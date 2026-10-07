@@ -36,7 +36,7 @@
  * ── The switcher ───────────────────────────────────────────────────────
  *
  * "Your communities": All communities first, then each community you are in,
- * then "Join or start a community". It opens from the community's name and ⌄
+ * then "Join a community" and "Start a community". It opens from the community's name and ⌄
  * in the coloured header, from the header's "Communities ⌄" on the
  * Communities list, and from the phone's tab held down (#3701; pressed while
  * it is lit, the tab goes up a level instead, ./tab-ladder.ts).

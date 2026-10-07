@@ -656,6 +656,31 @@ Two related notes on `path:` form:
   annotation (`path: /board @mobile`) is still accepted but redundant
   now; just point `path:` at the route where the change is visible.
 
+### Who the before & after shots see
+
+The shots agent signs in as the persona each declared change names, on
+throwaway copies of the app. Three things it cannot do by itself, which
+account for most changes that end up with no shots:
+
+- **It has no role in your app.** `member` is an ordinary signed-in member:
+  not your app's manager or owner, with no linked wallet and nothing it
+  made. When a change shows only to someone with a role, put the real
+  in-app path to that role in `hints.setup` (for example "Create a group
+  from + first; its creator is its manager"). Do not grant the role to
+  whoever opens the preview in seed data (see "Never seed the visitor"
+  above). If no in-app path reaches it, declare what a member does see and
+  say in the claim what the shots will leave out.
+- **It cannot sign out.** A change that signed-out visitors see is declared
+  with persona `guest`. A private app shows a guest only what it shows a
+  signed-out visitor outside Homeroom, usually a sign-in page, so declare a
+  private app's changes for `member`. The response to
+  `declare_visible_changes` warns about both mistakes; declare again when it
+  does.
+- **The home screen is not on the copies' addresses**, but the shots agent
+  shoots each side's home-screen tile from that side's `dapp.json`. A change
+  to the app's `icon`, `name` or colour is a visible change: declare it
+  with impact `ui` and a claim naming the home-screen tile, not `none`.
+
 ### Testing `path:` for the hybrid-routed self-app
 
 The before/after screenshots and the "Test this change" button visit the
@@ -3207,8 +3232,9 @@ feature):
 ## Starter-template notice — meant to be deleted
 
 Freshly scaffolded apps ship `public/index.html` as a template welcome
-screen — a "Starter template" hero and a "What's already working" card —
-wrapped in sentinel comments:
+screen — a "Starter template" hero with the app's thumbnail tile (the
+icon the app wears on Home) and the plain-English note on how the app is
+being built (ask Homeroom bot) — wrapped in sentinel comments:
 
 - opens with `<!-- usernode-starter-notice@1 … -->`
 - closes with `<!-- /usernode-starter-notice@1 -->`
@@ -3217,14 +3243,16 @@ Unlike the dev-console forwarder block above, this one is **meant to be
 deleted**: the whole screen is placeholder content, not product intent.
 When the user asks for their first real feature, replace the template
 screen rather than building alongside it — remove the sentinel block
-(both comments and everything between them), remove or repurpose the
-"Try the example" card and its demo endpoints (`/api/press`,
-`/api/leaderboard`, the `presses` table) as appropriate, and rewrite the
-scaffolded `README.md` to describe the actual app. Keep the dev-console
-forwarder `<script>` when rewriting the HTML, and the bridge `<script>`
-with the theme `<script>` right after it: the first real version keeps the
-template's light and dark looks and follows the viewer's Homeroom theme
-(see "New apps: a light and a dark look, following the platform").
+(both comments and everything between them), and rewrite the scaffolded
+`README.md` to describe the actual app. Apps created before October 2026
+still carry the older screen, which also had a "What's already working"
+list and a "Try the example" demo: remove that card and its demo
+endpoints (`/api/press`, `/api/leaderboard`, the `presses` table) there
+too. Keep the dev-console forwarder `<script>` when rewriting the HTML,
+and the bridge `<script>` with the theme `<script>` right after it: the
+first real version keeps the template's light and dark looks and follows
+the viewer's Homeroom theme (see "New apps: a light and a dark look,
+following the platform").
 
 ## Platform-level problems & missing capabilities: escalate, don't file workarounds
 

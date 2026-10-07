@@ -42,6 +42,9 @@ async function migrate(config) {
   await applySchemaWithLockRetry(pool, schema);
   await require('../services/moderation-migration').importLegacyReports(pool);
   await require('../services/moderation').purgeExpired(pool);
+  // The verified-identity rule's one-time production rollout: on, with $20
+  // a week for new members who have not verified (services/identity-rollout.js).
+  await require('../services/identity-rollout').applyIdentityRollout(pool);
   log.info('db', 'Schema up to date');
   finishPhase('schemaMs');
 
@@ -177,6 +180,8 @@ async function migrate(config) {
   await require('../services/bench/demo').seedStagingBench(pool);
   // #3737: and its taste eval, with screenshots to look at.
   await require('../services/bench/demo').seedStagingTaste(pool);
+  // And the App bench studio's gallery, with builds side by side.
+  await require('../services/bench/demo').seedStagingStudio(pool);
   // After the proposal seeds above: the platform-env fixture stamps a
   // failing verdict onto an existing staging proposal.
   await seedStagingPlatformEnv(pool, config);

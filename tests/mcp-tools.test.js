@@ -1053,6 +1053,188 @@ test('get_discussion passes the route\'s refusal through for an app the user can
   }
 });
 
+// ── post_message: the write half of get_discussion ─────────────────────
+//
+// It replays the chat route the browser's composer posts to, so who may post
+// where is that route's decision, and so is the "via agent" marker: the route
+// derives it from the connector bearer (#2236). What these tests hold is the
+// addressing, the refusals made before any call, and that the marker is read
+// back rather than claimed.
+
+const postScopes = { scopes: [READ_SCOPE, WRITE_SCOPE] };
+
+test('post_message posts on every thread get_discussion reads, through the chat route', async () => {
+  const { z } = require('zod');
+  const c = connector((method, pathname) => (method === 'POST' && pathname === '/api/apps/recipe-box/messages'
+    ? { message: { id: 77, content: 'x', posted_via: 'agent' } }
+    : { __http: { ok: false, status: 500, body: { error: 'unexpected call' } } }), postScopes);
+  try {
+    const cases = [
+      [{ threadType: 'issue', ref: 12 }, { thread_type: 'issue', thread_ref: 12 },
+        `${ORIGIN}/#app/recipe-box/dev/issues/12`],
+      [{ threadType: 'session', ref: 50 }, { thread_type: 'session', thread_ref: 50 },
+        `${ORIGIN}/#app/recipe-box/dev/proposals/50`],
+      [{ threadType: 'governance', ref: 9 }, { thread_type: 'governance', thread_ref: 9 },
+        `${ORIGIN}/#app/recipe-box/dev/governance/9`],
+      [{ threadType: 'message', ref: 60 }, { thread_type: 'message', thread_ref: 60 },
+        `${ORIGIN}/#messages/app/recipe-box/thread/60`],
+      // The channel is the app's own stream: no thread at all on the wire.
+      [{ threadType: 'channel' }, {}, `${ORIGIN}/#messages/app/recipe-box/m/77`],
+    ];
+    for (const [args, thread, webPath] of cases) {
+      const res = await c.handlers.get('post_message')({
+        slug: 'recipe-box', ...args, content: '  **Looks good** — one note on PR #901.\n',
+      });
+      assert.notEqual(res.isError, true, JSON.stringify(args));
+      const out = res.structuredContent;
+      assert.equal(out.messageId, 77);
+      assert.equal(out.threadType, args.threadType);
+      assert.equal(out.ref, args.ref ?? null);
+      assert.equal(out.viaAgent, true);
+      assert.equal(out.webPath, webPath);
+      assert.equal(z.object(c.specs.get('post_message').outputSchema).safeParse(out).success, true);
+      const call = c.calls.at(-1);
+      assert.equal(`${call.method} ${call.pathname}`, 'POST /api/apps/recipe-box/messages');
+      // Sent as written (bar the surrounding whitespace), and nothing that
+      // claims a provenance: the route stamps that from the bearer.
+      assert.deepEqual(call.body, { content: '**Looks good** — one note on PR #901.', ...thread });
+      assert.equal(out.contentChars, call.body.content.length);
+    }
+    assert.equal(c.calls.length, cases.length, 'one call per post, and no read first');
+  } finally {
+    c.restore();
+  }
+});
+
+test('post_message reports the route\'s marker rather than assuming it', async () => {
+  const c = connector(() => ({ message: { id: 5, posted_via: null } }), postScopes);
+  try {
+    const out = (await c.handlers.get('post_message')({
+      slug: 'recipe-box', threadType: 'issue', ref: 12, content: 'Hi.',
+    })).structuredContent;
+    assert.equal(out.viaAgent, false);
+  } finally {
+    c.restore();
+  }
+});
+
+test('post_message refuses bad input and an over-long message before any call', async () => {
+  const c = connector(() => ({ message: { id: 1, posted_via: 'agent' } }), postScopes);
+  try {
+    for (const args of [
+      { slug: 'Recipe Box', threadType: 'issue', ref: 1, content: 'Hi.' },
+      { slug: 'recipe-box', threadType: 'issue', content: 'Hi.' },
+      { slug: 'recipe-box', threadType: 'session', ref: 0, content: 'Hi.' },
+      { slug: 'recipe-box', threadType: 'dm', ref: 1, content: 'Hi.' },
+      { slug: 'recipe-box', threadType: 'issue', ref: 1, content: '   ' },
+    ]) {
+      const res = await c.handlers.get('post_message')(args);
+      assert.equal(res.structuredContent.code, 'invalid_request', JSON.stringify(args));
+    }
+
+    // The platform's own chat cap, refused with the numbers, never trimmed.
+    const over = 'x'.repeat(tools.MAX_ANSWER_CHARS + 3);
+    const long = await c.handlers.get('post_message')({
+      slug: 'recipe-box', threadType: 'session', ref: 50, content: over,
+    });
+    assert.equal(long.isError, true);
+    assert.equal(long.structuredContent.code, 'content_too_long');
+    assert.equal(long.structuredContent.limitChars, tools.MAX_ANSWER_CHARS);
+    assert.equal(long.structuredContent.actualChars, over.length);
+    assert.match(long.structuredContent.message, /Nothing was written/);
+
+    // Exactly at the cap still posts: the check is not off by one.
+    const exact = await c.handlers.get('post_message')({
+      slug: 'recipe-box', threadType: 'session', ref: 50, content: 'y'.repeat(tools.MAX_ANSWER_CHARS),
+    });
+    assert.notEqual(exact.isError, true);
+    assert.equal(c.calls.length, 1, 'only the post at the cap reached the platform');
+  } finally {
+    c.restore();
+  }
+
+  // A read-only connection cannot post, and is told how to fix it.
+  const readOnly = connector(() => ({ message: { id: 1 } }));
+  try {
+    const res = await readOnly.handlers.get('post_message')({
+      slug: 'recipe-box', threadType: 'issue', ref: 12, content: 'Hi.',
+    });
+    assert.equal(res.structuredContent.code, 'insufficient_scope');
+    assert.equal(readOnly.calls.length, 0);
+  } finally {
+    readOnly.restore();
+  }
+});
+
+test('post_message passes the route\'s refusals through', async () => {
+  const hidden = connector(() => ({ __http: { ok: false, status: 404, body: { error: 'App not found' } } }), postScopes);
+  try {
+    const res = await hidden.handlers.get('post_message')({
+      slug: 'secret-app', threadType: 'session', ref: 3, content: 'Hi.',
+    });
+    assert.equal(res.isError, true);
+    assert.equal(res.structuredContent.code, 'no_access');
+  } finally {
+    hidden.restore();
+  }
+
+  const noThread = connector(() => ({
+    __http: { ok: false, status: 400, body: { error: 'Invalid thread_type/thread_ref' } },
+  }), postScopes);
+  try {
+    const res = await noThread.handlers.get('post_message')({
+      slug: 'recipe-box', threadType: 'governance', ref: 999, content: 'Hi.',
+    });
+    assert.equal(res.structuredContent.code, 'invalid_request');
+    assert.match(res.structuredContent.message, /Invalid thread_type\/thread_ref/);
+  } finally {
+    noThread.restore();
+  }
+
+  const joinFirst = connector(() => ({
+    __http: { ok: false, status: 403, body: { code: 'join_required', error: 'Join this project to take part.',
+      app: { slug: 'recipe-box', name: 'Recipe box' } } },
+  }), postScopes);
+  try {
+    const res = await joinFirst.handlers.get('post_message')({
+      slug: 'recipe-box', threadType: 'issue', ref: 12, content: 'Hi.',
+    });
+    assert.equal(res.structuredContent.code, 'join_required');
+  } finally {
+    joinFirst.restore();
+  }
+});
+
+test('post_message is a write, held back from the delegated kinds, and the charter explains it', () => {
+  const block = registration('post_message');
+  assert.match(block, /annotations: writeAnnotations/);
+  assert.match(block, /scopeGuard\(WRITE_SCOPE\)/);
+  assert.match(block, /max: MAX_ANSWER_CHARS/);
+  // Addressed exactly as get_discussion addresses a thread.
+  assert.match(block, /threadType: z\.enum\(DISCUSSION_THREAD_TYPES\)/);
+  assert.ok(block.indexOf('writeLengthError(contentCheck)') < block.indexOf('callPlatform('),
+    'the length check happens before anything is posted');
+  assert.ok(tools.ACTING_TOOLS.includes('post_message'));
+
+  const audiences = require('../src/services/mcp-audiences');
+  assert.equal(audiences.toolVisibleTo('external', 'post_message'), true);
+  assert.equal(audiences.toolVisibleTo('agent_mayor', 'post_message'), false);
+  assert.equal(audiences.toolVisibleTo('worker_read', 'post_message'), false);
+
+  // The route it replays is already on the connector's exhaustive allowlist.
+  const policy = require('../src/services/cli-api-policy');
+  assert.equal(policy.isConnectorApiRequest('POST', '/api/apps/recipe-box/messages'), true);
+
+  const charter = require('../src/services/mcp-charter');
+  const section = charter.CHARTER_SECTIONS.find((s) => s.id === 'posting-in-discussions');
+  assert.ok(section, 'the charter has a section for it');
+  assert.match(section.text, /post_message/);
+  assert.match(section.text, /in the user's name/);
+  assert.match(section.text, /approved/);
+  assert.ok(!section.brief, 'charter-only: the server instructions have no room to spare');
+  assert.ok(charter.CHARTER_FULL.includes(section.text));
+});
+
 // ── #1225: a connector session can say it is working on something ──────
 //
 // Claiming a request and posting progress on it were a LOCAL-session
@@ -2297,20 +2479,29 @@ test('platform failures pass the platform’s own wording through', () => {
 test('the registered tool surface is exactly this, and nothing more', () => {
   const registered = [...SRC.matchAll(/server\.registerTool\('([a-z_]+)'/g)].map((m) => m[1]);
   assert.deepEqual(registered.sort(), [
+    'add_bench_task',
     'answer_questions',
     // #3654. Cancelling a benchmark run: full platform admins only.
     'cancel_bench_run',
-    'claim_request', 'create_request',
+    // The App bench studio (services/bench/studio.js), the benchmark's suites,
+    // the live Homeroom bot and the recent before/after screenshots: every
+    // one registered only for a full platform admin, and every route behind
+    // them (routes/bench-studio.js) refuses anybody else.
+    'cancel_bench_trial',
+    'claim_request', 'create_bench_context_pack', 'create_request',
     // Test accounts for first-run testing (create_test_account,
     // list_test_accounts, retire_test_account): registered only for a full
     // platform admin, and every route behind them refuses anybody else.
     'create_test_account',
     // Demo mode: the four acting tools of a creator's synthetic partner, and
     // its read — see ACTING_TOOLS and routes/demo-mode.js.
-    'demo_mode', 'demo_promote', 'demo_propose', 'demo_reset', 'demo_vote', 'get_app',
-    'get_bench_item',
+    'demo_mode', 'demo_promote', 'demo_propose', 'demo_reset', 'demo_vote',
+    'deploy_bench_preview', 'edit_bench_task', 'get_app',
+    'get_bench_context_pack', 'get_bench_gallery',
+    'get_bench_item', 'get_bench_reference_order',
     // #3654. One benchmark run's results, as aggregates only.
     'get_bench_run',
+    'get_bench_studio', 'get_bench_studio_run', 'get_bench_suite', 'get_bench_trial',
     // #2779. A native change, read the way the change page reads it.
     'get_change',
     // #1433. Read-only, and named `get_` so the shipped allow rules already
@@ -2318,12 +2509,12 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     'get_checkout_status',
     'get_connector_guidance', 'get_demo_status',
     // #3556. One app discussion thread, read through the transcript route.
-    'get_discussion',
+    'get_discussion', 'get_homeroom_bot',
     'get_platform_build', 'get_platform_conventions', 'get_proposal',
-    'get_request',
+    'get_recent_shots', 'get_request',
     // Specs on a request (services/request-specs.js): reading one, and the
     // platform's own format for writing one. post_spec, below, posts it.
-    'get_spec', 'get_spec_format',
+    'get_spec', 'get_spec_format', 'keep_bench_trial',
     // #3654. The Homeroom bot benchmark's judge (get_bench_item above it,
     // list_bench_grading_queue and submit_bench_grade below): registered only
     // for a full platform admin, and every route behind them refuses anybody
@@ -2331,13 +2522,17 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     'label_bench_task',
     // #3654. Running the benchmark (launch_bench_run, list_bench_runs, with
     // get_bench_run and cancel_bench_run above): the same full-admin gate.
-    'launch_bench_run',
-    'list_apps', 'list_bench_grading_queue', 'list_bench_runs',
-    'list_my_proposals', 'list_requests', 'list_test_accounts',
+    'launch_bench_run', 'launch_bench_studio',
+    'list_apps', 'list_bench_context_packs', 'list_bench_grading_queue', 'list_bench_runs',
+    'list_bench_suites', 'list_bench_trials',
+    'list_my_proposals', 'list_recent_shots', 'list_requests', 'list_test_accounts',
     // #1405. They write a row, but only into the CALLER'S OWN notification
     // feed — see the allow-rule reasoning in services/mcp-connect-constants.js
     // for why that is a different category from the acting tools below.
     'notify_awaiting_input', 'notify_input_received',
+    // One message on a discussion thread get_discussion reads, in the user's
+    // name and marked as their agent's, through the browser's own chat route.
+    'post_message',
     // A person's spec on a request, for the group to review before anything
     // is built. It builds, claims and votes on nothing (request-specs.js).
     'post_spec',
@@ -2350,11 +2545,13 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     // close". It files the proposal; the vote decides, and the platform
     // closes the issue only when it passes.
     'propose_close_request',
+    'rate_homeroom_bot_run',
     'recheck_change',
     'release_request',
+    'rerun_bench_trial',
     'retire_test_account',
     'start_change',
-    'start_platform_build', 'submit_bench_grade', 'submit_platform_build', 'submit_work',
+    'start_platform_build', 'submit_bench_grade', 'submit_bench_reference', 'submit_platform_build', 'submit_work',
     'sync_change',
     'update_proposal_description', 'update_proposal_issues', 'whoami',
     'withdraw_change',
@@ -2561,13 +2758,16 @@ test('ACTING_TOOLS names every user-directed action, and every one is a write', 
   // mean a read is being withheld from both for no reason, and a write left
   // out of it would leak into the read-only globs.
   assert.deepEqual([...tools.ACTING_TOOLS].sort(), [
-    'cancel_bench_run',
-    'create_request', 'create_test_account',
+    'add_bench_task',
+    'cancel_bench_run', 'cancel_bench_trial',
+    'create_bench_context_pack', 'create_request', 'create_test_account',
     'demo_mode', 'demo_promote', 'demo_propose', 'demo_reset', 'demo_vote',
-    'label_bench_task', 'launch_bench_run',
-    'post_spec', 'prepare_work', 'promote_change', 'propose_close_request', 'recheck_change',
+    'deploy_bench_preview', 'edit_bench_task', 'keep_bench_trial',
+    'label_bench_task', 'launch_bench_run', 'launch_bench_studio',
+    'post_message', 'post_spec', 'prepare_work', 'promote_change', 'propose_close_request',
+    'rate_homeroom_bot_run', 'recheck_change', 'rerun_bench_trial',
     'retire_test_account', 'start_change',
-    'start_platform_build', 'submit_bench_grade',
+    'start_platform_build', 'submit_bench_grade', 'submit_bench_reference',
     'submit_platform_build', 'submit_work', 'sync_change',
     'update_proposal_description', 'update_proposal_issues', 'withdraw_change',
   ]);

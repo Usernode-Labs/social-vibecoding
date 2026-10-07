@@ -1616,6 +1616,10 @@ const GroupChat = {
       // React controls with their own handlers; a click inside them (the
       // picker's search box included) is never a tap-to-quote.
       if (e.target.closest('.msgx-bar, .msgx-thread-chip, .msgx-thread-activity, .gc-msg-deleted-text')) return;
+      // #4029: a mention is never a tap-to-quote. A person's is a link to
+      // their page (the browser follows it); Homeroom bot's is text, and a
+      // tap on it does nothing rather than stage a reply to the row.
+      if (e.target.closest('.gc-mention')) return;
       // A reaction pill is NOT dispatched here. The reskin draws it with
       // @/components/ui/feed's `ReactionPill`, so no node carries
       // `.gc-react-pill` any more and this branch had nothing to match; the
@@ -1679,7 +1683,7 @@ const GroupChat = {
       }
       const quoted = e.target.closest('.gc-quoted');
       if (quoted) { GroupChat._handleQuotedClick(quoted); return; }
-      // Real links/buttons (PR link, "View full spec", mentions) win.
+      // Real links/buttons (PR link, "View full spec", channel refs) win.
       if (e.target.closest('a, button')) return;
       if (!GroupChat._isCleanTap(e)) return;
       const row = e.target.closest(QUOTE_SEL);
@@ -4175,6 +4179,18 @@ function knownChannelHandles() {
   }
 }
 
+// #4029: a mention is a link to that person's page, the address a project's
+// contributors and Kudos' Top users open. Homeroom bot has no person page, so
+// its mention ("@Homeroom bot", or its handle) stays text.
+function isBotMention(name) {
+  const key = String(name || '').toLowerCase();
+  return key === 'homeroom bot' || key === 'homeroom_bot';
+}
+
+function mentionHref(name) {
+  return `#leaderboard/users/${encodeURIComponent(name)}`;
+}
+
 function renderWithMentions(raw) {
   const escaped = escapeHtml(raw || '');
   const me = (App.user?.username || '').toLowerCase();
@@ -4182,7 +4198,8 @@ function renderWithMentions(raw) {
   const withMentions = escaped.replace(/(^|[^\w])@([A-Za-z0-9_]{1,32}(?:(?<=homeroom) bot\b)?)/gi, (_m, pre, name) => {
     const isMe = name.toLowerCase() === me;
     const cls = isMe ? 'gc-mention gc-mention-self' : 'gc-mention';
-    return `${pre}<span class="${cls}">@${name}</span>`;
+    if (isBotMention(name)) return `${pre}<span class="${cls}">@${name}</span>`;
+    return `${pre}<a class="${cls}" href="${mentionHref(name)}" data-mention="${name}">@${name}</a>`;
   });
   return renderChannelChips(renderRefChips(withMentions));
 }
@@ -4274,7 +4291,7 @@ function decorateMentionsAndRefs(node) {
   }
 }
 
-// Replace one text node with [text, <span class="gc-mention">…</span>,
+// Replace one text node with [text, <a class="gc-mention">…</a>,
 // <span class="gc-ref">…</span>, …] when it contains mentions/refs.
 function decorateTextNode(textNode) {
   const value = textNode.nodeValue != null ? textNode.nodeValue : (textNode.textContent || '');
@@ -4289,10 +4306,16 @@ function decorateTextNode(textNode) {
     if (seg.type === 'text') {
       frag.appendChild(document.createTextNode(seg.value));
     } else if (seg.type === 'mention') {
-      const span = document.createElement('span');
-      span.className = seg.isSelf ? 'gc-mention gc-mention-self' : 'gc-mention';
-      span.textContent = `@${seg.name}`;
-      frag.appendChild(span);
+      // #4029: a link to the person's page; Homeroom bot's stays text.
+      const bot = isBotMention(seg.name);
+      const el = document.createElement(bot ? 'span' : 'a');
+      el.className = seg.isSelf ? 'gc-mention gc-mention-self' : 'gc-mention';
+      if (!bot) {
+        el.setAttribute('href', mentionHref(seg.name));
+        el.setAttribute('data-mention', seg.name);
+      }
+      el.textContent = `@${seg.name}`;
+      frag.appendChild(el);
     } else if (seg.type === 'channel') {
       // #2783: a real link — see .gc-channel-ref in app.css for why it is
       // not a `.gc-ref`.

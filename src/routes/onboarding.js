@@ -14,6 +14,8 @@
 //                                          first" (Make it answers it in
 //                                          POST /api/apps)
 //   POST /api/me/tour-done                 the tour's Finish and Skip
+//   POST /api/me/phone-ask/answered        the first-run phone step's "Not
+//                                          now" (or its sheet closed)
 //   GET  /api/me/getting-started           the card: the tour, then the
 //                                          season's First challenges
 //   POST /api/me/getting-started/close     the card's close button, once
@@ -127,6 +129,21 @@ function onboardingRoutes(config) {
       res.json(await onboarding.markTourDone(pool, req.user.id, req.body || {}));
     } catch (err) {
       log.error('onboarding', 'tour done failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Read back as `phoneAsk` on /api/auth/me: the step is not asked again.
+  // Kept the first time; adding the phone ends the ask by itself.
+  router.post('/api/me/phone-ask/answered', drainGuard, sameOriginBrowserOnly, async (req, res) => {
+    try {
+      await pool.query(
+        'UPDATE users SET phone_ask_answered_at = COALESCE(phone_ask_answered_at, NOW()) WHERE id = $1',
+        [req.user.id]
+      );
+      res.json({ ok: true });
+    } catch (err) {
+      log.error('onboarding', 'phone ask answer failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

@@ -114,7 +114,7 @@ test('in a message that names its project, #N is a link to that project\'s reque
   assert.equal(html(bot),
     '<p>Filed as <a href="#app/ear-trainer-9aee0d/dev/issues/14" class="gc-ref gc-ref-issue" data-ref-type="issue" data-ref-number="14">#14</a>, '
     + 'beside <span class="gc-ref gc-ref-pr" data-ref-type="pr" data-ref-number="9">PR#9</span> and '
-    + '<span class="gc-mention gc-mention-self">@ada</span>. <code>#3</code><a href="https://example.test/">#4</a></p>',
+    + '<a class="gc-mention gc-mention-self" href="#leaderboard/users/ada" data-mention="ada">@ada</a>. <code>#3</code><a href="https://example.test/">#4</a></p>',
     'a real link, the chip\'s classes and data kept; a PR stays text; code and links are left alone');
 
   const person = body(doc, 'see #14');
@@ -124,6 +124,19 @@ test('in a message that names its project, #N is a link to that project\'s reque
   const none = body(doc, 'see #14');
   decorateRefs(none, new Set(), 'ada', null);
   assert.doesNotMatch(html(none), /<a href="#app/);
+});
+
+test('#4029: @name is a link to the person\'s page in Messages; Homeroom bot\'s stays text', () => {
+  const { decorateRefs, personHref } = loadTsx(CHANNELS);
+  assert.equal(personHref('ada'), '#leaderboard/users/ada', 'the address a project\'s contributors open');
+  const doc = makeDocument();
+  const msg = body(doc, 'ping @bob, @Homeroom bot and @homeroom_bot ');
+  decorateRefs(msg, new Set(), 'ada');
+  const out = html(msg);
+  assert.match(out, /<a class="gc-mention" href="#leaderboard\/users\/bob" data-mention="bob">@bob<\/a>/);
+  assert.match(out, /<span class="gc-mention">@Homeroom bot<\/span>/);
+  assert.match(out, /<span class="gc-mention">@homeroom_bot<\/span>/);
+  assert.match(out, /<code>#3<\/code><a href="https:\/\/example\.test\/">#4<\/a>/, 'code and links are left alone');
 });
 
 // ── 2. Where the project comes from, and where a press records ──────────

@@ -9003,6 +9003,12 @@ span.gc-vote-btn-icon { cursor: default; }
 .gc-mention {
   color: var(--accent);
   font-weight: 500;
+  text-decoration: none;
+}
+/* #4029: a person's mention is a link to their page, drawn as the channel
+   refs are: underlined on hover where there is a mouse. */
+@media (hover: hover) {
+  a.gc-mention:hover { text-decoration: underline; }
 }
 .gc-mention-self {
   background: rgba(31, 134, 255, 0.18);
@@ -10690,6 +10696,24 @@ html .un-backdrop.platform-backdrop-dim {
    it is the dialog people open from the same menus as those sheets, and it
    read as a different material beside them. */
 .un-modal:has(#feedback-form) { background-color: var(--dc-sheet-solid); }
+/* CANCEL AND POST STAY ON SCREEN (#4033). The kit modal is the scroller
+   (native.css `.un-modal`: overflow-y auto), so a long description or the
+   kudos row pushed the two buttons below its bottom edge and they had to be
+   scrolled to. The row sticks to that edge instead and the form scrolls
+   under it, on the same solid plane colour so nothing shows through. It
+   reaches down through the modal's 20px bottom padding (negative margin,
+   matching padding), so the buttons sit where they always did when the
+   form is short (4px + 12px is the 16px gap `mt-4` gave), and the hairline marks the edge the fields pass under. */
+.un-modal .feedback-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  margin-top: 4px;
+  margin-bottom: -20px;
+  padding: 12px 0 20px;
+  background-color: var(--dc-sheet-solid);
+  box-shadow: 0 -1px 0 var(--app-sheet-line);
+}
 .un-sheet, .un-sheet::after, .un-panel, .un-panel::after,
 #apps-switcher-sheet, .un-sheet:has(#apps-switcher-sheet),
 .un-sheet:has(#apps-switcher-sheet)::after {
@@ -20850,13 +20874,16 @@ html.un-kb #platform-parked {
     padding-top: 10px;
     border-top: 1px solid var(--app-sheet-line);
   }
+  /* #4027: the shell's one section-label size (SectionHeader: 12px bold,
+     tracked .06em, muted). At 10.5px / 600 the ACTIVE and RECENTS labels
+     were too small and faint to scan the rail by. */
   .platform-recents-head {
     margin: 0 0 4px;
     padding: 0 12px;
     color: var(--text-muted);
-    font-size: 10.5px;
-    font-weight: 600;
-    letter-spacing: .04em;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .06em;
     line-height: 1.35;
     text-transform: uppercase;
   }
@@ -20971,14 +20998,14 @@ html.un-kb #platform-parked {
   /* ── RECENTS BY DAY (#2919) ──────────────────────────────────────────
      frontend/src/features/nav/recents.ts (groupRecents) carries the argument.
      A small label before each day that has a row, quieter than the RECENTS
-     heading above it: sentence case, no caps or tracking, and the muted ink
-     taken down a step so the rows stay the thing you read. Less air above
+     heading above it: sentence case, no caps or tracking, smaller and
+     lighter than the heading so the rows stay the thing you read. Full
+     muted ink, not a step below it (#4027: at 75% it was too faint). Less air above
      the first one, which already sits under the heading. */
   .platform-recents-day {
     flex: none;
     padding: 8px 12px 2px;
     color: var(--text-muted);
-    opacity: .75;
     font-size: 11px;
     font-weight: 500;
     letter-spacing: .01em;

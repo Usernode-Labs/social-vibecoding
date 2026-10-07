@@ -5564,11 +5564,14 @@ const AppView = {
     // the idle sweep took their preview away (#3161, #3163): "needs staging
     // and checks to finish", with nothing left running that could finish.
     //
-    // So the state is always 'ready'. What it carries is a NOTE: one sentence
-    // that says what submitting now means for this change, in the order a
-    // reader would care. The server stays authoritative for the few things it
-    // still refuses (nothing committed yet, an agent turn still running), and
-    // says why in its own words when it does.
+    // So the state is 'ready' with one exception. What it carries is a NOTE:
+    // one sentence that says what submitting now means for this change, in
+    // the order a reader would care. The exception is a change with nothing
+    // committed (#3776): there is nothing to review, so the state is 'empty'
+    // and the Submit for review button stays disabled beside the step that
+    // says "Nothing committed yet". The server stays authoritative for the
+    // few things it still refuses (nothing committed yet, an agent turn still
+    // running), and says why in its own words when it does.
     // `short` is the same fact in a few words: the draft's "Submit for
     // review" step line (_draftStepsView).
     const ready = (note, tone = 'ok', short = 'Ready') => ({ kind: 'ready', note, tone, short });
@@ -5600,8 +5603,8 @@ const AppView = {
         ? item.proposal_state === 'draft'
         : !item.pr_number && !item.staging_url && !item.check_state;
       if (levelWithMain || nothingPushed) {
-        return ready('There are no committed changes to submit yet. Ask the agent to make a change first.', 'mute',
-          'Nothing committed yet');
+        return { kind: 'empty', tone: 'mute', short: 'Nothing committed yet',
+          note: 'There are no committed changes to submit yet. Ask the agent to make a change first.' };
       }
     }
     if (item.check_state === 'passing' && !item.staging_url) {
@@ -5719,11 +5722,12 @@ const AppView = {
       rows.forEach((r) => { delete r.step; delete r.stepDone; });
       const submission = AppView.changeSubmissionState(item);
       const ready = submission.kind === 'ready';
-      rows.push({ key: 'review', label: 'Review', tone: ready ? submission.tone : 'mute',
-        text: [ready ? submission.note : 'Submitting for review…'] });
+      const pending = submission.kind === 'pending';
+      rows.push({ key: 'review', label: 'Review', tone: pending ? 'mute' : submission.tone,
+        text: [pending ? 'Submitting for review…' : submission.note] });
       card.actions = (card.actions || []).filter((a) => a.key !== 'promote');
       if (mine && !AppView.readOnly) card.actions.push({ key: 'propose-change', cls: 'gc-vote-btn',
-        label: submission.kind === 'pending' ? 'Submitting…' : 'Submit for review',
+        label: pending ? 'Submitting…' : 'Submit for review',
         title: submission.note, disabled: !ready || !!busy,
         act: { fn: 'runChangeAction', args: [item.id, 'promote', item] } });
     }
@@ -19682,9 +19686,14 @@ const AppView = {
     const advisory = (p.approval_policy === 'invited' && p.qualified_yes_count != null && isOpenRow)
       ? Math.max(0, (parseInt(p.yes_count, 10) || 0) - yes) : 0;
     const lock = !!(p.requires_explicit_approval && isOpenRow);
+    // #3826: the lock is a glyph with a hover title, which a phone never
+    // shows. While the other member's Yes is still missing, the change's
+    // page says so in words (topic-head.tsx); once it is in, nothing.
+    const awaitsOtherYes = !!(lock && p.status !== 'closed' && AppView._awaitingOtherMember(p));
     const base = {
       yes, no, majority: maj, advisory, lock, reasons: [],
       ...(lock ? { lockTitle: AppView._lockTitle(p) } : {}),
+      ...(awaitsOtherYes ? { awaitsOtherYes: true } : {}),
     };
 
     // 0 — settled. `merged` is the stored lifecycle; deployment_state is a
@@ -19809,17 +19818,40 @@ const AppView = {
         return { ...base, tier: 5, key: 'needs_vote', label: 'Waiting for your approval', tone: 'progress', fill: true, dot: true, reasons,
           title: 'Approve it, and it goes live' };
       }
+      // The member floor (#3826): the tally reads full and the vote is
+      // still open, which reads as a mistake. Where this viewer's Yes
+      // would count, theirs is the one it waits on, so the pill says so
+      // instead of repeating a count it just showed. In an invited-
+      // approver app a non-approver's vote is advisory, so it keeps the
+      // plain vote label and only says the floor is unmet.
+      if (yes >= maj && waitsOnMember) {
+        const counts = p.approval_policy !== 'invited';
+        return { ...base, tier: 5, key: 'needs_vote',
+          label: counts ? `Needs your Yes · ${yes}/${maj}` : `Vote · ${yes}/${maj}`,
+          tone: 'progress', fill: true, dot: true, reasons,
+          title: counts
+            ? `It has the Yes votes it needs (${yes} of ${maj}), but none is from another member yet. Your Yes would be it.`
+            : 'It has the Yes votes it needs, but a Yes from another member is still missing.' };
+      }
       return { ...base, tier: 5, key: 'needs_vote', label: `Vote · ${yes}/${maj}`, tone: 'progress', fill: true, dot: true, reasons,
         title: 'You haven’t voted on this yet' };
     }
-    // 6 — plain tally.
-    const outcome = yes >= maj ? (waitsOnMember ? 'progress' : 'ok') : no >= maj ? 'blocked' : 'progress';
+    // 6 — plain tally. The member floor's wait gets WORDS (#3826): the
+    // votes are in, so a bare "3 / 3" reads as passed, and the lock glyph
+    // alone never said why it is not going live. The words are the home
+    // strip's ("Needs another member's Yes", MergeStatus.lifecycle 8a),
+    // with the tally riding as the suffix the contested tier uses, and
+    // the amber the conversation tier wears.
+    if (yes >= maj && waitsOnMember) {
+      return { ...base, tier: 6, key: 'needs_member',
+        label: `Needs another member’s Yes · ${yes}/${maj}`, tone: 'attention', fill: true, reasons,
+        title: AppView._explicitCopy(p.explicit_approval_reason).sentence };
+    }
+    const outcome = yes >= maj ? 'ok' : no >= maj ? 'blocked' : 'progress';
     const activeAtMerge = parseInt(p.active_users_at_merge, 10);
     return { ...base, tier: 6, key: 'tally', label: `${yes} / ${maj}`, tone: outcome, fill: true, reasons,
-      title: (yes >= maj && waitsOnMember)
-        ? AppView._explicitCopy(p.explicit_approval_reason).sentence
-        : (hasSnap && Number.isFinite(activeAtMerge) && activeAtMerge > 0)
-          ? `needed ${snap} of ${activeAtMerge} active users at merge time` : undefined };
+      title: (hasSnap && Number.isFinite(activeAtMerge) && activeAtMerge > 0)
+        ? `needed ${snap} of ${activeAtMerge} active users at merge time` : undefined };
   },
 
   // The pill's MARKUP moved to card/dev-card.tsx (`StatusPill`), which
@@ -21660,6 +21692,17 @@ const AppView = {
   // (the line is in hand and the optimistic paint is about to happen), so
   // a caller can show that it is on its way without claiming it landed.
   // The onclick callers ignore the value, as they always have.
+  // A vote the verified-identity rule refused (identity_required): open the
+  // verify sheet and, once a phone is linked, cast it again. Runs after the
+  // refused call has returned, so its in-flight guard is clear. False when
+  // there is no sheet to open, and the caller says the server's words.
+  _verifyThenVote(again) {
+    const ask = window.UsernodeReact?.verifyIdentity?.ask;
+    if (typeof ask !== 'function') return false;
+    void Promise.resolve(ask()).then((verified) => { if (verified) again(); });
+    return true;
+  },
+
   async castVote(sessionId, vote, expectedEpoch = null, opts = null) {
     // Guard against double-click / mashing: one in-flight vote per session.
     // The server is idempotent on an unchanged vote, but blocking here
@@ -21734,6 +21777,10 @@ const AppView = {
           AppView._seenEpoch.set(sessionId, parseInt(data.approvalEpoch, 10));
         }
         await AppView.refreshDevData('vote');
+        // A public app's vote counts from a verified account: the sheet that
+        // verifies, then the same vote again (features/auth/verify-identity.tsx).
+        if (data.code === 'identity_required' && AppView._verifyThenVote(
+          () => AppView.castVote(sessionId, vote, expectedEpoch, opts))) return false;
         // #1688: a No the server would not take without its line says so in
         // the server's own words rather than as an opaque failure.
         PlatformUI.toast((data.error === 'reason_required' && data.message)
@@ -21836,6 +21883,12 @@ const AppView = {
         // 409 "Issue is not open" is the common one: someone else's vote
         // decided it between this card rendering and the click landing.
         finish();
+        // A public app's vote counts from a verified account (castVote).
+        if (data.code === 'identity_required' && AppView._verifyThenVote(
+          () => AppView.castIssueVote(issueId, vote, opts))) {
+          AppView.refreshDevData('vote');
+          return;
+        }
         // #2603: a No the server would not take without its line says so in
         // the server's own words rather than as an opaque failure.
         PlatformUI.toast((data.error === 'reason_required' && data.message)

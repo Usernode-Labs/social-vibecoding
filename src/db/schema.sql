@@ -263,13 +263,55 @@ COMMENT ON TABLE native_sign_in_tokens IS 'staging:private';
 CREATE TABLE IF NOT EXISTS oauth_signup_sessions (
   token_hash  VARCHAR(64) PRIMARY KEY CHECK (token_hash ~ '^[0-9a-f]{64}$'),
   user_id     INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
-  provider    TEXT NOT NULL CHECK (provider IN ('apple', 'google')),
+  provider    TEXT NOT NULL CHECK (provider IN ('apple', 'google', 'phone')),
   expires_at  TIMESTAMPTZ NOT NULL,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_oauth_signup_sessions_expires
   ON oauth_signup_sessions (expires_at);
 COMMENT ON TABLE oauth_signup_sessions IS 'staging:private';
+
+-- Phone sign-in rides the same username continuation as Apple and Google
+-- (services/firebase-phone-auth.js). The constraint is named, dropped and
+-- re-added so an existing database widens idempotently; a fresh install
+-- above already carries all three values, so the re-add renames only.
+ALTER TABLE oauth_signup_sessions
+  DROP CONSTRAINT IF EXISTS oauth_signup_sessions_provider_check;
+ALTER TABLE oauth_signup_sessions
+  ADD CONSTRAINT oauth_signup_sessions_provider_check
+  CHECK (provider IN ('apple', 'google', 'phone'));
+
+-- A phone identity, beside Apple and Google (user_oauth_identities) rather
+-- than inside their OAuth contract: its invariants are its own (one account
+-- per number, one identity per account, E.164 shape), and the number is
+-- PII, so this table is private like its sibling. firebase_uid is the
+-- stable subject the next sign-in finds; the number is the human-facing
+-- key. Nothing on the platform derives an account from the number — the
+-- number is how the person proves themselves to Firebase, not how we look
+-- them up.
+CREATE TABLE IF NOT EXISTS user_phone_identities (
+  id           BIGSERIAL PRIMARY KEY,
+  user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  firebase_uid TEXT NOT NULL UNIQUE CHECK (char_length(firebase_uid) BETWEEN 1 AND 128),
+  phone_e164   VARCHAR(16) NOT NULL UNIQUE CHECK (phone_e164 ~ '^\+[1-9][0-9]{1,14}$'),
+  last_used_at TIMESTAMPTZ,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_user_phone_identities_user
+  ON user_phone_identities (user_id);
+COMMENT ON TABLE user_phone_identities IS 'staging:private';
+
+-- A phone sign-in's ID token is spent once: its hash, kept until the token
+-- itself expires. Same rule as native_sign_in_tokens above.
+CREATE TABLE IF NOT EXISTS phone_sign_in_tokens (
+  token_hash VARCHAR(64) PRIMARY KEY CHECK (token_hash ~ '^[0-9a-f]{64}$'),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_phone_sign_in_tokens_expires
+  ON phone_sign_in_tokens (expires_at);
+COMMENT ON TABLE phone_sign_in_tokens IS 'staging:private';
 
 -- Global CLI device authorization and opaque access tokens. These are
 -- deliberately independent from browser sessions and iframe/app identity.
@@ -9682,9 +9724,11 @@ CREATE INDEX IF NOT EXISTS idx_homeroom_bot_queue_order
 -- the model made it (`determined` / `missing_fact` are the belief model's
 -- prior), the text it would have posted, whether a live cap would have
 -- suppressed it, what the run cost, and how an admin rated it. Not marked
--- staging:private: every row derives from public GitHub issues and the
--- platform's own verdicts, and a staging preview of the dashboard needs
--- rows to show.
+-- staging:private as a table: the rows derive from public GitHub issues and
+-- the platform's own verdicts, a staging preview of the dashboard needs rows
+-- to show, and homeroom_bot_posts, the mention opt-outs and bench_tasks all
+-- point at it. One of its columns is a person's own words, `plan_change`
+-- (from their DM with the bot), and that column is private (below).
 CREATE TABLE IF NOT EXISTS homeroom_bot_runs (
   id               SERIAL PRIMARY KEY,
   app_id           INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
@@ -9835,6 +9879,8 @@ CREATE INDEX IF NOT EXISTS idx_homeroom_bot_requesters_user
 -- with it ("You asked: ..."), and the bot's change credits them by it. The
 -- issue's title stays the bot's short name for it.
 ALTER TABLE homeroom_bot_requesters ADD COLUMN IF NOT EXISTS asked_text TEXT;
+-- Their own words, often from their DM with the bot: not copied to staging.
+COMMENT ON COLUMN homeroom_bot_requesters.asked_text IS 'staging:private';
 
 -- B5: the bot is introduced once per person, ever: a maker at their first
 -- project, anybody else at their first request. Claimed by inserting the
@@ -10042,6 +10088,7 @@ CREATE INDEX IF NOT EXISTS homeroom_bot_runs_live_build_waiting_idx
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS plan JSONB;
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS awaiting_go_at TIMESTAMPTZ;
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS plan_change TEXT;
+COMMENT ON COLUMN homeroom_bot_runs.plan_change IS 'staging:private';
 CREATE INDEX IF NOT EXISTS homeroom_bot_runs_awaiting_go_idx
   ON homeroom_bot_runs(awaiting_go_at) WHERE awaiting_go_at IS NOT NULL;
 
@@ -10339,6 +10386,130 @@ CREATE TABLE IF NOT EXISTS bench_trial_artifacts (
   UNIQUE (trial_id, shot_id)
 );
 COMMENT ON TABLE bench_trial_artifacts IS 'staging:private';
+
+-- The App bench studio (services/bench/studio.js): first versions built from
+-- a brief the way the create-app flow builds them, driven from an admin's
+-- connector session, with CONTEXT PACKS to vary what the bot is told and
+-- REFERENCE builds (a Claude Code session's own app from the same inputs) to
+-- compare it with.
+--
+-- A context pack is guidance text for the bot's first-version prompts and
+-- files for the new app's first commit (a theme as a skill file, say). Each
+-- save is a new version of its name; a version that a run has used is never
+-- changed (`used_at`), so a result always names exactly what the bot read.
+-- Private: it is admin-written material for a benchmark.
+CREATE TABLE IF NOT EXISTS bench_context_packs (
+  id              SERIAL PRIMARY KEY,
+  name            TEXT NOT NULL,
+  version         INTEGER NOT NULL DEFAULT 1,
+  parent_id       INTEGER REFERENCES bench_context_packs(id) ON DELETE SET NULL,
+  guidance        TEXT NOT NULL DEFAULT '',
+  stage_guidance  JSONB NOT NULL DEFAULT '{}',
+  files           JSONB NOT NULL DEFAULT '[]',
+  notes           TEXT,
+  sha256          VARCHAR(64) NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}$'),
+  created_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  used_at         TIMESTAMPTZ,
+  UNIQUE (name, version)
+);
+COMMENT ON TABLE bench_context_packs IS 'staging:private';
+
+-- A run is `suite` (the launcher's: every task of a suite at its stages) or
+-- `studio` (the studio's: some briefs, on some models, with some packs).
+-- `context_pack_ids` are the packs its arms were given; 0 stands for none.
+ALTER TABLE bench_runs ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'suite';
+ALTER TABLE bench_runs ADD COLUMN IF NOT EXISTS context_pack_ids INTEGER[] NOT NULL DEFAULT '{}';
+ALTER TABLE bench_runs ADD COLUMN IF NOT EXISTS references_per_brief INTEGER NOT NULL DEFAULT 0;
+
+-- A trial's pack (none for every trial before the studio), its reference
+-- label when it is a reference build handed in from outside (its `model` is
+-- then `reference:<label>`), the commit a reference is captured at, what it
+-- is doing right now (its step, its last few activity lines and the skills
+-- it invoked, for the studio's watch), and when an admin kept its branch
+-- past the sweep.
+ALTER TABLE bench_trials ADD COLUMN IF NOT EXISTS context_pack_id INTEGER REFERENCES bench_context_packs(id) ON DELETE SET NULL;
+ALTER TABLE bench_trials ADD COLUMN IF NOT EXISTS reference_label TEXT;
+ALTER TABLE bench_trials ADD COLUMN IF NOT EXISTS capture_sha TEXT;
+ALTER TABLE bench_trials ADD COLUMN IF NOT EXISTS progress JSONB;
+ALTER TABLE bench_trials ADD COLUMN IF NOT EXISTS kept_at TIMESTAMPTZ;
+-- One trial per task, model, PACK and attempt: the same model with and
+-- without a pack are two arms of one run.
+ALTER TABLE bench_trials DROP CONSTRAINT IF EXISTS bench_trials_run_id_task_id_model_attempt_key;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bench_trials_arm_attempt
+  ON bench_trials(run_id, task_id, model, COALESCE(context_pack_id, 0), attempt);
+-- `awaiting`: a reference build's trial while its branch is copied in; the
+-- lane never claims it. Widening a CHECK never rejects a row already stored.
+DO $$
+BEGIN
+  ALTER TABLE bench_trials DROP CONSTRAINT IF EXISTS bench_trials_status_check;
+  ALTER TABLE bench_trials ADD CONSTRAINT bench_trials_status_check
+    CHECK (status IN ('pending', 'running', 'ok', 'model_fail', 'infra_fail', 'timeout',
+                      'not_applicable', 'skipped_cap', 'cancelled', 'awaiting'));
+END $$;
+-- A first version a restart interrupts goes on from where it was, as the
+-- bot's own builds do (services/bench/lane.js "After a restart"):
+-- `checkpoint` keeps what each finished sub-step left (the triage's answer,
+-- the spec, the build's commit), the sessions it opened and which of them a
+-- release already charged to the run. `prior_ms` is the time its earlier
+-- claims ran and `first_started_at` its first claim, so its elapsed time
+-- survives the restart.
+ALTER TABLE bench_trials ADD COLUMN IF NOT EXISTS checkpoint JSONB;
+ALTER TABLE bench_trials ADD COLUMN IF NOT EXISTS prior_ms BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE bench_trials ADD COLUMN IF NOT EXISTS first_started_at TIMESTAMPTZ;
+
+-- The first commit a brief's builds start from, made once per run, task and
+-- pack: today's starter rendered for the app's name, its sketch card, and the
+-- pack's files, as a commit with no history on `bench/r<run>-s<id>`. Every
+-- arm of the run and every reference built for it start from this same
+-- commit, so they are given exactly the same tree. `making` is claimed by
+-- one trial; the others wait for `ready`.
+CREATE TABLE IF NOT EXISTS bench_scaffolds (
+  id                SERIAL PRIMARY KEY,
+  run_id            INTEGER NOT NULL REFERENCES bench_runs(id) ON DELETE CASCADE,
+  task_id           INTEGER NOT NULL REFERENCES bench_tasks(id) ON DELETE CASCADE,
+  context_pack_id   INTEGER REFERENCES bench_context_packs(id) ON DELETE SET NULL,
+  status            TEXT NOT NULL DEFAULT 'making',
+  sha               TEXT,
+  branch            TEXT,
+  sketch            JSONB,
+  error             TEXT,
+  claimed_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ready_at          TIMESTAMPTZ,
+  branch_deleted_at TIMESTAMPTZ,
+  CONSTRAINT bench_scaffolds_status_check CHECK (status IN ('making', 'ready', 'failed'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bench_scaffolds_arm
+  ON bench_scaffolds(run_id, task_id, COALESCE(context_pack_id, 0));
+COMMENT ON TABLE bench_scaffolds IS 'staging:private';
+
+-- The studio's one host app: a private project the benchmark user made
+-- through the ordinary create path, whose repository carries every studio
+-- branch and whose own database is empty, so a preview of a studio build
+-- starts from a fresh database and never from anybody's data.
+CREATE TABLE IF NOT EXISTS bench_studio_hosts (
+  key         TEXT PRIMARY KEY,
+  app_id      INTEGER REFERENCES apps(id) ON DELETE SET NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE bench_studio_hosts IS 'staging:private';
+
+-- A studio build put up as a preview for a day: the session the preview is
+-- built on, and when it is taken down.
+CREATE TABLE IF NOT EXISTS bench_previews (
+  id            SERIAL PRIMARY KEY,
+  trial_id      INTEGER NOT NULL REFERENCES bench_trials(id) ON DELETE CASCADE,
+  session_id    INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL,
+  status        TEXT NOT NULL DEFAULT 'building',
+  error         TEXT,
+  requested_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at    TIMESTAMPTZ NOT NULL,
+  ended_at      TIMESTAMPTZ,
+  CONSTRAINT bench_previews_status_check CHECK (status IN ('building', 'live', 'failed', 'ended'))
+);
+CREATE INDEX IF NOT EXISTS idx_bench_previews_open ON bench_previews(expires_at) WHERE status IN ('building', 'live');
+COMMENT ON TABLE bench_previews IS 'staging:private';
 
 -- #3624 stage 2: the bot's DM is read by a model (homeroom-bot-mayor.js).
 -- One row per answer it wrote: what it cost (counted in the person's weekly
@@ -11591,9 +11762,11 @@ CREATE INDEX IF NOT EXISTS idx_community_invite_redemptions_user
   ON community_invite_redemptions (user_id) WHERE applied_at IS NULL;
 COMMENT ON TABLE community_invite_redemptions IS 'staging:private';
 
--- THE INVITE TREE: who let whom in. On unless an admin switches it off in
--- Admin → Waitlist, which writes the `invite_tree_enabled` platform_settings
--- row (services/community-invites.js; no row is on).
+-- THE INVITE TREE (retired): who a link let past the waitlist, on one of its
+-- maker's skips, while links could do that. Private membership replaced it
+-- (`private_member_since` below), so nothing writes `admitted_by` now, and
+-- the Admin → Waitlist switch it read is gone with its setting row (below).
+-- The columns keep the history: Journey's door for those accounts.
 -- `invite_generation` 0 is "let off the waitlist by us, by hand" (an admin
 -- admitting a waitlist row, or granting an account directly): grantPlatform-
 -- Access writes it only when that grant is what lets them in. 1 is somebody
@@ -11604,6 +11777,27 @@ COMMENT ON TABLE community_invite_redemptions IS 'staging:private';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS admitted_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS invite_generation SMALLINT;
 CREATE INDEX IF NOT EXISTS idx_users_admitted_by ON users (admitted_by) WHERE admitted_by IS NOT NULL;
+-- A PRIVATE MEMBER: somebody without platform access whom an invite link
+-- let into its community straight away, instead of queueing it for the day
+-- they are let in. They use and change their communities' apps, but do not
+-- make apps of their own; they are on the waitlist for that. The tier is
+-- `has_platform_access = FALSE AND private_member_since IS NOT NULL`, so
+-- letting them in (has_platform_access → TRUE, the waitlist's own release)
+-- ends it with no second write, and the triggers on that edge (the
+-- platform community, the welcome DM, queued invites) fire then, not here.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS private_member_since TIMESTAMPTZ;
+-- A PROVISIONAL HANDLE: an invite's phone sign-up gives a name, not a
+-- username, and its handle is made from the name (usernames.handlesFromName)
+-- for the private group that invited them to see. Nothing public may show it:
+-- a public app's identity token, a public community's membership and a
+-- public invite's join all refuse with username_required until the person
+-- picks a username (POST /api/me/username/choose clears this), and the shell
+-- asks for one first. Their name reaches a public place only as a username
+-- they chose.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS username_provisional_since TIMESTAMPTZ;
+-- The retired tree's on/off switch (services/community-invites.js used to read
+-- it). Nothing reads it now; idempotent, so a boot after the first finds none.
+DELETE FROM platform_settings WHERE key = 'invite_tree_enabled';
 
 -- Whether the person who made a link can still grant what it grants: an
 -- admin, or a collaborator where building is by invitation, or a member
@@ -11785,6 +11979,80 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS test_account_welcome_dm BOOLEAN NOT N
 CREATE INDEX IF NOT EXISTS idx_users_test_account_created_at
   ON users (test_account_created_at) WHERE test_account_created_at IS NOT NULL;
 
+-- The first-run "Add your phone number" step was answered, by "Not now" or
+-- by closing it (POST /api/me/phone-ask/answered): it is not asked again, and
+-- Home's card is where the phone is added after that. Adding the phone ends
+-- the ask on its own (identity_needed below).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_ask_answered_at TIMESTAMPTZ;
+
+-- VERIFIED IDENTITY (sybil protection for public decisions and the full AI
+-- budget). An account is verified by any of: a verified phone
+-- (user_phone_identities), BOTH GitHub and X linked (user_social_identities,
+-- the "social" identity tier, services/limits.js), or a zkPassport proof
+-- (user_activities source 'zkpassport'). GitHub or X alone is not enough:
+-- either is free to make in bulk, and the link proves ownership only.
+CREATE OR REPLACE FUNCTION identity_verified(target_user_id INTEGER)
+RETURNS BOOLEAN
+LANGUAGE sql STABLE AS $$
+  SELECT EXISTS (SELECT 1 FROM user_phone_identities p WHERE p.user_id = target_user_id)
+      OR (EXISTS (SELECT 1 FROM user_social_identities g
+                   WHERE g.user_id = target_user_id AND g.provider = 'github')
+          AND EXISTS (SELECT 1 FROM user_social_identities x
+                       WHERE x.user_id = target_user_id AND x.provider = 'x'))
+      OR EXISTS (SELECT 1 FROM user_activities z
+                  WHERE z.user_id = target_user_id AND z.source = 'zkpassport')
+$$;
+-- When the verified-identity rule was switched on (Admin, Limits): the
+-- platform_settings row 'identity_rule_since', an ISO timestamp, absent while
+-- it is off. A value that is not a timestamp reads as off, never as an error
+-- in every tally that calls this.
+CREATE OR REPLACE FUNCTION identity_rule_since()
+RETURNS TIMESTAMPTZ
+LANGUAGE sql STABLE AS $$
+  SELECT CASE
+           WHEN ps.value ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}(:?[0-9]{2})?)$'
+           THEN ps.value::timestamptz
+         END
+    FROM platform_settings ps
+   WHERE ps.key = 'identity_rule_since'
+$$;
+-- Exempt from the rule: an account let in before it was switched on (or an
+-- admin). Existing members keep their public votes and their AI budget.
+CREATE OR REPLACE FUNCTION identity_rule_exempt(target_user_id INTEGER)
+RETURNS BOOLEAN
+LANGUAGE sql STABLE AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM users u
+     WHERE u.id = target_user_id
+       AND (u.is_admin
+            OR (u.has_platform_access
+                AND COALESCE(u.platform_access_granted_at, u.created_at) < identity_rule_since()))
+  )
+$$;
+-- Whether the rule holds this account to it: on, and the account is neither
+-- exempt nor verified. GET /api/auth/me's `identityNeeded`, which asks a new
+-- member for a phone (the first-run step, Home's card).
+CREATE OR REPLACE FUNCTION identity_needed(target_user_id INTEGER)
+RETURNS BOOLEAN
+LANGUAGE sql STABLE AS $$
+  SELECT identity_rule_since() IS NOT NULL
+     AND NOT identity_rule_exempt(target_user_id)
+     AND NOT identity_verified(target_user_id)
+$$;
+-- Whether a vote by `voter_id` on `target_app_id` needs a verified identity
+-- to count: the app is PUBLIC (view_visibility 'public') and the rule holds
+-- the voter to it (identity_needed above). Private groups' votes are never
+-- held to it. The vote routes refuse such a vote first
+-- (services/communities.js identityVoteRefusal); counts_toward_outcome
+-- leaves it out of every tally and denominator.
+CREATE OR REPLACE FUNCTION public_vote_needs_identity(voter_id INTEGER, target_app_id INTEGER)
+RETURNS BOOLEAN
+LANGUAGE sql STABLE AS $$
+  SELECT identity_rule_since() IS NOT NULL
+     AND EXISTS (SELECT 1 FROM apps a WHERE a.id = target_app_id AND a.view_visibility = 'public')
+     AND identity_needed(voter_id)
+$$;
+
 -- Whose vote counts toward an app's outcome (test accounts, D1). Everybody's,
 -- except a test account's on an app a real person made: that vote is recorded
 -- and shown, labelled, and left out of the tally and of the active-member
@@ -11794,10 +12062,20 @@ CREATE INDEX IF NOT EXISTS idx_users_test_account_created_at
 -- denominator call (services/pr-vote-revision.js countedVotePredicateSql,
 -- services/governance.js, services/active-users.js). LANGUAGE sql and STABLE
 -- so the planner inlines it.
+--
+-- A PRIVATE MEMBER (users.private_member_since, not let in yet) never counts
+-- on a PUBLIC app (view_visibility 'public', a Public community), even one
+-- whose link brought them in: they use public apps, and vote in their own
+-- private groups. Invite links are cheap to make, so this keeps them from
+-- moving a public decision, and out of its denominator. The vote routes
+-- refuse such a vote first (services/communities.js privateVoteRefusal).
+--
+-- With the verified-identity rule on, a vote on a PUBLIC app counts only
+-- from a verified or exempt account (public_vote_needs_identity above).
 CREATE OR REPLACE FUNCTION counts_toward_outcome(voter_id INTEGER, target_app_id INTEGER)
 RETURNS BOOLEAN
 LANGUAGE sql STABLE AS $$
-  SELECT NOT EXISTS (
+  SELECT (NOT EXISTS (
            SELECT 1 FROM users tv
             WHERE tv.id = voter_id AND tv.test_account_created_at IS NOT NULL
          )
@@ -11805,7 +12083,15 @@ LANGUAGE sql STABLE AS $$
            SELECT 1 FROM apps ta
              JOIN users tc ON tc.id = ta.created_by
             WHERE ta.id = target_app_id AND tc.test_account_created_at IS NOT NULL
+         ))
+     AND NOT EXISTS (
+           SELECT 1 FROM users pv, apps pa
+            WHERE pv.id = voter_id AND pa.id = target_app_id
+              AND pv.private_member_since IS NOT NULL
+              AND NOT pv.has_platform_access AND NOT pv.is_admin
+              AND pa.view_visibility = 'public'
          )
+     AND NOT public_vote_needs_identity(voter_id, target_app_id)
 $$;
 -- The same rule keyed by what was voted on, for the tallies that hold only a
 -- proposal's id (services/governance.js qualifiedCounts).

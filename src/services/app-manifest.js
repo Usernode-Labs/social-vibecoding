@@ -299,6 +299,16 @@ const MANIFEST_FILENAME = 'dapp.json';
 // deadline nor RUN_TIMEOUT_MS moves. The step buys 29 slots over the 841
 // declared here.
 //
+// 870 → 880 (#3826): the member floor's words on the card. The mock row
+// whose votes are all in and whose floor is unmet has a route of its own
+// (the proposal page for 9000095), and no existing check shares it — the
+// #788 family's checks sit on rows below threshold or floor-met — so there
+// was nothing to fold it into, and the manifest stood at 840, exactly the
+// floor. Same arithmetic: 880 checks at ~3.9s over the pool of 16 is ~215s
+// of ideal work, and the unchanged 650s TESTS_DEADLINE_MS still clears the
+// 2x margin by ~220s, so neither the deadline nor RUN_TIMEOUT_MS moves.
+// The step buys 36 slots over the 844 declared here.
+//
 // THE RULE AT THE FLOOR, stated once because three guards enforce it and on
 // #4868 they gave opposite advice. Fold first: a check that can share a
 // route with an existing one joins that check's expectSelector with :has()
@@ -310,7 +320,7 @@ const MANIFEST_FILENAME = 'dapp.json';
 // feature is not held behind a second vote because main already sat at the
 // floor. Never delete a check to make room. tests/lib/check-cap.js puts
 // the same words in the failing guards' messages.
-const MAX_DECLARED_TESTS = 870;
+const MAX_DECLARED_TESTS = 880;
 
 // The pre-pool cap, kept for exactly one purpose: services/check-history.js
 // bootstraps an app with no recorded history by marking its first

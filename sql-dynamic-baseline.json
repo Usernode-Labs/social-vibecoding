@@ -82,9 +82,9 @@
     {
       "source": "src/middleware/auth.js",
       "kind": "structural-template",
-      "fingerprint": "606caceff13d515fd418",
+      "fingerprint": "b0f855e9f99e9e79bc84",
       "count": 1,
-      "preview": "`SELECT s.user_id, s.expires_at, s.created_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.session_bridge_enabled, u.locale"
+      "preview": "`SELECT s.user_id, s.expires_at, s.created_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.session_bridge_enabled, u.privat"
     },
     {
       "source": "src/middleware/topochain-auth.js",
@@ -355,14 +355,14 @@
     {
       "source": "src/routes/gallery.js",
       "kind": "structural-template",
-      "fingerprint": "58fb0cf775293b077d85",
+      "fingerprint": "12b0f30cc694f2898689",
       "count": 1,
       "preview": "`SELECT cs.id, cs.merged_at, cs.pr_number, cs.pr_url, cs.pr_title, cs.session_title, cs.capture_state, cs.capture_detail, cs.captured_at, cs.shots_state, cs.sho"
     },
     {
       "source": "src/routes/gallery.js",
       "kind": "structural-template",
-      "fingerprint": "5cb6df6299ca8d8a5b50",
+      "fingerprint": "adb60cb75d062f4b2ff5",
       "count": 1,
       "preview": "`SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.missing_recording.sql})::int AS missing_recording, COUNT(*) FILTER (WHERE ${PROBLEM_FIL"
     },

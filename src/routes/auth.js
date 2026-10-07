@@ -25,6 +25,7 @@ const genesisAccounts = require('../services/genesis-accounts');
 const waitlist = require('../services/waitlist');
 const firstSession = require('../services/first-session');
 const communityInvites = require('../services/community-invites');
+const phoneAuth = require('../services/firebase-phone-auth');
 const challengeScorer = require('../services/topochain/challenge-scorer');
 const events = require('../services/events');
 const { validatePassword } = require('../services/password-policy');
@@ -129,6 +130,14 @@ const SESSION_MINT_PATHS = [
   // The same sign-in inside the Homeroom app, with the ID token its own
   // sheet returned.
   '/api/auth/oauth/:provider/native',
+  // Phone sign-in and sign-up (routes/phone-auth.js). Verifying the code
+  // (or an ID token a client SDK earned) signs an established account
+  // straight in, so it mints a session; /request only texts a code, like
+  // /api/auth/otp/request, and stays outside so a signed-in person can
+  // still be walked through a phone verification elsewhere. The username
+  // step spends the continuation by minting the real session.
+  '/api/auth/phone/verify',
+  '/api/auth/phone/finish',
 ];
 
 function createSessionCookie(res, token, expiresAt) {
@@ -378,11 +387,15 @@ function authRoutes(config) {
       // copy is only dropped. Never throws.
       const consented = verified.created || req.body?.followInvite === true;
       const invite = consented
-        ? await communityInvites.redeemCarried(pool, req, res, verified.userId)
+        ? await communityInvites.redeemCarried(pool, req, res, verified.userId, {
+          requirePhone: phoneAuth.offered(config),
+        })
         : (communityInvites.clearInviteCookie(res), null);
-      // A link whose maker's skip let this person straight in has joined
-      // them already: the challenge for it counts now, not on the rule's
-      // next pass (#3564). A queued one waits for release, and the schedule.
+      // A link that joined this person (a private member's, or anybody's
+      // with access) counts for its challenge now, not on the rule's next
+      // pass (#3564). A queued one waits for release, and the schedule.
+      // While phone sign-in is offered, an email account new to the platform
+      // stays queued: a private member signs up with a phone.
       if (invite && invite.status === 'joined') await challengeScorer.scoreOnJoin(pool, config);
       if (verified.next === 'signed-in') {
         // The account already has a password, so there is nothing to set up.
@@ -433,12 +446,19 @@ function authRoutes(config) {
       // press accepted it; the person now types their own into an empty
       // field, and set-password refuses to finish without it. A shell cached
       // from before reads the missing field as null — an empty field.
+      //
+      // A link that just let them in (as a private member, or on its maker's
+      // skip) answers `waitlisted`: there is no queue in front of them now.
+      // The verifier read it before the link was followed.
+      const waitlistedNow = invite && invite.status === 'joined'
+        ? false
+        : (typeof verified.waitlisted === 'boolean' ? verified.waitlisted : null);
       return res.json({
         ok: true,
         next: 'set-password',
         created: !!verified.created,
         needsUsername: !!verified.needsUsernameChoice,
-        waitlisted: typeof verified.waitlisted === 'boolean' ? verified.waitlisted : null,
+        waitlisted: waitlistedNow,
         ...(invite ? { invite } : {}),
       });
     } catch (error) {
@@ -601,7 +621,7 @@ function authRoutes(config) {
       // waitlist release — so it carries platform access with it
       // (onboarding flow alignment). Without this, every invited user
       // would land in the waiting room, a regression on the invite flow.
-      // Not a release by hand, so no invite-tree skips come with it.
+      // Not a release by hand, so no generation 0 comes with it.
       await waitlist.grantPlatformAccess(pool, userId);
 
       // #2568: the included OpenRouter key, created with the account.
@@ -713,6 +733,10 @@ function authRoutes(config) {
     // people in, not strand every signed-in member behind a blocking step
     // the client cannot dismiss.
     let needsUsernameChoice = false;
+    // A handle made from an invite phone sign-up's name, for private groups
+    // only: the shell asks for a username before anything public
+    // (frontend/src/features/auth/username-first-run.js askForPublic).
+    let usernameProvisional = false;
     // Communities, stage 5 (src/services/onboarding.js): the join screen a
     // new account answers after its username and the terms, and the
     // Getting started card that follows it, for an account made since that
@@ -736,16 +760,27 @@ function authRoutes(config) {
     // that is due it; FALSE when the whole lookup fails, which leaves the
     // join screen as it was.
     let storyFirstSession = false;
+    // The verified-identity rule (schema.sql identity_needed): a member it
+    // holds to it, let in after it was switched on with no phone, GitHub and
+    // X, or zkPassport. `identityNeeded` draws Home's "Verify your account"
+    // card; `phoneAsk` asks them once, as the first first-run step on a
+    // phone (frontend/src/features/auth/phone-first-run.tsx), while phone
+    // sign-in is offered. Unreadable means neither.
+    let identityNeeded = false;
+    let phoneAsk = false;
     try {
       const { rows } = await pool.query(
         `SELECT u.anthropic_key_enc, u.anthropic_key_last4, u.usernode_pubkey,
                 u.display_name, u.bio, u.dev_flow_preference,
                 u.needs_username_choice,
                 u.needs_communities_choice,
+                (u.username_provisional_since IS NOT NULL) AS username_provisional,
                 (u.communities_onboarded_at IS NOT NULL
                   AND u.getting_started_closed_at IS NULL
                   AND u.getting_started_gate) AS show_getting_started,
                 (u.tour_done_at IS NOT NULL) AS tour_done,
+                identity_needed(u.id) AS identity_needed,
+                (u.phone_ask_answered_at IS NOT NULL) AS phone_ask_answered,
                 EXISTS (
                   SELECT 1 FROM credentials.user_ai_credentials credential
                    WHERE credential.user_id = u.id
@@ -772,9 +807,13 @@ function authRoutes(config) {
         ? rows[0].dev_flow_preference
         : null;
       needsUsernameChoice = rows[0]?.needs_username_choice === true;
+      usernameProvisional = rows[0]?.username_provisional === true;
       needsCommunitiesChoice = rows[0]?.needs_communities_choice === true;
       showGettingStarted = rows[0]?.show_getting_started === true;
       tourDone = rows[0]?.tour_done === true;
+      // A member let in (not a private member, who waits for that).
+      identityNeeded = rows[0]?.identity_needed === true && !!req.user.hasPlatformAccess;
+      phoneAsk = identityNeeded && rows[0]?.phone_ask_answered !== true && phoneAuth.offered(config);
       if (needsCommunitiesChoice) storyFirstSession = await firstSession.asksWhatToMake(pool, req.user.id);
       const verifiedLinks = await socialIdentity.verifiedProfileLinks(pool, req.user.id);
       profile = shapeProfile(rows[0], verifiedLinks);
@@ -857,8 +896,14 @@ function authRoutes(config) {
         // Platform-access gate (onboarding flow alignment). FALSE means
         // the account is waiting to be released off the platform
         // waitlist — the waiting room polls this to know when to let
-        // the user through.
-        hasPlatformAccess: !!req.user.hasPlatformAccess || !!req.user.isAdmin,
+        // the user through. It answers "may use the platform", so a
+        // private member says TRUE here too, and `privateMember` says
+        // what is different for them (middleware/auth.js isPrivateMember):
+        // they join by an invite link before they are let in, and do not
+        // make apps of their own until they are.
+        hasPlatformAccess: !!req.user.hasPlatformAccess || !!req.user.isAdmin || !!req.user.privateMember,
+        privateMember: !!req.user.privateMember,
+        usernameProvisional,
         // First-run username gate (#2563). TRUE means this account has
         // never picked the handle other members see — email sign-up gave
         // it a generated one and recorded that the person still has to
@@ -885,6 +930,10 @@ function authRoutes(config) {
         // The Getting started card on Home: shown to an account that came
         // through the join screen, until it is closed.
         showGettingStarted,
+        // The verified-identity rule holds this member to it (see above):
+        // Home's card, and, once, the first-run phone step.
+        identityNeeded,
+        phoneAsk,
         // The welcome tour was finished or skipped on this account, on any
         // device (POST /api/me/tour-done; cleared by Reset first run). The
         // tour counts it done when this OR the browser's own flag says so
@@ -1831,7 +1880,7 @@ function authRoutes(config) {
 
       // Genesis-ledger registration is invite-equivalent (the genesis
       // allowlist IS the invite) — grant platform access directly, without
-      // the invite-tree skips a release by hand carries.
+      // the generation 0 a release by hand records.
       await waitlist.grantPlatformAccess(pool, userId);
 
       // #2568: the included OpenRouter key, created with the account.

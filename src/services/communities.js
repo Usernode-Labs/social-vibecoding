@@ -163,6 +163,54 @@ async function leave(pool, app, userId) {
 // visibility guards answer with: by the time this runs the app is one the
 // caller may see, so there is nothing to hide, and the client needs the
 // code to offer Join in place of a dead end.
+/**
+ * A PRIVATE MEMBER's vote on a PUBLIC app (view_visibility 'public'), which
+ * is refused: they use public apps, and vote in their own private groups,
+ * even when a public community's link is what brought them in. Read from
+ * the rows, not req.user, so every caller is held to it. Returns the refusal
+ * body, or null when the vote may go ahead. schema.sql's
+ * counts_toward_outcome keeps such a vote out of every tally and
+ * denominator as well.
+ */
+async function privateVoteRefusal(pool, appId, userId) {
+  if (!appId || !userId) return null;
+  const { rows } = await pool.query(
+    `SELECT 1 FROM users u, apps a
+      WHERE u.id = $2 AND a.id = $1
+        AND u.private_member_since IS NOT NULL
+        AND NOT u.has_platform_access AND NOT u.is_admin
+        AND a.view_visibility = 'public'`,
+    [appId, userId]
+  );
+  if (!rows.length) return null;
+  return {
+    error: 'You can use public apps, but voting on them opens once you are let in off the waitlist.',
+    code: 'private_member_public_vote',
+  };
+}
+
+/**
+ * A vote on a PUBLIC app from an account the verified-identity rule holds
+ * (schema.sql public_vote_needs_identity: the rule is on, and the voter is
+ * neither verified, by a phone, GitHub and X, or zkPassport, nor let in
+ * before it was switched on). Refused before anything is recorded, so the
+ * Vote button can offer the verification instead of a vote that would not
+ * count; counts_toward_outcome leaves such a vote out of every tally too.
+ * Returns the refusal body, or null when the vote may go ahead.
+ */
+async function identityVoteRefusal(pool, appId, userId) {
+  if (!appId || !userId) return null;
+  const { rows } = await pool.query(
+    'SELECT public_vote_needs_identity($1, $2) AS needs',
+    [userId, appId]
+  );
+  if (rows[0]?.needs !== true) return null;
+  return {
+    error: 'Votes on public apps count from verified accounts. Verify your phone number, or link both GitHub and X in Settings.',
+    code: 'identity_required',
+  };
+}
+
 function joinRequiredBody(app) {
   const name = app.name || app.slug || 'this project';
   return {
@@ -612,6 +660,8 @@ module.exports = {
   CHANNEL_MOVED,
   AUDIENCES,
   AUDIENCE_LABELS,
+  privateVoteRefusal,
+  identityVoteRefusal,
   audienceSql,
   isMember,
   getMembership,

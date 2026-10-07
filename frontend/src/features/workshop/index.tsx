@@ -86,9 +86,10 @@ import { useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
+import { IconTile } from '@/components/ui/icon-tile';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import {
-  BallotIcon, ChevronLeftIcon, HandRaisedIcon, LockIcon, SpeechCheckIcon, UserGroupIcon, UserIcon,
+  BallotIcon, ChevronLeftIcon, HandRaisedIcon, LockIcon, PlusIcon, SearchIcon, SpeechCheckIcon, UserGroupIcon, UserIcon,
 } from '@/components/ui/icons';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { AppsLoadError } from '../apps/load-error';
@@ -601,6 +602,33 @@ export function WorkshopScreen() {
                   <Section key={section.key} audience={section.key} label={section.label} rows={section.rows} />
                 ))}
           </div>
+          {/* #3543: JOIN OR START, under the list, where Your communities has
+              them. Drawn once the list has loaded (so never in the prerender,
+              and never under a skeleton or a load error). Join is left out
+              while the empty card above already says it. Outside
+              #workshop-list, whose direct children are the sections. */}
+          {rows !== null && !state.error ? (
+            <GroupedList tone="plane" className="mt-6">
+              {empty ? null : (
+                <ListRow
+                  as="a"
+                  href="#apps"
+                  data-workshop-join=""
+                  leading={<IconTile size="sm" tint="neutral"><SearchIcon aria-hidden="true" /></IconTile>}
+                  title="Join a community"
+                  subtitle="Find one to join in Discover."
+                />
+              )}
+              <ListRow
+                as="button"
+                data-workshop-start=""
+                onClick={() => { (window as any).App?.showCreateModal?.(); }}
+                leading={<IconTile size="sm" tint="neutral"><PlusIcon aria-hidden="true" /></IconTile>}
+                title="Start a community"
+                subtitle="Make a project for you, a group or everyone."
+              />
+            </GroupedList>
+          ) : null}
         </div>
         {state.tab === 'needs' ? (
           <div data-workshop-pane="needs">

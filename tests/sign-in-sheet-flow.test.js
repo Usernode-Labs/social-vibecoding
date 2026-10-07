@@ -241,7 +241,7 @@ test('the password step sends the sign-in screen\'s exchange, and says what it r
 
 test('the password step is the sheet\'s: the link opens it, and Forgot password still reaches the reset', () => {
   const src = read(SHEET);
-  assert.match(src, /type Step = 'choose' \| 'email' \| 'code' \| 'account' \| 'username' \| 'password';/);
+  assert.match(src, /type Step = 'choose' \| 'email' \| 'code' \| 'account' \| 'username' \| 'password' \| 'phone' \| 'phone-code';/);
   assert.match(src, /data-sign-in-sheet-password=""\s+onClick=\{\(e\) => \{ e\.preventDefault\(\); setError\(null\); setDetails\(null\); setStep\('password'\); \}\}/);
   assert.match(src, /<label htmlFor="sign-in-sheet-identifier" className=\{LABEL\}>Username or email<\/label>/);
   assert.match(src, /<PasswordInput ref=\{currentPasswordField\} id="sign-in-sheet-current-password" name="password" required autoComplete="current-password"/);

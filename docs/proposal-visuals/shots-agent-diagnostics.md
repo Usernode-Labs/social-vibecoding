@@ -60,6 +60,13 @@ them. The admin shots-runs export has them as `agent_exit_code` and
 | `turn_process_gone` | The container kept running, but the turn's processes were gone with no exit marker |
 | `probe_unobservable` | The worker could not be asked whether the turn was still running |
 
+For `oom_killed`, `container_gone` and `turn_process_gone` the run
+dispatches the agent once more, with the budget that is left (at least a
+minute), so `agentDispatches` then has two entries; the second one's outcome
+is the run's. The admin connector's `list_recent_shots` reports the last
+failed dispatch of a failed run as `agentExit` (`code`, `exitCode`,
+`exitCause`).
+
 `workerMemory` summarises the worker's memory, which the shots proxy samples
 every 5 seconds (`worker/shots-memory.js`):
 - `limitMb` and `peakUsedMb`: the memory limit and the most the worker used.

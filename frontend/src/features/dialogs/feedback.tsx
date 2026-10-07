@@ -370,7 +370,11 @@ export function FeedbackDialog() {
         </div>
         <div id="feedback-status" className="text-sm mt-2 hidden">
         </div>
-        <div className="flex gap-3 mt-4">
+        {/* #4033: Cancel and Post stay on screen while the form above them
+            scrolls (a long description, the kudos row). `.feedback-actions`
+            in app.css pins the row to the bottom of the kit modal, which is
+            the scroller. */}
+        <div className="feedback-actions flex gap-3 mt-4">
           {/*
               The controller's success and save-for-later paths still close
               the dialog by clicking this button after their 1500 ms grace

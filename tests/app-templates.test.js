@@ -10,8 +10,9 @@
 //      services/app-templates.js's TEMPLATE_IDS and nothing else; absent is
 //      `empty`; an import takes none. The create dialog's list is the same
 //      list less `empty` (which is "Start from scratch").
-//   2. EMPTY IS UNCHANGED. Absent and `empty` write exactly the files they
-//      always did, so every existing scaffold test still describes it.
+//   2. EMPTY IS THE DEFAULT. Absent and `empty` write exactly the same
+//      files (#4047 dropped the scaffold's Press! demo, so "always got" is
+//      the static welcome screen, not the old one).
 //   3. EVERY STARTER GENERATES A WORKING REPOSITORY: its files, filled in;
 //      the platform conventions every app keeps (the bridge by relative
 //      path, the dev console forwarder, no CDN, the theme, a graceful
@@ -88,10 +89,18 @@ test('Empty is the scaffold every project always got, byte for byte', () => {
   assert.deepEqual(getTemplateFiles('Notes', 'notes-abc123', 'postgres://x', null, { template: null }), plain);
   assert.ok(!plain.some((f) => f.path === 'api.js' || f.path === 'public/app.js'));
   const server = file(plain, 'server.js');
-  assert.match(server, /app\.post\('\/api\/press'/);
-  assert.match(server, /CREATE TABLE IF NOT EXISTS presses/);
+  // #4047: the scaffold ships no Press! demo any more — no demo endpoints
+  // and no table; the starter screen is static. The server still listens.
+  assert.doesNotMatch(server, /\/api\/press|\/api\/leaderboard|presses/);
+  assert.match(server, /app\.listen\(port/);
   assert.doesNotMatch(server, /require\('\.\/api'\)/);
   assert.deepEqual(JSON.parse(file(plain, 'dapp.json')), { secrets: [] });
+  // #4047: the welcome card opens with the app's thumbnail tile (no sketch,
+  // no starter here, so the name's letter falls back the way the home tile
+  // does).
+  const emptyHtml = file(plain, 'public/index.html');
+  assert.match(emptyHtml, /<div class="flex h-20 w-20 items-center justify-center rounded-2xl border border-line bg-ground text-title"><span class="text-muted">N<\/span><\/div>/);
+  assert.doesNotMatch(emptyHtml, /Try the example|What's already working/);
   assert.throws(() => getTemplateFiles('Notes', 'notes', 'pg://x', null, { template: 'chess' }), /Unknown app template: chess/);
 });
 

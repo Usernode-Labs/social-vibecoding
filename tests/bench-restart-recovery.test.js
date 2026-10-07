@@ -13,7 +13,12 @@
 //   * any other (a build's spec turn) is abandoned and the trial put back in
 //     the queue at once, what it spent charged; after a second interruption
 //     it fails;
-//   * a recovery that cannot finish the trial puts it back in the queue.
+//   * a recovery that cannot finish the trial puts it back in the queue;
+//   * a first version's every turn (its triage, spec and build) is followed,
+//     what it produced kept on the trial's checkpoint, and the trial handed
+//     back to the lane to go on from there, as the bot's own builds are:
+//     kept work costs it no claim, each session is charged to the run once,
+//     and the time its claims ran adds up.
 //
 // server.js only boots when run as the entry point, so requiring it exposes
 // adoptOrphanWorker without starting anything. The worker, the agent-turn
@@ -316,6 +321,152 @@ test('restart recovery of benchmark trials, against the full PostgreSQL schema',
     await adopt(s2, 'exited');
     assert.equal(workerCalls.filter((c) => c[0] === 'resume').length, 0, 'an exited worker is not followed');
     assert.equal((await trialRow(exited.id)).status, 'pending');
+  });
+
+  // A first version (services/bench/runner.js firstVersionStage), on a run
+  // of its own as the studio makes one.
+  const { rows: [snap] } = await pool.query('SELECT id FROM homeroom_bot_run_snapshots ORDER BY id LIMIT 1');
+  const token = () => crypto.randomBytes(8).toString('hex');
+  const firstVersionTrial = async () => {
+    const { rows: [task] } = await pool.query(
+      `INSERT INTO bench_tasks (suite_id, stage, app_id, snapshot_id, reference_source, label_token)
+       VALUES ($1, 'first_version', $2, $3, 'authored', $4) RETURNING id`,
+      [suite.id, app.id, snap.id, token()],
+    );
+    const { rows: [run] } = await pool.query(
+      `INSERT INTO bench_runs (suite_id, models, baseline_model, stages, repeats, cap_usd, concurrency, status, kind)
+       VALUES ($1, ARRAY['today'], 'today', ARRAY['first_version'], 1, 50, 1, 'running', 'studio') RETURNING id`,
+      [suite.id],
+    );
+    const { rows: [trial] } = await pool.query(
+      "INSERT INTO bench_trials (run_id, task_id, model, attempt, status, item_token) VALUES ($1, $2, 'today', 1, 'pending', $3) RETURNING id",
+      [run.id, task.id, token()],
+    );
+    return { run, id: trial.id };
+  };
+  const keep = (trialId, checkpoint) => pool.query(
+    'UPDATE bench_trials SET checkpoint = $2::jsonb WHERE id = $1', [trialId, JSON.stringify(checkpoint)],
+  );
+  const fvRow = async (id) => (await pool.query(
+    `SELECT status, claims, session_id, checkpoint, recovered_at, prior_ms::float8 AS prior_ms, duration_ms,
+            cost_usd::float8 AS cost, interrupted_cost_usd::float8 AS interrupted
+       FROM bench_trials WHERE id = $1`, [id],
+  )).rows[0];
+  const SPEC = '# Tier List\n\nRank things with friends.';
+
+  let fv;
+  let triageSid;
+  let specSid;
+  await t.test('a first version\'s spec turn is followed, its spec kept, and the trial handed back without spending a claim', async () => {
+    reset();
+    fv = await firstVersionTrial();
+    triageSid = await newSession(null);
+    specSid = await newSession(turnOf('scout'));
+    await claimAs(fv.id, specSid);
+    await keep(fv.id, {
+      triageSessionId: triageSid, sessions: [triageSid, specSid],
+      triage: { status: 'ok', session_id: triageSid, parsed: { verdict: 'ready', buildNote: 'One board.' } },
+    });
+    await spend(triageSid, 0.05);
+    await spend(specSid, 0.3);
+    journalTail = async () => ({ lastResultText: SPEC, exitCode: 0, resultSeen: true });
+    await adopt(specSid);
+
+    assert.deepEqual(workerCalls.map((c) => c[0]), ['adoptWarmWorker', 'resume', 'finishTurn', 'destroyWorker'],
+      'followed to its end, never abandoned');
+    const row = await fvRow(fv.id);
+    assert.equal(row.status, 'pending', 'back in the queue to go on');
+    assert.equal(row.claims, 0, 'the restart cost it no claim');
+    assert.equal(row.session_id, null);
+    assert.ok(row.recovered_at);
+    assert.deepEqual(row.checkpoint.spec, { sessionId: specSid, specMd: SPEC });
+    assert.equal(row.checkpoint.triage.parsed.verdict, 'ready', 'what it kept before is kept');
+    assert.equal(row.checkpoint.handBacks, 1);
+    assert.equal(row.checkpoint.handedBackAt, 2);
+    assert.deepEqual(row.checkpoint.charged, { [triageSid]: 0.05, [specSid]: 0.3 }, 'every session it opened, charged once');
+    assert.equal(row.interrupted, 0, 'none of it thrown away');
+    assert.ok(row.prior_ms >= 179000, `the claim's time is kept (${row.prior_ms})`);
+    assert.equal(await spent(fv.run.id), 0.35);
+    assert.deepEqual(debits, [35]);
+    assert.equal((await sessionRow(specSid)).status, 'archived');
+    assert.deepEqual(graded, [], 'nothing recorded yet');
+    assert.deepEqual(outward, []);
+    assert.equal(await chatRows(specSid), 0);
+  });
+
+  await t.test('a restart that loses work spends a claim; the trial that finishes is charged only what no release was', async () => {
+    reset();
+    // The second claim's build turn: its worker was gone at the restart.
+    const buildSid = await newSession(turnOf('build'));
+    await claimAs(fv.id, buildSid);
+    await pool.query(
+      "UPDATE bench_trials SET checkpoint = jsonb_set(checkpoint, '{sessions}', checkpoint->'sessions' || to_jsonb($2::int)) WHERE id = $1",
+      [fv.id, buildSid],
+    );
+    await spend(buildSid, 0.2);
+    await adopt(buildSid, 'exited');
+    let row = await fvRow(fv.id);
+    assert.equal(row.status, 'pending');
+    assert.equal(row.claims, 1, 'nothing new was kept: this one counts');
+    assert.equal(row.checkpoint.handBacks, 1);
+    assert.equal(row.interrupted, 0.2, 'the lost build turn is the interrupted cost');
+    assert.equal(row.checkpoint.charged[buildSid], 0.2);
+    assert.ok(row.prior_ms >= 359000, `both claims' time (${row.prior_ms})`);
+    assert.equal(await spent(fv.run.id), 0.55);
+
+    // The third claim builds from the kept spec and records the trial.
+    const lastSid = await newSession(null);
+    await claimAs(fv.id, lastSid, { claims: 2 });
+    await spend(lastSid, 0.5);
+    const status = await lane.recordTrial(pool, {
+      trialRow: { id: fv.id, run_id: fv.run.id },
+      row: { stage: 'first_version', repo_url: 'https://github.com/o/todo' },
+      patch: {
+        status: 'ok', session_id: lastSid, session_ids: [triageSid, specSid, lastSid], duration_ms: 120000,
+        base_sha: BASE, build_branch: `bench/r${fv.run.id}-t${fv.id}`, build_sha: 'e'.repeat(40), build_commits: 2,
+        parsed: { built: true },
+      },
+      user: { id: user.id },
+      d: { worker: { evictWorker: async () => {} }, managedOpenRouter: managedKeys, limits, github: githubModule, afterTrial: async () => {} },
+    });
+    assert.equal(status, 'ok');
+    row = await fvRow(fv.id);
+    assert.equal(row.cost, 0.85, 'its own cost: the triage, the spec and the build its result is built from');
+    assert.equal(row.interrupted, 0.2);
+    assert.equal(await spent(fv.run.id), 1.05, 'every session charged to the run exactly once');
+    assert.deepEqual(debits, [20, 50], 'the lost turn at its release, the rest at the end');
+    assert.ok(row.duration_ms >= 120000 + 359000, `its elapsed time counts every claim (${row.duration_ms})`);
+  });
+
+  await t.test('a first version\'s triage turn is followed and its answer kept, on the triage\'s own clock', async () => {
+    reset();
+    const tri = await firstVersionTrial();
+    const sid = await newSession(turnOf('scout'));
+    await claimAs(tri.id, sid);
+    await keep(tri.id, { triageSessionId: sid, sessions: [sid] });
+    const bot = require('../src/services/homeroom-bot');
+    const budgets = require('../src/services/bench/runner').budgetsFor(await bot.readSettings(pool), { repo_url: 'https://github.com/o/todo' }, {}, 'first_version');
+    const { rows: [session] } = await pool.query('SELECT * FROM chat_sessions WHERE id = $1', [sid]);
+    const at = Date.parse('2026-10-06T22:00:00.000Z');
+    const startedAt = new Date(at).toISOString();
+    assert.equal(await lane.recoveryDeadline(pool, {}, session, turnOf('scout', { startedAt })), at + budgets.firstVersion.turnMs);
+    // Were its triage another session's, this scout turn would be the spec.
+    await keep(tri.id, { triageSessionId: sid + 1000, sessions: [sid] });
+    assert.equal(await lane.recoveryDeadline(pool, {}, session, turnOf('scout', { startedAt })),
+      at + Math.min(budgets.firstVersion.buildMs, budgets.firstVersion.specMs), 'a spec turn: the spec\'s clock');
+    assert.equal(await lane.recoveryDeadline(pool, {}, session, turnOf('build', { startedAt })), at + budgets.firstVersion.buildMs);
+    await keep(tri.id, { triageSessionId: sid, sessions: [sid] });
+
+    journalTail = async () => ({ lastResultText: VERDICT, exitCode: 0, resultSeen: true });
+    await adopt(sid);
+    const row = await fvRow(tri.id);
+    assert.equal(row.status, 'pending');
+    assert.equal(row.claims, 0);
+    assert.equal(row.checkpoint.triage.status, 'ok');
+    assert.equal(row.checkpoint.triage.session_id, sid);
+    assert.equal(row.checkpoint.triage.parsed.verdict, 'ready');
+    assert.equal(row.checkpoint.triage.parsed.buildNote, 'Pin the markers.');
+    assert.deepEqual(outward, []);
   });
 
   await t.test('a recovery that cannot finish the trial puts it back in the queue', async () => {

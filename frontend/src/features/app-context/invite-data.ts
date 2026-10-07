@@ -46,7 +46,6 @@ export type InviteState = {
   grant: 'member' | 'collaborator';
   defaults: { days: number; maxUses: number };
   limits: { minDays: number; maxDays: number; minUses: number; maxUses: number };
-  skipsLeft: number | null;
   /** WP-D: what joining means here, from the project's real rule. */
   joiningRule?: string | null;
 };

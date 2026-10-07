@@ -1147,14 +1147,19 @@ export function init() {
       screenshotInput.click();
     });
 
-    screenshotInput.addEventListener('change', async () => {
-      // #3027: the picker takes several files at once. Only as many as there
-      // is room for are attached, in the order picked, and the rest are
-      // named rather than silently dropped.
+    screenshotInput.addEventListener('change', () => {
       const files = Array.from((screenshotInput.files) || []);
       screenshotInput.value = '';
       // A cancelled pick came back with the page intact — nothing to rescue.
       if (!files.length) { clearCaptureDraft(); return; }
+      void attachScreenshotFiles(files);
+    });
+
+    // #3027: the picker takes several files at once. Only as many as there
+    // is room for are attached, in the order picked, and the rest are
+    // named rather than silently dropped. #4065: images dropped on the form
+    // come through here too.
+    async function attachScreenshotFiles(files) {
       const room = Math.max(0, MAX_SCREENSHOTS - screenshots.length);
       const taken = files.slice(0, room);
       // Bumped by every open and every real close: a dialog closed while the
@@ -1189,7 +1194,7 @@ export function init() {
         setScreenshotActionsDisabled(false);
         paintScreenshotActions();
       }
-    });
+    }
 
     // ── #3940: video attachment ────────────────────────────────────
     // One clip per issue, chosen alongside the images above. MP4/WebM/MOV
@@ -1409,18 +1414,61 @@ export function init() {
       videoInput.click();
     });
 
-    videoInput.addEventListener('change', () => {
-      const file = (videoInput.files || [])[0] || null;
-      videoInput.value = '';
-      // A cancelled pick came back with the page intact — nothing to rescue.
-      clearCaptureDraft();
-      if (!file) return;
+    const attachVideoFile = (file) => {
       void attachVideoBlob(file).catch((err) => {
         try { console.warn('[feedback] video attach failed', err && err.message); } catch { /* console is optional */ }
         if (video && video.uploading) discardVideo(video);
         paintVideoActions();
         showFeedbackNotice("Couldn't attach that clip. Please try another.", true);
       });
+    };
+
+    videoInput.addEventListener('change', () => {
+      const file = (videoInput.files || [])[0] || null;
+      videoInput.value = '';
+      // A cancelled pick came back with the page intact — nothing to rescue.
+      clearCaptureDraft();
+      if (!file) return;
+      attachVideoFile(file);
+    });
+
+    // ── #4065: drop files on the form ──────────────────────────────
+    // Messages, group chat and agent sessions already take a dropped file;
+    // this dialog only had its pickers, and a file dropped on it made the
+    // browser navigate away to the file, taking the draft with it. A drop
+    // anywhere on the form now goes where the pickers would send it: images
+    // to the screenshot row (same room limit and checks), a clip to the
+    // video slot. A control the dialog has switched off (an upload or a
+    // submit under way) refuses the drop the way its button would, and a
+    // full image row says so.
+    const draggingFiles = (event) => {
+      const types = event.dataTransfer && event.dataTransfer.types;
+      return !!types && Array.from(types).includes('Files');
+    };
+    feedbackForm.addEventListener('dragover', (event) => {
+      if (!draggingFiles(event)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'copy';
+    });
+    feedbackForm.addEventListener('drop', (event) => {
+      if (!draggingFiles(event)) return;
+      event.preventDefault();
+      if (feedbackText.readOnly) return;
+      const files = Array.from(event.dataTransfer.files || []);
+      const images = files.filter((file) => /^image\//.test(file.type));
+      const clip = files.find((file) => /^video\//.test(file.type));
+      if (images.length && !screenshotPickerBtn.disabled) {
+        if (screenshots.length >= MAX_SCREENSHOTS) {
+          showFeedbackNotice(`You can attach up to ${MAX_SCREENSHOTS} images.`, true);
+        } else {
+          abandonPendingCapture();
+          void attachScreenshotFiles(images);
+        }
+      }
+      if (clip && !videoBtn.disabled) attachVideoFile(clip);
+      if (!images.length && !clip && files.length) {
+        showFeedbackNotice('Drop an image or a video clip.', true);
+      }
     });
 
     // ── #1054: the offline outbox seam ─────────────────────────────

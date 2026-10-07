@@ -219,7 +219,6 @@ const STATE = {
   grant: 'member',
   defaults: { days: 7, maxUses: 25 },
   limits: { minDays: 1, maxDays: 30, minUses: 1, maxUses: 100 },
-  skipsLeft: null,
   joiningRule: 'Changes go in when 2 people approve.',
 };
 

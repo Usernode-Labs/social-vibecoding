@@ -332,7 +332,7 @@ test('a late card is committed on its own, with dapp.json\'s icon when it has no
 
 // ── 4. Not a screen ──────────────────────────────────────────────────────
 
-test('the first commit carries the card as design/sketch.json, and changes no screen, colour or design note', () => {
+test('the first commit carries the card as design/sketch.json, and changes nothing on the screen but its icon', () => {
   const plain = getTemplateFiles('Run Club', 'run-club-abc', 'postgres://x');
   const files = getTemplateFiles('Run Club', 'run-club-abc', 'postgres://x', null, { sketch: ROW });
   const file = (list, p) => list.find((f) => f.path === p)?.content;
@@ -345,8 +345,18 @@ test('the first commit carries the card as design/sketch.json, and changes no sc
   assert.equal(record.createdAt, '2026-10-05T10:00:00.000Z');
   assert.match(record.note, /It is a picture of the idea, not a design: it shows no screen and sets no layout, words or colours\./);
   assert.match(record.note, /where the two differ, the description wins/);
-  // Everything but dapp.json's icon and the card's file is the starter's.
-  const others = (list) => list.filter((f) => f.path !== 'dapp.json' && !f.path.startsWith('design/'));
+  // Everything but dapp.json's icon, the card's file and the starter tile's
+  // face is the starter's. The face is the icon change: the card's emoji
+  // replaces the app's initial.
+  const TILE = /<div class="flex h-20 w-20 items-center justify-center rounded-2xl border border-line bg-ground text-title">([\s\S]*?)<\/div>/;
+  const tile = (html) => TILE.exec(html)[1];
+  assert.equal(tile(file(files, 'public/index.html')), '🏃', 'the card\'s emoji is the tile face');
+  assert.equal(tile(file(plain, 'public/index.html')), '<span class="text-muted">R</span>', 'the app initial without a card');
+  const others = (list) => list
+    .filter((f) => f.path !== 'dapp.json' && !f.path.startsWith('design/'))
+    .map((f) => (f.path === 'public/index.html'
+      ? { ...f, content: f.content.replace(TILE, '<div class="tile">TILE</div>') }
+      : f));
   assert.deepEqual(others(files), others(plain));
   // A row from before the card (a screen mock) adds nothing.
   const legacy = getTemplateFiles('Run Club', 'run-club-abc', 'postgres://x', null,

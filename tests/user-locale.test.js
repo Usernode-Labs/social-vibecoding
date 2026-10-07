@@ -162,7 +162,7 @@ test('/api/auth/me reports null when unset', async () => {
 
 test('iframe-token mint selects the locale column alongside the pubkey', () => {
   const src = read('server.js');
-  assert.match(src, /SELECT usernode_pubkey, locale FROM users WHERE id = \$1/);
+  assert.match(src, /SELECT usernode_pubkey, locale, username_provisional_since IS NOT NULL AS provisional\s+FROM users WHERE id = \$1/);
 });
 
 test('iframe-token payload gains the locale claim additively', () => {

@@ -10,7 +10,8 @@
  *      another. Copy, and Share where the device has a share sheet.
  *   2. WHAT IT DOES, in one sentence: who can use it, for how long, for how
  *      many people, and — what a new person meets — that somebody new to
- *      Homeroom joins the waitlist first and this project when let in.
+ *      Homeroom joins straight away, as a private member, and goes straight
+ *      into this project (services/community-invites.js redeem).
  *   3. CHANGE. How long and for how many, within the server's limits; a new
  *      link is made with them. The old one keeps working until turned off.
  *   4. YOUR LINKS. Every live one, with Turn off. Someone who manages the
@@ -102,12 +103,13 @@ export function linkDetail(link: Pick<InviteLink, 'expiresAt' | 'maxUses' | 'use
   return `${used} · ${days <= 1 ? 'under a day left' : `${days} days left`}`;
 }
 
-/** The line about people new to Homeroom. */
-export function newcomerLine(skipsLeft: number | null): string {
-  if (skipsLeft && skipsLeft > 0) {
-    return `You can let ${skipsLeft} ${skipsLeft === 1 ? 'person' : 'people'} new to Homeroom skip the waitlist.`;
-  }
-  return 'Someone new to Homeroom joins the waitlist first, and this project when they are let in.';
+/**
+ * The line about people new to Homeroom: they join straight away, as private
+ * members (services/community-invites.js redeem). It used to count the skips
+ * past the waitlist a link could hand out, which private membership replaced.
+ */
+export function newcomerLine(): string {
+  return 'Someone new to Homeroom joins straight away and goes right into this project.';
 }
 
 function absolute(path: string): string {
@@ -345,7 +347,7 @@ export function InvitePane({ slug, label }: { slug: string | null; label: string
         </>
       ) : null}
       <p className={`px-5 pt-3 ${SMALL} text-zinc-500 dark:text-zinc-400`}>
-        {newcomerLine(state.skipsLeft)}
+        {newcomerLine()}
       </p>
       {state.joiningRule ? (
         <p data-invite-rule="" className={`px-5 pt-2 ${SMALL} text-zinc-500 dark:text-zinc-400`}>
