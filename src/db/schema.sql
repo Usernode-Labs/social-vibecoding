@@ -12362,3 +12362,155 @@ CREATE TABLE IF NOT EXISTS small_change_tags (
 CREATE INDEX IF NOT EXISTS small_change_tags_created_idx
   ON small_change_tags (created_at DESC, id DESC);
 COMMENT ON TABLE small_change_tags IS 'staging:private';
+
+-- Homeroom bot CONFIGURATIONS (services/bot-configs.js): how the bot builds a
+-- project's FIRST VERSION, as versioned recipes. A recipe names the model of
+-- each stage (triage, spec, build), an optional REVIEWER (a model that looks
+-- at the build's screenshots and asks for fixes, up to maxRounds rounds
+-- within budgetMinutes) and an optional App bench context pack. Each row is
+-- one immutable VERSION: editing a configuration saves a new version, and
+-- every average is per version, never across them. `role` is what the
+-- version does now: `current` builds every live first version (exactly one
+-- at a time, the partial unique index), `side` is built silently beside each
+-- live first version on the App bench lane for comparison, and `retired` is
+-- neither. Everything else the bot builds keeps the per-stage settings
+-- (homeroom-bot.js stageModel). `seed_key` makes the deploy's seed idempotent.
+-- Not private: admin-written recipes, nothing about anybody's app, and the
+-- bot's runs (a public table) name the version that built them.
+CREATE TABLE IF NOT EXISTS bot_config_versions (
+  id               SERIAL PRIMARY KEY,
+  key              TEXT NOT NULL,
+  label            TEXT NOT NULL,
+  version          INTEGER NOT NULL DEFAULT 1,
+  recipe           JSONB NOT NULL,
+  role             TEXT NOT NULL DEFAULT 'side',
+  notes            TEXT,
+  seed_key         TEXT,
+  created_by       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  role_changed_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT bot_config_versions_role_check CHECK (role IN ('current', 'side', 'retired')),
+  CONSTRAINT bot_config_versions_key_check CHECK (key ~ '^[a-z0-9][a-z0-9-]{0,39}$'),
+  CONSTRAINT bot_config_versions_version_check CHECK (version > 0),
+  UNIQUE (key, version)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bot_config_versions_one_current
+  ON bot_config_versions ((TRUE)) WHERE role = 'current';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bot_config_versions_seed
+  ON bot_config_versions (seed_key) WHERE seed_key IS NOT NULL;
+
+-- A live first version's configuration and its REVIEW (services/bot-review.js):
+-- which version built it; `review` the round-0 snapshot (the state after the
+-- first build, before any review), every round (its commit, the capture's
+-- artifacts, the reviewer's verdict and issues, what it cost and took) and
+-- why the loop stopped; `review_rounds` and `review_stop` the two numbers the
+-- run listing shows. `review->>'state'` is 'reviewing' (or 'capturing', a
+-- recipe with no reviewer whose first build is only captured) while the loop
+-- runs, so restart recovery proposes the last committed state rather than
+-- calling the build lost. Its captures are kept slim (whether the app booted
+-- and where each screenshot is stored); the full ones are private
+-- (bot_config_results).
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS bot_config_version_id INTEGER
+  REFERENCES bot_config_versions(id) ON DELETE SET NULL;
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS review JSONB;
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS review_rounds INTEGER;
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS review_stop TEXT;
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_runs_reviewing
+  ON homeroom_bot_runs(id) WHERE (review->>'state') IN ('reviewing', 'capturing');
+
+-- A SIDE build of a live first version runs on the App bench lane as a trial
+-- (services/bot-configs.js spawnSideBuilds): the live run it is compared
+-- with, and the configuration version it builds.
+ALTER TABLE bench_trials ADD COLUMN IF NOT EXISTS bot_run_id INTEGER
+  REFERENCES homeroom_bot_runs(id) ON DELETE SET NULL;
+ALTER TABLE bench_trials ADD COLUMN IF NOT EXISTS bot_config_version_id INTEGER
+  REFERENCES bot_config_versions(id) ON DELETE SET NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bench_trials_side_build
+  ON bench_trials(bot_run_id, bot_config_version_id, attempt) WHERE bot_run_id IS NOT NULL;
+
+-- What one configuration version made of one live first version: the
+-- current version's from the live build itself (source 'live'), a side
+-- version equal to it with no reviewer from the live build's round-0
+-- snapshot ('round0'), any other side version from its bench trial
+-- ('trial'). Cost and ACTIVE time (queue left out) include the live run's
+-- triage, which every configuration shares. `capture` is the screenshot
+-- step's summary; its artifact ids name rows in bot_capture_artifacts or
+-- bench_trial_artifacts. Private: it describes builds of private projects.
+CREATE TABLE IF NOT EXISTS bot_config_results (
+  id                 SERIAL PRIMARY KEY,
+  bot_run_id         INTEGER NOT NULL REFERENCES homeroom_bot_runs(id) ON DELETE CASCADE,
+  config_version_id  INTEGER NOT NULL REFERENCES bot_config_versions(id) ON DELETE CASCADE,
+  source             TEXT NOT NULL,
+  trial_id           INTEGER REFERENCES bench_trials(id) ON DELETE SET NULL,
+  status             TEXT NOT NULL DEFAULT 'pending',
+  built              BOOLEAN,
+  booted             BOOLEAN,
+  cost_usd           NUMERIC(18,8),
+  active_ms          BIGINT,
+  sha                TEXT,
+  capture            JSONB,
+  error              TEXT,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  finished_at        TIMESTAMPTZ,
+  CONSTRAINT bot_config_results_source_check CHECK (source IN ('live', 'round0', 'trial')),
+  CONSTRAINT bot_config_results_status_check CHECK (status IN ('pending', 'done', 'skipped')),
+  UNIQUE (bot_run_id, config_version_id)
+);
+CREATE INDEX IF NOT EXISTS idx_bot_config_results_version ON bot_config_results(config_version_id, status);
+CREATE INDEX IF NOT EXISTS idx_bot_config_results_trial ON bot_config_results(trial_id) WHERE trial_id IS NOT NULL;
+COMMENT ON TABLE bot_config_results IS 'staging:private';
+
+-- A blind PAIR: the current version's result and one side version's, from
+-- the same live first version, for an admin's pick (left, right or a tie)
+-- through the connector. `left_is_current` is drawn at random when the pair
+-- is made and never shown; `token` is the only id a picker sees. A pair
+-- where either side did not build or boot is `excluded` with why, never
+-- offered, and counted in the stats as that.
+CREATE TABLE IF NOT EXISTS bot_config_pairs (
+  id                 SERIAL PRIMARY KEY,
+  token              TEXT NOT NULL UNIQUE,
+  bot_run_id         INTEGER NOT NULL REFERENCES homeroom_bot_runs(id) ON DELETE CASCADE,
+  current_result_id  INTEGER NOT NULL REFERENCES bot_config_results(id) ON DELETE CASCADE,
+  side_result_id     INTEGER NOT NULL REFERENCES bot_config_results(id) ON DELETE CASCADE,
+  left_is_current    BOOLEAN NOT NULL,
+  status             TEXT NOT NULL DEFAULT 'waiting',
+  excluded_reason    TEXT,
+  pick               TEXT,
+  note               TEXT,
+  picked_by          INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  picked_at          TIMESTAMPTZ,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT bot_config_pairs_status_check CHECK (status IN ('waiting', 'excluded', 'picked')),
+  CONSTRAINT bot_config_pairs_pick_check CHECK (pick IS NULL OR pick IN ('current', 'side', 'tie')),
+  UNIQUE (current_result_id, side_result_id)
+);
+CREATE INDEX IF NOT EXISTS idx_bot_config_pairs_waiting ON bot_config_pairs(id) WHERE status = 'waiting';
+COMMENT ON TABLE bot_config_pairs IS 'staging:private';
+
+-- The review loop's screenshots (services/bot-review.js): one row per image
+-- of one round's capture, of a live run or of a bench trial whose recipe has
+-- a reviewer, stored as bench_trial_artifacts stores a trial's final ones.
+-- Private: an app's screens can show any of its data.
+CREATE TABLE IF NOT EXISTS bot_capture_artifacts (
+  id            VARCHAR(32) PRIMARY KEY CHECK (id ~ '^[0-9a-f]{32}$'),
+  bot_run_id    INTEGER REFERENCES homeroom_bot_runs(id) ON DELETE CASCADE,
+  trial_id      INTEGER REFERENCES bench_trials(id) ON DELETE CASCADE,
+  round         INTEGER NOT NULL CHECK (round >= 0),
+  shot_id       VARCHAR(64) NOT NULL,
+  viewport      VARCHAR(16) NOT NULL,
+  look          VARCHAR(8) NOT NULL CHECK (look IN ('light', 'dark')),
+  -- Any state the screenshot step plans (services/bench/capture.js STATES),
+  -- so a state it adds later needs no change here.
+  state         VARCHAR(16) NOT NULL CHECK (state ~ '^[a-z][a-z_]{0,15}$'),
+  content_type  VARCHAR(32) NOT NULL,
+  data          BYTEA NOT NULL,
+  width         INTEGER CHECK (width IS NULL OR width > 0),
+  height        INTEGER CHECK (height IS NULL OR height > 0),
+  bytes         INTEGER NOT NULL CHECK (bytes > 0),
+  sha256        VARCHAR(64) NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}$'),
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT bot_capture_artifacts_owner_check CHECK ((bot_run_id IS NULL) <> (trial_id IS NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_bot_capture_artifacts_run ON bot_capture_artifacts(bot_run_id, round) WHERE bot_run_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_bot_capture_artifacts_trial ON bot_capture_artifacts(trial_id, round) WHERE trial_id IS NOT NULL;
+COMMENT ON TABLE bot_capture_artifacts IS 'staging:private';
