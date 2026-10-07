@@ -3,12 +3,12 @@
 // transaction, so concurrent loops in several processes fire it once; the
 // request key `timer:<version that set it>` makes a duplicate a replay.
 
-import { enterPipeline } from './pipeline.ts';
+import { checkout, enterPipeline } from './pipeline.ts';
 import type { Machine } from './machine.ts';
 import type { Pool } from './types.ts';
 
 export async function fireDueTimers(pool: Pool, opts: { lockTimeoutMs: number; statementTimeoutMs: number; limit?: number }): Promise<number> {
-  const client = await pool.connect();
+  const client = await checkout(pool);
   let broken: Error | undefined;
   try {
     await enterPipeline(client, opts);
@@ -59,7 +59,7 @@ export async function purge(pool: Pool, opts: {
   lockTimeoutMs: number; statementTimeoutMs: number;
   machines: ReadonlyMap<string, Machine<any, any>>; eventsDays?: number; receiptsDays?: number; workDays?: number;
 }): Promise<void> {
-  const client = await pool.connect();
+  const client = await checkout(pool);
   try {
     await enterPipeline(client, { ...opts, statementTimeoutMs: Math.max(opts.statementTimeoutMs, 60000) });
     await client.query(

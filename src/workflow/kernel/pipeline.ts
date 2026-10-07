@@ -37,6 +37,22 @@ const millis = (v: number) => {
   return `'${n}ms'`;
 };
 
+// Check a client out of the pool. pg-pool listens for a connection's
+// 'error' only while the client is idle; a connection lost while checked
+// out would otherwise be an uncaught 'error' and end the process. The query
+// in flight still fails with it, and release() hands back a broken client.
+export async function checkout(pool: Pool): Promise<PoolClient> {
+  const client = await pool.connect();
+  const onError = () => {};
+  client.on?.('error', onError);
+  const release = client.release.bind(client);
+  client.release = (destroy) => {
+    client.removeListener?.('error', onError);
+    release(destroy);
+  };
+  return client;
+}
+
 // A pipeline transaction opens with the writer marker and the timeouts, in
 // one simple-protocol batch.
 const opening = (opts: Pick<PipelineOptions, 'lockTimeoutMs' | 'statementTimeoutMs'>) =>
@@ -150,7 +166,7 @@ export async function processNext(opts: PipelineOptions, idle: { retryInMs: numb
 }
 
 async function processOne(opts: PipelineOptions, names: string[], versions: number[], passed: number[]): Promise<Step> {
-  const client = await opts.pool.connect();
+  const client = await checkout(opts.pool);
   let broken: Error | undefined;
   let picked: Picked | undefined;
   try {

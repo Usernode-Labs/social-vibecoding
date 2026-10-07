@@ -2,7 +2,7 @@
 // event: releasing a faulted instance's held events.
 
 import { randomUUID } from 'node:crypto';
-import { enterPipeline } from './pipeline.ts';
+import { checkout, enterPipeline } from './pipeline.ts';
 import type { Pool, Queryable } from './types.ts';
 
 const num = (v: unknown) => (v == null ? null : Number(v));
@@ -132,7 +132,7 @@ export async function instance(db: Queryable, machine: string, key: string, opts
 export async function release(pool: Pool, machine: string, key: string, opts: {
   mode: 'retry' | 'skip'; actor: string; lockTimeoutMs?: number; statementTimeoutMs?: number;
 }) {
-  const client = await pool.connect();
+  const client = await checkout(pool);
   try {
     await enterPipeline(client, { lockTimeoutMs: opts.lockTimeoutMs ?? 2000, statementTimeoutMs: opts.statementTimeoutMs ?? 5000 });
     const { rows: [inst] } = await client.query(

@@ -345,6 +345,57 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     assert.equal(Number(row.version), 2);
   });
 
+  await t.test('K16 a first event that times out or throws leaves only a flagged (none) row', async () => {
+    const flag = (name, on) => pool.query(
+      `INSERT INTO kt_flags VALUES ($1, $2) ON CONFLICT (name) DO UPDATE SET on_off = EXCLUDED.on_off`, [name, on]);
+    const birth = defineMachine({
+      name: 'kt-birth', version: 1,
+      events: { Create: (p) => p || {}, Poke: (p) => p || {} },
+      create: ['Create'],
+      decode: (row) => ({ name: row.state, data: row.data }),
+      async facts(tx) {
+        const { rows: [f] } = await tx.query(
+          `SELECT COALESCE((SELECT on_off FROM kt_flags WHERE name = 'birth-slow'), FALSE) AS slow,
+                  COALESCE((SELECT on_off FROM kt_flags WHERE name = 'birth-boom'), FALSE) AS boom`);
+        if (f.slow) await tx.query('SELECT pg_sleep(0.3)');
+        return f;
+      },
+      authorize: { Create: () => ok(), Poke: () => ok() },
+      transitions: {
+        [NONE]: { Create: { to: (s, e, f) => { if (f.boom) throw new Error('born broken'); return { next: { name: 'alive', data: { pokes: 0 } } }; } } },
+        alive: { Create: { ignore: 'exists' }, Poke: { to: (s) => ({ next: { name: 'alive', data: { pokes: s.data.pokes + 1 } } }) } },
+      },
+    });
+    const born = (key) => inst(key, 'kt-birth');
+    const add = (r, key, type) => r.append(birth, key, { type }, { requestKey: `${key}-${type}-${++seq}`, source: { kind: 'route' } });
+    // Timeouts: the row exists only to carry the stall, and goes once it gets through.
+    const slow = make({ machine: birth, statementTimeoutMs: 100, stallAfter: 1 });
+    await flag('birth-slow', true);
+    const created = await add(slow, 'b1', 'Create');
+    await slow.drain();
+    assert.deepEqual([(await event(created)).status, (await event(created)).attempts], ['pending', 1]);
+    assert.deepEqual([(await born('b1')).state, (await born('b1')).flag, Number((await born('b1')).version)], [NONE, 'stalled', 0]);
+    await flag('birth-slow', false);
+    await sleep(600);
+    await slow.drain();
+    assert.equal((await event(created)).result, 'accepted');
+    assert.deepEqual([(await born('b1')).state, (await born('b1')).flag, Number((await born('b1')).version)], ['alive', null, 1]);
+    // A throw: faulted, later events held, and a retry creates it as if nothing happened.
+    const r = make({ machine: birth });
+    await flag('birth-boom', true);
+    const boom = await add(r, 'b2', 'Create');
+    const poke = await add(r, 'b2', 'Poke');
+    await r.drain();
+    assert.deepEqual([(await event(boom)).result, (await event(boom)).state_before], ['faulted', NONE]);
+    assert.equal((await event(poke)).status, 'held');
+    assert.deepEqual([(await born('b2')).state, (await born('b2')).flag], [NONE, 'faulted']);
+    await flag('birth-boom', false);
+    await r.release('kt-birth', 'b2', { mode: 'retry', actor: 'admin:1' });
+    await r.drain();
+    assert.deepEqual([(await event(boom)).result, (await event(poke)).result], ['accepted', 'accepted']);
+    assert.deepEqual([(await born('b2')).state, (await born('b2')).data.pokes, Number((await born('b2')).version)], ['alive', 1, 2]);
+  });
+
   await t.test('K5 a transition locks only its own instance; a message to a locked instance does not wait', async () => {
     await create('k5-a');
     await create('k5-b');
@@ -587,6 +638,15 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     await pool.query(`DELETE FROM wf_settings WHERE key = 'ownership_mode'`);
     const { ownershipViolations } = await inspect.problems(pool);
     assert.deepEqual(ownershipViolations.map((v) => [v.table_name, v.column_path, v.count]), [['kt_legacy', 'status', 1]]);
+  });
+
+  await t.test('the problems name each write outside a machine: row, application, statement', async () => {
+    const { ownershipViolationRows: rows } = await inspect.problems(pool);
+    const legacyId = Number((await pool.query(`SELECT id FROM kt_legacy WHERE key = 'k12'`)).rows[0].id);
+    assert.equal(rows.length, 1);
+    assert.deepEqual([rows[0].table, rows[0].column, rows[0].row], ['kt_legacy', 'status', { id: legacyId }]);
+    assert.equal(typeof rows[0].application, 'string');
+    assert.match(rows[0].query, /UPDATE kt_legacy SET status = 'x'/);
   });
 
   await t.test('K17 appendAndWait answers with the outcome, or pending within its budget', async () => {

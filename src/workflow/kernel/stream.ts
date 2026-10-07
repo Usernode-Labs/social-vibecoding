@@ -104,6 +104,8 @@ export class Signals {
         this.#log.warn('workflow', 'signal connection lost', { message: err.message });
         this.#client = null;
         client.release(err);
+        // Sleepers waiting for notifications go back to polling until then.
+        this.wakeAll();
         if (!this.#stopped) setTimeout(() => { this.start(); }, 1000).unref?.();
       });
       await client.query('LISTEN wf_events; LISTEN wf_outcome; LISTEN wf_work');

@@ -4,6 +4,7 @@
 
 import { assertJson } from './machine.ts';
 import { append } from './stream.ts';
+import { checkout } from './pipeline.ts';
 import type { Json, Logger, Pool, WorkHandler } from './types.ts';
 
 export class LeaseLost extends Error {
@@ -34,7 +35,7 @@ interface Claimed { id: string; machine: string; key: string; kind: string;
 // services run in one process for now, so that is also the global limit.
 export async function claim(opts: ServiceOptions, kind: string, room: number): Promise<Claimed[]> {
   const leaseMs = opts.handlers.get(kind)!.leaseMs ?? DEFAULTS.leaseMs;
-  const client = await opts.pool.connect();
+  const client = await checkout(opts.pool);
   try {
     await client.query('BEGIN');
     const { rows } = await client.query<Claimed & { previous_claim: string | null }>(
@@ -88,7 +89,7 @@ type Report =
 // Finish an attempt under its claim. Returns false when the claim is gone,
 // in which case nothing was written.
 async function finish(opts: ServiceOptions, w: Claimed, report: Report): Promise<boolean> {
-  const client = await opts.pool.connect();
+  const client = await checkout(opts.pool);
   try {
     await client.query('BEGIN');
     const live = `id = $1 AND claim_id = $2 AND status = 'running' AND lease_until > now()`;
