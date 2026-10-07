@@ -43,13 +43,15 @@
  * WITH THE KEYBOARD UP (production run, iOS app, 5 Oct 2026):
  *   - The screen was one scroller from the top of the glass, so revealing
  *     the description above the keys scrolled "Start from an example" up
- *     behind the clock. A strip the height of the status bar now stays
- *     put and only what is under it scrolls, so nothing passes under the
- *     clock. (It held the Homeroom wordmark until 6 Oct 2026; the screen
- *     opens on "Hi <name>" and its question now, as the canvas draws it.)
- *     The keyboard surface is attached to the scroller (lib/keyboard-surface.ts):
- *     a tap on a field is focused without the browser's pan, and the field
- *     is revealed once, between the strip and the keys.
+ *     behind the clock. The wordmark bar now stays put and only what is
+ *     under it scrolls, so nothing passes under the status bar. The bar
+ *     holds the whole mark below the inset (on a notched phone the mark
+ *     used to hang 12px out of its box, and the page would have scrolled
+ *     past it). The keyboard surface is attached to the scroller
+ *     (lib/keyboard-surface.ts): a tap on a field is focused without the
+ *     browser's pan, and the field is revealed once, between the bar and
+ *     the keys. (Owner, 7 Oct 2026: the bar stays, as on the story and the
+ *     invite page.)
  *   - The two answers are one sequence: the description's Return says
  *     "next" and goes on to the name (Shift+Return is a new line), and the
  *     name's Return makes it. In the app the keyboard's own next chevron
@@ -62,11 +64,11 @@
  *     example.
  *
  * AND IN SAFARI (iPhone 17 simulator, iOS 26, 5 Oct 2026): with the keyboard
- * up, iOS panned the page to the tapped description, top bar and all,
+ * up, iOS panned the page to the tapped description, wordmark bar and all,
  * and "Make it" sat under the keyboard's floating bar once a press had
  * scrolled the form. The screen is a `.platform-kb-surface` now: while the
  * keyboard is open it is padded into the band of the page that is actually
- * visible (lib/keyboard-open.ts, app.css), so the strip is at the top of what
+ * visible (lib/keyboard-open.ts, app.css), so the bar is at the top of what
  * is seen and the scroller ends where the keys begin. Its fields are
  * lib/keyboard-surface.ts's: a tap focuses without the pan (the first tap on
  * the description, which this screen focuses from code, included), and the
@@ -85,6 +87,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { DraftEditIcon } from '@/components/ui/icons';
+import { Wordmark } from '@/components/ui/wordmark';
 
 import { useKeyboardSurface } from '../../lib/keyboard-surface';
 import { EXAMPLES, type Example } from './examples';
@@ -339,10 +342,12 @@ export function MakeScreen({ who, idea = null, demo = false, onMade, onLookAroun
       className="platform-kb-surface fixed inset-0 z-[9000] flex flex-col text-zinc-900 dark:text-zinc-100"
       style={{ background: 'var(--home-wallpaper, #f4f2e4)' }}
     >
-      {/* The status bar's strip: it stays put over the scroller, so nothing
-          scrolls under the clock. No mark in it: the screen opens on its
-          question (canvas C2-make). */}
-      <div data-first-session-make-top="" className="h-[max(12px,env(safe-area-inset-top))] shrink-0" />
+      {/* Stays put over the scroller, so nothing scrolls under the status bar.
+          At least 32px tall under the status bar's inset, so the whole mark
+          is inside it and what scrolls stops below the mark, not beside it. */}
+      <div data-first-session-make-top="" className={`flex h-[max(52px,calc(env(safe-area-inset-top)+32px))] shrink-0 items-center justify-center pt-[env(safe-area-inset-top)] ${motion}`}>
+        <Wordmark className="h-6 w-auto text-[color:var(--brand-ink)]" />
+      </div>
       {/* The scroller the keyboard surface reveals fields in. Its className
           stays constant: nothing here varies it. */}
       <div ref={scrollerRef} data-first-session-make-scroll="" className="flex min-h-0 grow flex-col overflow-y-auto">
@@ -352,9 +357,9 @@ export function MakeScreen({ who, idea = null, demo = false, onMade, onLookAroun
         >
           <div className="text-center">
             {who ? (
-              <p className="mt-3 text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">{`Hi ${who}`}</p>
+              <p className="mt-4 text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">{`Hi ${who}`}</p>
             ) : null}
-            <h1 id="first-session-make-title" className={`${who ? 'mt-2.5' : 'mt-3'} text-balance text-[30px] font-extrabold leading-[34px]`}>What do you want to make?</h1>
+            <h1 id="first-session-make-title" className={`${who ? 'mt-2.5' : 'mt-4'} text-balance text-[30px] font-extrabold leading-[34px]`}>What do you want to make?</h1>
           </div>
           {fromWaitlist ? (
             <>

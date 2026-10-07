@@ -375,13 +375,13 @@ test('the description and the name are one sequence: Return says next and goes o
   assert.match(src, /ref=\{nameRef\}\s+id="first-session-name"/);
 });
 
-test('with the keyboard up nothing scrolls under the status bar: the strip stays, the form scrolls under it, inside the visible band', () => {
+test('with the keyboard up nothing scrolls under the status bar: the bar stays, the form scrolls under it, inside the visible band', () => {
   const src = read(`${DIR}/make.tsx`);
   const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', onMade() {}, onLookAround() {} });
   const root = /<div role="dialog"[^>]*>/.exec(html)[0];
   assert.match(root, /class="platform-kb-surface fixed inset-0 z-\[9000\] flex flex-col /);
   assert.doesNotMatch(root, /overflow/, 'the screen itself does not scroll from the top of the glass');
-  // The status bar's strip comes first, then the scroller holding the form.
+  // The wordmark bar (with the status bar's inset) comes first, then the scroller holding the form.
   const bar = html.indexOf('data-first-session-make-top=""');
   const scroller = html.indexOf('data-first-session-make-scroll=""');
   assert.ok(bar > -1 && scroller > bar && html.indexOf('<form') > scroller);
@@ -396,11 +396,15 @@ test('with the keyboard up nothing scrolls under the status bar: the strip stays
   assert.match(src, /useKeyboardSurface\(scrollerRef\);/);
   assert.doesNotMatch(src, /useComposerKeyboard/, 'one owner of the fields\' taps: the surface, not the kit\'s chat avoidance too');
   assert.match(src, /useEffect\(\(\) => \{ briefRef\.current\?\.focus\(\{ preventScroll: true \}\); \}, \[\]\);/);
-  // The strip is the status bar's inset (12px where there is none), so what
-  // scrolls stops below the clock. Owner, 6 Oct 2026: no wordmark in it; the
-  // screen opens on "Hi <name>" and its question, as the canvas draws it.
-  assert.match(src, /<div data-first-session-make-top="" className="h-\[max\(12px,env\(safe-area-inset-top\)\)\] shrink-0" \/>/);
-  assert.doesNotMatch(src, /Wordmark/);
+  // The bar holds the whole mark below the status bar's inset, so what
+  // scrolls stops below the mark. Owner, 7 Oct 2026: the logo bar stays on
+  // the make screen, in both openings, as on the story and the invite page.
+  assert.match(src, /<div data-first-session-make-top="" className=\{`flex h-\[max\(52px,calc\(env\(safe-area-inset-top\)\+32px\)\)\] shrink-0 items-center justify-center pt-\[env\(safe-area-inset-top\)\] \$\{motion\}`\}>\s+<Wordmark className="h-6 w-auto text-\[color:var\(--brand-ink\)\]" \/>/);
+  const wl = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', idea: 'A tracker for my run club', onMade() {}, onLookAround() {} });
+  for (const [name, out] of [['plain', html], ['waitlist', wl]]) {
+    const top = out.indexOf('data-first-session-make-top=""');
+    assert.ok(top > -1 && out.indexOf('<svg', top) < out.indexOf('data-first-session-make-scroll=""'), `${name}: the wordmark sits in the bar`);
+  }
   // The scroller's class string is constant.
   assert.match(src, /<div ref=\{scrollerRef\} data-first-session-make-scroll="" className="flex min-h-0 grow flex-col overflow-y-auto">/);
   // #3894's arrival is untouched: the bar and the form still rise in.
