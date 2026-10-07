@@ -5620,6 +5620,9 @@ async function noteProposalChecks(pool, { sessionId } = {}) {
       log.info('homeroom-bot', 'Its proposal\'s checks failed, but it looks like the platform; not revising', {
         app: row.slug, issueNumber, sessionId: row.id, failing: due.failing.length, total: due.total,
       });
+      // #4242: nothing else tells its requester, and its card would say it
+      // is still being checked for good: they hear it needs a look.
+      if (due.failing.length) await require('./homeroom-bot-dm').noteNeedsLook(pool, { sessionId: row.id, why: 'checks' });
       return false;
     }
     await pool.query(
@@ -7495,6 +7498,9 @@ async function runOnce(pool, config, deps = {}) {
       // its before & after shots is offered as ready to try anyway.
       const heldReady = await (deps.dm || require('./homeroom-bot-dm')).sweepHeldReady?.(pool, { ws: deps.ws || null });
       if (heldReady) out.heldReadyLooked = heldReady;
+      // #4242: and a build that succeeded and became no proposal is said.
+      const unproposed = await (deps.dm || require('./homeroom-bot-dm')).sweepUnproposedBuilds?.(pool, { ws: deps.ws || null });
+      if (unproposed) out.unproposedLooked = unproposed;
     }
 
     // Inside a platform-fault backoff nothing is dispatched (#3122). A wake

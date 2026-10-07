@@ -91,7 +91,7 @@ test('#3734: Now is the bot\'s own progress, its in-flight entries drawn as step
 test('what a run came to, in the activity cards\' words', () => {
   assert.deepEqual(tray.OUTCOMES, activity.OUTCOMES, 'one vocabulary');
   assert.equal(tray.outcomeOf({ verdict: 'ready', proposal_session_id: 5, proposal_status: 'promoted' }), 'proposed');
-  assert.equal(tray.outcomeOf({ verdict: 'ready', proposal_session_id: 5, proposal_status: 'merging' }), 'proposed');
+  assert.equal(tray.outcomeOf({ verdict: 'ready', proposal_session_id: 5, proposal_status: 'merging' }), 'going_live', '#4227');
   assert.equal(tray.outcomeOf({ verdict: 'ready', proposal_session_id: 5, proposal_status: 'merged' }), 'live');
   assert.equal(tray.outcomeOf({ verdict: 'ready', proposal_session_id: 5, proposal_status: 'closed' }), 'closed');
   assert.equal(tray.outcomeOf({ verdict: 'ready', build_ok: true }), 'proposed', 'a build that finished is a proposal');
@@ -729,6 +729,9 @@ test('the status line\'s last thing says the activity card\'s ending, in the per
     stopped: 'stopped on Ear Trainer #3',
     answer: 'answered on Ear Trainer #3',
     revise: 'updated the change for Ear Trainer #3',
+    checking: 'checking Ear Trainer #3 before you try it',
+    needs_look: 'Ear Trainer #3 needs a look',
+    going_live: 'Ear Trainer #3 going live',
   });
   // Each says what its card says: the words the two have in common, in the
   // server's labels (services/homeroom-bot-activity.js), the client's
@@ -737,6 +740,7 @@ test('the status line\'s last thing says the activity card\'s ending, in the per
     question: 'asked you', proposed: 'waiting for approval', live: 'live', closed: 'was closed',
     blocked: 'written', build_failed: 'finish building', person: 'the group', empty: 'nothing to build',
     failed: 'finish looking', held: 'for now', stopped: 'stopped', answer: 'answered on', revise: 'updated the change',
+    checking: 'before you try it', needs_look: 'needs a look', going_live: 'going live',
   };
   assert.deepEqual(Object.keys(SHARED).sort(), [...tray.OUTCOMES].sort());
   for (const outcome of tray.OUTCOMES) {

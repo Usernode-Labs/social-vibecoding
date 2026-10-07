@@ -143,8 +143,11 @@ export interface HomeroomBotAction {
   id: string;
   label: string;
   style: 'primary' | 'secondary';
-  /** B7: `preview` opens a change's preview, `vote` casts the person's own Yes, `reply` quotes the card. */
-  type: 'server' | 'open' | 'prompt' | 'preview' | 'vote' | 'reply';
+  /**
+   * B7: `preview` opens a change's preview, `vote` casts the person's own Yes, `reply` quotes the card.
+   * #4231: `invite` opens the invite sheet for the message's project (`appSlug`), in place.
+   */
+  type: 'server' | 'open' | 'prompt' | 'preview' | 'vote' | 'reply' | 'invite';
   target?: string;
   sessionId?: number;
   epoch?: number;
@@ -236,7 +239,10 @@ export interface HomeroomBotWork {
  */
 export type HomeroomBotActivityOutcome =
   | 'question' | 'proposed' | 'live' | 'closed' | 'blocked' | 'build_failed'
-  | 'person' | 'empty' | 'failed' | 'held' | 'stopped' | 'answer' | 'revise';
+  | 'person' | 'empty' | 'failed' | 'held' | 'stopped' | 'answer' | 'revise'
+  // #4242 / #4227: built and being checked before it is offered, built and
+  // needing a person to look, and merged but not live yet.
+  | 'checking' | 'needs_look' | 'going_live';
 
 export interface HomeroomBotActivity {
   messageId: number;

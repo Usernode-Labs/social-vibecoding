@@ -2037,6 +2037,7 @@ function botMomentLine(detail, message) {
     stopped_empty: app ? `${app}: I couldn't find anything to build. Tell me more` : 'I couldn\'t find anything to build. Tell me more',
     stopped_first: app ? `${app}: I couldn't start building it. You can still post a request` : 'I couldn\'t start building it',
     stopped_preview: app ? `${app}: the preview didn't start. I'm trying again` : 'The preview didn\'t start. I\'m trying again',
+    stopped_look: app ? `${app}: it's built, but it needs a look before you can try it` : 'It\'s built, but it needs a look before you can try it',
     held: app ? `${app}: I'll start it on Monday` : 'I\'ve paused until Monday',
     live: app ? `Your change to ${app} is live` : 'Your change is live',
     live_first: app ? `${app} is live` : 'Your project is live',
