@@ -99,23 +99,61 @@ function errorFields(parsed, redact) {
   return out;
 }
 
+// The token counts a reply reports, in Anthropic's split (input excludes
+// cache reads and writes), or null. A stream reports them twice: on
+// message_start, where OpenRouter's input is still 0, and in full on the
+// closing message_delta. Counts only.
+const USAGE_FIELDS = Object.freeze([
+  ['input_tokens', 'inputTokens'],
+  ['output_tokens', 'outputTokens'],
+  ['cache_read_input_tokens', 'cacheReadInputTokens'],
+  ['cache_creation_input_tokens', 'cacheWriteInputTokens'],
+]);
+
+function usageFields(usage) {
+  if (!usage || typeof usage !== 'object') return null;
+  const out = {};
+  for (const [from, to] of USAGE_FIELDS) {
+    if (Number.isSafeInteger(usage[from]) && usage[from] >= 0) out[to] = usage[from];
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+// Both reports of one reply, the larger of each count: they are running
+// totals, so the closing one is never smaller.
+function mergeUsage(a, b) {
+  if (!a) return b || null;
+  if (!b) return a;
+  const out = { ...a };
+  for (const [key, value] of Object.entries(b)) out[key] = Math.max(out[key] ?? 0, value);
+  return out;
+}
+
 // What a reply body says about itself: its message (generation) id and the
 // provider OpenRouter routed it to, from a JSON reply or the first event of
-// a stream, and an error envelope wherever one appears. Fields only.
+// a stream, its token counts, and an error envelope wherever one appears.
+// Fields only.
 function replyFields(parsed, redact) {
   if (!parsed || typeof parsed !== 'object') return {};
   if (parsed.type === 'error' || (parsed.error && typeof parsed.error === 'object')) return errorFields(parsed, redact);
+  if (parsed.type === 'message_delta') {
+    const usage = usageFields(parsed.usage);
+    return usage ? { usage } : {};
+  }
   const message = parsed.type === 'message_start' ? parsed.message : parsed;
   const out = {};
   const id = safeId(message?.id);
   if (id) out.generationId = id;
   const provider = safeProvider(message?.provider ?? parsed.provider);
   if (provider) out.providerName = provider;
+  const usage = usageFields(message?.usage);
+  if (usage) out.usage = usage;
   return out;
 }
 
 // Pass a reply through unchanged while reading what replyFields needs from
-// it: a small JSON body whole, or a stream's message_start and error events.
+// it: a small JSON body whole, or a stream's message_start, message_delta and
+// error events.
 // Only one event's text is held at a time, and an event longer than
 // MAX_OUTCOME_SCAN_BYTES is dropped unread; the bytes always flow on.
 async function* observeOutcome(body, { streaming, onFields, redact }) {
@@ -132,7 +170,7 @@ async function* observeOutcome(body, { streaming, onFields, redact }) {
         const data = event.split(/\r?\n/).filter(line => line.startsWith('data:'))
           .map(line => line.slice(5).trimStart()).join('\n');
         if (data && data.length <= MAX_OUTCOME_SCAN_BYTES
-            && (data.includes('"message_start"') || data.includes('"error"'))) {
+            && (data.includes('"message_start"') || data.includes('"message_delta"') || data.includes('"error"'))) {
           try { onFields(replyFields(JSON.parse(data), redact)); } catch { /* Not JSON: passes through. */ }
         }
       }
@@ -398,7 +436,10 @@ async function startMessagesAdapter({
         bodyStream = Readable.from(observeOutcome(bodyStream, {
           streaming,
           redact: redactOutcome,
-          onFields: (fields) => { Object.assign(timing.result, fields); },
+          onFields: ({ usage, ...fields }) => {
+            Object.assign(timing.result, fields);
+            if (usage) timing.result.usage = mergeUsage(timing.result.usage, usage);
+          },
         }));
         async function* observeTransfer() {
           for await (const chunk of bodyStream) {
@@ -425,7 +466,9 @@ async function startMessagesAdapter({
       if (timing) {
         clearInterval(timing.interval);
         // What the request came to, before its end: the platform logs a
-        // failed one and keeps the provider for the turn's ledger row.
+        // failed one, keeps the provider for the turn's ledger row, and sums
+        // the token counts of each that finished, which is what a turn
+        // stopped before Claude Code's own total is priced from.
         emitTiming({
           kind: 'provider_request_result', requestOrdinal: timing.ordinal,
           ...(timing.status != null ? { httpStatus: timing.status } : {}),

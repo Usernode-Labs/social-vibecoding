@@ -242,7 +242,10 @@ test('the adapter forwards Messages requests to OpenRouter with the key and stre
   ]);
   assert.equal(timing[0].inputItems, 1);
   assert.equal(timing[0].maxOutputTokens, 64_000);
-  assert.deepEqual(timing[3], { kind: 'provider_request_result', requestOrdinal: 1, httpStatus: 200, outcome: 'ok', requestId: 'req-1' });
+  assert.deepEqual(timing[3], {
+    kind: 'provider_request_result', requestOrdinal: 1, httpStatus: 200, outcome: 'ok', requestId: 'req-1',
+    usage: { inputTokens: 12, outputTokens: 1 },
+  });
   assert.equal(timing[4].outcome, 'ok');
   assert.ok(!JSON.stringify(timing).includes('hi'), 'timing carries sizes and counts, never content');
 
@@ -302,9 +305,40 @@ test('a streamed reply names its generation and the provider OpenRouter routed i
   assert.deepEqual(result, {
     kind: 'provider_request_result', requestOrdinal: 1, httpStatus: 200, outcome: 'ok',
     requestId: 'req-9', generationId: 'gen-1759626000-abc', providerName: 'DeepInfra',
+    usage: { inputTokens: 12 },
   });
   assert.ok(!JSON.stringify(timing).includes('secret prompt') && !JSON.stringify(timing).includes('reply text'),
     'never content');
+});
+
+test('a reply\'s token counts are its closing ones: OpenRouter fills them in only on message_delta', async (t) => {
+  // As GLM's replies came through OpenRouter on 2026-10-06: message_start
+  // says 0 input tokens, and the counts arrive with the closing message_delta.
+  // A stopped turn is priced from these (worker.js), so they must be the
+  // closing ones, cache reads and writes kept apart as Anthropic splits them.
+  const { result, timing } = await outcomeOf(t, (res) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.write('event: message_start\ndata: {"type":"message_start","message":{"id":"gen-3","provider":"Fireworks","model":"m","usage":{"input_tokens":0,"output_tokens":1}}}\n\n');
+    res.write('event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"done"}}\n\n');
+    res.write('event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":1834,"output_tokens":712,"cache_read_input_tokens":96512,"cache_creation_input_tokens":0}}\n\n');
+    res.end('event: message_stop\ndata: {"type":"message_stop"}\n\n');
+  });
+  assert.deepEqual(result.usage, { inputTokens: 1834, outputTokens: 712, cacheReadInputTokens: 96512, cacheWriteInputTokens: 0 });
+  assert.equal(result.providerName, 'Fireworks');
+  assert.ok(!JSON.stringify(timing).includes('done'), 'counts, never content');
+});
+
+test('a whole JSON reply reports its counts; a reply that reports none carries none', async (t) => {
+  const json = await outcomeOf(t, (res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ id: 'gen-4', type: 'message', usage: { input_tokens: 20, output_tokens: 5, cache_read_input_tokens: 'x' } }));
+  });
+  assert.deepEqual(json.result.usage, { inputTokens: 20, outputTokens: 5 });
+  const silent = await outcomeOf(t, (res) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.end('event: message_start\ndata: {"type":"message_start","message":{"id":"gen-5","model":"m"}}\n\n');
+  });
+  assert.equal(silent.result.usage, undefined);
 });
 
 test('a refusal says its status, type, provider and a redacted message', async (t) => {
