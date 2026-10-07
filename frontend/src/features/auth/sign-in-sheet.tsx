@@ -342,15 +342,17 @@ export function phoneE164(raw: string): string | null {
 }
 
 /**
- * The line over "Sign in with a password", for the screen that opened the
- * sheet. Only what is true there: an invite's Join and the story's Get
- * started make an account for a new address; the story's Sign in is for
- * somebody who has one.
+ * The one line under the first step's button. The first step is the title,
+ * the field, the button and this one line, nothing more (#4037, the owner's
+ * review of 7 October). Where the sheet makes an account (the story's Make
+ * an account, an invite's Join) it is the terms line, since continuing is
+ * agreeing (tests/terms-first-run.test.js); somebody with an account signs
+ * in from the story's own Sign in, or with the same email code. The story's
+ * Sign in, and the other ways after an invite's phone step, are for an
+ * account somebody has, so there it is the way to its password.
  */
-export function passwordLead(from: 'invite' | 'story' | 'signin'): string {
-  if (from === 'invite') return 'New to Homeroom? This makes your account. ';
-  if (from === 'story') return 'Already have an account? ';
-  return '';
+export function firstStepLine(from: 'invite' | 'story' | 'signin', phone = false): 'terms' | 'password' {
+  return from === 'signin' || phone ? 'password' : 'terms';
 }
 
 /** The line Google asks for where its reCAPTCHA badge is not shown (./recaptcha.ts). */
@@ -942,6 +944,19 @@ export function SignInSheet({
 
   if (!open) return null;
 
+  const oneLine = firstStepLine(from, phone) === 'password' ? (
+    <p className="text-center text-[13px] text-zinc-500 dark:text-zinc-400">
+      <a
+        href="#login"
+        data-sign-in-sheet-password=""
+        onClick={(e) => { e.preventDefault(); setError(null); setDetails(null); setStep('password'); }}
+        className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
+      >
+        Sign in with a password
+      </a>
+    </p>
+  ) : <TermsNotice />;
+
   const waitLeft = Math.max(0, Math.ceil((cooldownUntil - now) / 1000));
   const heading = step === 'choose' || step === 'email' || step === 'phone' ? title
     : step === 'code' ? 'Check your email'
@@ -1043,6 +1058,7 @@ export function SignInSheet({
             {phone ? (
               <button type="button" data-sign-in-sheet-to-phone="" className={QUIET} onClick={() => { setError(null); setStep('phone'); }}>New to Homeroom? Join with your phone</button>
             ) : null}
+            {oneLine}
           </div>
         ) : null}
 
@@ -1055,6 +1071,7 @@ export function SignInSheet({
               </div>
             </div>
             <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Sending code…' : 'Send code'}</button>
+            {oneLine}
             {providers.length ? (
               <button type="button" className={QUIET} onClick={() => { setError(null); setStep('choose'); }}>Other ways to continue</button>
             ) : null}
@@ -1201,20 +1218,8 @@ export function SignInSheet({
             </a>
           </p>
         ) : null}
-        {step === 'choose' || step === 'email' ? (
-          <p className="mt-4 text-center text-[13px] text-zinc-500 dark:text-zinc-400">
-            {phone ? '' : passwordLead(from)}
-            <a
-              href="#login"
-              data-sign-in-sheet-password=""
-              onClick={(e) => { e.preventDefault(); setError(null); setDetails(null); setStep('password'); }}
-              className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
-            >
-              Sign in with a password
-            </a>
-          </p>
-        ) : null}
-        <TermsNotice className="mt-3" />
+        {/* The first step's one line is its own (above); every later step keeps the terms. */}
+        {step === 'choose' || step === 'email' ? null : <TermsNotice className="mt-3" />}
       </div>
     </div>
   );

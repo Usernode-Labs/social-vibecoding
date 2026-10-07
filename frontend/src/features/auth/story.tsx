@@ -34,8 +34,10 @@ export function Story({ primaryClass, onStart, onSignIn }: {
         draggable={false}
         className="mx-auto mt-4 block h-auto w-[112px] max-w-full"
       />
-      {/* Centred in the room between the picture and the button. */}
-      <div className="my-auto flex flex-col items-center gap-6 py-8">
+      {/* Centred in the room between the picture and the button, with air
+          around it and between the headline and the examples (the C1-story
+          board's 28px, and a little more: the owner's 7 Oct review). */}
+      <div className="my-auto flex flex-col items-center gap-8 py-10">
         <h1 className="text-[34px] leading-[38px] font-extrabold text-balance">
           Communities make apps together.
         </h1>

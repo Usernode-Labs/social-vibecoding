@@ -257,23 +257,30 @@ test('the password step is the sheet\'s: the link opens it, and Forgot password 
 });
 
 test('each way into the sheet says only what is true for it', () => {
-  const { SignInSheet, passwordLead } = loadTsx(SHEET);
-  assert.equal(passwordLead('invite'), 'New to Homeroom? This makes your account. ');
-  assert.equal(passwordLead('story'), 'Already have an account? ');
-  assert.equal(passwordLead('signin'), '');
+  const { SignInSheet, firstStepLine } = loadTsx(SHEET);
+  // The first step is the title, the field, the button and ONE line under it
+  // (#4037, the owner's 7 Oct review): the terms where the sheet makes an
+  // account, the way to a password where it is for an account somebody has.
+  assert.equal(firstStepLine('invite'), 'terms');
+  assert.equal(firstStepLine('story'), 'terms');
+  assert.equal(firstStepLine('signin'), 'password');
+  assert.equal(firstStepLine('invite', true), 'password');
   const render = (from, title) => renderToHtml(createElement(SignInSheet, {
     open: true, title, from, onClose() {}, primaryClass: 'pill',
   }));
   const signin = render('signin', 'Sign in');
-  assert.doesNotMatch(signin, /Welcome back/);
-  assert.doesNotMatch(signin, /New to Homeroom|This makes your account|Already have an account/);
-  assert.match(signin, /<p[^>]*><a href="#login" data-sign-in-sheet-password=""[^>]*>Sign in with a password<\/a><\/p>/,
-    'Sign in: the link alone');
   const start = render('story', 'Make your account');
-  assert.match(start, /Already have an account\? <a[^>]*>Sign in with a password<\/a>/);
-  assert.doesNotMatch(start, /New to Homeroom/);
   const join = render('invite', 'Join Sunday Run Club');
-  assert.match(join, /New to Homeroom\? This makes your account\. <a[^>]*>Sign in with a password<\/a>/);
+  const BUTTON = /<button type="submit"[^>]*>Send code<\/button>/;
+  // Sign in: the button, then the password link, and nothing after the form.
+  assert.match(signin, new RegExp(`${BUTTON.source}<p[^>]*><a href="#login" data-sign-in-sheet-password=""[^>]*>Sign in with a password</a></p></form></div></div>`),
+    'Sign in: the link alone, right under the button');
+  assert.doesNotMatch(signin, /agree to Homeroom/);
+  // Make your account and Join: the button, then the terms, and nothing after.
+  for (const html of [start, join]) {
+    assert.match(html, new RegExp(`${BUTTON.source}<p[^>]*>By continuing, you agree to Homeroom&#x27;s terms\\.</p></form></div></div>`));
+    assert.doesNotMatch(html, /Sign in with a password|New to Homeroom|This makes your account|Already have an account|Welcome back/);
+  }
   // Nothing the story's two sheets say is a dash.
   for (const html of [signin, start, join]) assert.doesNotMatch(html, /—/);
   // #4037: no sheet has a line under its title, the title says it, and no
@@ -281,6 +288,7 @@ test('each way into the sheet says only what is true for it', () => {
   for (const html of [signin, start, join]) {
     assert.match(html, /<\/button><\/div><form/, 'the title row, then the email step');
     assert.doesNotMatch(html, /<p class="mt-1 text-\[15px\] leading-snug/);
+    assert.equal(html.match(/<p[\s>]/g).length, 1, 'one line on the first step');
   }
   const landing = read(LANDING);
   assert.doesNotMatch(landing, /It takes a minute|Welcome back|Sign in or make an account/);
