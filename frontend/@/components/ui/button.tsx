@@ -172,6 +172,14 @@ const buttonVariants = cva('', {
       // dark. Call site: the first-session invite sheet's second button
       // (features/first-session/made.tsx InviteSheet, #4180).
       pillRaised: 'rounded-full bg-white shadow-sm hover:bg-zinc-50 dark:bg-zinc-800 dark:hover:bg-zinc-700',
+      // The neutral pill on a card that is itself drawn in `pillNeutral`'s
+      // fills: the messages surface (#2c2c2e in dark, the same as zinc-800)
+      // and the white light card, where zinc-100 is a faint wash and the pill
+      // read as a line of text (#4200). One step darker than the card in both
+      // themes, still neutral: a secondary action, not the accent. Call site:
+      // the Homeroom bot's activity card and tray tile links
+      // (features/messages/bot-activity.tsx ActivityLink).
+      pillOnCard: 'rounded-full bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-700 dark:hover:bg-zinc-600',
       pillDanger: 'rounded-full bg-red-500/10 hover:bg-red-500/15',
       // #settings-remove — the bordered destructive button.
       destructive: 'rounded-lg border border-red-400 dark:border-red-700',
