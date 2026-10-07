@@ -314,6 +314,25 @@ async function screensFor(stories, files) {
   return screens;
 }
 
+// The changes whose every screen showed no difference at all between before
+// and after, within the comparison's tolerance: a byte-identical pair is the
+// obvious case, and a pair that differs only by antialiasing is the same to
+// a person looking at it. A change with any screen that differs is not here.
+// A screen's areas compare its before with the after of `shot`, the first
+// change on it, so they say nothing about the other changes sharing that
+// before screen: those are left out (counted as differing).
+function unchangedStories(screens) {
+  const changed = new Set();
+  const seen = new Set();
+  for (const screen of screens || []) {
+    for (const id of screen.stories || []) {
+      seen.add(id);
+      if (id !== screen.shot || (screen.regions || []).length) changed.add(id);
+    }
+  }
+  return new Set([...seen].filter((id) => !changed.has(id)));
+}
+
 module.exports = {
   MAX_REGIONS,
   decode,
@@ -323,4 +342,5 @@ module.exports = {
   locate,
   locateAll,
   screensFor,
+  unchangedStories,
 };

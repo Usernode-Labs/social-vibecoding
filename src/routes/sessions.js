@@ -6645,13 +6645,18 @@ function buildHeadlessSeed(issueNumber, issue, comments, botUsername, threadMess
     createdAt: c.createdAt || '',
   }));
 
-  seed += `\n\n${threadContext.buildIssueDiscussionBlock({
-    issueNumber,
-    githubComments: clippedGithub,
-    threadMessages: thread,
-    botUsername,
-    truncated: list.length > kept.length,
-  })}`;
+  // Inside the same UNTRUSTED DATA warning a person's own session reads its
+  // discussion under (buildDiscussionPromptBlock): anyone can comment, on
+  // GitHub too, and the Homeroom bot builds from this seed.
+  seed += threadContext.buildDiscussionPromptBlock({
+    issueBlock: threadContext.buildIssueDiscussionBlock({
+      issueNumber,
+      githubComments: clippedGithub,
+      threadMessages: thread,
+      botUsername,
+      truncated: list.length > kept.length,
+    }),
+  });
   return seed;
 }
 

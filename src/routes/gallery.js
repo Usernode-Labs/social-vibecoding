@@ -160,6 +160,128 @@ function buildWhere({ app, problem, cursor }) {
   return { whereSql: where.join(' AND '), params };
 }
 
+// Merged proposals + their capture groups, newest first, keyset-paged on
+// (merged_at, id). Selects artifact METADATA only — never session_visuals.data
+// — so no image bytes cross this read. Shared by the console's route below
+// and the admin connector's (routes/bench-studio.js).
+async function listProposals(pool, query = {}) {
+  const limit = resolveLimit(query.limit);
+  const problem = resolveProblem(query.problem);
+  const cursor = resolveCursor(query.before, query.before_id);
+  const { whereSql, params } = buildWhere({ app: query.app, problem, cursor });
+
+  params.push(limit + 1);
+  const { rows } = await pool.query(
+    `SELECT cs.id, cs.merged_at, cs.pr_number, cs.pr_url, cs.pr_title, cs.session_title,
+            cs.capture_state, cs.capture_detail, cs.captured_at,
+            cs.shots_state, cs.shots_run_id,
+            cs.shots_detail, cs.shots_updated_at,
+            cs.source, cs.imported_pr_head_sha, cs.reviewed_head_sha,
+            cs.checks_commit_sha, cs.handoff_head_sha,
+            cs.app_id, a.slug AS app_slug, a.name AS app_name,
+            (SELECT jsonb_agg(jsonb_build_object(
+                      'id', v.id, 'kind', v.kind, 'media', v.media,
+                      'capture_index', v.capture_index,
+                      'captured_path', v.captured_path,
+                      'captured_viewport', v.captured_viewport,
+                      'commit_hash', v.commit_hash,
+                      'scenario_id', v.scenario_id,
+                      'scenario_fingerprint', v.scenario_fingerprint,
+                      'before_fell_back', v.before_fell_back,
+                      'shot_status', v.shot_status)
+                    ORDER BY v.capture_index, v.kind, v.media)
+               FROM session_visuals v WHERE v.session_id = cs.id) AS artifacts
+       FROM chat_sessions cs
+       LEFT JOIN apps a ON a.id = cs.app_id
+      WHERE ${whereSql}
+      ORDER BY cs.merged_at DESC, cs.id DESC
+      LIMIT $${params.length}`,
+    params
+  );
+
+  let hasMore = false;
+  if (rows.length > limit) { hasMore = true; rows.length = limit; }
+  const shotsBySession = await shotsView.getForSessions(pool, rows);
+
+  // Group each row's flat artifact list through services/visuals.js's
+  // groupRows — the SAME implementation the proposal cards and PR bodies
+  // use — so the client just renders and nothing can drift.
+  const proposals = rows.map((r) => {
+    const grouped = visuals.groupRows(
+      Array.isArray(r.artifacts) ? r.artifacts : [], visualHeadForSession(r)
+    );
+    return {
+      id: r.id,
+      mergedAt: r.merged_at,
+      prNumber: r.pr_number,
+      prUrl: r.pr_url,
+      title: r.session_title || r.pr_title || null,
+      appId: r.app_id,
+      appSlug: r.app_slug,
+      appName: r.app_name,
+      captureState: r.capture_state || null,
+      captureReason: (r.capture_detail && r.capture_detail.reason) || null,
+      captureDetail: r.capture_detail || null,
+      capturedAt: r.captured_at,
+      visuals: grouped,
+      shots: shotsBySession.get(Number(r.id)) || null,
+    };
+  });
+
+  // Staging demo rows (?demo=1) — first page only, prepended, so paging
+  // through real rows afterwards still behaves. Same shape/stance as
+  // routes/debug.js's stagingMockMergeRuns.
+  const demo = galleryDemo.IS_STAGING && query.demo === '1' && !cursor
+    ? galleryDemo.demoProposals()
+    : [];
+
+  const last = rows[rows.length - 1];
+  return {
+    proposals: demo.concat(proposals),
+    hasMore,
+    nextCursor: hasMore && last ? { before: last.merged_at, before_id: last.id } : null,
+  };
+}
+
+// Counters for the current filter — the "is capture still failing?"
+// scoreboard. Same predicate set as the list, minus the cursor and the
+// artifact aggregate.
+async function galleryStats(pool, query = {}) {
+  const problem = resolveProblem(query.problem);
+  const { whereSql, params } = buildWhere({ app: query.app, problem, cursor: null });
+  const { rows } = await pool.query(
+    `SELECT COUNT(*)::int AS total,
+            COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.missing_recording.sql})::int AS missing_recording,
+            COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.missing_before.sql})::int AS missing_before,
+            COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.before_fell_back.sql})::int AS before_fell_back,
+            COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.root_only.sql})::int AS root_only,
+            COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.failed_or_skipped.sql})::int AS failed_or_skipped,
+            COUNT(*) FILTER (WHERE cs.capture_state = 'captured')::int AS complete,
+            COUNT(*) FILTER (WHERE cs.shots_state = 'verified')::int AS shots_verified,
+            COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.relevance_failure.sql})::int AS relevance_failure,
+            COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.replay_failure.sql})::int AS replay_failure,
+            COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.unsupported_agent.sql})::int AS unsupported_agent,
+            COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.override.sql})::int AS override,
+            COUNT(*) FILTER (WHERE cs.capture_state IS NULL)::int AS unknown_state
+       FROM chat_sessions cs
+       LEFT JOIN apps a ON a.id = cs.app_id
+      WHERE ${whereSql}`,
+    params
+  );
+  // Staging demo (?demo=1): the injected list rows aren't in the DB, so
+  // add their counts on top of the real ones.
+  if (galleryDemo.IS_STAGING && query.demo === '1') {
+    const real = rows[0] || {};
+    const demo = galleryDemo.demoStats();
+    const merged = { ...real };
+    for (const [k, v] of Object.entries(demo)) {
+      merged[k] = (Number(real[k]) || 0) + v;
+    }
+    return { stats: merged, demo: true };
+  }
+  return { stats: rows[0] || {} };
+}
+
 function galleryRoutes(config) {
   const router = Router();
   const pool = getPool(config);
@@ -179,82 +301,7 @@ function galleryRoutes(config) {
   // — so no image bytes cross this endpoint.
   router.get('/api/gallery/proposals', async (req, res) => {
     try {
-      const limit = resolveLimit(req.query.limit);
-      const problem = resolveProblem(req.query.problem);
-      const cursor = resolveCursor(req.query.before, req.query.before_id);
-      const { whereSql, params } = buildWhere({ app: req.query.app, problem, cursor });
-
-      params.push(limit + 1);
-      const { rows } = await pool.query(
-        `SELECT cs.id, cs.merged_at, cs.pr_number, cs.pr_url, cs.pr_title, cs.session_title,
-                cs.capture_state, cs.capture_detail, cs.captured_at,
-                cs.shots_state, cs.shots_run_id,
-                cs.shots_detail, cs.shots_updated_at,
-                cs.source, cs.imported_pr_head_sha, cs.reviewed_head_sha,
-                cs.checks_commit_sha, cs.handoff_head_sha,
-                cs.app_id, a.slug AS app_slug, a.name AS app_name,
-                (SELECT jsonb_agg(jsonb_build_object(
-                          'id', v.id, 'kind', v.kind, 'media', v.media,
-                          'capture_index', v.capture_index,
-                          'captured_path', v.captured_path,
-                          'captured_viewport', v.captured_viewport,
-                          'commit_hash', v.commit_hash,
-                          'scenario_id', v.scenario_id,
-                          'scenario_fingerprint', v.scenario_fingerprint,
-                          'before_fell_back', v.before_fell_back,
-                          'shot_status', v.shot_status)
-                        ORDER BY v.capture_index, v.kind, v.media)
-                   FROM session_visuals v WHERE v.session_id = cs.id) AS artifacts
-           FROM chat_sessions cs
-           LEFT JOIN apps a ON a.id = cs.app_id
-          WHERE ${whereSql}
-          ORDER BY cs.merged_at DESC, cs.id DESC
-          LIMIT $${params.length}`,
-        params
-      );
-
-      let hasMore = false;
-      if (rows.length > limit) { hasMore = true; rows.length = limit; }
-      const shotsBySession = await shotsView.getForSessions(pool, rows);
-
-      // Group each row's flat artifact list through services/visuals.js's
-      // groupRows — the SAME implementation the proposal cards and PR bodies
-      // use — so the client just renders and nothing can drift.
-      const proposals = rows.map((r) => {
-        const grouped = visuals.groupRows(
-          Array.isArray(r.artifacts) ? r.artifacts : [], visualHeadForSession(r)
-        );
-        return {
-          id: r.id,
-          mergedAt: r.merged_at,
-          prNumber: r.pr_number,
-          prUrl: r.pr_url,
-          title: r.session_title || r.pr_title || null,
-          appId: r.app_id,
-          appSlug: r.app_slug,
-          appName: r.app_name,
-          captureState: r.capture_state || null,
-          captureReason: (r.capture_detail && r.capture_detail.reason) || null,
-          captureDetail: r.capture_detail || null,
-          capturedAt: r.captured_at,
-          visuals: grouped,
-          shots: shotsBySession.get(Number(r.id)) || null,
-        };
-      });
-
-      // Staging demo rows (?demo=1) — first page only, prepended, so paging
-      // through real rows afterwards still behaves. Same shape/stance as
-      // routes/debug.js's stagingMockMergeRuns.
-      const demo = galleryDemo.IS_STAGING && req.query.demo === '1' && !cursor
-        ? galleryDemo.demoProposals()
-        : [];
-
-      const last = rows[rows.length - 1];
-      res.json({
-        proposals: demo.concat(proposals),
-        hasMore,
-        nextCursor: hasMore && last ? { before: last.merged_at, before_id: last.id } : null,
-      });
+      res.json(await listProposals(pool, req.query || {}));
     } catch (err) {
       log.error('gallery', 'List gallery proposals failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -291,39 +338,7 @@ function galleryRoutes(config) {
   // artifact aggregate.
   router.get('/api/gallery/stats', async (req, res) => {
     try {
-      const problem = resolveProblem(req.query.problem);
-      const { whereSql, params } = buildWhere({ app: req.query.app, problem, cursor: null });
-      const { rows } = await pool.query(
-        `SELECT COUNT(*)::int AS total,
-                COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.missing_recording.sql})::int AS missing_recording,
-                COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.missing_before.sql})::int AS missing_before,
-                COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.before_fell_back.sql})::int AS before_fell_back,
-                COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.root_only.sql})::int AS root_only,
-                COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.failed_or_skipped.sql})::int AS failed_or_skipped,
-                COUNT(*) FILTER (WHERE cs.capture_state = 'captured')::int AS complete,
-                COUNT(*) FILTER (WHERE cs.shots_state = 'verified')::int AS shots_verified,
-                COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.relevance_failure.sql})::int AS relevance_failure,
-                COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.replay_failure.sql})::int AS replay_failure,
-                COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.unsupported_agent.sql})::int AS unsupported_agent,
-                COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.override.sql})::int AS override,
-                COUNT(*) FILTER (WHERE cs.capture_state IS NULL)::int AS unknown_state
-           FROM chat_sessions cs
-           LEFT JOIN apps a ON a.id = cs.app_id
-          WHERE ${whereSql}`,
-        params
-      );
-      // Staging demo (?demo=1): the injected list rows aren't in the DB, so
-      // add their counts on top of the real ones.
-      if (galleryDemo.IS_STAGING && req.query.demo === '1') {
-        const real = rows[0] || {};
-        const demo = galleryDemo.demoStats();
-        const merged = { ...real };
-        for (const [k, v] of Object.entries(demo)) {
-          merged[k] = (Number(real[k]) || 0) + v;
-        }
-        return res.json({ stats: merged, demo: true });
-      }
-      res.json({ stats: rows[0] || {} });
+      res.json(await galleryStats(pool, req.query || {}));
     } catch (err) {
       log.error('gallery', 'Gallery stats failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -335,6 +350,8 @@ function galleryRoutes(config) {
 
 module.exports = {
   galleryRoutes,
+  listProposals,
+  galleryStats,
   // Exported for unit tests (pure helpers, no DB).
   resolveLimit,
   resolveCursor,

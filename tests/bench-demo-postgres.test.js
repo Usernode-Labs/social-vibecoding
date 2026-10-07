@@ -101,7 +101,27 @@ test('the benchmark\'s staging fixtures against the full PostgreSQL schema', { t
   // The declared check: the area opens on its Overview, which reads both
   // fixtures (the default suite's answer, and the taste suite's scores).
   const dapp = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'dapp.json'), 'utf8'));
-  const checks = dapp.tests.filter((c) => c.path.startsWith('/#admin/homeroom-bot/benchmark'));
+  // The App bench studio's fixture: two starter briefs, each with three
+  // builds side by side (no pack, the demo pack, a reference), graded, with
+  // screenshots, and no branch a preview could point at.
+  const studio = require('../src/services/bench/studio');
+  assert.equal(await demo.seedStagingStudio(pool), true);
+  assert.equal(await demo.seedStagingStudio(pool), false, 'idempotent');
+  const g = await studio.gallery(pool, {});
+  assert.deepEqual(g.briefs.map((b) => b.ref).sort(), ['bread', 'tier-list']);
+  for (const b of g.briefs) {
+    assert.deepEqual(b.builds.map((x) => x.armLabel).sort(), ['reference ref-v1 + Staging demo theme v1', 'today', 'today + Staging demo theme v1']);
+    assert.ok(b.builds.every((x) => x.shots.length > 0 && x.code === null && x.criteria.of === 12));
+  }
+  const studioRuns = await studio.listStudioRuns(pool);
+  assert.deepEqual(studioRuns.map((x) => [x.id, x.counts.ok]), [[demo.STUDIO_RUN_ID, 6]]);
+  assert.ok(demo.STUDIO_RUN_ID < demo.TASTE_RUN_ID && demo.TASTE_RUN_ID < demo.RUN_ID, 'the console still opens on the core demo');
+  const studioCheck = dapp.tests.find((c) => c.path === '/#admin/homeroom-bot/benchmark/studio');
+  assert.match(studioCheck.expectSelector, /\[data-studio-brief="bread"\]/);
+  assert.equal(studioCheck.expectText, 'Bread Bot');
+
+  // The Studio place has a check of its own, which reads no fixture.
+  const checks = dapp.tests.filter((c) => c.path.startsWith('/#admin/homeroom-bot/benchmark') && !c.path.endsWith('/studio'));
   assert.equal(checks.length, 1, 'one declared check, as before the area had places of its own');
   const [check] = checks;
   assert.equal(check.path, '/#admin/homeroom-bot/benchmark', 'the Overview');
