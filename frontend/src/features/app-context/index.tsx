@@ -93,6 +93,15 @@ export function AppContextIsland() {
   // to the step that asks for it again ("Next on step 4 goes back to step
   // 3"). While the tour is up it decides when the menu closes: its
   // `closesPanel` steps shut it through AppContext.close().
+  //
+  // A CLICK INTO AN EMBEDDED APP REACHES NO PARENT LISTENER, so the blur
+  // stands in for it: a frame takes its clicks into its own document, and
+  // the parent window loses focus instead. By the time a tick has passed
+  // `document.activeElement` is the iframe element, so a blur that finds an
+  // IFRAME there was a click into the app, and it closes the menu — the
+  // click itself still lands in the app. A blur to another browser window
+  // or to dev tools leaves activeElement where it was (not an IFRAME) and
+  // the menu stays open. The tour and the kit-sheet guards mirror onDoc's.
   useEffect(() => {
     if (!open || adopted) return undefined;
     const onDoc = (event: Event) => {
@@ -105,7 +114,21 @@ export function AppContextIsland() {
       void AppContext.close();
     };
     document.addEventListener('click', onDoc, true);
-    return () => document.removeEventListener('click', onDoc, true);
+    const onBlur = () => {
+      // Focus has moved into a frame by the time this runs; read it a tick later.
+      setTimeout(() => {
+        if (document.activeElement?.tagName !== 'IFRAME') return;
+        const tour = document.getElementById(TOUR_ID);
+        if (tour && !tour.classList.contains('hidden')) return;
+        if (AppContext._sheet) return;
+        void AppContext.close();
+      }, 0);
+    };
+    window.addEventListener('blur', onBlur);
+    return () => {
+      document.removeEventListener('click', onDoc, true);
+      window.removeEventListener('blur', onBlur);
+    };
   }, [open, adopted]);
 
   // `?shot=app-about`: the menu open on its About pane, for the declared
