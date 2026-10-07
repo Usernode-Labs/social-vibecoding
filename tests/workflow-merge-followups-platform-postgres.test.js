@@ -196,4 +196,26 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     await platform.startWorkflow(off, { loops: true });
     assert.equal(platform.workflowRunning(), false, 'nothing left: no runtime');
   });
+
+  await t.test('with the flag off, a merge still waiting for a deploy keeps the runtime (review finding 3)', async () => {
+    await platform.startWorkflow(config, { loops: true });
+    deploys.fail = true;
+    const s = await proposal();
+    await platform.mergeConfirmed({ sessionId: s.id, appId: app.id, mergeSha: SHA('9'), force: false, tally: { yes: 1, required: 1, active: 1 } });
+    await until(async () => (await state(s)) === 'deploy_failed', 'deploy failed');
+    deploys.fail = false;
+    await until(async () => !(await pool.query(
+      `SELECT 1 FROM wf_work WHERE machine = 'merge-followups' AND status <> 'settled'
+       UNION ALL SELECT 1 FROM wf_events WHERE machine = 'merge-followups' AND status = 'pending'`)).rows.length,
+    'its work settled; it now only waits for a deploy');
+    await platform.stopWorkflow();
+    const off = { ...config, wfMergeFollowupsEnabled: false };
+    await platform.startWorkflow(off, { loops: true });
+    assert.equal(platform.workflowRunning(), true, 'a merge waiting for a deploy keeps it running');
+    assert.equal(platform.mergeFollowupsEnabled(), false);
+    // The drift poller's later deploy (a build GitHub says contains it) is heard.
+    await platform.productionDeployed(app.id, SHA('c'));
+    await until(async () => (await state(s)) === 'live', 'live after the flag went off');
+    await platform.stopWorkflow();
+  });
 });

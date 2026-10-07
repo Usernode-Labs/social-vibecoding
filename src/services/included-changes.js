@@ -61,13 +61,22 @@ function prLabel(row) {
 }
 
 /** The line its pull request is closed with. */
-function closingComment(carrier) {
-  return `Included in #${carrier.pr_number}, which went live.`;
+// `live: false`: the carrier is merged but not live yet (the merge-followups
+// workflow machine says so later, in the thread: liveLine).
+function closingComment(carrier, { live = true } = {}) {
+  return live ? `Included in #${carrier.pr_number}, which went live.` : `Included in #${carrier.pr_number}, which merged.`;
 }
 
 /** The line in its own thread. */
-function threadLine(row, carrier) {
-  return `${prLabel(row)} went live as part of ${prLabel(carrier)}, which was built on it. Its own vote is closed.`;
+function threadLine(row, carrier, { live = true } = {}) {
+  return live
+    ? `${prLabel(row)} went live as part of ${prLabel(carrier)}, which was built on it. Its own vote is closed.`
+    : `${prLabel(row)} was merged as part of ${prLabel(carrier)}, which was built on it, and goes live with it. Its own vote is closed.`;
+}
+
+/** The line in its own thread once its carrier is live (after threadLine's `live: false`). */
+function liveLine(row, carrier) {
+  return `${prLabel(row)} is live, as part of ${prLabel(carrier)}.`;
 }
 
 /** The author's notification, under "Live". */
@@ -270,12 +279,15 @@ async function settleIncluded({ config, pool, row, carrier, sha, deployed = true
  * Close the requests it was linked to, as its own merge would have through
  * `Closes #N`: bounties on them resolve to its author, and each one closed is
  * then read as closed everywhere (the open-issues cache, its twin row, a
- * close-issue vote on it). Resolves the numbers closed on GitHub.
+ * close-issue vote on it). Resolves the numbers closed on GitHub, or with
+ * `report`, { closed, failed: [{ number, status }] }, so a durable caller
+ * (the merge-followups workflow machine) can retry the ones that failed.
  */
-async function closeRequests({ pool, row, carrier, github, repo, d, bounties = true }) {
+async function closeRequests({ pool, row, carrier, github, repo, d, bounties = true, report = false }) {
   const { sanitizeIssueNumbers } = require('./pr-metadata');
   const numbers = sanitizeIssueNumbers(row.linked_issues);
-  if (!numbers.length) return [];
+  const answer = (closed, failed) => (report ? { closed, failed } : closed);
+  if (!numbers.length) return answer([], []);
   // The merge-followups workflow machine pays the bounties itself, in the
   // transition that marks the change merged (bounties: false).
   if (bounties) for (const n of numbers) {
@@ -283,7 +295,7 @@ async function closeRequests({ pool, row, carrier, github, repo, d, bounties = t
       appId: row.app_id, sessionId: row.id, awardeeUserId: row.user_id || null, issueNumber: n,
     }).catch((err) => log.warn('included-changes', 'Bounty payout failed', { sessionId: row.id, issueNumber: n, err: err.message }));
   }
-  if (!github) return [];
+  if (!github) return answer([], []);
   github.noteIssuesClosed?.(repo.owner, repo.repo, numbers);
   const closed = [];
   const failed = [];
@@ -292,13 +304,13 @@ async function closeRequests({ pool, row, carrier, github, repo, d, bounties = t
       await github.closeIssue(repo.owner, repo.repo, n);
       closed.push(n);
     } catch (err) {
-      failed.push(n);
+      failed.push({ number: n, status: err.status ?? null });
       log.warn('included-changes', 'Could not close a request of an included change', {
         sessionId: row.id, issueNumber: n, status: err.status, err: err.message,
       });
     }
   }
-  if (failed.length) github.unsuppressIssues?.(repo.owner, repo.repo, failed);
+  if (failed.length) github.unsuppressIssues?.(repo.owner, repo.repo, failed.map((f) => f.number));
   if (closed.length) {
     const prNumber = carrier.pr_number || null;
     d.watcher.bustAndBroadcast({ owner: repo.owner, repo: repo.repo, appSlug: row.app_slug, appId: row.app_id, closed });
@@ -307,7 +319,7 @@ async function closeRequests({ pool, row, carrier, github, repo, d, bounties = t
       d.watcher.resolveSupersededProposals({ pool, appId: row.app_id, appSlug: row.app_slug, prNumber, numbers: closed }),
     ]);
   }
-  return closed;
+  return answer(closed, failed);
 }
 
 module.exports = {
@@ -319,6 +331,7 @@ module.exports = {
   prLabel,
   closingComment,
   threadLine,
+  liveLine,
   authorLine,
   CANDIDATES_SQL,
   MARK_SQL,

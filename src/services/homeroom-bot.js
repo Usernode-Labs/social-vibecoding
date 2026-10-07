@@ -5940,7 +5940,9 @@ async function goAhead(pool, { runId, answers = [] }) {
  * as `why` (a new look at the request, a merge): recorded as not built,
  * and its card's buttons go. Resolves the runs ended. Never throws.
  */
-async function retireWaitingPlans(pool, { appId, issueNumber = null, issues = null, why, deps = {} }) {
+// `before` leaves alone the plans made after it (a merge's bookkeeping run
+// late by the merge-followups workflow machine: noteRequestMerged).
+async function retireWaitingPlans(pool, { appId, issueNumber = null, issues = null, why, before = null, deps = {} }) {
   const numbers = issues || [issueNumber];
   let rows = [];
   try {
@@ -5948,8 +5950,9 @@ async function retireWaitingPlans(pool, { appId, issueNumber = null, issues = nu
       `UPDATE homeroom_bot_runs SET awaiting_go_at = NULL, build_ok = FALSE, build_error = $3
         WHERE app_id = $1 AND issue_number = ANY($2::int[]) AND awaiting_go_at IS NOT NULL
           AND build_ok IS NULL AND build_session_id IS NULL
+          AND ($4::timestamptz IS NULL OR created_at <= $4::timestamptz)
         RETURNING id`,
-      [appId, numbers.map(Number), `skipped: ${why}`],
+      [appId, numbers.map(Number), `skipped: ${why}`, before],
     ));
     if (rows.length) await (deps.dm || require('./homeroom-bot-dm')).closePlanCards(pool, rows.map((r) => Number(r.id)));
   } catch (err) {
@@ -6742,7 +6745,7 @@ async function noteRequestMerged(pool, session, deps = {}) {
       [appId, issues, why, Number(merged.id), before],
     );
     // B6: and a first version's plan still waiting for Build it.
-    out.skipped += (await retireWaitingPlans(pool, { appId, issues, why: why.replace(/^skipped:\s*/, ''), deps })).length;
+    out.skipped += (await retireWaitingPlans(pool, { appId, issues, why: why.replace(/^skipped:\s*/, ''), before, deps })).length;
     const worker = deps.worker || require('./worker');
     for (const run of settled) {
       if (!run.build_session_id) { out.skipped += 1; continue; }

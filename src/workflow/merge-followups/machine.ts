@@ -255,7 +255,7 @@ function settleWrites(e: Event<any>, d: Data, s: NonNullable<Facts['session']>):
   ];
 }
 
-function merged(e: Event<any>, f: Facts): Outcome<MFState> {
+function merged(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFState> {
   const s = f.session!;
   const app = f.app!;
   const p = e.payload;
@@ -276,10 +276,18 @@ function merged(e: Event<any>, f: Facts): Outcome<MFState> {
   const notify: Notification[] = [voteUpdate(d, {}), { type: 'kickQueue', appId: d.appId, excludeSessionId: d.sessionId },
     { type: 'bell', sessionId: d.sessionId }];
   if (app.selfHosted) notify.push({ type: 'nudgeDeployer', sha: d.mergeSha, prNumber: d.prNumber });
-  return outcome('delivering', d, {
+  const x: Extra = {
     writes: [{ type: 'secrets', eventId: e.id, sessionId: d.sessionId, appId: d.appId }, ...settleWrites(e, d, s)],
     work, notify,
-  });
+  };
+  // The platform's own release reports itself when it boots, to the merges
+  // waiting then. A merge recorded after that boot (recovery finding it late)
+  // checks the build already running, which may contain it.
+  if (app.selfHosted && app.mainSha && d.mergeSha) {
+    if (app.mainSha === d.mergeSha) return toLive(e, d, app.mainSha, ctx, x);
+    if (d.repo) work.push(verifyWork(d, app.mainSha));
+  }
+  return outcome('delivering', d, x);
 }
 
 // Why a carried change can no longer be included: [main]'s CANDIDATES_SQL
@@ -311,14 +319,17 @@ function included(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFSt
     deliveredSha: null, liveAt: null, failure: null, followups: {},
   };
   const changes = legacy('services/included-changes');
+  // "Went live" only when it has: until its carrier is live, it is merged and
+  // goes live with it (the thread says so again on CarrierDelivered).
+  const live = p.carrierState === 'live';
   const work = settleWork(d, s.linkedIssues, true);
   if (d.repo && d.prNumber) {
     work.unshift({ kind: WORK.closePr, key: 'close-pr', input: {
-      ...d.repo, number: d.prNumber, comment: changes.closingComment(legacyRow(ref)), marker: `homeroom-included-${d.sessionId}`,
+      ...d.repo, number: d.prNumber, comment: changes.closingComment(legacyRow(ref), { live }), marker: `homeroom-included-${d.sessionId}`,
     } });
   }
   const x: Extra = {
-    writes: [...settleWrites(e, d, s), chat(e, d.appId, d.sessionId, changes.threadLine(legacyRow(d), legacyRow(ref)),
+    writes: [...settleWrites(e, d, s), chat(e, d.appId, d.sessionId, changes.threadLine(legacyRow(d), legacyRow(ref), { live }),
       { included: { sessionId: d.sessionId, inSessionId: ref.sessionId, inPrNumber: ref.prNumber } })],
     work,
     notify: [voteUpdate(d, { includedIn: ref.sessionId }), { type: 'bell', sessionId: d.sessionId }],
@@ -341,7 +352,7 @@ function workResult(status: Followup['status']) {
         [p.workKey]: { ...prev, status, ...(p.error ? { error: p.error.message } : {}) } } };
       const result = (p.result || {}) as { sha?: string; contains?: boolean; ids?: number[] };
       if (p.kind === WORK.deliver && s.name !== 'live') {
-        if (status === 'done') return toLive(e, d, result.sha || d.mergeSha, ctx);
+        if (status === 'done') return deployedBuild(e, s.name, d, result.sha ? String(result.sha).toLowerCase() : null, ctx);
         if (s.name === 'delivering') return toFailed(e, d, p.error?.message || 'the deploy failed');
       }
       if (p.kind === WORK.verify && status === 'done' && result.contains && s.name !== 'live') {
@@ -363,12 +374,34 @@ function workResult(status: Followup['status']) {
   };
 }
 
+// An included change whose carrier is now live: it is live too, and its
+// thread, which said it goes live with the carrier, says it is.
+function carrierLive(e: Event<any>, d: Data, ctx: TransitionContext): Outcome<MFState> {
+  const line = legacy('services/included-changes').liveLine(legacyRow(d), legacyRow(d.includedIn!));
+  return toLive(e, d, e.payload.sha, ctx, { writes: [chat(e, d.appId, d.sessionId, line)] });
+}
+
 const fromCarrier = (s: any, e: Event<any>): Check =>
   (s.data.role === 'included' && e.source.kind === 'message' && e.source.from.key === sessionKey(s.data.includedIn!.sessionId)
     ? ok() : reject('not_the_carrier'));
 
-// A production deploy of `sha`: the merge commit itself is live at once;
-// any other build is checked against GitHub (delivery.verify).
+// Production runs `sha`. The merge commit itself is live at once; any other
+// build is live only once GitHub says it contains the merge (delivery.verify),
+// whoever deployed it, the merge's own delivery included: a rebuild deploys
+// main's tip, which a rewritten main need not contain. Without a merge
+// commit (GitHub off) there is nothing to compare, and the delivery is the
+// fact.
+function deployedBuild(e: Event<any>, name: Going['name'], d: Data, sha: string | null, ctx: TransitionContext): Outcome<MFState> {
+  if (!d.mergeSha) return toLive(e, d, sha, ctx);
+  if (sha === d.mergeSha) return toLive(e, d, sha, ctx);
+  if (!sha || !d.repo || d.followups[`verify:${sha}`]) return { next: { name, data: d } };
+  return outcome(name, d, { work: [verifyWork(d, sha)] });
+}
+
+const verifyWork = (d: Data, sha: string): WorkRequest =>
+  ({ kind: WORK.verify, key: `verify:${sha}`, input: { ...d.repo!, mergeSha: d.mergeSha, sha } });
+
+// A production deploy of `sha` reported from outside (Deployed).
 const deployed = {
   guard: (s: any, e: Event<any>): Check => {
     if (s.data.role !== 'merge') return reject('carrier_delivers');
@@ -376,12 +409,8 @@ const deployed = {
     if (s.data.followups[`verify:${e.payload.sha}`]) return reject('already_checking');
     return ok();
   },
-  to: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFState> => {
-    if (e.payload.sha === s.data.mergeSha) return toLive(e, s.data, e.payload.sha, ctx);
-    if (!s.data.repo) return { next: s };
-    return outcome(s.name, s.data, { work: [{ kind: WORK.verify, key: `verify:${e.payload.sha}`,
-      input: { ...s.data.repo, mergeSha: s.data.mergeSha, sha: e.payload.sha } }] });
-  },
+  to: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFState> =>
+    deployedBuild(e, s.name, s.data, e.payload.sha, ctx),
 };
 
 const retryFollowup = {
@@ -441,7 +470,7 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
             : !f.session || !f.app ? reject('no_session')
               : f.session.status === 'merged' ? reject('already_merged')
                 : !['promoted', 'merging'].includes(f.session.status) ? reject('not_merging') : ok()),
-          to: (s, e, f) => merged(e, f),
+          to: (s, e, f, ctx) => merged(e, f, ctx),
         },
         Included: {
           guard: (s, e, f, ctx) => {
@@ -456,7 +485,7 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
         ...created,
         ...works,
         Deployed: deployed,
-        CarrierDelivered: { guard: fromCarrier, to: (s, e, f, ctx) => toLive(e, (s as Going).data, e.payload.sha, ctx) },
+        CarrierDelivered: { guard: fromCarrier, to: (s, e, f, ctx) => carrierLive(e, (s as Going).data, ctx) },
         CarrierDeployFailed: { guard: fromCarrier, to: (s, e) => toFailed(e, (s as Going).data, e.payload.message) },
         RetryDelivery: { ignore: 'not_failed' },
         RetryFollowup: retryFollowup,
@@ -465,7 +494,7 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
         ...created,
         ...works,
         Deployed: deployed,
-        CarrierDelivered: { guard: fromCarrier, to: (s, e, f, ctx) => toLive(e, (s as Going).data, e.payload.sha, ctx) },
+        CarrierDelivered: { guard: fromCarrier, to: (s, e, f, ctx) => carrierLive(e, (s as Going).data, ctx) },
         CarrierDeployFailed: { ignore: 'already_failed' },
         RetryDelivery: {
           guard: (s) => ((s as Going).data.role === 'merge' && !(s as Going).data.selfHosted ? ok() : reject('carrier_delivers')),

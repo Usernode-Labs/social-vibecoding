@@ -30,6 +30,7 @@ export interface App {
   repo: { owner: string; repo: string } | null;
   selfHosted: boolean;
   demoMode: boolean;
+  mainSha: string | null;   // the build production runs (the platform's own: written at boot)
 }
 
 export interface Facts { session: Session | null; app: App | null }
@@ -53,7 +54,7 @@ export async function readFacts(tx: Tx, sessionId: number, { lock }: { lock: boo
        FROM chat_sessions cs WHERE cs.id = $1`, [sessionId]);
   if (!s) return { session: null, app: null };
   const { rows: [a] } = await tx.query(
-    'SELECT id, slug, name, repo_url, self_hosted, demo_mode FROM apps WHERE id = $1', [s.app_id]);
+    'SELECT id, slug, name, repo_url, self_hosted, demo_mode, main_sha FROM apps WHERE id = $1', [s.app_id]);
   return {
     session: {
       id: s.id, appId: s.app_id, status: s.status, userId: s.user_id ?? null,
@@ -66,6 +67,7 @@ export async function readFacts(tx: Tx, sessionId: number, { lock }: { lock: boo
     app: a ? {
       id: a.id, slug: a.slug, name: a.name, repo: parseRepo(a.repo_url),
       selfHosted: !!a.self_hosted, demoMode: !!a.demo_mode,
+      mainSha: /^[0-9a-f]{40}$/i.test(String(a.main_sha || '')) ? String(a.main_sha).toLowerCase() : null,
     } : null,
   };
 }

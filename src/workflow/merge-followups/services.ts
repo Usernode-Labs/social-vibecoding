@@ -130,10 +130,16 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
         if (input.closeOnly) {
           const changes = legacy('services/included-changes');
           const row = { id: input.sessionId, app_id: input.appId, app_slug: input.appSlug, linked_issues: numbers };
-          const closed = await changes.closeRequests({
+          const { closed, failed } = await changes.closeRequests({
             pool, row, carrier: { pr_number: input.carrierPrNumber || null }, github: gh,
-            repo: { owner: input.owner, repo: input.repo }, d: changes.depsOf(), bounties: false,
+            repo: { owner: input.owner, repo: input.repo }, d: changes.depsOf(), bounties: false, report: true,
           });
+          // A request that is gone (404, 410) is closed enough; any other
+          // failure is retried (closing a closed request again is harmless).
+          const unclosed = failed.filter((f: { status: number | null }) => f.status !== 404 && f.status !== 410);
+          if (unclosed.length) {
+            throw new Error(`Could not close request${unclosed.length === 1 ? '' : 's'} ${unclosed.map((f: { number: number }) => `#${f.number}`).join(', ')} on GitHub`);
+          }
           return { closed };
         }
         if (numbers.length) {
@@ -148,6 +154,11 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
           owner: input.owner, repo: input.repo, prNumber: input.prNumber, linkedIssues: numbers,
           appSlug: input.appSlug, appId: input.appId, pool,
         });
+        // A linked request the watcher could neither see closed nor close is
+        // retried: the next attempt watches and closes again. A number only
+        // the PR's body names is never closed here, so it is not waited for.
+        const open = (out.stillOpen || []).filter((n: number) => numbers.includes(n));
+        if (open.length) throw new Error(`Linked request${open.length === 1 ? '' : 's'} ${open.map((n: number) => `#${n}`).join(', ')} still open on GitHub`);
         return out as Json;
       },
     },

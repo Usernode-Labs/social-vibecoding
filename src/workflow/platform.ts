@@ -50,12 +50,16 @@ export async function syncSettings(pool: Pool, config: any): Promise<void> {
   await setSetting(pool, `enabled:${MERGE}`, config.wfMergeFollowupsEnabled ? '1' : null);
 }
 
-// Work merge-followups accepted before its flag went off still runs (K13):
-// its queued work, and the events waiting for it.
+// Merges merge-followups accepted before its flag went off still finish
+// (K13): their queued work, the events waiting for them, and the merges
+// still waiting for a deploy that contains them (delivering, deploy_failed),
+// which only this runtime hears about (productionDeployed).
 async function mergesUnfinished(pool: Pool): Promise<boolean> {
   const { rows } = await pool.query(
     `SELECT EXISTS (SELECT 1 FROM wf_work WHERE machine = $1 AND status IN ('queued', 'running', 'reported'))
-         OR EXISTS (SELECT 1 FROM wf_events WHERE machine = $1 AND status = 'pending') AS unfinished`, [MERGE]);
+         OR EXISTS (SELECT 1 FROM wf_events WHERE machine = $1 AND status = 'pending')
+         OR EXISTS (SELECT 1 FROM wf_instances WHERE machine = $1 AND state IN ('delivering', 'deploy_failed')) AS unfinished`,
+    [MERGE]);
   return !!rows[0]?.unfinished;
 }
 

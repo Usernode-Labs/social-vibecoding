@@ -290,8 +290,12 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     assert.equal(r.live_at, null, 'not live before its carrier');
     assert.equal((await instance(carried)).state, 'delivering');
     assert.equal((await events(carried, 'pr_merged'))[0].metadata.includedIn, carrier.id);
-    assert.ok((await lines(carried)).some((l) => /went live as part of/.test(l.content)));
-    assert.ok((await workOf(carried)).some((w) => w.kind === WORK.closePr));
+    // Not "went live" while its carrier is not live (review finding 6).
+    const said = (await lines(carried)).map((l) => l.content);
+    assert.ok(said.some((c) => /was merged as part of PR #\d+: Fix, which was built on it, and goes live with it/.test(c)), said.join(' | '));
+    assert.ok(!said.some((c) => /went live|is live/.test(c)));
+    const closePr = (await workOf(carried)).find((w) => w.kind === WORK.closePr);
+    assert.match(closePr.input.comment, /^Included in #\d+, which merged\.$/);
     assert.ok(!(await workOf(carried)).some((w) => w.kind === WORK.deliver), 'its carrier delivers it');
     // The busy one moved on: left as it was, and free to merge on its own later.
     assert.equal(await instance(busy), undefined);
@@ -307,6 +311,7 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     assert.equal((await instance(carrier)).state, 'live');
     assert.equal((await instance(carried)).state, 'live');
     assert.ok((await row(carried.id)).live_at);
+    assert.ok((await lines(carried)).some((l) => /is live, as part of PR #\d+: Fix\./.test(l.content)), 'and now it says so');
     const { rows: [n] } = await pool.query(`SELECT detail FROM notifications WHERE session_id = $1 AND kind = 'pr_merged'`, [carried.id]);
     assert.match(n.detail, /^Included in #\d+, which went live\.$/);
   });
@@ -317,6 +322,46 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     await merge(s);
     await settle();
     assert.equal(work.seen.get(s.id), 'merged');
+  });
+
+  await t.test('a delivery is live only if what it deployed contains the merge (review finding 1)', async () => {
+    const a = await app();
+    const s = await proposal(a);
+    // The rebuild deployed main's tip, which (main rewritten) does not contain the merge.
+    work.results.set(WORK.deliver, { sha: SHA('b') });
+    work.results.set(WORK.verify, (input) => ({ sha: input.sha, contains: false }));
+    await merge(s);
+    await settle();
+    assert.equal((await instance(s)).state, 'delivering', 'not live on the rebuild\'s word');
+    assert.equal((await row(s.id)).live_at, null);
+    assert.ok((await workOf(s)).some((w) => w.work_key === `verify:${SHA('b')}`), 'checked against GitHub');
+    assert.ok(!(await lines(s)).some((l) => /is live/.test(l.content)));
+    // A later deploy that does contain it makes it live.
+    work.results.set(WORK.verify, (input) => ({ sha: input.sha, contains: true }));
+    await send(s, 'Deployed', { sha: SHA('c') });
+    await settle();
+    assert.equal((await instance(s)).state, 'live');
+    assert.equal((await instance(s)).data.deliveredSha, SHA('c'));
+    work.results.set(WORK.deliver, { sha: SHA('a') });
+  });
+
+  await t.test('a platform merge recorded after its release booted checks the running build (review finding 2)', async () => {
+    const a = await app({ selfHosted: true });
+    // The release that contains the merge is already running when recovery records it.
+    await pool.query('UPDATE apps SET main_sha = $1 WHERE id = $2', [SHA('a'), a.id]);
+    const s = await proposal(a);
+    await merge(s, { observedBy: 'recovery' });
+    assert.equal((await instance(s)).state, 'live');
+    assert.ok((await row(s.id)).live_at);
+    // A running build that is not the merge commit is checked against GitHub.
+    const b = await app({ selfHosted: true });
+    await pool.query('UPDATE apps SET main_sha = $1 WHERE id = $2', [SHA('d'), b.id]);
+    const s2 = await proposal(b);
+    work.results.set(WORK.verify, (input) => ({ sha: input.sha, contains: input.sha === SHA('d') }));
+    await merge(s2, { observedBy: 'recovery' });
+    assert.ok((await workOf(s2)).some((w) => w.work_key === `verify:${SHA('d')}`));
+    await settle();
+    assert.equal((await instance(s2)).state, 'live');
   });
 
   await t.test('the platform\'s own app is live when its release boots', async () => {
