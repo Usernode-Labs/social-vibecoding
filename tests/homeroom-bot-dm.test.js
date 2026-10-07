@@ -550,7 +550,10 @@ test('a question in the DM draws its answers, the default marked, and says an an
   const answered = { ...message, metadata: { homeroomBot: { ...message.metadata.homeroomBot, status: 'answered', answer: 'Oldest first' } } };
   const after = renderToHtml(createElement(BotQuestion, { message: answered, conversationId: 3 }));
   assert.doesNotMatch(after, /Something else/, 'no buttons once answered');
-  assert.match(after, /You answered: Oldest first/);
+  // #4197: the answer stays as a settled chip, with a quiet "You answered"
+  // line under it, in place of the joined "You answered: …" line.
+  assert.match(after, /<span class="messages-bot-chosen"><svg[^>]*aria-hidden="true"[^>]*>[\s\S]*?<\/svg><span>Oldest first<\/span><\/span><\/div><p class="messages-bot-answered">You answered<\/p>/);
+  assert.doesNotMatch(after, /You answered:/);
 
   const person = { ...message, sender: { id: 4, username: 'ada' } };
   assert.equal(renderToHtml(createElement(BotQuestion, { message: person, conversationId: 3 })), '', 'only the bot\'s own');
@@ -576,6 +579,9 @@ test('a question in the DM draws its answers, the default marked, and says an an
   assert.match(html, /<button type="button" data-bot-answer="default"><span>Newest first<\/span>/);
   assert.doesNotMatch(html, /messages-bot-primary|messages-bot-secondary/, 'a question\'s answers keep one look: none of them is the act');
   const css = read('public/css/app.css');
+  // #4197: the settled chip uses the accent's tint and tint ink, never its fill.
+  assert.match(css, /\.messages-bot-chosen \{[^}]*color: var\(--accent-tint-ink\);[^}]*background: var\(--accent-tint\);/);
+  assert.doesNotMatch(css, /\.messages-bot-chosen \{[^}]*var\(--accent\)[^}]*\}/);
   assert.match(css, /\.messages-bot-answers \.messages-bot-primary \{ color: var\(--accent-ink\); background: var\(--accent\); \}/);
   assert.match(css, /\.messages-bot-answers \.messages-bot-other,\s*\.messages-bot-answers \.messages-bot-secondary \{\s*color: var\(--text-secondary\);\s*background: var\(--dc-raised\);/);
   const check = JSON.parse(read('dapp.json')).tests.find((t) => t.id === 'homeroom-bot-dm-question');

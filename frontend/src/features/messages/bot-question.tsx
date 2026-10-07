@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-import { InfoCircleIcon } from '@/components/ui/icons';
+import { CheckIcon, InfoCircleIcon } from '@/components/ui/icons';
 
 import { answerBotQuestion, scopeKey, setReply, tapBotAction } from './store';
 import type { ConversationMessage, HomeroomBotAction, HomeroomBotMeta } from './types';
@@ -101,7 +101,19 @@ export function BotQuestion({ message, conversationId }: { message: Conversation
           {offer ? null : <button type="button" className="messages-bot-other" onClick={somethingElse}>Something else</button>}
         </div>
       ) : null}
-      {answered ? <p className="messages-bot-answered">{offer ? `You chose: ${answered}` : `You answered: ${answered}`}</p> : null}
+      {/* #4197: the answer stays as a settled chip, with a quiet "You
+          answered" under it; an offer keeps its one-line read. */}
+      {answered && !offer ? (
+        <>
+          <div className="mt-1.5">
+            <span className="messages-bot-chosen">
+              <CheckIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              <span>{answered}</span>
+            </span>
+          </div>
+          <p className="messages-bot-answered">You answered</p>
+        </>
+      ) : answered ? <p className="messages-bot-answered">{`You chose: ${answered}`}</p> : null}
       {(open || chosen) && mirrorsReplies(meta) ? (
         <p className="messages-bot-note">
           <InfoCircleIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />

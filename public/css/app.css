@@ -1388,6 +1388,23 @@ html:not(.dark) .messages-markdown .gc-ref-issue { background: rgba(16, 185, 129
   color: var(--text-muted);
   font-size: 13px;
 }
+/* #4197: an answer once chosen stays as a settled chip, in the accent's
+   tint, not its fill: it is decided, not a button to press again. */
+.messages-bot-chosen {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  max-width: 100%;
+  padding: 5px 12px;
+  border-radius: 9999px;
+  color: var(--accent-tint-ink);
+  background: var(--accent-tint);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.2;
+  text-align: left;
+}
 /* B8: Homeroom bot's row in Messages' "+" wears its mark, at the glyphs' size. */
 .messages-new-option-mark {
   width: 20px;

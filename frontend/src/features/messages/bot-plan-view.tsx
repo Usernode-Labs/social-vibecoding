@@ -1,5 +1,7 @@
 import { useState, type ReactNode } from 'react';
 
+import { CheckIcon } from '@/components/ui/icons';
+
 import type { HomeroomBotPlan } from './types';
 
 /*
@@ -22,9 +24,11 @@ import type { HomeroomBotPlan } from './types';
  *
  * Once its buttons go, the card says why in one quiet line: built, replaced
  * by a newer plan (its bullets fold away), stopped after a week with no tap
- * (its bullets stay), changes asked for, or no longer needed. Under it, a
- * host may add a `footer`: the chat's "Notify me when it's ready", right
- * after Build it is pressed there (./notify-me.tsx).
+ * (its bullets stay), changes asked for, or no longer needed. Built (#4197)
+ * keeps each question on its own line, the answer it went with under it as
+ * a settled chip, whether that answer was tapped or the suggested one. Under
+ * it, a host may add a `footer`: the chat's "Notify me when it's ready",
+ * right after Build it is pressed there (./notify-me.tsx).
  *
  * Pure: no store, so the App tab draws it without the Messages screen.
  */
@@ -106,10 +110,26 @@ export function PlanCardView({
           </div>
         </div>
       )) : null}
-      {shown === 'built' && choices.length ? (
-        <ul className="space-y-0.5 text-[0.8125rem] text-zinc-500 dark:text-zinc-400">
-          {plan.questions.map((q, i) => (choices[i] ? <li key={q.question}>{`${q.question} ${choices[i]}`}</li> : null))}
-        </ul>
+      {/* #4197: built, each question keeps its own line and the answer it
+          went with sits under it as a settled chip — tapped here or the
+          suggested one, so the card reads back what will be built. */}
+      {shown === 'built' && plan.questions.some((q, i) => choices[i] || (busy ? picked[i] || q.answers[0] : null)) ? (
+        <div className="flex flex-col gap-3" data-bot-plan-choices="">
+          {plan.questions.map((q, i) => {
+            const answer = choices[i] || (busy ? picked[i] || q.answers[0] : null);
+            return answer ? (
+              <div key={q.question}>
+                <p className="text-[0.9375rem] font-medium text-zinc-900 dark:text-zinc-100">{q.question}</p>
+                <div className="mt-1.5">
+                  <span className="messages-bot-chosen">
+                    <CheckIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    <span>{answer}</span>
+                  </span>
+                </div>
+              </div>
+            ) : null;
+          })}
+        </div>
       ) : null}
       {open ? (
         <div className="messages-bot-answers" role="group" aria-label="Actions">

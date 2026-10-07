@@ -238,7 +238,11 @@ test('B6: the plan card, drawn in every state', () => {
   assert.match(open, /class="messages-bot-secondary" data-bot-plan-change="">Change something<\/button>/);
   const built = draw({ state: 'built', choices: ['Phone alert'] });
   assert.ok(!/Build it<\/button>/.test(built));
-  assert.match(built, /How should it remind you\? Phone alert/);
+  // #4197: the question keeps its own line, the answer sits under it as a
+  // settled chip with a check, not flattened into one grey list.
+  assert.match(built, /<p class="text-\[0\.9375rem\] font-medium text-zinc-900 dark:text-zinc-100">How should it remind you\?<\/p><div class="mt-1\.5"><span class="messages-bot-chosen">/);
+  assert.match(built, /<span class="messages-bot-chosen"><svg[^>]*aria-hidden="true"[^>]*>[\s\S]*?<\/svg><span>Phone alert<\/span><\/span>/);
+  assert.ok(!/space-y-0\.5/.test(built), 'no grey list of question-and-answer joined together');
   assert.match(built, /You chose Build it/);
   const replaced = draw({ state: 'replaced' });
   assert.match(replaced, /Replaced by a newer plan/);
@@ -249,6 +253,7 @@ test('B6: the plan card, drawn in every state', () => {
   assert.match(draw({ state: 'changing' }), /You asked for changes\. A new plan is on its way\./);
   assert.match(draw({ state: 'closed' }), /No longer needed\./);
   assert.match(draw({ busy: true }), /data-bot-plan="built"/, 'Build it pressed here reads as chosen at once');
+  assert.match(draw({ busy: true }), /<span class="messages-bot-chosen">[\s\S]*?<span>In the app<\/span>/, 'Build it pressed here shows the suggested answer as a chip at once');
   assert.match(draw({ surface: 'app' }), /rounded-\[20px\] bg-\[color:var\(--dc-sheet-solid\)\]/, 'the App tab draws it as a card');
 });
 
