@@ -193,6 +193,16 @@ A service is a `WorkHandler` registered for a kind:
   item of the same kind with `continues: '<work key>'`. The new item then starts from that
   item's last checkpoint, so a manual retry of a close that already commented does not
   comment again. Without `continues`, a new key starts fresh.
+- **An event can cancel work it made obsolete.** An outcome's `cancel: [{ kind, key }]`
+  settles those items of the instance as cancelled in the event's transaction (`result`
+  gains `cancelled: true`):
+  - a queued item never runs;
+  - a running item loses its claim, so its `signal` aborts at the next lease renewal
+    (within a third of the lease) and it reports nothing;
+  - an item that already reported has its result refused (`work_cancelled`).
+
+  The kernel stops nothing outside the database. A build or Job the item started is
+  cleaned up by the machine's own work (the preview machine's `checks.cancel`).
 
 ## Timers and messages
 
