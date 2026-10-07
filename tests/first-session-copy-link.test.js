@@ -150,6 +150,25 @@ test('Copy link copies the note and the link, then does what a share does', () =
   assert.match(src, /const COPIED_MS = 1200;/);
 });
 
+test('Share link without a share sheet keeps the sheet up: the made screen is told when it closes', () => {
+  const src = read(MADE);
+  const share = src.slice(src.indexOf('const shareLink = useCallback'), src.indexOf('const copyLink = useCallback'));
+  const sheet = src.slice(src.indexOf('export function InviteSheet('), src.indexOf('export function PlanWaitsCard('));
+  // A finished share still closes the sheet with "Invite sent" at once.
+  assert.match(share, /if \(shared\) \{ await sent\(\); return; \}/, 'only a finished share closes through sent()');
+  // The fallback copy says so on the sheet instead: the note kept and posted
+  // as the copy happens, and nothing marked sent until the sheet closes.
+  assert.match(share, /await navigator\.clipboard\.writeText\(inviteText\(note, url\)\);\s+setStatus\('Link copied\. Paste it in your group chat\.'\);\s+keepNote\(made\.slug, note\);\s+await postNote\(\);\s+wentOut\.current = true;/);
+  assert.doesNotMatch(share.slice(share.indexOf('writeText')), /await sent\(\)|onSent\(\)/,
+    'the copy alone does not tell the made screen');
+  // Every way out of the sheet then says the invite went out (close).
+  assert.match(sheet, /const close = useCallback\(\(\) => \{ if \(wentOut\.current\) onSent\(\); else onClose\(\); \}, \[onClose, onSent\]\);/);
+  assert.equal((sheet.match(/onClick=\{close\}/g) || []).length, 2, 'the backdrop and the ✕ both leave through close');
+  assert.doesNotMatch(sheet, /onClick=\{onClose\}/, 'nothing closes by hand any more');
+  assert.match(sheet, /if \(e\.key === 'Escape'\) close\(\);/);
+  assert.match(sheet, /\}, \[close\]\);/);
+});
+
 test('opening the sheet makes no link: one is made only by a press', () => {
   const src = read(MADE);
   const sheet = src.slice(src.indexOf('export function InviteSheet('), src.indexOf('export function PlanWaitsCard('));

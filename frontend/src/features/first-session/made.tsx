@@ -281,7 +281,7 @@ export function InviteSheet({ made, me, making = true, onClose, onSent }: {
   /** Its first version is not live yet: "<me> is making <name>" (makerLine). */
   making?: boolean;
   onClose: () => void;
-  /** The link went out (shared or copied). */
+  /** The link went out (shared or copied); a share-copy reports it when the sheet closes. */
   onSent: () => void;
 }) {
   const [note, setNote] = useState(() => openingNote(made.slug, made.example?.note));
@@ -293,6 +293,9 @@ export function InviteSheet({ made, me, making = true, onClose, onSent }: {
   // Which button leads, read once as the sheet opens (inviteActions).
   const [actions] = useState(() => inviteActions(onTouch(), hasShareSheet()));
   const linkRef = useRef<string | null>(null);
+  // A share that fell back to the copy: the invite has gone out, but the
+  // sheet stays up to say so, and says it only when it closes (close).
+  const wentOut = useRef(false);
   // Whether the note in the box is theirs from this device (kept, or typed
   // here); until it is, a note on one of their own links replaces it.
   const ownNote = useRef(keptNote(made.slug) !== null);
@@ -310,11 +313,14 @@ export function InviteSheet({ made, me, making = true, onClose, onSent }: {
       .catch(() => {});
     return () => { live = false; };
   }, [made.slug]);
+  // Every way out of the sheet: after a share-copy the copy was the invite,
+  // so leaving says so; before anything went out it is just a close.
+  const close = useCallback(() => { if (wentOut.current) onSent(); else onClose(); }, [onClose, onSent]);
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [close]);
 
   // The maker's note, as their first message in the group's chat, once.
   const postNote = useCallback(async () => {
@@ -366,17 +372,21 @@ export function InviteSheet({ made, me, making = true, onClose, onSent }: {
           if ((err as Error)?.name === 'AbortError') return;
         }
       }
-      if (!shared) {
-        await navigator.clipboard.writeText(inviteText(note, url));
-        setStatus('Link copied. Paste it in your group chat.');
-      }
-      await sent();
+      // With a share sheet the share is the invite, as ever. Without one
+      // (or after it refused) the copy is the invite: say so on the sheet
+      // and let closing it tell the made screen, so what happened is seen.
+      if (shared) { await sent(); return; }
+      await navigator.clipboard.writeText(inviteText(note, url));
+      setStatus('Link copied. Paste it in your group chat.');
+      keepNote(made.slug, note);
+      await postNote();
+      wentOut.current = true;
     } catch {
       setError('Could not share the link. Try again.');
     } finally {
       setBusy(false);
     }
-  }, [busy, link, me, made.name, making, note, sent]);
+  }, [busy, link, me, made.name, made.slug, making, note, postNote, sent]);
 
   // Copy link: the note and the link, put on the clipboard inside the press
   // even while the link is still being made (copyText: Safari copies nothing
@@ -404,7 +414,7 @@ export function InviteSheet({ made, me, making = true, onClose, onSent }: {
   const tile = made.emoji || made.name.slice(0, 1);
   return (
     <div className="fixed inset-0 z-[9001]" data-first-session-invite="">
-      <div aria-hidden="true" onClick={onClose} className={`absolute inset-0 bg-black/40 transition-opacity duration-200 ${shown ? 'opacity-100' : 'opacity-0'}`} />
+      <div aria-hidden="true" onClick={close} className={`absolute inset-0 bg-black/40 transition-opacity duration-200 ${shown ? 'opacity-100' : 'opacity-0'}`} />
       <div
         role="dialog"
         aria-modal="true"
@@ -414,7 +424,7 @@ export function InviteSheet({ made, me, making = true, onClose, onSent }: {
         <div className="mx-auto h-1.5 w-10 rounded-full bg-zinc-300 dark:bg-zinc-700 md:hidden" aria-hidden="true" />
         <div className="mt-3 flex items-center gap-3">
           <h2 id="first-session-invite-title" className="min-w-0 flex-1 text-[17px] font-semibold">{`Invite people to ${made.name}`}</h2>
-          <button type="button" onClick={onClose} aria-label="Close" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-200 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+          <button type="button" onClick={close} aria-label="Close" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-200 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
             <XIcon className="h-4 w-4" aria-hidden="true" />
           </button>
         </div>
