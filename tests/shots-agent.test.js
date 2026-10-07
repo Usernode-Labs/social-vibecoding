@@ -152,6 +152,17 @@ test('the shots agent prompt asks for before/after shots and leaves judgement to
   assert.match(prompt, /fullPage screenshot shows no more than the screen does; call\s+browser_hover/,
     'the shell scrolls inside its panes, so hover scrolls the element into view');
   assert.match(prompt, /look at it: it should show what the\s+checkpoint describes/);
+  // What a survey of published shots showed going wrong: a page loaded at
+  // desktop size kept its layout on the phone screen, a hover reactions bar
+  // covered the change, before and after were scrolled to different places,
+  // and text that types itself out was shot half written.
+  assert.match(prompt, /Then open the start path\s+again, even when the page is already open/);
+  assert.match(prompt, /call browser_mouse_move_xy to an empty spot away from the\s+change/);
+  assert.match(prompt, /the same element scrolled into view at the same place/);
+  assert.match(prompt, /Let anything still moving settle first/);
+  assert.match(prompt, /close it before you shoot,\s+unless that sheet is itself the change/);
+  assert.match(prompt, /Read what save_shot answers/);
+  assert.match(prompt, /a before\s+and an after are the same image/);
   assert.match(prompt, /element shot leads the\s+change on the proposal, so take one\s+whenever intent\.focus/);
   assert.match(prompt, /leave out the element shot on that side/);
   assert.match(prompt, /including anything\s+drawn over its edges/, "a corner badge overflows its button");

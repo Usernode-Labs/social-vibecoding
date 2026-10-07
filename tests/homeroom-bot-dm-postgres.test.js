@@ -584,9 +584,14 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
       // #3870: a change ready to try, saying what it is, just before them,
       // then two activity cards (tests/homeroom-bot-activity-postgres.test.js).
       // #4046: before the plan, a plan built already with the card under it,
-      // and the waiting plan's own card.
-      assert.equal(messages.length, 11, 'one question, one ask, one offer, a built plan and its card, a plan and its card, two questions, a ready card and two cards, not one per visit');
-      const [question, ask, offer, built, building, planCard, plan, two, ready, ...cards] = [...messages].sort((a, b) => a.id - b.id);
+      // and the waiting plan's own card. #4097 follow-up: before the ready
+      // card, a build that did not finish, with its Try again button.
+      assert.equal(messages.length, 12, 'one question, one ask, one offer, a built plan and its card, a plan and its card, two questions, a stuck build, a ready card and two cards, not one per visit');
+      const [question, ask, offer, built, building, planCard, plan, two, stuck, ready, ...cards] = [...messages].sort((a, b) => a.id - b.id);
+      assert.equal(stuck.metadata.homeroomBot.kind, 'build_failed');
+      assert.equal(stuck.metadata.homeroomBot.status, 'open');
+      assert.deepEqual(stuck.metadata.homeroomBot.actions, [{ id: 'try_again', label: 'Try again', style: 'primary', type: 'prompt', quote: true }]);
+      assert.match(stuck.content, /^\*\*Staging demo app\*\* · request #13: Staging demo, a print view\n\n.*Reply here and I'll try again\.$/s);
       assert.deepEqual(cards.map((m) => m.metadata.homeroomBot.kind), ['activity', 'activity']);
       assert.deepEqual([built.metadata.homeroomBot.kind, built.metadata.homeroomBot.status, built.metadata.homeroomBot.choices],
         ['plan', 'answered', ['Each runner picks their own goal']]);
@@ -856,5 +861,41 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     assert.equal(again.duplicate, true);
     await setting('homeroom_bot_dm_users', '[]');
     assert.equal(await dm.noteBuildRestarted(pool, { app, issueNumber: 3786, runId: run.id + 1 }), null, 'nobody the bot DMs, nothing sent');
+  });
+
+  await t.test('#4097 follow-up: where it is stuck it says what to tap, and only its newest message\'s suggestions stay live', async () => {
+    await setting('homeroom_bot_dm_users', JSON.stringify([ada.username]));
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 4097, $2, 'Print view'), ($1, 4098, $2, 'Dark mode')`,
+      [app.id, ada.id],
+    );
+    const read = async (sent) => (await pool.query('SELECT metadata FROM conversation_messages WHERE id = $1', [sent.messageId])).rows[0].metadata.homeroomBot;
+    // A decision the bot waits on: never retired by what it says next.
+    const decision = await dm.sendDm(pool, {
+      bot, userId: ada.id, content: 'Want me to file this?',
+      metadata: { kind: 'confirm', actionId: 1, actions: [{ id: 'yes', label: 'File it', style: 'primary', type: 'server' }], status: 'open' },
+    });
+    const failed = await dm.relayIssuePost({ pool, app, issueNumber: 4097, kind: 'build_failed', postId: 40971, bot, dm: { reason: 'the build ran past its time limit' } });
+    let meta = await read(failed);
+    assert.deepEqual(meta.actions, [{ id: 'try_again', label: 'Try again', style: 'primary', type: 'prompt', quote: true }], 'Try again, sent quoting it');
+    assert.equal(meta.status, 'open');
+    const blocked = await dm.relayIssuePost({ pool, app, issueNumber: 4098, kind: 'blocked', postId: 40981, bot, dm: { reason: 'it does not say which screen' } });
+    meta = await read(blocked);
+    assert.deepEqual(meta.actions, [{ id: 'add_detail', label: 'Add detail', style: 'primary', type: 'reply' }], 'Add detail, quoted in the composer');
+    assert.equal(meta.mirrors, true, 'and what they write is posted on the request, which the reply bar says');
+    assert.equal((await read(failed)).status, 'closed', 'the bot moved on: Try again went with it');
+
+    const chat = await dm.sendDm(pool, {
+      bot, userId: ada.id, content: 'It is waiting its turn.', moment: 'reply',
+      metadata: { kind: 'chat', actions: dm.promptActions(['How long will it take?']), status: 'open' },
+    });
+    assert.equal((await read(blocked)).status, 'closed');
+    assert.equal((await read(chat)).status, 'open', 'the newest message keeps its own');
+    assert.equal((await read(decision)).status, 'open', 'an offer is a decision, not a suggestion');
+    await dm.sendDm(pool, { bot, userId: ada.id, content: 'Plain words.' });
+    assert.equal((await read(chat)).status, 'closed');
+    assert.equal(await dm.settlePrompt(pool, { botId: bot.id, userId: ada.id, conversationId: chat.conversationId, content: 'How long will it take?' }), false,
+      'a retired suggestion is not settled by typing its words');
+    await setting('homeroom_bot_dm_users', '[]');
   });
 });

@@ -472,6 +472,8 @@ const BOT_DM_BUILT_PLAN_KEY = 'staging-hrbot-plan-built';
 // B7, #3870: a change ready to try, its card saying what the change is.
 // Its session id stands for no session: Try it opens nothing (the demo
 // project has no slug) and Approve answers with an error, never a vote.
+// #4097 follow-up: a build that did not finish, with its Try again button.
+const BOT_DM_STUCK_KEY = 'staging-hrbot-build-failed';
 const BOT_DM_READY_KEY = 'staging-hrbot-ready';
 const BOT_DM_READY_SESSION_ID = 990901;
 
@@ -642,6 +644,17 @@ async function ensureBotDmFixture(pool, user) {
   // already there is left as it was rather than given a newer last message.
   if (!sentKeys.size) {
     const dm = require('./homeroom-bot-dm');
+    // #4097 follow-up: a build that did not finish says what to tap, Try
+    // again, rather than "reply here" with nothing to press.
+    const stuck = { appName: 'Staging demo app', issueNumber: 13, issueTitle: 'Staging demo, a print view' };
+    await conversations.sendMessage(pool, { id: bot.id }, opened.conversationId, {
+      content: dm.dmText('build_failed', { reason: 'the build ran past its time limit' }, stuck),
+      idempotency_key: BOT_DM_STUCK_KEY,
+    }, {
+      metadata: {
+        homeroomBot: { kind: 'build_failed', ...stuck, actions: dm.STUCK_ACTIONS.build_failed, status: 'open' },
+      },
+    });
     const ready = { appName: 'Staging demo app', issueNumber: 11, issueTitle: 'Staging demo, grey out finished items' };
     const card = { approve: true, last: true };
     await conversations.sendMessage(pool, { id: bot.id }, opened.conversationId, {

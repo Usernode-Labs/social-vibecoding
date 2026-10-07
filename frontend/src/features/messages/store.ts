@@ -1486,9 +1486,13 @@ export async function tapBotAction(message: ConversationMessage, action: Homeroo
     if (!conversationId || conversationId !== message.conversationId) return;
     const scope = scopeKey(conversationId, null);
     const staged = replyFor(scope);
-    if (staged) setReply(scope, null);
+    // A `quote` prompt replies to the message it sits on, so it is about what
+    // that message is about; any other is sent on its own. Either way a
+    // reply they had staged is theirs again after.
+    if (action.quote) setReply(scope, message);
+    else if (staged) setReply(scope, null);
     const sending = send({ content: action.label });
-    if (staged) setReply(scope, staged);
+    if (action.quote || staged) setReply(scope, staged || null);
     await sending;
     return;
   }

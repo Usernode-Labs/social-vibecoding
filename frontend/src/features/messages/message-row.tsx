@@ -16,6 +16,7 @@ import { BotActivityCard, isActivityMessage } from './bot-activity';
 import { BotQuestion, botMeta } from './bot-question';
 import { BotPlanCard, BotPlanFollowUp, BotTwoQuestions, isPlanMessage, isTwoQuestions } from './bot-plan';
 import { BotReadyCard, isReadyMessage } from './bot-ready';
+import { BotHeadWords, botHead, isHeadCard } from './bot-head-card';
 import { LinkEmbeds } from './link-cards';
 import { plainText } from './plain-text';
 import { confirmAction } from '../../lib/confirm';
@@ -241,10 +242,14 @@ export const MessageRow = memo(function MessageRow({
   const shortTime = timeOfDay(message.createdAt);
 
   // The words, as markdown. A Homeroom bot message about a request names its
-  // project, so its `#N` chips open that project's requests (#3770).
-  const words = message.content
-    ? <MessageMarkdown content={message.content} channels={channels} appSlug={botMeta(message)?.appSlug} />
-    : null;
+  // project, so its `#N` chips open that project's requests (#3770), and the
+  // line naming what it is about is that thing's card (#4097,
+  // ./bot-head-card.tsx), which is then not drawn again under the words.
+  const head = botHead(message.content, botMeta(message));
+  const objects = head ? message.objects.filter((object) => !isHeadCard(head, object)) : message.objects;
+  const words = !message.content ? null : head
+    ? <BotHeadWords head={head} objects={message.objects} channels={channels} />
+    : <MessageMarkdown content={message.content} channels={channels} appSlug={botMeta(message)?.appSlug} />;
 
   // The quoted reply, the body and the inline editor: the part of the
   // message that stands as the row's text. A deleted message says so in its
@@ -289,7 +294,7 @@ export const MessageRow = memo(function MessageRow({
         && !isTwoQuestions(message) && !isReadyMessage(message)
         ? <BotQuestion message={message} conversationId={conversationId} hidePrompts={hidePrompts} /> : null}
       {message.attachments.length ? <div className="messages-attachments">{message.attachments.map((attachment) => <Attachment key={attachment.id} attachment={attachment} />)}</div> : null}
-      {message.objects.length ? <div className="messages-object-list">{message.objects.map((object, index) => <ObjectCard key={`${object.type}-${index}`} object={object} />)}</div> : null}
+      {objects.length ? <div className="messages-object-list">{objects.map((object, index) => <ObjectCard key={`${object.type}-${index}`} object={object} />)}</div> : null}
       {/* #3660: a link in the words to one of Homeroom's own pages, as the
           card it names — for this reader, and never one already above. */}
       {message.content && !message.moderated ? <LinkEmbeds text={message.content} exclude={message.objects} /> : null}

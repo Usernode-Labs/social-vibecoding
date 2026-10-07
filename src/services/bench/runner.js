@@ -78,8 +78,10 @@ const GITHUB_READS = Object.freeze([
   'compareRefs', 'getProposalDiff', 'fetchPublicIssue', 'fetchIssueComments', 'getPR', 'getCommitAt',
 ]);
 
+// A trial's own branch, `bench/r<run>-t<trial>`, or the first commit a
+// run's first versions share, `bench/r<run>-s<id>` (services/bench/scaffold.js).
 function assertBenchBranch(branch) {
-  if (typeof branch !== 'string' || !/^bench\/r\d+-t\d+$/.test(branch)) {
+  if (typeof branch !== 'string' || !/^bench\/r\d+-[ts]\d+$/.test(branch)) {
     throw new BenchSideEffectError(`touch the branch ${branch}`);
   }
 }
@@ -223,7 +225,9 @@ async function openSession(pool, config, { user, app, model, branch, title }) {
  * model can see). Resolves { routed, result, stopped, infra, costUsd, usage,
  * prompt }, `prompt` being what was sent; never throws.
  */
-async function runTurn({ pool, config, user, session, repo, prompt, mode, model, budgetMs, deps, commitMsg = '' }) {
+async function runTurn({
+  pool, config, user, session, repo, prompt, mode, model, budgetMs, deps, commitMsg = '', onActivity = null,
+}) {
   const { worker, sessions, agentTurn, activeWorkers } = deps;
   let containerName;
   try {
@@ -268,7 +272,11 @@ async function runTurn({ pool, config, user, session, repo, prompt, mode, model,
           mode, prompt: sent, model, commitMsg, resumeSessionId: null, branchName: session.branch_name,
           // As the bot's follow-up asks: a failed turn's work is not kept.
           discardFailedTurn: true,
-          ...(ctx || {}), telemetryComponent: TELEMETRY, onProgress: () => {},
+          ...(ctx || {}), telemetryComponent: TELEMETRY,
+          // A studio trial's watch (services/bench/progress.js); nothing else.
+          onProgress: typeof onActivity === 'function'
+            ? (line) => { try { onActivity(line); } catch { /* a watcher never stops a turn */ } }
+            : () => {},
         });
       },
       retryPredicate: () => null,
@@ -377,7 +385,7 @@ function turnFields(turn) {
   };
 }
 
-function triagePrompt(snapshot, seed, readsImages = false) {
+function triagePrompt(snapshot, seed, readsImages = false, guidance = null) {
   const bot = require('../homeroom-bot');
   return bot.triagePromptFor({
     seed, issueNumber: snapshot.issueNumber, firstVersion: !!snapshot.extra?.firstVersion, readsImages,
@@ -385,6 +393,8 @@ function triagePrompt(snapshot, seed, readsImages = false) {
     decider: snapshot.extra?.decider || null,
     // A first version's people when the original look ran (membersNote).
     members: snapshot.extra?.members || null,
+    // A studio trial's context pack (services/bench/packs.js).
+    guidance,
   });
 }
 
@@ -433,12 +443,13 @@ async function triageStage(ctx) {
   await ctx.onSession?.(session.id, { baseSha: base, branch });
   // Rendered at dispatch for what the trial's model can see, as the bot's
   // own triage is (homeroom-bot.js runTriage).
+  const guidance = ctx.guidance?.triage || null;
   const turn = await runTurn({
-    pool, config, user, session, repo, mode: 'scout', model, budgetMs: budgets.turnMs, deps,
-    prompt: (runtime) => triagePrompt(snapshot, seed, require('../prompts').runtimeReadsImages(runtime)),
+    pool, config, user, session, repo, mode: 'scout', model, budgetMs: budgets.turnMs, deps, onActivity: ctx.onActivity,
+    prompt: (runtime) => triagePrompt(snapshot, seed, require('../prompts').runtimeReadsImages(runtime), guidance),
   });
   const out = { session_id: session.id, base_sha: base, build_branch: branch, ...turnFields(turn), session };
-  return triageResult({ turn, out, prompt: turn.prompt || triagePrompt(snapshot, seed), snapshot });
+  return triageResult({ turn, out, prompt: turn.prompt || triagePrompt(snapshot, seed, false, guidance), snapshot });
 }
 
 async function specStage(ctx) {
@@ -551,6 +562,15 @@ async function buildStage(ctx) {
     sessionTitle: title,
     telemetry: TELEMETRY,
     onSession: async (s) => { sessionId = s.id; await ctx.onSession?.(s.id, { branch }); },
+    // A first version's spec model when it differs from its build's (the
+    // `today` preset: the bot's own model for each stage), and a studio
+    // trial's pack and watch. None of them for any other build task.
+    ...(ctx.specModel ? { specModel: ctx.specModel } : {}),
+    ...(ctx.guidance ? { specGuidance: ctx.guidance.spec || null, buildGuidance: ctx.guidance.build || null } : {}),
+    ...(ctx.onActivity ? { onProgress: ctx.onActivity } : {}),
+    ...(ctx.onStep ? { onStage: ctx.onStep } : {}),
+    // A studio trial an admin cancelled stops before its build turn.
+    ...(ctx.skipCheck ? { skipCheck: ctx.skipCheck } : {}),
   });
   return buildResult({ built, base, branch, sessionId, deps, repo, task, trial });
 }
@@ -680,54 +700,104 @@ async function captureStage(ctx) {
 }
 
 /**
- * A first-version trial: the bot's real first-version path from a brief.
- * Today's starter rendered for the app's name as a commit with no history
- * on the trial's branch; the brief filed as the new project's request; the
- * triage with the first-version note; when it is ready, the spec and the
- * build on the first version's longer clocks (buildAndPropose, never
- * proposed); then the screenshot step on the build's worker. A triage that
- * does not answer `ready` builds nothing, as the bot would not, and the
- * trial says what it answered instead.
+ * The model each turn of a first version runs on: the trial's own for all
+ * three, or, for the studio's `today` preset (services/bench/studio.js),
+ * what the live bot runs each stage on now. Pure.
+ */
+function firstVersionModels(ctx) {
+  const m = ctx.stageModels || {};
+  return { triage: m.triage || ctx.model, spec: m.spec || ctx.model, build: m.build || ctx.model };
+}
+
+/**
+ * A first-version trial: the bot's real first-version path from a brief,
+ * the way a project's first version is made today.
+ *
+ *   1. The new project's first commit (services/bench/scaffold.js): today's
+ *      starter rendered for the app's name, the first session's card of the
+ *      idea, and the context pack's files, made once per run, task and pack
+ *      and shared by every arm; the trial's branch is cut at it.
+ *   2. The brief filed as the project's first request, quoting the card as
+ *      the live one does (homeroom-bot-dm firstVersionIssue).
+ *   3. The triage with the first-version note (and the pack's guidance).
+ *   4. The plan. The live bot shows it to the creator and waits for Build it
+ *      (homeroom-bot.js awaitGo, goAhead); here the creator taps Build it
+ *      without changing anything, so the build note gets exactly the line
+ *      goAhead adds for the plan's suggested answers (creatorChoiceNote).
+ *   5. The spec and the build on the first version's longer clocks
+ *      (buildAndPropose, never proposed), each on its own model.
+ *   6. The screenshot step on the build's worker.
+ *
+ * A triage that does not answer `ready` builds nothing, as the bot would
+ * not, and the trial says what it answered instead.
  */
 async function firstVersionStage(ctx) {
-  const { snapshot, repo, trial, deps, budgets } = ctx;
+  const { pool, snapshot, repo, trial, deps, budgets } = ctx;
   const taste = require('./taste');
+  const bot = require('../homeroom-bot');
+  const scaffold = require('./scaffold');
   const input = taste.inputOf(snapshot);
   if (!input.brief || !input.appName) return { status: 'infra_fail', error: 'the task has no brief' };
+  const step = (name) => { try { ctx.onStep?.(name); } catch { /* a watcher never stops a trial */ } };
+  const models = firstVersionModels(ctx);
   const branch = branchFor(trial);
+  step('scaffold');
+  const made = await (deps.scaffold || scaffold.ensure)(pool, {
+    runId: trial.run_id, taskId: ctx.task?.id, pack: ctx.pack || null, input, repo, github: deps.github, user: ctx.user, deps,
+  });
+  if (!made || !made.ok) return { status: 'infra_fail', error: `scaffold: ${made?.error || 'not made'}` };
   let base;
   try {
-    base = await deps.github.createBenchScaffold(
-      repo.owner, repo.repo, branch, taste.scaffoldFiles(input), `Initialize ${input.appName} from Homeroom template`,
-    );
+    // An earlier attempt's branch of the same trial (a restart) goes first.
+    await deps.github.deleteBenchBranch(repo.owner, repo.repo, branch);
+    base = await pinBranch(deps.github, repo, branch, made.sha);
   } catch (err) {
-    return { status: 'infra_fail', error: `scaffold: ${err.message}` };
+    return { status: 'infra_fail', error: `branch: ${err.message}` };
   }
+  const card = scaffold.requestCard(made.sketch);
   const botLogin = await require('../homeroom-bot-live').botUsernameOf(deps.github).catch(() => null);
-  const request = taste.firstVersionRequest(input);
-  const seed = taste.seedFor(input, botLogin);
+  const request = taste.firstVersionRequest(input, card);
+  const seed = taste.seedFor(input, botLogin, card);
   const replay = {
     ...snapshot, issueNumber: taste.ISSUE_NUMBER, baseSha: base, promptHash: null,
     texts: { seed, build_note: '' }, thread: { issue: { title: request.title } },
     extra: { ...(snapshot.extra || {}), firstVersion: true },
   };
-  const triaged = await triageStage({ ...ctx, snapshot: replay, baseSha: base });
+  const started = {
+    scaffold: { sha: made.sha, branch: made.branch || null },
+    sketch: card ? { emoji: card.emoji || null, tagline: card.tagline || null, points: card.points || [] } : null,
+    models,
+  };
+  step('triage');
+  const triaged = await triageStage({ ...ctx, model: models.triage, snapshot: replay, baseSha: base });
   const sessionIds = [triaged.session_id].filter(Boolean);
   const common = { base_sha: base, build_branch: branch, session_ids: sessionIds };
   const triage = triaged.parsed ? {
     verdict: triaged.parsed.verdict, question: triaged.parsed.question || null, buildNote: triaged.parsed.buildNote || null,
     reason: triaged.parsed.reason || null, assumptions: triaged.parsed.assumptions || [],
   } : null;
-  if (triaged.status !== 'ok') return { ...triaged, ...common, session: undefined, parsed: { triage, built: false } };
+  if (triaged.status !== 'ok') return { ...triaged, ...common, session: undefined, parsed: { ...started, triage, built: false } };
   if (triage.verdict !== 'ready') {
     return {
       ...common, session_id: triaged.session_id, status: 'ok', cost_usd: triaged.cost_usd,
-      raw_output: triaged.raw_output, parsed: { triage, built: false },
+      raw_output: triaged.raw_output, parsed: { ...started, triage, built: false },
     };
   }
+  // An admin's cancel (services/bench/lane.js cancelTrial) ends it here.
+  const stopped = ctx.skipCheck ? await ctx.skipCheck() : null;
+  if (stopped) {
+    return { ...common, session_id: triaged.session_id, status: 'cancelled', error: stopped, cost_usd: triaged.cost_usd, parsed: { ...started, triage, built: false } };
+  }
+  step('plan');
+  const plan = bot.planFor(triaged.parsed);
+  const chosen = bot.choicesFrom(plan.questions, []);
+  const buildNote = `${triage.buildNote || ''}${bot.creatorChoiceNote(chosen)}`;
+  step('spec');
   const built = await buildStage({
     ...ctx,
-    snapshot: { ...replay, texts: { seed, build_note: triage.buildNote || '' } },
+    model: models.build,
+    specModel: models.spec !== models.build ? models.spec : null,
+    snapshot: { ...replay, texts: { seed, build_note: buildNote } },
     // A first version's own clocks (homeroom-bot buildBudgets, firstVersion).
     budgets: budgets.firstVersion || budgets,
   });
@@ -736,14 +806,52 @@ async function firstVersionStage(ctx) {
   const merged = {
     ...built, base_sha: base, build_branch: branch, session_id: built.session_id || triaged.session_id, session_ids: [...new Set(ids)],
     cost_usd: cost.length ? cost.reduce((a, b) => a + b, 0) : null,
-    parsed: { ...(built.parsed || {}), triage },
+    parsed: { ...started, ...(built.parsed || {}), triage, plan: { bullets: plan.bullets, questions: plan.questions, chosen } },
   };
   if (built.status !== 'ok' || !built.parsed?.built || !built.session_id) return merged;
+  step('capture');
   const shot = await screenshotStep(ctx, built.session_id);
   // The platform failing to run the step is not the build's fault: the
   // trial is a fault, kept out of quality, with its build still recorded.
   if (!shot.ok) return { ...merged, status: 'infra_fail', error: shot.error };
   return { ...merged, capture: shot.capture };
+}
+
+/**
+ * A reference build (services/bench/studio.js submitReference): an app a
+ * Claude Code session built from the same first commit and pack, copied
+ * into the trial's branch when it was handed in (capture_sha). It is judged
+ * like the bot's builds and so goes through the same screenshot step, in the
+ * same sealed worker, with no model turn: nothing is spent on a model. Its
+ * diff is read against the first commit it was built on.
+ */
+async function referenceStage(ctx) {
+  const { pool, config, user, app, repo, trial, deps, title } = ctx;
+  const sha = trial.capture_sha;
+  if (!sha) return { status: 'infra_fail', error: 'the reference names no commit' };
+  const scaffoldSha = trial.base_sha || null;
+  const branch = branchFor(trial);
+  let tip;
+  try {
+    tip = await pinBranch(deps.github, repo, branch, sha);
+  } catch (err) {
+    return { status: 'infra_fail', error: `branch: ${err.message}` };
+  }
+  const session = await openSession(pool, config, { user, app, model: ctx.sessionModel || ctx.model, branch, title });
+  // Sealed at the first commit it was built on, as a built first version's
+  // worker is at capture time.
+  await ctx.onSession?.(session.id, { baseSha: scaffoldSha || tip, branch });
+  const out = {
+    session_id: session.id, base_sha: scaffoldSha || tip, build_branch: branch, build_sha: sha, cost_usd: 0, session,
+    build_commits: Number.isFinite(trial.build_commits) && trial.build_commits > 0 ? trial.build_commits : 1,
+  };
+  const compared = scaffoldSha ? await branchDiff(deps.github, repo, scaffoldSha, branch) : null;
+  try { ctx.onStep?.('capture'); } catch { /* a watcher never stops a trial */ }
+  const shot = await screenshotStep(ctx, session.id);
+  const parsed = { built: true, reference: true, label: trial.reference_label || null, scaffold: { sha: scaffoldSha } };
+  const files = compared ? { diff: compared.diff, changed_files: { files: compared.files, complete: compared.complete, truncated: compared.truncated } } : {};
+  if (!shot.ok) return { ...out, ...files, status: 'infra_fail', error: shot.error, parsed };
+  return { ...out, ...files, status: 'ok', parsed, capture: shot.capture };
 }
 
 const STAGE_RUNNERS = Object.freeze({
@@ -754,7 +862,9 @@ const STAGE_RUNNERS = Object.freeze({
   checks_fix: (ctx) => followupStage(ctx, 'checks_fix'),
   // A DM task is a conversation of triage turns (services/bench/dm-sim.js).
   dm: (ctx) => require('./dm-sim').dmStage(ctx),
-  first_version: firstVersionStage,
+  // A reference build handed in from outside is a first version too,
+  // only captured (referenceStage).
+  first_version: (ctx) => (ctx.trial?.reference_label ? referenceStage(ctx) : firstVersionStage(ctx)),
   capture: captureStage,
 });
 
@@ -913,6 +1023,8 @@ module.exports = {
   STAGE_RUNNERS,
   triageStage,
   firstVersionStage,
+  firstVersionModels,
+  referenceStage,
   captureStage,
   screenshotStep,
   triageResult,
