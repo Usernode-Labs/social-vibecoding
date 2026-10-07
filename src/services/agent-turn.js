@@ -530,8 +530,10 @@ async function completeCodexAttempt({
       ? estimateRequestedModelCost(delta, row.metadata?.pricing)
       : { costSource: 'unavailable', estimatedCostUsd: null };
     const metadata = row.metadata || {};
-    // A stopped Claude Code turn priced from what its requests streamed
-    // (usageTotalFromResult): a floor, and marked as one.
+    // A stopped Claude Code turn priced from what its requests reported
+    // (usageTotalFromResult), and marked so: the sum of the requests that
+    // finished, or, without those, a floor from what Claude Code streamed.
+    if (usageTotal?.source === 'requests') metadata.usage_source = 'request_sum';
     if (usageTotal?.source === 'stream') metadata.usage_source = 'stream_floor';
     if (measuredComponent) {
       metadata.telemetry_component = measuredComponent;
@@ -946,8 +948,11 @@ function usageTotalFromResult(result) {
 // that is what such a turn is priced from. Before, the ledger recorded it at
 // 0 tokens and 'unavailable', so a build the Homeroom bot's clock stopped
 // cost "about $0" however long it ran (16 such builds in a week), and an
-// included key's allowance was never debited for a stopped turn. A floor:
-// the request in flight at the stop counts only what it had streamed.
+// included key's allowance was never debited for a stopped turn. The sum is
+// of the counts each finished request's reply closed on (source
+// 'requests'), or, failing those, of what Claude Code streamed (a floor,
+// source 'stream'). Either way the request in flight at the stop is left
+// out or counted short.
 // Inputs are already totalled the way OpenRouter bills them (cached reads
 // a subset). Claude harness only: a Codex turn's totals are a thread's
 // running total, which a per-turn sum would corrupt.
@@ -962,10 +967,10 @@ function streamedUsageFloor(r) {
   return {
     inputTokens: input,
     cachedInputTokens: count(relay.cachedInputTokens),
-    cacheWriteInputTokens: null,
+    cacheWriteInputTokens: count(relay.cacheWriteInputTokens),
     outputTokens: output,
     reasoningOutputTokens: null,
-    source: 'stream',
+    source: relay.source === 'requests' ? 'requests' : 'stream',
   };
 }
 

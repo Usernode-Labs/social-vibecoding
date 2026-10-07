@@ -295,6 +295,70 @@ test('a stopped Claude Code turn with no reported usage is priced from what its 
   assert.equal(row.updateParams[20], 'DeepInfra');
 });
 
+test('a stopped Claude Code turn is priced from the counts its finished requests closed on, not from what Claude Code streamed', async () => {
+  // Through OpenRouter, Claude Code's own events say 0 input tokens: the
+  // counts arrive only on each reply's closing message_delta. A 40-minute GLM
+  // build stopped by the bot's clock on 2026-10-06 was priced at 0 input and
+  // $0 that way. The request listener reads the closing counts of every
+  // request that finished, and those win.
+  const state = worker.newWatchState();
+  state.agentBackend = 'codex_openrouter';
+  state.agentHarness = 'claude';
+  const progress = [];
+  const feed = (line) => worker.parseLine(line, (l) => progress.push(l), state);
+  const provider = (event) => feed(`__USERNODE_CODING_PROVIDER__ ${JSON.stringify(event)}`);
+  const stream = (event, uuid) => feed(JSON.stringify({ type: 'stream_event', event, session_id: 'cc-or-2', parent_tool_use_id: null, uuid }));
+  feed(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'cc-or-2' }));
+  // What Claude Code streams through OpenRouter: no input on message_start.
+  stream({ type: 'message_start', message: { id: 'gen-1', model: 'z-ai/glm-5.3-flash', usage: { input_tokens: 0, output_tokens: 1 } } }, 'a1');
+  provider({ kind: 'provider_request_result', requestOrdinal: 1, httpStatus: 200, outcome: 'ok', providerName: 'Fireworks',
+    usage: { inputTokens: 1834, outputTokens: 712, cacheReadInputTokens: 96512, cacheWriteInputTokens: 0 } });
+  provider({ kind: 'provider_request_result', requestOrdinal: 2, httpStatus: 200, outcome: 'ok',
+    usage: { inputTokens: 900, outputTokens: 400, cacheReadInputTokens: 98000, cacheWriteInputTokens: 1200 } });
+  // The request the stop cut off reported nothing, and a bogus count is ignored.
+  provider({ kind: 'provider_request_result', requestOrdinal: 3, outcome: 'cancelled', usage: { inputTokens: -5, outputTokens: 'x' } });
+  worker.finalizeHarnessResult(state);
+  assert.deepEqual(state.relayUsage, {
+    requests: 2, inputTokens: 1834 + 96512 + 900 + 98000 + 1200, cachedInputTokens: 96512 + 98000,
+    cacheWriteInputTokens: 1200, outputTokens: 712 + 400, source: 'requests',
+  });
+  assert.equal(state.routedProvider, 'Fireworks');
+  const total = agentTurn.usageTotalFromResult({ ...state, agentHarness: 'claude' });
+  assert.equal(total.source, 'requests');
+  assert.equal(total.inputTokens, 198446);
+  assert.equal(total.cacheWriteInputTokens, 1200);
+
+  // Recorded as the sum of the requests, not as a floor.
+  const row = {
+    session_id: 6, status: 'running', agent_thread_id: null, reasoning_effort: null,
+    metadata: { pricing: { available: true, inputPricePerMillion: 0.15, outputPricePerMillion: 0.5 } },
+    input_tokens: 0, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0,
+  };
+  const client = {
+    async query(text, params) {
+      if (/FOR UPDATE/.test(text)) return { rows: [row] };
+      if (/^\s*UPDATE agent_turns/.test(text)) { row.updateParams = params; return { rowCount: 1 }; }
+      return { rows: [] };
+    },
+    release() {},
+  };
+  const out = await agentTurn.completeCodexAttempt({
+    pool: { async connect() { return client; } }, turnUuid: 'u-stop-2', status: 'failed', usageScope: 'run', usageTotal: total,
+  });
+  assert.ok(out.estimatedCost.estimatedCostUsd > 0.02, 'priced');
+  assert.equal(JSON.parse(row.updateParams[18]).usage_source, 'request_sum');
+
+  // With no finished request reported, the stream floor stands as before.
+  const old = worker.newWatchState();
+  old.agentBackend = 'codex_openrouter';
+  old.agentHarness = 'claude';
+  worker.parseLine(JSON.stringify({ type: 'stream_event', session_id: 's', parent_tool_use_id: null, uuid: 'b1',
+    event: { type: 'message_start', message: { id: 'g', model: 'm', usage: { input_tokens: 10, output_tokens: 1 } } } }), () => {}, old);
+  worker.finalizeHarnessResult(old);
+  assert.equal(old.relayUsage.source, undefined);
+  assert.equal(agentTurn.usageTotalFromResult({ ...old, agentHarness: 'claude' }).source, 'stream');
+});
+
 test('both ledger completions pass the routed provider the listener saw', () => {
   const fs = require('node:fs');
   const sessions = fs.readFileSync(require.resolve('../src/routes/sessions'), 'utf8');
