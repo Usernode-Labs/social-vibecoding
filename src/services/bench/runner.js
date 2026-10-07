@@ -568,6 +568,9 @@ async function buildStage(ctx) {
     deps: {
       worker: deps.worker, sessions: deps.sessions, agentTurn,
       activeWorkers: deps.activeWorkers, sessionLifecycle, seesImages: sight.told,
+      // Its reads only: whether a later build's repository has the
+      // frontend-design skill, as a live build asks (services/design-skill.js).
+      github: deps.github,
     },
     // Never proposed, never posted: no ceiling, no votes router, and no
     // onSpec but a first version's, which keeps the spec on its trial for a
