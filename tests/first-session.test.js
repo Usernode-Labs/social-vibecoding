@@ -880,3 +880,22 @@ test('each step brings its target into view before ringing it, drawing a held-ba
   assert.match(src, /if \(shown !== at && tries < 240\) \{[\s\S]*?const asked = tries === 30 \? step : \{ target: step\.target \};\s+if \(bringIntoView\(asked, \{ width: window\.innerWidth, height: window\.innerHeight \}\)\) shown = at;/);
   assert.ok(src.indexOf('bringIntoView(asked') < src.indexOf('const m = measure(at, stepRef.current);'));
 });
+
+// PR 1's App tab line "It opens here when it's ready." hides while a tour card
+// that says where the app opens is up: one carrying
+// `data-tour-says-where-it-opens` (features/app-frame/app-status.tsx). The
+// card on the App tab, "<project> opens here", is the only one that says it.
+test('the App tab\'s card says where the app opens, and carries the attribute that hides the screen\'s own line', () => {
+  const { makerSteps, invitedSteps, lookAroundSteps, privateSteps } = loadTsx(`${DIR}/tour-steps.ts`);
+  const project = { slug: 'film', name: 'Friday Film Crew', conversationId: 12 };
+  for (const steps of [makerSteps(project), invitedSteps(project)]) {
+    assert.deepEqual(steps.map((s) => !!s.saysWhereItOpens), steps.map((s, i) => i === 1));
+    assert.equal(steps[1].screen, 'app');
+    assert.equal(steps[1].title, 'Friday Film Crew opens here');
+  }
+  for (const steps of [lookAroundSteps(), privateSteps(project)]) {
+    assert.ok(steps.every((s) => !s.saysWhereItOpens));
+  }
+  const src = read(`${DIR}/index.tsx`);
+  assert.match(src, /role="dialog"\s+aria-labelledby="first-session-tour-title"\s+data-tour-says-where-it-opens=\{step\.saysWhereItOpens \? '' : undefined\}/);
+});

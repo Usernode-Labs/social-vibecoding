@@ -81,6 +81,13 @@ export type TourStep = {
    * screen holds, its Build it included, shows below them.
    */
   newestBelowCard?: { scroller: string; rows: string };
+  /**
+   * The card's words say where the app opens ("<project> opens here"), so
+   * the App tab's own "It opens here when it's ready." hides while the card
+   * is up: the card carries `data-tour-says-where-it-opens`, which that line
+   * reads (features/app-frame/app-status.tsx).
+   */
+  saysWhereItOpens?: boolean;
   last?: boolean;
 };
 
@@ -175,6 +182,7 @@ function sharedSteps(slug: string, name: string): TourStep[] {
       press: '#back-btn',
       title: `${name} opens here`,
       text: '✕ takes you back to Home.',
+      saysWhereItOpens: true,
       tap: 'Tap ✕',
       place: 'bottom',
     },

@@ -598,6 +598,7 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
       <div
         role="dialog"
         aria-labelledby="first-session-tour-title"
+        data-tour-says-where-it-opens={step.saysWhereItOpens ? '' : undefined}
         className="pointer-events-auto fixed left-4 right-4 mx-auto max-w-md rounded-[20px] bg-white p-4 text-zinc-900 shadow-[0_18px_40px_-16px_rgba(0,0,0,0.6)] dark:bg-zinc-800 dark:text-zinc-100"
         style={card}
       >
