@@ -649,6 +649,63 @@ test('the picture: verified shots keeps its card, a run under way is one line wi
   assert.ok(!verified.includes('dev-topic-hero-shots'));
 });
 
+test('the capture tiles are checked on a live proposal page, against the staging captures they are seeded with (#4269)', () => {
+  // #3976 retired the three checks that read the tiles (the routes past the
+  // first behind a disclosure, the phone outline, the empty tile) with the
+  // classic chat's Changes-ready card on 990412. The tiles still render for
+  // everyone on a proposal's page, in the hero, so ONE check reads all three
+  // there, on the promoted staging proposal whose captures cover each state:
+  // 900001 on staging-demo-app (migrate.js seedStagingDemoAppCard, then
+  // seedStagingVisuals).
+  const migrate = read('src/db/migrate.js');
+  assert.match(migrate, /\(900001, 'Staging demo app', 'staging-demo-app', 'running', 'public', 900001\)/);
+  assert.match(migrate, /\(900001, 900001, 900001, 'staging-demo\/promoted-pr', 900001,\s+'Staging demo PR[^']*', 'promoted', NOW\(\)\)/);
+  assert.ok(migrate.indexOf('await seedStagingDemoAppCard(pool);') < migrate.indexOf('await seedStagingVisuals(pool);'),
+    'the captures are written after the proposal they hang off');
+  const start = migrate.indexOf('async function seedStagingVisuals(pool)');
+  const seed = migrate.slice(start, migrate.indexOf('\n}\n', start));
+  assert.match(seed, /const DEMO_SESSION_ID = 900001;/);
+  const deep = /const SELF_APP_DEEP_PATH = '([^']+)'/.exec(seed)[1];
+  // The rows as /promoted aggregates them, shaped by the route's own helper.
+  const agg = {};
+  for (const [, ch, rest] of seed.matchAll(/\{ id: '(\w)'\.repeat\(32\), ([^}]*)\}/g)) {
+    const field = (name) => {
+      const m = new RegExp(`${name}: (?:'([^']*)'|(\\w+))`).exec(rest);
+      return m ? (m[1] ?? m[2]) : undefined;
+    };
+    const p = field('path');
+    agg[`${field('kind')}_${field('idx')}_${field('media')}`] = {
+      id: ch.repeat(32), path: p === 'SELF_APP_DEEP_PATH' ? deep : p,
+      viewport: field('viewport') || null, commit: null, fellBack: field('fellBack') === 'true',
+    };
+  }
+  const shaped = require('../src/services/visuals').shapeAgg(agg, null);
+  const groups = shaped.captures;
+  assert.ok(groups.length > 1, 'more than one route, so the rest sit behind the disclosure');
+  assert.ok(groups.slice(1).some((g) => g.viewport === 'mobile'), 'a phone capture past the first route');
+  assert.ok(groups.some((g) => !g.before && g.after), 'a route with no production version');
+
+  const av = context();
+  const { html } = render(av, { ...PR, id: 900001, shots: null, visuals: shaped });
+  const hero = html.indexOf('data-topic-sheet="hero"');
+  const scope = html.indexOf('<div class="dev-topic-visuals" data-visuals-scope="1"><div class="usn-visuals-body">');
+  assert.ok(hero >= 0 && scope > hero && scope < html.indexOf('data-change-conversation='), 'the tiles are in the hero');
+  const more = html.indexOf(`<details class="usn-visual-more"><summary class="usn-visual-more-summary">All ${groups.length} screens</summary>`, scope);
+  assert.ok(more > scope, 'the routes past the first sit behind "All N screens"');
+  assert.match(html.slice(more), /class="usn-visual-media usn-visual-phone"/, 'the phone capture is drawn in its outline');
+  assert.match(html.slice(scope), /class="usn-visual-empty" aria-hidden="true"/, 'the missing side is an empty tile');
+
+  const DAPP = JSON.parse(read('dapp.json'));
+  const check = DAPP.tests.find((t) => t.path === '/#app/staging-demo-app/dev/proposals/900001');
+  assert.ok(check, 'the proposal page is a declared check');
+  assert.equal(check.expectSelector,
+    '#dev-topic-thread [data-topic-sheet="hero"] [data-visuals-scope]:has(.usn-visual-more .usn-visual-phone):has(.usn-visual-empty)'
+    + ' .usn-visual-more > .usn-visual-more-summary');
+  assert.equal(check.expectText, `All ${groups.length} screens`, 'the count the seeded captures make');
+  assert.ok(!DAPP.tests.some((t) => /#dc-pr-card[^"]*\.usn-visual/.test(t.expectSelector || '')),
+    'nothing reads them on the classic card any more');
+});
+
 test('an issue page keeps the card and the sections under it', () => {
   const av = context();
   const issue = { number: 1993, title: 'Wait for authentication before opening previews', body: 'The preview opens on the login page.', state: 'open', user: { login: 'maya' }, created_at: '2026-09-11T12:00:00Z' };
