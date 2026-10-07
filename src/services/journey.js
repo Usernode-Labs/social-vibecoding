@@ -382,9 +382,13 @@ const COHORTS_SQL = `WITH ${ADMITTED_CTE}
 // shell was opened (the #general membership row or the first boot in UI
 // telemetry), the first-run sheets as they were shown (telemetry), the
 // welcome message's queue row, the earliest act of any kind, and the failed
-// attempts the telemetry saw.
+// attempts the telemetry saw. The admit mail's engagement (services/mail,
+// since 7 Oct 2026) is read across every admit mail to the address: whether
+// any was tracked, and the first open and the first followed link a person's
+// mail client made (a link scanner's or prefetcher's request is not one).
 const PERSON_FACTS = `
     m.status AS mail_status, m.error AS mail_error, m.created_at AS mail_at,
+    me.tracked AS mail_tracked, me.opened_at AS mail_opened_at, me.clicked_at AS mail_clicked_at,
     (SELECT MIN(d.created_at) FROM mail_deliveries d
       WHERE d.recipient = a.email AND d.kind = 'otp' AND d.created_at >= a.released_at) AS code_asked_at,
     u.id AS user_id, u.username, u.created_at AS account_at, u.password_set,
@@ -422,6 +426,15 @@ const PERSON_JOINS = `
        WHERE a.email IS NOT NULL AND d.recipient = a.email AND d.kind = 'waitlist_released'
        ORDER BY d.created_at DESC, d.id DESC LIMIT 1
     ) m ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT bool_or(d.engagement_tracked) AS tracked,
+             MIN(e.created_at) FILTER (WHERE e.type = 'opened') AS opened_at,
+             MIN(e.created_at) FILTER (WHERE e.type = 'clicked') AS clicked_at
+        FROM mail_deliveries d
+        LEFT JOIN mail_events e ON e.delivery_id = d.id
+         AND e.user_agent_class IS DISTINCT FROM 'scanner_or_prefetch'
+       WHERE a.email IS NOT NULL AND d.recipient = a.email AND d.kind = 'waitlist_released'
+    ) me ON TRUE
     LEFT JOIN welcome_dm_queue q ON q.user_id = u.id
     LEFT JOIN LATERAL (
       SELECT x.at, x.kind FROM (
@@ -493,7 +506,7 @@ function firstMileSteps(row, now = new Date()) {
   const facts = {
     admitted: admitted ? { done: true, at: admitted } : null,
     mail_sent: row.mail_status === 'sent'
-      ? { done: true, at: t(row.mail_at) }
+      ? { done: true, at: t(row.mail_at), note: mailEngagement(row).note }
       : { done: false, stuck: row.mail_status ? `Mail not sent: ${row.mail_status}` : 'No admit mail on record',
         expired: mailExpired && !row.mail_status },
     code_asked: row.code_asked_at
@@ -568,8 +581,24 @@ function firstMileSteps(row, now = new Date()) {
   };
 }
 
+/**
+ * What the admit mail's own tracking saw: null when no admit mail to this
+ * address was tracked (sent before tracking, or a mail kind it skips), so a
+ * gap reads as a gap and never as "not opened". A followed link counts as an
+ * open too: a client that blocks images still follows links. An open is
+ * approximate (an image proxy can fetch it), and no open is not proof the
+ * mail went unread.
+ */
+function mailEngagement(row) {
+  if (!row.mail_tracked) return { tracked: false, opened: false, clicked: false, note: row.mail_status === 'sent' ? 'not tracked' : null };
+  const clicked = row.mail_clicked_at != null;
+  const opened = clicked || row.mail_opened_at != null;
+  return { tracked: true, opened, clicked, note: clicked ? 'clicked the link' : opened ? 'opened' : 'no open seen' };
+}
+
 function firstMilePerson(row, now) {
   const mile = firstMileSteps(row, now);
+  const mail = mailEngagement(row);
   return {
     signupId: row.signup_id != null ? Number(row.signup_id) : null,
     userId: row.user_id != null ? Number(row.user_id) : null,
@@ -578,6 +607,7 @@ function firstMilePerson(row, now) {
     name: row.username || row.email || null,
     hasAccount: row.user_id != null,
     door: row.door || (row.released_at ? 'admitted' : null),
+    mail: mail.tracked ? { opened: mail.opened, clicked: mail.clicked } : null,
     ...mile,
   };
 }
@@ -658,13 +688,17 @@ async function firstMile(pool, { day, now = new Date(), leftOutIds = [] } = {}) 
     ...firstMilePerson(row, now),
     onboard: await onboardFor(pool, row, season ? season.id : null),
   })));
+  const tracked = people.filter((p) => p.mail);
   return {
     cohort: day,
     people,
     steps: firstMileCounts(people),
-    notRecorded: {
-      followedLink: notRecorded('Nothing records the admit mail being opened or its link followed.'),
-    },
+    mail: tracked.length ? {
+      tracked: tracked.length,
+      opened: tracked.filter((p) => p.mail.opened).length,
+      clicked: tracked.filter((p) => p.mail.clicked).length,
+    } : notRecorded('No admit mail in this cohort was tracked: tracking began on 7 Oct 2026.'),
+    notRecorded: {},
   };
 }
 
@@ -2111,6 +2145,7 @@ module.exports = {
   firstSessionReading,
   firstMileCounts,
   firstMileSteps,
+  mailEngagement,
   groupLifecycle,
   isActiveGroup,
   isoDay,

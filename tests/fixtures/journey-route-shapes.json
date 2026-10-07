@@ -66,12 +66,12 @@
   },
   "firstMile": {
     "cohort": "string",
-    "notRecorded": {
-      "followedLink": {
-        "reason": "string",
-        "recorded": "boolean"
-      }
+    "mail": {
+      "clicked": "number",
+      "opened": "number",
+      "tracked": "number"
     },
+    "notRecorded": {},
     "people": [
       {
         "daysSince": "number",
@@ -79,6 +79,7 @@
         "failedAttempts": "number",
         "furthest": "string",
         "hasAccount": "boolean",
+        "mail": "object",
         "name": "string",
         "repeatedTaps": "number",
         "signupId": "number",
