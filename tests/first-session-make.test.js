@@ -156,7 +156,7 @@ test('"Make it" makes a private community through the dialog\'s own route', () =
   assert.match(make, /from: 'first-session',/);
   assert.match(make, /export const BRIEF_MIN = 10;/);
   assert.match(read('frontend/src/features/dialogs/create-app.tsx'), /BRIEF_MIN = 10/);
-  for (const words of ['What do you want to make?', 'What should it do?', 'What should we call it?', 'Your own idea', 'Or start from an example', 'Not sure yet? ', 'Look around first']) {
+  for (const words of ['Start your community', 'What should it do?', 'What should we call it?', 'Your own idea', 'Or start from an example', 'Not sure yet? ', 'Look around first']) {
     assert.ok(make.includes(words), words);
   }
 });
@@ -164,21 +164,26 @@ test('"Make it" makes a private community through the dialog\'s own route', () =
 // #4038 and #4040 (canvas C2-make, C2b-make-waitlist, 6 Oct 2026): a title and
 // the one thing. No line under the title (it also said Homeroom bot builds
 // while you invite, which is not so: the plan waits until the tour ends), no
-// line under the name, and no "!".
-test('the make screen says only its question: no line under the title or the name, and "Hi <name>" without "!"', () => {
+// line under the name, and no "!". Owner, 7 Oct 2026 (canvas v74): the title
+// is "Start your community" (the screen starts a community; the app is what
+// it makes), and there is no "Hi <name>" above it: the logo bar, then the
+// title 16px under it.
+test('the make screen says only its question: "Start your community" under the logo bar, no greeting, no line under the title or the name', () => {
   const make = read(`${DIR}/make.tsx`);
-  for (const gone of ['Describe it for your group', 'while you invite', 'It\'s your group\'s name too', 'You\'re in!']) {
+  for (const gone of ['Describe it for your group', 'while you invite', 'It\'s your group\'s name too', 'You\'re in!', '`Hi ${']) {
     assert.ok(!make.includes(gone), `no longer says: ${gone}`);
   }
-  const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', onMade() {}, onLookAround() {} });
+  const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { onMade() {}, onLookAround() {} });
   assert.doesNotMatch(html, /tart from an example/, 'the tiles need no label');
-  assert.match(html, />Hi Jordan<\/p>/);
+  assert.doesNotMatch(html, />Hi\b/, 'no greeting');
+  assert.doesNotMatch(html, /What do you want to make/, 'the old title is gone');
   assert.doesNotMatch(html, /!/, 'no "!" anywhere on the screen');
-  // The title is followed by the tiles, with nothing between.
-  assert.match(html, /What do you want to make\?<\/h1><\/div><div class="mt-7 grid grid-cols-2 gap-2" role="group"/);
-  // No name, no kicker.
-  const nameless = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: '', onMade() {}, onLookAround() {} });
-  assert.doesNotMatch(nameless, />Hi\b/);
+  // The title opens the form, 16px under the bar, and the tiles follow it with nothing between.
+  assert.match(html, /<div class="text-center"><h1 id="first-session-make-title" class="mt-4 text-balance text-\[30px\] font-extrabold leading-\[34px\]">Start your community<\/h1><\/div><div class="mt-7 grid grid-cols-2 gap-2" role="group"/);
+  // The waitlist opening has the same title, straight over its fields.
+  const wl = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { idea: 'A tracker for my run club', onMade() {}, onLookAround() {} });
+  assert.match(wl, />Start your community<\/h1>/);
+  assert.doesNotMatch(wl, />Hi\b/);
 });
 
 test('it opens on the first example, chosen and filled in; their waitlist answer instead when they gave one', () => {
@@ -193,7 +198,7 @@ test('it opens on the first example, chosen and filled in; their waitlist answer
 });
 
 test('four tiles that look like buttons: the three examples and "Your own idea", the first chosen', () => {
-  const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', onMade() {}, onLookAround() {} });
+  const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { onMade() {}, onLookAround() {} });
   const tiles = [...html.matchAll(/<button type="button" aria-pressed="(true|false)" data-first-session-(example="(\w+)"|own="")[^>]*class="([^"]*)"/g)];
   assert.deepEqual(tiles.map((m) => m[3] || 'own'), ['run', 'poll', 'trip', 'own']);
   assert.deepEqual(tiles.map((m) => m[1]), ['true', 'false', 'false', 'false']);
@@ -212,7 +217,7 @@ test('four tiles that look like buttons: the three examples and "Your own idea",
 
 test('with a waitlist answer: "What should it do?" holds it, the name is theirs to give, and the examples are chips under the fields', () => {
   const idea = 'A tracker for my run club, so we can see who keeps up with their weekly miles';
-  const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', idea, onMade() {}, onLookAround() {} });
+  const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { idea, onMade() {}, onLookAround() {} });
   assert.ok(html.includes(`>${idea}</textarea>`));
   assert.match(html, /id="first-session-name"[^>]*value=""/);
   assert.match(html, /placeholder="For example, Sunday Run Club"/);
@@ -227,7 +232,7 @@ test('with a waitlist answer: "What should it do?" holds it, the name is theirs 
   // The island hands it over from the account (GET /api/auth/me).
   const island = read(`${DIR}/index.tsx`);
   assert.match(island, /const idea = legacy\(\)\.App\?\.user\?\.waitlistIdea;/);
-  assert.match(island, /<MakeScreen\s+who=\{viewerName\(\)\}\s+idea=\{shot \? shot\.idea : waitlistIdea\(\)\}/);
+  assert.match(island, /<MakeScreen\s+idea=\{shot \? shot\.idea : waitlistIdea\(\)\}/);
 });
 
 // Owner, 6 Oct 2026: a screen only a brand-new account's first run reaches
@@ -273,7 +278,7 @@ test('with a waitlist answer, "Your idea" appears once an example replaced their
   const { MakeScreen } = loadTsx(`${DIR}/make.tsx`, { stubs: { react: React } });
   const { EXAMPLES } = loadTsx(`${DIR}/examples.ts`);
   const idea = 'A tracker for my run club, so we can see who keeps up';
-  const draw = () => { at = 0; return MakeScreen({ who: 'Jordan', idea, onMade() {}, onLookAround() {} }); };
+  const draw = () => { at = 0; return MakeScreen({ idea, onMade() {}, onLookAround() {} }); };
   const find = (node, test, out = []) => {
     if (!node || typeof node !== 'object') return out;
     if (Array.isArray(node)) { node.forEach((n) => find(n, test, out)); return out; }
@@ -352,7 +357,7 @@ test('"Make it" looks pale only while making: a press with an answer missing goe
   assert.match(src, /placeholder="For example, Sunday Run Club"/);
   assert.doesNotMatch(src, /placeholder="Sunday Run Club"/);
   // Drawn: the button is live before anything is typed.
-  const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', onMade() {}, onLookAround() {} });
+  const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { onMade() {}, onLookAround() {} });
   const button = /<button[^>]*type="submit"[^>]*>/.exec(html)[0];
   assert.doesNotMatch(button, /\sdisabled(?:=|[\s>])/, 'no disabled attribute');
   assert.match(html, />Make it<\/button>/);
@@ -360,7 +365,7 @@ test('"Make it" looks pale only while making: a press with an answer missing goe
 
 test('the description and the name are one sequence: Return says next and goes on, then makes it', () => {
   const src = read(`${DIR}/make.tsx`);
-  const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: '', onMade() {}, onLookAround() {} });
+  const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { onMade() {}, onLookAround() {} });
   // In the one form, the description first and the name straight after it.
   const form = html.slice(html.indexOf('<form'), html.indexOf('</form>'));
   const fields = [...form.matchAll(/<(textarea|input)\b[^>]*>/g)].map((m) => m[0]);
@@ -377,7 +382,7 @@ test('the description and the name are one sequence: Return says next and goes o
 
 test('with the keyboard up nothing scrolls under the status bar: the bar stays, the form scrolls under it, inside the visible band', () => {
   const src = read(`${DIR}/make.tsx`);
-  const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', onMade() {}, onLookAround() {} });
+  const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { onMade() {}, onLookAround() {} });
   const root = /<div role="dialog"[^>]*>/.exec(html)[0];
   assert.match(root, /class="platform-kb-surface fixed inset-0 z-\[9000\] flex flex-col /);
   assert.doesNotMatch(root, /overflow/, 'the screen itself does not scroll from the top of the glass');
@@ -400,7 +405,7 @@ test('with the keyboard up nothing scrolls under the status bar: the bar stays, 
   // scrolls stops below the mark. Owner, 7 Oct 2026: the logo bar stays on
   // the make screen, in both openings, as on the story and the invite page.
   assert.match(src, /<div data-first-session-make-top="" className=\{`flex h-\[max\(52px,calc\(env\(safe-area-inset-top\)\+32px\)\)\] shrink-0 items-center justify-center pt-\[env\(safe-area-inset-top\)\] \$\{motion\}`\}>\s+<Wordmark className="h-6 w-auto text-\[color:var\(--brand-ink\)\]" \/>/);
-  const wl = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', idea: 'A tracker for my run club', onMade() {}, onLookAround() {} });
+  const wl = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { idea: 'A tracker for my run club', onMade() {}, onLookAround() {} });
   for (const [name, out] of [['plain', html], ['waitlist', wl]]) {
     const top = out.indexOf('data-first-session-make-top=""');
     assert.ok(top > -1 && out.indexOf('<svg', top) < out.indexOf('data-first-session-make-scroll=""'), `${name}: the wordmark sits in the bar`);
@@ -446,7 +451,7 @@ test('typing their own words into "What should it do?" lets go of the example; t
     useLayoutEffect() { at++; },
   };
   const { MakeScreen } = loadTsx(`${DIR}/make.tsx`, { stubs: { react: React } });
-  const draw = () => { at = 0; return MakeScreen({ who: 'Jordan', onMade() {}, onLookAround() {} }); };
+  const draw = () => { at = 0; return MakeScreen({ onMade() {}, onLookAround() {} }); };
   const find = (node, test, out = []) => {
     if (!node || typeof node !== 'object') return out;
     if (Array.isArray(node)) { node.forEach((n) => find(n, test, out)); return out; }
@@ -498,7 +503,7 @@ test('another example swaps its words in; "Your own idea" empties both fields an
   };
   const { MakeScreen } = loadTsx(`${DIR}/make.tsx`, { stubs: { react: React } });
   const { EXAMPLES } = loadTsx(`${DIR}/examples.ts`);
-  const draw = () => { at = 0; return MakeScreen({ who: 'Jordan', onMade() {}, onLookAround() {} }); };
+  const draw = () => { at = 0; return MakeScreen({ onMade() {}, onLookAround() {} }); };
   const find = (node, test, out = []) => {
     if (!node || typeof node !== 'object') return out;
     if (Array.isArray(node)) { node.forEach((n) => find(n, test, out)); return out; }

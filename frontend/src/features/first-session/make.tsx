@@ -1,6 +1,7 @@
 /**
- * "What do you want to make?": the first thing an account made from the
- * signed-out story is asked (../auth/story.tsx sets the session's
+ * "Start your community" (it was "What do you want to make?" until 7 Oct
+ * 2026: the screen starts a community, and the app is what it makes): the
+ * first thing an account made from the signed-out story is asked (../auth/story.tsx sets the session's
  * `usernode:first-session:make` flag in its sheet; ./index.tsx opens this
  * once the shell has signed them in).
  *
@@ -14,7 +15,8 @@
  * Create button.
  *
  * WHAT IT OPENS WITH (#4038, #4040; canvas C2-make and C2b-make-waitlist,
- * 6 Oct 2026). A title and the one thing: no line under the title.
+ * 6 Oct 2026). A title and the one thing: no line under the title, and
+ * no greeting above it (owner, 7 Oct 2026: the logo bar, then the title).
  *   - Four tiles that look like buttons: the three examples (./examples.ts)
  *     and "Your own idea". The first example is chosen when the screen
  *     opens, both fields filled with its words, so the screen shows what an
@@ -158,8 +160,7 @@ export function deviceTimeZone(): string | null {
   }
 }
 
-export function MakeScreen({ who, idea = null, demo = false, onMade, onLookAround }: {
-  who: string;
+export function MakeScreen({ idea = null, demo = false, onMade, onLookAround }: {
   /** What they told us on the waitlist the app should do, or null. */
   idea?: string | null;
   /** A screenshot state (./index.tsx makeShot): "Make it" makes nothing. */
@@ -356,10 +357,7 @@ export function MakeScreen({ who, idea = null, demo = false, onMade, onLookAroun
           onSubmit={(e) => { e.preventDefault(); void make(); }}
         >
           <div className="text-center">
-            {who ? (
-              <p className="mt-4 text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">{`Hi ${who}`}</p>
-            ) : null}
-            <h1 id="first-session-make-title" className={`${who ? 'mt-2.5' : 'mt-4'} text-balance text-[30px] font-extrabold leading-[34px]`}>What do you want to make?</h1>
+            <h1 id="first-session-make-title" className="mt-4 text-balance text-[30px] font-extrabold leading-[34px]">Start your community</h1>
           </div>
           {fromWaitlist ? (
             <>

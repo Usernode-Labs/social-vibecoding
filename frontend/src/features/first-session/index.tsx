@@ -707,7 +707,7 @@ export async function recordLookAround(): Promise<void> {
 }
 
 /**
- * Open "What do you want to make?", unless something else is already up.
+ * Open "Start your community", unless something else is already up.
  * `now` draws it before returning: asked from the signed-in shell's own
  * start (`sv:authed`, or the join step in that same tick), that is before the
  * browser paints the Home the shell has just shown, so the make screen is
@@ -813,7 +813,7 @@ export function FirstSession() {
       endHold(): void {
         setMode((prev) => (prev.kind === 'held' ? { kind: 'none' } : prev));
       },
-      // "What do you want to make?" for an account that is due the join
+      // "Start your community" for an account that is due the join
       // screen and did not come through the story's sheet, and for any
       // account still due it on a later boot. Nothing else is open by the
       // time the join screen's turn comes, and if the story's own flag got
@@ -849,7 +849,6 @@ export function FirstSession() {
     const { shot } = mode;
     return (
       <MakeScreen
-        who={viewerName()}
         idea={shot ? shot.idea : waitlistIdea()}
         demo={!!shot}
         // POST /api/apps answered the question as it made the project.
