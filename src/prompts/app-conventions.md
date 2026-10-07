@@ -2909,6 +2909,22 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   the kit owns the inset now. Apps may consume `var(--un-kb-inset,
   0px)` for their own fixed bottom bars. No-op on desktop or where
   `visualViewport` is absent.
+- **Tap outside a field closes the keyboard (automatic).** On a phone,
+  with a text field focused, a tap (one finger, no scroll or drag, not a
+  long press) on anything that is not a field or a control blurs the
+  field, so the keyboard goes down. iOS does not do this by itself, and
+  the Homeroom app has no Done button above its keys, so this is how
+  people put the keyboard away; Chrome on Android already behaved this
+  way. The tap is never prevented and still does whatever it did. Taps on
+  inputs, textareas, selects, editable regions, buttons, links, labels,
+  `summary`, iframes, ARIA widget roles (`button`, `option`, `listbox`,
+  `menuitem`, `tab`, `switch` and the like), `.un-pressable`, and the
+  list a field names in `aria-controls` keep the keyboard up. Mark
+  anything else that must keep it (a custom picker made of plain divs)
+  with `data-keep-keyboard`; it covers everything inside. An app that
+  closes the keyboard its own way turns this off with
+  `data-un-keyboard-dismiss="off"` on `<html>` or `<body>`. No-op on
+  desktop.
 - **Keyboard avoidance for fixed-shell content scrollers.**
   `unNative.attachKeyboardAvoidance(scrollEl, { topEl?, margin? = 8,
   fields? })` — the same keyboard physics for the APP's main content
