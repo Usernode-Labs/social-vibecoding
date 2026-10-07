@@ -168,8 +168,9 @@ const DIGEST_WAITING_SQL = `LEAST((
 // first message, or a message in a group's discussion, became when Homeroom
 // bot filed it (`bot_request_number`, from FILED_MESSAGE_JOIN_SQL). Kept
 // beside the joins they need in every read of the bell: the list, the exact
-// lookup and the live push.
-const LIVE_ROW_COLUMNS_SQL = `cs.status AS session_status,
+// lookup and the live push. A merged change that is not live yet
+// (chat_sessions.live_at) reads as merging, which the bell words as going live.
+const LIVE_ROW_COLUMNS_SQL = `CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'merging' ELSE cs.status END AS session_status,
             CASE WHEN n.kind = 'vote_digest' THEN ${DIGEST_WAITING_SQL} END AS digest_waiting,
             bot_request.issue_number AS bot_request_number`;
 // 'filed' and 'group' are a request in the writer's words; 'revise' asked to

@@ -5189,8 +5189,11 @@ const AppView = {
     // tier 0); while its rollout is still pending or has failed, the eyebrow
     // does not claim it.
     const dep = item.deployment_state;
+    // live_at is null while a merge is still going live (the merge-followups
+    // workflow machine); a row without the field reads as it always did.
     const settled = (dep === 'pending' || dep === 'deploying') ? 'Going live'
-      : (dep === 'failed' || dep === 'stalled') ? 'Not live yet' : 'Live';
+      : (dep === 'failed' || dep === 'stalled') ? 'Not live yet'
+        : dep === 'deployed' ? 'Live' : item.live_at === null ? 'Going live' : 'Live';
     // A change that went live inside another one says which
     // (services/included-changes.js): "Live, included in #8".
     const included = AppView._includedInWords(item);
@@ -5351,8 +5354,12 @@ const AppView = {
 
     const merged = item.status === 'merged';
     const included = merged ? AppView._includedInWords(item) : null;
+    // Every step done is merged, which is live only once production runs it
+    // (live_at, null until then).
+    const goingLive = merged && item.live_at === null;
     return {
-      headline: req ? req.headline : (merged ? (included ? `Live, ${included}` : 'Live') : 'Where it stands'),
+      headline: goingLive ? 'Going live'
+        : req ? req.headline : (merged ? (included ? `Live, ${included}` : 'Live') : 'Where it stands'),
       detail: req ? (req.detail || null) : null,
       done: req ? req.done : null,
       total: req ? req.total : null,
@@ -10183,7 +10190,7 @@ const AppView = {
         // without being named, which is why the head counts and the
         // sentence enumerates rather than both trying to do both.
         total: moved.length,
-        shipped: moved.filter((e) => e.kind === 'merged').length,
+        shipped: moved.filter((e) => e.kind === 'merged' && e.item?.live_at !== null).length,
         opened: moved.filter((e) => e.kind === 'issue').length,
         proposed: moved.filter((e) => e.kind === 'proposal').length,
         rows: moved.slice(0, AppView.WORKSHOP_SINCE_MAX).map((e) => ({ ...e.row, key: `since:${e.row.key}`, at: e.t })),
@@ -10214,7 +10221,9 @@ const AppView = {
     // every day and matched no week anybody talks about.
     const weekStartMs = AppView._weekStart(nowMs);
     const mergedAtOf = (m) => ts(m.merged_at || m.closed_at || m.created_at);
-    const allMerged = Array.isArray(AppView._merged) ? AppView._merged : [];
+    // Counted once live: a merge still going live has live_at null (the
+    // merge-followups workflow machine); rows without the field count.
+    const allMerged = (Array.isArray(AppView._merged) ? AppView._merged : []).filter((m) => m.live_at !== null);
     const openEntries = entries.filter((e) => e.lane !== 'done' && e.lane !== 'shipped');
     // Open issues nobody has taken. The OPEN lane specifically, not every
     // unfinished entry: `_bucketDevItems` already moves an issue with a
@@ -19868,6 +19877,13 @@ const AppView = {
         // evidence of a pending or failed rollout there is nothing to warn
         // about, and every app not redeployed since revision labels were
         // introduced would otherwise flag its whole history (#3368).
+      }
+      // Merged, and production not yet known to run it: live_at is null until
+      // it does (the merge-followups workflow machine). A row without the
+      // field reads as it always did.
+      if (p.live_at === null) {
+        return { ...base, tier: 0, key: 'deploying', label: 'Going live…', tone: 'progress', spinner: true, lock: false, advisory: 0,
+          title: 'This change was approved. The app is still running the version before it.' };
       }
       return { ...base, tier: 0, key: 'merged', label: '✓ Live', tone: 'ok', lock: false, advisory: 0 };
     }

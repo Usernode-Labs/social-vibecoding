@@ -12842,12 +12842,16 @@ UPDATE chat_sessions cs SET live_at = COALESCE(cs.merged_at, cs.created_at, NOW(
    AND NOT EXISTS (SELECT 1 FROM wf_instances w
                     WHERE w.machine = 'merge-followups' AND w.key = 'session:' || cs.id);
 
--- A row INSERTED as merged (seeds, fixtures, imports of history) reads as
--- [main] always read it: live. Only the machine makes a merged row that is
--- not live yet, and it does that with an UPDATE.
+-- A row merged by anything but the machine reads as [main] always read it:
+-- live. That covers rows INSERTED as merged (seeds, fixtures, history) and
+-- the legacy merge paths, which run while the machine's flag is off. Only
+-- the machine (the transition pipeline's writer marker) makes a merged row
+-- that is not live yet.
 CREATE OR REPLACE FUNCTION chat_sessions_inserted_merged_live() RETURNS TRIGGER AS $$
 BEGIN
-  NEW.live_at := COALESCE(NEW.merged_at, NOW());
+  IF current_setting('app.wf_writer', true) IS DISTINCT FROM 'transition' THEN
+    NEW.live_at := COALESCE(NEW.merged_at, NOW());
+  END IF;
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
@@ -12856,6 +12860,12 @@ CREATE TRIGGER chat_sessions_inserted_merged_live
   BEFORE INSERT ON chat_sessions
   FOR EACH ROW
   WHEN (NEW.status = 'merged' AND NEW.live_at IS NULL)
+  EXECUTE FUNCTION chat_sessions_inserted_merged_live();
+DROP TRIGGER IF EXISTS chat_sessions_merged_live ON chat_sessions;
+CREATE TRIGGER chat_sessions_merged_live
+  BEFORE UPDATE ON chat_sessions
+  FOR EACH ROW
+  WHEN (NEW.status = 'merged' AND OLD.status IS DISTINCT FROM 'merged' AND NEW.live_at IS NULL)
   EXECUTE FUNCTION chat_sessions_inserted_merged_live();
 
 -- While the machine is on, only it moves a proposal into 'merged' (the

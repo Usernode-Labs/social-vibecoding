@@ -534,6 +534,8 @@ function voteOpen(item) {
 function voteOutcome(item) {
   if (item.type === 'pr_vote') {
     if (item.status === 'merged') return 'live';
+    // Merged, its deploy still to come (api/me/history).
+    if (item.status === 'going_live') return 'going live';
     return 'closed';
   }
   return 'decided';

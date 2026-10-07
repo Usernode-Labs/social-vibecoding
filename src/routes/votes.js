@@ -2121,6 +2121,9 @@ function mergedRowSelect() {
            -- merged before the column existed — consumers must keep the
            -- created_at fallback forever.
            cs.merged_at, cs.promoted_at, cs.shared_at, cs.session_title,
+           -- When production first ran it; NULL while a merge is still going
+           -- live (the merge-followups workflow machine), so the card says so.
+           cs.live_at,
            COALESCE(cs.merged_at, cs.created_at) AS completed_at,
            cs.revert_of_session_id,
            -- A change that went live inside another one
@@ -4645,7 +4648,7 @@ function voteRoutes(config) {
              FROM (
                SELECT COALESCE(merged_at, created_at) AS t
                  FROM chat_sessions
-                WHERE app_id = $1 AND status = 'merged'
+                WHERE app_id = $1 AND status = 'merged' AND live_at IS NOT NULL
                UNION ALL
                SELECT created_at AS t
                  FROM issues

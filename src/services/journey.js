@@ -1077,7 +1077,7 @@ const CHANGE_LOOP_SQL = `WITH reported AS (
     LEFT JOIN users ru ON ru.id = t.reporter
     LEFT JOIN LATERAL (
       SELECT MIN(cs.created_at) AS sketch_at, MIN(cs.promoted_at) AS decide_at,
-             MIN(cs.merged_at) FILTER (WHERE cs.status = 'merged') AS live_at,
+             MIN(cs.live_at) FILTER (WHERE cs.status = 'merged') AS live_at,
              (SELECT hu.username FROM chat_sessions h JOIN users hu ON hu.id = h.user_id
                WHERE h.app_id = t.app_id
                  AND (t.number = ANY(h.linked_issues) OR h.created_from_issue_number = t.number)

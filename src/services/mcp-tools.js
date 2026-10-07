@@ -1446,6 +1446,11 @@ function changeNextStep(session, checks, live, kind = 'agent_mayor') {
   if (status === 'archived') {
     return `${ref} was withdrawn and is closed for good. ${words.closed}`;
   }
+  // Merged is live once production runs it (chat_sessions.live_at; null
+  // while its deploy is still to come).
+  if (status === 'merged' && session.live_at === null) {
+    return `${ref} merged: the group voted it in, and it is going live now. Nothing to do; call get_change again to see it live.`;
+  }
   if (status === 'merged') {
     return `${ref} merged: the group voted it in and it is part of the app now. ${words.closed}`;
   }

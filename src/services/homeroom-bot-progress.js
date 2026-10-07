@@ -405,9 +405,12 @@ async function requestRows(pool, userId) {
             bs.status AS build_status, bs.created_at AS build_started_at, bs.last_activity_at AS build_last_activity,
             bs.active_turn->>'mode' AS build_turn_mode, bs.active_turn->>'startedAt' AS build_turn_at,
             spec.created_at AS spec_at,
-            prop.proposal_session_id, cs.status AS proposal_status, cs.check_state, cs.check_phase,
+            prop.proposal_session_id,
+            -- Merged but not live yet (live_at) reads as merging: going live.
+            CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'merging' ELSE cs.status END AS proposal_status,
+            cs.check_state, cs.check_phase,
             cs.checks_progress, cs.checks_checked_at AS checks_at, cs.test_results,
-            COALESCE(cs.promoted_at, cs.created_at) AS proposal_at, cs.merged_at,
+            COALESCE(cs.promoted_at, cs.created_at) AS proposal_at, cs.live_at AS merged_at,
             oq.created_at AS question_at
        FROM mine m
        JOIN apps a ON a.id = m.app_id
@@ -491,7 +494,8 @@ async function attachAttempts(pool, rows) {
     ({ rows: runs } = await pool.query(
       `SELECT r.id, r.app_id, r.issue_number, r.created_at, r.build_ok, r.build_error, r.cap_suppressed,
               r.live_build_waiting_at, r.build_session_id, r.proposal_session_id,
-              bs.status AS build_status, bs.created_at AS build_started_at, ps.status AS proposal_status
+              bs.status AS build_status, bs.created_at AS build_started_at,
+              CASE WHEN ps.status = 'merged' AND ps.live_at IS NULL THEN 'merging' ELSE ps.status END AS proposal_status
          FROM homeroom_bot_runs r
          LEFT JOIN chat_sessions bs ON bs.id = r.build_session_id
          LEFT JOIN chat_sessions ps ON ps.id = r.proposal_session_id
@@ -790,7 +794,9 @@ async function proposalFacts(pool, sessionId, { domain = null } = {}) {
   if (!sessionId) return null;
   const revision = require('./pr-vote-revision');
   const { rows } = await pool.query(
-    `SELECT cs.id, cs.app_id, a.slug, cs.status, cs.check_state, cs.check_phase, cs.checks_progress,
+    `SELECT cs.id, cs.app_id, a.slug,
+            CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'merging' ELSE cs.status END AS status,
+            cs.check_state, cs.check_phase, cs.checks_progress,
             cs.test_results, cs.session_title, cs.pr_title, cs.promoted_at, cs.created_at,
             (SELECT COUNT(*)::int FROM pr_votes pv WHERE pv.session_id = cs.id AND pv.vote = 'yes'
                 AND ${revision.countedVotePredicateSql('pv', 'cs')}) AS yes,

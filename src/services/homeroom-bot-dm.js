@@ -2107,7 +2107,7 @@ const MAX_READY_APPROVALS = 4;
 /** The reader's newest ready cards, each with its change and its app (with the columns app-access reads). */
 async function readyRows(pool, userId) {
   const { rows } = await pool.query(
-    `SELECT d.message_id, cs.id AS session_id, cs.status,
+    `SELECT d.message_id, cs.id AS session_id, cs.status, cs.live_at,
             a.id, a.slug, a.name, a.created_by, a.self_hosted, a.collab_visibility, a.view_visibility,
             a.moderation_suspended_at
        FROM homeroom_bot_dm_messages d
@@ -2134,6 +2134,9 @@ async function readyRows(pool, userId) {
  */
 function readyStateOf(row) {
   const base = { messageId: Number(row.message_id) };
+  // Merged is live once production runs it (chat_sessions.live_at); until
+  // then it is going live, as while it merges.
+  if (row.status === 'merged' && !row.live_at) return { ...base, state: 'going_live', actions: [] };
   if (row.status === 'merged') {
     const open = row.self_hosted ? null : openAppAction({ slug: row.slug, appName: row.name || row.slug });
     return { ...base, state: 'live', actions: open ? [open] : [] };
@@ -3420,6 +3423,7 @@ async function firstVersionState(pool, appId, deps = {}) {
               SELECT 1 FROM homeroom_bot_runs r
                 JOIN chat_sessions cs ON cs.id = r.proposal_session_id
                WHERE r.app_id = f.app_id AND r.issue_number = f.issue_number AND cs.status = 'merged'
+                 AND cs.live_at IS NOT NULL
             ) AS merged,
             (SELECT p.conversation_id
                FROM users b
