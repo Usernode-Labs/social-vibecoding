@@ -55,10 +55,19 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   kernelPool = workflowPool;
   const deps = { config, pool: legacy('db/pool').getPool(config) };
   machine = governanceProposal({ dataKey: config.dataEncryptionKey, notifiers: governanceNotifiers(deps) });
-  runtime = createRuntime({
+  const started = createRuntime({
     pool: kernelPool!, machines: [machine], services: governanceServices(deps), slots: config.wfSlots, log: log!,
   });
-  await runtime.start({ loops: false });
+  try {
+    await started.start({ loops: false });
+  } catch (err) {
+    // Half started is not started: the routes must keep using the legacy paths.
+    await started.stop().catch(() => {});
+    await kernelPool!.end().catch(() => {});
+    kernelPool = null;
+    throw err;
+  }
+  runtime = started;
   log!.info('workflow', 'Workflow runtime started', { machines: [MACHINE] });
   if (opts.loops) await startWorkflowLoops();
 }

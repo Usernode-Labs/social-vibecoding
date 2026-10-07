@@ -1641,7 +1641,10 @@ async function start() {
   // The workflow runtime (src/workflow/platform.ts): every process appends
   // and waits for outcomes; the loops start in becomeLeader(), or here on a
   // staging preview, which never stands for election but must still decide.
-  await require('./src/workflow/platform.ts').startWorkflow(config, { loops: !runsClusterMaintenance() });
+  // Never fatal: without a runtime, governsKind() is false and [main]'s
+  // governance paths decide, as with the flag off.
+  await require('./src/workflow/platform.ts').startWorkflow(config, { loops: !runsClusterMaintenance() })
+    .catch((err) => log.error('server', 'Workflow runtime failed to start; the legacy paths decide', { err: err.message }));
   startupDiagnostics = Object.freeze({
     totalMs: Date.now() - startedAt,
     migrationsOnStartup,

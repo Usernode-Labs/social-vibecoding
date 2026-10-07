@@ -3146,6 +3146,11 @@ function issueRoutes(config) {
         return res.status(403).json({ error: 'Full admin access required' });
       }
 
+      // The workflow machine answers a closed proposal itself (a retry of an
+      // apply that succeeded replays its result); [main]'s path refuses here.
+      if (issue.status !== 'open' && !workflow().governsKind(issue.kind)) {
+        return res.status(409).json({ error: 'Issue is not open' });
+      }
       if (issue.kind !== 'secret_change' && issue.kind !== 'close_issue'
           && issue.kind !== 'maintenance_campaign' && issue.kind !== 'featured_illustration') {
         return res.status(400).json({ error: 'Only secret-change, close-issue, maintenance-campaign, and featured-illustration proposals can be admin-applied' });
@@ -3160,14 +3165,9 @@ function issueRoutes(config) {
         issueId: issue.id, kind: issue.kind, by: req.user.username,
       });
 
-      // The machine answers a closed proposal itself: a retry of an apply
-      // that succeeded replays its result instead of a 409.
       if (workflow().governsKind(issue.kind)) {
         const reply = await workflow().adminApplyProposal(issue, req.user, req.get('Idempotency-Key') || undefined);
         return res.status(reply.status).json(reply.body);
-      }
-      if (issue.status !== 'open') {
-        return res.status(409).json({ error: 'Issue is not open' });
       }
 
       const applied = issue.kind === 'close_issue'
