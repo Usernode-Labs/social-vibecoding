@@ -22,6 +22,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const unitSuite = require('../src/services/unit-suite');
+const unitSuiteRow = require('../src/services/unit-suite-row');
 const visuals = require('../src/services/visuals');
 
 // ── hasRunnableTestScript ──────────────────────────────────────────────
@@ -401,89 +402,111 @@ for (const failed of [false, true]) {
   });
 }
 
-// ── failureExcerpts (#3978) ────────────────────────────────────────────
+// ── Per-test excerpts (#3978) ──────────────────────────────────────────
 //
-// The reason names which tests failed; it never said why. Six Postgres
-// suites failed in the check container and passed on the author's machine,
-// and with only their names nobody could tell an assertion from a schema
-// error, a timeout or the environment. Each failing test now keeps a
-// bounded, redacted excerpt of what the runner printed about it.
+// The grouped reason names files; `failureDetails` carries each failing
+// test's OWN diagnostics — the assertion message, expected/actual, the
+// first stack lines — so a fix turn starts from the assertion instead of
+// re-running the suite to find it.
 
-// A describe() whose one subtest failed, the way node:test prints it: the
-// subtest's block (indented) comes BEFORE the parent's own `not ok`, and
-// the parent's block only says how many subtests failed.
-const nestedFail = (n, name, file) => [
-  `# Subtest: ${name}`,
-  '    # Subtest: inner case',
-  '    not ok 1 - inner case',
-  '      ---',
-  '      duration_ms: 3.1',
-  `      location: '${WS}/${file}:5:3'`,
-  "      failureType: 'testCodeFailure'",
-  '      error: |-',
-  '        Expected values to be strictly equal:',
-  '',
-  '        1 !== 2',
-  "      code: 'ERR_ASSERTION'",
-  '      expected: 2',
-  '      actual: 1',
-  "      operator: 'strictEqual'",
-  '      stack: |-',
-  ...Array.from({ length: 12 }, (_, i) => `        frame${i} (${WS}/${file}:${i + 7}:12)`),
-  '      ...',
-  '    1..1',
-  '# connecting to postgres://bot:hunter2secret@db:5432/app',
-  `not ok ${n} - ${name}`,
-  '  ---',
-  '  duration_ms: 5.2',
-  "  type: 'suite'",
-  `  location: '${WS}/${file}:3:1'`,
-  "  failureType: 'subtestsFailed'",
-  "  error: '1 subtest failed'",
-  "  code: 'ERR_TEST_FAILURE'",
-  '  ...',
-].join('\n');
+const excerptRun = (...extra) => tapRun([tapFail(1, 'renames a kudo without losing count', 'tests/kudos.test.js', 88)], ...extra);
 
-test('each failing test keeps the error, expected/actual and the first stack frames', () => {
-  const out = tapRun([tapFail(1, 'plain', 'tests/a.test.js'), nestedFail(2, 'bot hello', 'tests/b.test.js')]);
-  const details = unitSuite.failureExcerpts(out, '');
-  assert.equal(details.length, 2);
-  assert.deepEqual(details.map((d) => [d.file, d.test]), [['tests/a.test.js', 'plain'], ['tests/b.test.js', 'bot hello']]);
-  assert.match(details[0].excerpt, /error: 'boom'/);
-  assert.match(details[0].excerpt, /code: 'ERR_ASSERTION'/);
-  assert.doesNotMatch(details[0].excerpt, /duration_ms|location:/, 'timing and location are not the diagnosis');
-  const nested = details[1].excerpt;
-  assert.match(nested, /▸ inner case/, 'the failing subtest is named');
-  assert.match(nested, /1 !== 2/);
-  assert.match(nested, /expected: 2/);
-  assert.match(nested, /actual: 1/);
-  assert.match(nested, /frame0 \(tests\/b\.test\.js:7:12\)/, 'workspace paths read repo-relative');
-  assert.match(nested, /frame7 /);
-  assert.doesNotMatch(nested, /frame8 /, 'the stack is cut to its first frames');
-  assert.ok(!nested.includes(WS), 'no absolute workspace path survives');
+test('each failing test keeps its diagnostic block as an excerpt', () => {
+  const { details, truncated } = unitSuite.failureOutcomeParts(tapRun([tapFail(1, 'renames a kudo without losing count', 'tests/kudos.test.js', 88)]), '');
+  assert.equal(truncated, false, 'nothing was left out of a one-test run');
+  assert.equal(details.length, 1);
+  assert.equal(details[0].file, 'tests/kudos.test.js');
+  assert.equal(details[0].test, 'renames a kudo without losing count');
+  const ex = details[0].excerpt;
+  // The diagnosis the YAML block carries, in the runner's own words.
+  assert.match(ex, /error: 'boom'/);
+  assert.match(ex, /code: 'ERR_ASSERTION'/);
+  assert.match(ex, /failureType: 'testCodeFailure'/);
 });
 
-test('excerpts are redacted with the log rules', () => {
-  const details = unitSuite.failureExcerpts(tapRun([nestedFail(1, 'db', 'tests/b.test.js')]), '');
-  assert.match(details[0].excerpt, /postgres:\/\/bot:\*\*\*\*@db:5432\/app/, 'the host stays, the password goes');
-  assert.ok(!details[0].excerpt.includes('hunter2secret'));
-  const token = tapRun([tapFail(1, 'gh', 'tests/a.test.js').replace("error: 'boom'", `error: 'bad ghp_${'a'.repeat(30)}'`)]);
-  assert.ok(!unitSuite.failureExcerpts(token, '')[0].excerpt.includes('ghp_aaaa'));
+test('stdout printed just before the failure rides with the excerpt', () => {
+  const stdout = [
+    'not ok 1 - earlier failure',
+    '  ---',
+    '  ...',
+    'kudos rows moved 3',
+    'recount after rename: total=42',
+    'not ok 2 - renames a kudo',
+    '  ---',
+    "  error: 'expected 42 to equal 41',",
+    '  ...',
+    '# tests 2',
+    '# pass 0',
+    '# fail 2',
+    '# cancelled 0',
+  ].join('\n');
+  const { details } = unitSuite.failureOutcomeParts(stdout, '');
+  const mine = details.find((d) => d.test === 'renames a kudo');
+  assert.ok(mine, 'the second failing test has its own excerpt');
+  assert.match(mine.excerpt, /expected 42 to equal 41/);
+  assert.match(mine.excerpt, /— stdout just before the failure —/);
+  assert.match(mine.excerpt, /kudos rows moved 3/);
+  // The previous test's own block does not ride along: TAP structure ends
+  // the backward walk, so the excerpt is not a copy of the whole log.
+  assert.doesNotMatch(mine.excerpt, /earlier failure/);
 });
 
-test('excerpts are capped per test, in count and in total', () => {
-  const { FAILURE_EXCERPT_TESTS_MAX, FAILURE_EXCERPT_MAX, FAILURE_EXCERPTS_TOTAL_MAX } = require('../src/services/unit-suite-row');
-  const huge = (n) => tapFail(n, `t${n}`, 'tests/a.test.js').replace("error: 'boom'", `error: '${'x'.repeat(5000)}'`);
-  const details = unitSuite.failureExcerpts(tapRun(Array.from({ length: 30 }, (_, i) => huge(i + 1))), '');
-  assert.ok(details.length <= FAILURE_EXCERPT_TESTS_MAX);
-  assert.ok(details.every((d) => d.excerpt.length <= FAILURE_EXCERPT_MAX));
-  assert.ok(details.reduce((n, d) => n + d.excerpt.length, 0) <= FAILURE_EXCERPTS_TOTAL_MAX);
-  const many = unitSuite.failureExcerpts(tapRun(Array.from({ length: 30 }, (_, i) => tapFail(i + 1, `t${i}`, 'tests/a.test.js'))), '');
-  assert.equal(many.length, FAILURE_EXCERPT_TESTS_MAX);
+test('a long stack folds to its first ten lines with a count of the rest', () => {
+  const stdout = [
+    'not ok 1 - deep',
+    '  ---',
+    "  error: 'boom',",
+    '  stack: |-',
+    ...Array.from({ length: 15 }, (_, i) => `    at frame ${i + 1}`),
+    '  ...',
+  ].join('\n');
+  const { details } = unitSuite.failureOutcomeParts(stdout, '');
+  const ex = details[0].excerpt;
+  assert.ok(ex.includes('at frame 10'), 'the first ten frames are kept');
+  assert.doesNotMatch(ex, /at frame 11/);
+  assert.match(ex, /… 5 more stack lines/, 'the fold says how many it dropped');
 });
 
-test('non-TAP output has no excerpts; the row carries them only on failure', async (t) => {
-  assert.deepEqual(unitSuite.failureExcerpts('npm error 404', ''), []);
+test('excerpts are redacted like every other log text', () => {
+  const stdout = [
+    'not ok 1 - leaks',
+    '  ---',
+    "  error: 'connect to postgres://owner:hunter2@db.internal:5432/app failed; callback https://app.test/cb?token=abcdef123456 also failed',",
+    '  ...',
+  ].join('\n');
+  const { details } = unitSuite.failureOutcomeParts(stdout, '');
+  const ex = details[0].excerpt;
+  assert.doesNotMatch(ex, /hunter2/, 'the DSN password is masked');
+  assert.match(ex, /postgres:\/\/owner:\*\*\*\*@/, 'the DSN itself stays diagnosable');
+  assert.doesNotMatch(ex, /abcdef123456/);
+  assert.match(ex, /token=\*\*\*\*/, 'a token-like query parameter is masked');
+});
+
+test('the excerpt inventory is capped: ten tests, truncation flagged', () => {
+  const blocks = Array.from({ length: 14 }, (_, i) =>
+    tapFail(i + 1, `case ${i + 1}`, `tests/f${i}.test.js`));
+  const { details, truncated } = unitSuite.failureOutcomeParts(tapRun(blocks), '');
+  assert.equal(details.length, unitSuiteRow.MAX_UNIT_EXCERPTS);
+  assert.equal(truncated, true, 'the flag says some excerpts were left out');
+});
+
+test('a per-test excerpt clips at its cap rather than growing unbounded', () => {
+  const stdout = [
+    'not ok 1 - enormous',
+    '  ---',
+    `  error: '${'x'.repeat(4000)}',`,
+    '  ...',
+  ].join('\n');
+  const { details } = unitSuite.failureOutcomeParts(stdout, '');
+  assert.equal(details[0].excerpt.length, unitSuiteRow.MAX_TEST_EXCERPT_CHARS);
+  assert.match(details[0].excerpt, /…$/);
+});
+
+test('a failing run with no readable blocks still answers an empty inventory', () => {
+  assert.deepEqual(unitSuite.unitFailureDetails([]), { details: [], truncated: false });
+});
+
+test('the stored row carries the excerpts beside its grouped reason', async (t) => {
   const github = require('../src/services/github');
   const docker = require('../src/services/docker');
   const history = require('../src/services/check-history');
@@ -492,35 +515,44 @@ test('non-TAP output has no excerpts; the row carries them only on failure', asy
   t.mock.method(github, 'getCloneUrl', async () => 'https://example.test/repo');
   t.mock.method(history, 'loadGraduated', async () => new Set());
   t.mock.method(docker, 'runOneShot', async () => {
-    throw Object.assign(new Error('exit 1'), { stdout: tapRun([nestedFail(1, 'bot hello', 'tests/b.test.js')]), code: 1 });
+    throw Object.assign(new Error('exit 1'), {
+      stdout: tapRun([tapFail(1, 'regression', 'tests/x.test.js')]), code: 1,
+    });
   });
   const out = await unitSuite.maybeRunUnitSuite({ config: {}, pool: { query: async () => ({ rows: [] }) }, appId: 10, sessionId: 7, repoOwner: 'example', repoName: 'repo', ref: 'a'.repeat(40) });
-  assert.match(out.row.failureReason, /^tests\/b\.test\.js \(1\): bot hello \| /, 'the reason is unchanged');
-  assert.equal(out.row.failureDetails.length, 1);
-  assert.match(out.row.failureDetails[0].excerpt, /1 !== 2/);
-  const harvested = await unitSuite.outcomeFromLog({
-    pool: { query: async () => ({ rows: [] }) }, appId: 10, sessionId: 7, succeeded: false,
-    stdout: tapRun([nestedFail(1, 'bot hello', 'tests/b.test.js')]),
-  });
-  assert.deepEqual(harvested.row.failureDetails, out.row.failureDetails, 'the harvest path shapes the same details');
-  const passed = await unitSuite.outcomeFromLog({ pool: { query: async () => ({ rows: [] }) }, appId: 10, sessionId: 7, succeeded: true, stdout: 'ok 1 - a\n' });
-  assert.equal('failureDetails' in passed.row, false);
+  assert.ok(Array.isArray(out.row.failureDetails), 'the row shape carries the excerpts');
+  assert.equal(out.row.failureDetails[0].file, 'tests/x.test.js');
+  assert.equal(out.row.failureDetails[0].test, 'regression');
+  assert.match(out.row.failureDetails[0].excerpt, /error: 'boom'/);
+  assert.equal(out.row.failureDetailsTruncated, undefined, 'one excerpt, nothing truncated');
+  // A passing run carries none of it.
 });
 
-// #3978: the proposal's own tests write the output these excerpts read, so a
-// crafted or runaway output must not make the parse quadratic or unbounded.
-test('failure excerpts stay bounded on huge or crafted test output', () => {
-  const { failureExcerpts } = require('../src/services/unit-suite');
-  const nested = [];
-  for (let i = 0; i < 20000; i += 1) {
-    nested.push(`    not ok ${i} - nested ${i}`, '      ---', '      error: boom', ...Array(50).fill('        deep'));
-  }
-  const tops = [];
-  for (let i = 0; i < 2000; i += 1) tops.push(`not ok ${i} - top ${i}`, '  ---', '  error: top failed', '  ...');
-  const out = [...nested, ...tops].join('\n');
-  const started = Date.now();
-  const details = failureExcerpts(out, '');
-  assert.ok(Date.now() - started < 5000, `parsed in ${Date.now() - started} ms`);
-  assert.ok(details.length <= 10);
-  for (const d of details) assert.ok(d.excerpt.length <= 1500);
+test('a passing run carries no excerpt fields at all', async (t) => {
+  const github = require('../src/services/github');
+  const docker = require('../src/services/docker');
+  const history = require('../src/services/check-history');
+  t.mock.method(github, 'isEnabled', () => true);
+  t.mock.method(github, 'getFileContent', async () => '{"scripts":{"test":"node --test"}}');
+  t.mock.method(github, 'getCloneUrl', async () => 'https://example.test/repo');
+  t.mock.method(history, 'loadGraduated', async () => new Set());
+  t.mock.method(docker, 'runOneShot', async () => ({
+    stdout: tapRun([], { fail: 0 }), code: 0,
+  }));
+  const out = await unitSuite.maybeRunUnitSuite({ config: {}, pool: { query: async () => ({ rows: [] }) }, appId: 10, sessionId: 7, repoOwner: 'example', repoName: 'repo', ref: 'a'.repeat(40) });
+  assert.equal(out.row.status, 'pass');
+  assert.equal(out.row.failureDetails, undefined);
+  assert.equal(out.row.failureDetailsTruncated, undefined);
+});
+
+test('a harvested Job outcome keeps the same excerpts', async () => {
+  const pool = { query: async () => ({ rows: [{}] }) };
+  const out = await unitSuite.outcomeFromLog({
+    pool, appId: 10, sessionId: 7, succeeded: false,
+    stdout: tapRun([tapFail(1, 'harvested regression', 'tests/harvested.test.js')]),
+  });
+  assert.equal(out.row.status, 'fail');
+  assert.equal(out.row.failureDetails[0].file, 'tests/harvested.test.js');
+  assert.equal(out.row.failureDetails[0].test, 'harvested regression');
+  assert.match(out.row.failureDetails[0].excerpt, /error: 'boom'/);
 });

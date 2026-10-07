@@ -564,19 +564,58 @@ function stagingMockProposals(viewer) {
     },
     {
       ...mk(9000093, 900193,
-        '[Mock] #2061: waiting on the author — two checks are failing',
+        '[Mock] #2061: waiting on the author — checks are failing',
         5, 3, 0, 4, { required: 3 }),
       check_state: 'failing',
+      // #3978: the failing rows carry their diagnosis, and the unit-suite
+      // row carries its per-test excerpts, so the "Why it failed" fold on
+      // this route shows what a real failing proposal shows. Kept in the
+      // shape services/unit-suite.js shapes and the connector reads.
       test_results: [
-        { name: 'Kudos totals survive a rename', path: '/dev', status: 'fail' },
-        { name: 'The board folds on a narrow screen', path: '/dev', status: 'fail' },
+        {
+          name: 'Kudos totals survive a rename', path: '/dev', status: 'fail',
+          failureReason: 'Expected element "[data-kudos-total]" was not found',
+          consoleErrors: [],
+        },
+        {
+          name: 'The board folds on a narrow screen', path: '/dev', status: 'fail',
+          failureReason: '1 console error on load',
+          consoleErrors: [
+            { kind: 'pageerror', message: 'TypeError: Cannot read properties of undefined (reading \'rows\')', source: 'dev-kanban.tsx' },
+          ],
+        },
+        {
+          index: -3,
+          name: 'Repo unit suite (npm test) passes', path: 'package.json', status: 'fail',
+          advisory: false, consoleErrors: [],
+          failureReason: 'tests/kudos-totals.test.js (1): kudos totals survive a rename | # tests 20913 | # pass 20912 | # fail 1 | # cancelled 0',
+          failureDetails: [
+            {
+              file: 'tests/kudos-totals.test.js',
+              test: 'kudos totals survive a rename',
+              excerpt: [
+                "    error: 'expected 42 to equal 41',",
+                "    code: 'ERR_ASSERTION',",
+                "    actual: 42,",
+                "    expected: 41,",
+                "    failureType: 'testCodeFailure',",
+                '    stack: |',
+                "      AssertionError [ERR_ASSERTION]: expected 42 to equal 41",
+                '          at Test.<anonymous> (tests/kudos-totals.test.js:88:5)',
+                '  — stdout just before the failure —',
+                'renaming @mara → @mara-renamed: kudos rows moved 3',
+                'recount after rename: total=42 (expected 41)',
+              ].join('\n'),
+            },
+          ],
+        },
       ],
       merge_requirements: {
         context: { explicitApproval: false, locked: false, selfHosted: false },
         evaluated: [
           { key: 'approvals', state: 'done', detail: { note: '3 of 3' } },
           { key: 'integration', state: 'done', detail: { note: 'level with main, merges cleanly' } },
-          { key: 'checks', state: 'blocked', detail: { checkState: 'failing', failingCount: 2, note: '2 failing. They re-run on the next push' } },
+          { key: 'checks', state: 'blocked', detail: { checkState: 'failing', failingCount: 3, note: '3 failing. They re-run on the next push' } },
         ],
       },
       merge_requirements_at: new Date(Date.now() - 90 * 1000).toISOString(),

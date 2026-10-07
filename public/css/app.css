@@ -15452,6 +15452,22 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   overflow-wrap: anywhere;
 }
 .dev-ledger-why-errors { margin: 4px 0 0; padding-left: 16px; list-style: disc; }
+/* The unit-suite row's per-test excerpts (#3978): each failing test's name,
+   its file, and the captured error text on its own block, pre-wrap so the
+   expected/actual and stack lines keep their shape. */
+.dev-ledger-why-details { margin: 6px 0 0; padding-left: 16px; list-style: disc; }
+.dev-ledger-why-details > li { margin: 4px 0; }
+.dev-ledger-why-test { color: var(--text-primary); font-weight: 600; }
+.dev-ledger-why-file { color: var(--text-muted); }
+.dev-ledger-why-excerpt {
+  display: block;
+  margin-top: 3px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--dc-sheet-fill, rgba(113, 113, 122, 0.08));
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 /* ── The Review line ────────────────────────────────────────────────────
    "Approved by @alice ✓", and at its right end the "How voting works" link
    and the "?" — this is the row they explain, so they sit on it. */

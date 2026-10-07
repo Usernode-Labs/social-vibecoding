@@ -19,6 +19,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const tools = require('../src/services/mcp-tools');
+const unitSuiteRow = require('../src/services/unit-suite-row');
 
 const SRC = fs.readFileSync(
   path.join(__dirname, '../src/services/mcp-tools.js'), 'utf8'
@@ -2509,6 +2510,9 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     'get_change',
     // #1433. Read-only, and named `get_` so the shipped allow rules already
     // cover it — a drift check that prompts every call is one nobody runs.
+    // #3978. One failing check's whole stored output: the excerpt previews
+    // get_proposal carries are first-three-and-clipped.
+    'get_check_output',
     'get_checkout_status',
     'get_connector_guidance', 'get_demo_status',
     // #3556. One app discussion thread, read through the transcript route.
@@ -3119,12 +3123,20 @@ test('a failing unit suite returns each test\'s error excerpt beside its unchang
   });
   const unit = shaped.failures[0];
   assert.equal(unit.reason, `<untrusted-content>${reason}</untrusted-content>`, 'reason reads exactly as before');
-  assert.equal(unit.details.length, 10, 'capped at ten tests');
+  // The row stored 22 excerpts; the answer previews the first few and
+  // get_check_output returns the whole stored set. The field itself is on
+  // every entry — the zod output schema reads it on each one (#2137).
+  assert.equal(unit.details.length, unitSuiteRow.MAX_INLINE_EXCERPT_TESTS, 'preview holds only the first excerpts');
   assert.equal(unit.details[0].file, '<untrusted-content>tests/b.test.js</untrusted-content>');
   assert.equal(unit.details[0].test, '<untrusted-content>bot hello</untrusted-content>');
   assert.match(unit.details[0].excerpt, /^<untrusted-content>error: \|-\n {2}1 !== 2/);
-  assert.ok(unit.details.every((d) => d.excerpt.length < 1600), 'each excerpt re-capped at read time');
-  assert.equal('details' in shaped.failures[1], false, 'a row without excerpts keeps its old shape');
+  // 4000-character excerpts are re-capped at read time: the wrapper adds 37
+  // characters around the clipped text, and clip() marks the cut.
+  const wrap = '<untrusted-content></untrusted-content>'.length;
+  const cut = '… [truncated]'.length;
+  assert.ok(unit.details.every((d) => (d.excerpt || '').length <= unitSuiteRow.MAX_INLINE_EXCERPT_CHARS + wrap + cut),
+    'each excerpt re-capped at read time');
+  assert.deepEqual(shaped.failures[1].details, [], 'a row without excerpts keeps its old shape');
 });
 
 test('checks degrade to a knowable nothing rather than a guess', () => {
@@ -5090,5 +5102,168 @@ test('submit_work forwards an update\'s summary and reports whether it landed', 
     assert.equal('summary' in silent.update.body, false, 'a blank summary is "said nothing", never "blank it"');
   } finally {
     gh.isEnabled = realGh; githubLink.isEnabled = realLink;
+  }
+});
+
+// ── #3978 — failing checks return their error excerpts ───────────────────
+//
+// The names were the diagnosis once (change 4868) and the file list is the
+// diagnosis still; what an agent needs NEXT is the assertion under a name.
+// shapeChecks previews the unit row's first excerpts inline, and
+// get_check_output reads one row whole.
+
+const excerptUnitRow = (overrides = {}) => Object.assign({
+  index: -3,
+  name: 'Repo unit suite (npm test) passes',
+  path: 'package.json',
+  status: 'fail',
+  advisory: false,
+  consoleErrors: [],
+  failureReason: 'tests/a.test.js (2): t1; t2 | # tests 3 | # fail 2 | # cancelled 0',
+  failureDetails: [
+    { file: 'tests/a.test.js', test: 't1', excerpt: "error: 'expected 42 to equal 41', code: 'ERR_ASSERTION'" },
+    { file: 'tests/a.test.js', test: 't2', excerpt: "error: 'boom'" },
+    { file: 'tests/a.test.js', test: 't3', excerpt: "error: 'boom again'" },
+    { file: 'tests/a.test.js', test: 't4', excerpt: "error: 'boom yet again'" },
+  ],
+  failureDetailsTruncated: true,
+}, overrides);
+
+test('the unit-suite row previews its excerpts inline; declared rows keep details empty', () => {
+  const shaped = tools.shapeChecks({
+    check_state: 'failing',
+    test_results: [
+      { name: 'Board shows the snap toggle', path: '/dev', status: 'fail', failureReason: 'Expected element "[data-x]" was not found' },
+      excerptUnitRow(),
+    ],
+  });
+  assert.equal(shaped.detailsTruncated, true, 'the run kept fewer excerpts than the preview cap');
+  // The unit row leads; its preview holds the first three excerpts, wrapped
+  // like every other borrowed string.
+  const unit = shaped.failures[0];
+  assert.equal(unit.details.length, unitSuiteRow.MAX_INLINE_EXCERPT_TESTS);
+  assert.match(unit.details[0].excerpt, /<untrusted-content>error: 'expected 42 to equal 41/);
+  assert.equal(unit.details[0].file, '<untrusted-content>tests/a.test.js</untrusted-content>');
+  assert.match(unit.details[0].test, /<untrusted-content>t1/);
+  // A declared check's reason IS its diagnosis: it keeps the empty array,
+  // never a missing field — a conditional one fails the whole response (#2137).
+  const declared = shaped.failures[1];
+  assert.deepEqual(declared.details, []);
+});
+
+test('detailsTruncated stays false when the preview holds the whole run', () => {
+  const shaped = tools.shapeChecks({
+    check_state: 'failing',
+    test_results: [excerptUnitRow({ failureDetails: excerptUnitRow().failureDetails.slice(0, 2), failureDetailsTruncated: undefined })],
+  });
+  assert.equal(shaped.detailsTruncated, false);
+  assert.equal(shaped.failures[0].details.length, 2);
+});
+
+const checkOutputConnector = (testResults, checkState = 'failing') => connector((method, pathname) => {
+  assert.equal(method, 'GET');
+  assert.match(pathname, /^\/api\/sessions\/\d+$/);
+  return { session: Object.assign({}, DEFERRED_ROW, {
+    check_state: checkState, test_results: testResults,
+  }) };
+});
+
+test('get_check_output returns the unit row in full, wrapped as untrusted', async () => {
+  const c = checkOutputConnector([excerptUnitRow()]);
+  try {
+    const result = await c.handlers.get('get_check_output')({ proposalId: 4208 });
+    assert.ok(!result.isError);
+    const parsed = validateOutput(c.specs.get('get_check_output'), result);
+    assert.ok(parsed.success, `the SDK would reject this response: ${parsed.success ? '' : parsed.error.message}`);
+    const out = result.structuredContent;
+    assert.equal(out.proposalId, 4208);
+    assert.equal(out.prNumber, DEFERRED_ROW.pr_number || null, 'a session with no PR answers null');
+    assert.match(out.check.name, /Repo unit suite/);
+    assert.equal(out.check.advisory, false);
+    assert.match(out.reason, /tests\/a\.test\.js \(2\): t1; t2/);
+    assert.equal(out.tests.length, 4, 'the whole stored inventory, not the preview cap');
+    assert.match(out.tests[0].excerpt, /<untrusted-content>error: 'expected 42 to equal 41/);
+    assert.equal(out.tests[0].file, '<untrusted-content>tests/a.test.js</untrusted-content>');
+    assert.equal(out.testsTruncated, true);
+    assert.deepEqual(out.consoleErrors, [], 'the unit row carries no console errors');
+  } finally { c.restore(); }
+});
+
+test('get_check_output answers a declared check by name: reason and console errors', async () => {
+  const declared = {
+    name: 'Board shows the snap toggle', path: '/dev', status: 'fail', advisory: false,
+    failureReason: 'Expected element "[data-x]" was not found',
+    consoleErrors: [{ kind: 'pageerror', message: 'TypeError: x is not a function', source: '/js/dev.js:10' }],
+  };
+  const c = checkOutputConnector([declared, excerptUnitRow()]);
+  try {
+    const result = await c.handlers.get('get_check_output')({ proposalId: 4208, check: 'Board shows the snap toggle' });
+    assert.ok(!result.isError);
+    const parsed = validateOutput(c.specs.get('get_check_output'), result);
+    assert.ok(parsed.success, `the SDK would reject this response: ${parsed.success ? '' : parsed.error.message}`);
+    const out = result.structuredContent;
+    assert.match(out.check.name, /Board shows the snap toggle/);
+    assert.match(out.reason, /Expected element "\[data-x\]" was not found/);
+    assert.deepEqual(out.tests, [], 'a declared check carries no per-test excerpts');
+    assert.equal(out.testsTruncated, false);
+    assert.equal(out.consoleErrors.length, 1);
+    assert.match(out.consoleErrors[0].message, /TypeError: x is not a function/);
+    assert.equal(out.consoleErrors[0].source, '<untrusted-content>/js/dev.js:10</untrusted-content>');
+    // The unit row rides along but the explicit name wins.
+    assert.ok(!out.check.name.includes('Repo unit suite'));
+  } finally { c.restore(); }
+});
+
+test('get_check_output refuses a name no failing check carries, and names them', async () => {
+  const c = checkOutputConnector([
+    { name: 'Board shows the snap toggle', path: '/dev', status: 'fail' },
+    excerptUnitRow(),
+  ]);
+  try {
+    const result = await c.handlers.get('get_check_output')({ proposalId: 4208, check: 'nope' });
+    assert.ok(result.isError);
+    assert.equal(result.structuredContent.code, 'unknown_check');
+    assert.match(result.structuredContent.message, /Board shows the snap toggle/, 'the failing names are listed');
+  } finally { c.restore(); }
+});
+
+test('get_check_output without a name defaults to the unit row when one is failing', async () => {
+  const c = checkOutputConnector([
+    { name: 'Board shows the snap toggle', path: '/dev', status: 'fail' },
+    excerptUnitRow(),
+  ]);
+  try {
+    const result = await c.handlers.get('get_check_output')({ proposalId: 4208 });
+    assert.ok(!result.isError);
+    assert.match(result.structuredContent.check.name, /Repo unit suite/);
+  } finally { c.restore(); }
+});
+
+test('get_check_output says when several non-unit checks failed and none was named', async () => {
+  const c = checkOutputConnector([
+    { name: 'First fails', path: '/a', status: 'fail' },
+    { name: 'Second fails', path: '/b', status: 'fail' },
+  ]);
+  try {
+    const result = await c.handlers.get('get_check_output')({ proposalId: 4208 });
+    assert.ok(result.isError);
+    assert.equal(result.structuredContent.code, 'unknown_check');
+    assert.match(result.structuredContent.message, /First fails/);
+    assert.match(result.structuredContent.message, /Second fails/);
+  } finally { c.restore(); }
+});
+
+test('get_check_output answers no_failing_checks for a green or pending run', async () => {
+  for (const [state, rows] of [
+    ['passing', [{ name: 'fine', path: '/x', status: 'pass' }]],
+    ['pending', []],
+  ]) {
+    const c = checkOutputConnector(rows, state);
+    try {
+      const result = await c.handlers.get('get_check_output')({ proposalId: 4208 });
+      assert.ok(result.isError);
+      assert.equal(result.structuredContent.code, 'no_failing_checks');
+      assert.match(result.structuredContent.message, new RegExp(state), 'the state is named, not guessed');
+    } finally { c.restore(); }
   }
 });

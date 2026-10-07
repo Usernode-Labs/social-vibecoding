@@ -3952,6 +3952,11 @@
       "expectText": "Why it failed"
     },
     {
+      "name": "A failing unit-suite row lists each failing test with its error excerpt under Why it failed (#3978)",
+      "path": "/?demo=1&details=1#app/usernode-2d5619/dev/proposals/9000093",
+      "expectSelector": ".dev-step-blocked[data-note=\"checks\"] .dev-step-run .dev-ledger-fails > .dev-ledger-check-why > .dev-ledger-why > .dev-ledger-why-body > .dev-ledger-why-details > li .dev-ledger-why-excerpt"
+    },
+    {
       "name": "Freshness (#1442): a conflicting proposal says so on its merge step, with its votes still open above it",
       "path": "/?demo=1&details=1#app/usernode-2d5619/dev/proposals/9000034",
       "expectSelector": ".dev-topic-steps .dev-step[data-note=\"votes\"] ~ .dev-step[data-note=\"mergeability\"][data-req-gate=\"integration\"]",
