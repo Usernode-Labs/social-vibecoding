@@ -2697,14 +2697,10 @@ async function fileRequest(pool, config, {
        asked_text = COALESCE(EXCLUDED.asked_text, homeroom_bot_requesters.asked_text)`,
     [app.id, issueNumber, user.id, title, askedText ? clip(askedText, 2000) : null],
   );
+  // The people who follow new requests on the project, and (#3952) the
+  // people it names with @, in their words: once each (#4271). Never rejects.
   try {
-    notifications.createIssueOpenedNotifications?.(pool, { appId: app.id, issueNumber, authorId: user.id })
-      ?.then((rows) => Promise.all(rows.map((row) => notifications.hydrateAndPush(pool, row))))
-      ?.catch((err) => log.warn('homeroom-bot-mayor', 'Issue-opened notification failed', { err: err.message }));
-  } catch {}
-  // #3952: the people it names with @, in their words. Never rejects.
-  try {
-    notifications.notifyIssueMentions?.(pool, { appId: app.id, issueNumber, authorId: user.id, text: `${title}\n\n${body}` });
+    notifications.notifyIssueFiled?.(pool, { appId: app.id, issueNumber, authorId: user.id, text: `${title}\n\n${body}` });
   } catch {}
   await ws.sendSystemMessage(pool, app.id, `${user.username} created issue: "${title}" (#${issueNumber})`,
     'system', null, { type: 'issue', ref: issueNumber }).catch(() => {});

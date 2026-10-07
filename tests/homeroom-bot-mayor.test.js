@@ -191,7 +191,8 @@ test('it is wired after the send, never into it, and files a request the way the
   assert.match(route, /setImmediate\(\(\) => \{\n\s+require\('\.\.\/services\/homeroom-bot-dm'\)\.noteUserMessage\(/);
   const src = read('src/services/homeroom-bot-mayor.js');
   assert.match(src, /INSERT INTO issues \(app_id, github_issue_number, title, description, kind, payload, created_by\)/);
-  assert.match(src, /createIssueOpenedNotifications/);
+  // #4271: the new-request row and the mentions, in one call (notifications.js).
+  assert.match(src, /notifyIssueFiled/);
   assert.match(src, /if \(!\(await canFile\(pool, app, user\)\)\)/, 'a tap re-checks membership before filing');
 });
 
