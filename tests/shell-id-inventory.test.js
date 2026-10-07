@@ -997,7 +997,9 @@ const ADDED_IDS = {
   // picker is a native surface, so the input never renders); the preview
   // row's one item is built by feedback-controller.js, like the screenshot
   // thumbnails, so it carries no id of its own.
-  'feedback-video-btn': '#3940: the Add video button (label becomes Replace video once a clip is attached). dapp.json\'s feedback check selects on it.',
+  'feedback-video-btn': '#3940, then the attachment popup: the Video row of the paperclip menu (label "Video", "Replace video" once a clip is attached). dapp.json\'s feedback check selects on it.',
+  'feedback-attach-btn': 'The attachment popup\'s paperclip entry point: one icon button beside "Attach screenshot" standing in for the two buttons the form carried ("Choose from Photos", "Add video"), so the attachment area is one line again. Icon-only, with a tooltip and an accessible name; aria-expanded/aria-controls follow the popup.',
+  'feedback-attach-pop': 'The attachment popup itself: a small anchored panel in the vote picker\'s shape, hanging from #feedback-attach-btn, whose two rows keep the retired buttons\' ids (#feedback-screenshot-picker-btn "Photo", #feedback-video-btn "Video"). Ships hidden; closes on a choice, an outside tap and Escape.',
   'feedback-video-input': '#3940: the hidden video file input behind the button (MP4, WebM and MOV).',
   'feedback-video-preview': '#3940: the clip preview row (first-frame thumbnail, progress bar, status, remove), empty and hidden until a clip is chosen.',
 };

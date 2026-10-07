@@ -10,8 +10,16 @@ const controller = read('frontend/src/features/dialogs/feedback-controller.js');
 const dialog = read('frontend/src/features/dialogs/feedback.tsx');
 
 test('feedback offers native capture and a Photos fallback', () => {
-  assert.match(dialog, /id="feedback-screenshot-picker-btn"/);
-  assert.match(dialog, /Choose from Photos/);
+  // The picker's entry point is the popup's Photo row now: one paperclip
+  // opens the anchored menu, and the row keeps the picker button's id.
+  const popup = dialog.slice(
+    dialog.indexOf('id="feedback-attach-pop"'),
+    dialog.indexOf('id="feedback-video-input"'),
+  );
+  assert.match(dialog, /id="feedback-attach-btn"/);
+  assert.match(popup, /id="feedback-screenshot-picker-btn"/);
+  assert.match(popup, /Photo/);
+  assert.match(popup, /id="feedback-video-btn"/);
   assert.match(dialog, /id="feedback-screenshot-input"/);
   assert.match(dialog, /accept="image\/png,image\/jpeg"/);
   assert.match(controller, /capabilities\.includes\('captureScreenshot'\)/);
