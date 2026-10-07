@@ -108,6 +108,37 @@ export function AppContextIsland() {
     return () => document.removeEventListener('click', onDoc, true);
   }, [open, adopted]);
 
+  // A CLICK ON THE RUNNING APP DISMISSES IT TOO (#4260). The app is a
+  // cross-origin frame, so the listener above never hears that click: it
+  // happens in another document. What this one does hear is the focus going
+  // there — the window blurs and the frame becomes the active element. That
+  // is the outside click, read from this side, the same on a mouse and a
+  // finger. Switching tabs or windows also blurs, but leaves the active
+  // element where it was here, so it closes nothing. The tour keeps its
+  // say, as it does above. The web presentations only, like the listener
+  // above: adopted into a kit sheet, the kit's backdrop covers the frame and
+  // takes that tap itself.
+  useEffect(() => {
+    if (!open || adopted) return undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const onBlur = () => {
+      // The active element moves after the blur event, not before it.
+      timer = setTimeout(() => {
+        const active = document.activeElement;
+        if (!active || active.tagName !== 'IFRAME') return;
+        if (document.getElementById('apps-switcher-sheet')?.contains(active)) return;
+        const tour = document.getElementById(TOUR_ID);
+        if (tour && !tour.classList.contains('hidden')) return;
+        void AppContext.close();
+      }, 0);
+    };
+    window.addEventListener('blur', onBlur);
+    return () => {
+      window.removeEventListener('blur', onBlur);
+      if (timer) clearTimeout(timer);
+    };
+  }, [open, adopted]);
+
   // `?shot=app-about`: the menu open on its About pane, for the declared
   // checks and the review captures. About is a tap inside a menu that is
   // itself a tap away, so no URL reached it — the same gap ?shot=app-context
