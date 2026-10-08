@@ -1505,7 +1505,7 @@ export function LandingScreen() {
               Come build the next version with us.
             </h1>
             <p className="mt-2.5 text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400 text-pretty">
-              We let people in a few at a time, and we'll email you when your spot is ready.
+              We're letting people in a few at a time, and we'll email you when your spot is ready.
             </p>
             {/*
                 THE WAY OUT TO THE LONG VERSION. One sentence is the right
