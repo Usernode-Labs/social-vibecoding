@@ -115,3 +115,23 @@ test('#22: on a solo project the Yes line is a note, asked of the row\'s own pro
   assert.match(draw(), /Add a line for the group, if you like\./, 'a group keeps its wording');
   assert.match(WORKSHOP, /<NeedsVoteForm\s+row=\{row\}\s+slug=\{slug\}/, 'the sheet hands the form the page\'s project for rows without their own');
 });
+
+// #4346: an approval is a solo change, so its Yes asks for a note even before
+// the row's community read has landed — here the real `useCommunity` runs,
+// and with no effect under renderToStaticMarkup it has read nothing. The
+// staging demo card (`staging-demo-emoji-icon`) was the other way here: the
+// project reads as public, so the read never says solo at all.
+test('#4346: an approval whose community read has not landed asks for a note', () => {
+  const row = reelRows([{ ...item, approve: true }])[0];
+  assert.equal(row.kind, 'vote');
+  assert.equal(row.yes && row.yes.approve, true, 'the reel marks the change as an approval');
+
+  const yes = form({ row });
+  assert.match(yes, /<div class="dev-vote-switch-label" id="[^"]*">Your approval<\/div>/, 'the approval header, from the row\'s own yes.approve');
+  assert.match(yes, /<label class="dev-vote-reason-label" for="dev-ws-vote-reason-needs-proposal-42">Add a note, if you like\.<\/label>/);
+  assert.doesNotMatch(yes, /for the group/);
+
+  const no = form({ row, side: 'no' });
+  assert.match(no, /What’s not working for you\? One line is plenty\./, 'the No side is unchanged');
+  assert.match(no, /class="dev-vote-reason-send dev-vote-reason-send-no" disabled="">Don’t approve</, 'and still waits for its line');
+});

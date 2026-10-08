@@ -92,6 +92,22 @@ test('#22: on a project that is just yours the Yes line is a note; the No side i
   assert.match(fn, /solo=\{!!yes\.solo\}/);
 });
 
+// #4346: an approval is a solo change whether or not the project's audience
+// has been read — `solo` is false until the community read lands, and on a
+// card whose project reads as public on staging. So an approval's Yes asks
+// for a note on `approve` alone; a group vote keeps its line for the group.
+test('#4346: an approval asks for a note on its Yes even when solo has not been read', () => {
+  const onYes = picker({ approve: true, solo: false });
+  assert.match(onYes, /<label class="dev-vote-reason-label" for="dev-vote-reason-7">Add a note, if you like\.<\/label>/);
+  assert.doesNotMatch(onYes, /for the group/);
+  assert.match(onYes, />Your approval<\/div>/, 'the approval header rides approve, as before');
+  const onNo = picker({ approve: true, solo: false, side: 'no' });
+  assert.match(onNo, /What’s not working for you\? One line is plenty\./, 'the No side is unchanged');
+  assert.match(onNo, /class="dev-vote-reason-send dev-vote-reason-send-no" disabled="">Don’t approve<\/button>/,
+    'and a No still waits for its line');
+  assert.match(picker({ approve: false, solo: false }), /Add a line for the group, if you like\./, 'a group keeps its wording');
+});
+
 test('withLine false: the switch and the button only, and the send is never off', () => {
   // #2603 left no caller passing false — every vote the group casts carries
   // a line now — but the panel still draws without the box for anything
