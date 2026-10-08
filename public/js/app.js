@@ -5259,6 +5259,15 @@ const App = {
             // from dev/sessions/{id}, which is the OWNER's dev chat).
             subTab = 'topic';
             ref = { kind: 'session', id: parseInt(parts[4]) || null };
+          } else if (sec === 'week' && parts[4]) {
+            // A WEEK of the Workshop, as its own page (#4457): the address is
+            // the Monday it starts on. The date itself is read back off the
+            // address (AppView._workshopWeekIso), so an unparsable one has
+            // nothing to override and the Workshop tab shows instead.
+            subTab = 'forum';
+            if (typeof AppView !== 'undefined' && AppView._overrideWorkshopTab) {
+              AppView._overrideWorkshopTab('week');
+            }
           } else {
             // dev, dev/issues, dev/proposals, dev/sessions (no id) —
             // all land on the plain card list.

@@ -91,7 +91,7 @@ const ITEM_HOOKS = [
   'data-shared-session-row', 'data-session-chip', 'data-discussion-row',
 ];
 
-function itemHooks(card: DevCardModel): Record<string, string> {
+export function itemHooks(card: DevCardModel): Record<string, string> {
   const a = card.attrs || {};
   const out: Record<string, string> = {};
   for (const k of ITEM_HOOKS) if (a[k] != null) out[k] = String(a[k]);

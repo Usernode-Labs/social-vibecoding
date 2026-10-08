@@ -65,6 +65,7 @@ import { ChevronLeftIcon } from '@/components/ui/icons';
 
 import { useStoreState } from '../../../lib/use-store-state';
 import { improveStore, topicBackHref, topicBackLabel, topicWorkshopHref } from '../../improve/improve-store.js';
+import { topicBesideStore } from '../topic-beside-store';
 
 function onBackClick(event: MouseEvent<HTMLAnchorElement>): void {
   const nav = (window as unknown as {
@@ -99,7 +100,11 @@ function TopicChip({ href, label }: { href: string; label: 'Messages' | 'Worksho
 
 export function TopicBack(): ReactNode {
   const { slug, tab, subTab, boardView, topicOrigin } = useStoreState(improveStore);
+  const beside = useStoreState(topicBesideStore);
   const href = topicBackHref({ slug, tab, subTab, boardView, topicOrigin });
+  // #4457: with the item open BESIDE the Workshop's list, the list is right
+  // there — a chip pointing back at it would name what the reader can see.
+  if (beside.up) return null;
   if (!href) return null;
   // #3103: a card opened from a Messages conversation goes back to it, and
   // says so; everywhere else the chip is the Workshop's.

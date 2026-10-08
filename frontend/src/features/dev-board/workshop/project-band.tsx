@@ -15,7 +15,7 @@
 
 import type { KeyboardEvent, ReactNode } from 'react';
 
-export type ProjectTabKey = 'status' | 'discussion' | 'workshop' | 'needs' | 'all' | 'plan';
+export type ProjectTabKey = 'status' | 'discussion' | 'workshop' | 'needs' | 'all' | 'plan' | 'week';
 
 /** The four tabs, in the band's order. All items is the Workshop's page. */
 export const PROJECT_TABS: ReadonlyArray<{ key: ProjectTabKey; label: string }> = [
@@ -27,7 +27,7 @@ export const PROJECT_TABS: ReadonlyArray<{ key: ProjectTabKey; label: string }> 
 
 /** The tab lit for a page: All items is the Workshop's, the plan the Hub's. */
 export function litTab(tab: ProjectTabKey): ProjectTabKey {
-  if (tab === 'all') return 'workshop';
+  if (tab === 'all' || tab === 'week') return 'workshop';
   if (tab === 'plan') return 'status';
   return tab;
 }

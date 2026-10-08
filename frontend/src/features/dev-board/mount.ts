@@ -47,6 +47,7 @@ import { kanbanFiltersStore, type KanbanFiltersState } from './kanban-filters-st
 import { DevSessionShell } from './session-frame';
 import { VotingHelp, type VotingHelpProps } from './voting-help';
 import { DevTopicSubView } from './topic-frame';
+import { topicBesideStore, type TopicBesideState } from './topic-beside-store';
 import { publishViewMode } from './view-mode-store';
 import { publishDevActions } from './actions-store';
 import { publishWorkshopGroup } from './workshop/group-mode-store';
@@ -94,7 +95,11 @@ export interface DevBoardBridge {
   mountChatSubView(host: Element | null): void;
   mountTopicSubView(
     host: Element | null,
-    options: { backHref: string; onBackClick: (event: MouseEvent) => void },
+    options?: { beside?: TopicBesideState | null } | null,
+  ): void;
+  mountTopicSubView(
+    host: Element | null,
+    options?: { beside?: TopicBesideState | null } | null,
   ): void;
   mountAttrPopover(host: Element | null): void;
   publishAttrPopover(patch: Partial<AttrPopoverState>): void;
@@ -223,7 +228,13 @@ export const devBoardBridge: DevBoardBridge = {
   // Like the chat sub-view above: the frame takes no back-bar props. The
   // topic page's back control is the "‹ Workshop" chip at the top of its
   // head (#2916, topic/topic-back.tsx), rendered by TopicHead, not this frame.
-  mountTopicSubView(host) {
+  // #4457: `beside` lays the item out beside the Workshop's list instead of
+  // as a whole page — the frame reads the store directly for that, so the
+  // prop only seeds it before the first paint.
+  mountTopicSubView(host, options) {
+    if (options && options.beside !== undefined) {
+      topicBesideStore.set(options.beside || { up: false, slug: null, tab: null });
+    }
     mountLegacyPortal(host, createElement(DevTopicSubView));
   },
 

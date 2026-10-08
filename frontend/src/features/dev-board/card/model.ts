@@ -366,6 +366,16 @@ export type ListRow =
      */
     at?: number;
     /**
+     * What the item IS and where it stands, on the Workshop's own rows
+     * (#4457): the week page groups by them ("Went live", "Being worked
+     * on"), and the work row's words line reads the author. Copied off the
+     * entry the row was built from, so the client need not re-derive either
+     * from the card.
+     */
+    kind?: string;
+    lane?: string;
+    who?: string | null;
+    /**
      * The voter-facing plain-language summary (`pr_summary_md`), on vote rows
      * only. Null when the proposal has none — a legacy one, or a summary pass
      * that failed — and the deck says so rather than leaving a gap.
@@ -450,6 +460,12 @@ export interface DevWorkshopView {
   emptyNote: { loadFailed: boolean; filtered?: boolean } | null;
   /** Which tab a `?ws=` deep link asked for; null for the viewer's own choice. */
   tab: 'status' | 'discussion' | 'workshop' | 'needs' | 'all' | null;
+  /**
+   * A week page's Monday, as its address spells it ("2026-10-05"), when the
+   * `?ws=week` deep link named one; null on every other tab, and on a week
+   * address whose date does not parse (the Workshop tab shows instead).
+   */
+  weekIso?: string | null;
   /**
    * The models the ask box may talk to — the dev session's own list
    * (`DevChat.MODELS`), not a second one. Empty where DevChat is absent, and

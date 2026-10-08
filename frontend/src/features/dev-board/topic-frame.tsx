@@ -62,7 +62,14 @@
  * guard, so what #1036 bought that anchor is not lost; it is provided once.
  */
 
+import type { ReactNode } from 'react';
+import { useLayoutEffect, useRef } from 'react';
+
 import { skeletonListHtml } from './card/skeleton';
+import { useStoreState } from '../../lib/use-store-state';
+import { devWorkshopStore } from './card/cards-store';
+import { topicBesideStore } from './topic-beside-store';
+import { WorkshopLists } from './workshop/workshop';
 
 /**
  * The thread host's initial content, as a constant string.
@@ -79,7 +86,94 @@ import { skeletonListHtml } from './card/skeleton';
  */
 const THREAD_INITIAL = { __html: skeletonListHtml(1) };
 
+/**
+ * The Workshop's own lists, as the panel's left column (#4457). The same
+ * component the tab renders — Your work, Since your last visit, Week by
+ * week — from the same store, so the list the panel sits beside IS the list
+ * the tab shows, not a copy. Its scroll is the one the tab had: restored
+ * once, from the offset renderDevView saved on the way out.
+ */
+function BesideLists({ slug }: { slug: string }) {
+  const v = useStoreState(devWorkshopStore);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    const av = (window as unknown as {
+      AppView?: { _getFeedScroll?: (s: string, t: string | null) => number };
+    }).AppView;
+    const saved = av?._getFeedScroll?.(slug, null) || 0;
+    const el = listRef.current;
+    if (el && saved > 0) el.scrollTop = saved;
+    // Once: a later restore is renderDevView's, when the panel closes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return (
+    <div ref={listRef} className="dev-ws-beside-scroll">
+      <WorkshopLists
+        v={v}
+        slug={slug}
+        canPost={v.canPost}
+        outsider={false}
+        readOnly={false}
+        startHere={false}
+        bot={!!(v.mine && v.mine.bot)}
+        currentHref={typeof window !== 'undefined' ? window.location.hash : ''}
+        onOpenRow={(href) => {
+          const av = (window as unknown as {
+            AppView?: { openWorkRow?: (s: string, h: string) => boolean };
+          }).AppView;
+          if (!av?.openWorkRow?.(slug, href)) window.location.hash = href;
+        }}
+      />
+    </div>
+  );
+}
+
 export function DevTopicSubView() {
+  const beside = useStoreState(topicBesideStore);
+  if (!beside.up) return <TopicBody />;
+  return (
+    <div className="dev-ws-beside">
+      <aside className="dev-ws-beside-list" data-ws-beside-list="">
+        <BesideLists slug={beside.slug || ''} />
+      </aside>
+      <div className="dev-ws-beside-main">
+        <div className="dev-ws-beside-bar" data-ws-beside-bar="">
+          <button
+            type="button"
+            className="dev-ws-beside-page un-touch-target"
+            data-ws-beside-page=""
+            onClick={() => {
+              const av = (window as unknown as {
+                AppView?: { openBesideAsPage?: () => void };
+              }).AppView;
+              if (av?.openBesideAsPage) av.openBesideAsPage();
+            }}
+          >
+            Open as a page
+          </button>
+          <button
+            type="button"
+            className="dev-ws-beside-close un-touch-target"
+            data-ws-beside-close=""
+            aria-label="Close"
+            title="Close"
+            onClick={() => {
+              const av = (window as unknown as {
+                AppView?: { closeWorkBeside?: () => void };
+              }).AppView;
+              if (av?.closeWorkBeside) av.closeWorkBeside();
+            }}
+          >
+            ✕
+          </button>
+        </div>
+        <TopicBody />
+      </div>
+    </div>
+  );
+}
+
+function TopicBody() {
   return (
     <div className="flex flex-col h-full min-h-0 dc-lift dc-lift-strip">
       <div className="gc-tab-body flex-1 flex min-h-0">

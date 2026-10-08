@@ -230,6 +230,11 @@ const OWNED = [
     sel: '#dev-workshop',
     except: ['.dev-feed-comments', '[data-kudos-host]'],
   },
+  // The item beside the Workshop's list (topic-frame.tsx, #4457). The left
+  // column is React's whole subtree — the same WorkshopLists the tab
+  // renders — mounted where the topic frame mounts; the audit sweeps it on
+  // the dev routes that can carry it.
+  { sel: '[data-ws-beside-list]' },
   {
     sel: '#dev-kanban-board',
     except: ['[data-kudos-host]'],

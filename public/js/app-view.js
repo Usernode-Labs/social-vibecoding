@@ -1271,52 +1271,9 @@ const AppView = {
       if (shot === 'since-visit') {
         AppView._workshopSince[slug] = Date.now() - 30 * 86400000;
       }
-      // `?shot=since-seen` lands on the state #2240 is about, which is the
-      // OTHER end of the same walk: a reader with nothing new who walked into
-      // what they had seen anyway — which the strip invites, because its
-      // controls are drawn and live on a quiet day by design. Seen rows come
-      // out, and `Clear`, the control that folds them again, is what has to
-      // be live there.
-      // The baseline is seeded to NOW rather than a month back, so every row
-      // is on the seen side and the strip opens on its "nothing has changed"
-      // note; then the real controls are pressed — through their own
-      // handlers, as `?shot=board-unfold` presses a row — until the "Seen
-      // before" mark is on screen. It stops on the mark rather than after a
-      // fixed number of presses, because how many it takes depends on the
-      // rows.
-      // Nothing is written to storage, so a human who opens the link is not
-      // told they were here.
-      if (shot === 'since-seen') {
-        AppView._workshopSince[slug] = Date.now();
-        let tries = 0;
-        const done = () => {
-          clearInterval(tick);
-          document.removeEventListener('pointerdown', onUserInput, true);
-          document.removeEventListener('keydown', onUserInput, true);
-        };
-        // A human who opens this link must not have the list walked out from
-        // under them after their first real gesture. Same guard as
-        // `?shot=board-unfold` and `?shot=feed-comments` below, the other two
-        // deep links that drive a control rather than seeding state.
-        const onUserInput = (e) => { if (!e || e.isTrusted) done(); };
-        document.addEventListener('pointerdown', onUserInput, true);
-        document.addEventListener('keydown', onUserInput, true);
-        const tick = setInterval(() => {
-          if (App.currentApp !== slug || (tries += 1) > 40) { done(); return; }
-          // Re-asserted for the whole window rather than stopped at the first
-          // sighting, as `?shot=card-menu` does: the week summaries ride in
-          // behind the board's data and repaint the list, and a check that
-          // judged the page after an unfold was undone failed intermittently.
-          if (document.querySelector('[data-ws-since-seen]')) return;
-          // A week's seen rows follow its new ones behind that week's one
-          // `Show N more` (#3524), so an open week's reveal is the press when
-          // there is one; `Show an earlier week` steps back a week to find
-          // one when there is not.
-          const more = document.querySelector('button[data-ws-since-week-more]')
-            || document.querySelector('button[data-ws-since-more]:not([disabled])');
-          if (more) more.click();
-        }, 300);
-      }
+      // `?shot=since-seen` retired with the in-place unfold (#4457): the
+      // state it reached — a walked list behind a "Seen before" mark — is
+      // gone, and the check that needed it reads the week page directly.
       // `?shot=mine-empty` draws "What you are working on" with nothing in
       // it — the state #2182 keeps on screen — whatever sessions the viewer
       // has. The demo seeds one busy session of the viewer's, so without
@@ -4157,7 +4114,7 @@ const AppView = {
     // Leaving whatever thread surface was open: drop the live render
     // target so incoming thread messages turn into badge bumps.
     if (typeof GroupChat !== 'undefined' && GroupChat.unmountThread) GroupChat.unmountThread();
-    if (subTab !== 'topic') AppView._devTopic = null;
+    if (subTab !== 'topic') { AppView._devTopic = null; AppView._topicBeside = null; }
 
     // The topic sub-view used to be an `innerHTML` template, so it had to
     // retire whatever interim root the previous surface had left on
@@ -4592,7 +4549,7 @@ const AppView = {
     // the topic head (#2916, features/dev-board/topic/topic-back.tsx), which
     // scrolls with the page and carries the NavLink-guarded click; the header
     // draws no arrow on this route. See features/dev-board/topic-frame.tsx.
-    AppView._reactDevBoard()?.mountTopicSubView(content);
+    AppView._reactDevBoard()?.mountTopicSubView(content, { beside: AppView._topicBeside || null });
 
     // THE APP'S RECORD MAY NOT BE HERE — the #2879 case, on a topic page. A
     // failed or superseded GET /api/apps/<slug> leaves AppView.appData empty
@@ -4629,6 +4586,12 @@ const AppView = {
     let t = AppView._devTopic;
     if (!document.getElementById('dev-topic-thread') || !t
         || t.kind !== ref.kind || t.id !== ref.id) return;
+    // #4457: with the item open BESIDE the Workshop's list, the list needs
+    // this app's rows, which the topic route alone does not publish. The
+    // beside list reads the same store the tab does.
+    if (AppView._topicBeside && AppView._topicBeside.slug === App.currentApp) {
+      AppView._reactDevBoard()?.publishWorkshop(AppView._workshopView());
+    }
     // The Completed list is keyset-paginated, so a merged proposal beyond
     // the first page (deep link, shared URL, or one paged-in then lost when
     // _loadDevData reset _merged) won't be in any cached list. Rather than
@@ -9206,7 +9169,7 @@ const AppView = {
   // each directly (`?ws=needs`) because the platform's own rule is that a
   // screen only reachable by interacting needs a URL: the declared checks
   // select against it and the proposal screenshots are shot from it.
-  WORKSHOP_TABS: ['status', 'discussion', 'workshop', 'needs', 'all', 'plan'],
+  WORKSHOP_TABS: ['status', 'discussion', 'workshop', 'needs', 'all', 'plan', 'week'],
   _workshopModels() {
     const src = (typeof DevChat !== 'undefined' && DevChat && DevChat.MODELS) || null;
     if (!src || typeof src !== 'object') return { list: [], selected: null };
@@ -9220,6 +9183,10 @@ const AppView = {
   },
 
   WORKSHOP_TAB_KEY: 'devWorkshopTab',
+  // #4457: the item a Workshop row opened BESIDE the list, as
+  // `{ slug, tab }` — null when the item is a full page (a phone, or a row
+  // reached from anywhere else). Cleared by any route off the topic.
+  _topicBeside: null,
   // `?ws=` resolved once and cached, mirroring `?group=` above — and for the
   // same reason: a declared check runs against an empty localStorage and
   // would otherwise always land on the default tab and assert nothing.
@@ -9235,8 +9202,26 @@ const AppView = {
       AppView._workshopTabUrlOverride = AppView.WORKSHOP_TABS.indexOf(v) !== -1
         ? v
         : (AppView._retiredBoardLink() ? 'all' : null);
+      // `week` is only the tab while the address still names one of its
+      // weeks (AppView._workshopWeekIso reads it back off the hash): an
+      // override left standing would otherwise open every later app's
+      // Workshop on an empty week.
+      if (AppView._workshopTabUrlOverride === 'week' && !AppView._workshopWeekIso()) {
+        AppView._workshopTabUrlOverride = null;
+      }
     } catch { AppView._workshopTabUrlOverride = null; }
     return AppView._workshopTabUrlOverride;
+  },
+  // The Monday a `#app/<slug>/dev/week/<date>` address names, as the address
+  // spells it, or null anywhere else. Read off the hash at every ask rather
+  // than remembered: the week page IS its address, and a remembered date
+  // would follow the viewer to other screens.
+  _workshopWeekIso() {
+    if (typeof window === 'undefined' || !window.location) return null;
+    const hash = String(window.location.hash || '').replace(/^#/, '').split('?')[0];
+    const m = /^app\/[^/]+\/dev\/week\/(\d{4}-\d{2}-\d{2}|latest)$/.exec(hash);
+    if (!m) return null;
+    return m[2];
   },
   // The retired Board ROUTE's landing, the tab half. `#app/<slug>/board` calls
   // this and _overrideWorkshopGroup together (see app.js's restoreFromHash);
@@ -9263,7 +9248,7 @@ const AppView = {
       const stored = window.localStorage.getItem(AppView.WORKSHOP_TAB_KEY);
       // A remembered page (Needs you, All items) reopens as itself, with its
       // way back to the tab it hangs off above it.
-      if (AppView.WORKSHOP_TABS.indexOf(stored) !== -1 && stored !== 'plan') return stored;
+      if (AppView.WORKSHOP_TABS.indexOf(stored) !== -1 && stored !== 'plan' && stored !== 'week') return stored;
       // A viewer who last left the Dev screen on the Board gets the tab those
       // columns live in, for the same reason _getWorkshopGroup gives them the
       // pane: migrating the retired mode without carrying what it MEANT would
@@ -9409,12 +9394,80 @@ const AppView = {
   },
 
   _setWorkshopTab(key) {
-    // The plan is gone once it is built, so the page reopens on the hub.
-    const next = AppView.WORKSHOP_TABS.indexOf(key) !== -1 && key !== 'plan' ? key : 'status';
+    // The plan is gone once it is built, so the page reopens on the hub. A
+    // week is its address's page, never a remembered choice: it reopens on
+    // the Workshop tab.
+    const next = AppView.WORKSHOP_TABS.indexOf(key) !== -1 && key !== 'plan' && key !== 'week' ? key : 'status';
     // An explicit tap retires the URL override, exactly as `_setWorkshopGroup`
     // does — otherwise `?ws=` would keep winning over every later press.
     AppView._workshopTabUrlOverride = null;
     try { window.localStorage.setItem(AppView.WORKSHOP_TAB_KEY, next); } catch {}
+  },
+
+  /**
+   * #4457: A ROW OPENS ITS ITEM IN ONE TAP. On a window 1024px and wider the
+   * item opens in a panel BESIDE the list (the list moves left and keeps its
+   * scroll, the panel takes the rest); on a phone the item opens the way it
+   * always did, as its own page. Returns false when it did not open the
+   * panel, so the caller falls back to plain navigation.
+   *
+   * Opening IS navigation: the panel shows the item's own page (the same
+   * request or change page, mounted at its own address), so the address is
+   * the item's and Back, a reload and a copied link all behave. The list's
+   * scroll is already safe — renderDevView saves it on the way out — and the
+   * beside list restores it when the panel closes.
+   *
+   * A row pressed WHILE the panel is up switches the panel's item instead:
+   * the address is REPLACED, not pushed, so Back from the panel returns to
+   * the list rather than walking back through every row read on the way.
+   */
+  openWorkRow(slug, href) {
+    if (!slug || !href) return false;
+    let wide = false;
+    try { wide = window.matchMedia('(min-width: 1024px)').matches; } catch { return false; }
+    if (!wide) return false;
+    const next = `#${String(href).replace(/^#/, '')}`;
+    if (AppView._topicBeside && AppView._topicBeside.slug === slug
+        && window.location.hash === next) return true;
+    if (AppView._topicBeside && AppView._topicBeside.slug === slug) {
+      try {
+        window.history.replaceState(window.history.state, '', next);
+        window.dispatchEvent(new HashChangeEvent('hashchange'));
+        return true;
+      } catch { /* a rare engine without replaceState on a hash: fall through */ }
+    }
+    AppView._topicBeside = { slug, tab: AppView._workshopTab() };
+    window.location.hash = next;
+    return true;
+  },
+
+  // The panel's ✕. The list is where the panel came from, so go back to it;
+  // the saved scroll (renderDevView took it on the way out) is restored when
+  // the list re-renders.
+  closeWorkBeside() {
+    const beside = AppView._topicBeside;
+    AppView._topicBeside = null;
+    if (!beside) return;
+    window.location.hash = `#app/${encodeURIComponent(beside.slug)}/workshop`;
+  },
+
+  // The panel's "Open as a page": the whole tab becomes the item, exactly as
+  // a row opened from a phone would have it. The item is already loaded, so
+  // this re-renders the topic in place rather than navigating again.
+  openBesideAsPage() {
+    const beside = AppView._topicBeside;
+    AppView._topicBeside = null;
+    const t = AppView._devTopic;
+    if (!beside || !t) return;
+    void AppView.renderDevView('topic', { kind: t.kind, id: t.id });
+  },
+
+  // The week page's "‹ Workshop". The entry below is usually the tab the
+  // week was opened from, but a week address is a real page that can be
+  // reached cold, so when stepping back is not on it pushes instead.
+  backToWorkshop(slug) {
+    if (AppView._upWorkshopTab(slug, 'workshop')) return;
+    window.location.hash = `#app/${encodeURIComponent(slug)}/workshop`;
   },
   /**
    * A DOOR TO A PROJECT'S HUB OPENS THE HUB. The page reopens on the tab you
@@ -10270,11 +10323,16 @@ const AppView = {
       if (underThemeHeading && Array.isArray(card.badges) && card.badges.some((b) => b && b.key === 'attr:category')) {
         card = { ...card, badges: card.badges.filter((b) => !(b && b.key === 'attr:category')) };
       }
-      const row = AppView._attachRowConversation({ t: 'card', key: card.key, card }, kind, item);
+      const who = AppView._devCardAuthor(kind === 'my-session' || kind === 'shared-session' ? 'session' : kind, item);
+      // #4457: every row carries its entry's kind and lane (the week page
+      // groups by them) and its author, so the work row's words line can say
+      // "by …" without re-deriving either from the card.
+      const row = AppView._attachRowConversation(
+        { t: 'card', key: card.key, card, kind, lane, who: who || null }, kind, item,
+      );
       const created = createdOf(kind, item);
       if (baseline && created > baseline) row.fresh = true;
       const people = [];
-      const who = AppView._devCardAuthor(kind === 'my-session' || kind === 'shared-session' ? 'session' : kind, item);
       if (who) people.push(who);
       if (item && item.assignee && item.assignee.top) people.push(item.assignee.top);
       entries.push({
@@ -10320,10 +10378,10 @@ const AppView = {
     const mineOf = (bucket, pick) => bucket.filter(pick);
     const mineItems = [
       ...mineOf(buckets.inProgress, (e) => e.kind === 'my-session')
-        .map((e) => ({ kind: 'my-session', item: e.item })),
+        .map((e) => ({ kind: 'my-session', item: e.item, lane: e.lane })),
       ...mineOf(buckets.inReview, (x) => x.kind === 'proposal' && meId != null
         && String(x.item.user_id) === String(meId))
-        .map((x) => ({ kind: 'proposal', item: x.item })),
+        .map((x) => ({ kind: 'proposal', item: x.item, lane: x.lane })),
       // #2227: a governance proposal you opened — a propose-to-close, a
       // rename, a secret change — is your work in flight exactly as a code
       // proposal is, and it was the one kind of thing you could start and
@@ -10333,7 +10391,7 @@ const AppView = {
       // `user_id`.
       ...mineOf(buckets.inReview, (x) => x.kind === 'gov' && meId != null
         && String(x.item.created_by) === String(meId))
-        .map((x) => ({ kind: 'gov', item: x.item })),
+        .map((x) => ({ kind: 'gov', item: x.item, lane: x.lane })),
       // #2496: an issue you are working on — a claim of yours, a live
       // session of yours against it, an assignee mark naming you — is your
       // work in flight in the same sense, and it used to appear only inside
@@ -10346,7 +10404,7 @@ const AppView = {
       // working stays out of the strip: it is still on the board, in the
       // Underway column and in its theme, exactly as before.
       ...mineOf(buckets.inProgress, (e) => e.kind === 'issue' && AppView._issueIsMine(e.item))
-        .map((e) => ({ kind: 'issue', item: e.item })),
+        .map((e) => ({ kind: 'issue', item: e.item, lane: e.lane })),
     ].sort((a, b) => activityOf(b.kind, b.item) - activityOf(a.kind, a.item));
     // #2182: the strip stays on screen when there is nothing in it, so the
     // pane's shape does not change with the viewer's workload. `viewer` is
@@ -10360,7 +10418,7 @@ const AppView = {
       bot: !!AppView._botDoor(),
       count: mineList.length,
       shown: AppView.WORKSHOP_MINE_MAX,
-      rows: mineList.map(({ kind, item }) => {
+      rows: mineList.map(({ kind, item, lane }) => {
         const card = kind === 'my-session'
           ? AppView._mySessionCardModel(item)
           : kind === 'gov'
@@ -10369,8 +10427,14 @@ const AppView = {
               ? AppView._issueCardModel(item)
               : AppView._proposalCardModel(item);
         if (!card) return null;
+        // #4457: the row carries who made it and where it stands, for the
+        // words line and the week page's groups.
         return AppView._attachRowConversation(
-          { t: 'card', key: `mine:${card.key}`, card }, kind, item,
+          {
+            t: 'card', key: `mine:${card.key}`, card,
+            kind, lane: lane || null,
+            who: AppView._devCardAuthor(kind, item) || null,
+          }, kind, item,
         );
       }).filter(Boolean),
     };
@@ -10577,10 +10641,20 @@ const AppView = {
         shipped: moved.filter((e) => e.kind === 'merged' && e.item?.live_at !== null).length,
         opened: moved.filter((e) => e.kind === 'issue').length,
         proposed: moved.filter((e) => e.kind === 'proposal').length,
-        rows: moved.slice(0, AppView.WORKSHOP_SINCE_MAX).map((e) => ({ ...e.row, key: `since:${e.row.key}`, at: e.t })),
+        // #4457: each row carries its entry's kind and lane (the week page
+        // groups by them) and its author, read the way a card's meta line
+        // does (_devCardAuthor), so the work row's words line can say "by
+        // …" without re-deriving either from the card.
+        rows: moved.slice(0, AppView.WORKSHOP_SINCE_MAX).map((e) => ({
+          ...e.row, key: `since:${e.row.key}`, at: e.t,
+          kind: e.kind, lane: e.lane, who: AppView._devCardAuthor(e.kind, e.item) || null,
+        })),
         seen: {
           total: seen.length,
-          rows: seen.slice(0, AppView.WORKSHOP_SEEN_MAX).map((e) => ({ ...e.row, key: `seen:${e.row.key}`, at: e.t })),
+          rows: seen.slice(0, AppView.WORKSHOP_SEEN_MAX).map((e) => ({
+            ...e.row, key: `seen:${e.row.key}`, at: e.t,
+            kind: e.kind, lane: e.lane, who: AppView._devCardAuthor(e.kind, e.item) || null,
+          })),
         },
       };
     }
@@ -10830,6 +10904,9 @@ const AppView = {
       emptyNote,
       // Which tab a URL asked for, or null for the viewer's own choice.
       tab: AppView._workshopTab(),
+      // The Monday a week address names (#4457), or null. The week page is
+      // the address's, so it is read off the hash at every publish.
+      weekIso: AppView._workshopWeekIso(),
       // The models the Needs-you tab's ask box may talk to, read from the
       // SAME map the dev session's picker uses (DevChat.MODELS, refreshed
       // from GET /api/models at startup) rather than a second list here —

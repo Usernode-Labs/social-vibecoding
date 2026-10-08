@@ -227,6 +227,101 @@ export function approvalLine(
   return `A change goes live when ${who} ${required === 1 ? 'approves' : 'approve'} it${quiet ? ', or after a wait if one approves and nobody objects' : ''}.`;
 }
 
+/**
+ * One drawn step of the approval rule, for ApprovalRules' three-step
+ * drawing (#4457): "Its checks pass" → who has to say yes → "It goes live".
+ * The middle step carries the people: their faces, their names joined the
+ * way the rule joins them, and, where the rule has a quiet path, the wait
+ * line under it.
+ */
+export interface ApprovalStep {
+  key: 'checks' | 'who' | 'live';
+  text: string;
+  /** The names under the middle step, already joined ("evan or snait"). */
+  names?: string | null;
+  /** The faces beside the names: `{ username }` enough for swatchFor. */
+  faces?: Array<{ username: string }>;
+  /** Approvers beyond the faces drawn ("+9"). */
+  more?: number;
+  /** The quiet path, where the rule has one ("Or after a wait, …"). */
+  wait?: string | null;
+}
+
+/**
+ * The approval rule as three steps, pure like approvalLine so the five
+ * regimes are testable. `approvers` is GET /api/apps/:slug/approvers'
+ * answer when the reader may see it (the invited policy reads it; a 403 or
+ * a failure leaves it null and the middle step shows words only).
+ */
+export function approvalSteps(
+  approval: CommunityPayload['approval'] | null | undefined,
+  viewer?: Pick<CommunityPayload, 'audience' | 'is_member' | 'members'> | null,
+  approvers?: Array<{ username?: string; status?: string }> | null,
+): ApprovalStep[] | null {
+  if (!approval) return null;
+  const required = Math.max(1, Number(approval.required) || 1);
+  const electorate = Math.max(1, Number(approval.electorate) || 1);
+  const fixed = approval.approvals_required != null;
+  const quiet = !fixed && required > 1;
+  const WAIT = 'Or after a wait, if one says yes and nobody says no.';
+  let middle: ApprovalStep;
+  if (viewer?.audience === 'solo' && viewer.is_member
+    && Number(approval.electorate) === 1 && Number(approval.required) === 1) {
+    // A Just you project's one approver is the person reading it (#4246) —
+    // the same rule approvalLine draws; the face is theirs, the only member.
+    const you = (viewer.members && viewer.members[0]) || null;
+    middle = { key: 'who', text: 'You approve it', names: null, faces: you ? [you] : [], more: 0 };
+  } else if (approval.policy === 'invited') {
+    // "1 of 2 approvers says yes", with the approvers' faces and names. The
+    // names join with "or" when any one of them is enough, "and" when every
+    // one has to say yes — the same line approvalLine words.
+    const people = (approvers || [])
+      .filter((a) => a && a.username && (a.status == null || a.status === 'member'))
+      .map((a) => ({ username: String(a.username) }));
+    const shown = people.slice(0, 3);
+    const joiner = required < electorate ? ' or ' : ' and ';
+    const names = people.length
+      ? people.map((p) => p.username).join(joiner)
+      : null;
+    // The invited rule counts a named list, so it reads "1 of 2 approvers"
+    // — no "the" — where whoApproves' other callers count a whole electorate.
+    const who = required < electorate
+      ? `${required} of ${electorate} approvers`
+      : whoApproves(required, electorate, 'approver', 'approvers');
+    middle = {
+      key: 'who',
+      text: `${who} ${required === 1 ? 'says' : 'say'} yes`,
+      names: people.length ? names : null,
+      faces: shown,
+      more: Math.max(0, people.length - shown.length),
+      wait: quiet ? WAIT : null,
+    };
+  } else if (fixed) {
+    middle = {
+      key: 'who',
+      text: `${plural(required, 'member approves', 'members approve')} it`,
+      names: null, faces: [], more: 0, wait: null,
+    };
+  } else {
+    // Members vote: the first three faces of the roster stand for the
+    // electorate, "+N" for the rest of it.
+    const people = (viewer?.members || []).filter((m) => m && m.username).slice(0, 3);
+    middle = {
+      key: 'who',
+      text: `${whoApproves(required, electorate, 'active member', 'active members')} ${required === 1 ? 'approves' : 'approve'} it`,
+      names: null,
+      faces: people,
+      more: Math.max(0, electorate - people.length),
+      wait: quiet ? WAIT : null,
+    };
+  }
+  return [
+    { key: 'checks', text: 'Its checks pass' },
+    middle,
+    { key: 'live', text: 'It goes live' },
+  ];
+}
+
 /** "Public community · 12 members"; "Just you" alone, because there is one. */
 export function audienceLine(p: Pick<CommunityPayload, 'audience' | 'audience_label' | 'member_count'>): string {
   if (p.audience === 'solo') return p.audience_label || 'Just you';
@@ -1286,13 +1381,62 @@ export function ShareItCard({ slug, name }: { slug: string; name?: string }) {
  */
 export function ApprovalRules({ slug }: { slug: string }) {
   const data = useCommunity(slug);
+  // The invited policy's approvers are a named list, and their faces are the
+  // drawing's point, so the Workshop page asks for them the way the Members
+  // panel does. A reader who cannot see the list (a 403, an offline moment)
+  // gets the words without faces — the same fallback a server without the
+  // endpoint gives.
+  const invited = data?.approval?.policy === 'invited';
+  const [approvers, setApprovers] = useState<Array<{ username?: string; status?: string }> | null>(null);
+  useEffect(() => {
+    if (!slug || !invited) return undefined;
+    let dead = false;
+    fetch(`/api/apps/${encodeURIComponent(slug)}/approvers`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body) => {
+        if (!dead) setApprovers(Array.isArray(body && body.approvers) ? body.approvers : []);
+      })
+      .catch(() => { if (!dead) setApprovers([]); });
+    return () => { dead = true; };
+  }, [slug, invited]);
   if (!data || !data.approval) return null;
+  const steps = approvalSteps(data.approval, data, approvers);
+  if (!steps) return null;
   return (
     <section className="dev-ws-strip" data-ws-approval-rules="">
       <div className="dev-ws-head">
         <span className="dev-ws-head-title">Approval rules</span>
       </div>
-      <p className="dev-ws-rules-line" data-ws-community-rule="">{approvalLine(data.approval, data)}</p>
+      {/* THREE STEPS, read left to right: checks, then who says yes, then
+          live. The sentence is still here — the list's accessible name — so
+          a screen reader reads the rule as it always did. On a phone, and in
+          the narrow list beside an open item, the steps stack (app.css). */}
+      <ol className="dev-ws-rules-steps" data-ws-community-rule="" aria-label={approvalLine(data.approval, data)}>
+        {steps.map((step, i) => (
+          <li key={step.key} className="dev-ws-rules-step" data-ws-rules-step={step.key}>
+            {i > 0 ? <span className="dev-ws-rules-arrow" aria-hidden="true">→</span> : null}
+            <span className="dev-ws-rules-step-body">
+              <span className="dev-ws-rules-step-text">{step.text}</span>
+              {step.key === 'who' && (step.faces?.length || step.names) ? (
+                <span className="dev-ws-rules-people">
+                  {step.faces?.length ? (
+                    <span className="dev-ws-rules-faces">
+                      {step.faces.map((f) => (
+                        <span key={f.username} className="dev-ws-hero-face" style={{ background: swatchFor(f.username) }} title={`@${f.username}`}>
+                          {(f.username || '?').charAt(0).toUpperCase()}
+                        </span>
+                      ))}
+                      {step.more ? <span className="dev-ws-rules-face-more">{`+${step.more}`}</span> : null}
+                    </span>
+                  ) : null}
+                  {step.names ? <span className="dev-ws-rules-names">{step.names}</span> : null}
+                </span>
+              ) : null}
+              {step.wait ? <span className="dev-ws-rules-wait">{step.wait}</span> : null}
+            </span>
+          </li>
+        ))}
+      </ol>
     </section>
   );
 }

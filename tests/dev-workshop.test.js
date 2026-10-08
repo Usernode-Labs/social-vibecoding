@@ -39,11 +39,16 @@ const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 // events), so a test that wants a given week drawn renders its block.
 // #3524: a week has one reveal now, and `more` is how often it was pressed.
 const weekBlock = (week, over) => {
-  const { SinceWeekBlock } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
-  return renderToHtml(createElement(SinceWeekBlock, {
-    week: { fresh: [], seen: [], live: week.key === 'thisWeek', ...week },
-    slug: 'demo-app', canPost: true, openKey: null, onToggleRow: () => {},
-    more: 0, onMore: () => {},
+  // #4457: a week is ONE row on the Workshop tab now, and its page is its
+  // own address — `SinceWeekBlock` is gone. A test that wants a week drawn
+  // renders its row; the title is the range the tab names it by.
+  const { WeekRow } = loadTsx('frontend/src/features/dev-board/workshop/week-page.tsx');
+  const { weekRange } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
+  const w = { fresh: [], seen: [], live: week.key === 'thisWeek', ...week };
+  return renderToHtml(createElement(WeekRow, {
+    week: { ...w, title: w.title || weekRange(w.startMs, w.endMs, w.live) },
+    slug: 'demo-app',
+    onOpen: () => {},
     ...(over || {}),
   }));
 };
@@ -748,18 +753,15 @@ test('All items leads with the open line, and the weeks head the since list, the
   // work is about, beside the figure that raises the question.
   assert.match(html, new RegExp(`class="dev-ws-open-line"[^>]*>${cards.open.replace(/[.*+?^$()|[\]\\]/g, '\\$&')}`),
     'the open line leads the pane');
-  assert.ok(!html.includes('data-ws-since-week="open"'), 'and is not a week');
   assert.ok(!html.includes('Open issues'), 'nor titled as one');
 
-  // THE WEEKS HEAD THE SINCE LIST. There was a walk of them under All items
-  // ("Show past week") and a list of what moved on the hub: one question in
-  // two places. A first visit has nothing new, so the list opens on the
-  // live week alone, and `Show an earlier week` steps back from there.
-  const order = [...html.matchAll(/data-ws-since-week="([a-zA-Z:0-9]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(order, ['thisWeek'], 'the live week is open on arrival');
+  // THE WEEKS ARE ROWS NOW (#4457): one row per week — its dates, its line,
+  // how many went live, how much is new — and the week opens as its own
+  // page. There was a walk of them under All items ("Show past week") and a
+  // list of what moved on the hub: one question in two places.
+  assert.match(html, /data-ws-week-row="/, 'the live week is a row on arrival');
   assert.ok(html.includes(cards.thisWeek), 'with its line');
-  assert.ok(!html.includes(cards.lastWeek), 'last week waits behind the control');
-  assert.match(html, /data-ws-since-more="">/, 'and the step back is offered');
+  assert.match(html, /data-ws-weeks-more="/, 'and the step back is offered');
   assert.ok(!html.includes('data-ws-cards') && !html.includes('data-ws-week-more'), 'the walk is gone');
   assert.ok(html.indexOf('data-ws-dashboard') < html.indexOf('data-ws-since=""'), 'All items, then what changed (#852 review)');
 
@@ -802,7 +804,7 @@ test('the lead block names what its sentence is about, and the walk’s way back
 });
 
 test('the since list files each row under the week it moved in, and opens down to the newest news', () => {
-  const { sinceWeeks, sinceWeeksOpen, sinceNewFurther, mondayUtc } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
+  const { sinceWeeks, mondayUtc } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
   const WEEK = 7 * 86400000;
   const monday = Date.UTC(2026, 8, 14); // this week's, under FIXED_NOW
   assert.equal(mondayUtc(FIXED_NOW), monday, 'the weeks’ own anchor: Monday 00:00 UTC');
@@ -826,55 +828,12 @@ test('the since list files each row under the week it moved in, and opens down t
     'what was seen files the same way');
   assert.equal(list[2].line, '', 'a week the digest has no line for draws none');
   assert.equal(list[3].line, 'Long ago.', 'and a digest week with no rows keeps its line: it is the history');
-  // #3524: down to the NEWEST week with news, not every week with news. It
-  // was 2 here (this week and last both hold something new), and after a
-  // fortnight away the page arrived with every week open at once.
-  assert.equal(sinceWeeksOpen(list), 1, 'the newest week holding something new is open on arrival');
-  assert.equal(sinceWeeksOpen(sinceWeeks({ ...since, rows: [] }, weeks, FIXED_NOW)), 1, 'and at least the newest');
-  const quietNow = sinceWeeks({ ...since, rows: [row('since:b', monday - 2 * 86400000)] }, weeks, FIXED_NOW);
-  assert.equal(sinceWeeksOpen(quietNow), 2, 'a quiet week above the news stays open with it, so the list reads down to it');
-  // What is new further back is counted on the control that reaches it.
-  assert.equal(sinceNewFurther(list, 1), 1, 'last week\'s one new row, behind Show an earlier week');
-  assert.equal(sinceNewFurther(list, 2), 0);
-  assert.match(WORKSHOP, /const newFurther = sinceNewFurther\(weeks, weeksOpen\);/);
-  assert.match(WORKSHOP, /\{newFurther \? <span className="dev-ws-since-more-new">\{` · \$\{newFurther\} new`\}<\/span> : null\}/);
-
-  // Show an earlier week steps back a week; Clear folds it all back and moves the line.
-  assert.match(WORKSHOP, /onClick=\{\(\) => setSinceExtra\(sinceExtra \+ 1\)\}/);
-  assert.match(WORKSHOP, /disabled=\{weeksOpen >= weeks\.length\}/, 'spent, not gone, at the far end');
-  assert.match(WORKSHOP, /setSinceExtra\(0\);\s*setSinceMore\(\{\}\);/);
-});
-
-test('a week unfolded before the digest lands stays unfolded when the digest re-keys it', () => {
-  // The board paints first and the week summaries ride in behind it: until
-  // then this week is `week:<Monday>`, after it `thisWeek`. What is unfolded
-  // is remembered by the Monday both share, so the re-key does not fold it.
-  const { sinceWeeks, sinceWeekStateKey } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
-  const WEEK = 7 * 86400000;
-  const monday = Date.UTC(2026, 8, 14);
-  const row = (key, ms) => ({ t: 'card', key, card: {}, at: ms });
-  const since = {
-    baseline: 0, through: 0, total: 1, shipped: 0, opened: 0, proposed: 0,
-    rows: [row('since:a', FIXED_NOW - 3600000)],
-    seen: { total: 1, rows: [row('seen:b', monday - WEEK + 3600000)] },
-  };
-  const before = sinceWeeks(since, null, FIXED_NOW);
-  assert.deepEqual(before.map((w) => w.key), [`week:${monday}`, `week:${monday - WEEK}`]);
-  const open = { [sinceWeekStateKey(before[1])]: true };
-  const after = sinceWeeks(since, [
-    { key: 'thisWeek', title: 'This week', startMs: monday, endMs: FIXED_NOW, line: 'Now.', counts: null },
-    { key: 'lastWeek', title: '', startMs: monday - WEEK + 7200000, endMs: monday, line: 'Last.', counts: null },
-  ], FIXED_NOW);
-  assert.deepEqual(after.map((w) => w.key), ['thisWeek', 'lastWeek'], 'the digest re-keys the same weeks');
-  assert.equal(open[sinceWeekStateKey(after[1])], true, 'and the unfolded one is still found open');
-  assert.ok(!open[sinceWeekStateKey(after[0])], 'while its neighbour stays folded');
-  // The state and the React key both read the Monday; the week's own key is
-  // still what the markup names. #3524: one count of presses per week
-  // (`sinceMore`) where there were two booleans (`sinceAllNew`, `sinceSeen`).
-  assert.match(WORKSHOP, /more=\{sinceMore\[at\] \|\| 0\}/);
-  assert.match(WORKSHOP, /onMore=\{\(\) => setSinceMore\(\(cur\) => \(\{ \.\.\.cur, \[at\]: \(cur\[at\] \|\| 0\) \+ 1 \}\)\)\}/);
-  assert.ok(!/sinceMore\[w\.key\]|\[w\.key\]: /.test(WORKSHOP), 'nothing is keyed by w.key');
-  assert.ok(!/sinceAllNew|sinceSeen\b/.test(WORKSHOP), 'the two folds\' state is gone');
+  // #4457: nothing opens down any more — every week is one row, and the
+  // page behind it holds the whole week. The list's first page is the
+  // newest WEEKS_FIRST weeks, and Show earlier weeks adds WEEKS_STEP more.
+  const { WEEKS_FIRST, WEEKS_STEP } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
+  assert.equal(WEEKS_FIRST, 4, 'four weeks at first');
+  assert.equal(WEEKS_STEP, 4, 'four more a press');
 });
 
 // ── #3293: the list reaches back to the project's start ──────────────
@@ -909,127 +868,34 @@ test('#3293: the weeks go back, one at a time, to the project’s start', async 
   assert.equal(dash.firstWeek, monday - 6 * WEEK);
 
   const third = weekBlock(plain(dash.weeks[2]));
-  assert.match(third, /<span class="dev-ws-card-dates">Aug 31 – Sep 6<\/span>/, 'an older week is its dates');
-  assert.match(third, /<span class="dev-ws-since-week-n">7 landed<\/span>/, 'with its figure');
+  assert.match(third, /<span class="dev-ws-work-title">Aug 31 – Sep 6<\/span>/, 'an older week is its dates');
+  assert.match(third, /7 went live/, 'with its figure');
   assert.match(third, /Dark mode; Keyboard voting; Mobile layout; and 4 more\./, 'and what landed in it');
 
-  // A first visit opens on the live week, with the rest a press away each.
+  // A first visit opens on WEEKS_FIRST weeks — four rows — and the rest are
+  // behind Show earlier weeks (#4457).
   const html = workshopHtml(AppView, 'workshop');
-  assert.equal([...html.matchAll(/data-ws-since-week="/g)].length, 1);
-  assert.match(html, /data-ws-since-more="">/, 'live while there is more');
+  assert.match(html, /data-ws-week-row="/, 'the weeks are rows');
   assert.ok(!html.includes('data-ws-week-start'), 'with no floor drawn mid-list');
   // THE BEGINNING, SAID, once the list is walked to its end, and only then;
   // without `firstWeek` it claims no beginning, only the list's reach.
-  assert.match(WORKSHOP, /weeks\.length && weeksOpen >= weeks\.length && firstWeek \? \(\s*<p className="dev-ws-week-note" data-ws-week-start="">\s*\{`This project started the week of \$\{weekDate\(firstWeek\)\}\.`\}/);
-  assert.match(WORKSHOP, /weeks\.length && weeksOpen >= weeks\.length && !firstWeek && sinceExtra > 0 \? \(\s*<p className="dev-ws-week-note" data-ws-week-end="">That is as far back as the list goes\.<\/p>/);
+  assert.match(WORKSHOP, /weeks\.length && weeksOpen >= weeks\.length && weeksExtra > 0 && firstWeek \? \(\s*<p className="dev-ws-week-note" data-ws-week-start="">\s*\{`This project started the week of \$\{weekDate\(firstWeek\)\}\.`\}/);
+  assert.match(WORKSHOP, /weeks\.length && weeksOpen >= weeks\.length && !firstWeek && weeksExtra > 0 \? \(\s*<p className="dev-ws-week-note" data-ws-week-end="">That is as far back as the list goes\.<\/p>/);
 
   // A cache written before the counts existed carries none, and the week
   // draws its line alone rather than a zero.
   const legacy = plain(AppView._workshopWeeks({ ...cards, older: [{ start: monday - 3 * WEEK, line: 'Old.' }] },
     FIXED_NOW, null));
   assert.equal(legacy[legacy.length - 1].counts, null);
-  assert.ok(!weekBlock(legacy[legacy.length - 1]).includes('dev-ws-since-week-n'));
+  assert.ok(!weekBlock(legacy[legacy.length - 1]).includes('went live'));
 });
 
 test('#3293: a week from another year says which year', () => {
   const WEEK = 7 * 86400000;
   const jan = weekBlock({ key: 'week:a', title: '', startMs: Date.UTC(2026, 0, 12), endMs: Date.UTC(2026, 0, 12) + WEEK, counts: null, line: 'January.' });
   const dec = weekBlock({ key: 'week:b', title: '', startMs: Date.UTC(2025, 11, 29), endMs: Date.UTC(2025, 11, 29) + WEEK, counts: null, line: 'Across the new year.' });
-  assert.match(jan, /<span class="dev-ws-card-dates">Jan 12 – Jan 18<\/span>/, 'this year: no year');
-  assert.match(dec, /<span class="dev-ws-card-dates">Dec 29, 2025 – Jan 4<\/span>/, 'last year: named');
-});
-
-test('a week is a block on a rule: its heading, what landed, its line, then what moved in it', async () => {
-  const AppView = await loadWith(responseBody({
-    digestCards: {
-      lastWeek: 'the Dev screen became a styled Workshop, alongside many bug fixes.',
-      thisWeek: 'summary cards got shorter, plus preview and sign-in work.',
-      open: 'mostly QA triage, with older proposals still awaiting votes.',
-    },
-  }));
-  const [live, last] = plain(AppView._workshopView().dashboard.weeks);
-  const row = (key) => ({ t: 'card', key, card: AppView._issueCardModel(AppView._ghIssues[0]), at: FIXED_NOW - 3600000 });
-  const html = weekBlock(live, {});
-  // ONE NAMED WEEK, THE REST DATED. Only the live one keeps a word, because
-  // it is the one whose meaning really is "now", and it wears its range as
-  // a gloss, running to now rather than to a Sunday that has not come.
-  assert.match(html, /<h4 class="dev-ws-since-week-head">This week<span class="dev-ws-card-range">[^<]*→ now</,
-    'the live week: a name, then a range that runs to now');
-  assert.match(html, /<span class="dev-ws-since-week-n">\d+ landed<\/span><\/h4><p class="dev-ws-since-week-line" data-ws-since-week-line="">summary cards got shorter/,
-    'what landed rides the heading, and the line follows it');
-  const dated = weekBlock(last);
-  assert.match(dated, /<h4 class="dev-ws-since-week-head"><span class="dev-ws-card-dates">/, 'an older week is its dates');
-  assert.ok(!dated.includes('Last week'), 'and carries no relative name');
-
-  // What moved in it is NESTED under the line: the three newest out, and
-  // ONE control for the rest (#3524). There were two stacked folds here —
-  // "2 more new", which put every remaining new row out at once, and "2 more
-  // you have seen", which opened a second list — over `Show older`, a third.
-  // Now new and seen are one stream, and the one control shows the next few.
-  const reveals = (html) => (html.match(/<button[^>]*data-ws-since-week-more=""/g) || []).length;
-  const withRows = { ...live, fresh: ['a', 'b', 'c', 'd', 'e'].map((k) => row(`since:issue:${k}`)), seen: [row('seen:issue:f'), row('seen:issue:g')] };
-  const nested = weekBlock(withRows);
-  assert.match(nested, /<div class="dev-ws-since-nest">/);
-  assert.equal((nested.match(/data-ws-row="since:/g) || []).length, 3, 'three new rows');
-  assert.equal(reveals(nested), 1, 'one reveal for the week');
-  assert.match(nested, /<button type="button" class="dev-ws-reveal dev-ws-since-week-more touch-target-32" data-ws-since-week-more=""><svg[^>]*class="dev-ws-reveal-chev"[\s\S]*?<\/svg>Show 4 more<\/button><\/div><\/div>$/,
-    'the pane\'s own reveal, last in the week, and "more" because the next four cross into what was seen');
-  assert.ok(!nested.includes('data-ws-since-seen=""') && !nested.includes('data-ws-row="seen:'), 'nothing seen is out on arrival');
-  assert.ok(!/data-ws-since-more-new|data-ws-since-seen-fold|dev-ws-since-fold/.test(nested), 'the two folds are retired');
-  const open = weekBlock(withRows, { more: 1 });
-  assert.equal((open.match(/data-ws-row="since:/g) || []).length, 5, 'every new row once asked');
-  assert.match(open, /<div class="dev-ws-since-seen" data-ws-since-seen=""><span class="dev-ws-since-seen-label">Seen before<\/span><span class="dev-ws-since-seen-n">2<\/span><\/div>/);
-  assert.equal((open.match(/data-ws-row="seen:/g) || []).length, 2);
-  assert.ok(open.lastIndexOf('data-ws-row="since:') < open.indexOf('data-ws-since-seen=""')
-    && open.indexOf('data-ws-since-seen=""') < open.indexOf('data-ws-row="seen:'), 'new, the mark, then seen: one stream');
-  assert.equal(reveals(open), 0, 'and the control goes once there is nothing left to show');
-
-  // A FEW AT A TIME, never the whole week (#3524): a week of twelve new and
-  // three seen comes out three, then five a press.
-  const busy = { ...live, fresh: Array.from({ length: 12 }, (_, i) => row(`since:issue:n${i}`)), seen: ['x', 'y', 'z'].map((k) => row(`seen:issue:${k}`)) };
-  const step = (more) => weekBlock(busy, { more });
-  assert.equal((step(0).match(/data-ws-row="/g) || []).length, 3);
-  assert.match(step(0), /<\/svg>Show 5 more new<span class="dev-ws-since-week-left"> · 12 left<\/span><\/button>/, 'what the press shows, and what is still to come');
-  assert.equal((step(1).match(/data-ws-row="/g) || []).length, 8, 'five more a press, not all nine');
-  assert.match(step(1), /<\/svg>Show 5 more<span class="dev-ws-since-week-left"> · 7 left<\/span><\/button>/);
-  assert.equal((step(2).match(/data-ws-row="since:/g) || []).length, 12);
-  assert.equal((step(2).match(/data-ws-row="seen:/g) || []).length, 1, 'the stream crosses the line mid-press');
-  assert.match(step(2), /<\/svg>Show 2 more<\/button>/, 'no count left to name when the press shows the rest');
-  assert.equal((step(3).match(/data-ws-row="/g) || []).length, 15);
-  assert.equal(reveals(step(3)), 0);
-  // A week with nothing new is its one control, saying what it holds.
-  const quietWeek = weekBlock({ ...live, seen: Array.from({ length: 7 }, (_, i) => row(`seen:issue:q${i}`)) });
-  assert.ok(!quietWeek.includes('data-ws-row="'), 'nothing out on arrival');
-  assert.match(quietWeek, /<\/svg>Show 5 you have seen<span class="dev-ws-since-week-left"> · 7 left<\/span><\/button>/);
-  const { SINCE_STEP } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
-  assert.equal(SINCE_STEP, 5, 'a few, as the request asked');
-
-  // A BLOCK ON A RULE, as the walk's windows were: a hairline above, and the
-  // rows nested under a rule at the left.
-  assert.match(CSS, /\.dev-ws-since-week \{[^}]*border-top: 1px solid var\(--app-sheet-line\);/, 'a rule, not a card');
-  assert.match(CSS, /\.dev-ws-since-nest \{[^}]*border-left: 2px solid var\(--app-sheet-line\);/);
-  // THE FIGURES ARE NOT CARDS EITHER: hairlines between them, and nothing else.
-  const dashRule = CSS.slice(CSS.indexOf('.dev-ws-dash-cell {'));
-  const dashBody = dashRule.slice(0, dashRule.indexOf('}'));
-  assert.ok(!/box-shadow/.test(dashBody), 'the figures are not cards');
-  assert.match(dashBody, /border-left: 1px solid var\(--app-sheet-line\);/, 'a rule between them');
-  // FOUR ACROSS AT EVERY WIDTH (5 Oct 2026): one row on an iPhone 13 mini,
-  // not the 2x2 grid it was under 420px. A phone draws them closer and a
-  // size smaller instead, and a label wraps rather than being cut short.
-  assert.match(CSS, /\.dev-ws-dash \{[^}]*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);/);
-  assert.ok(!/\.dev-ws-dash \{[^}]*repeat\(2,/.test(CSS), 'no two-up grid on a phone');
-  assert.ok(!/\.dev-ws-dash-cell:nth-child/.test(CSS), 'and no second row to rule off');
-  assert.match(dashBody, /padding: 2px 8px;/, 'closer on a phone');
-  assert.match(CSS, /@media \(min-width: 420px\) \{\n\s*\.dev-ws-dash-cell \{ padding-left: 14px; padding-right: 14px; \}\n\}/,
-    'the wider spacing from 420px');
-  assert.match(CSS, /\.dev-ws-dash-cell:first-child \{ border-left: 0; padding-left: 2px; \}/);
-  assert.match(CSS, /\.dev-ws-dash-cell:last-child \{ padding-right: 2px; \}/);
-  assert.match(CSS, /\.dev-ws-dash-cell b \{[^}]*font-size: 20px;/, 'a size smaller on a phone');
-  assert.match(CSS, /@media \(min-width: 420px\) \{\n\s*\.dev-ws-dash-cell b \{ font-size: 24px; \}\n\}/,
-    'and the full size from 420px');
-  assert.ok(!/text-overflow|white-space: nowrap/.test(dashBody), 'a label wraps; it is never cut short');
-  // An exclusive end is captioned with the Sunday before it.
-  assert.match(WORKSHOP, /endMs - 86400000/);
+  assert.match(jan, /<span class="dev-ws-work-title">Jan 12 – Jan 18<\/span>/, 'this year: no year');
+  assert.match(dec, /<span class="dev-ws-work-title">Dec 29, 2025 – Jan 4<\/span>/, 'last year: named');
 });
 
 test('an empty window is no week at all', async () => {
@@ -1041,8 +907,7 @@ test('an empty window is no week at all', async () => {
   assert.deepEqual(plain(AppView._workshopView().dashboard.weeks.map((w) => w.key)), ['lastWeek'],
     'no window for a week with nothing in it');
   const html = workshopHtml(AppView, 'workshop');
-  assert.match(html, /data-ws-since-week="lastWeek"/);
-  assert.ok(!html.includes('data-ws-since-week="thisWeek"'), 'and none is drawn');
+  assert.equal([...html.matchAll(/data-ws-week-row="/g)].length, 1, 'the one week with something in it is a row');
   assert.ok(!html.includes('class="dev-ws-open-line"'), 'and no lead line for an empty one');
   assert.ok(!html.includes('open items across'), 'and still no derived sentence');
 
@@ -1050,7 +915,7 @@ test('an empty window is no week at all', async () => {
   // weeks and no since list to draw.
   const none = await loadWith(responseBody({ digestCards: { lastWeek: '', thisWeek: '', open: '' } }));
   assert.equal(none._workshopThemes.digestCards, null);
-  assert.ok(!workshopHtml(none, 'workshop').includes('data-ws-since-week'));
+  assert.ok(!workshopHtml(none, 'workshop').includes('data-ws-week-row'));
   assert.match(workshopHtml(none, 'workshop'), /3 open items across 1 category\./, 'the derived sentence is back');
 });
 
@@ -1143,17 +1008,13 @@ test('since-your-last-visit sits with the other things addressed to you', () => 
   // what it replaces, and prose naming a selector is not the selector.
   assert.ok(!/\.dev-ws-since-row/.test(CSS.replace(/\/\*[\s\S]*?\*\//g, '')),
     'the pressable row rule went with it');
-  // Three rows, because that is what the fixture has. The reveal is drawn
-  // whatever the count (#2183, pinned below). #3524: the list opens down to
-  // the NEWEST week with news, and the fixture's rows are stamped against the
-  // real clock, so which of the three share that week depends on the day
-  // the suite runs; the rest are counted on Show an earlier week. Out plus
-  // counted is the fixture's three whatever the weekday.
-  const drawn = (html.match(/data-ws-row="since:/g) || []).length;
-  const further = Number((html.match(/class="dev-ws-since-more-new"> · (\d+) new</) || [0, 0])[1]);
-  assert.ok(drawn >= 1, 'the newest week with news is open');
-  assert.equal(drawn + further, 3, 'and whatever is further back is counted, not dropped');
-  assert.match(html, /data-ws-since-more=""/, 'Show an earlier week, always drawn');
+  // Three rows, because that is what the fixture has — all of them, as quiet
+  // work rows (#4457): the list no longer unfolds in place a week at a time,
+  // and the history lives in Week by week below, whose reveal is drawn
+  // whatever the count (#2183, pinned below).
+  const drawn = (html.match(/data-ws-work-row="since:/g) || []).length;
+  assert.equal(drawn, 3, 'the whole list drawn, nothing behind a fold');
+  assert.match(html, /data-ws-weeks-more=""/, 'Show earlier weeks, always drawn');
   // The reveal keeps its own shape: centred under the stack of full-width
   // cards it belongs to.
   assert.match(CSS, /\.dev-ws-reveal-start \{[^}]*justify-content: flex-start;/);
@@ -2143,9 +2004,9 @@ test('#2496: an issue you are working on joins "What you are working on"', () =>
   assert.ok(bucketsUnderwayIssue(AppView, 12), 'still on the board, Underway');
   assert.ok(bucketsUnderwayIssue(AppView, 13), 'theirs is underway on the board all the same — the strip adds a place, it moves nothing');
 
-  // Rendered, keyed apart from the same card elsewhere in the pane.
+  // Rendered, as one row keyed apart from the same card elsewhere (#4457).
   const html = workshopHtml(AppView, 'workshop');
-  assert.match(html, /data-ws-row="mine:issue:12"/);
+  assert.match(html, /data-ws-work-row="mine:issue:12"/);
 });
 
 test('#2496: the mine-ness predicate reads every live mark the board writes', () => {
@@ -2203,41 +2064,14 @@ test('#1887: a card about your own session opens the CARD, with the session a li
   assert.ok(row, 'the session is on the lander, carrying the hook the checks name it by');
   assert.equal(row.key, 'mine:my-session:51');
 
-  // Folded, it is a disclosure like every other row: no destination of its
-  // own, and nothing on the lander links to the session.
+  // #4457: it is ONE row now — the whole row opens the change's page in one
+  // tap, and the session is linked from nowhere on the list.
   const folded = workshopHtml(AppView, 'workshop');
-  assert.match(folded, /class="dev-ws-row[^"]*"[^>]*aria-expanded="false"[^>]*data-ws-row="mine:my-session:51"[^>]*data-session-chip="51"/);
-  assert.ok(!folded.includes('/dev/sessions/51'), 'folded, the session is linked from nowhere');
-  assert.ok(!folded.includes('dev-ws-sheet-actions'), 'and there is no line under a row to carry a link');
+  assert.match(folded, /data-ws-work-row="mine:my-session:51"[^>]*data-session-chip="51"/, 'the row, hook intact');
+  assert.ok(!folded.includes('/dev/sessions/51'), 'the session is linked from nowhere on the list');
 
-  // Unfolded — through the deep link the declared check uses — it is the
-  // card: its pill in the action band, and under the sheet one line, the
-  // session's.
   AppView._workshopShot = 'mine-session';
   assert.deepEqual(plain(AppView._workshopView().autoExpand), { theme: 'mine', key: 'mine:my-session:51' });
-  const open = workshopHtml(AppView, 'workshop');
-  assert.match(open, /data-ws-lane="mine"><div class="dev-ws-rowwrap dev-ws-rowwrap-open"><div class="dev-feed-entry dev-ws-sheet" data-ws-sheet="mine:my-session:51"><div class="[^"]*dev-card-dense"[^>]*data-session-chip="51"/,
-    'the open card, hook intact');
-  // The change's page is the pill's, not a line under the sheet (#1886) —
-  // and since #1884 round two the pill IS that link on its first tap, here
-  // as on the Board, rather than opening the sections in place and becoming
-  // the link on a second.
-  assert.match(open, /<a class="gc-vote-btn dev-ws-open-btn" href="#app\/demo-app\/dev\/proposals\/51" data-ws-open-card="mine:my-session:51">Open card<\/a>/,
-    'the open card carries the pill, and it is the page link');
-  assert.ok(!open.includes('Open on its own page'), 'no page link under the sheet');
-  assert.ok(!open.includes('Open page ›'), 'and no second step to reach one');
-  // Under the sheet, the session — alone. #2030's point was that two
-  // controls both reading "Open" confused; the session is a different
-  // destination from the page the pill opens, so it keeps its own link,
-  // and it is the one thing the line holds: no separator, nothing beside it.
-  assert.match(open, /<div class="dev-ws-sheet-actions"><a href="#app\/demo-app\/dev\/sessions\/51" class="dev-ws-link" data-ws-open-session="mine:my-session:51">Open session ›<\/a><\/div><\/div>/,
-    'the session link is the line under the sheet, and the last thing in it');
-  assert.equal((open.match(/class="dev-ws-link"/g) || []).length, 1, 'one link under the sheet');
-  assert.equal((open.match(/\/dev\/sessions\/51/g) || []).length, 1, 'the session is linked once, inside the open card');
-  assert.ok(!open.includes('dev-ws-sheet-sep') && !FOLD.includes('dev-ws-sheet-sep') && !/dev-ws-sheet-sep/.test(CSS),
-    'the separator went with the second link');
-  assert.match(CSS, /\.dev-ws-sheet-actions \{ display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; \}/,
-    'the line keeps its rule — #1886 dropped it with the page link; this link is why it is back');
 
   // The helpers, from the bundle: the card's page is the change's, and only
   // a hook for one of YOUR sessions names a session — an imported PR of
@@ -2267,22 +2101,18 @@ test('#1887: a card about your own session opens the CARD, with the session a li
   assert.match(bh, /<a class="gc-vote-btn dev-ws-open-btn" href="#app\/demo-app\/dev\/proposals\/51" data-ws-open-card="my-session:51">Open card<\/a>/);
   assert.ok(!bh.includes('/dev/sessions/51'), 'the Board links the session from nowhere');
 
-  // Declared: the deep link, on the Workshop, reaching the link. RETARGETED
+  // Declared: the deep link, on the Workshop, reaching the row. RETARGETED
   // from the text-only board check that owned the busy mock row rather than
   // added: the manifest sits at its ceiling (services/app-manifest.js keeps
   // 20 slots clear of MAX_DECLARED_TESTS), so one check owns that row before
-  // and after — as the card it opens into, with the session inside it. The
-  // selector walks the markup above: the lane, the open wrapper, the sheet,
-  // the card by its hook, and the line under it — a later sibling of the
-  // card, past the thread — holding the session link alone (the page link
-  // it once had to pass on the way is the pill's now, #1886).
-  const check = dapp.tests.find((t) => /#1887/.test(t.name));
+  // and after — as one work row now (#4457), opening the change's page.
+  const check = dapp.tests.find((t) => /your own session is one row/.test(t.name));
   assert.ok(check, 'a declared check pins it');
   // On the Workshop tab, where your own work lives since the page split into
   // its hub and its Workshop.
   assert.equal(check.path, '/?demo=1&shot=mine-session&ws=workshop#app/usernode-2d5619/workshop');
   assert.equal(check.expectSelector,
-    '#dev-workshop [data-ws-lane="mine"] > .dev-ws-rowwrap-open > .dev-ws-sheet > .dev-card-dense[data-session-chip] ~ .dev-ws-sheet-actions > a.dev-ws-link[data-ws-open-session][href*="/dev/sessions/"]');
+    '#dev-workshop [data-ws-lane="mine"] a[data-ws-work-row][href*="/dev/proposals/"]');
   assert.equal(check.expectText, '[Mock] Busy own session', 'the busy mock row, which the retargeted check always read');
   assert.ok(!dapp.tests.some((t) => /Busy own session card renders/.test(t.name)), 'retargeted, not duplicated');
   assert.match(APP_VIEW_SRC, /if \(shot === 'mine-session'\) \{\s*AppView\._workshopShot = 'mine-session';\s*\}/,
@@ -2306,12 +2136,12 @@ test('#3081: an agent session\'s change card opens the AGENT SESSION, not its ol
   assert.ok(row, 'the change is on the lander with its usual hook');
   assert.equal(row.card.attrs['data-session-agent'], '7301', 'the card names the conversation it was started from');
 
+  // #4457: the card is one row now, and the row opens the change's page —
+  // whose own door still sends the owner to the conversation.
   const open = workshopHtml(AppView, 'workshop');
-  assert.match(open, /<div class="dev-ws-sheet-actions"><a href="#messages\/agent\/7301" class="dev-ws-link" data-ws-open-session="mine:my-session:52">Open session ›<\/a><\/div>/,
-    'the link under the open card is the agent session');
-  assert.ok(!open.includes('/dev/sessions/52'), 'and nothing on the card leads to the old dev chat');
-  assert.match(open, /href="#app\/demo-app\/dev\/proposals\/52" data-ws-open-card="mine:my-session:52">Open card<\/a>/,
-    'the change page is still the pill');
+  assert.match(open, /data-ws-work-row="mine:my-session:52"[^>]*href="#app\/demo-app\/dev\/proposals\/52"/,
+    'the row opens the change page');
+  assert.ok(!open.includes('/dev/sessions/52'), 'and nothing on the list leads to the old dev chat');
 
   const { sessionHref } = loadTsx('frontend/src/features/dev-board/card/fold.tsx');
   assert.equal(sessionHref('demo-app', row.card), '#messages/agent/7301');
@@ -2822,7 +2652,7 @@ test('the declared checks cover the lander, its strips and an unfolded row', () 
   assert.match(rules.expectSelector,
     /> \.dev-ws-tabbody > \[data-ws-dashboard\]:first-child \+ \[data-ws-approval-rules\] \+ \[data-ws-notices\]$/);
   assert.ok(!rules.expectSelector.includes(':has('), 'a plain chain');
-  assert.equal(rules.expectText, 'A change goes live', 'and the rule itself is on the page');
+  assert.equal(rules.expectText, 'It goes live', 'and the rule itself is on the page');
   const work = byName(/Your work stays on screen when it is empty/);
   assert.match(work.expectSelector,
     /\.dev-ws-tabbody > \[data-ws-approval-rules\] ~ \[data-ws-mine\] \[data-ws-lane="mine"\] > \[data-ws-mine-empty\]$/,
@@ -4287,50 +4117,6 @@ test('the ask card is padded evenly, so its resting line sits on its own middle'
     'the session card keeps its own, which is why this is an override rather than a change');
 });
 
-test('since-your-last-visit shows three a week and reveals the rest in place', () => {
-  const store = {};
-  store['workshopSeen:demo-app'] = String(Date.now() - 3.5 * 86400000);
-  const AppView = makeAppView({ localStorage: store });
-  seed(AppView);
-  // Four merges instead of one, all this week, so this week holds more than
-  // it draws.
-  AppView._merged = [40, 39, 38, 37].map((n, i) => ({
-    id: 78 - i, pr_number: n, pr_title: `Landed ${n}`, status: 'merged', username: 'alice',
-    created_at: at(2), merged_at: at(2), last_message_at: at(2), row_type: 'pr',
-  }));
-  AppView._mergedTotal = 4;
-  const html = workshopHtml(AppView, 'workshop');
-  assert.match(html, /class="dev-ws-since-n">6</, 'the count is the whole list');
-  const thisWeek = html.slice(html.indexOf('data-ws-since-week="week:'), html.indexOf('data-ws-since-week="week:', html.indexOf('data-ws-since-week="week:') + 1));
-  assert.equal((thisWeek.match(/data-ws-row="since:/g) || []).length, 3, 'three of this week’s are drawn');
-  // #3524: the rest are behind the week's ONE reveal, which shows a few a
-  // press (here the last two); it was "2 more new", beside a second fold.
-  assert.match(thisWeek, /data-ws-since-week-more=""><svg[\s\S]*?<\/svg>Show 2 more new<\/button>/, 'and the rest are one press');
-  assert.equal((thisWeek.match(/<button[^>]*data-ws-since-week-more=""/g) || []).length, 1, 'one control for the week');
-  // Show an earlier week: centred under the stack, caret DOWN at what it is
-  // about to show, and named for what it shows (#3524: it was "Show older",
-  // which under a week's own reveal could have meant that week's rows).
-  assert.match(html, /class="dev-ws-reveal dev-ws-since-more un-touch-target" data-ws-since-more=""/);
-  assert.ok(html.includes('Show an earlier week'));
-  assert.ok(!html.includes('Show older'));
-  assert.ok(!html.includes('dev-ws-reveal-start'), 'centred');
-  assert.ok(!html.includes('Show fewer'), 'one list with a way to ask for more; Clear folds it back');
-  // An empty list is a heading over nothing, so it says so instead. A
-  // baseline of NOW rather than an emptied board: "nothing moved since you
-  // were last here" is a statement about the window.
-  const fresh = makeAppView({ localStorage: { 'workshopSeen:demo-app': String(Date.now()) } });
-  seed(fresh);
-  const quiet = workshopHtml(fresh, 'workshop');
-  assert.match(quiet, /data-ws-since-none=""/);
-  assert.ok(quiet.includes('Nothing has changed since you were last here.'));
-  // Zero says nothing: no "0" pill beside the heading on a quiet visit.
-  assert.doesNotMatch(quiet, /dev-ws-since-n"/, 'no count pill when nothing moved');
-  // #2183: the way into what was seen is still there on a quiet day, the day
-  // the reader most wants it: this week's seen rows, one press into the week
-  // (#3524: its one reveal, where a fold of their own was).
-  assert.match(quiet, /data-ws-since-week-more=""><svg[\s\S]*?<\/svg>Show \d+ you have seen/);
-});
-
 test('since-your-last-visit counts one unnamed change in the singular', () => {
   // Governance items, shared sessions and the discussion are counted only in
   // `total`, so the sentence falls back to "N things moved" — and one of
@@ -4422,10 +4208,9 @@ test('Clear moves the baseline to now, persists it, and the rows fold under thei
   assert.doesNotMatch(cleared, /dev-ws-since-n"/, 'and no "0" pill once cleared');
   assert.match(cleared, /<button type="button" class="dev-ws-since-clear un-touch-target" data-ws-since-clear="" disabled="">Clear<\/button>/,
     'disabled rather than absent, so the row does not reflow');
-  // #3524: one press into its week, the week's own reveal, where a "you
-  // have seen" fold was.
-  assert.match(cleared, /data-ws-since-week-more=""><svg[\s\S]*?<\/svg>Show \d+ you have seen/,
-    'and the way back to what was cleared is one press into its week');
+  // #4457: what was cleared is on the seen side of the list, in its week —
+  // nothing unfolds now, so the way back to it is the week's page.
+  assert.ok(cleared.includes('data-ws-week-row='), 'the weeks are still listed');
 
   // A row a server clock put a moment in the future is cleared with the
   // rest: the stamp is the newer of now and `through`.
@@ -4446,7 +4231,7 @@ test('Clear moves the baseline to now, persists it, and the rows fold under thei
   assert.ok(idle._workshopSince['demo-app'] > 0);
 });
 
-test('Show an earlier week is always drawn: it steps back a week at a time, and disables when spent', () => {
+test('Show an earlier week is always drawn: it steps back a week at a time, and disables when spent', async () => {
   // A board with NOTHING on either side of the line and no weeks written:
   // the one case with nothing to step back to.
   const bare = makeAppView({ localStorage: { 'workshopSeen:demo-app': String(Date.now() - 3.5 * 86400000) } });
@@ -4457,33 +4242,34 @@ test('Show an earlier week is always drawn: it steps back a week at a time, and 
   assert.equal(v.since.rows.length, 0);
   assert.equal(v.since.seen.rows.length, 0);
   const html = workshopHtml(bare, 'workshop');
-  assert.match(html, /class="dev-ws-reveal dev-ws-since-more un-touch-target" data-ws-since-more="" disabled=""/,
-    'drawn, and disabled: a control that is sometimes there is one nobody learns to reach for');
   assert.match(html, /data-ws-since-clear="" disabled=""/);
+  // With no weeks written the week list is not drawn at all; where weeks
+  // exist the reveal is drawn whatever the count, and disabled at the far
+  // end — a control that is sometimes there is one nobody learns to reach
+  // for.
+  const one = await loadWith(responseBody({ digestCards: { lastWeek: 'Something landed.' } }));
+  const weeksHtml = workshopHtml(one, 'workshop');
+  assert.match(weeksHtml, /data-ws-week-row="/, 'the week is a row');
+  assert.match(weeksHtml, /data-ws-weeks-more=""[^>]*disabled=""/, 'and its reveal is drawn, disabled: one week, nothing earlier');
 
   // The steps are state, which a static render cannot press, so the source
-  // is pinned: a week a press, the far end disables it, Clear folds all of
-  // it and hands the stamp to AppView, which owns the baseline.
-  assert.match(WORKSHOP, /const \[sinceExtra, setSinceExtra\] = useState\(0\);/, 'no extra week until asked for');
-  assert.match(WORKSHOP, /const weeksOpen = Math\.min\(weeks\.length, sinceWeeksOpen\(weeks\) \+ sinceExtra\);/);
-  assert.match(WORKSHOP, /disabled=\{weeksOpen >= weeks\.length\}\s*onClick=\{\(\) => setSinceExtra\(sinceExtra \+ 1\)\}/);
-  assert.match(WORKSHOP, /const clearSince = \(\) => \{[\s\S]*?setSinceExtra\(0\);\s*setSinceMore\(\{\}\);[\s\S]*?callAppView\('_workshopClearSince', slug, v\.since\.through\);/);
+  // is pinned: four weeks at first, four more a press (#4457), and the far
+  // end disables the control. Clear hands the stamp to AppView, which owns
+  // the baseline.
+  assert.match(WORKSHOP, /const \[weeksExtra, setWeeksExtra\] = useState\(0\);/, 'no earlier weeks until asked for');
+  assert.match(WORKSHOP, /const weeksOpen = Math\.min\(weeks\.length, WEEKS_FIRST \+ weeksExtra\);/);
+  assert.match(WORKSHOP, /disabled=\{weeksOpen >= weeks\.length\}[^}]*onClick=\{\(\) => setWeeksExtra\(weeksExtra \+ WEEKS_STEP\)\}/);
+  assert.match(WORKSHOP, /Show earlier weeks/);
   assert.ok(!html.includes('data-ws-since-seen'), 'no seen mark over nothing');
-  // Every class the block emits has a rule (the #2097 lesson). #3524: the
-  // week's one reveal and its count, and the count of what is new further
-  // back, where the two folds' five classes were.
+  // Every class the block emits has a rule (the #2097 lesson). #4457: the
+  // week rows and the work list's, where the folds' classes were.
   const stripped = CSS.replace(/\/\*[\s\S]*?\*\//g, ' ');
-  for (const cls of ['dev-ws-since-clear', 'dev-ws-since-seen', 'dev-ws-since-seen-label', 'dev-ws-since-seen-n',
-    'dev-ws-since-week', 'dev-ws-since-week-head', 'dev-ws-since-week-n', 'dev-ws-since-week-line', 'dev-ws-since-nest',
-    'dev-ws-since-week-more', 'dev-ws-since-week-left', 'dev-ws-since-more-new']) {
+  for (const cls of ['dev-ws-since-clear', 'dev-ws-work-list', 'dev-ws-work-row', 'dev-ws-work-title', 'dev-ws-work-line',
+    'dev-ws-work-tag', 'dev-ws-work-votes', 'dev-ws-week-row', 'dev-ws-week-line', 'dev-ws-week-counts', 'dev-ws-week-group']) {
     assert.match(stripped, new RegExp(`\\.${cls} \\{`), `.${cls} has a rule`);
   }
-  assert.ok(!/\.dev-ws-since-fold/.test(stripped), 'and the folds\' rules went with them');
-  assert.ok(!/dev-ws-since-fold/.test(WORKSHOP), 'as did their markup');
-  // The list's control sits under a rule of its own when a week is above it,
-  // where the week it reveals will arrive, so it does not read as the week's.
-  assert.match(stripped, /\.dev-ws-since-week \+ \.dev-ws-since-more \{[^}]*border-top: 1px solid var\(--app-sheet-line\);/);
-  assert.match(stripped, /\.dev-ws-since-week-more \{[^}]*justify-content: flex-start;/, 'and the week\'s own is set left, inside the week');
+  assert.ok(!/\.dev-ws-since-week\b/.test(stripped), 'the old week-division rules are gone');
+  assert.ok(!/dev-ws-since-week/.test(WORKSHOP), 'as was their markup');
   assert.match(stripped, /\.dev-ws-reveal:disabled \{[^}]*cursor: default;/);
   assert.match(stripped, /\.dev-ws-since-clear:disabled \{[^}]*cursor: default;/);
   assert.match(stripped, /\.dev-ws-since-clear \{[^}]*margin-left: auto;/, 'pushed to the far end of the heading row');
@@ -4504,89 +4290,35 @@ test('the since-list controls have a declared check on the Workshop page, throug
   const check = dapp.tests.find((t) => /data-ws-since-clear/.test(t.expectSelector || ''));
   assert.ok(check, 'declared');
   assert.match(check.path, /^\/\?demo=1&shot=since-visit&ws=workshop#app\/usernode-2d5619\/workshop$/, 'the Workshop page, which is where the list lives');
-  assert.match(check.expectSelector, /\[data-ws-since\]:has\(> \[data-ws-since-week\] > \.dev-ws-since-week-head\) > \.dev-ws-since-head:has\(> \.dev-ws-since-n \+ button\[data-ws-since-clear\]\) ~ button\.dev-ws-since-more\[data-ws-since-more\]/,
-    'the week headings, the count and Clear, and Show an earlier week');
-  // #3524: renamed from "Show older", which under a week's own reveal read
-  // as that week's older rows.
-  assert.equal(check.expectText, 'Show an earlier week');
+  // #4457: the head with its count and Clear, the work rows the list is,
+  // and the week list with its rows — the whole strip in one selector.
+  assert.match(check.expectSelector, /\[data-ws-since\] > \.dev-ws-since-head > \.dev-ws-since-n \+ button\[data-ws-since-clear\]/,
+    'the count and Clear');
+  assert.match(check.expectSelector, /\[data-ws-since\] \[data-ws-work-row\]/, 'the list itself');
+  assert.match(check.expectSelector, /\[data-ws-weeks\] \[data-ws-week-row\]/, 'and the week list');
+  assert.equal(check.expectText, 'Show earlier weeks');
 });
 
-test('Clear is live once anything is unfolded, and folds what it revealed (#2240)', () => {
-  // The state the request is about, and it is the one the list's reveals
-  // invite most often: a reader with NOTHING new. #2183 kept that button live on a
-  // quiet day on purpose — "a control that is sometimes there is one nobody
-  // learns to reach for" — so the first press has no new row to spend and
-  // falls straight through to the seen side. What came out was a wall of
-  // rows the reader had already read and no way back up: Clear folds the
-  // walk, and Clear was disabled, because new rows were the only thing it
-  // gated on. Nothing about the press needed changing — only when it is
-  // offered.
-  const AppView = makeAppView({ localStorage: { 'workshopSeen:demo-app': String(Date.now()) } });
-  seed(AppView);
-  const v = AppView._workshopView();
-  assert.ok(v.since, 'the line exists, so the strip is drawn');
-  assert.equal(v.since.rows.length, 0, 'and nothing is above it');
-  assert.ok(v.since.seen.rows.length > 0, 'while the whole list is below it, to walk into');
-  const html = workshopHtml(AppView, 'workshop');
-  assert.match(html, /data-ws-since-none=""/, 'the strip opens on "nothing has changed"');
-  assert.doesNotMatch(html, /dev-ws-since-n"/, 'with no "0" count pill beside it');
-  assert.match(html, /data-ws-since-week-more=""><svg[\s\S]*?<\/svg>Show \d+ you have seen/,
-    'with the week\'s seen rows a press away (#3524: its one reveal)');
-  assert.match(html, /data-ws-since-clear="" disabled=""/,
-    'and Clear still disabled BEFORE the walk — there is nothing on screen to fold yet');
 
-  // The walk is state, which renderToStaticMarkup cannot press, so the
-  // predicate is pinned in the source the way the rest of the walk is.
-  assert.match(WORKSHOP, /disabled=\{!v\.since\.rows\.length && !sinceUnfolded\}/,
-    'live while there are new rows to dismiss OR anything unfolded to fold');
-  // #3524: a week pressed at all counts, where two booleans a week did.
-  assert.match(WORKSHOP, /const sinceUnfolded = sinceExtra > 0\s*\|\| Object\.values\(sinceMore\)\.some\(\(n\) => n > 0\);/);
-  // ONE handler, unchanged: it does not branch on which of the two made it
-  // live, and folding the seen side is already what it did.
-  assert.match(WORKSHOP, /const clearSince = \(\) => \{[\s\S]*?setSinceExtra\(0\);\s*setSinceMore\(\{\}\);/);
-
-  // With nothing new the baseline move is inert rather than special-cased:
-  // the line is already past every row, so `Clear` on a quiet day changes
-  // what is drawn and nothing else.
-  AppView._workshopClearSince('demo-app', v.since.through);
-  const after = AppView._workshopView();
-  assert.equal(after.since.rows.length, 0, 'still nothing new');
-  assert.equal(after.since.seen.total, v.since.seen.total, 'and not one row moved sides');
-});
-
-test('?shot=since-seen is the URL that reaches the walked state, for the check and the capture', () => {
+test('the week page has a declared check at its own address, and the walked-state deep link is retired (#4457)', () => {
   // A declared check loads a URL and asserts a selector — it cannot press a
-  // button — and the before/after screenshots the voters see are shot the
-  // same way. So the deep link has to land IN the walked state, which is
-  // `?shot=board-unfold`'s problem and takes its shape: drive the real
-  // control on an interval, stop on the mark it produces, and stand aside
-  // the moment a human touches the page.
-  assert.match(APP_VIEW_SRC, /if \(shot === 'since-seen'\) \{\s*AppView\._workshopSince\[slug\] = Date\.now\(\);/,
-    'the line is seeded at NOW, so every row is on the seen side');
-  const block = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf("if (shot === 'since-seen') {"));
-  const body = block.slice(0, block.indexOf('\n      }\n') + 1);
-  assert.match(body, /document\.querySelector\('\[data-ws-since-seen\]'\)/,
-    'it stops on the "Seen before" mark, not after a fixed number of presses');
-  // #3524: a week's seen rows follow its new ones behind its one reveal, so
-  // that is the press, where the week's "you have seen" fold was.
-  assert.match(body, /document\.querySelector\('button\[data-ws-since-week-more\]'\)\s*\|\| document\.querySelector\('button\[data-ws-since-more\]:not\(\[disabled\]\)'\)/,
-    'and presses the real controls: a week\'s Show N more, or Show an earlier week to find one');
-  assert.match(body, /e\.isTrusted/, 'and lets go on the first real gesture');
-  // The week summaries land after the board and can repaint the list, so the
-  // mark is re-checked for the whole window rather than trusted once.
-  assert.match(body, /if \(document\.querySelector\('\[data-ws-since-seen\]'\)\) return;/,
-    'the mark being there skips a press but keeps watching');
-  assert.ok(!/querySelector\('\[data-ws-since-seen\]'\)\) \{ done\(\)/.test(body),
-    'it does not stop at the first sighting');
-  assert.ok(!/localStorage/.test(body), 'nothing is written to storage — a human is not told they were here');
+  // button. The walked state the old `?shot=since-seen` drove a reader into
+  // is gone with the in-place unfold, so its driver is retired rather than
+  // left pressing controls that no longer exist, and the check that needed
+  // it reads the week page at `latest` instead — an address that spells the
+  // newest week so a static check needs no dates.
+  assert.ok(!/shot === 'since-seen'/.test(APP_VIEW_SRC),
+    'no driver left pressing removed controls');
+  assert.match(APP_VIEW_SRC, /if \(shot === 'since-visit'\) \{\s*AppView\._workshopSince\[slug\] = Date\.now\(\) - 30 \* 86400000;\s*\}/,
+    'the since-visit seed, which the week page does not need, is untouched');
 
-  const check = dapp.tests.find((t) => /data-ws-since-clear\]:not\(\[disabled\]\)/.test(t.expectSelector || ''));
+  const check = dapp.tests.find((t) => /\[data-ws-week-page\]/.test(t.expectSelector || ''));
   assert.ok(check, 'declared');
-  assert.match(check.path, /^\/\?demo=1&shot=since-seen&ws=workshop#app\/usernode-2d5619\/workshop$/,
-    'the Workshop page, which is where the list lives');
-  assert.match(check.expectSelector, /\[data-ws-since\]:has\(\[data-ws-since-seen\]\) > \.dev-ws-since-head > button\[data-ws-since-clear\]:not\(\[disabled\]\)/,
-    'the seen mark AND a live Clear — either alone would pass on the old behaviour');
-  assert.equal(check.expectText, 'Clear');
+  assert.match(check.path, /^\/\?demo=1&shot=since-seen#app\/usernode-2d5619\/dev\/week\/latest$/,
+    'the week page, whose address carries the week');
+  assert.match(check.expectSelector, /\[data-ws-week-page\] > \[data-ws-pagehead\] > button\[data-ws-page-back\]/,
+    'the page is the page, and its way back is drawn');
+  assert.equal(check.expectText, '‹ Workshop');
 });
 
 test('the composer shows its model picker and send circle at every width', () => {

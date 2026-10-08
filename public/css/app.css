@@ -16324,11 +16324,6 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    (`.dev-ws-since-week-more`). "N new" further back rides it in the accent:
    a number that asks for the reader. */
 .dev-ws-since-more { margin-top: 2px; }
-.dev-ws-since-week + .dev-ws-since-more {
-  margin-top: 6px; padding-top: 10px;
-  border-top: 1px solid var(--app-sheet-line);
-}
-.dev-ws-since-more-new { color: var(--accent); }
 /* #2183: the control is always drawn and DISABLED when the walk is over,
    rather than leaving — so it reads as spent, not pressable. */
 .dev-ws-reveal:disabled { color: var(--text-muted); opacity: .45; cursor: default; }
@@ -17363,38 +17358,115 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   font-size: 14px; line-height: 20px; color: var(--text-primary);
 }
 
-/* ── Since your last visit, week by week (the Workshop page) ──────────
-   Each week is a division of the pane, as the walk's windows were: a
-   hairline, the week's heading and range, its line, and what moved in it
-   nested under a rule at the left, so the rows read as the line's
-   evidence. A week's rows past the first three, new and then already seen,
-   come out a few at a time under ONE quiet reveal (#3524). */
-.dev-ws-since-week {
-  display: flex; flex-direction: column;
+/* ── The work list: one kind of row (#4457) ───────────────────────────
+   Your work and Since your last visit are one list of quiet rows — a
+   neutral tile, a 15px title over one line in words, small status tags,
+   and the votes where the item asks for one. Nothing unfolds in place: the
+   whole row opens the item (beside the list on a computer, its page on a
+   phone). The hairline between rows is the sheet's own line; the tile is
+   deliberately empty, a place the eye can rest where the old rows carried
+   a coloured icon. */
+.dev-ws-work-list { display: flex; flex-direction: column; }
+.dev-ws-work-row {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 10px 0;
   border-top: 1px solid var(--app-sheet-line);
-  margin-top: 4px; padding-top: 11px;
+  color: inherit; text-decoration: none;
 }
-.dev-ws-since-week-head {
-  display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; margin: 0;
-  font-size: 13px; font-weight: 600; letter-spacing: 0.01em; color: var(--text-primary);
+.dev-ws-work-list > :first-child { border-top: 0; }
+.dev-ws-work-row:hover { background: color-mix(in srgb, var(--text-primary) 3%, transparent); }
+.dev-ws-work-tile {
+  flex: none; width: 28px; height: 28px; margin-top: 1px;
+  border-radius: 8px; background: var(--dc-sheet-solid, var(--text-primary));
+  opacity: .06;
 }
-.dev-ws-since-week-n { font-size: 12px; font-weight: 500; letter-spacing: 0; color: var(--text-muted); }
-.dev-ws-since-week-line { margin: 6px 0 0; font-size: 14px; line-height: 1.45; color: var(--text-primary); }
-.dev-ws-since-nest {
-  display: flex; flex-direction: column; gap: 4px;
-  margin: 10px 0 0; padding-left: 10px;
-  border-left: 2px solid var(--app-sheet-line);
+.dev-ws-work-body { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.dev-ws-work-title {
+  font-size: 15px; font-weight: 650; line-height: 1.3; color: var(--text-primary);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
-/* #3524: the week's one reveal. It was two grey 36px pill rows stacked
-   here ("N more new" in the accent, "N more you have seen" with a check),
-   the most solid-looking things in the week and two different chevrons
-   side by side. Now it is the pane's own `.dev-ws-reveal`, the gesture
-   every other "more" in the pane uses, set to the LEFT, inside the week's
-   rule, so it belongs to the rows above it and not to `Show an earlier
-   week` below. The count still hidden rides it in the lighter weight. */
-.dev-ws-since-week-more { justify-content: flex-start; padding: 4px 12px 2px; }
-.dev-ws-since-week-left { font-weight: 500; }
-.dev-ws-since-nest > .dev-ws-since-seen { margin-top: 2px; padding-left: 0; }
+.dev-ws-work-line {
+  margin-top: 2px; font-size: 13px; line-height: 1.4;
+  color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dev-ws-work-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
+.dev-ws-work-tag {
+  font-size: 12px; font-weight: 500; line-height: 1;
+  padding: 3px 8px; border-radius: 999px;
+  color: var(--text-muted); background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+/* Green only where something is settled DONE: "Live". Everything else a
+   status can say stays grey, so the one thing that finished is not shouting
+   in a row of maybes. */
+.dev-ws-work-tag-live { color: var(--ok-ink, #157347); background: color-mix(in srgb, var(--ok-ink, #157347) 12%, transparent); }
+.dev-ws-work-chev { flex: none; align-self: center; color: var(--text-muted); font-size: 16px; }
+/* The votes: one part per yes the change needs, the count beside them, and
+   the card's own Vote button. The count is in the accent while the viewer
+   has not voted — it is the number that asks for them. */
+.dev-ws-work-votes { display: inline-flex; align-items: center; gap: 8px; }
+.dev-ws-work-segs { display: inline-flex; gap: 3px; }
+.dev-ws-work-seg {
+  width: 12px; height: 8px; border-radius: 2px;
+  background: color-mix(in srgb, var(--text-primary) 12%, transparent);
+}
+.dev-ws-work-seg-yes { background: var(--accent); }
+.dev-ws-work-vcount { font-size: 12px; font-weight: 500; color: var(--text-muted); }
+.dev-ws-work-vcount-wanted { color: var(--accent); font-weight: 600; }
+/* On a phone the votes take their own line, under the words. */
+@media (max-width: 699px) {
+  .dev-ws-work-tags { gap: 6px 10px; }
+  .dev-ws-work-votes { flex-basis: 100%; }
+}
+
+/* ── Week by week (the Workshop page), and a week's own page ──────────
+   Each week is ONE row now — its dates, its summary line, how many went
+   live, how much of it is new to you — and tapping it opens the week as
+   its own page. Nothing nests; the digest's double accordion is gone. */
+.dev-ws-week-row {
+  display: flex; align-items: flex-start; gap: 10px; width: 100%;
+  padding: 10px 0; text-align: left;
+  border-top: 1px solid var(--app-sheet-line);
+  background: none; border-left: 0; border-right: 0; border-bottom: 0;
+  color: inherit; cursor: pointer;
+}
+.dev-ws-week-list > :first-child { border-top: 0; }
+.dev-ws-week-line { margin-top: 2px; font-size: 13px; line-height: 1.4; color: var(--text-muted); }
+.dev-ws-week-counts { margin-top: 4px; font-size: 13px; font-weight: 500; color: var(--text-primary); }
+.dev-ws-week-new { color: var(--accent); }
+.dev-ws-week-group { margin-top: 14px; }
+.dev-ws-week-note { margin: 10px 0 0; font-size: 13px; line-height: 1.45; color: var(--text-muted); }
+
+/* ── The item beside the list (#4457) ─────────────────────────────────
+   On a window 1024px and wider a row opens the item in a panel beside the
+   list: the list moves left and keeps its own scroll, the item takes the
+   rest, a hairline between them. The bar over the item carries the two
+   ways out — the whole tab, and close. Under 1024px the layout is not
+   drawn at all; the item opens as its own page. */
+.dev-ws-beside { display: flex; align-items: stretch; width: 100%; height: 100%; min-height: 0; }
+.dev-ws-beside-list {
+  flex: none; width: 420px; max-width: 38vw;
+  min-height: 0; overflow-y: auto;
+  padding: 0 14px 24px;
+  border-right: 1px solid var(--app-sheet-line);
+}
+.dev-ws-beside-scroll { min-height: 100%; }
+.dev-ws-beside-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.dev-ws-beside-bar {
+  flex: none; display: flex; align-items: center; justify-content: flex-end; gap: 4px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--app-sheet-line);
+}
+.dev-ws-beside-page, .dev-ws-beside-close {
+  appearance: none; border: 0; background: none; cursor: pointer;
+  font-size: 13px; font-weight: 500; color: var(--text-muted);
+  padding: 6px 8px; border-radius: 8px;
+}
+.dev-ws-beside-page:hover, .dev-ws-beside-close:hover { color: var(--text-primary); background: color-mix(in srgb, var(--text-primary) 6%, transparent); }
+/* The panel's list is narrow: the approval rules stack, and a row's votes
+   keep their own line, as on a phone. */
+@media (max-width: 1023px) {
+  .dev-ws-beside { display: none; }
+}
 
 /* ── Share it (community-card.tsx ShareItCard) ──────────────────────
    A project that is just yours: its two ways to grow, side by side. The
@@ -17409,8 +17481,39 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 }
 .dev-ws-share:has(.dev-ws-join-pop) { position: relative; z-index: 5; }
 
-/* ── Approval rules (community-card.tsx ApprovalRules) ─────────────── */
-.dev-ws-rules-line { margin: 0; font-size: 14px; line-height: 1.45; color: var(--text-primary); }
+/* ── Approval rules, drawn as three steps (#4457) ─────────────────────
+   "Its checks pass" → who says yes, with faces and names → "It goes
+   live", one row across, arrows between. On a phone, and in the beside
+   panel's narrow list, the steps stack and the arrow turns to point DOWN
+   at the step it leads to. */
+.dev-ws-rules-steps {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px;
+  margin: 0; padding: 0; list-style: none;
+}
+.dev-ws-rules-step { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.dev-ws-rules-arrow { flex: none; color: var(--text-muted); font-size: 13px; }
+.dev-ws-rules-step-text { font-size: 14px; line-height: 1.45; color: var(--text-primary); }
+.dev-ws-rules-people { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.dev-ws-rules-faces { display: inline-flex; align-items: center; }
+.dev-ws-rules-faces .dev-ws-hero-face { width: 22px; height: 22px; font-size: 10px; }
+.dev-ws-rules-faces .dev-ws-hero-face + .dev-ws-hero-face { margin-left: -6px; }
+.dev-ws-rules-face-more {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; margin-left: -6px; border-radius: 50%;
+  font-size: 10px; font-weight: 600; color: var(--text-muted);
+  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
+}
+.dev-ws-rules-names {
+  font-size: 13px; color: var(--text-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 26ch;
+}
+.dev-ws-rules-wait { flex-basis: 100%; font-size: 13px; line-height: 1.4; color: var(--text-muted); }
+@media (max-width: 699px) {
+  .dev-ws-rules-steps { flex-direction: column; align-items: flex-start; gap: 8px; }
+  .dev-ws-rules-step { flex-direction: column; align-items: flex-start; gap: 4px; }
+  .dev-ws-rules-arrow { transform: rotate(90deg); }
+  .dev-ws-rules-wait { flex-basis: auto; }
+}
 
 /* ── Swipe to vote, on a phone (#3052) ─────────────────────────────────
    workshop.tsx's `useSwipeVote` is the gesture; this is how it looks. A
