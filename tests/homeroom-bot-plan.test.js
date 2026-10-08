@@ -79,7 +79,7 @@ test('B6: a question read can ask a second blocker with the first, and only a re
 test('B6: the prompt asks a first version for its plan, and any request for a second question only when it is a blocker', () => {
   const prompt = bot.triagePromptFor({ seed: 'SEED', issueNumber: 1, firstVersion: true });
   assert.match(prompt, /Its creator sees your plan before anything is built, and taps Build it or asks for changes/);
-  assert.match(prompt, /give `plan`: 3 to 5 bullets, each at most 80 characters/);
+  assert.match(prompt, /give `plan`: 3 to 5 short lines of a few words each, at most 40 characters/, '#4046: a light card');
   assert.match(prompt, /`choices`: at most 2 decisions/);
   assert.ok(!/Its creator sees your plan/.test(bot.triagePromptFor({ seed: 'SEED', issueNumber: 1 })), 'only a first version');
   const md = read('src/prompts/homeroom-bot-triage.md');
@@ -230,12 +230,33 @@ test('B6: the plan card, drawn in every state', () => {
   const draw = (props) => renderToHtml(createElement(PlanCardView, { appName: 'Plant Pal', plan, state: 'open', ...props }));
   const open = draw();
   assert.match(open, /data-bot-plan="open"/);
-  assert.match(open, /Here’s my plan for Plant Pal:/);
-  assert.match(open, /<li>A list of your plants<\/li>/);
+  assert.match(open, />My plan for Plant Pal<\/div>/, '#4046: its title, not a sentence ending in a colon');
+  // Owner, 7 October: each line a row of its own, as PR 5's plan page draws
+  // them: 15px over 22px, 12px above and below, a hairline between, no dot.
+  assert.match(open, /<ul class="mt-1 flex flex-col" data-bot-plan-lines=""><li class="py-3 text-\[0\.9375rem\] leading-\[22px\] text-zinc-900 dark:text-zinc-100">A list of your plants<\/li><li class="py-3 text-\[0\.9375rem\] leading-\[22px\] text-zinc-900 shadow-\[inset_0_1px_0_var\(--app-sheet-line\)\] dark:text-zinc-100">A Today view<\/li><\/ul>/);
+  assert.doesNotMatch(open, /rounded-full bg-zinc-400/, 'no dot before a line in the chat');
+  assert.match(draw({ surface: 'app' }), /<li class="flex items-start gap-2\.5"><span aria-hidden="true" class="[^"]*rounded-full[^"]*"><\/span><span>A list of your plants<\/span><\/li>/,
+    'the App tab\'s card keeps its dots');
   assert.match(open, /How should it remind you\?/);
-  assert.match(open, /aria-pressed="false" data-bot-answer="default"><span>In the app<\/span><span class="messages-bot-default">suggested<\/span>/);
-  assert.match(open, /class="messages-bot-primary" data-bot-plan-build="">Build it<\/button>/);
-  assert.match(open, /class="messages-bot-secondary" data-bot-plan-change="">Change something<\/button>/);
+  // #4046: one quiet single choice, the suggested answer already picked, and
+  // no "suggested" chip beside it.
+  assert.match(open, /role="radiogroup" aria-labelledby="[^"]+" class="mt-1 flex flex-col">/, 'no box behind the answers (owner, 7 October)');
+  assert.match(open, /<label class="flex min-h-\[44px\] cursor-pointer items-center gap-2\.5 py-2 [^"]*" data-bot-answer="default">/, '44px rows with no side padding');
+  assert.match(open, /data-bot-answer="default"><input type="radio" class="sr-only" name="[^"]+" checked="" value="In the app"\/>/);
+  assert.match(open, /data-bot-answer="other"><input type="radio" class="sr-only" name="[^"]+" value="Phone alert"\/>/);
+  assert.match(open, /<span class="font-semibold">In the app<\/span>/);
+  assert.doesNotMatch(open, /suggested|aria-pressed/);
+  // Build it is the one strong action, the width of the card; Change
+  // something is a quiet link under it.
+  assert.match(open, /<button type="button" class="mt-3 h-\[50px\] w-full rounded-full bg-\[color:var\(--accent\)\][^"]*" data-bot-plan-build="">Build it<\/button>/);
+  assert.match(open, /<button type="button" class="[^"]*text-violet-700[^"]*" data-bot-plan-change="">Change something<\/button>/);
+  assert.doesNotMatch(open, /messages-bot-primary|messages-bot-secondary|data-bot-plan-progress/, 'no step without its host\'s progress');
+  // #4046: in the chat, the one place a step count shows: in words, under the
+  // title, with no bar (owner, 7 October: a calmer hierarchy).
+  const waiting = draw({ progress: { line: 'Step 3 of 7', step: 3, of: 7 } });
+  assert.match(waiting, /My plan for Plant Pal<\/div><div class="mt-0\.5 flex min-w-0" data-bot-plan-progress=""><span class="[^"]*\btext-zinc-500\b[^"]*" role="status" data-bot-plan-progress-line="">Step 3 of 7<\/span><\/div>/,
+    'the title first, the step line just under it');
+  assert.doesNotMatch(waiting, /role="progressbar"/, 'no bar');
   const built = draw({ state: 'built', choices: ['Phone alert'] });
   assert.ok(!/Build it<\/button>/.test(built));
   // #4197: each question a small label, the answer gone with as a filled chip
@@ -243,7 +264,11 @@ test('B6: the plan card, drawn in every state', () => {
   assert.match(built, /<dt class="messages-bot-choice-label">How should it remind you\?<\/dt><dd><span class="messages-bot-chosen">Phone alert<\/span><\/dd>/);
   assert.ok(!/In the app/.test(built), 'only the answer chosen');
   assert.match(built, /<p class="messages-bot-answered messages-bot-done" role="status"><svg[^>]*>[\s\S]*?<\/svg><span>Building it<\/span><\/p>/);
-  assert.ok(!/You chose/.test(built));
+  const building = draw({ state: 'built', choices: ['Phone alert'], progress: { line: 'Step 4 of 7 · Build it · 10 to 25 min', step: 4, of: 7 } });
+  assert.match(building, /<span class="[^"]*\btruncate\b[^"]*" role="status" data-bot-plan-progress-line="">Step 4 of 7 · Build it · 10 to 25 min<\/span>/,
+    'the step line stays on one line, an ellipsis as the last resort');
+  assert.match(building, /<\/div><div class="mt-0\.5[^"]*" data-bot-plan-progress="">.*<\/div><dl class="messages-bot-choices/, 'title, step line, then the answers');
+  assert.doesNotMatch(building, /Building it<\/span><\/p>/, 'the step says it: nothing said twice');
   // Build it pressed here, before the update brings `choices`: the picks
   // (the suggested answer for one left alone) stay, never blank.
   const twoQs = { ...plan, questions: [...plan.questions, { question: 'Who can see it?', answers: ['Just me', 'Invited'] }] };
@@ -256,13 +281,12 @@ test('B6: the plan card, drawn in every state', () => {
   assert.match(view, /const went = choices\.length \? choices\s*: builtHere \|\| busy \? plan\.questions\.map\(\(q, i\) => picked\[i\] \|\| q\.answers\[0\] \|\| ''\) : \[\];/);
   const replaced = draw({ state: 'replaced' });
   assert.match(replaced, /Replaced by a newer plan/);
-  assert.ok(!/<li>/.test(replaced), 'a replaced plan folds its bullets away');
+  assert.ok(!/<li/.test(replaced), 'a replaced plan folds its bullets away');
   const stopped = draw({ state: 'stopped' });
-  assert.match(stopped, /<li>A list of your plants<\/li>/, 'a stopped plan keeps its bullets');
+  assert.match(stopped, />A list of your plants<\/li>/, 'a stopped plan keeps its lines');
   assert.match(stopped, /I stopped waiting on this plan\. Reply to pick it up again\./);
   assert.match(draw({ state: 'changing' }), /You asked for changes\. A new plan is on its way\./);
   assert.match(draw({ state: 'closed' }), /No longer needed\./);
-  assert.match(draw({ busy: true }), /data-bot-plan="built"/, 'Build it pressed here reads as chosen at once');
   assert.match(draw({ surface: 'app' }), /rounded-\[20px\] bg-\[color:var\(--dc-sheet-solid\)\]/, 'the App tab draws it as a card');
 });
 
@@ -300,15 +324,15 @@ test('B6: which bot messages draw a plan or two questions, and what state a plan
   assert.match(composer, /Say what to change, and Homeroom bot sends a new plan\. Only you see this\./);
 });
 
-test('B6: the App tab shows the same plan, in place of the chat button, and builds through the same endpoint', () => {
+test('B6: the plan is answered in the chat; #4043: the App tab no longer draws it', () => {
+  // #4043: the being-built App tab drew the whole plan, with its questions
+  // and Build it, under the tour card. The plan is answered in the creator's
+  // chat with Homeroom bot; the App tab shows the thumbnail and its line.
   const view = read('public/js/app-view.js');
-  assert.match(view, /action: mine && !plan\s*\? \{ key: 'botChat'/);
-  assert.match(view, /fetch\(`\/api\/conversations\/homeroom-bot\/actions\/\$\{id\}`, \{\s*method: 'POST',/);
-  assert.match(view, /body: JSON\.stringify\(\{ choice: 'build', answers:/);
-  assert.match(view, /messages\.quoteBotMessage\(conversationId, messageId\)/);
+  assert.doesNotMatch(view, /buildFirstVersion|changeFirstVersionPlan|homeroom-bot\/actions/);
   const status = read('frontend/src/features/app-frame/app-status.tsx');
-  assert.match(status, /\{view\.plan \? <FirstVersionPlanCard key=\{view\.plan\.actionId\} plan=\{view\.plan\} \/> : null\}/);
-  assert.match(status, /call\('buildFirstVersion', plan\.slug, plan\.actionId, answers\)/);
+  assert.doesNotMatch(status, /FirstVersionPlanCard|PlanCardView|buildFirstVersion/);
+  // The made screen still reads that one waits (its Needs you card).
   assert.match(read('src/routes/apps.js'), /\.\.\.\(mine && state\.plan \? \{ plan: state\.plan \} : \{\}\),/);
   const route = read('src/routes/conversations.js');
   assert.match(route, /const answers = Array\.isArray\(req\.body\?\.answers\)/);
@@ -418,10 +442,10 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     const state = states.find((s) => Number(s.row.issue_number) === 1).state;
     assert.deepEqual([state.stage, state.waitingOn], ['plan', 'them']);
     assert.equal(progress.stepNumber('plan', true), 3, 'Step 3 of 7, the plan\'s step');
-    // Its creator's turn, named for whoever reads it (planWaitsStepName).
+    // #4053: its build line, for whoever reads it (buildLineOf).
     const fv = await dm.firstVersionState(pool, app.id);
-    assert.equal(fv.stepName, 'Waiting for @maya to answer the plan');
-    assert.equal((await dm.firstVersionState(pool, app.id, { viewerId: maya.id })).stepName, 'Your turn: answer the plan');
+    assert.equal(fv.line, 'plan-member');
+    assert.equal((await dm.firstVersionState(pool, app.id, { viewerId: maya.id })).line, 'plan');
     assert.deepEqual(fv.plan.bullets, PLAN.bullets);
     assert.equal(fv.plan.actionId, (await planMessage(first)).meta.actionId);
     assert.equal((await progress.botWorkByIssue(pool, app.id)).get(1).what, 'queued', 'nobody else starts it');
@@ -475,7 +499,7 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     // Redoing the plan is not reading the description for the first time:
     // the App tab and the made screen keep it on the plan's step.
     const fv = await dm.firstVersionState(pool, app.id);
-    assert.deepEqual([fv.step, fv.of, fv.stepName], [3, 7, 'Updating the plan']);
+    assert.deepEqual([fv.step, fv.of, fv.line], [3, 7, 'planning']);
     assert.equal(fv.plan, undefined, 'no plan waits while the new one is written');
     const changes = await bot.planChangesFor(pool, app.id, 1);
     assert.deepEqual(changes, { bullets: PLAN.bullets, changes: ['Make it work for my partner too'] });
@@ -650,7 +674,7 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     assert.equal(card.meta.kind, 'activity');
     assert.equal(card.meta.lookAt, (await runRow(run)).created_at.toISOString(), 'read from the run the plan came from');
     assert.equal(card.meta.startedAt, undefined, 'its time counts from the tap');
-    assert.match(card.content, /\n\nBuilding the first version now\. This card updates as I go\.$/);
+    assert.match(card.content, /\n\nI'll message you here when it's ready to try\.$/, '#4046: the inbox preview; the chat does not draw it');
     const { rows: rang } = await pool.query('SELECT 1 FROM notifications WHERE conversation_message_id = $1', [under.messageId]);
     assert.equal(rang.length, 0, 'a progress card rings nothing');
     assert.equal(Number((await message(above.messageId)).meta.movedTo), under.messageId, 'the card above says where it went');

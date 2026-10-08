@@ -901,9 +901,46 @@ test('prepare_work asks the service for the upload command, and submit_work docu
     githubLink.isEnabled = saved.link;
   }
   const block = MCP_SRC.slice(MCP_SRC.indexOf("server.registerTool('submit_work'"));
-  assert.match(block, /patchUploadId: z\.number\(\)\.int\(\)\.positive\(\)\.optional\(\)/);
+  assert.match(block, /patchUploadId: positiveIntId\(\)\.optional\(\)/);
   assert.match(block, /Uploads may be up to 1 MB/);
   assert.match(block, /if yours cannot, send `patch` inline/);
+});
+
+// #4345. A client whose copy of the tool list predates #4264 has no type for
+// `patchUploadId` and sends the upload's id as text. The SDK validates a
+// call's arguments with the tool's own schema and hands the handler what it
+// parsed, so the schema is what has to take "1"; what it advertises stays an
+// integer, so a client that knows the field still sends a number.
+test('submit_work takes patchUploadId\'s digits as text, advertises an integer, and refuses anything else', () => {
+  const tools = require('../src/services/mcp-tools');
+  const { READ_SCOPE, WRITE_SCOPE } = require('../src/services/mcp-connect-constants');
+  const { normalizeObjectSchema, safeParse } = require('@modelcontextprotocol/sdk/server/zod-compat.js');
+  const { toJsonSchemaCompat } = require('@modelcontextprotocol/sdk/server/zod-json-schema-compat.js');
+  const specs = new Map();
+  tools.registerTools({ registerTool(name, spec) { specs.set(name, spec); } }, {
+    accessToken: 'svmcp_test', scopes: [READ_SCOPE, WRITE_SCOPE], user: { id: 3, username: 'ada' },
+    clientName: 'Claude', clientId: 'c1', origin: 'https://homeroom.example',
+    baseUrl: 'http://platform.internal', pool: null, config: {}, tokenId: null, grantId: null,
+  });
+  // The same two steps the SDK takes: parse a call's arguments, list the tool.
+  const schema = normalizeObjectSchema(specs.get('submit_work').inputSchema);
+  const parse = (args) => safeParse(schema, args);
+  for (const [sent, got] of [[1, 1], ['1', 1], [' 12 ', 12], ['101', 101]]) {
+    const r = parse({ taskId: 31, patchUploadId: sent });
+    assert.equal(r.success, true, JSON.stringify(sent));
+    assert.equal(r.data.patchUploadId, got, `${JSON.stringify(sent)} reaches the handler as the number`);
+  }
+  assert.equal(parse({ taskId: 31 }).data.patchUploadId, undefined, 'still optional');
+  for (const sent of ['abc', '', '0', '-1', '1.5', '01', '1e3', 0, -2, 1.5, true, null, {}]) {
+    assert.equal(parse({ taskId: 31, patchUploadId: sent }).success, false, JSON.stringify(sent));
+  }
+  const listed = toJsonSchemaCompat(schema, { strictUnions: true, pipeStrategy: 'input' });
+  assert.deepEqual(
+    { type: listed.properties.patchUploadId.type, exclusiveMinimum: listed.properties.patchUploadId.exclusiveMinimum },
+    { type: 'integer', exclusiveMinimum: 0 },
+    'advertised as the integer it always was'
+  );
+  assert.match(listed.properties.patchUploadId.description, /Instead of `patch`/, 'with its description');
 });
 
 // ── 6. Never logged, never readable ────────────────────────────────────

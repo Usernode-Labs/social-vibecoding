@@ -35,7 +35,7 @@ const PLAN = {
 
 test('a plan waits for Build it when first_version carries one, read as the App tab reads it', () => {
   const { waitingPlan } = loadTsx(`${DIR}/made.tsx`);
-  assert.deepEqual(waitingPlan({ step: 3, of: 7, stepName: 'Write a plan', plan: PLAN }), PLAN);
+  assert.deepEqual(waitingPlan({ step: 3, of: 7, line: 'plan', plan: PLAN }), PLAN);
   assert.deepEqual(waitingPlan({ plan: { bullets: ['a'], actionId: 5 } }),
     { bullets: ['a'], questions: [], actionId: 5, messageId: null, conversationId: null });
   assert.equal(waitingPlan(null), null);
@@ -43,9 +43,9 @@ test('a plan waits for Build it when first_version carries one, read as the App 
   assert.equal(waitingPlan({ plan: { ...PLAN, actionId: undefined } }), null, 'nothing to decide without its action');
   assert.equal(waitingPlan({ plan: { ...PLAN, bullets: [] } }), null);
   assert.equal(waitingPlan({ ready: true, plan: PLAN }), null, 'a ready version waits on nobody');
-  // The same test the being-built screen makes.
+  // #4043: the App tab no longer draws the plan; it is answered in the chat.
   const view = read('public/js/app-view.js');
-  assert.match(view, /const plan = mine && fv\.plan && Array\.isArray\(fv\.plan\.bullets\) && fv\.plan\.bullets\.length\s+&& Number\.isInteger\(fv\.plan\.actionId\) \? fv\.plan : null;/);
+  assert.doesNotMatch(view, /fv\.plan\b/);
 });
 
 test('the made screen reads the project under `app`, past the service worker\'s cache', () => {
@@ -54,7 +54,7 @@ test('the made screen reads the project under `app`, past the service worker\'s 
   // and its step never showed (tests/first-session-made-plan-postgres.test.js
   // runs it against the real route).
   const { madeAppOf, madeAppUrl, waitingPlan } = loadTsx(`${DIR}/made.tsx`);
-  const fv = { step: 3, of: 7, stepName: 'Write a plan', ready: false, plan: PLAN };
+  const fv = { step: 3, of: 7, line: 'plan', ready: false, plan: PLAN };
   assert.deepEqual(madeAppOf({ app: { status: 'running', first_version: fv } }), { firstVersion: fv, status: 'running' });
   assert.deepEqual(waitingPlan(madeAppOf({ app: { first_version: fv } }).firstVersion), PLAN);
   assert.deepEqual(madeAppOf({ app: { status: 'creating' } }), { firstVersion: null, status: 'creating' });
@@ -71,7 +71,7 @@ test('the made screen reads the project under `app`, past the service worker\'s 
     'the plain read is the boot lane\'s, served from cache first');
   const src = read(`${DIR}/made.tsx`);
   assert.match(src, /fetch\(madeAppUrl\(made\.slug\), \{ credentials: 'same-origin', cache: 'no-store' \}\)/);
-  assert.match(src, /const app = madeAppOf\(body\);\s+if \(live && app\) \{\s+setFv\(app\.firstVersion\);\s+setAppStatus\(app\.status\);/);
+  assert.match(src, /const app = madeAppOf\(body\);\s+if \(live && app\) \{\s+setFv\(app\.firstVersion\);/);
   assert.ok(!/setFv\(app\.first_version/.test(src), 'never the top of the answer');
 });
 
@@ -112,8 +112,7 @@ test('while the plan waits, the build\'s note says so instead of promising a mes
   assert.match(src, /<SketchCard made=\{made\} sketch=\{sketch\} line=\{line\} note=\{note\} /);
   assert.match(src, /<p className="mt-1 text-\[13px\] text-zinc-500 dark:text-zinc-400">\{note\}<\/p>/);
   assert.doesNotMatch(src, /sketchCaption/);
-  // Nothing is under way while it waits on them: no busy dot.
-  // Nor on a setup that stopped (stalledOf).
+  // The plain card's busy dot: not while it waits on them, nor on a setup that stopped (stalledOf).
   assert.match(src, /const busy = appStatus === 'creating' \|\| \(botBuilds && !\(fv && fv\.ready\) && !plan && !stalled\);/);
 });
 
@@ -218,7 +217,7 @@ test('the made screen renders with nothing read yet: no plan, the build\'s first
     onOpenChat() {},
   }));
   assert.ok(!/data-first-session-plan/.test(html), 'no plan until one is read');
-  assert.match(html, /data-first-session-build="">Setting it up…<\/span>/);
+  assert.match(html, /data-build-line="planning"[^>]*>.*Homeroom bot is planning it/);
   assert.match(html, />Homeroom is making your app\. It will message you when the first version is ready to try, or if it has any questions\.<\/p>/);
   assert.match(html, /Invite people later/);
 });
@@ -280,23 +279,24 @@ async function stateWith(stage, queueReason, viewerId = null) {
 test('a plan its creator asked to change stays on the plan\'s step while it is redone', async () => {
   for (const stage of ['queued', 'reading']) {
     const fv = await stateWith(stage, 'plan_change');
-    assert.deepEqual([fv.step, fv.of, fv.stepName], [3, 7, 'Updating the plan'], stage);
+    assert.deepEqual([fv.step, fv.of, fv.line], [3, 7, 'planning'], stage);
     assert.equal(fv.question, false);
     assert.equal(fv.ready, false);
     assert.equal(fv.plan, undefined);
+    assert.equal('stepName' in fv, false, '#4053: the line, never a step name');
   }
   // The first read of the description is still step 2.
   const first = await stateWith('reading', 'new');
-  assert.deepEqual([first.step, first.stepName], [2, 'Read the description']);
+  assert.deepEqual([first.step, first.line], [2, 'planning']);
   // A question the new read asks waits on them, as any question does.
-  const asked = await stateWith('question', 'plan_change');
-  assert.deepEqual([asked.step, asked.stepName], [2, 'Read the description']);
+  const asked = await stateWith('question', 'plan_change', 7);
+  assert.deepEqual([asked.step, asked.line], [2, 'planning'], 'a question in the record, not one waiting on them');
   // The new plan, once it is sent, is the plan's own step again, and waits
-  // on its creator: named for whoever reads it (planWaitsStepName).
+  // on its creator: said for whoever reads it (buildLineOf).
   const sent = await stateWith('plan', 'plan_change');
-  assert.deepEqual([sent.step, sent.stepName], [3, 'Waiting for @maya to answer the plan']);
+  assert.deepEqual([sent.step, sent.line], [3, 'plan-member']);
   const mine = await stateWith('plan', 'plan_change', 7);
-  assert.deepEqual([mine.step, mine.stepName], [3, 'Your turn: answer the plan']);
+  assert.deepEqual([mine.step, mine.line], [3, 'plan']);
   // Changed in changePlan, read here: the reason they agree on.
   const src = read('src/services/homeroom-bot-dm.js');
   assert.match(src, /enqueueFront\(pool, \{ appId: app\.id, issueNumber, userId: user\.id, reason: 'plan_change' \}\)/);
@@ -310,17 +310,19 @@ test('"Write a plan" names one wait: the plan waiting on its creator is their tu
   // the bot wrote its build plan after it, so the maker read their own turn
   // as the bot's.
   const plan = (stage, viewerId) => stateWith(stage, 'new', viewerId);
+  // #4053: and the build line says it the same way: "Your plan is ready to
+  // review" to its creator alone, "Planning it" to everyone else.
   const waits = await plan('plan', 7);
-  assert.deepEqual([waits.step, waits.of, waits.stepName], [3, 7, 'Your turn: answer the plan']);
-  assert.equal((await plan('plan', 99)).stepName, 'Waiting for @maya to answer the plan', 'another member reads whose turn it is');
-  assert.equal((await plan('plan', null)).stepName, 'Waiting for @maya to answer the plan');
+  assert.deepEqual([waits.step, waits.of, waits.line], [3, 7, 'plan']);
+  assert.equal((await plan('plan', 99)).line, 'plan-member', 'another member reads that it is being planned');
+  assert.equal((await plan('plan', null)).line, 'plan-member');
   // After Build it, what the bot does next is the build to them: writing
   // the build's own plan, and waiting for its turn and workspace, read as
-  // "Step 4 of 7: Build it", never "Write a plan" again (Evan, 5 October 2026:
+  // step 4, "Building it", never the plan again (Evan, 5 October 2026:
   // "writing the plan for the build" right after he approved the plan).
   for (const stage of ['planning', 'build_queued', 'starting']) {
     const after = await plan(stage, 7);
-    assert.deepEqual([after.step, after.stepName], [4, 'Build it'], stage);
+    assert.deepEqual([after.step, after.line], [4, 'building'], stage);
   }
   const progress = require('../src/services/homeroom-bot-progress');
   for (const stage of ['planning', 'build_queued', 'starting']) {
@@ -328,7 +330,7 @@ test('"Write a plan" names one wait: the plan waiting on its creator is their tu
     assert.equal(progress.stepNumber(stage, false), 2, `a request's ${stage} is still its plan`);
   }
   assert.equal(progress.stepNumber('plan', true), 3, 'the plan waiting on its creator stays step 3');
-  const { buildLine } = loadTsx(`${DIR}/made.tsx`);
-  assert.equal(buildLine(waits, 'running', true), 'Step 3 of 7: Your turn: answer the plan');
-  assert.ok(!/—/.test(waits.stepName));
+  const { madeLine } = loadTsx(`${DIR}/made.tsx`);
+  assert.equal(madeLine(waits, true), 'plan');
+  assert.equal(madeLine({ ...waits, line: 'plan-member' }, true), 'plan-member');
 });

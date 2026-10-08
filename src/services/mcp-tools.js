@@ -254,6 +254,21 @@ const MAX_CONVENTIONS_CHARS = 32 * 1024;
 
 const { neutralizeEnvelope } = require('./untrusted-envelope');
 
+// #4345. A positive integer id that also takes its digits as text. A client
+// whose copy of the tool list predates a field has no type for it and sends
+// the value as a string ("1"), which a bare z.number() refuses although the id
+// is exact. The advertised schema is the inner integer (the SDK lists a
+// preprocess by its input), so a client that knows the field still sends a
+// number; anything but plain digits is refused as before.
+const DIGITS_ID_RE = /^\s*[1-9]\d{0,15}\s*$/;
+function positiveIntId() {
+  const { z } = require('zod'); // loaded where registerTools loads it, not at require time
+  return z.preprocess(
+    (value) => (typeof value === 'string' && DIGITS_ID_RE.test(value) ? Number(value) : value),
+    z.number().int().positive()
+  );
+}
+
 function clip(value, max) {
   const text = String(value == null ? '' : value);
   if (text.length <= max) return text;
@@ -944,7 +959,10 @@ function failureReasonOf(result) {
 
 function shapeChecks(session) {
   const results = Array.isArray(session.test_results) ? session.test_results : [];
-  const failed = results.filter((t) => t && t.status && t.status !== 'pass');
+  // A unit suite that never reached `npm test` (its Job was refused, its pod
+  // stopped in setup) names no failing test, so it is not listed as one.
+  // When it is why the run errored, `error` below carries its reason.
+  const failed = results.filter((t) => t && t.status && t.status !== 'pass' && !unitSuiteRow.isNotRunRow(t));
   const ranOn = session.checks_commit_sha || null;
   const head = headShaOf(session);
   // #3978. The unit-suite row's stored per-test excerpts, previewed inline:
@@ -1325,6 +1343,22 @@ function shapeNextStep(session, checks, viewerId = null) {
       + ` and call submit_work with proposalId ${session.id} and that branch; otherwise poll get_proposal for the `
       + 'new verdict. Do not open a second proposal.';
   }
+  // The run errored because the repo unit suite could not run: its Job was
+  // refused or its setup stopped before any test. Nothing failed, and the
+  // error lane runs the checks again on its own, so "fix the build" would
+  // send the agent after a problem the code does not have.
+  const unitNotRun = unitSuiteRow.notRunError(session);
+  if (unitNotRun) {
+    const again = erroredRunWillRetry(session)
+      ? 'Homeroom runs errored checks again on its own, waiting longer between tries; poll get_proposal for the '
+        + 'new verdict.'
+      : 'Homeroom will not run them again on its own now; recheck_change re-runs them once the cause has cleared.';
+    return `The repo unit suite (npm test) could not run on ${ref}, so there is no verdict yet: `
+      + `${untrusted(unitNotRun, MAX_CHECK_ERROR_CHARS)} No test failed. ${again} Only if that reason points at `
+      + 'this change (installing its dependencies failed on its package.json or lockfile) fix it and push to '
+      + `${branch.youCanPush ? (branch.name || 'this proposal\'s branch') + ' in your own fork' : 'a branch in your OWN fork'}`
+      + ` and call submit_work with proposalId ${session.id} and that branch. Do not open a second proposal.`;
+  }
   // An errored run is a failure with no test to point at: the build or the
   // preview broke before the suite could report. Naming that is the difference
   // between fixing a test and fixing a Dockerfile.
@@ -1346,6 +1380,17 @@ function shapeNextStep(session, checks, viewerId = null) {
     : `Checks on ${ref} are failing and they gate merge — this cannot land however the vote goes. Fix the named tests and push `
       + 'to a branch in your OWN fork, then call submit_work with proposalId '
       + `${session.id} and that branch: ${whyYouCannotPush(branch)}. Do not open a second proposal.`;
+}
+
+// Will the error lane run this stored 'error' again on its own? The row is
+// one findStuckCheckSessions picks up, a retry is scheduled, and the streak
+// is under CHECK_MAX_AUTO_RETRIES. A row that does not say answers no, so a
+// rerun is never promised that will not come.
+function erroredRunWillRetry(session) {
+  if (!session || session.check_state !== 'error' || !session.branch_name) return false;
+  const recovery = require('./staging-recovery');
+  if (!recovery.isStuckCheckRecoveryScope(session) || session.check_next_retry_at == null) return false;
+  return (Number(session.consecutive_check_failures) || 0) < recovery.checkMaxAutoRetries();
 }
 
 // The 'error' a red run that overlapped a platform rollout is recorded as:
@@ -1597,6 +1642,13 @@ function changeNextStep(session, checks, live, kind = 'agent_mayor') {
     return `Checks on ${ref} ran while Homeroom was updating, so they will run again on their own. `
       + (unit ? `${unit} ${words.fixTests}${paused}`
         : `Nothing to fix yet; call get_change again for the new verdict.${paused}`);
+  }
+  if (unitSuiteRow.notRunError(session)) {
+    return `The repo unit suite (npm test) could not run on ${ref}, so there is no verdict yet, and no test failed. `
+      + (erroredRunWillRetry(session)
+        ? 'Homeroom runs the checks again on its own; call get_change again for the new verdict.'
+        : 'recheck_change re-runs the checks once the cause has cleared.')
+      + paused;
   }
   if (failing) {
     return checks.state === 'error' && !(checks.failing && checks.failing.length)
@@ -4134,6 +4186,15 @@ function registerTools(server, ctx) {
         nextStep: 'Checks cannot run inside a staging preview of Homeroom itself, so nothing was started.',
       });
     }
+    if (body.collecting) {
+      return toolResult({
+        changeId,
+        started: false,
+        checkState: 'pending',
+        nextStep: 'A run of the checks on this commit is still going, so nothing new was started: its verdict '
+          + 'is recorded when it finishes. Call get_change for it.',
+      });
+    }
     return toolResult({
       changeId,
       started: true,
@@ -4878,7 +4939,9 @@ function registerTools(server, ctx) {
         .describe('The name of the fork you pushed to, if you forked under a name other than the app repository’s. The owner is always the user’s linked GitHub account and is never taken from here.'),
       patch: z.string().optional()
         .describe('The change as a patch, the default way to submit new work — the output of `git format-patch <baseSha>..HEAD --stdout`, or a plain `git diff`. Homeroom applies it at the task’s recorded base commit, commits it in the app’s own repository and opens the pull request, so you need no GitHub write access at all. Requires taskId. With an UPDATE task’s taskId (prepare_work with proposalId) the base is that proposal’s current commit instead, and the patch advances THAT proposal exactly as a branch update does; it is refused with `branch_moved` when the proposal is no longer at the task’s base commit (or at `expectedHeadSha`, when you pass the commit you rebased onto). After an update lands, the task’s base is its new head, so the next patch is made from there. Roughly 250 KB max; push a branch for anything larger, or when you already push to your fork. Patch or branch is your decision: never ask the user to choose.'),
-      patchUploadId: z.number().int().positive().optional()
+      // #4345: added after many clients cached the tool list, so it takes its
+      // digits as a string too.
+      patchUploadId: positiveIntId().optional()
         .describe('Instead of `patch`: the `uploadId` printed by the upload command in your work order, which sends `git format-patch` output straight to Homeroom so a large patch is never retyped into this call (#4264). Requires a new-work taskId: an update’s patch is sent inline. Homeroom applies the uploaded bytes exactly as it applies `patch`: same base commit, same pull request. Uploads may be up to 1 MB. Refused if that upload was made for another task, or was replaced by a newer upload (submit the newest uploadId). The upload command needs a sandbox that can reach Homeroom; if yours cannot, send `patch` inline.'),
       source: z.enum(['work_order', 'assistant']).optional()
         .describe('Set to "work_order" when you are the coding agent submitting your own finished work, "assistant" when a human relayed it to you. Advisory only.'),

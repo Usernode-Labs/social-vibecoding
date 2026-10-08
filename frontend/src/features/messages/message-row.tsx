@@ -86,6 +86,8 @@ export const MessageRow = memo(function MessageRow({
   inThread = false,
   threadOpen = false,
   focused = false,
+  planCardId = null,
+  hidePrompts = false,
 }: {
   message: ConversationMessage;
   conversationId: number;
@@ -101,6 +103,10 @@ export const MessageRow = memo(function MessageRow({
   threadOpen?: boolean;
   /** The message a link pointed at — flashed once (#2387). */
   focused?: boolean;
+  /** #4046: a plan's request's activity card, whose step the plan carries (./bot-plan.tsx planLayout). */
+  planCardId?: number | null;
+  /** #4046: a plan or a question offers its own answers, so questions to tap give way. */
+  hidePrompts?: boolean;
 }) {
   const mine = Number(typeof window !== 'undefined' ? window.App?.user?.id : 0) === message.sender.id;
   const [picker, setPicker] = useState<'above' | 'below' | null>(null);
@@ -273,7 +279,7 @@ export const MessageRow = memo(function MessageRow({
       ) : isPlanMessage(message) ? (
         // B6: a first version's plan, and two questions at once, stand in
         // place of their words too (./bot-plan.tsx).
-        <BotPlanCard message={message} conversationId={conversationId} />
+        <BotPlanCard message={message} conversationId={conversationId} cardId={planCardId} />
       ) : isTwoQuestions(message) ? (
         <BotTwoQuestions message={message} conversationId={conversationId} />
       ) : isReadyMessage(message) ? (
@@ -289,7 +295,7 @@ export const MessageRow = memo(function MessageRow({
     <>
       {message.sender.bot && (message.metadata?.homeroomBot?.question || message.metadata?.homeroomBot?.actions?.length)
         && !isTwoQuestions(message) && !isReadyMessage(message)
-        ? <BotQuestion message={message} conversationId={conversationId} /> : null}
+        ? <BotQuestion message={message} conversationId={conversationId} hidePrompts={hidePrompts} /> : null}
       {message.attachments.length ? <div className="messages-attachments">{message.attachments.map((attachment) => <Attachment key={attachment.id} attachment={attachment} />)}</div> : null}
       {objects.length ? <div className="messages-object-list">{objects.map((object, index) => <ObjectCard key={`${object.type}-${index}`} object={object} />)}</div> : null}
       {/* #3660: a link in the words to one of Homeroom's own pages, as the

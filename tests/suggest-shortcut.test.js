@@ -1,7 +1,9 @@
 'use strict';
 
-// #4289: the C key opens Suggest an improvement, on a computer, with nothing
-// selected. Experimental, off by default, kept on the device.
+// #4289 and its follow-up: the C key comments on the page (a pin where the
+// pointer is, ../frontend/src/features/comment-pin/, tested in
+// tests/comment-pin.test.js), on a computer, with nothing selected.
+// Experimental, off by default, kept on the device.
 //
 // What is pinned, and each is a way it can be quietly wrong:
 //
@@ -11,8 +13,9 @@
 //      on screen, or a screen that claimed the key (preventDefault) leaves it
 //      alone, and the claim is read AFTER every listener has had the key.
 //   3. FROM INSIDE AN APP. The bridge forwards an unused C without touching
-//      the app's own handling, and the shell takes the message only from its
-//      running app's frame while that frame holds focus.
+//      the app's own handling, with where its pointer was, and the shell
+//      takes the message only from its running app's frame while that frame
+//      holds focus, placing the point by the frame's rectangle.
 //   4. ONE RULE, TWO COPIES. The shell and the bridge cannot share code, so
 //      the same table of keys runs through both.
 //   5. THE SEAMS. The Workshop claims its C, Settings paints and saves the
@@ -72,9 +75,13 @@ function shellHarness({
   const listeners = {};
   const timers = [];
   const frameWin = { name: 'app frame' };
-  const frame = { contentWindow: frameWin };
+  const frame = {
+    contentWindow: frameWin,
+    getBoundingClientRect: () => ({ left: 200, top: 56, width: 800, height: 600 }),
+  };
   let selection = '';
   let opened = 0;
+  const points = [];
   const doc = {
     activeElement: active === 'frame' ? frame : active,
     documentElement: { classList: { contains: (c) => panel && c === 'in-side-panel' } },
@@ -89,11 +96,12 @@ function shellHarness({
   };
   const storage = memoryStorage(enabled);
   shortcut.installSuggestShortcut({
-    win, doc, storage, open: () => { opened += 1; }, signedIn: () => signedIn,
+    win, doc, storage, open: (p) => { opened += 1; points.push(p); }, signedIn: () => signedIn,
   });
   return {
-    doc, frame, frameWin, storage,
+    doc, frame, frameWin, storage, points,
     select(text) { selection = text; },
+    move(x, y) { listeners.pointermove({ clientX: x, clientY: y }); },
     // Press, let any later listener act on the event, then run the task.
     press(init, later) {
       const e = keyEvent(init);
@@ -115,9 +123,13 @@ function bridgeHarness({ top = false, platformShell = false, active = body, poin
   const posted = [];
   const timers = [];
   let keydown = null;
+  let pointermove = null;
   let selection = '';
   const window = {
-    addEventListener(type, fn) { if (type === 'keydown') keydown = fn; },
+    addEventListener(type, fn) {
+      if (type === 'keydown') keydown = fn;
+      if (type === 'pointermove') pointermove = fn;
+    },
     getSelection: () => ({ isCollapsed: !selection, toString: () => selection }),
   };
   window.parent = top ? window : { postMessage(message, origin) { posted.push({ message, origin }); } };
@@ -127,6 +139,7 @@ function bridgeHarness({ top = false, platformShell = false, active = body, poin
   return {
     installed: () => !!keydown,
     select(text) { selection = text; },
+    move(x, y) { pointermove({ clientX: x, clientY: y }); },
     press(init, later) {
       const e = keyEvent(init);
       keydown(e);
@@ -238,6 +251,33 @@ test('the bridge forwards an unused C to the shell and never touches the app\'s 
   assert.equal(bridgeHarness({ pointerLock: {} }).press(), 0, 'a game holding the pointer');
 });
 
+test('the comment is pinned where the pointer was, over the shell or inside the app', () => {
+  const h = shellHarness();
+  h.press();
+  assert.equal(h.points[0], null, 'nobody has pointed yet: the comment picks the middle');
+  h.move(300, 200);
+  h.press();
+  assert.deepEqual(h.points[1], { x: 300, y: 200 });
+
+  const msg = (extra) => ({ [shortcut.SHORTCUT_MESSAGE_KEY]: 'suggest', ...extra });
+  const a = shellHarness({ active: 'frame' });
+  a.message(msg({ x: 40, y: 30 }));
+  assert.deepEqual(a.points[0], { x: 240, y: 86 }, 'the app\'s point, placed by the frame\'s rectangle');
+  a.message(msg({}));
+  assert.deepEqual(a.points[1], { x: 600, y: 356 }, 'no point from the app: the frame\'s middle');
+  a.message(msg({ x: 5000, y: -20 }));
+  assert.deepEqual(a.points[2], { x: 999, y: 56 }, 'kept inside the frame');
+  a.message(msg({ x: 'a', y: null }));
+  assert.deepEqual(a.points[3], { x: 600, y: 356 }, 'a point that is not one is ignored');
+
+  const b = bridgeHarness();
+  b.press();
+  assert.deepEqual({ ...b.posted[0].message }, { __usernode_shortcut: 'suggest' }, 'no pointer yet: no point');
+  b.move(40, 30);
+  b.press();
+  assert.deepEqual({ ...b.posted[1].message }, { __usernode_shortcut: 'suggest', x: 40, y: 30 });
+});
+
 test('the bridge installs nothing in a top frame and sends nothing from the platform\'s own document', () => {
   assert.equal(bridgeHarness({ top: true }).installed(), false);
   assert.equal(bridgeHarness({ platformShell: true }).press(), 0);
@@ -287,9 +327,11 @@ test('the Workshop claims its C, so the two never both open', () => {
   assert.match(ws, /if \(k === 'c' \|\| k === 'C'\) \{ e\.preventDefault\(\); toggleSheet\('comments'\); return; \}/);
 });
 
-test('the bundle installs the shortcut, and opens what the Suggest an improvement button opens', () => {
+test('the bundle installs the shortcut, which loads the comment on the first C', () => {
   assert.match(read('frontend/src/main.tsx'), /^import '\.\/features\/improve\/suggest-shortcut';$/m);
   const src = read('frontend/src/features/improve/suggest-shortcut.ts');
+  assert.match(src, /import\('\.\.\/comment-pin\/comment-pin'\)\s*\.then\(\(m\) => m\.openCommentPin\(point\)\)\s*\.catch\(\(\) => openSuggest\(\)\)/,
+    'loaded on demand, and the dialog if it cannot load');
   assert.match(src, /w\.Improve\.giveFeedback\(\)/);
   assert.match(src, /bridge\.suggestShortcut = \{/, 'published for settings.js, which cannot import');
 });
@@ -300,7 +342,8 @@ test('Settings, Experimental has the switch, unchecked as shipped, painted and s
   });
   const html = renderToHtml(createElement(ExperimentalSection));
   assert.match(html,
-    /<label[^>]*><input id="suggest-shortcut-enabled" type="checkbox" class="un-switch"\/><span[^>]*>Press C to suggest an improvement<\/span><\/label>/);
+    /<label[^>]*><input id="suggest-shortcut-enabled" type="checkbox" class="un-switch"\/><span[^>]*>Press C to comment on the page<\/span><\/label>/);
+  assert.match(html, /pressing C drops a pin where your pointer is/);
   assert.match(html, /Saved on this device only\./);
   assert.ok(html.indexOf('id="suggest-shortcut-enabled"') < html.indexOf('id="settings-local-agents-section"'),
     'inside the Experimental block');

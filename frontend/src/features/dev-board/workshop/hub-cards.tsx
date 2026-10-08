@@ -67,9 +67,9 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { ArrowUpIcon, ChevronDownIcon, ChevronRightIcon } from '@/components/ui/icons';
-import { ProgressRing } from '@/components/ui/progress-ring';
+import { ArrowUpIcon, ChatIcon, ChevronDownIcon, ChevronRightIcon } from '@/components/ui/icons';
 import { agoStamp } from '../../../lib/timestamp';
+import { BuildLine, type BuildLineState, buildLineOf } from '../../first-session/build-line';
 import { swatchFor } from '../../messages/format';
 import { open as openConversation, openBot } from '../../messages/store';
 import { CardRowView } from '../card/fold';
@@ -309,34 +309,14 @@ function HubComposer({ slug, url, placeholder }: { slug: string; url: string; pl
 export const FIRST_VERSION_POLL_MS = 15000;
 
 /**
- * "Step 4 of 7: Build it". The name is the server's (`step_name`, from
- * homeroom-bot-dm.js firstVersionState for this viewer), so the hub says
- * exactly what the made screen and the App tab say, and follows them when
- * a step is renamed.
+ * #4053: the build line, the server's for this viewer (`line`, from
+ * homeroom-bot-dm.js firstVersionState), so the hub says exactly what the
+ * made screen and the App tab say: "Building it", never "Step 4 of 7: Build
+ * it", which read as an instruction to the person looking at it. Step
+ * numbers stay in Homeroom bot's chat.
  */
-export function firstVersionStep(fv: HubFirstVersion): string {
-  if (!fv.step || !fv.of) return fv.ready ? 'Ready to try' : 'Being built';
-  return `Step ${fv.step} of ${fv.of}${fv.step_name ? `: ${fv.step_name}` : ''}`;
-}
-
-/**
- * The line under the step: what happens next, for whoever reads it. Its
- * maker is told what it waits on from them, or that the bot will message
- * them when it is ready or has a question (the made screen's words);
- * anybody else, whose description it is.
- *
- * NO BUILD TIME. Evan, 5 Oct 2026: no average build time for a first
- * version. It plans first and waits on its maker's answer, so an ordinary
- * request's typical build was a promise it did not keep.
- */
-export function firstVersionNote(fv: HubFirstVersion): string {
-  if (fv.ready) return 'Version one is ready to try.';
-  if (fv.waits_on === 'plan') return 'Homeroom bot has a plan for you.';
-  if (fv.waits_on === 'question') return 'Homeroom bot has a question for you.';
-  if (fv.mine) return 'Homeroom bot will message you when it’s ready to try, or if it has any questions.';
-  return fv.creator
-    ? `Homeroom bot is building it from @${fv.creator}’s description.`
-    : 'Homeroom bot is building it from its description.';
+export function firstVersionLine(fv: HubFirstVersion): BuildLineState {
+  return buildLineOf(fv.line) || (fv.ready ? 'ready' : 'planning');
 }
 
 /** Which of the card's states this is, for its `data-ws-first-version`. */
@@ -347,15 +327,15 @@ export function firstVersionKind(fv: HubFirstVersion): 'ready' | 'plan' | 'quest
 
 /**
  * FIRST VERSION: where Homeroom bot's build of the project stands, while it
- * builds it from the description it was made with. The same steps the made
- * screen and the App tab say ("Step 4 of 7: Build it",
- * services/homeroom-bot-progress.js), read from the hub's own record
- * (GET /api/apps/:slug/community `first_version`), with the step as the
- * ring the bot's activity cards lead with.
+ * builds it from the description it was made with: the build line the made
+ * screen and the App tab draw ("Building it", ../../first-session/
+ * build-line.tsx), read from the hub's own record
+ * (GET /api/apps/:slug/community `first_version`).
  *
  * When the bot waits on its maker (its plan, for their Build it, or a
- * question), the card says so and "Go to chat" opens their chat with it,
- * where the plan is decided. Ready to try, "See the change" opens the change,
+ * question), the card says so and a button opens their chat with it, where
+ * the plan is decided: "Review the plan" for the plan (the canvas's FVCard),
+ * "Go to chat" for a question. Ready to try, "See the change" opens the change,
  * where it is tried and approved. Nothing for a project the bot is not
  * building, or once its first version is live.
  *
@@ -377,8 +357,6 @@ export function FirstVersionCard({ slug, data }: { slug: string; data: Community
     return () => window.clearInterval(timer);
   }, [building, slug]);
   if (!fv) return null;
-  const step = firstVersionStep(fv);
-  const stepped = !!(fv.step && fv.of);
   const chat = () => {
     if (fv.conversation_id) openConversation(fv.conversation_id);
     else void openBot();
@@ -386,22 +364,11 @@ export function FirstVersionCard({ slug, data }: { slug: string; data: Community
   return (
     <section ref={ref} className="dev-ws-strip dev-ws-hub-first" data-ws-first-version={firstVersionKind(fv)}>
       <div className="dev-ws-hub-first-row">
-        {stepped ? (
-          <ProgressRing
-            pct={Math.round(((fv.step || 0) / (fv.of || 1)) * 100)}
-            label={`${fv.step}/${fv.of}`}
-            title={step}
-            aria-hidden="true"
-          />
-        ) : null}
         <span className="dev-ws-hub-door-text">
           <span className="dev-ws-head">
             <span className="dev-ws-head-title">First version</span>
           </span>
-          <span className="dev-ws-hub-needs-first">
-            <span className="dev-ws-hub-needs-title" data-ws-first-version-step="">{step}</span>
-            <span className="dev-ws-hub-needs-sub" data-ws-first-version-note="">{firstVersionNote(fv)}</span>
-          </span>
+          <BuildLine state={firstVersionLine(fv)} />
         </span>
       </div>
       {fv.waits_on ? (
@@ -410,11 +377,17 @@ export function FirstVersionCard({ slug, data }: { slug: string; data: Community
           variant="pillAccent"
           size="sm"
           ink="solid"
+          layout={fv.waits_on === 'plan' ? 'iconRow' : 'none'}
           className="self-start"
           data-ws-first-version-chat=""
           onClick={chat}
         >
-          Go to chat
+          {fv.waits_on === 'plan' ? (
+            <>
+              <ChatIcon className="h-4 w-4" aria-hidden="true" />
+              Review the plan
+            </>
+          ) : 'Go to chat'}
         </Button>
       ) : fv.ready && fv.session_id ? (
         <a

@@ -1121,7 +1121,7 @@ export function WaitlistScreen() {
           they build.
           </li>
           <li>
-            Access opens in batches. The public apps are open to everyone now.
+            We let people in a few at a time. The public apps are open to everyone now.
           </li>
         </ul>
         <p className={hiddenLast(joined, 'mt-3 text-sm font-medium text-zinc-700 dark:text-zinc-200')}>
@@ -1584,7 +1584,7 @@ export function WaitlistScreen() {
                 ? (status?.has_account
                   ? 'Your account already has access. Sign in any time.'
                   : 'Access is open for you. Create your account with this address and you\u2019re straight in.')
-                : 'We\u2019re opening access in small groups. We\u2019ll email you when yours comes up.'}
+                : 'We let people in a few at a time. We\u2019ll email you when yours comes up.'}
             </p>
             {/*
                 The same three-state vocabulary the stage-2 screen shows, from
@@ -1682,7 +1682,7 @@ export function WaitlistScreen() {
             <p className="mt-1.5 text-sm text-zinc-500 dark:text-zinc-400">
               {surveyAnswered
                 ? 'Your answers are saved. Add to them any time, and they merge, so nothing you already wrote is lost.'
-                : 'Four more questions, about three minutes: the group you\u2019d bring, a tool you\u2019ve lost, where else you are. These are the answers we actually read when we pick the next group.'}
+                : 'Four more questions, about three minutes: the group you\u2019d bring, a tool you\u2019ve lost, where else you are. These are the answers we actually read when we pick who gets in next.'}
             </p>
             <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
               <a

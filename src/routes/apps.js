@@ -259,10 +259,10 @@ const stagingApps = require('../services/staging-apps');
  * steps of homeroom-bot-progress.js FIRST_VERSION_STEPS), cut to what the
  * hub draws. Pure.
  *
- *   step, of, step_name  "Step 4 of 7: Build it", the step's name exactly
- *                        as firstVersionState names it for this viewer, so
- *                        the hub says what the App tab and the made screen
- *                        say
+ *   step, of             which of FIRST_VERSION_STEPS it is on
+ *   line                 its build line for this viewer (#4053:
+ *                        homeroom-bot-progress.js buildLineOf), so the hub
+ *                        says what the App tab and the made screen say
  *   ready                built and up for approval: ready to try
  *   mine                 whose description it is: the viewer's
  *   creator              whose description it is, by username
@@ -283,7 +283,7 @@ function hubFirstVersion(state, viewerId) {
   return {
     step: Number.isInteger(state.step) ? state.step : null,
     of: Number.isInteger(state.of) ? state.of : null,
-    step_name: state.stepName || null,
+    line: state.line || null,
     ready,
     mine,
     creator: state.creator || null,
@@ -562,6 +562,36 @@ const { ACTIVITY_MAX_PER_POST, ACTIVITY_MAX_PER_DAY } = appActivity;
  */
 const { activitySeconds } = appActivity;
 
+/**
+ * #4053 (owner, 7 Oct 2026): the build line of every first version Homeroom
+ * bot is still making among `apps`, for this viewer (homeroom-bot-dm.js
+ * firstVersionState, the same answer GET /api/apps/:slug gives as
+ * `first_version.line`): Map(appId -> line). The Home tile says it in place
+ * of "Spinning up...". One query finds the few under way; best-effort, so a
+ * read that fails leaves the tiles as they were.
+ */
+async function firstVersionLinesFor(pool, apps, viewerId) {
+  const lines = new Map();
+  const ids = apps.map((a) => Number(a.id)).filter((id) => Number.isInteger(id) && id > 0);
+  if (!ids.length) return lines;
+  try {
+    const { rows } = await pool.query(
+      `SELECT app_id FROM homeroom_bot_first_versions
+        WHERE app_id = ANY($1::int[]) AND bot_builds = TRUE AND status IN ('waiting', 'filing', 'filed')`,
+      [ids]
+    );
+    const botDm = require('../services/homeroom-bot-dm');
+    await Promise.all(rows.map(async ({ app_id: appId }) => {
+      const state = await botDm.firstVersionState(pool, appId, { viewerId });
+      const line = state && (state.line || (state.ready ? 'ready' : 'planning'));
+      if (line) lines.set(Number(appId), line);
+    }));
+  } catch (err) {
+    log.warn('apps', 'Could not read the first versions for the list', { message: err.message });
+  }
+  return lines;
+}
+
 function appRoutes(config, { pool = getPool(config) } = {}) {
   const router = Router();
 
@@ -727,6 +757,11 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       const contributorCounts = await contributors.loadContributorCounts(
         pool, rows.map((a) => a.id)
       );
+      // #4053: where each first version Homeroom bot is making stands, for
+      // its Home tile, in the build line this viewer reads.
+      const firstVersionLines = await firstVersionLinesFor(
+        pool, rows.filter((a) => !a.self_hosted && !stagingApps.isSample(a)), req.user?.id ?? null
+      );
 
       let apps = await Promise.all(rows.map(async (a) => {
         // Per-app missing-required-secrets list. Cheap (one extra query
@@ -829,6 +864,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           // /api/apps/:slug still answers the whole snapshot.
           manifest_snapshot: appAccess.summarizeManifestSnapshot(a.manifest_snapshot),
           contributor_count: contributorCount,
+          first_version_line: firstVersionLines.get(Number(a.id)) || null,
           last_failure: undefined,
           last_failure_reason: lf ? (lf.reason || null) : null,
           last_failure_at: lf ? (lf.at || null) : null,
@@ -1551,7 +1587,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
               mine,
               step: state.step,
               of: state.of,
-              stepName: state.stepName,
+              // #4053: the build line its thumbnail shows this viewer.
+              line: state.line || null,
               creator: state.creator,
               ready: !!state.ready,
               question: mine && !!state.question,
@@ -3752,7 +3789,7 @@ module.exports = {
   // one resolver, so it is pinned there rather than through a route.
   attachForkLineage,
   appRoutes, sweepStuckCreatingApps, accessFlags, canDeleteApp, compactGlobalChatApp,
-  deleteBlockReason, isCoreApp, hubFirstVersion,
+  deleteBlockReason, isCoreApp, hubFirstVersion, firstVersionLinesFor,
   // #2524: the activity guard and its two bounds, so the contract is
   // unit-testable without standing up the whole app router.
   activitySeconds, ACTIVITY_MAX_PER_POST, ACTIVITY_MAX_PER_DAY,

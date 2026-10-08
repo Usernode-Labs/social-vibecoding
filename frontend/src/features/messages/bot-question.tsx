@@ -67,11 +67,20 @@ export function requestPlace(meta: HomeroomBotMeta): string {
   return meta.firstVersion ? `${app}’s first-version request` : `${app} request #${meta.issueNumber}`;
 }
 
-export function BotQuestion({ message, conversationId }: { message: ConversationMessage; conversationId: number }) {
+export function BotQuestion({ message, conversationId, hidePrompts = false }: {
+  message: ConversationMessage;
+  conversationId: number;
+  /**
+   * #4046: a plan or a question in the chat offers its own answers now
+   * (./bot-plan.tsx planLayout), so questions to tap give way until it is
+   * answered.
+   */
+  hidePrompts?: boolean;
+}) {
   const meta = botMeta(message);
   // The answer tapped here, until the server's own state comes back.
   const [chosen, setChosen] = useState<string | null>(null);
-  if (meta?.actions?.length) return <BotActions message={message} meta={meta} conversationId={conversationId} />;
+  if (meta?.actions?.length) return <BotActions message={message} meta={meta} conversationId={conversationId} hidePrompts={hidePrompts} />;
   if (!meta || !meta.question) return null;
   const answers = (meta.answers || []).filter((a) => typeof a === 'string' && a.trim());
   const open = meta.status === 'open' && !chosen && !message.deleted;
@@ -145,7 +154,12 @@ export function suggestsOnly(actions: readonly HomeroomBotAction[]): boolean {
   return actions.length > 0 && actions.every((action) => action.type === 'prompt' || action.type === 'reply');
 }
 
-function BotActions({ message, meta, conversationId }: { message: ConversationMessage; meta: HomeroomBotMeta; conversationId: number }) {
+function BotActions({ message, meta, conversationId, hidePrompts = false }: {
+  message: ConversationMessage;
+  meta: HomeroomBotMeta;
+  conversationId: number;
+  hidePrompts?: boolean;
+}) {
   // The button pressed here, until the server's own state comes back.
   const [pressed, setPressed] = useState<HomeroomBotAction | null>(null);
   // #4231: the invite sheet, opened in place by Invite people.
@@ -163,6 +177,10 @@ function BotActions({ message, meta, conversationId }: { message: ConversationMe
   // message closed them, homeroom-bot-dm.js retireSuggestions) go quietly;
   // "No longer needed." is for a decision that was overtaken.
   if (meta.status === 'closed' && !chosen && suggestions) return null;
+  // #4046: one set of suggestions at a time: while a plan or a question
+  // offers its own answers, what to say next waits (a button that quotes,
+  // such as Try again, is not a suggestion). Asked already, it still says so.
+  if (open && hidePrompts && actions.every((action) => (action.type === 'prompt' && !action.quote) || action.type === 'reply')) return null;
   // A tap that is posted where the group reads it says so, before the tap.
   const posts = open && !!meta.mirrors && actions.some((action) => action.type === 'prompt' && action.quote);
 

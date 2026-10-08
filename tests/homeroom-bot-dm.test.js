@@ -492,7 +492,8 @@ test('the make screen sends the longer description, never with an import', () =>
   assert.equal(missingAnswer('short', 'Chore wheel'), 'brief', 'under the minimum is asked for again, not sent');
   const src = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/first-session/make.tsx'), 'utf8');
   assert.match(src, /maxLength=\{BRIEF_MAX\}/, 'the field stops at the maximum');
-  assert.match(src, /audience: 'invited',\s+brief: brief\.trim\(\),/);
+  // The description is the plain box or a template's sentence (`text`).
+  assert.match(src, /audience: 'invited',\s+brief: text\.trim\(\),/);
   // The import sends its repository, and no description to build from.
   const imp = src.slice(src.indexOf('const importRepo = useCallback('), src.indexOf('const formClass ='));
   assert.match(imp, /postCreateApp\(\{ name: repoName, audience: 'invited', repoUrl, from: entry \}\)/);

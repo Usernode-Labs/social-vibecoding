@@ -264,9 +264,21 @@ for other commits (background deletion; their input Secrets go with them).
 Runs for the same commit are left to finish, because their verdict still
 counts.
 
+The paths that start a run ask the same question first (`runToCollect`): a
+manual "Re-run checks" (or `recheck_change`), a promote or vote-time kick, a
+recheck that would rebuild the preview, the sweeper's preview heal, boot
+recovery, and every capture under the preview lifecycle. While the session
+still waits on that commit's verdict and its run is on the cluster, nothing new
+starts; the button and the tool say the run is still going. Once the verdict is
+stored the manifest is gone and a re-run starts fresh. Only a run whose inputs
+changed (new capture routes or shots for the same commit) replaces it.
+
 Under `PREVIEW_LIFECYCLE_ENABLED` the harvester adopts the run's
 `preview_operations` row first and writes through the same ownership check a
-live run does; a request for a newer revision aborts the harvest. Outside the
+live run does; a request for a newer revision aborts the harvest. A capture
+for the same revision finds the run under the lifecycle lock and leaves it:
+it cancels only other commits' check Jobs and does not take the row. A build,
+or a forced capture, still cancels every check Job of the session. Outside the
 Kubernetes capture runtime the harvester is a no-op. The stale sweep
 (`CHECKS_STALE_MS`) remains the backstop for rows with no manifest at all.
 

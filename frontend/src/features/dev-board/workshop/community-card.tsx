@@ -90,9 +90,10 @@ type Audience = 'open' | 'invited' | 'solo';
 export type HubFirstVersion = {
   step: number | null;
   of: number | null;
-  /** The step's name as the server names it for this viewer (the App
-      tab's and the made screen's words), never one written here. */
-  step_name: string | null;
+  /** #4053: its build line for this viewer (homeroom-bot-progress.js
+      buildLineOf), the App tab's and the made screen's; the words are
+      ../../first-session/build-line.tsx's, never written here. */
+  line: string | null;
   /** Built and up for approval: ready to try. */
   ready: boolean;
   /** The description is the viewer's. */

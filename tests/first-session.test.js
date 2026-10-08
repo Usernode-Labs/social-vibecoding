@@ -491,10 +491,10 @@ test('"You\'re in" fills its middle with the project, as its invite showed it', 
   const { createElement } = require('./lib/render-tsx');
   const { renderToHtml } = require('./lib/render-tsx');
   const draw = (props) => renderToHtml(createElement(JoinedPicture, { slug: 'page-turners', name: 'Page Turners', tile: '📚', ...props }));
-  // A project still without a picture of its own shows the featured card of
-  // its idea (./sketch-card.tsx), drawn from its words: nothing is fetched,
-  // so a link this join used up does not matter. "Being made" while its
-  // first version is on its way; compact (no points) for a new account.
+  // A project still without a picture of its own shows the thumbnail of its
+  // idea (./sketch-card.tsx), drawn from its words: nothing is fetched, so a
+  // link this join used up does not matter. #4053: no build line, since this
+  // screen is not told the step; compact (smaller art) for a new account.
   const CARD = { emoji: '📚', tagline: 'Our little book club', points: ['Pick the next book', 'See who is hosting'] };
   const picture = joinPicture({ kind: 'sketch', url: null, darkUrl: null, card: CARD });
   assert.deepEqual(picture, { kind: 'sketch', card: CARD });
@@ -502,12 +502,11 @@ test('"You\'re in" fills its middle with the project, as its invite showed it', 
   assert.match(sketch, /data-first-session-picture="sketch"/);
   assert.match(sketch, /data-featured-card="ready"/);
   assert.match(sketch, />Our little book club<\/p>/);
-  assert.match(sketch, />Pick the next book<\/span>/);
-  assert.match(sketch, />Being made<\/span>/);
-  assert.doesNotMatch(sketch, /<iframe|sketch\.html/);
+  assert.doesNotMatch(sketch, /Pick the next book|Being made|data-build-line|<iframe|sketch\.html/, 'a thumbnail: no points, no pill, no line');
   const compact = draw({ picture, building: false, compact: true });
-  assert.match(compact, /h-\[88px\][\s\S]*h-\[84px\]/, 'the art and the tagline, 172px');
-  assert.doesNotMatch(compact, /Pick the next book|data-featured-card-stage|repeating-linear-gradient/, 'no points, and no pill once it is not being made');
+  assert.match(compact, /h-\[88px\]/, 'smaller art');
+  assert.match(compact, />Our little book club<\/p>/);
+  assert.doesNotMatch(compact, /Pick the next book|data-featured-card-stage|repeating-linear-gradient/);
   assert.equal(joinPicture({ kind: 'sketch', card: null }), null, 'a sketch without a card is nothing');
   // The Discover card's image, light and dark.
   const art = draw({ picture: joinPicture({ kind: 'illustration', url: '/app-illustrations/1', darkUrl: '/app-illustrations/2' }) });
@@ -814,11 +813,11 @@ test('"You\'re in", drawn: the project under the welcome, and "is making" while 
     const sketch = existing.indexOf('data-first-session-picture="sketch"');
     assert.ok(sketch > existing.indexOf('Have a look, then say hi.') && sketch < existing.indexOf('Go to Page Turners'));
     assert.match(existing, /data-featured-card="ready"/);
-    assert.match(existing, />Pick the next book<\/span>/, 'the whole card, with room for it');
+    assert.match(existing, /h-\[132px\]/, 'the whole thumbnail, with room for it');
     const fresh = renderToHtml(createElement(YoureIn, { info: { ...info, newAccount: true }, onGo() {} }));
     assert.match(fresh, />Someone makes an app for their group\. Alex is making this one\.</);
     assert.ok(fresh.indexOf('data-first-session-picture="sketch"') > fresh.indexOf('How it works'));
-    assert.doesNotMatch(fresh, /Pick the next book/, 'compact under "How it works": the art and the tagline');
+    assert.match(fresh, /h-\[88px\]/, 'compact under "How it works": smaller art');
     const made = renderToHtml(createElement(YoureIn, { info: { ...info, building: false, picture: null, description: 'A book club' }, onGo() {} }));
     assert.match(made, />Alex made it for the group\./);
     assert.match(made, /data-first-session-picture="tile"[\s\S]*>A book club</);

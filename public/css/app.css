@@ -1374,6 +1374,11 @@ html:not(.dark) .messages-markdown .gc-ref-issue { background: rgba(16, 185, 129
    its Not now takes the neutral fill above. */
 .messages-bot-answers .messages-bot-primary { color: var(--accent-ink); background: var(--accent); }
 .messages-bot-answers .messages-bot-primary:hover { filter: none; background: var(--accent-light); }
+/* #4046: "Notify me when it's ready" under the plan: an action in the
+   accent's tint, quieter than the plan's Build it. */
+.messages-bot-answers .messages-bot-tint { color: var(--accent-tint-ink); background: var(--accent-tint); }
+/* Tapped, it turns grey and says so, with a check: settled, not pressable. */
+.messages-bot-answers .messages-bot-done { color: var(--text-muted); background: var(--dc-raised); cursor: default; filter: none; }
 /* B6: an answer tapped as a choice (a plan's, or one of two questions)
    takes the same accent fill. Nothing is sent until Build it. */
 .messages-bot-answers button[aria-pressed="true"] { color: var(--accent-ink); background: var(--accent); }
@@ -3652,6 +3657,26 @@ html[data-browser-scroller^="auth-"] body :is(
    `data-browser-scroller`, so nothing changes. */
 html.un-ios[data-browser-scroller="auth-landing-scroll"] [data-landing-story] {
   padding-bottom: max(0px, calc(100lvh - 100svh));
+}
+/* THE STORY IS A WHOLE SCREEN IN A PHONE BROWSER TOO (#4037). Paged by the
+   document, the landing's scroller is content-height (`flex: none` above),
+   so the column's `min-h-full` had nothing to fill and "Make an account",
+   its waitlist line and Sign in stopped under the tiles, with empty page
+   below them. While the story is up, the scroller takes the rest of the
+   screen under the header and the column takes all of it, so the story's
+   foot sits at the foot of the screen, as in the app. Scoped to the story:
+   the pitch and the invite cards keep their own height. The landing's logo
+   bar (#landing-header) stays above the story: it is a stranger's first
+   screen, so the logo says where they are (the owner's ruling, after a build
+   that hid it). tests/header-height-parity.test.js pins that nothing hides it. */
+html[data-browser-scroller="auth-landing-scroll"] #auth-landing-scroll:has(> * > [data-landing-story]) {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+html[data-browser-scroller="auth-landing-scroll"] #auth-landing-scroll > :has(> [data-landing-story]) {
+  flex: 1 0 auto;
+  width: 100%;
 }
 /* The anonymous overlay covered the signed-in shell, including any screen
    painted from the last-session snapshot. In document flow those roots must
