@@ -1510,7 +1510,7 @@
     {
       "name": "Create opens \"What do you want to make?\", the first session's own screen, as the one front door for a new project: a close, the examples, and a small \"Import from a GitHub repo\" (#748's route; the New project dialog is retired)",
       "path": "/#create",
-      "expectSelector": "[data-first-session-make][data-make-entry=\"create\"]:has([data-make-close]):has([data-first-session-example=\"run\"]) [data-make-import-link]",
+      "expectSelector": "[data-first-session-make][data-make-entry=\"create\"]:has([data-make-close]):has([data-first-session-example=\"tier\"]) [data-make-import-link]",
       "expectText": "What do you want to make?"
     },
     {
