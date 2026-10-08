@@ -59,6 +59,16 @@ async function web() { return fetch('https://example.com'); }
 function listen() { process.on('SIGTERM', () => {}); }
 module.exports = { sleep, schedule, fireAndForget, shell, web, listen };
 `,
+  'src/services/client.js': `
+const k8sClient = () => require('@kubernetes/client-node');
+let api;
+let kube;
+async function init() { const mod = await import('@octokit/rest'); api = new mod.Octokit({}); }
+function kubes() { const k8s = k8sClient(); const kc = new k8s.KubeConfig(); kube = { core: kc.makeApiClient(k8s.CoreV1Api) }; return kube; }
+function viaApi() { return api.rest.issues.get({}); }
+function viaKube() { return kube.core.readNamespace(); }
+module.exports = { init, kubes, viaApi, viaKube };
+`,
   'src/services/later.js': `
 let deepState = 0;
 function deep() { deepState += 1; }
@@ -158,6 +168,9 @@ test('timers, waits, unawaited work, hooks and outside I/O', async () => {
   assert.ok(reach('src/services/effects.js#shell').has('io src/services/effects.js#shell child_process'));
   assert.ok(reach('src/services/effects.js#web').has('io src/services/effects.js#web fetch'));
   assert.ok(reach('src/services/effects.js#listen').has('hook src/services/effects.js#listen process.on(SIGTERM)'));
+  // Through a client an outside service's library made, kept in a module binding.
+  assert.ok(reach('src/services/client.js#viaApi').has('io src/services/client.js#viaApi @octokit/rest'));
+  assert.ok(reach('src/services/client.js#viaKube').has('io src/services/client.js#viaKube @kubernetes/client-node'));
 });
 
 test('calls are followed through parameters, thunks, injected defaults and this', async () => {

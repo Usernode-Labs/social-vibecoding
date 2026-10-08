@@ -267,7 +267,11 @@ function buildModule(root, file) {
   for (const stmt of mod.sf.statements) topLevelBinding(ctx, stmt, unitOf);
   // Pass 3: exports.
   for (const stmt of mod.sf.statements) exportsOf(ctx, stmt, unitOf);
-  // Pass 4: what each unit references, and which module bindings change.
+  // Pass 4: each unit's locals, then the module bindings that hold a client
+  // of an outside service (calls through them are outside I/O), then what
+  // each unit references and which module bindings change.
+  for (const u of mod.units) declareLocals(ctx, u, unitOf);
+  for (const u of mod.units) markIoHandles(ctx, u, unitOf);
   const writes = new Map();   // top-level name -> Set of reasons
   for (const u of mod.units) collectRefs(ctx, u, unitOf, writes);
   for (const [name, reasons] of writes) {
@@ -496,6 +500,7 @@ function topLevelBinding(ctx, stmt, unitOf) {
       if (init && ts.isArrowFunction(init) && !ts.isBlock(init.body)) {
         const inner = moduleTarget(ctx, init.body);
         if (inner?.module) { mod.top.set(name, { kind: 'alias', alias: inner, thunk: true }); continue; }
+        if (inner?.external && ioPackage(inner.external)) { mod.top.set(name, { kind: 'external', io: ioPackage(inner.external) }); continue; }
       }
       if (init && (ts.isArrowFunction(init) || ts.isFunctionExpression(init) || ts.isClassExpression(init))) {
         mod.top.set(name, { kind: 'function', unit: unitOf.get(init), node: decl, isConst });
@@ -644,6 +649,7 @@ function declareLocals(ctx, u, unitOf) {
         else if (init && ts.isArrowFunction(init) && !ts.isBlock(init.body) && moduleTarget(ctx, init.body)?.module) {
           add(n.name.text, { alias: moduleTarget(ctx, init.body), thunk: true });
         } else if (init && (ts.isArrowFunction(init) || ts.isFunctionExpression(init))) add(n.name.text, { unit: unitOf.get(init) });
+        else if (init && ioOf(ctx, u, init)) add(n.name.text, { io: ioOf(ctx, u, init) });
         else {
           // What a closure made by this function keeps: a container, or a
           // `let`. It counts only for a factory that runs as its module loads.
@@ -653,8 +659,11 @@ function declareLocals(ctx, u, unitOf) {
         }
       } else {
         const m = moduleTarget(ctx, n.initializer);
-        if (m?.external && ioPackage(m.external) && ts.isObjectBindingPattern(n.name)) {
-          for (const el of n.name.elements) if (ts.isIdentifier(el.name)) add(el.name.text, { io: ioPackage(m.external) });
+        const io = ioOf(ctx, u, n.initializer);
+        if ((m?.external && ioPackage(m.external)) || io) {
+          const names = [];
+          collectDeclaredNames(n.name, names);
+          for (const x of names) add(x, { io: io || ioPackage(m.external) });
         } else if (m?.module && ts.isObjectBindingPattern(n.name)) {
           for (const el of n.name.elements) {
             if (!ts.isIdentifier(el.name)) continue;
@@ -676,6 +685,52 @@ function declareLocals(ctx, u, unitOf) {
     ts.forEachChild(n, visit);
   };
   ts.forEachChild(node, visit);
+}
+
+// The outside service an expression stands for, if any: a dynamic import or
+// a require of an I/O package, or anything built from a local, a module
+// binding or a thunk that stands for one (`new k8s.KubeConfig()`,
+// `kc.makeApiClient(...)`, `{ core: ... }`).
+function ioOf(ctx, u, expr) {
+  if (!expr) return null;
+  let found = null;
+  const visit = (n) => {
+    if (found || isFunctionLike(n)) return;
+    if (ts.isCallExpression(n) && n.expression.kind === ts.SyntaxKind.ImportKeyword
+      && n.arguments[0] && ts.isStringLiteralLike(n.arguments[0])) {
+      found = ioPackage(n.arguments[0].text);
+      if (found) return;
+    }
+    const m = ts.isCallExpression(n) ? moduleTarget(ctx, n) : null;
+    if (m?.external && ioPackage(m.external)) { found = ioPackage(m.external); return; }
+    const asObject = ts.isIdentifier(n) && ts.isPropertyAccessExpression(n.parent) && n.parent.expression === n;
+    if (ts.isIdentifier(n) && (asObject || isReference(n))) {
+      const hit = lookup(u, n.text);
+      const b = hit ? null : ctx.mod.top.get(n.text);
+      found = hit ? (hit.local.io || null) : (b?.kind === 'external' ? b.io : b?.ioHandle || null);
+      if (found) return;
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(expr);
+  return found;
+}
+
+// A module binding assigned a client of an outside service anywhere
+// (`app = new App(...)`, `clients = { core: kc.makeApiClient(...) }`) holds
+// one: a call through it is outside I/O.
+function markIoHandles(ctx, u, unitOf) {
+  const visit = (n) => {
+    if (n !== u.node && unitOf.has(n)) return;
+    if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken && ts.isIdentifier(n.left)
+      && !lookup(u, n.left.text)) {
+      const b = ctx.mod.top.get(n.left.text);
+      const io = b && b.kind === 'value' ? ioOf(ctx, u, n.right) : null;
+      if (io) b.ioHandle = io;
+    }
+    ts.forEachChild(n, visit);
+  };
+  ts.forEachChild(u.node, visit);
 }
 
 function lookup(u, name) {
@@ -708,7 +763,6 @@ function baseOf(expr) {
 function collectRefs(ctx, u, unitOf, writes) {
   const { mod } = ctx;
   const sf = mod.sf;
-  declareLocals(ctx, u, unitOf);
   const node = u.node;
   const isTopModuleBinding = (name) => !lookup(u, name) && mod.top.has(name);
   const noteWrite = (target, reason) => {
@@ -767,6 +821,10 @@ function collectRefs(ctx, u, unitOf, writes) {
         } else if (b && isTopModuleBinding(b.id) && mod.top.get(b.id).kind !== 'alias') {
           u.refs.push({ kind: 'hook', on: b.id, event: eventName(n), line: lineOf(sf, n) });
         }
+      }
+      if (callee.kind === ts.SyntaxKind.ImportKeyword && n.arguments[0] && ts.isStringLiteralLike(n.arguments[0])
+        && ioPackage(n.arguments[0].text)) {
+        u.refs.push({ kind: 'io', io: ioPackage(n.arguments[0].text), line: lineOf(sf, n) });
       }
       if (ts.isIdentifier(callee) && callee.text === 'fetch' && !lookup(u, 'fetch') && !mod.top.has('fetch')) {
         u.refs.push({ kind: 'io', io: 'fetch', line: lineOf(sf, n) });
@@ -881,6 +939,9 @@ function refIdentifier(ctx, u, id) {
     u.refs.push({ kind: 'io', io: hit ? hit.local.io : ctx.mod.top.get(name).io, line: lineOf(ctx.mod.sf, id) });
     return;
   }
+  // A call through a module binding that holds a client: the binding is
+  // still read (state), and the call is outside I/O.
+  if (!hit && called && ctx.mod.top.get(name)?.ioHandle) u.refs.push({ kind: 'io', io: ctx.mod.top.get(name).ioHandle, line: lineOf(ctx.mod.sf, id) });
   if (hit) {
     if (hit.scope !== u && hit.local.factoryState) u.refs.push({ kind: 'factoryState', scope: hit.scope, name, line: lineOf(ctx.mod.sf, id) });
     if (hit.local.unit && hit.local.unit !== u) u.refs.push({ kind: 'unit', unit: hit.local.unit, detached, line: lineOf(ctx.mod.sf, id) });
@@ -928,6 +989,7 @@ function refMember(ctx, u, n) {
       u.refs.push({ kind: 'io', io: hit ? hit.local.io : mod.top.get(obj.text).io, line });
       return;
     }
+    if (!hit && mod.top.get(obj.text)?.ioHandle) u.refs.push({ kind: 'io', io: mod.top.get(obj.text).ioHandle, line });
     if (hit) {
       if (hit.scope !== u && hit.local.factoryState) u.refs.push({ kind: 'factoryState', scope: hit.scope, name: obj.text, line });
       if (hit.local.alias) {
