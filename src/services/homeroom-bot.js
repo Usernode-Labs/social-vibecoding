@@ -7201,7 +7201,10 @@ async function noteRequestMerged(pool, session, deps = {}) {
       log.info('homeroom-bot', 'A request\'s proposal merged; the rest of the bot\'s work on it stopped', {
         sessionId: Number(merged.id), appId, issues, ...out,
       });
+      // The bot's loop may run in another process than this one (the
+      // workflow worker runs this after a merge): every Pod hears.
       wake({ appId });
+      publishWake({ appId });
     }
     // The project's first version is live: what waited for it
     // (FIRST_VERSION_PENDING_SQL) is picked up now, from the new main, on
