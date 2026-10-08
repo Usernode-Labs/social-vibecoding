@@ -207,7 +207,7 @@ test('three templates, the same on the story and the make screen, each a whole s
   assert.equal(sentence(game, 'board', 'everyone owns an island').text, 'A new game we build together. For the first version, a board game where everyone owns an island.');
   assert.equal(sentence(game, OWN, 'a card game where everyone bluffs!').text, 'A new game we build together. For the first version, a card game where everyone bluffs!');
   assert.equal(suggestedName(game, OWN, 'a card game'), '', 'their own game is theirs to name');
-  assert.equal(suggestedName(game, 'trivia', ''), 'Trivia Night');
+  assert.equal(suggestedName(game, 'trivia', ''), 'All About Us');
   // The organizer: each choice says what it keeps.
   assert.deepEqual(organizer.choices.map((c) => [c.label, c.name]), [['Groceries', 'Grocery List'], ['Chores', 'Chore List'], ['Shared library', 'Lending Library'], ['Potlucks', 'Potluck Planner']]);
   assert.equal(sentence(organizer, 'chores', '').text, 'An app to organize our chores: who\'s on what this week, and a nudge when it\'s your turn.');
@@ -446,13 +446,13 @@ test('a template fills in the description and the name; words of their own let g
   assert.deepEqual(chips(tree).map((c) => c.props['data-make-choice']), ['own', 'board', 'shooter', 'blocks', 'trivia']);
   assert.equal(chips(tree)[0].props.selected, true);
   assert.equal(words(tree).type, 'textarea');
-  assert.equal(words(tree).props.placeholder, 'For example, a card game where everyone bluffs');
+  assert.equal(words(tree).props.placeholder, 'For example, a card game where we each write an answer and guess who wrote what');
   assert.equal(writeOut(tree), undefined);
   assert.equal(nameField(tree).props.value, '', 'their own game is theirs to name');
   chips(tree)[1].props.onClick();
   tree = draw();
   assert.equal(nameField(tree).props.value, 'Board Game Night');
-  assert.equal(words(tree).props.placeholder, 'For example, everyone owns an island and trades to grow it');
+  assert.equal(words(tree).props.placeholder, 'For example, everyone trades to finish their railway across the map first');
   // Your own idea: the plain box again, and a suggested name goes with the template.
   tiles(tree)[3].props.onClick();
   tree = draw();
