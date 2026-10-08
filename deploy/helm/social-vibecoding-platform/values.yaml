@@ -125,6 +125,15 @@ config:
   # platform for a sign-in, no identity added to app requests); the gate
   # itself, and members-only private apps, are unaffected.
   appHostSignin: "on"
+  # Kept store for preview image builds (docs/kubernetes-operations.md).
+  # "slug=claim[,slug=claim]": preview builds of those apps mount that
+  # PersistentVolumeClaim, which you create in the BuildKit namespace. Empty
+  # sets nothing here, so a value in the foundation's social-build-policy
+  # ConfigMap, or none at all, stands.
+  buildkitPreviewStores: ""
+  # Raise it to start every kept store empty on its next build. Empty sets
+  # nothing here.
+  buildkitPreviewStoreEpoch: ""
   # Optional waitlist OAuth callback origin. Empty uses the application's canonical origin.
   waitlistOauthOrigin: ""
   # Firebase phone authentication flag; enable in the cluster's plaintext values.

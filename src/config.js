@@ -655,6 +655,16 @@ function load() {
         .split(',').map((name) => name.trim()).filter(Boolean),
       buildkitSuccessRetentionHours: Number(process.env.BUILDKIT_SUCCESS_RETENTION_HOURS
         || process.env.KPACK_SUCCESS_RETENTION_HOURS || '48'),
+      // Preview builds of the apps named here keep BuildKit's store, and a
+      // git mirror of the source, on a PersistentVolumeClaim an operator
+      // created in the BuildKit namespace: `slug=claim[,slug=claim]`. Empty
+      // (the default) leaves every build exactly as it is. An app's main is
+      // never built on it. docs/kubernetes-operations.md, "Kept store for
+      // preview image builds", has what to create and how to turn it off.
+      buildkitPreviewStores: process.env.BUILDKIT_PREVIEW_STORES || '',
+      // Part of what names the store's directory on the claim. Raise it and
+      // every kept store starts empty on its next build.
+      buildkitPreviewStoreEpoch: process.env.BUILDKIT_PREVIEW_STORE_EPOCH || '1',
     },
     // Postgres connection pool size (pg `Pool.max`). pg's built-in default
     // is 10, which can bottleneck under many concurrent SSE turns + staging
