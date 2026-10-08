@@ -44,6 +44,7 @@ import type { DevCardModel } from '../card/model';
 import { swatchFor } from '../../group-chat/swatch';
 import { useInlineImageViewer } from '../../image-viewer/image-viewer';
 import { topicHeadStore } from './topic-store';
+import { etaText, remainingMs } from './run-bar';
 import { ChangeConversation } from './conversation';
 import { TopicBack } from './topic-back';
 import { DescriptionEditor } from './description-editor';
@@ -1075,7 +1076,7 @@ const SHOTS_BUILDING = new Set(['planned', 'provisioning', 'exploring', 'replayi
  * strip, because it is the one pending state with something for the reader
  * to do — the panel carries the recorded reason and the retry control.
  */
-function BeforeAfter({ body }: { body: TopicBody }): ReactNode {
+function BeforeAfter({ body, hideRunningLine = false }: { body: TopicBody; hideRunningLine?: boolean }): ReactNode {
   const tiles = body.actions && body.actions.visuals ? body.actions.visuals : null;
   const ev = body.shots || null;
   const notStarted = !!(ev && ev.notStarted);
@@ -1092,6 +1093,9 @@ function BeforeAfter({ body }: { body: TopicBody }): ReactNode {
   // An interrupted run the recovery sweep is about to start again reads as
   // under way too: the next thing that happens needs nobody.
   if (!notStarted && (SHOTS_BUILDING.has(ev.state) || ev.retrying)) {
+    // #4452: while the run bar carries the shots as its current part, this
+    // line is the bar's Shots segment — drawing both would say it twice.
+    if (hideRunningLine) return null;
     return (
       <p className="dev-topic-hero-shots" data-shots-state={ev.state}>
         <span className="dc-status-spinner-arc" aria-hidden="true"></span>
@@ -1210,7 +1214,10 @@ function ChangeHero({ id, card, body, linkedIssues, onIssuesSaved }: {
       {body.summaryStale && body.summaryHtml
         ? <p className="dev-topic-note" role="note">This summary may describe an earlier revision.</p>
         : null}
-      {body.tested && id ? <TestedLine id={id} t={body.tested} /> : null}
+      {/* #4452: one bar while the change is built, checked and photographed;
+          the Tested verdict line returns once it settles. */}
+      {body.runBar && id ? <RunBar id={id} r={body.runBar} />
+        : body.tested && id ? <TestedLine id={id} t={body.tested} /> : null}
       {body.includedIn ? <IncludedIn r={body.includedIn} /> : null}
       {hasIssues ? (
         <IssueAssociations
@@ -1222,7 +1229,10 @@ function ChangeHero({ id, card, body, linkedIssues, onIssuesSaved }: {
           onSaved={onIssuesSaved}
         />
       ) : null}
-      <BeforeAfter body={body} />
+      <BeforeAfter
+        body={body}
+        hideRunningLine={!!(body.runBar && body.runBar.segments.some((s) => s.key === 'shots' && s.state === 'now'))}
+      />
       {body.note ? <div className="dev-topic-note">{body.note}</div> : null}
     </section>
   );
@@ -1232,6 +1242,55 @@ function ChangeHero({ id, card, body, linkedIssues, onIssuesSaved }: {
 const TESTED_MARK: Record<string, string> = {
   passed: '✓', failed: '✕', skipped: '·', broken: '!',
 };
+
+/**
+ * #4452: the ONE bar for a change being tested, where the "Testing it…" and
+ * "Taking before & after shots" spinner lines were: Build, Checks and Shots
+ * in the run panel's segment style, the current part filling in the accent,
+ * and the line above saying what is happening and — from the app's recent
+ * runs — about how long is left. The parts are equal widths: where the run
+ * is, not how long each part takes; the time is the estimate's job. A tap
+ * opens Details at the Checks part, which keeps the full bars.
+ */
+function RunBar({ id, r }: { id: number; r: NonNullable<TopicBody['runBar']> }): ReactNode {
+  // The clock starts in an effect, not during render: the estimate text is
+  // empty until the first tick, so the initial markup does not depend on
+  // when the page was drawn.
+  const [now, setNow] = useState<number | null>(null);
+  useEffect(() => {
+    setNow(Date.now());
+    const t = setInterval(() => setNow(Date.now()), 15 * 1000);
+    return () => clearInterval(t);
+  }, []);
+  const eta = now == null ? '' : etaText(remainingMs(r, now));
+  const open = () => (window as any).AppView?.openTechnicalDetails(id, 'checks');
+  return (
+    <button
+      type="button"
+      className="dev-topic-run"
+      data-run-phase={r.phase}
+      aria-label={eta ? `${r.label}, ${eta.charAt(0).toLowerCase()}${eta.slice(1)}` : r.label}
+      onClick={open}
+    >
+      <span className="dev-topic-run-head">
+        <span>{r.label}</span>
+        {eta ? <span className="dev-topic-run-eta">{eta}</span> : null}
+      </span>
+      <span className="dev-topic-run-bar" aria-hidden="true">
+        {r.segments.map((s) => (
+          <span key={s.key} className={`dev-topic-run-seg is-${s.state}`} data-step={s.key}>
+            <i className={s.fill == null ? 'is-busy' : undefined} style={s.fill == null ? undefined : { width: `${Math.round(Math.max(0, Math.min(1, s.fill)) * 100)}%` }} />
+          </span>
+        ))}
+      </span>
+      <span className="dev-topic-run-labels">
+        {r.segments.map((s) => (
+          <span key={s.key} className={s.state === 'now' ? 'is-now' : undefined}>{s.label}</span>
+        ))}
+      </span>
+    </button>
+  );
+}
 
 /**
  * B10b: one line for what testing found, where the steps list and its checks

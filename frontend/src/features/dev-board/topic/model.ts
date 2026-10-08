@@ -489,6 +489,53 @@ export interface StepsView {
   simple?: boolean;
 }
 
+/** One part of the change page's run bar (#4452): Build, Checks or Shots. */
+export interface RunBarSegment {
+  key: 'build' | 'checks' | 'shots';
+  label: 'Build' | 'Checks' | 'Shots';
+  state: 'done' | 'now' | 'todo';
+  /**
+   * 0..1 while the part is filling. Null = indeterminate: the segment
+   * pulses instead (the shots report a phase and no count; a check job
+   * with no total to size against).
+   */
+  fill: number | null;
+}
+
+/**
+ * The change page's ONE progress bar while a run is going (#4452), in place
+ * of the "Testing it…" and "Taking before & after shots" spinner lines:
+ * Build, Checks and Shots, filled as each finishes, with the line above it
+ * saying what is happening and — from the app's recent runs — about how
+ * long is left. Null once everything has settled.
+ */
+export interface RunBarView {
+  /** The line above the bar, in the words the page already uses. */
+  label: string;
+  phase: 'building' | 'queued' | 'testing' | 'shots';
+  segments: RunBarSegment[];
+  /**
+   * The stamps the estimate ages against, as milliseconds; null where a
+   * part has not started or the row does not say. The live flags say which
+   * parts are filling right now.
+   */
+  timing: {
+    buildStartedAt: number | null;
+    checksStartedAt: number | null;
+    shotsStartedAt: number | null;
+    checksLive: boolean;
+    shotsLive: boolean;
+    buildLive: boolean;
+  };
+  /** The app's recent-run medians, or null before a few runs exist. */
+  estimate: {
+    runs: number;
+    buildMs: number | null;
+    checksMs: number | null;
+    shotsMs: number | null;
+  } | null;
+}
+
 /** Everything under the card, by topic kind. */
 export interface TopicBody {
   changeId?: number;
@@ -528,6 +575,8 @@ export interface TopicBody {
   shots?: {
     state: string;
     verified: boolean;
+    /** #4452: when the run's agent picked the proposal up, or null. */
+    startedAt?: string | null;
     /**
      * #2601/#2558: a 'planned' run whose timestamp has gone past the idle
      * threshold — minted at submission and never picked up. It does not
@@ -595,6 +644,12 @@ export interface TopicBody {
   steps?: StepsView | null;
   /** B10b: the hero's one Tested line, from the latest checks run (`AppView._testedLine`). */
   tested?: { state: 'passed' | 'running' | 'failed' | 'skipped' | 'broken'; text: string } | null;
+  /**
+   * #4452: the hero's one run bar while the change is built, checked and
+   * photographed (`AppView._runBarView`), in place of the running Tested
+   * line and the shots spinner. Null once everything has settled.
+   */
+  runBar?: RunBarView | null;
   /** The one-line explainer under a session or governance card. */
   note?: string | null;
   /**

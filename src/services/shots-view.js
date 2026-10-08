@@ -165,6 +165,7 @@ function fromSnapshot(session, currentHead) {
     overriddenAt: detail.overriddenAt || null,
     overrideReason: typeof detail.overrideReason === 'string' ? detail.overrideReason.slice(0, 1000) : null,
     artifacts: [],
+    startedAt: null,
     updatedAt: session.shots_updated_at || detail.updatedAt || null,
   };
 }
@@ -194,6 +195,9 @@ function serialize(run, session, slug, currentHead) {
     repairAvailable: matchesCurrent && run.repairAvailable === true
       && !(run.automaticRetryPending === true && !['merged', 'archived'].includes(session?.status)),
     planHash: run.planHash || null,
+    // When the run's agent actually picked the proposal up (#4452): the
+    // change page's run bar ages its Shots part against this.
+    startedAt: run.startedAt || null,
     // A failed run carries them only when a declared change failed
     // (shots_change_failed), so the change page can say which one.
     shotResults: matchesCurrent && (run.state === 'verified'

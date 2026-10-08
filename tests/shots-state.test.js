@@ -202,6 +202,14 @@ test('an intent conflict does not offer a retry that would repeat the same failu
   assert.equal(state.runSummary({ ...row, state: 'exploring', failure_code: null }).repairAvailable, false);
 });
 
+test('the summary carries when the run started, so the change page can age its Shots part (#4452)', () => {
+  const started = new Date('2026-10-08T12:00:00Z');
+  const row = { state: 'exploring', base_sha: 'a'.repeat(40), head_sha: 'b'.repeat(40) };
+  assert.equal(state.runSummary(row).startedAt, null, 'a run only planned has no start yet');
+  // A pg timestamptz comes back a Date, and passes through like updatedAt does.
+  assert.equal(state.runSummary({ ...row, started_at: started }).startedAt, started);
+});
+
 test('shots heartbeat renews only the current active run and stores a bounded stage', async () => {
   let statement;
   const pool = { query: async (sql, values) => {

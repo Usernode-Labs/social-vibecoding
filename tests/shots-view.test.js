@@ -98,6 +98,15 @@ test('active progress shows the last stage only for the current proposal head', 
   assert.equal(view.serialize(active, session({ reviewed_head_sha: OTHER }), 'demo-app', OTHER).progress, null);
 });
 
+test('#4452: the serialized view carries when the run started, and a run only planned has no start', () => {
+  const started = '2026-10-08T12:00:00Z';
+  assert.equal(view.serialize(run({ startedAt: started }), session(), 'demo-app', HEAD).startedAt, started);
+  assert.equal(view.serialize(run({ startedAt: null }), session(), 'demo-app', HEAD).startedAt, null);
+  // A snapshot off the session's own columns has no run row to read a start
+  // from; the shape still carries the key.
+  assert.equal(view.serialize(null, session({ shots_state: 'exploring' }), 'demo-app', HEAD).startedAt, null);
+});
+
 test('snapshot serialization is truthful before a durable run exists', () => {
   const result = view.fromSnapshot(session({
     shots_state: 'planned',

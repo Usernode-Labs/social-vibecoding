@@ -422,8 +422,8 @@ test('the proposal page itself says where a waiting run is in line, without open
   const page = renderToHtml(createElement(ChangeDetail, { card: v.card, body: v.body, item: mock, conversation: true }));
   const text = page.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').toLowerCase();
   assert.ok(text.includes(want), `the page says "${declared.expectText}"; it read: ${text.slice(0, 600)}`);
-  assert.match(page, /<button type="button" class="dev-topic-tested" data-tested="running">[\s\S]*?Waiting for a checks slot \(2 ahead\)/,
-    'on the hero\'s Tested line');
+  assert.match(page, /<button type="button" class="dev-topic-run" data-run-phase="queued"[\s\S]*?Waiting for a checks slot \(2 ahead\)/,
+    'on the hero\'s run bar');
 });
 
 test('the Helm chart passes the cap through, documented beside CAPTURE_CPUS', () => {

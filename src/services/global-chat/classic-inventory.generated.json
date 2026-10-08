@@ -9534,6 +9534,21 @@
       "classicPath": "#app/:slug/dev/issues/:number"
     },
     {
+      "source": "src/routes/run-estimate.js",
+      "method": "GET",
+      "path": "/api/apps/:slug/run-estimate",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.apps.item.run.estimate.b2fd38c3",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#app/:slug/app"
+    },
+    {
       "source": "src/routes/sessions.js",
       "method": "GET",
       "path": "/api/sessions/:id/description",

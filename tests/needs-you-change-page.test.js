@@ -630,11 +630,15 @@ test('a draft’s steps: who is waiting, what the checks are doing, and Sync wit
   assert.deepEqual(failing.rows.map((r) => r.gate), ['review', 'approvals', 'integration', 'checks', 'github']);
 });
 
-test('the picture: verified shots keeps its card, a run under way is one line with the spinner, a failed one keeps its strip', () => {
+test('the picture: verified shots keeps its card, a run under way is the run bar, a failed one keeps its strip', () => {
   const av = context();
   const claim = { claim: 'The preview waits for sign-in', viewports: ['desktop'], steps: ['Open a preview'] };
   const building = render(av, { ...PR, shots: { state: 'exploring', claims: [claim], artifacts: [] } }).html;
-  assert.match(building, /<p class="dev-topic-hero-shots" data-shots-state="exploring"><span class="dc-status-spinner-arc" aria-hidden="true"><\/span><span>Taking before &amp; after shots<\/span><\/p>/);
+  // #4452: a run under way is the hero's one run bar, with its Shots part
+  // filling — the spinner line is gone with it.
+  assert.match(building, /<button type="button" class="dev-topic-run" data-run-phase="shots" aria-label="Taking before &amp; after shots"><span class="dev-topic-run-head"><span>Taking before &amp; after shots<\/span><\/span>/);
+  assert.match(building, /class="dev-topic-run-seg is-now" data-step="shots"/);
+  assert.ok(!building.includes('dev-topic-hero-shots'), 'the spinner line makes way for the bar');
   assert.ok(!building.includes('data-shots="1"'), 'no panel for a run still going');
   const failed = render(av, { ...PR, shots: { state: 'failed', failureReason: 'The dialog never opened.', claims: [claim], artifacts: [] } }).html;
   assert.match(failed, /<div class="dev-topic-shots" data-shots-state="failed"><span class="dev-badge bg-red-500\/10 text-red-700 dark:text-red-400">Couldn\u2019t take the shots<\/span>/);
@@ -645,7 +649,7 @@ test('the picture: verified shots keeps its card, a run under way is one line wi
     state: 'failed', failureCode: 'shots_run_interrupted', automaticRetryPending: true,
     failureReason: 'Homeroom restarted.', claims: [claim], artifacts: [],
   } }).html;
-  assert.match(retrying, /<p class="dev-topic-hero-shots" data-shots-state="failed"><span class="dc-status-spinner-arc" aria-hidden="true"><\/span><span>Trying the shots again<\/span><\/p>/);
+  assert.match(retrying, /<button type="button" class="dev-topic-run" data-run-phase="shots" aria-label="Trying the shots again"><span class="dev-topic-run-head"><span>Trying the shots again<\/span><\/span>/);
   assert.ok(!retrying.includes('dev-topic-shots-text'), 'no failure strip');
   const verified = render(av, { ...PR, shots: { state: 'verified', claims: [claim], artifacts: [], baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40) } }).html;
   assert.match(verified, /<div class="dev-topic-visuals" data-visuals-scope="1"><div class="usn-visuals-body">/);

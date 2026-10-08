@@ -5109,6 +5109,9 @@ const AppView = {
       body.hero = AppView._topicHeroView(t.kind, item);
       body.steps = AppView._topicStepsView(item, card, body);
       body.tested = AppView._testedLine(item);
+      // #4452: the one run bar while the change is built, checked and
+      // photographed; null once settled, when the Tested line speaks again.
+      body.runBar = AppView._runBarView(item);
     }
     body.aboutTitle = { issue: 'About this request', proposal: 'About this change', session: 'About this change', gov: 'About this proposal' }[t.kind] || 'About';
     return { card, body };
@@ -5987,6 +5990,156 @@ const AppView = {
     if (state === 'skipped') return { state: 'skipped', text: 'Not tested' };
     if (AppView._checksWillRetry(item)) return { state: 'running', text: 'Testing will run again' };
     return { state: 'broken', text: 'Testing couldn’t finish' };
+  },
+
+  // #4452: the change page's ONE progress bar while a run is going — Build,
+  // Checks and Shots in the run panel's segment style, in place of the
+  // "Testing it…" and "Taking before & after shots" spinner lines. Null
+  // once everything has settled (the Tested verdict line and the shots card
+  // come back), and for a deferred run or an error awaiting its retry,
+  // whose own lines explain themselves.
+  _runBarView(item) {
+    if (!item) return null;
+    const checksLive = item.check_state === 'pending' && item.check_phase !== 'deferred';
+    const p = item.checks_progress && typeof item.checks_progress === 'object' ? item.checks_progress : null;
+    const phase = checksLive ? (item.check_phase || null) : null;
+    const build = p && p.build && typeof p.build === 'object' ? p.build : null;
+    const BUILD_KEYS = ['source_fetch', 'image_build', 'clone', 'health', 'prepare_checks'];
+
+    // Build: the bar's first part. Done once the build half is over — a
+    // queued or testing run, a settled one, or a re-check on an already
+    // healthy preview with no build block at all. While the build runs,
+    // its finished steps over the five the pipeline has (equal parts, the
+    // run panel's own reading), pulsing before the first step lands.
+    let buildSeg;
+    if (!checksLive || phase === 'queued' || phase === 'testing' || phase == null) {
+      buildSeg = { state: 'done', fill: 1 };
+    } else {
+      const doneSteps = build && Array.isArray(build.steps)
+        ? build.steps.filter((s) => s && BUILD_KEYS.includes(s.key)).length : 0;
+      buildSeg = { state: 'now', fill: doneSteps > 0 ? doneSteps / BUILD_KEYS.length : null };
+    }
+    const buildLive = buildSeg.state === 'now';
+
+    // Checks: the two jobs (the app's declared checks, the unit suite) as
+    // ONE part, each filling its half. A job that is done counts as 1; one
+    // with no total to size against is left out; with neither known the
+    // part pulses. Todo while the build runs or the run waits for a slot.
+    let checksSeg;
+    if (!checksLive) checksSeg = { state: 'done', fill: 1 };
+    else if (phase === 'building' || phase === 'queued') checksSeg = { state: 'todo', fill: 0 };
+    else {
+      const frac = (job) => {
+        if (!job) return null;
+        if (job.done) return 1;
+        const expected = Number(job.expected);
+        if (!(expected > 0)) return null;
+        return Math.max(0, Math.min(1, (Number(job.ran) || 0) / expected));
+      };
+      const prog = AppView._checksProgressView(item);
+      const bar = prog && prog.bar;
+      const fracs = [frac(bar), frac(bar && bar.unit)].filter((f) => f != null);
+      checksSeg = { state: 'now', fill: fracs.length ? fracs.reduce((a, b) => a + b, 0) / fracs.length : null };
+    }
+    const checksNow = checksSeg.state === 'now';
+
+    // Shots: left out entirely when the change needs none, when its run has
+    // not started, or when it has failed with no retry coming — those keep
+    // their own strip with its reason and retry control. A fresh 'planned'
+    // run waits behind the build; the phases after it, and a retry, are
+    // under way (the shots report a phase and no count, so their fill is
+    // the pulse).
+    const shots = item.shots && typeof item.shots === 'object' ? item.shots : null;
+    let shotsSeg = null;
+    if (shots && shots.required !== false) {
+      const state = String(shots.state || '');
+      const notStarted = AppView._shotsNotStarted(shots);
+      const retrying = state === 'failed' && shots.automaticRetryPending === true;
+      if (state === 'verified' || state === 'overridden') shotsSeg = { state: 'done', fill: 1 };
+      else if (retrying || (['provisioning', 'exploring', 'replaying', 'reviewing'].includes(state) && !notStarted)) {
+        shotsSeg = { state: 'now', fill: null };
+      } else if (state === 'planned' && !notStarted) shotsSeg = { state: 'todo', fill: 0 };
+    }
+    const shotsNow = !!shotsSeg && shotsSeg.state === 'now';
+
+    // No bar: nothing is going. The Tested line and the shots strip say it.
+    if (!checksLive && !shotsNow) return null;
+
+    // The line above the bar, in the words the page already uses.
+    const label = checksLive
+      ? (phase === 'building' ? 'Building the preview'
+        : phase === 'queued' ? AppView._checksPhaseCopy('queued', item).title
+          : 'Testing it…')
+      : (String(shots.state || '') === 'failed' ? 'Trying the shots again' : 'Taking before & after shots');
+
+    const at = (v) => {
+      const t = typeof v === 'string' ? Date.parse(v) : Number(v);
+      return Number.isFinite(t) ? t : null;
+    };
+    // The estimate is the app's, not the change's — fetch at most once
+    // every ten minutes, and let the repaint it publishes fill the bar in.
+    const slug = (AppView.appData && AppView.appData.slug) || '';
+    AppView._loadRunEstimate(slug);
+    const cached = AppView._runEstimates[slug];
+    const est = cached && cached.data && typeof cached.data === 'object' ? cached.data : null;
+    return {
+      label,
+      phase: !checksLive ? 'shots' : (phase === 'building' ? 'building' : phase === 'queued' ? 'queued' : 'testing'),
+      segments: [
+        { key: 'build', label: 'Build', state: buildSeg.state, fill: buildSeg.fill },
+        { key: 'checks', label: 'Checks', state: checksSeg.state, fill: checksSeg.fill },
+        ...(shotsSeg ? [{ key: 'shots', label: 'Shots', state: shotsSeg.state, fill: shotsSeg.fill }] : []),
+      ],
+      timing: {
+        buildStartedAt: build ? at(build.startedAt) : null,
+        checksStartedAt: at(item.checks_checked_at),
+        shotsStartedAt: shots ? at(shots.startedAt) : null,
+        checksLive: checksNow,
+        shotsLive: shotsNow,
+        buildLive,
+      },
+      estimate: est ? {
+        runs: Number(est.runs) || 0,
+        buildMs: Number.isFinite(Number(est.buildMs)) && est.buildMs != null ? Number(est.buildMs) : null,
+        checksMs: Number.isFinite(Number(est.checksMs)) && est.checksMs != null ? Number(est.checksMs) : null,
+        shotsMs: Number.isFinite(Number(est.shotsMs)) && est.shotsMs != null ? Number(est.shotsMs) : null,
+      } : null,
+    };
+  },
+
+  // #4452: the estimate behind the run bar, per app. In-flight guarded like
+  // `_loadGovVoteRoster`, refetched after ten minutes; publishing repaints
+  // the topic head so a bar already on the page picks it up.
+  _loadRunEstimate(slug) {
+    if (!slug || !AppView.appData) return;
+    const key = String(slug);
+    const cache = AppView._runEstimates[key];
+    if (cache && Date.now() - cache.at < 10 * 60 * 1000) return;
+    if (AppView._runEstimatesInFlight.has(key) || AppView._runEstimatesScheduled.has(key)) return;
+    AppView._runEstimatesScheduled.add(key);
+    // Off the current task: the estimate is background data, so a user's
+    // own request in flight (a submit, a vote) sends alone, and repaints
+    // that land in the same tick cost one fetch, not one each.
+    setTimeout(() => {
+      AppView._runEstimatesScheduled.delete(key);
+      const fresh = AppView._runEstimates[key];
+      if (AppView._runEstimatesInFlight.has(key)
+        || (fresh && Date.now() - fresh.at < 10 * 60 * 1000)) return;
+      AppView._runEstimatesInFlight.add(key);
+      Promise.resolve()
+        .then(async () => {
+          const res = await fetch(`/api/apps/${encodeURIComponent(key)}/run-estimate${AppView._demoQS()}`);
+          const data = await res.json();
+          AppView._runEstimates[key] = { at: Date.now(), data: res.ok ? data : null };
+        })
+        .catch(() => {
+          AppView._runEstimates[key] = { at: Date.now(), data: null };
+        })
+        .then(() => {
+          AppView._runEstimatesInFlight.delete(key);
+          try { AppView._renderTopicHead(); } catch { /* a head may not be mounted */ }
+        });
+    }, 0);
   },
 
   _canEditDescription(item) {
@@ -16863,6 +17016,14 @@ const AppView = {
   _govVoteRosterInFlight: new Set(),
   _govVoteRosterStale: new Set(),
 
+  // #4452: the run bar's time estimate, per app — the medians of an app's
+  // last ten finished runs (GET /api/apps/:slug/run-estimate). Refetched at
+  // most once every ten minutes; a failed fetch stores null data and the
+  // bar then shows no estimate.
+  _runEstimates: Object.create(null),
+  _runEstimatesScheduled: new Set(),
+  _runEstimatesInFlight: new Set(),
+
   _invalidateGovVoteRoster(issueId) {
     if (issueId == null) return;
     const id = Number(issueId);
@@ -20718,6 +20879,9 @@ const AppView = {
       && ['planned', 'provisioning', 'exploring', 'replaying', 'reviewing'].includes(state);
     return {
       state,
+      // #4452: when the run's agent picked the proposal up — the run bar's
+      // Shots part ages its fill against this. Null while only planned.
+      startedAt: shots.startedAt || null,
       verified: state === 'verified',
       retrying,
       notStarted,

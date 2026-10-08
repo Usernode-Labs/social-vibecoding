@@ -15799,6 +15799,35 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-topic-tested-mark-broken { color: var(--state-attention); }
 .dev-topic-tested-mark-running { box-shadow: none; color: var(--accent); }
 .dev-topic-tested-mark-running > .dc-status-icon { margin: 0; }
+/* #4452: the ONE bar while a change is built, checked and photographed, in
+   place of the spinner lines — the run panel's segment style (8px, 3px
+   gaps, 999px ends), green for a finished part, the accent for the current
+   one, the neutral track for the parts still to come. Equal widths on
+   purpose (see BuildSteps): it says WHERE the run is, not how long each
+   part takes; the line above carries the estimate. */
+.dev-topic-run {
+  display: block; width: 100%; margin: 12px 0 0; padding: 0;
+  border: 0; background: none; font: inherit; text-align: left; cursor: pointer;
+}
+.dev-topic-run-head {
+  display: flex; justify-content: space-between; gap: 12px;
+  font-size: 13.5px; font-weight: 600; color: var(--text-secondary);
+}
+.dev-topic-run-eta { font-weight: 400; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.dev-topic-run-bar { display: flex; gap: 3px; height: 8px; margin: 7px 0 5px; }
+.dev-topic-run-seg { flex: 1 1 0; border-radius: 999px; background: var(--state-neutral-bg); overflow: hidden; }
+.dev-topic-run-seg i { display: block; height: 100%; border-radius: 999px; }
+.dev-topic-run-seg.is-done > i { width: 100%; background: var(--state-ok); }
+.dev-topic-run-seg.is-now > i { background: var(--accent); }
+/* An indeterminate part (the shots, a job with no count to size against):
+   a fixed fill that pulses, the run track's own animation. */
+.dev-topic-run-seg i.is-busy { width: 50%; animation: dev-ledger-progress-pulse 1.4s ease-in-out infinite; }
+.dev-topic-run-labels { display: flex; gap: 3px; font-size: 12px; color: var(--text-muted); }
+.dev-topic-run-labels span { flex: 1 1 0; }
+.dev-topic-run-labels span.is-now { color: var(--accent); font-weight: 600; }
+@media (prefers-reduced-motion: reduce) {
+  .dev-topic-run-seg i.is-busy { animation: none; }
+}
 .dev-description-dialog { margin: auto; border: 0; border-radius: 20px; width: min(680px, calc(100% - 24px)); max-height: 85dvh; }
 .dev-description-dialog::backdrop { background: rgba(20, 20, 26, .5); }
 @media (max-width: 480px) {

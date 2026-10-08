@@ -425,6 +425,10 @@ function runSummary(row, artifactSummary = []) {
     overriddenAt: row.overridden_at || null,
     overrideReason: row.override_reason || null,
     artifactSummary,
+    // When the run's agent actually picked the proposal up (#4452): the
+    // change page's run bar ages its Shots part against this. Null while
+    // the run is still only planned.
+    startedAt: row.started_at || null,
     updatedAt: row.updated_at || row.completed_at || row.created_at || null,
   };
 }

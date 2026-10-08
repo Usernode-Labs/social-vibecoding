@@ -78,6 +78,7 @@ const { reportAiRoutes } = require('./src/routes/report-ai');
 const { workshopAskRoutes } = require('./src/routes/workshop-ask');
 const { workshopThemesRoutes } = require('./src/routes/workshop-themes');
 const { sinceSummaryRoutes } = require('./src/routes/since-summary');
+const { runEstimateRoutes } = require('./src/routes/run-estimate');
 const { workshopOverviewRoutes, demoNeedsVoteRoutes } = require('./src/routes/workshop-overview');
 const { appNoticesRoutes } = require('./src/routes/app-notices');
 const { messagesOverviewRoutes } = require('./src/routes/messages-overview');
@@ -712,6 +713,8 @@ app.use(workshopAskRoutes(config));
 app.use(workshopThemesRoutes(config));
 // The hub's since-your-last-visit line (services/since-summary.js).
 app.use(sinceSummaryRoutes(config));
+// The change page's run bar estimate (services/run-estimate.js).
+app.use(runEstimateRoutes(config));
 // The top-level Workshop screen's per-app counts (#workshop): one query for
 // every app the viewer can see. Me-scoped like the ordering routes, so it
 // sits behind authMiddleware and refuses an anonymous caller outright.
