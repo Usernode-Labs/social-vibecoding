@@ -362,6 +362,20 @@ test('idOf identifies an app by slug', () => {
   assert.equal(HomeLayout.idOf(null), '');
 });
 
+test('idOf, repair and toWire speak folder ids as folder:<id>', () => {
+  const F = (id, col, row) => ({ type: 'folder', id, col, row });
+  assert.equal(HomeLayout.idOf(F(3, 0, 0)), 'folder:3');
+  // repair() places a folder that is present but never stored — a folder
+  // made on another device — as a folder item, not an app item.
+  const { layout, changed } = HomeLayout.repair([A('a', 0, 0)], COLS, ['app:a', 'folder:3']);
+  assert.ok(changed);
+  assert.deepEqual(layout.find((i) => i.type === 'folder'), { type: 'folder', id: 3, col: 1, row: 0 });
+  // And toWire sends folder items with their id, same as the server stores.
+  const wire = HomeLayout.toWire(layout);
+  assert.deepEqual(wire.find((i) => i.type === 'folder'), { type: 'folder', id: 3, col: 1, row: 0 });
+  assert.deepEqual(wire.find((i) => i.type === 'app'), { type: 'app', slug: 'a', col: 0, row: 0 });
+});
+
 // ── Blank rows (#975) ─────────────────────────────────────────────────
 
 test('an empty row between tiles is half a cell', () => {

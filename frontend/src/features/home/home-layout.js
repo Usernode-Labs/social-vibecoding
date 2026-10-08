@@ -79,9 +79,12 @@ const HomeLayout = {
   },
 
   // Stable identity for an item, used for dedupe and for "is this the same
-  // thing I picked up".
+  // thing I picked up". A folder item ids as `folder:<id>` — the same prefix
+  // convention the `app:` ids use, and the same string presentIds() hands to
+  // repair().
   idOf(item) {
     if (!item) return '';
+    if (item.type === 'folder') return `folder:${item.id}`;
     return `app:${item.slug}`;
   },
 
@@ -343,11 +346,15 @@ const HomeLayout = {
       changed = true;
     }
 
-    // Anything present but never placed — a newly added app, or one whose
-    // stored cell was a widget's and got reclaimed above.
+    // Anything present but never placed — a newly added app, one whose
+    // stored cell was a widget's and got reclaimed above, or a FOLDER this
+    // device is hearing about for the first time (made on another device;
+    // it lands at the first free cell like any new tile).
     for (const id of wanted) {
       if (seen.has(id)) continue;
-      const item = { type: 'app', slug: id.slice(4) };
+      const item = id.startsWith('folder:')
+        ? { type: 'folder', id: Number(id.slice(7)) }
+        : { type: 'app', slug: id.slice(4) };
       const size = HomeLayout.sizeOf(item, cols);
       const spot = HomeLayout.firstFreeCell(out, size, cols);
       out.push(spot
@@ -553,10 +560,13 @@ const HomeLayout = {
   // The wire shape for PUT /api/home-layout: canvas items only (the server's
   // CHECK constraint rejects row >= MAX_ROWS, and an overflow item has no
   // placement worth remembering — it comes back from the same derivation
-  // next load).
+  // next load). Folder items carry their id; the server drops one that is
+  // not the caller's, exactly like a stale slug.
   toWire(layout) {
     return HomeLayout.canvasItems(layout).map((it) => (
-      { type: 'app', slug: it.slug, col: it.col, row: it.row }
+      it.type === 'folder'
+        ? { type: 'folder', id: it.id, col: it.col, row: it.row }
+        : { type: 'app', slug: it.slug, col: it.col, row: it.row }
     ));
   },
 };

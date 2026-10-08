@@ -62,9 +62,9 @@ function makeMockPool(state) {
         return { rows: [] };
       }
       if (/INSERT INTO user_home_layout/i.test(sql)) {
-        const [user_id, cols, item_type, app_id, widget_key, grid_col, grid_row] = params;
+        const [user_id, cols, item_type, app_id, widget_key, folder_id, grid_col, grid_row] = params;
         (state.rows = state.rows || []).push({
-          user_id, cols, item_type, app_id, widget_key, grid_col, grid_row,
+          user_id, cols, item_type, app_id, widget_key, folder_id, grid_col, grid_row,
         });
         return { rows: [] };
       }
@@ -85,10 +85,22 @@ function makeMockPool(state) {
           .filter((r) => r.user_id === params[0])
           .map((r) => ({
             cols: r.cols, item_type: r.item_type, widget_key: r.widget_key,
-            grid_col: r.grid_col, grid_row: r.grid_row,
+            grid_col: r.grid_col, grid_row: r.grid_row, folder_id: r.folder_id ?? null,
             slug: (state.apps || APPS).find((a) => a.id === r.app_id)?.slug || null,
           }));
         return { rows };
+      }
+      // The folders read (ORDER BY) and the two lookup sets for parseItems
+      // (no ORDER BY) come off the same joined shape.
+      if (sql.includes('FROM user_home_folders f')) {
+        const joined = (state.folderRows || []).map((r) => ({
+          id: r.id, name: r.name, app_id: r.app_id, position: r.position,
+          slug: (state.apps || APPS).find((a) => a.id === r.app_id)?.slug || null,
+        }));
+        if (!sql.includes('ORDER BY')) {
+          return { rows: joined.map((r) => ({ id: r.id, app_id: r.app_id })) };
+        }
+        return { rows: joined };
       }
       return client.query(rawSql, params);
     },
@@ -193,6 +205,74 @@ test('GET skips the widget rows a pre-overhaul arrangement still carries', async
   assert.deepEqual(body.layouts['5'], [
     { type: 'app', slug: 'alpha', col: 0, row: 0 },
   ], 'the app tile survives; the widget cells simply are not there');
+});
+
+// ── Folders: GET ──────────────────────────────────────────────────────
+
+test('GET returns the caller\'s folders with only their visible members', async () => {
+  const { app, state } = makeApp({}, { user: USER });
+  state.folderRows = [
+    // Folder 3: a visible member and one the viewer cannot see.
+    { id: 3, name: 'Games', app_id: 101, position: 0 },
+    { id: 3, name: 'Games', app_id: 404, position: 1 },
+    // Folder 9 belongs to a different membership scope; its one member is
+    // visible, so the folder itself is.
+    { id: 9, name: 'Side things', app_id: 102, position: 0 },
+  ];
+  const { body } = await get(app, '/api/home-layout');
+  assert.deepEqual(body.folders, [
+    { id: 3, name: 'Games', apps: ['alpha'] },
+    { id: 9, name: 'Side things', apps: ['beta'] },
+  ], 'the invisible member is dropped, not the folder');
+  // An empty folder list still rides along, so the client always knows the
+  // field exists.
+  const empty = makeApp({}, { user: USER });
+  assert.deepEqual((await get(empty.app, '/api/home-layout')).body.folders, []);
+});
+
+test('GET returns stored folder tiles alongside app tiles', async () => {
+  const { app, state } = makeApp({}, { user: USER });
+  state.rows = [
+    { user_id: USER.id, cols: 5, item_type: 'folder', app_id: null, widget_key: null, folder_id: 3, grid_col: 0, grid_row: 0 },
+    { user_id: USER.id, cols: 5, item_type: 'app', app_id: 101, widget_key: null, folder_id: null, grid_col: 1, grid_row: 0 },
+  ];
+  const { body } = await get(app, '/api/home-layout');
+  assert.deepEqual(body.layouts['5'], [
+    { type: 'folder', id: 3, col: 0, row: 0 },
+    { type: 'app', slug: 'alpha', col: 1, row: 0 },
+  ]);
+});
+
+// ── parseItems: the folder arm ────────────────────────────────────────
+
+test('PUT accepts the caller\'s folder, drops an unknown folder and an in-folder app', () => {
+  const { parseItems } = require('../src/routes/home-layout');
+  const appIds = new Map([['alpha', 101], ['beta', 102]]);
+  const folders = { ids: new Set([3]), inFolder: new Set([101]) };
+  const { items } = parseItems([
+    { type: 'folder', id: 3, col: 0, row: 0 },
+    { type: 'app', slug: 'beta', col: 1, row: 0 },
+    { type: 'app', slug: 'alpha', col: 2, row: 0 }, // lives in folder 3 → dropped
+    { type: 'folder', id: 99, col: 3, row: 0 },     // not the caller's → dropped
+  ], 5, appIds, folders);
+  assert.deepEqual(items, [
+    { item_type: 'folder', folder_id: 3, app_id: null, widget_key: null, col: 0, row: 0 },
+    { item_type: 'app', app_id: 102, widget_key: null, col: 1, row: 0 },
+  ]);
+});
+
+test('PUT rejects a duplicate folder and an app overlapping one', () => {
+  const { parseItems } = require('../src/routes/home-layout');
+  const appIds = new Map([['alpha', 101]]);
+  const folders = { ids: new Set([3]), inFolder: new Set() };
+  assert.ok(parseItems([
+    { type: 'folder', id: 3, col: 0, row: 0 },
+    { type: 'folder', id: 3, col: 1, row: 0 },
+  ], 5, appIds, folders).error, 'the same folder twice is a 400');
+  assert.ok(parseItems([
+    { type: 'folder', id: 3, col: 0, row: 0 },
+    { type: 'app', slug: 'alpha', col: 0, row: 0 },
+  ], 5, appIds, folders).error, 'a tile sharing the folder\'s cell is a 400');
 });
 
 // ── PUT: the happy path ───────────────────────────────────────────────
@@ -381,15 +461,16 @@ test('PUT is 401 unauthenticated', async () => {
 // user_home_layout is created by this change, so a staging clone starts
 // empty and every preview would show the DERIVED default — i.e. exactly
 // today's arrangement, with the feature invisible.
-test('the staging demo layout is hole-bearing, app-only and two rows deep', () => {
+test('the staging demo layout is hole-bearing, folder-bearing and two rows deep', () => {
   const { demoLayouts } = require('../src/routes/home-layout');
   const demo = demoLayouts();
   for (const cols of ['4', '5']) {
-    const items = demo[cols];
-    assert.ok(items.length >= 6, `${cols}-column demo has content`);
-    // APP TILES ONLY. The three widgets it used to place are fixed sections
-    // below the grid now.
-    assert.ok(items.every((i) => i.type === 'app'), `${cols}: no widget items`);
+    const items = demo.layouts[cols];
+    assert.ok(items.length >= 5, `${cols}-column demo has content`);
+    // App tiles and the one seeded folder — the three widgets it used to
+    // place are fixed sections below the grid now.
+    assert.ok(items.every((i) => i.type === 'app' || i.type === 'folder'),
+      `${cols}: no widget items`);
     // …and inside the two rows shown by default (HomeLayout.DEFAULT_ROWS), or
     // the demo would sit behind "Show all" — the opposite of a preview.
     assert.ok(items.every((i) => i.row < 2), `${cols}: within the default rows`);
@@ -398,6 +479,16 @@ test('the staging demo layout is hole-bearing, app-only and two rows deep', () =
     assert.ok(row0.length >= 2 && row0.length < 4,
       `${cols}: row 0 has visible holes`);
   }
+  // The seeded folder is the Games folder, and its apps are IN it, not also
+  // on the grid beside it.
+  const folders = demo.folders;
+  assert.equal(folders.length, 1);
+  assert.equal(folders[0].name, 'Games');
+  const inGames = new Set(folders[0].apps);
+  assert.ok(inGames.size >= 2, 'the Games folder holds apps');
+  const onGrid = demo.layouts['4'].filter((i) => i.type === 'app').map((i) => i.slug);
+  assert.ok(onGrid.every((slug) => !inGames.has(slug)),
+    'foldered demo apps are not also on the grid');
   // It is read-only and strictly staging-gated.
   assert.match(ROUTE, /IS_STAGING && req\.query\.demo === '1'/);
   assert.match(ROUTE, /const IS_STAGING = process\.env\.USERNODE_ENV === 'staging'/);

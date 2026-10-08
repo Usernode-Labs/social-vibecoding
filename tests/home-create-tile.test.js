@@ -281,7 +281,9 @@ test('#3047: the expander appears for the tile alone, naming every app', () => {
   const HOME = HOME_SRC;
   assert.match(HOME, /const createHidden = !Home\._appsExpanded\s*&& HomeLayout\.createTileCollapsed\(shown, cols, rowBound\);/);
   assert.match(HOME, /const collapsed = hiddenRows \|\| createHidden;/);
-  assert.match(HOME, /moreCount = collapsed \? \(canvas\.length \+ HomeLayout\.overflowItems\(layout\)\.length\) : 0;/);
+  // Foldered apps count with the folder: the expander names every app the
+// grid holds, not every tile.
+  assert.match(HOME, /moreCount = collapsed \? \(itemCount\(canvas\) \+ itemCount\(HomeLayout\.overflowItems\(layout\)\)\) : 0;/);
   assert.match(HOME, /create = createHidden \? null : \{/);
   // The shot links that pin the tile's treatments open the grid, so the tile
   // they exist to show is on screen whatever the viewport's budget.

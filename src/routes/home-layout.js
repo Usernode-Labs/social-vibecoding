@@ -99,7 +99,7 @@ async function visibleAppIds(pool, user) {
 // otherwise look like it had nowhere to go).
 async function readLayouts(pool, userId) {
   const { rows } = await pool.query(
-    `SELECT l.cols, l.item_type, l.widget_key, l.grid_col, l.grid_row, a.slug
+    `SELECT l.cols, l.item_type, l.widget_key, l.folder_id, l.grid_col, l.grid_row, a.slug
        FROM user_home_layout l
        LEFT JOIN apps a ON a.id = l.app_id
       WHERE l.user_id = $1
@@ -112,6 +112,15 @@ async function readLayouts(pool, userId) {
     const bucket = layouts[String(r.cols)];
     if (!bucket) continue;
     if (r.item_type === 'widget') continue; // retired — see the note above
+    if (r.item_type === 'folder') {
+      // The FK cascade removes a layout row when its folder is deleted, so
+      // folder_id is always live here.
+      bucket.push({
+        type: 'folder', id: Number(r.folder_id),
+        col: Number(r.grid_col), row: Number(r.grid_row),
+      });
+      continue;
+    }
     if (r.slug) {
       bucket.push({
         type: 'app', slug: r.slug,
@@ -120,6 +129,56 @@ async function readLayouts(pool, userId) {
     }
   }
   return layouts;
+}
+
+// The caller's folders, as the wire shape: one entry per folder, its member
+// slugs ordered by position and filtered by the same visibility predicate
+// the layout's slugs obey. A folder whose members all lost visibility comes
+// back EMPTY rather than absent — the client hides an empty folder itself,
+// and its layout row (which stays) needs the id to exist here.
+async function readFolders(pool, userId, visible) {
+  const { rows } = await pool.query(
+    `SELECT f.id, f.name, m.app_id, m.position, a.slug
+       FROM user_home_folders f
+       LEFT JOIN user_home_folder_apps m ON m.folder_id = f.id
+       LEFT JOIN apps a ON a.id = m.app_id
+      WHERE f.user_id = $1
+      ORDER BY f.id, m.position`,
+    [userId]
+  );
+  const byId = new Map();
+  for (const r of rows) {
+    let folder = byId.get(Number(r.id));
+    if (!folder) {
+      folder = { id: Number(r.id), name: String(r.name || ''), apps: [] };
+      byId.set(Number(r.id), folder);
+    }
+    if (r.app_id != null && (!visible || visible.has(Number(r.app_id)))) {
+      folder.apps.push(String(r.slug));
+    }
+  }
+  return [...byId.values()];
+}
+
+// The caller's folders as two lookup sets for parseItems: which folder ids
+// are theirs (an unknown one is dropped like a stale slug) and which app ids
+// are inside one (those apps are represented by the folder's tile, so their
+// own layout rows are dropped).
+async function folderSets(pool, userId) {
+  const { rows } = await pool.query(
+    `SELECT f.id, m.app_id
+       FROM user_home_folders f
+       LEFT JOIN user_home_folder_apps m ON m.folder_id = f.id
+      WHERE f.user_id = $1`,
+    [userId]
+  );
+  const ids = new Set();
+  const inFolder = new Set();
+  for (const r of rows) {
+    ids.add(Number(r.id));
+    if (r.app_id != null) inFolder.add(Number(r.app_id));
+  }
+  return { ids, inFolder };
 }
 
 // Parse + validate a PUT body's items into rows ready to insert.
@@ -138,12 +197,15 @@ async function readLayouts(pool, userId) {
 // Overlap is still checked against the server's own footprint for an app
 // tile (1x1, the only footprint left), never against sizes the client claims,
 // so the stored layout can't be made self-overlapping by a patched client.
-function parseItems(raw, cols, appIds) {
+function parseItems(raw, cols, appIds, folders) {
   if (!Array.isArray(raw)) return { error: 'items must be an array' };
   if (raw.length > MAX_ITEMS) return { error: 'too many items' };
 
+  const folderIds = (folders && folders.ids) || new Set();
+  const inFolder = (folders && folders.inFolder) || new Set();
   const out = [];
   const seenApps = new Set();
+  const seenFolders = new Set();
   // Occupancy grid for the overlap check — cols x MAX_ROWS booleans.
   const occupied = new Set();
 
@@ -162,12 +224,26 @@ function parseItems(raw, cols, appIds) {
     let record;
     if (entry.type === 'widget') {
       continue; // a stale client — see the header note
+    } else if (entry.type === 'folder') {
+      // The caller's folder at its remembered cell. A folder id that is not
+      // the caller's — deleted under another tab, or another user's — is
+      // dropped silently, exactly like a stale slug; a duplicate of one
+      // already placed is a client bug and a 400.
+      const id = Number(entry.id);
+      if (!Number.isInteger(id) || !folderIds.has(id)) continue;
+      if (seenFolders.has(id)) return { error: 'duplicate folder' };
+      seenFolders.add(id);
+      size = [1, 1];
+      record = { item_type: 'folder', folder_id: id, app_id: null, widget_key: null, col, row };
     } else if (entry.type === 'app') {
       const slug = String(entry.slug || '');
       const appId = appIds.get(slug);
       // Not visible to this viewer (or gone): drop it silently rather than
       // rejecting the whole layout.
       if (appId == null) continue;
+      // An app inside one of the caller's folders is represented by the
+      // folder's own tile, so its cell row is stale — drop it the same way.
+      if (inFolder.has(appId)) continue;
       if (seenApps.has(appId)) return { error: 'duplicate app' };
       seenApps.add(appId);
       size = [1, 1];
@@ -221,21 +297,46 @@ function parseItems(raw, cols, appIds) {
 // holes rather than a derived default.
 function demoLayouts() {
   const arrangement = [
-    // Row 0: two tiles at the ends, a two-cell hole between them.
-    { type: 'app', slug: 'staging-demo-chess-arena', col: 0, row: 0 },
+    // Row 0: the Games FOLDER at the left end, a tile at the far end, a
+    // two-cell hole between them.
+    { type: 'folder', id: 1, col: 0, row: 0 },
     { type: 'app', slug: 'staging-demo-pixel-racer', col: 3, row: 0 },
     // Row 1: three tiles with the hole moved, so the gaps read as placement
     // rather than as "the list ran out".
-    { type: 'app', slug: 'staging-demo-puzzle-chain', col: 0, row: 1 },
     { type: 'app', slug: 'staging-demo-emoji-icon', col: 2, row: 1 },
     { type: 'app', slug: 'staging-demo-image-icon', col: 3, row: 1 },
     { type: 'app', slug: 'staging-demo-word-garden', col: 1, row: 1 },
   ];
+  // One sample folder so a reviewer can see the feature without dragging.
+  // Its members are two of the demo tiles, which are therefore NOT also on
+  // the grid above — a folder's apps live inside it only.
+  const folders = [
+    {
+      id: 1, name: 'Games',
+      apps: ['staging-demo-chess-arena', 'staging-demo-puzzle-chain'],
+    },
+  ];
   return {
-    '4': arrangement.map((i) => ({ ...i })),
-    '5': arrangement.map((i) => ({ ...i })),
+    layouts: {
+      '4': arrangement.map((i) => ({ ...i })),
+      '5': arrangement.map((i) => ({ ...i })),
+    },
+    folders: folders.map((f) => ({ ...f, apps: [...f.apps] })),
   };
 }
+
+// Generous over real use (nobody has forty folders) and equal to the canvas
+// size it guards: a folder is one tile among MAX_ITEMS, so POST refuses a
+// hostile client that would flood the table (400 'too many folders').
+const MAX_FOLDERS = 40;
+
+// Both widths' locks, ALWAYS taken 4-then-5. A folder write moves rows
+// between widths (an app's cell rows are deleted in every width while the
+// folder's cell is written to one), so a write that held only one width's
+// lock could interleave with that width's PUT.
+const FOLDER_LOCKS_SQL = "SELECT pg_advisory_xact_lock("
+  + "hashtextextended('home-layout:' || $1 || ':4', 0)), "
+  + "pg_advisory_xact_lock(hashtextextended('home-layout:' || $1 || ':5', 0))";
 
 function homeLayoutRoutes() {
   const router = Router();
@@ -245,7 +346,18 @@ function homeLayoutRoutes() {
     if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
     try {
       const demo = IS_STAGING && req.query.demo === '1';
-      const layouts = demo ? demoLayouts() : await readLayouts(pool, req.user.id);
+      let layouts;
+      let folders;
+      if (demo) {
+        const d = demoLayouts();
+        layouts = d.layouts;
+        folders = d.folders;
+      } else {
+        const visible = await visibleAppIds(pool, req.user);
+        const visibleIds = new Set(visible.values());
+        layouts = await readLayouts(pool, req.user.id);
+        folders = await readFolders(pool, req.user.id, visibleIds);
+      }
       // `widgets: panelRegistryPublic()` rode along here, so the client laid
       // out against the SAME footprints this route's overlap check validated
       // with. Nothing is placed but app tiles now, and their footprint is 1x1
@@ -257,6 +369,7 @@ function homeLayoutRoutes() {
         maxRows: MAX_ROWS,
         breakpoints: BREAKPOINTS,
         layouts,
+        folders,
         ...(demo ? { demo: true } : {}),
       });
     } catch (err) {
@@ -275,7 +388,8 @@ function homeLayoutRoutes() {
     }
     try {
       const appIds = await visibleAppIds(pool, req.user);
-      const parsed = parseItems(req.body?.items, cols, appIds);
+      const folders = await folderSets(pool, req.user.id);
+      const parsed = parseItems(req.body?.items, cols, appIds, folders);
       if (parsed.error) return res.status(400).json({ error: parsed.error });
 
       // Full replace of this width, in one transaction so a concurrent read
@@ -302,9 +416,9 @@ function homeLayoutRoutes() {
         for (const it of parsed.items) {
           await client.query(
             `INSERT INTO user_home_layout
-               (user_id, cols, item_type, app_id, widget_key, grid_col, grid_row, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
-            [req.user.id, cols, it.item_type, it.app_id, it.widget_key, it.col, it.row]
+               (user_id, cols, item_type, app_id, widget_key, folder_id, grid_col, grid_row, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
+            [req.user.id, cols, it.item_type, it.app_id, it.widget_key, it.folder_id || null, it.col, it.row]
           );
         }
         await client.query('COMMIT');
@@ -315,15 +429,305 @@ function homeLayoutRoutes() {
         client.release();
       }
 
-      const layouts = await readLayouts(pool, req.user.id);
+      // The GET shape, so the client adopts layouts and folders in one step.
+      const visibleIds = new Set(appIds.values());
+      const [layouts, folderList] = await Promise.all([
+        readLayouts(pool, req.user.id),
+        readFolders(pool, req.user.id, visibleIds),
+      ]);
       return res.json({
         maxCols: MAX_COLS,
         maxRows: MAX_ROWS,
         breakpoints: BREAKPOINTS,
         layouts,
+        folders: folderList,
       });
     } catch (err) {
       log.error('home-layout', 'PUT /api/home-layout failed', {
+        userId: req.user.id, message: err.message,
+      });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Folders ──────────────────────────────────────────────────────────
+  //
+  // Every route answers with the GET shape, so the client adopts layouts and
+  // folders in one step, and every one runs in a transaction under the same
+  // per-user advisory locks the PUT uses — both widths, 4 then 5 — because a
+  // folder write moves app cells across widths.
+
+  // The GET shape for the caller, shared by every folder route's answer.
+  async function readState(user) {
+    const visible = await visibleAppIds(pool, user);
+    const visibleIds = new Set(visible.values());
+    const [layouts, folders] = await Promise.all([
+      readLayouts(pool, user.id),
+      readFolders(pool, user.id, visibleIds),
+    ]);
+    return {
+      maxCols: MAX_COLS,
+      maxRows: MAX_ROWS,
+      breakpoints: BREAKPOINTS,
+      layouts,
+      folders,
+    };
+  }
+
+  // The caller's folder, or null when the id is not theirs (404, not 403 —
+  // another person's folder id is not a thing to know exists).
+  async function ownFolder(client, userId, id) {
+    const { rows } = await client.query(
+      'SELECT id FROM user_home_folders WHERE id = $1 AND user_id = $2',
+      [id, userId]
+    );
+    return rows.length ? rows[0] : null;
+  }
+
+  router.post('/api/home-folders', homeLayoutLimiter, async (req, res) => {
+    if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
+    const cols = Number(req.body?.cols);
+    const col = Number(req.body?.col);
+    const row = Number(req.body?.row);
+    if (!BREAKPOINTS.includes(cols)) {
+      return res.status(400).json({ error: 'Invalid column count' });
+    }
+    if (!Number.isInteger(col) || col < 0 || col >= cols
+        || !Number.isInteger(row) || row < 0 || row >= MAX_ROWS) {
+      return res.status(400).json({ error: 'Invalid cell' });
+    }
+    const slugs = Array.isArray(req.body?.slugs) ? req.body.slugs.map(String) : [];
+    if (slugs.length !== 2 || slugs[0] === slugs[1]) {
+      return res.status(400).json({ error: 'Two different apps are needed' });
+    }
+    try {
+      const visible = await visibleAppIds(pool, req.user);
+      const targetId = visible.get(slugs[0]);
+      const draggedId = visible.get(slugs[1]);
+      if (targetId == null || draggedId == null) {
+        return res.status(400).json({ error: 'Unknown app' });
+      }
+      const sets = await folderSets(pool, req.user.id);
+      if (sets.ids.size >= MAX_FOLDERS) {
+        return res.status(400).json({ error: 'too many folders' });
+      }
+      if (sets.inFolder.has(targetId) || sets.inFolder.has(draggedId)) {
+        return res.status(400).json({ error: 'App is already in a folder' });
+      }
+
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query(FOLDER_LOCKS_SQL, [req.user.id]);
+        const { rows } = await client.query(
+          `INSERT INTO user_home_folders (user_id, name) VALUES ($1, 'New folder')
+           RETURNING id`,
+          [req.user.id]
+        );
+        const folderId = Number(rows[0].id);
+        for (const [position, appId] of [[0, targetId], [1, draggedId]]) {
+          await client.query(
+            `INSERT INTO user_home_folder_apps (folder_id, user_id, app_id, position)
+             VALUES ($1, $2, $3, $4)`,
+            [folderId, req.user.id, appId, position]
+          );
+        }
+        // The two tiles leave the canvas in EVERY width — their cells are
+        // inside the folder now — and the folder takes the cell the client
+        // dropped onto, in the width it was dropped at.
+        await client.query(
+          'DELETE FROM user_home_layout WHERE user_id = $1 AND app_id = ANY($2)',
+          [req.user.id, [targetId, draggedId]]
+        );
+        await client.query(
+          `INSERT INTO user_home_layout
+             (user_id, cols, item_type, app_id, widget_key, folder_id, grid_col, grid_row, updated_at)
+           VALUES ($1, $2, 'folder', NULL, NULL, $3, $4, $5, NOW())`,
+          [req.user.id, cols, folderId, col, row]
+        );
+        await client.query('COMMIT');
+      } catch (txErr) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw txErr;
+      } finally {
+        client.release();
+      }
+      return res.status(201).json(await readState(req.user));
+    } catch (err) {
+      log.error('home-layout', 'POST /api/home-folders failed', {
+        userId: req.user.id, message: err.message,
+      });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/home-folders/:id/apps', homeLayoutLimiter, async (req, res) => {
+    if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
+    const folderId = Number(req.params.id);
+    if (!Number.isInteger(folderId)) return res.status(404).json({ error: 'Not found' });
+    const slug = String(req.body?.slug || '');
+    try {
+      const visible = await visibleAppIds(pool, req.user);
+      const appId = visible.get(slug);
+      if (appId == null) return res.status(400).json({ error: 'Unknown app' });
+      const sets = await folderSets(pool, req.user.id);
+      if (sets.inFolder.has(appId)) {
+        return res.status(400).json({ error: 'App is already in a folder' });
+      }
+
+      const client = await pool.connect();
+      let exists = false;
+      try {
+        await client.query('BEGIN');
+        await client.query(FOLDER_LOCKS_SQL, [req.user.id]);
+        if (!await ownFolder(client, req.user.id, folderId)) {
+          await client.query('ROLLBACK').catch(() => {});
+          return res.status(404).json({ error: 'Not found' });
+        }
+        exists = true;
+        const { rows } = await client.query(
+          'SELECT COALESCE(MAX(position), -1) + 1 AS next FROM user_home_folder_apps WHERE folder_id = $1',
+          [folderId]
+        );
+        await client.query(
+          `INSERT INTO user_home_folder_apps (folder_id, user_id, app_id, position)
+           VALUES ($1, $2, $3, $4)`,
+          [folderId, req.user.id, appId, Number(rows[0].next)]
+        );
+        await client.query(
+          'DELETE FROM user_home_layout WHERE user_id = $1 AND app_id = $2',
+          [req.user.id, appId]
+        );
+        await client.query('COMMIT');
+      } catch (txErr) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw txErr;
+      } finally {
+        client.release();
+      }
+      if (!exists) return res.status(404).json({ error: 'Not found' });
+      return res.json(await readState(req.user));
+    } catch (err) {
+      log.error('home-layout', 'POST /api/home-folders/:id/apps failed', {
+        userId: req.user.id, message: err.message,
+      });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.delete('/api/home-folders/:id/apps/:slug', homeLayoutLimiter, async (req, res) => {
+    if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
+    const folderId = Number(req.params.id);
+    const slug = String(req.params.slug || '');
+    if (!Number.isInteger(folderId)) return res.status(404).json({ error: 'Not found' });
+    try {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query(FOLDER_LOCKS_SQL, [req.user.id]);
+        if (!await ownFolder(client, req.user.id, folderId)) {
+          await client.query('ROLLBACK').catch(() => {});
+          return res.status(404).json({ error: 'Not found' });
+        }
+        const { rowCount } = await client.query(
+          'DELETE FROM user_home_folder_apps WHERE folder_id = $1 AND app_id = (SELECT id FROM apps WHERE slug = $2)',
+          [folderId, slug]
+        );
+        // The last app leaving takes the (now empty) folder with it; the
+        // FK cascade removes its layout rows in both widths with the folder.
+        if (rowCount) {
+          await client.query(
+            `DELETE FROM user_home_folders f
+              WHERE f.id = $1
+                AND NOT EXISTS (SELECT 1 FROM user_home_folder_apps m WHERE m.folder_id = f.id)`,
+            [folderId]
+          );
+        }
+        await client.query('COMMIT');
+      } catch (txErr) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw txErr;
+      } finally {
+        client.release();
+      }
+      return res.json(await readState(req.user));
+    } catch (err) {
+      log.error('home-layout', 'DELETE /api/home-folders/:id/apps/:slug failed', {
+        userId: req.user.id, message: err.message,
+      });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.patch('/api/home-folders/:id', homeLayoutLimiter, async (req, res) => {
+    if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
+    const folderId = Number(req.params.id);
+    if (!Number.isInteger(folderId)) return res.status(404).json({ error: 'Not found' });
+    // Trimmed; a blank answer is the default name, not a 400 — the client
+    // sends whatever the prompt held. Over the cap IS a 400 (a client that
+    // can produce it is broken; the schema CHECK agrees).
+    let name = String(req.body?.name ?? '').trim();
+    if (!name) name = 'New folder';
+    if (name.length > 40) return res.status(400).json({ error: 'Name is too long' });
+    try {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query(FOLDER_LOCKS_SQL, [req.user.id]);
+        const { rowCount } = await client.query(
+          'UPDATE user_home_folders SET name = $3, updated_at = NOW() WHERE id = $1 AND user_id = $2',
+          [folderId, req.user.id, name]
+        );
+        if (!rowCount) {
+          await client.query('ROLLBACK').catch(() => {});
+          return res.status(404).json({ error: 'Not found' });
+        }
+        await client.query('COMMIT');
+      } catch (txErr) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw txErr;
+      } finally {
+        client.release();
+      }
+      return res.json(await readState(req.user));
+    } catch (err) {
+      log.error('home-layout', 'PATCH /api/home-folders/:id failed', {
+        userId: req.user.id, message: err.message,
+      });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.delete('/api/home-folders/:id', homeLayoutLimiter, async (req, res) => {
+    if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
+    const folderId = Number(req.params.id);
+    if (!Number.isInteger(folderId)) return res.status(404).json({ error: 'Not found' });
+    try {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query(FOLDER_LOCKS_SQL, [req.user.id]);
+        // Nothing is uninstalled and nothing is lost: the memberships go with
+        // the folder, and the client's repair() puts the apps back on the grid
+        // at the first free cells, which persists because the stored layout
+        // is non-empty.
+        const { rowCount } = await client.query(
+          'DELETE FROM user_home_folders WHERE id = $1 AND user_id = $2',
+          [folderId, req.user.id]
+        );
+        await client.query('COMMIT');
+        if (!rowCount) {
+          return res.status(404).json({ error: 'Not found' });
+        }
+      } catch (txErr) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw txErr;
+      } finally {
+        client.release();
+      }
+      return res.json(await readState(req.user));
+    } catch (err) {
+      log.error('home-layout', 'DELETE /api/home-folders/:id failed', {
         userId: req.user.id, message: err.message,
       });
       return res.status(500).json({ error: 'Internal server error' });
@@ -341,5 +745,6 @@ module.exports = {
   MAX_COLS,
   MAX_ROWS,
   MAX_ITEMS,
+  MAX_FOLDERS,
   BREAKPOINTS,
 };

@@ -4976,6 +4976,46 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   .home-grid-cell { transition: none; }
 }
 
+/* ── Hold to fold ───────────────────────────────────────────
+   An app held 500ms over another tile's centre arms a folder drop. The
+   armed cell wears this outline instead of the displacement tint — the
+   promise the release keeps is "these two become a folder", not "this tile
+   lands here". Same accent and radius language as --on above; an inset
+   outline, so it reads as the cell's edge and not as a selection. */
+.home-grid-cell[data-folder-drop] {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 0.75rem;   /* rounded-xl, same as a tile */
+}
+
+/* The folder tile's face: up to four small copies of the member apps'
+   icons in a 2x2 grid. The tile keeps its own hairline face and dark-mode
+   steps (the rules above own .app-icon-tile); this only rearranges its
+   inside. The emoji/letter glyphs size down from the tile's text-3xl —
+   a whole icon at 15px in a quarter-tile would clip. */
+.app-icon-tile[data-icon="folder"] {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 3px;
+  padding: 6px;
+}
+.app-icon-tile[data-icon="folder"] > span {
+  font-size: 15px;
+  line-height: 1;
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.app-icon-tile[data-icon="folder"] > img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 2px;
+}
+
 /* ── The live displacement preview ──────────────────────────
    While something hovers a target, the items it WOULD push move to the cells
    they'd land in. The flow reorder this replaced gave that away for free

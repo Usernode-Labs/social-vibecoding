@@ -27,6 +27,7 @@ import { AppCard } from '../apps/app-card.js';
 import { gridStore } from './grid-store';
 import { chromeStore } from './chrome-store';
 import { detectInstallHost } from '../mobile-install/environment';
+import { mountFolderSheet, unmountFolderSheet } from './folder-sheet';
 
 // Which discovery cards and add badges already carry their listeners.
 // `_wireDiscoveryCards` runs again whenever a lane's tiles change identity,
@@ -458,6 +459,18 @@ const Home = {
   // with a repaired copy of the fixture.
   _layoutIsDemo: false,
 
+  // The viewer's home-screen FOLDERS, adopted alongside `_layouts` from the
+  // same payload (GET /api/home-layout answers both). Each entry is
+  // `{ id, name, apps: [slug…] }`, ordered by position. A folder's CELL on
+  // the canvas lives in `_layouts` as a `{ type: 'folder', id, col, row }`
+  // item; this array is its contents. Null until the first load, like
+  // `_layouts`.
+  _folders: null,
+
+  // The open folder sheet's kit handle, or null. One at a time — a tap on a
+  // tile while one is up dismisses it through the kit's own backdrop rules.
+  _folderSheet: null,
+
   // The column count the grid is rendering at right now — four, at every
   // width, since THE UI OVERHAUL. It must agree with the `grid-cols-4` class
   // on #app-list, and HomeLayout.COLS is the single source for that.
@@ -605,9 +618,13 @@ const Home = {
   // those fixed sections below the grid (and Create, later, the grid's
   // derived trailing tile), so they are not items — and repair() drops any
   // that a pre-overhaul stored layout still carries.
-  presentIds() {
+  // Every app tile that could hold a place on the grid, as app objects: the
+  // "yours" apps plus staging's request-time demo tiles (?demo=1,
+  // src/routes/apps.js) — the same set the pre-folder presentIds() listed,
+  // as objects so the folder membership below can reuse it.
+  _presentApps() {
     const { yours } = Home.partitionApps(Home._apps || []);
-    const ids = yours.map((a) => `app:${a.slug}`);
+    const apps = [...yours];
     // Staging's request-time demo tiles (?demo=1, src/routes/apps.js) are
     // NOT favourites and NOT collaborations, so partitionApps rightly leaves
     // them out of "Your apps" — but the ?demo=1 layout places them on the
@@ -618,7 +635,49 @@ const Home = {
     // like anything else (the spec's rule); only the DRAG excludes them,
     // which the recognizer's `:not([data-demo])` selector already handles.
     for (const app of Home._apps || []) {
-      if (app && app.demo && !Home.isYours(app)) ids.push(`app:${app.slug}`);
+      if (app && app.demo && !Home.isYours(app)) apps.push(app);
+    }
+    return apps;
+  },
+
+  // The visible members of one folder: its slugs intersected with the apps
+  // that are actually present right now. An app the viewer unpinned or lost
+  // access to is hidden from the folder (its membership row stays on the
+  // server, so re-pinning puts it back); a folder whose members are ALL
+  // hidden answers empty, and presentIds() then leaves the whole folder
+  // out — it is not drawn, and its layout row stays.
+  _folderMembers(folder) {
+    if (!folder) return [];
+    const bySlug = new Map(Home._presentApps().map((a) => [a.slug, a]));
+    return (folder.apps || []).map((s) => bySlug.get(s)).filter(Boolean);
+  },
+
+  // Every item that should be on the grid right now, as stable ids: the
+  // viewer's apps that are NOT inside a folder, plus one `folder:<id>` for
+  // each folder with at least one present member. This is the input
+  // HomeLayout.repair reconciles a stored layout against.
+  //
+  // It used to include the widgets they had not hidden. THE UI OVERHAUL made
+  // those fixed sections below the grid (and Create, later, the grid's
+  // derived trailing tile), so they are not items — and repair() drops any
+  // that a pre-overhaul stored layout still carries.
+  //
+  // FOLDERS: an app inside a folder is represented by the folder's own tile,
+  // so its `app:` id leaves this list — otherwise repair() would put the app
+  // BACK on the grid beside its folder. Search is unaffected: it runs over
+  // the full "yours" list, which still includes apps inside folders.
+  presentIds() {
+    const present = Home._presentApps();
+    const folderOf = new Map();
+    const ids = [];
+    for (const folder of Home._folders || []) {
+      const members = Home._folderMembers(folder);
+      if (!members.length) continue;
+      ids.push(`folder:${folder.id}`);
+      for (const app of members) folderOf.set(app.slug, folder.id);
+    }
+    for (const app of present) {
+      if (!folderOf.has(app.slug)) ids.push(`app:${app.slug}`);
     }
     return ids;
   },
@@ -650,8 +709,15 @@ const Home = {
       if (Array.isArray(legacy) && legacy.length) {
         base = legacy;
       } else {
-        const { yours } = Home.partitionApps(Home._apps || []);
-        base = HomeLayout.deriveDefault({ apps: yours.map((a) => a.slug), cols });
+        // The default arrangement derives from the same ids presentIds()
+        // answers — the apps NOT inside a folder — so a first visit with a
+        // folder already in it (made on another device) does not also spread
+        // its members across the grid.
+        base = HomeLayout.deriveDefault({
+          apps: present.filter((id) => !id.startsWith('folder:'))
+            .map((id) => id.slice(4)),
+          cols,
+        });
       }
     }
     const { layout, changed } = HomeLayout.repair(base, cols, present);
@@ -701,6 +767,7 @@ const Home = {
         // is nothing to adopt.
         // adopt it before anything lays out against it.
         Home._layouts = json.layouts;
+        Home._folders = json.folders || [];
         Home._layoutIsDemo = !!json.demo;
         Home._layoutFetchedAt = Date.now();
       })
@@ -733,6 +800,7 @@ const Home = {
       const json = await res.json();
       if (json && json.layouts) {
         Home._layouts = json.layouts;
+        Home._folders = json.folders || [];
         Home._layoutFetchedAt = Date.now();
       }
       return true;
@@ -859,7 +927,16 @@ const Home = {
       // exists whether or not anything is in it, and naming row 2 while
       // rendering rows 0-1 would pad the grid out with an empty tile row.
       rowTemplate = Home.rowTemplate(collapsed ? shown : layout, cols);
-      moreCount = collapsed ? (canvas.length + HomeLayout.overflowItems(layout).length) : 0;
+      // "Show all N apps" counts APPS, not tiles: a folder tile counts its
+      // members, not itself (the folders' apps are what the button reveals).
+      const itemCount = (list) => (list || []).reduce((n, it) => {
+        if (it && it.type === 'folder') {
+          return n + Home._folderMembers((Home._folders || [])
+            .find((f) => String(f.id) === String(it.id)) || {}).length;
+        }
+        return n + 1;
+      }, 0);
+      moreCount = collapsed ? (itemCount(canvas) + itemCount(HomeLayout.overflowItems(layout))) : 0;
       // One-shot: it described this paint.
       Home._revealSlug = null;
       // THE GRID ENDS WITH "CREATE AN APP" (the prototype's scrHome, whose
@@ -1060,10 +1137,28 @@ const Home = {
   gridItemView(item, cols, overflow) {
     const [w, h] = HomeLayout.sizeOf(item, cols);
     const placement = overflow ? null : { col: item.col, row: item.row, w, h };
+    // A FOLDER tile: one normal-sized cell drawn from its members. `preview`
+    // is up to four icon views for the tile's 2x2 face; `apps` are the whole
+    // visible membership, for the sheet the tile opens.
+    if (item.type === 'folder') {
+      const folder = (Home._folders || []).find((f) => String(f.id) === String(item.id));
+      if (!folder) return null;
+      const members = Home._folderMembers(folder);
+      return {
+        kind: 'folder',
+        placement,
+        folder: {
+          id: folder.id,
+          name: String(folder.name || 'New folder'),
+          apps: members.map((a) => Home.appView(a)),
+          preview: members.slice(0, 4).map((a) => AppCard.iconViewFor(a)),
+        },
+      };
+    }
     // The `item.type === 'widget'` branch that planted a `[data-panel-slot]`
     // host is gone with the UI overhaul: Discover and Challenges are fixed
     // sections below the grid now, and Create is a derived trailing tile
-    // (render()), so every ITEM on this canvas is an app tile.
+    // (render()), so every ITEM on this canvas is an app tile or a folder.
     const app = (Home._apps || []).find((a) => a.slug === item.slug);
     if (!app) return null;
     return { kind: 'card', placement, app: Home.appView(app) };
@@ -1096,8 +1191,14 @@ const Home = {
         // BEFORE the grid's own geometry because the strip sits above the
         // canvas and a finger over it resolves to no cell there anyway.
         Home._pointerOverWidget = Home._widgetStripAt(x, y);
-        if (Home._pointerOverWidget) return Home.WIDGET_DROP_CELL;
-        return Home._targetCellFor(x, y, info, cols);
+        if (Home._pointerOverWidget) {
+          Home._foldDisarm();
+          return Home.WIDGET_DROP_CELL;
+        }
+        const cell = Home._targetCellFor(x, y, info, cols);
+        // Hold-to-fold: an app held over another tile's centre arms a fold.
+        Home._foldUpdate(cell, info, cols);
+        return cell;
       },
       // canPlace runs first on every cell change and onHover right after, and
       // both need the SAME displacement plan — so compute it once and memo it
@@ -1119,10 +1220,12 @@ const Home = {
       onHover: (item, cell, ok) => {
         const overWidget = Home._isWidgetDropCell(cell);
         Home._markWidgetDrop(overWidget ? item : null, ok);
+        Home._foldHoverLast = { el: item, cell, ok, cols };
         Home._previewDrop(item, overWidget ? null : cell, ok, cols);
       },
       // The release spring's destination. Same memoised plan again: the tile
-      // settles on the cell the tint promised, not the one it left.
+      // settles on the cell the tint promised, not the one it left. When the
+      // fold is armed, it settles on the armed cell itself.
       rectForCell: (item, cell) => (Home._isWidgetDropCell(cell)
         ? Home._widgetDropRect()
         : Home._rectForCell(item, cell, cols)),
@@ -1132,6 +1235,11 @@ const Home = {
         // for onSettle, when the gesture is over and the strip may repaint.
         if (Home._isWidgetDropCell(cell)) {
           Home._pendingWidgetAdd = (item && item.dataset && item.dataset.slug) || null;
+          return;
+        }
+        // An armed fold replaces the placement write.
+        if (Home._foldArm) {
+          Home._foldOnto(item, Home._foldArm, cols);
           return;
         }
         Home._onGridPlace(item, cell, cols);
@@ -3845,9 +3953,27 @@ const Home = {
   // bounding box from the long-press paths).
   openCardMenu(slug, anchor) {
     Home.closeCardMenu();
+    // A FOLDER tile's menu: the tile has no app behind it, its identity is
+    // the folder id on the anchor. Delegating here (rather than a separate
+    // wiring) is what keeps onLift, contextmenu and the keyboard paths
+    // working unchanged for folder tiles.
+    const folderId = anchor && anchor.dataset ? anchor.dataset.folder : null;
+    if (folderId != null && folderId !== '') {
+      Home.openFolderMenu(folderId, anchor);
+      return;
+    }
     const app = (Home._apps || []).find((a) => a.slug === slug);
     if (!app) return;
     const items = Home.menuItemsFor(app);
+    // An app tile inside the open folder sheet carries data-in-folder; the
+    // way back onto My apps is the first item on its usual menu.
+    if (anchor && anchor.dataset && anchor.dataset.inFolder) {
+      items.unshift({
+        key: 'take-out-of-folder',
+        label: 'Take out of folder',
+        run: () => Home._menuTakeOutOfFolder(slug),
+      });
+    }
     if (!items.length) return;
 
     // A tile's context stays anchored to the tile on every platform.
@@ -3891,6 +4017,193 @@ const Home = {
     Home._menu = null;
     Home._menuAnchor = null;
     if (menu && typeof menu.dismiss === 'function') menu.dismiss();
+  },
+
+  // ── Folders ────────────────────────────────────────────────────────
+  //
+  // A folder tile is a normal grid tile: tap opens it (the sheet below),
+  // hold or right-click opens its menu. Everything the sheet and menu draw
+  // is the home screen's own tiles and the kit's own sheet / prompt /
+  // confirm, so both looks come from the tokens already on them.
+
+  _folderById(id) {
+    return (Home._folders || []).find((f) => String(f.id) === String(id)) || null;
+  },
+
+  // The folder sheet: the Wallet sheet's shape (a bottom sheet with a bold
+  // title), its body a four-column grid of the same tiles My apps draws.
+  // The body is a legacy portal owned wholly by home.js — no shell host.
+  openFolder(id) {
+    if (Home._folderSheet) return;
+    const folder = Home._folderById(id);
+    if (!folder) return;
+    const panel = document.createElement('div');
+    panel.className = 'px-4 pb-4 max-h-[75vh] overflow-y-auto';
+    const bodyEl = document.createElement('div');
+    panel.appendChild(bodyEl);
+    Home._folderSheet = PlatformUI.sheet({
+      contentEl: panel,
+      // Drop the portal BEFORE the kit discards the node it lives in.
+      onDismiss: () => {
+        unmountFolderSheet(bodyEl);
+        Home._folderSheet = null;
+      },
+    });
+    mountFolderSheet(bodyEl, {
+      folderId: folder.id,
+      dismiss: () => {
+        const sheet = Home._folderSheet;
+        Home._folderSheet = null;
+        if (sheet && typeof sheet.dismiss === 'function') sheet.dismiss();
+      },
+    });
+  },
+
+  openFolderMenu(id, anchor) {
+    const folder = Home._folderById(id);
+    if (!folder) return;
+    const anchorIsEl = !!(anchor && typeof anchor.getBoundingClientRect === 'function');
+    const menu = PlatformUI.popover({
+      anchorEl: anchorIsEl ? anchor : undefined,
+      anchorRect: anchorIsEl ? undefined : anchor,
+      title: folder.name || 'New folder',
+      items: [
+        { label: 'Rename', handler: () => Home._menuRenameFolder(folder) },
+        {
+          label: 'Remove folder',
+          destructive: true,
+          handler: () => Home._menuRemoveFolder(folder),
+        },
+      ],
+    });
+    if (!menu) return;
+    Home._menu = menu;
+    Home._menuAnchor = anchorIsEl && anchor.nodeType === 1 ? anchor : null;
+    menu.then(() => {
+      if (Home._menu === menu) {
+        Home._menu = null;
+        Home._menuAnchor = null;
+      }
+    });
+  },
+
+  // Adopt a folder route's GET-shaped answer (every one of them answers with
+  // it), or revert to server truth on the way out.
+  _adoptFolderState(json) {
+    if (json && json.layouts) {
+      Home._layouts = json.layouts;
+      Home._folders = json.folders || [];
+      Home._layoutFetchedAt = Date.now();
+      return true;
+    }
+    return false;
+  },
+
+  async _folderFailToast(text) {
+    PlatformUI.toast(text);
+    await Home._ensureLayoutLoaded({ force: true });
+    Home.render();
+  },
+
+  async _menuRenameFolder(folder) {
+    const value = await PlatformUI.prompt({
+      title: 'Rename folder',
+      value: folder.name || 'New folder',
+      maxLength: 40,
+      confirmLabel: 'Save',
+    });
+    if (value == null) return;
+    if (Home._layoutIsDemo) {
+      Home._folders = (Home._folders || []).map((f) => (
+        String(f.id) === String(folder.id)
+          ? { ...f, name: String(value).trim().slice(0, 40) || 'New folder' }
+          : f
+      ));
+      Home.render();
+      return;
+    }
+    try {
+      const res = await fetch(`/api/home-folders/${encodeURIComponent(folder.id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ name: String(value) }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      Home._adoptFolderState(await res.json());
+      Home.render();
+    } catch (err) {
+      await Home._folderFailToast('Couldn’t save your folder.');
+    }
+  },
+
+  async _menuRemoveFolder(folder) {
+    const ok = await PlatformUI.confirm({
+      title: 'Remove this folder?',
+      message: 'Its apps go back to My apps.',
+      confirmLabel: 'Remove',
+      danger: true,
+    });
+    if (!ok) return;
+    if (Home._layoutIsDemo) {
+      Home._folders = (Home._folders || []).filter(
+        (f) => String(f.id) !== String(folder.id));
+      Home._layoutCache = null;
+      Home.render();
+      return;
+    }
+    try {
+      const res = await fetch(`/api/home-folders/${encodeURIComponent(folder.id)}`, {
+        method: 'DELETE',
+        credentials: 'same-origin',
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      Home._adoptFolderState(await res.json());
+      Home._layoutCache = null;
+      Home.render();
+    } catch (err) {
+      await Home._folderFailToast('Couldn’t remove your folder.');
+    }
+  },
+
+  // "Take out of folder": the app goes back onto My apps in the first free
+  // spot (the server just removes the membership; the client's repair()
+  // re-places the present-but-unplaced app). When the last app leaves, the
+  // folder goes away, and the sheet it was open in goes with it.
+  async _menuTakeOutOfFolder(slug) {
+    const folder = (Home._folders || []).find((f) => (f.apps || []).includes(slug));
+    if (!folder) return;
+    const after = () => {
+      Home._layoutCache = null;
+      // The folder this sheet was showing is gone (or the app left it).
+      if (Home._folderSheet) {
+        const sheet = Home._folderSheet;
+        Home._folderSheet = null;
+        if (sheet && typeof sheet.dismiss === 'function') sheet.dismiss();
+      }
+      Home.render();
+    };
+    if (Home._layoutIsDemo) {
+      const folders = (Home._folders || [])
+        .map((f) => (String(f.id) === String(folder.id)
+          ? { ...f, apps: (f.apps || []).filter((s) => s !== slug) }
+          : f))
+        .filter((f) => (f.apps || []).length > 0);
+      Home._folders = folders;
+      after();
+      return;
+    }
+    try {
+      const res = await fetch(
+        `/api/home-folders/${encodeURIComponent(folder.id)}/apps/${encodeURIComponent(slug)}`,
+        { method: 'DELETE', credentials: 'same-origin' },
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      Home._adoptFolderState(await res.json());
+      after();
+    } catch (err) {
+      await Home._folderFailToast('Couldn’t save your folder.');
+    }
   },
 
   // #1838: the kit's popover dismisses itself from a document-level
@@ -4471,6 +4784,13 @@ const Home = {
   _itemFor(el) {
     if (!el) return null;
     const layout = Home._layoutCache || [];
+    // A FOLDER tile carries `data-folder`, not `data-slug` — the tile's face
+    // is its members, so the element's identity is the folder id.
+    const folderId = el.dataset?.folder;
+    if (folderId != null && folderId !== '') {
+      return layout.find((it) => it.type === 'folder'
+        && String(it.id) === String(folderId)) || null;
+    }
     const slug = el.dataset?.slug;
     return layout.find((it) => it.type === 'app' && it.slug === slug)
       || (Home._incoming && Home._incoming.slug === slug ? Home._incoming : null);
@@ -4620,6 +4940,162 @@ const Home = {
     Home._persistLayout(cols, next);
   },
 
+  // ── Hold to fold ───────────────────────────────────────────────────
+  //
+  // Dragging one app ONTO another makes a folder — but only on purpose. A
+  // drop between tiles must keep moving tiles the way it always has, so the
+  // fold arms only while the dragged APP's centre sits in the central half
+  // of an OCCUPIED overlay cell for 500ms. The outline on the cell
+  // (data-folder-drop, app.css) is the promise; a release before it arms is
+  // an ordinary placement, and the kit fires onHover only on a cell change,
+  // so the arm has to manage its own cleanup.
+  _foldTimer: null,
+  _foldKey: null,
+  _foldArm: null,
+  // The last hover, so a disarm can restore the displacement preview the
+  // arm cleared — the kit will not re-fire onHover until the cell changes.
+  _foldHoverLast: null,
+  // Optimistic folder ids until the server names one. Negative, so they can
+  // never collide with a real SERIAL id.
+  _foldTempId: -1,
+
+  // What (if anything) the pointer's cell could fold onto right now.
+  _foldTargetAt(cell, info, cols) {
+    if (!cell) return null;
+    const dragged = Home._itemFor(info && info.item);
+    // Only an app tile folds. A FOLDER dragged onto anything just moves, and
+    // a card dragged in from Discover was never on the canvas to fold with.
+    if (!dragged || dragged.type !== 'app') return null;
+    const layout = Home.currentLayoutCached(cols);
+    const occupant = layout.find((it) => (
+      it.col === cell.col && it.row === cell.row && it.row < HomeLayout.MAX_ROWS
+    ));
+    if (!occupant || HomeLayout.idOf(occupant) === HomeLayout.idOf(dragged)) return null;
+    // Central half of the overlay cell, inset 25% a side — measured, not
+    // assumed, because the overlay owns the real geometry.
+    const overlay = Home._overlayEl;
+    const cellEl = overlay && overlay.querySelector(`[data-cell="${cell.col},${cell.row}"]`);
+    if (!cellEl) return null;
+    const r = cellEl.getBoundingClientRect();
+    if (!r || !r.width || !r.height) return null;
+    if (!Number.isFinite(info?.centerX) || !Number.isFinite(info?.centerY)) return null;
+    if (info.centerX < r.left + r.width * 0.25 || info.centerX > r.right - r.width * 0.25) return null;
+    if (info.centerY < r.top + r.height * 0.25 || info.centerY > r.bottom - r.height * 0.25) return null;
+    return { targetId: HomeLayout.idOf(occupant), cell: { col: cell.col, row: cell.row } };
+  },
+
+  // Called from cellFromPoint on every resolve — start, keep or drop the
+  // 500ms hold.
+  _foldUpdate(cell, info, cols) {
+    const target = Home._foldTargetAt(cell, info, cols);
+    if (!target) { Home._foldDisarm(); return; }
+    const key = `${target.targetId}@${target.cell.col},${target.cell.row}`;
+    if (Home._foldKey === key && (Home._foldTimer || Home._foldArm)) return;
+    Home._foldDisarm();
+    Home._foldKey = key;
+    Home._foldTimer = setTimeout(() => {
+      Home._foldTimer = null;
+      Home._foldArm = { targetId: target.targetId, cell: target.cell };
+      Home._clearPreview();
+      const overlay = Home._overlayEl;
+      if (overlay) {
+        // One affordance at a time: the fold outline replaces the
+        // displacement tint while the arm holds.
+        overlay.querySelectorAll('.home-grid-cell--on').forEach((c) => {
+          c.classList.remove('home-grid-cell--on');
+        });
+        const t = overlay.querySelector(`[data-cell="${target.cell.col},${target.cell.row}"]`);
+        if (t) t.setAttribute('data-folder-drop', '1');
+      }
+    }, 500);
+  },
+
+  _foldDisarm() {
+    if (Home._foldTimer) { clearTimeout(Home._foldTimer); Home._foldTimer = null; }
+    Home._foldKey = null;
+    if (!Home._foldArm) return;
+    Home._foldArm = null;
+    const overlay = Home._overlayEl;
+    if (overlay) {
+      overlay.querySelectorAll('[data-folder-drop]').forEach((c) => {
+        c.removeAttribute('data-folder-drop');
+      });
+    }
+    // Restore the preview for the cell the pointer is still on.
+    const last = Home._foldHoverLast;
+    if (last && last.cell && !Home._isWidgetDropCell(last.cell)) {
+      Home._previewDrop(last.el, last.cell, last.ok, last.cols);
+    }
+  },
+
+  // The armed release: fold the dragged app onto its target. Optimistic —
+  // the folder exists locally the moment this runs, the repaint (deferred to
+  // onSettle while the gesture holds) already shows it, and the POST then
+  // adopts the server's answer. A failure reverts to server truth, the same
+  // shape _persistLayout reverts with.
+  async _foldOnto(el, arm, cols) {
+    const dragged = Home._itemFor(el);
+    if (!dragged || dragged.type !== 'app') return;
+    const ontoFolder = arm.targetId.startsWith('folder:');
+    const targetSlug = ontoFolder ? null : arm.targetId.slice(4);
+    const draggedSlug = dragged.slug;
+
+    const folders = (Home._folders || []).slice();
+    let folder;
+    if (ontoFolder) {
+      folder = folders.find((f) => String(f.id) === String(arm.targetId.slice(7)));
+      if (!folder) return;
+      if (!folder.apps.includes(draggedSlug)) {
+        folder = { ...folder, apps: [...folder.apps, draggedSlug] };
+      }
+    } else {
+      folder = { id: Home._foldTempId--, name: 'New folder', apps: [targetSlug, draggedSlug] };
+      folders.push(folder);
+    }
+    Home._folders = folders;
+
+    // The two tiles leave the canvas; the folder takes the armed cell.
+    const layout = Home.currentLayoutCached(cols).filter((it) => (
+      HomeLayout.idOf(it) !== arm.targetId && HomeLayout.idOf(it) !== HomeLayout.idOf(dragged)
+    ));
+    const next = [...layout, {
+      type: 'folder', id: folder.id, col: arm.cell.col, row: arm.cell.row,
+    }];
+    Home._layoutCache = next;
+    if (!Home._layouts) Home._layouts = {};
+    Home._layouts[String(cols)] = next;
+    Home._rerenderPending = true;
+
+    // The staging demo payload is read-only by contract — only the local
+    // update happens, the same as moving tiles there today.
+    if (Home._layoutIsDemo) return;
+
+    try {
+      const res = await fetch(ontoFolder
+        ? `/api/home-folders/${encodeURIComponent(folder.id)}/apps`
+        : '/api/home-folders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(ontoFolder
+          ? { slug: draggedSlug }
+          : { slugs: [targetSlug, draggedSlug], cols, col: arm.cell.col, row: arm.cell.row }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      if (json && json.layouts) {
+        Home._layouts = json.layouts;
+        Home._folders = json.folders || [];
+        Home._layoutFetchedAt = Date.now();
+      }
+    } catch (err) {
+      PlatformUI.toast('Couldn’t save your folder.');
+      await Home._ensureLayoutLoaded({ force: true });
+    }
+    if (Home._dragActive) Home._rerenderPending = true;
+    else Home.render();
+  },
+
   // ===== The drag-time grid overlay =====
   //
   // While something is lifted, the grid it snaps to is drawn underneath it:
@@ -4707,6 +5183,9 @@ const Home = {
   },
 
   _hideGridOverlay() {
+    // Drops the hold-to-fold arm with everything else: a gesture that ends
+    // never leaves an outline behind.
+    Home._foldDisarm();
     Home._clearPreview();
     Home._planMemo = null;
     if (Home._overlayEl && Home._overlayEl.parentNode) {
@@ -4768,6 +5247,16 @@ const Home = {
   // a drag into free space with nothing displaced.
   _rectForCell(el, cell, cols) {
     const overlay = Home._overlayEl;
+    // An armed fold settles on the armed overlay cell itself — there is no
+    // placement plan to read (the fold is a membership write, not a move).
+    if (Home._foldArm && overlay) {
+      const armed = overlay.querySelector(
+        `[data-cell="${Home._foldArm.cell.col},${Home._foldArm.cell.row}"]`);
+      if (armed) {
+        const ar = armed.getBoundingClientRect();
+        return { left: ar.left, top: ar.top };
+      }
+    }
     const plan = Home._planFor(el, cell, cols);
     if (!overlay || !plan) return null;
     const placed = plan.next.find((it) => HomeLayout.idOf(it) === HomeLayout.idOf(plan.item));

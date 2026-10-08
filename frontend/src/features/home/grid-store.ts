@@ -89,11 +89,26 @@ export interface HomeAppView {
 }
 
 /**
- * One placed tile. A single shape rather than a union: since the UI overhaul
- * moved the three widgets out to fixed sections, every item on the launcher
- * canvas is an app.
+ * One FOLDER tile's rendered facts, resolved by home.js the same way a
+ * card's are. `apps` are the member tiles (the sheet draws them), `preview`
+ * up to four icon views for the tile's 2x2 face.
  */
-export type GridItem = { kind: 'card'; placement: GridPlacement | null; app: HomeAppView };
+export interface FolderView {
+  id: number;
+  name: string;
+  apps: HomeAppView[];
+  preview: IconView[];
+}
+
+/**
+ * One placed tile. A two-armed union now: an app card, or a FOLDER — since
+ * folders joined the canvas every item is still 1x1, and a folder tile is
+ * drawn from its member apps rather than from one app's facts. The header
+ * note below that called this a single shape predates folders.
+ */
+export type GridItem =
+  | { kind: 'card'; placement: GridPlacement | null; app: HomeAppView }
+  | { kind: 'folder'; placement: GridPlacement | null; folder: FolderView };
 
 /**
  * The launcher's trailing "Create an app" tile (the prototype's scrHome ends

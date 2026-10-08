@@ -2929,6 +2929,64 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_user_home_layout_widget
 CREATE INDEX IF NOT EXISTS idx_user_home_layout_read
   ON user_home_layout(user_id, cols);
 
+-- ── Home screen FOLDERS (per user) ─────────────────────────────────────
+--
+-- A folder gathers apps on My apps into one tile. The folder itself is a
+-- row here (its name is the only state); its members live in
+-- user_home_folder_apps with an order; its CELL on the launcher canvas is
+-- a user_home_layout row with item_type 'folder' (one per width, below).
+--
+-- Per user, like the layout it belongs to. Not staging:private, for the
+-- same reason: a display preference with no sensitive content.
+CREATE TABLE IF NOT EXISTS user_home_folders (
+  id          SERIAL PRIMARY KEY,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name        TEXT NOT NULL DEFAULT 'New folder'
+    CONSTRAINT user_home_folder_name CHECK (char_length(name) BETWEEN 1 AND 40),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_user_home_folders_user
+  ON user_home_folders(user_id);
+
+-- Membership, ordered. An app is in at most one of a person's folders
+-- (UNIQUE (user_id, app_id)), so moving an app between folders is a
+-- membership rewrite, never a copy. A deleted app leaves its folder for
+-- free.
+CREATE TABLE IF NOT EXISTS user_home_folder_apps (
+  folder_id   INTEGER NOT NULL REFERENCES user_home_folders(id) ON DELETE CASCADE,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  app_id      INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  position    INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (folder_id, app_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_home_folder_apps_user
+  ON user_home_folder_apps(user_id, app_id);
+
+-- The folder's cell, in each stored width. Deleting a folder vacates its
+-- cell in both widths for free.
+ALTER TABLE user_home_layout ADD COLUMN IF NOT EXISTS folder_id
+  INTEGER REFERENCES user_home_folders(id) ON DELETE CASCADE;
+
+-- The kind CHECK gains its third arm. Re-added in a DO block rather than
+-- edited into the CREATE TABLE above so an existing database is upgraded
+-- in place (same idiom as users_dev_flow_preference_chk): the app and
+-- widget arms now also require the folder cell to be empty, and the new
+-- arm requires exactly the folder id to be set.
+DO $$
+BEGIN
+  ALTER TABLE user_home_layout DROP CONSTRAINT IF EXISTS user_home_layout_kind;
+  ALTER TABLE user_home_layout ADD CONSTRAINT user_home_layout_kind CHECK (
+    (item_type = 'app' AND app_id IS NOT NULL AND widget_key IS NULL AND folder_id IS NULL)
+    OR (item_type = 'widget' AND widget_key IS NOT NULL AND app_id IS NULL AND folder_id IS NULL)
+    OR (item_type = 'folder' AND folder_id IS NOT NULL AND app_id IS NULL AND widget_key IS NULL)
+  );
+END $$;
+
+-- One cell per folder per width.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_home_layout_folder
+  ON user_home_layout(user_id, cols, folder_id) WHERE folder_id IS NOT NULL;
+
 -- Admin-curated "Find more apps" row on the home screen. Global (one
 -- ordered list for everyone — no per-user targeting), display-only, and
 -- zero effect on access: the row is derived client-side from the

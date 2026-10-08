@@ -69,7 +69,7 @@ import { AppsLoadError } from '../apps/load-error';
 import { NO_APPS_YET } from '../apps/no-apps-yet';
 import { TileSkeleton } from '../apps/tile-skeleton';
 import { CreateTile } from './create-tile';
-import { gridStore, type GridItem, type GridPlacement, type HomeAppView, type IconView } from './grid-store';
+import { gridStore, type FolderView, type GridItem, type GridPlacement, type HomeAppView, type IconView } from './grid-store';
 
 function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).Home : null) || null;
@@ -384,6 +384,108 @@ export function AppsEmptyNote() {
   );
 }
 
+/**
+ * One FOLDER tile. An ordinary My apps tile — the same shell, cell
+ * attribute and title line as AppCardTile — whose face shows up to four
+ * small copies of the icons inside it. Its identity is `data-folder` (no
+ * `data-slug`: there is no app behind it), it carries `data-yours` so the
+ * kit's drag recognizer picks it up, and it shares the long-press wiring so
+ * hold and right-click open its menu through Home.openCardMenu — which
+ * delegates to the folder menu because the anchor carries `data-folder`.
+ *
+ * Tap (after the same `_suppressClick` guard a drag's trailing click needs)
+ * and Enter open the folder sheet; the tile is keyed `folder:<id>` so React
+ * keeps the node across paints.
+ */
+function FolderTile({ folder, style }: { folder: FolderView; style?: string }) {
+  const node = useRef<HTMLDivElement | null>(null);
+  const wireRef = useCallback((el: HTMLDivElement | null) => {
+    node.current = el;
+    if (!el || wired.has(el)) return;
+    wired.add(el);
+    const N = controller();
+    N?._wirePrewarm?.(el);
+  }, [folder.id]);
+
+  useEffect(() => {
+    if (!node.current) return;
+    return controller()?._wireCardLongPressMenu?.(node.current);
+  }, [folder.id]);
+
+  // The cell is an attribute, exactly like AppCardTile's — see that note:
+  // the CSSOM would fold grid-column + grid-row into a grid-area shorthand.
+  useIsomorphicLayoutEffect(() => {
+    const el = node.current;
+    if (!el) return;
+    if (style) el.setAttribute('style', style);
+    else el.removeAttribute('style');
+  }, [style]);
+
+  const open = () => controller()?.openFolder?.(folder.id);
+
+  return (
+    <div
+      ref={wireRef}
+      className="app-card app-card-draggable touch-pan-y relative rounded-xl transition-colors p-3 flex flex-col items-center text-center gap-1.5 cursor-grab"
+      data-folder={folder.id}
+      tabIndex={0}
+      role="button"
+      aria-label={`${folder.name}, folder, ${folder.apps.length} apps`}
+      aria-haspopup="menu"
+      title={`${folder.name}. Hold or right-click for folder actions`}
+      data-yours="true"
+      onPointerDownCapture={(e) => {
+        const N = controller();
+        if (N) N._cardPointerType = e.pointerType;
+      }}
+      onPointerCancel={() => { controller()?.closeCardMenu?.(); }}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        const N = controller();
+        if (!N) return;
+        if (N._cardPointerType === 'touch') {
+          if (!N._menu) N.openCardMenu?.(null, e.currentTarget);
+          return;
+        }
+        if ((N._menuAnchor || N._menuAnchorAtPress) === e.currentTarget) {
+          N.closeCardMenu?.();
+          return;
+        }
+        N.openCardMenu?.(null, e.currentTarget);
+      }}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return;
+        if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
+          e.preventDefault();
+          controller()?.openCardMenu?.(null, e.currentTarget);
+        } else if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          if (!e.repeat) open();
+        }
+      }}
+      onClick={(e) => {
+        const N = controller();
+        if (N?._suppressClick) { N._suppressClick = false; return; }
+        open();
+      }}
+    >
+      <div className="relative w-14 h-14 shrink-0">
+        <div
+          className="app-icon-tile w-14 h-14 rounded-2xl overflow-hidden font-bold text-xl"
+          data-icon="folder"
+        >
+          {folder.preview.map((icon, i) => (
+            <AppIcon key={i} icon={icon} />
+          ))}
+        </div>
+      </div>
+      <div className="w-full min-w-0">
+        <div className="app-card-title" title={folder.name}>{folder.name}</div>
+      </div>
+    </div>
+  );
+}
+
 export function AppGrid() {
   const state = useStoreState(gridStore);
   const live = useLiveAppSlugs();
@@ -489,13 +591,21 @@ export function AppGrid() {
       ) : null}
       {empty ? <AppsEmptyNote /> : null}
       {state.items.map((item) => (
-        <AppCardTile
-          key={`card:${item.app.slug}`}
-          app={item.app}
-          style={cellStyle(item)}
-          yours={state.view === 'grid'}
-          live={live.includes(item.app.slug)}
-        />
+        item.kind === 'folder' ? (
+          <FolderTile
+            key={`folder:${item.folder.id}`}
+            folder={item.folder}
+            style={cellStyle(item)}
+          />
+        ) : (
+          <AppCardTile
+            key={`card:${item.app.slug}`}
+            app={item.app}
+            style={cellStyle(item)}
+            yours={state.view === 'grid'}
+            live={live.includes(item.app.slug)}
+          />
+        )
       ))}
       {/*
           "Create an app", the grid's LAST child (./create-tile.tsx). Null

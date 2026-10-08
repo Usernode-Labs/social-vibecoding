@@ -369,6 +369,133 @@ test('a drop of an unknown item persists nothing', async () => {
   assert.equal(fetchCalls.filter((c) => c.method === 'PUT').length, 0);
 });
 
+// ── Hold to fold ──────────────────────────────────────────────────────
+
+// The fold geometry is measured against the overlay, so the tests stand up
+// a fake one whose cells report real rects and carry their own attributes.
+const makeOverlay = (rects) => {
+  const cells = new Map();
+  for (const [key, rect] of Object.entries(rects)) {
+    cells.set(key, {
+      _rect: { ...rect, right: rect.left + rect.width, bottom: rect.top + rect.height },
+      getBoundingClientRect() { return this._rect; },
+      setAttribute(k, v) { this[k] = v; },
+      removeAttribute(k) { delete this[k]; },
+      className: 'home-grid-cell',
+      classList: { remove: () => {} },
+    });
+  }
+  return {
+    cells,
+    querySelector: (sel) => {
+      const m = sel.match(/data-cell="(\d+),(\d+)"/);
+      return m ? (cells.get(`${m[1]},${m[2]}`) || null) : null;
+    },
+    querySelectorAll: (sel) => (
+      sel.includes('data-folder-drop')
+        ? [...cells.values()].filter((c) => c['data-folder-drop'] != null)
+        : []),
+  };
+};
+
+test('a 500ms hold over another tile\'s centre arms a fold', async () => {
+  const { Home } = makeHome();
+  seedLayout(Home);
+  Home.render = () => {};
+  // 'b' occupies (3,0); the fake overlay cell measures 80x80 there.
+  Home._overlayEl = makeOverlay({ '3,0': { left: 300, top: 0, width: 80, height: 80 } });
+  const info = { item: tileEl('a'), centerX: 340, centerY: 40 };
+  Home._foldUpdate({ col: 3, row: 0 }, info, 4);
+  assert.equal(Home._foldArm, null, 'the hold has not elapsed');
+  await new Promise((r) => setTimeout(r, 600));
+  // The arm was made inside home.js's vm realm — compare its shape.
+  assert.equal(JSON.stringify(Home._foldArm),
+    JSON.stringify({ targetId: 'app:b', cell: { col: 3, row: 0 } }));
+  const cell = Home._overlayEl.querySelector('[data-cell="3,0"]');
+  assert.equal(cell['data-folder-drop'], '1', 'the cell promises the fold');
+  Home._foldDisarm();
+});
+
+test('a hold off the centre or cut short stays an ordinary placement', async () => {
+  const { Home, fetchCalls } = makeHome();
+  seedLayout(Home);
+  Home.render = () => {};
+  Home._overlayEl = makeOverlay({ '3,0': { left: 300, top: 0, width: 80, height: 80 } });
+  // The far edge of the cell is outside the central half — no arm.
+  Home._foldUpdate({ col: 3, row: 0 },
+    { item: tileEl('a'), centerX: 306, centerY: 40 }, 4);
+  await new Promise((r) => setTimeout(r, 600));
+  assert.equal(Home._foldArm, null);
+  // A short hold that then moves away is disarmed, not armed late.
+  Home._foldUpdate({ col: 3, row: 0 },
+    { item: tileEl('a'), centerX: 340, centerY: 40 }, 4);
+  Home._foldDisarm();
+  await new Promise((r) => setTimeout(r, 600));
+  assert.equal(Home._foldArm, null);
+  assert.equal(Home._overlayEl.cells.get('3,0')['data-folder-drop'], undefined,
+    'no outline is left behind');
+  // And the release behaves as it always did: a swap, no folder POST.
+  Home._foldUpdate({ col: 3, row: 0 },
+    { item: tileEl('a'), centerX: 340, centerY: 40 }, 4);
+  Home._foldDisarm();
+  Home._onGridPlace(tileEl('a'), { col: 3, row: 0 }, 4);
+  await flush();
+  assert.equal(fetchCalls.filter((c) => c.method === 'POST').length, 0,
+    'no folder was made');
+  assert.equal(fetchCalls.filter((c) => c.method === 'PUT').length, 1,
+    'the drop placed normally');
+});
+
+test('a dragged folder never folds, and an armed release folds instead of placing', async () => {
+  const { Home, fetchCalls } = makeHome();
+  seedLayout(Home);
+  Home.render = () => {};
+  Home._overlayEl = makeOverlay({ '3,0': { left: 300, top: 0, width: 80, height: 80 } });
+  // A folder dragged over 'b' just moves: no fold arms.
+  Home._foldUpdate({ col: 3, row: 0 },
+    { item: { dataset: { folder: '1' } }, centerX: 340, centerY: 40 }, 4);
+  await new Promise((r) => setTimeout(r, 600));
+  assert.equal(Home._foldArm, null, 'a folder drag does not arm');
+  Home._foldDisarm();
+
+  // The armed release: onPlace hands the gesture to _foldOnto.
+  Home._foldArm = { targetId: 'app:b', cell: { col: 3, row: 0 } };
+  Home._onGridPlace = () => {
+    throw new Error('the plain placement must not run');
+  };
+  await Home._foldOnto(tileEl('a'), Home._foldArm, 4);
+  await flush();
+  const post = fetchCalls.find((c) => c.method === 'POST' && c.url === '/api/home-folders');
+  assert.ok(post, 'the folder POST went out');
+  assert.deepEqual(post.body.slugs, ['b', 'a'], 'target first, dragged second');
+  assert.deepEqual([post.body.col, post.body.row], [3, 0]);
+  assert.deepEqual(post.body.cols, 4);
+  assert.equal(fetchCalls.filter((c) => c.method === 'PUT').length, 0,
+    'no plain placement write');
+  // Optimistically the two tiles became one folder tile.
+  const items = Home._layoutCache;
+  assert.equal(items.filter((i) => i.type === 'app').length, 2, 'a and b left the grid');
+  assert.equal(
+    JSON.stringify(items.find((i) => i.type === 'folder')),
+    JSON.stringify({ type: 'folder', id: -1, col: 3, row: 0 }));
+  Home._foldArm = null;
+});
+
+test('hiding the overlay drops the arm with everything else', async () => {
+  const { Home } = makeHome();
+  seedLayout(Home);
+  Home.render = () => {};
+  Home._overlayEl = makeOverlay({ '3,0': { left: 300, top: 0, width: 80, height: 80 } });
+  Home._foldArm = { targetId: 'app:b', cell: { col: 3, row: 0 } };
+  Home._foldHoverLast = { el: tileEl('a'), cell: { col: 3, row: 0 }, ok: true, cols: 4 };
+  // The restore path needs a layout-backed preview; stub it and assert the
+  // arm itself is what went away.
+  Home._previewDrop = () => {};
+  Home._hideGridOverlay();
+  assert.equal(Home._foldArm, null);
+  assert.equal(Home._overlayEl, null);
+});
+
 // The overlay must tint an occupied target, or the grid lies about where a
 // release will land. canPlace and place are the same decision.
 test('canPlace accepts occupied targets and self-overlap', () => {

@@ -2116,6 +2116,55 @@ test('app menus use an anchored popover even on touch', () => {
   assert.ok(options.items.length > 0);
 });
 
+test('a folder tile\'s menu renames and removes, named after the folder', () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  Home._apps = [baseApp()];
+  sandbox.document.createElement = () => ({});
+  let options;
+  sandbox.PlatformUI = { popover: (opts) => { options = opts; return Promise.resolve(null); } };
+  const anchor = {
+    dataset: { folder: '1' },
+    getBoundingClientRect: () => ({ left: 20, top: 20, right: 76, bottom: 76 }),
+  };
+  Home._folders = [{ id: 1, name: 'Games', apps: ['demo-app'] }];
+  Home.openCardMenu(null, anchor);
+  assert.equal(options.title, 'Games');
+  assert.equal(
+    JSON.stringify(options.items.map((i) => i.label)),
+    JSON.stringify(['Rename', 'Remove folder']));
+  assert.equal(options.items[1].destructive, true);
+  // No header is built for a folder: there is no app behind the tile.
+  assert.equal(options.headerEl, undefined);
+  // An unknown folder id shows nothing rather than an empty menu.
+  const ghost = {
+    dataset: { folder: '99' },
+    getBoundingClientRect: () => ({ left: 20, top: 20, right: 76, bottom: 76 }),
+  };
+  Home.openCardMenu(null, ghost);
+  assert.equal(options.title, 'Games', 'the ghost menu never reached the popover');
+});
+
+test('"Take out of folder" rides the app menu only inside the sheet', () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  Home._apps = [baseApp()];
+  Home.renderMenuHeaderHtml = () => 'Demo App';
+  sandbox.document.createElement = () => ({});
+  let options;
+  sandbox.PlatformUI = { popover: (opts) => { options = opts; return Promise.resolve(null); } };
+  const anchorFor = (dataset) => ({
+    dataset,
+    getBoundingClientRect: () => ({ left: 20, top: 20, right: 76, bottom: 76 }),
+  });
+  Home.openCardMenu('demo-app', anchorFor({ slug: 'demo-app' }));
+  assert.equal(
+    options.items.some((i) => i.label === 'Take out of folder'), false,
+    'a plain My apps tile has no way out of a folder it is not in');
+  Home.openCardMenu('demo-app', anchorFor({ slug: 'demo-app', inFolder: 'true' }));
+  const out = options.items.find((i) => i.label === 'Take out of folder');
+  assert.ok(out, 'the sheet\'s tile offers the way out');
+  assert.equal(options.items[0], out, 'it is the first item');
+});
+
 test('movement dismissing an open search menu still suppresses the release click', () => {
   const h = holdHarness();
   h.fire('pointerdown');
