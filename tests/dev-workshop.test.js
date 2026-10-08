@@ -4667,7 +4667,9 @@ test('the sheets move, stop above the keyboard, and More opens the card page', (
   // sent the first row's click to the wrong descriptor on a desktop.
   assert.match(appView, /_cardMenuItems\(key, own\)/);
   assert.match(appView, /_cardMenuItems\(open\.key, open\.own\)/);
-  assert.match(appView, /label: 'Open card',/);
+  // #3676: the row says it only shows the item, so nobody wonders what
+  // opening it does.
+  assert.match(appView, /label: 'See full details',/);
 });
 
 test('the lander fills its scroller without a percentage in the floor', () => {

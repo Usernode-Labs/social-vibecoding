@@ -814,17 +814,17 @@ test('?shot=welcome-tour opens the tour at step 1 and writes nothing (#3567)', (
     'and it asserts the communities step\'s own copy');
 });
 
-test('the communities step names what the screen names (#3567)', () => {
-  // AGENTS.md, "Communities own projects": a community owns projects, and
-  // people see it by its audience, in the screen's own words.
+test('the communities step says what a community does, in three short sentences (#3567, #3676)', () => {
+  // AGENTS.md, "Communities own projects": a community owns projects. The
+  // audiences (Just you, Private, Public) are named on the Communities
+  // screen itself; listing them here made the first card four sentences,
+  // which a new member read as heavy (#3676).
   const step = steps.TOUR_STEPS[0];
   assert.equal(step.id, 'communities');
   assert.equal(step.title, 'Communities');
   assert.match(step.body, /communities that build projects together/);
   assert.match(step.body, /propose a change, and the group votes it in/);
-  for (const audience of ['Just you', 'a Private community', 'a Public community']) {
-    assert.ok(step.body.includes(audience), `names ${audience}`);
-  }
+  assert.ok(step.body.split(/(?<=\.) /).length <= 3, 'at most three sentences');
   assert.doesNotMatch(step.body, /\bapps?\b/, 'a thing being built is a project');
 });
 

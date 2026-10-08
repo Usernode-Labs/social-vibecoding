@@ -222,9 +222,10 @@ test('an owned imported PR shows proposal metadata with one promotion action', (
   assert.doesNotMatch(html, />Yes \(|>No \(/, 'voting stays hidden until promotion');
   assert.doesNotMatch(html, /Make visible|>Hide<|Share chat/);
   assert.equal(menuLabels(AppView, html).join('|'),
-    'Change priority…|Change category…|Change assignee…|View PR on GitHub|View checks',
+    'Vote to change priority…|Vote to change category…|Vote on who takes this…|View PR on GitHub|View checks',
     'the menu edits proposal attributes without exposing dev-session actions');
-  assert.ok(!menuHas(AppView, html, /Archive|Open session|Vote/));
+  // The attribute rows say Vote (#3676); a vote on the change itself is not a row.
+  assert.ok(!menuHas(AppView, html, /Archive|Open session|^Vote(?! on | to change )/));
 });
 
 test('another user’s imported PR names its people and exposes proposal attributes', () => {
@@ -238,7 +239,7 @@ test('another user’s imported PR names its people and exposes proposal attribu
   assert.match(html, /@sam/);
   assert.match(html, /Imported pull request by octo-contributor · imported by maya/);
   assert.doesNotMatch(html, /Ask for approval|is working on this/);
-  assert.ok(menuHas(AppView, html, /Change assignee/));
+  assert.ok(menuHas(AppView, html, /Vote on who takes this/));
   assert.ok(menuHas(AppView, html, /View PR on GitHub/));
 });
 

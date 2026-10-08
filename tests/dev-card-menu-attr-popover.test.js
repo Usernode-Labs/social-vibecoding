@@ -202,7 +202,7 @@ test('the ⋯ row for an attribute is wired to open its picker', () => {
   const rows = attrRows(AppView);
   const assignee = rows.find((it) => it.icon === 'assignee');
   assert.ok(assignee, 'an assignee row is offered');
-  assert.match(assignee.label, /assign/i);
+  assert.match(assignee.label, /who takes this/i);
   assert.equal(typeof assignee.act, 'function', 'and it is not an inert label');
 });
 

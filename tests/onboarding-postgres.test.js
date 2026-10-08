@@ -249,8 +249,8 @@ test('the first run: join screen and Getting started, against the full schema', 
     assert.equal(card.show, true);
     assert.deepEqual(card.steps.map((s) => s.kind), ['tour', 'challenge', 'challenge', 'challenge', 'challenge']);
     assert.deepEqual(card.steps.map((s) => s.title),
-      ['Take the 1-minute tour', 'Join a community', 'Try an app', 'Vote on a change', 'Suggest an improvement']);
-    assert.deepEqual(card.steps.map((s) => s.detail), ['See how Homeroom works.', 'Find people to build with.',
+      ['See how Homeroom works', 'Join a community', 'Try an app', 'Vote on a change', 'Suggest an improvement']);
+    assert.deepEqual(card.steps.map((s) => s.detail), ['A few short cards on where things are. Skip any time.', 'Find people to build with.',
       'Open an app and try it.', 'Help decide what ships next.', 'Tell a community what would make it better.']);
     assert.deepEqual(card.steps.map((s) => s.reward), [null, '500 pts', '500 pts', '250', '250 pts'],
       'the admin\'s words, as written');

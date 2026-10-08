@@ -9,7 +9,7 @@
  * until they were done). They overlapped and disagreed on "done". Now there
  * is one list, here:
  *
- *   1. Take the 1-minute tour   the welcome tour (./tour), finished or
+ *   1. See how Homeroom works   the welcome tour (./tour), finished or
  *                               skipped on any device (#3240); pays nothing
  *   2.. the season's First challenges, in the admin's order, with their own
  *       titles, tasks and rewards (Join a community, Try an app, Vote on an
@@ -203,7 +203,7 @@ const CITY_GARDEN: GettingStartedApp = { slug: 'city-garden', name: 'City garden
 // The fixtures' steps, in the order and words evan set the season up with.
 // Rewards are the admin's prose, as the server would send them.
 const FIXTURE_STEPS: Array<Omit<GettingStartedStep, 'done' | 'earned_points'>> = [
-  { id: 'tour', kind: 'tour', action: 'tour', title: 'Take the 1-minute tour', detail: 'See how Homeroom works.', href: null, reward: null },
+  { id: 'tour', kind: 'tour', action: 'tour', title: 'See how Homeroom works', detail: 'A few short cards on where things are. Skip any time.', href: null, reward: null },
   {
     id: 'challenge-41', kind: 'challenge', action: 'join', challenge_id: 41, event_id: 7,
     title: 'Join a community', detail: 'Find people to build with.', href: '#apps', reward: '500 pts',

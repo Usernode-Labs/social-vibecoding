@@ -118,9 +118,10 @@ export interface TourStep {
  * private community's mark, Suggest an improvement posts a request "the members"
  * vote on. So the tour opens on the idea everything after it rests on:
  * communities build projects together, by proposing changes and voting them
- * in. It names the three audiences the way the screen does (AGENTS.md,
- * "Communities own projects"): Just you, a Private community, a Public
- * community. It points at the Communities tab, which is where the ones you
+ * in. It named the three audiences too (Just you, a Private community, a
+ * Public community) until #3676: a new member read the step's four sentences
+ * as heavy, and the Communities screen names each audience where it lists
+ * them, so the step keeps to the idea and where to find yours. It points at the Communities tab, which is where the ones you
  * are in live, and like every step but the menu's it describes its target
  * rather than asking for a press: the tab navigates off Home.
  */
@@ -133,7 +134,7 @@ export const TOUR_STEPS: readonly TourStep[] = [
     // describing what the tab shows.
     id: 'communities',
     title: 'Communities',
-    body: 'Homeroom is made of communities that build projects together. Anyone in one can propose a change, and the group votes it in. A community is Just you, a Private community or a Public community. Yours are here.',
+    body: 'Homeroom is made of communities that build projects together. Members propose a change, and the group votes it in. Yours are here.',
     targets: ['#platform-tab-workshop'],
   },
   {

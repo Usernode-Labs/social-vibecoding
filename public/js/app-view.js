@@ -6245,9 +6245,11 @@ const AppView = {
     const rows = folded.length ? folded.map((a) => AppView._foldedMenuItem(a)).concat(list) : list;
     if (!own) return rows;
     return [{
-      label: 'Open card',
+      // #3676: "Open card" left a new member asking what opening it would
+      // do. It only reads: the row says so.
+      label: 'See full details',
       icon: 'open',
-      title: 'The card on its own page',
+      title: 'Opens it on its own page to read. It does not change it.',
       act: () => { window.location.hash = own; },
     }].concat(rows);
   },
@@ -6258,8 +6260,8 @@ const AppView = {
   // The click event a ⋯ menu row is currently acting on, or null.
   //
   // A row's `act()` runs INSIDE the click dispatch that chose it, and three
-  // of the rows ("Change assignee…" / "Change priority…" / "Change
-  // category…") open the body-mounted #attr-popover synchronously. So that
+  // of the rows (the priority, category and assignee votes) open the
+  // body-mounted #attr-popover synchronously. So that
   // very click carried on bubbling up to the document-level "a click outside
   // the popover dismisses it" handler in _attrInit — whose target was the
   // menu row, i.e. outside #attr-popover (and by then removed from the DOM
@@ -13838,7 +13840,13 @@ const AppView = {
     if (served.includes('awaiting_approval')) return `${conflict} · fixed after the vote`;
     if (served.includes('budget')) return `${conflict} · resumes after the daily budget reset`;
     if (n || fresh.mergeability === 'conflict' || /conflict/.test(String((g.detail && g.detail.note) || ''))) {
-      return `${conflict} · queued to fix`;
+      // #3676: "queued to fix" left the viewer asking what they should do.
+      // The conflict lane skips a head whose checks are failing
+      // (merge-queue.js conflictAdmission: the next push replaces it), so
+      // that case names what it waits on; otherwise Homeroom resolves it and
+      // nothing is asked of anyone.
+      if (p.check_state === 'failing' || p.check_state === 'error') return `${conflict} · fixed once the checks pass`;
+      return `${conflict} · Homeroom will fix it, nothing to do`;
     }
     // Not a conflict the columns can see (a recording from before direct
     // merges, say): the gate's own words, as a sentence.
@@ -17168,7 +17176,7 @@ const AppView = {
         && !!AppView._placedCategoryFor(targetType, targetRef);
       if (omitUnset && !(summary && summary.top) && !placed) continue;
       // B10c: who is on it shows only when somebody is. "Unassigned" was a
-      // grey chip saying nothing; the ⋯ row "Assign someone…" sets it.
+      // grey chip saying nothing; the ⋯ row "Suggest who takes this…" sets it.
       if (field === 'assignee' && !(summary && summary.top)) continue;
       out.push(AppView._attrChipSpec(field, targetType, targetRef, summary, readonly));
     }
@@ -17183,10 +17191,13 @@ const AppView = {
   _attrMenuItems(targetType, targetRef, item, opts) {
     if (AppView.readOnly || (opts && opts.readonly)) return [];
     const it = item || {};
+    // #3676: each row says what pressing it does, which is to cast a vote
+    // (or suggest someone), not to set the value outright as "Set priority…"
+    // and "Change assignee…" read.
     const labels = {
-      priority: ['Set priority…', 'Change priority…'],
-      category: ['Set category…', 'Change category…'],
-      assignee: ['Assign someone…', 'Change assignee…'],
+      priority: ['Vote on priority…', 'Vote to change priority…'],
+      category: ['Vote on category…', 'Vote to change category…'],
+      assignee: ['Suggest who takes this…', 'Vote on who takes this…'],
     };
     // No separate grouping row: the card's own CATEGORY chip is the
     // affordance now — tapping it opens this same popover — so a fourth row

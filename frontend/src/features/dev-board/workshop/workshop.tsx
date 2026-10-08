@@ -2788,7 +2788,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
     el,
   ), []);
   const menuKey = row ? row.card.rail.menuKey : undefined;
-  // The card's own page, offered under More as "Open card": here the item IS
+  // The card's own page, offered under More as "See full details": here the item IS
   // the screen, so there is no card face to tap for it (app-view.js's
   // _toggleCardMenu reads it off the trigger).
   const cardHref = row ? openHref(rowSlug(row, slug), row.card) : null;

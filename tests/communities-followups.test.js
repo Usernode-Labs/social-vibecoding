@@ -49,7 +49,7 @@ test('#3270, #3488: the feed\'s rows are a project\'s own Needs you rows, each c
   assert.deepEqual(change.thread, { type: 'session', ref: 8 });
   assert.deepEqual(change.tally, { yes: 2, no: 1 });
   assert.equal(change.app, app);
-  assert.equal(change.card.rail.menuKey, '', 'the ⋯ is Open card alone, which an empty key still reaches');
+  assert.equal(change.card.rail.menuKey, '', 'the ⋯ is See full details alone, which an empty key still reaches');
   // A group decision: no pair, so its vote sheet opens its page.
   assert.equal(decision.yes, null);
   assert.equal(decision.no, null);

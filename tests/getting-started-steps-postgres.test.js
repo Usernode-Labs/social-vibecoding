@@ -364,7 +364,7 @@ test('the Getting started buttons: default app, where Vote goes, and the Worksho
       assert.equal(c.app, null, 'Homeroom and their own project are no default app, and nothing falls back before Join');
       assert.equal(c.vote, null);
       assert.deepEqual(rows(c), [
-        ['tour', 'See how Homeroom works.', 'Start'],
+        ['tour', 'A few short cards on where things are. Skip any time.', 'Start'],
         ['join', 'Find people to build with. Homeroom and Just-you projects don’t count.', 'Join'],
         ['try', ...LOCK], ['vote', ...LOCK], ['suggest', ...LOCK],
       ]);

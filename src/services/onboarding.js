@@ -47,7 +47,7 @@
  * the season from everyone). They overlapped, and disagreed on "done". Since
  * evan's "one list" decision (2026-10-01) there is one:
  *
- *   1. Take the 1-minute tour   the welcome tour finished or skipped, on any
+ *   1. See how Homeroom works   the welcome tour finished or skipped, on any
  *                               device (`users.tour_done_at`, #3237). Code,
  *                               not a challenge: it pays nothing.
  *   2.. the season's First challenges, in the admin's display order
@@ -410,10 +410,12 @@ async function voteTarget(pool, userId, app, opts = {}) {
 }
 
 // The words the tour's row carries. Code, not a challenge: the tour pays
-// nothing, and there is nothing for an admin to rename.
+// nothing, and there is nothing for an admin to rename. #3676: not "Take the
+// 1-minute tour"; a new member said nobody gives onboarding a minute, so the
+// row says what it shows and that it can be left.
 const TOUR_STEP = Object.freeze({
-  title: 'Take the 1-minute tour',
-  detail: 'See how Homeroom works.',
+  title: 'See how Homeroom works',
+  detail: 'A few short cards on where things are. Skip any time.',
 });
 
 /**

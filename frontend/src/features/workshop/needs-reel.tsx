@@ -116,7 +116,7 @@ export function reelRows(
         chatCount: null,
         actions: [],
         actionPreview: null,
-        // No menu of its own across projects: the ⋯ is "Open card" alone
+        // No menu of its own across projects: the ⋯ is "See full details" alone
         // (AppView._cardMenuItems), which an empty key still reaches.
         rail: { menuKey: '', chevron: false, preview: null },
         extra: [],
