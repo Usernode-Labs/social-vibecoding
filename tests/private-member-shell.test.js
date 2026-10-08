@@ -92,13 +92,22 @@ test('the shell follows the tier: a reload when it changes, the store told, "Wan
 test('the mark menu: "Go to Homeroom" for a private member, and no terminal or Build it yourself', () => {
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
   assert.match(sheet, /\{mounted && privateMember \? \(\s+<button\s+id="app-menu-row-homeroom"/);
-  assert.match(sheet, /label="Go to Homeroom"/);
+  // A white card leading the list, right under "Suggest an improvement"
+  // (#4401): 20px, one inset hairline, the mark, rows' 15 over 13, a chevron.
+  const card = sheet.slice(sheet.indexOf('id="app-menu-row-homeroom"'));
+  assert.match(card, /^id="app-menu-row-homeroom"\s+type="button"\s+className="[^"]*\brounded-\[20px\][^"]*\bbg-white\b[^"]*shadow-\[inset_0_0_0_1px_var\(--app-sheet-line\)\]/);
+  assert.match(card, /src="\/brand\/homeroom-mark\.png"[\s\S]*?className="platform-mark-tile w-10 h-10/);
+  assert.match(card, /text-\[15px\] font-\[650\][^>]*>Go to Homeroom</);
+  assert.match(card, /text-\[13px\][^>]*>Your Home, your communities and Homeroom bot</);
+  assert.match(card.slice(0, card.indexOf('</button>')), /<ChevronRightIcon/);
   assert.match(sheet, /firstSession\?\.goHome\?\.\(info\)/);
   assert.match(sheet, /\{showTerminal && !privateMember \? \(/);
   assert.match(sheet, /readOnly: writeBarred,\s+\} = useStoreState\(improveStore\);[\s\S]*const readOnly = writeBarred \|\| privateMember;/);
-  // After "Go to community", so it stays the list's first row (dapp.json).
-  assert.ok(sheet.indexOf('id="app-menu-row-workshop"') < sheet.indexOf('id="app-menu-row-homeroom"'));
-  assert.ok(sheet.indexOf('id="app-menu-row-homeroom"') < sheet.indexOf('id="app-menu-row-about"'));
+  // First in the list, inside #switcher-nav, so the quick actions stay its
+  // previous sibling (dapp.json: #improve-quick-actions + #switcher-nav).
+  const nav = sheet.indexOf('id="switcher-nav"');
+  assert.ok(nav < sheet.indexOf('id="app-menu-row-homeroom"'));
+  assert.ok(sheet.indexOf('id="app-menu-row-homeroom"') < sheet.indexOf('id="app-menu-row-workshop"'));
 });
 
 test('the waitlist card: join, an email, a code, then On the waitlist with "Want in sooner?"', () => {
