@@ -122,7 +122,8 @@ url = "${CODEX_URL_PLACEHOLDER}"`;
  * at 12px — 6,330px on a phone before the social accounts at the bottom. Every
  * one of those is reference for a reader who has picked a route, so each is a
  * row now: the summary names the route and says what it costs ("6 steps ·
- * in Plugins & Connectors"), which is what lets someone choose WITHOUT
+ * also sets up Claude Code", "4 steps · in the plugins directory"), which
+ * is what lets someone choose WITHOUT
  * opening any of them.
  *
  * A `<details>` rather than a stateful island, on purpose. settings.js still
@@ -308,8 +309,8 @@ export function ConnectorsSection() {
             #1289: the one-line "Settings → Connectors, paste the URL" summary
             assumed both products still bury custom MCP servers one menu deep,
             and it skipped every step a first-time user actually stalls on —
-            ChatGPT's Plugins & Connectors settings (where custom MCP servers
-            are created from the plugins directory, #4431), Claude's
+            ChatGPT's plugins directory at chatgpt.com/plugins (where custom
+            MCP servers are created, #4431, #4433), Claude's
             per-conversation toggle, the Team/Enterprise Owner requirement. So
             each product gets its own numbered walkthrough, current as of the
             flows the issues document. Wherever the products' generic docs say
@@ -537,7 +538,7 @@ export function ConnectorsSection() {
           </Disclosure>
           </div>
         </Disclosure>
-        <Disclosure title="ChatGPT" hint="6 steps &middot; in Plugins &amp; Connectors">
+        <Disclosure title="ChatGPT" hint="4 steps &middot; in the plugins directory">
           <GuidedSetup id="connector-open-chatgpt" href="https://chatgpt.com/" product="ChatGPT" />
             <ChatgptSetupSteps />
         </Disclosure>

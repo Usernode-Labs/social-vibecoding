@@ -94,37 +94,36 @@ export function ClaudeSetupSteps() {
  * needs only that line, on either screen.
  *
  * Reworked for #4431: custom MCP servers are created from the plugins
- * directory now — Settings &rarr; Plugins &amp; Connectors &rarr; Browse
- * plugins directory &rarr; Add plugin &rarr; Create custom MCP server — and
- * the old Developer-mode gate and Plugins page are gone from the flow. After
- * the server is created it still has to be switched on per chat, in the
- * connector picker.
+ * directory now, and the old Developer-mode gate and Plugins page are gone
+ * from the flow. #4433 cut the front of it again: the directory has its own
+ * address, chatgpt.com/plugins, so the walkthrough opens there directly
+ * instead of walking Settings &rarr; Plugins &amp; Connectors &rarr; Browse
+ * plugins directory first. After the server is created it still has to be
+ * switched on per chat, in the connector picker.
+ *
+ * The one URL the steps may spell out is ChatGPT's own page — it is
+ * third-party and does not move with a fork, unlike the MCP server URL,
+ * which stays "the one above" for the reason the module header gives.
  */
 export function ChatgptSetupSteps() {
   return (
     <>
       <ol className="space-y-2">
-        <SetupStep n={1} title="Use ChatGPT on the web.">
-          Open ChatGPT in your browser. Plugin and MCP setup is currently a web feature.
+        <SetupStep n={1} title="Open the plugins directory.">
+          Go to <a href="https://chatgpt.com/plugins" target="_blank" rel="noopener noreferrer" className="font-semibold text-violet-700 dark:text-violet-400 underline underline-offset-2">chatgpt.com/plugins</a> in your browser. Plugin and MCP setup is currently a web feature.
         </SetupStep>
-        <SetupStep n={2} title="Open Plugins &amp; Connectors.">
-          In ChatGPT, go to <strong className="font-semibold text-zinc-600 dark:text-zinc-400">Settings &rarr; Plugins &amp; Connectors</strong>.
-        </SetupStep>
-        <SetupStep n={3} title="Browse the plugins directory.">
-          Select <strong className="font-semibold text-zinc-600 dark:text-zinc-400">&ldquo;Browse plugins directory&rdquo;</strong>.
-        </SetupStep>
-        <SetupStep n={4} title="Create a custom MCP server.">
+        <SetupStep n={2} title="Create a custom MCP server.">
           Click <strong className="font-semibold text-zinc-600 dark:text-zinc-400">&ldquo;Add plugin&rdquo;</strong>, then choose <strong className="font-semibold text-zinc-600 dark:text-zinc-400">&ldquo;Create custom MCP server&rdquo;</strong>.
         </SetupStep>
-        <SetupStep n={5} title="Enter your MCP server URL.">
+        <SetupStep n={3} title="Enter your MCP server URL.">
           For Homeroom that is the MCP server URL above, a public HTTPS endpoint ending in <code className="font-mono text-zinc-600 dark:text-zinc-400">/mcp</code>. The server must be reachable by ChatGPT; one running only on <code className="font-mono text-zinc-600 dark:text-zinc-400">localhost</code> will not work directly.
         </SetupStep>
-        <SetupStep n={6} title="Turn the server on in a chat.">
+        <SetupStep n={4} title="Turn the server on in a chat.">
           Open the <code className="font-mono text-zinc-600 dark:text-zinc-400">+</code> / connector picker next to the message box, select the server you just created, and set it as active. Now ask ChatGPT to perform something that uses one of the tools, for example: <em>&ldquo;Use my MCP server to list the open support tickets.&rdquo;</em> When appropriate, ChatGPT will call the tools your MCP server exposes and use their results in the conversation.
         </SetupStep>
       </ol>
       <p className={`${CONNECTOR_BODY} mt-3 pt-3 border-t border-zinc-200 dark:border-zinc-800`}>
-        <strong className="font-semibold text-zinc-600 dark:text-zinc-400">In short:</strong> Settings &rarr; Plugins &amp; Connectors &rarr; Browse plugins directory &rarr; Add plugin &rarr; Create custom MCP server &rarr; enter the MCP server URL &rarr; connector picker &rarr; set it active.
+        <strong className="font-semibold text-zinc-600 dark:text-zinc-400">In short:</strong> chatgpt.com/plugins &rarr; Add plugin &rarr; Create custom MCP server &rarr; enter the MCP server URL &rarr; connector picker &rarr; set it active.
       </p>
     </>
   );

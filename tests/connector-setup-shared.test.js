@@ -7,7 +7,7 @@
 // six steps of product-specific prose, which drifts the first time either
 // product moves a button — and the facts here are the ones people already
 // get wrong (the exact connector name, "there is no client secret",
-// ChatGPT's Plugins & Connectors settings, reworked for #4431). So the
+// ChatGPT's plugins directory, reworked for #4431 and #4433). So the
 // steps live in
 // frontend/src/features/settings/connector-setup-steps.tsx and both screens
 // render that module.
@@ -48,14 +48,15 @@ const cardHtml = (view) => renderToHtml(createElement(card().ConnectorSetupInlin
 }));
 
 test('the shared module is the only place the two walkthroughs are written', () => {
-  // Six and six, the counts both routes' summaries in Settings advertise
-  // ("6 steps · also sets up Claude Code", "6 steps · in Plugins &
-  // Connectors" — ChatGPT's reworked to six for #4431).
+  // Six and four, the counts both routes' summaries in Settings advertise
+  // ("6 steps · also sets up Claude Code", "4 steps · in the plugins
+  // directory" — ChatGPT reworked for #4431, then to the direct
+  // chatgpt.com/plugins opening for #4433).
   const claude = STEPS.slice(STEPS.indexOf('export function ClaudeSetupSteps'),
     STEPS.indexOf('export function ChatgptSetupSteps'));
   const chatgpt = STEPS.slice(STEPS.indexOf('export function ChatgptSetupSteps'));
   assert.equal((claude.match(/<SetupStep n=\{\d\}/g) || []).length, 6);
-  assert.equal((chatgpt.match(/<SetupStep n=\{\d\}/g) || []).length, 6);
+  assert.equal((chatgpt.match(/<SetupStep n=\{\d\}/g) || []).length, 4);
 
   // Neither consumer restates them. A `SetupStep` in Settings is legitimate
   // — the Codex and generic-client routes still render rows in that idiom —
@@ -63,7 +64,7 @@ test('the shared module is the only place the two walkthroughs are written', () 
   // are what a copy would have to reproduce.
   for (const [name, src] of [['Settings', SETTINGS_SECTION], ['the launchpad card', INLINE]]) {
     assert.doesNotMatch(src, /Open connector settings\./, `${name} does not restate Claude's steps`);
-    assert.doesNotMatch(src, /Use ChatGPT on the web\./, `${name} does not restate ChatGPT's steps`);
+    assert.doesNotMatch(src, /Open the plugins directory\./, `${name} does not restate ChatGPT's steps`);
   }
   assert.match(SETTINGS_SECTION, /<ClaudeSetupSteps \/>/);
   assert.match(SETTINGS_SECTION, /<ChatgptSetupSteps \/>/);
@@ -273,15 +274,19 @@ test('the card renders the hooks the declared checks select on', () => {
   assert.match(html, /class="dc-flow-actions"/, 'the card reuses the walkthrough\u2019s own action row');
 });
 
-test('a ChatGPT card renders ChatGPT\'s six steps and its recap', () => {
+test('a ChatGPT card renders ChatGPT\'s four steps and its recap', () => {
   const html = cardHtml({ product: 'ChatGPT' });
   assert.match(html, /data-connector-setup="ChatGPT"/);
-  // #4431: the plugins-directory flow, with no Developer mode in it.
-  assert.match(html, /Browse the plugins directory\./);
+  // #4431 moved the flow to the plugins directory; #4433 opened it at the
+  // directory's own address, as a link, with no Developer mode anywhere in
+  // it and no Settings walk first.
+  assert.match(html, /Open the plugins directory\./);
+  assert.match(html, /href="https:\/\/chatgpt\.com\/plugins"/);
   assert.match(html, /Create custom MCP server/);
   assert.doesNotMatch(html, /Developer mode/);
-  assert.equal((html.match(/<li class="flex gap-3">/g) || []).length, 6);
-  assert.match(html, /In short:/);
+  assert.doesNotMatch(html, /Browse plugins directory/, 'no Settings walk first');
+  assert.equal((html.match(/<li class="flex gap-3">/g) || []).length, 4);
+  assert.match(html, /In short:<\/strong> chatgpt\.com\/plugins/);
   assert.doesNotMatch(html, /Add custom connector/, 'and none of Claude\u2019s');
 });
 
