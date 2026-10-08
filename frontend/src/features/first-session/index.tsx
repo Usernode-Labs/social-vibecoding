@@ -61,6 +61,7 @@ import { Wordmark } from '@/components/ui/wordmark';
 
 import { pushDismissible, type Release } from '../../lib/back-stack';
 import { invalidateAppAllowance } from '../dialogs/app-allowance-store.js';
+import { cardPosition } from './card-placement';
 import { joinPicture, JoinedPicture } from './joined-picture';
 import { type Made, type MakeEntry, MakeScreen } from './make';
 import { MadeScreen, madeAppOf, madeAppUrl } from './made';
@@ -458,9 +459,6 @@ export function bringIntoView(step: Pick<TourStep, 'target' | 'revealWith'>, vie
   return true;
 }
 
-/** How far a card near the foot of the screen sits above the bar there. */
-const CARD_GAP = 20;
-
 /**
  * Pure: where the foot of the screen begins, the top of the bars lying along
  * it: the phone's tab bar and the Resume strip on it, each at least half the
@@ -475,11 +473,10 @@ export function footTop(bars: Box[], viewport: { width: number; height: number }
 }
 
 /**
- * The coach card's position for a target box, as inline style. It never
- * covers the tab bar: a card near the foot sits CARD_GAP above the bar (or
- * the screen's edge and its safe area, where there is no bar), including a
- * card about a tab on that bar. A card about something in the top half of
- * the screen sits under it; one about something lower down, over it.
+ * The coach card's position for a target box, as inline style
+ * (./card-placement.ts does the arithmetic, over what this measures). It
+ * never covers the tab bar, and it is always whole on the screen, on a
+ * laptop beside its rail as on a phone (#4182).
  */
 export function cardPlacement(
   box: Box | null,
@@ -487,25 +484,15 @@ export function cardPlacement(
   viewport: { width: number; height: number },
   foot: number = footTop(visibleBoxes(BOTTOM_BARS), viewport),
 ): React.CSSProperties {
-  const H = viewport.height;
-  const aboveFoot: React.CSSProperties = foot < H
-    ? { bottom: H - foot + CARD_GAP }
-    : { bottom: `calc(${CARD_GAP}px + env(safe-area-inset-bottom, 0px))` };
-  if (!box) return aboveFoot;
-  if (step.place && typeof step.place === 'object') {
-    if ('below' in step.place) {
-      const [below] = visibleBoxes(step.place.below);
-      if (below) return { top: below.top + below.height + 12 };
-    } else {
-      const above = document.querySelector(step.place.above);
-      if (above) return { bottom: H - above.getBoundingClientRect().top + 12 };
-    }
-  }
-  if (step.place === 'bottom' || box.height > H * 0.45) return aboveFoot;
-  const middle = box.top + box.height / 2;
-  if (middle >= foot) return aboveFoot;
-  if (middle > H / 2) return { bottom: H - box.top + PAD + 12 };
-  return { top: box.top + box.height + PAD + 12 };
+  const place = step.place;
+  const above = place && typeof place === 'object' && 'above' in place ? document.querySelector(place.above) : null;
+  const [below] = place && typeof place === 'object' && 'below' in place ? visibleBoxes(place.below) : [];
+  return cardPosition(box, place, viewport, {
+    foot,
+    aboveTop: above ? above.getBoundingClientRect().top : null,
+    belowBottom: below ? below.top + below.height : null,
+    pad: PAD,
+  });
 }
 
 /** The tour over the live shell (see the header); exported so a test can draw its card. */

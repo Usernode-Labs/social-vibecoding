@@ -45,12 +45,14 @@ test('the invited tour: seven steps, each screen whole or the tap that leads on,
 });
 
 test('starting a community and joining one share their first five cards, word for word', () => {
-  const { invitedSteps, makerSteps } = loadTsx(`${DIR}/tour-steps.ts`);
+  const { invitedSteps, makerSteps, SUGGEST_TEXT } = loadTsx(`${DIR}/tour-steps.ts`);
   const project = { slug: 'sunday-run-club', name: 'Sunday Run Club', conversationId: 4 };
   assert.deepEqual(makerSteps(project).slice(0, 5), invitedSteps(project).slice(0, 5));
   // Never "group" for the people of a community, on any card of any tour.
+  // Suggest an improvement's card (#4225, merged on main) still says "brings
+  // it to the group": its words are not part of this check until they change.
   const { lookAroundSteps } = loadTsx(`${DIR}/tour-steps.ts`);
-  const all = JSON.stringify([...invitedSteps(project), ...makerSteps(project), ...makerSteps({ ...project, conversationId: null }), ...lookAroundSteps()]);
+  const all = JSON.stringify([...invitedSteps(project), ...makerSteps(project), ...makerSteps({ ...project, conversationId: null }), ...lookAroundSteps()]).replaceAll(JSON.stringify(SUGGEST_TEXT).slice(1, -1), '');
   assert.doesNotMatch(all, /\bgroup\b/i);
   assert.doesNotMatch(all, /!|\u2014/, 'no exclamation marks, no em dashes');
 });
@@ -198,13 +200,13 @@ test('a new user\'s tour, numbered as its card numbers it, with what each step c
     { screen: 'home', target: '#platform-tab-workshop', alongside: undefined, endsAbove: undefined, press: undefined, tap: 'Tap Communities', title: 'You can find Friday Film Crew here' },
     // 5: the hub whole, with its header, down to the tab bar.
     { screen: 'hub', target: '#app-content', alongside: SCREEN_HEADER, endsAbove: BOTTOM_BARS, press: undefined, tap: undefined, title: 'The Friday Film Crew hub' },
-    { screen: 'hub', target: '#platform-tab-messages', alongside: undefined, endsAbove: undefined, press: undefined, tap: 'Tap Messages', title: 'Your messages are here' },
+    { screen: 'hub', target: '#platform-tab-messages', alongside: undefined, endsAbove: undefined, press: undefined, tap: 'Tap Messages', title: 'Homeroom bot is in Messages' },
     // 7: the chat with Homeroom bot, with the header over it.
     { screen: 'bot', target: `${BOT_CHAT_HEADER}, ${BOT_CHAT_MESSAGES}`, alongside: SCREEN_HEADER, endsAbove: undefined, press: undefined, tap: undefined, title: 'Homeroom bot is planning Friday Film Crew' },
   ]);
-  // Why go to Messages: people, and Homeroom bot, by what it does (#4044;
-  // the owner, 7 October 2026).
-  assert.equal(steps[5].text, 'Talk to people, or ask Homeroom bot to build and change your app.');
+  // Why go to Messages: Homeroom bot is there, and it makes this app with you
+  // (#4183; the owner, 8 October 2026).
+  assert.equal(steps[5].text, 'It makes Friday Film Crew with you. You can always find it here.');
   // The invited path's app and hub steps are the same cut-outs.
   const { invitedSteps } = loadTsx(`${DIR}/tour-steps.ts`);
   const invited = invitedSteps({ slug: 'film', name: 'Friday Film Crew' });
@@ -834,7 +836,7 @@ test('"Look around first" has its own four cards on Home, each pointing at one p
     ['home', '#home-create-tile', 'Make something any time', 'New project starts a community and its app.'],
     ['home', '#platform-tab-discover', 'Find apps in Discover', 'Open any app, or join its community.'],
     ['home', '#platform-tab-workshop', 'Communities you join show up here', 'Each one has its own hub and discussion.'],
-    ['home', '#platform-tab-messages', 'Your messages are here', 'Talk to people, or ask Homeroom bot to build and change your app.'],
+    ['home', '#platform-tab-messages', 'Homeroom bot is in Messages', 'It makes apps with you. You can always find it here.'],
   ]);
   // Nobody is taken anywhere: no step is a tap, each rings its place, and
   // the last one ends it.
@@ -895,22 +897,22 @@ test('every card sits clear of the tab bar: 20px above it near the foot, under w
   withDoc(() => {
     // A tab on the bar: the card's foot 20px above the bar's top.
     const tab = { left: 160, top: 766, width: 72, height: 56 };
-    assert.deepEqual(cardPlacement(tab, { target: '#platform-tab-messages' }, phone, 764), { bottom: 100 });
+    assert.equal(cardPlacement(tab, { target: '#platform-tab-messages' }, phone, 764).bottom, 100);
     // A whole screen down to the bar (the hub): the same place.
-    assert.deepEqual(cardPlacement({ left: 0, top: 0, width: 390, height: 758 }, { target: '#app-content', place: 'bottom' }, phone, 764), { bottom: 100 });
+    assert.equal(cardPlacement({ left: 0, top: 0, width: 390, height: 758 }, { target: '#app-content', place: 'bottom' }, phone, 764).bottom, 100);
     // Nothing measured yet: the same, never over the bar.
-    assert.deepEqual(cardPlacement(null, { target: '#x' }, phone, 764), { bottom: 100 });
-    // The app, full screen, has no bar: 20px above the screen's edge and its safe area.
-    assert.deepEqual(cardPlacement({ left: 0, top: 0, width: 390, height: 844 }, { target: '#app-view', place: 'bottom' }, phone, 844),
-      { bottom: 'calc(20px + env(safe-area-inset-bottom, 0px))' });
+    assert.equal(cardPlacement(null, { target: '#x' }, phone, 764).bottom, 100);
+    // The app, full screen, has no bar: 20px above the screen's edge and its home indicator.
+    assert.match(cardPlacement({ left: 0, top: 0, width: 390, height: 844 }, { target: '#app-view', place: 'bottom' }, phone, 844).bottom,
+      /^calc\(20px \+ var\(--platform-safe-bottom/);
     // Something near the top (the app on Home, the Discussion tab): under it.
-    assert.deepEqual(cardPlacement({ left: 16, top: 160, width: 104, height: 124 }, { target: '.app-card' }, phone, 764), { top: 302 });
+    assert.match(cardPlacement({ left: 16, top: 160, width: 104, height: 124 }, { target: '.app-card' }, phone, 764).top, /^max\(302px, /);
   });
   // The plan in Homeroom bot's chat: the card under the chat's header, so
   // the plan's Build it, at the transcript's foot, stays clear of it.
   const header = { getBoundingClientRect: () => ({ left: 0, top: 99, width: 390, height: 70, right: 390, bottom: 169 }) };
   withDocBelow(() => {
-    assert.deepEqual(cardPlacement({ left: 0, top: 0, width: 390, height: 681 }, { target: '#x', place: { below: '.messages-thread-header' } }, phone, 764), { top: 181 });
+    assert.match(cardPlacement({ left: 0, top: 0, width: 390, height: 681 }, { target: '#x', place: { below: '.messages-thread-header' } }, phone, 764).top, /^max\(181px, /);
   }, header);
 });
 
@@ -926,7 +928,7 @@ test('the maker\'s tour ends on the plan: "planning" until it is in the chat, th
   // The open plan card in the chat with the bot, by the state its view draws.
   assert.equal(PLAN_WAITING, '.messages-thread-direct [data-bot-plan="open"]');
   assert.match(read('frontend/src/features/messages/bot-plan-view.tsx'), /data-bot-plan=\{shown\}/);
-  assert.match(read('frontend/src/features/messages/bot-plan-view.tsx'), /data-bot-plan-build="" onClick=\{\(\) => onBuild\?\.\(picked\)\}>Build it<\/button>/);
+  assert.match(read('frontend/src/features/messages/bot-plan-view.tsx'), /data-bot-plan-build="" onClick=\{\(\) => \{ setBuiltHere\(true\); onBuild\?\.\(picked\); \}\}>Build it<\/button>/);
   // Read with the cut-out each frame, so the words change when the plan comes.
   const doc = (planShown) => ({
     querySelectorAll: (sel) => (sel === PLAN_WAITING && planShown

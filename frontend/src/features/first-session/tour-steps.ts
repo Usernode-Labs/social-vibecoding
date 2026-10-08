@@ -279,8 +279,8 @@ export function privateSteps({ slug, name }: TourProject): TourStep[] {
       screen: 'home',
       target: '#platform-tab-messages',
       ringed: true,
-      title: 'Your messages are here',
-      text: 'Talk to people, or ask Homeroom bot to build and change your app.',
+      title: 'Homeroom bot is in Messages',
+      text: `It makes ${name} with you. You can always find it here.`,
     },
     {
       // The card's own heading says what it is for ("Make and share your
@@ -313,8 +313,8 @@ export function makerSteps({ slug, name, conversationId }: TourProject): TourSte
     {
       screen: 'hub',
       target: '#platform-tab-messages',
-      title: 'Your messages are here',
-      text: 'Talk to people, or ask Homeroom bot to build and change your app.',
+      title: 'Homeroom bot is in Messages',
+      text: `It makes ${name} with you. You can always find it here.`,
       tap: 'Tap Messages',
       opensNext: true,
     },
@@ -376,8 +376,8 @@ export function lookAroundSteps(): TourStep[] {
       screen: 'home',
       target: '#platform-tab-messages',
       ringed: true,
-      title: 'Your messages are here',
-      text: 'Talk to people, or ask Homeroom bot to build and change your app.',
+      title: 'Homeroom bot is in Messages',
+      text: 'It makes apps with you. You can always find it here.',
       last: true,
     },
   ];

@@ -36,10 +36,11 @@ test('the private tour: four steps on Home, Next through each, ending on the wai
   assert.deepEqual(steps.map((s) => [s.title, s.text]), [
     ['Best brunch spots is on your Home', 'Open it any time from here.'],
     ['You can find Best brunch spots here', 'Communities lists every community you\'re in.'],
-    ['Your messages are here', 'Talk to people, or ask Homeroom bot to build and change your app.'],
+    ['Homeroom bot is in Messages', 'It makes Best brunch spots with you. You can always find it here.'],
     ['Your own apps start here', 'Join the waitlist to get your spot.'],
   ]);
-  for (const s of steps) assert.equal(s.text.split(/[.?]\s/).length, 1, `one sentence: ${s.text}`);
+  // One short sentence a card; the Messages card says its second ("You can always find it here.").
+  for (const s of steps) assert.ok(s.text.split(/[.?]\s/).length <= (s.title === 'Homeroom bot is in Messages' ? 2 : 1), `short: ${s.text}`);
   assert.doesNotMatch(JSON.stringify(steps.map((s) => [s.title, s.text])), /group/i);
   // Each points at its place and leads on with Next, as "Look around first" does.
   assert.deepEqual(steps.map((s) => !!s.ringed), [true, true, true, true]);
