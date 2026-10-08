@@ -67,7 +67,7 @@ import { timeOfDay } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { PostedViaChip } from './posted-via-chip';
 import { BotRequestCardView, BotStatusChip } from './bot-request';
-import { ImageViewer, openInViewer } from '../image-viewer/image-viewer';
+import { ImageViewer, openInViewer, useInlineImageViewer } from '../image-viewer/image-viewer';
 import { downloadLabel, downloadableImages, saveImages, useCanSaveImage } from '../image-viewer/save-image';
 import { EventRow } from './proposal-event';
 import { QuietCard } from './quiet-card';
@@ -76,6 +76,7 @@ import { LinkEmbeds } from '../messages/link-cards';
 import { openAppTarget } from '../messages/bot-shared';
 import { setUserBlocked } from '../messages/store';
 import { firstUnreadId, transcriptRow } from '../messages/unread-anchor';
+import { displayName, openRequestSpec, replyCount, requestStream } from '../dev-board/topic/request-model';
 import { MessageActionBar, MessageMenu, placementFor, type MenuItem } from '../message-actions/action-bar';
 import { MessageActionSheet, useLongPress } from '../message-actions/action-sheet';
 import { absoluteLink, copyToClipboard, toast } from '../message-actions/clipboard';
@@ -888,6 +889,8 @@ export function Transcript({ source = 'main' }: { source?: string }) {
   }, [voteRows]);
 
   if (!state.ready || !view) return null;
+  // #4453: a request's page draws its own stream.
+  if (source !== 'main' && view.lead.language === 'request') return <RequestRows view={view} />;
   return <TranscriptRows view={view} source={source} />;
 }
 
@@ -939,6 +942,155 @@ function renderRow(msg: TranscriptMessage, fallbackKey: string, main = false, ch
   }
   if ((main || chat) && msg.event) return <EventRow key={key} msg={msg} />;
   return <SystemRow key={key} msg={msg} />;
+}
+
+/**
+ * #4453: a comment on the request's GitHub issue, in a request's stream. The
+ * same named row a Homeroom reply is (so the two read as one conversation),
+ * with "· on GitHub" after the time. It is GitHub's to edit and react to, so
+ * it carries none of the row's controls.
+ */
+const GitHubRow = memo(function GitHubRow({ msg }: { msg: TranscriptMessage }) {
+  return (
+    <ChatMessageRow
+      className="gc-msg gc-msg-github"
+      data-github-comment={msg.key || ''}
+      data-username={msg.username}
+      avatar={(
+        <Avatar shape="square" size="md" color={swatchFor(msg.username)} aria-hidden="true">
+          {displayName(msg.username).charAt(0).toUpperCase()}
+        </Avatar>
+      )}
+      name={displayName(msg.username)}
+      timestamp={(
+        <>
+          {msg.time ? <span className="gc-msg-time" title={msg.timeTitle}>{msg.time}</span> : null}
+          <span className="gc-msg-via">{msg.time ? ' · on GitHub' : 'on GitHub'}</span>
+        </>
+      )}
+    >
+      <Body html={msg.bodyHtml} />
+    </ChatMessageRow>
+  );
+});
+
+/**
+ * #4453: something that happened on a request — a claim, a spec posted, a
+ * notice — as one quiet line with a glyph, where the stream reached it.
+ * `.gc-msg-system` keeps the module's row hooks (tap-to-quote's row
+ * selector, the repeat fold's count).
+ */
+const RequestEvent = memo(function RequestEvent({ msg, onRead }: { msg: TranscriptMessage; onRead?: () => void }) {
+  const spec = msg.kind === 'spec_share' ? msg.specShare : null;
+  const gh = msg.kind === 'github' ? msg.githubSpec : null;
+  const claim = /^(\S+) claimed this (?:issue|request)$/.exec((msg.systemText || '').trim());
+  let glyph = '•';
+  let text: ReactNode = msg.systemText;
+  if (spec) {
+    glyph = '📋';
+    text = <><b>{spec.sharedBy}</b>{` posted spec v${spec.version}`}</>;
+  } else if (gh) {
+    glyph = '📋';
+    text = <><b>{displayName(msg.username)}</b>{' posted a spec'}</>;
+  } else if (claim) {
+    glyph = '✋';
+    text = <><b>{claim[1]}</b>{' started working on this'}</>;
+  }
+  return (
+    <div className="gc-msg-system dev-request-event" data-msg-id={msg.id ?? ''} data-request-event={spec || gh ? 'spec' : claim ? 'claim' : 'notice'}>
+      <span className="dev-request-event-glyph" aria-hidden="true">{glyph}</span>
+      <span className="dev-request-event-text">
+        {text}
+        {msg.repeat && msg.repeat > 1 ? (
+          <span className="gc-msg-system-repeat" title={`Posted ${msg.repeat} times in a row; this is the latest`}>{` · ×${msg.repeat}`}</span>
+        ) : null}
+        {onRead ? <>{' · '}<button type="button" className="dev-request-event-link" onClick={onRead}>Read</button></> : null}
+        {msg.time ? <span className="dev-request-event-time" title={msg.timeTitle}>{` · ${msg.time}`}</span> : null}
+      </span>
+    </div>
+  );
+});
+
+/**
+ * #4453: a request's stream. Under the request (the topic head, drawn above
+ * this host) comes "N replies", then every reply in the order it was
+ * written, wherever it was written: the thread's messages and the issue's
+ * GitHub comments are merged by time in `GroupChat.renderThread`. A person's
+ * message is the named row; a claim, a spec posted or a notice is a line.
+ * Homeroom bot's GitHub copy of a spec that was posted here is the same
+ * posting twice, so it is left out (../dev-board/topic/request-model.ts).
+ */
+export function RequestRows({ view }: { view: TranscriptView }) {
+  const stream = useMemo(() => requestStream(foldRepeats(view.messages)), [view.messages]);
+  const specs = stream.specs;
+  const count = replyCount(stream.rows);
+  const loaded = !!view.lead.request?.loaded;
+  const more = view.lead.request?.githubMore;
+  // #3908: a screenshot in a GitHub comment opens in the app's viewer over
+  // the page, as one in the request's own words does (request-head.tsx).
+  const images = useInlineImageViewer();
+  const drawn: ReactNode[] = [];
+  let previous: TranscriptMessage | null = null;
+  stream.rows.forEach((msg, i) => {
+    const key = msg.id != null ? `m${msg.id}` : (msg.key ? `g${msg.key}` : `i${i}`);
+    if (msg.kind === 'message') {
+      const grouped = !!previous && previous.kind === 'message' && !msg.deleted && !previous.deleted
+        && !!msg.at && !!previous.at
+        && groupsWithPrevious(
+          { author: previous.username, at: previous.at },
+          { author: msg.username, at: msg.at, reply: !!msg.quote },
+        );
+      drawn.push(<MessageRow key={key} msg={msg} grouped={grouped} surface="thread" />);
+    } else if (msg.kind === 'github' && !msg.githubSpec) {
+      drawn.push(<GitHubRow key={key} msg={msg} />);
+    } else if (msg.kind === 'vote') {
+      drawn.push(<SystemRow key={key} msg={msg} />);
+    } else {
+      const card = msg.kind === 'spec_share' && msg.specShare
+        ? specs.find((c) => c.read.kind === 'shared' && c.read.sessionId === Number(msg.specShare?.sessionId))
+        : msg.kind === 'github' ? specs.find((c) => c.key === `g${msg.key}`) : null;
+      // A spec's line opens the version it posted, which may be older than
+      // the card's.
+      const read = msg.kind === 'spec_share' && msg.specShare && msg.specShare.sessionId
+        ? () => controller()?.openSharedSpec?.(msg.specShare?.sessionId, msg.specShare?.version, msg.specShare?.previewTitle)
+        : card ? () => openRequestSpec(card) : undefined;
+      drawn.push(<RequestEvent key={key} msg={msg} onRead={read} />);
+    }
+    previous = msg;
+  });
+  return (
+    <>
+      <div className="messages-reply-count" data-request-replies={count}>
+        <span>{count ? `${count} ${count === 1 ? 'reply' : 'replies'}` : loaded ? 'No replies yet' : 'Loading replies…'}</span>
+      </div>
+      {view.lead.earlier ? (
+        <div className="text-center py-1">
+          <button type="button" id="gc-thread-earlier" className="messages-load-older" onClick={() => controller()?.loadThreadHistoryForOpen?.()}>
+            Load earlier replies
+          </button>
+        </div>
+      ) : null}
+      {more ? (
+        <div className="dev-request-event dev-request-gh-more">
+          <span className="dev-request-event-glyph" aria-hidden="true">•</span>
+          <span className="dev-request-event-text">
+            {'Earlier GitHub comments aren’t shown here. '}
+            {more.url ? <a href={more.url} target="_blank" rel="noopener" className="dev-request-event-link">Read them on GitHub</a> : null}
+          </span>
+        </div>
+      ) : null}
+      {view.lead.error ? (
+        <div role="alert" className="gc-history-error flex items-center gap-2 px-4 py-2 text-xs text-zinc-500 dark:text-zinc-400">
+          <span>{view.lead.error}</span>
+          <Button type="button" variant="neutral" size="xsText" ink="neutral" onClick={() => controller()?.loadThreadHistoryForOpen?.()}>
+            Try again
+          </Button>
+        </div>
+      ) : null}
+      {images.viewer}
+      <div className="dev-request-stream" {...images.scope}>{drawn}</div>
+    </>
+  );
 }
 
 /** A reply's face on a thread card: the chat's letter swatch at 22px. */

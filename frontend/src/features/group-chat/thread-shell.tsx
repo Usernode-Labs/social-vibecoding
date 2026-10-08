@@ -80,9 +80,14 @@ export interface ThreadShellProps {
   placeholder: string;
   /** GC_MAX_MESSAGE_LEN, passed through so the module owns the number. */
   maxLength: number;
+  /**
+   * #4453: a request's page, drawn as the sheet Messages opens a reply thread
+   * in. Fill mode only. See `RequestShell` below.
+   */
+  request?: boolean;
 }
 
-function Composer({ fill, readOnly, notice, placeholder, maxLength }: ThreadShellProps) {
+function Composer({ fill, readOnly, notice, placeholder, maxLength, request = false }: ThreadShellProps) {
   // `platform-safe-bar` on BOTH variants: in fill mode this block is the
   // bottom of the screen, so it carries the home-indicator inset above its own
   // padding, and the read-only notice that replaces it needs the identical
@@ -97,6 +102,14 @@ function Composer({ fill, readOnly, notice, placeholder, maxLength }: ThreadShel
       </div>
     );
   }
+  if (request) {
+    return (
+      <div className={`messages-composer messages-composer-thread ${SAFE_BAR}`}>
+        <ComposerSlots scope="thread" />
+        <ComposerForm scope="thread" fill={fill} placeholder={placeholder} maxLength={maxLength} messages />
+      </div>
+    );
+  }
   return (
     <div className={`shrink-0 px-3 pt-1 pb-2 ${SAFE_BAR}`}>
       <ComposerSlots scope="thread" />
@@ -105,9 +118,46 @@ function Composer({ fill, readOnly, notice, placeholder, maxLength }: ThreadShel
   );
 }
 
+/**
+ * #4453: a request's page — the sheet Messages opens a reply thread in
+ * (features/messages/index.tsx `ReplyThreadPanel`): its header, a scroller
+ * holding the request as the root post and the replies under it, and the
+ * thread's composer at its foot. The page's back chip sits above the sheet.
+ *
+ * Two more empty hosts than the topic layout, both the topic head's
+ * (features/dev-board/topic/request-head.tsx portals into them), rendered
+ * once with a constant className and never looked inside:
+ *
+ *   * `#gc-thread-back` — the "‹ Workshop" chip, above the sheet.
+ *   * `#gc-thread-bar` — the sheet's header: "Request #N", its category,
+ *     and the ⋯ disc. Outside the scroller, so it stays put.
+ *
+ * Messages' tokens (`--messages-surface` and the rest) are defined on
+ * `.dev-request` in app.css, as they are on `.messages-layout`.
+ */
+function RequestShell(props: ThreadShellProps) {
+  const scroll = useRef<HTMLDivElement>(null);
+  return (
+    <div className="dev-request platform-kb-column">
+      <div id="gc-thread-back" className="dev-request-back" />
+      <section className="dev-request-sheet dc-lift dc-lift-session" aria-label="Request">
+        <div id="gc-thread-bar" className="dev-request-bar" />
+        <div ref={scroll} id="gc-thread-scroll" className="messages-thread-scroll dev-request-scroll overscroll-contain">
+          <div id="gc-thread-head" />
+          <div id="gc-thread-messages" />
+        </div>
+        <JumpToLatest scroller={scroll} slack={THREAD_FOLLOW_PX} />
+        <StatusLine scope="thread" className="px-4 text-xs text-zinc-500 dark:text-zinc-400 h-5 shrink-0" />
+        <Composer {...props} />
+      </section>
+    </div>
+  );
+}
+
 export function ThreadShell(props: ThreadShellProps) {
   const { fill, withHeader } = props;
   const scroll = useRef<HTMLDivElement>(null);
+  if (fill && props.request) return <RequestShell {...props} />;
   if (fill) {
     return (
       // `platform-kb-column` is what app.css hangs the keyboard reservation

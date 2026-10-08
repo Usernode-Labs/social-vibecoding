@@ -237,10 +237,6 @@ const OWNED = [
   // The kanban board's filter strip (features/dev-board/kanban-filters.tsx).
   // Swept on #app/recipebot/dev whenever the board is in kanban mode.
   { sel: '#dev-kanban-filterbar' },
-  // An issue topic page's GitHub thread
-  // (features/dev-board/issue-comments.tsx), inside the topic card that
-  // app-view.js still fills. Swept on the topic route above.
-  { sel: '#dev-issue-comments' },
   // The thread panel's shell (features/group-chat/thread-shell.tsx). ONE host
   // inside it stays its module's — the transcript's own portal target —
   // rendered once, empty, with a constant className and never looked inside,
@@ -259,17 +255,23 @@ const OWNED = [
     sel: '.dev-thread',
     except: ['#gc-thread-messages'],
   },
+  // #4453: a request's page is the same shell in its Messages-thread layout
+  // (`RequestShell`), with the same one module-owned host. Its back and
+  // header hosts are the topic head's portals, React's too.
+  {
+    sel: '.dev-request',
+    except: ['#gc-thread-messages'],
+  },
   // The opened topic's head — the card and everything under it
-  // (features/dev-board/topic/topic-head.tsx). Three seams inside it stay
+  // (features/dev-board/topic/topic-head.tsx). Two seams inside it stay
   // legacy-FILLED, each rendered once, empty, with a constant className:
   // `[data-transcript-body]` (public/js/session-transcript.js writes the
-  // chat and its Fork button), `[data-kudos-host]` in the detail action row,
-  // and `#dev-issue-comments`, which is a React island of its own listed
-  // below. Swept on the topic route.
+  // chat and its Fork button) and `[data-kudos-host]` in the detail action
+  // row. Swept on the topic route.
   {
     sel: '#gc-thread-head',
     except: [
-      '[data-transcript-body]', '[data-kudos-host]', '#dev-issue-comments',
+      '[data-transcript-body]', '[data-kudos-host]',
       // The change card's tabs give the existing chat controllers their
       // own empty hosts. Their React subtrees are audited separately below.
       '[data-change-discussion]', '[data-change-workspace]',
@@ -407,6 +409,9 @@ const ROUTES = [
   // issue (scripts/seed-checks-db.js); if the seed changes, re-point it rather
   // than dropping the route.
   '#app/recipebot/dev/issues/900001',
+  // #4453: a request's page in its Messages-thread layout, on the demo
+  // request that has GitHub comments, Homeroom replies and a spec.
+  '?demo=1#app/usernode-2d5619/dev/issues/900003',
   '#admin/e2e', '#admin/gallery', '#admin/node', '#admin/merges', '#admin/push', '#admin/campaigns', '#admin/mail', '#admin/sms', '#admin/estimator', '#admin/analytics', '#admin/journey', '#admin/overview', '#admin/codes', '#admin/featured-apps', '#admin/db-export', '#admin/features', '#admin/limits', '#admin/users', '#admin/users/900301', '#admin/support', '#admin/support/900302', '#admin/status', '#admin/incidents', '#admin/rollover', '#admin/staging-reap', '#admin/workflows',
   '#admin/model-costs', '#admin/reports', '#admin/welcome-dm', '#admin/sign-in', '#admin/test-accounts', '#admin/homeroom-bot', '#admin/homeroom-bot/settings', '#admin/homeroom-bot/benchmark', '#admin/small-changes',
   // The Benchmark's own places, in the same host (`when: '#admin/homeroom-bot'`

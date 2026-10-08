@@ -711,6 +711,15 @@ const GroupChat = {
         // methods down), so the insertAdjacentHTML this replaces was legacy
         // markup spliced into a reconciled tree: the row carried none of the
         // component's handlers and the next store update erased it.
+        //
+        // A request's page (#4453) renders the whole stream again instead:
+        // its rows are merged with the GitHub comments, and a spec posted
+        // live has to reach the head's spec cards and status card too.
+        if (a.language === 'request') {
+          GroupChat.renderThread({ keepScroll: true });
+          if (nearBottom) scroll.scrollTop = scroll.scrollHeight;
+          return;
+        }
         GroupChat._react()?.appendTranscriptMessage(
           GroupChat._messageView(msg, { language: GroupChat.activeThread && GroupChat.activeThread.language }),
           'thread',
@@ -1161,7 +1170,10 @@ const GroupChat = {
     // `language: 'chat'` is the change page's Discussion (topic/
     // conversation.tsx): bubbles, and every notice as a message. Every other
     // thread keeps its flat rows and centred lines.
-    const language = opts.language === 'chat' ? 'chat' : 'flat';
+    // `language: 'request'` (#4453) is a request's page: Messages' reply
+    // thread, with the request as its root post and its GitHub comments in
+    // the same stream (`renderThread`).
+    const language = opts.language === 'chat' || opts.language === 'request' ? opts.language : 'flat';
     GroupChat.activeThread = { type, ref: Number(ref), language };
 
     const threadKey = GroupChat.threadKey(type, ref);
@@ -1200,6 +1212,7 @@ const GroupChat = {
       notice: opts.notice || 'This thread is read-only.',
       placeholder: opts.placeholder || 'Reply in thread…',
       maxLength: GC_MAX_MESSAGE_LEN,
+      request: fill && language === 'request',
     });
 
     // Kit polish: keyboard avoidance on the unified thread scroller
@@ -1771,7 +1784,7 @@ const GroupChat = {
     const prevTop = scroll ? scroll.scrollTop : 0;
     const wasLoaded = el.dataset.loaded === '1';
 
-    const language = a.language === 'chat' ? 'chat' : 'flat';
+    const language = a.language === 'chat' || a.language === 'request' ? a.language : 'flat';
     const chat = language === 'chat';
     GroupChat._react()?.mountTranscript(el, 'thread');
     // #2387: a reply thread opens with the message it hangs off — from the
@@ -1780,8 +1793,24 @@ const GroupChat = {
     if (a.type === 'message') {
       root = st.root || GroupChat.messages.find((m) => Number(m.id) === Number(a.ref)) || null;
     }
-    const rows = st.messages.map((m) => GroupChat._messageView(m, { language }));
+    let rows = st.messages.map((m) => GroupChat._messageView(m, { language }));
     if (root) rows.unshift(GroupChat._messageView({ ...root, _threadRoot: true }, { language }));
+    // #4453: a request's page is ONE stream in time order. Its GitHub
+    // comments (AppView's per-issue cache, fetched once the page opens) join
+    // the thread's own rows by when they were written, and the specs among
+    // them all go to the head's spec cards and status card.
+    let githubMore;
+    if (language === 'request' && a.type === 'issue') {
+      const extra = (typeof AppView !== 'undefined' && AppView._requestThreadRows)
+        ? AppView._requestThreadRows(a.ref) : null;
+      if (extra && extra.rows.length) rows = GroupChat._mergeByTime(rows, extra.rows);
+      if (typeof AppView !== 'undefined' && AppView._reactDevBoard) {
+        AppView._reactDevBoard()?.publishRequestThread(a.ref, rows);
+      }
+      // GitHub returned only the newest comments: the stream says so, and
+      // links to the rest.
+      githubMore = extra && extra.truncated ? { url: extra.htmlUrl || null } : null;
+    }
     GroupChat._react()?.publishTranscript(
       rows,
       'thread',
@@ -1789,11 +1818,13 @@ const GroupChat = {
         earlier: !!(st.loaded && st.hasMore && st.messages.length),
         // In the chat language the quiet card says what an empty thread
         // means; the placeholder line is the flat thread's.
-        placeholder: st.loaded
+        // A request's page says it in its own "N replies" line instead.
+        placeholder: language === 'request' ? null : st.loaded
           ? (st.messages.length || chat ? null : 'No messages yet. Start the thread.')
           : (st.failed ? null : 'Loading…'),
         error: !st.loaded && st.failed ? 'Couldn’t load this thread.' : null,
         language,
+        ...(language === 'request' ? { request: { loaded: !!st.loaded, githubMore } } : {}),
         ...(chat && st.loaded ? {
           quiet: {
             variant: 'change',
@@ -1822,6 +1853,23 @@ const GroupChat = {
     } else {
       scroll.scrollTop = scroll.scrollHeight;
     }
+  },
+
+  // #4453: `rows` with `others` slotted in by time. The thread's own rows
+  // keep the order the server gave them (a run of identical notices stays a
+  // run, for the transcript's repeat fold); each of `others` (oldest first)
+  // goes in before the first row written after it.
+  _mergeByTime(rows, others) {
+    const t = (row) => Date.parse((row && row.at) || '') || 0;
+    const sorted = others.slice().sort((x, y) => t(x) - t(y));
+    const out = [];
+    let j = 0;
+    for (const row of rows) {
+      while (j < sorted.length && t(sorted[j]) <= t(row)) out.push(sorted[j++]);
+      out.push(row);
+    }
+    while (j < sorted.length) out.push(sorted[j++]);
+    return out;
   },
 
   // ── #15: reply / quote ──────────────────────────────────────────────

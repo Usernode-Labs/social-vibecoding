@@ -490,6 +490,47 @@ export interface StepsView {
 }
 
 /** Everything under the card, by topic kind. */
+/** #4453: what a request's page says about the request itself. */
+export interface RequestView {
+  number: number;
+  /** The category's name, as plain words under "Request #N"; null when unset. */
+  category: string | null;
+  /** The ⋯ disc's rows, registered with AppView's card-menu registry. '' for none. */
+  menuKey: string;
+  asker: string;
+  /** When it was asked: the formatted stamp, its unelided title and the instant. */
+  askedAt: string | null;
+  askedTime: string;
+  askedTitle: string;
+  title: string;
+  /** The author's inline title editor, open (`AppView._editingIssueTitle`). */
+  titleEditing: { issue: number; initial: string } | null;
+  /** The request's words, rendered, without the leading "**Source:**" line. */
+  bodyHtml: string;
+  /**
+   * The author's editor for the words. `source` is the "**Source:**" line
+   * the page leaves out, put back in front of what they save.
+   */
+  editor: { issue: number; markdown: string; source: string | null; canEdit: boolean };
+  status: RequestStatusView;
+}
+
+/** The card under the request: where it stands, and the one next step. */
+export interface RequestStatusView {
+  /** How far the issue row alone says it got; the stream can add Spec. */
+  stage: 'asked' | 'built' | 'voted';
+  /** Who is on it, as the sentence's first half ("You're working on this."). */
+  lead: string;
+  /** Said instead of the spec half when the row knows more ("A change is waiting for approval."). */
+  note: string | null;
+  /** The claim's lapse, in small words. */
+  fine: string | null;
+  /** The one action for this viewer, or null. */
+  action: { label: string; title?: string; disabled?: boolean; act?: { fn: string; args?: unknown[] }; href?: string } | null;
+  /** A closed request: the words that say so, and no stepper. */
+  closed: string | null;
+}
+
 export interface TopicBody {
   changeId?: number;
   issues?: IssueLink[];
@@ -565,8 +606,12 @@ export interface TopicBody {
     markdown: string;
     canEdit: boolean;
   } | null;
-  /** Render the `#dev-issue-comments` host (features/dev-board/issue-comments.tsx). */
-  comments?: boolean;
+  /**
+   * #4453: a request's page, drawn as a Messages reply thread
+   * (./request-head.tsx). Set on an issue's page only; its GitHub comments
+   * are in the thread's stream now (`AppView._requestThreadRows`).
+   */
+  request?: RequestView | null;
   /** A proposal's plain-language summary, already rendered. */
   summaryHtml?: string | null;
   /** The previous summary was retained for provenance but no longer describes this revision. */

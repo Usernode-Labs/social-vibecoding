@@ -6,10 +6,12 @@
 // The pictures are sanitised markdown (DevChat.renderMarkdown with
 // `images: true` wraps each in `a.dc-inline-img-link`), so they cannot carry
 // a handler; the surface around them delegates the tap through
-// features/image-viewer/image-viewer.tsx `useInlineImageViewer`. Two
-// surfaces draw a request's pictures: its body
-// (features/dev-board/topic/topic-head.tsx TopicBodySections) and its GitHub
-// discussion (features/dev-board/issue-comments.tsx). nav-link.js's
+// features/image-viewer/image-viewer.tsx `useInlineImageViewer`. Three
+// surfaces draw a request's pictures: its words on its own page, the root
+// post of its thread (features/dev-board/topic/request-head.tsx, #4453), its
+// replies there, GitHub's among them (features/group-chat/transcript.tsx
+// `RequestRows`), and its words under a row the Workshop unfolds
+// (features/dev-board/topic/topic-head.tsx TopicBodySections). nav-link.js's
 // external-link router must leave a scope's picture links to that handler.
 
 const test = require('node:test');
@@ -23,7 +25,8 @@ const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const VIEWER = 'frontend/src/features/image-viewer/image-viewer.tsx';
 const HEAD_TSX = 'frontend/src/features/dev-board/topic/topic-head.tsx';
-const COMMENTS_TSX = 'frontend/src/features/dev-board/issue-comments.tsx';
+const TRANSCRIPT_TSX = 'frontend/src/features/group-chat/transcript.tsx';
+const REQUEST_TSX = 'frontend/src/features/dev-board/topic/request-head.tsx';
 
 // The markup DevChat.renderMarkdown builds for an inline picture
 // (tests/issue-discussion-images.test.js pins it there).
@@ -143,30 +146,38 @@ test('the scope opens the viewer on a plain tap and leaves a modified click to t
   assert.equal(authored.prevented, 0, 'an image linked somewhere on purpose goes there');
 });
 
-test('the request\'s body is a viewer scope, and so is its GitHub discussion', () => {
+test('the request\'s words are a viewer scope, and so are its replies, GitHub\'s among them', () => {
   const body = renderComponent(HEAD_TSX, 'TopicBodySections', {
     body: { issueBodyHtml: `<div class="dev-issue-body"><p class="dc-p">${PICTURE}</p></div>` },
   });
   assert.match(body, /<section class="dev-topic-sheet dev-topic-about" data-topic-sheet="about" data-image-viewer-scope="">[\s\S]*class="dc-inline-img-link"/,
-    'the About sheet around the request\'s words takes the tap');
+    'the Workshop\'s About sheet around the request\'s words takes the tap');
   assert.doesNotMatch(body, /data-image-viewer=""/, 'no viewer until a tap');
 
-  const comments = renderComponent(COMMENTS_TSX, 'IssueCommentsView', {
-    comments: [{ key: '1', author: 'reporter', bot: false, createdAt: '', bodyHtml: `<p class="dc-p">${PICTURE}</p>` }],
-    truncated: false,
-    htmlUrl: null,
-  });
-  assert.match(comments, /<div class="dev-topic-gh-thread" data-image-viewer-scope="">[\s\S]*class="dc-inline-img-link"/);
-  assert.equal(renderComponent(COMMENTS_TSX, 'IssueCommentsView', { comments: [], truncated: false, htmlUrl: null }), '',
-    'no comments is still no section');
+  const root = renderComponent(REQUEST_TSX, 'RequestHead', { r: {
+    number: 1, category: null, menuKey: '', asker: 'reporter', askedAt: null, askedTime: '', askedTitle: '',
+    title: 'Broken on phones', titleEditing: null, bodyHtml: `<div class="dev-issue-body"><p class="dc-p">${PICTURE}</p></div>`,
+    editor: { issue: 1, markdown: '', source: null, canEdit: false },
+    status: { stage: 'asked', lead: 'Nobody is working on this yet.', note: null, fine: null, action: null, closed: null },
+  } });
+  assert.match(root, /<div class="min-w-0 flex-1" data-image-viewer-scope="">[\s\S]*class="dc-inline-img-link"/,
+    'the root post around the request\'s words takes the tap');
+
+  const replies = renderComponent(TRANSCRIPT_TSX, 'RequestRows', { view: {
+    lead: { earlier: false, placeholder: null, language: 'request', request: { loaded: true } },
+    messages: [{ id: null, key: '1', kind: 'github', username: 'reporter', time: '', timeTitle: '', at: null,
+      bodyHtml: `<p class="dc-p">${PICTURE}</p>`, systemText: '', mine: false, editedTitle: null, unread: false,
+      bookmarked: false, canEdit: false, flash: false, showEdit: false, showBookmark: false, showReact: false,
+      quote: null, reactions: [], attachments: [], voteRowClass: '', voteRef: null, specShare: null }],
+  } });
+  assert.match(replies, /<div class="dev-request-stream" data-image-viewer-scope="">[\s\S]*class="dc-inline-img-link"/);
 
   // Each renders its own viewer, which portals to <body>.
   const head = read(HEAD_TSX);
   const sections = head.slice(head.indexOf('export function TopicBodySections('));
   assert.match(sections, /const images = useInlineImageViewer\(\);[\s\S]*\{images\.viewer\}[\s\S]*data-topic-sheet="about" \{\.\.\.images\.scope\}>/);
-  const thread = read(COMMENTS_TSX);
-  assert.match(thread, /const images = useInlineImageViewer\(\);\n[\s\S]*if \(!comments\.length\) return null;[\s\S]*<div className="dev-topic-gh-thread" \{\.\.\.images\.scope\}>\n\s*\{images\.viewer\}/,
-    'the hook runs before the early return, as hooks must');
+  const stream = read(TRANSCRIPT_TSX);
+  assert.match(stream, /const images = useInlineImageViewer\(\);[\s\S]*\{images\.viewer\}\n\s*<div className="dev-request-stream" \{\.\.\.images\.scope\}>/);
 });
 
 test('a screenshot hosted elsewhere opens in a new tab from the viewer rather than replacing the page', () => {
@@ -196,13 +207,13 @@ test('a preview can open both pictures, and a declared check sees each wired to 
   const issues = read('src/routes/issues.js');
   assert.match(issues, /900010: \[\n\s*\.\.\.stampLadder\(\),[\s\S]{0,200}!\[Screenshot from a phone\]\(\/icons\/v3\/icon-192\.png\)/);
   // Folded into the #2349 check on the same route rather than declared
-  // again (tests/dev-board-fold.test.js pins the count): the body's picture
-  // is still the full-size file's link, now inside a viewer scope, and the
-  // discussion's picture is in one too.
+  // again (tests/dev-board-fold.test.js pins the count): the words' picture
+  // is still the full-size file's link, inside a viewer scope, and the
+  // replies' picture is in one too (#4453: the page's thread).
   const dapp = JSON.parse(read('dapp.json'));
   const check = dapp.tests.find((t) => /\/dev\/issues\/900010$/.test(t.path) && /#3908/.test(t.name));
   assert.ok(check, 'the screenshot issue\'s check names this change');
-  assert.match(check.expectSelector, /^#gc-thread-head:has\(\.dev-topic-gh-thread\[data-image-viewer-scope\] \.dc-inline-img-link > \[alt="Screenshot from a phone"\]\) /);
-  assert.match(check.expectSelector, / \.dev-topic-about\[data-image-viewer-scope\] \.dc-inline-img-link\[href\]\[target="_blank"\] > \.dc-inline-img$/);
+  assert.match(check.expectSelector, /^body:has\(#gc-thread-messages \.dev-request-stream\[data-image-viewer-scope\] \.dc-inline-img-link > \[alt="Screenshot from a phone"\]\) /);
+  assert.match(check.expectSelector, / #gc-thread-head \.dev-request-root \[data-image-viewer-scope\] \.dc-inline-img-link\[href\]\[target="_blank"\] > \.dc-inline-img$/);
   assert.equal(check.expectText, '[Mock] issue with an attached screenshot');
 });

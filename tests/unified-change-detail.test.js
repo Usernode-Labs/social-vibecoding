@@ -340,8 +340,8 @@ test('issue and governance topic bodies are not rebuilt as proposals without a s
     AppView: { _topicViewFor() { throw new Error('Non-session topic rebuilt as proposal'); } } };
   try {
     const { ChangeDetail } = loadTsx('frontend/src/features/dev-board/topic/topic-head.tsx');
-    const html = renderToHtml(createElement(ChangeDetail, { card: v.card, body: { ...v.body, comments: true }, item: null }));
-    assert.match(html, /id="dev-issue-comments"/);
+    const html = renderToHtml(createElement(ChangeDetail, { card: v.card, body: v.body, item: null }));
+    assert.match(html, /^<div class="dev-topic">/);
   } finally {
     if (previousWindow === undefined) delete global.window;
     else global.window = previousWindow;

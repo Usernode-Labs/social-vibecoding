@@ -166,11 +166,16 @@ test('a closed issue page offers no claim, kudos, close or start-work actions', 
   }
 
   // The whole topic screen, as _renderTopicHead publishes it: the card's one
-  // action line folds the detail pills in, so it is empty too, and the
-  // comments section still loads.
+  // action line folds the detail pills in, so it is empty too. #4453: its
+  // page is a thread whose root post says it is closed, with nothing to
+  // claim behind its ⋯, and its GitHub comments still load into the stream.
   const view = AppView._topicViewFor('issue', issue);
   assert.equal(view.card.actions.length, 0, 'no actions on the topic card');
-  assert.equal(view.body.comments, true, 'the GitHub comment thread still renders');
+  assert.match(view.body.request.status.closed, /^This request was closed/);
+  const rows = (AppView._cardMenus[view.body.request.menuKey] || []).map((m) => m.label);
+  for (const label of ['Pledge kudos', 'Claim it', 'Propose to close', 'Start more work', 'Set priority…']) {
+    assert.ok(!rows.includes(label), `no "${label}" row behind the request's ⋯`);
+  }
 
   // …while the same issue open keeps every one of them.
   const open = closedIssue({ state: 'open', closedAt: null });

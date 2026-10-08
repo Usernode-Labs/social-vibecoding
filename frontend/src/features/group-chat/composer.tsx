@@ -34,7 +34,7 @@
  */
 
 import { Button } from '@/components/ui/button';
-import { ArrowUpIcon, PaperClipIcon } from '@/components/ui/icons';
+import { ArrowUpIcon, PaperClipIcon, PlusIcon } from '@/components/ui/icons';
 import { Textarea } from '@/components/ui/textarea';
 
 import { DropOverlay } from '../attachments/file-drag';
@@ -185,15 +185,49 @@ export interface ComposerFormProps {
   placeholder: string;
   /** GC_MAX_MESSAGE_LEN, passed through so the module owns the number. */
   maxLength: number;
+  /**
+   * #4453: a request's page is a Messages reply thread, so its composer is
+   * Messages' own card: the + disc, the field, the round send. Same ids, so
+   * the module's listeners and the attachment wiring find it unchanged.
+   */
+  messages?: boolean;
 }
 
-export function ComposerForm({ scope, fill, placeholder, maxLength }: ComposerFormProps) {
+export function ComposerForm({ scope, fill, placeholder, maxLength, messages = false }: ComposerFormProps) {
   const ids = IDS[scope];
   // #4065: the drop zone, while a file is held over this composer or its
   // messages. The module's tracker publishes the flag; it lies over the card,
   // and takes no pointer events, so the drop still lands on the form.
   const dragging = !!useComposerSlot(scope).dragging;
   const dropZone = dragging ? <DropOverlay /> : null;
+  if (messages) {
+    return (
+      <form id={ids.form} className="messages-composer-card">
+        <div className="flex items-end gap-1.5">
+          <div className="messages-composer-add">
+            <button type="button" id={ids.attach} className="messages-composer-action" aria-label="Attach files" title="Attach files">
+              <PlusIcon aria-hidden="true" />
+            </button>
+          </div>
+          <input type="file" id={ids.file} className="hidden" multiple />
+          <textarea
+            id={ids.input}
+            rows={1}
+            maxLength={maxLength}
+            autoComplete="off"
+            placeholder={placeholder}
+            aria-label="Reply"
+            className="messages-composer-input"
+          />
+          {/* Keeps the field focused through the press, as Messages' Send does. */}
+          <button type="submit" className="messages-send" aria-label="Send" title="Send" onMouseDown={(event) => event.preventDefault()}>
+            <ArrowUpIcon aria-hidden="true" />
+          </button>
+        </div>
+        {dropZone}
+      </form>
+    );
+  }
   // THE CARD. The two full-height composers — the Discussion's and a topic
   // thread's — are the same card Messages draws at the foot of its sheet: a
   // white surface with bare glyphs, a borderless field at reading size and
