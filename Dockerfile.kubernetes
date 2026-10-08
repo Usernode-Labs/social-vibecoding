@@ -7,7 +7,11 @@
 FROM node:22-alpine AS asset-deps
 WORKDIR /build/frontend
 COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci --ignore-scripts
+# npm keeps a copy of every tarball it downloads. Left at its default
+# (/root/.npm) that copy is committed to this layer beside node_modules and
+# is half of what every build downloads to restore the layer; nothing reads
+# it again. So it goes to a named directory that the same RUN removes.
+RUN npm ci --ignore-scripts --cache /tmp/npm-cache && rm -rf /tmp/npm-cache
 
 # Build every generated browser asset in a lightweight output stage. The
 # outputs are intentionally excluded from the build context, so every
@@ -46,7 +50,9 @@ RUN apk add --no-cache git postgresql-client
 
 WORKDIR /app
 COPY --chown=node:node package.json package-lock.json ./
-RUN npm ci --omit=dev
+# The download cache stays out of this layer too (see asset-deps): here it
+# would ship in the image every pod pulls, in a directory only root can read.
+RUN npm ci --omit=dev --cache /tmp/npm-cache && rm -rf /tmp/npm-cache
 # Ship only runtime inputs. In particular, tests, docs, frontend sources and
 # both builder dependency trees stay out of the final image. scripts/ includes
 # the Kubernetes migration/asset entry points and shell-stamp.js, while
