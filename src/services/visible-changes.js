@@ -19,7 +19,11 @@ const MAX_PATH = 512;
 
 const IMPACTS = Object.freeze(['ui', 'motion', 'none']);
 // `guest` is a browser that is not signed in: what a signed-out visitor sees.
-const PERSONAS = Object.freeze(['member', 'read_only_admin', 'full_admin', 'guest']);
+// The invited members exist only on Homeroom's own copies: the pair's
+// fixtures write them there, and a change declared for one on another app
+// is warned about when it is declared and skipped when the shots run.
+const PERSONAS = Object.freeze(['member', 'read_only_admin', 'full_admin', 'guest',
+  'invited_member', 'waitlisted_member']);
 const ANIMATIONS = Object.freeze(['none', 'steps', 'motion']);
 const CONTROLLED_FAILURE_LABEL = 'Controlled test: deliberately block the declared API GET on both revisions.';
 const LOCATOR_KINDS = Object.freeze(['testId', 'role', 'label', 'placeholder', 'text', 'css']);

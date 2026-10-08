@@ -28,6 +28,10 @@ const PERSONAS = Object.freeze({
   read_only_admin: { dir: 'admin', server: 'browser_admin' },
   full_admin: { dir: 'full_admin', server: 'browser_full_admin' },
   guest: { dir: 'guest', server: 'browser_guest' },
+  // No dry run mints the invited members their tokens, so their state files
+  // are absent and these two start signed out, like the guest.
+  invited_member: { dir: 'invited_member', server: 'browser_invited_member' },
+  waitlisted_member: { dir: 'waitlisted_member', server: 'browser_waitlisted_member' },
 });
 // The same MCP browser tools a hosted turn is denied (worker/run-cc.sh).
 const DENIED_BROWSER_TOOLS = ['browser_evaluate', 'browser_run_code', 'browser_file_upload', 'browser_install'];

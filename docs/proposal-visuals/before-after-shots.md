@@ -101,7 +101,12 @@ external agent (`visible_changes` on the CLI's `proposal_submit_build`). The sha
 - `persona` is who is signed in: `member`, `read_only_admin`, `full_admin`
   (Homeroom controls hidden from read-only admins), or `guest`, a visitor who
   is not signed in. Use `guest` for what signed-out people see: Homeroom's
-  landing and sign-in pages, or a public app's guest view. A hosted build
+  landing and sign-in pages, or a public app's guest view. `invited_member`
+  and `waitlisted_member`, private members still waiting to be let into
+  Homeroom (one on their first visit, one already joined to the waitlist by
+  email), exist only on Homeroom's own proposals; a change declared for one
+  on any other app is warned about when it is declared and skipped when the
+  shots run. A hosted build
   turn's `declare_visible_changes` answers with `warnings` when the persona
   cannot show the change: a `guest` change on an app whose guests are shown
   nothing of it (private, or guests unavailable), or a claim about
@@ -162,7 +167,13 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
      "Suggest this back";
    - for the member: their chat with the Homeroom bot, with an activity card
      whose build waits its turn (working) and a newer card on the same
-     request.
+     request, and, on a separate conversation state, the fixture project's
+     plan answered with Build it and the bot's thanks over the project's
+     card, with its build line reading building;
+   - the invited members' own private fixture project, "[shots fixture] Book
+     swap": two private members of it (first visit, and already on the
+     waitlist) and a live invite link to it with its sketch card
+     (`src/services/shots-fixtures.js`).
 
    Each state goes into both copies or neither. A state the base or head
    revision cannot hold is left out of the run, as is one that fails to
@@ -340,6 +351,21 @@ on the app:
 No gate is loosened for this: the guest gets only what a signed-out request
 already gets, and a preview still never admits guests. The guest token is
 masked with the other tokens and never enters the brief or the trace.
+
+## The invited members
+
+Two more browsers, `invited_member` and `waitlisted_member`, are private
+members of one made-up project, "[shots fixture] Book swap" — somebody an
+invite link let into a project before they were let into Homeroom, which no
+other signed-in persona was. They are written only into Homeroom's own
+copies, beside the full-admin identity, and their tokens are minted only
+there. The first-visit member (`invited_member`) has not been to Home, so
+the project menu offers "Go to Homeroom"; the waitlisted one
+(`waitlisted_member`) has been Home and joined the waitlist by email, so
+Home's waitlist card reads "On the waitlist". The guest's browser also
+carries the live invite link to Book swap
+(`/invite/<token>` in `availableFixtures`). On a child app neither browser
+is signed in and neither appears in the brief.
 
 ## What people see
 

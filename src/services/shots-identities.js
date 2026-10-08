@@ -12,7 +12,7 @@ const platformJwt = require('./platform-jwt');
 const visuals = require('./visuals');
 const fixtures = require('./shots-fixtures');
 
-async function mintShotsAuthTokens(pool, appId) {
+async function mintShotsAuthTokens(pool, appId, { invited = false } = {}) {
   const { rows } = await pool.query(
     `SELECT id, username, usernode_pubkey, locale, is_admin, admin_readonly
        FROM users
@@ -26,7 +26,7 @@ async function mintShotsAuthTokens(pool, appId) {
   if (!admin || admin.is_admin !== true || admin.admin_readonly !== true) {
     throw new Error('The shots read-only administrator fixture identity is unavailable or unsafe.');
   }
-  return {
+  const tokens = {
     member: visuals.mintCaptureToken(member, appId),
     read_only_admin: visuals.mintCaptureToken(admin, appId),
     // Production has no full-admin service-account row. This token can only
@@ -40,6 +40,21 @@ async function mintShotsAuthTokens(pool, appId) {
       locale: 'en',
     }, appId),
   };
+  // The invited members exist only in the paired disposable databases too,
+  // so their tokens follow the full admin's: minted here, a session only
+  // where resetPair wrote the matching identity. Minted only when the pair
+  // holds the invited-member fixtures, so no other app ever carries them.
+  if (invited) {
+    for (const [persona, userId, username] of [
+      ['invited_member', fixtures.INVITED_USER_ID, fixtures.INVITED_USERNAME],
+      ['waitlisted_member', fixtures.WAITLISTED_USER_ID, fixtures.WAITLISTED_USERNAME],
+    ]) {
+      tokens[persona] = visuals.mintCaptureToken({
+        id: userId, username, usernode_pubkey: null, locale: 'en',
+      }, appId);
+    }
+  }
+  return tokens;
 }
 
 // What the guest browser is to the app it shoots, and the token it carries
@@ -104,6 +119,16 @@ async function personaWarnings(pool, app, intent, { selfApp = false } = {}) {
     warnings.push(`${signedOut.join(', ')} describes a visitor who is not signed in, but is declared for a `
       + 'signed-in persona, whose browser cannot sign out. If the change is what signed-out visitors see, '
       + 'declare it again with persona guest.');
+  }
+  // The invited members are written only into Homeroom's own copies; on any
+  // other app their browsers start signed out and see its sign-in wall.
+  const invited = stories
+    .filter((story) => story.persona === 'invited_member' || story.persona === 'waitlisted_member')
+    .map((story) => `${story.id} (${story.persona})`);
+  if (invited.length && !selfApp) {
+    warnings.push(`${invited.join(', ')} is declared for a persona that only Homeroom's own copies hold `
+      + '(invited_member or waitlisted_member). On this app those browsers are not signed in, so the change '
+      + 'will be skipped. Declare it again with persona member if it is for a signed-in person here.');
   }
   return warnings;
 }

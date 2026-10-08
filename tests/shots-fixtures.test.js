@@ -105,3 +105,97 @@ test('the isolated full-admin fixture includes self-app membership for channel s
   assert.deepEqual(installed.appMembership,
     { appId: 42, slug: 'usernode-2d5619', status: 'member' });
 });
+
+test('the invited-member fixtures cannot be created, inspected, or copied outside the run database', async () => {
+  const input = {
+    databaseUrl: 'postgres://usernode:localdev@127.0.0.1:5440/usernode',
+    slug: 'usernode-2d5619', runId: '1'.repeat(32), side: 'base',
+    selfAppSlug: 'usernode-2d5619',
+  };
+  await assert.rejects(fixtures.canInstallInvitedFixtures(input), /isolated shots database/);
+  await assert.rejects(fixtures.ensureInvitedFixtures(input), /isolated shots database/);
+});
+
+test('the invited-member fixture writes the project, its two private members and a live invite, marked as its own', async () => {
+  // The users' accounts must exist before their collaborator rows do (the
+  // collaborator table points at users), the community membership the
+  // trigger writes is verified, and every write is idempotent.
+  const queries = [];
+  const client = {
+    async query(sql, params) {
+      queries.push({ sql, params });
+      if (/SELECT id FROM users WHERE username = 'usernode-capture'/.test(sql)) {
+        return { rowCount: 1, rows: [{ id: 7 }] };
+      }
+      if (/FOR UPDATE/.test(sql)) return { rowCount: 0, rows: [] };
+      if (/SELECT id, community_id FROM apps/.test(sql)) {
+        return { rowCount: 1, rows: [{ id: fixtures.INVITE_PROJECT_ID, community_id: 77 }] };
+      }
+      if (/SELECT user_id FROM community_members/.test(sql)) return { rowCount: 2, rows: [] };
+      return { rowCount: 1, rows: [] };
+    },
+  };
+  const installed = await fixtures.installInvitedFixtures(client, 'a'.repeat(32));
+  const order = queries.map(({ sql }) => sql);
+  const firstUser = order.findIndex((sql) => /INSERT INTO users \(/.test(sql));
+  const firstCollab = order.findIndex((sql) => /INSERT INTO app_collaborators/.test(sql));
+  assert.ok(firstUser !== -1 && firstCollab !== -1 && firstUser < firstCollab,
+    'the accounts exist before the collaborator rows point at them');
+  const app = queries.find(({ sql }) => /INSERT INTO apps/.test(sql));
+  assert.equal(app.params[0], fixtures.INVITE_PROJECT_ID);
+  assert.equal(app.params[1], '[shots fixture] Book swap');
+  assert.equal(app.params[2], 'shots-fixture-book-swap');
+  assert.deepEqual(JSON.parse(app.params[4]), {
+    usernode_shots_fixture: { version: 1, runId: 'a'.repeat(32), kind: 'invite-project' },
+  });
+  const userUpserts = queries.filter(({ sql }) => /INSERT INTO users \(/.test(sql));
+  assert.deepEqual(userUpserts.map(({ params }) => [Number(params[0]), params[1]]), [
+    [fixtures.INVITED_USER_ID, fixtures.INVITED_USERNAME],
+    [fixtures.WAITLISTED_USER_ID, fixtures.WAITLISTED_USERNAME],
+  ]);
+  assert.ok(userUpserts.every(({ sql }) => /has_platform_access,\s+private_member_since/.test(sql)
+    && /FALSE, NOW\(\) - INTERVAL '1 day', FALSE\)/.test(sql)), 'both are private members, not let in');
+  const waitlist = queries.find(({ sql }) => /INSERT INTO waitlist_signups/.test(sql));
+  assert.equal(waitlist.params[0], 'shots-fixture-waitlisted@example.invalid');
+  assert.match(waitlist.sql, /released_at,\s+linked_user_id/, 'columns line up with the values');
+  assert.match(waitlist.sql, /NOW\(\) - INTERVAL '1 hour', NULL,/, 'confirmed, not released');
+  assert.equal(Number(waitlist.params[1]), fixtures.WAITLISTED_USER_ID);
+  const invite = queries.find(({ sql }) => /INSERT INTO community_invites/.test(sql));
+  assert.equal(invite.params[0], fixtures.INVITE_TOKEN);
+  assert.match(invite.params[4], /^\[shots fixture\]/);
+  const sketch = queries.find(({ sql }) => /INSERT INTO app_sketches/.test(sql));
+  assert.match(sketch.sql, /status, design, ready_at\)\s+VALUES \(\$1, \$2, 'ready', \$3::jsonb/);
+  assert.equal(Number(sketch.params[1]), 7, 'made by the shots member');
+  assert.match(sketch.params[2], /\[shots fixture\]/);
+  assert.equal(queries.filter(({ sql }) => /SELECT user_id FROM community_members/.test(sql)).length, 1);
+  assert.ok(queries.every(({ sql }) => !/INSERT INTO (?!apps|users|app_collaborators|waitlist_signups|app_sketches|community_invites)/.test(sql)));
+  // The project row's re-run is the update branch (the SELECT FOR UPDATE
+  // before it); every other write carries its own ON CONFLICT.
+  for (const insert of queries.filter(({ sql }) => /^INSERT INTO/.test(sql)
+    && !/INSERT INTO apps/.test(sql))) {
+    assert.match(insert.sql, /ON CONFLICT/, 'every write can be run again');
+  }
+  assert.deepEqual(installed.map((entry) => [entry.id, entry.persona, entry.path]), [
+    [fixtures.INVITED_PROFILE, 'invited_member', `/#app/${fixtures.INVITE_PROJECT_SLUG}`],
+    [fixtures.WAITLISTED_PROFILE, 'waitlisted_member', '/#home'],
+    [fixtures.INVITE_LINK_PROFILE, 'guest', `/invite/${fixtures.INVITE_TOKEN}`],
+  ]);
+});
+
+test('the invited-member fixture refuses a clone whose community memberships the trigger did not write', async () => {
+  const client = {
+    async query(sql) {
+      if (/SELECT id FROM users WHERE username = 'usernode-capture'/.test(sql)) {
+        return { rowCount: 1, rows: [{ id: 7 }] };
+      }
+      if (/FOR UPDATE/.test(sql)) return { rowCount: 0, rows: [] };
+      if (/SELECT id, community_id FROM apps/.test(sql)) {
+        return { rowCount: 1, rows: [{ id: fixtures.INVITE_PROJECT_ID, community_id: 77 }] };
+      }
+      if (/SELECT user_id FROM community_members/.test(sql)) return { rowCount: 1, rows: [] };
+      return { rowCount: 1, rows: [] };
+    },
+  };
+  await assert.rejects(fixtures.installInvitedFixtures(client, 'a'.repeat(32)),
+    /community memberships from the collaborator trigger/);
+});

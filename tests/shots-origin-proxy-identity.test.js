@@ -283,7 +283,8 @@ test('each persona\'s browser is configured onto its own listener', () => {
   const runner = fs.readFileSync(path.join(__dirname, '..', 'worker', 'run-cc.sh'), 'utf8');
   const exported = /export SHOTS_PROXY_PERSONA_PORTS='([^']+)'/.exec(runner);
   assert.ok(exported, 'the runner names the persona ports');
-  assert.deepEqual(Object.keys(JSON.parse(exported[1])).sort(), ['full_admin', 'guest', 'member', 'read_only_admin']);
+  assert.deepEqual(Object.keys(JSON.parse(exported[1])).sort(),
+    ['full_admin', 'guest', 'invited_member', 'member', 'read_only_admin', 'waitlisted_member']);
   // The proxy starts before the runner drops the tokens from its environment.
   assert.ok(runner.indexOf('node /usr/local/bin/shots-origin-proxy.js &')
     < runner.indexOf('unset SHOTS_MEMBER_TOKEN SHOTS_ADMIN_TOKEN SHOTS_FULL_ADMIN_TOKEN SHOTS_GUEST_TOKEN'));

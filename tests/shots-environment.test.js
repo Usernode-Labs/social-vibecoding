@@ -67,6 +67,7 @@ test('each paired reset serializes clones and adds the same member and full-admi
     hostedApp: fixtures.ensureHostedAppFixture,
     inspect: fixtures.canCopyMemberAgentSession, copy: fixtures.copyMemberAgentSession,
     copyAdmin: fixtures.copyFullAdminAgentSession,
+    inspectInvited: fixtures.canInstallInvitedFixtures, installInvited: fixtures.ensureInvitedFixtures,
     inspectDemo: demoStates.inspectDemoStates, installDemo: demoStates.installDemoStates,
   };
   const runId = '2'.repeat(32);
@@ -118,6 +119,13 @@ test('each paired reset serializes clones and adds the same member and full-admi
       adminSides.push(side);
       return { id: fixtures.FULL_ADMIN_SESSION_PROFILE, persona: 'full_admin', path: '/#messages/agent/990897', side };
     };
+    fixtures.canInstallInvitedFixtures = async () => true;
+    fixtures.ensureInvitedFixtures = async ({ side }) => [
+      { id: fixtures.INVITED_PROFILE, persona: 'invited_member',
+        path: `/#app/${fixtures.INVITE_PROJECT_SLUG}`, side },
+      { id: fixtures.WAITLISTED_PROFILE, persona: 'waitlisted_member', path: '/#home', side },
+      { id: fixtures.INVITE_LINK_PROFILE, persona: 'guest', path: `/invite/${fixtures.INVITE_TOKEN}`, side },
+    ];
     // Each side can hold some demo states; only those BOTH can hold are
     // written, and both sides are written together.
     const [runs, preview, list] = demoStates.STATE_IDS;
@@ -148,17 +156,22 @@ test('each paired reset serializes clones and adds the same member and full-admi
       dbs: [`postgres://fixture@db/${pair.sides.base.dbName}`, `postgres://fixture@db/${pair.sides.head.dbName}`],
       stateIds: [runs, list],
     }]);
-    assert.deepEqual(deployment.availableFixtures.slice(4).map((fixture) => fixture.id), [runs, list]);
+    assert.deepEqual(deployment.availableFixtures.slice(7).map((fixture) => fixture.id), [runs, list]);
     assert.ok(progress.includes('seed_shots_demo_states'));
-    assert.equal(deployment.availableFixtures.length, 6);
+    assert.equal(deployment.availableFixtures.length, 9);
     assert.equal(deployment.availableFixtures[0].persona, 'full_admin');
     assert.deepEqual(deployment.availableFixtures[0].appMembership,
       { appId: 42, slug, status: 'member' });
     assert.equal(deployment.availableFixtures[1].appSlug, fixtures.hostedAppSlug(runId));
-    assert.equal(deployment.availableFixtures[2].persona, 'member');
+    // The invited members and the invite link, on both revisions, between
+    // the hosted app and the member session.
+    assert.deepEqual(deployment.availableFixtures.slice(2, 5).map((fixture) => fixture.id),
+      [fixtures.INVITED_PROFILE, fixtures.WAITLISTED_PROFILE, fixtures.INVITE_LINK_PROFILE]);
+    assert.equal(deployment.availableFixtures[2].persona, 'invited_member');
+    assert.equal(deployment.availableFixtures[5].persona, 'member');
     // The full admin gets an agent session too, on both revisions, so a list
     // drawn only for a viewer with sessions is there before as well as after.
-    assert.equal(deployment.availableFixtures[3].id, fixtures.FULL_ADMIN_SESSION_PROFILE);
+    assert.equal(deployment.availableFixtures[6].id, fixtures.FULL_ADMIN_SESSION_PROFILE);
     assert.deepEqual(adminSides.sort(), ['base', 'head']);
     const pairedEnvs = deployedEnvs.filter((env) => env.DATABASE_URL);
     assert.equal(pairedEnvs.length, 2);
@@ -166,9 +179,13 @@ test('each paired reset serializes clones and adds the same member and full-admi
     assert.ok(progress.includes('seed_shots_identities'));
     assert.ok(progress.includes('deploy_hosted_app_fixture'));
     assert.ok(progress.includes('seed_hosted_app_fixture'));
+    assert.ok(progress.includes('inspect_invited_fixtures'));
+    assert.ok(progress.includes('seed_invited_fixtures'));
     assert.equal(deployment.fixtureFingerprint, crypto.createHash('sha256')
       .update(`source-fingerprint\n${fixtures.FULL_ADMIN_PROFILE}`
-        + `+${fixtures.HOSTED_APP_PROFILE}@${captureDigest}+${fixtures.PROFILE}+${fixtures.FULL_ADMIN_SESSION_PROFILE}`
+        + `+${fixtures.HOSTED_APP_PROFILE}@${captureDigest}`
+        + `+${fixtures.INVITED_PROFILE}+${fixtures.WAITLISTED_PROFILE}+${fixtures.INVITE_LINK_PROFILE}`
+        + `+${fixtures.PROFILE}+${fixtures.FULL_ADMIN_SESSION_PROFILE}`
         + `+${runs}+${list}`).digest('hex'));
   } finally {
     runtime.remove = original.remove;
@@ -183,6 +200,8 @@ test('each paired reset serializes clones and adds the same member and full-admi
     demoStates.inspectDemoStates = original.inspectDemo;
     demoStates.installDemoStates = original.installDemo;
     fixtures.copyFullAdminAgentSession = original.copyAdmin;
+    fixtures.canInstallInvitedFixtures = original.inspectInvited;
+    fixtures.ensureInvitedFixtures = original.installInvited;
   }
 });
 

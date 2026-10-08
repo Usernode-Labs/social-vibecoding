@@ -221,6 +221,8 @@ function buildTurnSecretEnv({
   anthropicProxyJwt, anthropicApiKey, prodDebugJwt, openrouterApiKey,
   shotsJwt, shotsMemberToken, shotsAdminToken, shotsFullAdminToken,
   shotsGuestToken = null,
+  shotsInvitedToken = null,
+  shotsWaitlistedToken = null,
   homeroomMcpToken = null,
 }) {
   const {
@@ -296,6 +298,14 @@ function buildTurnSecretEnv({
     // token only for a view-public child app (shots-identities.js).
     if (shotsGuestToken != null) {
       env.SHOTS_GUEST_TOKEN = requireNonEmptySecret(shotsGuestToken, 'shotsGuestToken');
+    }
+    // Optional too: the invited members exist only in Homeroom's own copies,
+    // where the pair's fixtures wrote them (shots-fixtures.js).
+    if (shotsInvitedToken != null) {
+      env.SHOTS_INVITED_TOKEN = requireNonEmptySecret(shotsInvitedToken, 'shotsInvitedToken');
+    }
+    if (shotsWaitlistedToken != null) {
+      env.SHOTS_WAITLISTED_TOKEN = requireNonEmptySecret(shotsWaitlistedToken, 'shotsWaitlistedToken');
     }
   }
   if (homeroomMcpToken && HOMEROOM_READ_MODES.has(mode)) env.HOMEROOM_MCP_TOKEN = homeroomMcpToken;
@@ -552,7 +562,9 @@ function shotsDiagnosticTool(name) {
   const server = parts.includes('browser_member') ? 'member'
     : parts.includes('browser_full_admin') ? 'full_admin'
       : parts.includes('browser_admin') ? 'admin'
-        : parts.includes('browser_guest') ? 'guest' : null;
+        : parts.includes('browser_guest') ? 'guest'
+          : parts.includes('browser_invited_member') ? 'invited_member'
+            : parts.includes('browser_waitlisted_member') ? 'waitlisted_member' : null;
   return { tool, ...(server ? { persona: server } : {}) };
 }
 
@@ -3425,6 +3437,8 @@ async function execInWorker(sessionId, {
       shotsAdminToken: shotsAuthTokens?.read_only_admin,
       shotsFullAdminToken: shotsAuthTokens?.full_admin,
       shotsGuestToken: shotsAuthTokens?.guest ?? null,
+      shotsInvitedToken: shotsAuthTokens?.invited_member ?? null,
+      shotsWaitlistedToken: shotsAuthTokens?.waitlisted_member ?? null,
       homeroomMcpToken: homeroomGrant ? homeroomGrant.token : null,
     });
   } catch (err) {

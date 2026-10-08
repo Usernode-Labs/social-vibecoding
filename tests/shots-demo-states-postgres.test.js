@@ -102,13 +102,21 @@ async function pairOfCopies(t) {
   return sides;
 }
 
+// The invited members, their project and its invite link (shots-fixtures.js),
+// as Homeroom's own shots copies are seeded before the demo states go in.
+// Only the plan-answered state needs them; the other states hold without.
+async function seedInvited(copies) {
+  for (const side of Object.values(copies)) await shotsFixtures.ensureInvitedFixtures(side.input);
+}
+
 test('demo states go into both shots copies or neither, once', { timeout: 180000 }, async (t) => {
   const copies = await pairOfCopies(t);
   if (!copies) return;
+  await seedInvited(copies);
   const { base, head } = copies;
 
   assert.deepEqual(await demoStates.inspectDemoStates(base.input), demoStates.STATE_IDS,
-    'a copy with the staging seeds can hold every state');
+    'a copy with the staging seeds and the invited-member fixtures can hold every state');
   // A revision whose schema lacks what a state writes cannot hold it.
   await head.pool.query('DROP TABLE friendships CASCADE');
   const headReady = await demoStates.inspectDemoStates(head.input);
@@ -149,11 +157,13 @@ test('demo states go into both shots copies or neither, once', { timeout: 180000
     ['shots-demo-homeroom-bot-verdict-v1', 'shots-demo-member-friend-request-v1']);
   assert.deepEqual(await demoStates.inspectDemoStates(head.input), ['shots-demo-homeroom-bot-verdict-v1']);
 
-  // Every row is in the reserved block or marked as the fixture's.
+  // Every row is in the reserved block, or the invited-member fixtures' own
+  // high id block (their project is one of those).
   const [low, high] = demoStates.RESERVED_RANGE;
   for (const table of ['agent_sessions', 'chat_sessions', 'challenges', 'challenge_templates', 'apps', 'conversations']) {
     const { rows } = await base.pool.query(`SELECT id FROM ${table} WHERE id >= 990000`);
-    assert.ok(rows.every((row) => Number(row.id) >= low && Number(row.id) <= high), table);
+    assert.ok(rows.every((row) => (Number(row.id) >= low && Number(row.id) <= high)
+      || Number(row.id) >= shotsFixtures.INVITE_PROJECT_ID), table);
   }
 
   // The brief tells the agent who each state is for and where it is.
@@ -166,6 +176,7 @@ test('demo states go into both shots copies or neither, once', { timeout: 180000
 test('each demo state reads back the way its screen needs it', { timeout: 180000 }, async (t) => {
   const copies = await pairOfCopies(t);
   if (!copies) return;
+  await seedInvited(copies);
   const { base, head } = copies;
   const result = await demoStates.installDemoStates({ base: base.input, head: head.input }, demoStates.STATE_IDS);
   assert.deepEqual(result.skipped, []);
@@ -316,25 +327,59 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   assert.equal(suggested.reason.code, 'lineage_missing');
   assert.equal(suggested.original.slug, 'staging-demo-forkable');
 
-  // The member's chat with the Homeroom bot: two activity cards on one
-  // request, read through the cards' own reader. The older one's build is
-  // ready and waiting its turn, so it is working though a newer card began
-  // on the same request; both are read, and nothing went to the bell.
+  // The member's chat with the Homeroom bot: the plan-answered state's
+  // thanks card on the fixture project, then two activity cards on a
+  // request of the member's, read through the cards' own reader. The
+  // oldest card's build is ready and waiting its turn, so it is working
+  // though a newer card began on the same request; all three are read, and
+  // nothing went to the bell.
   const viewer = { id: member, username: 'usernode-capture' };
   const { cards } = await botActivity.cardsFor(pool, { user: viewer });
-  assert.equal(cards.length, 2);
-  const [newer, older] = cards;
-  assert.ok(older.messageId < newer.messageId);
-  assert.equal(older.state, 'working');
-  assert.equal(older.stage, 'build_queued');
-  assert.equal(newer.state, 'working', 'the request\'s own progress: its build is waiting its turn');
-  assert.equal(older.links.request, `#app/${SLUG}/dev/issues/${demoStates.IDS.botRequest}`);
+  assert.equal(cards.length, 3);
+  const [thanks, update, first] = cards;
+  assert.ok(first.messageId < update.messageId && update.messageId < thanks.messageId);
+  assert.equal(first.state, 'working');
+  assert.equal(first.stage, 'build_queued');
+  assert.equal(update.state, 'working', 'the request\'s own progress: its build is waiting its turn');
+  assert.equal(update.links.request, `#app/${SLUG}/dev/issues/${demoStates.IDS.botRequest}`);
+  assert.equal(thanks.state, 'working', 'the thanks card over the fixture project: its build is waiting its turn');
+  assert.equal(thanks.links.request, `#app/${shotsFixtures.INVITE_PROJECT_SLUG}/dev/issues/1`);
   const chats = await conversations.listConversations(pool, viewer);
   const chat = chats.find((conversation) => conversation.id === demoStates.IDS.botConversation);
   assert.equal(chat.homeroomBot, true);
   assert.equal(chat.unreadCount, 0);
-  assert.equal(chat.latestMessage.id, newer.messageId);
+  assert.equal(chat.latestMessage.id, thanks.messageId);
   assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM notifications')).rows[0].n, 0);
+});
+
+test('the plan-answered state needs the invited fixtures and works without the run-card state', { timeout: 180000 }, async (t) => {
+  const copies = await pairOfCopies(t);
+  if (!copies) return;
+  const { base, head } = copies;
+  const PLAN = 'shots-demo-member-bot-plan-answered-v1';
+  // Without the fixture project there is nothing the plan answers, so no
+  // copy is asked to hold it.
+  assert.ok(!(await demoStates.inspectDemoStates(base.input)).includes(PLAN));
+  await seedInvited(copies);
+  // With it, the state installs on both sides, alone: it opens the bot's
+  // chat itself and needs nothing of the run-card state's.
+  const result = await demoStates.installDemoStates({ base: base.input, head: head.input }, [PLAN]);
+  assert.deepEqual(result.skipped, []);
+  const viewer = { id: (await base.pool.query('SELECT id FROM users WHERE username = $1', ['usernode-capture']))
+    .rows[0].id, username: 'usernode-capture' };
+  const { cards } = await botActivity.cardsFor(base.pool, { user: viewer });
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].state, 'working', 'the thanks card: its build is waiting its turn');
+  assert.equal(cards[0].links.request, `#app/${shotsFixtures.INVITE_PROJECT_SLUG}/dev/issues/1`);
+  const chats = await conversations.listConversations(base.pool, viewer);
+  const chat = chats.find((conversation) => conversation.id === demoStates.IDS.botConversation);
+  assert.equal(chat.homeroomBot, true);
+  assert.equal(chat.unreadCount, 0);
+  assert.equal(chat.latestMessage.id, cards[0].messageId);
+  // Read the second time: the same shape on both sides, and the state is
+  // not free to add again.
+  assert.ok(!(await demoStates.inspectDemoStates(base.input)).includes(PLAN));
+  assert.ok(!(await demoStates.inspectDemoStates(head.input)).includes(PLAN));
 });
 
 test('the demo states refuse a database that is not the run\'s own', async () => {

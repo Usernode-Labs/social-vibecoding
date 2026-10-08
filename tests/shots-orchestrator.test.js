@@ -752,7 +752,8 @@ test('fixture sign-in tokens are minted for this app once and reach only the age
   assert.equal(minted.length, 1);
   assert.equal(minted[0].pool, fixture.pool);
   assert.equal(minted[0].appId, 9, 'tokens are minted for the proposal\'s own app');
-  assert.deepEqual(minted[0].rest, []);
+  assert.deepEqual(minted[0].rest, [{ invited: false }],
+    'the invited members are minted only where their fixtures are in');
   assert.equal(minted[0].state, 'provisioning', 'minted after the builds matched, before exploring');
   assert.deepEqual(dispatchTokens, TOKENS);
   assert.equal(brief.runId, RUN_ID);
@@ -762,6 +763,47 @@ test('fixture sign-in tokens are minted for this app once and reach only the age
     'no durable trace carries sign-in material');
   assert.throws(() => controlPlane.forRequest({ runId: RUN_ID, sessionId: 42 }),
     { code: 'shots_control_not_found' }, 'the control is unregistered once the run ends');
+});
+
+test('a pair that holds the invited-member fixtures mints their tokens and names their browsers', async () => {
+  const minted = [];
+  let dispatchTokens = null;
+  let brief = null;
+  const invitedTokens = {
+    ...TOKENS,
+    invited_member: 'invited.jwt', waitlisted_member: 'waitlisted.jwt',
+  };
+  const fixture = setup({
+    dispatch: async (options) => {
+      dispatchTokens = options.authTokens;
+      const control = controlFor(options);
+      brief = control.getContext();
+      for (const story of control.intent.stories) saveStills(control, story.id);
+      return { backend: 'claude_code', threadId: 'shots-thread' };
+    },
+  });
+  fixture.dependencies.environment.resetPair = async () => ({
+    origins: { ...ORIGINS }, ...provenance,
+    availableFixtures: [
+      { id: 'platform-invited-member-v1', persona: 'invited_member', path: '/#app/shots-fixture-book-swap' },
+      { id: 'platform-waitlisted-member-v1', persona: 'waitlisted_member', path: '/#home' },
+    ],
+  });
+  fixture.dependencies.identities.mintShotsAuthTokens = async (pool, appId, options) => {
+    minted.push(options);
+    return { ...invitedTokens };
+  };
+  const result = await execute(fixture);
+  assert.equal(result.state, 'verified');
+  assert.deepEqual(minted, [{ invited: true }],
+    'both invited profiles present is what mints the two tokens');
+  assert.deepEqual(dispatchTokens, invitedTokens);
+  assert.deepEqual(Object.keys(brief.browsers).sort(),
+    ['full_admin', 'guest', 'invited_member', 'member', 'read_only_admin', 'waitlisted_member']);
+  assert.equal(brief.browsers.invited_member.tool, 'browser_invited_member');
+  assert.equal(brief.browsers.waitlisted_member.tool, 'browser_waitlisted_member');
+  assert.doesNotMatch(JSON.stringify(brief), /invited\.jwt|waitlisted\.jwt/,
+    'the brief carries no sign-in material');
 });
 
 test('a view-public child app\'s guest token reaches only the agent dispatch, and the brief says who the guest is', async () => {

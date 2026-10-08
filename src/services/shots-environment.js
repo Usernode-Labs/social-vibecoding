@@ -510,6 +510,23 @@ async function resetPair(config, pair, { onProgress = null } = {}) {
         shotsFixtures.ensureHostedAppFixture(fixtureInputs[side])));
       fixtureProfiles.push(`${shotsFixtures.HOSTED_APP_PROFILE}@${pair.hostedFixtureImageDigest}`);
       availableFixtures.push(hostedApps[0]);
+      // The invited members, their project and its invite link: two private
+      // members still waiting to be let into Homeroom, which no signed-in
+      // persona was. Installed only where both revisions can hold them.
+      onProgress?.({ stage: 'inspect_invited_fixtures' });
+      const invitedReady = await allSettledValues(['base', 'head'].map((side) =>
+        shotsFixtures.canInstallInvitedFixtures(fixtureInputs[side])));
+      if (invitedReady.every(Boolean)) {
+        onProgress?.({ stage: 'seed_invited_fixtures' });
+        const invited = await allSettledValues(['base', 'head'].map((side) =>
+          shotsFixtures.ensureInvitedFixtures(fixtureInputs[side])));
+        for (const entry of invited[0]) {
+          fixtureProfiles.push(entry.id);
+          availableFixtures.push(entry);
+        }
+      } else {
+        log.warn('shots', 'Invited-member fixtures left out of a shots pair', { runId: pair.runId });
+      }
       onProgress?.({ stage: 'inspect_shots_fixtures' });
       const ready = await allSettledValues(['base', 'head'].map((side) =>
         shotsFixtures.canCopyMemberAgentSession(fixtureInputs[side])));
