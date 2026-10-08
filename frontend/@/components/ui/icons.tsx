@@ -221,8 +221,8 @@ export const UserIcon = stroked(
  * A soft person silhouette, solid: a head and shoulders that run off the
  * bottom edge, so a round frame crops them. The waiting seats in the
  * community's people row (first-session/people-row.tsx) draw it in a tint,
- * and the hub's open seats pale in a circle (community-card.tsx WeekPeople).
- * #4361 and #4362 each added it, the second as a copy of the same shape.
+ * and the hub's open seats draw it pale in a circle (community-card.tsx
+ * WeekPeople).
  */
 export const PersonSilhouetteIcon = filled(
   'PersonSilhouetteIcon',

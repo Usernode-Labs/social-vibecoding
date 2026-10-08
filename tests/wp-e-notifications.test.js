@@ -91,12 +91,11 @@ test('a build moment in the bell is the bot\'s, in its own words', () => {
   assert.deepEqual(row, { label: 'Homeroom bot', subject: 'Run Club is ready to try', by: null });
 });
 
-test('the invite page says the maker sees a join; the made screen promises no time', () => {
-  const { seenLine } = loadTsx('frontend/src/features/auth/invite-card.tsx');
-  assert.equal(seenLine({ inviterName: 'Maya', inviter: 'maya' }), 'Maya will see that you joined.');
-  assert.equal(seenLine({ inviter: 'maya' }), '@maya will see that you joined.');
-  assert.equal(seenLine({}), '');
-  assert.match(read('public/js/app.js'), /will see that you joined\./, 'and the signed-in confirm says it too');
+test('the signed-in confirm says the maker sees a join, the signed-out invite page does not; the made screen promises no time', () => {
+  const card = loadTsx('frontend/src/features/auth/invite-card.tsx');
+  assert.equal(card.seenLine, undefined, 'the signed-out invite page names nobody who will see the join (owner, 8 October)');
+  assert.doesNotMatch(read('frontend/src/features/auth/invite-card.tsx'), /will see that you joined/);
+  assert.match(read('public/js/app.js'), /will see that you joined\./, 'the signed-in confirm says it');
   // WP-E said "usually in about 8 minutes" here, an ordinary request's
   // typical build; a first version took 50 (first-session run-through, 5
   // October 2026), and Evan asked for no average at all.

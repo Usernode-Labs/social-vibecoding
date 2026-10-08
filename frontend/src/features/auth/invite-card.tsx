@@ -14,13 +14,15 @@
  *            image, else, while it is built, the featured card of the idea
  *            its maker was shown (../first-session/sketch-card.tsx, drawn
  *            here from its words) (preview().project.picture), and the
- *            sender's note when they left one;
- *   join     "Join Supply Line" and "Evan will see that you joined.", pinned
- *            to the bottom of the screen where a phone page keeps its main
- *            action (InviteJoinBar). The landing draws it OUTSIDE its
- *            scroller, below it, so it stays in reach however long the page
- *            is and can never cover its last line, and it clears the
- *            home-indicator strip itself.
+ *            sender's note under it when they left one, and at the foot of
+ *            the scroller the one line that says what Homeroom is
+ *            (HOMEROOM_LINE, #4049);
+ *   join     "Join Supply Line", pinned to the bottom of the screen where a
+ *            phone page keeps its main action (InviteJoinBar). The landing
+ *            draws it OUTSIDE its scroller, below it, so it stays in reach
+ *            however long the page is and can never cover its last line, and
+ *            it clears the home-indicator strip itself. It does not say who
+ *            will see the join (Evan, 7 October).
  *
  * Everything comes from GET /api/public/invites/:token, which discloses
  * nothing more than the invite offers to share. Joining needs an account:
@@ -134,14 +136,8 @@ export function inviteLine(preview: InvitePreview): string {
   return members ? `${invited} · ${members}` : invited;
 }
 
-/**
- * WP-E: the link's maker hears when somebody joins through it
- * (src/services/invite-activity.js), so the page says so before they do.
- */
-export function seenLine(preview: Pick<InvitePreview, 'inviter' | 'inviterName'>): string {
-  const who = inviterLabel(preview);
-  return who ? `${who} will see that you joined.` : '';
-}
+/** The one line that names Homeroom, at the foot of the invite page (#4049). */
+export const HOMEROOM_LINE = 'On Homeroom, people using an app build and improve it together.';
 
 /** "12 people are in it." or '' for none. */
 export function membersLine(count: number | undefined): string {
@@ -272,8 +268,9 @@ export function DeadInvite({ preview }: { preview: InvitePreview }) {
 }
 
 /**
- * The scrolling part of a live link's page: the hero, the picture and the
- * note. Join is not in it: it is InviteJoinBar, pinned below the scroller.
+ * The scrolling part of a live link's page: the hero, the picture, the note
+ * and the foot line. Join is not in it: it is InviteJoinBar, pinned below the
+ * scroller.
  */
 export function MadeForYou({ preview }: { preview: InvitePreview }) {
   const project = preview.project!;
@@ -309,6 +306,9 @@ export function MadeForYou({ preview }: { preview: InvitePreview }) {
           </p>
         </section>
       ) : null}
+      <p data-landing-invite-homeroom="" className="mx-4 mt-auto pt-5 text-center text-[14px] leading-5 text-zinc-500 dark:text-zinc-400 text-pretty">
+        {HOMEROOM_LINE}
+      </p>
     </>
   );
 }
@@ -330,7 +330,6 @@ export function InviteJoinBar({ preview, primaryClass, onJoin }: {
   onJoin: () => void;
 }) {
   const project = preview.project!;
-  const seen = seenLine(preview);
   return (
     <div
       data-landing-invite-join=""
@@ -348,7 +347,6 @@ export function InviteJoinBar({ preview, primaryClass, onJoin }: {
         >
           {`Join ${project.name}`}
         </a>
-        {seen ? <p data-landing-invite-seen="" className="mt-2 text-center text-[13px] text-zinc-500 dark:text-zinc-400">{seen}</p> : null}
       </div>
     </div>
   );

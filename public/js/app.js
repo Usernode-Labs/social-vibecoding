@@ -4424,10 +4424,7 @@ const App = {
           name: project.name || slug,
           iconEmoji: project.iconEmoji || null,
           iconUrl: project.iconUrl || null,
-          // The picture the invite page showed, and its one line, to fill
-          // "You're in" with the project rather than empty space.
-          description: project.description || null,
-          picture: project.picture || null,
+          inviter: standing.inviter || null,
           inviterName: standing.inviterName || standing.inviter || null,
           inviterMadeIt: !!standing.inviterMadeIt,
           building: !!standing.building,

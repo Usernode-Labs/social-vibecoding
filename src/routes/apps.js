@@ -3488,7 +3488,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         return res.status(404).json({ error: 'App not found' });
       }
       const membership = await communities.getMembership(pool, app, req.user?.id);
-      const members = await communities.listMembers(pool, app.id);
+      // The hub draws a few faces; "You're in" lists everyone who is in it
+      // (features/first-session, owner 7 October), so it asks for all of
+      // them, up to a page's worth.
+      const members = await communities.listMembers(pool, app.id, req.query.members === 'all' ? 200 : 8);
       // The channel is the app's group chat, which is COLLAB-gated
       // (app-access.js): a viewer who may see a view-public,
       // collab-private app but not talk in it gets no row for it rather
