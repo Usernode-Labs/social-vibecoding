@@ -619,6 +619,137 @@ test('the follow-up and every benchmark trial ask for the same harness; a model 
   }
 });
 
+// ── The stop guard: the bot's build turns, and nothing else ─────────────
+//
+// In Claude Code a reply with no tool call ends the turn, and GLM ended about
+// half of the bot's no-change builds that way within seconds. run-cc.sh can
+// install a Stop hook (worker/build-stop-hook.js, pinned in
+// tests/build-stop-hook.test.js) that sends such an agent back to work. Only
+// the turns the bot runs to make a change ask for it: its build (live,
+// shadow and a benchmark trial's, all through buildAndPropose) and each
+// review round's fix, which run through the same buildTurnRunner. Its spec,
+// triage and follow-up turns do not, nor does anybody else's turn, and the
+// Codex runner never gets it.
+
+const CODEX_PUSHED = [
+  `__USERNODE_RESULT__ cc_exit=0 ahead=1 behind=0 sha=${SHA} push_ok=1 mode=build agent_backend=codex_openrouter agent_model=${DEEPSEEK} agent_thread_id=t-1 agent_exit=0`,
+  '__USERNODE_EXIT__ 0',
+];
+
+test('the stop guard: a bot build asks for it, its spec turn does not, and only Claude Code is given it', async (t) => {
+  const run = await runBotBuild(t, GLM);
+  assert.equal(run.out.ok, true, run.out.error);
+  assert.deepEqual(run.execs.map((o) => [o.mode, o.stopGuard === true]), [['scout', false], ['build', true]]);
+  assert.equal(run.dispatches[0].env.STOP_GUARD, undefined, 'the spec turn');
+  assert.equal(run.dispatches[1].env.STOP_GUARD, '1', 'the build turn');
+  assert.match(run.dispatches[1].script, /\/usr\/local\/bin\/run-cc\.sh/);
+  t.mock.restoreAll();
+
+  // A model mapped to Codex: the build asks, and the Codex runner, which has
+  // no Stop hook, is not told.
+  const codex = await runBotBuild(t, DEEPSEEK, { journal: CODEX_PUSHED });
+  assert.equal(codex.out.ok, true, codex.out.error);
+  assert.equal(codex.execs[1].stopGuard, true);
+  assert.match(codex.dispatches[1].script, /run-codex-agent\.sh/);
+  assert.equal(codex.dispatches[1].env.STOP_GUARD, undefined);
+});
+
+test('the stop guard: a review round\'s fix turn asks for it, a follow-up does not', async (t) => {
+  stubRuntime(t);
+  const { worker, calls } = loadWorker(t, JOURNAL);
+  const execs = [];
+  const session = { id: 5002, branch_name: 'dev/homeroom_bot-5002', agent_backend: 'codex_openrouter', agent_model: GLM, agent_config_version: 1 };
+  worker.adoptWarmWorker(5002, 'usernode-worker-5002');
+  // reviewLanded runs each fix through the build's own runner.
+  const runBuildTurn = live.buildTurnRunner({
+    pool: { async query() { return { rows: [], rowCount: 1 }; } },
+    config: CONFIG, bot: BOT, session, model: GLM, branchName: session.branch_name, containerName: 'usernode-worker-5002',
+    deps: {
+      worker: { execInWorker(id, opts) { execs.push(opts); return worker.execInWorker(id, opts); }, async stopTurn() {} },
+      sessions: { runCodexAttemptLoop: sessions.runCodexAttemptLoop },
+      agentTurn,
+      activeWorkers: new Set(),
+    },
+  });
+  const fixed = await runBuildTurn({
+    prompt: require('../src/services/bot-review').fixPrompt({
+      issues: [{ severity: 'major', screen: 'home', problem: 'The list overflows.', fix: 'Wrap it.' }],
+    }),
+    budgetMs: 60_000, commitMsg: 'Homeroom bot: review fixes, round 1', progress: { note() {} },
+  });
+  assert.ok(!fixed.routed?.error, JSON.stringify(fixed.routed));
+  assert.equal(execs[0].mode, 'build');
+  assert.equal(execs[0].stopGuard, true);
+  const dispatched = calls.filter((c) => c.args?.[0] === 'exec' && c.args?.[1] === '-d').map(readDispatch);
+  assert.equal(dispatched[0].env.STOP_GUARD, '1');
+
+  // A follow-up that may revise the proposal is a build turn too, but it may
+  // also end on an answer or a question that changes nothing: no guard.
+  const followExecs = [];
+  worker.adoptWarmWorker(602, 'usernode-worker-602');
+  const out = await followup.runFollowUpTurn({
+    pool: { async query() { return { rows: [], rowCount: 1 }; } },
+    config: CONFIG, bot: BOT, repo: { owner: 'usernode-bot', repo: 'todo' },
+    session: { id: 602, branch_name: 'dev/homeroom_bot-602', agent_backend: 'codex_openrouter', agent_model: GLM, agent_config_version: 1 },
+    prompt: 'Address the review.', mode: 'build', issueNumber: 12, turnBudgetMs: 60_000, model: GLM,
+    deps: {
+      worker: {
+        async ensureWorkerImage() {},
+        async ensureWorker() { return 'usernode-worker-602'; },
+        execInWorker: (id, opts) => { followExecs.push(opts); return worker.execInWorker(id, opts); },
+        async stopTurn() {},
+      },
+      agentTurn,
+      sessions: { runCodexAttemptLoop: sessions.runCodexAttemptLoop },
+      activeWorkers: new Set(),
+    },
+  });
+  assert.ok(!out.routed?.error, JSON.stringify(out.routed));
+  assert.equal(followExecs[0].mode, 'build');
+  assert.equal(followExecs[0].stopGuard, undefined);
+  const followDispatch = calls.filter((c) => c.args?.[0] === 'exec' && c.args?.[1] === '-d').map(readDispatch)[1];
+  assert.equal(followDispatch.env.MODE, 'build');
+  assert.equal(followDispatch.env.STOP_GUARD, undefined);
+});
+
+test('the stop guard: the worker gives it to a Claude Code build that asks, and to nothing else', async (t) => {
+  const { worker, calls } = loadWorker(t, JOURNAL);
+  const dispatch = async (id, opts) => {
+    worker.adoptWarmWorker(id, `usernode-worker-${id}`);
+    await worker.execInWorker(id, {
+      prompt: 'Build it.', branchName: `dev/someone-${id}`, agentBackend: 'codex_openrouter', agentHarness: 'claude',
+      agentModel: GLM, openrouterApiKey: KEY, openrouterApiBase: 'https://openrouter.ai/api/v1',
+      turnUuid: `attempt-${id}`, logicalTurnId: `turn-${id}`, attemptNumber: 1, ...opts,
+    });
+    return readDispatch(calls.filter((c) => c.args?.[0] === 'exec' && c.args?.[1] === '-d').at(-1)).env;
+  };
+  // A person's dev-chat build never asks.
+  assert.equal((await dispatch(801, { mode: 'build' })).STOP_GUARD, undefined);
+  // A scout that asked is still not given it: it changes nothing by design.
+  assert.equal((await dispatch(802, { mode: 'scout', stopGuard: true })).STOP_GUARD, undefined);
+  // A Codex build that asked is not given it.
+  assert.equal((await dispatch(803, { mode: 'build', stopGuard: true, agentHarness: 'codex' })).STOP_GUARD, undefined);
+  assert.equal((await dispatch(804, { mode: 'build', stopGuard: true })).STOP_GUARD, '1');
+
+  // And in the source, only the bot's build runner asks for it.
+  const askers = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith('.js') && /\bstopGuard\s*:\s*true\b/.test(fs.readFileSync(full, 'utf8'))) {
+        askers.push(path.relative(ROOT, full));
+      }
+    }
+  };
+  walk(path.join(ROOT, 'src'));
+  assert.deepEqual(askers, [path.join('src', 'services', 'homeroom-bot-live.js')]);
+  const liveSrc = fs.readFileSync(path.join(ROOT, 'src', 'services', 'homeroom-bot-live.js'), 'utf8');
+  assert.equal((liveSrc.match(/\bstopGuard\s*:\s*true\b/g) || []).length, 1);
+  const runner = liveSrc.slice(liveSrc.indexOf('function buildTurnRunner('), liveSrc.indexOf('async function publishSpec('));
+  assert.match(runner, /mode: 'build',[\s\S]*stopGuard: true/, 'in buildTurnRunner, the build and review-fix runner');
+});
+
 // ── A turn that failed is never proposed ────────────────────────────────
 //
 // The Codex runner never commits or pushes a turn whose agent failed

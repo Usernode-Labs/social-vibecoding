@@ -2055,6 +2055,15 @@ function buildTurnRunner({
           // A failed turn's work is neither committed nor pushed, under either
           // CLI (failedClaudeTurn).
           discardFailedTurn: true,
+          // In Claude Code, a reply with no tool call ends the turn, and GLM
+          // ended about half of the bot's no-change builds that way within
+          // seconds. The stop guard (worker/build-stop-hook.js) sends it back
+          // to work, twice at most, while the turn has changed nothing. Every
+          // turn this runner runs is told to make a change: the build, and
+          // each review round's fix, where a fix that changes nothing still
+          // pays for another capture and review. The spec, triage and
+          // follow-up turns run elsewhere and never ask for it.
+          stopGuard: true,
           ...(ctx || {}),
           telemetryComponent: telemetry || 'homeroom_bot_build',
           onProgress: teeProgress(turnProgress, onProgress),
