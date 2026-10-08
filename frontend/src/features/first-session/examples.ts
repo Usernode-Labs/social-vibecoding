@@ -51,8 +51,8 @@ export type Template = {
   key: string;
   /** On the tile and the story, and the project's tile until its sketch has an emoji. */
   emoji: string;
-  /** Drawn in place of the emoji: the tier list's mini tier chart (./tier-chart.tsx). */
-  chart?: boolean;
+  /** Drawn in place of the emoji (./marks.tsx): the tier list's mini chart, the game's gamepad, the organizer's checklist. */
+  mark?: 'chart' | 'game' | 'organizer';
   /** "A tier list", on the story. */
   title: string;
   /** What it is for, under the title on the story. */
@@ -82,7 +82,7 @@ export const TEMPLATES: readonly Template[] = [
   {
     key: 'tier',
     emoji: '📊',
-    chart: true,
+    mark: 'chart',
     title: 'A tier list',
     line: 'Rank your favorite spots, games, anything',
     short: 'Tier list',
@@ -100,6 +100,7 @@ export const TEMPLATES: readonly Template[] = [
   {
     key: 'game',
     emoji: '🎮',
+    mark: 'game',
     title: 'A game',
     line: 'A new one, built and played together',
     short: 'A game',
@@ -118,6 +119,7 @@ export const TEMPLATES: readonly Template[] = [
   {
     key: 'organizer',
     emoji: '📋',
+    mark: 'organizer',
     title: 'An organizer',
     line: 'Groceries, chores, a shared library',
     short: 'Organizer',

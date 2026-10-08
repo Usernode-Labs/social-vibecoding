@@ -150,8 +150,9 @@ test('the landing: the story in place of the pitch unless switched off, for nobo
 // waits for.
 test('the story: label, headline, "For example" and the three examples, "Get started", then Sign in', () => {
   const html = renderComponent('frontend/src/features/auth/story.tsx', 'Story', { primaryClass: 'pill', onStart() {}, onSignIn() {} });
-  // Each row: its emoji (the tier list draws a chart, no text), title and line.
-  const TEMPLATE_ROWS = loadTsx(`${DIR}/examples.ts`).TEMPLATES.flatMap((t) => (t.chart ? [t.title, t.line] : [t.emoji, t.title, t.line]));
+  // Each row: its title and line. Every template draws its mark (no text),
+  // so no emoji appears in the list.
+  const TEMPLATE_ROWS = loadTsx(`${DIR}/examples.ts`).TEMPLATES.flatMap((t) => (t.mark ? [t.title, t.line] : [t.emoji, t.title, t.line]));
   const text = html.replace(/<[^>]+>/g, '\n').split('\n').map((t) => t.trim()).filter(Boolean)
     .map((t) => t.replace(/&#x27;/g, "'"));
   assert.deepEqual(text, [
@@ -183,6 +184,10 @@ test('three templates, the same on the story and the make screen, each a whole s
   assert.deepEqual(TEMPLATES.map((t) => t.key), ['tier', 'game', 'organizer']);
   for (const t of TEMPLATES) {
     for (const k of ['emoji', 'title', 'line', 'short', 'head', 'note']) assert.ok(t[k], `${t.key}.${k}`);
+    // The tile draws a picture (./marks.tsx) in place of the emoji, which
+    // stays: it is the project's icon sent when the app is made.
+    assert.ok(['chart', 'game', 'organizer'].includes(t.mark), `${t.key}.mark is a drawn picture`);
+    assert.ok(t.emoji, `${t.key}.emoji stays the project's icon`);
     assert.ok(t.note.length <= 280, `${t.key} note fits a link's note`);
     for (const c of t.choices) {
       const s = sentence(t, c.key, t.finish ? c.example : '');
@@ -214,10 +219,22 @@ test('three templates, the same on the story and the make screen, each a whole s
   assert.equal(sentence(organizer, 'chores', '').text, 'An app to organize our chores: who\'s on what this week, and whose turn it is next.');
   assert.equal(sentence(organizer, 'library', '').text, 'An app to organize our shared library: what we can borrow, who has it now, and who\'s asking for it next.');
   assert.equal(suggestedName(organizer, OWN, 'camping gear'), 'Camping Gear List');
-  // The story says the same three, the tier list drawn as a tier list.
+  // The story says the same three, every one drawn as a picture.
   const story = renderComponent('frontend/src/features/auth/story.tsx', 'Story', { primaryClass: 'pill', onStart() {}, onSignIn() {} });
   for (const t of TEMPLATES) assert.ok(story.includes(`>${t.title}<`) && story.includes(`>${t.line}<`), t.key);
   assert.match(story, /data-tier-chart=""/);
+  assert.match(story, /data-game-mark=""/);
+  assert.match(story, /data-organizer-mark=""/);
+  // The switch both screens draw through: a template's mark, or, where there
+  // is none, its emoji (the 💡 tile keeps its emoji there).
+  const { TemplateMark } = loadTsx(`${DIR}/marks.tsx`);
+  const MARK_ATTRS = { chart: 'data-tier-chart', game: 'data-game-mark', organizer: 'data-organizer-mark' };
+  for (const t of TEMPLATES) {
+    const html = renderToHtml(createElement(TemplateMark, { t }));
+    assert.ok(html.includes(`${MARK_ATTRS[t.mark]}=""`), `${t.key} draws its mark`);
+    assert.doesNotMatch(html, new RegExp(t.emoji), `${t.key} does not fall back to its emoji`);
+  }
+  assert.equal(renderToHtml(createElement(TemplateMark, { t: { emoji: '💡' } })), '💡', 'no mark: the emoji stands in');
 });
 
 test('"Make it" makes a private community through the dialog\'s own route', () => {
@@ -434,6 +451,19 @@ test('a template fills in the description and the name; words of their own let g
   assert.deepEqual(tiles(tree).map((c) => c.props['data-first-session-example']), ['tier', 'game', 'organizer', 'idea'], 'four tiles, Your own idea last');
   assert.deepEqual(pressed(tree), [], 'none picked yet');
   assert.ok(brief(tree), 'it opens on the plain box');
+  // Each template's tile draws its mark through the one switch the story
+  // draws (./marks.tsx TemplateMark). This tree is stepped by hand with a
+  // React that does not render components, so the tile carries the switch's
+  // element with the template in it; the switch itself is pinned to draw
+  // that template's picture by the test below.
+  const MARKS = { tier: 'chart', game: 'game', organizer: 'organizer' };
+  for (const tile of tiles(tree)) {
+    const key = tile.props['data-first-session-example'];
+    if (!MARKS[key]) continue;
+    const mark = find(tile, (n) => n.props && n.props.t && n.props.t.key === key)[0];
+    assert.ok(mark, `${key} tile draws its mark`);
+    assert.equal(mark.props.t.mark, MARKS[key]);
+  }
   // One tap on the tier list: its first choice, a whole description, a name.
   tiles(tree)[0].props.onClick();
   tree = draw();
