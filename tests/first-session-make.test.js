@@ -204,14 +204,14 @@ test('three templates, the same on the story and the make screen, each a whole s
   assert.equal(game.finish, true);
   assert.equal(firstChoice(game), OWN);
   assert.equal(sentence(game, 'board', '').blank, true, 'a starter still waits for the rest');
-  assert.equal(sentence(game, 'board', 'everyone owns an island').text, 'A new game we build together. For the first version, a board game where everyone owns an island.');
-  assert.equal(sentence(game, OWN, 'a card game where everyone bluffs!').text, 'A new game we build together. For the first version, a card game where everyone bluffs!');
+  assert.equal(sentence(game, 'board', 'we roll dice').text, 'A new game we build together. For the first version, a board game where we roll dice.');
+  assert.equal(sentence(game, OWN, 'a drawing game where one of us draws and everyone guesses!').text, 'A new game we build together. For the first version, a drawing game where one of us draws and everyone guesses!');
   assert.equal(suggestedName(game, OWN, 'a card game'), '', 'their own game is theirs to name');
   assert.equal(suggestedName(game, 'trivia', ''), 'Trivia Night');
   // The organizer: each choice says what it keeps.
   assert.deepEqual(organizer.choices.map((c) => [c.label, c.name]), [['Groceries', 'Grocery List'], ['Chores', 'Chore List'], ['Shared library', 'Lending Library'], ['Potlucks', 'Potluck Planner']]);
   assert.equal(sentence(organizer, 'chores', '').text, 'An app to organize our chores: who\'s on what this week, and a nudge when it\'s your turn.');
-  assert.equal(suggestedName(organizer, OWN, 'camping gear'), 'Camping Gear Crew');
+  assert.equal(suggestedName(organizer, OWN, 'camping gear'), 'Camping Gear List');
   // The story says the same three, the tier list drawn as a tier list.
   const story = renderComponent('frontend/src/features/auth/story.tsx', 'Story', { primaryClass: 'pill', onStart() {}, onSignIn() {} });
   for (const t of TEMPLATES) assert.ok(story.includes(`>${t.title}<`) && story.includes(`>${t.line}<`), t.key);
@@ -446,13 +446,13 @@ test('a template fills in the description and the name; words of their own let g
   assert.deepEqual(chips(tree).map((c) => c.props['data-make-choice']), ['own', 'board', 'shooter', 'blocks', 'trivia']);
   assert.equal(chips(tree)[0].props.selected, true);
   assert.equal(words(tree).type, 'textarea');
-  assert.equal(words(tree).props.placeholder, 'For example, a card game where everyone bluffs');
+  assert.equal(words(tree).props.placeholder, 'For example, a drawing game where one of us draws and everyone guesses');
   assert.equal(writeOut(tree), undefined);
   assert.equal(nameField(tree).props.value, '', 'their own game is theirs to name');
   chips(tree)[1].props.onClick();
   tree = draw();
   assert.equal(nameField(tree).props.value, 'Board Game Night');
-  assert.equal(words(tree).props.placeholder, 'For example, everyone owns an island and trades to grow it');
+  assert.equal(words(tree).props.placeholder, 'For example, we roll dice and race each other around the board');
   // Your own idea: the plain box again, and a suggested name goes with the template.
   tiles(tree)[3].props.onClick();
   tree = draw();
