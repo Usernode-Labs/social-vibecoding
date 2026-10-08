@@ -868,6 +868,25 @@ test('#15: the first-version screenshot state is self-contained, and mounts no f
   assert.equal(member.waiting.maker, 'jordan');
   assert.equal(member.waiting.plan.bullets.length, 4);
   assert.equal(member.waiting.makerNote, 'Help me pick which plants we track first!');
+  // #4387: its first look and what it is adding, as plainly made-up
+  // pictures; `-testing` its real screens, which stay at Ready to try.
+  assert.equal(member.buildNote, 'Adding the watering reminders');
+  assert.equal(member.screens.kind, 'first_look');
+  assert.equal(member.screens.images.length, 1);
+  assert.match(member.screens.images[0], /^data:image\/svg\+xml;charset=utf-8,/);
+  assert.match(decodeURIComponent(member.screens.images[0]), /Sample image for screenshots/);
+  assert.match(appJs, /'first-version-testing': 'testing',/);
+  AppView.showFirstVersionShot('testing');
+  const testing = h.status();
+  assert.equal(testing.buildLine, 'testing');
+  assert.equal(testing.screens.kind, 'real');
+  assert.equal(testing.screens.images.length, 3);
+  assert.equal('buildNote' in testing, false);
+  assert.ok(testing.waiting, 'still "While you wait"');
+  AppView.showFirstVersionShot('ready');
+  assert.equal(h.status().screens.kind, 'real');
+  AppView.showFirstVersionShot();
+  assert.equal(h.status().screens.kind, 'first_look', 'the maker\'s own screen too');
 });
 
 // ── 5 October: never painted from an answer it cannot trust ──────────────

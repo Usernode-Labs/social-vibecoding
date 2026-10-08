@@ -2858,9 +2858,31 @@ const AppView = {
   // who is not its maker reads it, with "While you wait" (its plan and the
   // maker's note made up; Say hi to the group has no room behind it).
   // Otherwise it is being built ("Building it").
+  //
+  // #4387: being built, its thumbnail shows its first look and its line
+  // says what it is adding ('member' and the maker's own); 'testing', the
+  // same member once it is tested, and 'ready' and 'approved', show three
+  // real screens. Every picture is a plainly made-up sample
+  // (_firstVersionSampleScreen), never a real app.
   showFirstVersionShot(variant = false) {
     const withPlan = variant === true || variant === 'plan';
     const ready = variant === 'ready' || variant === 'approved';
+    const sample = (label) => AppView._firstVersionSampleScreen(label);
+    const firstLook = { kind: 'first_look', at: null, images: [sample('First look')] };
+    const realScreens = (minutesAgo) => ({
+      kind: 'real',
+      at: new Date(Date.now() - minutesAgo * 60000).toISOString(),
+      images: [sample('Screen 1'), sample('Screen 2'), sample('Screen 3')],
+    });
+    const memberPlan = {
+      bullets: [
+        'A list of your plants, each with a photo',
+        'Which ones need water today, at the top',
+        'Tap a plant to mark it watered',
+        'A reminder when one has gone dry',
+      ],
+      questions: [{ question: 'How should it remind you?', suggested: 'In the app' }],
+    };
     AppView.appData = {
       slug: 'staging-demo-first-version',
       name: 'Plant Pal',
@@ -2881,19 +2903,15 @@ const AppView = {
           sessionId: 990003, mustApprove: true, approved: false, waitingOn: [], more: 0, missing: 1,
           goesLiveAt: new Date(Date.now() + 3 * 86400000).toISOString(), soon: false,
         },
-      } : variant === 'member' ? {
-        building: true, mine: false, member: true, step: 4, of: 7, line: 'building',
-        creator: 'jordan', ready: false, question: false, conversationId: null,
+        screens: realScreens(12),
+      } : variant === 'member' || variant === 'testing' ? {
+        building: true, mine: false, member: true, ready: false, question: false, conversationId: null,
+        ...(variant === 'testing'
+          ? { step: 5, of: 7, line: 'testing', screens: realScreens(4) }
+          : { step: 4, of: 7, line: 'building', caption: 'Adding the watering reminders', screens: firstLook }),
+        creator: 'jordan',
         makerNote: 'Help me pick which plants we track first!',
-        memberPlan: {
-          bullets: [
-            'A list of your plants, each with a photo',
-            'Which ones need water today, at the top',
-            'Tap a plant to mark it watered',
-            'A reminder when one has gone dry',
-          ],
-          questions: [{ question: 'How should it remind you?', suggested: 'In the app' }],
-        },
+        memberPlan,
       } : withPlan ? {
         // B6: its plan waits for Build it, as the server says it to the
         // plan's creator (homeroom-bot-progress.js buildLineOf). The plan
@@ -2903,6 +2921,7 @@ const AppView = {
       } : {
         building: true, mine: true, step: 4, of: 7, line: 'building',
         creator: null, ready: false, question: false, conversationId: null,
+        caption: 'Adding the watering reminders', screens: firstLook,
       },
     };
     AppView._teardownDevRoots();
@@ -3164,6 +3183,11 @@ const AppView = {
       ? appData.manifest_snapshot : {};
     const said = [appData.description, snapshot.description]
       .find((line) => typeof line === 'string' && line.trim());
+    // #4387: what the build is adding now, for a member, while it is built
+    // ("Building it · Adding the tier rows"), and the screens its thumbnail
+    // shows in place of the icon (_firstVersionScreens).
+    const caption = typeof fv.caption === 'string' && fv.caption.trim() ? fv.caption.trim().slice(0, 40) : null;
+    const screens = AppView._firstVersionScreens(appData);
     return {
       thumb: {
         name: appData.name || appData.slug,
@@ -3173,7 +3197,62 @@ const AppView = {
         ...(appData.shot ? { sketch: false } : {}),
       },
       buildLine: typeof fv.line === 'string' && fv.line ? fv.line : (fv.ready ? 'ready' : 'planning'),
+      ...(caption ? { buildNote: caption } : {}),
+      ...(screens ? { screens } : {}),
     };
+  },
+
+  /**
+   * #4387: the screens a member's thumbnail shows while the first version is
+   * built (`first_version.screens`, routes/apps.js
+   * firstVersionShowcaseFields): its FIRST LOOK, the spec's main screen
+   * drawn to a picture, from Building it, then up to three REAL screens of
+   * the build from Testing it, through Ready to try. Each is an image the
+   * server keeps for the project's members
+   * (/api/apps/:slug/first-version/screens/:kind/:n), never a page. A
+   * screenshot state's made-up project carries its own pictures. Null for
+   * none: the thumbnail is as it was.
+   */
+  _firstVersionScreens(appData) {
+    const fv = appData.first_version || {};
+    const sc = fv.screens;
+    if (!sc || (sc.kind !== 'first_look' && sc.kind !== 'real')) return null;
+    const at = typeof sc.at === 'string' && sc.at ? sc.at : null;
+    if (appData.shot) {
+      const images = Array.isArray(sc.images) ? sc.images.filter((src) => typeof src === 'string' && src.startsWith('data:image/')).slice(0, 3) : [];
+      return images.length ? { kind: sc.kind, at, images } : null;
+    }
+    const count = Math.min(Number.isInteger(sc.count) ? sc.count : 0, 3);
+    if (!count || !appData.slug) return null;
+    const v = encodeURIComponent(String(sc.v || '0'));
+    const slug = encodeURIComponent(appData.slug);
+    return {
+      kind: sc.kind,
+      at,
+      images: Array.from({ length: count }, (_, i) => `/api/apps/${slug}/first-version/screens/${sc.kind}/${i}?v=${v}`),
+    };
+  },
+
+  /**
+   * A made-up screen for the screenshot states (`?shot=first-version…`):
+   * plainly a sample, grey blocks under a header that says so, never a
+   * picture of a real app.
+   */
+  _firstVersionSampleScreen(label, accent = '#2f6fdf') {
+    const rows = [0, 1, 2, 3, 4].map((i) => {
+      const y = 236 + i * 112;
+      return `<rect x="24" y="${y}" width="342" height="96" rx="16" fill="#ffffff"/>`
+        + `<rect x="40" y="${y + 18}" width="60" height="60" rx="14" fill="${accent}" opacity="0.25"/>`
+        + `<rect x="116" y="${y + 26}" width="${170 - i * 14}" height="14" rx="7" fill="#c9ccd3"/>`
+        + `<rect x="116" y="${y + 52}" width="${120 + i * 10}" height="12" rx="6" fill="#e1e3e8"/>`;
+    }).join('');
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="390" height="844" viewBox="0 0 390 844">'
+      + '<rect width="390" height="844" fill="#f1f2f5"/>'
+      + `<rect width="390" height="200" fill="${accent}"/>`
+      + `<text x="24" y="92" font-family="system-ui, sans-serif" font-size="30" font-weight="700" fill="#ffffff">${label}</text>`
+      + '<text x="24" y="132" font-family="system-ui, sans-serif" font-size="18" fill="#ffffff" opacity="0.85">Sample image for screenshots</text>'
+      + `${rows}</svg>`;
+    return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
   },
 
   /**

@@ -360,6 +360,26 @@ async function waitingMemberFields(pool, appId, viewerId, state) {
 }
 
 /**
+ * #4387: what a first version's App tab shows a MEMBER while it is built
+ * (services/first-version-screens.js): `caption`, the build agent's
+ * "Adding …" phrase while it is built, and `screens` ({ kind, count, at, v }),
+ * the first look from "Building it", the real screens from "Testing it",
+ * each image read from GET /api/apps/:slug/first-version/screens/:kind/:n.
+ * Both come from the plan, which is a read for members (hubFirstVersion), so
+ * anyone else gets neither and sees the thumbnail: `{}`.
+ */
+async function firstVersionShowcaseFields(pool, appId, viewerId, { mine = false, line = null } = {}) {
+  if (viewerId == null) return {};
+  const fvScreens = require('../services/first-version-screens');
+  const showcase = await fvScreens.showcaseOf(pool, appId);
+  if (!showcase) return {};
+  const fields = fvScreens.firstVersionShowcase(showcase, line);
+  if (!fields.caption && !fields.screens) return {};
+  if (!mine && !(await communities.isMember(pool, appId, viewerId))) return {};
+  return fields;
+}
+
+/**
  * IN ITS FIRST WEEK, A FIRST VERSION THAT WENT LIVE STAYS ON THE HUB (#4045,
  * decision D), as its card's Live and Open app: firstVersionState answers
  * null once the bot's proposal merged, and the week's hub has nothing else
@@ -1687,6 +1707,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           const state = await botDm.firstVersionState(pool, appRow.id, { viewerId: req.user?.id ?? null });
           if (state) {
             const mine = req.user?.id != null && Number(state.userId) === Number(req.user.id);
+            // #4387: what its members watch while it is built, read only
+            // for a member (firstVersionShowcaseFields).
+            const showcase = await firstVersionShowcaseFields(pool, appRow.id, req.user?.id, { mine, line: state.line || null })
+              .catch(() => ({}));
             firstVersion = {
               building: true,
               mine,
@@ -1706,6 +1730,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
               // Ready to try: the change, and who it waits on, as this
               // viewer reads it (firstVersionApproval).
               ...(state.ready && state.approval ? { approval: state.approval } : {}),
+              ...showcase,
               // No "usually about N minutes" (WP-E used to send the
               // ordinary request's typical build here): a first version
               // plans first and waits on its creator's answer, and took 50
@@ -1823,6 +1848,37 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     } catch (err) {
       log.error('apps', 'Failed to read sketch', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #4387: one of a first version's screens for its App tab (the first
+  // look, or a real screen: services/first-version-screens.js), as a PNG,
+  // for the project's MEMBERS only, the read that says it is there
+  // (firstVersionShowcaseFields). 404 for anyone else, as for a screen that
+  // is not there: neither says whether it exists. Private to the browser
+  // that asked; nothing in it runs.
+  router.get('/api/apps/:slug/first-version/screens/:kind/:n', async (req, res) => {
+    try {
+      const fvScreens = require('../services/first-version-screens');
+      const kind = String(req.params.kind || '');
+      const n = /^[0-9]$/.test(req.params.n || '') ? Number(req.params.n) : -1;
+      if (!fvScreens.KINDS.includes(kind) || n < 0 || n >= fvScreens.MAX_SCREENS || !req.user?.id) {
+        return res.status(404).json({ error: 'Not found' });
+      }
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS);
+      if (!app || !(await communities.isMember(pool, app.id, req.user.id))) return res.status(404).json({ error: 'Not found' });
+      const row = await fvScreens.readScreen(pool, app.id, kind, n);
+      if (!row || row.content_type !== 'image/png') return res.status(404).json({ error: 'Not found' });
+      res.set({
+        'Content-Type': 'image/png',
+        'Cache-Control': 'private, max-age=3600',
+        'X-Content-Type-Options': 'nosniff',
+        'Content-Security-Policy': "default-src 'none'",
+      });
+      return res.send(Buffer.isBuffer(row.data) ? row.data : Buffer.from(row.data || ''));
+    } catch (err) {
+      log.error('apps', 'Failed to read a first version screen', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
     }
   });
 
@@ -3925,7 +3981,7 @@ module.exports = {
   // one resolver, so it is pinned there rather than through a route.
   attachForkLineage,
   appRoutes, sweepStuckCreatingApps, accessFlags, canDeleteApp, compactGlobalChatApp,
-  deleteBlockReason, isCoreApp, hubFirstVersion, firstVersionLinesFor, sharedPlan, waitingMemberFields,
+  deleteBlockReason, isCoreApp, hubFirstVersion, firstVersionLinesFor, sharedPlan, waitingMemberFields, firstVersionShowcaseFields,
   // #2524: the activity guard and its two bounds, so the contract is
   // unit-testable without standing up the whole app router.
   activitySeconds, ACTIVITY_MAX_PER_POST, ACTIVITY_MAX_PER_DAY,
