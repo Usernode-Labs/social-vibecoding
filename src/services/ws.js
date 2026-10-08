@@ -37,10 +37,13 @@ const globalClients = new Set(); // Set<{ ws, user }> for /ws/events
 // not sent. The audience still needs to know something moved, so they get the
 // nudge their own reconnect path already handles — `resyncCurrentView` in
 // public/js/app.js — rather than a truncated event.
-function _onBusMessage({ kind, routing, data, oversize }) {
+function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
   const r = routing || {};
   const payload = oversize ? { type: 'resync_hint' } : data;
   if (payload == null) return;
+  // A workflow machine's push has no emitting process to run what its push
+  // helper runs beside the sockets, so every process that relays it does.
+  if (fromWorkflow && !oversize) afterWorkflowPush(kind, r, payload);
   switch (kind) {
     case 'global':
       deliverGlobal(payload);
@@ -2170,6 +2173,10 @@ function pushAppUpdate(data) {
 function pushIssueUpdate(data) {
   broadcastGlobalScoped({ type: 'issue_update', ...data },
     { appId: data.appId, appSlug: data.appSlug });
+  afterIssueUpdate(data);
+}
+
+function afterIssueUpdate(data) {
   // An edit or an unclaim names the GitHub issue; a create names the local
   // row, so routes/issues.js wakes the bot itself once the twin exists.
   if (data && data.issueNumber != null && data.appId != null
@@ -2177,6 +2184,16 @@ function pushIssueUpdate(data) {
     noteIssueActivityForBot(data.appId, data.issueNumber, data.action);
   }
   noteBoardChange(data);
+}
+
+// What the push helpers run beside the sockets, for a push a workflow
+// machine published (services/ws-bus.js WORKFLOW_SENDER). Each is safe to
+// run once per relaying process: the Workshop's re-placement takes its row's
+// lease, the bot's wake and the badge sync are idempotent.
+function afterWorkflowPush(kind, routing, payload) {
+  if (kind === 'scoped' && payload.type === 'issue_update') afterIssueUpdate(payload);
+  else if (kind === 'scoped' && payload.type === 'session_update') noteBoardChange(payload);
+  else if (kind === 'user' && routing.userId != null) afterUserPush(routing.userId, payload);
 }
 
 // The Workshop's grouping for an app moved — cards were placed into
@@ -2253,15 +2270,20 @@ function deliverToUser(userId, payload) {
 function pushToUser(userId, payload) {
   const sent = deliverToUser(userId, payload);
   wsBus.publish('user', { userId }, payload);
-  // #2904: every read path announces itself with this event, so it is also
-  // where the iOS icon badge learns the count moved. Only the emitting
-  // instance gets here (bus peers call deliverToUser), so one change is one
-  // debounced sync. Lazy and guarded: the badge is best-effort and must never
-  // break the socket fan-out.
+  afterUserPush(userId, payload);
+  return sent;
+}
+
+// #2904: every read path announces itself with this event, so it is also
+// where the iOS icon badge learns the count moved. Only the emitting
+// instance gets here (bus peers call deliverToUser), so one change is one
+// debounced sync; a workflow push has no emitting instance, so each one
+// that relays it schedules the sync. Lazy and guarded: the badge is
+// best-effort and must never break the socket fan-out.
+function afterUserPush(userId, payload) {
   if (payload && payload.type === 'notifications_changed') {
     try { require('./mobile-push').scheduleBadgeSync(userId); } catch {}
   }
-  return sent;
 }
 
 // Platform conversations have no app room. Their service resolves a fresh

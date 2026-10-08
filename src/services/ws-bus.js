@@ -61,6 +61,12 @@ const MAX_PAYLOAD_BYTES = 7000;
 // collision would make one of them drop the other's events as its own.
 const INSTANCE_ID = crypto.randomUUID();
 
+// What a workflow machine decided, published inside its transition's
+// transaction (src/workflow/platform.ts). It is no instance's own echo, so
+// every instance delivers it, the one whose slot decided included, and it
+// is not a peer: hearing one says nothing about who else is listening.
+const WORKFLOW_SENDER = 'workflow';
+
 let _client = null;
 let _onMessage = null;
 let _onListening = null;
@@ -297,6 +303,17 @@ function flushBatches() {
   for (const key of [..._batches.keys()]) _flushBatch(key);
 }
 
+/**
+ * The NOTIFY body for a push a workflow transition publishes: the same
+ * envelope as publish, from WORKFLOW_SENDER, and the same resync nudge in
+ * place of a payload over the budget. Pure.
+ */
+function workflowBody(kind, routing, data) {
+  const body = JSON.stringify({ i: WORKFLOW_SENDER, k: kind, r: routing || null, d: data });
+  if (Buffer.byteLength(body, 'utf8') <= MAX_PAYLOAD_BYTES) return body;
+  return JSON.stringify({ i: WORKFLOW_SENDER, k: kind, r: routing || null, o: 1 });
+}
+
 function _handleNotification(msg) {
   if (!msg || msg.channel !== CHANNEL || !msg.payload) return;
   let env;
@@ -307,6 +324,12 @@ function _handleNotification(msg) {
   }
   // Our own echo. Already delivered locally, before it was ever published.
   if (!env || env.i === INSTANCE_ID) return;
+  if (env.i === WORKFLOW_SENDER) {
+    if (typeof _onMessage === 'function' && env.k !== HELLO_KIND) {
+      _deliver({ kind: env.k, routing: env.r || null, data: env.d, oversize: !!env.o, fromWorkflow: true });
+    }
+    return;
+  }
   // Anything from another instance proves it exists (see _isAlone).
   _peers.lastPeerAt = Date.now();
   if (env.k === HELLO_KIND) return;
@@ -455,7 +478,7 @@ async function stop() {
 
 module.exports = {
   start, stop, publish, publishBatched, flushBatches,
-  CHANNEL, MAX_PAYLOAD_BYTES, INSTANCE_ID,
+  CHANNEL, MAX_PAYLOAD_BYTES, INSTANCE_ID, WORKFLOW_SENDER, workflowBody,
   BATCH_WINDOW_MS, PEER_HELLO_MS, PEER_TTL_MS, PEER_POLL_MS,
   _isAlone,
   _peers,

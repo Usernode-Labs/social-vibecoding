@@ -24,7 +24,7 @@ function counter({ name = 'kt-counter', version = 1 } = {}) {
     events: {
       Create: any, Add: (p) => { if (!Number.isInteger(p?.n)) throw new Error('n must be an integer'); return p; },
       Explode: any, Flaky: any, Swallow: any, Sneaky: any, Lock: any, Send: any, Work: any,
-      Arm: any, Tick: any, Admit: any, Close: any,
+      Arm: any, Tick: any, Admit: any, Close: any, Shout: any,
     },
     create: ['Create'],
     terminal: ['closed'],
@@ -38,7 +38,7 @@ function counter({ name = 'kt-counter', version = 1 } = {}) {
     },
     authorize: {
       Create: () => ok(), Add: () => ok(), Explode: () => ok(), Flaky: () => ok(), Swallow: () => ok(),
-      Sneaky: () => ok(), Lock: () => ok(), Send: () => ok(), Work: () => ok(), Arm: () => ok(), Close: () => ok(),
+      Sneaky: () => ok(), Lock: () => ok(), Send: () => ok(), Work: () => ok(), Arm: () => ok(), Close: () => ok(), Shout: () => ok(),
       Tick: (e) => (e.source.kind === 'timer' ? ok() : reject('timer_only')),
       Admit: (e, f) => (f.admission ? ok() : reject('admission_off')),
     },
@@ -82,6 +82,16 @@ function counter({ name = 'kt-counter', version = 1 } = {}) {
         Arm: { to: (s, e, f, ctx) => ({ ...same(s, {}), timer: { at: new Date(ctx.now.getTime() + e.payload.ms), event: { type: 'Tick', payload: { armedAt: ctx.version + 1 } } } }) },
         Tick: { to: (s) => same(s, { ticks: s.data.ticks + 1 }) },
         Admit: { to: (s) => same(s, { admitted: true }) },
+        // What browsers hear: one push from the transition, one from a write
+        // that knows the row it inserted; `explode` faults after both.
+        Shout: {
+          guard: (s, e) => (e.payload.refuse ? reject('refused') : ok()),
+          to: (s, e) => ({
+            ...same(s, {}),
+            push: [{ kind: 'room', routing: { appId: 7 }, data: { type: 'shouted', word: e.payload.word, at: new Date(0) } }],
+            writes: [{ type: 'shout', word: e.payload.word }, ...(e.payload.explode ? [{ type: 'boom' }] : [])],
+          }),
+        },
         Close: { to: (s) => ({ next: { name: 'closed', data: s.data } }) },
       },
       closed: {
@@ -98,6 +108,11 @@ function counter({ name = 'kt-counter', version = 1 } = {}) {
       async swallow(tx) { try { await tx.query('SELECT 1/0'); } catch { /* swallowed on purpose */ } },
       sneaky: (tx) => tx.query('COMMIT'),
       lock: (tx, w) => tx.query('UPDATE kt_rows SET v = v + 1 WHERE id = $1', [w.row]),
+      async shout(tx, w, ctx) {
+        const { rows: [row] } = await tx.query('INSERT INTO kt_log (key, n) VALUES ($1, 0) RETURNING id', [ctx.key]);
+        ctx.push({ kind: 'room', routing: { appId: 7 }, data: { type: 'line', id: Number(row.id), word: w.word } });
+      },
+      boom() { throw new Error('boom write'); },
     },
     async project(tx, before, after, ctx) {
       await tx.query(
@@ -195,6 +210,46 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     assert.equal((await event(otherActor)).reason, 'request_key_conflict', 'the actor is part of the request');
     assert.equal((await inst('k1')).data.count, 7);
     await pool.query(`UPDATE kt_flags SET on_off = TRUE WHERE name = 'admission'`);
+  });
+
+  await t.test('pushes are published in the transition\'s transaction: heard once it commits, never otherwise', async () => {
+    const { Client } = require('pg');
+    const listener = new Client({ connectionString: String(url) });
+    await listener.connect();
+    const heard = [];
+    listener.on('notification', (m) => heard.push(JSON.parse(m.payload)));
+    await listener.query('LISTEN kt_push');
+    const r = make({
+      publish: (q, list) => q.query('SELECT pg_notify($1, b) FROM unnest($2::text[]) WITH ORDINALITY AS t(b, n) ORDER BY n',
+        ['kt_push', list.map((p) => JSON.stringify(p))]),
+    });
+    const send = (key, payload, requestKey) => r.append(machine, key, { type: 'Shout', payload },
+      { requestKey: requestKey || `push-${++seq}`, source: { kind: 'route' }, actor: 'user:1', appId: 7 });
+    const settle = async () => { await r.drain(); await sleep(150); };
+    try {
+      await r.append(machine, 'kp', { type: 'Create', payload: {} }, { requestKey: 'kp-create', source: { kind: 'route' }, appId: 7 });
+      await r.append(machine, 'kpx', { type: 'Create', payload: {} }, { requestKey: 'kpx-create', source: { kind: 'route' }, appId: 7 });
+      await r.drain();
+      const said = await send('kp', { word: 'hello' }, 'kp-hello');
+      await settle();
+      const { rows: [line] } = await pool.query(`SELECT id FROM kt_log WHERE key = 'kp' ORDER BY id DESC LIMIT 1`);
+      assert.deepEqual(heard, [
+        { kind: 'room', routing: { appId: 7 }, data: { type: 'shouted', word: 'hello', at: '1970-01-01T00:00:00.000Z' } },
+        { kind: 'room', routing: { appId: 7 }, data: { type: 'line', id: Number(line.id), word: 'hello' } },
+      ], 'the transition\'s pushes, then the write\'s, serialised as JSON');
+      assert.deepEqual((await event(said)).emitted.push, ['room:shouted', 'room:line']);
+      heard.length = 0;
+      await send('kp', { word: 'no', refuse: true });
+      await send('kpx', { word: 'lost', explode: true });
+      await send('kp', { word: 'hello' }, 'kp-hello');   // a retry replays
+      await settle();
+      assert.deepEqual(heard, [], 'a rejected, faulted or replayed event publishes nothing');
+      assert.equal((await inst('kpx')).flag, 'faulted');
+      assert.equal((await pool.query(`SELECT count(*)::int AS n FROM kt_log WHERE key = 'kpx'`)).rows[0].n, 0, 'nor writes anything');
+      await r.release('kt-counter', 'kpx', { mode: 'skip', actor: 'test' });
+    } finally {
+      await listener.end();
+    }
   });
 
   await t.test('K3 a rejection writes no receipt, so the same key can be accepted later', async () => {

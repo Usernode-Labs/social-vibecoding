@@ -312,3 +312,39 @@ test('a batch never outgrows the NOTIFY budget, and an oversize item still nudge
   assert.deepEqual(items.map((item) => (item.o ? 'nudge' : item.d.n)), [0, 1, 2, 3, 4, 5, 6, 'nudge']);
   assert.deepEqual(items[7].r, { sessionId: 9 }, 'the nudge keeps its audience');
 });
+
+// A workflow machine's push (src/workflow/platform.ts publishPushes) is
+// published inside its transition's transaction from no instance at all:
+// every instance relays it, the one whose slot decided included, and none
+// counts it as a peer.
+test('a workflow push is delivered by every instance, its decider included, and proves no peer', () => {
+  const seen = collect();
+  bus._peers.lastPeerAt = -Infinity;
+  bus._handleNotification({ channel: bus.CHANNEL, payload: bus.workflowBody('room', { appId: 7 }, { type: 'chat', id: 1 }) });
+  assert.deepEqual(seen, [{ kind: 'room', routing: { appId: 7 }, data: { type: 'chat', id: 1 }, oversize: false, fromWorkflow: true }]);
+  assert.equal(bus._peers.lastPeerAt, -Infinity, 'not a peer');
+});
+
+test('a workflow push over the NOTIFY budget becomes the same nudge, to the same audience', () => {
+  const small = JSON.parse(bus.workflowBody('scoped', { appId: 3, appSlug: 'x' }, { type: 'vote_update' }));
+  assert.deepEqual(small, { i: bus.WORKFLOW_SENDER, k: 'scoped', r: { appId: 3, appSlug: 'x' }, d: { type: 'vote_update' } });
+  const big = bus.workflowBody('scoped', { appId: 3, appSlug: 'x' }, { type: 'vote_update', pad: 'z'.repeat(9000) });
+  assert.ok(Buffer.byteLength(big, 'utf8') < 8000);
+  assert.deepEqual(JSON.parse(big), { i: bus.WORKFLOW_SENDER, k: 'scoped', r: { appId: 3, appSlug: 'x' }, o: 1 });
+});
+
+test('a relayed workflow push runs what its push helper runs beside the sockets', () => {
+  // The board-change reaction ran in the process that emitted a push; a
+  // workflow push has none, so each process that relays it runs it. A peer's
+  // push does not: its emitter already did.
+  const ws = require('../src/services/ws');
+  const boards = [];
+  ws.onBoardChange((info) => boards.push(info));
+  const push = { kind: 'scoped', routing: { appId: 5, appSlug: 'five' }, data: { type: 'issue_update', action: 'closed', appId: 5, appSlug: 'five' }, oversize: false };
+  ws._onBusMessage(push);
+  assert.deepEqual(boards, [], 'a peer\'s push');
+  ws._onBusMessage({ ...push, fromWorkflow: true });
+  assert.deepEqual(boards, [{ appId: 5, appSlug: 'five' }], 'a workflow push');
+  ws._onBusMessage({ ...push, data: null, oversize: true, fromWorkflow: true });
+  assert.equal(boards.length, 1, 'a nudge says nothing about the board');
+});

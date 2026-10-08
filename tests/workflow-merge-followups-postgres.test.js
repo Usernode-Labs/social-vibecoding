@@ -79,6 +79,8 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
 
   const notified = [];
   const notifiers = Object.fromEntries(NOTIFIERS.map((n) => [n, (x) => { notified.push(x); }]));
+  // What browsers hear: published in the transition's transaction.
+  const pushed = [];
   // Fake work: records each call; `results` answers per kind, `fail` makes
   // a kind throw (permanently when asked).
   const work = { calls: [], results: new Map(), fail: new Map(), seen: new Map() };
@@ -95,7 +97,7 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
   });
   const machine = mergeFollowups({ dataKey: DATA_KEY, notifiers });
   const rt = createRuntime({
-    pool, machines: [machine], pollMs: 50,
+    pool, machines: [machine], pollMs: 50, publish: async (q, list) => { pushed.push(...list); },
     services: Object.fromEntries(Object.values(WORK).map((k) => [k, fake(k)])),
   });
   runtimes.push(rt);
@@ -213,7 +215,11 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     assert.ok(kinds.includes(WORK.dm) && kinds.includes(WORK.journey), 'the DM and the journey record follow live');
     const dm = work.calls.find((c) => c.kind === WORK.dm && c.input.sessionId === s.id);
     assert.equal(dm.input.sha, SHA('a'));
-    assert.ok(notified.some((n) => n.type === 'appVersion' && n.appId === a.id));
+    const heard = pushed.filter((p) => p.routing.appId === a.id);
+    assert.ok(heard.some((p) => p.kind === 'scoped' && p.data.type === 'app_version_changed' && p.data.sha === SHA('a')), 'the version pill');
+    assert.ok(heard.some((p) => p.kind === 'room' && p.data.type === 'chat' && p.data.content === live.content && p.data.id > 0
+      && p.data.metadata.merged.votes === '2/3' && !('wfEvent' in p.data.metadata)), 'the line, as the room shows it');
+    assert.ok(pushed.some((p) => p.data.type === 'vote_update' && p.data.sessionId === s.id && p.data.live === true), 'the vote card');
   });
 
   await t.test('F6: a failed deploy is visible, and a later deploy makes it live', async () => {

@@ -9,7 +9,7 @@
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
 import { createRuntime } from './kernel/index.ts';
-import type { EventOutcome, Logger, Pool, Runtime } from './kernel/index.ts';
+import type { EventOutcome, Logger, Pool, Push, Queryable, Runtime } from './kernel/index.ts';
 import { legacy } from './legacy.ts';
 import { GOVERNANCE_KINDS } from './governance-proposal/facts.ts';
 import { MACHINE, governanceProposal, issueKey } from './governance-proposal/machine.ts';
@@ -84,6 +84,16 @@ async function recordBooted(pool: Pool): Promise<void> {
       WHERE a.self_hosted = TRUE`, [sha]);
 }
 
+// What browsers should hear, published on the WebSocket bus's channel in
+// the transition's own transaction: Postgres delivers a NOTIFY only if it
+// commits, to every web process listening then, the deciding one included
+// (services/ws-bus.js WORKFLOW_SENDER), which relays it to its sockets.
+export async function publishPushes(q: Queryable, pushes: Push[]): Promise<void> {
+  const bus = legacy('services/ws-bus');
+  await q.query('SELECT pg_notify($1, body) FROM unnest($2::text[]) WITH ORDINALITY AS t(body, n) ORDER BY n',
+    [bus.CHANNEL, pushes.map((p) => bus.workflowBody(p.kind, p.routing ?? null, p.data))]);
+}
+
 export async function startWorkflow(config: any, opts: { loops: boolean }): Promise<void> {
   log = legacy('services/logger');
   const appPool = legacy('db/pool').getPool(config);
@@ -115,7 +125,7 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
     services = { ...services, ...mergeFollowupsServices(deps) };
   }
   const started = createRuntime({
-    pool: kernelPool!, machines, services, slots: config.wfSlots, log: log!,
+    pool: kernelPool!, machines, services, slots: config.wfSlots, log: log!, publish: publishPushes,
   });
   try {
     await started.start({ slots: true });
