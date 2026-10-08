@@ -423,6 +423,20 @@ async function gatherFull(config) {
     stuckSessions: stuckSessions.length,
     globalSpendCents,
     globalSpendCap: GLOBAL_DAILY_LIMIT_CENTS,
+    // Check-run queue (#4317): slots in use, runs waiting, the oldest wait.
+    // Null when the queue could not be read — unobserved, not empty.
+    ...(await (async () => {
+      try {
+        const stats = await require('./check-runs').queueStats(pool);
+        if (!stats) return {};
+        return {
+          checksRunning: stats.running,
+          checksLimit: stats.limit,
+          checksQueued: stats.queued,
+          checksOldestWaitSeconds: stats.oldestWaitSeconds,
+        };
+      } catch { return {}; }
+    })()),
     // Ramp headlines, mirrored into the summary bar.
     sessionsGlobalUsed: capacity.globalUsed,
     sessionsGlobalCap: globalCap,
@@ -435,7 +449,8 @@ async function gatherFull(config) {
     // Null means unobserved; zero would falsely claim an empty/healthy fleet.
     for (const key of ['prodRunning', 'prodMissing', 'stagingRunning', 'stagingTotal',
       'workersRunning', 'workersReady', 'workersTotal', 'workersInFlight',
-      'workersWarmIdle', 'workersBootstrapping', 'workersOrphaned', 'stuckSessions', 'activeTurns']) {
+      'workersWarmIdle', 'workersBootstrapping', 'workersOrphaned', 'stuckSessions', 'activeTurns',
+      'checksRunning', 'checksQueued']) {
       summary[key] = null;
     }
     capacity.activeTurns = null;

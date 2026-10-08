@@ -625,6 +625,10 @@ async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, re
     passed = true;
   } catch (err) {
     if (signal?.aborted) throw signal.reason;
+    // #4317: a capacity refusal (quota exceeded, Pod unschedulable) is not a
+    // verdict — rethrow it so the run requeues instead of storing a failing
+    // unit-suite row.
+    if (err.retryLater) throw err;
     readSummary(err.stdout);
     const timedOut = err.killed === true || err.signal === 'SIGTERM' || err.signal === 'SIGKILL';
     const parts = failureOutcomeParts(err.stdout, err.stderr, { timedOut });

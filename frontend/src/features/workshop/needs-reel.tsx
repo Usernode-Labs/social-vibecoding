@@ -57,6 +57,11 @@ export type NeedsFeedItem = {
    * needs (B7, the server's rule for `_cardVoteButtonSpecs`' `approve`).
    */
   approve?: boolean;
+  /**
+   * #4317: the change's checks are waiting for a free check-run slot; the
+   * position says where in line the run stands.
+   */
+  checksQueued?: { position?: number } | null;
   app: { slug: string; name: string; icon_url: string | null; icon_emoji: string | null };
 };
 
@@ -138,6 +143,7 @@ export function reelRows(
       thread: { type: change ? 'session' : 'governance', ref: item.id },
       app: item.app,
       tally: { yes: Number(item.yes) || 0, no: Number(item.no) || 0 },
+      checksQueued: item.checksQueued || null,
     };
     return row;
   });

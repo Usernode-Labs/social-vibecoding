@@ -154,6 +154,15 @@ function plural(n, one, many = `${one}s`) {
   return `${n} ${n === 1 ? one : many}`;
 }
 
+/** Pure: 1 → "next", 2 → "2nd", 3 → "3rd", 4 → "4th" — the queue's words. */
+function ordinalWords(n) {
+  if (n === 1) return 'next';
+  const mod100 = n % 100;
+  const suffix = mod100 >= 11 && mod100 <= 13 ? 'th'
+    : n % 10 === 1 ? 'st' : n % 10 === 2 ? 'nd' : n % 10 === 3 ? 'rd' : 'th';
+  return `${n}${suffix}`;
+}
+
 /** Pure: a proposal's checks, in plain words, from its columns. */
 function checksWords({ check_state: state, check_phase: phase, checks_progress: progress, failed_checks: failedChecks }) {
   if (state === 'passing') return 'passed';
@@ -164,6 +173,14 @@ function checksWords({ check_state: state, check_phase: phase, checks_progress: 
   }
   if (state === 'error' || state === 'unknown') return 'could not run (the preview or the test run broke)';
   if (state === 'pending' || state === 'running') {
+    if (phase === 'queued') {
+      // #4317: the run is admitted but waits for a free check-run slot. The
+      // position comes from the queue block the server stamps while waiting.
+      const pos = Number(progress?.queue?.position);
+      return Number.isInteger(pos) && pos > 0
+        ? `waiting for a free slot (${ordinalWords(pos)} in line)`
+        : 'waiting for a free slot';
+    }
     if (phase === 'building') return 'running: building the preview first';
     const p = progress && typeof progress === 'object' ? progress : {};
     const ran = Number(p.ran);

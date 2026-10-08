@@ -331,6 +331,11 @@ const NEEDS_FEED_SQL = `
            cs.pr_number AS number,
            cs.approval_epoch AS epoch,
            cs.last_activity_at AS at,
+           -- #4317: whether the change's checks are waiting for a free run
+           -- slot, and where in line they stand; false/NULL otherwise.
+           (cs.check_state = 'pending' AND cs.check_phase = 'queued') AS checks_queued,
+           (CASE WHEN cs.check_state = 'pending' AND cs.check_phase = 'queued'
+                 THEN (cs.checks_progress->'queue'->>'position')::int END) AS queue_position,
            (SELECT COUNT(*) FROM pr_votes pv
              WHERE pv.session_id = cs.id AND pv.vote = 'yes'
                AND ${countedVotePredicateSql('pv', 'cs')})::int AS yes,
@@ -344,6 +349,7 @@ const NEEDS_FEED_SQL = `
     SELECT 'governance', i.app_id, i.id, i.title::text,
            LEFT(COALESCE(i.description, ''), ${NEEDS_FEED_SUMMARY_MAX})::text,
            u.username::text, NULL::int, NULL::int, i.created_at,
+           FALSE::boolean, NULL::int,
            NULL::int, NULL::int
       FROM issues i
       LEFT JOIN users u ON u.id = i.created_by
@@ -351,7 +357,7 @@ const NEEDS_FEED_SQL = `
   )
   SELECT a.id AS app_id, a.slug, a.name, a.icon_image_id, a.icon_emoji,
          o.kind, o.id, o.title, o.summary, o.author, o.number, o.epoch,
-         o.at, o.yes, o.no,
+         o.at, o.yes, o.no, o.checks_queued, o.queue_position,
          (o.kind = 'proposal'
            AND (${communities.audienceSql('a', '(SELECT COUNT(*) FROM community_members m WHERE m.community_id = a.community_id)')}) = 'solo'
            AND counts_toward_outcome($1, a.id)) AS solo
@@ -484,6 +490,13 @@ function shapeNeedsFeed(rows) {
     at: row.at instanceof Date ? row.at.toISOString() : (row.at || null),
     yes: row.yes == null ? null : Number(row.yes),
     no: row.no == null ? null : Number(row.no),
+    // #4317: the change's checks are waiting for a free run slot; the feed's
+    // fact line says where in line it stands.
+    ...(row.checks_queued ? {
+      checksQueued: {
+        ...(row.queue_position != null ? { position: Number(row.queue_position) } : {}),
+      },
+    } : {}),
     ...(approvedAlone(row) ? { approve: true } : {}),
     app: {
       slug: row.slug,

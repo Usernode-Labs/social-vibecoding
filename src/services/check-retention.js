@@ -31,9 +31,12 @@ const log = require('./logger');
 
 const INTERVAL_MS = 15 * 60 * 1000;
 const MAX_DELETIONS = 50;
-// Far past every check Job's activeDeadlineSeconds (770 s for a capture, 600 s
-// for a unit suite by default), so a run still being created or still running
-// never loses its input here, whatever its Pods are doing.
+// Far past every check Job's activeDeadlineSeconds. The Job's deadline is
+// the run's own timeout (770 s for a capture, 600 s for a unit suite by
+// default) plus the Pod's scheduling window (CHECK_POD_START_MS, default
+// 10 min, #4317) — the backstop, since the live timeout now counts only
+// RUNNING time. So a run still being created or still running never loses
+// its input here, whatever its Pods are doing.
 const SECRET_MIN_AGE_MS = 2 * 60 * 60 * 1000;
 const CHECK_INPUT_SECRET = /^sv-(?:capture|unit-suite)-s[a-z0-9][a-z0-9-]*-input$/;
 const CHECK_JOB = /^sv-(?:capture|unit-suite)-s[a-z0-9]/;

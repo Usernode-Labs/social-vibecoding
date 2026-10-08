@@ -1560,6 +1560,13 @@ async function becomeLeader() {
   // the election) is picked up within the orphan window instead of waiting
   // out CHECKS_STALE_MS for the stale sweep to start it over.
   checkHarvest.start(config);
+  // The check-run queue's leader dispatch (#4317): hands queued runs their
+  // slots as the cluster's room allows, so a burst never asks Kubernetes for
+  // more Jobs than it can run. Kubernetes capture runtime only — local
+  // Docker development runs checks as before.
+  if (config.captureRuntime === 'kubernetes') {
+    require('./src/services/check-runs').startDispatcher(getPool(config));
+  }
   mainWatch.start(config);
   if (!config.wfMergeFollowupsEnabled) mergeFollowups.start(config);
 

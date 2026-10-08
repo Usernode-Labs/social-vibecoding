@@ -9059,6 +9059,9 @@ CREATE INDEX IF NOT EXISTS chat_sessions_integration_measured_idx
 -- tree that cannot merge is not the tree that would be tested after the
 -- resolution. The verdict stays 'pending' with this phase until the head
 -- merges cleanly, at which point the checks run (services/check-admission.js).
+-- It also gains 'queued' (#4317): the run is admitted but waits for a free
+-- check-run slot, so the card says "Checks waiting · 3rd in line" instead of
+-- spinning a run that has not started.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_resolved_epoch INTEGER;
 
 -- The one exception to "behind is not a reason to sync": a promoted
@@ -9221,6 +9224,24 @@ CREATE TABLE IF NOT EXISTS check_runs (
 );
 COMMENT ON TABLE check_runs IS 'staging:private';
 CREATE INDEX IF NOT EXISTS idx_check_runs_session ON check_runs (session_id);
+
+-- The platform's own check-run queue (#4317). A run a slot has not been
+-- granted to yet sits at state 'queued' instead of holding a Kubernetes Job
+-- against the namespace's quotas. 'preparing' is a row recorded before its
+-- launcher reached the queue (record()'s provisional and full writes); NULL
+-- marks a row written before the queue existed and counts as running, so a
+-- deploy mid-burst never over-dispatches. queued_at is when the run joined
+-- the line — inherited by a replacement commit's run and by a requeue, so a
+-- run keeps its place. slot_at is when dispatch granted the slot. retry_at
+-- holds a requeued run back (CHECKS_REQUEUE_BACKOFF_MS) so a full cluster is
+-- not hammered. Priority is NOT stored: it is read from chat_sessions.status
+-- when the line is ordered, so a draft promoted while it waits moves up at
+-- once.
+ALTER TABLE check_runs ADD COLUMN IF NOT EXISTS state      VARCHAR(16);
+ALTER TABLE check_runs ADD COLUMN IF NOT EXISTS queued_at  TIMESTAMPTZ;
+ALTER TABLE check_runs ADD COLUMN IF NOT EXISTS slot_at    TIMESTAMPTZ;
+ALTER TABLE check_runs ADD COLUMN IF NOT EXISTS retry_at   TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_check_runs_queue ON check_runs (queued_at) WHERE state = 'queued';
 
 -- Renamed from visual_evidence_* when visual evidence became before & after
 -- shots. Guarded so boot is idempotent either way: an existing deployment

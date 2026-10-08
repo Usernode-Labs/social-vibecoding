@@ -134,6 +134,22 @@
     return mins >= 1 ? mins + ' min' : '';
   }
 
+  // #4317 — where in line a queued checks run stands, as the pill's own
+  // words. 1 reads "next in line" (nothing ahead of it), 2 "2nd in line",
+  // 3 "3rd in line", and so on. No position (an older server, a row read
+  // before the queue block landed) says nothing, so the pill falls back to
+  // plain "Checks waiting".
+  function inLine(p) {
+    var q = p && p.checks_progress && typeof p.checks_progress === 'object' ? p.checks_progress.queue : null;
+    var pos = q ? Number(q.position) : NaN;
+    if (!Number.isInteger(pos) || pos < 1) return '';
+    if (pos === 1) return 'next in line';
+    var mod100 = pos % 100;
+    var suffix = mod100 >= 11 && mod100 <= 13 ? 'th'
+      : pos % 10 === 1 ? 'st' : pos % 10 === 2 ? 'nd' : pos % 10 === 3 ? 'rd' : 'th';
+    return pos + suffix + ' in line';
+  }
+
   // #788 / the member floor: why a flagged proposal needs a Yes from a member
   // other than its author, in the words every surface uses. The server's copy
   // is src/services/explicit-approval.js; this file loads before app-view.js
@@ -396,6 +412,19 @@
         title: 'This proposal conflicts with main, so its preview was built but its tests '
           + 'were not run: they would judge a tree that cannot merge. They run automatically '
           + 'once it merges cleanly.',
+      });
+    }
+    // 6-queued (#4317) — the run is admitted but waits for a free check-run
+    // slot. Nothing is running, so no spinner; "waiting", not "couldn't
+    // run". Precedes the checks_running branch, whose spinner and running
+    // time would both be false here.
+    if (check === 'pending' && p.check_phase === 'queued') {
+      var inLineWords = inLine(p);
+      return descriptor('checks_queued',
+        inLineWords ? 'Checks waiting · ' + inLineWords : 'Checks waiting', 'neutral', false, {
+        votes: votes,
+        title: 'The platform is running as many checks as it can at once. This proposal’s checks start '
+          + 'as soon as a slot is free' + (inLineWords ? ' (' + inLineWords + ')' : '') + '. Nothing is wrong with the change.',
       });
     }
     if (check === 'pending') {

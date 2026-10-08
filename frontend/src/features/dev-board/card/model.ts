@@ -490,6 +490,12 @@ export interface DevWorkshopView {
      */
     tally?: { yes: number; no: number } | null;
     /**
+     * #4317: the change's checks are waiting for a free run slot, and the
+     * row carries where in line they stand. The Communities feed's rows say
+     * so in their facts line, since no pill was worked out for them.
+     */
+    checksQueued?: { position?: number } | null;
+    /**
      * The Description sheet's body: a proposal's summary or an issue's
      * body, rendered and sanitised where it was built (app-view.js). Empty
      * when there is none.

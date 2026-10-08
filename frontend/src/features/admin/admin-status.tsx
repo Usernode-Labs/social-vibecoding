@@ -344,6 +344,24 @@ function Summary({ s, node, runtimeKind }: { s: StatusData; node: any; runtimeKi
     <SummaryCard key="prodmissing" label="Prod missing" tone={s.prodMissing > 0 ? 'red' : 'zinc'}>{`${s.prodMissing}`}</SummaryCard>,
   ];
 
+  // The check-run queue (#4317): how many runs are waiting for a slot, how
+  // long the oldest has waited, and how many of the slots are in use.
+  // Built exactly like the other cards; yellow while anything is waiting.
+  if (s.checksQueued != null) {
+    const queueTone: Tone = s.checksQueued > 0 ? 'yellow' : 'zinc';
+    const oldest = s.checksOldestWaitSeconds != null && s.checksOldestWaitSeconds > 0
+      ? `oldest ${fmtDurationSeconds(s.checksOldestWaitSeconds)}`
+      : null;
+    const slots = s.checksRunning != null && s.checksLimit != null ? `${s.checksRunning}/${s.checksLimit} running` : null;
+    const muted = [oldest, slots].filter(Boolean).join(' · ');
+    cards.push(
+      <SummaryCard key="checksqueue" label="Checks queue" tone={queueTone}>
+        {`${s.checksQueued}`}
+        {muted ? <> <span className="text-zinc-500 dark:text-zinc-400 text-xs">{muted}</span></> : null}
+      </SummaryCard>,
+    );
+  }
+
   if (s.globalSpendCents != null) {
     const spendPct = Math.round((s.globalSpendCents / s.globalSpendCap) * 100);
     const spendTone: Tone = spendPct > 80 ? 'red' : spendPct > 50 ? 'yellow' : 'zinc';

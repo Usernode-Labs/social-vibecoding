@@ -1317,6 +1317,19 @@ type Fact = { key: string; tone: string | undefined; text: string };
  * approval") is the eyebrow.
  */
 const SAID_ELSEWHERE = new Set(['needs_vote', 'tally', 'approvals']);
+/**
+ * #4317: where a queued checks run stands, as the facts line says it — the
+ * same words the `checks_queued` pill uses ("Checks waiting · 3rd in line").
+ */
+function checksQueuedText(q: { position?: number } | null | undefined): string {
+  const pos = q ? Number(q.position) : NaN;
+  if (!Number.isInteger(pos) || pos < 1) return 'Checks waiting';
+  if (pos === 1) return 'Checks waiting · next in line';
+  const mod100 = pos % 100;
+  const suffix = mod100 >= 11 && mod100 <= 13 ? 'th'
+    : pos % 10 === 1 ? 'st' : pos % 10 === 2 ? 'nd' : pos % 10 === 3 ? 'rd' : 'th';
+  return `Checks waiting · ${pos}${suffix} in line`;
+}
 function factsFor(row: QueueRow, voted: string | null): Fact[] {
   const out: Fact[] = [];
   const st = row.card.pill ? row.card.pill.state : null;
@@ -1333,6 +1346,9 @@ function factsFor(row: QueueRow, voted: string | null): Fact[] {
     if (voted) out.push({ key: 'voted', tone: 'ok', text: youAnswered(row, voted) });
     const said = [row.tally.yes ? `${row.tally.yes} yes` : '', row.tally.no ? `${row.tally.no} no` : ''].filter(Boolean).join(' · ');
     if (said) out.push({ key: 'tally', tone: undefined, text: said });
+    // #4317: no pill was worked out for a feed row, so the waiting fact is
+    // said here.
+    if (row.checksQueued) out.push({ key: 'checks', tone: undefined, text: checksQueuedText(row.checksQueued) });
   }
   for (const b of row.card.badges) {
     if (b.t === 'attr' && (b.field === 'category' || b.field === 'priority') && b.label.text) {

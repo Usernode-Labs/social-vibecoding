@@ -3556,7 +3556,7 @@ function registerTools(server, ctx) {
         // phase the platform stores but the schema does not name fails the
         // SDK's structured-output validation, which rejects the WHOLE
         // response, not the one field (#2137).
-        phase: z.enum(['building', 'testing', 'deferred']).nullable()
+        phase: z.enum(['building', 'testing', 'deferred', 'queued']).nullable()
           .describe("Which stage a pending run is at. 'building' means the staging preview is still being "
             + "built — or, once `progress.build.step` reads 'prepare_checks', is up and being handed to the checks, "
             + "which can mean waiting behind an earlier run on the same proposal (`progress.build.queued`) — so no "
@@ -3566,7 +3566,9 @@ function registerTools(server, ctx) {
             + 'merge as it stands — and it runs once the head merges cleanly; `mergeability` and '
             + '`freshness.mergeabilityFiles` say where, and nextStep says who syncs. Null on a row that predates '
             + "the column. 'building' and 'testing' are not a reason to push again; 'deferred' ends only when "
-            + 'the head merges cleanly with main again, which in practice means a head synced with it.'),
+            + "the head merges cleanly with main again, which in practice means a head synced with it. "
+            + "'queued' means the run is admitted but waits for a free check-run slot "
+            + '(`progress.queue.position` says where in line; it starts on its own).'),
         trigger: z.string().nullable()
           .describe('What started this run — e.g. commit-push, proposal-open, manual-recheck, boot-reconcile, '
             + 'stuck-sweep. A run the platform drove for itself reads differently from one your own push caused.'),

@@ -1327,9 +1327,47 @@ async function setChecksPending(pool, sessionId, commitSha, phase = null, trigge
 // running for it, and nothing will until the head merges cleanly. Anything
 // else (undefined, a typo, a value from a newer writer) collapses to NULL —
 // the card's legacy wording — rather than rendering an unknown caption.
-const CHECK_PHASES = new Set(['building', 'testing', 'deferred']);
+const CHECK_PHASES = new Set(['building', 'testing', 'deferred', 'queued']);
 function normalizeCheckPhase(phase) {
   return CHECK_PHASES.has(phase) ? phase : null;
+}
+
+// The queue stamp (#4317). The run is admitted but waits for a free check
+// run slot: the verdict stays 'pending', the phase says so, and the queue
+// block carries the position the card shows ("3rd in line"). Refreshing
+// checks_checked_at keeps staging-recovery.checkRunOverdue from treating a
+// live waiter as stuck. Same commit guard as setChecksProgress: a stamp
+// about a head the row has since left is discarded.
+async function setChecksQueued(pool, sessionId, commitSha, queue, build = null) {
+  if (!pool || !sessionId) return false;
+  const res = await pool.query(
+    `UPDATE chat_sessions
+        SET check_phase = 'queued',
+            checks_checked_at = NOW(),
+            checks_progress = $2::jsonb
+      WHERE id = $1
+        AND check_state = 'pending'
+        AND (checks_commit_sha IS NOT DISTINCT FROM $3::text)`,
+    [sessionId, JSON.stringify({ ...(build ? { build } : {}), ...(queue ? { queue } : {}) }), commitSha || null]
+  );
+  return !!(res && res.rowCount);
+}
+
+// The slot was granted after the card said "waiting": back to the testing
+// half's wording, with the queue block dropped. Same guard.
+async function setChecksRunningAfterQueued(pool, sessionId, commitSha, build = null) {
+  if (!pool || !sessionId) return false;
+  const res = await pool.query(
+    `UPDATE chat_sessions
+        SET check_phase = 'testing',
+            checks_checked_at = NOW(),
+            checks_progress = $2::jsonb
+      WHERE id = $1
+        AND check_state = 'pending'
+        AND (checks_commit_sha IS NOT DISTINCT FROM $3::text)`,
+    [sessionId, JSON.stringify({ ...(build ? { build } : {}) }), commitSha || null]
+  );
+  return !!(res && res.rowCount);
 }
 
 // The deferral stamp. The run captured the preview and stopped: the verdict
@@ -2602,7 +2640,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // is best-effort and swallowed: the verdict below is still read from
     // the whole stdout. `closeProgress` is called before the verdict is
     // written so a late timer can never broadcast 'pending' after it.
-    const progress = makeChecksProgressState({
+    let progress = makeChecksProgressState({
       expected: tests.length,
       // The build half, finished, rides every testing-half snapshot.
       build: buildProgressFromTimings(stagingResult && stagingResult.timings),
@@ -2616,8 +2654,10 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         notifyChecksProgress(session.id, commitHash, snap, 'testing', trigger);
       },
     });
-    closeProgress = progress.close;
-    const progressObserver = progress.observeCapture;
+    // The state is recreated per attempt below (a retried run must not carry
+    // the aborted attempt's frames), so the close hook reads the CURRENT one.
+    closeProgress = () => progress.close();
+    const progressObserver = (line) => progress.observeCapture(line);
 
     // The full manifest, written before either Job exists: everything the
     // verdict needs that the Jobs' own output does not carry, so a process
@@ -2662,53 +2702,116 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       });
     }
 
-    // Repo unit suite (aggregate `npm test` check). Launched BEFORE the
-    // capture container and awaited after it, so the suite runs in its own
-    // one-shot container CONCURRENTLY with the browser checks and adds
-    // ~zero wall clock unless it outlasts the whole capture run. The
-    // .catch collapses every failure mode to null (no row) — the checks
-    // run must never die because the unit-suite runner did.
-    const unitSuitePromise = shotsOnly ? Promise.resolve(null) : unitSuite.maybeRunUnitSuite({
-      config, pool, appId: app.id, sessionId: session.id,
-      repoOwner, repoName, ref: gitRef,
-      prNumber: Number(session.pr_number) || null,
-      onProgress: progress.observeUnit,
-      signal: operation?.signal, previewRunId: runId,
-    }).catch((err) => {
-      log.warn('visuals', 'Unit-suite check failed to run (non-fatal)', {
-        sessionId: session.id, err: err.message,
-      });
-      return null;
-    });
-    operation?.track(unitSuitePromise);
-
-    log.info('visuals', 'Starting capture', {
-      sessionId: session.id, slug: app.slug, before: media && prodRunning,
-      paths: capturePaths, pathDefaulted, captureRouteSource,
-      visualScenarios: visualScenarios.map((scenario) => scenario.id), targets: targets.length,
-      authenticated: !!captureToken, selfApp: isSelfApp, deviceScaleFactor, media,
-      tests: tests.length, declaredTests: declaredTests.length,
-      blocking: dispatched ? dispatched.filter((d) => d.graduated).length : tests.length,
-      deferred: shotsOnly || undefined,
-    });
+    // The launch, as an attempt loop. Each attempt waits for its slot (the
+    // first one usually returns at once), then launches the unit suite and
+    // the capture. A refusal from the cluster — a quota-exceeded create, a
+    // Pod that cannot be scheduled — is capacity, never a verdict: the
+    // attempt is aborted, the run requeues after a pause and goes again.
+    // #4317: waiting shows on the card ("Checks waiting · 3rd in line");
+    // the run's time limit only starts once its Pod is Running. Local Docker
+    // development and the deferred no-op run skip the queue entirely.
+    const queueEligible = harvestable && kubernetesCapture && !(shotsOnly && !media);
+    const finishedBuild = buildProgressFromTimings(stagingResult && stagingResult.timings);
     let stdout;
     let captureStderr = '';
     let runPartial = false;
     let runPartialReason = '';
-    const captureStartedAt = Date.now();
-    try {
-      // #47 payload routing: a Linux exec caps any single argv/env string at
-      // 128KB (MAX_ARG_STRLEN). A manifest-scale suite — this repo's own 232
-      // checks, each carrying a tokenized staging URL — exceeds that as one
-      // `-e TESTS=...` string, and the docker spawn dies with E2BIG before
-      // the container starts (that was every self-app proposal fail-closing
-      // to "Checks couldn't run"). Large suites ride the container's stdin
-      // instead (TESTS='@stdin' marker; docker.runOneShot pipes it); small
-      // ones keep the env var, which older capture images also understand.
-      const testsJson = JSON.stringify(tests);
-      const testsViaStdin = testsJson.length > 90 * 1024;
-      let res;
-      const captureEnv = {
+    let unitOutcome = null;
+    let captureStartedAt = Date.now();
+    let captureRefused = null;
+    for (let attemptNo = 1; ; attemptNo += 1) {
+      // #4317: hold the run for a slot when the cluster is full, instead of
+      // creating Jobs Kubernetes refuses or leaves Pending past their own
+      // deadline. After a refusal, the requeued run waits here again.
+      if (queueEligible) {
+        let showedQueued = false;
+        await checkRuns.waitForSlot(operation?.cleanupPool || pool, runId, {
+          sessionId: session.id, signal: operation?.signal,
+          onPosition: (queue) => {
+            showedQueued = true;
+            setChecksQueued(pool, session.id, commitHash, queue, finishedBuild).catch(() => {});
+            notifyChecksProgress(session.id, commitHash, { ...(finishedBuild ? { build: finishedBuild } : {}), queue }, 'queued', trigger);
+          },
+        });
+        if (showedQueued) {
+          // The slot was granted after the card said "waiting": back to the
+          // testing half's wording, queue block dropped.
+          await setChecksRunningAfterQueued(pool, session.id, commitHash, finishedBuild).catch(() => {});
+          notifyChecksProgress(session.id, commitHash, finishedBuild ? { build: finishedBuild } : {}, 'testing', trigger);
+        }
+      }
+      const attempt = new AbortController();
+      const attemptSignal = AbortSignal.any([operation?.signal, attempt.signal].filter(Boolean));
+      // A fresh state per attempt: the aborted attempt's frames must not
+      // bleed into the retried run's bar.
+      progress = makeChecksProgressState({
+        expected: tests.length,
+        build: buildProgressFromTimings(stagingResult && stagingResult.timings),
+        flush: async (snap) => {
+          if (operation?.signal.aborted) return;
+          try {
+            await operation?.check();
+            await setChecksProgress(pool, session.id, commitHash, snap);
+            await operation?.check();
+          } catch { return; }
+          notifyChecksProgress(session.id, commitHash, snap, 'testing', trigger);
+        },
+      });
+      captureStartedAt = Date.now();
+
+      // Repo unit suite (aggregate `npm test` check). Launched BEFORE the
+      // capture container and awaited after it, so the suite runs in its own
+      // one-shot container CONCURRENTLY with the browser checks and adds
+      // ~zero wall clock unless it outlasts the whole capture run. The
+      // .catch collapses every failure mode to null (no row) — the checks
+      // run must never die because the unit-suite runner did. The one
+      // exception is a capacity refusal (retryLater): that requeues the
+      // whole attempt rather than reading as the suite's failure.
+      let unitSuitePromise = Promise.resolve(null);
+      if (!shotsOnly) {
+        unitSuitePromise = unitSuite.maybeRunUnitSuite({
+          config, pool, appId: app.id, sessionId: session.id,
+          repoOwner, repoName, ref: gitRef,
+          prNumber: Number(session.pr_number) || null,
+          onProgress: progress.observeUnit,
+          signal: attemptSignal, previewRunId: runId,
+        }).catch((err) => {
+          if (err.retryLater) {
+            attempt.abort(err);
+            throw err;
+          }
+          log.warn('visuals', 'Unit-suite check failed to run (non-fatal)', {
+            sessionId: session.id, err: err.message,
+          });
+          return null;
+        });
+        // The tracked promise must never reject into the operation.
+        operation?.track(unitSuitePromise.catch(() => null));
+      }
+
+      log.info('visuals', 'Starting capture', {
+        sessionId: session.id, slug: app.slug, before: media && prodRunning,
+        paths: capturePaths, pathDefaulted, captureRouteSource,
+        visualScenarios: visualScenarios.map((scenario) => scenario.id), targets: targets.length,
+        authenticated: !!captureToken, selfApp: isSelfApp, deviceScaleFactor, media,
+        tests: tests.length, declaredTests: declaredTests.length,
+        blocking: dispatched ? dispatched.filter((d) => d.graduated).length : tests.length,
+        deferred: shotsOnly || undefined,
+        attempt: attemptNo > 1 ? attemptNo : undefined,
+      });
+      try {
+        // #47 payload routing: a Linux exec caps any single argv/env string at
+        // 128KB (MAX_ARG_STRLEN). A manifest-scale suite — this repo's own 232
+        // checks, each carrying a tokenized staging URL — exceeds that as one
+        // `-e TESTS=...` string, and the docker spawn dies with E2BIG before
+        // the container starts (that was every self-app proposal fail-closing
+        // to "Checks couldn't run"). Large suites ride the container's stdin
+        // instead (TESTS='@stdin' marker; docker.runOneShot pipes it); small
+        // ones keep the env var, which older capture images also understand.
+        const testsJson = JSON.stringify(tests);
+        const testsViaStdin = testsJson.length > 90 * 1024;
+        let res;
+        const captureEnv = {
           // Multi-target protocol (#270). The container loops over these
           // sequentially and tags each shot frame with its index=. The
           // optional per-target `viewport` (#768) is the resolved pixel
@@ -2765,60 +2868,114 @@ async function captureForSession(config, session, app, commitHash, stagingResult
           TEST_CONCURRENCY,
           TEST_TIMEOUT_MS,
           TESTS_DEADLINE_MS,
-      };
-      if (shotsOnly && !media) {
-        // A deferred verdict on a range with no frontend files: no
-        // assertions to run and no screens to shoot, so there is nothing
-        // for the container to do. The stamp below still lands.
-        stdout = '';
-        res = { partial: false };
-      } else if (kubernetesCapture) {
-        ({ stdout, ...res } = await kubernetes.runCaptureJob(config, {
-          onStdoutLine: progressObserver,
-          memory: CAPTURE_MEMORY,
-          cpus: CAPTURE_CPUS,
-          signal: operation?.signal, previewRunId: runId,
-          sessionId: session.id,
-          env: captureEnv,
-          stdinPayload: testsViaStdin ? testsJson : null,
-          timeoutMs: RUN_TIMEOUT_MS,
-          maxBuffer: RUN_MAX_BUFFER,
-          salvagePartial: true,
-        }));
-      } else {
-        ({ stdout, ...res } = await docker.runOneShot(`usernode-capture-${session.id}`, {
-          onStdoutLine: progressObserver,
-          image: CAPTURE_IMAGE,
-          env: captureEnv,
-          stdinPayload: testsViaStdin ? testsJson : null,
-          // Eight concurrent Chromium pages need materially more than the
-          // 1g/1cpu one-shot default.
-          memory: CAPTURE_MEMORY,
-          cpus: CAPTURE_CPUS,
-          timeoutMs: RUN_TIMEOUT_MS,
-          maxBuffer: RUN_MAX_BUFFER,
-        // Improvement 5: the output protocol is a stream of independently
-        // parseable frames, so a run killed at RUN_TIMEOUT_MS still carries
-        // every frame it already emitted. Salvage them instead of losing the
-        // whole proposal's screenshots to one slow page.
-          salvagePartial: true,
-        }));
-      }
-      runPartial = !!res.partial;
-      runPartialReason = res.partialReason || '';
-      captureStderr = res.stderr || '';
-      if (runPartial) {
-        log.warn('visuals', 'Capture run cut short — parsing partial output', {
-          sessionId: session.id, reason: runPartialReason,
-        });
-      }
-    } finally {
-      if (beforeSessionToken) {
-        await (operation?.cleanupPool || pool).query('DELETE FROM sessions WHERE token = $1', [beforeSessionToken])
-          .catch((err) => log.warn('visuals', 'Capture session-cookie cleanup failed', {
-            sessionId: session.id, err: err.message,
+        };
+        if (shotsOnly && !media) {
+          // A deferred verdict on a range with no frontend files: no
+          // assertions to run and no screens to shoot, so there is nothing
+          // for the container to do. The stamp below still lands.
+          stdout = '';
+          res = { partial: false };
+        } else if (kubernetesCapture) {
+          ({ stdout, ...res } = await kubernetes.runCaptureJob(config, {
+            onStdoutLine: progressObserver,
+            memory: CAPTURE_MEMORY,
+            cpus: CAPTURE_CPUS,
+            signal: attemptSignal, previewRunId: runId,
+            sessionId: session.id,
+            env: captureEnv,
+            stdinPayload: testsViaStdin ? testsJson : null,
+            timeoutMs: RUN_TIMEOUT_MS,
+            maxBuffer: RUN_MAX_BUFFER,
+            salvagePartial: true,
           }));
+        } else {
+          ({ stdout, ...res } = await docker.runOneShot(`usernode-capture-${session.id}`, {
+            onStdoutLine: progressObserver,
+            image: CAPTURE_IMAGE,
+            env: captureEnv,
+            stdinPayload: testsViaStdin ? testsJson : null,
+            // Eight concurrent Chromium pages need materially more than the
+            // 1g/1cpu one-shot default.
+            memory: CAPTURE_MEMORY,
+            cpus: CAPTURE_CPUS,
+            timeoutMs: RUN_TIMEOUT_MS,
+            maxBuffer: RUN_MAX_BUFFER,
+            // Improvement 5: the output protocol is a stream of independently
+            // parseable frames, so a run killed at RUN_TIMEOUT_MS still carries
+            // every frame it already emitted. Salvage them instead of losing the
+            // whole proposal's screenshots to one slow page.
+            salvagePartial: true,
+          }));
+        }
+        runPartial = !!res.partial;
+        runPartialReason = res.partialReason || '';
+        captureStderr = res.stderr || '';
+        if (runPartial) {
+          log.warn('visuals', 'Capture run cut short — parsing partial output', {
+            sessionId: session.id, reason: runPartialReason,
+          });
+        }
+      } catch (err) {
+        if (kubernetes.isRetryLater(err)) {
+          // The cluster turned the capture Job away: stop the attempt's
+          // other Job too, then fall through to the requeue below.
+          attempt.abort(err);
+          captureRefused = err;
+        } else {
+          throw err;
+        }
       }
+      // The unit-suite container started before the capture run; by now it
+      // has usually been finished for minutes. Its own timeoutMs bounds this
+      // await. A rejection here is a retryLater refusal (the launch .catch
+      // turns every other failure into null) — requeued exactly like a
+      // refused capture Job below. When the capture Job was refused first,
+      // the outcome rides the tracked copy and this attempt is already
+      // on its way to the requeue.
+      let unitThisAttempt = null;
+      try {
+        if (!captureRefused) {
+          const unitOutcome = await unitSuitePromise;
+          closeProgress();
+          unitThisAttempt = unitOutcome;
+        } else {
+          closeProgress();
+        }
+      } catch (err) {
+        closeProgress();
+        if (kubernetes.isRetryLater(err)) {
+          attempt.abort(err);
+          captureRefused = captureRefused || err;
+        } else {
+          throw err;
+        }
+      }
+
+      if (operation?.signal.aborted) {
+        throw operation.signal.reason || new Error('checks run aborted');
+      }
+      // Either Job refusing the cluster is capacity, never a verdict: hand
+      // the run's Jobs back, requeue after a pause, and go again. The old
+      // place in line is kept (requeue preserves queued_at), so a burst
+      // resolves in arrival order.
+      const refused = captureRefused;
+      if (refused) {
+        log.info('visuals', 'Check-run slot refused by the cluster — requeueing', {
+          sessionId: session.id, runId, attempt: attemptNo,
+          reason: refused.retryReason || 'capacity',
+        });
+        try {
+          await kubernetes.cancelPreviewChecks(config, session.id, runId);
+        } catch (cleanupErr) {
+          log.warn('visuals', 'Refused check Jobs could not be cancelled; their TTL will', {
+            sessionId: session.id, runId, err: cleanupErr.message,
+          });
+        }
+        await checkRuns.requeue(operation?.cleanupPool || pool, runId);
+        continue;
+      }
+      unitOutcome = unitThisAttempt;
+      break;
     }
 
     const captureMs = Date.now() - captureStartedAt;
@@ -2829,12 +2986,6 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       partialReason: runPartialReason || undefined,
     });
 
-    await operation?.check();
-    // The unit-suite container started before the capture run; by now it
-    // has usually been finished for minutes. Its own timeoutMs bounds this
-    // await, and the .catch at launch made rejection impossible.
-    const unitOutcome = await unitSuitePromise;
-    closeProgress();
     await operation?.check();
 
     // Everything from here is the settlement — shared with the harvester,
@@ -2884,6 +3035,22 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       if (stored) notifyChecks(session.id, { state: 'error', results: [] }, commitHash, send);
     } catch { /* nothing more we can do */ }
   } finally {
+    // The manifest goes with the run, whatever ended it: a settled run has
+    // nothing left to harvest, and a superseded or failed one has had its
+    // Jobs cancelled (or is about to) — a harvester finding the row would
+    // only re-drive a run something else already replaced. Its slot, if it
+    // held one, is handed on at once.
+    stopHeartbeat();
+    if (harvestable) await checkRuns.finish(operation?.cleanupPool || pool, runId);
+    // The capture-user cookie outlives the attempts (a requeued attempt must
+    // still authenticate its "before" shots on the retry), so it is cleaned
+    // up once here, when the whole run ends, whatever ended it.
+    if (beforeSessionToken) {
+      await (operation?.cleanupPool || pool).query('DELETE FROM sessions WHERE token = $1', [beforeSessionToken])
+        .catch((err) => log.warn('visuals', 'Capture session-cookie cleanup failed', {
+          sessionId: session.id, err: err.message,
+        }));
+    }
     // Close the timing trace whatever happened, so a run never sits at
     // 'running' in the admin view. The total is the figure this exists for:
     // it is what "the checks step got slower" is measured in.
@@ -2892,12 +3059,6 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       status: traceStatus,
       summary: `checks ${traceStatus} in ${Math.round(totalMs / 1000)}s`,
     });
-    // The manifest goes with the run, whatever ended it: a settled run has
-    // nothing left to harvest, and a superseded or failed one has had its
-    // Jobs cancelled (or is about to) — a harvester finding the row would
-    // only re-drive a run something else already replaced.
-    stopHeartbeat();
-    if (harvestable) await checkRuns.finish(operation?.cleanupPool || pool, runId);
     // ...and so do its Jobs, once it settled: with the verdict stored and the
     // manifest gone no harvest will read them, and the Job TTL would hold the
     // worker namespace's Job slots for another hour. A run that ended any

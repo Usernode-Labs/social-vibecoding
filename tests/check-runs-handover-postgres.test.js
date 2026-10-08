@@ -38,15 +38,19 @@ const DSN = process.env.TEST_DATABASE_URL
 const config = { captureRuntime: 'kubernetes', kubernetes: { workerNamespace: 'workers' } };
 
 // The table as schema.sql declares it, less the foreign key: the test schema
-// has no chat_sessions to point at.
+// has no chat_sessions to point at. The queue columns the table gained later
+// live in idempotent ALTERs beside it, so they come along (#4317).
 const DDL = (() => {
   const schema = fs.readFileSync(path.join(ROOT, 'src/db/schema.sql'), 'utf8');
   const start = schema.indexOf('CREATE TABLE IF NOT EXISTS check_runs');
   if (start < 0) throw new Error('check_runs is not in schema.sql any more');
   const end = schema.indexOf(');', start) + 2;
-  return schema.slice(start, end)
+  const alters = schema.split('\n')
+    .filter((l) => l.startsWith('ALTER TABLE check_runs ADD COLUMN IF NOT EXISTS'));
+  if (alters.length < 4) throw new Error('the check_runs queue columns are not in schema.sql any more');
+  return [schema.slice(start, end)
     .replace('IF NOT EXISTS ', '')
-    .replace(/\s*REFERENCES chat_sessions\(id\) ON DELETE CASCADE/, '');
+    .replace(/\s*REFERENCES chat_sessions\(id\) ON DELETE CASCADE/, ''), ...alters].join('\n');
 })();
 
 async function connect() {

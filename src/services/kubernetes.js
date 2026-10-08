@@ -27,6 +27,14 @@ const ROLLOUT_POLL_MS = 1000;
 // read when the process that launched it died (services/check-harvest.js).
 // A run that settles deletes its Jobs itself (deleteSettledCheckJobs).
 const CHECK_JOB_TTL_SECONDS = 3600;
+// #4317: how long a check Pod may wait to be scheduled (and, once Running,
+// how much grace the run's own timeout gets on top) before the run is
+// requeued instead of timed out. The Job's activeDeadlineSeconds is the
+// backstop (run timeout + this window); the platform's live deadline only
+// starts when the Pod actually reaches Running, so Pending time never eats
+// the run's own budget.
+const CHECK_POD_START_MS = Math.max(60_000, Number(process.env.CHECK_POD_START_MS) || 10 * 60 * 1000);
+const CHECK_UNSCHEDULABLE_GRACE_MS = Math.max(10_000, Number(process.env.CHECK_UNSCHEDULABLE_GRACE_MS) || 90_000);
 const TERMINAL_CONTAINER_WAITING_REASONS = new Set([
   'CreateContainerConfigError',
   'CreateContainerError',
@@ -80,6 +88,22 @@ function isNotFound(err) {
 function isQuotaExceeded(err) {
   const code = err?.code ?? err?.response?.statusCode ?? err?.response?.status;
   return code === 403 && /exceeded quota/i.test(String(err?.message || ''));
+}
+
+// #4317: a refusal that is about cluster CAPACITY, not about the proposal —
+// the namespace's quota, or a Pod no node can take. The caller requeues the
+// run and shows "Checks waiting"; it is never stored as a verdict.
+function isRetryLater(err) {
+  return err?.retryLater === true;
+}
+
+// The quota refusal, shaped for the queue: the run goes back in line.
+function quotaRefusal(kind, name, err) {
+  const wrapped = new Error(`${kind} create refused (exceeded quota); will retry: ${err?.message || err}`);
+  wrapped.retryLater = true;
+  wrapped.retryReason = 'quota';
+  wrapped.cause = err;
+  return wrapped;
 }
 
 function dnsName(value, max = 63) {
@@ -2137,9 +2161,16 @@ async function runCheckJob(config, {
     'social.usernode.io/workload': 'check',
   };
   const checkLabels = { ...labels({ sessionId, environment: unitSuite ? 'worker' : 'capture' }), ...checkSelector };
+  // #4317: the run's timeout counts RUNNING time, not Pending time. The Pod
+  // spec's activeDeadlineSeconds is set from Pod START on a node; the Job's
+  // own is only the backstop (timeout + the scheduling window), so a Job that
+  // could not be scheduled for a while is requeued rather than killed.
+  const podDeadlineSeconds = Math.ceil(timeoutMs / 1000);
+  const jobBackstopSeconds = Math.ceil((timeoutMs + CHECK_POD_START_MS) / 1000);
   const body = { apiVersion: 'batch/v1', kind: 'Job', metadata: { name, namespace, labels: { ...checkLabels } }, spec: {
-    backoffLimit: 0, activeDeadlineSeconds: Math.ceil(timeoutMs / 1000), ttlSecondsAfterFinished: CHECK_JOB_TTL_SECONDS,
+    backoffLimit: 0, activeDeadlineSeconds: jobBackstopSeconds, ttlSecondsAfterFinished: CHECK_JOB_TTL_SECONDS,
     template: { metadata: { labels: { ...checkLabels } }, spec: {
+      activeDeadlineSeconds: podDeadlineSeconds,
       restartPolicy: 'Never', serviceAccountName: cfg.workerServiceAccount,
       automountServiceAccountToken: false, securityContext: nodePodSecurityContext(),
       // Prefer spare hosts without stranding checks when only one host fits.
@@ -2173,19 +2204,32 @@ async function runCheckJob(config, {
   try {
     signal?.throwIfAborted();
     if (inputSecretName) {
-      inputSecret = await core.createNamespacedSecret({ namespace, body: {
-        apiVersion: 'v1', kind: 'Secret',
-        metadata: { name: inputSecretName, namespace, labels: labels({ sessionId, environment: unitSuite ? 'worker' : 'capture' }) },
-        type: 'Opaque', stringData: unitSuite
-          ? Object.fromEntries(Object.entries(env || {}).map(([key, value]) => [key, String(value)]))
-          : { 'tests.json': String(stdinPayload) },
-      } });
+      let created;
+      try {
+        created = await core.createNamespacedSecret({ namespace, body: {
+          apiVersion: 'v1', kind: 'Secret',
+          metadata: { name: inputSecretName, namespace, labels: labels({ sessionId, environment: unitSuite ? 'worker' : 'capture' }) },
+          type: 'Opaque', stringData: unitSuite
+            ? Object.fromEntries(Object.entries(env || {}).map(([key, value]) => [key, String(value)]))
+            : { 'tests.json': String(stdinPayload) },
+        } });
+      } catch (err) {
+        if (isQuotaExceeded(err)) throw quotaRefusal('Input Secret', inputSecretName, err);
+        throw err;
+      }
+      inputSecret = created;
       inputSecretCreated = true;
     }
     signal?.throwIfAborted();
     // A refused create (the namespace's quota, for one) leaves no Job to own
     // the Secret; the finally below deletes it.
-    const createdJob = await batch.createNamespacedJob({ namespace, body });
+    let createdJob;
+    try {
+      createdJob = await batch.createNamespacedJob({ namespace, body });
+    } catch (err) {
+      if (isQuotaExceeded(err)) throw quotaRefusal('Job', name, err);
+      throw err;
+    }
     // A platform restart must not orphan private clone credentials. The Job's
     // TTL also garbage-collects its input Secret if normal cleanup cannot run.
     // The Secret goes first so a Pod never starts without its input, which
@@ -2199,7 +2243,13 @@ async function runCheckJob(config, {
       secret.metadata.ownerReferences = [{ apiVersion: 'batch/v1', kind: 'Job', name, uid: createdJob.metadata.uid }];
       await core.replaceNamespacedSecret({ name: inputSecretName, namespace, body: secret });
     }
-    const deadline = Date.now() + timeoutMs + 15000;
+    // #4317: the deadline that governs the wait below starts when the Pod
+    // actually reaches Running. Until then the clock is the scheduling
+    // window (CHECK_POD_START_MS); a Pod that never starts is requeued, not
+    // timed out, so Pending time can never be judged as the run's own.
+    let deadline = Date.now() + CHECK_POD_START_MS;
+    let runningAt = null;
+    let unschedulableSince = null;
     // Progress observer state. Two ways to see the container's stdout as it
     // streams: FOLLOW the pod log (one long request; each line reaches the
     // observer as it is printed, the same cadence docker's stdout gives),
@@ -2282,9 +2332,39 @@ async function runCheckJob(config, {
         err.code = terminated?.exitCode;
         const jobReason = job.status.conditions?.find(c => c.type === 'Failed')?.reason;
         err.stderr = [jobReason, terminated?.reason].filter(Boolean).join(': ');
-        err.killed = jobReason === 'DeadlineExceeded' || terminated?.reason === 'OOMKilled';
+        err.killed = jobReason === 'DeadlineExceeded' || terminated?.reason === 'OOMKilled'
+          || pod?.status?.reason === 'DeadlineExceeded';
         err.captureJobTerminated = true;
         throw err;
+      }
+      // The Pod read doubles as the running-clock's start and the
+      // scheduling-refusal detector. Best-effort: the Job read above still
+      // gates the loop, and a missed read just delays the clock one tick.
+      let pod = null;
+      try {
+        const pods = await observeCheck(core.listNamespacedPod({ namespace, labelSelector: `job-name=${name}` }), signal);
+        pod = pods.items?.[0] || null;
+      } catch { /* observation only */ }
+      const podPhase = String(pod?.status?.phase || '');
+      const scheduled = pod?.status?.conditions?.find((c) => c.type === 'PodScheduled');
+      const unschedulable = scheduled?.status === 'False' && scheduled?.reason === 'Unschedulable';
+      if (runningAt === null && podPhase === 'Running') {
+        runningAt = Date.now();
+        deadline = runningAt + timeoutMs + 15000;
+      }
+      if (runningAt === null) {
+        const now = Date.now();
+        if (unschedulable) {
+          if (unschedulableSince === null) unschedulableSince = now;
+          if (now - unschedulableSince >= CHECK_UNSCHEDULABLE_GRACE_MS) {
+            const err = new Error(`${kind} Pod ${name} cannot be scheduled (unschedulable for ${Math.round((now - unschedulableSince) / 1000)}s); will retry`);
+            err.retryLater = true;
+            err.retryReason = 'unschedulable';
+            throw err;
+          }
+        } else {
+          unschedulableSince = null;
+        }
       }
       if (job.status?.succeeded) {
         let terminalOutput;
@@ -2305,6 +2385,14 @@ async function runCheckJob(config, {
       if (!following) await startFollow();
       if (!following && tick % PROGRESS_EVERY_TICKS === 0) await observeProgress();
       await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+    // The scheduling window ended and the Pod never ran: a capacity refusal,
+    // not a run that took too long. Requeue rather than judge.
+    if (runningAt === null) {
+      const err = new Error(`${kind} Pod ${name} was never scheduled within the start window; will retry`);
+      err.retryLater = true;
+      err.retryReason = 'unschedulable';
+      throw err;
     }
     const err = new Error(`Timed out waiting for ${kind} Job ${name}`);
     err.killed = true;
@@ -2742,6 +2830,7 @@ module.exports = {
   listManagedBuilds, readBuild, deleteBuildSnapshot,
   runCaptureJob, runUnitSuiteJob, cancelPreviewChecks, findCheckJobs, collectCheckJob,
   deleteSettledCheckJobs, listCheckLeftovers, deleteCheckLeftover, MANAGED_BY, CHECK_JOB_TTL_SECONDS,
+  isRetryLater, CHECK_POD_START_MS, CHECK_UNSCHEDULABLE_GRACE_MS,
   execInWorker, _getClients: getClients,
   getWorkerStatus, getWorkerContractVersion, getWorkerRuntimeMetadata, deleteWorker, eraseWorker, listWorkers, cloneWorkerVolume,
   listWorkerVolumes, listPreviews, listShotsRuntimes, isQuotaExceeded,

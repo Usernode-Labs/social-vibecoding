@@ -5486,7 +5486,7 @@ const AppView = {
     // Checks deferred behind a conflict are not running: not reached yet.
     const checks = (cs === 'failing' || cs === 'error' || previewFailed) ? 'blocked'
       : (cs === 'passing' || cs === 'skipped') ? 'done'
-        : (cs === 'pending' && item.check_phase !== 'deferred') ? 'active' : 'pending';
+        : (cs === 'pending' && item.check_phase !== 'deferred' && item.check_phase !== 'queued') ? 'active' : 'pending';
     return [
       // Named as the state it reaches, like "No conflicts with main", so it
       // does not read as a second copy of the hero's Submit for review button.
@@ -5521,6 +5521,7 @@ const AppView = {
       }
       if (g.key === 'checks') {
         if (item.check_state === 'pending' && item.check_phase === 'deferred') return 'Runs after the sync';
+        if (item.check_state === 'pending' && item.check_phase === 'queued') return 'Waiting for a free slot';
         if (g.state === 'pending' && !item.check_state) return 'Not run yet';
         return AppView._checksLine(g, item, false);
       }
@@ -5676,7 +5677,9 @@ const AppView = {
     }
     if (item.check_state === 'passing') return ready('Ready to submit for review.');
     return ready('You can submit it now. Its checks keep running, and it can merge only once they pass.', 'ok',
-      item.check_phase === 'deferred' ? 'Ready · checks run after the sync' : 'Ready · checks are still running');
+      item.check_phase === 'deferred' ? 'Ready · checks run after the sync'
+        : item.check_phase === 'queued' ? 'Ready · checks are waiting for a free slot'
+          : 'Ready · checks are still running');
   },
   _completeChangeView(item, card, body) {
     const mine = !!(App.user && Number(item.user_id) === Number(App.user.id));
@@ -13817,7 +13820,7 @@ const AppView = {
     const cs = p.check_state;
     const now = (cs === 'passing' || cs === 'skipped') ? 'done'
       : (cs === 'failing' || cs === 'error') ? 'blocked'
-        : (cs === 'pending' && p.check_phase !== 'deferred') ? 'active' : null;
+        : (cs === 'pending' && p.check_phase !== 'deferred' && p.check_phase !== 'queued') ? 'active' : null;
     if (!now) return out;
     return out.map((g) => (g && g.key === 'checks' && g.state === 'pending' ? { ...g, state: now } : g));
   },
@@ -13919,6 +13922,9 @@ const AppView = {
     const cs = p.check_state;
     if (g.state === 'pending') return moot ? 'Runs after the sync' : null;
     if (cs === 'pending' && p.check_phase === 'deferred') return 'Runs after the sync';
+    // A queued run has no progress bar to read yet — say where it stands
+    // instead of the generic "Starting" (#4317).
+    if (cs === 'pending' && p.check_phase === 'queued') return 'Waiting for a free slot';
     const v = AppView._checksVerdictView(p);
     if (g.state === 'done') {
       if (cs === 'skipped') return 'Skipped';
@@ -15594,6 +15600,32 @@ const AppView = {
       return [{ ...fallback, key: 'checks', action: recheck }];
     }
 
+    if (state === 'pending' && pr.check_phase === 'queued') {
+      // The run is admitted but waits for a free check-run slot (#4317).
+      // Nothing is running, so no spinner — and no "Re-run checks" either:
+      // a re-run would only join the line again. Merge stays blocked until
+      // the checks pass, as with any pending run.
+      const q = pr.checks_progress && typeof pr.checks_progress === 'object' ? pr.checks_progress.queue : null;
+      const pos = q ? Number(q.position) : NaN;
+      const inLineWords = Number.isInteger(pos) && pos >= 1
+        ? (pos === 1 ? 'next in line'
+          : pos + (pos % 100 >= 11 && pos % 100 <= 13 ? 'th'
+            : pos % 10 === 1 ? 'st' : pos % 10 === 2 ? 'nd' : pos % 10 === 3 ? 'rd' : 'th') + ' in line')
+        : '';
+      const rows = [{
+        t: 'line',
+        parts: ['The platform runs a limited number of checks at once. This run starts on its own when its turn comes'
+          + (inLineWords ? ` (${inLineWords})` : '')
+          + '; nothing is wrong with the change.'],
+      }];
+      if (q && q.since) rows.push({ t: 'line', parts: [`Waiting since ${relTime(q.since)}.`], weight: 'foot' });
+      return [{
+        key: 'checks', tone: 'neutral', spinner: false,
+        heading: 'Checks are waiting for a free slot' + (inLineWords ? ` (${inLineWords})` : '') + '.',
+        rows, action: null,
+      }];
+    }
+
     if (state === 'pending' && pr.check_phase === 'deferred') {
       // Nothing is running. The preview was built so reviewers have something
       // to look at, and the tests were skipped on purpose: the head conflicts
@@ -15950,6 +15982,12 @@ const AppView = {
     deferred: {
       title: 'Checks deferred',
       detail: 'The preview is up, but the tests were not run: this proposal conflicts with main, and they would judge a tree that cannot merge. They run once it merges cleanly.',
+    },
+    // #4317: the run is admitted but waits for a free check-run slot. Not a
+    // stage of the run either — nothing is running yet, so no spinner.
+    queued: {
+      title: 'Waiting for a free slot…',
+      detail: 'The platform runs a limited number of checks at once; this run starts on its own when its turn comes.',
     },
   },
 

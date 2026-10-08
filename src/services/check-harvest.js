@@ -207,6 +207,13 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
       runtime_name: session.app_runtime_name, runtime_kind: session.app_runtime_kind,
     };
     if (!manifest.launched) return await redrive(session, 'process died before the Jobs were created');
+    // #4317: a run still holding a queue seat ('preparing' or 'queued') has
+    // no Jobs anywhere — it was waiting for a slot when its process died.
+    // Re-drive it like the not-yet-launched case; the new run rejoins the
+    // back of the line.
+    if (row.state === 'preparing' || row.state === 'queued') {
+      return await redrive(session, `process died while the run was ${row.state}`);
+    }
 
     // Under the lifecycle the run's operation row must still be ours to
     // settle; a newer run's row means a successor already owns the session
