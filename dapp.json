@@ -964,9 +964,9 @@
       "expectSelector": "#dev-body .gc-vote-item > .flex-1:first-child > .dev-card-head + .dev-card-meta + .dev-card-badges.dev-card-status + .gc-card-actions"
     },
     {
-      "name": "Proposal page as a Needs-you item: the hero (the eyebrow with its state, the age at its right, the title, the by-line, the tags, the band with the ⋯ last), then the Discussion; the steps are in Details (B10b)",
+      "name": "Proposal page as a Needs-you item: the hero (the eyebrow with its state, the age at its right, the title, the by-line with the change's own number at its end, the tags, the band with the ⋯ last), then the Discussion; the steps are in Details (B10b)",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000043",
-      "expectSelector": "#gc-thread-head .dev-topic > .dev-topic-hero:has(> .dev-topic-hero-top > .dev-ws-eyebrow + .dev-ws-item-of):has(> .dev-topic-hero-chips + .dev-topic-hero-actions > .gc-card-actions > [data-card-menu]:last-child) + .dev-conversation",
+      "expectSelector": "#gc-thread-head .dev-topic > .dev-topic-hero:has(.dev-ws-eyebrow + .dev-ws-item-of):has(> .dev-topic-hero-by .font-mono):has(> .dev-topic-hero-chips + .dev-topic-hero-actions > .gc-card-actions > [data-card-menu]:last-child) + .dev-conversation",
       "expectText": "Waiting for approval"
     },
     {
