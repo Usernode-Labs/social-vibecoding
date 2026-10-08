@@ -97,12 +97,13 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 // Display-only: nothing in the platform reads these back, and strictly a
 // no-op in production.
 const DEMO_COUNTS = {
-  // `owed` names DEMO_NEEDS_FEED's three, below, so a vote swiped past in
+  // `owed` names DEMO_NEEDS_FEED's cards, below, so a vote swiped past in
   // the demo feed takes its count off the row, as a real one does (#3526).
   'staging-demo-your-app': {
     working: 2, needs: 3, owed: ['proposal:-103@0', 'proposal:-104@0', 'governance:-105'],
   },
-  'staging-demo-emoji-icon': { working: 0, needs: 5 },
+  // #4313: its one demo card, the Just-you change that asks for approval.
+  'staging-demo-emoji-icon': { working: 0, needs: 5, owed: ['proposal:-106@0'] },
   'staging-demo-image-icon': { working: 1, needs: 0 },
   'staging-demo-long-name': { working: 4, needs: 1 },
 };
@@ -551,7 +552,29 @@ const DEMO_NEEDS_FEED = [
     author: 'staging-demo-partner', number: null, epoch: null, at: '2026-09-21T08:00:00Z', yes: null, no: null,
     app: { slug: 'staging-demo-your-app', name: 'Staging demo app', icon_url: null, icon_emoji: null },
   },
+  // #4313: a change on a Just-you project, which asks for your approval
+  // rather than a vote (#4270's `approve`), so the reel's approval wording
+  // can be seen in a preview. Nobody else is in it, so it has no author and
+  // no tally; `?shot=needs-approve` opens on it with its vote sheet up.
+  {
+    kind: 'proposal', id: -106, title: '[Demo] Show a word count under each note',
+    summary: 'A demo change on a project that is just yours: each note shows how many words it has.',
+    author: null, number: null, epoch: 0, at: '2026-09-20T09:00:00Z', yes: 0, no: 0, approve: true,
+    app: { slug: 'staging-demo-emoji-icon', name: 'Staging demo emoji icon', icon_url: null, icon_emoji: '🎮' },
+  },
 ];
+
+/**
+ * Whether a proposal id is one of the demo feed's (#4313): the follow-up
+ * requests the reel makes for a demo row (its vote, its Ask thread) are
+ * answered by the demo path rather than refused, so a preview logs no
+ * failed request. Negative ids name no real proposal anywhere.
+ */
+function isDemoNeedsProposal(id) {
+  const n = Number(id);
+  return IS_STAGING && Number.isInteger(n) && n < 0
+    && DEMO_NEEDS_FEED.some((it) => it.kind === 'proposal' && it.id === n);
+}
 
 /** The feed's demo overlay: the real feed first, then the demo cards. */
 function withDemoNeedsFeed(items) {
@@ -582,6 +605,30 @@ function groupItems(rows) {
     });
   }
   return items;
+}
+
+/**
+ * #4313: a vote on one of the ?demo=1 Needs-you feed's cards is answered
+ * here, never cast: the preview's Approve and Vote land as they would, and
+ * nothing logs a failed request. So is the card's page's read of who voted
+ * (nobody: a demo card names no real people). Its own router, mounted ahead
+ * of the session routers (server.js), whose access guard refuses a negative
+ * id before those routes are reached. Every other id passes straight through.
+ */
+function demoNeedsVoteRoutes() {
+  const router = Router();
+  router.get('/api/sessions/:id/votes', (req, res, next) => {
+    if (!isDemoNeedsProposal(req.params.id)) return next();
+    return res.json({ yes: [], no: [], reasons: [], earlier: { yes: [], no: [] } });
+  });
+  router.post('/api/sessions/:id/vote', (req, res, next) => {
+    if (!isDemoNeedsProposal(req.params.id)) return next();
+    if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
+    const vote = req.body?.vote;
+    if (!['yes', 'no'].includes(vote)) return res.status(400).json({ error: 'Vote must be "yes" or "no"' });
+    return res.json({ ok: true, demo: true, vote });
+  });
+  return router;
 }
 
 function workshopOverviewRoutes(config) {
@@ -667,9 +714,10 @@ function workshopOverviewRoutes(config) {
 }
 
 module.exports = {
-  workshopOverviewRoutes, withDemoCounts, DEMO_COUNTS, COUNTS_SQL,
+  workshopOverviewRoutes, demoNeedsVoteRoutes, withDemoCounts, DEMO_COUNTS, COUNTS_SQL,
   withDemoItems, DEMO_ITEMS, ITEMS_SQL, ITEMS_PER_APP, ITEMS_TOTAL, groupItems,
   NEEDS_FEED_SQL, NEEDS_FEED_MAX, shapeNeedsFeed, withVotesRequired, DEMO_NEEDS_FEED, withDemoNeedsFeed,
+  isDemoNeedsProposal,
   OWED_BY_COMMUNITY_SQL, owedByCommunity,
   MY_SESSIONS_WHERE, MY_PROPOSALS_WHERE,
 };

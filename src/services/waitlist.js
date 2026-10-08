@@ -438,12 +438,51 @@ async function linkUserByEmail(pool, { userId, email }) {
   }
 }
 
+// ── Phone rows and outbound SMS (#4223, #4096) ────────────────────────
+//
+// A phone row (email NULL, joined from Home's card with a verified phone,
+// services/member-waitlist.js) has no address to send "you're in" to, and
+// Homeroom has no outbound SMS yet: Firebase only sends sign-in codes. The
+// author's call is that phone-only people are not let in before they can be
+// told, so their release is HELD: releaseWaitlistSignup refuses such a row,
+// Admin -> Waitlist shows it with Admit disabled, and a batch skips it.
+//
+// THE SMS HOOK. When #4096 lands, `sendReleaseText` sends the "you're in"
+// text to the linked account's verified number (user_phone_identities) and
+// `phoneReleaseReady` returns true; nothing else has to move. The admin
+// routes already call sendReleaseText for every newly released row without
+// an address.
+const SMS_ISSUE = 4096;
+
+function phoneReleaseReady() {
+  return false;
+}
+
+async function sendReleaseText(_pool, signup) {
+  log.info('waitlist', `"You're in" text not sent: outbound SMS is #${SMS_ISSUE}`, {
+    signupId: signup && signup.id != null ? Number(signup.id) : null,
+  });
+  return false;
+}
+
+class WaitlistReleaseError extends Error {
+  constructor(code, message, status = 409) {
+    super(message);
+    this.code = code;
+    this.status = status;
+  }
+}
+
+const NEEDS_SMS = `This signup joined with a phone number and has no email. It can be admitted once Homeroom can send texts (#${SMS_ISSUE}).`;
+
 // Admin release of a waitlist row. Sets released_at (idempotent) and, if
 // an account is already linked (or one exists with the same email),
 // grants it platform access immediately. Returns the updated row or
 // null when the id doesn't exist. `newly_released` distinguishes the
 // first release from an idempotent re-release so the caller can send
-// the "you're in" notification exactly once.
+// the "you're in" notification exactly once. A phone row (no email) is
+// refused with WaitlistReleaseError 'needs_sms' while phoneReleaseReady()
+// says no; a phone row released before that is a no-op re-release.
 async function releaseWaitlistSignup(pool, signupId) {
   const { rows } = await pool.query(
     `WITH prev AS (
@@ -452,15 +491,23 @@ async function releaseWaitlistSignup(pool, signupId) {
      UPDATE waitlist_signups w
         SET released_at = COALESCE(w.released_at, NOW())
       WHERE w.id = $1
+        AND (w.email IS NOT NULL OR w.released_at IS NOT NULL OR $2::boolean)
       RETURNING w.id, w.email, w.released_at, w.linked_user_id, w.more_token,
                 (SELECT prev.released_at FROM prev) IS NULL AS newly_released`,
-    [signupId]
+    [signupId, phoneReleaseReady()]
   );
   const row = rows[0];
-  if (!row) return null;
+  if (!row) {
+    const { rows: held } = await pool.query(
+      'SELECT 1 FROM waitlist_signups WHERE id = $1 AND email IS NULL',
+      [signupId]
+    );
+    if (held.length) throw new WaitlistReleaseError('needs_sms', NEEDS_SMS);
+    return null;
+  }
 
   let userId = row.linked_user_id;
-  if (!userId) {
+  if (!userId && row.email) {
     // The account may predate the waitlist row (or linkage was missed) —
     // resolve by email and backfill the link.
     const { rows: userRows } = await pool.query(
@@ -499,4 +546,8 @@ module.exports = {
   grantPlatformAccess,
   linkUserByEmail,
   releaseWaitlistSignup,
+  WaitlistReleaseError,
+  SMS_ISSUE,
+  phoneReleaseReady,
+  sendReleaseText,
 };

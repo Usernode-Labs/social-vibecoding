@@ -2989,20 +2989,6 @@ const DevChat = {
     return !!(typeof App !== 'undefined' && App.user && App.user.sessionBridgeEnabled);
   },
 
-  // Best-effort: a failed save must not block the venue the user just chose.
-  // Settings → Claude & ChatGPT connectors is the other door to this value.
-  async _saveDevFlowPreference(flow) {
-    try {
-      const res = await fetch('/api/me/dev-flow', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({ flow }),
-      });
-      if (res.ok && typeof App !== 'undefined' && App.user) App.user.devFlowPreference = flow;
-    } catch { /* ignore */ }
-  },
-
   // "Use Claude Code" / "Use Codex" from an out-of-credits card or banner.
   // Same walkthrough the picker opens, in the session the user was refused
   // in — the work they were describing is right there in the transcript.
@@ -3038,12 +3024,11 @@ const DevChat = {
   // rendering the Claude/Codex launchpad.
   //
   // `dismissed` is the lever rather than a cleared `mode`, because
-  // _devFlowTarget checks it FIRST and so short-circuits all three ways a
-  // launchpad comes back: this in-memory wizard, the session's stored
-  // venue, and a saved dev_flow_preference on an untouched session. Only
-  // the first is being cleared here — the other two are still true, and
-  // without `dismissed` the very next paint would answer "wizard" from one
-  // of them and put the launchpad straight back.
+  // _devFlowTarget checks it FIRST and so short-circuits both ways a
+  // launchpad comes back: this in-memory wizard and the session's stored
+  // venue. Only the first is being cleared here — the other is still true,
+  // and without `dismissed` the very next paint would answer "wizard" from
+  // it and put the launchpad straight back.
   //
   // It is per-tab and per-session by construction: _resetDevFlow() rebuilds
   // this object when the session changes, and picking a web venue again
@@ -3284,13 +3269,10 @@ const DevChat = {
           return;
         }
         if (pick.kind === 'flow') {
-          // Answering the venue question ALSO answers it for next time —
-          // that is what "asked once" means. The picker card used to make
-          // this a second decision ("remember this choice"); the sheet is
-          // the deliberate act, so the save rides along with it.
-          DevChat._saveDevFlowPreference(pick.flow);
-          // #1281: and it answers it for THIS session, which is what turns
-          // the chat into a launchpad and keeps it one across a reload.
+          // #1281: picking a web hand-off answers it for THIS session,
+          // which is what turns the chat into a launchpad and keeps it one
+          // across a reload. Nothing is saved for next time (#4311): the
+          // account-wide preference it used to write had no reader left.
           if (DevChat.currentSession) DevChat.currentSession.build_venue = pick.venue;
           DevChat._persistBuildVenue(pick.venue);
           DevChat._devFlowFromCredits(pick.flow, DevChat._webHandoffTargetId());
@@ -3813,16 +3795,13 @@ const DevChat = {
     // #1281: the vendor toggle at the top of the launchpad. Switching is
     // cheap and loses nothing — an external task is minted per vendor when
     // the work order is prepared, and the status read re-derives every step
-    // for whichever one is now selected. The saved default moves with it,
-    // for the same reason picking a venue in the sheet moves it: the toggle
-    // IS the deliberate act.
+    // for whichever one is now selected.
     if (action === 'vendor-claude-code' || action === 'vendor-codex') {
       const next = action === 'vendor-codex' ? 'codex' : 'claude-code';
       if (flow.agent === next) return;
       flow.agent = next;
       flow.mode = 'wizard';
       flow.status = null;
-      DevChat._saveDevFlowPreference(next);
       const venue = next === 'codex' ? 'web-codex' : 'web-claude-code';
       if (DevChat.currentSession) DevChat.currentSession.build_venue = venue;
       DevChat._persistBuildVenue(venue);

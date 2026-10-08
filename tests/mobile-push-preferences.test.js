@@ -51,6 +51,8 @@ const CURRENT_KINDS = [
   // A server-wide cap nearing its ceiling, for full admins only. Joins
   // app_alerts beside app_health (services/platform-limit-alerts.js).
   'platform_limit',
+  // #4296: its sibling, the unexpected events digest and hourly alert.
+  'platform_incident',
   // WP-E: the Homeroom bot's build moments ("Your builds"), and what an
   // invite link brings back to its maker ("Your invites").
   'build_ready', 'build_needs_you', 'build_stopped', 'build_live',

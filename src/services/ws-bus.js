@@ -63,6 +63,7 @@ const INSTANCE_ID = crypto.randomUUID();
 
 let _client = null;
 let _onMessage = null;
+let _onListening = null;
 let _connectionString = null;
 let _stopped = true;
 let _retryMs = 1000;
@@ -119,6 +120,48 @@ function _handleNotification(msg) {
   }
 }
 
+// ── A gap in listening is a gap in delivery (#4177) ──────────────────
+//
+// NOTIFY reaches only the sessions LISTENing when it is sent. While this
+// listener is down (the database restarted, the connection dropped, the first
+// connect is still retrying) every event another instance publishes is lost
+// for this instance's sockets, and nothing tells them. So each time the
+// listener is subscribed again, this instance's sockets are told to re-read
+// what they show: the same nudge an oversize payload becomes. The very first
+// subscription at boot tells nobody anything, because nobody is connected yet.
+//
+// The nudge makes every client re-read its screen, so it is rationed. A
+// listener that keeps dropping (an idle timeout on the path to the database)
+// would otherwise nudge everyone about once a second, and after a database
+// restart every instance would nudge every client at the same moment. So it
+// goes out at most once per HINT_MIN_INTERVAL_MS, and a later subscription
+// within that window is covered by one nudge at its end; each is delayed by
+// up to HINT_JITTER_MS so instances do not fire together.
+const HINT_MIN_INTERVAL_MS = 30_000;
+const HINT_JITTER_MS = 2_000;
+let _lastHintAt = -Infinity;
+let _hintTimer = null;
+
+/** How long until the nudge may go out. Pure; exported for tests. */
+function _hintDelay(now, lastHintAt, random) {
+  return Math.max(0, lastHintAt + HINT_MIN_INTERVAL_MS - now) + Math.floor(random * HINT_JITTER_MS);
+}
+
+function _listening() {
+  if (typeof _onListening !== 'function' || _hintTimer) return;
+  _hintTimer = setTimeout(() => {
+    _hintTimer = null;
+    _lastHintAt = Date.now();
+    if (typeof _onListening !== 'function') return;
+    try {
+      _onListening();
+    } catch (err) {
+      log.warn('ws-bus', 'listening handler threw', { err: err.message });
+    }
+  }, _hintDelay(Date.now(), _lastHintAt, Math.random()));
+  if (typeof _hintTimer.unref === 'function') _hintTimer.unref();
+}
+
 async function _connect() {
   if (_stopped) return;
   const { Client } = require('pg');
@@ -140,6 +183,7 @@ async function _connect() {
     _client = client;
     _retryMs = 1000;
     log.info('ws-bus', 'listening for cross-instance events', { instance: INSTANCE_ID });
+    _listening();
   } catch (err) {
     log.warn('ws-bus', 'listener connect failed, retrying', { err: err.message });
     _scheduleReconnect();
@@ -158,11 +202,14 @@ function _scheduleReconnect() {
  * Start the bus. Safe to call when the database is unreachable — publishing
  * degrades to a no-op and the listener retries, so a single-instance
  * deployment behaves exactly as it does today either way.
+ *
+ * `onListening` runs each time the listener is subscribed (see `_listening`).
  */
-function start({ pool, connectionString, onMessage }) {
+function start({ pool, connectionString, onMessage, onListening }) {
   _pool = pool || null;
   _connectionString = connectionString || null;
   _onMessage = onMessage || null;
+  _onListening = onListening || null;
   _stopped = false;
   if (!_connectionString) {
     log.warn('ws-bus', 'no connection string — cross-instance fan-out disabled');
@@ -173,6 +220,7 @@ function start({ pool, connectionString, onMessage }) {
 
 async function stop() {
   _stopped = true;
+  if (_hintTimer) { clearTimeout(_hintTimer); _hintTimer = null; }
   const client = _client;
   _client = null;
   if (client) {
@@ -183,6 +231,10 @@ async function stop() {
 module.exports = {
   start, stop, publish,
   CHANNEL, MAX_PAYLOAD_BYTES, INSTANCE_ID,
-  // Test seam: drive a notification without a database.
+  // Test seams: drive a notification, or a fresh subscription, without a
+  // database.
   _handleNotification,
+  _listening,
+  _hintDelay,
+  HINT_MIN_INTERVAL_MS,
 };
