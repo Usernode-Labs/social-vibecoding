@@ -52,9 +52,12 @@ function runtimeWith(clients, { diagnostics } = {}) {
 
 // A batch/core pair that records what the platform does and plays back a
 // Job that runs one poll then succeeds, its Pod carrying the digest in the
-// termination message.
+// termination message. `historyJobs` are the app's other finished builds:
+// the lookup for an image to reuse names the revision and does not see
+// them, the lookup for what earlier builds reported does.
 function fakeCluster({
   jobReads = null, podMessage = digest('d'), podExitCode = 0, logLines = [], existingJobs = [], createJobError = null,
+  historyJobs = [], historyError = null,
 } = {}) {
   const state = { secrets: [], jobs: [], patches: [], deleted: [], replacedSecrets: [], lists: [], logFollows: 0 };
   let reads = 0;
@@ -65,7 +68,12 @@ function fakeCluster({
     status: { containerStatuses: [{ name: 'buildkit', state: { terminated: { exitCode: podExitCode, message: podMessage } } }] },
   });
   const batch = {
-    async listNamespacedJob(request) { state.lists.push(request); return { items: existingJobs }; },
+    async listNamespacedJob(request) {
+      state.lists.push(request);
+      if (/social\.usernode\.io\/revision=/.test(request.labelSelector || '')) return { items: existingJobs };
+      if (historyError) throw historyError;
+      return { items: [...existingJobs, ...historyJobs] };
+    },
     async createNamespacedJob({ body }) {
       if (createJobError) throw createJobError;
       state.jobs.push(body);
@@ -160,6 +168,8 @@ test('the Job manifest: rootless daemon, per-app cache repository, source and id
   assert.equal(env.IMAGE_TAG, 'registry.test/apps/demo:git-x-abc');
   assert.equal(env.CACHE_REF, 'registry.test/cache/demo:buildkit-cache');
   assert.equal(env.REGISTRY_ATTRS, '');
+  assert.equal(env.CACHE_UPLOAD, 'auto');
+  assert.equal(env.CACHE_SETTLED_STEPS, '', 'no history: whatever runs causes a cache upload');
   assert.equal(env.BUILDKITD_FLAGS, '--oci-worker-no-process-sandbox');
   assert.equal(env.DOCKER_CONFIG, undefined, 'anonymous registry: no credential mount');
   assert.deepEqual(pod.volumes.map((v) => v.name).sort(), ['buildkitd', 'workspace']);
@@ -190,7 +200,7 @@ test('the Job manifest: privileged mode, registry credentials and a plain-HTTP r
   assert.deepEqual(volume.secret, { secretName: 'push-creds', items: [{ key: '.dockerconfigjson', path: 'config.json' }] });
 });
 
-test('the build script: fetches by SHA, exports the tree without .git, never prints the clone URL, hands back only the digest', () => {
+test('the build script: fetches by SHA, exports the tree without .git, never prints the clone URL, ends its termination message with the digest', () => {
   const script = buildkit._forTest.BUILD_SCRIPT;
   assert.match(script, /^set -eu/m);
   assert.match(script, /git -c protocol\.version=2 fetch -q --depth 1 "\$REPO_URL" "\$GIT_SHA"/);
@@ -204,8 +214,26 @@ test('the build script: fetches by SHA, exports the tree without .git, never pri
   assert.match(script, /--export-cache "type=registry,ref=\$CACHE_REF,mode=max,image-manifest=true,oci-mediatypes=true\$REGISTRY_ATTRS"/);
   assert.match(script, /--progress plain/, 'line-oriented output is what the step parser reads');
   assert.match(script, /--metadata-file \/workspace\/metadata\.json/);
-  assert.match(script, /printf '%s' "\$digest" > \/dev\/termination-log/);
+  assert.match(script, /printf '%s' "\$digest"\n\} > \/dev\/termination-log \|\| exit 1/, 'the digest ends the termination message');
   assert.match(script, /test -n "\$digest"/, 'no digest is a failed build, not an empty result');
+  // Two buildctl runs: the build, which pushes the image and only reads the
+  // cache, and the cache upload, which outputs nothing. What decides whether
+  // the second one happens is tests/kubernetes-buildkit-cache-upload.test.js.
+  const runs = script.split('buildctl-daemonless.sh build').slice(1);
+  assert.equal(runs.length, 2);
+  const [build, upload] = runs.map((run) => run.slice(0, run.search(/\n(?! {2,}--)/)));
+  assert.match(build, /--output /);
+  assert.match(build, /--import-cache /);
+  assert.match(build, /--trace \/workspace\/trace\.json/, 'the trace says which steps ran');
+  assert.doesNotMatch(build, /--export-cache/, 'the build does not wait for a cache upload');
+  assert.match(upload, /--export-cache /);
+  assert.match(upload, /--import-cache /, 'layers the cache served are lazy references to it');
+  assert.doesNotMatch(upload, /--output|--metadata-file/, 'the pushed image cannot change after its digest is read');
+  for (const flag of ['--frontend dockerfile.v0', '--local context=/workspace/src', '--local dockerfile=/workspace/src',
+    '--opt "filename=$DOCKERFILE"', '--opt "build-arg:GIT_SHA=$GIT_SHA"']) {
+    assert.ok(build.includes(flag) && upload.includes(flag), `both runs solve the same build (${flag})`);
+  }
+  assert.ok(script.indexOf('test -n "$digest"') < script.indexOf('set +e'), 'only what follows the pushed image is allowed to fail');
   // The daemon preflight runs before any source is fetched and exits with
   // the code the platform reads as "the lane cannot run here".
   const preflight = script.indexOf('buildctl-daemonless.sh debug workers');
@@ -233,6 +261,7 @@ test('createBuild: Secret then Job, owner reference, digest from the termination
   assert.equal(result.buildRef, `bk/${state.jobs[0].metadata.name}`);
   assert.equal(result.engine, 'buildkit');
   assert.equal(result.reused, undefined);
+  assert.equal(result.cacheUpload, null, 'this Pod said nothing about the layer cache');
   assert.match(result.requestedTag, new RegExp(`^registry\\.test/apps/demo:git-${revision}-[a-f0-9]{12}$`));
   assert.match(state.jobs[0].metadata.name, /^bk-12-s42-bbbbbbbbbbbb-[a-f0-9]{12}$/);
   assert.ok(state.jobs[0].metadata.name.length <= 63);
@@ -251,6 +280,77 @@ test('createBuild: Secret then Job, owner reference, digest from the termination
     { index: 2, total: 9, phase: 'shell', detail: 'RUN npm ci' },
   ]);
   assert.equal(state.deleted.length, 0, 'a successful Job stays for reuse until its TTL');
+});
+
+// A finished build of the app as the history lookup finds it.
+function finishedBuild(name, completionTime, cacheSteps) {
+  return {
+    metadata: { name, namespace: 'bk', labels: { 'social.usernode.io/app-id': '12' },
+      annotations: { 'social.usernode.io/image-digest': digest('e'), ...(cacheSteps ? { 'social.usernode.io/cache-steps': cacheSteps } : {}) } },
+    status: { succeeded: 1, completionTime },
+  };
+}
+
+test('createBuild: the Job is told which steps need no cache upload, from what the app\'s finished builds reported, and its own report is kept on it', async () => {
+  const hoursAgo = (h) => new Date(Date.now() - h * 3600 * 1000).toISOString();
+  const vite = 'aaaaaaaaaaaa';
+  const deps = 'bbbbbbbbbbbb';
+  const historyJobs = [
+    finishedBuild('bk-12-s1-a', hoursAgo(5), `cache-upload=done\ncache-ran=${vite} ${deps}\ncache-served=`),
+    finishedBuild('bk-12-s2-b', hoursAgo(4), `cache-upload=done\ncache-ran=${vite}\ncache-served=${deps}`),
+    finishedBuild('bk-12-s3-c', hoursAgo(3), `cache-upload=skipped\ncache-ran=${vite}\ncache-served=${deps}`),
+    finishedBuild('bk-12-s4-d', hoursAgo(2), null), // from before builds reported
+    finishedBuild('bk-12-s5-e', hoursAgo(1), 'cache-upload=done'), // could not tell which steps ran
+    { ...finishedBuild('bk-12-s6-f', hoursAgo(1), `cache-upload=done\ncache-ran=${deps}\ncache-served=`), status: { active: 1 } },
+    { ...finishedBuild('bk-12-s7-g', hoursAgo(1), `cache-upload=done\ncache-ran=${deps}\ncache-served=`), status: { failed: 1 } },
+  ];
+  const report = `cache-upload=skipped\ncache-ran=${vite}\ncache-served=${deps}`;
+  const { clients, state } = fakeCluster({ historyJobs, podMessage: `${report}\n${digest('d')}` });
+  const result = await buildkit.createBuild(config(), {
+    app, revision, environment: 'staging', sessionId: 42, sourceDir: sourceTree(['Dockerfile.kubernetes']),
+  }, runtimeWith(clients));
+  assert.equal(state.lists.length, 2, 'one lookup for an image to reuse, one for the history');
+  assert.equal(state.lists[1].namespace, 'bk');
+  assert.equal(state.lists[1].labelSelector,
+    'app.kubernetes.io/managed-by=social-vibecoding-runtime,social.usernode.io/app-id=12,social.usernode.io/build-engine=buildkit');
+  const env = Object.fromEntries(state.jobs[0].spec.template.spec.containers[0].env.map((e) => [e.name, e.value]));
+  assert.equal(env.CACHE_SETTLED_STEPS, vite, 'ran in two uploading builds and was never served; the dependency step was');
+  assert.equal(env.CACHE_UPLOAD, 'auto');
+  assert.equal(result.imageRef, `registry.test/apps/demo@${digest('d')}`, 'the digest is read past the cache lines');
+  assert.equal(result.cacheUpload, 'skipped');
+  assert.deepEqual(state.patches[0].request.body, { metadata: { annotations: {
+    'social.usernode.io/image-digest': digest('d'),
+    'social.usernode.io/cache-steps': report,
+  } } });
+});
+
+test('createBuild: a history that cannot be read is a build that uploads the cache, not a failed build', async () => {
+  const { clients, state } = fakeCluster({
+    historyError: Object.assign(new Error('etcdserver: request timed out'), { code: 500 }),
+    podMessage: `cache-upload=done\ncache-ran=aaaaaaaaaaaa\ncache-served=\n${digest('d')}`,
+  });
+  const result = await buildkit.createBuild(config(), {
+    app, revision, environment: 'staging', sessionId: 42, sourceDir: sourceTree(['Dockerfile']),
+  }, runtimeWith(clients));
+  const env = Object.fromEntries(state.jobs[0].spec.template.spec.containers[0].env.map((e) => [e.name, e.value]));
+  assert.equal(env.CACHE_SETTLED_STEPS, '');
+  assert.equal(result.cacheUpload, 'done');
+});
+
+test('createBuild: BUILDKIT_CACHE_UPLOAD=always asks for no history and uploads after every build', async () => {
+  const { clients, state } = fakeCluster({
+    historyJobs: [finishedBuild('bk-12-s1-a', new Date().toISOString(), 'cache-upload=done\ncache-ran=aaaaaaaaaaaa\ncache-served=')],
+  });
+  await buildkit.createBuild(config({ buildkitCacheUpload: 'always' }), {
+    app, revision, environment: 'staging', sessionId: 42, sourceDir: sourceTree(['Dockerfile']),
+  }, runtimeWith(clients));
+  assert.equal(state.lists.length, 1, 'only the lookup for an image to reuse');
+  const env = Object.fromEntries(state.jobs[0].spec.template.spec.containers[0].env.map((e) => [e.name, e.value]));
+  assert.equal(env.CACHE_UPLOAD, 'always');
+  assert.equal(env.CACHE_SETTLED_STEPS, '');
+  await assert.rejects(buildkit.createBuild(config({ buildkitCacheUpload: 'never' }), {
+    app, revision, environment: 'staging', sessionId: 42, sourceDir: sourceTree(['Dockerfile']),
+  }, runtimeWith(clients)), /Unsupported BUILDKIT_CACHE_UPLOAD=never \(auto, always\)/);
 });
 
 test('createBuild: a previous successful Job for the same revision and recipe is reused without a build', async () => {
