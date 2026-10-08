@@ -508,6 +508,7 @@ governance machine.
 | `tests/admin-workflows.test.js` | The admin section. |
 | `tests/workflow-process-state.test.js` | The list of what the machines still depend on only shrinks. |
 | `tests/workflow-state-trace.test.js` | The tracer's rules, on a small source tree of its own. |
+| `tests/workflow-processes-postgres.test.js` | Each machine's flows with every decision and work item in a child process, the test process being the web side; and the same flows with the child killed (SIGKILL) mid-item, restarted, and compared with an uninterrupted run. Only outside services are faked (`tests/fixtures/workflow-outside-fakes.js`); the harness is `tests/lib/workflow-processes.js`. The known dependencies on the web process's memory are `todo` scenarios, each naming its entry in the list. |
 
 The kernel guarantees cover:
 - replay;
