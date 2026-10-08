@@ -101,7 +101,7 @@
   },
   "row.active.justNow": {
     "text": "just now",
-    "description": "Quiet fact on the row of a project that is just the person's own, on the Communities screen: it was last active less than a minute ago. Lower case, it follows other text on the line."
+    "description": "The whole quiet fact on the row of a project that is just the person's own, on the Communities screen: it was last active less than a minute ago. Drawn in its own element, in lower case."
   },
   "row.active.minutes_one": {
     "text": "{{count}}m ago",

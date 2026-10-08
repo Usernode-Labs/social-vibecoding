@@ -105,47 +105,47 @@
   },
   "allItems.theme.foot.involved_one": {
     "text": "{{count}} involved",
-    "description": "First fact on the bottom line of a category card on a project's All items page: how many people are involved in the category. Another fact follows it after a middle dot."
+    "description": "First fact on the bottom line of a category card on a project's All items page: how many people are involved in the category. Another fact follows it after a middle dot. It is one complete fact in a line of independent facts joined by the separator message project:facts.pair; it is not a clause of the fact beside it."
   },
   "allItems.theme.foot.involved_other": {
     "text": "{{count}} involved",
-    "description": "First fact on the bottom line of a category card on a project's All items page: how many people are involved in the category. Another fact follows it after a middle dot."
+    "description": "First fact on the bottom line of a category card on a project's All items page: how many people are involved in the category. Another fact follows it after a middle dot. It is one complete fact in a line of independent facts joined by the separator message project:facts.pair; it is not a clause of the fact beside it."
   },
   "allItems.theme.foot.underway_one": {
     "text": "{{count}} underway",
-    "description": "Fact on the bottom line of a category card on a project's All items page: how many of its items somebody is working on now. It follows other facts after a middle dot, so it starts in lower case."
+    "description": "Fact on the bottom line of a category card on a project's All items page: how many of its items somebody is working on now. It follows other facts after a middle dot, so it starts in lower case. It is one complete fact in a line of independent facts joined by the separator message project:facts.pair; it is not a clause of the fact beside it."
   },
   "allItems.theme.foot.underway_other": {
     "text": "{{count}} underway",
-    "description": "Fact on the bottom line of a category card on a project's All items page: how many of its items somebody is working on now. It follows other facts after a middle dot, so it starts in lower case."
+    "description": "Fact on the bottom line of a category card on a project's All items page: how many of its items somebody is working on now. It follows other facts after a middle dot, so it starts in lower case. It is one complete fact in a line of independent facts joined by the separator message project:facts.pair; it is not a clause of the fact beside it."
   },
   "allItems.theme.foot.review_one": {
     "text": "{{count}} in review",
-    "description": "Fact on the bottom line of a category card on a project's All items page: how many of its items are proposals being reviewed or voted on. It follows other facts after a middle dot."
+    "description": "Fact on the bottom line of a category card on a project's All items page: how many of its items are proposals being reviewed or voted on. It follows other facts after a middle dot. It is one complete fact in a line of independent facts joined by the separator message project:facts.pair; it is not a clause of the fact beside it."
   },
   "allItems.theme.foot.review_other": {
     "text": "{{count}} in review",
-    "description": "Fact on the bottom line of a category card on a project's All items page: how many of its items are proposals being reviewed or voted on. It follows other facts after a middle dot."
+    "description": "Fact on the bottom line of a category card on a project's All items page: how many of its items are proposals being reviewed or voted on. It follows other facts after a middle dot. It is one complete fact in a line of independent facts joined by the separator message project:facts.pair; it is not a clause of the fact beside it."
   },
   "allItems.theme.foot.shippedIdle_one": {
     "text": "{{count}} went live this week, nothing in progress now",
-    "description": "Fact on the bottom line of a category card on a project's All items page, when nobody is working in the category right now but changes were merged this week. {{count}} is how many changes went live. It follows another fact after a middle dot, so it starts in lower case."
+    "description": "Fact on the bottom line of a category card on a project's All items page, when nobody is working in the category right now but changes were merged this week. {{count}} is how many changes went live. It follows another fact after a middle dot, so it starts in lower case. It is one complete fact in a line of independent facts joined by the separator message project:facts.pair; it is not a clause of the fact beside it."
   },
   "allItems.theme.foot.shippedIdle_other": {
     "text": "{{count}} went live this week, nothing in progress now",
-    "description": "Fact on the bottom line of a category card on a project's All items page, when nobody is working in the category right now but changes were merged this week. {{count}} is how many changes went live. It follows another fact after a middle dot, so it starts in lower case."
+    "description": "Fact on the bottom line of a category card on a project's All items page, when nobody is working in the category right now but changes were merged this week. {{count}} is how many changes went live. It follows another fact after a middle dot, so it starts in lower case. It is one complete fact in a line of independent facts joined by the separator message project:facts.pair; it is not a clause of the fact beside it."
   },
   "allItems.theme.foot.quiet_one": {
     "text": "quiet for {{count}} days",
-    "description": "Fact on the bottom line of a category card on a project's All items page, when nothing has happened in the category for more than two weeks. {{count}} is the number of days (always over 14). It follows another fact after a middle dot, so it starts in lower case."
+    "description": "Fact on the bottom line of a category card on a project's All items page, when nothing has happened in the category for more than two weeks. {{count}} is the number of days (always over 14). It follows another fact after a middle dot, so it starts in lower case. It is one complete fact in a line of independent facts joined by the separator message project:facts.pair; it is not a clause of the fact beside it."
   },
   "allItems.theme.foot.quiet_other": {
     "text": "quiet for {{count}} days",
-    "description": "Fact on the bottom line of a category card on a project's All items page, when nothing has happened in the category for more than two weeks. {{count}} is the number of days (always over 14). It follows another fact after a middle dot, so it starts in lower case."
+    "description": "Fact on the bottom line of a category card on a project's All items page, when nothing has happened in the category for more than two weeks. {{count}} is the number of days (always over 14). It follows another fact after a middle dot, so it starts in lower case. It is one complete fact in a line of independent facts joined by the separator message project:facts.pair; it is not a clause of the fact beside it."
   },
   "allItems.theme.foot.idle": {
     "text": "nothing in flight right now",
-    "description": "Fact on the bottom line of a category card on a project's All items page, when nobody is working on anything in the category at the moment. It follows another fact after a middle dot, so it starts in lower case."
+    "description": "Fact on the bottom line of a category card on a project's All items page, when nobody is working on anything in the category at the moment. It follows another fact after a middle dot, so it starts in lower case. It is one complete fact in a line of independent facts joined by the separator message project:facts.pair; it is not a clause of the fact beside it."
   },
   "allItems.theme.openOnBoard": {
     "text": "Open on Board ›",
@@ -205,31 +205,31 @@
   },
   "allItems.grouping.categories_one": {
     "text": "{{count}} category",
-    "description": "First fact on the small line above the list of categories on a project's All items page: how many categories the items are grouped into. Other facts may follow it after a middle dot."
+    "description": "First fact on the small line above the list of categories on a project's All items page: how many categories the items are grouped into. Other facts may follow it after a middle dot. It is one complete fact in a line of independent facts joined by the separator message project:facts.pair; it is not a clause of the fact beside it."
   },
   "allItems.grouping.categories_other": {
     "text": "{{count}} categories",
-    "description": "First fact on the small line above the list of categories on a project's All items page: how many categories the items are grouped into. Other facts may follow it after a middle dot."
+    "description": "First fact on the small line above the list of categories on a project's All items page: how many categories the items are grouped into. Other facts may follow it after a middle dot. It is one complete fact in a line of independent facts joined by the separator message project:facts.pair; it is not a clause of the fact beside it."
   },
   "allItems.grouping.byCategoryForNow": {
     "text": "grouped by category for now",
-    "description": "Fact on the small line above the list of categories on a project's All items page, when the items are grouped by the category the group voted for each one because the AI model has not grouped them yet. It follows the count of categories after a middle dot, so it starts in lower case."
+    "description": "Fact on the small line above the list of categories on a project's All items page, when the items are grouped by the category the group voted for each one because the AI model has not grouped them yet. It follows the count of categories after a middle dot, so it starts in lower case. It is one complete fact in a line of independent facts joined by the separator message project:facts.pair; it is not a clause of the fact beside it."
   },
   "allItems.grouping.demo": {
     "text": "staging demo grouping",
-    "description": "Fact on the small line above the list of categories on a project's All items page, shown only on a test (staging) copy of Homeroom where the categories are sample data. It follows the count of categories after a middle dot, so it starts in lower case."
+    "description": "Fact on the small line above the list of categories on a project's All items page, shown only on a test (staging) copy of Homeroom where the categories are sample data. It follows the count of categories after a middle dot, so it starts in lower case. It is one complete fact in a line of independent facts joined by the separator message project:facts.pair; it is not a clause of the fact beside it."
   },
   "allItems.grouping.placing": {
     "text": "placing new cards…",
-    "description": "Progress note on the small line above the list of categories on a project's All items page, while the AI model sorts new items into categories. It follows other facts after a middle dot, so it starts in lower case."
+    "description": "Progress note on the small line above the list of categories on a project's All items page, while the AI model sorts new items into categories. It follows other facts after a middle dot, so it starts in lower case. It is one complete fact in a line of independent facts joined by the separator message project:facts.pair; it is not a clause of the fact beside it."
   },
   "allItems.grouping.redrafting": {
     "text": "re-drafting categories…",
-    "description": "Progress note on the small line above the list of categories on a project's All items page, while the AI model writes the categories again. It follows other facts after a middle dot, so it starts in lower case."
+    "description": "Progress note on the small line above the list of categories on a project's All items page, while the AI model writes the categories again. It follows other facts after a middle dot, so it starts in lower case. It is one complete fact in a line of independent facts joined by the separator message project:facts.pair; it is not a clause of the fact beside it."
   },
   "allItems.grouping.drafting": {
     "text": "drafting categories…",
-    "description": "Progress note on the small line above the list of categories on a project's All items page, while the AI model writes the categories for the first time. It follows other facts after a middle dot, so it starts in lower case."
+    "description": "Progress note on the small line above the list of categories on a project's All items page, while the AI model writes the categories for the first time. It follows other facts after a middle dot, so it starts in lower case. It is one complete fact in a line of independent facts joined by the separator message project:facts.pair; it is not a clause of the fact beside it."
   },
   "allItems.sort.label": {
     "text": "Order categories",
@@ -265,7 +265,7 @@
   },
   "boardEmpty.loadFailed": {
     "text": "Couldn't load open requests right now. <0></0>",
-    "description": "Note shown in place of the items on a project's Hub or All items page when the list of open requests could not be fetched. <0></0> marks where the sentence about the empty board follows; keep it after this sentence, with whatever your language puts between two sentences."
+    "description": "Note shown in place of the items on a project's Hub or All items page when the list of open requests could not be fetched. There is no button in it. <0></0> is not a control: it is the place where a second, separate and complete sentence is drawn right after this one, namely one of the \"Nothing on the board yet…\" messages (which has its own entry and its own link styling). Keep the tag empty and put it after this sentence, with whatever your language writes between two sentences."
   },
   "boardEmpty.readOnly": {
     "text": "Nothing on the board yet.",
@@ -545,39 +545,39 @@
   },
   "since.words.nothing": {
     "text": "nothing has changed",
-    "description": "Fallback for the one-line summary under the \"Since your last visit\" heading on a project's Workshop tab when the list is empty. Shown alone on its line, in lower case."
+    "description": "The whole summary line under the \"Since your last visit\" heading on a project's Workshop tab when the list under it is empty. Shown alone, in lower case."
   },
   "since.words.landed_one": {
     "text": "{{count}} change landed",
-    "description": "Part of the one-line summary under the \"Since your last visit\" heading on a project's Workshop tab: how many changes were merged since the last visit. Change is a noun. It is listed with the other counts, separated by commas."
+    "description": "One fact in the summary line under the \"Since your last visit\" heading on a project's Workshop tab. The line lists up to three such facts (changes landed, new requests, new proposals), each complete by itself, joined with commas by the shared list message (core:list.pair); none is a clause of another. This one: how many changes were merged and went live. {{count}} is that number."
   },
   "since.words.landed_other": {
     "text": "{{count}} changes landed",
-    "description": "Part of the one-line summary under the \"Since your last visit\" heading on a project's Workshop tab: how many changes were merged since the last visit. Change is a noun. It is listed with the other counts, separated by commas."
+    "description": "One fact in the summary line under the \"Since your last visit\" heading on a project's Workshop tab. The line lists up to three such facts (changes landed, new requests, new proposals), each complete by itself, joined with commas by the shared list message (core:list.pair); none is a clause of another. This one: how many changes were merged and went live. {{count}} is that number."
   },
   "since.words.requests_one": {
     "text": "{{count}} new request",
-    "description": "Part of the one-line summary under the \"Since your last visit\" heading on a project's Workshop tab: how many requests (filed issues) were opened since the last visit. Request is a noun. It is listed with the other counts, separated by commas."
+    "description": "One fact in the summary line under the \"Since your last visit\" heading on a project's Workshop tab. The line lists up to three such facts (changes landed, new requests, new proposals), each complete by itself, joined with commas by the shared list message (core:list.pair); none is a clause of another. This one: how many requests (filed issues) were opened. {{count}} is that number."
   },
   "since.words.requests_other": {
     "text": "{{count}} new requests",
-    "description": "Part of the one-line summary under the \"Since your last visit\" heading on a project's Workshop tab: how many requests (filed issues) were opened since the last visit. Request is a noun. It is listed with the other counts, separated by commas."
+    "description": "One fact in the summary line under the \"Since your last visit\" heading on a project's Workshop tab. The line lists up to three such facts (changes landed, new requests, new proposals), each complete by itself, joined with commas by the shared list message (core:list.pair); none is a clause of another. This one: how many requests (filed issues) were opened. {{count}} is that number."
   },
   "since.words.proposals_one": {
     "text": "{{count}} new proposal",
-    "description": "Part of the one-line summary under the \"Since your last visit\" heading on a project's Workshop tab: how many proposals (changes put up for a vote) were made since the last visit. It is listed with the other counts, separated by commas."
+    "description": "One fact in the summary line under the \"Since your last visit\" heading on a project's Workshop tab. The line lists up to three such facts (changes landed, new requests, new proposals), each complete by itself, joined with commas by the shared list message (core:list.pair); none is a clause of another. This one: how many proposals (changes put up for a vote) were made. {{count}} is that number."
   },
   "since.words.proposals_other": {
     "text": "{{count}} new proposals",
-    "description": "Part of the one-line summary under the \"Since your last visit\" heading on a project's Workshop tab: how many proposals (changes put up for a vote) were made since the last visit. It is listed with the other counts, separated by commas."
+    "description": "One fact in the summary line under the \"Since your last visit\" heading on a project's Workshop tab. The line lists up to three such facts (changes landed, new requests, new proposals), each complete by itself, joined with commas by the shared list message (core:list.pair); none is a clause of another. This one: how many proposals (changes put up for a vote) were made. {{count}} is that number."
   },
   "since.words.moved_one": {
     "text": "{{count}} thing moved",
-    "description": "One-line summary under the \"Since your last visit\" heading on a project's Workshop tab, when items changed but none was merged, filed or proposed. {{count}} is how many items changed."
+    "description": "The whole summary line under the \"Since your last visit\" heading on a project's Workshop tab, when items changed but none was merged, filed or proposed. {{count}} is how many items changed."
   },
   "since.words.moved_other": {
     "text": "{{count}} things moved",
-    "description": "One-line summary under the \"Since your last visit\" heading on a project's Workshop tab, when items changed but none was merged, filed or proposed. {{count}} is how many items changed."
+    "description": "The whole summary line under the \"Since your last visit\" heading on a project's Workshop tab, when items changed but none was merged, filed or proposed. {{count}} is how many items changed."
   },
   "since.week.thisWeek": {
     "text": "This week",
@@ -609,7 +609,7 @@
   },
   "since.week.seenBefore": {
     "text": "Seen before",
-    "description": "Divider inside a week of the week-by-week list on a project's Workshop tab: the rows under it are ones this person has already seen. A count follows it."
+    "description": "Divider inside a week of the week-by-week list on a project's Workshop tab: the rows under it are ones this person has already seen. The whole label; the number of such rows is drawn beside it in a separate element."
   },
   "since.reveal.moreNew_one": {
     "text": "Show {{count}} more new",
@@ -705,19 +705,19 @@
   },
   "needsYou.answered.votedYes": {
     "text": "Voted yes",
-    "description": "Confirmation at the top of an item in the Needs you feed once this person has voted Yes on the change. A hint on how to reach the next item follows it after a middle dot."
+    "description": "Confirmation at the top of an item in the Needs you feed once this person has voted Yes on the change. A hint on how to reach the next item follows it after a middle dot. It is one complete fact in a line of independent facts joined by the separator message project:facts.pair; it is not a clause of the fact beside it."
   },
   "needsYou.answered.votedNo": {
     "text": "Voted no",
-    "description": "Confirmation at the top of an item in the Needs you feed once this person has voted No on the change. A hint on how to reach the next item follows it after a middle dot."
+    "description": "Confirmation at the top of an item in the Needs you feed once this person has voted No on the change. A hint on how to reach the next item follows it after a middle dot. It is one complete fact in a line of independent facts joined by the separator message project:facts.pair; it is not a clause of the fact beside it."
   },
   "needsYou.answered.approved": {
     "text": "Approved",
-    "description": "Confirmation at the top of an item in the Needs you feed once this person has approved the change, on a project that is just theirs. A hint on how to reach the next item follows it after a middle dot."
+    "description": "Confirmation at the top of an item in the Needs you feed once this person has approved the change, on a project that is just theirs. A hint on how to reach the next item follows it after a middle dot. It is one complete fact in a line of independent facts joined by the separator message project:facts.pair; it is not a clause of the fact beside it."
   },
   "needsYou.answered.notApproved": {
     "text": "Not approved",
-    "description": "Confirmation at the top of an item in the Needs you feed once this person has declined the change, on a project that is just theirs. A hint on how to reach the next item follows it after a middle dot."
+    "description": "Confirmation at the top of an item in the Needs you feed once this person has declined the change, on a project that is just theirs. A hint on how to reach the next item follows it after a middle dot. It is one complete fact in a line of independent facts joined by the separator message project:facts.pair; it is not a clause of the fact beside it."
   },
   "needsYou.fact.youVotedYes": {
     "text": "You voted yes",
@@ -877,11 +877,11 @@
   },
   "needsYou.next.wide": {
     "text": "press ↓ or scroll for the next",
-    "description": "Hint on an answered item in the Needs you feed on a wide window: how to move to the next item. It follows the confirmation (\"Voted yes\") after a middle dot, so it starts in lower case. ↓ is the down arrow key."
+    "description": "Hint on an answered item in the Needs you feed on a wide window: how to move to the next item. It follows the confirmation (\"Voted yes\") after a middle dot, so it starts in lower case. ↓ is the down arrow key. It is one complete fact in a line of independent facts joined by the separator message project:facts.pair; it is not a clause of the fact beside it."
   },
   "needsYou.next.phone": {
     "text": "swipe up for the next",
-    "description": "Hint on an answered item in the Needs you feed on a phone: how to move to the next item. It follows the confirmation (\"Voted yes\") after a middle dot, so it starts in lower case."
+    "description": "Hint on an answered item in the Needs you feed on a phone: how to move to the next item. It follows the confirmation (\"Voted yes\") after a middle dot, so it starts in lower case. It is one complete fact in a line of independent facts joined by the separator message project:facts.pair; it is not a clause of the fact beside it."
   },
   "needsYou.eyebrow.request": {
     "text": "Request",
@@ -1317,19 +1317,19 @@
   },
   "notices.meta.byWhen": {
     "text": "by @{{username}} · {{when}}",
-    "description": "Small grey line under a changed setting in the \"Lately in this project\" panel: who changed it and how long ago. {{username}} is that person's username; keep the @ before it. {{when}} is a short relative time such as 2d ago."
+    "description": "The whole small grey line beside a changed setting in the \"Lately in this project\" panel of a project's Workshop tab, shown alone in its own element: who changed the setting and how long ago. {{username}} is that person's username; keep the @ before it. {{when}} is a short relative time such as 2d ago."
   },
   "notices.meta.by": {
     "text": "by @{{username}}",
-    "description": "Small grey line under a changed setting in the \"Lately in this project\" panel, when the time is unknown: who changed it. {{username}} is that person's username; keep the @ before it."
+    "description": "The whole small grey line beside a changed setting in the \"Lately in this project\" panel of a project's Workshop tab, shown alone in its own element, when the time is unknown: who changed the setting. {{username}} is that person's username; keep the @ before it."
   },
   "notices.meta.votedWhen": {
     "text": "through a voted change · {{when}}",
-    "description": "Small grey line under a changed setting in the \"Lately in this project\" panel, when nobody changed it by hand: a proposal the members voted in changed it. {{when}} is a short relative time such as 2d ago."
+    "description": "The whole small grey line beside a changed setting in the \"Lately in this project\" panel of a project's Workshop tab, shown alone in its own element, when nobody changed the setting by hand: a proposal the members voted in changed it. {{when}} is a short relative time such as 2d ago."
   },
   "notices.meta.voted": {
     "text": "through a voted change",
-    "description": "Small grey line under a changed setting in the \"Lately in this project\" panel, when nobody changed it by hand and the time is unknown: a proposal the members voted in changed it."
+    "description": "The whole small grey line beside a changed setting in the \"Lately in this project\" panel of a project's Workshop tab, shown alone in its own element, when nobody changed the setting by hand and the time is unknown: a proposal the members voted in changed it."
   },
   "sinceSummary.since.today": {
     "text": "Since earlier today",
@@ -1497,23 +1497,23 @@
   },
   "hub.needs.from": {
     "text": "from @{{username}}",
-    "description": "Line under the title of the first proposal on the Needs you card of a project's Hub, when it is the only one: who put that proposal up. {{username}} is that person's username; keep the @ before it."
+    "description": "The whole line under the title of the first proposal on the Needs you card of a project's Hub, when it is the only proposal waiting: who put it up. Shown alone on its own line. {{username}} is that person's username; keep the @ before it."
   },
   "hub.needs.fromAndMore_one": {
     "text": "from @{{username}} · and {{count}} more",
-    "description": "Line under the title of the first proposal on the Needs you card of a project's Hub: who put that proposal up, then how many other proposals also wait for this person's vote. {{username}} is that person's username; keep the @ before it. {{count}} is the number of other proposals."
+    "description": "The whole line under the title of the first proposal on the Needs you card of a project's Hub: who put that proposal up, then how many other proposals also wait for this person's vote. Shown alone on its own line. {{username}} is that person's username; keep the @ before it. {{count}} is the number of other proposals."
   },
   "hub.needs.fromAndMore_other": {
     "text": "from @{{username}} · and {{count}} more",
-    "description": "Line under the title of the first proposal on the Needs you card of a project's Hub: who put that proposal up, then how many other proposals also wait for this person's vote. {{username}} is that person's username; keep the @ before it. {{count}} is the number of other proposals."
+    "description": "The whole line under the title of the first proposal on the Needs you card of a project's Hub: who put that proposal up, then how many other proposals also wait for this person's vote. Shown alone on its own line. {{username}} is that person's username; keep the @ before it. {{count}} is the number of other proposals."
   },
   "hub.needs.andMore_one": {
     "text": "and {{count}} more",
-    "description": "Line under the title of the first proposal on the Needs you card of a project's Hub, when who put it up is not known: how many other proposals also wait for this person's vote. It follows the first proposal's title on its own line."
+    "description": "The whole line under the title of the first proposal on the Needs you card of a project's Hub, when who put it up is not known: how many other proposals also wait for this person's vote. Shown alone on its own line, in its own element; it is not appended to the title."
   },
   "hub.needs.andMore_other": {
     "text": "and {{count}} more",
-    "description": "Line under the title of the first proposal on the Needs you card of a project's Hub, when who put it up is not known: how many other proposals also wait for this person's vote. It follows the first proposal's title on its own line."
+    "description": "The whole line under the title of the first proposal on the Needs you card of a project's Hub, when who put it up is not known: how many other proposals also wait for this person's vote. Shown alone on its own line, in its own element; it is not appended to the title."
   },
   "hub.needs.skipped_one": {
     "text": "{{count}} vote you skipped is still open",
@@ -2332,12 +2332,28 @@
     "description": "Accessible name of the box on a request's page that links to the change being built or voted on to resolve it. \"Issue\" is another word for the request."
   },
   "topic.request.closedBand.closed": {
-    "text": "Closed",
-    "description": "Status word in the band at the top of a request that is no longer open, after a check mark. An adjective describing the request, not the verb for closing a window."
+    "text": "<0>Closed</0>",
+    "description": "The whole text of the band at the top of a closed request's page (a request is a filed issue), when neither the date nor the way it was closed is known. \"Closed\" is an adjective describing the request, not the verb for closing a window. <0></0> draws it bold."
+  },
+  "topic.request.closedBand.when": {
+    "text": "<0>Closed</0><1>·</1><2>{{date}}</2>",
+    "description": "The whole text of the band at the top of a closed request's page (a request is a filed issue), when only the date is known. \"Closed\" is an adjective describing the request. {{date}} is a short date or relative time, for example Oct 5 or 3d ago. <0></0> is the status word, drawn bold; <1></1> is a separator dot hidden from screen readers; <2></2> holds the date. Keep every tag, in the order your language reads."
+  },
+  "topic.request.closedBand.whenByChange": {
+    "text": "<0>Closed</0><1>·</1><2>{{date}}</2><3>·</3><4>by</4><5></5>",
+    "description": "The whole text of the band at the top of a closed request's page (a request is a filed issue), when a merged change closed it: closed, on this date, by this change. {{date}} is a short date or relative time, for example Oct 5 or 3d ago. <0></0> is the status word, drawn bold; <1></1> and <3></3> are separator dots hidden from screen readers; <2></2> holds the date; <4></4> holds the word that introduces the change; <5></5> is a link showing the change's number and title, which fills itself in: leave it empty and put it where the change's name belongs."
   },
   "topic.request.closedBand.byChange": {
-    "text": "<0>by</0><1></1>",
-    "description": "Part of the band at the top of a closed request, after \"Closed\" and its date: says which change closed it. <0></0> holds the word meaning \"by\" (closed by this change); <1></1> is the link showing that change's number and title, which fills itself in: leave it empty and place it where the change's name belongs."
+    "text": "<0>Closed</0><1>·</1><2>by</2><3></3>",
+    "description": "The whole text of the band at the top of a closed request's page (a request is a filed issue), when a merged change closed it and the date is not known: closed by this change. <0></0> is the status word, drawn bold; <1></1> is a separator dot hidden from screen readers; <2></2> holds the word that introduces the change; <3></3> is a link showing the change's number and title, which fills itself in: leave it empty and put it where the change's name belongs."
+  },
+  "topic.request.closedBand.whenHow": {
+    "text": "<0>Closed</0><1>·</1><2>{{date}}</2><3>·</3><4>{{how}}</4>",
+    "description": "The whole text of the band at the top of a closed request's page (a request is a filed issue), when a vote or an admin closed it. {{date}} is a short date or relative time, for example Oct 5 or 3d ago. {{how}} is a short phrase saying how it was closed, such as \"by vote\" or \"by an admin\", supplied already worded. <0></0> is the status word, drawn bold; <1></1> and <3></3> are separator dots hidden from screen readers; <2></2> holds the date and <4></4> the phrase."
+  },
+  "topic.request.closedBand.how": {
+    "text": "<0>Closed</0><1>·</1><2>{{how}}</2>",
+    "description": "The whole text of the band at the top of a closed request's page (a request is a filed issue), when a vote or an admin closed it and the date is not known. {{how}} is a short phrase saying how it was closed, such as \"by vote\" or \"by an admin\", supplied already worded. <0></0> is the status word, drawn bold; <1></1> is a separator dot hidden from screen readers; <2></2> holds the phrase."
   },
   "topic.request.closedBand.byChangeLabel": {
     "text": "Closed by {{change}}: {{title}}",
@@ -2509,11 +2525,19 @@
   },
   "card.pill.moreReasons_one": {
     "text": "and {{count}} more reason, open for details",
-    "description": "Tooltip on a proposal card's status bar when the proposal is held back for several reasons. It follows the first reason, after a middle dot, so it starts in lower case. {{count}} is how many further reasons there are; \"open\" is a verb: open the card."
+    "description": "The whole tooltip on a proposal card's status bar when the proposal is held back for several reasons and the first one has no text to show. {{count}} is how many further reasons there are; \"open\" is a verb: open the card to read them. Shown alone, in lower case."
   },
   "card.pill.moreReasons_other": {
     "text": "and {{count}} more reasons, open for details",
-    "description": "Tooltip on a proposal card's status bar when the proposal is held back for several reasons. It follows the first reason, after a middle dot, so it starts in lower case. {{count}} is how many further reasons there are; \"open\" is a verb: open the card."
+    "description": "The whole tooltip on a proposal card's status bar when the proposal is held back for several reasons and the first one has no text to show. {{count}} is how many further reasons there are; \"open\" is a verb: open the card to read them. Shown alone, in lower case."
+  },
+  "card.pill.reasonAndMore_one": {
+    "text": "{{reason}} · and {{count}} more reason, open for details",
+    "description": "Tooltip on a proposal card's status bar when the proposal is held back for several reasons: the first reason, then how many more there are. {{reason}} is the first reason, a sentence supplied already worded; {{count}} is how many further reasons there are. \"Open\" is a verb: open the card to read them. Keep the middle dot, or your language's separator, between the two parts."
+  },
+  "card.pill.reasonAndMore_other": {
+    "text": "{{reason}} · and {{count}} more reasons, open for details",
+    "description": "Tooltip on a proposal card's status bar when the proposal is held back for several reasons: the first reason, then how many more there are. {{reason}} is the first reason, a sentence supplied already worded; {{count}} is how many further reasons there are. \"Open\" is a verb: open the card to read them. Keep the middle dot, or your language's separator, between the two parts."
   },
   "card.pill.advisoryVotes_one": {
     "text": "{{count}} advisory vote from non-approvers, so they don't count toward merging",
@@ -3353,11 +3377,11 @@
   },
   "suggestBack.changes.more_one": {
     "text": "and {{count}} more",
-    "description": "Last line of the list of changes in the 'Suggest this back' dialog, after the listed ones: {{count}} further changes are not listed."
+    "description": "The whole last line of the list of changes in the 'Suggest this back' dialog. Each line of that list is its own element, one change per line; this final line stands for the changes that are not listed. {{count}} is how many those are."
   },
   "suggestBack.changes.more_other": {
     "text": "and {{count}} more",
-    "description": "Last line of the list of changes in the 'Suggest this back' dialog, after the listed ones: {{count}} further changes are not listed."
+    "description": "The whole last line of the list of changes in the 'Suggest this back' dialog. Each line of that list is its own element, one change per line; this final line stands for the changes that are not listed. {{count}} is how many those are."
   },
   "suggestBack.changes.files_one": {
     "text": "{{count}} file changed",

@@ -223,9 +223,13 @@ export function StatusPill({ s, inline }: { s: StatusPillState; inline?: boolean
   const titleParts: string[] = [];
   if (s.title) titleParts.push(s.title);
   else if (s.reasons && s.reasons[0]) titleParts.push(s.reasons[0].detail);
-  if (s.tier === 2 && extra > 0) {
-    titleParts.push(t('project:card.pill.moreReasons', { count: extra }));
-  }
+  // The first reason and "and N more" are one message, so a language can
+  // order and punctuate them; with no first reason the count stands alone.
+  const tooltip = s.tier === 2 && extra > 0
+    ? (titleParts.length
+      ? t('project:card.pill.reasonAndMore', { reason: titleParts[0] ?? '', count: extra })
+      : t('project:card.pill.moreReasons', { count: extra }))
+    : (titleParts.length ? titleParts.join(' · ') : undefined);
   const cd = s.countdown ? (s.reject ? ' gc-reject-countdown' : ' gc-merge-countdown') : '';
   // An OPEN vote is the bar's own tone on a board card — accent blue, with an
   // accent fill — where the tier's `progress` violet is kept for the merge
@@ -237,7 +241,7 @@ export function StatusPill({ s, inline }: { s: StatusPillState; inline?: boolean
       className={`gc-vote-count gc-vote-count-${s.tone} dev-status-pill${block}${vote}${cd}`}
       data-window-ends={s.countdown ? String(s.countdown) : undefined}
       data-label-suffix={s.countdown && s.suffix ? s.suffix : undefined}
-      title={titleParts.length ? titleParts.join(' · ') : undefined}
+      title={tooltip}
     >
       {fills}
       <span className="gc-vote-count-label">
