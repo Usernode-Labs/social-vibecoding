@@ -7,13 +7,17 @@
  * making and sharing apps of their own is what the waitlist is for, and this
  * card is where they join it. In order:
  *
- *   join    "Make and share your own apps", and Join the waitlist;
+ *   join    "Make and share your own apps", and Join the waitlist. An
+ *           account with a verified phone and no confirmed email joins right
+ *           there, with that one press and nothing asked (#4223);
  *   email   the address to join with: the account's own confirmed one joins
  *           with one press, another is sent a 6-digit code first. An address
  *           another account holds is refused (the server says so);
  *   code    the code from that mail;
  *   listed  "On the waitlist", where the news will go, and the optional
  *           "Want in sooner?" questions (#more/<token>, ../auth/more.tsx).
+ *           Joined by phone, it offers "Add an email too", which goes
+ *           through the email and code steps above.
  *
  * NOT IN THE PRERENDER. Who is signed in arrives after hydration (the nav
  * store's `privateMember`, published by App._syncViewer), so the first render
@@ -35,6 +39,8 @@ type Standing = {
   state: 'none' | 'listed' | 'admitted';
   email: string | null;
   accountEmail: string | null;
+  /** A verified phone on the account: with no accountEmail, it joins with one press. */
+  hasPhone?: boolean;
   moreToken: string | null;
 };
 
@@ -43,6 +49,7 @@ type Step = { kind: 'join' } | { kind: 'email' } | { kind: 'code'; email: string
 const STATE_PATH = '/api/me/waitlist';
 const JOIN_PATH = '/api/me/waitlist/join';
 const VERIFY_PATH = '/api/me/waitlist/verify';
+const JOIN_PHONE_PATH = '/api/me/waitlist/join-phone';
 
 const BODY = 'text-[15px] leading-snug text-zinc-700 dark:text-zinc-200';
 const SMALL = 'text-[13px] leading-snug text-zinc-500 dark:text-zinc-400';
@@ -107,6 +114,7 @@ export function WaitlistCardBody({ standing, onListed }: {
       const { ok, data } = await post(JOIN_PATH, { email: address });
       if (!ok) { setError(data?.error || 'Could not join the waitlist. Try again.'); return; }
       if (data.next === 'code') { setCode(''); setStep({ kind: 'code', email: data.email }); return; }
+      setStep({ kind: 'join' });
       onListed(data as Standing);
     } catch {
       setError('Could not join the waitlist. Try again.');
@@ -121,6 +129,7 @@ export function WaitlistCardBody({ standing, onListed }: {
     try {
       const { ok, data } = await post(VERIFY_PATH, { email: address, code: entered });
       if (!ok) { setError(data?.error || 'Could not check that code. Try again.'); return; }
+      setStep({ kind: 'join' });
       onListed(data as Standing);
     } catch {
       setError('Could not check that code. Try again.');
@@ -129,7 +138,26 @@ export function WaitlistCardBody({ standing, onListed }: {
     }
   }, [onListed]);
 
-  if (standing.state === 'listed') {
+  const joinByPhone = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const { ok, data } = await post(JOIN_PHONE_PATH, {});
+      if (!ok) { setError(data?.error || 'Could not join the waitlist. Try again.'); return; }
+      onListed(data as Standing);
+    } catch {
+      setError('Could not join the waitlist. Try again.');
+    } finally {
+      setBusy(false);
+    }
+  }, [onListed]);
+
+  const listed = standing.state === 'listed';
+  // Joined by phone: no address on the row, so the news goes by text.
+  const byPhone = listed && !standing.email;
+  const phoneOnly = !!standing.hasPhone && !standing.accountEmail;
+
+  if (listed && step.kind === 'join') {
     return (
       <div className="flex flex-col gap-2 p-4" data-waitlist-card="listed">
         <Pill />
@@ -137,9 +165,21 @@ export function WaitlistCardBody({ standing, onListed }: {
         <p className={BODY}>
           {standing.email
             ? `You’re on the waitlist. We’ll email ${standing.email} when it’s your turn.`
-            : 'You’re on the waitlist. We’ll email you when it’s your turn.'}
+            : (byPhone
+              ? 'You’re on the waitlist. We’ll text you when it’s your turn.'
+              : 'You’re on the waitlist. We’ll email you when it’s your turn.')}
         </p>
         <p className={SMALL}>We let people in from the waitlist in batches. Until then, your group&rsquo;s apps are yours to use and change.</p>
+        {byPhone ? (
+          <button
+            id="home-waitlist-add-email"
+            type="button"
+            className={`${LINK} self-start min-h-[44px]`}
+            onClick={() => { setError(null); setEmail(''); setStep({ kind: 'email' }); }}
+          >
+            Add an email too
+          </button>
+        ) : null}
         {standing.moreToken ? <Sooner token={standing.moreToken} /> : null}
       </div>
     );
@@ -181,7 +221,9 @@ export function WaitlistCardBody({ standing, onListed }: {
     const submit = (e: FormEvent) => { e.preventDefault(); if (!busy) void join(email.trim()); };
     return (
       <form className="flex flex-col gap-2 p-4" data-waitlist-card="email" onSubmit={submit}>
-        <h3 className="text-[17px] font-semibold leading-snug text-zinc-900 dark:text-zinc-100">Join the waitlist</h3>
+        <h3 className="text-[17px] font-semibold leading-snug text-zinc-900 dark:text-zinc-100">
+          {listed ? 'Add an email too' : 'Join the waitlist'}
+        </h3>
         <p className={BODY}>
           {standing.accountEmail ? 'With your email, or another one.' : 'Add your email. We’ll email you a 6-digit code.'}
         </p>
@@ -221,10 +263,12 @@ export function WaitlistCardBody({ standing, onListed }: {
         size="pill"
         layout="full"
         className="mt-1 disabled:opacity-60"
-        onClick={() => setStep({ kind: 'email' })}
+        disabled={busy}
+        onClick={() => (phoneOnly ? void joinByPhone() : setStep({ kind: 'email' }))}
       >
         Join the waitlist
       </Button>
+      {phoneOnly ? <p role="alert" className={msgClass(error ? 'error' : null)}>{error}</p> : null}
       <p className={`${SMALL} text-center`}>We let people in from the waitlist in batches.</p>
     </div>
   );

@@ -150,13 +150,14 @@ test('proposalId + propose: true with no branch promotes the session through the
 
 test('the one-call path reuses the promote route the propose-after-update runs, and restates none of its gates', () => {
   const block = TOOLS_SRC.slice(
-    TOOLS_SRC.indexOf('if (updating && !branch && propose === true) {'),
-    TOOLS_SRC.indexOf('if (updating && !branch) {'),
+    TOOLS_SRC.indexOf('if (updating && !branch && !patch && propose === true) {'),
+    TOOLS_SRC.indexOf('if (updating && !branch && !patch) {'),
   );
   assert.ok(block.length > 0, 'the no-branch promote exists, ahead of the branch-required refusal');
   // The same route the branch path's promoteOnce calls.
   assert.match(block, /'POST', `\/api\/sessions\/\$\{proposalId\}\/promote`/);
-  assert.match(TOOLS_SRC, /const promoteOnce = \(\) => callPlatform\(\s*baseUrl, accessToken, 'POST', `\/api\/sessions\/\$\{proposalId\}\/promote`/);
+  // (#4263: the update's target, which an update task's taskId names too.)
+  assert.match(TOOLS_SRC, /const promoteOnce = \(\) => callPlatform\(\s*baseUrl, accessToken, 'POST', `\/api\/sessions\/\$\{targetId\}\/promote`/);
   // No reopen, and no copy of the route's own checks in this module.
   assert.doesNotMatch(block, /\/resume/);
   assert.doesNotMatch(block, /isSessionBusy|hasUnsubmittedUpload|currentCheckedHead|promotedSessions|getBranchSha/);
@@ -185,12 +186,33 @@ test('a field only an update applies is refused before anything is called', asyn
   } finally { c.restore(); }
 });
 
+// #4263. An update can also carry its commits as a patch, which is an update
+// like a branch is: it never takes the as-it-stands promote, which would put
+// the session up for the vote WITHOUT the patch. An uploaded patch is new
+// work's alone, so it is refused here like any other field.
+test('a patch is an update, never the as-it-stands promote, and an upload id is refused', async () => {
+  const c = connector(() => { throw new Error('must not call the platform'); });
+  try {
+    const res = await c.handlers.get('submit_work')({
+      proposalId: 6992, propose: true, patch: 'diff --git a/x b/x\n',
+    });
+    assert.equal(res.isError, true);
+    assert.match(res.structuredContent.message, /A patch needs the taskId from the work order/);
+    assert.doesNotMatch(res.structuredContent.message, /as it stands/);
+    const upload = await c.handlers.get('submit_work')({ proposalId: 6992, propose: true, patchUploadId: 5 });
+    assert.equal(upload.isError, true);
+    assert.match(upload.structuredContent.message, /does not take patchUploadId/);
+    assert.deepEqual(c.calls, [], 'nothing was promoted');
+  } finally { c.restore(); }
+});
+
 test('without propose, an update still needs its branch, and the refusal names the one-call path', async () => {
   const c = connector(() => { throw new Error('must not call the platform'); });
   try {
     const res = await c.handlers.get('submit_work')({ proposalId: 6992 });
     assert.equal(res.isError, true);
-    assert.match(res.structuredContent.message, /An update needs `branch` too/);
+    assert.match(res.structuredContent.message, /An update needs the new commits: `branch`/);
+    assert.match(res.structuredContent.message, /or `patch` with the taskId of this proposal's update work order/, '#4263');
     assert.match(res.structuredContent.message, /pass propose: true and no branch instead/);
     assert.deepEqual(c.calls, []);
   } finally { c.restore(); }
@@ -335,7 +357,7 @@ test('the connector teaches the one-call path where it teaches promoting', () =>
     const spec = c.specs.get('submit_work');
     assert.match(spec.description, /or as it stands with NO `branch` and nothing pushed/);
     const propose = spec.inputSchema.propose.description;
-    assert.match(propose, /With NO `branch`, nothing is pushed and nothing else is written/);
+    assert.match(propose, /With proposalId and NO `branch` or `patch`, nothing is pushed and nothing else is written/);
     assert.match(propose, /instead of pushing the same commit to a fork/);
     assert.match(propose, /not the user's session, is already up for a vote, merged or closed, or the platform's own promote checks say it is not ready \(for example nothing submitted yet, or a turn still moving its branch\)/);
     assert.match(spec.inputSchema.share.description, /proposalId and propose: true alone promote it, with no push/);

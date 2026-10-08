@@ -3068,9 +3068,11 @@ const App = {
     // is the mounted one, so calling both is free.
     if (window.AdminConsole?.isOpen?.()) AdminConsole.loadStagingReap?.();
     App.loadVersion();
-    // A change's page re-reads its row on events, not on a timer, so a
-    // dropped socket is its cue too (topic-head.tsx's ChangeDetail).
-    window.dispatchEvent(new CustomEvent('change-detail-refresh', { detail: 'all' }));
+    // #4177: everything that registered with live reads re-reads what it
+    // shows — a change's page (topic-head.tsx's ChangeDetail), its vote
+    // rosters, every loaded chat stream. The lines above are the screens not
+    // moved there yet; a screen that moves takes its line out of this list.
+    window.UsernodeReact?.liveReads?.resync?.('reconnect');
     if (App.currentApp && typeof AppView !== 'undefined' && AppView.appData) {
       // Re-fetch tab-specific state. We don't blow away the DOM —
       // these helpers update in place — so scroll positions, drafts,
@@ -4287,7 +4289,20 @@ const App = {
       // between the sheet and the welcome (Evan, 5 October 2026; the make
       // screen's hand-off, #3894, works the same way). The welcome fills it;
       // any other ending takes it down (_endWelcomeHold).
-      const fromLanding = App._inviteLandingToken === token;
+      //
+      // The landing's mark is kept in this tab's sessionStorage as well as
+      // here, because a sign-in does not always finish in the document that
+      // showed the landing: the move onto the live build reloads it after
+      // the code step (finishLogin, _moveToLiveShell 'signed-in'), and a
+      // provider's trip comes back to the link in a new one. With only the
+      // in-memory mark, that boot followed the link unheld and Home showed
+      // until the standing came back (#4215).
+      let landed = null;
+      try {
+        landed = sessionStorage.getItem(App.INVITE_LANDING_KEY);
+        sessionStorage.removeItem(App.INVITE_LANDING_KEY);
+      } catch (_) { /* the in-memory mark alone */ }
+      const fromLanding = App._inviteLandingToken === token || landed === token;
       App._inviteLandingToken = null;
       const island = window.UsernodeReact && window.UsernodeReact.firstSession;
       held = !!(fromLanding && island && typeof island.holdWelcome === 'function' && island.holdWelcome());
@@ -4454,6 +4469,10 @@ const App = {
     }
   },
 
+  // Where the landing marks the invite link it showed signed out, for a
+  // sign-in that finishes in another document (_followInvite).
+  INVITE_LANDING_KEY: 'usernode:invite-landing',
+
   // "You're in"'s held frame (above), down; a welcome that took its place stays.
   _endWelcomeHold() {
     const island = window.UsernodeReact && window.UsernodeReact.firstSession;
@@ -4604,6 +4623,7 @@ const App = {
         if (!App.user) {
           // A sign-in from here comes back to this link (_followInvite).
           App._inviteLandingToken = inviteToken;
+          try { sessionStorage.setItem(App.INVITE_LANDING_KEY, inviteToken); } catch (_) { /* this document only */ }
           AuthScreens.rememberDeepLink(location.pathname);
           AuthScreens.show('landing');
           return;
@@ -4953,6 +4973,7 @@ const App = {
         // `#app/<slug>/dev/sessions/<id>`): no history entry of its own, so
         // Back from the chat still lands on the inbox it was opened from.
         const agent = App._messagesAgentThread(parts);
+        if (agent && agent.kind === 'agent') App._takeAgentFlow(hash, fragQuery);
         if (agent) {
           if (!window.matchMedia('(min-width: 768px)').matches) {
             if (agent.kind === 'session' && typeof Improve !== 'undefined') {
@@ -5024,6 +5045,7 @@ const App = {
         // A serial id, so the same signed-int32 bound as a conversation's;
         // `#agent/new` is one not sent yet, created by its first message.
         App.setChromeless(false);
+        App._takeAgentFlow(hash, fragQuery);
         if (parts[1] === 'new') {
           App.navigateToAgentSession('new');
           return;
@@ -7296,6 +7318,36 @@ const App = {
       return id != null && id <= 2147483647 ? { kind: 'session', slug, id } : null;
     }
     return null;
+  },
+
+  // #4312: a shared link's `?flow=claude-code|codex` on an agent session
+  // address, in the fragment's own query (#messages/agent/new?flow=codex) or
+  // the page's (/?flow=codex#messages/agent/new). The conversation opens with
+  // its "Build with" sheet on that agent's tab, as the model pill and the
+  // credits card open it (features/agent-session/store.ts prepareHandoff).
+  // The value is taken out of the address once handed over, so a reload,
+  // Back, or the first message giving an unsent conversation its own address
+  // does not open the sheet again. Any other value is ignored.
+  _takeAgentFlow(hash, fragQuery) {
+    const read = (query) => {
+      try { return new URLSearchParams(query || '').get('flow'); } catch (_) { return null; }
+    };
+    const known = (value) => value === 'claude-code' || value === 'codex';
+    const flow = [read(fragQuery), read(location.search)].find(known);
+    if (!flow) return;
+    window.UsernodeReact?.agentSession?.prepareHandoff?.(flow);
+    const without = (query) => {
+      try {
+        const params = new URLSearchParams(query || '');
+        if (known(params.get('flow'))) params.delete('flow');
+        const rest = params.toString();
+        return rest ? `?${rest}` : '';
+      } catch (_) { return ''; }
+    };
+    try {
+      history.replaceState(history.state, '',
+        `${location.pathname}${without(location.search)}#${hash}${without(fragQuery)}`);
+    } catch (_) {}
   },
 
   // State-only teardown; the incoming transition hides the root.

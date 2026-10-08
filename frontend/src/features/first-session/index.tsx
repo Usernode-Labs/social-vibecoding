@@ -110,6 +110,7 @@ type Legacy = {
     saveSessionSnapshot?: (user: unknown) => void;
     navigateHome?: (opts?: unknown) => void;
     navigateToApp?: (slug: string, tab: string) => unknown;
+    _isScreenVisible?: (id: string) => boolean;
     openDiscussionInHub?: (slug: string) => void;
     _WORKSHOP_VIEW_KEY?: string;
     _workshopViewPath?: (url: string) => string | null;
@@ -124,6 +125,8 @@ type Legacy = {
     settled: () => Promise<void>;
   };
   Home?: { load?: () => void };
+  // ../auth/username-first-run.js: set while it asks a provisional handle for a username.
+  UsernameFirstRun?: { _publicAsk?: Promise<boolean> | null };
   Secrets?: { open?: (slug: string) => void };
   UsernodeReact?: Record<string, unknown>;
 };
@@ -149,6 +152,41 @@ export function enterScreen(screen: TourScreen, slug: string, conversationId?: n
   else if (screen === 'hub') { AppView?._landOnHub?.(slug); App.navigateToApp?.(slug, 'dev'); }
   else if (screen === 'discussion') App.openDiscussionInHub?.(slug);
   else if (screen === 'bot' && conversationId) window.location.hash = `#messages/${conversationId}`;
+}
+
+/** The longest the held frame waits on a private member's app (appDrawn). */
+export const APP_DRAWN_MAX_MS = 10_000;
+
+/**
+ * Resolves once the app a private member is sent to (`going`, what
+ * App.navigateToApp returned) is the screen, or that navigation has ended
+ * somewhere else, or it has stopped to ask for a username: whichever comes
+ * first, and within APP_DRAWN_MAX_MS. "You're in"'s held frame stays up
+ * until then (#4215). For a provisional handle (a private group's phone
+ * Join) the navigation reads the app's audience before it reveals anything
+ * (App._navigateAfterUsername); by the time it does, Home has drawn the
+ * project's tile under the frame, and the app grows out of it (the
+ * navigation's zoom) with Home still up until the zoom ends. Taking the
+ * frame down at the hand-off showed Home for that whole time.
+ */
+export function appDrawn(going: unknown, host: Legacy = legacy(), now: () => number = Date.now): Promise<void> {
+  const app = host.App;
+  const appUp = () => !!app?._isScreenVisible?.('app-view');
+  const drawn = () => (appUp() && !app?._isScreenVisible?.('home-screen')) || !!host.UsernameFirstRun?._publicAsk;
+  const pending = going as Promise<unknown> | null | undefined;
+  if (drawn() || !pending || typeof pending.then !== 'function') return Promise.resolve();
+  const until = now() + APP_DRAWN_MAX_MS;
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = () => { settled = true; };
+    pending.then(done, done);
+    const check = () => {
+      // Settled with no app up: it went somewhere else ("Not now", refused).
+      if (drawn() || (settled && !appUp()) || now() > until) resolve();
+      else requestAnimationFrame(check);
+    };
+    requestAnimationFrame(check);
+  });
 }
 
 /**
@@ -643,7 +681,8 @@ export function YoureIn({ info, onGo }: { info: FirstSessionInfo; onGo: (firstVe
 
 export type Mode =
   | { kind: 'none' }
-  | { kind: 'held' }
+  // `app`: handed to a private member's app (welcome), and down once it is drawn.
+  | { kind: 'held'; app?: string }
   | { kind: 'welcome'; info: FirstSessionInfo }
   // `entry` 'create' is the Create button's (see the header); none is the first session's.
   | { kind: 'make'; entry?: MakeEntry; startImport?: boolean }
@@ -804,10 +843,14 @@ export function FirstSession() {
         // A PRIVATE MEMBER lands inside the app the link was for, full
         // screen, instead of "You're in" and the hub: Homeroom is what the
         // mark menu's "Go to Homeroom" opens, and its tour (goHome) runs
-        // then. A frame held for the welcome goes.
+        // then. A frame held for the welcome goes once the app is on
+        // screen, not before (appDrawn): never Home in between.
         if (legacy().App?.user?.privateMember) {
-          setMode((prev) => (prev.kind === 'held' ? { kind: 'none' } : prev));
-          enterScreen('app', info.slug);
+          // The follow's own ending (endHold) leaves a frame handed on.
+          const { slug } = info;
+          setMode((prev) => (prev.kind === 'held' ? { kind: 'held', app: slug } : prev));
+          const going = legacy().App?.navigateToApp?.(slug, 'app');
+          void appDrawn(going).then(() => setMode((prev) => (prev.kind === 'held' && prev.app === slug ? { kind: 'none' } : prev)));
           return true;
         }
         setMode({ kind: 'welcome', info });
@@ -842,9 +885,10 @@ export function FirstSession() {
         return held;
       },
       // The follow ended some other way (the hub, a confirm, a toast): the
-      // frame goes, and only the frame.
+      // frame goes, and only the frame. A frame welcome() handed to the app
+      // stays until the app is drawn.
       endHold(): void {
-        setMode((prev) => (prev.kind === 'held' ? { kind: 'none' } : prev));
+        setMode((prev) => (prev.kind === 'held' && !prev.app ? { kind: 'none' } : prev));
       },
       // "What do you want to make?" for an account that is due the join
       // screen and did not come through the story's sheet, and for any

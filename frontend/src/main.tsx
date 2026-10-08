@@ -142,6 +142,10 @@ import './lib/transition-ground';
 // Publishes window.ResetTime: allowance resets worded in the viewer's own
 // clock, for the classic scripts that cannot import it (#3230).
 import './lib/reset-time';
+// #4177: the one place that re-reads what is on screen after a gap
+// (window.UsernodeReact.liveReads). Before DOMContentLoaded, because the
+// group chat registers with it the first time a channel connects.
+import './lib/live-reads';
 // #4065: the drop-zone tracker for the classic chat scripts
 // (window.UsernodeReact.fileDrag), and the floor under every drop zone: a
 // file dropped where nothing takes it no longer opens in place of the app.

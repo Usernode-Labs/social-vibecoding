@@ -137,10 +137,11 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS locale VARCHAR(35);
 -- order to the user's own Claude Code / Codex web UI (the external-agent
 -- flow in services/external-agent-tasks.js).
 --
--- Written by POST /api/me/dev-flow, echoed by GET /api/auth/me as
--- `devFlowPreference`, and clearable back to NULL from Settings →
--- Connections. The CHECK is the same allowlist the route enforces, so a
--- direct DB write can never park an unrenderable value here.
+-- No longer read or written (#4311): POST /api/me/dev-flow, the
+-- `devFlowPreference` field of GET /api/auth/me and the Settings row were
+-- removed because nothing chose a venue from the value. The column and its
+-- CHECK stay so a rollback to an older build still finds them; drop them in
+-- a later migration once no deployable build reads them.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS dev_flow_preference TEXT;
 DO $$
 BEGIN
@@ -5361,6 +5362,10 @@ INSERT INTO mobile_push_kind_categories (kind, category, default_enabled) VALUES
   -- (services/platform-limit-alerts.js). "Something happened that affects
   -- the apps you look after", one level up, so the same category.
   ('platform_limit', 'app_alerts', TRUE),
+  -- #4296: errors that should not happen, as a daily digest or one kind past
+  -- its hourly line (services/platform-incident-alerts.js). Full admins
+  -- only, beside platform_limit.
+  ('platform_incident', 'app_alerts', TRUE),
   ('reaction', 'lightweight_activity', FALSE),
   ('kudos', 'lightweight_activity', FALSE),
   ('conversation_invite', 'messages', TRUE),
@@ -5418,6 +5423,8 @@ DELETE FROM mobile_push_kind_categories
    'session_stalled',
    -- Server-wide limit alerts for full admins.
    'platform_limit',
+   -- #4296: the unexpected events digest and hourly alert, same audience.
+   'platform_incident',
    -- WP-E.
    'build_ready', 'build_needs_you', 'build_stopped', 'build_live',
    'invite_opened', 'member_joined', 'first_message'
@@ -7026,13 +7033,16 @@ BEGIN
   --                      bot-owned branch in the app repo
   --   update_fork_head — the proposal's head already lived in the author's
   --                      fork, so advancing the tracked head WAS the write
+  -- And #4263 adds a third:
+  --   update_patch     — the author's patch was applied on the proposal's
+  --                      head and pushed onto that same bot-owned branch
   -- Widening a CHECK means replacing it, so this one constraint is dropped
   -- and recreated rather than added-if-absent. Safe on every boot: the new
   -- list is a superset, so no stored value can be excluded by it.
   ALTER TABLE external_agent_tasks DROP CONSTRAINT IF EXISTS external_agent_tasks_submitted_via_chk;
   ALTER TABLE external_agent_tasks ADD CONSTRAINT external_agent_tasks_submitted_via_chk
     CHECK (submitted_via IS NULL OR submitted_via IN (
-      'branch','branch_head_repo','mirror','patch','pr','update_branch','update_fork_head'));
+      'branch','branch_head_repo','mirror','patch','pr','update_branch','update_fork_head','update_patch'));
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint WHERE conname = 'external_agent_tasks_submitted_source_chk'
   ) THEN
@@ -8720,6 +8730,46 @@ ALTER TABLE waitlist_signups ADD COLUMN IF NOT EXISTS project_invite_id INTEGER;
 CREATE INDEX IF NOT EXISTS idx_waitlist_signups_project_invite
   ON waitlist_signups (project_invite_id) WHERE project_invite_id IS NOT NULL;
 COMMENT ON COLUMN waitlist_signups.project_invite_id IS 'staging:private';
+
+-- ── Phone rows on the waitlist (#4223) ─────────────────────────────────
+--
+-- An account with a verified phone (user_phone_identities) joins from
+-- Home's waitlist card with one tap and no email (services/member-waitlist.js,
+-- joinWithPhone). Its row has email NULL, linked_user_id set and
+-- confirmed_at stamped at insert: the verified phone stands for the
+-- confirmation. Releasing one is HELD until outbound SMS exists (#4096), so
+-- releaseWaitlistSignup refuses a row without an address.
+--
+-- The UNIQUE constraint on email stays: emails are stored lowercased by every
+-- writer, `ON CONFLICT (email)` names it, and NULLs are distinct under it, so
+-- any number of phone rows fit. The case-insensitive index below states the
+-- same rule on LOWER(email), created the way users_email_lower_unique is: a
+-- legacy case-variant pair downgrades to a warning, never a boot failure.
+--
+-- One phone row per account. Not one row of ANY kind per account: rows
+-- linked twice already exist (an account that confirmed two addresses on the
+-- card) and a full index would fail to build on them, and an account merge
+-- (services/user-merge.js) drops a merged account's rows that collide on a
+-- unique index, which would delete a real email signup. The member card's
+-- own writers keep the wider rule: joinWithPhone inserts only for an account
+-- with no listed row, and adding an email folds the phone row into it.
+ALTER TABLE waitlist_signups ALTER COLUMN email DROP NOT NULL;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+     WHERE schemaname = current_schema() AND indexname = 'waitlist_signups_email_lower_unique'
+  ) THEN
+    BEGIN
+      CREATE UNIQUE INDEX waitlist_signups_email_lower_unique
+        ON waitlist_signups (LOWER(email)) WHERE email IS NOT NULL;
+    EXCEPTION WHEN unique_violation THEN
+      RAISE WARNING 'waitlist_signups_email_lower_unique not created: case-variant duplicate emails exist; the raw-column UNIQUE (email) is kept';
+    END;
+  END IF;
+END $$;
+CREATE UNIQUE INDEX IF NOT EXISTS waitlist_signups_phone_row_unique
+  ON waitlist_signups (linked_user_id) WHERE email IS NULL;
 
 -- ── Proposal freshness (#1442) ─────────────────────────────────────────
 --

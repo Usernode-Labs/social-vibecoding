@@ -272,6 +272,8 @@ const EXEMPT = new Map([
   ['votes.js POST /api/sessions/:id/vote', JSON_FIELD],
   ['waitlist-connect.js POST /waitlist/connect/:provider/complete', JSON_FIELD],
   ['workshop-ask.js POST /api/apps/:slug/workshop/ask', JSON_FIELD],
+  // #4313: the ?demo=1 Needs-you cards' vote, answered and never cast (staging only).
+  ['workshop-overview.js POST /api/sessions/:id/vote', JSON_FIELD],
   // Declarations the literal-path scan used to miss.
   ['anthropic-proxy.js ALL `${ROUTE_PREFIX}*`', TOKEN],
   ['app-illustrations.js POST /api/apps/:slug/featured-illustration', RAW],

@@ -176,6 +176,10 @@ function deps(over = {}, log = {}) {
     }, over.prImportSync),
     githubPublic: over.githubPublic || { marker: 'public-reader' },
     prMetadata: over.prMetadata || { applyPrMetadata: async () => null },
+    // #4263: the new-work patch path's apply, aimed at the proposal's branch.
+    // Unset here, so a test that forgets it reaches the real one and fails
+    // loudly rather than quietly pushing nothing.
+    applyPatch: over.applyPatch,
     // Both of these are real behaviours elsewhere; here they only have to be
     // observable, so a test can assert the update ran INSIDE them.
     serialize: over.serialize || (async (id, fn) => {
@@ -2892,4 +2896,130 @@ test('an imported proposal\'s body is its author\'s and is not rewritten for the
   }, { branch: 'usernode/add-a-button', summary: 'New.' }, {});
   assert.equal(result.summaryUpdated, true);
   assert.equal(result.summaryBodyRejected, undefined);
+});
+
+// ── #4263: an update by PATCH ──────────────────────────────────────────
+//
+// The connector's update work order hands the fix in as a patch, the way new
+// work goes in, so a cloud session that cannot push to a fork can still revise
+// its proposal. The patch is applied ON the proposal's live head by the
+// new-work patch path's own machinery, pushed onto the proposal's own branch
+// under a lease, and then everything after the push is the branch update's
+// tail: the same votes, checks, preview and answer.
+
+const PATCH = 'diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-old\n+new\n';
+
+function applyPatchStub(log, answer) {
+  return async (args) => {
+    (log.applied = log.applied || []).push(args);
+    if (answer) return answer;
+    return {
+      ok: true, branch: args.targetBranch, headSha: FORK_HEAD.toUpperCase(),
+      credential: 'pat', cleanup: async () => {},
+    };
+  };
+}
+
+function runPatch(over = {}, params = {}, log = {}) {
+  return run(
+    { applyPatch: applyPatchStub(log, over.applied), ...over },
+    { branch: undefined, patch: PATCH, expectedHeadSha: NATIVE_HEAD, ...params },
+    log
+  );
+}
+
+test('a patch is applied ON the proposal\'s live head, onto its own branch, and takes the branch update\'s tail', async () => {
+  const log = {};
+  const result = await runPatch({}, {}, log);
+  assert.equal(result.ok, true, `${result.code}: ${result.message}`);
+  assert.equal(log.applied.length, 1);
+  const [args] = log.applied;
+  assert.equal(args.patch, PATCH);
+  assert.equal(args.baseSha, NATIVE_HEAD, 'at the head GitHub reported, which the caller also named');
+  assert.equal(args.targetBranch, 'dev/evan-1786376366569', 'the proposal\'s own branch, not a new one');
+  assert.equal(args.sessionId, 501);
+  // No fork is read and nothing is pushed from one.
+  assert.equal(log.verify, undefined);
+  assert.equal(log.push, undefined);
+  assert.equal(log.mirror, undefined);
+  // THE SAME proposal, advanced by the native reconcile, under the same lock.
+  assert.equal(result.proposalId, 501);
+  assert.equal(result.headSha, FORK_HEAD);
+  assert.equal(result.previousHeadSha, NATIVE_HEAD);
+  assert.equal(result.targetKind, 'proposal');
+  assert.equal(result.submittedVia, 'update_patch');
+  assert.equal(result.votesCleared, 4);
+  assert.equal(result.checksRerun, true);
+  assert.equal(result.previewRebuilding, true);
+  assert.equal(log.reconcile.length, 1);
+  assert.deepEqual(log.serialized, [501]);
+  assert.deepEqual(log.began, [501]);
+  assert.deepEqual(log.released, [501]);
+});
+
+test('a patch update answers in exactly the shape a branch update does', async () => {
+  const viaBranch = await run({}, {}, {});
+  const viaPatch = await runPatch({}, {}, {});
+  assert.equal(viaBranch.ok, true);
+  assert.deepEqual(Object.keys(viaPatch).sort(), Object.keys(viaBranch).sort());
+  // Differing only in how the commit arrived.
+  assert.deepEqual({ ...viaPatch, submittedVia: null }, { ...viaBranch, submittedVia: null });
+  assert.equal(viaBranch.submittedVia, 'update_branch');
+});
+
+test('a connector proposal (a bot-owned head under an imported row) takes a patch through its own tail', async () => {
+  const session = importedSession({
+    branch_name: 'usernode/from-es92-t3-8510c5ac',
+    imported_pr_head_repo: 'o/r',
+  });
+  const log = {};
+  const result = await runPatch({ session }, {}, log);
+  assert.equal(result.ok, true, `${result.code}: ${result.message}`);
+  assert.equal(log.applied[0].targetBranch, 'usernode/from-es92-t3-8510c5ac');
+  assert.equal(log.synced.length, 1, 'the imported head is re-read, as for a branch update');
+  assert.equal(result.proposalId, 601);
+  assert.equal(result.submittedVia, 'update_patch');
+});
+
+test('a patch made from a commit the proposal has moved off is branch_moved, and nothing is applied', async () => {
+  const log = {};
+  const result = await runPatch({}, { expectedHeadSha: OTHER_HEAD }, log);
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'branch_moved');
+  assert.equal(result.headSha, NATIVE_HEAD, 'the head that replaced it, to rebase onto');
+  assert.equal(log.applied, undefined);
+  assert.equal(log.reconcile, undefined);
+});
+
+test('the apply\'s own refusals pass through, and nothing after the push runs', async () => {
+  for (const code of ['branch_moved', 'patch_did_not_apply', 'patch_rejected', 'patch_too_large']) {
+    const log = {};
+    const result = await runPatch({ applied: { ok: false, code, message: `${code}!`, retryable: false } }, {}, log);
+    assert.equal(result.ok, false);
+    assert.equal(result.code, code, 'in the caller\'s vocabulary already, so not renamed');
+    assert.equal(log.reconcile, undefined, code);
+  }
+});
+
+test('a patch needs the commit it was made from, and is never sent with a branch', async () => {
+  const log = {};
+  const unnamed = await runPatch({}, { expectedHeadSha: undefined }, log);
+  assert.equal(unnamed.code, 'invalid_request');
+  assert.match(unnamed.message, /expectedHeadSha/);
+  const both = await runPatch({}, { branch: 'fix/failing-check' }, log);
+  assert.equal(both.code, 'invalid_request');
+  assert.match(both.message, /not both/);
+  assert.equal(log.applied, undefined);
+});
+
+test('a patch cannot move a head in the author\'s own fork, or a proposal that is not the caller\'s', async () => {
+  const log = {};
+  const fork = await runPatch({ session: importedSession({ imported_pr_head_repo: 'evan-gh/r' }) }, {}, log);
+  assert.equal(fork.code, 'invalid_request');
+  assert.match(fork.message, /in your own fork, which only you can push to/);
+  assert.match(fork.message, /submit with proposalId and branch/);
+
+  const theirs = await runPatch({ session: nativeSession({ user_id: 99 }) }, {}, log);
+  assert.equal(theirs.code, 'not_your_proposal');
+  assert.equal(log.applied, undefined);
 });

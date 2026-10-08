@@ -81,6 +81,18 @@ function _onBusMessage({ kind, routing, data, oversize }) {
   }
 }
 
+// #4177: the bus listener has just been subscribed again, so whatever other
+// instances published while it was down never reached this instance's sockets
+// (services/ws-bus.js `_listening`). Every one of them gets the nudge an
+// oversize payload becomes: the events socket answers it with
+// `App.resyncCurrentView`, a chat room with `GroupChat.resyncLoaded`. It says
+// only "re-read", so it leaks nothing to anyone in any room.
+function _onBusListening() {
+  const hint = { type: 'resync_hint' };
+  deliverGlobal(hint);
+  for (const appId of rooms.keys()) deliverToRoom(appId, hint);
+}
+
 // The Homeroom bot follows issue activity. Best-effort by construction: the
 // event has already been delivered, and a bot that fails to hear it is
 // caught up by its reconcile sweep.
@@ -247,6 +259,7 @@ function attach(server, config) {
     pool,
     connectionString: config.databaseUrl,
     onMessage: _onBusMessage,
+    onListening: _onBusListening,
   });
 
   wss = new WebSocketServer({ noServer: true });
@@ -1970,4 +1983,4 @@ function pushConversationEvent(memberUserIds, payload, { excludeUserId = null } 
 
 const pushNotificationToUser = pushToUser;
 
-module.exports = { connectedUserIds, disconnectUser, attach, broadcast, _onBusMessage, broadcastGlobal, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, sendBotMessage, sendFirstVersionMessage, getOnlineUsers, pushAppStatusUpdate, pushAppCreationPhase, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushWorkshopUpdate, onBoardChange, pushToUser, pushConversationEvent, pushNotificationToUser, pushPlatformVersion, getReactionsForMessages, validateThread, handleMessage, admitSocketFrame, SOCKET_RATE_BUDGETS, SOCKET_RATE_WINDOW_MS, MAX_CHAT_LEN };
+module.exports = { connectedUserIds, disconnectUser, attach, broadcast, _onBusMessage, _onBusListening, broadcastGlobal, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, sendBotMessage, sendFirstVersionMessage, getOnlineUsers, pushAppStatusUpdate, pushAppCreationPhase, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushWorkshopUpdate, onBoardChange, pushToUser, pushConversationEvent, pushNotificationToUser, pushPlatformVersion, getReactionsForMessages, validateThread, handleMessage, admitSocketFrame, SOCKET_RATE_BUDGETS, SOCKET_RATE_WINDOW_MS, MAX_CHAT_LEN };

@@ -419,6 +419,22 @@ test('app health alerts say what happened and what to do (#2253, #2273)', () => 
   });
 });
 
+test('unexpected events alerts say how many of what, with no app (#4296)', () => {
+  const copy = (detail) => buildMessage({
+    ...INPUT, kind: 'platform_incident', context: { detail },
+  }).notification;
+  assert.deepEqual(copy('hour:build_interrupted:6'), {
+    title: 'Unexpected events piling up',
+    body: '6 build interrupted in the last hour. Admin \u2192 Unexpected events has each one',
+  });
+  assert.deepEqual(copy('digest:9:build_interrupted=7'), {
+    title: '9 unexpected events yesterday',
+    body: 'build interrupted 7, other 2',
+  });
+  assert.deepEqual(copy('digest:1:build_interrupted=1').title, '1 unexpected event yesterday');
+  assert.equal(copy('garbage').title, 'Unexpected events');
+});
+
 test('platform limit alerts name the cap, how full it is, and the lever', () => {
   // Full admins only, and no app: the title carries no " · App" suffix.
   const copy = (detail) => buildMessage({

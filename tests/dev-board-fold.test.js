@@ -1530,9 +1530,26 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // composer's Build with, a refused send), and no route reaches them
   // without a screenshot-only parameter. 733 leaves 147 slots.
   //
+  // 733 → 732: −1 (#4311): the Settings choice of where changes get built
+  // is gone (nothing acted on its value since #4268), so the check that
+  // read its row after the connectors on #settings/connectors went with it.
+  // 732 leaves 148 slots.
+  //
+  // 732 → 733: +1 (#4296): the admin console's Unexpected events section,
+  // a new route (#admin/incidents) with its filters, its links and its read
+  // in one selector; the Homeroom bot's check takes the link to it by :has().
+  // 733 leaves 147 slots.
+  //
+  // 733 → 734: +1 (#4312): a real, shareable `?flow=claude-code|codex` link
+  // on an agent session address now opens Build with on that agent's tab, so
+  // the hand-off walkthrough is reachable from a route again. One check opens
+  // it on 990801 and reads the first step's Link GitHub. The out-of-credits
+  // card still needs a refused send and stays with the unit tests.
+  // 734 leaves 146 slots under the 880 ceiling.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 733);
+  checkCap.assertPinned(DAPP.tests.length, 734);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

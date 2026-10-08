@@ -140,11 +140,11 @@ export interface Incidents {
   items: Incident[];
 }
 
-const INCIDENT_KIND: Record<string, string> = {
+export const INCIDENT_KIND: Record<string, string> = {
   build_interrupted: 'Build interrupted',
 };
 
-const INCIDENT_OUTCOME: Record<string, string> = {
+export const INCIDENT_OUTCOME: Record<string, string> = {
   resumed: 'carried on from its plan',
   requeued: 'started over from the request',
   failed: 'stopped: too many in a row',
@@ -232,6 +232,10 @@ export function RolloutHealth({ health, failures, incidents }: {
             {unexpected.map((i, n) => <li key={`${i.at}-${n}`} className="break-words" data-kind={i.kind}>{incidentLine(i)}</li>)}
           </ul>
         ) : null}
+        {/* #4296: the whole log, every kind, with filters and daily counts. */}
+        <a className={`${AdminUI.btn.link} text-sm inline-block mt-2`} href="#admin/incidents" id="admin-homeroom-bot-unexpected-all">
+          All unexpected events
+        </a>
       </details>
     </div>
   );

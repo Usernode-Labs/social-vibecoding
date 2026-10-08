@@ -18590,7 +18590,7 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
   .dev-ws-sheet-vote { --ws-sheet-in: dev-ws-pop-in; --ws-sheet-out: dev-ws-pop-out; }
   .dev-ws-sheet-vote > .dev-ws-scrim { position: fixed; background: transparent; }
   .dev-ws-sheet-vote > .dev-ws-sheet-card {
-    max-height: none; padding: 18px 18px 16px;
+    max-height: none; overflow: visible; padding: 18px 18px 16px;
     border-radius: 18px; border: 1px solid var(--app-sheet-line);
     box-shadow: 0 18px 50px rgba(24, 39, 75, .22);
   }

@@ -165,15 +165,6 @@
       "mobileSupported": true
     },
     {
-      "key": "build-venue",
-      "label": "Where changes get built",
-      "group": "AI & building",
-      "gate": null,
-      "capabilityId": "settings.open.build_venue",
-      "classicPath": "#settings/build-venue",
-      "mobileSupported": true
-    },
-    {
       "key": "cli",
       "label": "CLI & coding-agent access",
       "group": "AI & building",
@@ -1325,6 +1316,21 @@
       "domain": "admin",
       "risk": "external_write",
       "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin"
+    },
+    {
+      "source": "src/routes/admin.js",
+      "method": "GET",
+      "path": "/api/admin/incidents",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.get.admin.incidents.862da7fa",
+      "domain": "admin",
+      "risk": "read",
+      "confirmation": "never",
       "renderer": "admin_record",
       "transport": "server_loopback",
       "mobileSupported": true,
@@ -3495,21 +3501,6 @@
       "transport": "server_loopback",
       "mobileSupported": true,
       "classicPath": "#apps"
-    },
-    {
-      "source": "src/routes/auth.js",
-      "method": "POST",
-      "path": "/api/me/dev-flow",
-      "expression": null,
-      "status": "mapped",
-      "capabilityId": "settings.post.me.dev.flow.ae803a40",
-      "domain": "settings",
-      "risk": "external_write",
-      "confirmation": "required",
-      "renderer": "setting",
-      "transport": "server_loopback",
-      "mobileSupported": true,
-      "classicPath": "#settings"
     },
     {
       "source": "src/routes/auth.js",
@@ -7987,6 +7978,21 @@
       "expression": null,
       "status": "mapped",
       "capabilityId": "apps.post.me.waitlist.join.0a54f4d1",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps"
+    },
+    {
+      "source": "src/routes/member-waitlist.js",
+      "method": "POST",
+      "path": "/api/me/waitlist/join-phone",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.me.waitlist.join.phone.87f4b1bd",
       "domain": "apps",
       "risk": "external_write",
       "confirmation": "required",
@@ -13119,6 +13125,22 @@
       "transport": "server_loopback",
       "mobileSupported": true,
       "classicPath": "#app/:slug/app"
+    },
+    {
+      "source": "src/routes/workshop-overview.js",
+      "method": "GET",
+      "path": "/api/sessions/:id/votes",
+      "expression": null,
+      "status": "exempt",
+      "reason": "staging demo-card middleware represented by the concrete session vote capabilities"
+    },
+    {
+      "source": "src/routes/workshop-overview.js",
+      "method": "POST",
+      "path": "/api/sessions/:id/vote",
+      "expression": null,
+      "status": "exempt",
+      "reason": "staging demo-card middleware represented by the concrete session vote capabilities"
     },
     {
       "source": "src/routes/workshop-overview.js",

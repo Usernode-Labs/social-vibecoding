@@ -2372,6 +2372,8 @@ function describeCheckJob(job) {
     state: failed ? 'failed' : (succeeded ? 'succeeded' : 'running'),
     failedReason: failedCondition?.reason || null,
     startedAt: job.status?.startTime || job.metadata?.creationTimestamp || null,
+    finishedAt: failed ? (failedCondition?.lastTransitionTime || null)
+      : (succeeded ? (job.status?.completionTime || null) : null),
   };
 }
 
@@ -2393,6 +2395,35 @@ async function findCheckJobs(config, { sessionId, previewRunId }) {
     else if (name.startsWith(`sv-unit-suite-s${sessionId}-`)) found.unitSuite = describeCheckJob(job);
   }
   return found;
+}
+
+// Stop a session's check Jobs that are still running, except those of the
+// runs `spare` names (by preview-run-id): the runs a newer one supersedes
+// (check-harvest.stopSupersededRuns). Unlike cancelPreviewChecks this waits
+// for nothing. The policy is a query option with no body, as deleteIfPresent
+// sends it: with a body the API server reads the options from the body
+// alone, and a batch/v1 Job deleted without a policy orphans its Pod and
+// input Secret. Background propagation takes both (runCheckJob points the
+// Secret's ownerReference at its Job). Each name carries its run id, so no
+// precondition is needed. A finished Job holds no capacity and is left for
+// its TTL, and a Job with no run label names no run that could be
+// superseded. Returns the names it deleted.
+async function stopCheckJobs(config, { sessionId, spare = () => false }) {
+  const { batch } = getClients();
+  const namespace = config.kubernetes.workerNamespace;
+  const selector = `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/session-id=${sessionId}`;
+  const jobs = await batch.listNamespacedJob({ namespace, labelSelector: selector });
+  const stopping = (jobs.items || []).filter((job) => {
+    const name = job.metadata?.name || '';
+    if (!name.startsWith(`sv-capture-s${sessionId}-`) && !name.startsWith(`sv-unit-suite-s${sessionId}-`)) return false;
+    const runId = job.metadata?.labels?.['social.usernode.io/preview-run-id'];
+    if (!runId || spare(runId)) return false;
+    return !job.metadata?.deletionTimestamp && describeCheckJob(job).state === 'running';
+  });
+  await Promise.all(stopping.map((job) => deleteIfPresent(
+    batch, 'deleteNamespacedJob', job.metadata.name, namespace, { propagationPolicy: 'Background' },
+  )));
+  return stopping.map((job) => job.metadata.name);
 }
 
 // Wait for a check Job to end and return its whole output. Same shape a
@@ -2715,6 +2746,7 @@ module.exports = {
   getWorkerStatus, getWorkerContractVersion, getWorkerRuntimeMetadata, deleteWorker, eraseWorker, listWorkers, cloneWorkerVolume,
   listWorkerVolumes, listPreviews, listShotsRuntimes, isQuotaExceeded,
   listStatusResources, listNamespaceCapacity, inspectWorkerTermination, getPlatformDeployStatus,
+  stopCheckJobs,
   _setClientsForTest: setClientsForTest, _envChecksumForTest: envChecksum,
   _attachLineObserverForTest: attachLineObserver,
   _clientsLogApiForTest: clientsLogApi,

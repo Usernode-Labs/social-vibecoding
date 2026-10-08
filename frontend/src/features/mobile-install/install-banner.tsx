@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { XIcon } from '@/components/ui/icons';
 import { useHiddenClass } from '../../lib/legacy-dom';
+import { hasPlatformViewer, whenPlatformViewer } from '../../lib/platform-viewer';
 import { isEmbeddedPanel } from '../../lib/side-panel-mode';
 import {
   A2HS_STEPS, detectMobileOs, installOffer, storeLabel,
@@ -82,6 +83,9 @@ export function MobileInstallBanner() {
   const ref = useRef<HTMLDivElement>(null);
   const [urls, setUrls] = useState<StoreUrls | null>(null);
   const [dismissed, setDismissed] = useState(false);
+  // #4204: only somebody who is in. Starts false (the first render must be
+  // the hidden strip either way) and turns on when the authed shell boots.
+  const [member, setMember] = useState(false);
   const [offer, setOffer] = useState<InstallOffer | null>(null);
   // #1513: the home-screen instructions are one tap away rather than always
   // on, so the strip stays one line until somebody asks how.
@@ -99,16 +103,23 @@ export function MobileInstallBanner() {
     if (!onAPhone || isNativeApp() || isStandalone() || readDismissed()
         || isEmbeddedPanel()) return undefined;
 
+    // #4204: nor before the visitor is in. The signed-out landing (an invite
+    // link's page included) and the waiting room never ask; the fetch waits
+    // for the authed shell, which also covers a sign-in without a reload.
     let live = true;
-    fetch('/api/public/mobile-app')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((body) => {
-        if (live && body) setUrls({ ios: body.ios ?? null, android: body.android ?? null });
-      })
-      .catch(() => {
-        /* Offline, or the endpoint is unreachable: no banner, no console noise. */
-      });
-    return () => { live = false; };
+    const stopWaiting = whenPlatformViewer(() => {
+      if (!live) return;
+      setMember(true);
+      fetch('/api/public/mobile-app')
+        .then((res) => (res.ok ? res.json() : null))
+        .then((body) => {
+          if (live && body) setUrls({ ios: body.ios ?? null, android: body.android ?? null });
+        })
+        .catch(() => {
+          /* Offline, or the endpoint is unreachable: no banner, no console noise. */
+        });
+    });
+    return () => { live = false; stopWaiting(); };
   }, []);
 
   // Recomputed from the real environment whenever the inputs change, rather
@@ -121,10 +132,11 @@ export function MobileInstallBanner() {
       maxTouchPoints: nav.maxTouchPoints || 0,
       native: isNativeApp(),
       standalone: isStandalone(),
+      member: member && hasPlatformViewer(),
       dismissed: dismissed || readDismissed(),
       urls,
     }));
-  }, [urls, dismissed]);
+  }, [urls, dismissed, member]);
 
   useHiddenClass(ref, !offer);
 
