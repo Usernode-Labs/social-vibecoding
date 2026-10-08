@@ -166,6 +166,12 @@ function checksWords({ check_state: state, check_phase: phase, checks_progress: 
   if (state === 'pending' || state === 'running') {
     if (phase === 'building') return 'running: building the preview first';
     const p = progress && typeof progress === 'object' ? progress : {};
+    if (phase === 'queued') {
+      const ahead = Number(p.queue && p.queue.ahead);
+      return Number.isInteger(ahead) && ahead > 0
+        ? `waiting for a checks slot (${ahead} ahead)`
+        : 'waiting for a checks slot';
+    }
     const ran = Number(p.ran);
     const expected = Number(p.expected);
     const failed = Number(p.failed) || 0;

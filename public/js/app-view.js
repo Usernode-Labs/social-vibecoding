@@ -5584,7 +5584,7 @@ const AppView = {
     let note = null;
     if (live) {
       const why = AppView._checksTriggerCopy(item.check_trigger);
-      const title = AppView._checksPhaseCopy(item.check_phase).title;
+      const title = AppView._checksPhaseCopy(item.check_phase, item).title;
       note = why ? `${title} ${why}` : title;
     } else if (item.check_state === 'error' && item.check_error_detail) {
       // The run's own reason first: it is the one that can say "not this
@@ -5875,7 +5875,11 @@ const AppView = {
       return { state: 'failed', text: broken === 1 ? 'Tested · One thing isn’t working' : `Tested · ${broken} things aren’t working` };
     }
     if (state === 'passing') return { state: 'passed', text: 'Tested · All checks passed' };
-    if (state === 'pending') return { state: 'running', text: 'Testing it…' };
+    if (state === 'pending') {
+      return item.check_phase === 'queued'
+        ? { state: 'running', text: 'Waiting to be tested' }
+        : { state: 'running', text: 'Testing it…' };
+    }
     if (state === 'failing') return { state: 'failed', text: 'Testing found a problem' };
     if (state === 'skipped') return { state: 'skipped', text: 'Not tested' };
     if (AppView._checksWillRetry(item)) return { state: 'running', text: 'Testing will run again' };
@@ -12373,7 +12377,7 @@ const AppView = {
         && typeof window !== 'undefined' && window.MergeStatus) {
       const life = MergeStatus.lifecycle(s);
       if (life.key === 'checks_running' && s.check_phase) {
-        const phase = AppView._checksPhaseCopy(s.check_phase);
+        const phase = AppView._checksPhaseCopy(s.check_phase, s);
         return {
           t: 'ms', key: 'state', tone: 'neutral',
           label: phase.title, title: phase.detail, spinner: true,
@@ -13944,6 +13948,11 @@ const AppView = {
         const steps = prog.build.steps || [];
         const at = Math.min(steps.filter((s) => s.state === 'done').length + 1, steps.length || 1);
         return `Building preview · ${at} of ${steps.length || 5}`;
+      }
+      // Built, and in line for a checks slot: where it is in the line.
+      if (p.check_phase === 'queued') {
+        const place = AppView._checksQueuePlace(p);
+        return place ? `Waiting for a slot · ${place}` : 'Waiting for a slot';
       }
       if (prog && prog.bar.expected) return `Running · ${prog.bar.ran} of ${prog.bar.expected}`;
       if (prog && prog.bar.ran) return `Running · ${prog.bar.ran} so far`;
@@ -15624,16 +15633,21 @@ const AppView = {
       // manually. #607: a FRESH run (under the ~10-min stale window) shows
       // just the spinner + started-at line — offering "Re-run checks" seconds
       // after a run began was the confusion in the issue report.
-      const stale = AppView._checksRunStale(pr.checks_checked_at);
+      // A run waiting for a checks slot is not stuck however long it waits:
+      // the queue starts it, and a re-run would only join the line again.
+      const queued = pr.check_phase === 'queued';
+      const stale = !queued && AppView._checksRunStale(pr.checks_checked_at);
       // Name the STAGE the run is actually in. A checks run is two very
       // differently-sized halves — build the branch + clone the app's data,
       // then run the suite against the live preview — and one opaque message
       // for both made a mid-flight build look identical to a wedged one. An
       // unrecognised / absent phase (legacy rows, a proposal checked before
       // this shipped) keeps the previous wording verbatim.
-      const phase = AppView._checksPhaseCopy(pr.check_phase);
+      const phase = AppView._checksPhaseCopy(pr.check_phase, pr);
       const rows = [{ t: 'line', parts: [`${phase.detail} Merge is blocked until all tests pass.`] }];
-      if (pr.checks_checked_at) rows.push({ t: 'line', parts: [`Started ${relTime(pr.checks_checked_at)}.`], weight: 'foot' });
+      if (pr.checks_checked_at) {
+        rows.push({ t: 'line', parts: [`${queued ? 'Waiting since' : 'Started'} ${relTime(pr.checks_checked_at)}.`], weight: 'foot' });
+      }
       // …and WHY it started. "Started 4 minutes ago" answers a different
       // question from "who asked for this": a run kicked off by the
       // platform's own recovery sweeper reads as inexplicable churn without
@@ -15950,6 +15964,14 @@ const AppView = {
       title: 'Running the automated tests…',
       detail: 'The preview is up and the automated tests are running against it.',
     },
+    // Between the two: the preview is up and the run waits its turn, because
+    // the platform runs a few proposals' checks at a time
+    // (services/checks-queue.js). Nothing is wrong and nobody has to act.
+    // The title gains the place in line when the row carries it.
+    queued: {
+      title: 'Waiting for a checks slot',
+      detail: 'The preview is up. Homeroom runs a few proposals’ checks at a time so they don’t slow each other down, and these start on their own when a slot frees up.',
+    },
     // Not a stage of a run: the run stopped on purpose after the build. The
     // head conflicts with main, so the preview exists for reviewers and the
     // tests wait for a head that can merge. No spinner belongs on this.
@@ -15959,11 +15981,24 @@ const AppView = {
     },
   },
 
-  _checksPhaseCopy(phase) {
-    return AppView.CHECKS_PHASE_COPY[phase] || {
+  // `pr` is optional: a queued run's title says how many runs are ahead of
+  // it when the row carries that (checks_progress.queue.ahead).
+  _checksPhaseCopy(phase, pr) {
+    const copy = AppView.CHECKS_PHASE_COPY[phase] || {
       title: 'Checks are still running…',
       detail: 'The staging build is being tested.',
     };
+    if (phase !== 'queued') return copy;
+    const place = AppView._checksQueuePlace(pr);
+    return place ? { ...copy, title: `${copy.title} (${place})` } : copy;
+  },
+
+  // "2 ahead", "next in line", or '' when the row does not say.
+  _checksQueuePlace(pr) {
+    const q = pr && pr.checks_progress && pr.checks_progress.queue;
+    const ahead = q && Number.isInteger(q.ahead) && q.ahead >= 0 ? q.ahead : null;
+    if (ahead === null) return '';
+    return ahead === 0 ? 'next in line' : `${ahead} ahead`;
   },
 
   // Why the run in flight started (chat_sessions.check_trigger). Written in
@@ -19536,8 +19571,9 @@ const AppView = {
   },
 
   // A checks error the merge gate still counts as in progress: the run
-  // overlapped a platform update and goes again on its own
-  // (visuals.settleCaptureRun). Every other error blocks on the author.
+  // overlapped a platform update and goes again on its own. Nothing records
+  // that any more (#3828), but rows stored before still run again and read
+  // this way. Every other error blocks on the author.
   // Same reading as MergeStatus.checksWillRetry.
   _checksWillRetry(pr) {
     if (!pr || pr.check_state !== 'error') return false;

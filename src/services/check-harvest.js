@@ -181,8 +181,15 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
     await settleLifecycle({ error: lifecycle.cancelled() });
     return { outcome: 'moot', why, ...base };
   };
+  // The re-driven run keeps this one's place in the checks queue
+  // (services/checks-queue.js): it asks for its slot as of the moment this
+  // one first did, so a restart, or Jobs lost under it, does not send it to
+  // the back of the line.
+  const queuedSince = row.queued_at || null;
   const redrive = async (session, why) => {
-    log.info('check-harvest', 'Orphaned run has nothing to read — re-driving its checks now', { ...base, why });
+    log.info('check-harvest', 'Orphaned run has nothing to read — re-driving its checks now', {
+      ...base, why, ...(row.admitted_at === null ? { waitingForSlot: true } : {}),
+    });
     await checkRuns.finish(pool, runId);
     await settleLifecycle({ error: new Error(why) });
     mergeDebug.endRun(pool, manifest.debugRunId || null, {
@@ -191,7 +198,9 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
     // Release the seat BEFORE the re-drive so captureForSession does not
     // park itself behind the harvest that is asking for it.
     release(null);
-    await stagingRecovery.recheckSessionChecks({ config, pool, session, reason: 'orphaned-run' });
+    await stagingRecovery.recheckSessionChecks({
+      config, pool, session, reason: 'orphaned-run', ...(queuedSince ? { queuedSince } : {}),
+    });
     return { outcome: 'redriven', why, ...base };
   };
   // Once the verdict from the Jobs is stored and the manifest cleared, the
@@ -359,10 +368,6 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
       runPartial: capture ? !!capture.partial : false,
       runPartialReason: capture ? (capture.partialReason || '') : '',
       unitOutcome,
-      // A harvested run outlived the process that launched it, so it ran
-      // across a restart: a red verdict from it runs again (visuals.js,
-      // ROLLOUT_BOOT_WINDOW_MS) instead of standing against the author.
-      overlappedRollout: true,
     });
     verdict = settled.traceStatus;
     // The live capture's finally block does not run after adoption. Without
@@ -499,6 +504,12 @@ async function sweep(config, { reason = 'sweep', pool = null, wait = false } = {
 // stale sweep starts it over as before. Never throws: a question it cannot
 // answer reads as no, so the stale sweep stays the backstop. `commitSha`
 // asks about another commit than the session's checks pin.
+//
+// Yes, too, for a run of that commit still waiting for a checks slot
+// (services/checks-queue.js; `queued: true`). It has no Jobs yet; its owner
+// creates them once it is admitted, or, if its owner has died, the harvest
+// re-drives it in its place in line. Starting another would only queue a
+// second run of the same commit behind it.
 async function runOnCluster(config, pool, session, {
   commitSha = session?.checks_commit_sha, staleMs = null, now = Date.now(),
 } = {}) {
@@ -508,13 +519,16 @@ async function runOnCluster(config, pool, session, {
     const kubernetes = require('./kubernetes');
     const windowMs = staleMs ?? require('./staging-recovery').checksStaleMs();
     const { rows } = await pool.query(
-      `SELECT run_id, owner FROM check_runs
+      `SELECT run_id, owner, admitted_at FROM check_runs
         WHERE session_id = $1 AND commit_sha IS NOT DISTINCT FROM $2
         ORDER BY started_at DESC
         LIMIT 5`,
       [sessionId, commitSha || null]
     );
     for (const row of rows) {
+      if (require('./checks-queue').isWaitingRow(row)) {
+        return { runId: row.run_id, owner: row.owner, capture: 'queued', unitSuite: 'queued', queued: true };
+      }
       const jobs = await kubernetes.findCheckJobs(config, { sessionId, previewRunId: row.run_id });
       if (!jobs.capture) continue;
       const found = [jobs.capture, jobs.unitSuite].filter(Boolean);
