@@ -16,6 +16,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadTsx } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -106,10 +107,23 @@ test('?shot=waiting shows the room for the shots, without the poll', () => {
 // for the people of an app; their apps are in their communities.
 test('the Home waitlist card: a few at a time, your spot, no batches or group', () => {
   const src = code(read('frontend/src/features/home/waitlist-card.tsx'));
-  assert.match(src, /We're letting people in a few at a time\./);
-  assert.match(src, /We’ll email you when your spot is ready\./);
-  assert.match(src, /We’ll text you when your spot is ready\./);
-  for (const gone of [/batches/i, /your turn/i, /group&rsquo;s apps/, /The group doesn/]) assert.doesNotMatch(src, gone);
+  // The card's words are catalog messages: the card names each id, and the
+  // catalog (every `waitlist.*` entry of the Home namespace) holds what it says.
+  for (const [id, said] of [
+    ['home:waitlist.join.note', "We're letting people in a few at a time."],
+    ['home:waitlist.listed.byEmail', 'We’ll email you when your spot is ready.'],
+    ['home:waitlist.listed.byText', 'We’ll text you when your spot is ready.'],
+  ]) {
+    assert.ok(src.includes(`t('${id}')`), `the card reads ${id}`);
+    assert.equal(message(id), said);
+  }
+  const catalog = JSON.parse(read('frontend/locales/en/home.json'));
+  const words = Object.entries(catalog).filter(([key]) => key.startsWith('waitlist.')).map(([, entry]) => entry.text).join('\n');
+  assert.ok(words.length > 400, 'located the card\'s catalog entries');
+  for (const gone of [/batches/i, /your turn/i, /group&rsquo;s apps/, /group’s apps/, /The group doesn/]) {
+    assert.doesNotMatch(src, gone);
+    assert.doesNotMatch(words, gone);
+  }
 });
 
 test('the waitlist pitch and form keep the email promise, without batches or groups', () => {

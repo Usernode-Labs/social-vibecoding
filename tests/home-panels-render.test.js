@@ -36,7 +36,7 @@ const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const { HOME_SRC: HOME, PANELS_SRC: SRC, PANELS_RAW } = require('./helpers/home-modules');
 const { installPanelsStore } = require('./helpers/home-grid-store');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
-const { message } = require('./lib/platform-i18n');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 const INDEX = read('public/index.html');
 const ISLAND = read('frontend/src/features/home/index.tsx');
 const SW = read('public/sw.js');
@@ -153,6 +153,7 @@ function makeHomePanels({
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   // home-panels.js imports its view-model store; ./helpers/home-modules strips
   // the line so the source runs as classic script text, and this supplies the
@@ -402,6 +403,10 @@ test('the rank rule is named on HomePanels, as the tab names its own', () => {
   const G = HP.CHALLENGE_GROUPS;
   assert.deepEqual(
     [G.ONBOARDING, G.WEEKLY, G.PERSISTENT, HP.OTHER_GROUP].map((g) => g.heading),
+    ['home:challenges.group.setup', 'home:challenges.group.week', 'home:challenges.group.always', 'home:challenges.group.other'],
+    'the table holds message ids');
+  assert.deepEqual(
+    [G.ONBOARDING, G.WEEKLY, G.PERSISTENT, HP.OTHER_GROUP].map((g) => message(g.heading)),
     ['First challenges', 'This week', 'Always open', 'Season challenges']);
   assert.deepEqual(
     [G.ONBOARDING, G.WEEKLY, G.PERSISTENT, HP.OTHER_GROUP].map((g) => g.key),
@@ -535,7 +540,8 @@ test('challengesView: the finished fill sits last under one Done header, with no
   assert.deepEqual([...view.rows].map((r) => r.id), ['3', '4', '1', '2'], "`rows` is the groups' sequence");
   assert.deepEqual([...view.rows].map((r) => r.deadline), [null, null, null, null]);
   assert.deepEqual([...groups[2].rows].map((r) => r.stateLabel), ['Done', 'Done']);
-  assert.equal(HP.DONE_GROUP.heading, 'Done');
+  assert.equal(HP.DONE_GROUP.heading, 'home:challenges.group.done');
+  assert.equal(message(HP.DONE_GROUP.heading), 'Done');
   assert.equal(view.expandable, true, 'the fifth card is behind the toggle');
 });
 

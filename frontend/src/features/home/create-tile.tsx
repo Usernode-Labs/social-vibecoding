@@ -49,6 +49,7 @@ import { useRef } from 'react';
 
 import { PlusWideIcon } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import type { CreateTileView } from './grid-store';
 
@@ -86,9 +87,10 @@ const LABEL_OFF = 'home-create-label app-card-title text-zinc-400 dark:text-zinc
 // "New project" since communities, stage 4: the create dialog it opens is
 // titled "New project" (stage 3), and what it makes is a project for someone
 // (Just you, a private or a public community), not only an app to use.
-export const CREATE_TILE_LABEL = 'New project';
+export const CREATE_TILE_LABEL = 'home:create.label';
 
 export function CreateTile({ view, style }: { view: CreateTileView; style?: string }) {
+  const t = useMessages('home');
   const node = useRef<HTMLButtonElement | null>(null);
 
   // The cell, written as an ATTRIBUTE for the reason app-grid.tsx's header
@@ -105,7 +107,7 @@ export function CreateTile({ view, style }: { view: CreateTileView; style?: stri
   const on = view.enabled;
   // The locked tile's name starts with its visible label (the name a voice
   // user says has to be the one on screen), then says what a tap does.
-  const locked = `${CREATE_TILE_LABEL}. View app quota. ${view.hint}`;
+  const locked = t('home:create.lockedTip', { hint: view.hint });
   return (
     <button
       ref={node}
@@ -118,7 +120,7 @@ export function CreateTile({ view, style }: { view: CreateTileView; style?: stri
       // section it replaces. `data-create-enabled` is the quota state.
       data-panel-slot="create"
       data-create-enabled={String(on)}
-      title={on ? 'Start a new project' : locked}
+      title={on ? t('home:create.tip') : locked}
       {...(on ? null : { 'aria-label': locked })}
       onClick={() => {
         // Both states open the same dialog. At the limit its quota row
@@ -130,7 +132,7 @@ export function CreateTile({ view, style }: { view: CreateTileView; style?: stri
       <span className={`${FACE} ${on ? FACE_ON : FACE_OFF}`} aria-hidden="true">
         <PlusWideIcon className="h-6 w-6" strokeWidth="2" />
       </span>
-      <span className={on ? LABEL_ON : LABEL_OFF}>{CREATE_TILE_LABEL}</span>
+      <span className={on ? LABEL_ON : LABEL_OFF}>{t(CREATE_TILE_LABEL)}</span>
     </button>
   );
 }

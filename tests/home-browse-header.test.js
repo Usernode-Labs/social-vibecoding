@@ -20,7 +20,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
-const { message } = require('./lib/platform-i18n');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 
 const read = (file) => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
 const APP = read('public/js/app.js');
@@ -75,6 +75,7 @@ function harness({ improveAvailable = true } = {}) {
     },
   };
   sandbox.window = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(APP, sandbox);
   vm.runInContext(BROWSE, sandbox);

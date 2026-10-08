@@ -62,6 +62,7 @@ import { useCallback, useEffect, useRef } from 'react';
 
 import { LockIcon, UserGroupIcon } from '@/components/ui/icons';
 
+import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { listText } from '../../lib/i18n/runtime';
 import { useStoreState } from '../../lib/use-store-state';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
@@ -162,6 +163,7 @@ const RETRY_BTN = 'retry-btn relative inline-flex items-center rounded-full bg-v
 function AppCardTile({ app, style, yours, live }: {
   app: HomeAppView; style?: string; yours: boolean; live: boolean;
 }) {
+  const t = useMessages('home');
   const node = useRef<HTMLDivElement | null>(null);
   const wireRef = useCallback((el: HTMLDivElement | null) => {
     node.current = el;
@@ -209,7 +211,7 @@ function AppCardTile({ app, style, yours, live }: {
       role="button"
       aria-label={live ? listText([app.name, liveAppLabel()]) : app.name}
       aria-haspopup="menu"
-      title={`${app.name}. Hold or right-click for app actions`}
+      title={t('home:grid.tile.tip', { app: app.name })}
       {...(app.demo ? { 'data-demo': 'true' } : null)}
       {...(yours ? { 'data-yours': 'true' } : null)}
       {...(live ? { 'data-live': 'true' } : null)}
@@ -287,8 +289,8 @@ function AppCardTile({ app, style, yours, live }: {
         {app.forkName ? (
           <span
             className="fork-tag absolute -bottom-1 -left-1 w-5 h-5 flex items-center justify-center rounded-full bg-amber-500 text-white text-xs font-bold shadow-sm"
-            title={`Remixed from ${app.forkName}`}
-            aria-label={`Remixed from ${app.forkName}`}
+            title={t('home:grid.tile.remixedFrom', { app: app.forkName })}
+            aria-label={t('home:grid.tile.remixedFrom', { app: app.forkName })}
           >
             ⑂
           </span>
@@ -306,8 +308,8 @@ function AppCardTile({ app, style, yours, live }: {
           <span
             className="app-card-stage absolute -bottom-1 -right-1 w-5 h-5 flex items-center justify-center rounded-full bg-white text-zinc-600 shadow-[0_0_0_1.5px_var(--app-sheet-line)] dark:bg-zinc-800 dark:text-zinc-300"
             data-stage={app.audience}
-            title={app.audience === 'invited' ? 'Private community' : 'Just you'}
-            aria-label={app.audience === 'invited' ? 'Private community' : 'Just you'}
+            title={app.audience === 'invited' ? t('home:grid.tile.audience.invited') : t('home:grid.tile.audience.solo')}
+            aria-label={app.audience === 'invited' ? t('home:grid.tile.audience.invited') : t('home:grid.tile.audience.solo')}
           >
             {app.audience === 'invited'
               ? <UserGroupIcon className="w-3 h-3" aria-hidden="true" />
@@ -329,10 +331,10 @@ function AppCardTile({ app, style, yours, live }: {
               type="button"
               className={RETRY_BTN}
               data-slug={app.slug}
-              aria-label={`Retry ${app.name}`}
+              aria-label={t('home:grid.tile.retryNamed', { app: app.name })}
               onClick={(e) => { e.stopPropagation(); controller()?._onRetry?.(app.slug, e.currentTarget); }}
             >
-              Retry
+              {t('core:common.retry')}
             </button>
           </div>
         ) : app.buildLine ? (
@@ -363,6 +365,7 @@ function AppCardTile({ app, style, yours, live }: {
  * own lines.
  */
 export function AppGrid() {
+  const t = useMessages('home');
   const state = useStoreState(gridStore);
   const live = useLiveAppSlugs();
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -435,9 +438,11 @@ export function AppGrid() {
       ) : null}
       {state.emptyQuery !== null ? (
         <div className="col-span-full py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">
-          {`No apps match “${state.emptyQuery}”. Clear the search and try `}
-          <span className="text-violet-700 dark:text-violet-400">Discover Communities</span>
-          {' below.'}
+          <RichMessage
+            id="home:grid.noMatches"
+            values={{ query: state.emptyQuery }}
+            components={[<span className="text-violet-700 dark:text-violet-400" />]}
+          />
         </div>
       ) : null}
       {state.resultsHeading ? (
@@ -446,7 +451,7 @@ export function AppGrid() {
       {!state.ready && !state.notice ? (
         <TileSkeleton
           n={SKELETON_TILES}
-          label="Loading your apps"
+          label={t('home:grid.loading')}
           className="col-span-full grid grid-cols-4 gap-1.5 sm:gap-2"
         />
       ) : null}

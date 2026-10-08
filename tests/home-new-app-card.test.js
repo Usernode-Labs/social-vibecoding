@@ -23,6 +23,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const SRC = fs.readFileSync(path.join(ROOT, 'public/js/app.js'), 'utf8');
@@ -39,6 +40,7 @@ function harness() {
   assert.ok(body, 'the helper is defined in app.js');
   const loads = [];
   const sandbox = { loads };
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(
     'var Home = { load: function () { loads.push(1); } };'
@@ -94,7 +96,8 @@ test('the tile already has the words for a building app', () => {
   // This change puts the card there; the label was never the missing part.
   // A project whose first version Homeroom bot makes says its build line
   // first (#4053); "Spinning up..." is left for one it does not.
-  assert.match(HOME, /const statusLabel = buildLine \? BUILD_LINE_WORDS\[buildLine\]\s*: isRunning \? ''\s*: app\.status === 'creating' \? 'Spinning up\.\.\.'/);
+  assert.match(HOME, /const statusLabel = buildLine \? BUILD_LINE_WORDS\[buildLine\]\s*: isRunning \? ''\s*: app\.status === 'creating' \? message\('home:grid\.tile\.status\.creating'\)/);
+  assert.equal(message('home:grid.tile.status.creating'), 'Spinning up...');
 });
 
 test('#4053: a first version on its way says its build line on the tile, for every status but a failed set-up', () => {

@@ -24,6 +24,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { HOME_RAW } = require('./helpers/home-modules');
+const { message } = require('./lib/platform-i18n');
 
 const GRID_TSX = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'home', 'app-grid.tsx'), 'utf8',
@@ -125,8 +126,9 @@ test('onContextMenu is pointer-type aware and toggles by anchor (#1838)', () => 
 });
 
 test('the tile still advertises the hold gesture and no hamburger (#1838)', () => {
-  assert.match(GRID_TSX, /Hold or right-click for app actions/,
+  assert.match(GRID_TSX, /title=\{t\('home:grid\.tile\.tip', \{ app: app\.name \}\)\}/,
     'the tooltip is the discovery affordance for both mouse entry points');
+  assert.equal(message('home:grid.tile.tip', { app: 'Recipe Box' }), 'Recipe Box. Hold or right-click for app actions');
   assert.doesNotMatch(GRID_TSX, /card-menu-btn/,
     '#1740 removed the per-tile hamburger badge on purpose — the fix for'
     + ' #1838 is a reachable gesture, not a restored button');

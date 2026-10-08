@@ -26,6 +26,7 @@ const { HOME_SRC, PANELS_SRC } = require('./helpers/home-modules');
 const { installGridStore, installPanelsStore, INITIAL_GRID } = require('./helpers/home-grid-store');
 const { installAppCard } = require('./helpers/app-card');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const GRID = 'frontend/src/features/home/app-grid.tsx';
 const SHEET = 'frontend/src/features/app-context/app-context-sheet.tsx';
@@ -152,6 +153,7 @@ function makeHome() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   installAppCard(sandbox);
   const gridStore = installGridStore(sandbox);

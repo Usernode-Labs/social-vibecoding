@@ -21,6 +21,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -97,8 +98,10 @@ test('the four doors say "Remix", and keep their ids and data attributes', () =>
   assert.match(plus, /data-plus="fork"[\s\S]{0,140}title="Remix"\s+sub="Make your own copy"/);
 
   const home = read('frontend/src/features/home/home.js');
-  assert.match(home, /key: 'fork',\s+label: 'Remix',\s+sub: 'Make your own copy',/,
+  assert.match(home, /key: 'fork',\s+label: message\('home:menu\.remix\.label'\),\s+sub: message\('home:menu\.remix\.sub'\),/,
     'the card menu, which Discover\'s page draws its rows from too');
+  assert.equal(message('home:menu.remix.label'), 'Remix');
+  assert.equal(message('home:menu.remix.sub'), 'Make your own copy');
 
   const detail = read('frontend/src/features/apps/browse-detail.tsx');
   assert.match(detail, /subtitle=\{a\.sub \|\| undefined\}/, 'Discover shows the line under the label');
@@ -109,14 +112,26 @@ test('the four doors say "Remix", and keep their ids and data attributes', () =>
 });
 
 test('lineage reads "Remixed from" wherever people see it', () => {
-  for (const file of [
-    'frontend/src/features/apps/browse-detail.tsx',
-    'frontend/src/features/home/home.js',
-    'frontend/src/features/home/app-grid.tsx',
-    'frontend/src/features/app-context/about-pane.tsx',
+  // Where the line is a catalog message, the file names its id and the catalog
+  // holds the words; a file that still writes the line holds it itself.
+  for (const [file, ids] of [
+    ['frontend/src/features/apps/browse-detail.tsx',
+      ['discover:detail.remixedFrom.line', 'discover:detail.remixedFrom.openOriginal']],
+    ['frontend/src/features/home/home.js', ['home:grid.tile.remixedFrom']],
+    ['frontend/src/features/home/app-grid.tsx', ['home:grid.tile.remixedFrom']],
+    ['frontend/src/features/app-context/about-pane.tsx', []],
   ]) {
     const src = read(file);
-    assert.match(src, /Remixed from \$\{/, `${file} says Remixed from`);
+    if (ids.length) {
+      for (const id of ids) {
+        assert.ok(src.includes(`'${id}'`), `${file} reads ${id}`);
+        const said = message(id, { app: 'Recipe Box' });
+        assert.match(said, /Remixed from Recipe Box/, `${file} says Remixed from`);
+        assert.doesNotMatch(said, /Forked from/, `${id} no longer says Forked from`);
+      }
+    } else {
+      assert.match(src, /Remixed from \$\{/, `${file} says Remixed from`);
+    }
     assert.doesNotMatch(src, /[`"']Forked from|\bForked from \$\{/, `${file} no longer says Forked from`);
   }
 });

@@ -1,0 +1,570 @@
+{
+  "card.openApp": {
+    "text": "Open {{app}}",
+    "description": "Accessible name and tooltip of an app's icon wherever the icon is a link: activating it opens that app. \"Open\" is a verb. {{app}} is the app's name."
+  },
+  "pill.missingSecrets": {
+    "text": "Missing secrets",
+    "description": "Small red chip on an app's card or row: the app cannot run yet because required secret values (API keys and the like) have not been set."
+  },
+  "pill.missingSecretsTip_one": {
+    "text": "{{count}} required secret unset. Set values in the app's Secrets panel",
+    "description": "Tooltip of the \"Missing secrets\" chip on an app. {{count}} is how many required secret values are not set yet. \"Secrets\" is the name of a panel in the app's settings."
+  },
+  "pill.missingSecretsTip_other": {
+    "text": "{{count}} required secrets unset. Set values in the app's Secrets panel",
+    "description": "Tooltip of the \"Missing secrets\" chip on an app. {{count}} is how many required secret values are not set yet. \"Secrets\" is the name of a panel in the app's settings."
+  },
+  "pill.toVote_one": {
+    "text": "{{count}} to vote",
+    "description": "Small amber chip on an app's card or row: {{count}} proposed changes to this app are waiting for the viewer's community to vote on them."
+  },
+  "pill.toVote_other": {
+    "text": "{{count}} to vote",
+    "description": "Small amber chip on an app's card or row: {{count}} proposed changes to this app are waiting for the viewer's community to vote on them."
+  },
+  "pill.toVoteTip_one": {
+    "text": "{{count}} change awaiting community votes",
+    "description": "Tooltip of the \"to vote\" chip on an app. {{count}} is the number of proposed changes (noun) to the app that are waiting for votes."
+  },
+  "pill.toVoteTip_other": {
+    "text": "{{count}} changes awaiting community votes",
+    "description": "Tooltip of the \"to vote\" chip on an app. {{count}} is the number of proposed changes (noun) to the app that are waiting for votes."
+  },
+  "pill.inDev_one": {
+    "text": "{{count}} in dev",
+    "description": "Small blue chip on an app's card or row: {{count}} build sessions, in which someone is developing a change to the app, are in progress. \"dev\" is short for development."
+  },
+  "pill.inDev_other": {
+    "text": "{{count}} in dev",
+    "description": "Small blue chip on an app's card or row: {{count}} build sessions, in which someone is developing a change to the app, are in progress. \"dev\" is short for development."
+  },
+  "pill.inDevTip_one": {
+    "text": "{{count}} build session in progress",
+    "description": "Tooltip of the \"in dev\" chip on an app. {{count}} is how many sessions of building (developing) a change to the app are under way. \"Build\" describes the session; it is not a command."
+  },
+  "pill.inDevTip_other": {
+    "text": "{{count}} build sessions in progress",
+    "description": "Tooltip of the \"in dev\" chip on an app. {{count}} is how many sessions of building (developing) a change to the app are under way. \"Build\" describes the session; it is not a command."
+  },
+  "pill.issues_one": {
+    "text": "{{count}} issue",
+    "description": "Small grey chip on an app's card or row: {{count}} open issues (reported problems or requests) for the app."
+  },
+  "pill.issues_other": {
+    "text": "{{count}} issues",
+    "description": "Small grey chip on an app's card or row: {{count}} open issues (reported problems or requests) for the app."
+  },
+  "pill.issuesTip_one": {
+    "text": "{{count}} open issue",
+    "description": "Tooltip of the issues chip on an app. {{count}} is how many issues are open, meaning not yet resolved. \"Open\" is an adjective."
+  },
+  "pill.issuesTip_other": {
+    "text": "{{count}} open issues",
+    "description": "Tooltip of the issues chip on an app. {{count}} is how many issues are open, meaning not yet resolved. \"Open\" is an adjective."
+  },
+  "pill.private": {
+    "text": "Private",
+    "description": "Chip with a lock icon on an app's card or row: only the app's members can open and use it."
+  },
+  "pill.privateTip": {
+    "text": "Only members can open and use this app",
+    "description": "Tooltip of the \"Private\" chip on an app. \"Open\" is a verb."
+  },
+  "pill.inviteOnly": {
+    "text": "Invite-only build",
+    "description": "Chip with an envelope icon on an app's card or row: anyone can use the app, but only invited collaborators can build (develop changes to) it. \"Build\" is a noun here."
+  },
+  "pill.inviteOnlyTip": {
+    "text": "Anyone can use this app; only invited collaborators can build it",
+    "description": "Tooltip of the \"Invite-only build\" chip on an app. \"Build\" is a verb: develop changes to the app."
+  },
+  "browse.headerTitle": {
+    "text": "All apps",
+    "description": "Title in the header bar of the Discover screen while it shows the list of every app."
+  },
+  "search.placeholder": {
+    "text": "Search all apps…",
+    "description": "Placeholder inside the search field at the top of the Discover screen, which filters the list of every app."
+  },
+  "search.label": {
+    "text": "Search all apps",
+    "description": "Accessible name of the search field at the top of the Discover screen."
+  },
+  "search.clear": {
+    "text": "Clear search",
+    "description": "Tooltip and accessible name of the × button inside Discover's search field: empties the field."
+  },
+  "filter.groupLabel": {
+    "text": "Filter apps",
+    "description": "Accessible name of the row of filter chips (All, Featured, Joined, New) under Discover's search field."
+  },
+  "filter.all": {
+    "text": "All",
+    "description": "Filter chip on the Discover screen: show every app."
+  },
+  "filter.featured": {
+    "text": "Featured",
+    "description": "Filter chip on the Discover screen: show only the apps Homeroom's staff picked to feature."
+  },
+  "filter.joined": {
+    "text": "Joined",
+    "description": "Filter chip on the Discover screen: show only the apps whose community the viewer has joined."
+  },
+  "filter.new": {
+    "text": "New",
+    "description": "Filter chip on the Discover screen: show only recently created apps."
+  },
+  "sort.label": {
+    "text": "Sort",
+    "description": "Label in front of the sort menu on the Discover screen. A noun: the order of the list."
+  },
+  "sort.selectLabel": {
+    "text": "Sort apps",
+    "description": "Accessible name of the sort menu on the Discover screen. \"Sort\" is a verb here."
+  },
+  "sort.recommended": {
+    "text": "Recommended",
+    "description": "Option in Discover's sort menu: Homeroom's own order, reviewed working apps first."
+  },
+  "sort.users": {
+    "text": "Most users",
+    "description": "Option in Discover's sort menu: apps with the most active users first."
+  },
+  "sort.active": {
+    "text": "Most active",
+    "description": "Option in Discover's sort menu: apps with the most changes gone live in the last 30 days first."
+  },
+  "sort.merged": {
+    "text": "Most changes live",
+    "description": "Option in Discover's sort menu: apps with the most changes ever gone live first. \"Changes\" is a noun; \"live\" means released to users."
+  },
+  "sort.newest": {
+    "text": "Newest",
+    "description": "Option in Discover's sort menu: most recently created apps first."
+  },
+  "loadError.directoryTitle": {
+    "text": "Couldn't load the app directory",
+    "description": "Title of the error card shown in place of Discover's list when the list of apps could not be fetched."
+  },
+  "loadError.detail": {
+    "text": "Something went wrong reaching the app directory. Check your connection and try again.",
+    "description": "Second line of the error card shown when the list of apps could not be fetched, on Discover and on Home. A \"Try again\" button follows it."
+  },
+  "empty.search.featured": {
+    "text": "No featured apps match “{{query}}”.",
+    "description": "Shown in place of Discover's list when the Featured filter is on and the search finds nothing. {{query}} is what the person typed; keep the quotation marks around it in your language's style."
+  },
+  "empty.search.joined": {
+    "text": "Nothing you’ve joined matches “{{query}}”.",
+    "description": "Shown in place of Discover's list when the Joined filter is on and the search finds nothing. {{query}} is what the person typed."
+  },
+  "empty.search.new": {
+    "text": "No new apps match “{{query}}”.",
+    "description": "Shown in place of Discover's list when the New filter is on and the search finds nothing. {{query}} is what the person typed."
+  },
+  "empty.search.all": {
+    "text": "No apps match “{{query}}”.",
+    "description": "Shown in place of Discover's list when the search finds nothing and no filter narrows it. {{query}} is what the person typed."
+  },
+  "empty.featured": {
+    "text": "No featured apps yet.",
+    "description": "Shown in place of Discover's list when the Featured filter is on and no app is featured."
+  },
+  "empty.joined": {
+    "text": "You haven’t joined anything yet. Join apps from All.",
+    "description": "Shown in place of Discover's list when the Joined filter is on and the viewer has joined no app. \"All\" is the name of the first filter chip; use the same word as that chip."
+  },
+  "empty.all": {
+    "text": "No apps to show yet.",
+    "description": "Shown in place of Discover's list when there are no apps at all (or none are new)."
+  },
+  "list.heading.reviewedWorking": {
+    "text": "Reviewed working apps",
+    "description": "Heading over the first group of rows in Discover's Recommended order: apps a reviewer has checked and found working."
+  },
+  "list.heading.notYetReviewed": {
+    "text": "Not yet reviewed",
+    "description": "Heading over the second group of rows in Discover's Recommended order: apps nobody has reviewed yet."
+  },
+  "list.label.notYetReviewed": {
+    "text": "Not yet reviewed",
+    "description": "Small label on one app's row in Discover: this app's current version has not been reviewed. Shown where no group heading already says it."
+  },
+  "list.more.note": {
+    "text": "Demos and apps needing fixes, setup, or an icon are still available below and in search.",
+    "description": "Note at the end of Discover's list, above the \"Show more\" button that reveals the apps kept out of the main list."
+  },
+  "list.more.showLess": {
+    "text": "Show less",
+    "description": "Button at the end of Discover's list: hides again the extra apps that \"Show more\" revealed."
+  },
+  "list.more.showMore_one": {
+    "text": "Show more ({{count}})",
+    "description": "Button at the end of Discover's list: reveals the apps kept out of the main list (demos, apps needing fixes). {{count}} is how many it reveals."
+  },
+  "list.more.showMore_other": {
+    "text": "Show more ({{count}})",
+    "description": "Button at the end of Discover's list: reveals the apps kept out of the main list (demos, apps needing fixes). {{count}} is how many it reveals."
+  },
+  "list.join.action": {
+    "text": "Join",
+    "description": "Button on an app's row in Discover: join that app's community, which also puts the app on the viewer's Home. A verb."
+  },
+  "list.join.joined": {
+    "text": "Joined",
+    "description": "State shown, with a check mark, on the same button of a Discover row once the viewer is a member of the app's community. Pressing it asks whether to leave."
+  },
+  "list.join.named": {
+    "text": "Join {{app}}",
+    "description": "Accessible name of the Join button on an app's row in Discover. {{app}} is the app's name."
+  },
+  "row.join.tip": {
+    "text": "Join {{app}}",
+    "description": "Tooltip of the Join button on an app's row in Discover. {{app}} is the app's name."
+  },
+  "row.join.joinedTip": {
+    "text": "Joined. Tap to leave {{app}}",
+    "description": "Tooltip of the button on a Discover row when the viewer is already a member. {{app}} is the app's name. \"Leave\" means stop being a member of the app's community."
+  },
+  "row.meta.users_one": {
+    "text": "{{count}} user",
+    "description": "First fact on the small grey line under an app's name in Discover. {{count}} is how many people actively use the app."
+  },
+  "row.meta.users_other": {
+    "text": "{{count}} users",
+    "description": "First fact on the small grey line under an app's name in Discover. {{count}} is how many people actively use the app."
+  },
+  "row.meta.liveRecently_one": {
+    "text": "{{count}} live in 30d",
+    "description": "Fact on the grey line under an app's name in Discover, under the Most active order: {{count}} changes to the app went live in the last 30 days. \"30d\" is short for 30 days."
+  },
+  "row.meta.liveRecently_other": {
+    "text": "{{count}} live in 30d",
+    "description": "Fact on the grey line under an app's name in Discover, under the Most active order: {{count}} changes to the app went live in the last 30 days. \"30d\" is short for 30 days."
+  },
+  "row.meta.changesLive_one": {
+    "text": "{{count}} change live",
+    "description": "Fact on the grey line under an app's name in Discover, under the Most changes live order: {{count}} changes to the app have ever gone live. \"Change\" is a noun."
+  },
+  "row.meta.changesLive_other": {
+    "text": "{{count}} changes live",
+    "description": "Fact on the grey line under an app's name in Discover, under the Most changes live order: {{count}} changes to the app have ever gone live. \"Change\" is a noun."
+  },
+  "row.meta.created": {
+    "text": "Created {{when}}",
+    "description": "Fact on the grey line under an app's name in Discover, under the Newest order. {{when}} is a short relative time such as \"3d ago\" or \"just now\"."
+  },
+  "row.meta.updated": {
+    "text": "Updated {{when}}",
+    "description": "Fact on the grey line under an app's name in Discover: when the app's latest version went live. {{when}} is a short relative time such as \"3d ago\" or \"just now\"."
+  },
+  "row.meta.pair": {
+    "text": "{{first}} · {{second}}",
+    "description": "Joins two short facts on one line of an app's row or a contributor's row (\"12 users · Updated 3d ago\"). {{first}} is everything said so far and {{second}} the next fact. Keep a separator your language uses for such a run of facts."
+  },
+  "row.status.creating": {
+    "text": "Spinning up…",
+    "description": "Last fact on the grey line under an app's name in Discover, and the tooltip of its status dot: the app is being set up and is not running yet."
+  },
+  "row.status.awaitingSecrets": {
+    "text": "Awaiting secrets",
+    "description": "Last fact on the grey line under an app's name in Discover: the app is waiting for its required secret values (API keys and the like) to be set."
+  },
+  "row.status.error": {
+    "text": "Error",
+    "description": "Last fact on the grey line under an app's name in Discover: the app failed to build or start."
+  },
+  "time.justNow": {
+    "text": "just now",
+    "description": "A relative time inside \"Updated …\" or \"Created …\" on Discover: less than a minute ago. Lower case because it follows another word."
+  },
+  "time.minutesAgo_one": {
+    "text": "{{count}}m ago",
+    "description": "A compact relative time inside \"Updated …\" or \"Created …\" on Discover. {{count}} is a number of minutes; \"m\" abbreviates minutes."
+  },
+  "time.minutesAgo_other": {
+    "text": "{{count}}m ago",
+    "description": "A compact relative time inside \"Updated …\" or \"Created …\" on Discover. {{count}} is a number of minutes; \"m\" abbreviates minutes."
+  },
+  "time.hoursAgo_one": {
+    "text": "{{count}}h ago",
+    "description": "A compact relative time inside \"Updated …\" or \"Created …\" on Discover. {{count}} is a number of hours; \"h\" abbreviates hours."
+  },
+  "time.hoursAgo_other": {
+    "text": "{{count}}h ago",
+    "description": "A compact relative time inside \"Updated …\" or \"Created …\" on Discover. {{count}} is a number of hours; \"h\" abbreviates hours."
+  },
+  "time.daysAgo_one": {
+    "text": "{{count}}d ago",
+    "description": "A compact relative time inside \"Updated …\" or \"Created …\" on Discover. {{count}} is a number of days; \"d\" abbreviates days."
+  },
+  "time.daysAgo_other": {
+    "text": "{{count}}d ago",
+    "description": "A compact relative time inside \"Updated …\" or \"Created …\" on Discover. {{count}} is a number of days; \"d\" abbreviates days."
+  },
+  "time.monthsAgo_one": {
+    "text": "{{count}}mo ago",
+    "description": "A compact relative time inside \"Updated …\" or \"Created …\" on Discover. {{count}} is a number of months; \"mo\" abbreviates months."
+  },
+  "time.monthsAgo_other": {
+    "text": "{{count}}mo ago",
+    "description": "A compact relative time inside \"Updated …\" or \"Created …\" on Discover. {{count}} is a number of months; \"mo\" abbreviates months."
+  },
+  "time.yearsAgo_one": {
+    "text": "{{count}}y ago",
+    "description": "A compact relative time inside \"Updated …\" or \"Created …\" on Discover. {{count}} is a number of years; \"y\" abbreviates years."
+  },
+  "time.yearsAgo_other": {
+    "text": "{{count}}y ago",
+    "description": "A compact relative time inside \"Updated …\" or \"Created …\" on Discover. {{count}} is a number of years; \"y\" abbreviates years."
+  },
+  "detail.unavailable": {
+    "text": "That app isn’t available.",
+    "description": "Shown on an app's page in Discover when the app does not exist or the viewer may not see it."
+  },
+  "detail.backToAll": {
+    "text": "← Back to all apps",
+    "description": "Link under \"That app isn’t available.\": returns to Discover's list. Keep the leading arrow."
+  },
+  "detail.blocked.note": {
+    "text": "You blocked this app. Unblock it to open it again.",
+    "description": "Shown on an app's page in Discover when the viewer has blocked that app. \"Blocked\" means the viewer chose not to see it; \"open\" is a verb."
+  },
+  "detail.blocked.settingsLink": {
+    "text": "Open blocked apps in Settings",
+    "description": "Link under \"You blocked this app.\": goes to the list of blocked apps in Settings. \"Open\" is a verb."
+  },
+  "detail.remixedFrom.line": {
+    "text": "⑂ Remixed from {{app}}",
+    "description": "Line under an app's version on its page in Discover: this app was made as a copy (a remix) of another app. {{app}} is the original app's name. Keep the leading ⑂ symbol."
+  },
+  "detail.remixedFrom.openOriginal": {
+    "text": "Remixed from {{app}}: open the original",
+    "description": "Tooltip of the \"Remixed from\" line on an app's page when the original app can be opened. {{app}} is the original app's name. \"Open\" is a verb."
+  },
+  "detail.remixedFrom.originalGone": {
+    "text": "The original app no longer exists",
+    "description": "Tooltip of the \"Remixed from\" line on an app's page when the app it was copied from has been deleted."
+  },
+  "detail.updated": {
+    "text": "Updated {{when}}",
+    "description": "Line under an app's name on its page in Discover: when its latest version went live. {{when}} is a short relative time such as \"3d ago\" or \"just now\"."
+  },
+  "detail.open.action": {
+    "text": "Open",
+    "description": "Main button on an app's page in Discover: opens the app so it can be used. A verb."
+  },
+  "detail.open.creating": {
+    "text": "Spinning up…",
+    "description": "Label of the disabled main button on an app's page in Discover while the app is being set up and cannot be opened yet."
+  },
+  "detail.open.notRunning": {
+    "text": "Not running",
+    "description": "Label of the disabled main button on an app's page in Discover when the app failed to start."
+  },
+  "detail.open.unavailable": {
+    "text": "Unavailable",
+    "description": "Label of the disabled main button on an app's page in Discover when the app cannot be opened and its state is unknown."
+  },
+  "detail.myApps.add": {
+    "text": "Add to My apps",
+    "description": "Second button on an app's page in Discover: puts a tile for the app on the viewer's Home screen. \"My apps\" is the name of that section of Home."
+  },
+  "detail.myApps.remove": {
+    "text": "Remove from My apps",
+    "description": "Second button on an app's page in Discover when the app already has a tile on the viewer's Home: takes the tile away. \"My apps\" is the name of that section of Home."
+  },
+  "detail.share.label": {
+    "text": "Share",
+    "description": "First row of the actions list on an app's page in Discover: shares a link to the app. A verb."
+  },
+  "detail.share.tip": {
+    "text": "Share a link to this app",
+    "description": "Tooltip of the Share row on an app's page in Discover."
+  },
+  "detail.share.copied": {
+    "text": "Link copied",
+    "description": "Brief notice after the Share row copied the app's link to the clipboard, on a device with no share sheet."
+  },
+  "detail.share.copyFailed": {
+    "text": "Couldn’t copy the link",
+    "description": "Brief notice when the Share row on an app's page could not copy the app's link to the clipboard."
+  },
+  "detail.contributors.heading": {
+    "text": "Contributors",
+    "description": "Heading of the card listing the people who contributed to an app, on the app's page in Discover, before their number is known."
+  },
+  "detail.contributors.headingCount_one": {
+    "text": "Contributors<0> · {{count}}</0>",
+    "description": "Heading of the contributors card on an app's page in Discover, with the number of contributors in lighter text. {{count}} is that number; the numbered tag wraps the lighter part, separator included."
+  },
+  "detail.contributors.headingCount_other": {
+    "text": "Contributors<0> · {{count}}</0>",
+    "description": "Heading of the contributors card on an app's page in Discover, with the number of contributors in lighter text. {{count}} is that number; the numbered tag wraps the lighter part, separator included."
+  },
+  "detail.contributors.tip": {
+    "text": "The app’s creator, its members, and everyone with a change that went live in it",
+    "description": "Tooltip of the \"Contributors\" heading on an app's page: who the list counts."
+  },
+  "detail.contributors.loading": {
+    "text": "Loading contributors…",
+    "description": "Shown inside the contributors card on an app's page while the list is being fetched."
+  },
+  "detail.contributors.loadFailed": {
+    "text": "Couldn’t load contributors.",
+    "description": "Shown inside the contributors card on an app's page when the list could not be fetched."
+  },
+  "detail.contributors.none": {
+    "text": "No contributors yet.",
+    "description": "Shown inside the contributors card on an app's page when nobody has contributed to the app."
+  },
+  "detail.contributors.showFewer": {
+    "text": "Show fewer",
+    "description": "Button at the foot of the contributors card on an app's page: folds the list back to its first five people."
+  },
+  "detail.contributors.showAll_one": {
+    "text": "Show all {{count}} contributor",
+    "description": "Button at the foot of the contributors card on an app's page: unfolds the whole list. {{count}} is the total number of contributors."
+  },
+  "detail.contributors.showAll_other": {
+    "text": "Show all {{count}} contributors",
+    "description": "Button at the foot of the contributors card on an app's page: unfolds the whole list. {{count}} is the total number of contributors."
+  },
+  "detail.contributor.viewChanges": {
+    "text": "View @{{username}}’s changes",
+    "description": "Tooltip of a person's row in the contributors card on an app's page: opens that person's page. {{username}} is their username; keep the @ in front of it. \"Changes\" is a noun."
+  },
+  "detail.contributor.creator": {
+    "text": "Creator",
+    "description": "Small grey word under a contributor's username on an app's page: this person created the app."
+  },
+  "detail.contributor.member": {
+    "text": "Member",
+    "description": "Small grey word under a contributor's username on an app's page: this person is a member of the app's community."
+  },
+  "detail.contributor.votes_one": {
+    "text": "{{count}} vote",
+    "description": "Small grey fact under a contributor's username on an app's page: how many votes this person has cast on the app's proposed changes."
+  },
+  "detail.contributor.votes_other": {
+    "text": "{{count}} votes",
+    "description": "Small grey fact under a contributor's username on an app's page: how many votes this person has cast on the app's proposed changes."
+  },
+  "detail.contributor.live_one": {
+    "text": "{{count}} live",
+    "description": "Pill at the end of a contributor's row on an app's page: {{count}} of this person's changes to the app have gone live (been released)."
+  },
+  "detail.contributor.live_other": {
+    "text": "{{count}} live",
+    "description": "Pill at the end of a contributor's row on an app's page: {{count}} of this person's changes to the app have gone live (been released)."
+  },
+  "detail.contributor.liveTip": {
+    "text": "Their changes that went live in this app",
+    "description": "Tooltip of the \"live\" pill on a contributor's row: what the number counts. \"Changes\" is a noun."
+  },
+  "illustration.title": {
+    "text": "Featured illustration",
+    "description": "Title, and accessible name, of the dialog where an app's owner sets the picture shown on the app's card in Home's Discover rail."
+  },
+  "illustration.previewCaption": {
+    "text": "Preview on Discover",
+    "description": "Caption over the sample card in the featured illustration editor: this is how the card will look on Discover. \"Preview\" is a noun."
+  },
+  "illustration.theme.group": {
+    "text": "Preview theme",
+    "description": "Accessible name of the Light / Dark pair of buttons in the featured illustration editor, which switch the sample card between the two colour themes."
+  },
+  "illustration.theme.light": {
+    "text": "Light",
+    "description": "Button in the featured illustration editor: show the sample card in the light colour theme."
+  },
+  "illustration.theme.dark": {
+    "text": "Dark",
+    "description": "Button in the featured illustration editor: show the sample card in the dark colour theme."
+  },
+  "illustration.framingLabel": {
+    "text": "Illustration framing: drag to move, scroll or pinch to zoom, arrow keys to nudge",
+    "description": "Accessible name of the sample card in the featured illustration editor, where the picture is positioned and zoomed."
+  },
+  "illustration.framingHelp": {
+    "text": "Drag the card to move the image. Scroll or pinch to zoom. Zoom <0>{{percent}}%</0>.",
+    "description": "Help line under the upload buttons in the featured illustration editor, ending with the current zoom level. {{percent}} is a whole number such as 120; the numbered tag wraps the live readout."
+  },
+  "illustration.upload.fileLabel": {
+    "text": "Upload featured illustration",
+    "description": "Accessible name of the hidden file chooser in the featured illustration editor."
+  },
+  "illustration.upload.light": {
+    "text": "Upload light image",
+    "description": "Button in the featured illustration editor: choose the picture used in the light colour theme, when none is set yet."
+  },
+  "illustration.upload.replaceLight": {
+    "text": "Replace light image",
+    "description": "Button in the featured illustration editor: choose a different picture for the light colour theme."
+  },
+  "illustration.upload.dark": {
+    "text": "Upload dark image",
+    "description": "Button in the featured illustration editor: choose a separate picture for the dark colour theme."
+  },
+  "illustration.upload.replaceDark": {
+    "text": "Replace dark image",
+    "description": "Button in the featured illustration editor: choose a different picture for the dark colour theme."
+  },
+  "illustration.upload.useLightInBoth": {
+    "text": "Use light image in both themes",
+    "description": "Button in the featured illustration editor: drop the separate dark-theme picture so the light one is used everywhere."
+  },
+  "illustration.upload.formats": {
+    "text": "PNG, JPEG or WebP, up to 20 MB.",
+    "description": "Small note under the upload button in the featured illustration editor: the accepted file types and size. Keep the format names."
+  },
+  "illustration.upload.sameDimensions": {
+    "text": "Use images with the same dimensions. Framing and colour are shared across both themes.",
+    "description": "Small note in the featured illustration editor about the light and dark pictures."
+  },
+  "illustration.cardColour": {
+    "text": "Card colour",
+    "description": "Label, and accessible name, of the row of colour swatches in the featured illustration editor: the background colour of the app's card."
+  },
+  "illustration.resetPosition": {
+    "text": "Reset position",
+    "description": "Button in the featured illustration editor: puts the picture back to its default position and zoom."
+  },
+  "illustration.useAppIcon": {
+    "text": "Use app icon",
+    "description": "Button in the featured illustration editor: removes the illustration so the card shows the app's icon instead."
+  },
+  "illustration.loadingPreview": {
+    "text": "Loading preview…",
+    "description": "Shown in the featured illustration editor while the current illustration is being fetched."
+  },
+  "illustration.loadFailed": {
+    "text": "Could not load the illustration. Reopen the editor to try again.",
+    "description": "Error in the featured illustration editor when the current illustration could not be fetched and the server gave no message of its own."
+  },
+  "illustration.saveFailed": {
+    "text": "Could not save. Try again.",
+    "description": "Error in the featured illustration editor when proposing the change failed and the server gave no message of its own."
+  },
+  "illustration.sent": {
+    "text": "Sent to the group for approval. The illustration changes when the vote passes. <0>Open the proposal</0>",
+    "description": "Shown in the featured illustration editor after the change was submitted for the community's vote. The numbered tag is a link to the proposal (noun: the change put to a vote); \"Open\" is a verb."
+  },
+  "illustration.pending": {
+    "text": "A change to this illustration is already waiting for the group's vote. Another can be proposed once it settles. <0>Open the proposal</0>",
+    "description": "Shown in the featured illustration editor when an earlier change to the illustration is still being voted on. The numbered tag is a link to that proposal (noun); \"Open\" is a verb."
+  },
+  "illustration.proposeNote": {
+    "text": "Proposing opens a governance card on the board. The change applies when the group votes it in.",
+    "description": "Small note above the buttons of the featured illustration editor: what pressing \"Propose change\" does. The board is the project's list of proposals."
+  },
+  "illustration.propose": {
+    "text": "Propose change",
+    "description": "Main button of the featured illustration editor: submits the new illustration for the community's vote. \"Change\" is a noun."
+  },
+  "illustration.pleaseWait": {
+    "text": "Please wait…",
+    "description": "Label of the main button of the featured illustration editor while an upload or save is in progress."
+  }
+}

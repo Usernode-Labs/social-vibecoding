@@ -15,14 +15,17 @@
 import { Button } from '@/components/ui/button';
 import { WarningTriangleIcon } from '@/components/ui/icons';
 
-export const APPS_LOAD_ERROR_DETAIL =
-  'Something went wrong reaching the app directory. Check your connection and try again.';
+import { useMessages } from '../../lib/i18n/react';
+
+/** The message id of the line under the title: what happened and what to try. */
+export const APPS_LOAD_ERROR_DETAIL = 'discover:loadError.detail';
 
 export function AppsLoadError({ title, onRetry, className = '' }: {
   title: string;
   onRetry: () => void;
   className?: string;
 }) {
+  const t = useMessages('discover');
   return (
     <div
       role="alert"
@@ -31,9 +34,9 @@ export function AppsLoadError({ title, onRetry, className = '' }: {
     >
       <WarningTriangleIcon className="h-8 w-8 text-amber-600 dark:text-amber-400" aria-hidden="true" />
       <p className="text-[15px] font-semibold text-zinc-900 dark:text-zinc-100">{title}</p>
-      <p className="max-w-xs text-sm text-zinc-500 dark:text-zinc-400">{APPS_LOAD_ERROR_DETAIL}</p>
+      <p className="max-w-xs text-sm text-zinc-500 dark:text-zinc-400">{t(APPS_LOAD_ERROR_DETAIL)}</p>
       <Button type="button" variant="pillAccent" size="pill" className="mt-1" onClick={onRetry}>
-        Try again
+        {t('core:common.tryAgain')}
       </Button>
     </div>
   );

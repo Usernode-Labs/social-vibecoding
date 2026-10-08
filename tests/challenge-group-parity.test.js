@@ -26,6 +26,7 @@ const vm = require('node:vm');
 
 const { PANELS_SRC } = require('./helpers/home-modules');
 const { installPanelsStore } = require('./helpers/home-grid-store');
+const { message } = require('./lib/platform-i18n');
 
 const TAB_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'frontend/src/features/leaderboard/topochain-challenges.js'), 'utf8'
@@ -74,15 +75,27 @@ function loadHome() {
 const TAB = loadTab();
 const HOME = loadHome();
 
+// A table's `heading` is a message id where its module reads its text from
+// the language catalog (Home's does: `home:challenges.group.*`). The words are
+// what the two copies must agree on, so a heading that is an id is read
+// through the catalog before the tables are compared.
+const said = (table) => JSON.parse(JSON.stringify(table),
+  (key, value) => (key === 'heading' && /^[a-z-]+:[A-Za-z0-9_.]+$/.test(value) ? message(value) : value));
+
 test('the two group tables are the same table', () => {
-  assert.deepEqual(plain(HOME.CHALLENGE_GROUPS), plain(TAB.GROUPS));
-  assert.deepEqual(plain(HOME.OTHER_GROUP), plain(TAB.OTHER_GROUP));
-  assert.deepEqual(plain(TAB.GROUPS), {
+  assert.deepEqual(said(HOME.CHALLENGE_GROUPS), said(TAB.GROUPS));
+  assert.deepEqual(said(HOME.OTHER_GROUP), said(TAB.OTHER_GROUP));
+  assert.deepEqual(plain(HOME.CHALLENGE_GROUPS), {
+    ONBOARDING: { key: 'setup', heading: 'home:challenges.group.setup', order: 0 },
+    WEEKLY: { key: 'week', heading: 'home:challenges.group.week', order: 1 },
+    PERSISTENT: { key: 'always', heading: 'home:challenges.group.always', order: 2 },
+  }, 'Home holds the ids of the same headings');
+  assert.deepEqual(said(TAB.GROUPS), {
     ONBOARDING: { key: 'setup', heading: 'First challenges', order: 0 },
     WEEKLY: { key: 'week', heading: 'This week', order: 1 },
     PERSISTENT: { key: 'always', heading: 'Always open', order: 2 },
   }, 'the owner-decided headings, with the keys unchanged');
-  assert.deepEqual(plain(TAB.OTHER_GROUP), { key: 'other', heading: 'Season challenges', order: 3 });
+  assert.deepEqual(said(TAB.OTHER_GROUP), { key: 'other', heading: 'Season challenges', order: 3 });
 });
 
 test('the two rank rules agree for every group, setup unfinished and finished', () => {

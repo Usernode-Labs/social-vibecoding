@@ -32,6 +32,7 @@ import { Button } from '@/components/ui/button';
 import { GroupedList } from '@/components/ui/grouped-list';
 import { Input } from '@/components/ui/input';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { QUEUE_PILL, SURVEY_FIELD, SURVEY_LABEL, msgClass, useSurveyAnswered } from '../auth/waitlist-shared';
 import { navStore } from '../nav/nav-store.js';
@@ -78,11 +79,12 @@ function Pill(): ReactNode {
 
 function Sooner({ token }: { token: string }): ReactNode {
   const answered = useSurveyAnswered(token);
+  const t = useMessages('home');
   return (
     <div className="mt-1 flex items-center justify-between gap-3 border-t border-zinc-200 pt-1 dark:border-zinc-800">
-      <span className="text-[15px] font-semibold text-zinc-900 dark:text-zinc-100">Want in sooner?</span>
+      <span className="text-[15px] font-semibold text-zinc-900 dark:text-zinc-100">{t('home:waitlist.sooner.title')}</span>
       <a id="home-waitlist-sooner" href={`#more/${token}`} className={`${LINK} min-h-[44px] inline-flex items-center`}>
-        {answered ? 'Edit my answers' : 'Answer 4 questions'}
+        {answered ? t('home:waitlist.sooner.edit') : t('home:waitlist.sooner.answer')}
       </a>
     </div>
   );
@@ -92,6 +94,7 @@ export function WaitlistCardBody({ standing, onListed }: {
   standing: Standing;
   onListed: (next: Standing) => void;
 }): ReactNode {
+  const t = useMessages('home');
   const [step, setStep] = useState<Step>({ kind: 'join' });
   const [email, setEmail] = useState(standing.accountEmail || '');
   const [code, setCode] = useState('');
@@ -105,45 +108,45 @@ export function WaitlistCardBody({ standing, onListed }: {
     setError(null);
     try {
       const { ok, data } = await post(JOIN_PATH, { email: address });
-      if (!ok) { setError(data?.error || 'Could not join the waitlist. Try again.'); return; }
+      if (!ok) { setError(data?.error || t('home:waitlist.error.join')); return; }
       if (data.next === 'code') { setCode(''); setStep({ kind: 'code', email: data.email }); return; }
       setStep({ kind: 'join' });
       onListed(data as Standing);
     } catch {
-      setError('Could not join the waitlist. Try again.');
+      setError(t('home:waitlist.error.join'));
     } finally {
       setBusy(false);
     }
-  }, [onListed]);
+  }, [onListed, t]);
 
   const verify = useCallback(async (address: string, entered: string) => {
     setBusy(true);
     setError(null);
     try {
       const { ok, data } = await post(VERIFY_PATH, { email: address, code: entered });
-      if (!ok) { setError(data?.error || 'Could not check that code. Try again.'); return; }
+      if (!ok) { setError(data?.error || t('home:waitlist.error.code')); return; }
       setStep({ kind: 'join' });
       onListed(data as Standing);
     } catch {
-      setError('Could not check that code. Try again.');
+      setError(t('home:waitlist.error.code'));
     } finally {
       setBusy(false);
     }
-  }, [onListed]);
+  }, [onListed, t]);
 
   const joinByPhone = useCallback(async () => {
     setBusy(true);
     setError(null);
     try {
       const { ok, data } = await post(JOIN_PHONE_PATH, {});
-      if (!ok) { setError(data?.error || 'Could not join the waitlist. Try again.'); return; }
+      if (!ok) { setError(data?.error || t('home:waitlist.error.join')); return; }
       onListed(data as Standing);
     } catch {
-      setError('Could not join the waitlist. Try again.');
+      setError(t('home:waitlist.error.join'));
     } finally {
       setBusy(false);
     }
-  }, [onListed]);
+  }, [onListed, t]);
 
   const listed = standing.state === 'listed';
   // Joined by phone: no address on the row, so the news goes by text.
@@ -154,9 +157,9 @@ export function WaitlistCardBody({ standing, onListed }: {
     return (
       <div className="flex flex-col gap-2 p-4" data-waitlist-card="listed">
         <Pill />
-        <h3 className="text-[17px] font-semibold leading-snug text-zinc-900 dark:text-zinc-100">Make your own apps</h3>
+        <h3 className="text-[17px] font-semibold leading-snug text-zinc-900 dark:text-zinc-100">{t('home:waitlist.title')}</h3>
         <p className={BODY}>
-          {byPhone ? 'We’ll text you when your spot is ready.' : 'We’ll email you when your spot is ready.'}
+          {byPhone ? t('home:waitlist.listed.byText') : t('home:waitlist.listed.byEmail')}
         </p>
         {byPhone ? (
           <button
@@ -165,7 +168,7 @@ export function WaitlistCardBody({ standing, onListed }: {
             className={`${LINK} self-start min-h-[44px]`}
             onClick={() => { setError(null); setEmail(''); setStep({ kind: 'email' }); }}
           >
-            Add an email too
+            {t('home:waitlist.addEmail.link')}
           </button>
         ) : null}
         {standing.moreToken ? <Sooner token={standing.moreToken} /> : null}
@@ -177,9 +180,9 @@ export function WaitlistCardBody({ standing, onListed }: {
     const submit = (e: FormEvent) => { e.preventDefault(); if (!busy) void verify(step.email, code.trim()); };
     return (
       <form className="flex flex-col gap-2 p-4" data-waitlist-card="code" onSubmit={submit}>
-        <h3 className="text-[17px] font-semibold leading-snug text-zinc-900 dark:text-zinc-100">Check your email</h3>
-        <p className={BODY}>{`We sent a 6-digit code to ${step.email}. It expires in 15 minutes.`}</p>
-        <label htmlFor="home-waitlist-code" className={SURVEY_LABEL}>Code</label>
+        <h3 className="text-[17px] font-semibold leading-snug text-zinc-900 dark:text-zinc-100">{t('home:waitlist.code.title')}</h3>
+        <p className={BODY}>{t('home:waitlist.code.sent', { email: step.email })}</p>
+        <label htmlFor="home-waitlist-code" className={SURVEY_LABEL}>{t('home:waitlist.code.label')}</label>
         <Input
           id="home-waitlist-code"
           inputMode="numeric"
@@ -190,15 +193,15 @@ export function WaitlistCardBody({ standing, onListed }: {
           {...SURVEY_FIELD}
         />
         <Button type="submit" variant="pillAccent" size="pill" layout="full" disabled={busy || code.length !== 6} className="mt-1 disabled:opacity-60">
-          Join the waitlist
+          {t('home:waitlist.code.submit')}
         </Button>
         <p role="alert" className={msgClass(error ? 'error' : null)}>{error}</p>
         <div className="flex items-center justify-between gap-3">
           <button type="button" className={`${LINK} min-h-[44px]`} onClick={() => { setError(null); setStep({ kind: 'email' }); }}>
-            Use another email
+            {t('home:waitlist.code.otherEmail')}
           </button>
           <button type="button" className={`${SMALL} min-h-[44px] hover:underline`} disabled={busy} onClick={() => void join(step.email)}>
-            Send a new code
+            {t('home:waitlist.code.resend')}
           </button>
         </div>
       </form>
@@ -210,12 +213,12 @@ export function WaitlistCardBody({ standing, onListed }: {
     return (
       <form className="flex flex-col gap-2 p-4" data-waitlist-card="email" onSubmit={submit}>
         <h3 className="text-[17px] font-semibold leading-snug text-zinc-900 dark:text-zinc-100">
-          {listed ? 'Add an email too' : 'Join the waitlist'}
+          {listed ? t('home:waitlist.email.titleAdd') : t('home:waitlist.email.titleJoin')}
         </h3>
         <p className={BODY}>
-          {standing.accountEmail ? 'With your email, or another one.' : 'Add your email. We’ll email you a 6-digit code.'}
+          {standing.accountEmail ? t('home:waitlist.email.leadOwn') : t('home:waitlist.email.leadAdd')}
         </p>
-        <label htmlFor="home-waitlist-email" className={SURVEY_LABEL}>Email</label>
+        <label htmlFor="home-waitlist-email" className={SURVEY_LABEL}>{t('home:waitlist.email.label')}</label>
         <Input
           id="home-waitlist-email"
           type="email"
@@ -223,16 +226,16 @@ export function WaitlistCardBody({ standing, onListed }: {
           maxLength={255}
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          placeholder="you@example.com"
+          placeholder={t('home:waitlist.email.placeholder')}
           {...SURVEY_FIELD}
         />
         <Button type="submit" variant="pillAccent" size="pill" layout="full" disabled={busy || !email.trim()} className="mt-1 disabled:opacity-60">
-          {own ? 'Join the waitlist' : 'Email me a code'}
+          {own ? t('home:waitlist.email.submitJoin') : t('home:waitlist.email.submitCode')}
         </Button>
         <p role="alert" className={msgClass(error ? 'error' : null)}>{error}</p>
-        <p className={SMALL}>We use it to tell you when your spot is ready, and you can sign in with it. Nobody else sees it.</p>
+        <p className={SMALL}>{t('home:waitlist.email.privacy')}</p>
         <button type="button" className={`${LINK} self-start min-h-[44px]`} onClick={() => { setError(null); setStep({ kind: 'join' }); }}>
-          Not now
+          {t('home:waitlist.email.notNow')}
         </button>
       </form>
     );
@@ -240,7 +243,7 @@ export function WaitlistCardBody({ standing, onListed }: {
 
   return (
     <div className="flex flex-col gap-2 p-4" data-waitlist-card="join">
-      <h3 className="text-[17px] font-semibold leading-snug text-zinc-900 dark:text-zinc-100">Make your own apps</h3>
+      <h3 className="text-[17px] font-semibold leading-snug text-zinc-900 dark:text-zinc-100">{t('home:waitlist.title')}</h3>
       <Button
         id="home-waitlist-join"
         type="button"
@@ -251,15 +254,16 @@ export function WaitlistCardBody({ standing, onListed }: {
         disabled={busy}
         onClick={() => (phoneOnly ? void joinByPhone() : setStep({ kind: 'email' }))}
       >
-        Join the waitlist
+        {t('home:waitlist.join.button')}
       </Button>
       {phoneOnly ? <p role="alert" className={msgClass(error ? 'error' : null)}>{error}</p> : null}
-      <p className={`${SMALL} text-center`}>We're letting people in a few at a time.</p>
+      <p className={`${SMALL} text-center`}>{t('home:waitlist.join.note')}</p>
     </div>
   );
 }
 
 export function WaitlistCard(): ReactNode {
+  const t = useMessages('home');
   const { privateMember } = useStoreState(navStore);
   const [standing, setStanding] = useState<Standing | null>(null);
 
@@ -275,7 +279,7 @@ export function WaitlistCard(): ReactNode {
 
   if (!privateMember || !standing || standing.state === 'admitted') return null;
   return (
-    <section id="home-waitlist-card" className="px-3 pb-2 pt-3" aria-label="Waitlist">
+    <section id="home-waitlist-card" className="px-3 pb-2 pt-3" aria-label={t('home:waitlist.regionLabel')}>
       <GroupedList tone="plane" className="mx-0">
         <WaitlistCardBody standing={standing} onListed={setStanding} />
       </GroupedList>

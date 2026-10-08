@@ -299,7 +299,7 @@ const Browse = {
       const app = Browse.appBySlug(Browse._slug);
       App.setHeaderTitle(app?.name || Browse._slug);
     } else {
-      App.setHeaderTitle('All apps');
+      App.setHeaderTitle(PlatformI18n.t('discover:browse.headerTitle'));
     }
   },
 
@@ -362,11 +362,11 @@ const Browse = {
   // The order of this array is the order of the <select>; the first entry is
   // the default. Labels are user-facing.
   SORTS: [
-    { key: 'recommended', label: 'Recommended' },
-    { key: 'users', label: 'Most users' },
-    { key: 'active', label: 'Most active' },
-    { key: 'merged', label: 'Most changes live' },
-    { key: 'new', label: 'Newest' },
+    { key: 'recommended', label: 'discover:sort.recommended' },
+    { key: 'users', label: 'discover:sort.users' },
+    { key: 'active', label: 'discover:sort.active' },
+    { key: 'merged', label: 'discover:sort.merged' },
+    { key: 'new', label: 'discover:sort.newest' },
   ],
 
   // localStorage key for the remembered choice. Namespaced like the rest of
@@ -443,13 +443,13 @@ const Browse = {
   // browse-screen.tsx keeps a COPY of them for the same reason it keeps one
   // of SORTS (tests/browse-screen.test.js pins the two together).
   FILTERS: [
-    { key: 'all', label: 'All' },
-    { key: 'featured', label: 'Featured' },
+    { key: 'all', label: 'discover:filter.all' },
+    { key: 'featured', label: 'discover:filter.featured' },
     // The key stays `yours` — ?filter=yours links and the declared checks
     // select on it — while the label says what the chip now holds: the
     // communities you are in, not the shortcuts on your Home screen.
-    { key: 'yours', label: 'Joined' },
-    { key: 'new', label: 'New' },
+    { key: 'yours', label: 'discover:filter.joined' },
+    { key: 'new', label: 'discover:filter.new' },
   ],
 
   // "New" is the apps CREATED in the last NEW_WINDOW_DAYS days (by
@@ -546,14 +546,14 @@ const Browse = {
     const filter = Browse.resolveFilter(key == null ? Browse._filter : key);
     const q = String(query || '').trim();
     if (q) {
-      if (filter === 'featured') return `No featured apps match “${q}”.`;
-      if (filter === 'yours') return `Nothing you’ve joined matches “${q}”.`;
-      if (filter === 'new') return `No new apps match “${q}”.`;
-      return `No apps match “${q}”.`;
+      if (filter === 'featured') return PlatformI18n.t('discover:empty.search.featured', { query: q });
+      if (filter === 'yours') return PlatformI18n.t('discover:empty.search.joined', { query: q });
+      if (filter === 'new') return PlatformI18n.t('discover:empty.search.new', { query: q });
+      return PlatformI18n.t('discover:empty.search.all', { query: q });
     }
-    if (filter === 'featured') return 'No featured apps yet.';
-    if (filter === 'yours') return 'You haven’t joined anything yet. Join apps from All.';
-    return 'No apps to show yet.';
+    if (filter === 'featured') return PlatformI18n.t('discover:empty.featured');
+    if (filter === 'yours') return PlatformI18n.t('discover:empty.joined');
+    return PlatformI18n.t('discover:empty.all');
   },
 
   // Unreviewed is not the same as broken. Apps with icons that have not yet
@@ -685,28 +685,28 @@ const Browse = {
     const sort = Browse.resolveSort(key == null ? Browse._sort : key);
     const bits = [];
     const users = parseInt(app.active_users || 0, 10) || 0;
-    bits.push(`${users} user${users === 1 ? '' : 's'}`);
+    bits.push(PlatformI18n.t('discover:row.meta.users', { count: users }));
     if (sort === 'active') {
       const recent = parseInt(app.merged_prs_recent || 0, 10) || 0;
-      if (recent > 0) bits.push(`${recent} live in 30d`);
+      if (recent > 0) bits.push(PlatformI18n.t('discover:row.meta.liveRecently', { count: recent }));
     } else if (sort === 'merged') {
       const merged = parseInt(app.merged_prs || 0, 10) || 0;
-      if (merged > 0) bits.push(`${merged} change${merged === 1 ? '' : 's'} live`);
+      if (merged > 0) bits.push(PlatformI18n.t('discover:row.meta.changesLive', { count: merged }));
     }
     if (sort === 'new') {
       const created = formatRelativeTime(app.created_at);
-      if (created) bits.push(`Created ${created}`);
+      if (created) bits.push(PlatformI18n.t('discover:row.meta.created', { when: created }));
     } else {
       const rel = formatRelativeTime(app.last_deploy_at || app.created_at);
-      if (rel) bits.push(`Updated ${rel}`);
+      if (rel) bits.push(PlatformI18n.t('discover:row.meta.updated', { when: rel }));
     }
     const status = app.status === 'running' ? ''
-      : app.status === 'creating' ? 'Spinning up…'
-      : app.status === 'awaiting_secrets' ? 'Awaiting secrets'
-      : app.status === 'error' ? 'Error'
+      : app.status === 'creating' ? PlatformI18n.t('discover:row.status.creating')
+      : app.status === 'awaiting_secrets' ? PlatformI18n.t('discover:row.status.awaitingSecrets')
+      : app.status === 'error' ? PlatformI18n.t('discover:row.status.error')
       : app.status || '';
     if (status) bits.push(status);
-    return bits.join(' · ');
+    return joinFacts(bits);
   },
 
   // One app-store row, as DATA: icon · name + meta + status pills · Add
@@ -736,7 +736,9 @@ const Browse = {
       demo: isDemo,
       openable: !isDemo,
       added: isAdded,
-      addTitle: isAdded ? `Joined. Tap to leave ${app.name || app.slug}` : `Join ${app.name || app.slug}`,
+      addTitle: isAdded
+        ? PlatformI18n.t('discover:row.join.joinedTip', { app: app.name || app.slug })
+        : PlatformI18n.t('discover:row.join.tip', { app: app.name || app.slug }),
     };
   },
 
@@ -931,7 +933,7 @@ const Browse = {
     } catch (err) {
       ok = false;
     }
-    PlatformUI.toast(ok ? 'Link copied' : 'Couldn’t copy the link');
+    PlatformUI.toast(ok ? PlatformI18n.t('discover:detail.share.copied') : PlatformI18n.t('discover:detail.share.copyFailed'));
   },
 
   // ── Contributors (#919) ───────────────────────────────────────────
@@ -978,11 +980,11 @@ const Browse = {
     };
 
     if (state === 'loading') {
-      view.note = 'Loading contributors…';
+      view.note = PlatformI18n.t('discover:detail.contributors.loading');
     } else if (state === 'error') {
-      view.note = 'Couldn’t load contributors.';
+      view.note = PlatformI18n.t('discover:detail.contributors.loadFailed');
     } else if (!items.length) {
-      view.note = 'No contributors yet.';
+      view.note = PlatformI18n.t('discover:detail.contributors.none');
     } else {
       const shown = expanded ? items : items.slice(0, Browse.CONTRIB_FOLD);
       view.rows = shown.map((c, i) => Browse.contributorRowView(c, i + 1));
@@ -991,8 +993,8 @@ const Browse = {
       // quotes `total` so the number matches the heading.
       if (items.length > Browse.CONTRIB_FOLD) {
         view.toggle = expanded
-          ? 'Show fewer'
-          : `Show all ${total} contributor${total === 1 ? '' : 's'}`;
+          ? PlatformI18n.t('discover:detail.contributors.showFewer')
+          : PlatformI18n.t('discover:detail.contributors.showAll', { count: total });
       }
     }
 
@@ -1012,9 +1014,9 @@ const Browse = {
     // Creator wins over member — the creator is always backfilled as one,
     // so showing both would be noise on every single first row.
     const bits = [];
-    if (c && c.is_creator) bits.push('Creator');
-    else if (c && c.is_member) bits.push('Member');
-    if (votes > 0) bits.push(`${votes} vote${votes === 1 ? '' : 's'}`);
+    if (c && c.is_creator) bits.push(PlatformI18n.t('discover:detail.contributor.creator'));
+    else if (c && c.is_member) bits.push(PlatformI18n.t('discover:detail.contributor.member'));
+    if (votes > 0) bits.push(PlatformI18n.t('discover:detail.contributor.votes', { count: votes }));
     return {
       who,
       rank,
@@ -1022,7 +1024,7 @@ const Browse = {
       merged,
       // null rather than '' so the renderer drops the line instead of
       // drawing an empty one, exactly as the string version did.
-      meta: bits.length ? bits.join(' · ') : null,
+      meta: bits.length ? joinFacts(bits) : null,
       // A zero stays visible in muted grey rather than vanishing, so every
       // row keeps the same shape and the column doesn't ragged out.
       pillTint: merged > 0
@@ -1158,12 +1160,12 @@ const Browse = {
         updatedRel,
         canOpen,
         openLabel: canOpen
-          ? 'Open'
-          : (app.status === 'creating' ? 'Spinning up…'
-            : app.status === 'error' ? 'Not running'
-            : (app.status || 'Unavailable')),
+          ? PlatformI18n.t('discover:detail.open.action')
+          : (app.status === 'creating' ? PlatformI18n.t('discover:detail.open.creating')
+            : app.status === 'error' ? PlatformI18n.t('discover:detail.open.notRunning')
+            : (app.status || PlatformI18n.t('discover:detail.open.unavailable'))),
         isAdded,
-        favLabel: isAdded ? 'Remove from My apps' : 'Add to My apps',
+        favLabel: isAdded ? PlatformI18n.t('discover:detail.myApps.remove') : PlatformI18n.t('discover:detail.myApps.add'),
         // The Share row (shareDetailApp). A flag, not the URL: the click
         // resolves the link from the app record it is handed, the same one
         // Open and Add act on, rather than from a string frozen at paint.
@@ -1292,12 +1294,19 @@ function formatRelativeTime(input) {
   const t = new Date(input);
   if (Number.isNaN(t.getTime())) return null;
   const seconds = Math.floor((Date.now() - t.getTime()) / 1000);
-  if (seconds < 60) return 'just now';
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-  if (seconds < 86400 * 30) return `${Math.floor(seconds / 86400)}d ago`;
-  if (seconds < 86400 * 365) return `${Math.floor(seconds / (86400 * 30))}mo ago`;
-  return `${Math.floor(seconds / (86400 * 365))}y ago`;
+  if (seconds < 60) return PlatformI18n.t('discover:time.justNow');
+  if (seconds < 3600) return PlatformI18n.t('discover:time.minutesAgo', { count: Math.floor(seconds / 60) });
+  if (seconds < 86400) return PlatformI18n.t('discover:time.hoursAgo', { count: Math.floor(seconds / 3600) });
+  if (seconds < 86400 * 30) return PlatformI18n.t('discover:time.daysAgo', { count: Math.floor(seconds / 86400) });
+  if (seconds < 86400 * 365) return PlatformI18n.t('discover:time.monthsAgo', { count: Math.floor(seconds / (86400 * 30)) });
+  return PlatformI18n.t('discover:time.yearsAgo', { count: Math.floor(seconds / (86400 * 365)) });
+}
+
+// Short facts on one line of a row ("12 users · Updated 3d ago"). Each fact is
+// a whole message of its own, and what joins two of them is a message too, so
+// a language can use its own separator.
+function joinFacts(facts) {
+  return facts.reduce((first, second) => PlatformI18n.t('discover:row.meta.pair', { first, second }));
 }
 
 // Still published as a global: App.navigateToBrowse, app.js's hash router and
@@ -1305,3 +1314,13 @@ function formatRelativeTime(input) {
 // scripts. Guarded because the SSG prerender pass evaluates this module in
 // Node (the island imports it).
 if (typeof window !== 'undefined') window.Browse = Browse;
+
+// The descriptors above hold text, so a language change rebuilds them from
+// the same state: the rows or the detail page, and the header's title.
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  document.addEventListener('homeroom:language-changed', () => {
+    if (!Browse._open) return;
+    Browse.render();
+    Browse._syncChrome();
+  });
+}
