@@ -18346,6 +18346,10 @@ const AppView = {
     // #287: strictly per-viewer, and reverts to "Create proposal" once the
     // session is archived (the server filters archived rows out of
     // myPrSessionId).
+    //
+    // A change for this request already waiting for approval: no Build it
+    // now beside it. The "Waiting for approval" chip says where it stands.
+    if (!issue.myPrSessionId && AppView._issueAwaitingApproval(issue)) return null;
     return issue.myPrSessionId
       ? {
         key: 'primary', cls: 'gc-vote-btn', label: 'Start more work',
@@ -18358,6 +18362,19 @@ const AppView = {
         title: 'Start an agent session on this request',
         act: { fn: 'chooseIssueWork', args: [n] },
       };
+  },
+
+  /**
+   * Whether a change for this request is already waiting for approval: the
+   * work state is "Waiting for approval" (a linked session promoted or
+   * merging), or the change that addresses it is in review. Build it now is
+   * not offered then, so a second build is not started beside it.
+   */
+  _issueAwaitingApproval(issue) {
+    if (!issue) return false;
+    const st = AppView._issueWorkState(issue);
+    if (st && st.key === 'in_review') return true;
+    return !!(issue.addressed_by && issue.addressed_by.state === 'review');
   },
 
   /** B8: whether a change is one Homeroom bot built (its author is the bot's account). */
@@ -18496,7 +18513,7 @@ const AppView = {
       // B8: with Homeroom bot's button on the face, building it yourself is
       // the ≡'s first row, the same launcher; left out while the bot is on
       // it, as Start work is, so it is never built twice.
-      else if (AppView._botDoor() && !issue.bot) items.unshift({
+      else if (AppView._botDoor() && !issue.bot && !AppView._issueAwaitingApproval(issue)) items.unshift({
         label: 'Build it now', icon: 'generate', act: () => AppView.chooseIssueWork(n),
       });
       // "Pledge kudos" disables once the viewer has an open bounty here or
@@ -21613,11 +21630,20 @@ const AppView = {
 
   // The work-state chip's SPEC. A chip whose state names a linked session
   // is a button that opens it; every other state is an inert span.
+  //
+  // "Waiting for approval" (with or without "· you") is the one state that
+  // is filled rather than tinted: it is what the request is waiting on, and
+  // it stands in for the Build it now it hides (_issuePrimaryActionSpec).
+  _WORK_REVIEW_CLS: 'bg-violet-600 text-white dark:bg-violet-500 dark:text-white',
+  _WORK_REVIEW_HOVER: 'hover:bg-violet-700 dark:hover:bg-violet-600',
   _inProgressChipSpec(issue) {
     const st = AppView._issueWorkState(issue);
     if (!st) return null;
-    const tone = AppView._WORK_TONE_CLS[st.tone] || AppView._WORK_TONE_CLS.sky;
-    const hover = AppView._WORK_TONE_HOVER[st.tone] || AppView._WORK_TONE_HOVER.sky;
+    const review = st.key === 'in_review';
+    const tone = review ? AppView._WORK_REVIEW_CLS
+      : (AppView._WORK_TONE_CLS[st.tone] || AppView._WORK_TONE_CLS.sky);
+    const hover = review ? AppView._WORK_REVIEW_HOVER
+      : (AppView._WORK_TONE_HOVER[st.tone] || AppView._WORK_TONE_HOVER.sky);
     const ip = issue.in_progress || null;
     const target = ip && ip.target;
     const targetId = target ? parseInt(target.sessionId, 10) : 0;

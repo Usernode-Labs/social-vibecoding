@@ -721,3 +721,63 @@ test('B10c: a picked-up request says who said they would work on it, and when it
   assert.match(theirs, /^maya said they'd work on this.* but hasn't started building it yet\./);
   assert.doesNotMatch(mine + theirs, /claim|dev session/i);
 });
+
+// ── A change already waiting for approval ───────────────────────────────
+//
+// Build it now is hidden while a change for the request is up for approval
+// (the work state is in_review, or addressed_by is in review), and the
+// "Waiting for approval" chip is filled rather than tinted so it reads as
+// the request's status. Every other action stays.
+
+test('a request with a change waiting for approval offers no Build it now, on the card or in ⋯', () => {
+  const AppView = makeAppView();
+  const ip = (over) => ({ count: 1, users: ['maya'], peopleTotal: 1, mine: false, claims: [], sessions: [], target: null, ...over });
+  const inReview = baseIssue({ in_progress: ip({ sessions: [sess({ status: 'promoted' })] }) });
+  const mineInReview = baseIssue({ in_progress: ip({ users: ['me'], mine: true, sessions: [sess({ status: 'promoted', mine: true, username: 'me' })] }) });
+  const addressed = baseIssue({ addressed_by: { sessionId: 7, state: 'review', prNumber: 12 } });
+
+  // The control: an ordinary request offers it.
+  assert.equal(AppView._issuePrimaryActionSpec(baseIssue()).label, 'Build it now');
+  assert.ok(hasAction(AppView._issueCardModel(baseIssue()), 'chooseIssueWork'));
+
+  for (const issue of [inReview, mineInReview, addressed]) {
+    assert.equal(AppView._issueAwaitingApproval(issue), true);
+    assert.equal(AppView._issuePrimaryActionSpec(issue), null);
+    for (const model of [AppView._issueCardModel(issue), AppView._issueCardModel(issue, { noNav: true })]) {
+      assert.ok(!hasAction(model, 'chooseIssueWork'), 'no Build it now');
+      assert.ok(!cardHtml(model).includes('Build it now'));
+    }
+    // The other actions stay: Claim on the face, the rest in the detail list.
+    assert.ok(hasAction(AppView._issueCardModel(issue), 'markIssueInProgress')
+      || hasAction(AppView._issueCardModel(issue), 'clearIssueClaim'));
+    const keys = Array.from(AppView._detailActionsView('issue', issue).pills, (p) => p.key);
+    assert.ok(keys.includes('claim') && keys.includes('bounty') && keys.includes('close'));
+  }
+
+  // A change merged, or still being worked on, does not hide it.
+  assert.equal(AppView._issueAwaitingApproval(baseIssue({ addressed_by: { sessionId: 7, state: 'merged' } })), false);
+  assert.equal(AppView._issuePrimaryActionSpec(baseIssue({ in_progress: ip({ sessions: [sess()] }) })).label, 'Build it now');
+  // The viewer's own Start more work is not Build it now, and stays.
+  assert.equal(AppView._issuePrimaryActionSpec({ ...inReview, myPrSessionId: 5 }).label, 'Start more work');
+
+  // Where the bot's button is on the face, Build it now is the ⋯'s row: hidden too.
+  AppView._ghIssuesMeta = { myRemaining: 5, homeroomBot: { typicalMinutes: 8 } };
+  const rows = (issue) => Array.from(AppView._issueMenuItems(issue, { progressOnFace: true }), (it) => it.label);
+  assert.ok(rows(baseIssue()).includes('Build it now'));
+  assert.ok(!rows(inReview).includes('Build it now'));
+  assert.ok(!rows(addressed).includes('Build it now'));
+});
+
+test('"Waiting for approval" is a filled chip; the other states keep their tint', () => {
+  const AppView = makeAppView();
+  const ip = (over) => ({ count: 1, users: ['maya'], peopleTotal: 1, mine: false, claims: [], sessions: [], target: null, ...over });
+  const review = AppView._inProgressChipSpec(baseIssue({ in_progress: ip({ sessions: [sess({ status: 'promoted' })] }) }));
+  assert.match(review.cls, /\bbg-violet-600 text-white\b/);
+  assert.ok(!/bg-violet-500\/10/.test(review.cls));
+  const mine = AppView._inProgressChipSpec(baseIssue({ in_progress: ip({ sessions: [sess({ status: 'promoted', mine: true })] }) }));
+  assert.equal(mine.label, 'Waiting for approval · you');
+  assert.match(mine.cls, /\bbg-violet-600 text-white\b/, 'the "· you" variant too');
+  const working = AppView._inProgressChipSpec(baseIssue({ in_progress: ip({ sessions: [sess()] }) }));
+  assert.ok(!/bg-violet-600/.test(working.cls));
+  assert.match(working.cls, /bg-sky-500\/10/);
+});
