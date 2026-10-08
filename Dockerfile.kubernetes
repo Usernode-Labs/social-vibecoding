@@ -20,6 +20,7 @@ FROM node:22-alpine AS shell
 WORKDIR /build
 COPY frontend ./frontend
 COPY scripts/shell-stamp.js ./scripts/shell-stamp.js
+COPY scripts/language-packs.js ./scripts/language-packs.js
 COPY src/services/countries.json ./src/services/countries.json
 ARG GIT_SHA=dev
 ENV GIT_SHA=$GIT_SHA

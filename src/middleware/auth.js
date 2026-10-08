@@ -68,6 +68,9 @@ const PUBLIC_PATHS = [
   // and the service-worker precache fills with redirects. Static JS only, no
   // data access.
   '/shell/',
+  // Language packs for the shell itself (scripts/language-packs.js): static
+  // UI text, needed on the sign-in screens too. No data access.
+  '/locales/',
   // Build-scoped shell assets (/b/<build sha>/js/app.js and so on): the same
   // files as /js/, /css/, /vendor/ and /shell/ above, addressed per build so
   // a deploy can serve them immutable (src/services/static-cache.js). Public

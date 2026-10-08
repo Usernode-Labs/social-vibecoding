@@ -680,6 +680,9 @@ const App = {
     if (nativeBoundary) await nativeBoundary;
     // The boot reader sees signed-out only after native authority is closed.
     App._publishBootSession({ signedOut: true });
+    // Signed out, the language follows this device (frontend/src/lib/i18n).
+    // Not awaited: the sign-in screens never wait for a language pack.
+    void globalThis.PlatformI18n?.applySessionLanguage?.(null);
     // #2902: the apps kept loaded were the signed-out viewer's.
     if (typeof AppView !== 'undefined') AppView.evictAllAppFrames?.();
     // THE SIDE PANEL'S DOCUMENT HAS NO SESSION: the cookie it shares with the
