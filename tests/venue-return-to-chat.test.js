@@ -70,7 +70,7 @@ function makeDevChat() {
   // DevFlowSelect only has to EXIST for _devFlowTarget to consider a
   // wizard at all, so it is stubbed rather than loaded.
   sandbox.DevFlowSelect = { wizardHtml: () => '<div data-flow-wizard="1"></div>' };
-  sandbox.App = { user: { externalFlowsAvailable: true, devFlowPreference: null }, currentApp: 'x' };
+  sandbox.App = { user: { externalFlowsAvailable: true }, currentApp: 'x' };
   sandbox.PlatformUI = { toast: () => {}, hasKit: () => false, menu: () => Promise.resolve(null) };
   vm.createContext(sandbox);
   vm.runInContext(BUILD_VENUES_SRC, sandbox);
@@ -128,17 +128,17 @@ test('_devFlowReturnToChat brings the composer back', () => {
   assert.equal(DevChat._launchpadVenue(), null, 'the session is a chat again');
 });
 
-test('a saved dev_flow_preference is no longer a third way back in', () => {
+test('a saved dev_flow_preference cannot come back in — it no longer exists', () => {
   // It WAS the third way, and the reason `dismissed` had to be the lever
   // rather than a cleared `mode`: that branch read the user's stored default
   // and answered "wizard" on the very next paint. It also meant a launchpad
   // nothing had recorded, under a header that said On-Platform — so #1353
-  // closed the door instead of out-ranking it, and `dismissed` now has only
-  // the in-memory wizard left to clear. See tests/venue-surface-sync.test.js.
-  const { DevChat, sandbox } = makeDevChat();
-  sandbox.App.user.devFlowPreference = 'claude-code';
+  // closed the door instead of out-ranking it, and #4311 removed the
+  // preference outright: the value can no longer exist on App.user, and a
+  // fresh session stays a chat. See tests/venue-surface-sync.test.js.
+  const { DevChat } = makeDevChat();
   assert.equal(DevChat._launchpadVenue(), null,
-    'a standing preference is not a decision about THIS session');
+    'nothing standing answers for THIS session');
   assert.equal(DevChat._currentVenueId(), 'usernode-claude',
     'and the header agrees, which is the whole point');
 

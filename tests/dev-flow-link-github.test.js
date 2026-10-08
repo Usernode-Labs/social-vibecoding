@@ -79,7 +79,7 @@ async function makeDevChat({ native = false, bridge = null, published = true } =
   sandbox.DevFlowSelect = DevFlowSelect;
   // `App.user.id` is what pins the system-browser trip to the signed-in
   // account, exactly as the Settings row reads it.
-  sandbox.App = { user: { id: 7, externalFlowsAvailable: true, devFlowPreference: null }, currentApp: 'x' };
+  sandbox.App = { user: { id: 7, externalFlowsAvailable: true }, currentApp: 'x' };
   sandbox.PlatformUI = { toast: () => {}, hasKit: () => false, menu: () => Promise.resolve(null) };
   // What frontend/src/features/dev-chat/mount.ts publishes, from the real
   // module — see the source pin below for the publication itself.

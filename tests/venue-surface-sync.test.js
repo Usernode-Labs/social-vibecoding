@@ -11,10 +11,11 @@
 //
 // and the second knew something the first did not. So a fresh session,
 // belonging to anyone who had ever picked a web venue once (picking one
-// saves the preference), opened saying "On-Platform" over the Claude Code
-// walkthrough. The only way out was to pick another venue and come back,
-// which set an in-memory `dismissed` flag — per tab, so a reload put the
-// launchpad straight back.
+// saved the preference back then), opened saying "On-Platform" over the
+// Claude Code walkthrough. The only way out was to pick another venue and
+// come back, which set an in-memory `dismissed` flag — per tab, so a reload
+// put the launchpad straight back. The preference, its save and its echo
+// are gone now (#4311); these tests hold the one-derivation invariant.
 //
 // This is a BEHAVIOURAL test, for the reason tests/venue-return-to-chat.js
 // spells out: the previous fix in this area was guarded by a regex over the
@@ -71,7 +72,7 @@ function makeDevChat() {
   sandbox.globalThis = sandbox;
   sandbox.window.addEventListener = () => {};
   sandbox.DevFlowSelect = { wizardHtml: () => '<div data-flow-wizard="1"></div>' };
-  sandbox.App = { user: { externalFlowsAvailable: true, devFlowPreference: null }, currentApp: 'x' };
+  sandbox.App = { user: { externalFlowsAvailable: true }, currentApp: 'x' };
   sandbox.PlatformUI = { toast: () => {}, hasKit: () => false, menu: () => Promise.resolve(null) };
   vm.createContext(sandbox);
   vm.runInContext(BUILD_VENUES_SRC, sandbox);
@@ -111,13 +112,16 @@ function assertAgrees(DevChat, sandbox, because) {
   return { venue, surface };
 }
 
-test('a saved web default no longer opens a launchpad over an On-Platform header', () => {
+test('a fresh session is an ordinary chat, on the header and the screen', () => {
   // The bug, exactly as reported: the window starts saying On-Platform and
-  // shows the WebUI screen, and you have to change type and change back.
+  // shows the WebUI screen, and you have to change type and change back. A
+  // saved web default used to be able to cause it (#1353); the preference
+  // cannot exist any more (#4311), so this is the plain default now — and
+  // still the guard that nothing summons a launchpad for an untouched
+  // session.
   const { DevChat, sandbox } = makeDevChat();
-  sandbox.App.user.devFlowPreference = 'claude-code';
 
-  const { venue } = assertAgrees(DevChat, sandbox, 'a saved claude-code default');
+  const { venue } = assertAgrees(DevChat, sandbox, 'a fresh session');
   assert.equal(venue, 'usernode-claude',
     'nothing has been chosen for THIS session, so it is an ordinary chat');
   assert.equal(DevChat._launchpadVenue(), null, 'and it opens on the composer');
@@ -127,15 +131,13 @@ test('a saved web default no longer opens a launchpad over an On-Platform header
   assert.equal(DevChat._devFlowHtml(), '');
 });
 
-test('the saved default survives a reload, so the fix has to as well', () => {
-  // The old escape hatch was `dismissed`, which lives in the tab. Re-opening
-  // the session is a fresh _resetDevFlow, and the preference is still set —
-  // which is why "pick another venue and come back" had to be done again
-  // every single time.
+test('re-opening a session after a reload answers the same thing', () => {
+  // The old escape hatch was `dismissed`, which lives in the tab. The
+  // derived answer has no memory to diverge from, so a reopen agrees with
+  // the first one.
   const { DevChat, sandbox } = makeDevChat();
-  sandbox.App.user.devFlowPreference = 'codex';
   DevChat._resetDevFlow(7);
-  assertAgrees(DevChat, sandbox, 'a reopened session with a saved codex default');
+  assertAgrees(DevChat, sandbox, 'a reopened session');
   assert.equal(DevChat._launchpadVenue(), null);
 });
 
@@ -167,8 +169,10 @@ test('every stored venue paints the surface it names', () => {
 });
 
 test('an in-chat venue is a chat, whatever else is true of the session', () => {
-  // A saved web default in every case, because that is the input that used
-  // to be able to turn any of these into a launchpad the header denied.
+  // None of these states may summon a launchpad the header denies — the
+  // input that used to be able to (a saved web default) cannot exist any
+  // more (#4311), so the venue column and the session's own shape are the
+  // whole question.
   const cases = [
     ['an OpenRouter session', (dc) => { dc.currentSession.agent_backend = 'codex_openrouter'; }],
     ['a leased session', (dc) => { dc._localAgent = { label: 'Laptop', leaseId: 'l1' }; }],
@@ -178,7 +182,6 @@ test('an in-chat venue is a chat, whatever else is true of the session', () => {
   ];
   for (const [because, mutate] of cases) {
     const { DevChat, sandbox } = makeDevChat();
-    sandbox.App.user.devFlowPreference = 'claude-code';
     mutate(DevChat);
     assertAgrees(DevChat, sandbox, because);
     assert.equal(DevChat._launchpadVenue(), null, `${because} keeps its composer`);

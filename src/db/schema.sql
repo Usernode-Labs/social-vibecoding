@@ -137,10 +137,10 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS locale VARCHAR(35);
 -- order to the user's own Claude Code / Codex web UI (the external-agent
 -- flow in services/external-agent-tasks.js).
 --
--- Written by POST /api/me/dev-flow, echoed by GET /api/auth/me as
--- `devFlowPreference`, and clearable back to NULL from Settings →
--- Connections. The CHECK is the same allowlist the route enforces, so a
--- direct DB write can never park an unrenderable value here.
+-- #4311 removed every reader and writer (the Settings part, POST
+-- /api/me/dev-flow, the /api/auth/me echo) because nothing chose a venue
+-- from the value any more. The column and its CHECK stay so a rollback of
+-- that change keeps working; dropping them is left for a later migration.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS dev_flow_preference TEXT;
 DO $$
 BEGIN

@@ -165,15 +165,6 @@
       "mobileSupported": true
     },
     {
-      "key": "build-venue",
-      "label": "Where changes get built",
-      "group": "AI & building",
-      "gate": null,
-      "capabilityId": "settings.open.build_venue",
-      "classicPath": "#settings/build-venue",
-      "mobileSupported": true
-    },
-    {
       "key": "cli",
       "label": "CLI & coding-agent access",
       "group": "AI & building",
@@ -3495,21 +3486,6 @@
       "transport": "server_loopback",
       "mobileSupported": true,
       "classicPath": "#apps"
-    },
-    {
-      "source": "src/routes/auth.js",
-      "method": "POST",
-      "path": "/api/me/dev-flow",
-      "expression": null,
-      "status": "mapped",
-      "capabilityId": "settings.post.me.dev.flow.ae803a40",
-      "domain": "settings",
-      "risk": "external_write",
-      "confirmation": "required",
-      "renderer": "setting",
-      "transport": "server_loopback",
-      "mobileSupported": true,
-      "classicPath": "#settings"
     },
     {
       "source": "src/routes/auth.js",

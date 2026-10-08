@@ -43,7 +43,7 @@ import { ApiKeySection } from './api-key';
 import { AppAiSection } from './app-ai';
 import { AppPermissionsSection } from './app-permissions';
 import { CliSection } from './cli';
-import { BuildVenueSection, ConnectorsSection, LinkedAccountsSection } from './connectors';
+import { ConnectorsSection, LinkedAccountsSection } from './connectors';
 import { DevConsoleSection } from './dev-console';
 import { ExperimentalSection } from './experimental';
 import { GlobalChatSettingsSection } from './global-chat';
@@ -87,7 +87,6 @@ export function SettingsSections() {
       <OpenRouterSection />
       <ApiKeySection />
       <ConnectorsSection />
-      <BuildVenueSection />
       <CliSection />
       <AgentFilesSection />
       <GlobalChatSettingsSection />

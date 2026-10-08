@@ -205,8 +205,9 @@ test('the launchpad is wired on every re-render, in its own host', () => {
 test('the vendor toggle switches in place and stores the new venue', () => {
   const actions = DEV_CHAT_SRC.match(/async _devFlowAction\([\s\S]*?\n  \},/)[0];
   assert.match(actions, /vendor-claude-code|vendor-codex/, 'both toggle actions are handled');
-  assert.match(actions, /_saveDevFlowPreference\(next\)/, 'the saved default moves with it');
-  assert.match(actions, /_persistBuildVenue\(venue\)/, 'and so does this session');
+  assert.doesNotMatch(actions, /_saveDevFlowPreference/,
+    'no standing default rides along — the setting is gone (#4311)');
+  assert.match(actions, /_persistBuildVenue\(venue\)/, 'this session still stores it');
   assert.match(actions, /flow\.status = null/,
     'the status is re-read for the new vendor rather than reused');
 });

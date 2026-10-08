@@ -58,6 +58,16 @@ const withInteriors = `${after}\n${lazyInteriorsHtml()}`;
 
 // Ids a conversion chunk deliberately removed, each with the reason.
 const RETIRED_IDS = {
+  // ── #4311: the "Where changes get built" setting is removed ────────
+  // #4268 left this Settings part standing but nothing read its value any
+  // more — agent sessions pick where work runs in their own Build-with
+  // sheet — so the part went end to end: the markup here, the save route,
+  // the /api/auth/me echo and the Global Chat inspector group. The three
+  // ids leave ADDED_IDS with it (#1191 put them there when the block
+  // stopped being injected at runtime).
+  'dev-flow-pref-section': 'The "Where changes get built" block on Settings → Connectors & CLI (#1049). Removed with the setting: nothing chose a venue from the saved value any more.',
+  'settings-dev-flow': 'The build-flow dropdown itself. Gone with its part (#4311).',
+  'settings-dev-flow-status': 'Save/error line for the build-flow dropdown. Gone with its part (#4311).',
   // ── The create-project dialog is retired ───────────────────────────
   // Create opens "What do you want to make?" (features/first-session/
   // make.tsx), the screen the first session asks with, for everyone. It
@@ -733,12 +743,9 @@ const ADDED_IDS = {
   // which created the block and inserted it into the Connections pane on
   // every render. The reason was this very baseline: the shell's body used to
   // be a hand-written document, so a new settings control had nowhere to go.
-  // The pane is a component now, so the block is markup and its ids are a
-  // deliberate line here — which is also what stops a legacy module writing
-  // into a subtree React owns.
-  'dev-flow-pref-section': 'The "Preferred build flow" block in Settings → Connections (#1049) — the escape hatch for the dev-chat picker\'s "remember my option" checkbox.',
-  'settings-dev-flow': 'The build-flow dropdown itself. Settings binds its change and gates the two hand-off options on whether the deployment has external flows.',
-  'settings-dev-flow-status': 'Save/error line for the build-flow dropdown.',
+  // The pane is a component now, so the block was markup and its ids were a
+  // deliberate line in ADDED_IDS — which is also what stopped a legacy
+  // module writing into a subtree React owns.
   'cli-setup-guide': 'Always-visible local-agent setup in Settings → CLI access (#1609). It is static section markup so capability detection and credential-list state cannot blank the instructions.',
   'native-app-version-slot': 'Mobile app version/build rendered through the native bridge (#1101).',
   'feedback-queue-dot': 'Header dot for feedback saved offline and still waiting to send (#1054). It has changed parents twice without changing id or writer — off the retired #feedback-btn onto #improve-btn, and off that onto the Homeroom mark when #2718 retired it — because it belongs on whichever control is the way to this dialog from the header. Bottom-left, opposite the working dot.',
