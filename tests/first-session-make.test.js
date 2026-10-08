@@ -205,7 +205,7 @@ test('three templates, the same on the story and the make screen, each a whole s
   assert.equal(firstChoice(game), OWN);
   assert.equal(sentence(game, 'board', '').blank, true, 'a starter still waits for the rest');
   assert.equal(sentence(game, 'board', 'everyone owns an island').text, 'A new game we build together. For the first version, a board game where everyone owns an island.');
-  assert.equal(sentence(game, OWN, 'a card game where everyone bluffs!').text, 'A new game we build together. For the first version, a card game where everyone bluffs!');
+  assert.equal(sentence(game, OWN, 'we give one-word clues to guess a secret word!').text, 'A new game we build together. For the first version, we give one-word clues to guess a secret word!');
   assert.equal(suggestedName(game, OWN, 'a card game'), '', 'their own game is theirs to name');
   assert.equal(suggestedName(game, 'trivia', ''), 'Trivia Night');
   // The organizer: each choice says what it keeps.
@@ -454,7 +454,7 @@ test('a template fills in the description and the name; words of their own let g
   assert.deepEqual(chips(tree).map((c) => c.props['data-make-choice']), ['own', 'board', 'shooter', 'blocks', 'trivia']);
   assert.equal(chips(tree)[0].props.selected, true);
   assert.equal(words(tree).type, 'textarea');
-  assert.equal(words(tree).props.placeholder, 'For example, a card game where everyone bluffs');
+  assert.equal(words(tree).props.placeholder, 'For example, we give one-word clues to guess a secret word');
   assert.equal(writeOut(tree), undefined);
   assert.equal(nameField(tree).props.value, '', 'their own game is theirs to name');
   chips(tree)[1].props.onClick();

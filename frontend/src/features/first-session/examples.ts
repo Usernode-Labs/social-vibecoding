@@ -101,7 +101,7 @@ export const TEMPLATES: readonly Template[] = [
       { key: 'blocks', label: '3D blocks', fill: 'a 3D block game where', example: 'we build a city one block a day', name: 'Block World', description: 'A 3D block game' },
       { key: 'trivia', label: 'Trivia', fill: 'a trivia game where', example: 'every question is about one of us', name: 'Trivia Night', description: 'A trivia game' },
     ],
-    own: { example: 'a card game where everyone bluffs', name: '', description: 'A game' },
+    own: { example: 'we give one-word clues to guess a secret word', name: '', description: 'A game' },
     note: 'I\'m making us a game. Join and tell me what it needs.',
   },
   {
