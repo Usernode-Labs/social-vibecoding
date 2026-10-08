@@ -2,59 +2,75 @@
  * Right after "Make it" (./make.tsx): something to give, and one thing to
  * do with it.
  *
- *   what      The project, being built: its thumbnail, with the build line
- *             one line under it (#4053, ./build-line.tsx: "Homeroom bot is
- *             planning it") from GET /api/apps/:slug (`app.first_version`),
- *             read again every ten seconds, past the service worker's cache
- *             (madeAppOf, madeAppUrl).
- *   plan      B6: once the bot has read the description it waits for its
- *             plan's Build it (`first_version.plan`) and builds nothing
- *             until then. The plan itself is answered in the chat with
- *             Homeroom bot, where Build it and Change something are: this
- *             screen draws a small "Needs you" card under the project, "Homeroom
- *             bot has a plan for <name>", whose Go to chat opens that chat
- *             (PlanWaitsCard). It used to draw the whole plan, with Build it,
- *             above the sketch, and it arrived there at whatever moment the
- *             plan did (Evan, 5 October 2026).
- *   invite    "Invite people to <name>": Share invite opens a short sheet
- *             (InviteSheet below). Once something has gone out, the line
- *             says so and "Invite people later" becomes "Go to the
- *             Homeroom app". Either starts the tour (./index.tsx). While
- *             it is out, the project's community is read again, and the
- *             line says who has joined (joinedLine).
+ *   bar       The Homeroom logo bar, as on the story, the invite page and
+ *             the make screen (owner, 7 October 2026), so the first session
+ *             reads as one product from the story to the tour. It stays
+ *             behind the invite sheet. From Create, under the platform's own
+ *             header, there is none.
+ *   who       Your face in the middle with waiting seats on both sides
+ *             (./people-row.tsx, canvas People.dc.html). As people join,
+ *             their faces take the seats: the project's community is read
+ *             once, then every ten seconds while an invite is out. No line
+ *             says who joined as well (decided 6 October 2026).
+ *   title     "Your new community", small, as the screen's heading. Then,
+ *             16px under it, the thumbnail, which carries the name: a big
+ *             name over the card said it twice (owner, 7 October 2026,
+ *             canvas v78). The faces, the heading and the thumbnail are one
+ *             block, centred between the logo bar and the line over the
+ *             buttons.
+ *   what      The project's thumbnail (./sketch-card.tsx) with the build
+ *             line one line under it (#4053, ./build-line.tsx: "Homeroom bot
+ *             is planning it") from GET /api/apps/:slug
+ *             (`app.first_version`), read again every ten seconds, past the
+ *             service worker's cache (madeAppOf, madeAppUrl). When the plan
+ *             waits, only that line changes ("Your plan is ready to review",
+ *             in blue), as it does on every screen. Nothing here asks for an
+ *             answer: the plan waits until the tour ends, and the "Needs you"
+ *             card that asked for it before anyone was invited is gone from
+ *             the first session (Evan's test, 6 October 2026). From Create,
+ *             which has no tour, the card stays (PlanWaitsCard). A project Homeroom bot does not
+ *             build has no line, and one quiet note under the card says who
+ *             builds it (NO_BOT_NOTE).
+ *   invite    One quiet line, "Invite people to use it and help improve it
+ *             together.", over Share invite and Invite people later. Once the
+ *             link has gone out the line says so ("Invite shared. Next, a
+ *             short tour.", or "Link copied. Next, a short tour."), and the
+ *             buttons keep their places: Share again, grey, where Share
+ *             invite was, and Start the tour, blue, where Invite people later
+ *             was (owner, 8 October 2026). Invite people later and Start the
+ *             tour both start the tour (./index.tsx). From Create there is no
+ *             tour: the line says "Invite shared." or "Link copied." and the
+ *             second button goes to the project (continueLabel).
  *
- * Nothing under the two buttons. A quiet "While you wait, look around Home
- * and other apps" used to sit there; "Invite people later" is already the
- * way on without inviting anyone, so it was a third way off one screen
- * (Evan, 5 October 2026).
+ * Nothing under the two buttons.
  *
  * The sheet is the first invite, not the project's full invite pane
  * (features/app-context/invite-pane.tsx, with live links, their limits, an
  * invite by username and the project's joining rule, which stays where it
- * is): what they'll get, "<maker> is making <name>" while its first version
- * is not live, with the note edited in place, then Share link and Copy link
- * (inviteActions: which one leads depends on the device). Nothing else:
- * somebody brand new knows nobody on Homeroom to invite by username yet, and
- * the joining rule is the project's business later (both taken out after
- * Evan's run-through, 5 October 2026). The link it makes works until it is
- * turned off, for anyone it reaches (WP-D): the project is the gift, so the
- * link should outlive a week. A note they wrote themselves and shared
- * (the share sheet, not Copy link) is also the maker's first message in the
- * group's chat (the sheet says so, #4238), so the people it brings find it
- * waiting there. The note is kept per project on this device
+ * is): its title ("Invite people to Sunday Run Club"), a small caps "What
+ * they'll see" over the invite as they will see it ("alex invited you to
+ * Sunday Run Club" and the note, edited in place), then Share link and Copy
+ * link (inviteActions: which one leads depends on the device, #4180).
+ * Nothing else: somebody brand new knows nobody on Homeroom to invite by
+ * username yet, and the joining rule is the project's business later (both
+ * taken out after Evan's run-through, 5 October 2026). The link it makes
+ * stops after a week or 25 people (LINK_DAYS, LINK_USES), and the sheet says
+ * so. A note they wrote themselves and shared (the share sheet, not Copy
+ * link) is also the maker's first message in the group's chat (the sheet
+ * says so, #4238), so the people it brings find it waiting there. The note is
+ * kept per project on this device
  * (noteKey), else read back from the maker's own newest link.
  *
- *   sketch    The project's thumbnail (./sketch-card.tsx,
- *             services/app-sketch.js): its emoji, now the project's icon, and
- *             a tagline, made from the description in a few seconds, with
- *             the build line under the card. The same frame stands while it is
- *             sketched. Without one (a project with no sketch, or one that
- *             never came) it says the description instead.
+ *   sketch    The thumbnail is made from the description in a few seconds
+ *             (services/app-sketch.js): its emoji, now the project's icon,
+ *             and a tagline. The same frame stands while it is sketched.
+ *             Without one (a project with no sketch, or one that never came)
+ *             it says the description instead.
  *
  * Every line says what is true for this project: when Homeroom bot builds
- * it (`made.conversationId`, its DM), the build line and "messages you"; when it
- * does not, the description is the project's first request, for whoever
- * builds it. Nothing says how long a first version takes (buildNote).
+ * it (`made.conversationId`, its DM), the build line; when it does not, the
+ * description is the project's first request, for whoever builds it. Nothing
+ * says how long a first version takes (buildNote).
  *
  * FROM CREATE TOO, IMPORTS INCLUDED. Every new project lands here: from the
  * first session, from the Create button's make screen, and from its import
@@ -63,7 +79,7 @@
  * progress view used to: a setup that stopped (status `error`, with Try
  * again, POST /api/apps/:slug/retry) or one waiting on its secrets
  * (`awaiting_secrets`, with Set secrets, which an imported repo can declare),
- * in a card under the project like the plan's (SetupStoppedCard). An import
+ * in a card under the project (SetupStoppedCard). An import
  * has no sketch and nothing built from a description: its lines say it is
  * being imported, then that it runs (buildLine, buildNote). Every one is a
  * private community, so every one ends on Share invite.
@@ -81,6 +97,7 @@ import type { HomeroomBotPlanQuestion } from '../messages/types';
 import { BUILD_LINE_WORDS, type BuildLineState, buildLineOf } from './build-line';
 import { copyText, inviteText } from './copy-invite';
 import type { Made, MakeEntry } from './make';
+import { type Person, PeopleRow } from './people-row';
 import { SketchCard, showsCard, useSketch } from './sketch-card';
 
 /** B6: the plan Homeroom bot waits on before it builds anything. */
@@ -149,6 +166,28 @@ export function planWaitsLine(name: string): string {
   return `Homeroom bot has a plan for ${name}`;
 }
 
+/** The screen's heading, small, over the thumbnail (which carries the name). */
+export const COMMUNITY_LABEL = 'Your new community';
+
+/** The one line over the buttons until the link has gone out. */
+export const INVITE_HINT = 'Invite people to use it and help improve it together.';
+
+/** The small caps label over the invite as they will see it, in the sheet. */
+export const PREVIEW_LABEL = 'What they\'ll see';
+
+/**
+ * Under the thumbnail when Homeroom bot does not build the project: it has
+ * no build line, so this says who builds it. Nothing is said under the card
+ * when the bot builds it; the build line says where it is.
+ */
+export const NO_BOT_NOTE = 'Your description is its first request. You or anyone you invite can build it from there.';
+
+/** The line over the buttons once the link has gone out. `tour`: the first session's, which goes on to the tour. */
+export function sharedLine(how: SentHow, tour = true): string {
+  const said = how === 'copied' ? 'Link copied.' : 'Invite shared.';
+  return tour ? `${said} Next, a short tour.` : said;
+}
+
 /**
  * A setup that is not going on by itself (creation-progress-store.js
  * outcomeOf): it failed, or it waits on secrets. Null while it is creating,
@@ -205,8 +244,7 @@ export function madeLine(fv: FirstVersion, botBuilds: boolean, live = false, sta
  * "Homeroom bot plans it first, and asks you to approve the plan", and after
  * it only that it messages you. Evan, 5 October 2026: one plain line, the
  * same before and after the plan, that says it asks when it has questions.
- * The plan, when it comes, has its own card under the project
- * (PlanWaitsCard), and while it waits this line says so instead.
+ * While the plan waits, a project that is not sketched says so instead.
  */
 export function buildNote(botBuilds: boolean, planWaits = false, stalled: Stalled = null, imported = false): string {
   if (stalled === 'failed') return 'Trying again usually clears it. If it stops again, ask an admin.';
@@ -218,16 +256,19 @@ export function buildNote(botBuilds: boolean, planWaits = false, stalled: Stalle
 }
 
 /**
- * "alex is making Page Turners" while its first version is not live, and
- * "alex made Page Turners" once it is: what they'll get, in the invite sheet
- * and the title of what it shares.
+ * The invite as they will see it, in the sheet and as the shared link's
+ * title: "alex invited you to Page Turners". It says nothing about the app
+ * being made: the thumbnail and its build line say that, and the same words
+ * serve a project that is live already (the Invite people button in the bot's
+ * chat, messages/bot-question.tsx).
  */
-export function makerLine(me: string, name: string, making: boolean): string {
-  if (!me) return making ? `Being made: ${name}` : `Made: ${name}`;
-  return `${me} ${making ? 'is making' : 'made'} ${name}`;
+export function inviteLine(me: string, name: string): string {
+  return me ? `${me} invited you to ${name}` : `You're invited to ${name}`;
 }
 
-const NOTE_DEFAULT = 'Come try it with me!';
+// The note the sheet opens with when the example has none and nothing is
+// kept: sent while the app is still being made, so no "Made us", and no "!" (#4042).
+const NOTE_DEFAULT = 'I\'m making this for us. Join and tell me what it needs.';
 // The link every invite link gets by default (services/community-invites.js
 // DEFAULT_DAYS and DEFAULT_USES): a week, and 25 people. It used to work until
 // it was turned off, for anyone it reached (WP-D), which was safe while the
@@ -336,11 +377,9 @@ export function sentStatus(how: SentHow): string {
  * and is not waited on. Cancelling the share sheet (AbortError) changes
  * nothing.
  */
-export function InviteSheet({ made, me, making = true, onClose, onSent }: {
+export function InviteSheet({ made, me, onClose, onSent }: {
   made: Made;
   me: string;
-  /** Its first version is not live yet: "<me> is making <name>" (makerLine). */
-  making?: boolean;
   onClose: () => void;
   /** The link went out, shared or copied. The sheet stays open. */
   onSent: (how: SentHow) => void;
@@ -442,7 +481,7 @@ export function InviteSheet({ made, me, making = true, onClose, onSent }: {
       // make is waited on first (see the header).
       const url = linkRef.current || await link();
       if (!url) return;
-      const title = makerLine(me, made.name, making);
+      const title = inviteLine(me, made.name);
       const nav = navigator as Navigator & { share?: (d: ShareData) => Promise<void> };
       if (typeof nav.share === 'function') {
         sharing.current = true;
@@ -471,7 +510,7 @@ export function InviteSheet({ made, me, making = true, onClose, onSent }: {
     } finally {
       setBusy(false);
     }
-  }, [busy, link, me, made.name, making, note, sent]);
+  }, [busy, link, me, made.name, note, sent]);
 
   // Copy link: the note and the link, put on the clipboard inside the press
   // even while the link is still being made (copyText: Safari copies nothing
@@ -511,27 +550,23 @@ export function InviteSheet({ made, me, making = true, onClose, onSent }: {
             <XIcon className="h-4 w-4" aria-hidden="true" />
           </button>
         </div>
-        <p className="mt-4 pb-1.5 text-[13px] text-zinc-500 dark:text-zinc-400">What they'll get</p>
+        <p data-first-session-invite-label="" className="mt-4 pb-1.5 text-xs font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{PREVIEW_LABEL}</p>
         <div className="overflow-hidden rounded-2xl bg-white dark:bg-zinc-800">
           <div className="flex items-center gap-3 p-3">
             <span className="app-icon-tile flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-2xl" aria-hidden="true">{tile}</span>
             <div className="min-w-0">
-              <p data-first-session-invite-maker="" className="text-[15px] font-semibold leading-snug">{makerLine(me, made.name, making)}</p>
-              <p className="text-[13px] text-zinc-500 dark:text-zinc-400">A link to see it and join the chat</p>
+              <p data-first-session-invite-line="" className="text-[15px] font-[650] leading-snug">{inviteLine(me, made.name)}</p>
             </div>
           </div>
           <div className="px-3 pb-2 pt-2.5 shadow-[inset_0_1px_0_var(--app-sheet-line)]">
-            {/* Named on screen, in the label style of "What they'll get" above
-                and the make screen's fields (make.tsx LABEL): unlabelled, the
-                note read as part of the card rather than something to write. */}
-            <label htmlFor="first-session-note" className="block pb-1 text-[13px] text-zinc-500 dark:text-zinc-400">Note</label>
             <textarea
               id="first-session-note"
+              aria-label="Your note"
               rows={2}
               maxLength={280}
               value={note}
               onChange={(e) => { ownNote.current = true; setNote(e.target.value); keepNote(made.slug, e.target.value); }}
-              placeholder="Add a note (optional)"
+              placeholder="Add a note"
               className="w-full resize-none border-0 bg-transparent p-0 text-[16px] leading-snug placeholder-zinc-500 focus:outline-none"
             />
           </div>
@@ -610,7 +645,7 @@ export function PlanWaitsCard({ name, onOpenChat }: { name: string; onOpenChat: 
 }
 
 /**
- * A setup that stopped, under the project where the plan's card goes: what
+ * A setup that stopped, under the project: what
  * it needs, and the one thing that does it. What the New project dialog's
  * progress view said with its Retry and Set secrets.
  */
@@ -647,64 +682,45 @@ export function SetupStoppedCard({ stalled, busy, onRetry, onSetSecrets }: {
 
 /**
  * The made screen's second button: on the first session, on to the tour
- * ("Invite people later", then "Go to the Homeroom app" once an invite is
- * out); from Create, to the project itself.
+ * ("Invite people later", then "Start the tour" once an invite is out); from
+ * Create, to the project itself.
  */
 export function continueLabel(entry: MakeEntry, sent: boolean, name: string): string {
   if (entry === 'create') return sent ? `Go to ${name}` : 'Invite people later';
-  return sent ? 'Go to the Homeroom app' : 'Invite people later';
+  return sent ? 'Start the tour' : 'Invite people later';
 }
 
-type CommunityMember = { username?: string; display_name?: string | null; source?: string };
-type Community = { member_count?: number; members?: CommunityMember[] } | null;
+type Community = { member_count?: number; members?: (Person & { source?: string })[] } | null;
+
+const COMMUNITY_POLL_MS = 10000;
 
 /**
- * The made screen's line once the link is out: who has joined (joinedLine),
- * or, before anyone has, how it went out, "✓ Link shared." or "✓ Link
- * copied." Never "Invite sent": handing the link to the share sheet is not
- * a message known to have gone (#4196).
+ * The project's community: read once (`on`), then again every ten seconds
+ * while `polling` (an invite is out), so a join takes a seat.
  */
-export function sentLines(joined: string | null, how: SentHow = 'shared'): string[] {
-  return [joined || (how === 'copied' ? '✓ Link copied.' : '✓ Link shared.')];
-}
-
-/**
- * Who has joined since the invite went out, from GET /api/apps/:slug/community
- * (`members` is the newest few, the maker first as 'creator'; `member_count`
- * is everyone): "✓ Sam joined.", "✓ Sam and Alex joined.", "✓ 3 people
- * joined.", or null while nobody has.
- */
-export function joinedLine(community: Community): string | null {
-  const members = Array.isArray(community?.members) ? community!.members : [];
-  const others = members.filter((m) => m && m.source !== 'creator' && (m.display_name || m.username));
-  const counted = Number.isInteger(community?.member_count)
-    ? Number(community!.member_count) - (members.length > others.length ? 1 : 0) : 0;
-  const count = Math.max(others.length, counted);
-  if (count <= 0) return null;
-  const named = (m: CommunityMember) => m.display_name || m.username;
-  if (count === 1 && others.length === 1) return `✓ ${named(others[0])} joined.`;
-  if (count === 2 && others.length === 2) return `✓ ${named(others[0])} and ${named(others[1])} joined.`;
-  return `✓ ${count} people joined.`;
-}
-
-const JOINED_POLL_MS = 10000;
-
-/** The project's community, read again while an invite is out, so a join shows. */
-function useCommunity(slug: string, on: boolean): Community {
+function useCommunity(slug: string, polling: boolean): Community {
   const [community, setCommunity] = useState<Community>(null);
   useEffect(() => {
-    if (!on) return undefined;
     let live = true;
     const read = () => fetch(`/api/apps/${encodeURIComponent(slug)}/community`, { credentials: 'same-origin' })
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => { if (live && data) setCommunity(data); })
       .catch(() => {});
     read();
-    const t = window.setInterval(read, JOINED_POLL_MS);
+    const t = polling ? window.setInterval(read, COMMUNITY_POLL_MS) : 0;
     return () => { live = false; window.clearInterval(t); };
-  }, [slug, on]);
+  }, [slug, polling]);
   return community;
 }
+
+/** The people row's faces: the community's members (its maker first), else just you. */
+export function peopleOf(community: Community, me: string): Person[] {
+  const members = Array.isArray(community?.members) ? community!.members.filter((m) => m && (m.username || m.display_name)) : [];
+  return members.length ? members : [{ username: me || 'you' }];
+}
+
+/** A quiet button: white, under or beside the blue one. */
+const SECONDARY = 'flex h-11 w-full items-center justify-center rounded-full bg-white text-[16px] font-semibold text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800';
 
 /** The made screen's root, full screen or under the platform header as make.tsx MAKE_ROOT is. */
 export const MADE_ROOT = 'fixed inset-0 z-[9000] flex flex-col overflow-y-auto text-zinc-900 dark:text-zinc-100';
@@ -713,9 +729,9 @@ export const MADE_ROOT_UNDER_HEADER = 'platform-under-header fixed inset-x-0 bot
 export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-session', onSetSecrets, underHeader = false }: {
   made: Made;
   me: string;
-  /** "Invite people later" / "Go to …" (continueLabel): `skipped` when nothing went out. */
+  /** "Invite people later" / "Start the tour" / "Go to …" (continueLabel): `skipped` when nothing went out. */
   onContinue: (skipped: boolean) => void;
-  /** Go to chat, on the plan's card: the chat with Homeroom bot, where the plan is answered. */
+  /** Go to chat, on the plan's card (from Create only): the chat with Homeroom bot, where the plan is answered. */
   onOpenChat: (conversationId: number | null) => void;
   entry?: MakeEntry;
   /** Set secrets, on a setup that waits on them: the project's secrets dialog. */
@@ -731,6 +747,7 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
   const sent = sentHow !== null;
   const [retrying, setRetrying] = useState(false);
   const imported = !!made.imported;
+  const fromCreate = entry === 'create';
   // Whether a first version has been read as on its way: once it has, a read
   // without one means it is live (or came to something else), and the
   // project is no longer "being made" (makerLine).
@@ -767,7 +784,6 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
   }, [made.slug, retrying]);
 
   const community = useCommunity(made.slug, sent);
-  const joined = joinedLine(community);
   const plan = waitingPlan(fv);
   // A setup that failed or waits on secrets (stalledOf).
   const stalled = stalledOf(appStatus);
@@ -783,12 +799,17 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
   // is something to be pinged about (features/dialogs/ping-ask.ts: it shows
   // nothing on the web, or once the phone's answer is decided).
   useEffect(() => { if (botBuilds) askForPingWhileBotBuilds(); }, [botBuilds]);
-  const note = buildNote(botBuilds, !!plan, stalled, imported);
   const sketch = useSketch(made.slug);
   // An import is never sketched: its plain card, not the sketch's frame
   // while the (absent) sketch is read.
   const card = !imported && showsCard(sketch.state);
   const line = madeLine(fv, botBuilds, !making, stalled, imported);
+  // The thumbnail says only what the build line does not: a quiet note when
+  // the bot builds nothing, or what a stopped setup or an import needs. The
+  // plain card says the build's words and one line about what happens next.
+  const note = card
+    ? (stalled || imported ? buildNote(botBuilds, !!plan, stalled, imported) : botBuilds ? null : NO_BOT_NOTE)
+    : buildNote(botBuilds, !!plan, stalled, imported);
   const plainLine = buildLine(fv, appStatus, botBuilds, imported);
   // Something is under way: the project being set up, or the bot's build
   // (not while its plan waits on them, nor on a setup that stopped: then
@@ -805,59 +826,74 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
       style={{ background: 'var(--home-wallpaper, #f4f2e4)' }}
     >
       {underHeader ? null : (
-        <div className="flex h-[52px] shrink-0 items-center justify-center pt-[env(safe-area-inset-top)]">
+        // The logo bar: the whole mark below the status bar's inset, at least
+        // 32px under it (the make screen's bar).
+        <div data-first-session-made-top="" className="flex h-[max(52px,calc(env(safe-area-inset-top)+32px))] shrink-0 items-center justify-center pt-[env(safe-area-inset-top)]">
           <Wordmark className="h-6 w-auto text-[color:var(--brand-ink)]" />
         </div>
       )}
-      <div className="mx-auto flex w-full max-w-sm grow flex-col px-4 pb-[max(34px,env(safe-area-inset-bottom))]">
-        {card ? (
-          <SketchCard made={made} sketch={sketch} line={line} note={note} />
-        ) : (
-          <div className="mt-4 flex flex-col items-center rounded-[20px] bg-white px-6 py-7 text-center shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
-            <span className="app-icon-tile flex h-20 w-20 items-center justify-center rounded-[22px] text-5xl" aria-hidden="true">{tile}</span>
-            <h1 id="first-session-made-title" className="mt-3 text-[22px] font-extrabold leading-tight">{made.name}</h1>
-            {made.description ? <p className="mt-1 text-[15px] text-zinc-500 dark:text-zinc-400">{made.description}</p> : null}
-            <div className="mt-4 flex items-center gap-2 text-[14px] text-zinc-600 dark:text-zinc-300">
-              {busy ? <span className="status-dot creating" aria-hidden="true" /> : null}
-              <span data-first-session-build="">{plainLine}</span>
-            </div>
-            <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400">{note}</p>
+      <div className="mx-auto flex w-full max-w-sm grow flex-col px-6 pb-[max(36px,env(safe-area-inset-bottom))]">
+        {/* The community and its app, one block, centred between the logo bar
+            and the line over the buttons (canvas C3-started, C5-shared). */}
+        <div data-first-session-made-body="" className="flex grow flex-col justify-center gap-4 py-4">
+          <div className="flex flex-col items-center gap-2.5 text-center">
+            <PeopleRow people={peopleOf(community, me)} />
+            <h1 id="first-session-made-title" className="text-[15px] font-normal leading-5 text-zinc-600 dark:text-zinc-400">{COMMUNITY_LABEL}</h1>
           </div>
-        )}
-        {/* Under the project, never above it: the sketch stays where it is when the plan lands. */}
-        {stalled ? (
-          <SetupStoppedCard stalled={stalled} busy={retrying} onRetry={() => { void retry(); }} onSetSecrets={() => onSetSecrets?.()} />
-        ) : null}
-        {plan && !stalled ? <PlanWaitsCard name={made.name} onOpenChat={() => onOpenChat(plan.conversationId ?? made.conversationId)} /> : null}
-        <div className="mt-6">
-          <p className="text-[17px] font-semibold">{`Invite people to ${made.name}`}</p>
-          <p className="mt-0.5 text-[14px] leading-snug text-zinc-500 dark:text-zinc-400">They can follow along and chat with you while it's being built.</p>
-          {sent ? sentLines(joined, sentHow).map((line) => (
-            <p key={line} data-first-session-sent={joined ? 'joined' : ''} className="mt-2 text-[14px] font-semibold text-emerald-700 dark:text-emerald-400">
-              {line}
-            </p>
-          )) : null}
+          {card ? (
+            <SketchCard made={made} sketch={sketch} line={line} note={note} />
+          ) : (
+            <div className="flex flex-col items-center rounded-[20px] bg-white px-6 py-7 text-center shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
+              <span className="app-icon-tile flex h-20 w-20 items-center justify-center rounded-[22px] text-5xl" aria-hidden="true">{tile}</span>
+              <p className="mt-3 text-[22px] font-extrabold leading-tight">{made.name}</p>
+              {made.description ? <p className="mt-1 text-[15px] text-zinc-500 dark:text-zinc-400">{made.description}</p> : null}
+              <div className="mt-4 flex items-center gap-2 text-[14px] text-zinc-600 dark:text-zinc-300">
+                {busy ? <span className="status-dot creating" aria-hidden="true" /> : null}
+                <span data-first-session-build="">{plainLine}</span>
+              </div>
+              <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400">{note}</p>
+            </div>
+          )}
+          {/* Under the project, never above it: the thumbnail stays where it is. */}
+          {stalled ? (
+            <SetupStoppedCard stalled={stalled} busy={retrying} onRetry={() => { void retry(); }} onSetSecrets={() => onSetSecrets?.()} />
+          ) : null}
+          {/* The first session asks for no answer yet: the plan waits until the
+              tour ends. From Create there is no tour, so its card is the way
+              to the chat where the plan is answered. */}
+          {plan && !stalled && fromCreate ? <PlanWaitsCard name={made.name} onOpenChat={() => onOpenChat(plan.conversationId ?? made.conversationId)} /> : null}
         </div>
-        <div className="grow" />
-        <div className="mt-6 flex flex-col gap-2.5">
-          <Button type="button" onClick={() => setInviting(true)} layout="full" variant="pillAccent" size="pillLg" ink="solidLate" className="flex items-center justify-center">
-            Share invite
-          </Button>
-          <button
-            type="button"
-            data-first-session-continue=""
-            onClick={() => onContinue(!sent)}
-            className="flex h-11 w-full items-center justify-center rounded-full bg-white text-[16px] font-semibold text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
-          >
-            {continueLabel(entry, sent, made.name)}
-          </button>
+        <p role="status" data-first-session-hint={sentHow || ''} className="text-center text-[15px] leading-5 text-zinc-500 dark:text-zinc-400">
+          {sentHow ? sharedLine(sentHow, !fromCreate) : INVITE_HINT}
+        </p>
+        <div className="mt-[18px] flex flex-col gap-2.5">
+          {/* The buttons keep their places once the link is out: Share again,
+              grey, where Share invite was, and the way on, blue, where
+              Invite people later was. */}
+          {sent ? (
+            <button type="button" data-first-session-share-again="" onClick={() => setInviting(true)} className={SECONDARY}>
+              Share again
+            </button>
+          ) : (
+            <Button type="button" onClick={() => setInviting(true)} layout="full" variant="pillAccent" size="pillLg" ink="solidLate" className="flex items-center justify-center">
+              Share invite
+            </Button>
+          )}
+          {sent ? (
+            <Button type="button" data-first-session-continue="" onClick={() => onContinue(false)} layout="full" variant="pillAccent" size="pillLg" ink="solidLate" className="flex items-center justify-center">
+              {continueLabel(entry, true, made.name)}
+            </Button>
+          ) : (
+            <button type="button" data-first-session-continue="" onClick={() => onContinue(true)} className={SECONDARY}>
+              {continueLabel(entry, false, made.name)}
+            </button>
+          )}
         </div>
       </div>
       {inviting ? (
         <InviteSheet
           made={sketch.card ? { ...made, emoji: sketch.card.emoji } : made}
           me={me}
-          making={making}
           onClose={() => setInviting(false)}
           onSent={(how) => setSentHow(how)}
         />

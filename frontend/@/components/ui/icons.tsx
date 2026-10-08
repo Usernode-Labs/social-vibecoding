@@ -217,6 +217,16 @@ export const UserIcon = stroked(
   'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z',
 );
 
+/**
+ * A soft person silhouette, solid: a head and shoulders that run off the
+ * bottom edge, so a round frame crops them. The waiting seats in the
+ * community's people row (first-session/people-row.tsx) draw it in a tint.
+ */
+export const PersonSilhouetteIcon = filled(
+  'PersonSilhouetteIcon',
+  'M12 4.4a4.6 4.6 0 100 9.2 4.6 4.6 0 100-9.2zM2.5 24c.9-5.2 4.6-8.4 9.5-8.4s8.6 3.2 9.5 8.4z',
+);
+
 export const WalletIcon = stroked(
   'WalletIcon',
   'M21 12a2.25 2.25 0 00-2.25-2.25H15a3 3 0 11-6 0H5.25A2.25 2.25 0 003 12m18 0v6a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 18v-6m18 0V9M3 12V9m18 0a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 9m18 0V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v3',

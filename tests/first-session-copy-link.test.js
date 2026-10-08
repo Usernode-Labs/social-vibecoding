@@ -164,8 +164,8 @@ test('#4238: the note goes in the group chat only when shared, and only a note t
   const { notePostable } = loadTsx(MADE);
   assert.equal(notePostable('shared', 'Read with us', null), true);
   assert.equal(notePostable('copied', 'Read with us', null), false, 'a copy may never be pasted');
-  assert.equal(notePostable('shared', 'Come try it with me!', null), false, 'the untouched default');
-  assert.equal(notePostable('shared', '  Come try it with me!  ', null), false);
+  assert.equal(notePostable('shared', 'I\'m making this for us. Join and tell me what it needs.', null), false, 'the untouched default');
+  assert.equal(notePostable('shared', '  I\'m making this for us. Join and tell me what it needs.  ', null), false);
   assert.equal(notePostable('shared', 'Pick a book for June', 'Pick a book for June'), false, "the example's preset note");
   assert.equal(notePostable('shared', 'Pick one for July', 'Pick a book for June'), true);
   assert.equal(notePostable('shared', '   ', null), false);
