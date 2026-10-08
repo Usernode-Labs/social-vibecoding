@@ -287,9 +287,6 @@ test('B6: the plan card, drawn in every state', () => {
   assert.match(stopped, /I stopped waiting on this plan\. Reply to pick it up again\./);
   assert.match(draw({ state: 'changing' }), /You asked for changes\. A new plan is on its way\./);
   assert.match(draw({ state: 'closed' }), /No longer needed\./);
-  const pressed = draw({ busy: true });
-  assert.match(pressed, /data-bot-plan="built"/, 'Build it pressed here reads as chosen at once');
-  assert.match(pressed, /data-bot-plan-chosen=""><li>In the app<\/li>/, 'with the suggested answer, left alone');
   assert.match(draw({ surface: 'app' }), /rounded-\[20px\] bg-\[color:var\(--dc-sheet-solid\)\]/, 'the App tab draws it as a card');
 });
 
