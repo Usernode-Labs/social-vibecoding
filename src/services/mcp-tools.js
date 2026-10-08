@@ -4878,7 +4878,13 @@ function registerTools(server, ctx) {
         .describe('The name of the fork you pushed to, if you forked under a name other than the app repository’s. The owner is always the user’s linked GitHub account and is never taken from here.'),
       patch: z.string().optional()
         .describe('The change as a patch, the default way to submit new work — the output of `git format-patch <baseSha>..HEAD --stdout`, or a plain `git diff`. Homeroom applies it at the task’s recorded base commit, commits it in the app’s own repository and opens the pull request, so you need no GitHub write access at all. Requires taskId. With an UPDATE task’s taskId (prepare_work with proposalId) the base is that proposal’s current commit instead, and the patch advances THAT proposal exactly as a branch update does; it is refused with `branch_moved` when the proposal is no longer at the task’s base commit (or at `expectedHeadSha`, when you pass the commit you rebased onto). After an update lands, the task’s base is its new head, so the next patch is made from there. Roughly 250 KB max; push a branch for anything larger, or when you already push to your fork. Patch or branch is your decision: never ask the user to choose.'),
-      patchUploadId: z.number().int().positive().optional()
+      // #4345: a client whose tool list predates #4264 has no type for this
+      // field and sends the uploadId as text. Read a digits-only string as the
+      // number; anything else reaches the integer check untouched and is refused.
+      patchUploadId: z.preprocess(
+        (v) => (typeof v === 'string' && /^[1-9]\d*$/.test(v.trim()) ? Number(v.trim()) : v),
+        z.number().int().positive(),
+      ).optional()
         .describe('Instead of `patch`: the `uploadId` printed by the upload command in your work order, which sends `git format-patch` output straight to Homeroom so a large patch is never retyped into this call (#4264). Requires a new-work taskId: an update’s patch is sent inline. Homeroom applies the uploaded bytes exactly as it applies `patch`: same base commit, same pull request. Uploads may be up to 1 MB. Refused if that upload was made for another task, or was replaced by a newer upload (submit the newest uploadId). The upload command needs a sandbox that can reach Homeroom; if yours cannot, send `patch` inline.'),
       source: z.enum(['work_order', 'assistant']).optional()
         .describe('Set to "work_order" when you are the coding agent submitting your own finished work, "assistant" when a human relayed it to you. Advisory only.'),

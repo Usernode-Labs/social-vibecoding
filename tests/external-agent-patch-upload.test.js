@@ -829,14 +829,15 @@ function connector() {
   const tools = require('../src/services/mcp-tools');
   const { READ_SCOPE, WRITE_SCOPE } = require('../src/services/mcp-connect-constants');
   const handlers = new Map();
+  const specs = new Map();
   const realFetch = globalThis.fetch;
   globalThis.fetch = async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ app: { id: 7, slug: 'recipe-box', name: 'Recipe Box', repo_url: 'https://github.com/usernode-bot/recipe-box' } }) });
-  tools.registerTools({ registerTool(name, _spec, handler) { handlers.set(name, handler); } }, {
+  tools.registerTools({ registerTool(name, spec, handler) { specs.set(name, spec); handlers.set(name, handler); } }, {
     accessToken: 'svmcp_test', scopes: [READ_SCOPE, WRITE_SCOPE], user: { id: 3, username: 'ada' },
     clientName: 'Claude', clientId: 'c1', origin: 'https://homeroom.example',
     baseUrl: 'http://platform.internal', pool: null, config: {}, tokenId: null, grantId: null,
   });
-  return { handlers, restore: () => { globalThis.fetch = realFetch; } };
+  return { handlers, specs, restore: () => { globalThis.fetch = realFetch; } };
 }
 
 test('submit_work takes patchUploadId with a taskId, passes it to the service, and refuses it alone or beside a patch', async () => {
@@ -873,6 +874,89 @@ test('submit_work takes patchUploadId with a taskId, passes it to the service, a
   }
 });
 
+test('submit_work reads a digits-only patchUploadId string as the number, and other ids stay strict', () => {
+  const c = connector();
+  try {
+    const spec = c.specs.get('submit_work');
+    const schema = spec.inputSchema.patchUploadId;
+    // Accepted: the number itself, and digits-only text, trimmed, read as it.
+    for (const [sent, expected] of [[1, 1], ['1', 1], [' 12 ', 12], ['101', 101]]) {
+      const r = schema.safeParse(sent);
+      assert.equal(r.success, true, `${JSON.stringify(sent)} must parse`);
+      assert.equal(typeof r.data, 'number', `${JSON.stringify(sent)} must parse to a number`);
+      assert.equal(r.data, expected);
+    }
+    const omitted = schema.safeParse(undefined);
+    assert.equal(omitted.success, true);
+    assert.equal(omitted.data, undefined);
+    // Refused: not a plain positive whole number written as text.
+    for (const bad of ['abc', '0', '-1', '1.5', '01', '+1', '1e2', '', true, null, 0, -1, 1.5]) {
+      assert.equal(schema.safeParse(bad).success, false, `${JSON.stringify(bad)} must be refused`);
+    }
+    // #4345 relaxes only patchUploadId: every other id still demands a number.
+    for (const field of ['taskId', 'prNumber']) {
+      assert.equal(spec.inputSchema[field].safeParse('31').success, false, `${field} stays a strict number`);
+    }
+  } finally {
+    c.restore();
+  }
+});
+
+test('over MCP, submit_work still advertises patchUploadId as an integer and reads the string form', async () => {
+  const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
+  const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
+  const { InMemoryTransport } = require('@modelcontextprotocol/sdk/inMemory.js');
+  const tools = require('../src/services/mcp-tools');
+  const { READ_SCOPE, WRITE_SCOPE } = require('../src/services/mcp-connect-constants');
+  const realSubmit = svc.submitWork;
+  let reached = null;
+  svc.submitWork = async (_deps, params) => {
+    reached = params;
+    return { ok: true, proposalId: 555, prNumber: 88, prUrl: null, appSlug: 'recipe-box', externalAgent: 'claude-code', submittedVia: 'patch' };
+  };
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ app: { id: 7, slug: 'recipe-box', name: 'Recipe Box', repo_url: 'https://github.com/usernode-bot/recipe-box' } }) });
+  const server = new McpServer({ name: 'homeroom', version: '1.0.0' });
+  tools.registerTools(server, {
+    accessToken: 'svmcp_test', scopes: [READ_SCOPE, WRITE_SCOPE], user: { id: 3, username: 'ada' },
+    clientName: 'Claude', clientId: 'c1', origin: 'https://homeroom.example',
+    baseUrl: 'http://platform.internal', pool: null, config: {}, tokenId: null, grantId: null,
+  });
+  const client = new Client({ name: 'agent', version: '1.0.0' });
+  const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  try {
+    // (1) The advertised schema is unchanged: the same integer shape as prNumber.
+    const { tools: listed } = await client.listTools();
+    const advertised = listed.find((t) => t.name === 'submit_work');
+    const field = advertised.inputSchema.properties.patchUploadId;
+    const prField = advertised.inputSchema.properties.prNumber;
+    assert.equal(field.type, 'integer', JSON.stringify(field));
+    assert.ok(field.exclusiveMinimum === 0 || field.minimum === 1, JSON.stringify(field));
+    assert.ok(!('anyOf' in field) && field.type !== 'string', JSON.stringify(field));
+    const { description: _d, ...fieldCore } = field;
+    const { description: _pd, ...prCore } = prField;
+    assert.deepEqual(fieldCore, prCore, 'patchUploadId advertises the same shape as prNumber');
+    // (2) A digits-only string from an older client is read as the number.
+    const ok = await client.callTool({ name: 'submit_work', arguments: { taskId: 31, patchUploadId: '1' } });
+    assert.ok(!ok.isError, JSON.stringify(ok));
+    assert.equal(reached.patchUploadId, 1);
+    assert.equal(typeof reached.patchUploadId, 'number');
+    assert.equal(reached.taskId, 31);
+    // (3) Anything else is refused before the handler runs.
+    reached = null;
+    const refused = await client.callTool({ name: 'submit_work', arguments: { taskId: 31, patchUploadId: '01' } });
+    assert.equal(refused.isError, true);
+    assert.match(refused.content[0].text, /patchUploadId/);
+    assert.equal(reached, null, 'the refusal never reached the service');
+  } finally {
+    globalThis.fetch = realFetch;
+    svc.submitWork = realSubmit;
+    await Promise.allSettled([server.close(), client.close()]);
+  }
+});
+
 test('prepare_work asks the service for the upload command, and submit_work documents the field', async () => {
   const realPrepare = svc.prepareWork;
   const gh = require('../src/services/github');
@@ -901,7 +985,11 @@ test('prepare_work asks the service for the upload command, and submit_work docu
     githubLink.isEnabled = saved.link;
   }
   const block = MCP_SRC.slice(MCP_SRC.indexOf("server.registerTool('submit_work'"));
-  assert.match(block, /patchUploadId: z\.number\(\)\.int\(\)\.positive\(\)\.optional\(\)/);
+  // #4345: the advertised field stays the strict integer; only a digits-only
+  // string is preprocessed into the number before the integer check runs.
+  assert.match(block, /patchUploadId: z\.preprocess\(/);
+  assert.match(block, /\(v\) => \(typeof v === 'string' && \/\^\[1-9\]\\d\*\$\/\.test\(v\.trim\(\)\) \? Number\(v\.trim\(\)\) : v\),/);
+  assert.match(block, /z\.number\(\)\.int\(\)\.positive\(\),\n {6}\)\.optional\(\)/);
   assert.match(block, /Uploads may be up to 1 MB/);
   assert.match(block, /if yours cannot, send `patch` inline/);
 });
