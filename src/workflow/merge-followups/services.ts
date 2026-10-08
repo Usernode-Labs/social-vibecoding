@@ -11,9 +11,16 @@ import { WORK } from './machine.ts';
 
 interface Deps { config: any; pool: Pool; shotsPollMs?: number }
 
-// The states of a before/after shots run working inside the proposal's
-// worker (from provisioning to review; a planned run has not started).
-const SHOTS_WORKING = ['provisioning', 'exploring', 'replaying', 'reviewing'];
+// The states of a before/after shots run that holds, or will hold, the
+// proposal's worker: every state but the terminal ones. Planned too: a run
+// takes its hold when it starts, and stays planned while it waits (up to two
+// minutes) for the session to go idle before it provisions. A planned run
+// that has not started yet is waited for as well, rather than left to start
+// a new worker after the retirement.
+const shotsWorking = (): string[] => {
+  const { STATES, TERMINAL_STATES } = legacy('services/shots-state');
+  return STATES.filter((state: string) => !TERMINAL_STATES.has(state));
+};
 
 export function mergeFollowupsServices({ config, pool, shotsPollMs = 15000 }: Deps): Record<string, WorkHandler> {
   const github = () => legacy('services/github');
@@ -104,7 +111,7 @@ export function mergeFollowupsServices({ config, pool, shotsPollMs = 15000 }: De
         let waited = false;
         while (Date.now() < until) {
           const { rows } = await pool.query(
-            'SELECT 1 FROM shot_runs WHERE session_id = $1 AND state = ANY($2::text[]) LIMIT 1', [input.sessionId, SHOTS_WORKING]);
+            'SELECT 1 FROM shot_runs WHERE session_id = $1 AND state = ANY($2::text[]) LIMIT 1', [input.sessionId, shotsWorking()]);
           if (!rows.length) break;
           waited = true;
           await delay(shotsPollMs, undefined, { signal });
@@ -121,18 +128,22 @@ export function mergeFollowupsServices({ config, pool, shotsPollMs = 15000 }: De
       backoffMs: backoff,
       async run({ input }): Promise<Json> {
         const gh = github();
-        if (!gh.isEnabled()) return { found: [] };
+        if (!gh.isEnabled()) return { found: [], ids: [] };
         // Each change goes with the head that was found merged, which the
         // Included guard compares under the change's lock: an operation on
         // the change in some other process (an upload, a sync with main) that
         // moved it since is caught there, where no process's memory is read.
         const changes = legacy('services/included-changes');
         const { rows } = await pool.query(changes.CANDIDATES_SQL, [input.appId, input.sessionId]);
-        if (!rows.length) return { found: [] };
+        if (!rows.length) return { found: [], ids: [] };
         const listed = await gh.listPullRequestCommitShas(input.owner, input.repo, input.prNumber);
         const head = legacy('services/pr-vote-revision').reviewedHeadForSession;
-        return { found: changes.containedIn(rows, listed?.shas)
-          .map((c: any) => ({ id: Number(c.id), head: String(head(c)).toLowerCase() })) };
+        const found = changes.containedIn(rows, listed?.shas)
+          .map((c: any) => ({ id: Number(c.id), head: String(head(c)).toLowerCase() }));
+        // `ids` too, for one release: a web Pod still on the previous version
+        // reads only `ids`, and would otherwise settle this find as finding
+        // nothing (during a rollout, or after a rollback).
+        return { found, ids: found.map((c: { id: number }) => c.id) };
       },
     },
 

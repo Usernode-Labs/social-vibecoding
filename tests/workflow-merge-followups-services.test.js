@@ -86,7 +86,8 @@ test('included.find names each change with the head found merged, reading no pro
   gh.listPullRequestCommitShas = async () => ({ shas: [A, B], complete: true });
   try {
     const out = await handlers[WORK.find].run({ input: { ...base }, key: 'included', attempt: 1, resumeFrom: null, checkpoint: async () => {} });
-    assert.deepEqual(out, { found: [{ id: 11, head: A }, { id: 12, head: B }] });
+    assert.deepEqual(out.found, [{ id: 11, head: A }, { id: 12, head: B }]);
+    assert.deepEqual(out.ids, [11, 12], 'what a web Pod on the previous release reads');
   } finally {
     pool.rows = [];
   }
@@ -103,7 +104,9 @@ test('worker retirement waits for a shots run another process is running in the 
   retired.length = 0;
   assert.deepEqual(await retire.run(ctx(new AbortController().signal)), { deferred: false, waitedForShots: true });
   assert.equal(queries.length, 3, 'read until the run stopped working');
-  assert.deepEqual(queries[0], [31, ['provisioning', 'exploring', 'replaying', 'reviewing']]);
+  // Planned included: a run holds the worker from its start, while it waits
+  // for the session to go idle, before it provisions.
+  assert.deepEqual(queries[0], [31, ['planned', 'provisioning', 'exploring', 'replaying', 'reviewing']]);
   assert.deepEqual(retired, [31], 'then retired, once');
   // Stopping the process mid-wait reports nothing: the next claim waits again.
   working = Infinity;
