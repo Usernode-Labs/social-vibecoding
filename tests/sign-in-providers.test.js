@@ -480,7 +480,7 @@ test('the sheet: Apple and Google first when offered, then email; the trip carri
   assert.equal(sheet.resumeError('error-something_new'), 'That did not work. Try again, or use your email.');
   const src = read('frontend/src/features/auth/sign-in-sheet.tsx');
   // Apple and Google first, unless the invite's Join starts with the phone
-  // (tests/phone-invite-join.test.js), when they are among the other ways.
+  // (tests/phone-invite-join.test.js), when they sit under it past an "or".
   assert.match(src, /const otherWays: Step = providers\.length \? 'choose' : 'email';\s+const firstStep: Step = phone \? 'phone' : otherWays;/);
   assert.match(src, /\{`Continue with \$\{PROVIDER_LABEL\[provider\]\}`\}/);
   assert.match(src, /Continue with email/);
