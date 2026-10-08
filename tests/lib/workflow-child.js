@@ -81,6 +81,9 @@ const config = { ...spec.config, databaseUrl: spec.databaseUrl };
 // The request pool, made with the config first, as server.js does at boot.
 require('../../src/db/pool').getPool(config);
 process.on('unhandledRejection', (err) => { console.error('unhandled rejection:', err?.message || err); });
+// What every process that runs the machines sets up, as server.js does
+// (src/workflow/setup.ts), and nothing only the web server has.
+const setup = require('../../src/workflow/setup.ts');
 
 process.on('message', async (m) => {
   if (!m?.stop) return;
@@ -89,7 +92,7 @@ process.on('message', async (m) => {
   process.exit(0);
 });
 
-platform.startWorkflow(config, { loops: true }).then(
+setup.setupWorkflowProcess(config).then(() => platform.startWorkflow(config, { loops: true })).then(
   () => process.send({ ready: true }),
   (err) => { console.error(err); process.exit(1); },
 );

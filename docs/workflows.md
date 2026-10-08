@@ -372,14 +372,21 @@ always `unknown_event`.
    What browsers hear is a push. The notifiers still declared are post-commit kicks
    into code not migrated yet; each is on the list in
    `tests/baselines/workflow-process-state.json` until its step replaces it.
-4. **States are phases a person would recognise.** I/O progress belongs in the work
+4. **A machine relies only on what `src/workflow/setup.ts` sets up.** That is the
+   configuration and the clients of outside services every process running the
+   machines makes at boot (activity mail, the account-deletion guard on workers, the
+   phone push sender, GitHub, the model); `server.js` runs it, and so does the
+   two-process tests' child. Nothing only the web server has (its sockets, the
+   Workshop's board-change listener, the leader's sweepers and loops) may be needed:
+   a machine relying on one fails its two-process tests.
+5. **States are phases a person would recognise.** I/O progress belongs in the work
    item's checkpoint, not in more states.
-5. **Rejection reasons are stable snake_case codes.** They appear in the admin view and in
+6. **Rejection reasons are stable snake_case codes.** They appear in the admin view and in
    API answers.
-6. **Terminal states still accept work results,** so follow-ups can report after the
+7. **Terminal states still accept work results,** so follow-ups can report after the
    instance has finished.
-7. **One instance per transaction.** Reach other instances with messages.
-8. **A machine replaces its old paths.** Once its flag is the default, the old code is
+8. **One instance per transaction.** Reach other instances with messages.
+9. **A machine replaces its old paths.** Once its flag is the default, the old code is
    deleted.
 
 **Wiring it in.** `src/workflow/platform.ts` owns the process's runtime: its own pool,

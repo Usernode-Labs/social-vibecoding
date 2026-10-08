@@ -2,9 +2,12 @@
 
 // The outside services, faked for the workflow side of a two-process test
 // (tests/lib/workflow-child.js): GitHub's API, the container runtime (Docker,
-// Kubernetes) and the model. Each module keeps its pure helpers and its own
-// in-process caches real; what would reach the outside is replaced. A call a
-// test did not expect fails like an unreachable service, and is recorded as
+// Kubernetes), the model, and the phone push provider (Firebase). Each
+// module keeps its pure helpers, its own in-process caches and its `init`
+// real (the child boots through src/workflow/setup.ts as server.js does);
+// what would reach the outside is replaced. The push provider is faked at
+// its library, so the platform's own push code runs. A call a test did not
+// expect fails like an unreachable service, and is recorded as
 // `fake.unexpected` so the test can see what its flow touched.
 //
 // What GitHub would remember (an issue closed, a comment created) is kept in
@@ -35,7 +38,7 @@ function outside(fakes, rel, { keep = [], overrides = {} }) {
 module.exports = function install(fakes) {
   const comments = async (number) => (await fakes.read('github.comment')).filter((c) => c.number === number);
   outside(fakes, 'services/github', {
-    keep: ['parseGithubUrl', 'safeMention', 'noteIssuesClosed', 'unsuppressIssues', 'invalidateIssuesCache',
+    keep: ['init', 'parseGithubUrl', 'safeMention', 'noteIssuesClosed', 'unsuppressIssues', 'invalidateIssuesCache',
       'noteIssueCreated', 'describeGithubError', 'credentialClass', 'clipIssueComments'],
     overrides: {
       isEnabled: () => true,
@@ -83,5 +86,20 @@ module.exports = function install(fakes) {
     },
   });
   outside(fakes, 'services/kubernetes', { keep: [] });
-  outside(fakes, 'services/llm', { overrides: { isEnabled: () => false } });
+  outside(fakes, 'services/llm', { keep: ['init'], overrides: { isEnabled: () => false } });
+  // Firebase: what a push to a phone carries, recorded (`push.send`).
+  const firebase = (name, exports) => fakes.stub(require.resolve(name, { paths: [SRC] }), exports);
+  firebase('firebase-admin/app', { initializeApp: (o, name) => ({ name }), cert: (account) => account, deleteApp: async () => {} });
+  firebase('firebase-admin/messaging', { getMessaging: () => ({
+    async send(message) {
+      await fakes.record('push.send', { token: message.token, badge: message.apns?.payload?.aps?.badge ?? null });
+      return 'projects/test/messages/1';
+    },
+  }) });
+  // Not an outside service, a probe: whether the Workshop hears a board
+  // change in this process (its listener is registered by server.js only).
+  const themes = require(path.join(SRC, 'services/workshop-themes'));
+  fakes.stub(path.join(SRC, 'services/workshop-themes'), {
+    ...themes, noteBoardChange: (pool, info) => { fakes.record('workshop.boardChange', info).catch(() => {}); return true; },
+  });
 };

@@ -61,7 +61,11 @@ test('workflow machines in a process of their own, and through its crash', { tim
 
   // The flags, as config.js reads them; the child adds the database URL.
   const flags = { dataEncryptionKey: DATA_KEY, wfGovernanceEnabled: true, wfMergeFollowupsEnabled: true,
-    wfPoolMax: 4, wfSlots: 2, wfOwnershipMode: 'raise' };
+    wfPoolMax: 4, wfSlots: 2, wfOwnershipMode: 'raise',
+    // Phone push on, to a fake Firebase (the fixture fakes its library).
+    mobilePushEnabled: true, mobilePushEnvironment: 'production', firebaseProjectId: 'social-test',
+    firebaseServiceAccountJsonB64: Buffer.from(JSON.stringify({
+      project_id: 'social-test', client_email: 'push@social-test.iam.example', private_key: 'fake' })).toString('base64') };
   const startWorkflow = async () => {
     workflow = procs.startWorkflowProcess({ databaseUrl, config: flags, fixture: FAKES });
     await workflow.ready;
@@ -245,6 +249,39 @@ test('workflow machines in a process of their own, and through its crash', { tim
     } finally {
       done();
     }
+  });
+
+  // ── What the workflow process's boot gives it (src/workflow/setup.ts) ─
+
+  await t.test('a merge decided in the workflow process syncs the phone badge of everyone with a bell row about it', async () => {
+    const a = await app({ selfHosted: true });
+    const s = await proposal(a);
+    const voter = await user();
+    await pool.query(`INSERT INTO notifications (user_id, app_id, session_id, kind) VALUES ($1, $2, $3, 'pr_proposed')`, [voter.id, a.id, s.id]);
+    await pool.query('ALTER TABLE mobile_push_registrations DROP CONSTRAINT IF EXISTS mobile_push_registrations_native_credential_user_fk');
+    const token = `fcm-${crypto.randomUUID()}`;
+    await pool.query(
+      `INSERT INTO mobile_push_registrations
+         (user_id, native_session_credential_reference, environment, installation_id,
+          registration_hash, registration_enc, platform, permission_status, session_expires_at)
+       VALUES ($1, $2, 'production', $3, $4, $5, 'ios', 'authorized', NOW() + INTERVAL '30 days')`,
+      [voter.id, `nsc_${String(voter.id).padStart(43, '0')}`, crypto.randomUUID(), crypto.randomBytes(32).toString('hex'),
+        require('../src/services/secrets').encrypt(token, DATA_KEY)]);
+    await platform.mergeConfirmed({ sessionId: s.id, appId: a.id, mergeSha: SHA('9'), force: false, tally: { yes: 1, required: 1, active: 1 } });
+    const sent = await procs.until(async () => (await procs.effects(pool, 'push.send')).find((e) => e.data.token === token), 'the badge push');
+    assert.equal(sent.data.badge, 0, 'the merge settled the vote request, so nothing is left unread');
+    assert.equal(sent.pid, workflow.pid, 'sent by the workflow process');
+  });
+
+  await t.test('the Workshop hears a board change decided in the workflow process', {
+    todo: 'its listener is registered by server.js only (list: notifiers | uses src/services/ws.js:noteBoardChange); it leaves when the Workshop reacts to the stream',
+  }, async () => {
+    const a = await app();
+    const issue = await closeProposal(a, 77);
+    await platform.fileProposal(issue.id, a.id);
+    await platform.voteOnProposal({ ...issue, status: 'open' }, await user(), { vote: 'up', reason: null });
+    await procs.until(async () => (await procs.effects(pool, 'workshop.boardChange')).some((e) => e.data.appId === a.id),
+      'the Workshop to hear it', 5000);
   });
 
   await t.test('the version pill reads "deploying" while the workflow process deploys a merge', {
