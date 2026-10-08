@@ -807,8 +807,8 @@ export function AppsSwitcherSheet(): ReactNode {
           {/*
               GO TO HOMEROOM, for a private member only, and only after mount
               (the store says who is signed in after hydration, so the
-              prerender has no such row). Home, and the first time its tour
-              (features/first-session goHome).
+              prerender has no such row). Home, and the first time its
+              eight-card tour (features/first-session goHome).
 
               A CARD, NOT A ROW (#4401): as a plain row among the app's own it
               was easy to miss, and it is the one door a private member has to

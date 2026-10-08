@@ -8297,7 +8297,7 @@ const App = {
   // A PRIVATE MEMBER (App.user.privateMember: an invite link let them into
   // its community before they were let in) lands inside that app with no ✕.
   // The mark menu's "Go to Homeroom" (features/app-context) takes them to
-  // Home and its four-step tour (features/first-session goHome), and from
+  // Home and its eight-card tour (features/first-session goHome), and from
   // then on an app has its ✕ like anybody's. Remembered on this device, the
   // way the tours themselves are.
   PRIVATE_HOME_PREFIX: 'usernode:private-home:',

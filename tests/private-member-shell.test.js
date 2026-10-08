@@ -2,10 +2,11 @@
 
 // A PRIVATE MEMBER in the shell (users.private_member_since): an invite link
 // lands them inside the group's app with no ✕, the mark menu's "Go to
-// Homeroom" is their way on, and its first use runs a four-step tour of a
-// Home that has Discover but no Challenges and no New project, and has the
-// waitlist card. The invite's Join that makes them asks for a name and a
-// phone first (tests/phone-invite-join.test.js). The server half is
+// Homeroom" is their way on, and its first use runs the maker's eight-card
+// tour, from a Home that has Discover but no Challenges and no New project
+// and has the waitlist card, through the community's hub and the app. The
+// invite's Join that makes them asks for a name and a phone first
+// (tests/phone-invite-join.test.js). The server half is
 // tests/private-member-postgres.test.js and
 // tests/community-invites-postgres.test.js.
 
@@ -20,42 +21,56 @@ const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const APP = read('public/js/app.js');
 
-test('the private tour: four steps on Home, Next through each, ending on the waitlist card', () => {
+test('the private tour: the maker\'s route in eight cards, ending on the waitlist card', () => {
   const { privateSteps } = loadTsx('frontend/src/features/first-session/tour-steps.ts');
   const steps = privateSteps({ slug: 'best-brunch', name: 'Best brunch spots' });
-  assert.deepEqual(steps.map((s) => s.screen), ['home', 'home', 'home', 'home']);
-  assert.deepEqual(steps.map((s) => !!s.tap), [false, false, false, false], 'nothing to press but Next');
+  assert.deepEqual(steps.map((s) => s.screen), ['home', 'home', 'hub', 'app', 'app', 'app', 'app', 'home']);
+  // The taps lead on through the product's own controls: the Communities tab,
+  // the Homeroom mark, then ✕ back to Home.
+  assert.deepEqual(steps.map((s) => !!s.tap), [false, true, false, false, true, false, true, false]);
   assert.deepEqual(steps.map((s) => s.target), [
     '.app-card[data-slug="best-brunch"]',
     '#platform-tab-workshop',
-    '#platform-tab-messages',
+    '#app-content',
+    '#app-view',
+    '#platform-mark-btn',
+    '#improve-row-feedback',
+    '#back-btn',
     '#home-waitlist-card',
   ]);
-  // The other tours' words (#4044): one short title and one short sentence,
-  // the project by its name and never "group" (the owner, 7 October 2026),
-  // but for the bot card, whose words the owner approved for #4397.
+  // The other tours' words, reused card for card (#4044): the hub and in-app
+  // cards are sharedSteps' own, so the wording cannot drift. This tour's own
+  // two cards — the first and the last — never say "group" (the owner,
+  // 7 October 2026); the shared menu card's approved copy does.
   assert.deepEqual(steps.map((s) => [s.title, s.text]), [
     ['Best brunch spots is on your Home', 'Open it any time from here.'],
     ['You can find Best brunch spots here', 'Communities lists every community you\'re in.'],
-    ['Meet Homeroom bot', 'Tell it what Best brunch spots should do next, and it builds it for the group to try. It\'s always here in Messages.'],
+    ['The Best brunch spots hub', 'The discussion and the app\'s changes are here.'],
+    ['Best brunch spots opens here', 'This is the app your community makes together.'],
+    ['Suggest an improvement', 'Every app has this menu. Tap it.'],
+    ['Suggest an improvement', 'It doesn\'t vanish into a feedback box: Homeroom bot starts building it for you, or brings it to the group, and you can follow along.'],
+    ['✕ takes you back to Home', 'Open Best brunch spots again from Home any time.'],
     ['Your own apps start here', 'Join the waitlist to get your spot.'],
   ]);
-  // One short sentence a card; the Messages card says its second ("It's always here in Messages.").
-  for (const s of steps) assert.ok(s.text.split(/[.?]\s/).length <= (s.title === 'Meet Homeroom bot' ? 2 : 1), `short: ${s.text}`);
-  // Only the bot card says who tries what it builds, "the group" (#4397).
-  assert.doesNotMatch(JSON.stringify(steps.filter((s) => s.title !== 'Meet Homeroom bot').map((s) => [s.title, s.text])), /group/i);
-  assert.doesNotMatch(steps[2].title, /group/i);
-  // Each points at its place and leads on with Next, as "Look around first" does.
-  assert.deepEqual(steps.map((s) => !!s.ringed), [true, true, true, true]);
-  assert.deepEqual(steps.map((s) => !!s.last), [false, false, false, true]);
-  // No challenges, and no ✕ to teach: the invited tour's step about it is
-  // not in this one.
-  assert.doesNotMatch(JSON.stringify(steps), /challenge|points|✕|back-btn/i);
-  // Every target is one the shell draws: the tabs are the bar's own ids, the
-  // card is the waitlist card's own section.
+  // One short sentence on this tour's own cards; the shared menu card says
+  // its two ("Every app has this menu." "Tap it.").
+  for (const [i, s] of steps.entries()) assert.ok(s.text.split(/[.?]\s/).length <= (i === 4 ? 2 : 1), `short: ${s.text}`);
+  assert.doesNotMatch(JSON.stringify([steps[0], steps[7]].map((s) => [s.title, s.text])), /group/i);
+  // The first card is pointed at, led on with Next; the menu's button and
+  // the waitlist card are ringed; the last card ends the tour.
+  assert.deepEqual(steps.map((s) => !!s.ringed), [true, false, false, false, false, true, false, true]);
+  assert.deepEqual(steps.map((s) => !!s.last), [false, false, false, false, false, false, false, true]);
+  // The menu card is drawn over the open menu; the app-whole card says where
+  // the app opens (tests/first-session.test.js pins the attribute).
+  assert.equal(steps[5].inMenu, true);
+  assert.equal(steps[3].saysWhereItOpens, true);
+  // No challenges (a private member's Home has none).
+  assert.doesNotMatch(JSON.stringify(steps), /challenge|points/i);
+  // Every target is one the shell draws: the Communities tab is the bar's
+  // own id, the card is the waitlist card's own section.
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
   assert.ok(bar.includes('id={`platform-tab-${key}`}'));
-  for (const key of ["key: 'workshop' as const", "key: 'messages' as const"]) assert.ok(bar.includes(key), key);
+  assert.ok(bar.includes("key: 'workshop' as const"));
   assert.match(read('frontend/src/features/home/waitlist-card.tsx'), /<section id="home-waitlist-card"/);
 });
 

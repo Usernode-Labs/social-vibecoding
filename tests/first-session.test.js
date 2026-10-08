@@ -1158,9 +1158,12 @@ test('the App tab\'s card says where the app opens, and carries the attribute th
     assert.equal(steps[1].screen, 'app');
     assert.equal(steps[1].title, 'Friday Film Crew opens here');
   }
-  for (const steps of [lookAroundSteps(), privateSteps(project)]) {
-    assert.ok(steps.every((s) => !s.saysWhereItOpens));
-  }
+  assert.ok(lookAroundSteps().every((s) => !s.saysWhereItOpens));
+  // The private member's tour walks the maker's route now: exactly one of
+  // its cards says where the app opens, its app-whole card.
+  const privates = privateSteps(project);
+  assert.equal(privates.filter((s) => s.saysWhereItOpens).length, 1);
+  assert.equal(privates.find((s) => s.saysWhereItOpens)?.screen, 'app');
   const src = read(`${DIR}/index.tsx`);
   assert.match(src, /role="dialog"\s+aria-labelledby="first-session-tour-title"\s+data-tour-says-where-it-opens=\{step\.saysWhereItOpens \? '' : undefined\}/);
 });

@@ -12,8 +12,11 @@
  * over (decision C); the invited one ends in Discussion. "Look around first"
  * has its own four cards on Home (decision E, #4072): where to start a
  * project later, and what the tab bar's places are. A private member, let in
- * by an invite link before the waitlist let them in, gets four cards in the
- * same words the first time they reach Home (#4080, privateSteps).
+ * by an invite link before the waitlist let them in, walks the maker's route
+ * the first time they reach Home (#4080, privateSteps): their project's
+ * card, then the shared cards through the Communities tab, the hub and the
+ * app — Suggest an improvement and ✕ among them — ending on the waitlist
+ * card that is how they make apps of their own.
  *
  * Every target is the product's own control or region, found by the
  * selectors the rest of the shell already pins (tests/baselines/
@@ -138,9 +141,9 @@ export const BOTTOM_BARS = '#platform-parked, #platform-tabs';
 export const PLAN_WAITING = '.messages-thread-direct [data-bot-plan="open"]';
 
 /**
- * The app screen's Suggest steps, the same on the invited and maker paths
- * (request #4225, reordered by #4390): the Homeroom mark at the top of the
- * app, which the reader taps, then the real menu it opens with its "Suggest
+ * The app screen's Suggest steps, the same on the invited, maker and private
+ * member's paths (request #4225, reordered by #4390): the Homeroom mark at
+ * the top of the app, which the reader taps, then the real menu it opens with its "Suggest
  * an improvement" button pointed at but not pressed, so no suggestion
  * starts. The copy is honest about what happens to a suggestion: Homeroom
  * bot does not always build it, and sometimes brings it to the group as a
@@ -282,13 +285,18 @@ export function invitedSteps({ slug, name }: TourProject): TourStep[] {
  * A PRIVATE MEMBER's tour (users.private_member_since): an invite link let
  * them into a community's app before they were let in, and they reach the
  * rest of Homeroom only through the mark menu's "Go to Homeroom" (#4080).
- * The first time they do, four cards on the Home it opens, in the other
- * tours' words: the project, where to find it, Homeroom bot, and the
- * waitlist card that is how they make apps of their own. Each points at one
- * place and leads on with Next, as "Look around first" does: every step is
- * on the screen they are on.
+ * The first time they do, the maker's route: their project's card on the
+ * Home it opens, then the shared cards through the Communities tab, the hub
+ * and the app — Suggest an improvement and ✕ among them — back to the
+ * waitlist card that is how they make apps of their own. goHome already
+ * remembers the community and, on the first visit, gives the app its ✕
+ * before the tour runs (./index.tsx), so the shared cards' taps land.
  */
 export function privateSteps({ slug, name }: TourProject): TourStep[] {
+  // The shared cards, by index: 0 is the maker's own tap card on Home, which
+  // this tour replaces with its ringed one below; 1 the app whole; 2 and 3
+  // Suggest an improvement; 4 ✕; 5 the Communities tab; 6 the hub.
+  const shared = sharedSteps(slug, name);
   return [
     {
       screen: 'home',
@@ -297,25 +305,14 @@ export function privateSteps({ slug, name }: TourProject): TourStep[] {
       title: `${name} is on your Home`,
       text: 'Open it any time from here.',
     },
+    shared[5], // "You can find ${name} here": the Communities tab, tapped.
+    shared[6], // The hub, shown whole.
+    shared[1], // "${name} opens here": the app, shown whole.
+    ...suggestSteps(),
+    shared[4], // ✕ back to Home.
     {
-      screen: 'home',
-      target: '#platform-tab-workshop',
-      ringed: true,
-      title: `You can find ${name} here`,
-      text: 'Communities lists every community you\'re in.',
-    },
-    {
-      screen: 'home',
-      target: '#platform-tab-messages',
-      ringed: true,
-      // What the bot is for, then where it is (#4397); the maker's and "Look
-      // around first" tours keep their own card.
-      title: 'Meet Homeroom bot',
-      text: `Tell it what ${name} should do next, and it builds it for the group to try. It's always here in Messages.`,
-    },
-    {
-      // The card's own heading says what it is for ("Make and share your
-      // own apps"); this card says where, and what the card does.
+      // The card's own heading says what it is for ("Make your own apps");
+      // this card says where, and what the card does.
       screen: 'home',
       target: '#home-waitlist-card',
       ringed: true,

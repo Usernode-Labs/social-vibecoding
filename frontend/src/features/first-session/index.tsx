@@ -1272,7 +1272,7 @@ export function FirstSession() {
         return true;
       },
       // The mark menu's "Go to Homeroom" for a private member (features/
-      // app-context): Home, and the first time, the four-step tour of it
+      // app-context): Home, and the first time, the eight-card tour of it
       // from the app they were in. From then on the app has its ✕ again
       // (App._privateHomeVisited, public/js/app.js).
       goHome(info: { slug?: string | null; name?: string | null }): void {
