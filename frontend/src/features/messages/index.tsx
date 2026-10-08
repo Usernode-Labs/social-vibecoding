@@ -25,6 +25,7 @@ import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-store';
 import * as api from './api';
 import { BotActivitySync, isMovedActivity } from './bot-activity';
+import { NO_PLAN_LAYOUT, planLayout } from './bot-plan';
 import { BotWorkButton, BotWorkPanel, BotWorkStatusLine, BotWorkSync, newestBotMessageId } from './bot-work';
 import { MessageComposer } from './composer';
 import { CreateConversationDialog } from './create-dialog';
@@ -1759,10 +1760,16 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   // item — draw as the first and a "… N more" row (../../lib/card-runs.ts).
   // A day divider breaks a run, so folding never hides one.
   const runs = cardRunStarts(snap.messages, isCardMessage, (a, b) => dayKey(a) === dayKey(b));
+  // #4046: a first version's plan carries its request's step, and while a
+  // plan or a question offers its own answers the bot's questions to tap
+  // give way (./bot-plan.tsx).
+  const plans = botDm ? planLayout(snap.messages) : NO_PLAN_LAYOUT;
   for (let index = 0; index < snap.messages.length; index += 1) {
     const message = snap.messages[index];
     // B6: a card Build it moved under its plan is drawn there, not here.
     if (isMovedActivity(message)) continue;
+    // #4046: and a card whose step its plan carries is not drawn at all.
+    if (plans.hidden.has(message.id)) continue;
     const day = dayKey(message);
     if (day && day !== previousDay) {
       rows.push(<div key={`day-${day}`} className="messages-day" aria-hidden="true">{dayLabel(message)}</div>);
@@ -1806,6 +1813,8 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
       kind={kind}
       threadOpen={snap.route.threadRootId === message.id}
       focused={flashId === message.id}
+      planCardId={plans.cardOf.get(message.id) ?? null}
+      hidePrompts={plans.answersOpen && !!message.sender.bot}
     />);
     previous = message;
     const length = runs.get(index);
