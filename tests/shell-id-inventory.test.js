@@ -336,6 +336,17 @@ const RETIRED_IDS = {
   'feedback-screenshot-img': 'The single attachment preview <img>. Each attached image is now an item the controller appends to #feedback-screenshot-preview, with its own preview and an alt text numbered by position.',
   'feedback-screenshot-state': 'The single attachment\'s status line ("Uploading…", "Saved with your feedback…"). Each thumbnail item carries its own status span now, so an upload failing on one image is reported beside that image.',
   'feedback-screenshot-remove': 'The single ✕ that dropped the only attachment. Each thumbnail has its own 48px remove button, labelled "Remove image N", so one picture can go without the others.',
+  // ── #4311: the Settings choice of where changes get built is gone ────
+  // #1191 made these three markup in Settings → Connectors & CLI (they had
+  // been injected at runtime), so they were declared in ADDED_IDS; the
+  // frozen baseline never recorded them. Nothing acted on the saved value
+  // after #4268 (agent sessions pick where work runs in their own Build-with
+  // sheet), so the row, its save route and its /api/auth/me field went
+  // together. users.dev_flow_preference stays in the schema so a rollback
+  // still reads it.
+  'dev-flow-pref-section': '#4311: the "Where changes get built" part of Settings → Connectors & CLI. Nothing chose a venue from its value any more.',
+  'settings-dev-flow': '#4311: that part\'s dropdown, which saved users.dev_flow_preference through POST /api/me/dev-flow (removed).',
+  'settings-dev-flow-status': '#4311: the dropdown\'s save/error line.',
 };
 
 // Ids a conversion chunk deliberately added, each with the reason.
@@ -708,6 +719,10 @@ const ADDED_IDS = {
   // per-user opt-ins in Settings → Experimental.
   'homeroom-bot-dm-enabled': 'Opt-in switch that puts this account on the Homeroom bot\'s DM list (#3624).',
   'homeroom-bot-dm-status': 'Save/error line for the Homeroom bot switch, e.g. when the list is full (#3624).',
+  // #4289 — the experimental C shortcut for Suggest an improvement, beside
+  // the other opt-ins in Settings → Experimental. Kept on the device
+  // (features/improve/suggest-shortcut.ts), so it has no save/error line.
+  'suggest-shortcut-enabled': 'Opt-in switch for pressing C to open Suggest an improvement on a computer (#4289).',
   // Username changes — Settings -> Username, the change-your-@handle form. It sits in
   // Settings rather than the profile edit sheet because the endpoint requires
   // the current password, which is the same reason Change password is here.
@@ -724,17 +739,6 @@ const ADDED_IDS = {
   // (#1412's #improve-version-dot came and went: the Streamlined Concept
   // returned the version cue to the hamburger under its original
   // #header-menu-deploy-dot id — see the note in RETIRED_IDS.)
-  // ── #1191: the build-flow preference stops being injected ────────
-  // These three were BUILT AT RUNTIME by Settings._renderDevFlowSection,
-  // which created the block and inserted it into the Connections pane on
-  // every render. The reason was this very baseline: the shell's body used to
-  // be a hand-written document, so a new settings control had nowhere to go.
-  // The pane is a component now, so the block is markup and its ids are a
-  // deliberate line here — which is also what stops a legacy module writing
-  // into a subtree React owns.
-  'dev-flow-pref-section': 'The "Preferred build flow" block in Settings → Connections (#1049) — the escape hatch for the dev-chat picker\'s "remember my option" checkbox.',
-  'settings-dev-flow': 'The build-flow dropdown itself. Settings binds its change and gates the two hand-off options on whether the deployment has external flows.',
-  'settings-dev-flow-status': 'Save/error line for the build-flow dropdown.',
   'cli-setup-guide': 'Always-visible local-agent setup in Settings → CLI access (#1609). It is static section markup so capability detection and credential-list state cannot blank the instructions.',
   'native-app-version-slot': 'Mobile app version/build rendered through the native bridge (#1101).',
   'feedback-queue-dot': 'Header dot for feedback saved offline and still waiting to send (#1054). It has changed parents twice without changing id or writer — off the retired #feedback-btn onto #improve-btn, and off that onto the Homeroom mark when #2718 retired it — because it belongs on whichever control is the way to this dialog from the header. Bottom-left, opposite the working dot.',

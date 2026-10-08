@@ -316,7 +316,8 @@ async function countVotes(pool, sessionId) {
 //   drive this without a database, a git binary or a GitHub account; the
 //   defaults are the real modules.
 //
-// params: { user, session, branch, forkRepo, expectedHeadSha, testing, origin }
+// params: { user, session, branch, forkRepo, expectedHeadSha, testing, origin,
+//           patch }
 //   `session` is the joined chat_sessions row the route loaded and
 //   access-checked. `branch` is the branch in the caller's OWN fork that
 //   carries the new work. `forkRepo` is only its NAME, for an agent that
@@ -324,6 +325,17 @@ async function countVotes(pool, sessionId) {
 //   comes from the verified GitHub link. `testing` is the revision's capture
 //   routes and steps, already validated by services/testing-notes.js's
 //   `parseSubmitted` — see applyTestingMetadata.
+//
+//   `patch` (#4263) carries the new work INSTEAD of `branch`: the same
+//   `git format-patch` / `git diff` text the connector's new-work patch path
+//   takes, applied here on the proposal's current head by that path's own
+//   machinery (services/external-agent-patch.js) and pushed onto the
+//   proposal's branch under a lease. `expectedHeadSha` is then required: it
+//   is the commit the patch was made against, and a proposal that has moved
+//   off it is `branch_moved`. Everything after the push (votes, checks,
+//   preview, testing metadata, title, description, summary) is the branch
+//   update's own tail, unchanged. Only a head in the app's repository can
+//   take one; a fork head is the author's to push.
 async function updateProposalFromForkBranch(deps, params) {
   const { pool, config } = deps;
   const gh = deps.gh || require('./github');
@@ -342,8 +354,12 @@ async function updateProposalFromForkBranch(deps, params) {
   // The branch name reaches a `git fetch` argv and the fork name reaches a
   // URL path, so both are validated by the same predicates the submit path
   // uses. One definition, in services/external-agent-head.js.
+  const patch = typeof params.patch === 'string' && params.patch.trim() ? params.patch : null;
   const branch = params.branch ? String(params.branch).trim() : '';
-  if (!head.validRef(branch)) {
+  if (patch && branch) {
+    return fail('invalid_request', 'Send the new work as a patch or as a branch, not both.');
+  }
+  if (!patch && !head.validRef(branch)) {
     return fail('invalid_request', 'branch must be the git branch you pushed to your fork.');
   }
   const forkRepoName = params.forkRepo ? String(params.forkRepo).trim() : null;
@@ -355,6 +371,15 @@ async function updateProposalFromForkBranch(deps, params) {
     : null;
   if (expectedHeadSha && !SHA_RE.test(expectedHeadSha)) {
     return fail('invalid_request', 'expectedHeadSha must be a 40-character commit id.');
+  }
+  // A patch is applied AT a commit, so it has to say which one. Without it
+  // the only candidate is whatever the head is now, which is exactly the
+  // guess the lease exists to rule out.
+  if (patch && !expectedHeadSha) {
+    return fail(
+      'invalid_request',
+      'A patch needs expectedHeadSha: the proposal\'s commit it was made against, which is where it is applied.'
+    );
   }
   let visibleChanges;
   if (params.visibleChanges !== undefined) {
@@ -430,6 +455,10 @@ async function updateProposalFromForkBranch(deps, params) {
         prMetadata: deps.prMetadata || require('./pr-metadata'), username: user.username,
         session, owner, repo, forkOwner: link.login, forkRepo, branch,
         expectedLogin: link.login, expectedHeadSha, sessionId,
+        // #4263. The new work as a patch instead of a fork branch, and the
+        // new-work patch path's own apply, injectable like `head`.
+        patch,
+        applyPatch: deps.applyPatch || require('./external-agent-patch').applyPatch,
         testing: normalizeTesting(params.testing),
         visibleChanges,
         title: normalizeProposedTitle(params.title),
@@ -450,6 +479,18 @@ async function updateProposalFromForkBranch(deps, params) {
         lifecycle: deps.lifecycle,
         pushSessionUpdate: deps.pushSessionUpdate,
       };
+      // #4263. A head in the author's fork is written by the author alone:
+      // the platform holds no credential for it, so a patch has nowhere to
+      // land and the honest answer is the branch route.
+      if (patch && branchHomeOf(session) === 'user_fork') {
+        return fail(
+          'invalid_request',
+          `This proposal follows ${session.branch_name || 'a branch'} in your own fork, which only you can push to, `
+          + 'so Homeroom cannot apply a patch to it. Commit the change on that branch, push it, and submit with '
+          + 'proposalId and branch.',
+          { retryable: false }
+        );
+      }
       const result = branchHomeOf(session) === 'user_fork'
         ? await advanceForkHead(ctx)
         : await advanceAppRepoBranch(ctx);
@@ -1518,12 +1559,29 @@ async function advanceAppRepoBranch(ctx) {
   // inside pushForkBranchToAppBranch immediately before the push — the
   // second run is the load-bearing one, and this one is not permitted to
   // replace it.
-  const verified = await head.verifyForkBranch({
-    githubPublic, forkOwner, forkRepo, branch, expectedLogin,
-  });
-  if (!verified.ok) return renameHeadFailure(verified, branch);
+  //
+  // #4263. A PATCH has no fork to verify: its content arrived in this
+  // request from the proposal's own author (ownershipGate, twice), and it is
+  // applied ON `liveHead`, so it cannot drop a reviewed commit and needs no
+  // ancestry check. `verified` is filled in from the commit the apply wrote,
+  // below, and everything after the push reads it exactly as for a branch.
+  let verified = null;
+  if (!ctx.patch) {
+    verified = await head.verifyForkBranch({
+      githubPublic, forkOwner, forkRepo, branch, expectedLogin,
+    });
+    if (!verified.ok) return renameHeadFailure(verified, branch);
+  } else if (firstLanding) {
+    // Nothing has landed yet, so there is no commit to apply the patch at.
+    return fail(
+      'invalid_request',
+      'This work has no commits on its branch yet, so there is no commit to apply a patch at. Push a branch to '
+      + 'your fork and submit it with proposalId and branch.',
+      { retryable: false }
+    );
+  }
 
-  if (!firstLanding) {
+  if (!firstLanding && verified) {
     // Nothing to push — but a resubmit may still be correcting the capture
     // routes, which is the one thing that used to have no way through (#1199).
     if (verified.headSha === liveHead) return resubmitUnchanged(ctx, liveHead, 'update_branch');
@@ -1549,16 +1607,32 @@ async function advanceAppRepoBranch(ctx) {
   // the same gate in front of it; `mirrorForkBranch` is not a second
   // implementation of anything, it is the one the mirror rung already uses,
   // pointed at the name this row recorded instead of one it mints.
-  const pushed = firstLanding
-    ? await head.mirrorForkBranch({
-      gh, githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin,
-      targetBranch,
-    })
-    : await head.pushForkBranchToAppBranch({
-      githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin,
-      targetBranch, expectedRemoteSha: liveHead, sessionId,
+  //
+  // #4263. A patch is the new-work patch path's own apply (size, file-count,
+  // `.github/` and growth bounds included), aimed at THIS branch at
+  // `liveHead` and pushed under the same lease: a head that moved since the
+  // read above is `branch_moved`, never overwritten. Its refusals are already
+  // in the caller's vocabulary, so they pass through unrenamed.
+  let pushed;
+  if (ctx.patch) {
+    pushed = await ctx.applyPatch({
+      owner, repo, patch: ctx.patch, baseSha: liveHead, userId: session.user_id,
+      targetBranch, sessionId,
     });
-  if (!pushed.ok) return renameHeadFailure(pushed, branch);
+    if (!pushed.ok) return pushed;
+    verified = { ok: true, headSha: String(pushed.headSha || '').trim().toLowerCase() };
+  } else {
+    pushed = firstLanding
+      ? await head.mirrorForkBranch({
+        gh, githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin,
+        targetBranch,
+      })
+      : await head.pushForkBranchToAppBranch({
+        githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin,
+        targetBranch, expectedRemoteSha: liveHead, sessionId,
+      });
+    if (!pushed.ok) return renameHeadFailure(pushed, branch);
+  }
 
   if (session.source !== 'imported') {
     // The push has moved this proposal's code. Keep the previous summary out
@@ -1625,11 +1699,12 @@ async function advanceAppRepoBranch(ctx) {
     previousHeadSha: liveHead,
     // What this push actually landed on, decided here and not by the work
     // order — which was written before the agent started and may be an hour
-    // out of date. `submittedVia` stays 'update_branch' in all three: the
-    // schema's widened CHECK already allows it and a third value would need a
-    // migration for no gain.
+    // out of date. `submittedVia` stays 'update_branch' in all three tails,
+    // which say what the push landed on, not how the commit arrived. A patch
+    // does say so (#4263: 'update_patch', added to the schema's CHECK), the
+    // way the create path's 'patch' and 'mirror' tell its two rungs apart.
     targetKind: promoted ? 'proposal' : 'session',
-    submittedVia: 'update_branch',
+    submittedVia: ctx.patch ? 'update_patch' : 'update_branch',
     // What the screenshots this revision's capture shoots will be of — and
     // what it will NOT be of, because a route the caller sent was unusable.
     testingUpdated: testingApplied.changed,

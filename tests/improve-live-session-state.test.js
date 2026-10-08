@@ -203,9 +203,11 @@ test('a later-issued answer is allowed to take over again', async () => {
 
 test('a session the store has never heard of keeps the payload flag', () => {
   const { Improve, store } = load([]);
-  // onSessionCreated publishes a server row straight into the list, ahead
-  // of any load that could have seeded the store.
-  Improve.onSessionCreated({ ...SESSION, id: 9, busy: true }, 'demo');
+  // A row in the list that no load seeded the store with. (DevChat's
+  // classic creation used to publish one like this, through
+  // `onSessionCreated`; #4268 removed both.)
+  Improve._all = [{ ...SESSION, id: 9, busy: true }];
+  Improve._rebucket();
   assert.equal(store.state.sessions[0].busy, true);
 });
 

@@ -1664,11 +1664,14 @@ async function creationPath(pool, { week, now = new Date(), leftOutIds = [], mem
 //
 // Beside them, the invite funnel (#4176), for the same window: how many
 // people opened an invite link (invite_opened, signed in or out, never a
-// name), how many signed up or in through one (invite_signed_in), and how
-// many joined through one (community_invite_redemptions). Counts only: the
-// page works out what dropped off between them. Four of these are events
-// first written with this reading; before each was first recorded it is
-// "not recorded", never a zero.
+// name), how many reached Homeroom signed in through one (invite_signed_in),
+// and how many joined through one (community_invite_redemptions). Signed in
+// is everyone who got there, in its two ways (#4272): signed up or in from
+// the link, which is what the link converted, or already signed in when
+// they opened it (the event's `how`, journey-events.noteInviteSignedIn).
+// Counts only: the page works out what dropped off between them. Four of
+// these are events first written with this reading; before each was first
+// recorded it is "not recorded", never a zero.
 
 // Written into the reading as minutes and seconds; the SQL takes no window.
 const FIRST_SESSION_MINUTES = 60;
@@ -1737,7 +1740,9 @@ const FIRST_SESSION_RECORDED_SQL = `SELECT
 // once per maker and project, a sign-in and a join once per link. An open
 // signed out has no name, so opens are counted whoever opened them,
 // leaving out only the signed-in opens of people who are not real; the
-// other two steps are real people's. $3/$4 are the real-person parameters.
+// other two steps are real people's. A sign-in is counted in all, and in
+// its two ways: signed up or in from the link, or already signed in when
+// they opened it. $3/$4 are the real-person parameters.
 const INVITE_FUNNEL_SQL = `WITH real AS (
     SELECT u.id FROM users u WHERE ${REAL_PERSON_SQL}
   ), win AS (
@@ -1749,23 +1754,32 @@ const INVITE_FUNNEL_SQL = `WITH real AS (
            WHERE e.event_type = 'invite_opened'
              AND e.created_at >= w.from_at AND e.created_at < $2::timestamptz
              AND (e.user_id IS NULL OR e.user_id IN (SELECT r.id FROM real r))) AS opened,
-         (SELECT COUNT(*)::int FROM events e
-           WHERE e.event_type = 'invite_signed_in'
-             AND e.created_at >= w.from_at AND e.created_at < $2::timestamptz
-             AND e.user_id IN (SELECT r.id FROM real r)) AS signed_in,
+         s.signed_in, s.signed_in_by_invite, s.signed_in_already,
          (SELECT COUNT(*)::int FROM community_invite_redemptions x
            WHERE x.status = 'joined'
              AND COALESCE(x.applied_at, x.created_at) >= w.from_at
              AND COALESCE(x.applied_at, x.created_at) < $2::timestamptz
              AND x.user_id IN (SELECT r.id FROM real r)) AS joined
-    FROM win w`;
+    FROM win w
+    CROSS JOIN LATERAL (
+      SELECT COUNT(*)::int AS signed_in,
+             (COUNT(*) FILTER (WHERE e.metadata->>'how' IN ('signed_up', 'signed_in')))::int AS signed_in_by_invite,
+             (COUNT(*) FILTER (WHERE e.metadata->>'how' = 'was_signed_in'))::int AS signed_in_already
+        FROM events e
+       WHERE e.event_type = 'invite_signed_in'
+         AND e.created_at >= w.from_at AND e.created_at < $2::timestamptz
+         AND e.user_id IN (SELECT r.id FROM real r)
+    ) s`;
 
 /**
  * Pure: the invite funnel for `week`, from a row of INVITE_FUNNEL_SQL:
- * `{ from, opened, signedIn, joined }`, `from` being when its counts start.
- * Not recorded before the first sign-in through an invite was, nor for one
- * admit cohort (`cohort`): an open signed out names nobody, so it is in no
- * cohort, and the funnel is everyone's or nothing.
+ * `{ from, opened, signedIn, signedInByInvite, signedInAlready, joined }`,
+ * `from` being when its counts start. `signedIn` is everyone who reached
+ * Homeroom signed in through a link; `signedInByInvite` signed up or in from
+ * it (the step's conversion), `signedInAlready` was signed in when they
+ * opened it. Not recorded before the first sign-in through an invite was,
+ * nor for one admit cohort (`cohort`): an open signed out names nobody, so
+ * it is in no cohort, and the funnel is everyone's or nothing.
  */
 function inviteFunnelReading(row, { week, cohort = false } = {}) {
   if (cohort) return notRecorded('An invite opened signed out names nobody, so the funnel is counted for everyone only.');
@@ -1777,6 +1791,8 @@ function inviteFunnelReading(row, { week, cohort = false } = {}) {
     from: new Date(Math.max(new Date(week.start).getTime(), since.getTime())).toISOString(),
     opened: Number(row.opened || 0),
     signedIn: Number(row.signed_in || 0),
+    signedInByInvite: Number(row.signed_in_by_invite || 0),
+    signedInAlready: Number(row.signed_in_already || 0),
     joined: Number(row.joined || 0),
   };
 }

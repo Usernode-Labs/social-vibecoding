@@ -385,18 +385,24 @@ type NextSteps = {
 
 const UNIT_MAX = 24;
 
-function UnitBar({ n, of, fill, rest = JUI.empty }: { n: number; of: number; fill: string; rest?: string }) {
+// `also` more after the first `n`, in `alsoFill`: one count in two parts.
+function UnitBar({ n, of, fill, rest = JUI.empty, also = 0, alsoFill = fill }: {
+  n: number; of: number; fill: string; rest?: string; also?: number; alsoFill?: string;
+}) {
   if (of <= 0) return <div className={`h-2 rounded-sm ${JUI.empty}`} />;
   if (of > UNIT_MAX) {
     return (
-      <div className={`h-2 rounded-sm overflow-hidden ${rest}`}>
+      <div className={`flex h-2 rounded-sm overflow-hidden ${rest}`}>
         <div className={`h-2 ${fill}`} style={{ width: `${Math.round((n / of) * 100)}%` }} />
+        {also > 0 ? <div className={`h-2 ${alsoFill}`} style={{ width: `${Math.round((also / of) * 100)}%` }} /> : null}
       </div>
     );
   }
   return (
     <div className="flex gap-0.5">
-      {Array.from({ length: of }, (_, i) => <span key={i} className={`h-2 flex-1 rounded-sm ${i < n ? fill : rest}`} />)}
+      {Array.from({ length: of }, (_, i) => (
+        <span key={i} className={`h-2 flex-1 rounded-sm ${i < n ? fill : i < n + also ? alsoFill : rest}`} />
+      ))}
     </div>
   );
 }
@@ -1101,14 +1107,17 @@ function CreationCard({ scope, onOpen }: { scope: Scope; onOpen: OpenPerson }) {
 // somebody who joined one through an invite link, each timed from the start
 // of that session. The aha in the first session: the maker sent an invite,
 // or the person who joined wrote in its chat or filed a request, within the
-// hour. Under them, the invite funnel: links opened, sign-ins through one,
-// joins, and what dropped off between each.
+// hour. Under them, the invite funnel: links opened, sign-ins through one
+// (in their two ways: from the link, or already signed in), joins, and what
+// dropped off between each.
 
 type FirstSessionStep = {
   key: string; reached: number; inSession: number; medianSeconds: number | null;
   targetSeconds: number | null; withinTarget: number | null;
 };
-type InviteFunnel = { from: string; opened: number; signedIn: number; joined: number };
+type InviteFunnel = {
+  from: string; opened: number; signedIn: number; signedInByInvite: number; signedInAlready: number; joined: number;
+};
 type FirstSessionData = {
   week: string; finished: boolean; sessionMinutes: number;
   make: { people: number; notRecorded: NotRecorded | null; steps: FirstSessionStep[]; aha: number };
@@ -1159,8 +1168,17 @@ function FirstSessionRows({ steps, people, minutes }: { steps: FirstSessionStep[
 // cohort, and a cohort view leaves the funnel out.
 const FUNNEL_STEPS: Array<['opened' | 'signedIn' | 'joined', string, string]> = [
   ['opened', 'Opened the link', 'opened an invite link, signed in or not: a person, or a browser, once per project'],
-  ['signedIn', 'Signed in', 'signed up or in from an invite link, or opened one already signed in'],
+  ['signedIn', 'Signed in', 'reached Homeroom signed in through an invite link: from the link, or already signed in'],
   ['joined', 'Joined', 'joined a project through an invite link'],
+];
+
+// Signed in, in its two ways (#4272): [key, label, what it counts, fill].
+// Signing up or in from the link is what the link brought about, so it is
+// the step's conversion, out of everyone who opened a link. Somebody already
+// signed in had nothing to convert: they are counted, never a share.
+const SIGNED_IN_WAYS: Array<['signedInByInvite' | 'signedInAlready', string, string, string]> = [
+  ['signedInByInvite', 'From the link', 'opened the link signed out, then signed up or in', 'bg-violet-500'],
+  ['signedInAlready', 'Already signed in', 'were signed in when they opened the link', 'bg-violet-300 dark:bg-violet-400/50'],
 ];
 
 // A step's share of the one before it is printed only from this many
@@ -1180,13 +1198,32 @@ function InviteFunnelRows({ funnel }: { funnel: InviteFunnel }) {
       {FUNNEL_STEPS.map(([key, label, means], i) => {
         const n = funnel[key];
         const before = i ? funnel[FUNNEL_STEPS[i - 1][0]] : null;
+        // Signed in is the total of its two ways, each on a line of its own,
+        // and its conversion is the first of them.
+        const ways = key === 'signedIn';
         return (
           <div key={key} data-journey-invite-funnel-step={key} title={means}>
             <div className="flex items-baseline justify-between gap-2 text-sm">
               <span>{label}</span>
-              <span className="tabular-nums shrink-0">{before == null ? plural(n, 'person', 'people') : conversion(n, before)}</span>
+              <span className="tabular-nums shrink-0">{before == null || ways ? plural(n, 'person', 'people') : conversion(n, before)}</span>
             </div>
-            <UnitBar n={n} of={most} fill={key === 'joined' ? 'bg-emerald-500' : 'bg-violet-500'} />
+            {ways ? (
+              <UnitBar n={funnel.signedInByInvite} also={funnel.signedInAlready} of={most}
+                fill={SIGNED_IN_WAYS[0][3]} alsoFill={SIGNED_IN_WAYS[1][3]} />
+            ) : <UnitBar n={n} of={most} fill={key === 'joined' ? 'bg-emerald-500' : 'bg-violet-500'} />}
+            {ways ? (
+              <div className="mt-1 space-y-0.5">
+                {SIGNED_IN_WAYS.map(([way, wayLabel, wayMeans, fill]) => (
+                  <div key={way} data-journey-invite-funnel-way={way} title={wayMeans}
+                    className="flex items-baseline justify-between gap-2 text-xs">
+                    <span className="inline-flex items-center gap-1.5 text-zinc-600 dark:text-zinc-300"><Dot cls={fill} />{wayLabel}</span>
+                    <span className="tabular-nums shrink-0">
+                      {way === 'signedInByInvite' ? conversion(funnel[way], funnel.opened) : plural(funnel[way], 'person', 'people')}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
             {before == null ? null : (
               <div className={`mt-0.5 ${JUI.fine}`}>{before > n ? `${before - n} dropped off` : 'nobody dropped off'}</div>
             )}
@@ -1822,4 +1859,5 @@ const AdminJourney = {
 // evaluates this module in Node, where there is no window.
 if (typeof window !== 'undefined') (window as any).AdminJourney = AdminJourney;
 
-export { AdminJourney };
+// InviteFunnelRows for its render test (tests/admin-journey-section.test.js).
+export { AdminJourney, InviteFunnelRows };

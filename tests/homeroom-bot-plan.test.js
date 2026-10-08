@@ -397,7 +397,7 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
   let first;
   await t.test('a ready first version waits under its plan, which rings as needing an answer', async () => {
     first = await readyRun();
-    assert.equal(await bot.awaitGo(pool, { runId: first, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot }), true);
+    assert.equal(await bot.awaitGo(pool, { runId: first, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot }), 'waiting');
     const run = await runRow(first);
     assert.ok(run.awaiting_go_at, 'it waits');
     assert.equal(run.live_build_waiting_at, null, 'nothing is built yet');
@@ -526,12 +526,104 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     assert.match((await runRow(go)).build_note, /How should it remind you\? In the app/);
   });
 
-  await t.test('a first version nobody can be shown the plan of is built at once, as before plans', async () => {
+  // #4175: a first version is never built without its creator's Build it.
+  // Until 8 October 2026 a plan that could not be sent was built at once.
+  const queued = async (id) => (await runRow(id)).live_build_waiting_at;
+  const failing = (how) => ({
+    ...dm,
+    sendPlanCard: async () => { if (how === 'throw') throw new Error('dm down'); return null; },
+  });
+  const sinceLastTry = (id, minutes) => pool.query(
+    `UPDATE homeroom_bot_runs SET plan_unsent_at = NOW() - make_interval(mins => $2) WHERE id = $1`, [id, minutes],
+  );
+  const finish = (id) => pool.query(
+    'UPDATE homeroom_bot_runs SET awaiting_go_at = NULL, build_ok = FALSE, build_error = $2 WHERE id = $1 AND build_ok IS NULL',
+    [id, 'test: done'],
+  );
+
+  await t.test('#4175: a plan that could not be sent keeps its run waiting, with nothing built', async () => {
+    const run = await readyRun();
+    assert.equal(await bot.awaitGo(pool, { runId: run, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot, deps: { dm: failing() } }), 'unsent');
+    let row = await runRow(run);
+    assert.ok(row.awaiting_go_at, 'it still waits for Build it');
+    assert.ok(row.plan_unsent_at, 'to be sent again');
+    assert.deepEqual([row.plan_send_attempts, row.build_ok, await queued(run)], [1, null, null], 'nothing is built');
+    assert.equal(await planMessage(run), undefined, 'and nobody was sent a card');
+    // A send that throws is the same: it waits.
+    const thrown = await readyRun();
+    assert.equal(await bot.awaitGo(pool, { runId: thrown, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot, deps: { dm: failing('throw') } }), 'unsent');
+    row = await runRow(thrown);
+    assert.deepEqual([!!row.awaiting_go_at, row.plan_send_attempts, await queued(thrown)], [true, 1, null]);
+    await finish(run); await finish(thrown);
+  });
+
+  await t.test('#4175: a later wake sends it again once its wait is up, and then it waits for Build it under the plan', async () => {
+    const run = await readyRun();
+    await bot.awaitGo(pool, { runId: run, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot, deps: { dm: failing() } });
+    assert.deepEqual(await bot.retryUnsentPlans(pool, homeroomBot), { sent: 0, unsent: 0, stopped: 0 }, 'not before its wait is up');
+    await sinceLastTry(run, bot.PLAN_SEND_RETRY_MINUTES[0] + 1);
+    assert.deepEqual(await bot.retryUnsentPlans(pool, homeroomBot), { sent: 1, unsent: 0, stopped: 0 });
+    const row = await runRow(run);
+    assert.ok(row.awaiting_go_at, 'it waits for Build it');
+    assert.deepEqual([row.plan_unsent_at, row.plan_send_attempts, row.build_ok, await queued(run)], [null, 2, null, null]);
+    const card = await planMessage(run);
+    assert.deepEqual([card.meta.kind, card.meta.status], ['plan', 'open'], 'its creator has the plan');
+    assert.deepEqual(card.meta.plan, PLAN);
+    assert.deepEqual(await bot.retryUnsentPlans(pool, homeroomBot), { sent: 0, unsent: 0, stopped: 0 }, 'sent once');
+    await bot.retireWaitingPlans(pool, { appId: app.id, issueNumber: 1, why: 'test: done' });
+  });
+
+  await t.test('#4175: a plan that still cannot be sent after about an hour stops, recorded as not built', async () => {
+    const run = await readyRun();
+    await bot.awaitGo(pool, { runId: run, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot, deps: { dm: failing() } });
+    const minutes = bot.PLAN_SEND_RETRY_MINUTES;
+    assert.ok(minutes.reduce((a, b) => a + b, 0) >= 50 && minutes.reduce((a, b) => a + b, 0) <= 90, 'about an hour');
+    for (let i = 0; i < minutes.length; i += 1) {
+      assert.ok((await runRow(run)).awaiting_go_at, `still waiting before retry ${i + 1}`);
+      await sinceLastTry(run, minutes[i] + 1);
+      const out = await bot.retryUnsentPlans(pool, homeroomBot, { dm: failing() });
+      assert.deepEqual(out, i < minutes.length - 1 ? { sent: 0, unsent: 1, stopped: 0 } : { sent: 0, unsent: 0, stopped: 1 });
+    }
+    const row = await runRow(run);
+    assert.deepEqual(
+      [row.awaiting_go_at, row.plan_unsent_at, row.build_ok, row.build_error, row.plan_send_attempts, await queued(run)],
+      [null, null, false, 'skipped: the plan could not be sent to its creator', bot.PLAN_SEND_ATTEMPTS, null],
+    );
+    await sinceLastTry(run, 120);
+    assert.deepEqual(await bot.retryUnsentPlans(pool, homeroomBot, { dm: failing() }), { sent: 0, unsent: 0, stopped: 0 }, 'tried no more');
+  });
+
+  await t.test('#4175: a first version for someone the bot no longer works for stops at once, and is never built', async () => {
     await set('homeroom_bot_dm_users', '[]');
     const lone = await readyRun();
-    assert.equal(await bot.awaitGo(pool, { runId: lone, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot }), false);
-    assert.equal((await runRow(lone)).awaiting_go_at, null);
+    assert.equal(await bot.awaitGo(pool, { runId: lone, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot }), 'stopped');
+    const row = await runRow(lone);
+    assert.deepEqual(
+      [row.awaiting_go_at, row.plan_unsent_at, row.build_ok, row.build_error, await queued(lone)],
+      [null, null, false, 'skipped: nobody to send the plan to: its creator no longer has Homeroom bot', null],
+    );
     await set('homeroom_bot_dm_users', JSON.stringify(['maya']));
+    // And one whose requester cannot be found.
+    const orphan = await readyRun();
+    await pool.query('UPDATE homeroom_bot_runs SET issue_number = 99 WHERE id = $1', [orphan]);
+    assert.equal(await bot.awaitGo(pool, { runId: orphan, app, issueNumber: 99, parsed: { plan: PLAN }, bot: homeroomBot }), 'stopped');
+    const gone = await runRow(orphan);
+    assert.deepEqual([gone.build_ok, gone.build_error, await queued(orphan)],
+      [false, 'skipped: nobody to send the plan to: its creator could not be found', null]);
+  });
+
+  await t.test('#4175: a run that already has a build state is not asked again, and is never queued twice', async () => {
+    const run = await readyRun();
+    await bot.queueLiveBuild(pool, { runId: run, appId: app.id });
+    const first = await queued(run);
+    assert.ok(first);
+    assert.equal(await bot.awaitGo(pool, { runId: run, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot }), 'already');
+    assert.equal((await runRow(run)).awaiting_go_at, null);
+    await bot.queueLiveBuild(pool, { runId: run, appId: app.id });
+    assert.equal((await queued(run)).toISOString(), first.toISOString(), 'a second queue keeps its place');
+    await pool.query('UPDATE homeroom_bot_runs SET live_build_waiting_at = NULL, build_ok = FALSE WHERE id = $1', [run]);
+    await bot.queueLiveBuild(pool, { runId: run, appId: app.id });
+    assert.equal(await queued(run), null, 'and one already built is left alone');
   });
 
   // First session, 4 October: Build it collapsed the plan and nothing
@@ -542,7 +634,7 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     // Its card, from when it was queued (or the one an earlier Build it moved).
     await activity.startCard(pool, { app, issueNumber: 1, requester, bot: homeroomBot, jobKey: 'plan-under', queued: true });
     const run = await readyRun();
-    assert.equal(await bot.awaitGo(pool, { runId: run, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot }), true);
+    assert.equal(await bot.awaitGo(pool, { runId: run, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot }), 'waiting');
     const plan = await planMessage(run);
     const above = await activity.requestCard(pool, { userId: maya.id, appId: app.id, issueNumber: 1 });
     assert.ok(above && above.messageId < Number(plan.id), 'the request\'s card sits above its plan');
@@ -585,7 +677,9 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
 
 test('B6: where the waiting state is read, and where it ends', () => {
   const src = read('src/services/homeroom-bot.js');
-  assert.match(src, /if \(firstVersion && await awaitGo\(pool, \{ runId, app, issueNumber, parsed, bot, deps \}\)\) \{\s*acted = 'awaiting_go';/);
+  assert.match(src, /\} else if \(firstVersion\) \{\s*acted = PLAN_ACTED\[await awaitGo\(pool, \{ runId, app, issueNumber, parsed, bot, deps \}\)\];/);
+  // #4175: a plan that could not be sent is sent again on the sweep's cadence.
+  assert.match(src, /const resent = await retryUnsentPlans\(pool, bot, \{ dm: deps\.dm, ws: deps\.ws \|\| null \}\);/);
   assert.match(src, /await retireWaitingPlans\(pool, \{ appId: app\.id, issueNumber, why: 'the request was read again', deps: \{ dm: deps\.dm \} \}\);/);
   assert.match(src, /const stalePlans = await settleStalePlans\(pool, \{ dm: deps\.dm \}\);/);
   assert.match(src, /out\.skipped \+= \(await retireWaitingPlans\(pool, \{ appId, issues, why: why\.replace/);
@@ -594,7 +688,8 @@ test('B6: where the waiting state is read, and where it ends', () => {
   assert.match(progressSrc, /run\.awaiting_go_at AS plan_waiting_at/);
   assert.match(read('src/services/homeroom-bot-mayor.js'), /AND a\.kind <> 'build_plan'/);
   const schema = read('src/db/schema.sql');
-  for (const column of ['plan JSONB', 'awaiting_go_at TIMESTAMPTZ', 'plan_change TEXT']) {
+  for (const column of ['plan JSONB', 'awaiting_go_at TIMESTAMPTZ', 'plan_change TEXT',
+    'plan_send_attempts INTEGER NOT NULL DEFAULT 0', 'plan_unsent_at TIMESTAMPTZ']) {
     assert.ok(schema.includes(`ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS ${column};`), column);
   }
   assert.equal(live.questionText({ question: 'Q?' }).includes('If nobody answers'), false);

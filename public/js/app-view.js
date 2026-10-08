@@ -4469,6 +4469,12 @@ const AppView = {
     // let the paint below re-read it once — returning to a topic shows the
     // roster it had while the new one loads, rather than a loading line.
     AppView._invalidateVoteRoster(ref.id);
+    // The governance roster follows the same rule (#4177): it used to be read
+    // once per page load, so reopening a topic showed the roster from the
+    // first visit.
+    if (ref.kind === 'gov') AppView._invalidateGovVoteRoster(ref.id);
+    // ...and both re-read after a gap while the topic is open.
+    AppView._watchTopicLiveReads();
     // Arriving at a SESSION topic used to open its shared transcript here:
     // the "Read chat" pill that once set `_transcriptOpen` on its way was
     // gone, so landing on this page WAS the read-the-chat gesture. #2605
@@ -4915,15 +4921,19 @@ const AppView = {
     let body;
     if (t.kind === 'issue') {
       card = AppView._issueCardModel(item, { noNav: true });
+      const closedBand = AppView._issueClosedBandView(item);
       // #396: the issue body, then the GitHub comment thread. The thread is
       // fetched lazily (after paint) into `#dev-issue-comments`, which the
       // head renders as an empty host, so a cached (or empty) result reuses
       // what is already there across WS-driven refreshes.
       body = {
         actions: AppView._detailActionsView('issue', item),
-        // (#2431) The mirror of a proposal's issue chips: which change
-        // closed this issue, or is working on it.
-        addressedBy: AppView._issueProposalRefView(item),
+        // (#2431) The mirror of a proposal's issue chips: which change is
+        // working on this issue, or addressed it. (#4244) On a CLOSED issue
+        // the change that closed it rides in the card's status band instead,
+        // so the page says "closed" once.
+        closedBand,
+        addressedBy: closedBand && closedBand.ref ? null : AppView._issueProposalRefView(item),
         issueBodyHtml: AppView._issueBodyHtml(item),
         issueBodyEditor: {
           issue: item.number,
@@ -5031,6 +5041,28 @@ const AppView = {
       label: n ? `#${n}` : 'Change',
       title: ref.title || (n ? `Pull request #${n}` : `Change ${ref.sessionId}`),
       href: `#app/${slug}/dev/proposals/${ref.sessionId}`,
+    };
+  },
+
+  // #4244: a closed request's ONE status band, at the top of its card:
+  // "Closed · Oct 5 · by #10 <title>". Emerald when a merged change closed
+  // it (the change is the band's pill, the door to its page), zinc when a
+  // close vote or an admin did (`closed_via`, from the single-issue route).
+  // The card itself then carries no second "Closed" badge (_issueCardModel).
+  _issueClosedBandView(issue) {
+    if (!issue || issue.state !== 'closed') return null;
+    const ref = AppView._issueProposalRefView(issue);
+    const merged = !!(ref && ref.state === 'merged');
+    const stamp = issue.closedAt ? relStamp(issue.closedAt) : { text: '', title: '' };
+    const how = merged ? null
+      : issue.closed_via === 'admin' ? 'by an admin'
+        : issue.closed_via === 'vote' ? 'by vote' : null;
+    return {
+      tone: merged ? 'merged' : 'settled',
+      when: stamp.text || null,
+      whenTitle: stamp.title || null,
+      how,
+      ref: merged ? ref : null,
     };
   },
 
@@ -7116,12 +7148,11 @@ const AppView = {
     if (issueBtn) {
       issueBtn.addEventListener('click', () => {
         close();
-        // The shared feedback dialog with the open app preselected (#226):
-        // since #2707 only `target: 'app'` does that, and only where "This
-        // app" can be chosen. The same call Improve.giveFeedback() makes,
+        // The shared feedback dialog, asking where it goes with nothing
+        // chosen (#4236): no `target`, the same as Improve.giveFeedback(),
         // so the two entry points cannot drift. QA 2026-09-24: plus
         // `intent`, so the dialog is headed "File an issue".
-        App.openFeedbackModal({ fromDev: true, target: 'app', intent: 'issue' });
+        App.openFeedbackModal({ fromDev: true, intent: 'issue' });
       }, { signal });
     }
     const importPrBtn = menu.querySelector('[data-plus="import-pr"]');
@@ -7239,8 +7270,8 @@ const AppView = {
     AppView._tellChangePage({ id: Number(sessionId), patch: clean });
   },
   // topic-head.tsx's ChangeDetail listens for this: an id re-reads, `{ id,
-  // row }` adopts a row, `{ id, patch }` merges one, 'all' re-reads every
-  // mounted page.
+  // row }` adopts a row, `{ id, patch }` merges one. Re-reading every mounted
+  // page after a gap is live reads' job now (#4177, lib/live-reads.ts).
   _tellChangePage(detail) {
     if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function'
         || typeof CustomEvent === 'undefined') return;
@@ -15504,7 +15535,13 @@ const AppView = {
     const done = !!u.done;
     let sub;
     let sentence;
-    if (done) {
+    if (done && u.notRun === true) {
+      // Its Job was refused or its setup stopped before any test ran
+      // (services/unit-suite.js notRunOutcome): no test failed, and the
+      // verdict says why once it lands.
+      sub = 'npm test could not run';
+      sentence = 'The repo unit suite (npm test) could not run, so no test result came back.';
+    } else if (done) {
       const ok = u.exitOk !== false;
       sub = ok ? `npm test finished: ${passed} passed` : `npm test finished: ${failed} failed`;
       sentence = ok
@@ -15993,6 +16030,10 @@ const AppView = {
         if (btn) { btn.disabled = false; btn.textContent = 'Re-run checks'; }
         return;
       }
+      // A run of this commit is still on the cluster and its result is on
+      // the way, so the server left it to finish rather than start over.
+      // Say so: the card keeps showing that run, not a new one.
+      if (data.collecting) PlatformUI.toast('These checks are still running, so they were not started again. The result will show here when they finish.');
       // #607: the server stamped 'pending' before responding — refresh so
       // the spinning "Checks running…" badge renders immediately (the WS
       // pending broadcast covers everyone else's screens).
@@ -16514,17 +16555,27 @@ const AppView = {
   // "Loading votes…" is reserved for a roster that has genuinely never been
   // loaded. A stale roster is at worst a few hundred milliseconds behind,
   // which is strictly better than a blank one.
+  //
+  // #4177: a roster marked stale while a read of it is on the wire (a vote, a
+  // gap) is read once more, fresh, when that read lands, since its answer may
+  // predate whatever asked. So a roster being read is marked, even before
+  // its first answer.
   _voteRosterStale: new Set(),
 
   _invalidateVoteRoster(sessionId) {
     if (sessionId == null) return;
     const id = Number(sessionId);
-    if (AppView._voteRoster[sessionId]) AppView._voteRosterStale.add(id);
+    if (AppView._voteRoster[sessionId] || AppView._voteRosterInFlight.has(sessionId)) AppView._voteRosterStale.add(id);
     else delete AppView._voteRoster[sessionId];
   },
 
-  async _loadVoteRoster(sessionId) {
-    if (AppView._voteRosterInFlight.has(sessionId)) return;
+  // `fresh`: a live re-read after a gap (#4177), which must not be answered
+  // from the service worker's saved copy (`cache: 'no-cache'`, public/sw.js).
+  async _loadVoteRoster(sessionId, { fresh = false } = {}) {
+    if (AppView._voteRosterInFlight.has(sessionId)) {
+      if (fresh) AppView._voteRosterStale.add(Number(sessionId));
+      return;
+    }
     const stale = AppView._voteRosterStale.has(Number(sessionId));
     if (AppView._voteRoster[sessionId] && !stale) return;
     AppView._voteRosterStale.delete(Number(sessionId));
@@ -16533,6 +16584,9 @@ const AppView = {
       AppView._voteRosterInFlight.delete(sessionId);
       const before = (AppView._voteRoster[sessionId]?.earlierVoters || []).join('\n');
       AppView._voteRoster[sessionId] = view;
+      // Marked stale while this read was on the wire: once more, fresh,
+      // before the repaint below could start a plain read.
+      if (AppView._voteRosterStale.has(Number(sessionId))) void AppView._loadVoteRoster(sessionId, { fresh: true });
       AppView._renderTopicHead();
       // #3411: the Discussion marks the vote lines this roster says no longer
       // count, so repaint it when that set moves (and only then).
@@ -16543,7 +16597,7 @@ const AppView = {
       }
     };
     try {
-      const res = await fetch(`/api/sessions/${sessionId}/votes`);
+      const res = await fetch(`/api/sessions/${sessionId}/votes`, fresh ? { cache: 'no-cache' } : undefined);
       if (!res.ok) { publish({ phase: 'hidden' }); return; }
       const data = await res.json();
       const ctx = AppView._proposalsCtx || {};
@@ -16616,13 +16670,48 @@ const AppView = {
   _invalidateGovVoteRoster(issueId) {
     if (issueId == null) return;
     const id = Number(issueId);
-    if (AppView._govVoteRoster[issueId]) AppView._govVoteRosterStale.add(id);
+    if (AppView._govVoteRoster[issueId] || AppView._govVoteRosterInFlight.has(issueId)) AppView._govVoteRosterStale.add(id);
     else delete AppView._govVoteRoster[issueId];
   },
 
-  async _loadGovVoteRoster(issueId) {
+  // ── Live re-reads for the open topic (#4177) ─────────────────────────
+  //
+  // A governance roster was invalidated only by the viewer's OWN vote, so
+  // anyone else's never appeared on an open page. It now re-reads after a gap
+  // (lib/live-reads.ts: the socket reconnecting, the tab coming back, the
+  // service worker correcting this roster's read). A change page's roster
+  // re-reads with the page itself (topic-head.tsx's ChangeDetail), and every
+  // topic's discussion with the chat (GroupChat.resyncLoaded). Registered
+  // once, the first time a topic opens; the watcher reads whichever topic is
+  // open when a re-read comes.
+  _topicLiveWatch: null,
+  _watchTopicLiveReads() {
+    if (AppView._topicLiveWatch) return;
+    const live = window.UsernodeReact && window.UsernodeReact.liveReads;
+    if (!live || typeof live.watch !== 'function') return;
+    AppView._topicLiveWatch = live.watch(() => AppView._rereadOpenTopic(), {
+      reads: (url) => url.pathname === AppView._openGovRosterPath(),
+    });
+  },
+  _openGovRosterPath() {
+    const t = AppView._devTopic;
+    if (!t || t.kind !== 'gov' || !AppView.appData) return null;
+    return `/api/apps/${AppView.appData.slug}/governance/${t.id}/votes`;
+  },
+  _rereadOpenTopic() {
+    if (typeof App === 'undefined' || App.currentTab !== 'dev' || !AppView._openGovRosterPath()) return;
+    const id = AppView._devTopic.id;
+    AppView._invalidateGovVoteRoster(id);
+    return AppView._loadGovVoteRoster(id, { fresh: true });
+  },
+
+  // `fresh` as in `_loadVoteRoster`.
+  async _loadGovVoteRoster(issueId, { fresh = false } = {}) {
     if (issueId == null || !AppView.appData) return;
-    if (AppView._govVoteRosterInFlight.has(issueId)) return;
+    if (AppView._govVoteRosterInFlight.has(issueId)) {
+      if (fresh) AppView._govVoteRosterStale.add(Number(issueId));
+      return;
+    }
     const stale = AppView._govVoteRosterStale.has(Number(issueId));
     if (AppView._govVoteRoster[issueId] && !stale) return;
     AppView._govVoteRosterStale.delete(Number(issueId));
@@ -16630,11 +16719,14 @@ const AppView = {
     const publish = (view) => {
       AppView._govVoteRosterInFlight.delete(issueId);
       AppView._govVoteRoster[issueId] = view;
+      // As in `_loadVoteRoster`: marked stale meanwhile, read once more.
+      if (AppView._govVoteRosterStale.has(Number(issueId))) void AppView._loadGovVoteRoster(issueId, { fresh: true });
       AppView._renderTopicHead();
     };
     try {
       const slug = AppView.appData.slug;
-      const res = await fetch(`/api/apps/${slug}/governance/${issueId}/votes${AppView._demoQS()}`);
+      const res = await fetch(`/api/apps/${slug}/governance/${issueId}/votes${AppView._demoQS()}`,
+        fresh ? { cache: 'no-cache' } : undefined);
       if (!res.ok) { publish({ phase: 'hidden' }); return; }
       const data = await res.json();
       // A non-breaking space is not needed here (no approver ticks on a
@@ -17930,7 +18022,9 @@ const AppView = {
       : null;
 
     // ── Badges: close status + work state + at most three metadata chips ──
-    const badges = closed ? [closedBadge] : [
+    // (#4244) On its own page (noNav) the status band above the card says
+    // it, with when and by what, so the card does not say it twice.
+    const badges = closed ? (noNav ? [] : [closedBadge]) : [
       closeBadge,
       AppView._inProgressChipSpec(issue),
       ...AppView._attrChipSpecs('issue', n, issue, { omitUnset: !noNav }),

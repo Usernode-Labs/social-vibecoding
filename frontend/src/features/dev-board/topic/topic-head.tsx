@@ -33,9 +33,10 @@ import { createPortal } from 'react-dom';
 import type { FormEvent, KeyboardEvent, ReactNode, SyntheticEvent } from 'react';
 
 import { Html } from '../../../lib/html';
+import { FRESH, watch } from '../../../lib/live-reads';
 import { useStoreState } from '../../../lib/use-store-state';
 import { Button } from '@/components/ui/button';
-import { ChevronRightIcon, PencilSquareIcon, PlusIcon, SearchIcon, XIcon } from '@/components/ui/icons';
+import { CheckIcon, ChevronRightIcon, PencilSquareIcon, PlusIcon, SearchIcon, XIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { ActionBand, ActionButton, Badge, DevCard, StatusPill, TitleContent, VoteButton, isVoteSpec } from '../card/dev-card';
@@ -46,6 +47,7 @@ import { topicHeadStore } from './topic-store';
 import { ChangeConversation } from './conversation';
 import { TopicBack } from './topic-back';
 import { DescriptionEditor } from './description-editor';
+import { ISSUE_BODY_MAX } from '../../../lib/issue-body-limit';
 import type {
   ChecksVerdict,
   CheckRow,
@@ -53,6 +55,7 @@ import type {
   NoteTone,
   RosterView,
   IssueLink,
+  IssueClosedBand,
   IssueProposalRef,
   TextRun,
   TopicBody,
@@ -613,21 +616,34 @@ function withPendingVote(av: any, row: any) {
   return row;
 }
 
-export async function readChangeDetail(item: any, owner: boolean, signal: AbortSignal) {
+/** The path a change page reads its row from, review or not. */
+export function changeDetailPath(item: any): string {
+  const av = (window as any).AppView;
+  const review = ['promoted', 'merging', 'merged'].includes(item.status) && av?.appData?.slug;
+  return review ? `/api/apps/${av.appData.slug}/proposals/${item.id}` : `/api/sessions/${item.id}/details`;
+}
+
+/**
+ * `fresh` is a re-read after a gap (#4177, lib/live-reads.ts): it skips the
+ * service worker's saved copy, and re-reads the vote roster for every viewer,
+ * because whatever moved the row while this page was not hearing about it
+ * may have moved the votes too.
+ */
+export async function readChangeDetail(item: any, owner: boolean, signal: AbortSignal, { fresh = false } = {}) {
   const id = item.id;
   const av = (window as any).AppView;
   const review = ['promoted', 'merging', 'merged'].includes(item.status) && av?.appData?.slug;
-  const url = review ? `/api/apps/${av.appData.slug}/proposals/${id}` : `/api/sessions/${id}/details`;
+  const url = changeDetailPath(item);
   // The short form: passing checks are counted, and their fold reads the
   // names when opened (AppView._loadCheckNames, _readTopicRow).
   const demo = av?._demoQS?.() ? '&demo=1' : '';
-  const response = await fetch(`${url}?results=failing${demo}`, { signal });
+  const response = await fetch(`${url}?results=failing${demo}`, fresh ? { ...FRESH, signal } : { signal });
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error || 'Could not refresh this change.');
   const session = review ? payload.proposal : payload.session;
   if (review && !signal.aborted) {
-    if (owner) av._invalidateVoteRoster(id);
-    await av._loadVoteRoster(id);
+    if (owner || fresh) av._invalidateVoteRoster(id);
+    await av._loadVoteRoster(id, { fresh });
   }
   return session;
 }
@@ -749,6 +765,46 @@ function AddressedBy({ r }: { r: IssueProposalRef }): ReactNode {
         ><IssueIdentity label={r.label} title={r.title} /><RefChevron /></a>
       </div>
     </aside>
+  );
+}
+
+/**
+ * #4244 — a closed request's ONE status band, at the top of its card:
+ * "✓ Closed · Oct 5 · by #10 <title> ›". It replaced a separate "Closed by"
+ * box above the card plus a grey "Closed" badge on it, which said the same
+ * thing twice in two places. Emerald when a merged change closed it, zinc
+ * when a close vote or an admin did. The change is an inline pill drawn like
+ * the change page's "Addresses" line (`.dev-topic-issue`), and it keeps
+ * `data-addressed-by`, the hook the old box's row carried.
+ */
+function ClosedBand({ b }: { b: IssueClosedBand }): ReactNode {
+  const r = b.ref;
+  return (
+    <div className="dev-issue-closed-band" data-tone={b.tone} data-topic-part="closed-band">
+      <CheckIcon className="dev-issue-closed-band-glyph" aria-hidden="true" />
+      <span className="dev-issue-closed-band-k">Closed</span>
+      {b.when ? <>
+        <span className="dev-issue-closed-band-dot" aria-hidden="true">·</span>
+        <span title={b.whenTitle || undefined}>{b.when}</span>
+      </> : null}
+      {r ? <>
+        <span className="dev-issue-closed-band-dot" aria-hidden="true">·</span>
+        <span>by</span>
+        <a
+          href={r.href}
+          className="dev-ws-chip dev-ws-chip-info dev-topic-issue"
+          data-addressed-by={r.sessionId}
+          aria-label={`Closed by ${r.label}: ${r.title}`}
+          onClick={(event) => {
+            if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+            event.preventDefault(); call('openTopic', 'proposal', r.sessionId);
+          }}
+        ><b>{r.label}</b><span>{r.title}</span><ChevronRightIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /></a>
+      </> : b.how ? <>
+        <span className="dev-issue-closed-band-dot" aria-hidden="true">·</span>
+        <span>{b.how}</span>
+      </> : null}
+    </div>
   );
 }
 
@@ -1540,6 +1596,9 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
   const [loaded, setLoaded] = useState<any>(null);
   const [error, setError] = useState('');
   const [revision, setRevision] = useState(0);
+  // The next read is a live re-read (#4177): fresh, roster included. Held
+  // until a read actually runs, because a hidden page defers it.
+  const freshNext = useRef(false);
   const id = item?.id;
   // THE PAGE RE-READS ITS ROW WHEN SOMETHING HAPPENS TO IT, not on a timer.
   // It polled every ten seconds for as long as it was open, because the
@@ -1551,12 +1610,17 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
   //   - with `{ id, row }`: adopt a row the Workshop just read for this page;
   //   - with `{ id, patch }`: merge a live patch (a checks tick), which would
   //     otherwise be painted over by this page's older read;
-  //   - with 'all': the socket reconnected (App.resyncCurrentView);
+  //   - a live re-read (#4177, lib/live-reads.ts): the socket reconnected, the
+  //     tab came back after a while, or the service worker corrected this
+  //     page's own read, which it may have answered from an older copy;
   //   - the page coming back into view after a read was skipped for it.
   useEffect(() => {
     if (!id || !active) return;
     const abort = new AbortController();
     let skipped = false;
+    // A fresh read still on the wire when this effect is torn down (a
+    // revision bump aborts it): the next effect's read inherits `fresh`.
+    let freshInFlight = false;
     async function load() {
       // These portals can remain mounted while another screen is open, and a
       // hidden tab reads nothing; either reads when it is seen again.
@@ -1565,16 +1629,20 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
         return;
       }
       skipped = false;
+      const fresh = freshNext.current;
+      freshNext.current = false;
+      freshInFlight = fresh;
       try {
-        const session = await readChangeDetail(item, owner, abort.signal);
+        const session = await readChangeDetail(item, owner, abort.signal, { fresh });
         if (!abort.signal.aborted) { setLoaded(session); setError(''); }
       } catch (err) {
         if (!abort.signal.aborted) setError((err as Error).message);
+      } finally {
+        if (!abort.signal.aborted) freshInFlight = false;
       }
     }
     const refresh = (event: Event) => {
       const detail = (event as CustomEvent).detail;
-      if (detail === 'all') { setRevision((n) => n + 1); return; }
       if (detail && typeof detail === 'object') {
         if (Number(detail.id) !== Number(id)) return;
         if (detail.row) { setLoaded(detail.row); setError(''); return; }
@@ -1586,6 +1654,12 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
       if (Number(detail) === Number(id)) setRevision((n) => n + 1);
     };
     const seen = () => { if (skipped && document.visibilityState !== 'hidden') void load(); };
+    // Its own read and the roster it reads with it (readChangeDetail).
+    const paths = new Set([changeDetailPath(item), `/api/sessions/${id}/votes`]);
+    const unwatch = watch(() => {
+      freshNext.current = true;
+      setRevision((n) => n + 1);
+    }, { reads: (url) => paths.has(url.pathname) });
     window.addEventListener('change-detail-refresh', refresh);
     document.addEventListener('visibilitychange', seen);
     const shown = typeof ResizeObserver === 'function' && root.current ? new ResizeObserver(seen) : null;
@@ -1593,6 +1667,8 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
     void load();
     return () => {
       abort.abort();
+      if (freshInFlight) freshNext.current = true;
+      unwatch();
       window.removeEventListener('change-detail-refresh', refresh);
       document.removeEventListener('visibilitychange', seen);
       shown?.disconnect();
@@ -1650,7 +1726,9 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
         <>
           <div className="dev-topic-sheet dev-topic-card" data-topic-sheet="card">
             {/* #2431: an ISSUE's page names the change on it. A CHANGE's page
-                names its issues under the summary (ChangeHero). */}
+                names its issues under the summary (ChangeHero). #4244: a
+                CLOSED issue says so once, in the band at the card's top. */}
+            {body.closedBand ? <ClosedBand b={body.closedBand} /> : null}
             {body.addressedBy ? <AddressedBy r={body.addressedBy} /> : null}
             <DevCard model={card} />
           </div>
@@ -1743,7 +1821,7 @@ function IssueBody(
             id="dev-issue-body-input"
             aria-labelledby="dev-issue-body-heading"
             rows={10}
-            maxLength={10000}
+            maxLength={ISSUE_BODY_MAX}
             width="full"
             box="default"
             className="resize-y"

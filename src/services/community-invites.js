@@ -932,6 +932,25 @@ async function redeemCarried(pool, req, res, userId, { requirePhone = false } = 
   }
 }
 
+/**
+ * A sign-in that carried a link but does not follow it: an existing account
+ * is asked first, by the shell (App._followInvite), unless this sign-in IS
+ * the Join its page asked for. The carried copy is dropped, so nothing
+ * follows it later without asking. The admin Journey's invite funnel still
+ * counts the sign-in as one the link brought (#4272): they opened the link
+ * signed out and signed in carrying it, and the shell's standing read after
+ * it would otherwise take them for somebody already signed in. Recorded
+ * before the sign-in answers, so that read finds it. Never throws; resolves
+ * null, as redeemCarried does when it follows nothing.
+ */
+async function dropCarried(pool, req, res, userId) {
+  const token = req.cookies?.[INVITE_COOKIE];
+  clearInviteCookie(res);
+  if (!token || !isToken(token) || !userId) return null;
+  await require('./journey-events').noteInviteSignedIn(pool, { token, userId, carried: true });
+  return null;
+}
+
 module.exports = {
   DEFAULT_DAYS,
   DEFAULT_USES,
@@ -965,4 +984,5 @@ module.exports = {
   setInviteCookie,
   clearInviteCookie,
   redeemCarried,
+  dropCarried,
 };

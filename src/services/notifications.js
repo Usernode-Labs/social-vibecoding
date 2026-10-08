@@ -25,6 +25,10 @@
 // 'platform_limit' tells full admins a server-wide cap (MAX_APPS,
 // MAX_GLOBAL_SESSIONS) is nearly or completely used; `detail` carries the
 // cap, level and figures (services/platform-limit-alerts.js).
+// 'platform_incident' (#4296) tells full admins about errors that should not
+// happen: a daily digest of the previous day's counts per kind, or one kind
+// past its hourly threshold; `detail` carries which, and the figures
+// (services/platform-incident-alerts.js).
 // 'channel_message' is a person's message in the discussion of a private
 // project of 8 people or fewer, to the rest of its people: one row per
 // discussion that folds later messages into a count in `detail`
@@ -1006,6 +1010,38 @@ async function createPlatformLimitNotifications(pool, { detail }) {
   return rows;
 }
 
+// #4296: errors that should not happen, counted (services/platform-incident-
+// alerts.js decides when). Full admins only, no app, like platform_limit
+// above. `detail` is that module's "digest:..." or "hour:<kind>:<n>" token.
+//
+// De-dupe: an admin who already got an alert starting `dedupePrefix` since
+// `since` (today's digest; this kind's hour alert in the last hour) gets no
+// second one, read or not: the promise is one digest a day and one alert per
+// kind per hour.
+async function createPlatformIncidentNotifications(pool, { detail, dedupePrefix, since }) {
+  const token = String(detail || '').slice(0, 32);
+  const prefix = String(dedupePrefix || '');
+  const after = since instanceof Date ? since : new Date(since);
+  if (!token || !prefix || !token.startsWith(prefix) || Number.isNaN(after.getTime())) return [];
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, source_user_id, kind, detail)
+     SELECT admin.id, NULL, 'platform_incident', $1::varchar(32)
+       FROM users admin
+      WHERE admin.is_admin = TRUE
+        AND admin.admin_readonly = FALSE
+        AND NOT EXISTS (
+          SELECT 1 FROM notifications existing
+           WHERE existing.user_id = admin.id
+             AND existing.kind = 'platform_incident'
+             AND LEFT(existing.detail, char_length($2)) = $2
+             AND existing.created_at >= $3
+        )
+     RETURNING id, user_id, source_user_id, kind, detail, created_at`,
+    [token, prefix, after],
+  );
+  return rows;
+}
+
 async function notifyManagedOpenRouterReviewAdmins(pool, args) {
   const rows = await createManagedOpenRouterReviewNotifications(pool, args);
   await Promise.all(rows.map((row) => hydrateAndPush(pool, row)));
@@ -1976,6 +2012,7 @@ module.exports = {
   createRevisionRecheckNotifications,
   createAppHealthNotification,
   createPlatformLimitNotifications,
+  createPlatformIncidentNotifications,
   createCheckFailedNotification,
   createSessionDoneNotification,
   createSessionStalledNotification,

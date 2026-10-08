@@ -227,6 +227,16 @@ test('Kubernetes workflow retains queued releases, publishes the tip, and never 
   assert.match(release, /compare "\$published_sha" "\$GITHUB_SHA"\)" = ahead/, 'only over an older revision');
   assert.match(release, /compare "\$GITHUB_SHA" "\$current_sha"\)" = ahead/, 'only a revision the branch still contains');
   assert.match(release, /\[ "\$RELEASE_CHANNEL" = stable \] \|\| decide false/, 'a candidate waits for its tip');
+  // The tip too (7 October: four rollouts in sixteen minutes) goes out no
+  // sooner than RELEASE_MIN_GAP_MINUTES after the release before it: it waits
+  // in the step, re-reading the branch, and a dispatched run never waits.
+  assert.match(release, /RELEASE_MIN_GAP_MINUTES: '10'/);
+  assert.match(release, /\[ "\$GITHUB_EVENT_NAME" != workflow_dispatch \] \\\n\s+\|\| decide true/,
+    'a run dispatched by hand is the way to release at once');
+  assert.match(release, /sleep \$\(\( wait_until - now < 30 \? wait_until - now : 30 \)\)\n\s+current_sha="\$\(branch_tip\)"/,
+    'every wait is followed by a fresh read of the branch tip');
+  assert.match(release, /^    permissions:\n(?:      #.*\n)*      actions: read$/m,
+    'the release age is read from this workflow\'s own runs');
   for (const step of ['Log in to GHCR for Helm', 'Publish OCI Helm release', 'Record atomic release']) {
     assert.match(release, new RegExp(`- name: ${step}\\n        if: steps\\.current_head\\.outputs\\.publish == 'true'`));
   }

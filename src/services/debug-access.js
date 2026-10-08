@@ -106,6 +106,7 @@ const DENIED_TABLES = new Set([
   'mcp_tokens',               // hosted-connector bearer hashes and hints
   'mcp_delegations',          // which of the platform's own agents holds a grant for whom (#2779)
   'mcp_auth_audit_events',    // security audit trail for connector credentials
+  'external_agent_upload_tokens', // one-time work-order patch upload credential hashes (#4264)
   'user_social_identities',   // private provider ownership proofs
   'social_identity_oauth_states', // social-link state hashes + PKCE verifiers
   'social_identity_pending_replacements', // short-lived verified account replacements

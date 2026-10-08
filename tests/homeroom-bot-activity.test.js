@@ -50,10 +50,17 @@ test('a card\'s outcome is the first live run after it began: its verdict, and f
   assert.equal(activity.outcomeOf({}), null, 'no run yet: still going');
   assert.equal(activity.outcomeOf(run({ verdict: 'ready' })), null, 'a build not finished: still going');
   assert.equal(activity.outcomeOf(run({ verdict: 'ready', proposal_session_id: 4, proposal_status: 'promoted' })), 'proposed');
-  assert.equal(activity.outcomeOf(run({ verdict: 'ready', proposal_session_id: 4, proposal_status: 'merging' })), 'proposed');
+  assert.equal(activity.outcomeOf(run({ verdict: 'ready', proposal_session_id: 4, proposal_status: 'merging' })), 'going_live',
+    '#4227: merged and not live yet is going live, with its spinner');
+  // #4242: not "waiting for approval" until its news (the ready card) went out.
+  assert.equal(activity.outcomeOf(run({ verdict: 'ready', proposal_session_id: 4, proposal_status: 'promoted', told: false })), 'checking');
+  assert.equal(activity.outcomeOf(run({ verdict: 'ready', proposal_session_id: 4, proposal_status: 'promoted', told: true })), 'proposed');
+  assert.equal(activity.outcomeOf(run({ verdict: 'ready', proposal_session_id: 4, proposal_status: 'promoted', told: false, needs_look: true })), 'needs_look',
+    'nothing will offer it without a person, and its requester was told so');
   assert.equal(activity.outcomeOf(run({ verdict: 'ready', proposal_session_id: 4, proposal_status: 'merged' })), 'live');
   assert.equal(activity.outcomeOf(run({ verdict: 'ready', proposal_session_id: 4, proposal_status: 'closed' })), 'closed');
-  assert.equal(activity.outcomeOf(run({ verdict: 'ready', build_ok: true })), 'proposed', 'built, its proposal a moment from recorded');
+  assert.equal(activity.outcomeOf(run({ verdict: 'ready', build_ok: true })), 'checking', '#4242: built, no proposal recorded: never waiting for approval');
+  assert.equal(activity.outcomeOf(run({ verdict: 'ready', build_ok: true, needs_look: true })), 'needs_look');
   assert.equal(activity.outcomeOf(run({ verdict: 'ready', build_ok: false, build_error: 'turn timed out' })), 'build_failed');
   assert.equal(activity.outcomeOf(run({ verdict: 'ready', build_ok: false, build_error: 'blocked: needs a paid API' })), 'blocked');
   assert.equal(activity.outcomeOf(run({ verdict: 'ready', build_ok: false, build_error: 'skipped: the request was closed before its build started' })), 'stopped',
@@ -65,7 +72,8 @@ test('a card\'s outcome is the first live run after it began: its verdict, and f
     assert.equal(activity.outcomeOf(run({ verdict })), verdict);
   }
   assert.equal(activity.outcomeOf(run({ verdict: 'something new' })), 'failed');
-  for (const outcome of ['question', 'proposed', 'live', 'closed', 'blocked', 'build_failed', 'person', 'empty', 'failed', 'held', 'stopped']) {
+  for (const outcome of ['question', 'proposed', 'live', 'closed', 'blocked', 'build_failed', 'person', 'empty', 'failed', 'held', 'stopped',
+    'checking', 'needs_look', 'going_live']) {
     assert.ok(activity.OUTCOMES.includes(outcome), outcome);
   }
 });

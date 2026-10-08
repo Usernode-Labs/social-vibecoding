@@ -24,12 +24,16 @@ const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const options = require('../src/services/create-options');
 const manifest = require('../src/services/app-manifest');
 
-test('#3572: the server holds the limit, 90, and every example the make screen sends fits it', () => {
+test('#3572: the server holds the limit, 90, and every description a template on the make screen sends fits it', () => {
   assert.equal(options.DESCRIPTION_MAX, 90);
   assert.match(options.parseCreateOptions({ audience: 'open', description: 'x'.repeat(91) }).error,
     /^Say what it is in 90 characters or fewer\.$/, 'the refusal names the limit');
-  const { EXAMPLES } = loadTsx('frontend/src/features/first-session/examples.ts');
-  for (const e of EXAMPLES) assert.ok(e.description.length <= options.DESCRIPTION_MAX, e.key);
+  const { TEMPLATES, OWN, descriptionOf } = loadTsx('frontend/src/features/first-session/examples.ts');
+  for (const t of TEMPLATES) {
+    for (const key of [...t.choices.map((c) => c.key), OWN]) {
+      assert.ok(descriptionOf(t, key).length <= options.DESCRIPTION_MAX, `${t.key}/${key}`);
+    }
+  }
 });
 
 test('#3572: a longer line from a repository is kept, and clamped where it is drawn', () => {

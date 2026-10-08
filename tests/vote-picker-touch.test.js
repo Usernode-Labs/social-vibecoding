@@ -92,6 +92,21 @@ test('#22: on a project that is just yours the Yes line is a note; the No side i
   assert.match(fn, /solo=\{!!yes\.solo\}/);
 });
 
+// An approval is only asked on a project that is just yours, so its Yes line
+// is a note even when the caller's `solo` has not caught up: the Needs you
+// sheet reads it from a community lookup that may not have landed, and the
+// staging demo's Just you project reads as public.
+test('an approval\'s Yes line is a note whatever `solo` says; its No side is unchanged', () => {
+  for (const solo of [false, undefined]) {
+    const onYes = picker({ approve: true, solo });
+    assert.match(onYes, /<label class="dev-vote-reason-label" for="dev-vote-reason-7">Add a note, if you like\.<\/label>/, String(solo));
+    assert.doesNotMatch(onYes, /for the group/, String(solo));
+    const onNo = picker({ approve: true, solo, side: 'no' });
+    assert.match(onNo, /What’s not working for you\? One line is plenty\.<\/label>/, String(solo));
+  }
+  assert.match(picker({ approve: false, solo: false }), /Add a line for the group, if you like\./, 'a group vote keeps its wording');
+});
+
 test('withLine false: the switch and the button only, and the send is never off', () => {
   // #2603 left no caller passing false — every vote the group casts carries
   // a line now — but the panel still draws without the box for anything

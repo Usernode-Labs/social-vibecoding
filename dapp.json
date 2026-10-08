@@ -1510,7 +1510,7 @@
     {
       "name": "Create opens \"What do you want to make?\", the first session's own screen, as the one front door for a new project: a close, the examples, and a small \"Import from a GitHub repo\" (#748's route; the New project dialog is retired)",
       "path": "/#create",
-      "expectSelector": "[data-first-session-make][data-make-entry=\"create\"]:has([data-make-close]):has([data-first-session-example=\"run\"]) [data-make-import-link]",
+      "expectSelector": "[data-first-session-make][data-make-entry=\"create\"]:has([data-make-close]):has([data-first-session-example=\"tier\"]) [data-make-import-link]",
       "expectText": "What do you want to make?"
     },
     {
@@ -3193,9 +3193,10 @@
       "expectSelector": "body:has(#header-scope-switch[aria-controls=\"community-switcher\"]) #workshop-screen[data-page-bounce]:not(.hidden):has(#workshop-list [data-workshop-app]) [data-workshop-pane=\"status\"]:not(.hidden) #workshop-empty.hidden"
     },
     {
-      "name": "Communities: Needs you is a project’s own feed, every project mixed, each item naming its project, with the rail from Vote to More (#3270, #3488)",
-      "path": "/?demo=1&ws=needs#workshop",
-      "expectSelector": "#workshop-screen:not(.hidden):has([data-workshop-needs-back]) [data-needs-reel]:has([data-ws-rail-btn=\"vote\"] ~ [data-ws-rail-btn=\"more\"]) section[data-ws-app=\"staging-demo-your-app\"] a[href^=\"#app/staging-demo-your-app/dev/governance/\"]"
+      "name": "Communities: Needs you is a project’s own feed, every project mixed, each item naming its project, with the rail from Vote to More (#3270, #3488); a Just-you change's vote sheet asks for your approval (#4313)",
+      "path": "/?demo=1&ws=needs&shot=needs-approve#workshop",
+      "expectSelector": "#workshop-screen:not(.hidden):has([data-workshop-needs-back]) [data-needs-reel]:has([data-ws-rail-btn=\"vote\"] ~ [data-ws-rail-btn=\"more\"]):has(a[href^=\"#app/staging-demo-your-app/dev/governance/\"]) [data-ws-sheet=\"vote\"] .dev-ws-vote-sub",
+      "expectText": "Waiting for your approval."
     },
     {
       "name": "The Challenges area is the way to the Leaderboard screen",
@@ -3212,6 +3213,12 @@
       "name": "Admin console deep-links the Activation codes section (#818)",
       "path": "/#admin/codes",
       "expectSelector": "#admin-code-list"
+    },
+    {
+      "name": "#4296: the Unexpected events section reads the incident log, with its kind, app and time filters and its links to Health & status and Rollout health",
+      "path": "/#admin/incidents",
+      "expectSelector": "#admin-incidents:has(#admin-incidents-links a[href=\"#admin/status\"]):has(#admin-incidents-kind):has(#admin-incidents-app):has(#admin-incidents-days) #admin-incidents-summary[data-state=\"ready\"]",
+      "expectText": "Unexpected events"
     },
     {
       "name": "Admin console renders the Health & status section (#860)",
@@ -3935,9 +3942,9 @@
       "expectText": "Estimates are per-token pricing times a typical change"
     },
     {
-      "name": "Homeroom bot dashboard renders its verdict table and mode (#2684) under its rollout health: proposals merged, time to a proposal, questions waiting, failed turns and DM answers, with the week's failed answers",
+      "name": "Homeroom bot dashboard renders its verdict table and mode (#2684) under its rollout health: proposals merged, time to a proposal, questions waiting, failed turns and DM answers, with the week's failed answers and its unexpected events (#4210), linking to the whole log (#4296)",
       "path": "/#admin/homeroom-bot",
-      "expectSelector": "#admin-homeroom-bot:has(#admin-homeroom-bot-rollout-rows [data-rollout=\"chat\"]):has(#admin-homeroom-bot-rollout-failures) #admin-homeroom-bot-table",
+      "expectSelector": "#admin-homeroom-bot:has(#admin-homeroom-bot-rollout-rows [data-rollout=\"chat\"]):has(#admin-homeroom-bot-rollout-failures):has(#admin-homeroom-bot-unexpected #admin-homeroom-bot-unexpected-all) #admin-homeroom-bot-table",
       "expectText": "Verdict"
     },
     {
@@ -4159,12 +4166,6 @@
       "name": "Inside an app's detail page the header arrow links back to the list (#1036)",
       "path": "/#apps/usernode-2d5619",
       "expectSelector": "a#back-btn[href=\"#apps\"]"
-    },
-    {
-      "name": "Settings can answer the build-flow question for good (#1049), after the connectors on Connectors & CLI, with no GitHub rows",
-      "path": "/#settings/connectors",
-      "expectSelector": "#settings-section-content:not(:has([data-settings-section=\"linked-accounts\"]:not(.hidden))) [data-settings-section=\"connectors\"]:not(.hidden) + [data-settings-section=\"build-venue\"]:not(.hidden):has(option[value=\"claude-code\"])",
-      "expectText": "Where changes get built"
     },
     {
       "name": "A connector-imported proposal names the coding agent that built it (#967)",
@@ -4517,6 +4518,12 @@
       "expectText": "The staging build or the test run itself broke"
     },
     {
+      "name": "#4269: a proposal's before/after shows its first screen and keeps the rest behind All 5 screens, with a phone capture in a device outline and an empty tile for a route with no production version",
+      "path": "/#app/staging-demo-app/dev/proposals/900001",
+      "expectSelector": "#dev-topic-thread [data-topic-sheet=\"hero\"] [data-visuals-scope]:has(.usn-visual-more .usn-visual-phone):has(.usn-visual-empty) .usn-visual-more > .usn-visual-more-summary",
+      "expectText": "All 5 screens"
+    },
+    {
       "name": "A change opens its full overview with a single action band",
       "path": "/#app/usernode-2d5619/dev/proposals/900801",
       "expectSelector": "#dev-topic-thread .dev-topic-hero .gc-card-actions [data-card-menu]",
@@ -4791,6 +4798,12 @@
       "expectText": "Also keep the choice when I switch devices."
     },
     {
+      "name": "#4312: a shared ?flow=claude-code link on an agent session opens its Build with sheet on the Claude Code tab, at the walkthrough's first step",
+      "path": "/#messages/agent/990801?flow=claude-code",
+      "expectSelector": "[data-agent-session-handoff=\"claude-code\"] [data-agent-session-handoff-steps] > [data-agent-session-handoff-step=\"github\"]:first-child [data-agent-session-handoff-action]",
+      "expectText": "Link GitHub"
+    },
+    {
       "name": "#3976: an agent session draws a coding run as the dev chat's run card: its head with the chevron, the agent named under it, then its chips",
       "path": "/#messages/agent/990801",
       "expectSelector": "[data-agent-session-thread=\"990801\"] [data-agent-session-run] > details.dc-cc-attached > .dc-cc-attached-summary > .dc-cc-head:has(> .dc-cc-attached-chevron) + .dc-status-venue + .dc-cc-chips"
@@ -4819,9 +4832,9 @@
       "expectSelector": "body:has(#messages-screen.hidden) #app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"][data-ws-slug=\"staging-demo-app\"] section.dev-ws-discussion[data-discussion-app=\"staging-demo-app\"] > .dev-ws-discussion-host #gc-messages"
     },
     {
-      "name": "#2387: an app channel's messages carry the same hover bar, a threaded one its reply count, a deleted one its placeholder",
+      "name": "#2387: an app channel's messages carry the same hover bar, a threaded one its reply count, a deleted one its placeholder; #4238: Homeroom bot's first-version line carries its Open button",
       "path": "/?demo=1#messages/app/staging-demo-app",
-      "expectSelector": "#gc-messages:has([data-msg-id=\"9902000\"] .gc-msg-deleted-text) [data-msg-id=\"9902003\"]:has(.msgx-thread-chip) .gc-msg-actions.msgx-bar > [aria-label=\"Add reaction\"] ~ .gc-msg-more-action[aria-haspopup=\"menu\"]",
+      "expectSelector": "#gc-messages:has([data-msg-id=\"9902000\"] .gc-msg-deleted-text):has([data-gc-open-app]) [data-msg-id=\"9902003\"]:has(.msgx-thread-chip) .gc-msg-actions.msgx-bar > [aria-label=\"Add reaction\"] ~ .gc-msg-more-action[aria-haspopup=\"menu\"]",
       "expectText": "3 replies"
     },
     {

@@ -2811,6 +2811,55 @@ const App = {
   // we know we might have missed something" rather than a periodic poll.
   _eventsWsHasConnected: false,
 
+  // #4318: a session's live events (`session_event`: the agent's progress,
+  // the Mayor's replies, status rows) reach only its owner's sockets and the
+  // sockets that WATCH it, so a screen showing a session's live transcript
+  // says so on this socket. `_watchedSessions` maps a session id to the set
+  // of reasons it is on screen; the socket watches every id with at least
+  // one, and is told them all again whenever it reconnects. Today the one
+  // reason is DevChat's open session (the session chat and the Mayor chat;
+  // DevChat.currentSession's setter calls setDevChatSession). Lists, boards,
+  // proposal pages and previews need nothing here: checks and preview
+  // events still reach everyone who may view the app.
+  _watchedSessions: new Map(),
+
+  watchSession(sessionId, reason = 'screen') {
+    const id = Number(sessionId);
+    if (!Number.isSafeInteger(id) || id <= 0) return;
+    let reasons = App._watchedSessions.get(id);
+    if (!reasons) {
+      reasons = new Set();
+      App._watchedSessions.set(id, reasons);
+      App._sendSessionWatch('watch_session', id);
+    }
+    reasons.add(reason);
+  },
+
+  unwatchSession(sessionId, reason = 'screen') {
+    const id = Number(sessionId);
+    const reasons = App._watchedSessions.get(id);
+    if (!reasons) return;
+    reasons.delete(reason);
+    if (reasons.size) return;
+    App._watchedSessions.delete(id);
+    App._sendSessionWatch('unwatch_session', id);
+  },
+
+  _devChatWatchedId: null,
+  setDevChatSession(sessionId) {
+    const id = Number(sessionId) > 0 ? Number(sessionId) : null;
+    if (id === App._devChatWatchedId) return;
+    if (App._devChatWatchedId != null) App.unwatchSession(App._devChatWatchedId, 'devchat');
+    App._devChatWatchedId = id;
+    if (id != null) App.watchSession(id, 'devchat');
+  },
+
+  _sendSessionWatch(type, sessionId) {
+    const socket = App.eventsWs;
+    if (!socket || socket.readyState !== 1) return; // re-sent on open
+    try { socket.send(JSON.stringify({ type, sessionId })); } catch { /* closed */ }
+  },
+
   connectEvents() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     // Same staging-iframe token fallback as GroupChat._openSocket — the
@@ -2829,6 +2878,9 @@ const App = {
       // A (re)opened socket proves we're online — clear the offline
       // banner immediately instead of waiting for the slow re-probe loop.
       if (window.Offline) Offline.nudge();
+      // #4318: a new socket watches nothing until told; tell it every
+      // session still on screen before anything else can be missed.
+      for (const id of App._watchedSessions.keys()) App._sendSessionWatch('watch_session', id);
       if (isReconnect) App.resyncCurrentView();
     };
 
@@ -3071,9 +3123,11 @@ const App = {
     // is the mounted one, so calling both is free.
     if (window.AdminConsole?.isOpen?.()) AdminConsole.loadStagingReap?.();
     App.loadVersion();
-    // A change's page re-reads its row on events, not on a timer, so a
-    // dropped socket is its cue too (topic-head.tsx's ChangeDetail).
-    window.dispatchEvent(new CustomEvent('change-detail-refresh', { detail: 'all' }));
+    // #4177: everything that registered with live reads re-reads what it
+    // shows — a change's page (topic-head.tsx's ChangeDetail), its vote
+    // rosters, every loaded chat stream. The lines above are the screens not
+    // moved there yet; a screen that moves takes its line out of this list.
+    window.UsernodeReact?.liveReads?.resync?.('reconnect');
     if (App.currentApp && typeof AppView !== 'undefined' && AppView.appData) {
       // Re-fetch tab-specific state. We don't blow away the DOM —
       // these helpers update in place — so scroll positions, drafts,
@@ -4290,7 +4344,20 @@ const App = {
       // between the sheet and the welcome (Evan, 5 October 2026; the make
       // screen's hand-off, #3894, works the same way). The welcome fills it;
       // any other ending takes it down (_endWelcomeHold).
-      const fromLanding = App._inviteLandingToken === token;
+      //
+      // The landing's mark is kept in this tab's sessionStorage as well as
+      // here, because a sign-in does not always finish in the document that
+      // showed the landing: the move onto the live build reloads it after
+      // the code step (finishLogin, _moveToLiveShell 'signed-in'), and a
+      // provider's trip comes back to the link in a new one. With only the
+      // in-memory mark, that boot followed the link unheld and Home showed
+      // until the standing came back (#4215).
+      let landed = null;
+      try {
+        landed = sessionStorage.getItem(App.INVITE_LANDING_KEY);
+        sessionStorage.removeItem(App.INVITE_LANDING_KEY);
+      } catch (_) { /* the in-memory mark alone */ }
+      const fromLanding = App._inviteLandingToken === token || landed === token;
       App._inviteLandingToken = null;
       const island = window.UsernodeReact && window.UsernodeReact.firstSession;
       held = !!(fromLanding && island && typeof island.holdWelcome === 'function' && island.holdWelcome());
@@ -4457,6 +4524,10 @@ const App = {
     }
   },
 
+  // Where the landing marks the invite link it showed signed out, for a
+  // sign-in that finishes in another document (_followInvite).
+  INVITE_LANDING_KEY: 'usernode:invite-landing',
+
   // "You're in"'s held frame (above), down; a welcome that took its place stays.
   _endWelcomeHold() {
     const island = window.UsernodeReact && window.UsernodeReact.firstSession;
@@ -4607,6 +4678,7 @@ const App = {
         if (!App.user) {
           // A sign-in from here comes back to this link (_followInvite).
           App._inviteLandingToken = inviteToken;
+          try { sessionStorage.setItem(App.INVITE_LANDING_KEY, inviteToken); } catch (_) { /* this document only */ }
           AuthScreens.rememberDeepLink(location.pathname);
           AuthScreens.show('landing');
           return;
@@ -4956,6 +5028,7 @@ const App = {
         // `#app/<slug>/dev/sessions/<id>`): no history entry of its own, so
         // Back from the chat still lands on the inbox it was opened from.
         const agent = App._messagesAgentThread(parts);
+        if (agent && agent.kind === 'agent') App._takeAgentFlow(hash, fragQuery);
         if (agent) {
           if (!window.matchMedia('(min-width: 768px)').matches) {
             if (agent.kind === 'session' && typeof Improve !== 'undefined') {
@@ -5027,6 +5100,7 @@ const App = {
         // A serial id, so the same signed-int32 bound as a conversation's;
         // `#agent/new` is one not sent yet, created by its first message.
         App.setChromeless(false);
+        App._takeAgentFlow(hash, fragQuery);
         if (parts[1] === 'new') {
           App.navigateToAgentSession('new');
           return;
@@ -7301,6 +7375,36 @@ const App = {
     return null;
   },
 
+  // #4312: a shared link's `?flow=claude-code|codex` on an agent session
+  // address, in the fragment's own query (#messages/agent/new?flow=codex) or
+  // the page's (/?flow=codex#messages/agent/new). The conversation opens with
+  // its "Build with" sheet on that agent's tab, as the model pill and the
+  // credits card open it (features/agent-session/store.ts prepareHandoff).
+  // The value is taken out of the address once handed over, so a reload,
+  // Back, or the first message giving an unsent conversation its own address
+  // does not open the sheet again. Any other value is ignored.
+  _takeAgentFlow(hash, fragQuery) {
+    const read = (query) => {
+      try { return new URLSearchParams(query || '').get('flow'); } catch (_) { return null; }
+    };
+    const known = (value) => value === 'claude-code' || value === 'codex';
+    const flow = [read(fragQuery), read(location.search)].find(known);
+    if (!flow) return;
+    window.UsernodeReact?.agentSession?.prepareHandoff?.(flow);
+    const without = (query) => {
+      try {
+        const params = new URLSearchParams(query || '');
+        if (known(params.get('flow'))) params.delete('flow');
+        const rest = params.toString();
+        return rest ? `?${rest}` : '';
+      } catch (_) { return ''; }
+    };
+    try {
+      history.replaceState(history.state, '',
+        `${location.pathname}${without(location.search)}#${hash}${without(fragQuery)}`);
+    } catch (_) {}
+  },
+
   // State-only teardown; the incoming transition hides the root.
   _exitMessages() {
     App._inMessages = false;
@@ -7525,11 +7629,7 @@ const App = {
       if (App.currentTab === 'dev') {
         if (ref == null && App.currentSubTab === 'sessions'
             && typeof DevChat !== 'undefined' && DevChat.currentSession) {
-          // #2241: an unsent change has no id, and `null` here would
-          // normalize the whole route back to the board — so it serializes
-          // as the word the router reserves for it.
-          ref = DevChat.currentSession.id
-            || (DevChat.currentSession.pending ? DevChat.NEW_SESSION_REF : null);
+          ref = DevChat.currentSession.id || null;
         } else if (ref == null && App.currentSubTab === 'topic'
             && typeof AppView !== 'undefined' && AppView._devTopic) {
           ref = AppView._devTopic;
@@ -8405,11 +8505,12 @@ const App = {
 
     if (subTab === 'sessions') {
       // #2241: `new` is the one session ref that is a WORD rather than an
-      // id — /app/<slug>/dev/sessions/new is the change you have not sent
-      // yet, which has no row and therefore no id to be addressed by. It
-      // needs a route of its own precisely because of the line below: a
-      // session sub-tab with no ref normalizes to the card list, so a
-      // screen with nothing to name could not be navigated to at all.
+      // id — /app/<slug>/dev/sessions/new was the classic change you had
+      // not sent yet. That screen is gone (#2779, #4268), but the address
+      // still resolves to an unsent agent session
+      // (App.openNewChangeAsAgentSession). It needs a route of its own
+      // because of the line below: a session sub-tab with no ref
+      // normalizes to the card list.
       // DevChat.NEW_SESSION_REF holds the only other copy of this literal.
       if (ref === 'new') return { tab: 'dev', subTab: 'sessions', ref: 'new' };
       const id = (ref && typeof ref === 'object') ? ref.id : parseInt(ref, 10);

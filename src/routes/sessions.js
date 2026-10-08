@@ -1111,8 +1111,10 @@ async function loadSessionCheckContext(pool, sessionId) {
 // bounded.
 function summarizeFailingChecks(checkState, testResults, max = FAILING_CHECKS_MAX) {
   if (checkState !== 'failing') return { total: 0, blocking: 0, rows: [] };
+  // A unit suite that never reached `npm test` names no failing test, and
+  // a fix turn handed it would go looking for one.
   const all = (Array.isArray(testResults) ? testResults : [])
-    .filter((r) => r && r.status !== 'pass');
+    .filter((r) => r && r.status !== 'pass' && !unitSuiteRow.isNotRunRow(r));
   const failing = [
     ...all.filter(unitSuiteRow.isUnitSuiteRow),
     ...all.filter((r) => !unitSuiteRow.isUnitSuiteRow(r)),
@@ -5723,25 +5725,22 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // once and cached, so the 3s status poll costs nothing.
   //
   // #1378: the set became a Map because `stoppable` is now part of the
-  // payload and the fixtures have to be able to show BOTH answers. A seeded
-  // fixture has no in-memory stop handle and no durable active_turn, so it
-  // would compute stoppable:false for all of them — regressing the two
-  // estimator fixtures to the "Finishing up…" spinner and breaking the
-  // checks that assert their cohort note. The '-unstoppable' fixture is the
-  // one that deliberately keeps the false answer.
+  // payload. A seeded fixture has no in-memory stop handle and no durable
+  // active_turn, so it would compute stoppable:false — regressing the
+  // estimator fixtures to the "Finishing up…" spinner — so each one declares
+  // itself stoppable. (A '-unstoppable' fixture kept the false answer until
+  // #4268 removed it: its screen was the composer's, which a read-only
+  // classic session no longer draws.)
   let stagingCohortFixtureIds = null;
   async function stagingCohortFixtureSessions() {
     if (process.env.USERNODE_ENV !== 'staging') return null;
     if (stagingCohortFixtureIds) return stagingCohortFixtureIds;
     try {
       const { rows } = await pool.query(
-        `SELECT id, branch_name FROM chat_sessions
+        `SELECT id FROM chat_sessions
           WHERE branch_name LIKE 'staging-fixture/cc-cohort-%'`
       );
-      stagingCohortFixtureIds = new Map(rows.map((r) => [
-        r.id,
-        { stoppable: !String(r.branch_name || '').endsWith('-unstoppable') },
-      ]));
+      stagingCohortFixtureIds = new Map(rows.map((r) => [r.id, { stoppable: true }]));
     } catch {
       stagingCohortFixtureIds = new Map();
     }
@@ -6512,7 +6511,18 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           || visuals.hasInFlightCapture(sessionId)) {
         return res.json({ status: 'running' });
       }
+      // The same holds for a run of this commit that another process
+      // launched and that is still on the cluster, running or finished but
+      // not yet read: the harvest collects it (services/check-harvest.js),
+      // and starting over would throw it away, or cancel it mid-run. Asked
+      // before the stamp below, which would set it back to "building". Its
+      // stored verdict clears its manifest, and a press after that starts a
+      // fresh run. `collecting` lets the client say why nothing new started.
       recheckInFlight.add(sessionId);
+      if (await require('../services/check-harvest').runToCollect(config, pool, sessionId, session.checks_commit_sha || null)) {
+        recheckInFlight.delete(sessionId);
+        return res.json({ status: 'running', checkState: 'pending', collecting: true });
+      }
 
       // #607: stamp 'pending' + broadcast BEFORE responding so the client's
       // immediate refresh deterministically sees the in-progress state (the

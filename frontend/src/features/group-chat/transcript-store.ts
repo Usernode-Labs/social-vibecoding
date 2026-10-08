@@ -346,6 +346,11 @@ export interface TranscriptMessage {
   botCard?: BotRequestCard | null;
   /** B9: "Make this a request" is offered on this message (theirs, and the bot answers them here). */
   canAskBot?: boolean;
+  /**
+   * #4238: the Open button under Homeroom bot's "I've made the first
+   * version" message in a project's channel. Absent or null on every other row.
+   */
+  openApp?: { label: string; target: string } | null;
   /** Spec-share rows only — see SpecShareView. Null on every other kind. */
   specShare: SpecShareView | null;
   /**

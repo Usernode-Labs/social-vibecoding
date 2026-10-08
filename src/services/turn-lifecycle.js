@@ -376,6 +376,29 @@ async function incrementByokCents(db, { sessionId, turnId, cents }) {
   };
 }
 
+// One more platform restart reached this turn (server.js, when restart
+// recovery takes a bot's or a benchmark trial's turn): counted on the turn's
+// own record so every later recovery reads the same total, which the bot's
+// clock gives back time for (homeroom-bot.js RESTART_ALLOWANCE_MS). Keyed on
+// the exact turn, so a count never carries to the next one. Resolves the new
+// count, or null when the session holds no such turn.
+async function noteRestart(db, { sessionId, turnId }) {
+  if (!turnId) return null;
+  const { rows } = await db.query(
+    `UPDATE chat_sessions
+        SET active_turn = jsonb_set(
+              active_turn, '{restarts}',
+              to_jsonb(COALESCE((active_turn->>'restarts')::int, 0) + 1),
+              true)
+      WHERE id = $1
+        AND active_turn IS NOT NULL
+        AND active_turn->>'turnId' = $2
+      RETURNING (active_turn->>'restarts')::int AS restarts`,
+    [sessionId, String(turnId)],
+  );
+  return rows.length ? Number(rows[0].restarts) : null;
+}
+
 async function clearCleanupPending(db, {
   sessionId,
   turnId = null,
@@ -562,6 +585,7 @@ module.exports = {
   markQuarantined,
   mergeTailMilestones,
   incrementByokCents,
+  noteRestart,
   clearCleanupPending,
   markHeadlessTerminal,
   markStopRequested,

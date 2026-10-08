@@ -577,6 +577,12 @@ export function init() {
     const TITLE_GEN_DEBOUNCE_MS = 900;
     const TITLE_GEN_MIN_DESC = 12;
     const TITLE_GEN_MAX_PER_OPEN = 8;
+    // #4194: the description may run to 64,000 characters now; the title is
+    // named from its start, and the preview route refuses more than this
+    // (TITLE_SOURCE_MAX in lib/issue-body-limit.ts and routes/feedback.js,
+    // kept equal by tests/issue-body-limit.test.js). A literal, not an
+    // import: the controller's tests run it with its imports stripped.
+    const TITLE_GEN_SOURCE_MAX = 2000;
     const titleIdlePlaceholder = feedbackTitle.placeholder;
     let titleDirty = false;
     let lastGeneratedFor = '';
@@ -609,7 +615,7 @@ export function init() {
         const res = await fetch('/api/feedback/title', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ description: desc }),
+          body: JSON.stringify({ description: desc.slice(0, TITLE_GEN_SOURCE_MAX) }),
         });
         const data = res.ok ? await res.json() : {};
         // Stale (a newer request or a reset happened) or the user took
@@ -2150,6 +2156,20 @@ export function init() {
       // guess about intent, so asking again would only be a second tap.
       // Only when "This app" is really there to choose.
       if (opts.target === 'app' && canTargetApp) setFeedbackTarget('app');
+      // The experimental C comment (features/comment-pin/) hands itself over
+      // here when it cannot post on its own (offline, the server failing):
+      // its words, its screenshot and the destination the person already
+      // chose, so the outbox below takes it from there and nothing is lost.
+      // The words go after anything already in the box, never over it.
+      if (opts.target === 'platform') setFeedbackTarget('platform');
+      if (typeof opts.description === 'string' && opts.description.trim()) {
+        const typed = feedbackText.value.trim();
+        feedbackText.value = typed ? `${typed}\n\n${opts.description}` : opts.description;
+      }
+      if (typeof Blob !== 'undefined' && opts.screenshotBlob instanceof Blob
+          && screenshots.length < MAX_SCREENSHOTS) {
+        void attachScreenshotBlob(opts.screenshotBlob);
+      }
 
       // #1054: the outbox state — the offline hint, the "Save for later"
       // button label, and anything already waiting to send. Painted last so

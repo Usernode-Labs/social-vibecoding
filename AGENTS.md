@@ -153,6 +153,10 @@ selects a skill.
   whole-tree guards that name no file (icons, inks, em dashes, the Global
   Chat route inventory, …). A guard opts in with a
   `// test:changed: always (…)` line; mark a new one only if it is fast.
+  A suite that reaches a file only through a chain of modules declares it
+  with a `// test:changed: when <path> (…)` line, and a change to that file
+  or anything under that directory selects it: the Mayor turn golden
+  declares `src/prompts/`, because the prompts it pins are built from there.
 - **Run `npm test` only when shared code moved and the mapping cannot see
   who depends on it** — a `public/js/**` module other modules reach through
   a global (the mapping runs the suites that name the module, not those of

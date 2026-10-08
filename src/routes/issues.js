@@ -133,14 +133,13 @@ const MAX_CLOSE_REASON_LENGTH = 2000;
 // #556: cap for author-edited issue titles (rename route below). Matches
 // the feedback form's optional title input; far below GitHub's own limit.
 const MAX_ISSUE_TITLE_LENGTH = 200;
-// Matches the issue-draft service and feedback form. Empty is valid: GitHub
-// issues may deliberately have no description, but an accidental novel must
-// not ride through the app's JSON limit or make the topic unusable.
-const MAX_ISSUE_BODY_LENGTH = 10000;
-// GitHub's own issue-body limit: the most a request filed with screenshots
-// may come to once their embed lines are appended (MAX_REQUEST_BODY_CHARS in
-// services/mcp-tools.js is the same number).
-const MAX_GITHUB_ISSUE_BODY_CHARS = 65536;
+// GitHub's own issue-body limit (services/issue-body-limit.js): the most a
+// request filed with screenshots may come to once their embed lines are
+// appended, and the most its author may edit its body to (#4194: this was
+// 10,000, so a request written at length on GitHub could not be edited
+// here). Empty is valid: GitHub issues may deliberately have no description.
+const { GITHUB_ISSUE_BODY_MAX: MAX_GITHUB_ISSUE_BODY_CHARS } = require('../services/issue-body-limit');
+const MAX_ISSUE_BODY_LENGTH = MAX_GITHUB_ISSUE_BODY_CHARS;
 
 // A request body with its screenshots embedded exactly as the feedback
 // dialog embeds them, so every reader of `/issue-images/<id>` lines (the
@@ -366,6 +365,44 @@ function stagingMockIssues(repoUrl) {
       + 'building. Nobody has claimed it yet. The page says the bot is on it, '
       + 'and still offers Claim for anyone who wants to work on it alongside '
       + 'the bot, but not Start work.', 2),
+  ];
+}
+
+// #4244: two CLOSED staging-only requests, so a closed request's page (its
+// status band) can be previewed. Served by the single-issue route alone:
+// the board lists open requests, and these are not. 900031 was closed by a
+// merged change (its `addressed_by`, which the resolver would otherwise
+// answer from chat_sessions), 900032 by a close vote (`closed_via`). Each is
+// used only when the real lookups answer nothing. A no-op in production.
+function stagingMockClosedIssues(repoUrl) {
+  const base = (repoUrl || 'https://github.com/example/app')
+    .replace(/\.git$/, '').replace(/\/$/, '');
+  const daysAgo = (d) => new Date(Date.now() - d * 24 * 3600 * 1000).toISOString();
+  const mk = (number, title, body, days, extra) => ({
+    number,
+    title,
+    body,
+    labels: ['usernode'],
+    state: 'closed',
+    createdAt: daysAgo(days + 6),
+    updatedAt: daysAgo(days),
+    closedAt: daysAgo(days),
+    htmlUrl: `${base}/issues/${number}`,
+    user: 'staging-tester',
+    ...extra,
+  });
+  return [
+    mk(900031, '[Mock] Empty board shows no tier bands',
+      'Staging-only closed mock request. A merged change closed it, so its '
+      + 'page says so in a green band at the top of the card.', 9, {
+        mockAddressedBy: {
+          sessionId: 900031, state: 'merged', prNumber: 10, prUrl: null,
+          title: 'Show the four empty tier bands when the board has no restaurants',
+        },
+      }),
+    mk(900032, '[Mock] Retire the old tips banner',
+      'Staging-only closed mock request. A close vote closed it, so its page '
+      + 'says so in a grey band at the top of the card.', 9, { mockClosedVia: 'vote' }),
   ];
 }
 
@@ -2488,7 +2525,8 @@ function issueRoutes(config) {
       // reason the comments route below gives; without it the live fetch
       // goes first and the mock is only the fallback. No-op in production.
       const mock = IS_STAGING
-        ? stagingMockIssues(app.repo_url).find((i) => i.number === number) || null
+        ? stagingMockIssues(app.repo_url).find((i) => i.number === number)
+          || stagingMockClosedIssues(app.repo_url).find((i) => i.number === number) || null
         : null;
       let issue = null;
       if (mock && req.query.demo === '1') {
@@ -2554,12 +2592,36 @@ function issueRoutes(config) {
         }
         if (!bot && mock && number === 900018) bot = stagingMockBotWork();
       }
+      // #4244: a closed issue no merged change closed was closed by a
+      // close_issue vote, or an admin forcing one through. The applied row's
+      // audit payload says which, so the page's status band can too.
+      let closedVia = null;
+      if (issue.state === 'closed') {
+        const { rows: closeRows } = await pool.query(
+          `SELECT payload->>'appliedBy' AS applied_by
+             FROM issues
+            WHERE app_id = $1 AND kind = 'close_issue' AND status = 'closed'
+              AND payload->>'issueNumber' = $2::text
+              AND payload ? 'appliedAt'
+            ORDER BY id DESC
+            LIMIT 1`,
+          [app.id, number]
+        );
+        const by = closeRows[0] && String(closeRows[0].applied_by || '');
+        if (by && !by.startsWith('refused')) closedVia = by.startsWith('admin') ? 'admin' : 'vote';
+        if (!closedVia && issue === mock && mock.mockClosedVia) closedVia = mock.mockClosedVia;
+      }
+      const addressed = addressedBy.get(number)
+        || (issue === mock && mock.mockAddressedBy) || null;
+      const issueFields = { ...issue };
+      delete issueFields.mockAddressedBy;
+      delete issueFields.mockClosedVia;
 
       return res.json({
         issue: {
           state: 'open',
           closedAt: null,
-          ...issue,
+          ...issueFields,
           bounty_count: b ? b.cnt : 0,
           my_bounty: b ? !!b.mine : false,
           created_by_username: (creatorRows[0] && creatorRows[0].username)
@@ -2569,7 +2631,8 @@ function issueRoutes(config) {
           in_progress: null,
           bot,
           myPrSessionId: null,
-          addressed_by: addressedBy.get(number) || null,
+          addressed_by: addressed,
+          closed_via: closedVia,
           chatCount: (chat && chat.cnt) || 0,
           lastMessageAt: (chat && chat.last_at) || null,
           title_fallback: issue.title === FEEDBACK_FALLBACK_TITLE,

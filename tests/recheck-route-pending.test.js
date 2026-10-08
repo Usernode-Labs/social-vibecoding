@@ -133,6 +133,52 @@ test('recheck refuses to queue behind an existing capture pipeline', async () =>
   }
 });
 
+// A run of this commit another process launched, still on the cluster and
+// not yet read, is the run being asked for, as a capture in flight here is.
+// Nothing is stamped or started; the client is told why (`collecting`). With
+// nothing left to collect the button starts a fresh run, as the loop above
+// pins.
+test('recheck leaves a run of the commit still on the cluster to the harvest', async () => {
+  const calls = [];
+  poolQueryHandler = async (sql) => {
+    if (/FROM chat_sessions cs JOIN apps a/.test(String(sql))) return { rows: [sessionRow({ check_state: 'pending' })] };
+    return { rows: [] };
+  };
+  const harvest = require('../src/services/check-harvest');
+  const saved = {
+    runToCollect: harvest.runToCollect,
+    setChecksPending: visuals.setChecksPending,
+    notifyChecksPending: visuals.notifyChecksPending,
+    recheckSessionChecks: stagingRecovery.recheckSessionChecks,
+  };
+  harvest.runToCollect = async (_config, _pool, sessionId, commitSha) => {
+    calls.push(['runToCollect', sessionId, commitSha]);
+    return { runId: 'f7895663', owner: 'old-pod:1:exited', capture: 'running', unitSuite: 'succeeded' };
+  };
+  visuals.setChecksPending = async () => { calls.push(['setChecksPending']); };
+  stagingRecovery.recheckSessionChecks = async () => { calls.push(['recheckSessionChecks']); };
+  const server = await startServer();
+  try {
+    const { res, body } = await postRecheck(server);
+    assert.strictEqual(res.status, 200);
+    assert.deepStrictEqual(body, { status: 'running', checkState: 'pending', collecting: true });
+    assert.deepStrictEqual(calls, [['runToCollect', 42, 'abc123']]);
+    // The coalesce does not hold the session: a press once the verdict is
+    // stored reaches the run again.
+    harvest.runToCollect = async () => null;
+    stagingRecovery.recheckSessionChecks = async () => 'rechecked';
+    visuals.notifyChecksPending = () => {};
+    const again = await postRecheck(server);
+    assert.deepStrictEqual(again.body, { status: 'running', checkState: 'pending' });
+  } finally {
+    harvest.runToCollect = saved.runToCollect;
+    visuals.setChecksPending = saved.setChecksPending;
+    visuals.notifyChecksPending = saved.notifyChecksPending;
+    stagingRecovery.recheckSessionChecks = saved.recheckSessionChecks;
+    server.close();
+  }
+});
+
 test('recheck never revives checks on an archived proposal', async () => {
   const calls = [];
   poolQueryHandler = async (sql) => {

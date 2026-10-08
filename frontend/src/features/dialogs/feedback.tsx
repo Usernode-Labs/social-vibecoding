@@ -35,6 +35,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 
 import { HostDropOverlay } from '../attachments/file-drag';
+import { FEEDBACK_DESCRIPTION_MAX } from '../../lib/issue-body-limit';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { returnKeyHandler } from '../../lib/return-to-next';
 import { Feedback, init as initFeedback } from './feedback-controller';
@@ -52,7 +53,15 @@ interface OpenOptions {
    * 'app': open with "This app" chosen, when it can be. For a caller whose
    * own button named the open app (Getting started's Suggest).
    */
-  target?: 'app';
+  target?: 'app' | 'platform';
+  /**
+   * The experimental C comment handing itself over (features/comment-pin/):
+   * its words, added after anything already typed, and its screenshot,
+   * attached as Photos would. 'platform' above comes only from it: the
+   * person chose that destination on the comment.
+   */
+  description?: string;
+  screenshotBlob?: Blob;
   firstFeedback?: { userId: number; appSlug: string | null; issueNumber: number; canFix: boolean };
 }
 
@@ -242,7 +251,7 @@ export function FeedbackDialog() {
           <Textarea
             id="feedback-text"
             rows={4}
-            maxLength={2000}
+            maxLength={FEEDBACK_DESCRIPTION_MAX}
             aria-required="true"
             placeholder="Describe the change, or the problem you hit"
             className="resize-none"

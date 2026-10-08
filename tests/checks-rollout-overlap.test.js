@@ -315,6 +315,7 @@ async function harvestWith(t, stdout) {
     collectCheckJob: async () => ({
       state: 'succeeded', stdout, stderr: '', exitCode: 0, timedOut: false, partial: false, partialReason: '',
     }),
+    deleteSettledCheckJobs: async () => 1,
   });
   stub(t, visuals, { scheduleShots: () => {} });
   const summary = await harvest.sweep(harvestConfig, { reason: 'boot', pool });

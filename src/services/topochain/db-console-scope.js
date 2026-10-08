@@ -55,7 +55,7 @@
 // names a column, it is denied.
 //
 // OUT OF SCOPE, STRUCTURALLY: `credentials.user_ai_credentials`. The
-// inventory query below is `table_schema = 'public'`, and that table
+// inventory query below is `nspname = 'public'`, and that table
 // lives in the separate `credentials` schema, which the console role is
 // never granted USAGE on. It therefore needs no deny entry of any kind —
 // it cannot appear in the scope, be granted, or be selected from.
@@ -257,6 +257,9 @@ const CONSOLE_CREDENTIAL_COLUMNS = {
   // public half of the exchange and stays readable.
   mcp_authorization_codes: ['code_hash'],
   mcp_tokens: ['token_hash', 'token_hint'],
+  // Work-order patch upload credentials (#4264): the hash locates a live
+  // upload capability. Which task it is for, and until when, stay readable.
+  external_agent_upload_tokens: ['token_hash'],
   // Social identity is private account metadata. The short-lived OAuth row
   // additionally contains the callback-state hash and live PKCE verifier.
   user_social_identities: ['provider_subject', 'handle'],
@@ -298,19 +301,35 @@ const DENIED_CONSOLE_COLUMNS = (() => {
 // hard stop for a hypothetical hostile identifier.
 const SAFE_IDENT = /^[a-z_][a-z0-9_]*$/;
 
-// Every base table in `public` with its column list. `BASE TABLE` skips
-// views and materialized views deliberately: the console's role is
-// granted per-table, and a view would need its own grant plus grants on
-// whatever it selects from — out of scope for "list the tables".
+// Every base table in `public` with its column list, in column order.
+// Base tables only (`relkind` 'r', or 'p' for a partitioned one, which is
+// what information_schema calls BASE TABLE) skips views and materialized
+// views deliberately: the console's role is granted per-table, and a view
+// would need its own grant plus grants on whatever it selects from — out
+// of scope for "list the tables".
+//
+// Read from the system catalog, not from `information_schema.columns`
+// joined to `information_schema.tables`: Postgres re-evaluated the column
+// view once per table for that join, about 0.2 s on an idle server, and
+// this runs first on every schema-browser fetch (see db-schema-info.js).
+// The privilege test is the one information_schema applies, so a column
+// the caller cannot see is left out exactly as before.
+// `tests/topochain-db-schema-catalog-postgres.test.js` asserts the rows
+// match the old query's on the full schema.
 const TABLE_INVENTORY_SQL = `
-  SELECT c.table_name AS table,
-         array_agg(c.column_name::text ORDER BY c.ordinal_position) AS columns
-    FROM information_schema.columns c
-    JOIN information_schema.tables t
-      ON t.table_schema = c.table_schema AND t.table_name = c.table_name
-   WHERE c.table_schema = 'public' AND t.table_type = 'BASE TABLE'
-   GROUP BY c.table_name
-   ORDER BY c.table_name
+  SELECT c.relname::text AS table,
+         array_agg(a.attname::text ORDER BY a.attnum) AS columns
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    JOIN pg_attribute a ON a.attrelid = c.oid
+   WHERE n.nspname = 'public'
+     AND c.relkind IN ('r', 'p')
+     AND a.attnum > 0
+     AND NOT a.attisdropped
+     AND (pg_has_role(c.relowner, 'USAGE')
+       OR has_column_privilege(c.oid, a.attnum, 'SELECT, INSERT, UPDATE, REFERENCES'))
+   GROUP BY c.relname
+   ORDER BY c.relname
 `;
 
 // ── The cached scope ────────────────────────────────────────────────────
