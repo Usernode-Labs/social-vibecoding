@@ -645,6 +645,31 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     }
   });
 
+  await t.test('loops without slots (the workflow worker) run work and timers; another process applies the results', async () => {
+    const worker = make();
+    await worker.start({ loops: true, slots: false });
+    try {
+      await create('kw');
+      await route('kw', 'Work', { workKey: 'kw-1' });
+      await route('kw', 'Arm', { ms: 200 });
+      await rt.drain();
+      const pending = async () => (await pool.query(
+        `SELECT type FROM wf_events WHERE key = 'kw' AND status = 'pending' ORDER BY id`)).rows.map((r) => r.type);
+      const started = Date.now();
+      while ((await pending()).length < 2) {
+        assert.ok(Date.now() - started < 5000, 'the worker ran the work and fired the timer');
+        await sleep(50);
+      }
+      assert.deepEqual((await pending()).sort(), ['Tick', 'WorkSucceeded'], 'and applied neither');
+      assert.equal(await rt.drain(), 2);
+      const row = await inst('kw');
+      assert.deepEqual(row.data.results.map((r) => r.slice(0, 2)), [['ok', 'kw-1']]);
+      assert.equal(row.data.ticks, 1);
+    } finally {
+      await worker.stop();
+    }
+  });
+
   await t.test('K15 serial per instance, concurrent across instances and processes', async () => {
     const a = make({ slots: 4 });
     const b = make({ pool: other, slots: 4 });

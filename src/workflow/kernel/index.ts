@@ -159,14 +159,15 @@ export function createRuntime(opts: RuntimeOptions) {
     // Every process starts signals (so appendAndWait wakes on outcomes).
     // With `slots`, it also runs pipeline slots: every process may, since
     // an instance's row lock decides who applies its events. With `loops`,
-    // it runs the slots, timers and services: the leader for now. Callable
-    // again later: a follower starts its loops when it is elected.
+    // it runs the timers and services, and the slots too unless `slots` is
+    // false (the workflow worker, whose results the web Pods' slots apply).
+    // Callable again later: a follower starts its loops when it is elected.
     async start(o: { loops?: boolean; slots?: boolean } = {}) {
       if (!listening) {
         listening = true;
         await signals.start();
       }
-      if ((o.slots || o.loops) && !slotsRunning) {
+      if ((o.slots ?? o.loops) && !slotsRunning) {
         slotsRunning = true;
         for (let i = 0; i < (opts.slots ?? 8); i++) {
           const idle = { retryInMs: null as number | null };
