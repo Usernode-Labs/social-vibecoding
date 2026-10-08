@@ -698,8 +698,9 @@ test('every phase and ending has words', () => {
   assert.deepEqual(Object.keys(SHORT_PHASES).sort(), [...tray.PHASES].sort());
   assert.deepEqual(Object.keys(LAST_WORDS).sort(), [...tray.OUTCOMES].sort());
   for (const outcome of tray.OUTCOMES) assert.match(englishText(LAST_WORDS[outcome], { job: 'Ear Trainer #3' }), /Ear Trainer #3/, outcome);
-  for (const phase of tray.PHASES) assert.ok(englishText(PHASE_LABELS[phase]) && englishText(SHORT_PHASES[phase]), phase);
-  assert.equal(englishText(SHORT_PHASES.merging), 'going live');
+  for (const phase of tray.PHASES) assert.ok(englishText(PHASE_LABELS[phase]) && englishText(SHORT_PHASES[phase], { job: 'X' }), phase);
+  // The job and its stage are one whole message.
+  assert.equal(englishText(SHORT_PHASES.merging, { job: 'Ear Trainer #3' }), 'Working on Ear Trainer #3 · going live');
   assert.equal(WORK_CHANGED_EVENT, 'homeroom-bot-work-changed');
   assert.equal(jobTitle(job({ firstVersion: true, title: 'ignored' })), 'Ear Trainer first version');
   assert.equal(jobTitle(job({ issueNumber: 3, title: 'Sort' })), 'Ear Trainer #3: Sort');
@@ -756,7 +757,7 @@ test('the status line\'s last thing says the activity card\'s ending, in the per
   }
   // None of the platform's words, anywhere the header or the tray says them.
   const said = [
-    ...tray.OUTCOMES.map((o) => last(o, 'X')), ...Object.values(PHASE_LABELS).map((id) => englishText(id)), ...Object.values(SHORT_PHASES).map((id) => englishText(id)),
+    ...tray.OUTCOMES.map((o) => last(o, 'X')), ...Object.values(PHASE_LABELS).map((id) => englishText(id)), ...Object.values(SHORT_PHASES).map((id) => englishText(id, { job: 'X' })),
     ...Object.values(ACTIVITY_OUTCOME_LABELS).map((id) => englishText(id)), ...Object.values(activity.OUTCOME_LABELS), ...Object.values(activity.TONE_WORDS),
   ];
   for (const line of said) assert.doesNotMatch(line, /propos|merg|\bPR\b|pull request|staging|\u2014/i, line);

@@ -161,13 +161,13 @@ export const PHASE_LABELS: Record<HomeroomBotPhase, string> = {
 
 /** The same, as the header's status line says it after the request's name. */
 export const SHORT_PHASES: Record<HomeroomBotPhase, string> = {
-  looking: 'messages:bot.phaseShort.looking',
-  building: 'messages:bot.phaseShort.building',
-  following_up: 'messages:bot.phaseShort.followingUp',
-  setting_up: 'messages:bot.phaseShort.settingUp',
-  queued: 'messages:bot.phaseShort.queued',
-  follow_up_queued: 'messages:bot.phaseShort.followUpQueued',
-  merging: 'messages:bot.phaseShort.merging',
+  looking: 'messages:bot.tray.workingOnPhase.looking',
+  building: 'messages:bot.tray.workingOnPhase.building',
+  following_up: 'messages:bot.tray.workingOnPhase.followingUp',
+  setting_up: 'messages:bot.tray.workingOnPhase.settingUp',
+  queued: 'messages:bot.tray.workingOnPhase.queued',
+  follow_up_queued: 'messages:bot.tray.workingOnPhase.followUpQueued',
+  merging: 'messages:bot.tray.workingOnPhase.merging',
 };
 
 /**
@@ -235,19 +235,20 @@ export function trayStatus(work: HomeroomBotWork | null, now: Date = new Date())
   if (work.now.length === 1) {
     const job = work.now[0];
     let short = translate('messages:bot.tray.workingOnShort', { job: shortName(job) });
-    if (queued) short = needs ? dotText([translate('messages:bot.tray.queued'), needs]) : translate('messages:bot.tray.jobQueued', { job: shortName(job) });
-    else if (needs) short = dotText([translate('messages:bot.tray.working'), needs]);
+    if (queued) short = waiting ? translate('messages:bot.tray.queuedNeedYou', { count: waiting }) : translate('messages:bot.tray.jobQueued', { job: shortName(job) });
+    else if (waiting) short = translate('messages:bot.tray.workingNeedYou', { count: waiting });
     return {
       kind: 'working',
-      long: dotText([translate('messages:bot.tray.workingOn', { job: jobName(job) }), translate(SHORT_PHASES[job.phase]), needs]),
+      // The job and its stage are one message; an unknown stage says the job alone.
+      long: dotText([translate(SHORT_PHASES[job.phase] || 'messages:bot.tray.workingOn', { job: jobName(job) }), needs]),
       short,
     };
   }
   if (work.now.length) {
     const count = work.now.length;
     let short = translate('messages:bot.tray.workingOnCount', { count });
-    if (queued) short = needs ? dotText([translate('messages:bot.tray.queued'), needs]) : translate('messages:bot.tray.countQueued', { count });
-    else if (needs) short = dotText([translate('messages:bot.tray.working'), needs]);
+    if (queued) short = waiting ? translate('messages:bot.tray.queuedNeedYou', { count: waiting }) : translate('messages:bot.tray.countQueued', { count });
+    else if (waiting) short = translate('messages:bot.tray.workingNeedYou', { count: waiting });
     return { kind: 'working', long: dotText([translate('messages:bot.tray.workingOnRequests', { count }), needs]), short };
   }
   if (waiting === 1) {

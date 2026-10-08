@@ -265,7 +265,7 @@
   },
   "thread.activity.rootNoText": {
     "text": "a message",
-    "description": "Shown on the thread-replies card after the heading \"Replied in thread\" in place of the thread's first message when it has no words (for example only a picture). Lower case because it follows the heading on the same line."
+    "description": "Shown alone, in its own muted element beside the heading \"Replied in thread\", on the card of replies made in a thread: stands in for the thread's first message when that message has no words (for example only a picture). It is not joined to the heading in code; it is lower case in English because nothing is capitalized there."
   },
   "thread.activity.open_one": {
     "text": "Replied in thread: {{message}}, {{time}}. Open thread",
@@ -529,43 +529,43 @@
   },
   "bot.activity.typicalAbout_one": {
     "text": "usually about {{count}} minutes",
-    "description": "Part of the status line on a working Homeroom bot activity card: how long this kind of work usually takes. {{count}} is a number of minutes. Lower case because it follows another fact on the same line."
+    "description": "One fact in the dot-separated status line of a working Homeroom bot activity card, complete on its own: how long this kind of work usually takes. {{count}} is a number of minutes."
   },
   "bot.activity.typicalAbout_other": {
     "text": "usually about {{count}} minutes",
-    "description": "Part of the status line on a working Homeroom bot activity card: how long this kind of work usually takes. {{count}} is a number of minutes. Lower case because it follows another fact on the same line."
+    "description": "One fact in the dot-separated status line of a working Homeroom bot activity card, complete on its own: how long this kind of work usually takes. {{count}} is a number of minutes."
   },
   "bot.activity.typicalRange_one": {
     "text": "usually {{from}} to {{count}} minutes",
-    "description": "Part of the status line on a working Homeroom bot activity card: the usual range of time this kind of work takes. {{from}} is the shorter number of minutes and {{count}} the longer. Lower case because it follows another fact on the same line."
+    "description": "One fact in the dot-separated status line of a working Homeroom bot activity card, complete on its own: the usual range of time this kind of work takes. {{from}} is the shorter number of minutes and {{count}} the longer."
   },
   "bot.activity.typicalRange_other": {
     "text": "usually {{from}} to {{count}} minutes",
-    "description": "Part of the status line on a working Homeroom bot activity card: the usual range of time this kind of work takes. {{from}} is the shorter number of minutes and {{count}} the longer. Lower case because it follows another fact on the same line."
+    "description": "One fact in the dot-separated status line of a working Homeroom bot activity card, complete on its own: the usual range of time this kind of work takes. {{from}} is the shorter number of minutes and {{count}} the longer."
   },
   "bot.activity.soFar": {
     "text": "{{duration}} so far",
-    "description": "Part of the status line on a working Homeroom bot activity card: how long the bot has been working. {{duration}} is a short duration such as \"5m\", \"2h 5m\" or \"under a minute\"."
+    "description": "One fact in the dot-separated status line of a working Homeroom bot activity card: how long the bot has been working. {{duration}} is a short duration such as \"5m\", \"2h 5m\" or \"under a minute\". Complete on its own; a middle dot joins it to the fact before it."
   },
   "bot.activity.soFarAfterFirstVersion": {
     "text": "{{duration}} so far, after waiting {{waited}} for the first version",
-    "description": "Part of the status line on a working Homeroom bot activity card: how long the bot has been working, and how long the request waited beforehand for the project's first version to be finished. {{duration}} and {{waited}} are short durations such as \"5m\" or \"2h 5m\"."
+    "description": "One fact in the dot-separated status line of a working Homeroom bot activity card: how long the bot has been working, and how long the request waited beforehand for the project's first version to be finished. {{duration}} and {{waited}} are short durations such as \"5m\" or \"2h 5m\". Complete on its own; a middle dot joins it to the fact before it."
   },
   "bot.activity.soFarAfterTurn": {
     "text": "{{duration}} so far, after waiting {{waited}} for its turn",
-    "description": "Part of the status line on a working Homeroom bot activity card: how long the bot has been working, and how long the request waited in the bot's queue beforehand. {{duration}} and {{waited}} are short durations such as \"5m\" or \"2h 5m\"."
+    "description": "One fact in the dot-separated status line of a working Homeroom bot activity card: how long the bot has been working, and how long the request waited in the bot's queue beforehand. {{duration}} and {{waited}} are short durations such as \"5m\" or \"2h 5m\". Complete on its own; a middle dot joins it to the fact before it."
   },
   "bot.activity.took": {
     "text": "took {{duration}}",
-    "description": "Part of the status line on a finished Homeroom bot activity card: how long the work took. {{duration}} is a short duration such as \"5m\", \"2h 5m\" or \"under a minute\". Lower case because it follows another fact on the same line."
+    "description": "One fact in the dot-separated status line of a finished Homeroom bot activity card: how long the work took. {{duration}} is a short duration such as \"5m\", \"2h 5m\" or \"under a minute\". Complete on its own; a middle dot joins it to the fact before it."
   },
   "bot.activity.tookAfterFirstVersion": {
     "text": "took {{duration}}, after waiting {{waited}} for the first version",
-    "description": "Part of the status line on a finished Homeroom bot activity card: how long the work took, and how long the request waited beforehand for the project's first version. {{duration}} and {{waited}} are short durations such as \"5m\" or \"2h 5m\". Lower case because it follows another fact."
+    "description": "One fact in the dot-separated status line of a finished Homeroom bot activity card: how long the work took, and how long the request waited beforehand for the project's first version. {{duration}} and {{waited}} are short durations such as \"5m\" or \"2h 5m\". Complete on its own; a middle dot joins it to the fact before it."
   },
   "bot.activity.tookAfterTurn": {
     "text": "took {{duration}}, after waiting {{waited}} for its turn",
-    "description": "Part of the status line on a finished Homeroom bot activity card: how long the work took, and how long the request waited in the bot's queue beforehand. {{duration}} and {{waited}} are short durations such as \"5m\" or \"2h 5m\". Lower case because it follows another fact."
+    "description": "One fact in the dot-separated status line of a finished Homeroom bot activity card: how long the work took, and how long the request waited in the bot's queue beforehand. {{duration}} and {{waited}} are short durations such as \"5m\" or \"2h 5m\". Complete on its own; a middle dot joins it to the fact before it."
   },
   "bot.activity.ringStep": {
     "text": "Step {{step}} of {{total}}",
@@ -631,57 +631,29 @@
     "text": "Looking at it",
     "description": "Status line of a tile in Homeroom bot's Activity panel when the bot has not said more: reading the request. The bot speaks in the first person (\"my queue\")."
   },
-  "bot.phaseShort.looking": {
-    "text": "reading it",
-    "description": "Short status after \"Working on …\" in the line under Homeroom bot's name at the top of its conversation: reading the request. Lower case because it follows another fact on the same line; the bot speaks in the first person."
-  },
   "bot.phase.building": {
     "text": "Building",
     "description": "Status line of a tile in Homeroom bot's Activity panel when the bot has not said more: building the change. The bot speaks in the first person (\"my queue\")."
-  },
-  "bot.phaseShort.building": {
-    "text": "building",
-    "description": "Short status after \"Working on …\" in the line under Homeroom bot's name at the top of its conversation: building the change. Lower case because it follows another fact on the same line; the bot speaks in the first person."
   },
   "bot.phase.followingUp": {
     "text": "Following up on its change",
     "description": "Status line of a tile in Homeroom bot's Activity panel when the bot has not said more: following up on the change it built for this request. The bot speaks in the first person (\"my queue\")."
   },
-  "bot.phaseShort.followingUp": {
-    "text": "following up",
-    "description": "Short status after \"Working on …\" in the line under Homeroom bot's name at the top of its conversation: following up on the change it built for this request. Lower case because it follows another fact on the same line; the bot speaks in the first person."
-  },
   "bot.phase.settingUp": {
     "text": "Getting the project ready",
     "description": "Status line of a tile in Homeroom bot's Activity panel when the bot has not said more: preparing a new project. The bot speaks in the first person (\"my queue\")."
-  },
-  "bot.phaseShort.settingUp": {
-    "text": "setting up",
-    "description": "Short status after \"Working on …\" in the line under Homeroom bot's name at the top of its conversation: preparing a new project. Lower case because it follows another fact on the same line; the bot speaks in the first person."
   },
   "bot.phase.queued": {
     "text": "Waiting its turn in my queue",
     "description": "Status line of a tile in Homeroom bot's Activity panel when the bot has not said more: the request waits in the bot's queue. The bot speaks in the first person (\"my queue\")."
   },
-  "bot.phaseShort.queued": {
-    "text": "in my queue",
-    "description": "Short status after \"Working on …\" in the line under Homeroom bot's name at the top of its conversation: the request waits in the bot's queue. Lower case because it follows another fact on the same line; the bot speaks in the first person."
-  },
   "bot.phase.followUpQueued": {
     "text": "Waiting its turn to follow up on its change",
     "description": "Status line of a tile in Homeroom bot's Activity panel when the bot has not said more: the follow-up waits in the bot's queue. The bot speaks in the first person (\"my queue\")."
   },
-  "bot.phaseShort.followUpQueued": {
-    "text": "queued to follow up",
-    "description": "Short status after \"Working on …\" in the line under Homeroom bot's name at the top of its conversation: the follow-up waits in the bot's queue. Lower case because it follows another fact on the same line; the bot speaks in the first person."
-  },
   "bot.phase.merging": {
     "text": "Making the approved change live",
     "description": "Status line of a tile in Homeroom bot's Activity panel when the bot has not said more: the approved change is being put into use. The bot speaks in the first person (\"my queue\")."
-  },
-  "bot.phaseShort.merging": {
-    "text": "going live",
-    "description": "Short status after \"Working on …\" in the line under Homeroom bot's name at the top of its conversation: the approved change is being put into use. Lower case because it follows another fact on the same line; the bot speaks in the first person."
   },
   "bot.last.question": {
     "text": "Last: asked you about {{job}}",
@@ -753,27 +725,63 @@
   },
   "bot.tray.needYou_one": {
     "text": "{{count}} needs you",
-    "description": "Fact appended to the line under Homeroom bot's name: how many of the person's requests are waiting for their answer or decision. {{count}} is that number."
+    "description": "One fact in the dot-separated line under Homeroom bot's name on a wide screen, complete on its own: how many of the person's requests are waiting for their answer or decision. It is joined to the fact before it by a middle dot. {{count}} is that number."
   },
   "bot.tray.needYou_other": {
     "text": "{{count}} need you",
-    "description": "Fact appended to the line under Homeroom bot's name: how many of the person's requests are waiting for their answer or decision. {{count}} is that number."
+    "description": "One fact in the dot-separated line under Homeroom bot's name on a wide screen, complete on its own: how many of the person's requests are waiting for their answer or decision. It is joined to the fact before it by a middle dot. {{count}} is that number."
   },
   "bot.tray.workingOn": {
     "text": "Working on {{job}}",
-    "description": "Line under Homeroom bot's name at the top of its conversation on a wide screen: the one piece of work the bot is doing. {{job}} names it, for example \"Ear Trainer #3\"."
+    "description": "Line under Homeroom bot's name at the top of its conversation on a wide screen: the one piece of work the bot is doing, when its stage is not known. {{job}} names it, for example \"Ear Trainer #3\"."
+  },
+  "bot.tray.workingOnPhase.looking": {
+    "text": "Working on {{job}} · reading it",
+    "description": "Line under Homeroom bot's name at the top of its conversation on a wide screen: the one piece of work the bot is doing and its stage (the bot is reading the request). {{job}} names the work, for example \"Ear Trainer #3\". The bot speaks in the first person."
+  },
+  "bot.tray.workingOnPhase.building": {
+    "text": "Working on {{job}} · building",
+    "description": "Line under Homeroom bot's name at the top of its conversation on a wide screen: the one piece of work the bot is doing and its stage (the bot is building the change). {{job}} names the work, for example \"Ear Trainer #3\". The bot speaks in the first person."
+  },
+  "bot.tray.workingOnPhase.followingUp": {
+    "text": "Working on {{job}} · following up",
+    "description": "Line under Homeroom bot's name at the top of its conversation on a wide screen: the one piece of work the bot is doing and its stage (the bot is following up on the change it built for this request). {{job}} names the work, for example \"Ear Trainer #3\". The bot speaks in the first person."
+  },
+  "bot.tray.workingOnPhase.settingUp": {
+    "text": "Working on {{job}} · setting up",
+    "description": "Line under Homeroom bot's name at the top of its conversation on a wide screen: the one piece of work the bot is doing and its stage (the bot is preparing a new project). {{job}} names the work, for example \"Ear Trainer #3\". The bot speaks in the first person."
+  },
+  "bot.tray.workingOnPhase.queued": {
+    "text": "Working on {{job}} · in my queue",
+    "description": "Line under Homeroom bot's name at the top of its conversation on a wide screen: the one piece of work the bot is doing and its stage (the request waits in the bot's queue). {{job}} names the work, for example \"Ear Trainer #3\". The bot speaks in the first person."
+  },
+  "bot.tray.workingOnPhase.followUpQueued": {
+    "text": "Working on {{job}} · queued to follow up",
+    "description": "Line under Homeroom bot's name at the top of its conversation on a wide screen: the one piece of work the bot is doing and its stage (the follow-up waits in the bot's queue). {{job}} names the work, for example \"Ear Trainer #3\". The bot speaks in the first person."
+  },
+  "bot.tray.workingOnPhase.merging": {
+    "text": "Working on {{job}} · going live",
+    "description": "Line under Homeroom bot's name at the top of its conversation on a wide screen: the one piece of work the bot is doing and its stage (the approved change is being put into use). {{job}} names the work, for example \"Ear Trainer #3\". The bot speaks in the first person."
+  },
+  "bot.tray.queuedNeedYou_one": {
+    "text": "Queued · {{count}} needs you",
+    "description": "Phone-width line under Homeroom bot's name when everything the bot has for this person waits in its queue and some requests wait for the person's answer. {{count}} is how many requests need the person."
+  },
+  "bot.tray.queuedNeedYou_other": {
+    "text": "Queued · {{count}} need you",
+    "description": "Phone-width line under Homeroom bot's name when everything the bot has for this person waits in its queue and some requests wait for the person's answer. {{count}} is how many requests need the person."
+  },
+  "bot.tray.workingNeedYou_one": {
+    "text": "Working · {{count}} needs you",
+    "description": "Phone-width line under Homeroom bot's name when the bot is working and some requests wait for the person's answer. {{count}} is how many requests need the person."
+  },
+  "bot.tray.workingNeedYou_other": {
+    "text": "Working · {{count}} need you",
+    "description": "Phone-width line under Homeroom bot's name when the bot is working and some requests wait for the person's answer. {{count}} is how many requests need the person."
   },
   "bot.tray.workingOnShort": {
     "text": "Working on {{job}}",
     "description": "Line under Homeroom bot's name at the top of its conversation on a phone: the one piece of work the bot is doing. {{job}} is its short name, a request number such as \"#3\" or a project's name."
-  },
-  "bot.tray.queued": {
-    "text": "Queued",
-    "description": "Start of the phone-width line under Homeroom bot's name when all the person's requests are waiting in the bot's queue; a count of requests that need the person follows."
-  },
-  "bot.tray.working": {
-    "text": "Working",
-    "description": "Start of the phone-width line under Homeroom bot's name when the bot is working; a count of requests that need the person follows."
   },
   "bot.tray.jobQueued": {
     "text": "{{job}} queued",
@@ -869,7 +877,7 @@
   },
   "bot.tray.soFar": {
     "text": "{{duration}} so far",
-    "description": "Second part of the status on a tile in Homeroom bot's Activity panel: how long the bot has been working on it. {{duration}} is a short duration such as \"5m\", \"2h 5m\" or \"under a minute\"."
+    "description": "One fact in the dot-separated status of a tile in Homeroom bot's Activity panel, complete on its own: how long the bot has been working on it. {{duration}} is a short duration such as \"5m\", \"2h 5m\" or \"under a minute\"."
   },
   "bot.tray.waitingOnYou": {
     "text": "Waiting on you",
@@ -1159,22 +1167,6 @@
     "text": "You approved it. It goes live when {{count}} more people approve, or on {{date}} if nobody objects.",
     "description": "Line on Homeroom bot's card after the reader approved a change: says whose approval it still needs before it is put into use (\"goes live\"), and when it goes live anyway if nobody objects. {{count}} is how many more people must approve. {{date}} is a day and month, for example \"October 12\"."
   },
-  "bot.plan.timeAbout_one": {
-    "text": "about {{count}} min",
-    "description": "End of the progress line on Homeroom bot's plan card while it builds: how long building usually takes. {{count}} is a number of minutes; \"min\" abbreviates minutes."
-  },
-  "bot.plan.timeAbout_other": {
-    "text": "about {{count}} min",
-    "description": "End of the progress line on Homeroom bot's plan card while it builds: how long building usually takes. {{count}} is a number of minutes; \"min\" abbreviates minutes."
-  },
-  "bot.plan.timeRange_one": {
-    "text": "{{from}} to {{count}} min",
-    "description": "End of the progress line on Homeroom bot's plan card while it builds: the usual range of time building takes. {{from}} is the shorter number of minutes and {{count}} the longer; \"min\" abbreviates minutes."
-  },
-  "bot.plan.timeRange_other": {
-    "text": "{{from}} to {{count}} min",
-    "description": "End of the progress line on Homeroom bot's plan card while it builds: the usual range of time building takes. {{from}} is the shorter number of minutes and {{count}} the longer; \"min\" abbreviates minutes."
-  },
   "bot.plan.step": {
     "text": "Step {{step}} of {{total}}",
     "description": "Progress line under the title of Homeroom bot's plan card. {{step}} is the current step number and {{total}} the number of steps."
@@ -1186,6 +1178,70 @@
   "bot.plan.working": {
     "text": "Working on it",
     "description": "Progress line under the title of Homeroom bot's plan card while it builds, when the bot has not said what exactly it is doing. \"it\" is the plan."
+  },
+  "bot.plan.progress.stepNamedAbout_one": {
+    "text": "Step {{step}} of {{total}} · {{name}} · about {{count}} min",
+    "description": "Progress line under the title of Homeroom bot's plan card while it builds, a single line of facts separated by middle dots: the step under way ({{step}} of {{total}}, called {{name}}), then how long building usually takes: {{count}} is a number of minutes. \"min\" abbreviates minutes."
+  },
+  "bot.plan.progress.stepNamedAbout_other": {
+    "text": "Step {{step}} of {{total}} · {{name}} · about {{count}} min",
+    "description": "Progress line under the title of Homeroom bot's plan card while it builds, a single line of facts separated by middle dots: the step under way ({{step}} of {{total}}, called {{name}}), then how long building usually takes: {{count}} is a number of minutes. \"min\" abbreviates minutes."
+  },
+  "bot.plan.progress.stepNamedRange_one": {
+    "text": "Step {{step}} of {{total}} · {{name}} · {{from}} to {{count}} min",
+    "description": "Progress line under the title of Homeroom bot's plan card while it builds, a single line of facts separated by middle dots: the step under way ({{step}} of {{total}}, called {{name}}), then the usual range of time building takes: {{from}} is the shorter number of minutes and {{count}} the longer. \"min\" abbreviates minutes."
+  },
+  "bot.plan.progress.stepNamedRange_other": {
+    "text": "Step {{step}} of {{total}} · {{name}} · {{from}} to {{count}} min",
+    "description": "Progress line under the title of Homeroom bot's plan card while it builds, a single line of facts separated by middle dots: the step under way ({{step}} of {{total}}, called {{name}}), then the usual range of time building takes: {{from}} is the shorter number of minutes and {{count}} the longer. \"min\" abbreviates minutes."
+  },
+  "bot.plan.progress.stepAbout_one": {
+    "text": "Step {{step}} of {{total}} · about {{count}} min",
+    "description": "Progress line under the title of Homeroom bot's plan card while it builds, a single line of facts separated by middle dots: the step under way ({{step}} of {{total}}), then how long building usually takes: {{count}} is a number of minutes. \"min\" abbreviates minutes."
+  },
+  "bot.plan.progress.stepAbout_other": {
+    "text": "Step {{step}} of {{total}} · about {{count}} min",
+    "description": "Progress line under the title of Homeroom bot's plan card while it builds, a single line of facts separated by middle dots: the step under way ({{step}} of {{total}}), then how long building usually takes: {{count}} is a number of minutes. \"min\" abbreviates minutes."
+  },
+  "bot.plan.progress.stepRange_one": {
+    "text": "Step {{step}} of {{total}} · {{from}} to {{count}} min",
+    "description": "Progress line under the title of Homeroom bot's plan card while it builds, a single line of facts separated by middle dots: the step under way ({{step}} of {{total}}), then the usual range of time building takes: {{from}} is the shorter number of minutes and {{count}} the longer. \"min\" abbreviates minutes."
+  },
+  "bot.plan.progress.stepRange_other": {
+    "text": "Step {{step}} of {{total}} · {{from}} to {{count}} min",
+    "description": "Progress line under the title of Homeroom bot's plan card while it builds, a single line of facts separated by middle dots: the step under way ({{step}} of {{total}}), then the usual range of time building takes: {{from}} is the shorter number of minutes and {{count}} the longer. \"min\" abbreviates minutes."
+  },
+  "bot.plan.progress.workingAbout_one": {
+    "text": "Working on it · about {{count}} min",
+    "description": "Progress line under the title of Homeroom bot's plan card while it builds, a single line of facts separated by middle dots: that the bot is working (\"it\" is the plan), then how long building usually takes: {{count}} is a number of minutes. \"min\" abbreviates minutes."
+  },
+  "bot.plan.progress.workingAbout_other": {
+    "text": "Working on it · about {{count}} min",
+    "description": "Progress line under the title of Homeroom bot's plan card while it builds, a single line of facts separated by middle dots: that the bot is working (\"it\" is the plan), then how long building usually takes: {{count}} is a number of minutes. \"min\" abbreviates minutes."
+  },
+  "bot.plan.progress.workingRange_one": {
+    "text": "Working on it · {{from}} to {{count}} min",
+    "description": "Progress line under the title of Homeroom bot's plan card while it builds, a single line of facts separated by middle dots: that the bot is working (\"it\" is the plan), then the usual range of time building takes: {{from}} is the shorter number of minutes and {{count}} the longer. \"min\" abbreviates minutes."
+  },
+  "bot.plan.progress.workingRange_other": {
+    "text": "Working on it · {{from}} to {{count}} min",
+    "description": "Progress line under the title of Homeroom bot's plan card while it builds, a single line of facts separated by middle dots: that the bot is working (\"it\" is the plan), then the usual range of time building takes: {{from}} is the shorter number of minutes and {{count}} the longer. \"min\" abbreviates minutes."
+  },
+  "bot.plan.progress.doingAbout_one": {
+    "text": "{{doing}} · about {{count}} min",
+    "description": "Progress line under the title of Homeroom bot's plan card while it builds, a single line of facts separated by middle dots: what the bot says it is doing ({{doing}}, the bot's own words, already capitalized), then how long building usually takes: {{count}} is a number of minutes. \"min\" abbreviates minutes."
+  },
+  "bot.plan.progress.doingAbout_other": {
+    "text": "{{doing}} · about {{count}} min",
+    "description": "Progress line under the title of Homeroom bot's plan card while it builds, a single line of facts separated by middle dots: what the bot says it is doing ({{doing}}, the bot's own words, already capitalized), then how long building usually takes: {{count}} is a number of minutes. \"min\" abbreviates minutes."
+  },
+  "bot.plan.progress.doingRange_one": {
+    "text": "{{doing}} · {{from}} to {{count}} min",
+    "description": "Progress line under the title of Homeroom bot's plan card while it builds, a single line of facts separated by middle dots: what the bot says it is doing ({{doing}}, the bot's own words, already capitalized), then the usual range of time building takes: {{from}} is the shorter number of minutes and {{count}} the longer. \"min\" abbreviates minutes."
+  },
+  "bot.plan.progress.doingRange_other": {
+    "text": "{{doing}} · {{from}} to {{count}} min",
+    "description": "Progress line under the title of Homeroom bot's plan card while it builds, a single line of facts separated by middle dots: what the bot says it is doing ({{doing}}, the bot's own words, already capitalized), then the usual range of time building takes: {{from}} is the shorter number of minutes and {{count}} the longer. \"min\" abbreviates minutes."
   },
   "bot.plan.title": {
     "text": "My plan for {{project}}",
@@ -1569,7 +1625,7 @@
   },
   "object.byAuthor": {
     "text": "by {{author}}",
-    "description": "Part of the detail line on a card for a shared item: who created it. {{author}} is a username. Lower case because it follows other facts on the same line."
+    "description": "One fact in the dot-separated detail line of a card for a shared item, complete on its own: who created the item. It is joined to the other facts (the project, the item's status) by a middle dot. {{author}} is a username."
   },
   "inbox.filter.all": {
     "text": "All",
@@ -1881,19 +1937,19 @@
   },
   "members.status.invited": {
     "text": "invited",
-    "description": "Status shown after a person's role in the \"Group members\" list: they were invited and have not accepted yet. Written in lower case; the screen capitalises it."
+    "description": "Status shown beside a person's role, as a separate fact after a middle dot, in the \"Group members\" list: they were invited and have not accepted yet. Written in lower case; the screen capitalises it."
   },
   "members.status.declined": {
     "text": "declined",
-    "description": "Status shown after a person's role in the \"Group members\" list: they turned the invitation down. Written in lower case; the screen capitalises it."
+    "description": "Status shown beside a person's role, as a separate fact after a middle dot, in the \"Group members\" list: they turned the invitation down. Written in lower case; the screen capitalises it."
   },
   "members.status.left": {
     "text": "left",
-    "description": "Status shown after a person's role in the \"Group members\" list: they left the group chat (past tense of \"leave\"). Written in lower case; the screen capitalises it."
+    "description": "Status shown beside a person's role, as a separate fact after a middle dot, in the \"Group members\" list: they left the group chat (past tense of \"leave\"). Written in lower case; the screen capitalises it."
   },
   "members.status.removed": {
     "text": "removed",
-    "description": "Status shown after a person's role in the \"Group members\" list: they were removed from the group chat. Written in lower case; the screen capitalises it."
+    "description": "Status shown beside a person's role, as a separate fact after a middle dot, in the \"Group members\" list: they were removed from the group chat. Written in lower case; the screen capitalises it."
   },
   "members.removeButton": {
     "text": "Remove",

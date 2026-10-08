@@ -6,7 +6,6 @@ import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import * as api from './api';
 import { ACTIVITY_OUTCOME_LABELS, isActivityMessage, isMovedActivity } from './bot-activity';
-import { dotText } from './bot-shared';
 import { ensureBotActivity, useBotActivity } from './bot-activity-store';
 import { botMeta, postedNote } from './bot-question';
 import { AnsweredChoices, PlanCardView, type AnsweredChoice, type PlanCardState, type PlanProgress } from './bot-plan-view';
@@ -91,12 +90,18 @@ function capitalized(text: string): string {
  * 375px (owner, 7 October); the activity card keeps its own words
  * (./bot-activity.tsx typicalText).
  */
-export function planTime(range?: { from: number; to: number } | null): string | null {
+export function planTime(range?: { from: number; to: number } | null): { kind: 'about' | 'range'; from: number; count: number } | null {
   if (!range || !(range.to > 0)) return null;
-  return range.from >= range.to
-    ? translate('messages:bot.plan.timeAbout', { count: range.to })
-    : translate('messages:bot.plan.timeRange', { from: range.from, count: range.to });
+  return { kind: range.from >= range.to ? 'about' : 'range', from: range.from, count: range.to };
 }
+
+/** The built plan's progress line, one whole message per what it leads with and how the time is said. */
+const PROGRESS_LINES = {
+  stepNamed: { about: 'messages:bot.plan.progress.stepNamedAbout', range: 'messages:bot.plan.progress.stepNamedRange' },
+  step: { about: 'messages:bot.plan.progress.stepAbout', range: 'messages:bot.plan.progress.stepRange' },
+  working: { about: 'messages:bot.plan.progress.workingAbout', range: 'messages:bot.plan.progress.workingRange' },
+  doing: { about: 'messages:bot.plan.progress.doingAbout', range: 'messages:bot.plan.progress.doingRange' },
+} as const;
 
 /**
  * Pure (#4046): the line at the top of a plan in `state`, from its request's
@@ -113,13 +118,15 @@ export function planProgress(card: HomeroomBotActivity | null | undefined, state
   }
   const stepped = card.step && card.of ? { step: card.step, of: card.of } : null;
   if (state === 'open') return stepped ? { line: translate('messages:bot.plan.step', { step: stepped.step, total: stepped.of }), ...stepped } : null;
-  const what = stepped
-    ? (card.stepName
-      ? translate('messages:bot.plan.stepNamed', { step: stepped.step, total: stepped.of, name: card.stepName })
-      : translate('messages:bot.plan.step', { step: stepped.step, total: stepped.of }))
-    : card.doing ? capitalized(card.doing) : translate('messages:bot.plan.working');
+  const lead: keyof typeof PROGRESS_LINES = stepped ? (card.stepName ? 'stepNamed' : 'step') : card.doing ? 'doing' : 'working';
+  const values = {
+    step: stepped?.step ?? 0, total: stepped?.of ?? 0, name: card.stepName || '', doing: card.doing ? capitalized(card.doing) : '',
+  };
   const time = planTime(card.typicalMinutes);
-  return { line: time ? dotText([what, time]) : what, step: stepped?.step ?? null, of: stepped?.of ?? null };
+  const what = lead === 'stepNamed' ? translate('messages:bot.plan.stepNamed', values)
+    : lead === 'step' ? translate('messages:bot.plan.step', values)
+      : lead === 'doing' ? values.doing : translate('messages:bot.plan.working');
+  return { line: time ? translate(PROGRESS_LINES[lead][time.kind], { ...values, from: time.from, count: time.count }) : what, step: stepped?.step ?? null, of: stepped?.of ?? null };
 }
 
 /**
