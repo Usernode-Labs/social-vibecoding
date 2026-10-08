@@ -69,6 +69,8 @@ function activity() { return require('./homeroom-bot-activity'); }
 // side builds and their results (services/bot-configs.js), and its review
 // (services/bot-review.js). Lazy: they read this module's settings.
 function botConfigs() { return require('./bot-configs'); }
+// #4387: what a first version's App tab shows while it is built.
+function firstVersionScreens() { return require('./first-version-screens'); }
 function botReview() { return require('./bot-review'); }
 // #4210: interrupted builds, kept for admins.
 function incidents() { return require('./platform-incidents'); }
@@ -6689,6 +6691,15 @@ async function buildLive({
       ),
       origin: { lane: 'live', runId },
       onNoChange: (noChange) => keepNoChange(pool, runId, noChange),
+      // #4387: what the people waiting on a first version watch on its App
+      // tab: the spec's main screen drawn as its first look, and the build
+      // agent's "Adding …" phrases (services/first-version-screens.js).
+      ...(firstVersion ? {
+        onProgress: firstVersionScreens().captionWatcher(pool, runId),
+        onFirstLook: ({ specHtml, containerName }) => firstVersionScreens().renderFirstLook({
+          pool, worker: deps.worker || require('./worker'), containerName, runId, specHtml,
+        }),
+      } : {}),
       ...(version ? {
         harnessOf: live.recipeHarness,
         review,
@@ -6701,6 +6712,11 @@ async function buildLive({
     liveBuildsInFlight.delete(runId);
   }
   if (built) built.model = model;
+  // #4387: and, once it is reviewed, up to three of its real screens, from
+  // the review's last capture, for its App tab from "Testing it".
+  if (firstVersion && built?.review?.finalCapture) {
+    await firstVersionScreens().keepRealScreens(pool, runId, built.review.finalCapture);
+  }
   if (built.specMd) {
     await pool.query('UPDATE homeroom_bot_runs SET build_spec_md = $2 WHERE id = $1', [runId, built.specMd])
       .catch(() => {});

@@ -12762,6 +12762,33 @@ CREATE INDEX IF NOT EXISTS idx_bot_capture_artifacts_trial ON bot_capture_artifa
 CREATE INDEX IF NOT EXISTS idx_bot_capture_artifacts_created ON bot_capture_artifacts(created_at);
 COMMENT ON TABLE bot_capture_artifacts IS 'staging:private';
 
+-- #4387: what a first version's App tab shows while it is built
+-- (services/first-version-screens.js). The FIRST LOOK, the spec's main
+-- drawn screen rendered to a phone-sized PNG in the build's worker, from
+-- "Building it"; then up to three REAL screens of the build, kept from its
+-- review's last capture, from "Testing it". Images only, never the model's
+-- HTML; read back only by the project's members (GET
+-- /api/apps/:slug/first-version/screens/:kind/:n). Private: an app's
+-- screens can show any of its data.
+CREATE TABLE IF NOT EXISTS first_version_screens (
+  id            VARCHAR(32) PRIMARY KEY CHECK (id ~ '^[0-9a-f]{32}$'),
+  bot_run_id    INTEGER NOT NULL REFERENCES homeroom_bot_runs(id) ON DELETE CASCADE,
+  kind          VARCHAR(16) NOT NULL CHECK (kind IN ('first_look', 'real')),
+  position      SMALLINT NOT NULL CHECK (position >= 0 AND position < 3),
+  content_type  VARCHAR(32) NOT NULL,
+  data          BYTEA NOT NULL,
+  width         INTEGER CHECK (width IS NULL OR width > 0),
+  height        INTEGER CHECK (height IS NULL OR height > 0),
+  bytes         INTEGER NOT NULL CHECK (bytes > 0),
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (bot_run_id, kind, position)
+);
+COMMENT ON TABLE first_version_screens IS 'staging:private';
+-- #4387: the build agent's latest "Adding …" phrase (usernode-progress),
+-- the App tab's build line note while a first version is built.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_caption TEXT;
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_caption_at TIMESTAMPTZ;
+
 -- ===================================================================
 -- Workflow foundation: the kernel's tables (src/workflow/kernel/).
 --

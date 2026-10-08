@@ -12,6 +12,9 @@
  * build line one line under it, and "It opens here when it’s ready." below that:
  * no plan, no step count, nothing to press (#4043); a member who is not its
  * maker gets a "While you wait" card under it (#4396, ./waiting-card.tsx).
+ * For its members the thumbnail's band shows the first look, then its real
+ * screens, and the build line says what it is adding (#4387,
+ * ./first-version-screens.tsx).
  * Once that version is
  * built and up for approval, the same thumbnail says Ready to try, and the
  * screen says what it waits on, with Try it and See the change.
@@ -34,7 +37,7 @@
  * is the whole point of that path — the frame must survive.
  */
 
-import type { ReactNode } from 'react';
+import { useCallback, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 
@@ -43,6 +46,7 @@ import { type BuildLineState, buildLineOf } from '../first-session/build-line';
 import { useTourRunning } from '../first-session/tour-running';
 import { FeaturedCard, sketching, useSketch } from '../first-session/sketch-card';
 import { appStatusStore } from './app-status-store.js';
+import { type FirstVersionScreens, ScreensBand, hasScreens } from './first-version-screens';
 import { type FirstVersionWaiting, WaitingCard, lineNote } from './waiting-card';
 
 /** The resolved placeholder. `null` means some other owner has the host. */
@@ -64,6 +68,16 @@ export interface AppStatusView {
   thumb?: FirstVersionThumb | null;
   /** None: no line (a screen that cannot know the step). */
   buildLine?: BuildLineState | null;
+  /**
+   * #4387: what the build is adding now ("Adding the tier rows"), the build
+   * line's note while it is built, in place of "usually 10 to 25 min".
+   */
+  buildNote?: string | null;
+  /**
+   * #4387: the first look, or the real screens, the thumbnail's colour band
+   * shows in place of its icon (./first-version-screens.tsx).
+   */
+  screens?: FirstVersionScreens | null;
   /**
    * The lines say what a first-session tour card can say over this screen
    * ("It opens here when it’s ready."), so they hide while a card that says
@@ -116,9 +130,20 @@ export interface FirstVersionThumb {
  * (GET /api/apps/:slug/sketch, as the made screen reads it), else its
  * description.
  */
-function FirstVersionCard({ thumb, line, note = null }: { thumb: FirstVersionThumb; line: BuildLineState | null; note?: string | null }): ReactNode {
+function FirstVersionCard({ thumb, line, note = null, screens = null }: {
+  thumb: FirstVersionThumb;
+  line: BuildLineState | null;
+  note?: string | null;
+  screens?: FirstVersionScreens | null;
+}): ReactNode {
   const sketch = useSketch(thumb.sketch === false ? null : thumb.slug);
   const card = sketch.card;
+  // Pictures that would not load leave the thumbnail as it was, until there
+  // are others to show (the real screens after a first look, say).
+  const shownKey = hasScreens(screens) ? `${screens.kind} ${screens.images.join(' ')}` : '';
+  const [emptyKey, setEmptyKey] = useState<string | null>(null);
+  const onEmpty = useCallback(() => setEmptyKey(shownKey), [shownKey]);
+  const shows = hasScreens(screens) && emptyKey !== shownKey ? screens : null;
   return (
     <div className="w-full max-w-[342px]" data-app-first-version={line || ''}>
       <FeaturedCard
@@ -130,6 +155,7 @@ function FirstVersionCard({ thumb, line, note = null }: { thumb: FirstVersionThu
         sketching={!card && !thumb.description && sketching(sketch.state)}
         line={line}
         lineNote={note}
+        band={shows ? <ScreensBand key={shownKey} screens={shows} name={thumb.name} onEmpty={onEmpty} /> : null}
       />
     </div>
   );
@@ -206,7 +232,13 @@ export function AppStatusView_({ view: answered }: { view: AppStatusView }): Rea
     <>
       {view.dot ? <div className={`status-dot ${view.dot}`}></div> : null}
       {thumb ? (
-        <FirstVersionCard key={thumb.slug} thumb={thumb} line={line} note={waiting ? lineNote(line) : null} />
+        <FirstVersionCard
+          key={thumb.slug}
+          thumb={thumb}
+          line={line}
+          note={(line === 'building' && view.buildNote) || (waiting ? lineNote(line) : null)}
+          screens={view.screens || null}
+        />
       ) : (
         <p className={titled ? 'max-w-sm text-base font-semibold text-zinc-900 dark:text-zinc-100' : 'text-sm'}>{view.message}</p>
       )}

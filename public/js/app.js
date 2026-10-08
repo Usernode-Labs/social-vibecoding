@@ -886,9 +886,11 @@ const App = {
     // Build it. `-ready` and `-approved`: built and up for approval, as a
     // member who still has to approve it and as one who has. #4396:
     // `-member`, being built, as a member who is not its maker reads it.
+    // #4387: `-testing`, the same member once it is being tested, with its
+    // real screens.
     const variants = {
       'first-version': false, 'first-version-plan': 'plan', 'first-version-ready': 'ready', 'first-version-approved': 'approved',
-      'first-version-member': 'member',
+      'first-version-member': 'member', 'first-version-testing': 'testing',
     };
     if (!Object.prototype.hasOwnProperty.call(variants, shot)) return;
     try {

@@ -4456,22 +4456,30 @@ async function rescueUnpushedCommit(sessionId, { branchName = null } = {}) {
 // committed, pushed or journaled, and the active-turn record is untouched.
 const BENCH_CAPTURE_SCRIPT_PATH = '/tmp/usernode-bench-capture.js';
 const BENCH_ENV_KEY = /^[A-Z][A-Z0-9_]{0,63}$/;
+// #4387: another of the platform's scripts run the same way (the first
+// version's first look, services/first-version-screens.js) is written to a
+// file of its own, so it never overwrites a capture running beside it.
+const BENCH_SCRIPT_PATH_RE = /^\/tmp\/usernode-[a-z0-9-]{1,40}\.js$/;
 
-function buildBenchCaptureCommand(env = {}) {
+function buildBenchCaptureCommand(env = {}, scriptPath = BENCH_CAPTURE_SCRIPT_PATH) {
+  if (!BENCH_SCRIPT_PATH_RE.test(scriptPath)) throw new Error(`runBenchCapture: invalid script path ${scriptPath}`);
   const pairs = Object.entries(env).map(([key, value]) => {
     if (!BENCH_ENV_KEY.test(key)) throw new Error(`runBenchCapture: invalid env key ${key}`);
     return shellQuote(`${key}=${String(value)}`);
   });
-  return ['sh', '-c', `cd /home/node/workspace && exec env ${pairs.join(' ')} node ${BENCH_CAPTURE_SCRIPT_PATH}`];
+  return ['sh', '-c', `cd /home/node/workspace && exec env ${pairs.join(' ')} node ${scriptPath}`];
 }
 
-async function runBenchCapture(containerName, { source, env = {}, timeoutMs, maxBuffer = 96 * 1024 * 1024 } = {}) {
+async function runBenchCapture(containerName, {
+  source, env = {}, timeoutMs, maxBuffer = 96 * 1024 * 1024, scriptPath = BENCH_CAPTURE_SCRIPT_PATH,
+} = {}) {
   if (!containerName) throw new Error('runBenchCapture: no worker');
   if (typeof source !== 'string' || !source) throw new Error('runBenchCapture: no script');
-  const write = buildTurnContextFileScript(source, BENCH_CAPTURE_SCRIPT_PATH);
+  const command = buildBenchCaptureCommand(env, scriptPath);
+  const write = buildTurnContextFileScript(source, scriptPath);
   if (usesKubernetesWorkers()) await execWorkerCommand(containerName, ['sh', '-s'], write);
   else await docker.execShellStdin(containerName, write, { timeoutMs: 20000, label: 'runBenchCapture' });
-  const { stdout } = await execWorkerCommand(containerName, buildBenchCaptureCommand(env), null, { timeoutMs, maxBuffer });
+  const { stdout } = await execWorkerCommand(containerName, command, null, { timeoutMs, maxBuffer });
   return String(stdout || '');
 }
 

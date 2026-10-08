@@ -213,6 +213,10 @@ COPY usernode-report-platform-issue /usr/local/bin/usernode-report-platform-issu
 # back; staging still supplies its own platform-issued capture identity.
 COPY usernode-run-checks /usr/local/bin/usernode-run-checks
 COPY usernode-run-inloop /usr/local/bin/usernode-run-inloop
+# usernode-progress (#4387): the first version's build says what it is
+# adding now ("Adding the tier rows"). It only echoes: the platform reads
+# the phrase off the command in the turn's stream.
+COPY usernode-progress /usr/local/bin/usernode-progress
 # usernode-debug (#616) is read-only production debugging for ADMIN
 # sessions on the self-edit app. It calls the platform's prod-debug
 # internal API (deny-listed read-only SQL role, allowlisted container
@@ -243,6 +247,7 @@ RUN chmod +x /usr/local/bin/worker-run.sh \
               /usr/local/bin/usernode-run-checks \
               /usr/local/bin/usernode-run-inloop \
               /usr/local/bin/usernode-debug \
+              /usr/local/bin/usernode-progress \
   && mkdir -p /home/node/workspace /home/node/.claude \
   && chown -R node:node /home/node
 
