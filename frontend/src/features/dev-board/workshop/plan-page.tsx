@@ -13,10 +13,11 @@
  *
  * The plan is the server's (GET /api/apps/:slug/community
  * `first_version.plan`, routes/apps.js sharedPlan), sent to a member who
- * did not start the project and only while it waits. It is the current
+ * did not start the project while it waits and, once its maker chose it,
+ * while it is built and tested (#4396). It is the current
  * one: after Change something there is none until Homeroom bot has written
  * the new one. With none to show (it was built, or the reader is not a
- * member) the page goes back to the Hub.
+ * member, it is ready) the page goes back to the Hub.
  *
  * Drawn here rather than with the chat's plan card (../../messages/
  * bot-plan-view.tsx), whose open state is all answers and buttons.
@@ -40,9 +41,51 @@ export function planStep(step: number | null | undefined, of: number | null | un
   return { text: `Step ${at} of ${all}` };
 }
 
-/** Who answers it, in a sentence. */
-export function decidesLine(creator: string | null | undefined): string {
+/** The build lines of a plan its maker already chose (#4396): it is being built or tested. */
+const CHOSEN_LINES = new Set(['building', 'testing']);
+
+/**
+ * Who answers it, in a sentence. Once its maker chose it (#4396: the plan
+ * is read on while it is built and tested), who chose it, and what comes
+ * after.
+ */
+export function decidesLine(creator: string | null | undefined, line?: string | null): string {
+  if (line && CHOSEN_LINES.has(line)) {
+    return `${creator || 'The person who started it'} chose this plan. Once it’s live, anyone here can suggest changes.`;
+  }
   return creator ? `${creator} decides on this plan.` : 'The person who started it decides on this plan.';
+}
+
+/** The plan as members read it: what the first version will do, and each question with its suggested answer. */
+export interface MemberPlan {
+  bullets: string[];
+  questions: Array<{ question: string; suggested?: string | null }>;
+}
+
+/**
+ * The plan's lines, each a row of its own, and each of Homeroom bot's
+ * questions a row too, the question small over its suggested answer. This
+ * page draws them, and so does the App tab's plan sheet
+ * (../../app-frame/waiting-card.tsx).
+ */
+export function PlanLines({ name, plan }: { name: string; plan: MemberPlan }): ReactNode {
+  return (
+    <>
+      <GroupedList tone="plane" className="mx-0" role="list" aria-label={`Plan for ${name}`} data-ws-plan-lines="">
+        {plan.bullets.map((bullet) => <div key={bullet} role="listitem" className="dev-ws-plan-row">{bullet}</div>)}
+      </GroupedList>
+      {plan.questions.length ? (
+        <GroupedList tone="plane" className="mx-0" data-ws-plan-questions="">
+          {plan.questions.map((q) => (
+            <div key={q.question} className="dev-ws-plan-row dev-ws-plan-q">
+              <p className="dev-ws-plan-qq">{q.question}</p>
+              {q.suggested ? <p className="dev-ws-plan-qa" data-ws-plan-suggested="">{q.suggested}</p> : null}
+            </div>
+          ))}
+        </GroupedList>
+      ) : null}
+    </>
+  );
 }
 
 export function PlanPage({ name, data, onBack, onDiscussion }: {
@@ -79,21 +122,9 @@ export function PlanPage({ name, data, onBack, onDiscussion }: {
         <h2 className="dev-ws-plan-title">{`My plan for ${name}`}</h2>
         {step ? <p className="dev-ws-plan-step" data-ws-plan-step="">{step.text}</p> : null}
       </div>
-      <GroupedList tone="plane" className="mx-0" role="list" aria-label={`Plan for ${name}`} data-ws-plan-lines="">
-        {plan.bullets.map((bullet) => <div key={bullet} role="listitem" className="dev-ws-plan-row">{bullet}</div>)}
-      </GroupedList>
-      {plan.questions.length ? (
-        <GroupedList tone="plane" className="mx-0" data-ws-plan-questions="">
-          {plan.questions.map((q) => (
-            <div key={q.question} className="dev-ws-plan-row dev-ws-plan-q">
-              <p className="dev-ws-plan-qq">{q.question}</p>
-              {q.suggested ? <p className="dev-ws-plan-qa" data-ws-plan-suggested="">{q.suggested}</p> : null}
-            </div>
-          ))}
-        </GroupedList>
-      ) : null}
+      <PlanLines name={name} plan={plan} />
       <div className="dev-ws-plan-foot">
-        <p className="dev-ws-plan-who" data-ws-plan-who="">{decidesLine(fv.creator)}</p>
+        <p className="dev-ws-plan-who" data-ws-plan-who="">{decidesLine(fv.creator, fv.line)}</p>
         <button type="button" className="dev-ws-plan-talk un-touch-target" data-ws-plan-discussion="" onClick={onDiscussion}>
           Talk about it in Discussion
         </button>

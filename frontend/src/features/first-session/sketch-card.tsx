@@ -136,7 +136,7 @@ function glyphOf(name: string, emoji: string | null, sketched: boolean): string 
  * `children` close the card's body, under the line (the invite page's
  * invitation, #4394).
  */
-export function FeaturedCard({ name, colorKey, emoji, iconUrl = null, card, description = null, sketching: sketched = !card, line = null, titleId, heading = false, compact = false, large = false, children = null }: {
+export function FeaturedCard({ name, colorKey, emoji, iconUrl = null, card, description = null, sketching: sketched = !card, line = null, lineNote = null, titleId, heading = false, compact = false, large = false, children = null }: {
   name: string;
   /** Picks a colour when there is no emoji to read one from (the project's slug). */
   colorKey: string;
@@ -150,6 +150,8 @@ export function FeaturedCard({ name, colorKey, emoji, iconUrl = null, card, desc
   sketching?: boolean;
   /** Where its first version is (./build-line.tsx), or none. */
   line?: BuildLineState | null;
+  /** After the line's words: how long it usually takes (BuildLine's `note`). */
+  lineNote?: string | null;
   titleId?: string;
   /** The name as the screen's heading (the made screen's dialog is labelled by it). */
   heading?: boolean;
@@ -196,7 +198,7 @@ export function FeaturedCard({ name, colorKey, emoji, iconUrl = null, card, desc
       </div>
       {line ? (
         <div data-featured-card-line="" className="px-1">
-          <BuildLine state={line} />
+          <BuildLine state={line} note={lineNote} />
         </div>
       ) : null}
     </div>
