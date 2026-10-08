@@ -191,8 +191,13 @@ test('every app writes HTML specs; the platform\'s screens draw with its stylesh
   assert.match(specHtmlContract(false), /data-side="after"/);
 
   // The browser loads only the kit for an app's screens, and treats an unstamped document the same way.
+  // The kit filter goes through the address's pathname with any build-scoped
+  // `/b/<sha>` prefix (scripts/shell-stamp.js) taken off first: a deployed
+  // document names native.css at `/b/<sha>/usernode-native/…`, and a filter on
+  // the plain prefix would leave every other app's screens with no stylesheet.
   const lib = read('frontend/src/lib/spec-html.ts');
-  assert.match(lib, /\.filter\(\(href\) => styles === 'platform' \|\| href\.startsWith\(`\$\{origin\}\/usernode-native\/`\)\)/);
+  assert.match(lib, /return path\.replace\(\/\^\\\/b\\\/\[0-9a-f\]\{7,40\}\(\?=\\\/\)\/, ''\)\.startsWith\('\/usernode-native\/'\);/);
+  assert.match(lib, /\.filter\(\(href\) => styles === 'platform' \|\| kitStylesheet\(href\)\)/);
   assert.match(lib, /const styles: SpecStyles = article\.getAttribute\('data-spec-styles'\) === 'platform' \? 'platform' : 'kit';/);
 });
 

@@ -173,13 +173,24 @@ function cleanScreenMarkup(markup: string): string {
 
 type SpecStyles = 'platform' | 'kit';
 
+/**
+ * The kit's stylesheet, wherever the build stamped it. A deployed document
+ * loads its stylesheets from `/b/<build sha>/…` (scripts/shell-stamp.js),
+ * so the plain `/usernode-native/` prefix would match nothing and every
+ * other app's screens would draw with no stylesheet at all.
+ */
+function kitStylesheet(href: string): boolean {
+  const path = new URL(href).pathname;
+  return path.replace(/^\/b\/[0-9a-f]{7,40}(?=\/)/, '').startsWith('/usernode-native/');
+}
+
 function frameDoc(markup: string, side: 'before' | 'after', styles: SpecStyles): string {
   const origin = window.location.origin;
   const dark = document.documentElement.classList.contains('dark');
   const links = Array.from(document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"]'))
     .map((link) => link.href)
     .filter((href) => href.startsWith(`${origin}/`))
-    .filter((href) => styles === 'platform' || href.startsWith(`${origin}/usernode-native/`))
+    .filter((href) => styles === 'platform' || kitStylesheet(href))
     .map((href) => `<link rel="stylesheet" href="${escapeAttr(href)}">`)
     .join('');
   const csp = `default-src 'none'; style-src 'unsafe-inline' ${origin}; img-src data: ${origin}; font-src data: ${origin}`;
