@@ -130,7 +130,8 @@ test('while it is sketched: the same frame, the name in place, a band of light o
   const html = sketchCard({ sketch: { state: 'loading', card: null } });
   assert.match(html, /data-first-session-sketch="loading"/);
   assert.match(html, /data-featured-card="sketching"/);
-  assert.match(html, /<h1 id="first-session-made-title" class="truncate text-\[17px\] font-bold leading-\[22px\]">Plant Pal<\/h1>/);
+  assert.match(html, /<p class="truncate text-\[17px\] font-bold leading-\[22px\]">Plant Pal<\/p>/, 'the name once, on the card; the screen\'s heading is its own');
+  assert.doesNotMatch(html, /<h1/);
   assert.match(html, /role="status" class="sr-only">Sketching Plant Pal from your description…<\/p>/);
   assert.match(html, /motion-safe:animate-card-sweep/);
   assert.match(html, /pointer-events-none absolute inset-0 overflow-hidden motion-reduce:hidden/);
@@ -138,6 +139,8 @@ test('while it is sketched: the same frame, the name in place, a band of light o
   assert.ok(lineOutsideCard(html), 'while it is sketched too, the line is under the card and the light passes over the card alone');
   assert.match(html, />Homeroom bot is planning it<\/span>/);
   assert.match(html, /Homeroom is making your app\. It will message you when the first version is ready to try, or if it has any questions\./);
+  // The note is optional: the made screen gives none when the bot builds it.
+  assert.doesNotMatch(sketchCard({ sketch: { state: 'loading', card: null }, note: null }), /Homeroom is making your app|data-first-session-note/);
   // No words yet, no frame.
   assert.doesNotMatch(html, /<iframe|data-featured-card-words/);
   // The example's emoji, when one was picked, is already the icon.

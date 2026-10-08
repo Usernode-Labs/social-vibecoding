@@ -74,10 +74,11 @@
 import { useEffect, useReducer, useRef, useState, type ReactNode, type Ref } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { CheckIcon, ChevronRightIcon, LockIcon, PlayIcon, UserGroupIcon, UserIcon } from '@/components/ui/icons';
+import { ChevronRightIcon, LockIcon, PersonSilhouetteIcon, PlayIcon, UserGroupIcon, UserIcon } from '@/components/ui/icons';
 import { swatchFor } from '../../messages/format';
 import { offerJoin, registerJoinAnchor } from '../../../lib/join-required';
 import { invitedByLine, joinByInvite, seenByLine, useInviteOffer, type InviteJoin, type InviteOffer } from './invite-offer';
+import { hubShot, hubShotPayload } from './hub-shot';
 
 type Audience = 'open' | 'invited' | 'solo';
 
@@ -105,6 +106,12 @@ export type HubFirstVersion = {
   conversation_id: number | null;
   /** The change, once it is ready to try. */
   session_id: number | null;
+  /** #4074: the plan waiting for its maker's Build it, read only, for a
+      member who did not start it (routes/apps.js sharedPlan); else null. */
+  plan?: {
+    bullets: string[];
+    questions: Array<{ question: string; suggested: string | null }>;
+  } | null;
 };
 
 export type CommunityPayload = {
@@ -113,6 +120,13 @@ export type CommunityPayload = {
   /** dapp.json's one-line description, or the first sentence of the
       description it was made from when dapp.json has none yet. */
   description?: string | null;
+  /** #4045: made under seven days ago (never the platform's own): the hub
+      leaves out what is still empty (decision D). */
+  first_week?: boolean;
+  /** #4045: the viewer has a live invite link for a project that is still
+      just theirs, so the hub draws open seats beside their face instead of
+      "Just you". Only ever true for a member, on a Just you project. */
+  invite_link?: boolean;
   first_version?: HubFirstVersion | null;
   member_count: number;
   is_member: boolean;
@@ -237,6 +251,10 @@ function AudienceGlyph({ audience }: { audience: Audience }) {
 }
 
 async function readCommunity(slug: string): Promise<CommunityPayload | null> {
+  // `?shot=hub-first-week` (./hub-shot.ts): a made-up first week, drawn for
+  // the before/after shots in place of the server's answer.
+  const shot = hubShot();
+  if (shot) return hubShotPayload(slug, shot);
   try {
     const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/community`);
     if (!res.ok) return null;
@@ -303,6 +321,102 @@ export function useCommunity(slug: string): CommunityPayload | null {
 /** How many faces the hero shows before the count says the rest. */
 export const HERO_FACES = 5;
 
+/** Up to HERO_FACES faces, overlapping; nothing for nobody. */
+function HeroFaces({ members }: { members: CommunityPayload['members'] | null | undefined }) {
+  const faces = (members || []).slice(0, HERO_FACES);
+  if (!faces.length) return null;
+  return (
+    <span className="dev-ws-hero-faces" aria-hidden="true">
+      {faces.map((m) => (
+        <span key={m.id} className="dev-ws-hero-face" style={{ background: swatchFor(m.username) }} title={`@${m.username}`}>
+          {(m.username || '?').charAt(0).toUpperCase()}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/** How many faces the first week's row shows: the count says the rest. */
+export const WEEK_FACES = 3;
+
+/**
+ * The seats of a project nobody has joined yet, in the colours of the
+ * canvas board People (set "you-open"): one on each side of your face, pale,
+ * with a person's outline in them. They are not buttons; Invite is.
+ */
+const SEATS = [
+  { bg: '#ebefed', ink: '#cedae0' },
+  { bg: '#fae5dc', ink: '#ebb199' },
+] as const;
+
+function Seat({ bg, ink }: { bg: string; ink: string }) {
+  return (
+    <span className="dev-ws-hero-face dev-ws-hero-seat" style={{ background: bg, color: ink }}>
+      <PersonSilhouetteIcon aria-hidden="true" />
+    </span>
+  );
+}
+
+/**
+ * The people row of a project's first week (#4045, the owner, 8 Oct 2026;
+ * canvas boards Hub and People): the faces at the left, then who it is for
+ * as "Private community" with its lock, and "3 people" under it.
+ *
+ *   Just you              the label alone: nobody else is here, and no link is out
+ *   a link is out         your face between two open seats, "Private
+ *                         community" and no count: the count of one person
+ *                         is the seats' whole point
+ *   anyone else in it     up to three faces, the audience and "N people"
+ *
+ * `seats` is `invite_link` on a Just you project (GET .../community): the
+ * audience the server derives stays "Just you" until somebody accepts, so the
+ * hub says "Private community" itself while the seats are shown.
+ */
+export function WeekPeople({ members, count, audience, audienceLabel, seats }: {
+  members: CommunityPayload['members'] | null | undefined;
+  count: number;
+  audience?: Audience;
+  audienceLabel?: string;
+  seats?: boolean;
+}) {
+  const solo = audience === 'solo';
+  const shown: Audience | undefined = seats ? 'invited' : audience;
+  const label = seats ? 'Private community' : audienceLabel;
+  const you = (members || [])[0];
+  const faces = seats ? [] : solo ? [] : (members || []).slice(0, WEEK_FACES);
+  const countLine = seats || solo ? '' : plural(count, 'person', 'people');
+  return (
+    <div className="dev-ws-hero-week-people" data-ws-members="" data-ws-seats={seats ? '' : undefined}>
+      {seats && you ? (
+        <span className="dev-ws-hero-faces dev-ws-hero-seats" aria-hidden="true">
+          <Seat {...SEATS[0]} />
+          <span className="dev-ws-hero-face" style={{ background: swatchFor(you.username) }} title={`@${you.username}`}>
+            {(you.username || '?').charAt(0).toUpperCase()}
+          </span>
+          <Seat {...SEATS[1]} />
+        </span>
+      ) : faces.length ? (
+        <span className="dev-ws-hero-faces" aria-hidden="true">
+          {faces.map((m) => (
+            <span key={m.id} className="dev-ws-hero-face" style={{ background: swatchFor(m.username) }} title={`@${m.username}`}>
+              {(m.username || '?').charAt(0).toUpperCase()}
+            </span>
+          ))}
+        </span>
+      ) : null}
+      <span className="dev-ws-hero-week-who" data-ws-members-cell="members">
+        {label ? (
+          <span className="dev-ws-hero-audience" data-ws-community-audience="">
+            {shown ? <AudienceGlyph audience={shown} /> : null}
+            <b>{label}</b>
+          </span>
+        ) : null}
+        {countLine ? <span className="dev-ws-hero-week-count">{countLine}</span> : null}
+      </span>
+    </div>
+  );
+}
+
 /**
  * The hub's people line (#3268): up to HERO_FACES faces, then who the
  * community is for and how many are in it, "Public community · 23 members".
@@ -323,21 +437,6 @@ export function HeroPeople({ members, count, audience, audienceLabel, children }
       <HeroCount count={count} audience={audience} audienceLabel={audienceLabel} />
       {children}
     </div>
-  );
-}
-
-/** Up to HERO_FACES faces, overlapping; nothing for nobody. */
-function HeroFaces({ members }: { members: CommunityPayload['members'] | null | undefined }) {
-  const faces = (members || []).slice(0, HERO_FACES);
-  if (!faces.length) return null;
-  return (
-    <span className="dev-ws-hero-faces" aria-hidden="true">
-      {faces.map((m) => (
-        <span key={m.id} className="dev-ws-hero-face" style={{ background: swatchFor(m.username) }} title={`@${m.username}`}>
-          {(m.username || '?').charAt(0).toUpperCase()}
-        </span>
-      ))}
-    </span>
   );
 }
 
@@ -532,6 +631,10 @@ export async function proposeAudience(slug: string, to: 'public' | 'private'): P
   }
 }
 
+/** What making it public means, said before it is proposed (the Share it popup and ⋯'s confirm). */
+export const MAKE_PUBLIC_LINE = 'Anyone can find it on Discover, join, and propose changes. '
+  + 'Members vote on this first, and it applies once it merges.';
+
 /**
  * What making it private means, said before it is proposed. Who can OPEN
  * it: the repository stays public on GitHub (services/github.js createRepo)
@@ -569,8 +672,64 @@ export async function confirmMakePrivate(slug: string, name: string): Promise<vo
 }
 
 /**
- * "Make it public" (it was "Open it up"): the audience change as a question
- * under its button, the Join popup's shape. The answer opens the visibility
+ * "Make it public", from the hub's ⋯ (#4045, decision D). It was a button in
+ * the hero's row; it is a setting, so it lives beside "Make it private" in
+ * the ⋯ (../actions-row.tsx DevPlusMenu's `onMakePublic`), and the row keeps
+ * what you do with people: Invite. The same question as the popup, as the
+ * platform's confirm, then the same proposal.
+ */
+export async function confirmMakePublic(slug: string, name: string): Promise<void> {
+  const ui = (window as any).PlatformUI;
+  if (!ui || typeof ui.confirm !== 'function') return;
+  const ok = await ui.confirm({
+    title: `Make ${name} a public community?`,
+    message: MAKE_PUBLIC_LINE,
+    confirmLabel: 'Propose making it public',
+    cancelLabel: 'Not now',
+  });
+  if (!ok) return;
+  try {
+    await proposeAudience(slug, 'public');
+  } catch (err) {
+    ui.toast?.(err instanceof Error ? err.message : 'That did not go through. Try again.');
+    return;
+  }
+  await reloadCommunity(slug);
+}
+
+/**
+ * Whether the hub's ⋯ offers "Make it public": a private community, to
+ * whoever may open the visibility proposal, while no change to who it is
+ * for is already up for a vote. A project that is just yours keeps it on
+ * its Share it card.
+ */
+export function canMakePublic(data: Pick<CommunityPayload, 'audience' | 'can_manage' | 'audience_change'> | null | undefined): boolean {
+  return !!data && data.audience === 'invited' && !!data.can_manage && !data.audience_change;
+}
+
+/**
+ * Leave, from the hub's ⋯ (#4045): it was the hero's Joined pill. Whether
+ * the ⋯ offers it: a member who did not start the project (they cannot
+ * leave what they started).
+ */
+export function canLeave(data: Pick<CommunityPayload, 'is_member' | 'is_creator'> | null | undefined): boolean {
+  return !!data && !!data.is_member && !data.is_creator;
+}
+
+/** Leave the community: Home.setMembership asks first, then the hub re-reads. */
+export async function leaveCommunity(slug: string): Promise<void> {
+  const home = (window as any).Home;
+  if (!slug || !home?.setMembership) return;
+  try {
+    await home.setMembership(slug, false);
+  } finally {
+    await reloadCommunity(slug);
+  }
+}
+
+/**
+ * "Make it public" on a project that is just yours (ShareItCard): the
+ * audience change as a question under its button, the Join popup's shape. The answer opens the visibility
  * PR; the hero then re-reads and shows it as up for a vote. Only this way
  * round: "Make it private" is the ⋯'s (confirmMakePrivate, above).
  */
@@ -640,9 +799,7 @@ function MakePublic({ slug, name, onOpened }: {
           data-ws-audience-pop=""
         >
           <p className="dev-ws-ask-q">{`Make ${name} a public community?`}</p>
-          <p className="dev-ws-vote-sub">
-            Anyone can find it on Discover, join, and propose changes. Members vote on this first, and it applies once it merges.
-          </p>
+          <p className="dev-ws-vote-sub">{MAKE_PUBLIC_LINE}</p>
           {error ? <p className="dev-ws-audience-error" role="alert" data-ws-audience-error="">{error}</p> : null}
           <div className="dev-ws-answer-row">
             <button
@@ -852,18 +1009,6 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedBy
     void joinThroughLink(false).then((ok) => answer(ok ? 'joined' : false));
   };
 
-  const leave = async () => {
-    const home = (window as any).Home;
-    if (!home?.setMembership || busy) return;
-    setBusy(true);
-    try {
-      await home.setMembership(slug, false);
-    } finally {
-      setBusy(false);
-      void load();
-    }
-  };
-
   // Invite is a MEMBER's (#3362): an invite link can be made by anyone in
   // the community (services/community-invites.js), and the pane says so when
   // the viewer cannot make one yet. Collaborators and approvals stay behind
@@ -924,8 +1069,10 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedBy
       {popup}
     </InviteCard>
   ) : null;
-  // YOU AND THIS PROJECT, at the end of the action row: Join, or Joined.
-  const membership = invited ? null : !data.is_member ? (
+  // YOU AND THIS PROJECT, at the end of the action row: Join. Joined was
+  // here too, and was the way out; Leave is a row of the ⋯ now (#4045,
+  // canLeave), so a member's row is what they can do, not what they are.
+  const membership = invited || data.is_member ? null : (
     <span className="dev-ws-join-anchor">
       <Button
         ref={joinRef}
@@ -943,26 +1090,21 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedBy
       </Button>
       {popup}
     </span>
-  ) : data.is_creator ? null : (
-    // JOINED IS THE LEAVE CONTROL. A state you can see, with a check, and a
-    // tap asks before it takes you out (Home.setMembership), the same pill
-    // Discover draws. Outlined, not filled: it shares a row with Open app,
-    // and a settled state should not be the loudest thing in it. The creator
-    // gets none: they cannot leave what they started.
-    <Button
-      type="button"
-      variant="pillNeutral"
-      size="sm"
-      ink="neutral"
-      className="dev-ws-joined inline-flex items-center gap-1"
-      data-ws-community-leave=""
-      title={`Joined. Tap to leave ${displayName}`}
-      disabled={busy}
-      onClick={() => { void leave(); }}
-    >
-      <CheckIcon className="w-3.5 h-3.5" strokeWidth="3" aria-hidden="true" />
-      Joined
-    </Button>
+  );
+  // #4045, DECISION D: IN ITS FIRST WEEK the hero leaves out what is still
+  // empty: no fortnight of activity. The people row is the week's own
+  // (WeekPeople): the faces, "Private community" over "3 people", then what
+  // you can do. A pending change to who it is for is not empty, so it stays.
+  const week = !!data.first_week;
+  // A link is out on a project that is still just theirs: their face and
+  // open seats, and the audience it is about to be (WeekPeople).
+  const seats = member && solo && !!data.invite_link;
+  // While its first version is on the way (or, in its first week, just
+  // went live) the First version card is the way into the app: Open app
+  // there, so not here too.
+  const appButton = data.first_version ? null : openApp;
+  const descLine = (
+    <p className="dev-ws-hero-desc" data-ws-community-description="">{data.description}</p>
   );
 
   return (
@@ -976,15 +1118,16 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedBy
       style={asking ? { position: 'relative', zIndex: 5 } : undefined}
     >
       {inviteHead}
-      {/* WHAT IT IS first, under the coloured header's tile and name. */}
-      {data.description ? (
-        <p className="dev-ws-hero-desc" data-ws-community-description="">{data.description}</p>
-      ) : null}
+      {/* WHAT IT IS first, under the coloured header's tile and name. In a
+          project's first week it sits under the people row instead. */}
+      {data.description && !week ? descLine : null}
       {/* WHO IS HERE, WHO IT IS FOR AND HOW LIVELY IT HAS BEEN, one block:
           the faces, "Public community · 23 members" over this week in words,
           and the fortnight's chart across from both. Just you is the label
-          alone: nobody to show and nothing to count. */}
-      {solo ? (
+          alone: nobody to show and nothing to count. In its first week the
+          people are the action row's first part instead (WeekPeople, below),
+          and there is no fortnight yet. */}
+      {week ? null : solo ? (
         <HeroPeople members={[]} count={Number(data.member_count) || 0} audience={data.audience} audienceLabel={data.audience_label} />
       ) : (
         <HeroPulse
@@ -996,15 +1139,24 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedBy
         />
       )}
       {/* WHAT YOU CAN DO HERE, one row: Open app in the community's colour,
-          Invite, "Make it public" (a private community only: a public one's
-          "Make it private" is a row of the ⋯), the ⋯, and across from them
-          Join or Joined. A project that is just yours grows from its Share
-          it card instead (ShareItCard), so its row keeps Open app and the ⋯.
-          The ⋯ stays LAST among the actions (its menu hangs off its right
-          edge); Join or Joined is the row's, pushed to the far end. */}
+          Invite, the ⋯, and across from them Join. "Make it public" and
+          "Make it private" are rows of the ⋯ (#4045), and so is Leave. A
+          project that is just yours grows from its Share it card instead
+          (ShareItCard), so its row keeps Open app and the ⋯. The ⋯ stays
+          LAST among the actions (its menu hangs off its right edge); Join is
+          the row's, pushed to the far end. */}
       <div className="dev-ws-hero-row">
+      {week ? (
+        <WeekPeople
+          members={data.members}
+          count={Number(data.member_count) || 0}
+          audience={data.audience}
+          audienceLabel={data.audience_label}
+          seats={seats}
+        />
+      ) : null}
       <div className="dev-ws-hero-actions">
-        {openApp}
+        {appButton}
         {member && !solo ? (
           <Button
             type="button"
@@ -1018,13 +1170,12 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedBy
             Invite
           </Button>
         ) : null}
-        {data.can_manage && !data.audience_change && data.audience === 'invited' ? (
-          <MakePublic slug={slug} name={displayName} onOpened={() => { void load(); }} />
-        ) : null}
         {menu}
       </div>
       {membership ? <span className="dev-ws-hero-member">{membership}</span> : null}
       </div>
+      {/* The app's one line sits under the week's people row (canvas board Hub). */}
+      {data.description && week ? descLine : null}
       {data.audience_change ? (
         <a
           className="dev-ws-hero-line dev-ws-hero-pending"

@@ -95,12 +95,19 @@ test('a project page is four tabs, Hub, Discussion, Needs you and Workshop, with
   assert.ok(order.every((n) => n >= 0), `all seven on the hub: ${JSON.stringify(order)}`);
   assert.deepEqual([...order].sort((a, b) => a - b), order, 'hero, first version, summary, Needs you, discussion, Share it, your work');
   assert.doesNotMatch(hub, /data-ws-start-change/, 'no Start a new change at its foot');
-  assert.match(hub, /\{owesVote\(v\.queue\)\s*\? <NeedsCard [^\n]*\n\s*: <NothingToVote queue=\{v\.queue\} onOpen=\{\(\) => openTab\('needs'\)\} alone=\{alone\} \/>\}/,
-    'Needs you only while a vote is owed; one quiet line in its place otherwise (#3408), and none on a project nobody else is in');
+  assert.match(hub, /\{owesVote\(v\.queue\)\s*\? <NeedsCard [^\n]*\n\s*: <NothingToVote queue=\{v\.queue\} onOpen=\{\(\) => openTab\('needs'\)\} alone=\{alone \|\| weekOne\} \/>\}/,
+    'Needs you only while a vote is owed; one quiet line in its place otherwise (#3408), and none on a project nobody else is in or in its first week (#4045)');
   assert.match(hub, /<SinceSummaryCard slug=\{slug\} since=\{v\.since \? v\.since\.baseline : 0\} onMore=\{\(\) => openTab\('workshop'\)\} \/>/,
     'the summary card\'s Week by week is the Workshop tab');
   assert.match(hub, /<ChannelCard slug=\{slug\} name=\{app\.name \|\| slug\} data=\{community\} compact onOpen=\{\(\) => openTab\('discussion'\)\} \/>/,
-    'the discussion is a preview whose Open is the Discussion tab');
+    'the discussion is a preview whose Open is the Discussion tab, on every hub, a new one\'s too (#4045)');
+  const { ChannelCard: Preview } = loadTsx(HUB);
+  const quiet = renderToHtml(createElement(Preview, {
+    slug: 'garden', name: 'Garden', compact: true, onOpen: () => {},
+    data: { slug: 'garden', channel: { recent: [], unread_count: 0, href: '#messages/app/garden' } },
+  }));
+  assert.match(quiet, /<button type="button" class="dev-ws-hub-say-hi un-touch-target" data-ws-channel-empty="">Say hi to Garden<\/button>/,
+    'with nothing said yet it asks for the first word, and opens the Discussion tab');
   assert.match(hub, /\{v\.mine && \(v\.mine\.rows\.length \|\| \(v\.mine\.viewer && workEmpty\)\) \? \(\s*<YourWorkCard/,
     'your work for any signed-in viewer, with work or without (#3489), unless a project nobody else is in has nothing to say there');
   assert.doesNotMatch(hub, /<WorkshopDoor|dev-ws-hub-side|data-ws-since=""/, 'no Workshop door, no second column, and the since list is the Workshop\'s');
@@ -130,8 +137,16 @@ test('a project page is four tabs, Hub, Discussion, Needs you and Workshop, with
   assert.equal(ws.split('<ApprovalRules').length - 1, 1, 'and only there');
   const all = LANDER.slice(LANDER.indexOf("{tab === 'all' ? ("));
   assert.ok(!all.slice(0, all.indexOf('data-ws-pane=""')).includes('<ApprovalRules'), 'and All items no longer leads with them');
-  // `?ws=discussion` is a deep link like the others.
-  assert.match(read('public/js/app-view.js'), /WORKSHOP_TABS: \['status', 'discussion', 'workshop', 'needs', 'all'\],/);
+  // `?ws=discussion` is a deep link like the others, and so is `?ws=plan`,
+  // the plan for the people who joined (#4074), a page under the Hub that is
+  // visited and never reopened on.
+  const av = read('public/js/app-view.js');
+  assert.match(av, /WORKSHOP_TABS: \['status', 'discussion', 'workshop', 'needs', 'all', 'plan'\],/);
+  assert.match(av, /const next = AppView\.WORKSHOP_TABS\.indexOf\(key\) !== -1 && key !== 'plan' \? key : 'status';/);
+  assert.match(av, /if \(AppView\.WORKSHOP_TABS\.indexOf\(stored\) !== -1 && stored !== 'plan'\) return stored;/);
+  const { litTab } = loadTsx('frontend/src/features/dev-board/workshop/project-band.tsx');
+  assert.equal(litTab('plan'), 'status', 'Hub stays lit over the plan');
+  assert.equal(litTab('all'), 'workshop');
 });
 
 test('the hub\'s channel card shows the last messages, what is new, and the way in', () => {

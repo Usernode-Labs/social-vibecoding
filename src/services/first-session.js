@@ -112,15 +112,28 @@ async function recordStart(pool, userId, via) {
   );
 }
 
+// "Look around first" is also written to `events` as its own outcome
+// (first_session_looked_around, #4039), in the same statement, so it is
+// recorded exactly when the answer is, once, with its time: the admin
+// Journey counts it beside the projects made from the question
+// (services/journey.js firstSession). Make it needs no row here: POST
+// /api/apps records app_created with from 'first-session'.
 async function answerJoinScreen(pool, userId, answer) {
   await pool.query(
-    `UPDATE users
-        SET needs_communities_choice = FALSE,
-            getting_started_seen = COALESCE(getting_started_seen, '{}'::jsonb)
-                                   || jsonb_build_object(
-                                        'join_answer', COALESCE(getting_started_seen->>'first_session', $2::text),
-                                        'first_session_answer', $2::text)
-      WHERE id = $1 AND needs_communities_choice = TRUE`,
+    `WITH answered AS (
+       UPDATE users
+          SET needs_communities_choice = FALSE,
+              getting_started_seen = COALESCE(getting_started_seen, '{}'::jsonb)
+                                     || jsonb_build_object(
+                                          'join_answer', COALESCE(getting_started_seen->>'first_session', $2::text),
+                                          'first_session_answer', $2::text)
+        WHERE id = $1 AND needs_communities_choice = TRUE
+        RETURNING id, getting_started_seen->>'first_session' AS via
+     )
+     INSERT INTO events (user_id, event_type, metadata)
+     SELECT a.id, 'first_session_looked_around', jsonb_build_object('via', a.via)
+       FROM answered a
+      WHERE $2::text = 'looked_around'`,
     [userId, answer]
   );
 }
@@ -161,6 +174,45 @@ async function asksWhatToMake(pool, userId) {
   }
 }
 
+/**
+ * What the account told us on the waitlist that its group would build:
+ * answers.group.need (services/waitlist-questions.js, `group_need`). People
+ * write it on the website's optional second waitlist step (/waitlist-success,
+ * "What would you build together?", saved through the stage-2 route
+ * POST /api/public/waitlist/more/:token); the in-app survey's own wording of
+ * the question is "What would its own app do that those tools can't?". The
+ * make screen ("What do you want to make?") opens with it in "What should
+ * it do?" and "Your own idea" picked (#4040).
+ *
+ * So only somebody who filled in that optional step, and then signed up with
+ * the same email, gets it. A sign-up from the story's "Make an account"
+ * creates no waitlist row, and gets the plain screen.
+ *
+ * Only the waitlist row linked to the account (waitlist.linkUserByEmail,
+ * when an email-code or provider sign-up uses the row's address): the
+ * waitlist is keyed by email, and a link is the platform's own word that
+ * the two are the same person. An email-code sign-up with no waitlist row
+ * has none. Null for no row, an empty answer, or a read that fails, and the
+ * screen is then the plain one. Never throws: GET /api/auth/me reads it.
+ */
+async function waitlistIdea(pool, userId) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT NULLIF(BTRIM(answers->'group'->>'need'), '') AS idea
+         FROM waitlist_signups
+        WHERE linked_user_id = $1
+        ORDER BY submitted_at DESC
+        LIMIT 1`,
+      [userId]
+    );
+    const idea = rows[0]?.idea;
+    return typeof idea === 'string' && idea ? idea : null;
+  } catch (err) {
+    log.warn('first-session', 'Could not read the waitlist answer', { userId, err: err.message });
+    return null;
+  }
+}
+
 module.exports = {
   STORY_KEY,
   readStorySetting,
@@ -171,4 +223,5 @@ module.exports = {
   answerJoinScreenByMaking,
   answerJoinScreenByLookingAround,
   asksWhatToMake,
+  waitlistIdea,
 };

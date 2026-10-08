@@ -25,6 +25,15 @@ async function build(config, { app, revision, environment, sessionId, sourceDir,
   return kubernetes.createBuild(config, { app, revision, environment, sessionId, sourceDir, onProgress });
 }
 
+// Whether `build` needs every file of `sourceDir`. Docker builds FROM that
+// directory, submodules included. A Kubernetes build fetches the commit from
+// GitHub itself and only looks at the directory's root, so a caller there can
+// hand over a checkout of the root alone (services/staging.js does).
+function buildReadsWholeSource(config) {
+  if (mode(config) === 'docker') return true;
+  return kubernetes.buildReadsBelowSourceRoot(config);
+}
+
 async function cleanupFailedBuilds(config) {
   if (mode(config) !== 'kubernetes') return { examined: 0, deleted: 0 };
   return kubernetes.deleteFailedBuilds(config);
@@ -181,5 +190,5 @@ async function remove(config, ref, options = {}) {
 }
 
 module.exports = {
-  mode, productionRef, appOrigin, build, cleanupFailedBuilds, deploy, dnsAlias, status, inspect, probeHealth, logs, restart, remove,
+  mode, productionRef, appOrigin, build, buildReadsWholeSource, cleanupFailedBuilds, deploy, dnsAlias, status, inspect, probeHealth, logs, restart, remove,
 };

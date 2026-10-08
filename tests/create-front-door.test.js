@@ -243,7 +243,7 @@ test('the made screen from Create goes to the project; an import lands there too
   }));
   assert.match(html, />Importing it from GitHub…</);
   assert.match(html, />Share invite<\/button>/, 'every new project ends on Share invite');
-  assert.match(html, />Invite people to Notes</);
+  assert.match(html, />Invite people to use it and help improve it together\.</);
   assert.doesNotMatch(html, /data-first-session-sketch/, 'an import is never sketched');
   const src = read(`${DIR}/made.tsx`);
   assert.doesNotMatch(src, /\bsolo\b|made\.audience/, 'nothing is made for Just me from here any more');
@@ -287,7 +287,7 @@ test('a setup that stopped says so on the made screen, with Try again or Set sec
   assert.match(src, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(made\.slug\)\}\/retry`, \{ method: 'POST', credentials: 'same-origin' \}\)/);
   assert.match(src, /if \(res\.ok\) setAppStatus\('creating'\);/);
   // And the plan's card is not drawn over it.
-  assert.match(src, /\{plan && !stalled \? <PlanWaitsCard/);
+  assert.match(src, /\{plan && !stalled && fromCreate \? <PlanWaitsCard/);
 });
 
 test('the server sketches the idea for both doors, and only the first session answers the join screen and counts in the Journey', () => {

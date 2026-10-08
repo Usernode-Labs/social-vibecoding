@@ -231,7 +231,7 @@
       "key": "language",
       "label": "Language",
       "group": "Preferences",
-      "gate": "settings-language-section",
+      "gate": null,
       "capabilityId": "settings.open.language",
       "classicPath": "#settings/language",
       "mobileSupported": true
@@ -12800,6 +12800,21 @@
       "expression": null,
       "status": "exempt",
       "reason": "browser_telemetry: same-origin diagnostics transport, never a model-visible capability"
+    },
+    {
+      "source": "src/routes/ui-telemetry.js",
+      "method": "GET",
+      "path": "/api/admin/analytics/browser-languages",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.get.admin.analytics.browser.languages.d0f7a0f8",
+      "domain": "admin",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin"
     },
     {
       "source": "src/routes/ui-telemetry.js",

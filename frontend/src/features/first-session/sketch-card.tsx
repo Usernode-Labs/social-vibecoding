@@ -270,21 +270,24 @@ export function useSketch(slug: string | null): Sketch {
 
 /**
  * The made screen's card (./made.tsx): the thumbnail, being sketched and
- * then the idea, with the build line just under the card and the line about
- * what happens next below that.
+ * then the idea, with the build line just under the card. The screen's own
+ * heading is "Your new community" over it (#4041), so the card's name, the
+ * only place the name is said, is not a heading here. A note goes under the
+ * build line only when the screen has one to say (a project Homeroom bot
+ * does not build).
  */
-export function SketchCard({ made, sketch, line, note }: {
+export function SketchCard({ made, sketch, line, note = null }: {
   made: Made;
   sketch: Sketch;
   /** Where its first version is (./build-line.tsx), or none for a project Homeroom bot does not build. */
   line: BuildLineState | null;
-  /** buildNote: what happens next, under the card. */
-  note: string;
+  /** A quiet line under the card, or none. */
+  note?: string | null;
 }) {
   const card = sketch.card;
   const sketched = !card && sketching(sketch.state);
   return (
-    <div data-first-session-sketch={card ? 'ready' : sketch.state} className="mt-4">
+    <div data-first-session-sketch={card ? 'ready' : sketch.state}>
       {sketched ? <p role="status" className="sr-only">{`Sketching ${made.name} from your description…`}</p> : null}
       <FeaturedCard
         name={made.name}
@@ -294,10 +297,8 @@ export function SketchCard({ made, sketch, line, note }: {
         description={made.description}
         sketching={sketched}
         line={line}
-        titleId="first-session-made-title"
-        heading
       />
-      <p className="px-1 pt-2.5 text-[13px] leading-snug text-zinc-500 dark:text-zinc-400">{note}</p>
+      {note ? <p data-first-session-note="" className="px-1 pt-2.5 text-[13px] leading-snug text-zinc-500 dark:text-zinc-400">{note}</p> : null}
     </div>
   );
 }

@@ -31,12 +31,19 @@ test('the private tour: four steps on Home, Next through each, ending on the wai
     '#platform-tab-messages',
     '#home-waitlist-card',
   ]);
-  assert.deepEqual(steps.map((s) => s.title), [
-    'Best brunch spots is on your Home',
-    'The group lives in Communities',
-    'Homeroom bot is in Messages',
-    'Make and share your own apps',
+  // The other tours' words (#4044): one short title and one short sentence,
+  // the project by its name and never "group" (the owner, 7 October 2026).
+  assert.deepEqual(steps.map((s) => [s.title, s.text]), [
+    ['Best brunch spots is on your Home', 'Open it any time from here.'],
+    ['You can find Best brunch spots here', 'Communities lists every community you\'re in.'],
+    ['Homeroom bot is in Messages', 'It makes Best brunch spots with you. You can always find it here.'],
+    ['Your own apps start here', 'Join the waitlist to get your spot.'],
   ]);
+  // One short sentence a card; the Messages card says its second ("You can always find it here.").
+  for (const s of steps) assert.ok(s.text.split(/[.?]\s/).length <= (s.title === 'Homeroom bot is in Messages' ? 2 : 1), `short: ${s.text}`);
+  assert.doesNotMatch(JSON.stringify(steps.map((s) => [s.title, s.text])), /group/i);
+  // Each points at its place and leads on with Next, as "Look around first" does.
+  assert.deepEqual(steps.map((s) => !!s.ringed), [true, true, true, true]);
   assert.deepEqual(steps.map((s) => !!s.last), [false, false, false, true]);
   // No challenges, and no ✕ to teach: the invited tour's step about it is
   // not in this one.
@@ -112,7 +119,7 @@ test('the waitlist card: join, an email, a code, then On the waitlist with "Want
   });
   assert.match(listed, /data-waitlist-card="listed"/);
   assert.match(listed, /On the waitlist/);
-  assert.match(listed, /We’ll email lina@example\.com when it’s your turn\./);
+  assert.match(listed, /We’ll email lina@example\.com when your spot is ready\./);
   assert.match(listed, new RegExp(`href="#more/${token}"[^>]*>Answer them now<`));
 
   const src = read(card);
@@ -133,7 +140,7 @@ test('the waitlist card: join, an email, a code, then On the waitlist with "Want
     standing: { state: 'listed', email: null, accountEmail: null, hasPhone: true, moreToken: token },
     onListed: () => {},
   });
-  assert.match(byPhone, /We’ll text you when it’s your turn\./);
+  assert.match(byPhone, /We’ll text you when your spot is ready\./);
   assert.match(byPhone, /id="home-waitlist-add-email"[^>]*>Add an email too</);
   assert.match(byPhone, new RegExp(`href="#more/${token}"`));
   assert.doesNotMatch(listed, /Add an email too/, 'an email row has nothing to add');

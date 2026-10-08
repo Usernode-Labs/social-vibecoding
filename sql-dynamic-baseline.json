@@ -159,13 +159,6 @@
     {
       "source": "src/routes/apps.js",
       "kind": "structural-template",
-      "fingerprint": "186bdc9221b3dd99e2f1",
-      "count": 1,
-      "preview": "`SELECT ${appAccess.ACCESS_COLUMNS}, name, repo_url, LEFT(manifest_snapshot->>'description', 280) AS description FROM apps WHERE slug = $1 AND (NOT self_hosted "
-    },
-    {
-      "source": "src/routes/apps.js",
-      "kind": "structural-template",
       "fingerprint": "36c97d735c90dad4c7d2",
       "count": 1,
       "preview": "` SELECT ${appAccess.nonSecretAppColumnList('a')}, COALESCE(msg_counts.cnt, 0) AS message_count, COALESCE(activity.total_seconds, 0) AS total_seconds, COALESCE("
@@ -176,6 +169,13 @@
       "fingerprint": "3ebf0a6fda28d39ecee9",
       "count": 1,
       "preview": "`SELECT ${appAccess.ACCESS_COLUMNS} FROM apps WHERE slug = $1 AND (NOT self_hosted OR $2::boolean)`"
+    },
+    {
+      "source": "src/routes/apps.js",
+      "kind": "structural-template",
+      "fingerprint": "494303c8aea7b8fc16eb",
+      "count": 1,
+      "preview": "`SELECT ${appAccess.ACCESS_COLUMNS}, name, repo_url, LEFT(manifest_snapshot->>'description', 280) AS description, (NOT self_hosted AND created_at > NOW() - INTE"
     },
     {
       "source": "src/routes/apps.js",

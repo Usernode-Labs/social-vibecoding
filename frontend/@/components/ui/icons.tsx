@@ -217,6 +217,16 @@ export const UserIcon = stroked(
   'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z',
 );
 
+/**
+ * A soft person silhouette, solid: a head and shoulders that run off the
+ * bottom edge, so a round frame crops them. The waiting seats in the
+ * community's people row (first-session/people-row.tsx) draw it in a tint.
+ */
+export const PersonSilhouetteIcon = filled(
+  'PersonSilhouetteIcon',
+  'M12 4.4a4.6 4.6 0 100 9.2 4.6 4.6 0 100-9.2zM2.5 24c.9-5.2 4.6-8.4 9.5-8.4s8.6 3.2 9.5 8.4z',
+);
+
 export const WalletIcon = stroked(
   'WalletIcon',
   'M21 12a2.25 2.25 0 00-2.25-2.25H15a3 3 0 11-6 0H5.25A2.25 2.25 0 003 12m18 0v6a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 18v-6m18 0V9M3 12V9m18 0a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 9m18 0V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v3',
@@ -645,6 +655,19 @@ export const EllipsisVerticalIcon = ({ id, className, ...rest }: IconProps) => (
   </svg>
 );
 EllipsisVerticalIcon.displayName = 'EllipsisVerticalIcon';
+
+/**
+ * A person's outline, filled: a head over shoulders, on a 24×24 box. The hub's
+ * open seats draw it pale in a circle (community-card.tsx WeekPeople, the
+ * canvas board People). A head and a path, so written out rather than built.
+ */
+export const PersonSilhouetteIcon = ({ id, className, ...rest }: IconProps) => (
+  <svg id={id} className={className} viewBox="0 0 24 24" fill="currentColor" {...rest}>
+    <circle cx="12" cy="9" r="4.6" />
+    <path d="M2.5 24c.9-5.2 4.6-8.4 9.5-8.4s8.6 3.2 9.5 8.4z" />
+  </svg>
+);
+PersonSilhouetteIcon.displayName = 'PersonSilhouetteIcon';
 
 /**
  * The Dev card's ⋯ trigger — three dots on a HORIZONTAL row, in a 20×20 box.

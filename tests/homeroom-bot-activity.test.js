@@ -428,6 +428,13 @@ test('the staging demo has one card being built and one that ended in a proposal
   assert.equal(done.outcome, 'proposed');
   for (const card of demo.cards) assert.deepEqual(card.links, { request: null, proposal: null });
   assert.deepEqual(activity.demoState({}, now), { cards: [] }, 'a fixture without its cards has no state to show');
+  // #4046: two first versions' cards, which their plans carry: one waiting
+  // for Build it, one being built under the plan that was built.
+  const [waits, builds] = activity.demoState({ plan: 43, building: 44 }, now).cards;
+  assert.deepEqual([waits.messageId, waits.state, waits.step, waits.of, waits.waitingOn], [43, 'working', 3, 7, 'them']);
+  assert.equal(waits.typicalMinutes, undefined, 'a plan waiting on its maker has no usual time');
+  assert.deepEqual([builds.messageId, builds.step, builds.of, builds.typicalMinutes], [44, 4, 7, { from: 10, to: 25 }]);
+  assert.deepEqual([waits.stepName, builds.stepName], [progressSvc.FIRST_VERSION_STEPS[2], progressSvc.FIRST_VERSION_STEPS[3]], 'by their own names');
   // And the card opening the demo DM gives work already under way: its plan,
   // begun well before the card, as the tray's demo lists it.
   const [joined] = activity.demoState({ underWay: 42 }, now).cards;
@@ -596,7 +603,7 @@ test('the row draws a bot\'s activity message as the card, in place of its words
   // B6: then a plan and two questions at once, which stand in place of their words too.
   assert.match(row, /\) : isActivityMessage\(message\) \? \([\s\S]{0,600}homeroomBot\?\.hello \? <p className="messages-bot-hello">[\s\S]{0,120}<BotActivityCard message=\{message\} words=\{words\} \/>\s*<\/>\s*\) : isPlanMessage\(message\) \? \(/);
   // B7: and a change ready to try.
-  assert.match(row, /<BotPlanCard message=\{message\} conversationId=\{conversationId\} \/>\s*\) : isTwoQuestions\(message\) \? \(\s*<BotTwoQuestions message=\{message\} conversationId=\{conversationId\} \/>\s*\) : isReadyMessage\(message\) \? \([\s\S]{0,120}<BotReadyCard message=\{message\} conversationId=\{conversationId\} \/>\s*\) : words\}/);
+  assert.match(row, /<BotPlanCard message=\{message\} conversationId=\{conversationId\} cardId=\{planCardId\} \/>\s*\) : isTwoQuestions\(message\) \? \(\s*<BotTwoQuestions message=\{message\} conversationId=\{conversationId\} \/>\s*\) : isReadyMessage\(message\) \? \([\s\S]{0,120}<BotReadyCard message=\{message\} conversationId=\{conversationId\} \/>\s*\) : words\}/);
 });
 
 // ── #3770: an older card keeps its words ──
@@ -935,7 +942,8 @@ test('B6: Build it moves the request\'s card under the plan, read from the plan\
   assert.equal(sent.length, 1, 'one card, under the plan');
   const [card] = sent;
   assert.equal(card.idempotencyKey, 'hrbot-activity-run-61', 'the key catching up gives the same run\'s build: never two messages');
-  assert.equal(card.content, '**Flat 4B Chores**, its first version\n\nBuilding the first version now. This card updates as I go.');
+  // #4046: the chat does not draw it (the plan carries its step); these words are the inbox's preview.
+  assert.equal(card.content, '**Flat 4B Chores**, its first version\n\nI\'ll message you here when it\'s ready to try.');
   assert.ok(!/—/.test(card.content));
   assert.deepEqual(card.metadata, {
     kind: 'activity', appSlug: 'flat-4b-chores', appName: 'Flat 4B Chores', issueNumber: 1,
@@ -1056,7 +1064,7 @@ test('B6: the transcript leaves out a card Build it moved under its plan, and th
   assert.equal(normalizeBotMeta({ homeroomBot: { kind: 'activity', movedTo: 950 } }).homeroomBot.movedTo, 950);
   assert.equal('movedTo' in normalizeBotMeta({ homeroomBot: { kind: 'activity', movedTo: 'x' } }).homeroomBot, false);
   const screen = read('frontend/src/features/messages/index.tsx');
-  assert.match(screen, /const message = snap\.messages\[index\];\s*\/\/[^\n]*\n\s*if \(isMovedActivity\(message\)\) continue;\s*const day = dayKey\(message\);/,
+  assert.match(screen, /const message = snap\.messages\[index\];\s*\/\/[^\n]*\n\s*if \(isMovedActivity\(message\)\) continue;\s*\/\/[^\n]*\n\s*if \(plans\.hidden\.has\(message\.id\)\) continue;\s*const day = dayKey\(message\);/,
     'skipped before its day and its name are counted, so the row after it is drawn as it would be');
   assert.match(screen, /import \{ BotActivitySync, isMovedActivity \} from '\.\/bot-activity';/);
 });

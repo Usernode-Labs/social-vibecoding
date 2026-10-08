@@ -583,11 +583,13 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
       // B6: a new project's plan and a request with two questions. #3736:
       // #3870: a change ready to try, saying what it is, just before them,
       // then two activity cards (tests/homeroom-bot-activity-postgres.test.js).
-      // #4097 follow-up: before the ready card, a build that did not finish,
-      // with its Try again button. #4231: then a new project's first version
-      // gone live, with Open, Open community and Invite people.
-      assert.equal(messages.length, 10, 'one question, one ask, one offer, a plan, two questions, a stuck build, a first version live, a ready card and two cards, not one per visit');
-      const [question, ask, offer, plan, two, stuck, firstLive, ready, ...cards] = [...messages].sort((a, b) => a.id - b.id);
+      // #4046: before the plan, a plan built already with the card under it,
+      // and the waiting plan's own card. #4097 follow-up: before the ready
+      // card, a build that did not finish, with its Try again button. #4231:
+      // then a new project's first version gone live, with Open, Open
+      // community and Invite people.
+      assert.equal(messages.length, 13, 'one question, one ask, one offer, a built plan and its card, a plan and its card, two questions, a stuck build, a first version live, a ready card and two cards, not one per visit');
+      const [question, ask, offer, built, building, planCard, plan, two, stuck, firstLive, ready, ...cards] = [...messages].sort((a, b) => a.id - b.id);
       assert.equal(firstLive.metadata.homeroomBot.kind, 'merged');
       assert.equal(firstLive.metadata.homeroomBot.firstVersion, true);
       assert.deepEqual(firstLive.metadata.homeroomBot.actions.map((a) => a.label), ['Open Staging demo plants', 'Open community', 'Invite people']);
@@ -597,6 +599,12 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
       assert.deepEqual(stuck.metadata.homeroomBot.actions, [{ id: 'try_again', label: 'Try again', style: 'primary', type: 'prompt', quote: true }]);
       assert.match(stuck.content, /^\*\*Staging demo app\*\* · request #13: Staging demo, a print view\n\n.*Reply here and I'll try again\.$/s);
       assert.deepEqual(cards.map((m) => m.metadata.homeroomBot.kind), ['activity', 'activity']);
+      assert.deepEqual([built.metadata.homeroomBot.kind, built.metadata.homeroomBot.status, built.metadata.homeroomBot.choices],
+        ['plan', 'answered', ['Each runner picks their own goal']]);
+      assert.deepEqual([building.metadata.homeroomBot.kind, building.metadata.homeroomBot.appName], ['activity', 'Staging demo run club']);
+      assert.match(building.content, /\n\nI'll message you here when it's ready to try\.$/);
+      assert.deepEqual([planCard.metadata.homeroomBot.kind, planCard.metadata.homeroomBot.appName, planCard.metadata.homeroomBot.issueNumber],
+        ['activity', 'Staging demo plants', 1], 'the waiting plan\'s own card, above it');
       assert.equal(ready.metadata.homeroomBot.kind, 'proposal');
       assert.equal(ready.metadata.homeroomBot.changeTitle, 'Staging demo: a calmer colour for finished items');
       assert.match(ready.content, /^\*\*Staging demo app\*\* · request #11: Staging demo, grey out finished items\n\nIt's ready to try\./);

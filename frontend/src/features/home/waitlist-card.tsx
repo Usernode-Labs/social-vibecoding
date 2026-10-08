@@ -1,9 +1,9 @@
 /**
  * A PRIVATE MEMBER's waitlist card on Home (#home-waitlist-card).
  *
- * A private member is somebody an invite link let into its group's app
+ * A private member is somebody an invite link let into a community's app
  * before they were let in off the waitlist (users.private_member_since,
- * src/routes/member-waitlist.js). They use and change their group's apps;
+ * src/routes/member-waitlist.js). They use and change their communities' apps;
  * making and sharing apps of their own is what the waitlist is for, and this
  * card is where they join it. In order:
  *
@@ -164,12 +164,12 @@ export function WaitlistCardBody({ standing, onListed }: {
         <h3 className="text-[17px] font-semibold leading-snug text-zinc-900 dark:text-zinc-100">Make and share your own apps</h3>
         <p className={BODY}>
           {standing.email
-            ? `You’re on the waitlist. We’ll email ${standing.email} when it’s your turn.`
+            ? `You’re on the waitlist. We’ll email ${standing.email} when your spot is ready.`
             : (byPhone
-              ? 'You’re on the waitlist. We’ll text you when it’s your turn.'
-              : 'You’re on the waitlist. We’ll email you when it’s your turn.')}
+              ? 'You’re on the waitlist. We’ll text you when your spot is ready.'
+              : 'You’re on the waitlist. We’ll email you when your spot is ready.')}
         </p>
-        <p className={SMALL}>We let people in from the waitlist in batches. Until then, your group&rsquo;s apps are yours to use and change.</p>
+        <p className={SMALL}>We let people in a few at a time. Until then, you can use and change the apps in your communities.</p>
         {byPhone ? (
           <button
             id="home-waitlist-add-email"
@@ -242,7 +242,7 @@ export function WaitlistCardBody({ standing, onListed }: {
           {own ? 'Join the waitlist' : 'Email me a code'}
         </Button>
         <p role="alert" className={msgClass(error ? 'error' : null)}>{error}</p>
-        <p className={SMALL}>We use it to tell you when it&rsquo;s your turn, and you can sign in with it. The group doesn&rsquo;t see it.</p>
+        <p className={SMALL}>We use it to tell you when your spot is ready, and you can sign in with it. Nobody else sees it.</p>
         <button type="button" className={`${LINK} self-start min-h-[44px]`} onClick={() => { setError(null); setStep({ kind: 'join' }); }}>
           Not now
         </button>
@@ -254,7 +254,7 @@ export function WaitlistCardBody({ standing, onListed }: {
     <div className="flex flex-col gap-2 p-4" data-waitlist-card="join">
       <h3 className="text-[17px] font-semibold leading-snug text-zinc-900 dark:text-zinc-100">Make and share your own apps</h3>
       <p className={BODY}>
-        You can use your group&rsquo;s apps and suggest changes to them now. To make apps of your own and share them with anyone, join the waitlist.
+        You can use the apps in your communities and suggest changes to them now. To make apps of your own and share them with anyone, join the waitlist.
       </p>
       <Button
         id="home-waitlist-join"
@@ -269,7 +269,7 @@ export function WaitlistCardBody({ standing, onListed }: {
         Join the waitlist
       </Button>
       {phoneOnly ? <p role="alert" className={msgClass(error ? 'error' : null)}>{error}</p> : null}
-      <p className={`${SMALL} text-center`}>We let people in from the waitlist in batches.</p>
+      <p className={`${SMALL} text-center`}>We let people in a few at a time.</p>
     </div>
   );
 }

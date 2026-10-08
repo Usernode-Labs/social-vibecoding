@@ -203,9 +203,19 @@ const EVENT_TYPES = Object.freeze({
   //                         'was_signed_in' }; the first two are the
   //                         sign-ins the link brought, the last somebody
   //                         already signed in (#4272)
+  //   first_session_looked_around
+  //                         the first session's question, "What do you want
+  //                         to make?", answered with "Look around first"
+  //                         (#4039): the other outcome beside a project made
+  //                         from it (app_created with from 'first-session').
+  //                         Written once, with the answer itself
+  //                         (services/first-session.js answerJoinScreen).
+  //                         metadata: { via } (how the question reached
+  //                         them: 'story' or 'sign_in')
   FIRST_ARTEFACT_SHOWN: 'first_artefact_shown',
   INVITE_OPENED: 'invite_opened',
   INVITE_SIGNED_IN: 'invite_signed_in',
+  FIRST_SESSION_LOOKED_AROUND: 'first_session_looked_around',
   // Something on the platform that should not happen, kept for admins
   // (services/platform-incidents.js, #4210). metadata: { kind, ... } where
   // kind names the incident ('build_interrupted': a bot build a restart or

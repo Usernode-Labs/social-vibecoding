@@ -58,6 +58,9 @@ const withInteriors = `${after}\n${lazyInteriorsHtml()}`;
 
 // Ids a conversion chunk deliberately removed, each with the reason.
 const RETIRED_IDS = {
+  // ── #4073: the waiting screen says the waitlist in one line ────────
+  'waiting-who': 'The username inside "Your account … doesn\'t have platform access yet." on the waiting screen. The screen says "You\'re on the waitlist" and one line about your spot now (features/auth/waiting.tsx), as the onboarding canvas draws it, so nothing names the account there.',
+  'waiting-check-state': 'The waiting screen\'s "Last checked …" / "Connection issue, will retry" line. The screen still checks every 30 seconds and lets the account in the moment access is granted; it no longer reports each check, and a check that fails is tried again on the next one.',
   // ── The create-project dialog is retired ───────────────────────────
   // Create opens "What do you want to make?" (features/first-session/
   // make.tsx), the screen the first session asks with, for everyone. It
