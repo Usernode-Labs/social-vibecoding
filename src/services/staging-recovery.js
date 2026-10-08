@@ -303,6 +303,12 @@ function checkTriggerForReason(reason) {
 // and must stay skippable.
 const FORCED_RECHECK_REASONS = new Set(['manual-recheck', 'testing-update']);
 
+// The reasons whose run REPLACES one of the same commit still on the cluster
+// (visuals.captureForSession `replaceRun`). The proposal's capture routes or
+// shots changed, so that run answers the old question. Every other recheck,
+// a manual one included, leaves such a run to be collected.
+const REPLACING_RECHECK_REASONS = new Set(['testing-update', 'shots-update']);
+
 // Rebuild the staging preview for a single session that has a branch +
 // commits ahead of main but a NULL/dead staging_url. Shared by the
 // startup recovery sweep (recoverSessions), the periodic sweeper's
@@ -606,6 +612,7 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
     // Deliberately NOT forced: a rebuild whose head already has a passing
     // verdict has nothing new to learn, and this path fires on every heal
     // sweep and every preview click.
+    replaceRun: REPLACING_RECHECK_REASONS.has(reason),
   })
     .catch((err) => log.warn('staging-recovery', 'Post-rebuild checks capture failed (non-fatal)', {
       sessionId: session.id, err: err.message,
@@ -883,6 +890,23 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
 // no-op cases (no repo / no bot token → rebuildSessionStaging returns
 // 'skipped'); a genuine build failure propagates to the caller.
 async function recheckSessionChecks({ config, pool, session, reason }) {
+  const replaceRun = REPLACING_RECHECK_REASONS.has(reason);
+  // A run of this commit still on the cluster, running or finished but not
+  // yet read, is the run a recheck asks for: the harvest collects it
+  // (services/check-harvest.js). Asked before the stamp below, which would
+  // set a run that is testing back to "building", and before a rebuild,
+  // which would replace the preview under it and take the lifecycle row its
+  // harvest writes through. Its verdict, when stored, clears its manifest,
+  // and a recheck after that starts a fresh run as before.
+  if (!replaceRun) {
+    const left = await require('./check-harvest').runToCollect(config, pool, session.id, session.checks_commit_sha || null);
+    if (left) {
+      log.info('staging-recovery', 'A run of this commit is still on the cluster; leaving it to the harvest', {
+        sessionId: session.id, reason, ...left,
+      });
+      return 'collecting';
+    }
+  }
   // #607: stamp 'pending' + tell open clients the moment the re-run is
   // requested — a needed staging rebuild can take minutes, and before this
   // the badge kept showing the stale verdict (or nothing at all for a
@@ -916,6 +940,7 @@ async function recheckSessionChecks({ config, pool, session, reason }) {
     // routes (#1199) — is asking for a FRESH verdict, so these paths force
     // the run even when the row already reads passing.
     force: FORCED_RECHECK_REASONS.has(reason),
+    replaceRun,
   })
     .catch((err) => log.warn('staging-recovery', 'Direct checks re-run failed (non-fatal)', {
       sessionId: session.id, reason, err: err.message,

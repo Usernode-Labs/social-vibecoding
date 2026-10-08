@@ -64,6 +64,34 @@ test('run-scoped cancellation leaves successor Jobs alone', async t => {
   assert.deepEqual(deleted, ['sv-capture-s42-old']);
 });
 
+// preview-lifecycle.run leaves a run of its revision to the harvest and
+// cancels the rest: the spared run keeps its Jobs, every other run's go, with
+// the policy and the precondition together in the body.
+test('a spared run keeps its Jobs while every other run of the session is cancelled', async t => {
+  const deleted = [];
+  const job = (name, runId, status = {}) => ({
+    metadata: { name, uid: `${name}-uid`, labels: { 'social.usernode.io/preview-run-id': runId } }, status,
+  });
+  kubernetes._setClientsForTest({ batch: {
+    listNamespacedJob: async () => ({ items: [
+      job('sv-capture-s42-harvested', 'harvested', { active: 1 }),
+      job('sv-unit-suite-s42-harvested', 'harvested', { succeeded: 1 }),
+      job('sv-capture-s42-other-commit', 'other-commit', { active: 1 }),
+      job('sv-unit-suite-s42-other-commit', 'other-commit', { active: 1 }),
+    ] }),
+    deleteNamespacedJob: async request => { deleted.push(request); },
+    readNamespacedJob: async () => missing(),
+  }, core: { listNamespacedPod: async () => ({ items: [] }) } });
+  t.after(() => kubernetes._setClientsForTest(null));
+  await kubernetes.cancelPreviewChecks(config, 42, null, { spare: runId => runId === 'harvested' });
+  assert.deepEqual(deleted, [
+    { name: 'sv-capture-s42-other-commit', namespace: 'workers',
+      body: { propagationPolicy: 'Foreground', preconditions: { uid: 'sv-capture-s42-other-commit-uid' } } },
+    { name: 'sv-unit-suite-s42-other-commit', namespace: 'workers',
+      body: { propagationPolicy: 'Foreground', preconditions: { uid: 'sv-unit-suite-s42-other-commit-uid' } } },
+  ], 'the spared run\'s Jobs, running or finished, are not touched; the others go in the foreground');
+});
+
 test('cancellation interrupts a stalled Job observation without salvaging old results', async t => {
   const controller = new AbortController();
   let created; let polling;

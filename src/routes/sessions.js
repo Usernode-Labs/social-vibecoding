@@ -6509,7 +6509,18 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           || visuals.hasInFlightCapture(sessionId)) {
         return res.json({ status: 'running' });
       }
+      // The same holds for a run of this commit that another process
+      // launched and that is still on the cluster, running or finished but
+      // not yet read: the harvest collects it (services/check-harvest.js),
+      // and starting over would throw it away, or cancel it mid-run. Asked
+      // before the stamp below, which would set it back to "building". Its
+      // stored verdict clears its manifest, and a press after that starts a
+      // fresh run. `collecting` lets the client say why nothing new started.
       recheckInFlight.add(sessionId);
+      if (await require('../services/check-harvest').runToCollect(config, pool, sessionId, session.checks_commit_sha || null)) {
+        recheckInFlight.delete(sessionId);
+        return res.json({ status: 'running', checkState: 'pending', collecting: true });
+      }
 
       // #607: stamp 'pending' + broadcast BEFORE responding so the client's
       // immediate refresh deterministically sees the in-progress state (the
