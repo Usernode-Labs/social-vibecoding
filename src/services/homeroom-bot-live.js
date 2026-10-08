@@ -510,7 +510,7 @@ function specDesignBrief(firstVersion = false, starter = null) {
   if (!starterOf(starter)) return FIRST_VERSION_SPEC_DESIGN_BRIEF;
   return swapWording(FIRST_VERSION_SPEC_DESIGN_BRIEF, [[
     'the app has no screen of its own yet (the starter template\'s is placeholder), so there is no existing screen for it to look like, and the triage only sketched one.',
-    'the game starter\'s screen works but wears the design kit\'s default look, so this game has no look of its own yet, and the triage only sketched one.',
+    'the game starter\'s screens (a title screen, then the game filling the screen) work and wear the example game\'s scene (`public/scene.css`), which is a starting point to restyle, not this game\'s look, and the triage only sketched one.',
   ]]);
 }
 
@@ -1725,7 +1725,7 @@ function firstVersionDesignLines(starter = null) {
   if (!s) return FIRST_VERSION_DESIGN_LINES;
   const lines = swapWording(FIRST_VERSION_DESIGN_LINES.join('\n'), [[
     'the starter\'s screen and default colours are placeholder, not a look to copy.',
-    'the game starter\'s screen works, but its default colours are the kit\'s, not a look to copy.',
+    'the game starter\'s screens work, but their look is the example game\'s, not a look to copy.',
   ]]).split('\n');
   return [
     '',
@@ -1734,6 +1734,10 @@ function firstVersionDesignLines(starter = null) {
     'creator\'s game by changing it, and never by deleting it to start over; replace the example game\'s rules and',
     'screen wherever the request differs, and update its checks in dapp.json to what the screen now shows.',
     ...lines,
+    'A game drawn as a scene of its own keeps its look in `public/scene.css` (its colours named once at its top, the',
+    'canvas\'s at the top of `public/app.js`): restyle that for this game rather than forcing the scene onto the kit\'s',
+    'tokens, which still carry the kit\'s own parts. Keep a title screen and the game filling the screen, and say in',
+    '"## Design" which look is the scene\'s and which is the kit\'s.',
   ];
 }
 

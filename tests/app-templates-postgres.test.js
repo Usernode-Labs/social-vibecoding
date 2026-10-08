@@ -707,12 +707,20 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
         frames += 1;
       }
       assert.ok(frames >= 12, `${frames} frames in a second`);
-      a.send({ t: 'input', input: { x: ship[1] + 15, y: ship[2], a: 0, beam: true } });
-      const moved = await a.next((m) => m.t === 'frame' && m.frame.ships.some((s) => s[0] === 101 && s[1] === ship[1] + 15 && s[4] === 1));
+      // A storm is the numbers every page works its sparks out from.
+      const stormy = await a.next((m) => m.t === 'frame' && m.frame.storms.length);
+      assert.ok(['interval', 'n', 'v', 'a0'].every((k) => k in stormy.frame.storms[0]));
+      a.send({ t: 'input', input: { x: ship[1] + 15, y: ship[2] - 5 } });
+      const moved = await a.next((m) => m.t === 'frame' && m.frame.ships.some((s) => s[0] === 101 && s[1] === ship[1] + 15 && s[2] === ship[2] - 5));
       assert.ok(moved, 'the server takes the page\'s word for where its ship is');
-      a.send({ t: 'input', input: { x: ship[1] + 300, y: ship[2], a: 0, beam: true } });
+      a.send({ t: 'input', input: { x: ship[1] + 315, y: ship[2] - 5 } });
       const later = await a.next((m) => m.t === 'frame');
       assert.equal(later.frame.ships.find((s) => s[0] === 101)[1], ship[1] + 15, 'but not a jump');
+      // Its page saw a spark touch it: a shield goes, and everyone hears.
+      await a.next((m) => m.t === 'frame' && m.frame.now > m.frame.ships.find((s) => s[0] === 101)[5]);
+      const p2 = a.next((m) => m.t === 'event');
+      a.send({ t: 'act', action: { type: 'hit' } });
+      assert.deepEqual((await p2).event, { type: 'hit', id: 101, shields: 2 });
       // Grace drops in mid-run; then both leave and the run is over and kept.
       assert.equal((await app.call('POST', '/api/room/join', { as: grace })).status, 200);
       const both = await a.next((m) => m.t === 'frame' && m.frame.ships.length === 2);
@@ -748,10 +756,10 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
       assert.match((await p).error, /already/);
       g.send({ t: 'act', action: { type: 'place', x: 99, y: 0, z: 0, c: 1 } });
       assert.match((await g.next((m) => m.t === 'error')).error, /outside/);
-      // Where ada points shows on grace's screen.
-      a.send({ t: 'input', input: { x: 6, y: 0, z: 25, c: 2 } });
-      const cursor = await g.next((m) => m.t === 'frame' && m.frame.cursors.length);
-      assert.deepEqual(cursor.frame.cursors[0], [101, 'ada', 6, 0, 25, 2, 0]);
+      // Where ada is flying shows on grace's screen.
+      a.send({ t: 'input', input: { x: 6.5, y: 3, z: 25, yaw: 1.25, c: 2 } });
+      const there = await g.next((m) => m.t === 'frame' && m.frame.builders.length);
+      assert.deepEqual(there.frame.builders[0], [101, 'ada', 6.5, 3, 25, 1.25, 2]);
       const room = (await app.call('GET', '/api/room', { as: grace })).data;
       assert.ok(room.game.blocks.some((b) => b.join() === '5,0,25,4'), 'a plain request sees the same world');
       assert.equal((await app.call('POST', '/api/room/act', { as: grace, body: { action: { type: 'remove', x: 5, y: 0, z: 25 } } })).status, 200);

@@ -13,8 +13,8 @@
 
 const SQUARES = 30;
 // Where a square sends you: up a shortcut, or down a slide.
-const SHORTCUTS = { 4: 12, 9: 18, 16: 24, 20: 27 };
-const SLIDES = { 13: 6, 19: 11, 26: 17, 28: 22 };
+const SHORTCUTS = { 3: 15, 8: 20, 12: 24, 21: 28 };
+const SLIDES = { 16: 4, 23: 11, 27: 22, 29: 18 };
 // Somebody who is not here gets a moment, then their roll is made for them.
 const AWAY_MS = 2500;
 // Nobody's turn waits forever: after this, the room rolls for them too.

@@ -315,15 +315,21 @@ for (const id of GAMES) {
     assert.match(html, /window\.usernode && window\.usernode\.theme/);
     assert.match(html, /<script src="\/game\/room\.js"><\/script>\s*<script (?:type="module" )?src="\/app\.js"><\/script>\s*<\/body>/,
       'the game room\'s page side, then the game');
-    assert.match(html, /<h1 class="text-title">Demo App<\/h1>/);
+    // A title screen with the game's name, and the game's own scene,
+    // styled after the kit (public/scene.css).
+    assert.match(html, /<h1 class="[^"]*">Demo App<\/h1>/);
+    assert.match(html, /<link rel="stylesheet" href="\/tailwind\.css">\s*<link rel="stylesheet" href="\/scene\.css">/);
+    assert.match(file(files, 'public/scene.css'), /CLAUDE\.md "## Design"/, 'the scene says where its look is written down');
+    assert.match(html, /id="title"[^>]*>/, 'a title screen');
+    assert.match(html, /id="stage"[^>]*class="[^"]*\bfixed inset-0\b/, 'the game fills the screen');
     for (const m of html.matchAll(/<(?:script|link)[^>]+(?:src|href)="([^"]+)"/g)) {
       assert.ok(m[1].startsWith('/') || m[1].startsWith('data:'), `${id}: ${m[1]} is not fetched from another origin`);
     }
     assert.doesNotMatch(html, /usernode-starter-notice@1/);
     // Honest states: loading shapes, an error with Retry, an empty state.
     assert.match(html, /class="skeleton /);
-    assert.match(html, /class="state-error card"[\s\S]*?>Retry<\/button>/);
-    assert.match(html, /class="state-empty card"/);
+    assert.match(html, /class="state-error[^"]*"[\s\S]*?>Retry<\/button>/);
+    assert.match(html, /class="state-empty[^"]*"/);
     assert.match(html, /<body class="min-h-screen bg-ground text-fg">/);
     // Its scripts: plain DOM, people's words as text, no browser dialogs.
     for (const p of ['public/app.js', 'public/game/room.js']) {
@@ -420,14 +426,16 @@ test('the board game: turns, a six rolls again, shortcuts and slides, a roll mad
   assert.equal(r.act(g, { type: 'roll' }, ctx(2, 3)).error, 'It is not your turn yet.');
   g = r.act(g, { type: 'roll' }, ctx(1, 6)).game;
   assert.deepEqual([g.pieces[1].pos, g.turn], [6, 0], 'a six rolls again');
+  g = r.act(g, { type: 'roll' }, ctx(1, 2)).game;
+  assert.deepEqual([g.pieces[1].pos, g.lastMove.landed, g.turn], [20, 8, 1], 'square 8 is a shortcut to 20');
+  g = r.act(g, { type: 'roll' }, ctx(2, 3)).game;
+  assert.equal(g.pieces[2].pos, 15, 'square 3 is a shortcut to 15');
   g = r.act(g, { type: 'roll' }, ctx(1, 3)).game;
-  assert.deepEqual([g.pieces[1].pos, g.lastMove.landed, g.turn], [18, 9, 1], 'square 9 is a shortcut to 18');
-  g = r.act(g, { type: 'roll' }, ctx(2, 4)).game;
-  assert.equal(g.pieces[2].pos, 12, 'square 4 is a shortcut to 12');
+  assert.deepEqual([g.pieces[1].pos, g.lastMove.landed], [11, 23], 'square 23 is a slide to 11');
   // Away: their roll is made for them after a moment, never before.
   assert.equal(r.update(g, { now: 1000, random: () => 0.1, isOnline: () => false }), null);
   const auto = r.update(g, { now: 3000, random: () => 0.1, isOnline: () => false });
-  assert.match(auto.log[0].text, /^@ana rolled 1 \(rolled for them\)/);
+  assert.match(auto.log[0].text, /^@ben rolled 1 \(rolled for them\)/);
   // Reaching the finish wins: the winner first, then by how far they got.
   g.pieces[1].pos = 27;
   g.turn = 0;
@@ -462,44 +470,66 @@ test('trivia: the author never answers or sees the answer early; quick and known
   assert.deepEqual(r.result(g).map((x) => [x.username, x.score, x.place]), [['ana', 125, 1], ['ben', 25, 2]]);
 });
 
-test('the space game: a beam cracks rocks into crystals; a hit costs a shield; out of shields, the run ends', () => {
+test('the space game: storms of sparks made of numbers, stardust to collect, a hit costs a shield, out of shields the ship is out', () => {
   const r = rulesOf('game-space');
-  let g = r.setup({ players: [{ id: 1, username: 'ana' }], now: 0 });
-  g.waveAt = 1e12;
-  g.rocks = [{ id: 99, x: 600, y: 300, vx: 0, vy: 0, size: 3, hp: r.SIZES[3].hp }];
-  const ship = g.ships[1];
-  Object.assign(ship, { x: 480, y: 300, beam: true, coverUntil: 1e12 });
-  let now = 0;
-  for (let i = 0; i < 600 && (g.rocks.length || g.crystals.length); i += 1) {
-    now += 50;
-    ship.seenAt = now;
-    const t = g.rocks[0];
-    if (t) ship.a = Math.atan2(t.y - ship.y, t.x - ship.x);
-    else if (g.crystals[0]) Object.assign(ship, { x: g.crystals[0].x, y: g.crystals[0].y });
-    g = r.tick(g, 50, { now, random: () => 0.5 });
-  }
-  assert.equal(g.score, 80, 'one big rock: two, then four small, then eight crystals');
-  // A hit costs a shield, then cover; three hits and the ship docks.
-  let h = r.setup({ players: [{ id: 1, username: 'ana' }], now: 0 });
-  h.waveAt = 1e12;
-  for (let hit = 1; hit <= 3; hit += 1) {
-    const t = hit * 5000;
-    h.ships[1].seenAt = t;
-    h.rocks = [{ id: hit, x: h.ships[1].x, y: h.ships[1].y, vx: 0, vy: 0, size: 1, hp: 1 }];
-    h = r.tick(h, 50, { now: t, random: () => 0.5 });
-    assert.equal(h.ships[1].shields, 3 - hit);
-  }
-  assert.equal(h.ships[1].docked, true);
-  assert.equal(h.over, true);
-  assert.deepEqual(r.result(h), [{ id: 1, username: 'ana', score: 0, place: 1 }]);
+  const players = [{ id: 1, username: 'ana' }, { id: 2, username: 'ben' }];
+  let g = r.setup({ players, now: 0 });
+  const random = seq(0.5, 0.2, 0.8, 0.35);
+  const fly = (to) => {
+    for (let t = g.now + 50; t <= to; t += 50) {
+      for (const ship of Object.values(g.ships)) ship.seenAt = t;
+      g = r.tick(g, 50, { now: t, random });
+    }
+  };
+  fly(4000);
+  // A storm: a pulsar that drifts in from above and throws sparks in a
+  // pattern. The frame carries its numbers, not a position for each spark.
+  assert.equal(g.storms.length, 1, 'one storm at a time in the first sector');
+  const s = g.storms[0];
+  assert.equal(s.kind, 'ring', 'the first sector\'s storms are rings');
+  assert.equal(r.pulsarAt(s, s.t0).y, -60, 'from above the field');
+  assert.equal(r.pulsarAt(s, s.t0 + s.enter).y, s.ys);
+  const f = r.frame(g);
+  assert.deepEqual(Object.keys(f.storms[0]).filter((k) => ['interval', 'n', 'rot', 'spread', 'v', 'curve', 'a0'].includes(k)).length, 7);
+  assert.ok(f.dust.length >= 2, 'stardust drifts down');
+  assert.ok(g.ships[1].score > 0, 'time flown scores');
+  // Later sectors bring more storms, and fans aimed at the nearest ship.
+  fly(95000);
+  assert.equal(g.sector, 4);
+  assert.ok(g.bursts.some((b) => b.colour === 4), 'comet showers');
   // A ship's own page says where it is, within the speed limit.
-  let k = r.setup({ players: [{ id: 1, username: 'ana' }], now: 0 });
-  const was = { x: k.ships[1].x, y: k.ships[1].y };
-  k = r.input(k, { id: 1 }, { x: was.x + 500, y: was.y, a: 0, beam: false }, { now: 50 });
-  assert.deepEqual([k.ships[1].x, k.ships[1].y], [was.x, was.y], 'a jump is not believed');
-  k = r.input(k, { id: 1 }, { x: was.x + 20, y: was.y, a: 1, beam: true }, { now: 100 });
-  assert.deepEqual([k.ships[1].x, k.ships[1].a, k.ships[1].beam], [was.x + 20, 1, true]);
-  assert.match(r.act(k, { type: 'fire' }, {}).error, /Fly with the controls/);
+  const was = { x: g.ships[1].x, y: g.ships[1].y };
+  g = r.input(g, { id: 1 }, { x: was.x + 900, y: was.y }, { now: g.now });
+  assert.deepEqual([g.ships[1].x, g.ships[1].y], [was.x, was.y], 'a jump is not believed');
+  g = r.input(g, { id: 1 }, { x: was.x + 20, y: was.y - 10 }, { now: g.now + 50 });
+  assert.deepEqual([g.ships[1].x, g.ships[1].y], [was.x + 20, was.y - 10]);
+  // Stardust close to your ship is yours, once; far away, it is not.
+  const d = g.dust[g.dust.length - 1];
+  const at = r.dustAt(d, g.now);
+  g.ships[2].x = at.x + 400;
+  g.ships[2].y = at.y;
+  assert.equal(r.act(g, { type: 'collect', id: d.id }, { player: { id: 2 }, now: g.now }).event, undefined, 'too far');
+  g.ships[2].x = at.x + 20;
+  const got = r.act(g, { type: 'collect', id: d.id }, { player: { id: 2 }, now: g.now });
+  assert.deepEqual([got.event, got.game.ships[2].dust], [{ type: 'dust', id: d.id, by: 2 }, 1]);
+  assert.equal(r.act(got.game, { type: 'collect', id: d.id }, { player: { id: 1 }, now: g.now }).event, undefined, 'gone');
+  // A hit costs a shield, then a moment of cover; out of shields, the ship is out.
+  let now = g.now;
+  let out = r.act(g, { type: 'hit' }, { player: { id: 1 }, now });
+  assert.deepEqual(out.event, { type: 'hit', id: 1, shields: 2 });
+  assert.equal(r.act(out.game, { type: 'hit' }, { player: { id: 1 }, now: now + 100 }).game.ships[1].shields, 2, 'covered');
+  out = r.act(out.game, { type: 'hit' }, { player: { id: 1 }, now: (now += 2500) });
+  out = r.act(out.game, { type: 'hit' }, { player: { id: 1 }, now: (now += 2500) });
+  assert.deepEqual([out.game.ships[1].shields, out.game.ships[1].out, out.game.over], [0, true, false], 'the others fly on');
+  assert.match(r.act(out.game, { type: 'hit' }, { player: { id: 1 }, now }).error, /out of this run/);
+  assert.match(r.act(out.game, { type: 'fire' }, { player: { id: 2 }, now }).error, /not a move/);
+  // The run ends when every ship is out: each pilot's own score, highest first.
+  g = r.removePlayer(out.game, 2);
+  assert.equal(g.over, true);
+  const res = r.result(g);
+  assert.deepEqual(res.map((x) => x.place), [1, 2]);
+  assert.ok(res[0].score >= res[1].score);
+  assert.deepEqual(res.map((x) => x.username).sort(), ['ana', 'ben']);
 });
 
 test('the block world: blocks inside the world, one per cell, sent to everyone as an event', () => {
@@ -510,14 +540,18 @@ test('the block world: blocks inside the world, one per cell, sent to everyone a
   assert.deepEqual(out.event, { type: 'place', x: 1, y: 0, z: 2, c: 3, by: 'ana' });
   g = out.game;
   assert.match(r.act(g, { type: 'place', x: 1, y: 0, z: 2, c: 1 }, me).error, /already/);
-  assert.match(r.act(g, { type: 'place', x: 32, y: 0, z: 0, c: 1 }, me).error, /outside/);
-  assert.match(r.act(g, { type: 'place', x: 0, y: 0, z: 0, c: r.COLOURS }, me).error, /colour/);
+  assert.match(r.act(g, { type: 'place', x: r.SIZE.x, y: 0, z: 0, c: 1 }, me).error, /outside/);
+  assert.match(r.act(g, { type: 'place', x: 0, y: 0, z: 0, c: r.BLOCKS }, me).error, /Pick a block/);
   assert.match(r.act(g, { type: 'remove', x: 9, y: 9, z: 9 }, me).error, /no block/);
   assert.deepEqual(r.view(g).blocks, [[1, 0, 2, 3]]);
   g = r.act(g, { type: 'remove', x: 1, y: 0, z: 2 }, me).game;
   assert.equal(g.count, 0);
-  g = r.input(g, { id: 1, username: 'ana' }, { x: 3, y: 1, z: 4, c: 2 }, { now: Date.now() });
-  assert.deepEqual(r.frame(g).cursors, [[1, 'ana', 3, 1, 4, 2, 0]]);
+  // Where each builder is flying, which way they face, and their block.
+  g = r.input(g, { id: 1, username: 'ana' }, { x: 3.04, y: 6.5, z: -4.2, yaw: 1.234, c: 2 }, { now: Date.now() });
+  assert.deepEqual(r.frame(g).builders, [[1, 'ana', 3, 6.5, -4.2, 1.23, 2]]);
+  assert.deepEqual(r.view(g).builders, r.frame(g).builders, 'a plain request sees them too');
+  g = r.input(g, { id: 1, username: 'ana' }, { x: 500, y: 1, z: 1 }, { now: Date.now() });
+  assert.deepEqual(r.frame(g).builders, [], 'nobody is far outside the world');
   assert.equal(r.open, true, 'always on: no lobby');
   assert.equal(r.result(g), null, 'never over');
 });

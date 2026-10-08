@@ -1390,7 +1390,9 @@ Where things are:
 - \`public/game/room.js\`: the page's side of the room: the live
   connection, falling back to asking every couple of seconds, and
   \`join()\`, \`start()\`, \`act(move)\`, \`input(controls)\`.
-- \`public/index.html\` and \`public/app.js\`: the screen.
+- \`public/index.html\` and \`public/app.js\`: the screens (a title screen with
+  the lobby, then the game filling the screen), and \`public/scene.css\`: the
+  game's own look.
 ${starter.notes ? `${starter.notes}
 ` : ''}- \`dapp.json\` \`tests\`: the checks every proposal runs. Keep them passing,
   and change them when you change what they look for.

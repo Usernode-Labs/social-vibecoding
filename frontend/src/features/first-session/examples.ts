@@ -119,7 +119,7 @@ export const TEMPLATES: readonly Template[] = [
     finish: true,
     choices: [
       { key: 'board', label: 'Board game', fill: 'a board game where', example: 'we roll dice and race each other around the board', name: 'Board Game Night', description: 'A board game', starter: 'game-board', starts: 'a dice race' },
-      { key: 'shooter', label: 'Space shooter', fill: 'an arcade space shooter where', example: 'we fly together against waves of asteroids', name: 'Space Shooter', description: 'An arcade space shooter', starter: 'game-space', starts: 'ships flying through asteroids' },
+      { key: 'shooter', label: 'Space shooter', fill: 'an arcade space shooter where', example: 'we fly together through storms of sparks and collect stardust', name: 'Space Shooter', description: 'An arcade space shooter', starter: 'game-space', starts: 'a scrolling run dodging storms of sparks' },
       { key: 'blocks', label: '3D blocks', fill: 'a 3D block game where', example: 'we build whatever we want together', name: 'Block World', description: 'A 3D block game', starter: 'game-blocks', starts: 'a shared 3D block world' },
       { key: 'trivia', label: 'Trivia', fill: 'a trivia game where', example: 'every question is about one of us', name: 'Trivia Night', description: 'A trivia game', starter: 'game-trivia', starts: 'trivia about each other' },
     ],

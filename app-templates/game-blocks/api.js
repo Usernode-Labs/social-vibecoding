@@ -17,32 +17,39 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
 const room = new Room(rules);
 
-// Staging demo: a small house, a tree and a path, as if two people had
-// started building. Colours are palette indexes (public/app.js PALETTE).
+// Staging demo: a small house, a tree and a path in the middle of the
+// world, as if two people had started building. Blocks are indexes into
+// public/app.js BLOCKS.
 function demoWorld() {
   const blocks = {};
   const put = (x, y, z, c) => { blocks[rules.key(x, y, z)] = c; };
-  const BRICK = 3;
-  const WOOD = 2;
-  const LEAVES = 0;
-  const STONE = 1;
-  const GLASS = 5;
-  for (let x = 6; x <= 11; x++) {
-    for (let z = 6; z <= 10; z++) {
-      const wall = x === 6 || x === 11 || z === 6 || z === 10;
+  const STONE = 2;
+  const WOOD = 3;
+  const PLANKS = 4;
+  const LEAVES = 5;
+  const BRICK = 7;
+  const GLASS = 8;
+  for (let x = 15; x <= 21; x++) {
+    for (let z = 15; z <= 20; z++) {
+      const wall = x === 15 || x === 21 || z === 15 || z === 20;
       for (let y = 0; y <= 2; y++) {
-        const door = z === 6 && (x === 8 || x === 9) && y <= 1;
-        const pane = y === 1 && ((x === 6 || x === 11) && z === 8);
+        const door = z === 20 && x === 18 && y <= 1;
+        const pane = y === 1 && (((x === 15 || x === 21) && (z === 17 || z === 18)) || (z === 20 && (x === 16 || x === 20)));
         if (wall && !door) put(x, y, z, pane ? GLASS : BRICK);
       }
-      put(x, 3, z, WOOD);
     }
   }
-  for (let y = 0; y <= 3; y++) put(20, y, 12, WOOD);
-  for (let x = 19; x <= 21; x++) for (let z = 11; z <= 13; z++) for (let y = 4; y <= 5; y++) put(x, y, z, LEAVES);
-  put(20, 6, 12, LEAVES);
-  for (let z = 0; z <= 5; z++) put(8, 0, z, STONE);
-  return { size: rules.SIZE, blocks, count: Object.keys(blocks).length, cursors: {} };
+  // A roof that steps in.
+  for (let step = 0; step < 3; step++) {
+    for (let x = 14 + step; x <= 22 - step; x++) {
+      for (let z = 14 + step; z <= 21 - step; z++) put(x, 3 + step, z, PLANKS);
+    }
+  }
+  for (let y = 0; y <= 3; y++) put(27, y, 22, WOOD);
+  for (let x = 26; x <= 28; x++) for (let z = 21; z <= 23; z++) for (let y = 4; y <= 5; y++) put(x, y, z, LEAVES);
+  put(27, 6, 22, LEAVES);
+  for (let z = 21; z <= 39; z++) put(18, 0, z, STONE);
+  return { size: rules.SIZE, blocks, count: Object.keys(blocks).length, builders: {} };
 }
 
 async function migrate(pool) {

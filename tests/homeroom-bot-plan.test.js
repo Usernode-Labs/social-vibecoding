@@ -778,11 +778,12 @@ test('a first version made from a game starter is specced and built on it; witho
     assert.match(scope, /never plan to start over/);
     const brief = live.specDesignBrief(true, id);
     assert.doesNotMatch(brief, /the starter template's is placeholder/);
-    assert.match(brief, /the game starter's screen works but wears the design kit's default look/);
+    assert.match(brief, /the game starter's screens \(a title screen, then the game filling the screen\) work and wear the example game's scene/);
     const lines = live.firstVersionDesignLines(id).join('\n');
     assert.ok(lines.includes(`This repository starts as Homeroom's ${s.title}`), `${id}: the build is told`);
     assert.match(lines, /never by deleting it to start over/);
     assert.doesNotMatch(lines, /the starter's screen and default colours are placeholder/);
+    assert.match(lines, /keeps its look in `public\/scene\.css`/, `${id}: the scene is restyled, not replaced`);
     const spec = live.specPrompt({ seed: 'seed', buildNote: 'plan', firstVersion: true, starter: id });
     assert.ok(spec.includes(scope) && spec.includes(brief));
     const html = live.specPrompt({ seed: 'seed', buildNote: 'plan', firstVersion: true, starter: id, html: true });
