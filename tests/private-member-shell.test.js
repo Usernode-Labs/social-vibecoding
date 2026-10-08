@@ -120,7 +120,9 @@ test('the waitlist card: join, an email, a code, then On the waitlist with "Want
     onListed: () => {},
   });
   assert.match(none, /data-waitlist-card="join"/);
-  assert.match(none, /Make and share your own apps/);
+  assert.match(none, />Make your own apps</);
+  assert.doesNotMatch(none, /suggest changes to them now/, 'the pitch paragraph is gone');
+  assert.match(none, /We&#x27;re letting people in a few at a time\./);
   assert.match(none, /id="home-waitlist-join"[^>]*>Join the waitlist</);
   assert.doesNotMatch(none, /On the waitlist/);
 
@@ -131,8 +133,13 @@ test('the waitlist card: join, an email, a code, then On the waitlist with "Want
   });
   assert.match(listed, /data-waitlist-card="listed"/);
   assert.match(listed, /On the waitlist/);
-  assert.match(listed, /We’ll email lina@example\.com when your spot is ready\./);
-  assert.match(listed, new RegExp(`href="#more/${token}"[^>]*>Answer them now<`));
+  assert.match(listed, />Make your own apps</);
+  assert.match(listed, /We’ll email you when your spot is ready\./);
+  assert.doesNotMatch(listed, /few at a time|Until then/, 'one line under the title');
+  // "Want in sooner?" is one row: the question, and a link to the questions.
+  assert.match(listed, /Want in sooner\?/);
+  assert.match(listed, new RegExp(`href="#more/${token}"[^>]*>Answer 4 questions<`));
+  assert.doesNotMatch(listed, /Optional \(moves you up the list\)|Answer them now/);
 
   const src = read(card);
   // Not in the prerender: nothing until the shell knows who is signed in.

@@ -107,8 +107,9 @@ test('?shot=waiting shows the room for the shots, without the poll', () => {
 // for the people of an app; their apps are in their communities.
 test('the Home waitlist card: a few at a time, your spot, no batches or group', () => {
   const src = code(read('frontend/src/features/home/waitlist-card.tsx'));
-  assert.match(src, /We're letting people in a few at a time\. Until then, you can use and change the apps in your communities\./);
+  assert.match(src, /We're letting people in a few at a time\./);
   assert.match(src, /We’ll email you when your spot is ready\./);
+  assert.match(src, /We’ll text you when your spot is ready\./);
   for (const gone of [/batches/i, /your turn/i, /group&rsquo;s apps/, /The group doesn/]) assert.doesNotMatch(src, gone);
 });
 
