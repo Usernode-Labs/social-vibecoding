@@ -425,7 +425,8 @@ separate workflow Pod.
 Which process holds the leader role does not decide anything: row locks do. What the
 machines' work handlers and notifiers still reach in process memory does: a restart
 erases it, and a machine resumes its work right after a boot, when memory is empty.
-That is listed, per machine, in `tests/baselines/workflow-process-state.json` (below).
+Every place a machine calls into code that may keep such memory is listed, per machine,
+in `tests/baselines/workflow-process-state.json` (below).
 **Moving the loops to a Deployment of their own waits until that list is empty;** it is
 then a deployment change, with more than one replica and alerts on overdue work.
 

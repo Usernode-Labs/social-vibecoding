@@ -224,7 +224,7 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     assert.ok(heard.some((p) => p.kind === 'room' && p.data.type === 'chat' && p.data.content === live.content && p.data.id > 0
       && p.data.metadata.merged.votes === '2/3' && !('wfEvent' in p.data.metadata)), 'the line, as the room shows it');
     assert.ok(pushed.some((p) => p.data.type === 'vote_update' && p.data.sessionId === s.id && p.data.live === true), 'the vote card');
-    // The author's "your change is live": named for the relay to read, and their bell re-read.
+    // The author's "your change is live", named for the relaying web process to read.
     const { rows: [n] } = await pool.query(`SELECT id FROM notifications WHERE session_id = $1 AND kind = 'pr_merged'`, [s.id]);
     const toAuthor = pushed.filter((p) => p.kind === 'user' && p.routing.userId === s.author.id);
     assert.ok(toAuthor.some((p) => p.data.type === 'notification_new' && p.data.notificationId === n.id && !p.data.notification));

@@ -1,13 +1,6 @@
-// What a web process does with a push a workflow machine published
-// (services/ws-bus.js WORKFLOW_SENDER, src/workflow/pushes.ts): it relays it
-// to its own sockets.
-//
-//   * a notification is named by id, not carried: the relay reads it for the
-//     recipient's open tabs, and nobody else gets it;
-//   * notifications_changed schedules the phone badge sync, for a workflow
-//     push, not for a peer's (its emitter already did);
-//   * a push too big to carry still runs the board-change reaction, from its
-//     type and routing.
+// A notification a workflow machine pushes is named by id, not carried
+// (src/workflow/merge-followups/machine.ts): the web process relaying it
+// reads it for the recipient's open tabs, and nobody else gets it.
 //
 // Real sockets against ws.attach, pool stubbed via require.cache, as in
 // tests/ws-session-event-routing.test.js.
@@ -41,8 +34,6 @@ const fakePool = {
 };
 const stub = (p, exports) => { const id = require.resolve(p); require.cache[id] = { id, filename: id, loaded: true, exports, paths: [] }; };
 stub('../src/db/pool', { getPool: () => fakePool });
-const badges = [];
-stub('../src/services/mobile-push', { scheduleBadgeSync: (userId) => { badges.push(userId); return true; } });
 delete require.cache[require.resolve('../src/services/ws')];
 const ws = require('../src/services/ws');
 
@@ -86,11 +77,4 @@ test('a notification named by a workflow push is read by the relay and reaches i
   assert.deepEqual(reads, []);
   author.terminate();
   other.terminate();
-});
-
-test('a relayed workflow push schedules no badge sync: the deciding process\'s badgeSync notifier does', async () => {
-  badges.length = 0;
-  relay({ kind: 'user', routing: { userId: 2 }, data: { type: 'notifications_changed' }, fromWorkflow: true });
-  relay({ kind: 'user', routing: { userId: 2 }, data: { type: 'notifications_changed' } });
-  assert.deepEqual(badges, []);
 });

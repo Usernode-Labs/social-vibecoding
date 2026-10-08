@@ -44,11 +44,6 @@ test('workflow machines in a process of their own, and through its crash', { tim
   let listener = null;
   let platform = null;
   t.after(async () => {
-    if (process.env.WF_DEBUG) {
-      const { rows } = await pool.query(`SELECT kind, data->>'module' AS m, data->>'fn' AS fn, data->>'url' AS url, count(*)::int AS n
-        FROM wf_test_effects WHERE kind IN ('fake.unexpected', 'net.refused') GROUP BY 1, 2, 3, 4 ORDER BY 5 DESC`).catch(() => ({ rows: [] }));
-      console.log('outside calls the flows reached unfaked:', rows);
-    }
     await workflow?.stop();
     await platform?.stopWorkflow();
     await listener?.end();

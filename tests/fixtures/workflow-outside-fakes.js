@@ -81,8 +81,6 @@ module.exports = function install(fakes) {
     keep: ['containerHostname', 'parseDockerBuildLine', 'STOP_GRACE_SEC', 'STAGING_STOP_GRACE_SEC'],
     overrides: {
       async removeVolume(name) { await fakes.record('docker.removeVolume', { name }); },
-      async stopAndRemove(name) { await fakes.record('docker.stopAndRemove', { name }); },
-      async containerExists() { return false; },
     },
   });
   outside(fakes, 'services/kubernetes', { keep: [] });

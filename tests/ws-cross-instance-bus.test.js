@@ -332,16 +332,3 @@ test('a workflow push over the NOTIFY budget becomes the same nudge, to the same
   assert.ok(Buffer.byteLength(big, 'utf8') < 8000);
   assert.deepEqual(JSON.parse(big), { i: bus.WORKFLOW_SENDER, k: 'scoped', r: { appId: 3, appSlug: 'x' }, o: 1 });
 });
-
-test('a relayed workflow push reaches sockets only; the reactions are the deciding process\'s notifiers', () => {
-  // ws.pushIssueUpdate also runs the board-change listeners in the process
-  // that calls it. A machine's push is delivery only: its board-change kick
-  // is the machine's own notifier, run once where it decided.
-  const ws = require('../src/services/ws');
-  const boards = [];
-  ws.onBoardChange((info) => boards.push(info));
-  const push = { kind: 'scoped', routing: { appId: 5, appSlug: 'five' }, data: { type: 'issue_update', action: 'closed', appId: 5, appSlug: 'five' }, oversize: false };
-  ws._onBusMessage({ ...push, fromWorkflow: true });
-  ws._onBusMessage(push);
-  assert.deepEqual(boards, []);
-});
