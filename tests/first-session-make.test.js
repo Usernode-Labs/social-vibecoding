@@ -599,3 +599,118 @@ test('the admin Journey page says which first session answered the join screen',
   assert.match(read('src/services/journey.js'),
     /note: seen\.join_answer \? `not asked: \$\{seen\.join_answer\}` : 'not asked', weak: true/);
 });
+
+// #4040: what somebody answered on the waitlist opens the make screen on
+// Your own idea with that answer in the box. Evan's screen is otherwise
+// untouched.
+
+test('a waitlist answer opens the make screen on Your own idea, filled in, with one quiet line under the box', () => {
+  const make = loadTsx(`${DIR}/make.tsx`);
+  assert.equal(make.WAITLIST_IDEA_LINE, 'Filled in from your waitlist answer.');
+  const idea = 'A tracker for my run club, so we can see who keeps up';
+  const base = { who: 'Jordan', onMade() {}, onLookAround() {} };
+  const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { ...base, idea });
+  // Your own idea is the picked tile, and no template is.
+  assert.match(html, /<button[^>]*aria-pressed="true"[^>]*data-first-session-example="idea"/);
+  assert.equal((html.match(/aria-pressed="true"/g) || []).length, 1);
+  // The plain box holds the answer.
+  assert.match(html, new RegExp(`<textarea[^>]*id="first-session-brief"[^>]*>${idea}</textarea>`));
+  // One quiet line directly under it: small, muted (the screen's HINT).
+  const line = /<p data-make-waitlist-idea="" class="([^"]*)">([^<]*)<\/p>/.exec(html);
+  assert.ok(line, 'the line is drawn');
+  assert.equal(line[2], make.WAITLIST_IDEA_LINE);
+  assert.match(line[1], /\btext-xs\b/);
+  assert.match(line[1], /\btext-zinc-500\b/);
+  assert.doesNotMatch(line[1], /red-|amber-|font-(semi)?bold/);
+  assert.ok(html.indexOf('data-make-waitlist-idea') > html.indexOf('</textarea>'));
+  assert.ok(html.indexOf('data-make-waitlist-idea') < html.indexOf('first-session-name'), 'before the name field');
+
+  // Without one (none, null, blank, or from Create's door) it is Evan's screen.
+  const plain = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', base);
+  for (const props of [{ ...base, idea: null }, { ...base, idea: '   ' }]) {
+    assert.equal(renderComponent(`${DIR}/make.tsx`, 'MakeScreen', props), plain);
+  }
+  assert.doesNotMatch(plain, /aria-pressed="true"/);
+  assert.doesNotMatch(plain, /data-make-waitlist-idea|waitlist answer/);
+  assert.match(plain, /<textarea[^>]*id="first-session-brief"[^>]*><\/textarea>/);
+
+  // A filled description reaches Make it as a typed one does: the plain box is
+  // the description (`text`), and with a name nothing is missing.
+  assert.equal(make.missingAnswer(idea, 'Run Club'), null);
+  assert.equal(make.missingAnswer(idea, ''), 'name');
+  assert.match(read(`${DIR}/make.tsx`), /const text = templated && said \? said\.text : brief;/);
+});
+
+test('the line goes once the words are changed, and a template can still be picked', () => {
+  const idea = 'A tracker for my run club, so we can see who keeps up';
+  let slots = [];
+  let at = 0;
+  const real = require(require.resolve('react', { paths: [path.join(ROOT, 'frontend')] }));
+  const React = {
+    ...real,
+    useState(init) {
+      const k = at++;
+      if (!(k in slots)) slots[k] = typeof init === 'function' ? init() : init;
+      return [slots[k], (v) => { slots[k] = typeof v === 'function' ? v(slots[k]) : v; }];
+    },
+    useRef(init) { const k = at++; if (!(k in slots)) slots[k] = { current: init }; return slots[k]; },
+    useCallback(fn) { at++; return fn; },
+    useEffect() { at++; },
+    useLayoutEffect() { at++; },
+    useSyncExternalStore(subscribe, get) { at++; return get(); },
+  };
+  const { MakeScreen } = loadTsx(`${DIR}/make.tsx`, { stubs: { react: React } });
+  const draw = () => { at = 0; return MakeScreen({ who: 'Jordan', onMade() {}, onLookAround() {}, idea }); };
+  const find = (node, test, out = []) => {
+    if (!node || typeof node !== 'object') return out;
+    if (Array.isArray(node)) { node.forEach((n) => find(n, test, out)); return out; }
+    if (test(node)) out.push(node);
+    find(node.props && node.props.children, test, out);
+    return out;
+  };
+  const line = () => find(draw(), (n) => n.props && 'data-make-waitlist-idea' in n.props);
+  const box = () => find(draw(), (n) => n.type === 'textarea' && n.props.id === 'first-session-brief')[0];
+  assert.equal(line().length, 1);
+  assert.equal(box().props.value, idea);
+  // Typing over it: the line has nothing to say any more, and it stays Your own idea.
+  box().props.onChange({ target: { value: `${idea} and a leaderboard` } });
+  assert.equal(line().length, 0);
+  assert.equal(box().props.value, `${idea} and a leaderboard`);
+  // Clearing it is allowed.
+  box().props.onChange({ target: { value: '' } });
+  assert.equal(box().props.value, '');
+  assert.equal(line().length, 0);
+  // A template still picks as it does: one tap, a whole description.
+  const tile = find(draw(), (n) => n.type === 'button' && n.props['data-first-session-example'] && n.props['data-first-session-example'] !== 'idea')[0];
+  tile.props.onClick();
+  assert.equal(find(draw(), (n) => n.props && n.props['data-make-sentence']).length, 1);
+  assert.equal(line().length, 0);
+});
+
+test('the make screen takes the idea from the signed-in user, or from a ?shot= state, and the Create door never does', () => {
+  const src = read(`${DIR}/index.tsx`);
+  assert.match(src, /idea=\{shot \? shot\.idea : legacy\(\)\.App\?\.user\?\.waitlistIdea \?\? null\}/);
+  const create = src.slice(src.indexOf("if (mode.kind === 'make' && mode.entry === 'create')"), src.indexOf("if (mode.kind === 'make') {"));
+  assert.match(create, /who=\{viewerName\(\)\}/);
+  assert.doesNotMatch(create, /idea=/);
+  const island = loadTsx(`${DIR}/index.tsx`);
+  assert.deepEqual(Object.keys(island.MAKE_SHOTS), ['make', 'make-waitlist']);
+  assert.equal(island.makeShot('?shot=make').idea, null);
+  assert.match(island.makeShot('?shot=make-waitlist').idea, /run club/);
+  assert.equal(island.makeShot('?shot=first-version'), null);
+  assert.equal(island.makeShot('?shot=toString'), null);
+  assert.equal(island.makeShot(''), null);
+});
+
+test('the waitlist answer is read for the account\'s linked row only, and /me sends it only while the question is owed', async () => {
+  const pool = fakePool([[{ idea: 'A map of our swimming spots' }], [{ idea: null }], [], new Error('no table')]);
+  assert.equal(await firstSession.waitlistIdea(pool, 7), 'A map of our swimming spots');
+  assert.match(pool.calls[0].sql, /answers->'group'->>'need'/);
+  assert.match(pool.calls[0].sql, /WHERE linked_user_id = \$1/);
+  assert.deepEqual(pool.calls[0].params, [7]);
+  assert.equal(await firstSession.waitlistIdea(pool, 7), null, 'an empty answer');
+  assert.equal(await firstSession.waitlistIdea(pool, 7), null, 'no linked row');
+  assert.equal(await firstSession.waitlistIdea(pool, 7), null, 'a failed read never throws');
+  assert.match(read('src/routes/auth.js'), /if \(storyFirstSession\) waitlistIdea = await firstSession\.waitlistIdea\(pool, req\.user\.id\);/);
+  assert.match(read('src/routes/auth.js'), /storyFirstSession,\s+\/\/[^\n]*\n\s+\/\/[^\n]*\n\s+waitlistIdea,/);
+});

@@ -1000,6 +1000,7 @@ export function FirstSession() {
   if (mode.kind === 'make' && mode.entry === 'create') {
     return (
       <MakeScreen
+        who={viewerName()}
         entry="create"
         startImport={!!mode.startImport}
         underHeader={underHeader}
@@ -1020,6 +1021,9 @@ export function FirstSession() {
     return (
       <MakeScreen
         who={viewerName()}
+        // What they said on the waitlist, if anything: known now, from the
+        // signed-in user (or the screenshot state), so the box opens filled.
+        idea={shot ? shot.idea : legacy().App?.user?.waitlistIdea ?? null}
         // POST /api/apps answered the question as it made the project.
         onMade={(made) => { noteAnswered(); setMode({ kind: 'made', made }); }}
         onLookAround={() => {
