@@ -11,6 +11,10 @@
  * itself, because the fun of a game is in what you build. The make screen's
  * fourth tile, Your own idea, is the plain description box.
  *
+ * Evan, 8 October 2026 (#4388): every example, name and note was read again
+ * against three things, that each is concrete, a group would want it, and it
+ * makes a good first version, and the ones that failed were rewritten.
+ *
  * A template is a sentence with one blank: `head`, then the chosen choice's
  * `fill` (or the maker's own words), then that choice's `tail` or the
  * template's. A `finish` template (the game) always ends in the maker's own
@@ -78,13 +82,13 @@ export const TEMPLATES: readonly Template[] = [
     head: 'A tier list for our favorite ',
     tail: '. Anyone can add items, everyone sorts them, and we can see where they land.',
     choices: [
-      { key: 'restaurants', label: 'Restaurants', fill: 'restaurants', name: 'Restaurant Tier List', description: 'A restaurant tier list' },
-      { key: 'hikes', label: 'Hikes', fill: 'hikes', name: 'Hiking Tier List', description: 'A hiking tier list' },
-      { key: 'cities', label: 'Cities', fill: 'cities', name: 'City Tier List', description: 'A city tier list' },
-      { key: 'games', label: 'Games', fill: 'games', name: 'Game Tier List', description: 'A game tier list' },
+      { key: 'restaurants', label: 'Restaurants', fill: 'restaurants', name: 'Restaurant Tier List', description: 'Our favorite restaurants, ranked together' },
+      { key: 'hikes', label: 'Hikes', fill: 'hikes', name: 'Hiking Tier List', description: 'Our favorite hikes, ranked together' },
+      { key: 'cities', label: 'Cities', fill: 'cities', name: 'City Tier List', description: 'Our favorite cities, ranked together' },
+      { key: 'games', label: 'Games', fill: 'games', name: 'Game Tier List', description: 'Our favorite games, ranked together' },
     ],
-    own: { example: 'taco spots', name: '{words} Tier List', description: 'A tier list' },
-    note: 'I\'m making us a tier list. Join and tell me what it needs.',
+    own: { example: 'taco spots', name: '{words} Tier List', description: 'Our favorites, ranked together' },
+    note: 'I\'m making us a tier list. Join, add a few favorites and help sort them.',
   },
   {
     key: 'game',
@@ -96,13 +100,13 @@ export const TEMPLATES: readonly Template[] = [
     tail: '',
     finish: true,
     choices: [
-      { key: 'board', label: 'Board game', fill: 'a board game where', example: 'everyone owns an island and trades to grow it', name: 'Board Game Night', description: 'A board game' },
-      { key: 'shooter', label: 'Space shooter', fill: 'an arcade space shooter where', example: 'we fly together against waves of asteroids', name: 'Space Shooter', description: 'An arcade space shooter' },
-      { key: 'blocks', label: '3D blocks', fill: 'a 3D block game where', example: 'we build a city one block a day', name: 'Block World', description: 'A 3D block game' },
-      { key: 'trivia', label: 'Trivia', fill: 'a trivia game where', example: 'every question is about one of us', name: 'Trivia Night', description: 'A trivia game' },
+      { key: 'board', label: 'Board game', fill: 'a board game where', example: 'we trade wood and stone to build up our islands', name: 'Board Game Night', description: 'A board game we build and play together' },
+      { key: 'shooter', label: 'Space shooter', fill: 'an arcade space shooter where', example: 'we take turns flying through an asteroid field and try to beat the best distance', name: 'Arcade Night', description: 'An arcade space game we build and play together' },
+      { key: 'blocks', label: '3D blocks', fill: 'a 3D block game where', example: 'we each build a house on one street and walk over to visit', name: 'Block World', description: 'A 3D block game we build and play together' },
+      { key: 'trivia', label: 'Trivia', fill: 'a trivia game where', example: 'we each write questions about ourselves and everyone else guesses', name: 'Trivia Night', description: 'A trivia game we build and play together' },
     ],
-    own: { example: 'a card game where everyone bluffs', name: '', description: 'A game' },
-    note: 'I\'m making us a game. Join and tell me what it needs.',
+    own: { example: 'a word game where we all get the same seven letters and the longest word wins', name: '', description: 'A game we build and play together' },
+    note: 'I\'m making us a game we can play together. Join and help decide how it plays.',
   },
   {
     key: 'organizer',
@@ -113,13 +117,13 @@ export const TEMPLATES: readonly Template[] = [
     head: 'An app to organize our ',
     tail: ', so everyone can see what\'s where and who\'s on it.',
     choices: [
-      { key: 'groceries', label: 'Groceries', fill: 'groceries', tail: ': one shared list, and whoever\'s at the store checks things off.', name: 'Grocery List', description: 'A grocery list' },
-      { key: 'chores', label: 'Chores', fill: 'chores', tail: ': who\'s on what this week, and a nudge when it\'s your turn.', name: 'Chore List', description: 'A chore list' },
-      { key: 'library', label: 'Shared library', fill: 'shared library', tail: ': what we can borrow, who has it now, and when it\'s coming back.', name: 'Lending Library', description: 'A lending library' },
-      { key: 'potlucks', label: 'Potlucks', fill: 'potlucks', tail: ': who\'s bringing what, so we don\'t end up with six salads.', name: 'Potluck Planner', description: 'A potluck planner' },
+      { key: 'groceries', label: 'Groceries', fill: 'groceries', tail: ': one shared list, and whoever\'s at the store checks things off.', name: 'Grocery List', description: 'One grocery list for all of us, checked off at the store' },
+      { key: 'chores', label: 'Chores', fill: 'chores', tail: ': who\'s on what this week, and a nudge when it\'s your turn.', name: 'Chore List', description: 'Who\'s on which chore this week, and whose turn is next' },
+      { key: 'library', label: 'Shared library', fill: 'shared library', tail: ': what we can borrow, who has it now, and when it\'s coming back.', name: 'Lending Library', description: 'What we lend each other, who has it and when it\'s back' },
+      { key: 'potlucks', label: 'Potlucks', fill: 'potlucks', tail: ': who\'s bringing what, so we don\'t end up with six salads.', name: 'Potluck Planner', description: 'Who\'s bringing what to the next potluck' },
     ],
-    own: { example: 'camping gear', name: '{words} Crew', description: 'An organizer' },
-    note: 'I\'m making us an organizer. Join and tell me what it needs.',
+    own: { example: 'camping gear', name: 'Our {words}', description: 'What we share, where it is and who has it' },
+    note: 'I\'m making us one place to keep track of things. Join and tell me what to add first.',
   },
 ];
 
