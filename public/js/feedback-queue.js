@@ -594,6 +594,47 @@
       return flushing;
     },
 
+    // #3994: the dialog's "Try again". The automatic triggers can all miss a
+    // connection that is back (the probe still says offline, the backoff is
+    // at its 10 minute step), and a person looking at a stuck message should
+    // not have to wait for them. Every waiting record is made due now and a
+    // pass runs straight away. Nothing is removed here: a send that fails
+    // again goes back on the schedule with its words, exactly as before.
+    // A record another tab is sending keeps its claim (isDue still honours
+    // it), so a press cannot file the same issue twice.
+    async retryNow() {
+      if (flushDisabled) return { sent: 0, failed: 0, remaining: 0, filed: [], reason: 'manual' };
+      // Let a pass already in flight settle first: it chose its records
+      // before this reset, and writing over a record it holds would undo
+      // its progress.
+      while (flushing) await flushing;
+      const s = await ensureStore();
+      const t = nowMs();
+      const waiting = mine(await s.all()).filter((r) => r.status !== 'failed'
+        && !(Number(r.sendingSince) && t - Number(r.sendingSince) < CLAIM_STALE_MS)
+        && (Number(r.nextAttemptAt) || 0) > t);
+      for (const record of waiting) {
+        try { await s.put(Object.assign({}, record, { nextAttemptAt: t })); } catch (err) { /* sent on schedule instead */ }
+      }
+      // A pass that started during the writes above (the timer, a reconnect)
+      // may have chosen its records before them, and joining it would send
+      // nothing. Wait it out, then start our own: flush() claims the slot
+      // synchronously, so nothing can slip in between.
+      while (flushing) await flushing;
+      return FeedbackQueue.flush('manual');
+    },
+
+    // Put a record handed out by takeFailed() back, unchanged. For a caller
+    // that took one to fill the composer and then found someone typing in
+    // it: the refused words go back to wait for the next open.
+    async putBack(record) {
+      if (!record || !record.id) return;
+      const s = await ensureStore();
+      await s.put(record);
+      broadcast('changed');
+      notifyChange();
+    },
+
     // Display-only seeding for the ?shot=feedback-queued screenshot link.
     // Swaps in the in-memory adapter and disables flushing: the pinned state
     // is photographable without writing to the device or filing anything.

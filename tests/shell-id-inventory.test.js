@@ -355,6 +355,7 @@ const RETIRED_IDS = {
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
   // ── #4127: one paperclip for Photo and Video in Send feedback ─────────
+  'feedback-queue-retry': '#3994: Try again under Send feedback\'s status line, shown while a message saved on this device has not been sent. It sends the outbox now (FeedbackQueue.retryNow) instead of waiting for reconnect, sign-in or the backoff timer. Shown and worded by ./feedback-controller.',
   'feedback-attach-btn': '#4127: the paperclip in Send feedback\'s attachment row. It opens #feedback-attach-menu, which holds the Photo (#feedback-screenshot-picker-btn) and Video (#feedback-video-btn) rows that were two buttons of their own, so the row fits on one line. dapp.json\'s feedback check selects on it.',
   'feedback-attach-menu': '#4127: the paperclip\'s popover, in the vote popover\'s frame. Opened and closed by ./feedback-controller (outside click, Escape, a choice).',
   'report-modal': '#2721 shared reporting dialog',
