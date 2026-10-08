@@ -82,6 +82,7 @@ import { useWorkshopGroup } from './group-mode-store';
 import { describe as describeCommunity } from '../../workshop/community-scope';
 import { registerLevel } from '../../workshop/tab-ladder';
 import { markNeedsSeen, needsRowKey, unseenNeeds, useNeedsSeen } from '../../workshop/needs-seen';
+import { plainSummary } from '../../workshop/summary-text';
 import {
   ApprovalRules, CommunityCard, ShareItCard, canLeave, canMakePrivate, canMakePublic, confirmMakePrivate, confirmMakePublic,
   leaveCommunity, useCommunity,
@@ -1883,7 +1884,9 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
   const href = openHref(rowSlug(row, slug), row.card);
   const title = row.card.title.text || row.card.title.title;
   const facts = factsFor(row, voted);
-  const summary = isVote ? row.summary : (row.body || null);
+  // A change's summary is Markdown written for its page; the card shows its
+  // words alone, so an explanation's blocks (an `explain` fence) stay off it.
+  const summary = isVote ? (plainSummary(row.summary) || null) : (row.body || null);
   const pct = Math.max(2, Math.round(((index + 1) / Math.max(1, count)) * 100));
   // A run that worked out its screens IS the summary: the picture takes the
   // paragraph's room, and the words are one tap away in Description.

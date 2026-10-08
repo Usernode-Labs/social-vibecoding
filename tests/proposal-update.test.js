@@ -2763,7 +2763,7 @@ test('an author\'s summary on a same-commit resubmit replaces the old one, fresh
   assert.equal(session.pr_summary_stale, false);
 });
 
-test('the summary is held to the import\'s 600-character cap', async () => {
+test('the summary is held to the import\'s 2400-character cap (#4098: room for an explain fence)', async () => {
   const session = importedSession({ imported_pr_head_repo: 'evan-gh/r' });
   const pool = fakePool([
     ['pr_summary_source = \'author\'', [{ id: 601 }]],
@@ -2771,9 +2771,9 @@ test('the summary is held to the import\'s 600-character cap', async () => {
   ]);
   const result = await run({
     session, pool, gh: { getBranchSha: async () => NATIVE_HEAD },
-  }, { branch: 'usernode/add-a-button', summary: 'x'.repeat(900) }, {});
+  }, { branch: 'usernode/add-a-button', summary: 'x'.repeat(3000) }, {});
   assert.equal(result.summaryUpdated, true);
-  assert.equal(summaryWrites(pool)[0].params[0].length, 600);
+  assert.equal(summaryWrites(pool)[0].params[0].length, 2400);
 });
 
 test('nobody but the proposal\'s author may change its summary', async () => {

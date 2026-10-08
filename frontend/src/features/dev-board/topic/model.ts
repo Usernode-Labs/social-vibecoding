@@ -24,6 +24,7 @@
  */
 
 import type { ActionSpec, StatusPillState } from '../card/model';
+import type { ExplainBlock } from '../../../lib/explain-blocks';
 
 
 /** The four tints a note box comes in. Resolved to classes by the component. */
@@ -569,6 +570,14 @@ export interface TopicBody {
   comments?: boolean;
   /** A proposal's plain-language summary, already rendered. */
   summaryHtml?: string | null;
+  /**
+   * The explanation's structured blocks (#4098): a before/after comparison,
+   * a numbered path of steps or a small table, split off the summary
+   * (`AppView._changeSummaryView`, lib/explain-blocks.ts) and drawn under
+   * the words with the shell's list primitives (topic/explain-blocks.tsx).
+   * Null or empty when the summary has none.
+   */
+  summaryBlocks?: ExplainBlock[] | null;
   /** The previous summary was retained for provenance but no longer describes this revision. */
   summaryStale?: boolean;
   /**

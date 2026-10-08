@@ -1,4 +1,5 @@
 const { Router } = require('express');
+const explainBlocks = require('../services/explain-blocks');
 const { getPool } = require('../db/pool');
 const { connectionExhaustionMessage } = require('../db/connection-census');
 const { ROLLOUT_RETRY_DETAIL } = require('../services/staging-recovery');
@@ -147,6 +148,20 @@ function stagingDemoNeedsProposal(id, slug) {
 }
 
 function stagingMockProposals(viewer) {
+  // #4098: the one mock summary that carries explanation blocks, as the
+  // metadata model emits them and explain-blocks.embed stores them: the
+  // sample sentence, then the `explain` fence. Written out in full here
+  // because tests evaluate this function on its own, with nothing else in
+  // scope; tests/explain-blocks-hero.test.js checks it is canonical.
+  const explainedSummary = [
+    'This is a sample plain-language summary so testers can see the new '
+      + 'explanation that now appears at the top of a proposal, written in '
+      + 'everyday words, with no technical jargon.',
+    '',
+    '```explain',
+    '{"v":1,"blocks":[{"kind":"comparison","rows":[{"who":"Member from before the switch","before":"Vote counts","after":"Vote counts"},{"who":"New member, verified","before":"Vote counts","after":"Vote counts"},{"who":"New member, unverified","before":"Vote counts","after":"Asked to verify first, then counts"},{"who":"Anyone in a private community","before":"Vote counts","after":"Vote counts"}],"terms":[{"term":"Verified","meaning":"A phone number, GitHub and X both linked, or zkPassport"},{"term":"Unverified","meaning":"None of those yet"}]},{"kind":"steps","title":"Steps for an unverified newcomer","steps":["Votes on a public app","A sheet asks for a phone number","Verifies","The vote counts"]}]}',
+    '```',
+  ].join('\n');
   const hoursAgo = (h) => new Date(Date.now() - h * 3600 * 1000).toISOString();
   const hoursAhead = (h) => new Date(Date.now() + h * 3600 * 1000).toISOString();
   // gate = { required, windowEndsAt, contested } — precomputed because mock
@@ -262,10 +277,16 @@ function stagingMockProposals(viewer) {
   const rows = [
     // Unopposed, thin support: threshold met but a multi-day visibility
     // window still running → "Goes live in ~2d" countdown pill.
-    mk(9000001, 900101,
-      '[Mock] Long-title test: rework the proposal card header so the '
-      + 'discussion badge and vote tally wrap gracefully on narrow phones',
-      3, 2, 0, 4, { required: 2, windowEndsAt: hoursAhead(46) }),
+    {
+      ...mk(9000001, 900101,
+        '[Mock] Long-title test: rework the proposal card header so the '
+        + 'discussion badge and vote tally wrap gracefully on narrow phones',
+        3, 2, 0, 4, { required: 2, windowEndsAt: hoursAhead(46) }),
+      // #4098: the sample sentence, then the explanation's structured
+      // blocks as the metadata model emits them, so the change page's
+      // before/after card and numbered steps are reviewable on ?demo=1.
+      pr_summary_md: explainedSummary,
+    },
     // Near-majority, no opposition: window almost elapsed → short
     // "Goes live in Xh" countdown.
     // #1251: the only mock proposal that declares a linked issue. 900017 is
@@ -2024,7 +2045,7 @@ function parseImportLinkedIssues(body) {
 // testing note's is — one over-long field must not cost somebody their whole
 // submission — and the field is optional, so an omitted one behaves exactly as
 // before rather than inventing a summary nobody wrote.
-const MAX_IMPORT_SUMMARY = 600;
+const MAX_IMPORT_SUMMARY = 2400;
 
 function parseImportSummary(body) {
   const raw = body && typeof body.summary === 'string' ? body.summary : '';
@@ -3243,7 +3264,9 @@ function voteRoutes(config) {
       // import button sends none, which leaves the column at the empty array
       // it defaulted to before.
       const importLinkedIssues = parseImportLinkedIssues(req.body);
-      const importSummary = parseImportSummary(req.body);
+      // #4098: an `explain` fence in the summary is stored canonically; one
+      // the cap cut, or one that does not validate, stays as plain text.
+      const importSummary = explainBlocks.normalize(parseImportSummary(req.body));
       const promote = req.body?.promote === true;
       const initialStatus = promote ? 'promoted' : 'active';
 

@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const explainBlocks = require('./explain-blocks');
 const log = require('./logger');
 const llmTelemetry = require('./llm-telemetry');
 const { hasDocumentBlocks, withoutDocuments } = require('./attachments');
@@ -1197,9 +1198,12 @@ function parsePrMetadataText(text) {
   const body = typeof parsed.body === 'string' ? parsed.body.trim() : '';
   let summary = typeof parsed.summary === 'string' ? parsed.summary.trim() : '';
   if (summary.length > 600) summary = summary.slice(0, 600).trimEnd();
+  // #4098: the explanation's structured blocks, validated all-or-nothing
+  // per block; absent, malformed or over-long input is simply no blocks.
+  const blocks = explainBlocks.validate(parsed.blocks);
   if (!title) throw new Error('Empty PR title from LLM');
   if (title.length > 200) title = title.slice(0, 200);
-  return { title, body, summary };
+  return { title, body, summary, blocks };
 }
 
 // Strip lone UTF-16 surrogates from a string. Chat history occasionally
@@ -1264,10 +1268,15 @@ A pull request may bundle several updates made over multiple turns. You are give
 - A title (max 72 chars, imperative mood, no trailing period, no PR #) that captures the overall scope of the PR. If the updates are related, summarize them as one theme; if they are distinct, lead with the most significant change.
 - A short markdown description (2-6 lines): 1 sentence of context, then bullet points covering the concrete changes across all updates. Keep it tight; no filler.
 - A summary: 1-3 short sentences in plain, everyday English saying what changes for somebody USING the app — what looks different, what they can now do, or what stops going wrong. Write it from what that person would NOTICE, not from what was edited. File and directory names, function, variable, column and setting identifiers, code, and developer vocabulary belong in the description above and must not appear here. The whole group reads this first and many of them are not developers; the description sits beneath it behind a collapsed "Technical details" section, so nothing technical is lost by keeping it out of the summary.
+- Optionally, blocks: an array of at most TWO objects drawn under the summary as small cards, only when one explains the change better than another sentence would. Most changes need none: a copy fix or a colour change has nothing to compare, so send an empty array. The summary must stand on its own without them. The same everyday-word rule applies: every string is one short plain line, no Markdown, no code, at most 120 characters (a title at most 60). The three shapes, with exact field names:
+  - {"kind": "comparison", "title"?: "...", "rows": [{"who": "...", "before": "...", "after": "..."}], "terms"?: [{"term": "...", "meaning": "..."}]} when different people or situations get different outcomes before and after the change: 1 to 6 rows, one per person or situation, and 0 to 4 terms defining any word the summary uses in a special sense.
+  - {"kind": "steps", "title"?: "...", "steps": ["..."]} for a path a person follows, 2 to 7 steps in order; the title says whose path it is.
+  - {"kind": "table", "title"?: "...", "columns": ["..."], "rows": [["..."]]} only when neither fits: 2 to 4 columns, 1 to 6 rows, every row with exactly one cell per column; the first column names what the row is about.
+  For example, a change that counts public votes only from verified people: a comparison with rows for "Member from before the switch", "New member, verified" (Vote counts, Vote counts), "New member, unverified" (Vote counts, Asked to verify first, then counts) and "Anyone in a private community", with terms "Verified" (A phone number, GitHub and X both linked, or zkPassport) and "Unverified" (None of those yet); and a steps block titled "Steps for an unverified newcomer": Votes on a public app, A sheet asks for a phone number, Verifies, The vote counts.
 
 The SPEC section (when present) describes the intended scope and overall theme — useful for framing — but it may describe work that isn't built yet, so base the concrete changes on the requests and coding-agent summaries, not the spec alone.
 
-Respond with ONLY a JSON object: {"title": "...", "body": "...", "summary": "..."}. No prose before or after.`;
+Respond with ONLY a JSON object: {"title": "...", "body": "...", "summary": "...", "blocks": [...]}. No prose before or after.`;
 
   const reqBlock = reqList.length
     ? reqList.map((r, i) => (multi ? `${i + 1}. ${r.slice(0, 1000)}` : r.slice(0, 2000))).join('\n')
@@ -1312,13 +1321,13 @@ Author: ${stripLoneSurrogates(username) || 'unknown'}`;
   if (resp.stop_reason === 'refusal') throw new Error('PR metadata request was refused');
 
   const text = (resp.content || []).find((b) => b.type === 'text')?.text || '';
-  const { title, body, summary } = parsePrMetadataText(text);
+  const { title, body, summary, blocks } = parsePrMetadataText(text);
   // Surface usage so callers (pr-metadata.js) can debit the user
   // who triggered the PR. May be undefined if the SDK strips it on
   // some response shapes; callers must tolerate that. A fallback-served
   // response bills at the model that actually answered.
   const served = detectFallback(resp) && typeof resp.model === 'string' ? resp.model : model;
-  return { title, body, summary, usage: resp.usage, model: served };
+  return { title, body, summary, blocks, usage: resp.usage, model: served };
 }
 
 // ── The hub's since-your-last-visit line ─────────────────────────────

@@ -59,3 +59,32 @@ test('empty title still throws (title stays required)', () => {
 test('no JSON object in the text throws', () => {
   assert.throws(() => parsePrMetadataText('not json at all'), /No JSON object/);
 });
+
+// ── #4098: the explanation's structured blocks ────────────────────────
+
+test('valid blocks come back canonical, with unknown fields dropped', () => {
+  const out = parsePrMetadataText(JSON.stringify({
+    title: 'T', body: 'B', summary: 'S',
+    blocks: [
+      { kind: 'steps', title: 'Path', steps: ['One', 'Two'], colour: 'red' },
+      { kind: 'comparison', rows: [{ who: 'W', before: 'B', after: 'A', extra: 1 }], terms: [] },
+    ],
+  }));
+  assert.deepEqual(out.blocks, [
+    { kind: 'steps', title: 'Path', steps: ['One', 'Two'] },
+    { kind: 'comparison', rows: [{ who: 'W', before: 'B', after: 'A' }] },
+  ]);
+});
+
+test('absent or malformed blocks are no blocks, never a throw', () => {
+  assert.deepEqual(parsePrMetadataText(JSON.stringify({ title: 'T', body: 'B', summary: 'S' })).blocks, []);
+  assert.deepEqual(parsePrMetadataText(JSON.stringify({ title: 'T', blocks: 'steps' })).blocks, []);
+  assert.deepEqual(parsePrMetadataText(JSON.stringify({ title: 'T', blocks: [{ kind: 'steps', steps: ['only one'] }] })).blocks, []);
+  assert.deepEqual(parsePrMetadataText(JSON.stringify({ title: 'T', blocks: [{ kind: 'chart', data: [1, 2] }] })).blocks, []);
+});
+
+test('a third block is dropped', () => {
+  const steps = (t) => ({ kind: 'steps', title: t, steps: ['a', 'b'] });
+  const out = parsePrMetadataText(JSON.stringify({ title: 'T', blocks: [steps('1'), steps('2'), steps('3')] }));
+  assert.deepEqual(out.blocks.map((b) => b.title), ['1', '2']);
+});

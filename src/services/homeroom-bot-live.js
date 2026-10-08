@@ -1534,6 +1534,13 @@ const BUILD_DESCRIPTION_LINES = Object.freeze([
   'Write it from what that person would notice, not from what you edited. No file names, code, commit hashes or',
   'test results: those belong in the summary above it. No em dashes: use a comma, a colon or a full stop. Skip the',
   'block only if you changed nothing.',
+  'The description may END with one fenced code block whose language is explain, holding one JSON object',
+  '{"v": 1, "blocks": [...]} with at most two blocks, only when one explains the change better than another sentence',
+  'would; most changes need none. Every string is one short plain line, no Markdown, at most 120 characters (a',
+  'title at most 60). The shapes: {"kind": "comparison", "title"?, "rows": [{"who", "before", "after"}] (1 to 6),',
+  '"terms"?: [{"term", "meaning"}] (0 to 4)} when people or situations get different outcomes before and after;',
+  '{"kind": "steps", "title"?, "steps": [...]} (2 to 7) for a path a person follows; {"kind": "table", "title"?,',
+  '"columns": [...] (2 to 4), "rows": [[...]] (1 to 6, one cell per column)} only when neither fits.',
 ]);
 
 // A build of the platform's own repository runs its tests the way that

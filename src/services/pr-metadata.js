@@ -8,6 +8,7 @@ const turnEffects = require('./turn-effects');
 const sessionTitles = require('./session-title');
 const proposalDescription = require('./proposal-description');
 const summaryFreshness = require('./summary-freshness');
+const explainBlocks = require('./explain-blocks');
 const { visualHeadForSession } = require('./pr-vote-revision');
 
 // Coerce an arbitrary array of "issue numbers" into a clean, deduped,
@@ -374,6 +375,7 @@ function fallbackPrMetadataDraft(username) {
     title: `${username}'s changes`,
     body: '',
     summary: '',
+    blocks: [],
     fallback: true,
   };
 }
@@ -487,6 +489,9 @@ function deterministicPrMetadataDraft({
     summary: latestDescription
       ? latestDescriptionSummary(summaries, descriptions, ccSummary)
       : cumulativeDeterministicSummary(summaries, ccSummary),
+    // The agent's own description may already carry an `explain` fence
+    // (proposal-description.js normalises it); nothing is added here.
+    blocks: [],
     fallback: false,
   };
 }
@@ -518,6 +523,10 @@ async function generatePrMetadataDraft({ userMessage, ccSummary, requests, summa
       title: meta.title,
       body: meta.body,
       summary: typeof meta.summary === 'string' ? meta.summary.trim() : '',
+      // #4098: the explanation's structured blocks, already validated by
+      // llm.parsePrMetadataText; validated again here because a durable
+      // turn's receipt replays a draft that may predate the validator.
+      blocks: explainBlocks.validate(meta.blocks),
       fallback: false,
       usage: meta.usage,
       model: meta.model,
@@ -558,8 +567,17 @@ function renderPrMetadataDraft(draft, {
   // first paragraph of the PR body — before the model's bullets and before
   // the deterministic testing/visuals/closing suffix and the footer — so
   // the GitHub PR literally leads with the user-facing explanation.
-  const summary = typeof safeDraft.summary === 'string' ? safeDraft.summary.trim() : '';
-  const bodyWithSummary = summary ? `${summary}\n\n${safeDraft.body}` : safeDraft.body;
+  //
+  // #4098: the draft's blocks ride INSIDE the summary as its `explain`
+  // fence (what pr_summary_md stores); GitHub gets them as a table and a
+  // numbered list instead. With no blocks both forms are the summary as
+  // given, byte for byte.
+  const summary = explainBlocks.embed(
+    typeof safeDraft.summary === 'string' ? safeDraft.summary.trim() : '',
+    safeDraft.blocks,
+  );
+  const summaryForGitHub = explainBlocks.forGitHub(summary);
+  const bodyWithSummary = summary ? `${summaryForGitHub}\n\n${safeDraft.body}` : safeDraft.body;
   return {
     ...safeDraft,
     summary,
@@ -960,11 +978,15 @@ async function applyPrMetadata({
   const prSummary = generatedSummary || retainedSummary;
   // The draft renderer led the body with the model's own summary; drop it
   // when the author's is the one that leads.
+  // The body leads with the summary's GitHub form (#4098: its blocks as a
+  // table and a list), so the lead is matched and prepended in that form.
+  const rawGeneratedLead = explainBlocks.forGitHub(rawGeneratedSummary);
   const draftBody = authorSummaryHolds && rawGeneratedSummary
-    && String(generatedBody || '').startsWith(`${rawGeneratedSummary}\n\n`)
-    ? String(generatedBody).slice(rawGeneratedSummary.length + 2) : generatedBody;
-  const prBody = retainedSummary && !String(draftBody || '').startsWith(retainedSummary)
-    ? `${retainedSummary}\n\n${draftBody || ''}` : draftBody;
+    && String(generatedBody || '').startsWith(`${rawGeneratedLead}\n\n`)
+    ? String(generatedBody).slice(rawGeneratedLead.length + 2) : generatedBody;
+  const retainedLead = explainBlocks.forGitHub(retainedSummary);
+  const prBody = retainedSummary && !String(draftBody || '').startsWith(retainedLead)
+    ? `${retainedLead}\n\n${draftBody || ''}` : draftBody;
 
   // Whether the linked-issue set drifted from what's reflected in the live
   // PR body. Drives the existing-PR update gate below so a newly-linked

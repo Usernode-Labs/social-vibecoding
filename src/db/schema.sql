@@ -3378,6 +3378,12 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_visuals_applied TEXT;
 -- surface's single source of truth). NULL = none generated yet (legacy /
 -- pre-feature proposals, or an LLM-unavailable fallback); the view simply
 -- omits the summary paragraph in that case.
+-- #4098: the text may END with a fenced code block of language `explain`
+-- holding version-1 structured blocks (a before/after comparison with term
+-- definitions, a numbered path of steps, a small table), validated by
+-- src/services/explain-blocks.js; the change page draws them natively and
+-- the PR body carries them as a table and a list. A fence that does not
+-- validate is kept as the plain text it is.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_summary_md TEXT;
 
 -- A summary is a snapshot of proposal inputs, not a timeless description.

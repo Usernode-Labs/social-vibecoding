@@ -38,6 +38,7 @@ import { useEffect, useMemo, type ReactNode } from 'react';
 import type { DevWorkshopView } from '../dev-board/card/model';
 import { callAppView } from '../dev-board/card/fold';
 import { NeedsFeed } from '../dev-board/workshop/workshop';
+import { plainSummary } from './summary-text';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { agoStamp } from '../../lib/timestamp';
 
@@ -62,22 +63,10 @@ export type NeedsFeedItem = {
 
 type FeedRow = DevWorkshopView['queue'][number];
 
-/**
- * A proposal's summary is Markdown written for its own page. On the item it
- * is a paragraph: headings, emphasis, code ticks and list markers go, a link
- * keeps its words, and the whitespace collapses. The Description sheet has
- * it rendered.
- */
-export function plainSummary(md: string | null | undefined): string {
-  return String(md || '')
-    .replace(/```[\s\S]*?```/g, ' ')
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
-    .replace(/^\s{0,3}(#{1,6}|[-*+]|\d+\.)\s+/gm, '')
-    .replace(/[*_`>~]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
+// The card's paragraph form of a summary lives in summary-text.ts so the
+// Workshop's own deck can read it without importing this module; it is
+// re-exported here for the callers that always found it on the reel.
+export { plainSummary } from './summary-text';
 
 /**
  * The feed's rows, in the shape a project's Needs you builds its own

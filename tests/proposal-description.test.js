@@ -110,3 +110,20 @@ test('the turn path peels the block off and hands it to the PR metadata', () => 
   assert.match(src, /proposalDescription: turnDescription,/);
   assert.match(src, /\.\.\.\(turnDescription \? \{ proposalDescription: turnDescription \} : \{\}\),/);
 });
+
+test('#4098: an explain fence the agent ended with is stored canonically; an invalid one stays text', () => {
+  const explainBlocks = require('../src/services/explain-blocks');
+  const loose = [
+    '==== DESCRIPTION ====',
+    'Adds a dark-mode switch.',
+    '',
+    '```explain',
+    JSON.stringify({ v: 1, blocks: [{ kind: 'steps', steps: ['Open Settings', 'Tap Dark'], colour: 'x' }] }, null, 2),
+    '```',
+    '==== END DESCRIPTION ====',
+  ].join('\n');
+  assert.equal(subject.extract(loose).description,
+    explainBlocks.embed('Adds a dark-mode switch.', [{ kind: 'steps', steps: ['Open Settings', 'Tap Dark'] }]));
+  const bad = '==== DESCRIPTION ====\nAdds a switch.\n\n```explain\n{oops\n```\n==== END DESCRIPTION ====';
+  assert.equal(subject.extract(bad).description, 'Adds a switch.\n\n```explain\n{oops\n```');
+});

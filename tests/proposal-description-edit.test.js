@@ -150,3 +150,13 @@ test('a head/summary invalidation racing the read is caught by the atomic versio
   assert.equal((await f.save('Draft from previous head')).status, 409);
   assert.deepEqual(f.updates, []);
 });
+
+test('#4098: parseEdit stores an explain fence canonically and keeps an invalid one as the text typed', () => {
+  const explainBlocks = require('../src/services/explain-blocks');
+  const steps = { kind: 'steps', steps: ['Open Settings', 'Tap Dark'] };
+  const typed = `Adds a switch.\n\n\`\`\`explain\n${JSON.stringify({ v: 1, blocks: [{ ...steps, colour: 'x' }] }, null, 2)}\n\`\`\`  `;
+  assert.equal(edit.parseEdit({ description: typed, expectedVersion: 0 }).description,
+    explainBlocks.embed('Adds a switch.', [steps]));
+  const bad = 'Adds a switch.\n\n```explain\n{oops\n```';
+  assert.equal(edit.parseEdit({ description: bad, expectedVersion: 0 }).description, bad);
+});

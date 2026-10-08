@@ -1551,7 +1551,12 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // checks slot reads "Waiting for a checks slot (2 ahead)" on its card. A
   // new state on a new mock route (proposals/9000054), so nothing to fold it
   // into; it mirrors the two phase checks on 9000022 and 9000026.
-  // 735 leaves 145 slots.
+  //
+  // 735 → 736: +1 (#4098): a change's explanation blocks on the proposal
+  // page (the Before and after card, its Terms, the numbered Steps under the
+  // summary, on mock 9000001). Folding it into that route's one check put
+  // its selector past the 256 characters the runner reads, so it is a check
+  // of its own. 736 leaves 144 slots under the 880 ceiling.
   //
   // 735 → 737: +2 (#4405, custom domains): the hub's ⋯ menu offers Custom
   // domain in its Settings & rules panel to whoever manages the project (a
@@ -1559,11 +1564,12 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // the check account does not manage), and the Custom domain dialog lists
   // the CNAME and TXT records with the Waiting for DNS status line, opened
   // by `?shot=app-domain` on the seeded staging-demo-custom-domain project.
-  // 737 leaves 143 slots.
+  // 737 → 738: +1 (#4098) is counted above as 735 → 736; with #4405's two
+  // it makes 738, which leaves 142 slots.
   //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 737);
+  checkCap.assertPinned(DAPP.tests.length, 738);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
