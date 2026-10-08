@@ -115,8 +115,12 @@ export function ChatgptSetupSteps() {
         <SetupStep n={2} title="Create a custom MCP server.">
           Click <strong className="font-semibold text-zinc-600 dark:text-zinc-400">&ldquo;Add plugin&rdquo;</strong>, then choose <strong className="font-semibold text-zinc-600 dark:text-zinc-400">&ldquo;Create custom MCP server&rdquo;</strong>.
         </SetupStep>
-        <SetupStep n={3} title="Enter your MCP server URL.">
-          For Homeroom that is the MCP server URL above, a public HTTPS endpoint ending in <code className="font-mono text-zinc-600 dark:text-zinc-400">/mcp</code>. The server must be reachable by ChatGPT; one running only on <code className="font-mono text-zinc-600 dark:text-zinc-400">localhost</code> will not work directly.
+        {/* #4438: this field is for Homeroom's own MCP server, whose URL is
+            known and shown above, so the step names it instead of teaching
+            what a generic MCP server URL is. Claude's step 3 keeps its
+            reachability sentence, which is about Anthropic's cloud. */}
+        <SetupStep n={3} title="Enter Homeroom MCP server URL.">
+          For Homeroom that is the MCP server URL above. Copy it as it is.
         </SetupStep>
         <SetupStep n={4} title="Turn the server on in a chat.">
           Open the <code className="font-mono text-zinc-600 dark:text-zinc-400">+</code> / connector picker next to the message box, select the server you just created, and set it as active. Now ask ChatGPT to perform something that uses one of the tools, for example: <em>&ldquo;Use my MCP server to list the open support tickets.&rdquo;</em> When appropriate, ChatGPT will call the tools your MCP server exposes and use their results in the conversation.

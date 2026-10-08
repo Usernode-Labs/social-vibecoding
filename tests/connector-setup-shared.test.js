@@ -58,6 +58,18 @@ test('the shared module is the only place the two walkthroughs are written', () 
   assert.equal((claude.match(/<SetupStep n=\{\d\}/g) || []).length, 6);
   assert.equal((chatgpt.match(/<SetupStep n=\{\d\}/g) || []).length, 4);
 
+  // #4438: ChatGPT's step 3 names Homeroom's URL, which the field above the
+  // steps already shows, instead of teaching what a generic MCP server URL
+  // is. Step 3 stays a step, so the card's "4 steps" hint stays true; and
+  // Claude's step 3 keeps its own reachability sentence, which is about
+  // Anthropic's cloud, not ChatGPT's.
+  const chatgptStep3 = stripComments(chatgpt).slice(
+    stripComments(chatgpt).indexOf('<SetupStep n={3}'),
+    stripComments(chatgpt).indexOf('<SetupStep n={4}'));
+  assert.match(chatgptStep3, /Enter Homeroom MCP server URL\./);
+  assert.match(chatgptStep3, /the MCP server URL above\. Copy it as it is\./);
+  assert.doesNotMatch(chatgptStep3, /public HTTPS endpoint|localhost|reachable by ChatGPT/);
+
   // Neither consumer restates them. A `SetupStep` in Settings is legitimate
   // — the Codex and generic-client routes still render rows in that idiom —
   // so the assertion is on the product walkthroughs' own first lines, which

@@ -129,4 +129,7 @@ test('#1607: the written walkthroughs stay, because a chat cannot click a settin
   assert.doesNotMatch(steps, /Developer mode/);
   assert.doesNotMatch(steps, /Browse plugins directory/, 'no Settings walk first');
   assert.match(steps, /Paste your MCP server URL\./);
+  // #4438: ChatGPT's step 3 names Homeroom's URL, which the field above the
+  // steps already shows, instead of teaching what a generic MCP server URL is.
+  assert.match(steps, /Enter Homeroom MCP server URL\./);
 });
