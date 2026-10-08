@@ -166,8 +166,10 @@ const ISSUES_CLOSED_SUPPRESS_TTL_MS = 10 * 60 * 1000;
 // recorded closed by a process that serves no page (the workflow worker,
 // after a merge) or by another web Pod. So noteIssuesClosed,
 // unsuppressIssues and invalidateIssuesCache apply the change here and
-// publish it on the WebSocket bus (ws-bus.js); every other process applies
-// it without publishing again (applyIssueChange, from ws.js).
+// publish it on the WebSocket bus (ws-bus.js); every web process applies
+// it without publishing again (applyIssueChange, from ws.js). The workflow
+// worker only publishes, so its own copy hears nothing from the others; it
+// serves no issue list, and what it reads expires with the cache's TTL.
 function shareIssueChange(change) {
   wsBus.publish('github_issues', null, change);
 }

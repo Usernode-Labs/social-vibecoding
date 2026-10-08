@@ -402,7 +402,9 @@ applies an event, and work claims are leased row locks.
 the shared bootstrap the web process runs (`src/services/process-bootstrap.js`: phone
 push, GitHub, the LLM, and the module-level hooks), then the runtime with its loops and
 no slots (`startWorkflow(config, { loops: true, worker: true })`), and serves only
-`/health` on 8081. What it means for the code:
+`/health` on 8081. At SIGTERM it signals its running work to abort and waits up to
+80 seconds; work that finished is reported, work that ended on the signal resumes from
+its checkpoint on the next claim. What it means for the code:
 
 - **Results are decided on the web Pods.** A work result the worker appends is applied
   by a web Pod's slot, within one wake-up. Notifiers run there too, beside the process
@@ -419,11 +421,25 @@ no slots (`startWorkflow(config, { loops: true, worker: true })`), and serves on
   - a turn's pending stop (`worker.stopTurn` publishes `worker_stop`, and the process
     running the turn records it);
   - whether a shots run holds a proposal's worker (`worker.retire` reads `shot_runs`
-    and waits for the run);
-  - whether an included change is busy (`included.find` pins the head it found, and the
-    `Included` guard refuses a change whose head moved, `head_moved`).
+    and waits for any run not yet finished, planned ones included);
+  - the Homeroom bot's wake after a merge (`noteRequestMerged` publishes it, for the
+    process running the bot's loop);
+  - whether an included change is still the one that merged (`included.find` pins the
+    head it found, and the `Included` guard refuses a change whose recorded head moved,
+    `head_moved`).
   A new handler follows the same rule: state it needs from a web process goes through
   the database or the bus.
+- **Not covered yet** (to settle before the worker is turned on):
+  - whether an app is deploying (`app-deploy-status.js`) is per process, so the web
+    Pods do not see a deploy the worker runs: the version pill, the heal pass and the
+    fleet rollover read it;
+  - an included change's busy check: an operation that pushes to the change without a
+    turn (sync with main, a turn's tail, a hand-off promotion) does not move its
+    recorded head first, so `head_moved` does not see it, and the in-memory check that
+    did is not visible from the worker.
+- **The worker's broadcasts** carry `p: 1`, so a web Pod does not take the worker for
+  a peer that hears it (`_isAlone` in `ws-bus.js`), and they are sent one at a time, in
+  the order they were made.
 - **It records no booted build.** `apps.booted_shas` is what served; the worker serves
   nothing, and a worker rolled out ahead of the web Pods would otherwise make a platform
   release read live early.

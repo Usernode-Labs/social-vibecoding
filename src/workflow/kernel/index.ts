@@ -1,7 +1,8 @@
 // The workflow kernel's entry point. A process creates one runtime with the
 // machines and services it knows. Every process can append and wait; the
 // pipeline slots, timer loop and services run where `start` enables them
-// (slots on every process, the rest on the leader). Correctness never
+// (slots on every web process; the rest on the leader, or on the workflow
+// worker, which runs no slots). Correctness never
 // depends on which process runs what: it comes from row locks and SKIP
 // LOCKED claims.
 // docs/workflows.md explains the model and how to write a machine.

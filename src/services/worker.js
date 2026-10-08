@@ -4791,12 +4791,14 @@ async function destroyCcVolume(sessionId) {
 // and the release of the last hold carries it out. Whichever comes second
 // does the teardown, and only once.
 //
-// Both sides run in this process (the platform is one pod, and the shots
-// control plane is in memory for the same reason), and each checks the
-// other and records itself in one synchronous step, so neither can slip
-// between the other's check and record. A restart drops the holds along
-// with the runs that held them; the hourly volume sweep frees a merged
-// change's leftover volume.
+// Both sides are in this process when the merge's follow-ups run where the
+// shots do (the shots control plane is in memory), and each checks the other
+// and records itself in one synchronous step, so neither can slip between
+// the other's check and record. The workflow worker, which runs them
+// elsewhere, cannot see the hold: its retirement waits for the run in
+// shot_runs instead (merge-followups' worker.retire). A restart drops the
+// holds along with the runs that held them; the hourly volume sweep frees a
+// merged change's leftover volume.
 const _workerHolds = new Map();
 
 function holdWorker(sessionId) {
