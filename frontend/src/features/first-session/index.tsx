@@ -716,7 +716,7 @@ function WelcomeFrame({ children, foot = null, held = false }: { children: React
       style={{ background: 'var(--home-wallpaper, #f4f2e4)' }}
     >
       <div className="flex h-[52px] shrink-0 items-center justify-center pt-[env(safe-area-inset-top)]">
-        <Wordmark className="h-6 w-auto text-[color:var(--brand-ink)]" />
+        <Wordmark className="h-6 w-auto text-zinc-900 dark:text-zinc-100" />
       </div>
       {/* The page scrolls under a foot that stays: a long list of people
           never pushes the one button off the screen. */}

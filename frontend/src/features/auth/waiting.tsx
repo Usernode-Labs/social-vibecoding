@@ -258,7 +258,7 @@ export function WaitingScreen() {
       {mounted ? (
         <>
         <div className="mx-auto flex min-h-full w-full max-w-sm flex-col px-6 pt-16 pb-9 text-center">
-          <Wordmark className="mx-auto h-6 w-auto text-[color:var(--brand-ink)]" />
+          <Wordmark className="mx-auto h-6 w-auto text-zinc-900 dark:text-zinc-100" />
           <h1 className="mt-12 text-[30px] font-extrabold leading-[34px] text-zinc-900 dark:text-zinc-100">
             You're on the waitlist
           </h1>
