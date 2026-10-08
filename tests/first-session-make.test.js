@@ -551,7 +551,7 @@ test('the maker\'s last step shows the chat with Homeroom bot whole: its header 
   const { makerSteps, BOT_CHAT_HEADER, BOT_CHAT_MESSAGES } = loadTsx(`${DIR}/tour-steps.ts`);
   const steps = makerSteps({ slug: 'film', name: 'Friday Film Crew', conversationId: 12 });
   const chat = steps[8];
-  assert.equal(chat.title, 'Homeroom bot is planning Friday Film Crew');
+  assert.equal(chat.title, 'Homeroom bot is working on Friday Film Crew');
   assert.equal(BOT_CHAT_HEADER, '.messages-thread-direct > .messages-thread-header');
   assert.equal(BOT_CHAT_MESSAGES, '.messages-thread-direct > .messages-thread-scroll');
   // One cut-out round both (index.tsx targetBox draws a selector list as one box).
@@ -562,7 +562,7 @@ test('the maker\'s last step shows the chat with Homeroom bot whole: its header 
   // plan's title and first lines are never under the card.
   assert.deepEqual(chat.newestBelowCard, { scroller: BOT_CHAT_MESSAGES, rows: 'article.messages-message' });
   assert.deepEqual(chat.place, { below: BOT_CHAT_HEADER });
-  assert.equal(chat.text, 'It messages you here when the plan is ready.');
+  assert.equal(chat.text, 'It\'ll let you know here when there\'s something to look at.');
   // And the platform's top bar over them, as one cut-out (Evan, 5 Oct 2026:
   // "include the header on step 7 also").
   assert.equal(chat.alongside, '#platform-header');

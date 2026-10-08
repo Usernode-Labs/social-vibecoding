@@ -3173,6 +3173,9 @@ const AppView = {
    * (`tourSays`: the card carries `data-tour-says-where-it-opens`;
    * features/app-frame/app-status.tsx). A card that does not say it, such as
    * today's "this shows how the build is going", leaves it in place.
+   * While a first-session tour runs, app-status.tsx holds "Review the plan"
+   * back and its line says the bot is working on it (heldForTour): the
+   * tour's last card is what names the plan.
    */
   _firstVersionView(appData) {
     const fv = appData.first_version || {};

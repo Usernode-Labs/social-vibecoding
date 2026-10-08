@@ -115,6 +115,24 @@ test('a plan or a question waiting on its maker: one button that says so, and no
   assert.match(src, /import \{ open as openConversation, openBot \} from '\.\.\/\.\.\/messages\/store';/);
 });
 
+test('#4391/#4393: while the first-session tour runs, no Review the plan: the bot is working on it', () => {
+  const tour = loadTsx('frontend/src/features/first-session/tour-running.ts');
+  tour.setTourRunning(true);
+  try {
+    const plan = card(building({ step: 3, line: 'plan', waits_on: 'plan' }));
+    assert.match(plan, /data-ws-first-version="working"/);
+    assert.match(plan, /data-build-line="working"[^>]*>.*animate-spin.*Homeroom bot is working on it/, 'the build line, with its spinner');
+    assert.doesNotMatch(plan, /data-ws-first-version-action|Review the plan|plan is ready/);
+    // Only the plan is held: a question and the build itself are as they were.
+    assert.match(card(building({ step: 2, line: 'question', waits_on: 'question' })), /data-ws-first-version-action="answer"/);
+    assert.match(card(building()), /data-build-line="building"/);
+  } finally {
+    tour.setTourRunning(false);
+  }
+  // Once the tour ends, exactly as before.
+  assert.match(card(building({ step: 3, line: 'plan', waits_on: 'plan' })), /data-ws-first-version-action="review"[^>]*>Review the plan<\/button>/);
+});
+
 test('ready to try: Try it, with no line above it; live in its first week: Open app', () => {
   const html = card(building({ step: 6, line: 'ready', ready: true, session_id: 990003 }));
   assert.match(html, /data-ws-first-version="ready"/);
