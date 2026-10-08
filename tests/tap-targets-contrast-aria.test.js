@@ -14,6 +14,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -207,8 +208,9 @@ test('Q19: chip and Save slops never cover a neighbour\'s own box', () => {
 
 test('Q20: form controls the audit found unnamed have names', () => {
   const waitlist = read('frontend/src/features/auth/waitlist.tsx');
-  assert.match(waitlist, /<label className=\{SURVEY_LABEL\} htmlFor="waitlist-country">\s*Country/,
+  assert.match(waitlist, /<label className=\{SURVEY_LABEL\} htmlFor="waitlist-country">\s*\{t\('auth:waitlist\.country\.label'\)\}/,
     'the Country label points at its select');
+  assert.equal(message('auth:waitlist.country.label'), 'Country');
   assert.match(waitlist, /id="waitlist-country"/);
   // Four text boxes that took focus announcing only "edit text".
   assert.match(read('frontend/src/features/messages/message-row.tsx'),

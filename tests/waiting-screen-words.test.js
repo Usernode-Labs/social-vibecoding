@@ -31,15 +31,25 @@ function code(src) {
     .replace(/^\s*\/\/.*$/gm, ' ');
 }
 
+/** The English of every auth catalog entry whose key starts with `prefix`. */
+function catalogTexts(prefix) {
+  const entries = JSON.parse(read('frontend/locales/en/auth.json'));
+  return Object.keys(entries).filter((key) => key.startsWith(prefix)).map((key) => entries[key].text);
+}
+
 test('the waiting screen: the title, one line, the invite box, Sign out', () => {
   const src = code(read(WAITING));
-  assert.match(src, />\s*You're on the waitlist\s*</);
+  assert.match(src, />\s*\{t\('auth:waiting\.title'\)\}\s*</);
+  assert.equal(message('auth:waiting.title'), "You're on the waitlist");
   // The email promise is back now every newcomer gets a spot and the mail (#4083).
-  assert.match(src, />\s*We let people in a few at a time, and we'll email you when your spot is ready\.\s*</);
-  assert.match(src, /\{`When you get access, you join \$\{namesLine\(queued\.map\(\(q\) => q\.name\)\)\}\.`\}/);
+  assert.match(src, />\s*\{t\('auth:waiting\.lead'\)\}\s*</);
+  assert.equal(message('auth:waiting.lead'), "We let people in a few at a time, and we'll email you when your spot is ready.");
+  assert.match(src, /\{t\('auth:waiting\.youJoin', \{ communities: namesLine\(queued\.map\(\(q\) => q\.name\)\) \}\)\}/);
+  assert.equal(message('auth:waiting.youJoin', { communities: 'A, B and C' }), 'When you get access, you join A, B and C.');
   assert.match(src, /data-waiting-queued=""/);
   assert.match(src, /<Wordmark className="mx-auto h-6 w-auto text-zinc-950 dark:text-white" \/>/);
-  assert.match(src, /id="waiting-logout"[\s\S]{0,400}?>\s*Sign out\s*<\/button>/);
+  assert.match(src, /id="waiting-logout"[\s\S]{0,400}?>\s*\{t\('auth:waiting\.signOut'\)\}\s*<\/button>/);
+  assert.equal(message('auth:waiting.signOut'), 'Sign out');
   // Sign out is a small text link, not a pill; the room draws one picture, the
   // story's own, in the space above it (C1b-waiting).
   const logout = src.match(/<button\s+id="waiting-logout"[\s\S]*?>/)[0];
@@ -50,6 +60,8 @@ test('the waiting screen: the title, one line, the invite box, Sign out', () => 
   // What it said before, and the two lines that went with it.
   for (const gone of [/in the queue/i, /batches/i, /your turn/i, /platform access/i, /Last checked/, /Connection issue/, /When you're let in/, /id="waiting-who"/, /id="waiting-check-state"/]) {
     assert.doesNotMatch(src, gone);
+    // The room's words are catalog entries now: the same goes for them.
+    for (const text of catalogTexts('waiting.')) assert.doesNotMatch(text, gone);
   }
   // It still lets the account in the moment access is granted.
   assert.match(src, /const POLL_MS = 30000;/);
@@ -77,8 +89,10 @@ test('the invite box names every community a link queued, in one sentence', () =
 
 test('the landing\'s way back to it says the waitlist too', () => {
   const src = code(read(LANDING));
-  assert.match(src, /id="landing-back-to-waiting"[\s\S]{0,200}?>\s*Your spot on the waitlist\s*<\/a>/);
+  assert.match(src, /id="landing-back-to-waiting"[\s\S]{0,200}?>\s*\{t\('auth:landing\.backToWaiting'\)\}\s*<\/a>/);
+  assert.equal(message('auth:landing.backToWaiting'), 'Your spot on the waitlist');
   assert.doesNotMatch(src, /queue status/i);
+  for (const text of catalogTexts('landing.')) assert.doesNotMatch(text, /queue status/i);
 });
 
 // The before/after shots cannot reach the waiting room: every shot persona
@@ -127,8 +141,11 @@ test('the Home waitlist card: a few at a time, your spot, no batches or group', 
 });
 
 test('the waitlist pitch and form keep the email promise, without batches or groups', () => {
-  assert.match(code(read(LANDING)), /We're letting people in a few at a time, and we'll email you when your spot is ready\./);
+  assert.match(code(read(LANDING)), /\{t\('auth:landing\.pitch\.body'\)\}/);
+  assert.match(message('auth:landing.pitch.body'), /We're letting people in a few at a time, and we'll email you when your spot is ready\./);
   const form = code(read('frontend/src/features/auth/waitlist.tsx'));
-  assert.match(form, /We\\u2019re letting people in a few at a time\. We\\u2019ll email you when yours comes up\./);
+  assert.match(form, /t\('auth:waitlist\.status\.leadWaiting'\)/);
+  assert.match(message('auth:waitlist.status.leadWaiting'), /We\u2019re letting people in a few at a time\. We\u2019ll email you when yours comes up\./);
   assert.doesNotMatch(form, /small groups|next group/);
+  for (const text of catalogTexts('waitlist.')) assert.doesNotMatch(text, /small groups|next group/);
 });

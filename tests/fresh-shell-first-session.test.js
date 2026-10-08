@@ -46,6 +46,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const ts = require('typescript');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -642,6 +643,7 @@ function loadAuthShared(window, fetchImpl) {
     console: { warn() {} },
     require(specifier) {
       if (specifier === '../../lib/legacy-dom') return { useIsomorphicLayoutEffect() {} };
+      if (specifier === '../../lib/i18n/runtime') return englishPlatformI18n();
       throw new Error(`unexpected auth shared import: ${specifier}`);
     },
   };

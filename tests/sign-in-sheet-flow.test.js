@@ -24,6 +24,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -243,9 +244,11 @@ test('the password step is the sheet\'s: the link opens it, and Forgot password 
   const src = read(SHEET);
   assert.match(src, /type Step = 'choose' \| 'email' \| 'code' \| 'account' \| 'username' \| 'password' \| 'phone' \| 'phone-code';/);
   assert.match(src, /data-sign-in-sheet-password=""\s+onClick=\{\(e\) => \{ e\.preventDefault\(\); setError\(null\); setDetails\(null\); setStep\('password'\); \}\}/);
-  assert.match(src, /<label htmlFor="sign-in-sheet-identifier" className=\{LABEL\}>Username or email<\/label>/);
+  assert.match(src, /<label htmlFor="sign-in-sheet-identifier" className=\{LABEL\}>\{t\('auth:signInSheet\.password\.identifierLabel'\)\}<\/label>/);
+  assert.equal(message('auth:signInSheet.password.identifierLabel'), 'Username or email');
   assert.match(src, /<PasswordInput ref=\{currentPasswordField\} id="sign-in-sheet-current-password" name="password" required autoComplete="current-password"/);
-  assert.match(src, /<a href="#login\/forgot" onClick=\{\(\) => \{ if \(followInvite\) rememberInviteJoin\(\); onClose\(\); \}\} className=\{QUIET\}>Forgot password\?<\/a>/);
+  assert.match(src, /<a href="#login\/forgot" onClick=\{\(\) => \{ if \(followInvite\) rememberInviteJoin\(\); onClose\(\); \}\} className=\{QUIET\}>\{t\('auth:signInSheet\.password\.forgot'\)\}<\/a>/);
+  assert.equal(message('auth:signInSheet.password.forgot'), 'Forgot password?');
   // Join pressed on an invite, then a password: the shell follows the link
   // without asking a second time, as it did from the sign-in screen.
   assert.match(src, /if \(followInvite\) rememberInviteJoin\(\);\s+await finish\('existing'\);/);

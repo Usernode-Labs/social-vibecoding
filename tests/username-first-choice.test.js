@@ -35,6 +35,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const express = require('express');
@@ -412,7 +413,10 @@ test('it presents at once, with an empty field and nothing fetched to fill it (#
 test('beside the field, every sign-up surface says the username will be public (#3575)', () => {
   const shared = read('frontend/src/features/auth/shared.ts');
   const note = 'Your username will be public to other users on Homeroom.';
-  assert.match(shared, /export const USERNAME_PUBLIC_NOTE = 'Your username will be public to other users on Homeroom\.';/);
+  // The React forms read the sentence from the catalog, one entry per form.
+  assert.match(shared, /auth:register\.usernamePublic and auth:login\.signup\.usernamePublic/);
+  assert.equal(message('auth:register.usernamePublic'), note);
+  assert.equal(message('auth:login.signup.usernamePublic'), note);
   // The gate is a classic module with no imports, so it spells the words;
   // this is what holds the two copies together.
   assert.ok(gateJs.includes(`const PUBLIC_NOTE = '${note}';`));
@@ -429,10 +433,10 @@ test('beside the field, every sign-up surface says the username will be public (
   // shared constant on its own line, directly under the input.
   const register = read('frontend/src/features/auth/register.tsx');
   assert.match(register,
-    /aria-describedby="reg-username-public reg-username-hint"[\s\S]{0,700}?<p id="reg-username-public" className=\{FIELD_HINT\}>\s*\{USERNAME_PUBLIC_NOTE\}\s*<\/p>\s*<p\s+id="reg-username-hint"/);
+    /aria-describedby="reg-username-public reg-username-hint"[\s\S]{0,700}?<p id="reg-username-public" className=\{FIELD_HINT\}>\s*\{t\('auth:register\.usernamePublic'\)\}\s*<\/p>\s*<p\s+id="reg-username-hint"/);
   const login = read('frontend/src/features/auth/login.tsx');
   assert.match(login,
-    /aria-describedby="otp-username-public otp-username-hint"[\s\S]{0,300}?\/>\s*<p id="otp-username-public" className=\{FIELD_HINT\}>\s*\{USERNAME_PUBLIC_NOTE\}\s*<\/p>\s*<p id="otp-username-hint"/);
+    /aria-describedby="otp-username-public otp-username-hint"[\s\S]{0,300}?\/>\s*<p id="otp-username-public" className=\{FIELD_HINT\}>\s*\{t\('auth:login\.signup\.usernamePublic'\)\}\s*<\/p>\s*<p id="otp-username-hint"/);
 });
 
 test('screenshot and demo routes are skipped, except this step own shot', () => {

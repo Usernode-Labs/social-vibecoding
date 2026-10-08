@@ -29,6 +29,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('fs');
 const path = require('path');
 
@@ -155,11 +156,14 @@ test('the trigger accepts by continuing, and never presents the sheet', () => {
 test('the sign-in screens say continuing is agreeing, linking the current terms', () => {
   const shared = read('frontend', 'src', 'features', 'auth', 'waitlist-shared.tsx');
   assert.match(shared, /export function TermsNotice\(/);
-  assert.match(shared, /\{`By \$\{verb\}, you agree to Homeroom's `\}/);
+  assert.match(shared, /<RichMessage id=\{verb === 'signing in' \? 'auth:terms\.signingIn' : 'auth:terms\.continuing'\}/);
+  assert.equal(message('auth:terms.continuing'), "By continuing, you agree to Homeroom's <0>terms</0>.");
+  assert.equal(message('auth:terms.signingIn'), "By signing in, you agree to Homeroom's <0>terms</0>.");
   assert.match(shared, /const link = useWaitlistOptions\(\)\?\.terms_link \|\| null;/);
   assert.match(read('frontend', 'src', 'features', 'auth', 'sign-in-sheet.tsx'), /<TermsNotice className="mt-3" recaptcha=\{step === 'phone' \|\| step === 'phone-code' \? RECAPTCHA_LINE : null\} \/>/);
   assert.match(read('frontend', 'src', 'features', 'auth', 'login.tsx'),
-    /Sign in\s*\n\s*<\/Button>\s*\n\s*<TermsNotice verb="signing in" \/>/);
+    /\{t\('auth:login\.submit'\)\}\s*\n\s*<\/Button>\s*\n\s*<TermsNotice verb="signing in" \/>/);
+  assert.equal(message('auth:login.submit'), 'Sign in');
   assert.match(read('src', 'routes', 'public-api.js'), /terms_link: await currentTermsLink\(\),/);
 });
 

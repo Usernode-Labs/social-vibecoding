@@ -21,6 +21,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -83,7 +84,15 @@ const flush = () => new Promise((resolve) => setImmediate(resolve));
  */
 function mountHook({ pathname, fetchImpl }) {
   const fake = createFakeReact();
-  const card = loadTsx(CARD_PATH, { stubs: { react: fake.React } });
+  // The hook under test draws nothing; the card's text components are not
+  // rendered here, so the React half of the language runtime is stubbed with
+  // the English reader and the stepped React stays two hooks small.
+  const card = loadTsx(CARD_PATH, {
+    stubs: {
+      react: fake.React,
+      '../../lib/i18n/react': { useMessages: () => englishPlatformI18n().t, RichMessage: () => null },
+    },
+  });
   const calls = [];
   globalThis.location = { pathname };
   globalThis.fetch = (url) => { calls.push(url); return fetchImpl(url); };

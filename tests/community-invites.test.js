@@ -10,6 +10,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -242,7 +243,8 @@ test('the words: the landing card, the invite pane', () => {
   assert.equal(card.inviterLabel({}), '');
   // The signed-out page does not say who will see the join (owner, 8 October).
   assert.equal(card.seenLine, undefined);
-  assert.equal(card.HOMEROOM_LINE, 'On Homeroom, people using an app build and improve it together.');
+  assert.equal(card.HOMEROOM_LINE, 'auth:invite.homeroomLine');
+  assert.equal(message(card.HOMEROOM_LINE), 'On Homeroom, people using an app build and improve it together.');
   // The making line is gone: the hero says who invited you, not who made it.
   const src = read('frontend/src/features/auth/invite-card.tsx');
   assert.doesNotMatch(src, /and invited you to join|export function madeLine|export function underLine/);
@@ -380,5 +382,6 @@ test(`a live link's landing is "Made for you"; the pitch stays in the document, 
   assert.match(card, /<section\s+data-landing-invite="live"/);
   assert.match(card, /data-landing-invite-picture=\{picture\.kind\}/);
   assert.match(card, /data-landing-invite-note=""/);
-  assert.match(card, /\{`Join \$\{project\.name\}`\}/);
+  assert.match(card, /\{t\('auth:invite\.join', \{ project: project\.name \}\)\}/);
+  assert.equal(message('auth:invite.join', { project: 'Game Corner' }), 'Join Game Corner');
 });

@@ -28,6 +28,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const { createElement, loadTsx, renderToHtml } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -500,7 +501,8 @@ test('a private community\'s invite preview shows the community and Join, and no
   assert.doesNotMatch(html, /will see that you joined/, 'the Join stands alone (#4395)');
   assert.match(html, /<b>Private community<\/b><\/span> · 4 members/, 'the member count');
   assert.match(html, /data-invite-preview-description="">Our monthly pick</);
-  assert.ok(html.includes(CLOSED_LINE), 'and why there is no more to see');
+  assert.equal(message(CLOSED_LINE), 'Its members, its app and what it is deciding open once you join.');
+  assert.ok(html.includes(message(CLOSED_LINE)), 'and why there is no more to see');
   assert.doesNotMatch(html, /dev-ws-hero-face|dev-ws-hero-faces/, 'no faces');
   assert.doesNotMatch(html, /data-ws-community-open-app|Open app/, 'no Open app');
   assert.doesNotMatch(html, /data-ws-members-trend|data-ws-members-stats/, 'no trend');

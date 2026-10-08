@@ -15,6 +15,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
@@ -122,13 +123,17 @@ test('the sheet\'s phone steps: the code, then the username on the phone\'s own 
   const verify = src.slice(src.indexOf('const verifyPhone = useCallback'), src.indexOf('const finishAccount = useCallback'));
   assert.match(verify, /fetchSessionMint\('\/api\/auth\/phone\/verify'/);
   assert.match(verify, /sessionInfo: phoneSession\.current,\s+code,\s+\.\.\.\(phoneName\.current \? \{ name: phoneName\.current \} : \{\}\),\s+\.\.\.\(followInvite \? \{ followInvite: true \} : \{\}\),/);
-  assert.match(src, /if \(!name\) \{ setError\('Enter your name\.'\);/);
+  assert.match(src, /if \(!name\) \{ setError\(translate\('auth:signInSheet\.phone\.nameMissing'\)\);/);
+  assert.equal(message('auth:signInSheet.phone.nameMissing'), 'Enter your name.');
   assert.match(verify, /if \(data\.next === 'signed-in'\) \{\s+await finish\(data\.created === true \? 'new' : 'existing'\);/);
   assert.match(verify, /setUsernameVia\('phone'\);\s+setStep\('username'\);/);
   assert.match(src, /fetchSessionMint\(usernameVia === 'phone' \? '\/api\/auth\/phone\/finish' : '\/api\/auth\/oauth\/finish'/);
-  assert.match(src, /'Check your texts'/);
-  assert.match(src, /`We sent a 6-digit code to the number ending \$\{phoneNumber\.slice\(-4\)\}\.`/);
-  assert.match(src, /The code fills itself in on most phones\./);
+  assert.match(src, /t\('auth:signInSheet\.phoneCode\.title'\)/);
+  assert.equal(message('auth:signInSheet.phoneCode.title'), 'Check your texts');
+  assert.match(src, /t\('auth:signInSheet\.phoneCode\.lead', \{ lastDigits: phoneNumber\.slice\(-4\) \}\)/);
+  assert.equal(message('auth:signInSheet.phoneCode.lead', { lastDigits: '0123' }), 'We sent a 6-digit code to the number ending 0123.');
+  assert.match(src, /\{t\('auth:signInSheet\.phoneCode\.autofill'\)\}/);
+  assert.equal(message('auth:signInSheet.phoneCode.autofill'), 'The code fills itself in on most phones.');
   // The landing hands the offer to the invite's sheet only.
   const landing = read('frontend/src/features/auth/landing.tsx');
   assert.match(landing, /const phoneSignIn = waitlistPayload\?\.phone_sign_in === true;/);

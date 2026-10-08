@@ -6,6 +6,7 @@
 // are like-for-like, and the filter finds it by either name.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx, renderComponent } = require('./lib/render-tsx');
@@ -18,7 +19,8 @@ test('Settings and the waiting room say Sign out, on the same buttons', () => {
   const settings = read('frontend/src/features/settings/index.tsx');
   assert.match(settings, /id="settings-logout"[\s\S]{0,400}?>\s*Sign out\s*<\/button>/);
   const waiting = read('frontend/src/features/auth/waiting.tsx');
-  assert.match(waiting, /id="waiting-logout"[\s\S]{0,300}?>\s*Sign out\s*<\/button>/);
+  assert.match(waiting, /id="waiting-logout"[\s\S]{0,300}?>\s*\{t\('auth:waiting\.signOut'\)\}\s*<\/button>/);
+  assert.equal(message('auth:waiting.signOut'), 'Sign out');
   for (const [name, src] of [['settings', settings], ['waiting', waiting]]) {
     assert.doesNotMatch(src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\{\/\*[\s\S]*?\*\/\}/g, ''), />\s*Log out\s*</, `${name}: no "Log out" left on a button`);
   }

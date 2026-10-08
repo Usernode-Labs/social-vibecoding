@@ -32,7 +32,7 @@ import { Button } from '@/components/ui/button';
 import { GroupedList } from '@/components/ui/grouped-list';
 import { Input } from '@/components/ui/input';
 
-import { useMessages } from '../../lib/i18n/react';
+import { Message, useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { QUEUE_PILL, SURVEY_FIELD, SURVEY_LABEL, msgClass, useSurveyAnswered } from '../auth/waitlist-shared';
 import { navStore } from '../nav/nav-store.js';
@@ -72,7 +72,7 @@ function Pill(): ReactNode {
   const pill = QUEUE_PILL.confirmed;
   return (
     <span className={`self-start inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${pill.tint}`}>
-      {pill.label}
+      <Message id={pill.label} />
     </span>
   );
 }
