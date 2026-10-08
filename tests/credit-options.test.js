@@ -248,12 +248,12 @@ test('the banner offers exactly two doors: pay for it, or build elsewhere (#1348
   assert.match(banner, /id="dc-credits-add-key"/);
 });
 
-test('an unverified account is asked to connect before it is asked to pay', () => {
+test('an unverified account is asked to verify before it is asked to pay', () => {
   // It cannot spend credits at all yet, so "Add API key" is not the lead
   // remedy — but the second door is the same one.
   const banner = CreditOptions.bannerActionsHtml({ verificationRequired: true });
   assert.equal((banner.match(/<button/g) || []).length, 2);
-  assert.match(banner, /Connect GitHub or X/);
+  assert.match(banner, /data-credits-verify="1"[^>]*>Verify my account</);
   assert.match(banner, /Change session type/);
   assert.doesNotMatch(banner, /Add API key/);
 });
@@ -316,6 +316,31 @@ test('a flow click is handled in place, or falls through to the hash', () => {
       global.window.location.hash, '#settings/connectors',
       'with no onFlow handler the button is an ordinary hash navigation'
     );
+  } finally {
+    if (originalWindow === undefined) delete global.window;
+    else global.window = originalWindow;
+  }
+});
+
+test('#4378: "Verify my account" opens the verify sheet in place, or falls through to Linked accounts', () => {
+  const listeners = [];
+  const node = { addEventListener(type, fn) { listeners.push(fn); }, contains() { return true; } };
+  CreditOptions.wire(node);
+  const attrs = { 'data-credits-verify': '1', 'data-credits-hash': '#settings/linked-accounts' };
+  const click = () => listeners[0]({
+    target: { closest: () => ({ getAttribute: (name) => attrs[name] || null }) },
+    preventDefault() {},
+  });
+  const originalWindow = global.window;
+  const asked = [];
+  global.window = { location: { hash: '' }, UsernodeReact: { verifyIdentity: { askForCredits: () => asked.push(1) } } };
+  try {
+    click();
+    assert.equal(asked.length, 1, 'the sheet opens');
+    assert.equal(global.window.location.hash, '', 'and nothing navigates');
+    global.window = { location: { hash: '' } };
+    click();
+    assert.equal(global.window.location.hash, '#settings/linked-accounts', 'no sheet loaded: Settings');
   } finally {
     if (originalWindow === undefined) delete global.window;
     else global.window = originalWindow;

@@ -924,10 +924,12 @@ const MAX_CHECK_ERROR_CHARS = 1000;
 // already on the row and thrown away here:
 //
 //   phase     — which half of the run is in flight ('building' | 'testing'),
-//               or 'deferred': no run at all, the verdict withheld while the
-//               head conflicts with main (#2137). The web card has worded the
-//               two halves since #1144; the connector was the only surface
-//               that could not tell them apart.
+//               'queued' between them (the preview built, the run waiting
+//               for a checks slot, services/checks-queue.js), or 'deferred':
+//               no run at all, the verdict withheld while the head conflicts
+//               with main (#2137). The web card has worded the two halves
+//               since #1144; the connector was the only surface that could
+//               not tell them apart.
 //   trigger   — why this run started. A re-run the platform drove for itself
 //               (a boot reconcile, a stuck sweep) reads very differently from
 //               one the author's own push caused.
@@ -1147,6 +1149,12 @@ function proposalRefSentence(proposalId, prNumber) {
 const PHASE_CAPTION = {
   building: 'the staging preview is still building (container build + database clone) or being handed to the checks, so no test has run yet',
   testing: 'the automated tests are running against the preview',
+  // services/checks-queue.js: built, and in line for one of the few runs the
+  // cluster takes at once. It starts on its own; pushing again only rejoins
+  // the line at the back.
+  queued: 'the staging preview is built and the run is waiting for a checks slot, because Homeroom runs a few '
+    + 'proposals\' checks at a time (`progress.queue.ahead` is how many runs are ahead of it); it starts on its '
+    + 'own, so no test has run yet',
 };
 
 // A run in flight. Neither verdict applies: there is nothing to fix yet and
@@ -1328,11 +1336,11 @@ function shapeNextStep(session, checks, viewerId = null) {
         + 'own fork and call submit_work with proposalId and that branch — every submission clears the votes it has '
         + 'collected, so only do it for a change worth re-reviewing.';
   }
-  // A red run that overlapped a platform rollout is recorded as an error the
-  // platform runs again on its own (visuals.js settleCaptureRun). Its failing
-  // rows are the rollout's, not the diff's, so there is nothing to fix yet,
-  // unless its unit suite failed tests: the rerun is still said, and those
-  // are named beside it (#4265).
+  // A red run that overlapped a platform rollout was recorded as an error the
+  // platform runs again on its own (#3828; rows stored before it was retired
+  // still are). Its failing rows were taken as the rollout's, not the diff's,
+  // so there is nothing to fix yet, unless its unit suite failed tests: the
+  // rerun is still said, and those are named beside it (#4265).
   if (rolloutRetry(session)) {
     const rerun = `Checks on ${ref} ran while Homeroom was updating, so they will run again on their own.`;
     const unit = rolloutUnitFailures(session);
@@ -1393,8 +1401,9 @@ function erroredRunWillRetry(session) {
   return (Number(session.consecutive_check_failures) || 0) < recovery.checkMaxAutoRetries();
 }
 
-// The 'error' a red run that overlapped a platform rollout is recorded as:
-// the platform runs it again on its own, so it asks nothing of the author.
+// The 'error' a red run that overlapped a platform rollout was recorded as
+// (#3828): the platform runs it again on its own, so it asks nothing of the
+// author. Nothing writes it now; rows stored before still read this way.
 function rolloutRetry(session) {
   return session.check_state === 'error'
     && session.check_error_detail === require('./staging-recovery').ROLLOUT_RETRY_DETAIL;
@@ -1633,6 +1642,10 @@ function changeNextStep(session, checks, live, kind = 'agent_mayor') {
   const failing = checks.state === 'error' || checks.state === 'failing' || checks.state === 'fail'
     || (Array.isArray(checks.failing) && checks.failing.length > 0);
   if (checks.state === 'pending') {
+    if (checks.phase === 'queued') {
+      return `Checks on ${ref}'s current commit are waiting for a checks slot; they start on their own. `
+        + `Call get_change again for the verdict.${paused}`;
+    }
     return checks.phase === 'deferred'
       ? `Checks on ${ref} are held back because it conflicts with main. ${words.deferred}${paused}`
       : `Checks are running on ${ref}'s current commit. Call get_change again for the verdict.${paused}`;
@@ -3608,16 +3621,18 @@ function registerTools(server, ctx) {
         // phase the platform stores but the schema does not name fails the
         // SDK's structured-output validation, which rejects the WHOLE
         // response, not the one field (#2137).
-        phase: z.enum(['building', 'testing', 'deferred']).nullable()
+        phase: z.enum(['building', 'queued', 'testing', 'deferred']).nullable()
           .describe("Which stage a pending run is at. 'building' means the staging preview is still being "
             + "built — or, once `progress.build.step` reads 'prepare_checks', is up and being handed to the checks, "
             + "which can mean waiting behind an earlier run on the same proposal (`progress.build.queued`) — so no "
-            + "test has run yet and a `total` of 0 is expected; 'testing' means the suite is running "
+            + "test has run yet and a `total` of 0 is expected; 'queued' means the preview is built and the run is "
+            + 'waiting for a checks slot, since Homeroom runs a few at a time (`progress.queue.ahead` runs are ahead '
+            + "of it), and it starts on its own; 'testing' means the suite is running "
             + "against the preview; 'deferred' means NO run is in flight: this head conflicts with the app's default "
             + 'branch, so the preview was built but the verdict was not run — it would judge a tree that cannot '
             + 'merge as it stands — and it runs once the head merges cleanly; `mergeability` and '
             + '`freshness.mergeabilityFiles` say where, and nextStep says who syncs. Null on a row that predates '
-            + "the column. 'building' and 'testing' are not a reason to push again; 'deferred' ends only when "
+            + "the column. 'building', 'queued' and 'testing' are not a reason to push again; 'deferred' ends only when "
             + 'the head merges cleanly with main again, which in practice means a head synced with it.'),
         trigger: z.string().nullable()
           .describe('What started this run — e.g. commit-push, proposal-open, manual-recheck, boot-reconcile, '

@@ -589,6 +589,39 @@ test('a complete resume fallback is accepted only for a resumed hosted-Claude bu
   } finally { restore(); }
 });
 
+// The Homeroom bot's nudge (homeroom-bot-live.js buildTurnRunner) resumes
+// a build's conversation with a short prompt; when Claude Code cannot resume
+// it, run-cc.sh starts afresh, and must do so from the whole build prompt,
+// on OpenRouter as on Anthropic.
+test('a resumed Claude Code build on OpenRouter carries its complete fresh fallback to the runner', async () => {
+  const { worker, calls, restore } = loadWorker({ journalLines: ['__USERNODE_EXIT__ 0'] });
+  const env = (dispatch, name) => dispatch.args.find((a) => typeof a === 'string' && a.startsWith(`${name}=`));
+  try {
+    const args = {
+      mode: 'build',
+      prompt: 'the nudge',
+      resumeSessionId: 'claude-session-1',
+      branchName: 'dev/openrouter-test',
+      agentBackend: 'codex_openrouter',
+      agentHarness: 'claude',
+      agentModel: 'z-ai/glm-5.3-flash',
+      openrouterApiKey: 'sk-or-must-not-appear-in-argv',
+      openrouterApiBase: 'https://openrouter.ai/api/v1',
+    };
+    warmSession(worker, 8311);
+    await worker.execInWorker(8311, { ...args, resumeFallbackPrompt: 'the whole build prompt, then the nudge' });
+    const withFallback = calls.filter(isDispatch).at(-1);
+    assert.equal(env(withFallback, 'RESUME_FALLBACK_PROMPT_FILE'),
+      `RESUME_FALLBACK_PROMPT_FILE=${worker.TURN_RESUME_FALLBACK_PROMPT_PATH}`);
+    assert.equal(env(withFallback, 'CLAUDE_RESUME_SESSION_ID'), 'CLAUDE_RESUME_SESSION_ID=claude-session-1');
+
+    warmSession(worker, 8312);
+    await worker.execInWorker(8312, args);
+    assert.equal(env(calls.filter(isDispatch).at(-1), 'RESUME_FALLBACK_PROMPT_FILE'), 'RESUME_FALLBACK_PROMPT_FILE=',
+      'every other OpenRouter turn has none');
+  } finally { restore(); }
+});
+
 test('Codex dispatch forwards OpenRouter model metadata without exposing its key in argv', async () => {
   const { worker, calls, restore } = loadWorker({
     journalLines: ['__USERNODE_EXIT__ 0'],

@@ -530,8 +530,34 @@ function effectiveCategory(rawCategory) {
 // /seasons ... v4 should pick one behavior" — v4's ONE behavior is this
 // fallback applied on BOTH endpoints, documented here at the one shared
 // call site both builders below go through.
-function effectiveCtaLabel(rawCtaLabel) {
-  return rawCtaLabel != null ? rawCtaLabel : 'Get Started';
+//
+// A CTA is its link (#3202). With no link at all, web or mobile, there is
+// nothing for a button to open, and the fallback label made the app draw a
+// "Get Started" that did nothing on the weekly challenges whose templates
+// carry no link. So such a challenge sends no CTA: all six fields null, the
+// way the web challenge page (TopochainChallenges.ctaView) and the Home
+// panel (home-panels.js buildChallengeRow) already draw none. While either
+// link is usable the fields pass through as before, since a mobile label
+// may ride the web link and the web label a mobile one.
+function hasCtaLink(link) {
+  return typeof link === 'string' && link.trim() !== '';
+}
+
+function effectiveCta(eff) {
+  if (!hasCtaLink(eff.cta_link) && !hasCtaLink(eff.mobile_cta_link)) {
+    return {
+      cta_type: null, cta_label: null, cta_link: null,
+      mobile_cta_type: null, mobile_cta_label: null, mobile_cta_link: null,
+    };
+  }
+  return {
+    cta_type: eff.cta_type,
+    cta_label: eff.cta_label != null ? eff.cta_label : 'Get Started',
+    cta_link: eff.cta_link,
+    mobile_cta_type: eff.mobile_cta_type,
+    mobile_cta_label: eff.mobile_cta_label,
+    mobile_cta_link: eff.mobile_cta_link,
+  };
 }
 
 // Full per-challenge item for GET /challenges (SPEC 1934-1974): every
@@ -560,12 +586,7 @@ function buildMobileChallengeItem(r, { activities, activitiesTotal }) {
     description: eff.description,
     requirements: eff.requirements,
     reward_logic: eff.reward_logic,
-    cta_type: eff.cta_type,
-    cta_label: effectiveCtaLabel(eff.cta_label),
-    cta_link: eff.cta_link,
-    mobile_cta_type: eff.mobile_cta_type,
-    mobile_cta_label: eff.mobile_cta_label,
-    mobile_cta_link: eff.mobile_cta_link,
+    ...effectiveCta(eff),
     schedule_start: iso(eff.schedule_start),
     schedule_end: iso(eff.schedule_end),
     enabled: r.enabled,
@@ -594,12 +615,7 @@ function buildSeasonChallengeItem(r) {
     description: eff.description,
     requirements: eff.requirements,
     reward_logic: eff.reward_logic,
-    cta_type: eff.cta_type,
-    cta_label: effectiveCtaLabel(eff.cta_label),
-    cta_link: eff.cta_link,
-    mobile_cta_type: eff.mobile_cta_type,
-    mobile_cta_label: eff.mobile_cta_label,
-    mobile_cta_link: eff.mobile_cta_link,
+    ...effectiveCta(eff),
     schedule_start: iso(eff.schedule_start),
     schedule_end: iso(eff.schedule_end),
     enabled: r.enabled,

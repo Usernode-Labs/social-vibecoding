@@ -2,7 +2,8 @@
  * A project's four tabs: Hub · Discussion · Needs you · Workshop.
  *
  * All items is a page under the Workshop (its "See all"), with a way back,
- * so while it is up the Workshop tab stays lit.
+ * so while it is up the Workshop tab stays lit. The plan (#4074, the First
+ * version card's "See the plan") is a page under the Hub the same way.
  *
  * ONE PLACE, THE PAGE. ./workshop.tsx renders them at the head of the page at
  * every width. On a phone they are a BAND under the header, in the
@@ -14,7 +15,7 @@
 
 import type { KeyboardEvent, ReactNode } from 'react';
 
-export type ProjectTabKey = 'status' | 'discussion' | 'workshop' | 'needs' | 'all';
+export type ProjectTabKey = 'status' | 'discussion' | 'workshop' | 'needs' | 'all' | 'plan';
 
 /** The four tabs, in the band's order. All items is the Workshop's page. */
 export const PROJECT_TABS: ReadonlyArray<{ key: ProjectTabKey; label: string }> = [
@@ -24,9 +25,11 @@ export const PROJECT_TABS: ReadonlyArray<{ key: ProjectTabKey; label: string }> 
   { key: 'workshop', label: 'Workshop' },
 ];
 
-/** The tab lit for a page: All items is the Workshop's. */
+/** The tab lit for a page: All items is the Workshop's, the plan the Hub's. */
 export function litTab(tab: ProjectTabKey): ProjectTabKey {
-  return tab === 'all' ? 'workshop' : tab;
+  if (tab === 'all') return 'workshop';
+  if (tab === 'plan') return 'status';
+  return tab;
 }
 
 /**

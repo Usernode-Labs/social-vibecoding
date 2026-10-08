@@ -584,8 +584,8 @@ test('pull-to-refresh dispatches on the active section', () => {
   assert.match(body, /TopochainLeaderboard\.loadLeaderboard\(\)/,
     'a pull on the Topochain tab reloads Topochain standings, not kudos panes');
   assert.match(body, /Leaderboard\.section === 'challenges'/, 'and on the challenges section');
-  assert.match(body, /TopochainChallenges\.loadChallenges\(\)/,
-    'a pull on the Challenges tab reloads the challenge grid');
+  assert.match(body, /TopochainChallenges\.loadChallenges\(\{ fresh: true \}\)/,
+    'a pull on the Challenges tab reloads the challenge grid, fresh (#3985)');
 });
 
 // ─── Duplicate titles ────────────────────────────────────────────────────
@@ -605,7 +605,7 @@ test('the challenges pane decorates the public grid with your own points', () =>
   assert.match(chJs, /\/challenges-api\/challenges\?season_event_id=/,
     'it fetches the session-scoped view');
   assert.match(chJs, /activities_total/, 'and reads your own per-challenge total');
-  const load = chJs.slice(chJs.indexOf('  async _loadMine(eventId) {'), chJs.indexOf('  // ── Challenge grid'));
+  const load = chJs.slice(chJs.indexOf('  async _loadMine(eventId, init) {'), chJs.indexOf('  // ── Challenge grid'));
   assert.ok(!/_challengesError/.test(load),
     'a personalization failure never paints an error — the public grid stands');
   // #1917: the "See where the season stands" link under the grid is gone —

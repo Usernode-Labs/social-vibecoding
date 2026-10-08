@@ -2696,6 +2696,11 @@
       "expectText": "prepare checks (waiting for an earlier run)"
     },
     {
+      "name": "Checks card says a built preview's run is waiting for a checks slot, and where it is in line",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000054",
+      "expectText": "Waiting for a checks slot (2 ahead)"
+    },
+    {
       "name": "Checks card says an author's commit started the run (#1144), in Details (B10b)",
       "path": "/?demo=1&details=1#app/usernode-2d5619/dev/proposals/9000022",
       "expectText": "Triggered by a new commit on this proposal."
@@ -3561,7 +3566,7 @@
       "expectText": "Staging demo read-only proposal"
     },
     {
-      "name": "The hub's ⋯ menu holds rename and secrets directly, no App settings nesting (#645)",
+      "name": "The hub's ⋯ menu holds rename and secrets in its Settings & rules panel, not behind App settings (#645, #4045)",
       "path": "/?demo=1&ws=status#app/usernode-2d5619/dev",
       "expectSelector": "#dev-plus-menu [data-plus='rename']"
     },
@@ -3583,8 +3588,8 @@
       "expectSelector": "#dev-plus-menu [data-plus='members']"
     },
     {
-      "name": "The hub's ⋯ menu shows the approver roster on an invited-approvers app (#646)",
-      "path": "/?demo=1&ws=status&shot=plus-menu#app/staging-demo-invited-approvers/dev",
+      "name": "The hub's ⋯ menu shows the approver roster in its Settings & rules panel on an invited-approvers app (#646, #4045)",
+      "path": "/?demo=1&ws=status&shot=plus-menu-settings#app/staging-demo-invited-approvers/dev",
       "expectSelector": "#dev-plus-menu [data-plus='members']",
       "expectText": "Members & approvals"
     },

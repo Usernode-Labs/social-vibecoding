@@ -34,11 +34,10 @@
  * It is drawn here, from text, by React: nothing the model wrote is markup.
  * The made screen draws it with its line (SketchCard below), the App tab
  * while the first version is on its way (features/app-frame/app-status.tsx),
- * and the invite page (../auth/invite-card.tsx) and "You're in"
- * (./joined-picture.tsx) while the project has no picture of its own. Those
- * two know only that it is on its way, not where, so they draw it without
- * a line. "You're in" for a new account, whose welcome leaves about 200px,
- * draws it `compact`: smaller art.
+ * and the invite page (../auth/invite-card.tsx) while the project has no
+ * picture of its own. The invite page knows only that it is on its way, not
+ * where, so it draws it without a line. `compact` is smaller art, for a
+ * screen with little room.
  *
  * ThumbRow is the small size, for a row: the tile on its colour, the name,
  * and the build line in place of the one line when there is one.
@@ -132,14 +131,19 @@ function glyphOf(name: string, emoji: string | null, sketched: boolean): string 
  * build line just under the card (8px below it, not in it) when `line` is
  * given. `sketching` is the card
  * still being sketched (by default, while there is no `card`); `description`
- * stands in for the sketch's tagline when there is none.
+ * stands in for the sketch's tagline when there is none. `iconUrl` is the
+ * project's own icon image, drawn in the tile in place of the emoji, and
+ * `children` close the card's body, under the line (the invite page's
+ * invitation, #4394).
  */
-export function FeaturedCard({ name, colorKey, emoji, card, description = null, sketching: sketched = !card, line = null, titleId, heading = false, compact = false }: {
+export function FeaturedCard({ name, colorKey, emoji, iconUrl = null, card, description = null, sketching: sketched = !card, line = null, titleId, heading = false, compact = false, large = false, children = null }: {
   name: string;
   /** Picks a colour when there is no emoji to read one from (the project's slug). */
   colorKey: string;
   /** The icon: the card's, or one already known while it is sketched. */
   emoji: string | null;
+  /** The project's own icon image, which the tile shows instead of the emoji. */
+  iconUrl?: string | null;
   card: FeaturedCardData | null;
   /** The project's own description, said when there is no sketch. */
   description?: string | null;
@@ -151,8 +155,12 @@ export function FeaturedCard({ name, colorKey, emoji, card, description = null, 
   heading?: boolean;
   /** Smaller art, for a screen with little room. */
   compact?: boolean;
+  /** The name at 20px, for a card that is the screen's one subject. */
+  large?: boolean;
+  /** More of the card's body, under the line. */
+  children?: ReactNode;
 }) {
-  const color = useResolvedCommunityColor(sketched ? null : { iconEmoji: emoji, key: colorKey });
+  const color = useResolvedCommunityColor(sketched ? null : { iconUrl, iconEmoji: emoji, key: colorKey });
   const glyph = glyphOf(name, emoji, sketched);
   const tagline = (card && card.tagline) || (description || '').trim();
   const Title = heading ? 'h1' : 'p';
@@ -170,14 +178,15 @@ export function FeaturedCard({ name, colorKey, emoji, card, description = null, 
           />
           <span
             aria-hidden="true"
-            className={`app-icon-tile relative flex items-center justify-center leading-none shadow-[0_6px_18px_rgba(0,0,0,0.16)] ${compact ? 'h-14 w-14 rounded-2xl text-[32px]' : 'h-[76px] w-[76px] rounded-[22px] text-[44px]'}`}
+            className={`app-icon-tile relative flex items-center justify-center overflow-hidden leading-none shadow-[0_6px_18px_rgba(0,0,0,0.16)] ${compact ? 'h-14 w-14 rounded-2xl text-[32px]' : 'h-[76px] w-[76px] rounded-[22px] text-[44px]'}`}
           >
-            {glyph ? <Glyph key={glyph} glyph={glyph} /> : null}
+            {iconUrl ? <img src={iconUrl} alt="" className="h-full w-full object-cover" /> : glyph ? <Glyph key={glyph} glyph={glyph} /> : null}
           </span>
         </div>
         <div className="flex flex-col gap-1 px-4 pb-4 pt-3.5">
-          <Title id={titleId} className="truncate text-[17px] font-bold leading-[22px]">{name}</Title>
+          <Title id={titleId} className={large ? 'truncate text-[20px] font-bold leading-[26px]' : 'truncate text-[17px] font-bold leading-[22px]'}>{name}</Title>
           {sketched ? <Placeholder /> : tagline ? <Tagline key={tagline} text={tagline} /> : null}
+          {children}
         </div>
         {sketched ? (
           <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden motion-reduce:hidden">
@@ -199,12 +208,14 @@ export function FeaturedCard({ name, colorKey, emoji, card, description = null, 
  * with its icon, its name, and under it the build line when there is one,
  * else its one line.
  */
-export function ThumbRow({ name, colorKey, emoji, tagline = null, line = null }: {
+export function ThumbRow({ name, colorKey, emoji, tagline = null, line = null, lineNote = null }: {
   name: string;
   colorKey: string;
   emoji: string | null;
   tagline?: string | null;
   line?: BuildLineState | null;
+  /** After the build line's words (BuildLine `note`). */
+  lineNote?: string | null;
 }): ReactNode {
   const color = useResolvedCommunityColor({ iconEmoji: emoji, key: colorKey });
   const glyph = glyphOf(name, emoji, false);
@@ -222,7 +233,7 @@ export function ThumbRow({ name, colorKey, emoji, tagline = null, line = null }:
       <span className="flex min-w-0 flex-col gap-0.5">
         <span className="truncate text-[15px] font-[650] leading-5">{name}</span>
         {line ? (
-          <BuildLine state={line} />
+          <BuildLine state={line} note={lineNote} />
         ) : tagline ? (
           <span className="line-clamp-2 text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400">{tagline}</span>
         ) : null}
@@ -271,21 +282,24 @@ export function useSketch(slug: string | null): Sketch {
 
 /**
  * The made screen's card (./made.tsx): the thumbnail, being sketched and
- * then the idea, with the build line just under the card and the line about
- * what happens next below that.
+ * then the idea, with the build line just under the card. The screen's own
+ * heading is "Your new community" over it (#4041), so the card's name, the
+ * only place the name is said, is not a heading here. A note goes under the
+ * build line only when the screen has one to say (a project Homeroom bot
+ * does not build).
  */
-export function SketchCard({ made, sketch, line, note }: {
+export function SketchCard({ made, sketch, line, note = null }: {
   made: Made;
   sketch: Sketch;
   /** Where its first version is (./build-line.tsx), or none for a project Homeroom bot does not build. */
   line: BuildLineState | null;
-  /** buildNote: what happens next, under the card. */
-  note: string;
+  /** A quiet line under the card, or none. */
+  note?: string | null;
 }) {
   const card = sketch.card;
   const sketched = !card && sketching(sketch.state);
   return (
-    <div data-first-session-sketch={card ? 'ready' : sketch.state} className="mt-4">
+    <div data-first-session-sketch={card ? 'ready' : sketch.state}>
       {sketched ? <p role="status" className="sr-only">{`Sketching ${made.name} from your description…`}</p> : null}
       <FeaturedCard
         name={made.name}
@@ -295,10 +309,8 @@ export function SketchCard({ made, sketch, line, note }: {
         description={made.description}
         sketching={sketched}
         line={line}
-        titleId="first-session-made-title"
-        heading
       />
-      <p className="px-1 pt-2.5 text-[13px] leading-snug text-zinc-500 dark:text-zinc-400">{note}</p>
+      {note ? <p data-first-session-note="" className="px-1 pt-2.5 text-[13px] leading-snug text-zinc-500 dark:text-zinc-400">{note}</p> : null}
     </div>
   );
 }

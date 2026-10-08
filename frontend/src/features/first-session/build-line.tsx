@@ -39,15 +39,26 @@ import { BUILD_LINE_WORDS } from './build-line-words.js';
 
 export { BUILD_LINE_WORDS };
 
-export type BuildLineState = keyof typeof BUILD_LINE_WORDS;
+/**
+ * One line the server never sends (so not in BUILD_LINE_WORDS, which match
+ * its states one for one): the maker's hub card while the first-session tour
+ * runs, in place of "Review the plan" (./tour-running.ts). A spinner, as the
+ * lines on their way have.
+ */
+export const WORKING_LINE_WORDS = 'Homeroom bot is working on it';
+
+/** The lines the server sends (`first_version.line`). */
+export type ServerBuildLine = keyof typeof BUILD_LINE_WORDS;
+
+export type BuildLineState = ServerBuildLine | 'working';
 
 /** The same lines on a Home tile (./build-line-words.js). */
 export { BUILD_LINE_TILE_CARD, buildLineTileClass, buildLineTileOf } from './build-line-words.js';
 
 /** The line in an answer (`first_version.line`), or null for none or one this shell does not know. */
-export function buildLineOf(value: unknown): BuildLineState | null {
+export function buildLineOf(value: unknown): ServerBuildLine | null {
   return typeof value === 'string' && Object.prototype.hasOwnProperty.call(BUILD_LINE_WORDS, value)
-    ? (value as BuildLineState) : null;
+    ? (value as ServerBuildLine) : null;
 }
 
 /** The lines that wait on the reader: blue, with a dot. */
@@ -61,7 +72,11 @@ export function buildLineDone(state: BuildLineState): boolean {
   return state === 'ready' || state === 'live';
 }
 
-export function BuildLine({ state, className = '' }: { state: BuildLineState; className?: string }): ReactNode {
+/**
+ * `note`, after the words: how long it usually takes, where a screen says so
+ * (#4392, Homeroom bot's thanks: "Building it · usually 10 to 25 min").
+ */
+export function BuildLine({ state, note = null, className = '' }: { state: BuildLineState; note?: string | null; className?: string }): ReactNode {
   const asks = buildLineAsks(state);
   const done = buildLineDone(state);
   // A span, so it can sit in a row's text as well as in a card.
@@ -78,7 +93,7 @@ export function BuildLine({ state, className = '' }: { state: BuildLineState; cl
       ) : (
         <SpinnerRingIcon className="h-3.5 w-3.5 shrink-0 animate-spin motion-reduce:animate-none" aria-hidden="true" />
       )}
-      <span className="truncate">{BUILD_LINE_WORDS[state]}</span>
+      <span className="truncate">{note ? `${state === 'working' ? WORKING_LINE_WORDS : BUILD_LINE_WORDS[state]} · ${note}` : state === 'working' ? WORKING_LINE_WORDS : BUILD_LINE_WORDS[state]}</span>
     </span>
   );
 }

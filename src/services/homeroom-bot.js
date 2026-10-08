@@ -3768,6 +3768,8 @@ async function shadowBuild({
       specGuidance: guidance?.spec || null,
       buildGuidance: guidance?.build || null,
     } : {}),
+    origin: { lane: 'shadow', runId },
+    onNoChange: (noChange) => keepNoChange(pool, runId, noChange),
     propose: false,
   });
   const buildMs = Date.now() - buildStartedMs;
@@ -3798,7 +3800,7 @@ async function shadowBuild({
     `UPDATE homeroom_bot_runs
         SET build_ok = $2, build_branch = $3, build_sha = $4, build_commits = $5,
             build_error = $6, build_cost_usd = $7, build_session_id = $8, build_spec_md = $9,
-            build_model = $10
+            build_model = $10, build_no_change = $11::jsonb
       WHERE id = $1`,
     [runId, !!built.ok, built.branchName || null, built.sha || null,
       Number.isFinite(built.commits) ? built.commits : null,
@@ -3807,7 +3809,9 @@ async function shadowBuild({
       built.ok
         ? (built.specNote ? clip(built.specNote, MAX_ERROR_CHARS) : null)
         : clip([built.error || 'unknown', built.specNote].filter(Boolean).join('; '), MAX_ERROR_CHARS),
-      built.costUsd ?? null, built.sessionId || null, built.specMd || null, model || null],
+      built.costUsd ?? null, built.sessionId || null, built.specMd || null, model || null,
+      // A build turn that changed nothing: what it said and did, and its nudge.
+      built.noChange ? JSON.stringify(built.noChange) : null],
   );
   log.info('homeroom-bot', 'Shadow build', {
     app: app.slug, issueNumber, runId, ok: !!built.ok, branch: built.branchName || null,
@@ -4170,6 +4174,64 @@ async function debitRecovered(pool, session, costUsd, deps = {}) {
 }
 
 /**
+ * What a build turn restart recovery followed to its end adds to its run's
+ * record of a turn that changed nothing (build_no_change, homeroom-bot-live.js
+ * buildNudgePrompt), counted as the build counts it (recordNoChange):
+ *   - a nudge's outcome, added to what its build turn left on the run before
+ *     the nudge started. A turn is a nudge by its ledger name, or by a record
+ *     that says a nudge started and has none;
+ *   - a build turn of its own that ended cleanly and changed nothing. It is
+ *     not nudged here: that would mean rebuilding the whole build prompt and
+ *     holding a slot for it, and a turn that quits early ends in seconds, so a
+ *     restart rarely catches one. It is recorded as having changed nothing.
+ * Resolves the record to keep, or null when there is nothing to add. Never
+ * throws.
+ */
+async function recoveredNoChange(pool, {
+  runId, session, result = {}, timedOut = false, component = null, origin = null, appId = null, issueNumber = null,
+}) {
+  try {
+    const { rows: [row] = [] } = await pool.query(
+      'SELECT build_no_change FROM homeroom_bot_runs WHERE id = $1', [runId],
+    );
+    const before = row?.build_no_change && Array.isArray(row.build_no_change.turns) ? row.build_no_change : null;
+    const nudgeTurn = component === live.BUILD_NUDGE_TELEMETRY
+      || (!!before?.nudged && !before.turns.some((t) => t.turn === 'nudge'));
+    const routed = { result: result || {} };
+    const facts = live.turnFacts({ routed, stopped: timedOut }, {
+      turn: nudgeTurn ? 'nudge' : 'build', model: session.agent_model || null,
+    });
+    const where = { appId, sessionId: session.id, userId: session.user_id || null, issueNumber, origin };
+    let noChange;
+    if (nudgeTurn) {
+      const committed = facts.ended === 'changed';
+      noChange = {
+        ...(before || { notNudged: null }),
+        turns: [...(before ? before.turns.filter((t) => t.turn !== 'nudge') : []),
+          { ...facts, said: committed ? null : live.agentSaid(result?.lastResultText) }],
+        nudged: true, committed, recovered: true,
+      };
+      await live.recordNoChange(pool, { ...where, noChange, which: 'nudge', recovered: true });
+    } else {
+      if (facts.ended !== 'no_change' && facts.ended !== 'not_pushed') return null;
+      noChange = {
+        turns: [{ ...facts, said: live.agentSaid(result?.lastResultText) }],
+        nudged: false, notNudged: 'a restart caught the turn, and recovery does not nudge', committed: null, recovered: true,
+      };
+      await live.recordNoChange(pool, { ...where, noChange, which: 'first', recovered: true });
+    }
+    log.warn('homeroom-bot', nudgeTurn ? 'Recovered a nudge after a restart' : 'A build turn a restart caught changed nothing', {
+      runId, sessionId: session.id, lane: origin?.lane || null, ...noChange.turns[noChange.turns.length - 1],
+      committed: noChange.committed,
+    });
+    return noChange;
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not record a recovered build turn that changed nothing', { runId, err: err.message });
+    return null;
+  }
+}
+
+/**
  * A recovered turn of the bot's, finished. `result` is what the journal
  * replay returned; `timedOut` says the bot's clock, re-armed by recovery,
  * ended it, its time given back for each restart that reached the turn
@@ -4188,7 +4250,9 @@ async function finishRecoveredTurn({
   pool, session, activeTurn, result = {}, timedOut = false, deps = {},
 }) {
   const run = await runOfSession(pool, session.id);
-  if (!run && await noteRecoveredLive(pool, session, { mode: activeTurn?.mode, result, timedOut })) {
+  if (!run && await noteRecoveredLive(pool, session, {
+    mode: activeTurn?.mode, result, timedOut, component: activeTurn?.telemetryComponent || null,
+  })) {
     return 'live_pending';
   }
   if (!run) {
@@ -4226,14 +4290,20 @@ async function finishRecoveredTurn({
       : turnFailed ? `the build turn failed (${turnFailed})${note}`
         : `the build produced no change to propose${note}`;
   const costUsd = await sessionCostUsd(pool, session.id);
+  const noChange = await recoveredNoChange(pool, {
+    runId: run.id, session, result, timedOut, component: activeTurn?.telemetryComponent || null,
+    origin: { lane: 'shadow', runId: run.id }, appId: run.app_id, issueNumber: run.issue_number,
+  });
   await pool.query(
     `UPDATE homeroom_bot_runs r
         SET build_ok = $2, build_branch = $3, build_sha = $4, build_commits = $5,
             build_error = $6, build_cost_usd = $7,
-            build_spec_md = COALESCE(r.build_spec_md, (SELECT spec_md FROM chat_sessions WHERE id = $8))
+            build_spec_md = COALESCE(r.build_spec_md, (SELECT spec_md FROM chat_sessions WHERE id = $8)),
+            build_no_change = COALESCE($9::jsonb, r.build_no_change)
       WHERE r.id = $1 AND r.build_ok IS NULL`,
     [run.id, built, built ? session.branch_name || null : null, result.sha || null,
-      built ? Number(result.ahead) : null, error, costUsd, session.id],
+      built ? Number(result.ahead) : null, error, costUsd, session.id,
+      noChange ? JSON.stringify(noChange) : null],
   );
   await putAwayRecoveredSession(pool, session, { archive: true });
   await debitRecovered(pool, session, costUsd, deps);
@@ -4788,6 +4858,16 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
     // A failed turn is a failed build here as on the live path.
     const turnFailed = plan.mode === 'scout' || plan.timedOut
       ? null : live.failedClaudeTurn(plan.result);
+    // A build turn that changed nothing, or a nudge (recoveredNoChange): what
+    // it said and did, kept on the run with the outcome below.
+    const noChange = plan.mode !== 'scout' && !plan.lost && !reviewing && !restartedOut
+      ? await recoveredNoChange(pool, {
+        runId: plan.runId, session, result: plan.result || {}, timedOut: !!plan.timedOut,
+        component: plan.component || null, origin: { lane: 'live', runId: plan.runId },
+        appId: app.id, issueNumber: plan.issueNumber,
+      })
+      : null;
+    const noChangeOut = noChange ? { noChange } : {};
     let built;
     // The review recovery ran itself, when the restart caught the build turn
     // rather than the review (reviewRecoveredBuild).
@@ -4865,7 +4945,7 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
       if (promoted.status === 200 && promoted.body?.ok) {
         built = {
           ok: true, sessionId: Number(sessionId), prNumber: promoted.body.prNumber || null,
-          specMd: session.spec_md || null, specVersion: session.spec_version || null, ...pushed,
+          specMd: session.spec_md || null, specVersion: session.spec_version || null, ...pushed, ...noChangeOut,
         };
       } else {
         // Built but not proposed: left as the live path leaves it, for a
@@ -4874,7 +4954,7 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
         await putAwayRecoveredSession(pool, session, { archive: false });
         built = {
           ok: false, sessionId: Number(sessionId), ...pushed,
-          error: `the change was built but could not be proposed: ${why}`,
+          error: `the change was built but could not be proposed: ${why}`, ...noChangeOut,
         };
       }
     } else {
@@ -4884,6 +4964,7 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
         error: (plan.timedOut ? 'the build ran past its time limit'
           : turnFailed ? `the build turn failed (${turnFailed})`
             : 'the build produced no change to propose') + note,
+        ...noChangeOut,
       };
     }
     if (built.blocked) await archive();
@@ -5897,6 +5978,20 @@ function liveSayer({
 }
 
 /**
+ * A build turn that changed nothing, kept on its run the moment it ends,
+ * before its nudge starts (homeroom-bot-live.js buildAndPropose's
+ * onNoChange), so a restart in the middle of the nudge still finds what the
+ * first turn said (recoveredNoChange). The outcome's own record replaces it.
+ */
+async function keepNoChange(pool, runId, noChange) {
+  if (!runId || !noChange) return;
+  await pool.query(
+    'UPDATE homeroom_bot_runs SET build_no_change = $2::jsonb WHERE id = $1',
+    [runId, JSON.stringify(noChange)],
+  ).catch((err) => log.warn('homeroom-bot', 'Could not keep a build turn that changed nothing on its run', { runId, err: err.message }));
+}
+
+/**
  * What a live build came to, recorded on its run in the columns a shadow
  * build fills (#3509): before this it was only said on the issue, so an
  * export could not tell a build that failed from one found impossible, nor
@@ -5919,12 +6014,15 @@ async function recordLiveBuild(pool, runId, built, model = null) {
             build_branch = COALESCE($4, build_branch), build_sha = COALESCE($5, build_sha),
             build_commits = COALESCE($6, build_commits), build_cost_usd = COALESCE($7, build_cost_usd),
             build_session_id = COALESCE(build_session_id, $8), build_spec_md = COALESCE($9, build_spec_md),
-            build_model = COALESCE($10, build_model)
+            build_model = COALESCE($10, build_model), build_no_change = COALESCE($11::jsonb, build_no_change)
       WHERE id = $1`,
     [runId, !!built.ok, error, built.branchName || null, built.sha || null,
       Number.isFinite(built.commits) ? built.commits : null,
       Number.isFinite(built.costUsd) ? built.costUsd : null,
-      built.sessionId || null, built.specMd || null, model || built.model || null],
+      built.sessionId || null, built.specMd || null, model || built.model || null,
+      // A build turn that changed nothing: what it said and did, and its
+      // nudge (homeroom-bot-live.js buildNudgePrompt).
+      built.noChange ? JSON.stringify(built.noChange) : null],
   ).catch((err) => log.warn('homeroom-bot', 'Could not record the live build on its run', { runId, err: err.message }));
 }
 
@@ -6525,6 +6623,8 @@ async function buildLive({
       onSession: (session) => pool.query(
         'UPDATE homeroom_bot_runs SET build_session_id = $2, live_build_waiting_at = NULL WHERE id = $1', [runId, session.id],
       ),
+      origin: { lane: 'live', runId },
+      onNoChange: (noChange) => keepNoChange(pool, runId, noChange),
       ...(version ? {
         harnessOf: live.recipeHarness,
         review,
@@ -7929,7 +8029,7 @@ const RUNS_SQL = `SELECT r.id, r.issue_number, r.mode, r.verdict, r.determined, 
             r.proposal_session_id,
             r.build_ok, r.build_branch, r.build_sha, r.build_commits, r.build_error,
             r.build_cost_usd::float8 AS build_cost_usd, r.build_at, r.build_queued_at, r.build_spec_md,
-            r.build_session_id,
+            r.build_session_id, r.build_no_change,
             r.question_answers, dm.dm_sent_at, dm.dm_answered_at, r.checks_head_sha,
             r.label_verdict, r.build_model,
             r.bot_config_version_id, bc.key AS bot_config_key, bc.label AS bot_config_label,
@@ -8692,6 +8792,8 @@ module.exports = {
   ABANDONED_LIVE_REASON,
   FIRST_VERSION_BUILD_TIME_FACTOR,
   recordLiveBuild,
+  keepNoChange,
+  recoveredNoChange,
   recoveryDeadline,
   finishRecoveredTurn,
   abandonRecoveredTurn,

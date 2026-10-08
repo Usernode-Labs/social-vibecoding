@@ -390,7 +390,7 @@ test('_loadedEventId tracks the event the grid belongs to', () => {
   assert.match(CHALLENGES_SRC,
     /TopochainChallenges\._loadedEventId = eventId;/,
     'loadChallenges records which event its list is for');
-  const load = CHALLENGES_SRC.slice(CHALLENGES_SRC.indexOf('async loadChallenges()'));
+  const load = CHALLENGES_SRC.slice(CHALLENGES_SRC.indexOf('async loadChallenges('));
   const assignAt = load.indexOf('_loadedEventId = eventId');
   const guardAt = load.indexOf('if (eventId == null)');
   assert.ok(assignAt > -1 && assignAt < guardAt,

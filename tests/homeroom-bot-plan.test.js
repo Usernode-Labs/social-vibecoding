@@ -544,8 +544,17 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
       user: maya, conversationId: goCard.conversation_id,
       message: { id: sent.messageId, content: 'Build it!', reply: { id: goCard.id } }, deps: { bot: homeroomBot },
     });
-    const said = (await pool.query('SELECT content FROM conversation_messages WHERE id = $1', [out.messageId])).rows[0];
-    assert.match(said.content, /^Building Plant Pal now, with what I suggested\./);
+    const said = (await pool.query(
+      `SELECT content, metadata->'homeroomBot' AS meta FROM conversation_messages WHERE id = $1`, [out.messageId],
+    )).rows[0];
+    // #4392: typed, the answer is the same thanks Build it sends, with its card, and said once.
+    assert.equal(said.content, 'Thanks for answering about the plan. I\'ll let you know when Plant Pal is ready to try.');
+    assert.deepEqual([said.meta.kind, said.meta.thanks], ['activity', true]);
+    const { rows: [{ n: after }] } = await pool.query(
+      'SELECT COUNT(*)::int AS n FROM conversation_messages WHERE conversation_id = $1 AND id > $2 AND sender_id = $3',
+      [goCard.conversation_id, sent.messageId, homeroomBot.id],
+    );
+    assert.equal(after, 1, 'one message from the bot after the typed Build it: the thanks');
     assert.ok((await runRow(go)).live_build_waiting_at);
     assert.match((await runRow(go)).build_note, /How should it remind you\? In the app/);
   });
@@ -674,7 +683,9 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     assert.equal(card.meta.kind, 'activity');
     assert.equal(card.meta.lookAt, (await runRow(run)).created_at.toISOString(), 'read from the run the plan came from');
     assert.equal(card.meta.startedAt, undefined, 'its time counts from the tap');
-    assert.match(card.content, /\n\nI'll message you here when it's ready to try\.$/, '#4046: the inbox preview; the chat does not draw it');
+    assert.equal(card.content, 'Thanks for answering about the plan. I\'ll let you know when Plant Pal is ready to try.',
+      '#4392: the bot\'s thanks, drawn over the app\'s card');
+    assert.equal(card.meta.thanks, true);
     const { rows: rang } = await pool.query('SELECT 1 FROM notifications WHERE conversation_message_id = $1', [under.messageId]);
     assert.equal(rang.length, 0, 'a progress card rings nothing');
     assert.equal(Number((await message(above.messageId)).meta.movedTo), under.messageId, 'the card above says where it went');

@@ -4450,7 +4450,9 @@
    * ──────────────────────────────────────────────────────────────────── */
 
   // actionSheet({ title?, actions: [{ label, icon?, iconEl?, destructive?,
-  // handler? }], cancelLabel? }) — returns a Promise.
+  // highlighted?, handler? }], cancelLabel? }) — returns a Promise.
+  // `highlighted` lights one row (a tint behind it, its label bold): the
+  // action the menu leads with. Meant for one row, not a style for many.
   function actionSheet(options) {
     var opts = options || {};
     var actions = opts.actions || [];
@@ -4486,7 +4488,8 @@
         }
         var btn = document.createElement('button');
         btn.type = 'button';
-        btn.className = 'un-action-btn' + (action.destructive ? ' un-destructive' : '');
+        btn.className = 'un-action-btn' + (action.destructive ? ' un-destructive' : '')
+          + (action.highlighted ? ' un-highlighted' : '');
         fillRowButton(btn, action, sheetAligned);
         btn.addEventListener('click', function () { settle(action); });
         card.appendChild(btn);

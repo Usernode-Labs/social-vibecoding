@@ -2821,8 +2821,10 @@ const DevChat = {
         ...base,
         tone: 'amber',
         icon: 'person',
-        lead: 'Connect GitHub or X to unlock $10/day of Homeroom credits.',
-        tail: ' Either account unlocks the same tier; connecting both does not stack credits.',
+        // #4378: the allowance is weekly (#2571); an unverified account
+        // is asked to verify for more, in the sheet the button opens.
+        lead: 'You\u2019re out of this week\u2019s free AI credits.',
+        tail: ' Verify your account to get more: add your phone number, or link GitHub and X.',
         actionsHtml: actions({ verificationRequired: true }),
       };
     }
@@ -3212,7 +3214,9 @@ const DevChat = {
     const CO = window.CreditOptions;
     const state = CO ? DevChat._creditState() : null;
     if (state && state.level === 'locked') {
-      return 'Connect GitHub or X to unlock $10/day of Homeroom credits.';
+      return window.CreditOptions && CreditOptions.VERIFY_LINE
+        ? CreditOptions.VERIFY_LINE
+        : 'Verify your account to get more: add your phone number, or link GitHub and X.';
     }
     const reset = DevChat._creditResetSentence();
     const lead = DevChat._globalBudgetOut()
