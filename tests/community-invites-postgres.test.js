@@ -178,6 +178,7 @@ test('invite links against a real PostgreSQL', async (t) => {
       );
       assert.equal(preview.project.slug, undefined, 'the address comes after joining');
       assert.equal(preview.building, false, 'no first version on its way: made, not being made');
+      assert.equal('buildLine' in preview, false, 'no build step on a signed-out preview (#4049, rule 5)');
     });
 
     await t.test('somebody with access joins on the spot, pinned like Join; following again spends nothing', async () => {

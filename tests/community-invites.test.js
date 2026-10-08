@@ -234,8 +234,9 @@ test('the words: the landing card, the invite pane', () => {
   assert.equal(card.inviterLabel({ inviter: 'evan', inviterName: 'Evan' }), 'Evan');
   assert.equal(card.inviterLabel({ inviter: 'evan', inviterName: 'evan' }), '@evan');
   assert.equal(card.inviterLabel({}), '');
-  assert.equal(card.seenLine(evan), 'Evan will see that you joined.');
-  assert.equal(card.seenLine({ ...evan, inviterName: 'evan' }), '@evan will see that you joined.');
+  // The signed-out page does not say who will see the join (owner, 8 October).
+  assert.equal(card.seenLine, undefined);
+  assert.equal(card.HOMEROOM_LINE, 'On Homeroom, people using an app build and improve it together.');
   // The making line is gone: the hero says who invited you, not who made it.
   const src = read('frontend/src/features/auth/invite-card.tsx');
   assert.doesNotMatch(src, /and invited you to join|export function madeLine|export function underLine/);
