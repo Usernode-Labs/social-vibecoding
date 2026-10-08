@@ -112,7 +112,11 @@
  * With a frame focused (the platform shell around an app), the same tap
  * on the page around it posts `{ __usernode_keyboard: 'dismiss' }` to the
  * frame, and the kit in a frame blurs its own field when that message
- * comes from its parent window (its own opt-out still holds).
+ * comes from its parent window (its own opt-out still holds). A frame its
+ * parent marks `data-un-keyboard-relay` (the shell's side panel, a page of
+ * the same origin) runs it the other way: a dismissing tap in there with
+ * no field of its own posts `{ __usernode_keyboard: 'tap' }` up, and the
+ * parent applies its own rule as if the tap had landed on it.
  *
  * A presented sheet or side panel also carries `--un-presence` on its own
  * element: 1 at rest, 0 off-screen, and 1:1 with the finger in between,
@@ -648,6 +652,20 @@
   function isKeyboardDismissMessage(data) {
     return !!data && typeof data === 'object' && data.__usernode_keyboard === 'dismiss';
   }
+  // And up (request #4314): the shell's side panel on iPad Safari is a
+  // document of its own beside the app, so a tap in it reaches neither the
+  // shell nor the app. A frame whose parent marks it with this attribute
+  // reports such a tap, made with no field of its own focused, to that
+  // parent, which takes it from that frame of its own origin only and
+  // closes the keyboard by its own rule (blur its field, or tell the
+  // focused frame).
+  var KB_RELAY_ATTR = 'data-un-keyboard-relay';
+  function keyboardTapMessage() {
+    return { __usernode_keyboard: 'tap' };
+  }
+  function isKeyboardTapMessage(data) {
+    return !!data && typeof data === 'object' && data.__usernode_keyboard === 'tap';
+  }
 
   // Keyboard-aware reveal math for a focused field inside a content
   // scroller. scrollIntoView({block:'nearest'}) is blind here: keyboard
@@ -986,6 +1004,9 @@
     tapKeepsKeyboard: tapKeepsKeyboard,
     keyboardDismissMessage: keyboardDismissMessage,
     isKeyboardDismissMessage: isKeyboardDismissMessage,
+    KB_RELAY_ATTR: KB_RELAY_ATTR,
+    keyboardTapMessage: keyboardTapMessage,
+    isKeyboardTapMessage: isKeyboardTapMessage,
     revealScrollDelta: revealScrollDelta,
     reorderDropIndex: reorderDropIndex,
     gridDropSide: gridDropSide,
@@ -1157,6 +1178,16 @@
    * passes the message on to a frame focused inside it. Posted, never
    * waited on, so the tap's own click is no later for it.
    *
+   * The other way (request #4314): in a frame its parent marked
+   * `data-un-keyboard-relay` (the shell's side panel, beside the app on an
+   * iPad), the same tap with no field or frame of its own focused posts
+   * `{ __usernode_keyboard: 'tap' }` to the parent. `window.frameElement`
+   * is null under a parent of another origin, so only a same-origin parent
+   * can ask for it. The parent takes it only from such a frame of its own,
+   * of its own origin, and does what a tap on its own page would: blur
+   * its field, or tell the frame that has focus. Each side's opt-out
+   * holds, and the tap's exceptions are checked where it landed.
+   *
    * Touch events where the page has them (every phone), else pointer
    * events from a finger; never a mouse or a pen. The start is heard in
    * capture, before anything can stop it; the end in the window's bubble
@@ -1208,6 +1239,33 @@
       return kbAttr(document.documentElement, KB_DISMISS_OFF_ATTR) === 'off'
         || kbAttr(document.body, KB_DISMISS_OFF_ATTR) === 'off';
     }
+    var framed = false;
+    try { framed = !!window.parent && window.parent !== window; } catch (err) { /* no parent */ }
+    function origin() {
+      try { return window.location.origin; } catch (err) { return null; }
+    }
+    // In a frame: whether the parent asked to hear this page's taps.
+    function relays() {
+      if (!framed) return false;
+      try { return kbAttr(window.frameElement, KB_RELAY_ATTR) != null; } catch (err) { return false; }
+    }
+    // To the parent, at this page's own origin: relays() saw the parent's
+    // element, so the parent is of this origin too.
+    function report() {
+      try {
+        window.parent.postMessage(keyboardTapMessage(), origin());
+      } catch (err) { /* a parent mid-teardown has no keyboard */ }
+    }
+    // The frame of this page's that a relayed tap came from, or null: one
+    // marked to relay, in this document, of this origin.
+    function relayFrame(e) {
+      var o = origin();
+      if (!e.source || !o || e.origin !== o) return null;
+      try {
+        var el = e.source.frameElement;
+        return el && el.ownerDocument === document && kbAttr(el, KB_RELAY_ATTR) != null ? el : null;
+      } catch (err) { return null; }
+    }
     function pathOf(e) {
       try {
         var path = typeof e.composedPath === 'function' ? e.composedPath() : null;
@@ -1219,7 +1277,7 @@
     }
 
     function down(x, y) {
-      tap = !off() && (focusedField() || focusedFrame())
+      tap = !off() && (focusedField() || focusedFrame() || relays())
         ? { x: x, y: y, at: now(), moved: 0, scrolled: false, multi: false }
         : null;
     }
@@ -1235,18 +1293,30 @@
       if (!isKeyboardDismissTap({ moved: t.moved, ms: now() - t.at, scrolled: t.scrolled, multi: t.multi })) return;
       var field = focusedField();
       var frame = field ? null : focusedFrame();
-      if (!(field || frame) || tapKeepsKeyboard(pathOf(e), field || frame)) return;
-      if (field) putAway(field); else tell(frame);
+      var relay = !(field || frame) && relays();
+      if (!(field || frame || relay) || tapKeepsKeyboard(pathOf(e), field || frame)) return;
+      if (field) putAway(field); else if (frame) tell(frame); else report();
     }
 
     // In a frame: the page around it heard a tap that closes the keyboard.
     // From the parent window only, as the bridge takes the shell's other
-    // messages; a top-level page has no parent to hear it from.
+    // messages; a top-level page has no parent to hear it from. Around a
+    // relaying frame: a tap in it that closes the keyboard, which this
+    // page treats as its own (never telling the frame it came from).
     function onMessage(e) {
-      if (!e || e.source !== window.parent || !isKeyboardDismissMessage(e.data) || off()) return;
+      if (!e || off()) return;
+      var from = null;
+      if (isKeyboardDismissMessage(e.data)) {
+        if (!framed || e.source !== window.parent) return;
+      } else if (isKeyboardTapMessage(e.data)) {
+        from = relayFrame(e);
+        if (!from) return;
+      } else {
+        return;
+      }
       var field = focusedField();
       var frame = field ? null : focusedFrame();
-      if (field) putAway(field); else if (frame) tell(frame);
+      if (field) putAway(field); else if (frame && frame !== from) tell(frame);
     }
 
     function first(list) { return list && list.length ? list[0] : null; }
@@ -1297,9 +1367,9 @@
     }
     // Element scrolls do not bubble, but they pass the window in capture.
     window.addEventListener('scroll', onScroll, quiet);
-    var framed = false;
-    try { framed = !!window.parent && window.parent !== window; } catch (err) { /* no parent */ }
-    if (framed) window.addEventListener('message', onMessage);
+    // Every page: a frame hears its parent, and any page may hold a frame
+    // that relays.
+    window.addEventListener('message', onMessage, { passive: true });
   })();
 
   /* ────────────────────────────────────────────────────────────────────
