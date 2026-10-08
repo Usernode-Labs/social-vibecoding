@@ -212,33 +212,32 @@ test('the words: the landing card, the invite pane', () => {
     '@ada invited you to join Tiers.');
   assert.equal(card.membersLine(1), '1 person is in it.');
   assert.equal(card.membersLine(0), '');
-  // "Made for you": the gift when the sender made it, the invitation when not.
-  // A community and its one project share a name, so the gift names the
-  // project ("made Flat 4B Chores", not "made this for Flat 4B Chores"); only
-  // a community named apart from its project is what it was made for.
-  const made = { live: true, reason: null, project: { name: 'Flat 4B Chores', iconEmoji: '🧹', iconUrl: null },
-    inviter: 'jordan_t1004', inviterName: 'jordan_t1004', inviterMadeIt: true, memberCount: 4 };
-  assert.equal(card.madeLine(made), 'jordan_t1004 made Flat 4B Chores');
-  assert.equal(card.madeLine({ ...made, communityName: 'Flat 4B Chores' }), 'jordan_t1004 made Flat 4B Chores');
-  assert.equal(card.madeLine({ ...made, communityName: ' flat 4b chores ' }), 'jordan_t1004 made Flat 4B Chores');
-  assert.equal(card.madeLine({ ...made, communityName: null }), 'jordan_t1004 made Flat 4B Chores');
-  const forGroup = { ...made, project: { name: 'Run Tracker', iconEmoji: '🏃', iconUrl: null },
-    inviter: 'maya', inviterName: 'Maya', communityName: 'Sunday Run Club' };
-  assert.equal(card.madeForName(forGroup), 'Sunday Run Club');
-  assert.equal(card.madeLine(forGroup), 'Maya made this for Sunday Run Club');
-  assert.equal(card.madeForName(made), null);
-  assert.equal(card.underLine(made), 'and invited you to join · 4 people are in it');
-  assert.equal(card.underLine({ ...made, memberCount: 1 }), 'and invited you to join · 1 person is in it');
-  assert.equal(card.underLine({ ...made, memberCount: 0 }), 'and invited you to join');
-  assert.equal(card.madeLine({ ...made, inviterMadeIt: false }), '@jordan_t1004 invited you to join Flat 4B Chores.');
-  assert.equal(card.madeLine({ ...forGroup, inviterMadeIt: false }), '@maya invited you to join Run Tracker.');
-  assert.equal(card.underLine({ ...made, inviterMadeIt: false, memberCount: 1 }), '1 person is in it.');
-  // While its first version is on its way nothing is made yet (Evan, 5
-  // October 2026): "is making", in both of the gift's forms.
-  assert.equal(card.madeLine({ ...made, building: true }), 'jordan_t1004 is making Flat 4B Chores');
-  assert.equal(card.madeLine({ ...forGroup, building: true }), 'Maya is making this for Sunday Run Club');
-  assert.equal(card.madeLine({ ...made, building: true, inviterMadeIt: false }), '@jordan_t1004 invited you to join Flat 4B Chores.');
-  assert.equal(card.underLine({ ...made, building: true }), 'and invited you to join · 4 people are in it');
+  // #4203: the page leads with the invitation, not the making, in one line
+  // under the project's name: who invited you (display name, else @handle),
+  // then how many are in it.
+  const evan = { live: true, reason: null, project: { name: 'Supply Line', iconEmoji: '📦', iconUrl: null },
+    inviter: 'evan', inviterName: 'Evan', inviterMadeIt: true, memberCount: 26 };
+  assert.equal(card.inviteLine(evan), 'Evan invited you to Supply Line · 26 people are in it');
+  assert.equal(card.inviteLine({ ...evan, inviterMadeIt: false }), 'Evan invited you to Supply Line · 26 people are in it');
+  assert.equal(card.inviteLine({ ...evan, building: true }), 'Evan invited you to Supply Line · 26 people are in it');
+  // No display name: preview() sends the handle as inviterName, and the page
+  // names the handle as a handle.
+  assert.equal(card.inviteLine({ ...evan, inviterName: 'evan' }), '@evan invited you to Supply Line · 26 people are in it');
+  assert.equal(card.inviteLine({ ...evan, inviterName: null }), '@evan invited you to Supply Line · 26 people are in it');
+  assert.equal(card.inviteLine({ ...evan, inviter: null, inviterName: null }), "You're invited to Supply Line · 26 people are in it");
+  // The count: one person, and zero (or none sent) says nothing.
+  assert.equal(card.inviteLine({ ...evan, memberCount: 1 }), 'Evan invited you to Supply Line · 1 person is in it');
+  assert.equal(card.inviteLine({ ...evan, memberCount: 0 }), 'Evan invited you to Supply Line');
+  assert.equal(card.inviteLine({ ...evan, memberCount: undefined }), 'Evan invited you to Supply Line');
+  assert.equal(card.membersPhrase(2), '2 people are in it');
+  assert.equal(card.inviterLabel({ inviter: 'evan', inviterName: 'Evan' }), 'Evan');
+  assert.equal(card.inviterLabel({ inviter: 'evan', inviterName: 'evan' }), '@evan');
+  assert.equal(card.inviterLabel({}), '');
+  assert.equal(card.seenLine(evan), 'Evan will see that you joined.');
+  assert.equal(card.seenLine({ ...evan, inviterName: 'evan' }), '@evan will see that you joined.');
+  // The making line is gone: the hero says who invited you, not who made it.
+  const src = read('frontend/src/features/auth/invite-card.tsx');
+  assert.doesNotMatch(src, /and invited you to join|export function madeLine|export function underLine/);
 
   const pane = loadTsx('frontend/src/features/app-context/invite-pane.tsx');
   const now = Date.parse('2026-09-27T12:00:00Z');
@@ -367,7 +366,7 @@ test(`a live link's landing is "Made for you"; the pitch stays in the document, 
     "hiddenLast(pitchHidden, 'px-4 flex grow flex-col text-center')",
   ]) assert.ok(landing.includes(hidden), hidden);
   const card = read('frontend/src/features/auth/invite-card.tsx');
-  assert.match(card, /<section data-landing-invite="live"/);
+  assert.match(card, /<section\s+data-landing-invite="live"/);
   assert.match(card, /data-landing-invite-picture=\{picture\.kind\}/);
   assert.match(card, /data-landing-invite-note=""/);
   assert.match(card, /\{`Join \$\{project\.name\}`\}/);

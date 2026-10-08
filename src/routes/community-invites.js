@@ -56,9 +56,10 @@ function escapeAttr(value) {
 
 /**
  * The community a live link's project was made for, when it is named apart
- * from the project, or null: the same rule as the page's card
- * (frontend/src/features/auth/invite-card.tsx, madeForName). A community and
- * its one project share a name today, and preview() sends no other.
+ * from the project, or null. A community and its one project share a name
+ * today, and preview() sends no other. (The page's card had the same rule
+ * until #4203, when it began leading with who invited you instead:
+ * frontend/src/features/auth/invite-card.tsx, inviteLine.)
  */
 function madeForName(preview, projectName) {
   const community = String((preview && preview.communityName) || '').trim();
@@ -68,7 +69,7 @@ function madeForName(preview, projectName) {
 
 /**
  * The link-preview tags for an invite page: what iMessage, Slack and the
- * rest show when the link is pasted. A live link reads the way its page does:
+ * rest show when the link is pasted. A live link's title is the gift:
  * "Maya made Run Tracker" when the person who sent it made the project ("Maya
  * made this for Sunday Run Club" when the community it was made for has a
  * name of its own; "is making" while its first version is on its way,
