@@ -308,21 +308,23 @@ test('soft reasons are amber tags, and the bar just counts the vote', () => {
   assert.match(tag.cls, /amber/, 'soft, so amber rather than red');
 });
 
-test('checks in flight are a neutral, spinning tag — they outrank nothing now', () => {
+test('checks in flight draw the progress bar — the spinning chip stands down (#4452)', () => {
   const AppView = makeAppView();
   const pending = PR({ check_state: 'pending' });
-  const running = AppView.statusTagSpecs(pending, {}).find((t) => t.key === 'tag-checks-running');
-  assert.ok(running);
-  assert.equal(running.label, 'Checks running…');
-  assert.match(running.cls, /zinc/, 'nobody has to act, so neutral');
-  assert.ok(running.spinner, 'in flight, so it spins');
+  // A run that is actually under way gets the segmented bar now; the chip
+  // would say the same thing twice on one card.
+  assert.ok(AppView._buildProgressSpec(pending), 'a pending run has a bar');
+  assert.ok(!AppView.statusTagSpecs(pending, {}).some((t) => t.key === 'tag-checks-running'),
+    'the chip does not spin beside the bar');
   assert.ok(!/Checks/.test(AppView.statusPillState(pending).label), 'the bar is the vote');
 
-  // #607: nothing recorded at all — the first run hasn't stamped 'pending'.
+  // #607: nothing recorded at all — the first run hasn't stamped 'pending',
+  // nothing is running, and the chip still explains the wait.
   const fresh = PR({});
   const starting = AppView.statusTagSpecs(fresh, {}).find((t) => t.key === 'tag-checks-running');
   assert.ok(starting);
   assert.equal(starting.label, 'Checks starting…');
+  assert.match(starting.cls, /zinc/, 'nobody has to act, so neutral');
   assert.ok(starting.spinner);
 });
 

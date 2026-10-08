@@ -13847,6 +13847,10 @@ const AppView = {
       pill,
       linked,
       badges,
+      // The run-progress bar's spec, while the run is in flight (null
+      // otherwise). dev-card.tsx draws it after the meta row, where the two
+      // spinner chips sat; the change page's hero draws the same one.
+      progress: AppView._buildProgressSpec(pr),
       chatCount: parseInt(pr.chat_count) || 0,
       actions,
       // The eye is a rail affordance on the dense card and a band affordance
@@ -15612,6 +15616,7 @@ const AppView = {
     });
     let sentence;
     let sub;
+    let doing = null;
     if (done) {
       const total = Number.isFinite(b.totalMs) ? b.totalMs
         : doneSteps.filter((s) => s.key !== 'prepare_checks').reduce((n, s) => n + (s.ms || 0), 0);
@@ -15625,7 +15630,7 @@ const AppView = {
       sub = `built in ${AppView._fmtMs(total)}`;
     } else {
       const copy = current && AppView.BUILD_STEP_COPY[current];
-      let doing = copy ? copy.doing : 'building';
+      doing = copy ? copy.doing : 'building';
       if (queued) doing = q.doing;
       if (image && image.doing) doing = `${doing} (${image.doing})`;
       sentence = parts.length
@@ -15633,7 +15638,10 @@ const AppView = {
         : `Preview build: ${doing}.`;
       sub = `build: ${doing}`;
     }
-    return { steps, sentence, sub, done, current, image };
+    // `doing` is the running step's own words, without the "build: " label
+    // the sub line carries — the progress bar's caption and tooltip use it
+    // verbatim ("cloning the database", "waiting for an earlier run").
+    return { steps, sentence, sub, doing: done ? null : doing, done, current, image };
   },
 
   // Inside the "build image" step. On the cluster the image is a buildpack
@@ -20033,6 +20041,168 @@ const AppView = {
     soft: 'dev-badge bg-amber-500/10 text-amber-800 dark:text-amber-400',
     running: 'dev-badge bg-zinc-500/10 text-zinc-500 dark:text-zinc-400',
   },
+  // The wait's usual size, in the words the app already uses elsewhere for
+  // an approximate time ("about 4 min"; past the hour, "about 1h 10m").
+  // Server-side, src/services/run-estimate.js works the number out of the
+  // project's recent settled runs; the routes attach it only once enough of
+  // those exist for a median to mean something.
+  _fmtEta(ms) {
+    const m = Math.max(1, Math.round((Number(ms) || 0) / 60000));
+    if (m < 60) return `about ${m} min`;
+    const h = Math.floor(m / 60);
+    const rest = m % 60;
+    return `about ${h}h${rest ? ` ${rest}m` : ''}`;
+  },
+
+  // The run-progress bar, as one spec or null — beside statusTagSpecs, the
+  // same kind of pure builder a card reads. While a change is being built
+  // and tested, its card and its change page show ONE segmented bar instead
+  // of the three separate spinner lines: four segments in run order
+  // (building the preview, the browser checks, npm test, the before & after
+  // shots), each filling as its phase finishes, with the phase's own words
+  // and the project's usual run time in the line under the bar.
+  //
+  // Null unless the run is in flight: `check_state === 'pending'` with
+  // `check_phase !== 'deferred'` (a deferred run tests nothing until the
+  // merge — the soft chip stays), or the shots state is one of the in-flight
+  // states the status tag already treats as running (or a retry the recovery
+  // sweep is about to start). Governance rows never reach here, and a
+  // settled run never gets one — the Tested line and the verdict's own tags
+  // take over exactly as before.
+  //
+  // A phase part way through fills from its own counts (finished build steps
+  // over the five, ran over expected); a phase with no counts yet shows no
+  // fill — the spinner in the line under the bar carries the "something is
+  // happening" reading.
+  _buildProgressSpec(pr) {
+    const p = pr;
+    if (!p || p.status === 'merged' || p.status === 'merging') return null;
+    const checksPending = p.check_state === 'pending' && p.check_phase !== 'deferred';
+    const shots = (p.shots && typeof p.shots === 'object') ? p.shots : null;
+    const shotsRetrying = !!(shots && shots.state === 'failed' && shots.automaticRetryPending === true);
+    const shotsRunning = !!(shots
+      && !AppView._shotsNotStarted(shots)
+      && (['planned', 'provisioning', 'exploring', 'replaying', 'reviewing'].includes(shots.state)
+        || shotsRetrying));
+    if (!checksPending && !shotsRunning) return null;
+
+    const live = AppView._checksProgressView(p);
+    const build = live ? live.build : null;
+    const unit = live ? live.unit : null;
+    const bar = live ? live.bar : null;
+    const SHOTS_DONE = ['verified', 'not_required', 'overridden'];
+
+    // ── Segment 1: building the preview ──
+    let buildSeg;
+    let buildCaption = null;
+    if (build && build.done) {
+      buildSeg = { key: 'build', title: `Preview ${build.sub}`, state: 'done', fraction: 1 };
+    } else if (checksPending) {
+      // Mid-build (or no frame yet — a fresh push, a legacy row): the phase
+      // is the build's, and nothing is counted that the frame has not sent.
+      const finished = build ? build.steps.filter((s) => s.state === 'done').length : 0;
+      buildCaption = (build && build.doing) || 'building the preview';
+      buildSeg = {
+        key: 'build', title: buildCaption, state: 'now',
+        fraction: build ? finished / 5 : null,
+      };
+    } else {
+      // Only the shots are in flight, so the run is past the build.
+      buildSeg = { key: 'build', title: 'Preview built', state: 'done', fraction: 1 };
+    }
+
+    // ── Segment 2: the browser checks ──
+    const verdictStored = !!p.check_state && p.check_state !== 'pending';
+    let checksSeg;
+    let checksCaption = null;
+    if (verdictStored) {
+      checksSeg = { key: 'checks', title: 'Checks finished', state: 'done', fraction: 1 };
+    } else {
+      const ran = bar ? bar.ran : 0;
+      const expected = bar ? bar.expected : null;
+      const started = !!(ran || expected);
+      // Not started until the build finishes — and known to be finished only
+      // from the build's own frame. With NO frame at all (a fresh push, a
+      // legacy row) every run segment reads as the spinner state: nothing
+      // has been counted, nothing fills.
+      const checksWaiting = p.check_phase === 'queued' || !!(build && !build.done);
+      if (started) checksCaption = `Checks ${ran}${expected ? ` of ${expected}` : ''} run`;
+      else if (!checksWaiting && build) checksCaption = 'Checks running…';
+      checksSeg = {
+        key: 'checks',
+        title: started
+          ? `Checks: ${ran}${expected ? ` of ${expected}` : ''} run${bar && bar.passed ? `, ${bar.passed} passed` : ''}`
+          : 'Checks running…',
+        state: checksWaiting ? 'todo' : 'now',
+        fraction: started && expected ? Math.min(1, ran / expected) : null,
+      };
+    }
+
+    // ── Segment 3: npm test (the unit suite's own container) ──
+    let unitSeg;
+    let unitCaption = null;
+    if (verdictStored) {
+      unitSeg = { key: 'unit', title: 'npm test finished', state: 'done', fraction: 1 };
+    } else if (unit && unit.bar.done) {
+      unitSeg = { key: 'unit', title: unit.sub, state: 'done', fraction: 1 };
+    } else if (unit) {
+      const ub = unit.bar;
+      const installing = ub.phase === 'cloning' || ub.phase === 'installing';
+      const started = !installing && !!(ub.ran || ub.expected);
+      // The suite's own sub already says "npm test: …" — cloning, installing
+      // or the counts, exactly as the checks panel words them today.
+      unitCaption = started
+        ? `npm test: ${ub.ran}${ub.expected ? ` of ~${ub.expected}` : ''} run`
+        : (unit.sub || 'npm test');
+      unitSeg = {
+        key: 'unit', title: unit.sub, state: 'now',
+        fraction: started && ub.expected ? Math.min(1, ub.ran / ub.expected) : null,
+      };
+    } else {
+      // No frame: the suite runs alongside the browser checks, so it is the
+      // spinner state when they are — and it says nothing until the build is
+      // done, because before that it has nothing running to name.
+      unitSeg = {
+        key: 'unit', title: 'npm test',
+        state: checksSeg.state === 'now' ? 'now' : 'todo', fraction: null,
+      };
+      if (checksSeg.state === 'now' && build) unitCaption = 'npm test';
+    }
+
+    // ── Segment 4: the before & after shots ──
+    let shotsSeg;
+    let shotsCaption = null;
+    if (shots && SHOTS_DONE.includes(shots.state)) {
+      shotsSeg = { key: 'shots', title: 'Before & after shots saved', state: 'done', fraction: 1 };
+    } else if (shotsRunning) {
+      // No fill while the run is going: the capture job reports no counts,
+      // so the honest signal is the moving spinner under the bar.
+      shotsCaption = shotsRetrying ? 'Trying the shots again' : 'Taking before & after shots';
+      shotsSeg = { key: 'shots', title: shotsCaption, state: 'now', fraction: null };
+    } else {
+      shotsSeg = { key: 'shots', title: 'Before & after shots', state: 'todo', fraction: null };
+    }
+
+    // ── The caption: where things stand, in the words the change already
+    // uses today. Each phase that is still moving is named, joined with
+    // " · "; finished phases say nothing (the segment's fill is their word).
+    const parts = [];
+    if (buildSeg.state === 'now') parts.push(buildCaption);
+    else if (p.check_phase === 'queued') parts.push(AppView._checksPhaseCopy('queued', p).title);
+    else {
+      if (checksSeg.state === 'now') parts.push(checksCaption);
+      if (unitSeg.state === 'now') parts.push(unitCaption);
+    }
+    if (shotsCaption && verdictStored) parts.push(shotsCaption);
+
+    const eta = p.run_eta && Number.isFinite(p.run_eta.ms) ? AppView._fmtEta(p.run_eta.ms) : null;
+    return {
+      segments: [buildSeg, checksSeg, unitSeg, shotsSeg],
+      caption: parts.filter(Boolean).join(' · '),
+      etaText: eta || undefined,
+    };
+  },
+
   statusTagSpecs(item, opts) {
     if (!item) return [];
     const p = item;
@@ -20041,6 +20211,11 @@ const AppView = {
     // none of this applies to it — the same guard statusPillState carries.
     if ((o.kind || 'proposal') === 'gov') return [];
     const out = [];
+    // While the run-progress bar is up it carries the in-flight reading:
+    // the spinning "Checks running…" chip and the running shots tag would
+    // say what the bar and its caption already say. Every settled-state tag
+    // (checks_failing, integrating, resolving, behind main, …) still draws.
+    const progress = AppView._buildProgressSpec(p);
     const isOpenRow = p.status !== 'merged' && p.status !== 'merging';
     // Merge-conflict resolution: in flight, nobody need act, so it reads like
     // a running check rather than like a problem.
@@ -20056,6 +20231,10 @@ const AppView = {
     // "worth knowing, does not stop it landing".
     if (isOpenRow) {
       for (const r of AppView.blockReasons(p)) {
+        // The bar's shots segment is the running shots tag's reading; the
+        // not-started / failed states keep their chip (they explain a wait,
+        // they are not a phase of the run).
+        if (progress && r.key === 'shots' && r.running) continue;
         out.push({
           t: 'chip', key: `tag-${r.key}`,
           // Three tones, three meanings: `running` is in flight and nobody
@@ -20087,18 +20266,21 @@ const AppView = {
       });
     } else if (p.check_state === 'pending'
         || (!p.check_state && p.status === 'promoted' && !p.console_check_state)) {
-      // Checks in flight. The live counts ride the label exactly as they did
-      // in the bar: a board of cards should say how far each run is, not just
-      // that it is running.
-      const live = p.check_state === 'pending' ? AppView._checksProgressView(p) : null;
-      const count = live && live.bar.expected ? ` ${live.bar.ran}/${live.bar.expected}` : (live && live.bar.ran ? ` ${live.bar.ran}` : '');
-      out.push({
-        t: 'chip', key: 'tag-checks-running', cls: AppView.STATUS_TAG_CLS.running,
-        label: p.check_state === 'pending' ? `Checks running…${count}` : 'Checks starting…',
-        spinner: true, meta: true,
-        data: { 'data-status-tag': 'checks-running' },
-        title: 'Automated tests are still running on the staging build. Merge is blocked until they pass.',
-      });
+      // Checks in flight — unless the progress bar is up, in which case its
+      // segments and caption are this same story told better. (The bar only
+      // exists while `pending` and not deferred, so the "Checks starting…"
+      // case below it keeps the chip: nothing is running yet.)
+      if (!progress) {
+        const live = p.check_state === 'pending' ? AppView._checksProgressView(p) : null;
+        const count = live && live.bar.expected ? ` ${live.bar.ran}/${live.bar.expected}` : (live && live.bar.ran ? ` ${live.bar.ran}` : '');
+        out.push({
+          t: 'chip', key: 'tag-checks-running', cls: AppView.STATUS_TAG_CLS.running,
+          label: p.check_state === 'pending' ? `Checks running…${count}` : 'Checks starting…',
+          spinner: true, meta: true,
+          data: { 'data-status-tag': 'checks-running' },
+          title: 'Automated tests are still running on the staging build. Merge is blocked until they pass.',
+        });
+      }
     }
     return out;
   },

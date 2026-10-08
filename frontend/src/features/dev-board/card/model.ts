@@ -290,6 +290,32 @@ export interface RailSpec {
   preview?: PreviewSpec | null;
 }
 
+/**
+ * One segment of the run-progress bar (`AppView._buildProgressSpec`): a
+ * phase of the run in order — building the preview, the browser checks, npm
+ * test, the before & after shots — with its fill rule already resolved.
+ * `state` is 'done' | 'now' | 'todo'; `fraction` is 0..1 or null when the
+ * phase has no counts yet (no fill; the caption's spinner reads).
+ */
+export interface BuildProgressSegment {
+  key: 'build' | 'checks' | 'unit' | 'shots';
+  title: string;
+  state: 'done' | 'now' | 'todo';
+  fraction: number | null;
+}
+
+/**
+ * The whole bar, while a change is being built and tested: the four
+ * segments, the caption's words (the phases still moving, joined with
+ * " · "), and the wait's usual size when the project has settled runs
+ * enough to median over ("about 4 min").
+ */
+export interface BuildProgressSpec {
+  segments: BuildProgressSegment[];
+  caption: string;
+  etaText?: string;
+}
+
 export interface DevCardModel {
   /** Stable across repaints — the React key and the store's identity. */
   key: string;
@@ -305,6 +331,12 @@ export interface DevCardModel {
   /** Closes-#N pills — their own opt because they lead the band, outside the cap. */
   linked: BadgeSpec[];
   badges: BadgeSpec[];
+  /**
+   * The run-progress bar, while this change is being built and tested
+   * (`AppView._buildProgressSpec`); null once the run settles, when the
+   * Tested line and the verdict's own tags take over.
+   */
+  progress?: BuildProgressSpec | null;
   chatCount: number | null;
   actions: ActionSpec[];
   /** The eye, when it rides in the action band rather than the rail. */

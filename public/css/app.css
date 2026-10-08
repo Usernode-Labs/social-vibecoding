@@ -15782,6 +15782,26 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-details-part { margin-top: 14px; }
 .dev-details-sub { margin: 0 0 6px; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); }
 .dev-details-part > .dev-topic-details-body { margin: 0; padding: 0; background: none; font-size: 13.5px; line-height: 1.5; }
+/* The run-progress bar: while a change builds and runs its checks, its card
+   and change page show ONE segmented bar instead of three spinner lines.
+   The vote step's tally-bar language (a rounded track, an accent fill), four
+   equal segments in run order; the fill is the honest signal, the segment's
+   size is not. A phase with no counts yet draws no fill; the spinner in the
+   note line under the bar carries the "something is happening" reading. */
+.dev-progress { margin: 10px 0 2px; }
+.dev-progress-bar { display: flex; gap: 3px; height: 6px; }
+.dev-progress-seg {
+  position: relative; flex: 1; height: 6px; border-radius: 999px;
+  background: var(--state-neutral-bg); overflow: hidden;
+}
+.dev-progress-seg.dev-progress-done { background: var(--accent); }
+.dev-progress-seg.dev-progress-now { box-shadow: inset 0 0 0 1.5px var(--accent); }
+.dev-progress-part { position: absolute; inset: 0 auto 0 0; border-radius: inherit; background: var(--accent); }
+.dev-progress-note {
+  display: flex; align-items: center; gap: 6px; margin: 5px 0 0;
+  font-size: 0.78rem; color: var(--text-muted);
+}
+.dev-progress-note > .dc-status-spinner-arc { flex: none; margin: 0; }
 /* B10b: the hero's Tested line, in the steps' own marks. A tap opens
    Details at the Checks part. */
 .dev-topic-tested {

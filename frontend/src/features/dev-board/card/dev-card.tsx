@@ -62,6 +62,7 @@ import type {
   ActionRef,
   ActionSpec,
   BadgeSpec,
+  BuildProgressSpec,
   CardIconSpec,
   DevCardModel,
   ExtraSpec,
@@ -323,6 +324,47 @@ export function Preview({ spec }: { spec: PreviewSpec }): ReactNode {
 }
 
 /** One entry of the status band, dispatched over the tagged union. */
+/**
+ * The run-progress bar (`AppView._buildProgressSpec`): four segments in run
+ * order — building the preview, the browser checks, npm test, the before &
+ * after shots — each filling as its phase finishes, with the phases still
+ * moving named in the line under it and the wait's usual size once the
+ * project has settled runs enough to median over. A phase with no counts yet
+ * shows no fill; the caption's spinner is the "something is happening"
+ * reading. The fill widths ride as inline styles, the same way the vote
+ * step's tally bar does, and the classes live in app.css beside the Tested
+ * line they sit next to.
+ */
+export function BuildBar({ p }: { p: BuildProgressSpec }): ReactNode {
+  const note = [p.caption, p.etaText].filter(Boolean).join(' · ');
+  return (
+    <div
+      className="dev-progress"
+      data-run-progress="1"
+      role="img"
+      aria-label={note || 'A run is in progress'}
+    >
+      <div className="dev-progress-bar">
+        {p.segments.map((s) => {
+          const full = s.state === 'done' || (s.fraction != null && s.fraction >= 1);
+          const cls = full ? ' dev-progress-done' : s.state === 'now' ? ' dev-progress-now' : '';
+          return (
+            <span key={s.key} className={`dev-progress-seg${cls}`} title={s.title}>
+              {!full && s.fraction != null && s.fraction > 0
+                ? <i className="dev-progress-part" style={{ width: `${Math.round(s.fraction * 100)}%` }} />
+                : null}
+            </span>
+          );
+        })}
+      </div>
+      <p className="dev-progress-note">
+        <span className="dc-status-icon dc-status-spinner-arc" aria-hidden="true" />
+        <span>{note}</span>
+      </p>
+    </div>
+  );
+}
+
 export function Badge({ b }: { b: BadgeSpec }): ReactNode {
   switch (b.t) {
     case 'chip':
@@ -1440,6 +1482,10 @@ export function DevCard(
   // collapses it, exactly as `_cardContentHtml` did.
   const metaNodes = metaLineNodes(m);
   const metaRow = dense || metaNodes.length ? <div className="dev-card-meta">{metaNodes}</div> : null;
+  // The run-progress bar sits between the meta line and the status row,
+  // exactly where the two spinner chips it replaces used to ride the meta
+  // line (statusTagSpecs omits them while the bar is up).
+  const progressBar = m.progress ? <BuildBar p={m.progress} /> : null;
 
   return (
     <div className={`${m.cls} ${dense ? 'dev-card-dense' : 'dev-card-topic'}`} data-edge={edge} {...attrs}>
@@ -1462,6 +1508,7 @@ export function DevCard(
           {headEnd}
         </div>
         {metaRow}
+        {progressBar}
         {statusRow}
         {factsRow}
         {actionRow}

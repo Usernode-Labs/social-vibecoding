@@ -847,6 +847,22 @@ test('#2170: every ?demo=1 mock with a verdict carries the kept shape; a run in 
       assert.equal(row.checks_progress.build.step, 'done');
       assert.equal(row.checks_progress.queue.ahead, 2);
       assert.equal('checksMs' in row.checks_progress, false);
+    } else if (row.id === 9000022) {
+      // #4452: the demo's mid-build row carries a live frame (two of five
+      // steps, cloning the database) but no cost — the card's progress bar
+      // fills from exactly this shape.
+      assert.equal(row.check_state, 'pending');
+      assert.equal(row.checks_progress.build.step, 'clone');
+      assert.equal('checksMs' in row.checks_progress, false,
+        'a run in flight carries no cost, only its live frame');
+    } else if (row.id === 9000026) {
+      // The demo's mid-suite row: build finished and costed, checks and
+      // npm test running from their live counts, no verdict cost yet.
+      assert.equal(row.check_state, 'pending');
+      assert.equal(row.checks_progress.build.step, 'done');
+      assert.equal(row.checks_progress.build.totalMs, 19964);
+      assert.equal('checksMs' in row.checks_progress, false,
+        'a run in flight carries no cost, only its live counts');
     } else {
       assert.equal(row.checks_progress, undefined, `${row.id}: a run in flight (or none) carries no cost`);
     }

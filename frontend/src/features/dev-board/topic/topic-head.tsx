@@ -39,7 +39,7 @@ import { Button } from '@/components/ui/button';
 import { CheckIcon, ChevronRightIcon, PencilSquareIcon, PlusIcon, SearchIcon, XIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { ActionBand, ActionButton, Badge, DevCard, StatusPill, TitleContent, VoteButton, isVoteSpec } from '../card/dev-card';
+import { ActionBand, ActionButton, Badge, BuildBar, DevCard, StatusPill, TitleContent, VoteButton, isVoteSpec } from '../card/dev-card';
 import type { DevCardModel } from '../card/model';
 import { swatchFor } from '../../group-chat/swatch';
 import { useInlineImageViewer } from '../../image-viewer/image-viewer';
@@ -1075,7 +1075,7 @@ const SHOTS_BUILDING = new Set(['planned', 'provisioning', 'exploring', 'replayi
  * strip, because it is the one pending state with something for the reader
  * to do — the panel carries the recorded reason and the retry control.
  */
-function BeforeAfter({ body }: { body: TopicBody }): ReactNode {
+function BeforeAfter({ body, hideRunning }: { body: TopicBody; hideRunning?: boolean }): ReactNode {
   const tiles = body.actions && body.actions.visuals ? body.actions.visuals : null;
   const ev = body.shots || null;
   const notStarted = !!(ev && ev.notStarted);
@@ -1092,6 +1092,11 @@ function BeforeAfter({ body }: { body: TopicBody }): ReactNode {
   // An interrupted run the recovery sweep is about to start again reads as
   // under way too: the next thing that happens needs nobody.
   if (!notStarted && (SHOTS_BUILDING.has(ev.state) || ev.retrying)) {
+    // While the run-progress bar is up it carries this line's reading — the
+    // shots are its last segment, spinning in the caption. Failed, waived
+    // and not-started runs keep their strip or panel: they are facts a
+    // voter weighs, not a phase of the run.
+    if (hideRunning) return null;
     return (
       <p className="dev-topic-hero-shots" data-shots-state={ev.state}>
         <span className="dc-status-spinner-arc" aria-hidden="true"></span>
@@ -1210,7 +1215,15 @@ function ChangeHero({ id, card, body, linkedIssues, onIssuesSaved }: {
       {body.summaryStale && body.summaryHtml
         ? <p className="dev-topic-note" role="note">This summary may describe an earlier revision.</p>
         : null}
-      {body.tested && id ? <TestedLine id={id} t={body.tested} /> : null}
+      {/* While the run is under way the two spinner lines — the Tested
+          line's "Testing it…" and the in-flight shots line below — give way
+          to one bar (`card.progress`, AppView._buildProgressSpec): four
+          segments for building, the checks, npm test and the shots, with
+          the phase and the usual run time in the line under it. The settled
+          Tested line keeps its place exactly as it was. */}
+      {card.progress && id
+        ? <BuildBar p={card.progress} />
+        : (body.tested && id ? <TestedLine id={id} t={body.tested} /> : null)}
       {body.includedIn ? <IncludedIn r={body.includedIn} /> : null}
       {hasIssues ? (
         <IssueAssociations
@@ -1222,7 +1235,7 @@ function ChangeHero({ id, card, body, linkedIssues, onIssuesSaved }: {
           onSaved={onIssuesSaved}
         />
       ) : null}
-      <BeforeAfter body={body} />
+      <BeforeAfter body={body} hideRunning={!!card.progress} />
       {body.note ? <div className="dev-topic-note">{body.note}</div> : null}
     </section>
   );

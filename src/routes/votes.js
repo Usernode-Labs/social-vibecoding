@@ -29,6 +29,7 @@ const { isCliCredentialManagementSession } = require('../services/cli-api-policy
 const visibleChangesContract = require('../services/visible-changes');
 const shotsState = require('../services/shots-state');
 const shotsView = require('../services/shots-view');
+const runEstimate = require('../services/run-estimate');
 const summaryFreshness = require('../services/summary-freshness');
 const proposalDelivery = require('../services/proposal-delivery');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
@@ -769,6 +770,20 @@ function stagingMockProposals(viewer) {
       recheckable: true,
       test_results: [],
       checks_checked_at: hoursAgo(0.02),
+      // Mid-build frame: two of the five steps done, cloning the database.
+      // The progress bar and the estimate are reviewable under ?demo=1.
+      checks_progress: {
+        build: {
+          step: 'clone',
+          startedAt: hoursAgo(0.02),
+          steps: [
+            { key: 'source_fetch', ms: 2555 },
+            { key: 'image_build', ms: 5372 },
+          ],
+        },
+        updatedAt: hoursAgo(0.004),
+      },
+      run_eta: { ms: 240000, samples: 4 },
     },
     {
       // 9000026, not 9000023: the "at least N approvals" fixture further
@@ -784,6 +799,15 @@ function stagingMockProposals(viewer) {
       recheckable: true,
       test_results: [],
       checks_checked_at: hoursAgo(0.02),
+      // Built, browser checks finished, the unit suite still running: the
+      // shape the progress bar's caption words as "npm test: 120 of ~190 run".
+      checks_progress: {
+        build: { step: 'done', steps: mockBuildSteps(), totalMs: 19964 },
+        ran: 8, passed: 8, failed: 0, expected: 8,
+        unit: { phase: 'running', ran: 120, passed: 118, failed: 0, skipped: 2, expected: 190 },
+        updatedAt: hoursAgo(0.003),
+      },
+      run_eta: { ms: 240000, samples: 4 },
     },
     // The fifth build step. The container is up (four steps done, 20s) but
     // the run is parked behind an earlier capture on the same proposal —
@@ -810,6 +834,7 @@ function stagingMockProposals(viewer) {
         },
         updatedAt: hoursAgo(0.015),
       },
+      run_eta: { ms: 240000, samples: 4 },
     },
     // The wait between the halves: the preview is built and the run is in
     // the checks queue, two runs ahead of it (services/checks-queue.js). A
@@ -833,6 +858,7 @@ function stagingMockProposals(viewer) {
         },
         queue: { ahead: 2, since: hoursAgo(0.05) },
       },
+      run_eta: { ms: 240000, samples: 4 },
     },
     // #607: a freshly promoted proposal whose first checks run hasn't even
     // stamped 'pending' yet (staging build still going) — NO verdict, NO
@@ -4506,6 +4532,20 @@ function voteRoutes(config) {
         }
       }
 
+      // The wait's usual size, for rows whose run is in flight (the change
+      // card's progress bar words it "about 4 min"). One read per request —
+      // the service caches per app on top — and attached only when the
+      // project has settled runs to median over (samples >= 3 keeps the
+      // estimate off a project's first runs, which have nothing to say).
+      if (rows.some((r) => runEstimate.runInFlight(r))) {
+        const runEta = await runEstimate.estimate(pool, appRows[0].id);
+        if (runEta && runEta.samples >= 3) {
+          for (const row of rows) {
+            if (runEstimate.runInFlight(row)) row.run_eta = runEta;
+          }
+        }
+      }
+
       res.json({
         // `?results=failing`: the shell's list form (services/list-test-results.js).
         promoted: listTestResults.forListing(req, rows),
@@ -5046,6 +5086,12 @@ function voteRoutes(config) {
       }
 
       if (!proposal) return res.status(404).json({ error: 'Proposal not found' });
+      // The same run-time estimate the board rows carry, so the change
+      // page's own progress bar words it too (run-estimate.js).
+      if (runEstimate.runInFlight(proposal)) {
+        const runEta = await runEstimate.estimate(pool, gatedApp.id);
+        if (runEta && runEta.samples >= 3) proposal.run_eta = runEta;
+      }
       // `?results=failing`: the proposal page's own read, which lists passing
       // checks only when their fold is opened (services/list-test-results.js).
       res.json({ proposal: listTestResults.forItem(req, proposal) });
