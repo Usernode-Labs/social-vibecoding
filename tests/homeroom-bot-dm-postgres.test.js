@@ -602,7 +602,8 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
       assert.deepEqual([built.metadata.homeroomBot.kind, built.metadata.homeroomBot.status, built.metadata.homeroomBot.choices],
         ['plan', 'answered', ['Each runner picks their own goal']]);
       assert.deepEqual([building.metadata.homeroomBot.kind, building.metadata.homeroomBot.appName], ['activity', 'Staging demo run club']);
-      assert.match(building.content, /\n\nI'll message you here when it's ready to try\.$/);
+      assert.equal(building.content, 'Thanks for answering about the plan. I\'ll let you know when Staging demo run club is ready to try.');
+      assert.equal(building.metadata.homeroomBot.thanks, true);
       assert.deepEqual([planCard.metadata.homeroomBot.kind, planCard.metadata.homeroomBot.appName, planCard.metadata.homeroomBot.issueNumber],
         ['activity', 'Staging demo plants', 1], 'the waiting plan\'s own card, above it');
       assert.equal(ready.metadata.homeroomBot.kind, 'proposal');
