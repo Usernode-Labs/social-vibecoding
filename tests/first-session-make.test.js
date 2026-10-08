@@ -269,27 +269,19 @@ test('a choice that needs no typing makes a ready-made app, with nothing for Hom
   assert.match(src, /\{readyMadeOf\(template, choice\) \? <p data-make-ready="" className=\{HINT\}>\{READY_LINE\}<\/p> : null\}/);
 });
 
-// #4174: every project's repository is public on GitHub, and its first
-// request is a public issue holding the description word for word. The make
-// screen says so, quietly, under Make it, from either door.
-test('under Make it, one quiet line says what you write and the code are public on GitHub', () => {
+// #4384: the make screen no longer says, under Make it, that what you write
+// and the code are public on GitHub (#4174 added that line). The other
+// "public on GitHub" lines (import, visibility, fork, settings) stay.
+test('nothing under Make it says what you write is public on GitHub', () => {
   const make = loadTsx(`${DIR}/make.tsx`);
-  assert.equal(make.MAKE_PUBLIC_LINE, 'What you write here, and the app’s code, are public on GitHub.');
+  assert.equal(make.MAKE_PUBLIC_LINE, undefined);
   for (const props of [
     { who: 'Jordan', onMade() {}, onLookAround() {} },
     { who: 'Jordan', entry: 'create', onMade() {}, onClose() {} },
   ]) {
     const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', props);
-    const line = /<p data-make-public="" class="([^"]*)">([^<]*)<\/p>/.exec(html);
-    assert.ok(line, `the line is drawn (${props.entry || 'first-session'})`);
-    assert.equal(line[2], make.MAKE_PUBLIC_LINE);
-    // Fine print: small and muted, never a warning colour.
-    assert.match(line[1], /\btext-\[13px\]/);
-    assert.match(line[1], /\btext-zinc-500\b/);
-    assert.doesNotMatch(line[1], /red-|amber-|font-(semi)?bold/);
-    assert.ok(html.indexOf('data-make-public') > html.indexOf('>Make it</button>'), 'under Make it');
-    const next = props.entry === 'create' ? 'data-make-import-link' : 'Look around first';
-    assert.ok(html.indexOf('data-make-public') < html.indexOf(next), `above ${next}`);
+    assert.ok(html.includes('>Make it</button>'), `the screen is drawn (${props.entry || 'first-session'})`);
+    assert.doesNotMatch(html, /data-make-public|public on GitHub/);
   }
 });
 
@@ -572,13 +564,13 @@ test('after Make it: the build line, then one invite, and the second button says
 test('the maker\'s tour ends in Homeroom bot\'s chat when it builds for them, and on the hub when not', () => {
   const { makerSteps } = loadTsx(`${DIR}/tour-steps.ts`);
   const withBot = makerSteps({ slug: 'film', name: 'Friday Film Crew', conversationId: 12 });
-  assert.deepEqual(withBot.map((s) => s.screen), ['home', 'app', 'app', 'home', 'hub', 'hub', 'bot']);
-  assert.equal(withBot[5].target, '#platform-tab-messages');
-  assert.equal(withBot[5].opensNext, true);
-  assert.equal(withBot[6].last, true);
+  assert.deepEqual(withBot.map((s) => s.screen), ['home', 'app', 'app', 'app', 'app', 'home', 'hub', 'hub', 'bot']);
+  assert.equal(withBot[7].target, '#platform-tab-messages');
+  assert.equal(withBot[7].opensNext, true);
+  assert.equal(withBot[8].last, true);
   const without = makerSteps({ slug: 'film', name: 'Friday Film Crew', conversationId: null });
-  assert.deepEqual(without.map((s) => s.screen), ['home', 'app', 'app', 'home', 'hub']);
-  assert.equal(without[4].last, true);
+  assert.deepEqual(without.map((s) => s.screen), ['home', 'app', 'app', 'app', 'app', 'home', 'hub']);
+  assert.equal(without[6].last, true);
   const index = read(`${DIR}/index.tsx`);
   assert.match(index, /else if \(screen === 'bot' && conversationId\) window\.location\.hash = `#messages\/\$\{conversationId\}`;/);
 });
@@ -591,7 +583,7 @@ test('the maker\'s tour ends in Homeroom bot\'s chat when it builds for them, an
 test('the maker\'s last step shows the chat with Homeroom bot whole: its header with its messages, the plan\'s buttons clear of the card', () => {
   const { makerSteps, BOT_CHAT_HEADER, BOT_CHAT_MESSAGES } = loadTsx(`${DIR}/tour-steps.ts`);
   const steps = makerSteps({ slug: 'film', name: 'Friday Film Crew', conversationId: 12 });
-  const chat = steps[6];
+  const chat = steps[8];
   assert.equal(chat.title, 'Homeroom bot is planning Friday Film Crew');
   assert.equal(BOT_CHAT_HEADER, '.messages-thread-direct > .messages-thread-header');
   assert.equal(BOT_CHAT_MESSAGES, '.messages-thread-direct > .messages-thread-scroll');
@@ -608,14 +600,13 @@ test('the maker\'s last step shows the chat with Homeroom bot whole: its header 
   // "include the header on step 7 also").
   assert.equal(chat.alongside, '#platform-header');
   assert.equal(chat.endsAbove, undefined, 'the transcript ends at the composer, above the tab bar');
-  // The other steps' targets (the close step cuts out the app screen, with
-  // ✕ its press: tests/first-session.test.js), and only this one moves a
-  // transcript.
-  assert.deepEqual(steps.slice(0, 6).map((s) => s.target), [
-    '.app-card[data-slug="film"]', '#platform-mark-btn', '#app-view', '#platform-tab-workshop', '#app-content', '#platform-tab-messages',
+  // The other steps' targets (the app screen whole, then the menu and ✕ on
+  // it: tests/first-session.test.js), and only this one moves a transcript.
+  assert.deepEqual(steps.slice(0, 8).map((s) => s.target), [
+    '.app-card[data-slug="film"]', '#app-view', '#platform-mark-btn', '#improve-row-feedback', '#back-btn', '#platform-tab-workshop', '#app-content', '#platform-tab-messages',
   ]);
-  assert.equal(steps[2].press, '#back-btn');
-  assert.deepEqual(steps.map((s) => !!s.newestBelowCard), [false, false, false, false, false, false, true]);
+  assert.ok(steps.every((s) => !s.press), 'no cut-out rings a control inside a wider one');
+  assert.deepEqual(steps.map((s) => !!s.newestBelowCard), [false, false, false, false, false, false, false, false, true]);
   // The Messages screen draws what it names: a direct conversation's section,
   // whose first child is its header (none when embedded in a hub, which the
   // bot's chat never is), its scroller, and an <article> per message.

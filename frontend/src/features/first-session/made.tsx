@@ -839,7 +839,7 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
         // The logo bar: the whole mark below the status bar's inset, at least
         // 32px under it (the make screen's bar).
         <div data-first-session-made-top="" className="flex h-[max(52px,calc(env(safe-area-inset-top)+32px))] shrink-0 items-center justify-center pt-[env(safe-area-inset-top)]">
-          <Wordmark className="h-6 w-auto text-[color:var(--brand-ink)]" />
+          <Wordmark className="h-6 w-auto text-zinc-950 dark:text-white" />
         </div>
       )}
       <div className="mx-auto flex w-full max-w-sm grow flex-col px-6 pb-[max(36px,env(safe-area-inset-bottom))]">

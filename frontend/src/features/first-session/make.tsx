@@ -195,14 +195,6 @@ export function makeEyebrow(entry: MakeEntry, who: string): string {
 }
 
 /**
- * Under Make it, quietly: what is public once it is made (#4174). Every
- * project's repository is public on GitHub, and its first request is a
- * public issue holding the description word for word, with the plan as a
- * comment (services/github.js, services/homeroom-bot-dm.js).
- */
-export const MAKE_PUBLIC_LINE = 'What you write here, and the app’s code, are public on GitHub.';
-
-/**
  * Under the description box, quietly, while it still holds the answer the
  * person gave on the waitlist (#4040): it opens on Your own idea with that
  * answer in the box. Gone once they change a word of it.
@@ -477,7 +469,7 @@ export function MakeScreen({
             <XIcon className="h-4 w-4" aria-hidden="true" />
           </button>
         ) : null}
-        {underHeader ? null : <Wordmark className="h-6 w-auto text-[color:var(--brand-ink)]" />}
+        {underHeader ? null : <Wordmark className="h-6 w-auto text-zinc-950 dark:text-white" />}
       </div>
       {/* The scroller the keyboard surface reveals fields in. Its className
           stays constant: nothing here varies it. */}
@@ -687,7 +679,6 @@ export function MakeScreen({
           >
             {busy ? 'Making it…' : 'Make it'}
           </Button>
-          <p data-make-public="" className="mt-2 text-center text-[13px] leading-snug text-zinc-500 dark:text-zinc-400">{MAKE_PUBLIC_LINE}</p>
           {fromCreate ? (
             // Small, under Make it: the one other way to start a project.
             <p className="mt-3 text-center">
