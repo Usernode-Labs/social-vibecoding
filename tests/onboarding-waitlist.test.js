@@ -475,7 +475,7 @@ test('every path that confirms an account\'s address gives it its spot', () => {
 
 test('releaseRowsForGrant releases the account\'s rows and tells its own address', async () => {
   const pool = recordingPool([
-    { rows: [{ email: 'Mine@Example.com' }] },
+    { rows: [{ email: 'Mine@Example.com', email_confirmed: true }] },
     { rows: [{ id: 9, email: 'listed@example.com', was_released: false }] },
   ]);
   const release = await releaseRowsForGrant(pool, 60);
@@ -486,9 +486,19 @@ test('releaseRowsForGrant releases the account\'s rows and tells its own address
   assert.deepEqual(update.params, [60, 'mine@example.com']);
 });
 
+test('releaseRowsForGrant never claims a row by an address the account has not confirmed', async () => {
+  const pool = recordingPool([
+    { rows: [{ email: 'someone-else@example.com', email_confirmed: false }] },
+    { rows: [] },
+  ]);
+  const release = await releaseRowsForGrant(pool, 64);
+  assert.deepEqual(pool.seen[1].params, [64, null], 'only its own linked rows');
+  assert.deepEqual(release, { id: null, email: null, linked_user_id: 64, more_token: null });
+});
+
 test('releaseRowsForGrant says nothing to tell when a row was already released', async () => {
   const pool = recordingPool([
-    { rows: [{ email: 'mine@example.com' }] },
+    { rows: [{ email: 'mine@example.com', email_confirmed: true }] },
     { rows: [{ id: 9, email: 'mine@example.com', was_released: true }] },
   ]);
   assert.equal(await releaseRowsForGrant(pool, 61), null);

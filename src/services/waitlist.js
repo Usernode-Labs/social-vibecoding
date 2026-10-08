@@ -482,8 +482,12 @@ async function ensureAccountSignup(pool, { userId }) {
 // null when one of its rows was already released, whose release already sent
 // the "you're in" mail.
 async function releaseRowsForGrant(pool, userId) {
-  const { rows: users } = await pool.query('SELECT email FROM users WHERE id = $1', [userId]);
-  const accountEmail = normalizeEmail(users[0] && users[0].email);
+  // Only an address the account proved may claim an unlinked row by email:
+  // an unconfirmed one could name somebody else's spot.
+  const { rows: users } = await pool.query(
+    'SELECT email, email_confirmed FROM users WHERE id = $1', [userId]);
+  const accountEmail = users[0] && users[0].email_confirmed === true
+    ? normalizeEmail(users[0].email) : null;
   const { rows } = await pool.query(
     `WITH prev AS (
         SELECT id, released_at FROM waitlist_signups
