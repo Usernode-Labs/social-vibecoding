@@ -143,16 +143,27 @@ id). `src/workflow/pushes.ts` shapes them as `services/ws.js`'s helpers do. The 
 `publish` (`platform.ts publishPushes`) sends each one with `pg_notify` on the WebSocket
 bus's channel before `COMMIT`, so it is heard only if the transition commits. The
 sender is `workflow` (`services/ws-bus.js WORKFLOW_SENDER`), so every web process relays
-it, the one whose slot decided included. A relaying process also runs what the push
-helper would have run beside the sockets: the Workshop's board-change reaction, the
-bot's wake and the phone badge sync. Delivery is what it always was: at most once, to the
-processes listening then. A client resyncs after a reconnect, and a push over the NOTIFY
-size limit becomes the resync nudge. No machine calls into web code to reach a browser.
+it, the one whose slot decided included. No machine calls into web code to reach a
+browser. Delivery is at most once, as a WebSocket broadcast always was, with three
+differences from a push helper called in the deciding process:
+- every process, the deciding one included, hears it through its own `LISTEN`
+  connection; while that connection is down its sockets miss it, and get the resync
+  nudge when it is back (a client also resyncs after its own reconnect);
+- a push over the NOTIFY budget becomes the resync nudge for every socket, the deciding
+  process's included;
+- what the push helper ran beside the sockets (the Workshop's board-change reaction, the
+  bot's wake, the phone badge sync) runs in each relaying process: once with the shipped
+  single replica, N times with N, and for an oversize push from its type and routing.
+  It is traced as `relay` in the list below until it has a single owner.
+
+A notification is named, not carried: the transition pushes its id
+(`notification_new` with `notificationId`), and the relaying process reads it for the
+recipient's open tabs, so the bell's query never runs in the transition.
 
 **Round trips.** A producer waits on every query of the transaction, so the kernel keeps
 its own to three: one batch opens the transaction and picks (`BEGIN`, the writer marker,
 the timeouts, the pick with its receipt and the clock), one statement records the
-outcome, then `COMMIT`. A route registers for the outcome's notification before it
+outcome, then `COMMIT`; a transition with pushes adds one statement that publishes them. A route registers for the outcome's notification before it
 appends, so it reads the outcome once, when it is there. The rest is the machine's: keep
 its facts to as few queries as the rules allow, and fold a write and what goes with it
 into one statement. `tests/workflow-query-budget-postgres.test.js` counts the queries of
@@ -416,7 +427,10 @@ then a deployment change, with more than one replica and alerts on overdue work.
 
 `node scripts/workflow-state-trace.mjs` reads the source and walks each part of each
 machine: transitions and domain writes, each work handler, each notifier, the routes'
-side (`platform.ts`) and the kernel. It lists what breaks the rules above:
+side (`platform.ts`), the kernel, and what a web process runs when it relays a machine's
+push (`relay`). Work it finds started and not awaited (a timer, an async function run in
+place, a dropped promise) is listed where it starts and not followed. It lists what
+breaks the rules above:
 - module state that changes after load;
 - timers and promises nobody awaits (work that lives only in this process);
 - process listeners;

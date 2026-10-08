@@ -57,7 +57,14 @@ function fireAndForget() { void bg(); bg().catch(() => {}); bg(); }
 function shell() { return spawn('ls'); }
 async function web() { return fetch('https://example.com'); }
 function listen() { process.on('SIGTERM', () => {}); }
-module.exports = { sleep, schedule, fireAndForget, shell, web, listen };
+function inPlace() { (async () => { await later.deep(); })(); }
+function each(xs) { xs.forEach(async () => { await later.deep(); }); }
+function together() { Promise.all([bg(), bg()]); }
+function globals() { globalThis.flag = 1; process.env.MODE = 'x'; }
+const { setTimeout: delay } = require('timers/promises');
+async function pace() { await delay(5); return AbortSignal.timeout(10); }
+function viaGlobal() { return globalThis.fetch('https://example.com'); }
+module.exports = { sleep, schedule, fireAndForget, shell, web, listen, inPlace, each, together, globals, pace, viaGlobal };
 `,
   'src/services/client.js': `
 const k8sClient = () => require('@kubernetes/client-node');
@@ -83,6 +90,24 @@ function viaFallback(deps = {}) { const h = deps.helper || require('./helper'); 
 const api = { first() { return this.second(); }, second() { return helper.helped(); } };
 module.exports = { viaParam, viaThunk, viaFallback, api };
 `,
+  'src/services/reexport.js': `
+const store = require('./store');
+module.exports = { remember: store.remember };
+`,
+  'src/services/via-reexport.js': `
+const re = require('./reexport');
+function call() { return re.remember('a', 1); }
+module.exports = { call };
+`,
+  'src/services/many.js': `
+const a = require('./m1'); const b = require('./m2'); const c = require('./m3'); const d = require('./m4');
+function anyOf(x) { return x.touch(); }
+module.exports = { anyOf, a, b, c, d };
+`,
+  'src/services/m1.js': 'const s1 = new Set(); function touch() { s1.add(1); } module.exports = { touch };',
+  'src/services/m2.js': 'const s2 = new Set(); function touch() { s2.add(1); } module.exports = { touch };',
+  'src/services/m3.js': 'const s3 = new Set(); function touch() { s3.add(1); } module.exports = { touch };',
+  'src/services/m4.js': 'const s4 = new Set(); function touch() { s4.add(1); } module.exports = { touch };',
   'src/services/helper.js': `
 const seen = new Set();
 function helped() { seen.add(1); }
@@ -168,6 +193,16 @@ test('timers, waits, unawaited work, hooks and outside I/O', async () => {
   assert.ok(reach('src/services/effects.js#shell').has('io src/services/effects.js#shell child_process'));
   assert.ok(reach('src/services/effects.js#web').has('io src/services/effects.js#web fetch'));
   assert.ok(reach('src/services/effects.js#listen').has('hook src/services/effects.js#listen process.on(SIGTERM)'));
+  const iife = reach('src/services/effects.js#inPlace');
+  assert.ok(iife.has('detached src/services/effects.js#inPlace → src/services/effects.js#inPlace (async function nobody awaits)'));
+  assert.ok(!iife.has('state src/services/later.js#deepState'), 'what it runs is its own flow');
+  assert.ok(reach('src/services/effects.js#each').has('detached src/services/effects.js#each → src/services/effects.js#each (async function nobody awaits)'));
+  assert.ok(reach('src/services/effects.js#together').has('detached src/services/effects.js#together → src/services/effects.js#bg'));
+  const globals = reach('src/services/effects.js#globals');
+  assert.ok(globals.has('state src/services/effects.js#globalThis.flag') && globals.has('state src/services/effects.js#process.env'));
+  const paced = reach('src/services/effects.js#pace');
+  assert.ok(paced.has('wait src/services/effects.js#pace delay') && paced.has('wait src/services/effects.js#pace AbortSignal.timeout'));
+  assert.ok(reach('src/services/effects.js#viaGlobal').has('io src/services/effects.js#viaGlobal fetch'));
   // Through a client an outside service's library made, kept in a module binding.
   assert.ok(reach('src/services/client.js#viaApi').has('io src/services/client.js#viaApi @octokit/rest'));
   assert.ok(reach('src/services/client.js#viaKube').has('io src/services/client.js#viaKube @kubernetes/client-node'));
@@ -180,6 +215,11 @@ test('calls are followed through parameters, thunks, injected defaults and this'
   assert.ok(reach('src/services/deps.js#viaThunk').has('state src/services/store.js#cache'), 'a thunk for a module');
   assert.ok(reach('src/services/deps.js#viaFallback').has(seen), 'an injected dependency or its default');
   assert.ok(reach('src/services/deps.js#api.first').has(seen), 'this.method');
+  assert.ok(reach('src/services/via-reexport.js#call').has('state src/services/store.js#cache'), 're-exported as { x: mod.x }');
+  // However many imported modules export the name: an import added elsewhere
+  // must not make a dependency disappear from the list.
+  const many = reach('src/services/many.js#anyOf');
+  for (const n of [1, 2, 3, 4]) assert.ok(many.has(`state src/services/m${n}.js#s${n}`), `m${n}`);
 });
 
 test('roles: the decider, each handler, each notifier, and the owned columns', async () => {

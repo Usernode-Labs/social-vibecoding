@@ -74,6 +74,10 @@ export function machineGroups(root = REPO) {
     if (files.length) groups.set(entry.name, { files });
   }
   groups.set('platform', { files: ['src/workflow/platform.ts'] });
+  // What a web process runs when it relays a machine's push, beside the
+  // sockets (services/ws.js afterWorkflowPush): a machine's decision still
+  // starts it, so it is traced too, though no machine calls it.
+  if (fs.existsSync(path.join(root, 'src/services/ws.js'))) groups.set('relay', { files: [], roots: ['src/services/ws.js#afterWorkflowPush'] });
   return groups;
 }
 
@@ -252,7 +256,8 @@ function buildModule(root, file) {
       if (!name) name = `<fn@${mod.sf.getLineAndCharacterOfPosition(node.getStart(mod.sf)).line + 1}>`;
       const full = unit.parent || unit !== body ? `${unit === body ? '' : `${unit.name}/`}${name}` : name;
       const u = new Unit(mod, node, unit === body ? name : full, unit === body ? null : unit);
-      u.deferred = isTimerArgument(node) || isDetachedCallback(node);
+      u.deferred = isTimerArgument(node) || isDetachedCallback(node) || isDetachedIife(node);
+      u.detachedHere = !u.deferred ? false : (isDetachedIife(node) || (isDetachedCallback(node) && isAsyncNode(node)));
       if (unit !== body) unit.children.push(u);
       mod.units.push(u);
       unitOf.set(node, u);
@@ -320,9 +325,10 @@ function detachedCall(call) {
       p = top.parent;
       continue;
     }
-    // Promise.resolve(f()).catch(...)
+    // Promise.resolve(f()).catch(...), Promise.all([f(), g()]), Promise.all(xs.map(...))
+    if (p && ts.isArrayLiteralExpression(p) && p.elements.includes(top)) { top = p; p = p.parent; continue; }
     if (p && ts.isCallExpression(p) && p.arguments.includes(top) && ts.isPropertyAccessExpression(p.expression)
-      && p.expression.getText() === 'Promise.resolve') {
+      && /^Promise\.(resolve|all|allSettled|race|any)$/.test(p.expression.getText())) {
       top = p;
       p = p.parent;
       continue;
@@ -340,8 +346,29 @@ function isDetachedCallback(node) {
   while (p && ts.isParenthesizedExpression(p)) { child = p; p = p.parent; }
   if (!p || !ts.isCallExpression(p) || !p.arguments.includes(child)) return false;
   const callee = p.expression;
-  if (!ts.isPropertyAccessExpression(callee) || !CHAIN_METHODS.has(callee.name.text)) return false;
-  return detachedCall(p) === 'chain' || detachedCall(p) === 'void';
+  if (!ts.isPropertyAccessExpression(callee)) return false;
+  const method = callee.name.text;
+  const dropped = (d) => d === 'chain' || d === 'void' || d === 'statement';
+  if (CHAIN_METHODS.has(method)) return detachedCall(p) === 'chain' || detachedCall(p) === 'void';
+  // xs.forEach(async ...): every promise is dropped; xs.map(async ...) when
+  // nobody awaits what it returns.
+  if (!isAsyncNode(node)) return false;
+  if (method === 'forEach') return true;
+  if (method === 'map' || method === 'flatMap') return dropped(detachedCall(p));
+  return false;
+}
+
+const isAsyncNode = (n) => !!(ts.canHaveModifiers(n) && ts.getModifiers(n)?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword));
+
+// (async () => { ... })() run in place, its promise dropped.
+function isDetachedIife(node) {
+  if (!isAsyncNode(node) || !(ts.isArrowFunction(node) || ts.isFunctionExpression(node))) return false;
+  let child = node;
+  let p = node.parent;
+  while (p && ts.isParenthesizedExpression(p)) { child = p; p = p.parent; }
+  if (!p || !ts.isCallExpression(p) || p.expression !== child) return false;
+  const d = detachedCall(p);
+  return d === 'statement' || d === 'void' || d === 'chain';
 }
 
 // The member names a factory's returned object literal has.
@@ -526,6 +553,12 @@ function topLevelBinding(ctx, stmt, unitOf) {
       const m = moduleTarget(ctx, init);
       if (m?.external && ioPackage(m.external) && ts.isObjectBindingPattern(decl.name)) {
         for (const el of decl.name.elements) if (ts.isIdentifier(el.name)) mod.top.set(el.name.text, { kind: 'external', io: ioPackage(m.external) });
+        continue;
+      }
+      if (/^(node:)?timers\/promises$/.test(m?.external || '')) {
+        const names = [];
+        collectDeclaredNames(decl.name, names);
+        for (const x of names) mod.top.set(x, { kind: 'external', io: null, wait: true });
         continue;
       }
       if (m?.module && ts.isObjectBindingPattern(decl.name)) {
@@ -768,6 +801,13 @@ function collectRefs(ctx, u, unitOf, writes) {
   const noteWrite = (target, reason) => {
     const b = baseOf(target);
     if (!b) return;
+    // A process-wide value: globalThis.x, process.env.X, module.exports.x
+    // written while a flow runs (not as the module loads).
+    if (u !== mod.topUnit && !lookup(u, b.id) && (['globalThis', 'global'].includes(b.id)
+      || (b.id === 'process' && b.first === 'env') || (b.id === 'module' && b.first === 'exports') || b.id === 'exports')) {
+      u.refs.push({ kind: 'global', name: b.id === 'process' ? 'process.env' : b.id === 'exports' ? 'module.exports' : `${b.id}${b.first ? `.${b.first}` : ''}`, line: lineOf(sf, target) });
+      return;
+    }
     // Into another module's export: `other.cache.set(…)`, `other._x = …`.
     const hit = lookup(u, b.id);
     const alias = hit ? hit.local.alias : (mod.top.get(b.id)?.kind === 'alias' ? mod.top.get(b.id).alias : null);
@@ -826,6 +866,11 @@ function collectRefs(ctx, u, unitOf, writes) {
         && ioPackage(n.arguments[0].text)) {
         u.refs.push({ kind: 'io', io: ioPackage(n.arguments[0].text), line: lineOf(sf, n) });
       }
+      const calleeText = ts.isPropertyAccessExpression(callee) ? callee.getText(sf) : '';
+      if (calleeText === 'AbortSignal.timeout') u.refs.push({ kind: 'wait', fn: 'AbortSignal.timeout', line: lineOf(sf, n) });
+      if (calleeText === 'globalThis.fetch' || calleeText === 'global.fetch') u.refs.push({ kind: 'io', io: 'fetch', line: lineOf(sf, n) });
+      const promised = ts.isPropertyAccessExpression(callee) ? moduleTarget(ctx, callee.expression) : null;
+      if (/^(node:)?timers\/promises$/.test(promised?.external || '')) u.refs.push({ kind: 'wait', fn: callee.name.text, line: lineOf(sf, n) });
       if (ts.isIdentifier(callee) && callee.text === 'fetch' && !lookup(u, 'fetch') && !mod.top.has('fetch')) {
         u.refs.push({ kind: 'io', io: 'fetch', line: lineOf(sf, n) });
       }
@@ -853,7 +898,10 @@ function collectRefs(ctx, u, unitOf, writes) {
   // followed (server.js's body is the whole boot).
   if (atLoad) u.refs = u.refs.filter((r) => r.kind === 'timer' || r.kind === 'hook');
   // A unit defined inside another is reached with it.
-  for (const c of u.children) if (!c.deferred) u.refs.push({ kind: 'unit', unit: c });
+  for (const c of u.children) {
+    if (!c.deferred) u.refs.push({ kind: 'unit', unit: c });
+    else if (c.detachedHere) u.refs.push({ kind: 'detachedFn', unit: c, line: c.line });
+  }
 }
 
 function isAliasInit(call) {
@@ -935,6 +983,10 @@ function refIdentifier(ctx, u, id) {
   // `thunk().x` is resolved by refMember; `const m = thunk()` by the local.
   const thunk = hit ? hit.local.thunk : ctx.mod.top.get(name)?.thunk;
   if (thunk && called && (isCalleeOfThunk(id) || isAliasInit(id.parent))) return;
+  if (!hit && ctx.mod.top.get(name)?.wait) {
+    if (called) u.refs.push({ kind: 'wait', fn: name, line: lineOf(ctx.mod.sf, id) });
+    return;
+  }
   if (hit?.local.io || (!hit && ctx.mod.top.get(name)?.kind === 'external')) {
     u.refs.push({ kind: 'io', io: hit ? hit.local.io : ctx.mod.top.get(name).io, line: lineOf(ctx.mod.sf, id) });
     return;
@@ -1093,7 +1145,8 @@ export class Program {
       const b = mod.top.get(target.name);
       if (!b) return [];
       if (b.kind === 'function' || b.kind === 'class') return [{ unit: b.unit }];
-      if (b.kind === 'alias') return this.resolveExport(b.alias.module, [b.alias.member, ...rest].filter(Boolean).join('.') || '*whole', seen);
+      // `{ x: mod.x }`: the member of the module the binding stands for.
+      if (b.kind === 'alias') return this.resolveExport(b.alias.module, [b.alias.member, target.member, ...rest].filter(Boolean).join('.') || '*whole', seen);
       const out = [];
       if (b.state) out.push({ state: { mod, name: target.name } });
       if (b.object) {
@@ -1104,6 +1157,17 @@ export class Program {
       return out;
     }
     return [];
+  }
+
+  // An export that is a constant (a literal, a frozen table): nothing to follow.
+  isConstant(file, member) {
+    const mod = this.modules.get(file);
+    const target = mod?.exports.get(member.split('.')[0]);
+    if (!target) return false;
+    if (target.opaque) return true;
+    if (!target.name) return false;
+    const b = mod.top.get(target.name);
+    return !!b && b.kind === 'value' && !b.state && !b.object && !b.target?.name && !b.target?.module && !b.target?.instance;
   }
 
   wholeModule(file) {
@@ -1137,6 +1201,11 @@ export class Program {
       if (r.kind === 'timer' || r.kind === 'wait') { meets.push({ kind: r.kind, mod, name: u.top.name, fn: r.fn, line: r.line }); continue; }
       if (r.kind === 'hook') { meets.push({ kind: 'hook', mod, name: u.top.name, on: r.on, event: r.event, line: r.line }); continue; }
       if (r.kind === 'io') { meets.push({ kind: 'io', mod, name: u.top.name, io: r.io, line: r.line }); continue; }
+      if (r.kind === 'detachedFn') {
+        meets.push({ kind: 'detached', mod, name: u.top.name, target: `${mod.file}#${u.top.name} (async function nobody awaits)`, line: r.line });
+        continue;
+      }
+      if (r.kind === 'global') { meets.push({ kind: 'state', mod, name: r.name, why: 'a process-wide value written at run time', line: r.line }); continue; }
       if (r.kind === 'top') {
         const b = mod.top.get(r.name);
         if (b.kind === 'function' || b.kind === 'class') { emit([{ unit: b.unit }], r, r.name); continue; }
@@ -1161,7 +1230,8 @@ export class Program {
       }
       if (r.kind === 'member') {
         const found = this.resolveExport(r.module, r.member);
-        if (!found.length && !this.modules.get(r.module)?.exports.has(r.member.split('.')[0])) {
+        // Nothing found for an export that is not a plain constant: said, not dropped.
+        if (!found.length && !this.isConstant(r.module, r.member)) {
           unresolved.push({ kind: 'member', module: r.module, member: r.member, from: u.label, line: r.line });
         }
         emit(found, r, `${r.module}:${r.member}`);
@@ -1187,7 +1257,6 @@ export class Program {
           if ((this.exporters.get(r.member) || []).length) unresolved.push({ kind: 'byName', member: r.member, on: r.on, from: u.label, line: r.line, exporters: 0 });
           continue;
         }
-        if (who.length > 3) { unresolved.push({ kind: 'byName', member: r.member, on: r.on, from: u.label, line: r.line, exporters: who.length }); continue; }
         emit(who.flatMap((file) => this.resolveExport(file, r.member)), r, `${r.on}.${r.member} (by name)`);
       }
     }
@@ -1305,6 +1374,7 @@ const FORBIDDEN = new Map([
   ['services', new Set(['state', 'timer', 'hook', 'detached'])],
   ['notifiers', new Set(['state', 'timer', 'hook', 'detached', 'io'])],
   ['web', new Set(['state', 'timer', 'hook', 'detached', 'io'])],
+  ['relay', new Set(['state', 'timer', 'hook', 'detached', 'io'])],
   ['kernel', new Set(['state', 'timer', 'wait', 'hook', 'detached', 'io'])],
 ]);
 
@@ -1316,6 +1386,7 @@ export function machineRoles(program, name, group) {
   };
   if (name === 'kernel') { add('kernel', 'kernel', program.unitsIn(group.files)); return roles; }
   if (name === 'platform') { add('web', 'web', program.unitsIn(group.files)); return roles; }
+  if (group.roots) { add('relay', 'relay', group.roots.map((l) => program.findUnit(l)).filter(Boolean)); return roles; }
   for (const file of group.files) {
     const mod = program.modules.get(file);
     if (!mod) continue;
@@ -1388,7 +1459,9 @@ function writesOf(walk, tables) {
 export function ownership(program, root = program.root) {
   const schema = fs.readFileSync(path.join(root, 'src/db/schema.sql'), 'utf8');
   const owned = [];   // { machine, table, column, trigger }
-  for (const m of schema.matchAll(/CREATE\s+TRIGGER\s+([a-z_][a-z0-9_]*)\s+BEFORE\s+UPDATE\s+ON\s+([a-z_][a-z0-9_]*)[\s\S]*?EXECUTE\s+FUNCTION\s+wf_guard_owned_columns\(([^;]*?)\);/gi)) {
+  // One statement each ([^;]), so a match never reaches into the next one.
+  const trigger = /CREATE\s+TRIGGER\s+([a-z_][a-z0-9_]*)\s+BEFORE\s+(?:INSERT\s+OR\s+)?UPDATE(?:\s+OF\s+[^;]*?)?(?:\s+OR\s+INSERT)?\s+ON\s+([a-z_][a-z0-9_]*)[^;]*?EXECUTE\s+FUNCTION\s+wf_guard_owned_columns\(([^;]*?)\);/gi;
+  for (const m of schema.matchAll(trigger)) {
     const args = [...m[3].matchAll(/'([^']*)'/g)].map((a) => a[1]);
     const scope = /^@(?:enrolled|enabled)=([a-z0-9-]+)/.exec(args[0] || '');
     if (!scope) continue;
@@ -1417,7 +1490,7 @@ export function ownership(program, root = program.root) {
   for (const m of schema.matchAll(/CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+([a-z_][a-z0-9_]*)\s*\(\s*\)\s+RETURNS\s+TRIGGER\s+AS\s+\$\$([\s\S]*?)\$\$/gi)) {
     fns.set(m[1].toLowerCase(), new Set([...m[2].matchAll(/NEW\.([a-z_][a-z0-9_]*)\s*:=/gi)].map((x) => x[1].toLowerCase())));
   }
-  for (const m of schema.matchAll(/CREATE\s+TRIGGER\s+([a-z_][a-z0-9_]*)\s+BEFORE\s+(?:INSERT|UPDATE)(?:\s+OR\s+(?:INSERT|UPDATE))?\s+ON\s+([a-z_][a-z0-9_]*)[\s\S]*?EXECUTE\s+FUNCTION\s+([a-z_][a-z0-9_]*)\s*\(/gi)) {
+  for (const m of schema.matchAll(/CREATE\s+TRIGGER\s+([a-z_][a-z0-9_]*)\s+BEFORE\s+(?:INSERT|UPDATE)(?:\s+OF\s+[^;]*?)?(?:\s+OR\s+(?:INSERT|UPDATE))?\s+ON\s+([a-z_][a-z0-9_]*)[^;]*?EXECUTE\s+FUNCTION\s+([a-z_][a-z0-9_]*)\s*\(/gi)) {
     const assigned = fns.get(m[3].toLowerCase());
     if (!assigned) continue;
     for (const o of owned) {
@@ -1582,6 +1655,7 @@ async function main(argv) {
   }
   const trace = traceMachines(root, program);
   if (args.has('--shrink')) {
+    if (root !== REPO) throw new Error('--shrink rewrites this checkout\'s list; it cannot take another checkout (--repo)');
     const now = ratchetEntries(trace, allowed, root);
     let removed = 0;
     for (const [name, list] of Object.entries(baseline.machines)) {

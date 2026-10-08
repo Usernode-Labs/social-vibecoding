@@ -148,6 +148,9 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     assert.equal((await vote(i, v1, 'down')).result, 'accepted');
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM issue_votes WHERE issue_id = $1', [i.id])).rows[0].n, 0);
     assert.deepEqual(await lines(i), [`${v1.username} voted down on close proposal for issue #7: “not yet”`]);
+    assert.ok(pushed.some((p) => p.kind === 'room' && p.routing.appId === a.id && p.data.type === 'chat'
+      && p.data.content === `${v1.username} voted down on close proposal for issue #7: “not yet”` && p.data.thread.type === 'governance'),
+    'the vote line, to the app\'s room');
     await send(i, 'Withdraw', { userId: author.id, username: author.username }, { actor: `user:${author.id}` });
     await rt.drain();
     const late = await vote(i, v2, 'up');

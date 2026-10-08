@@ -650,12 +650,15 @@ async function writeMergedNotification(tx: Tx, w: any, ctx: WriteContext) {
     const c = await votes.mergeCredits(tx, { id: w.sessionId, app_id: w.appId, user_id: w.userId }, { before: w.mergedAt });
     credits = votes.creditsSentence(c, { withAuthor: false }) || null;
   }
-  const notifications = legacy('services/notifications');
-  const created = await notifications.createPrMergedNotification(tx, {
+  const created = await legacy('services/notifications').createPrMergedNotification(tx, {
     userId: w.userId, appId: w.appId, sessionId: w.sessionId, forced: !!w.force, credits,
   });
+  // Named, not carried: the relaying web process reads the row for the
+  // author's tabs (ws.js relayNotification), so the bell's query never runs
+  // in, or holds up, the transition that makes the change live. Their bell
+  // and badge re-read too: the bell write before this one could not see it.
   for (const row of created || []) {
-    const shown = await notifications.hydrateNotification(tx, row.id);
-    if (shown) ctx.push(toUser(shown.userId, { type: 'notification_new', notification: shown.notification }));
+    ctx.push(toUser(Number(row.user_id), { type: 'notification_new', notificationId: Number(row.id) }));
+    ctx.push(toUser(Number(row.user_id), { type: 'notifications_changed' }));
   }
 }

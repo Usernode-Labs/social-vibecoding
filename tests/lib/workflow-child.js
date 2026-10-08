@@ -39,15 +39,40 @@ const fakes = {
   },
 };
 
-// The outside network is faked: a call that would leave the machine is
-// refused and recorded, so a test sees what it reached unfaked.
+// The outside network is faked: a connection that would leave the machine
+// through fetch, an http or https request, or net.connect is refused and
+// recorded, so a test sees what it reached unfaked. Loopback is left alone,
+// and a raw net.Socket (how pg reaches the database) is not intercepted.
+const LOOPBACK = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
+const refused = (where) => {
+  fakes.record('net.refused', { url: where }).catch(() => {});
+  return Object.assign(new Error(`outside network refused in the workflow test process: ${where}`), { code: 'ECONNREFUSED' });
+};
 const realFetch = globalThis.fetch;
 globalThis.fetch = async (input, init) => {
   const url = new URL(typeof input === 'string' ? input : input.url);
-  if (['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)) return realFetch(input, init);
-  await fakes.record('net.refused', { url: `${url.origin}${url.pathname}` });
-  throw Object.assign(new Error(`outside network refused in the workflow test process: ${url.origin}`), { code: 'ECONNREFUSED' });
+  if (LOOPBACK.has(url.hostname)) return realFetch(input, init);
+  throw refused(`${url.origin}${url.pathname}`);
 };
+for (const mod of [require('node:http'), require('node:https')]) {
+  for (const fn of ['request', 'get']) {
+    const real = mod[fn];
+    mod[fn] = function guarded(target, ...rest) {
+      const host = typeof target === 'string' || target instanceof URL ? new URL(String(target)).hostname : (target?.hostname || target?.host || 'localhost');
+      if (!LOOPBACK.has(String(host).replace(/:\d+$/, ''))) throw refused(`${fn} ${host}`);
+      return real.call(this, target, ...rest);
+    };
+  }
+}
+const net = require('node:net');
+for (const fn of ['connect', 'createConnection']) {
+  const real = net[fn];
+  net[fn] = function guarded(...args) {
+    const o = typeof args[0] === 'object' && args[0] ? args[0] : { port: args[0], host: typeof args[1] === 'string' ? args[1] : 'localhost' };
+    if (!o.path && !LOOPBACK.has(String(o.host || 'localhost'))) throw refused(`net ${o.host}:${o.port}`);
+    return real.apply(this, args);
+  };
+}
 
 require(spec.fixture)(fakes);
 

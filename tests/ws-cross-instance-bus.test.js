@@ -321,16 +321,16 @@ test('a workflow push is delivered by every instance, its decider included, and 
   const seen = collect();
   bus._peers.lastPeerAt = -Infinity;
   bus._handleNotification({ channel: bus.CHANNEL, payload: bus.workflowBody('room', { appId: 7 }, { type: 'chat', id: 1 }) });
-  assert.deepEqual(seen, [{ kind: 'room', routing: { appId: 7 }, data: { type: 'chat', id: 1 }, oversize: false, fromWorkflow: true }]);
+  assert.deepEqual(seen, [{ kind: 'room', routing: { appId: 7 }, data: { type: 'chat', id: 1 }, oversize: false, type: null, fromWorkflow: true }]);
   assert.equal(bus._peers.lastPeerAt, -Infinity, 'not a peer');
 });
 
-test('a workflow push over the NOTIFY budget becomes the same nudge, to the same audience', () => {
+test('a workflow push over the NOTIFY budget becomes the same nudge, to the same audience, keeping its type', () => {
   const small = JSON.parse(bus.workflowBody('scoped', { appId: 3, appSlug: 'x' }, { type: 'vote_update' }));
   assert.deepEqual(small, { i: bus.WORKFLOW_SENDER, k: 'scoped', r: { appId: 3, appSlug: 'x' }, d: { type: 'vote_update' } });
   const big = bus.workflowBody('scoped', { appId: 3, appSlug: 'x' }, { type: 'vote_update', pad: 'z'.repeat(9000) });
   assert.ok(Buffer.byteLength(big, 'utf8') < 8000);
-  assert.deepEqual(JSON.parse(big), { i: bus.WORKFLOW_SENDER, k: 'scoped', r: { appId: 3, appSlug: 'x' }, o: 1 });
+  assert.deepEqual(JSON.parse(big), { i: bus.WORKFLOW_SENDER, k: 'scoped', r: { appId: 3, appSlug: 'x' }, o: 1, t: 'vote_update' });
 });
 
 test('a relayed workflow push runs what its push helper runs beside the sockets', () => {

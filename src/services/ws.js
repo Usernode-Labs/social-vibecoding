@@ -37,13 +37,22 @@ const globalClients = new Set(); // Set<{ ws, user }> for /ws/events
 // not sent. The audience still needs to know something moved, so they get the
 // nudge their own reconnect path already handles — `resyncCurrentView` in
 // public/js/app.js — rather than a truncated event.
-function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
+function _onBusMessage({ kind, routing, data, oversize, type, fromWorkflow }) {
   const r = routing || {};
   const payload = oversize ? { type: 'resync_hint' } : data;
   if (payload == null) return;
-  // A workflow machine's push has no emitting process to run what its push
-  // helper runs beside the sockets, so every process that relays it does.
-  if (fromWorkflow && !oversize) afterWorkflowPush(kind, r, payload);
+  if (fromWorkflow) {
+    // A workflow machine's push has no emitting process to run what its push
+    // helper runs beside the sockets, so every process that relays it does;
+    // for one too big to carry, from its type and routing.
+    afterWorkflowPush(kind, r, oversize ? { type, ...r } : payload);
+    // A notification is named, not carried: the relay reads it for the
+    // recipient's tabs here, outside the transition that created it.
+    if (kind === 'user' && !oversize && payload.type === 'notification_new' && payload.notificationId != null && !payload.notification) {
+      relayNotification(r.userId, payload.notificationId);
+      return;
+    }
+  }
   switch (kind) {
     case 'global':
       deliverGlobal(payload);
@@ -2187,9 +2196,21 @@ function afterIssueUpdate(data) {
 }
 
 // What the push helpers run beside the sockets, for a push a workflow
-// machine published (services/ws-bus.js WORKFLOW_SENDER). Each is safe to
-// run once per relaying process: the Workshop's re-placement takes its row's
-// lease, the bot's wake and the badge sync are idempotent.
+// machine published (services/ws-bus.js WORKFLOW_SENDER). Before, only the
+// emitting process ran it; now each process that relays the push does: once
+// with the shipped single replica, N times with N. That repeats the
+// Workshop's GitHub read before its lease decides who re-places (only one
+// does), the bot's wake (idempotent) and the phone badge sync (one silent
+// badge push per process). Traced as `relay` in
+// tests/baselines/workflow-process-state.json; it becomes a reaction to the
+// stream with its own single owner when the bot and the Workshop migrate.
+function relayNotification(userId, notificationId) {
+  if (userId == null || !_pool || !connectedUserIds().includes(Number(userId))) return;
+  require('./notifications').hydrateNotification(_pool, notificationId)
+    .then((shown) => { if (shown) deliverToUser(shown.userId, { type: 'notification_new', notification: shown.notification }); })
+    .catch((err) => log.warn('ws', 'could not read a notification to relay', { notificationId, err: err.message }));
+}
+
 function afterWorkflowPush(kind, routing, payload) {
   if (kind === 'scoped' && payload.type === 'issue_update') afterIssueUpdate(payload);
   else if (kind === 'scoped' && payload.type === 'session_update') noteBoardChange(payload);

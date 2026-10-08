@@ -39,13 +39,29 @@ test('workflow machines in a process of their own, and through its crash', { tim
   const url = new URL(DSN); url.pathname = '/' + dbName;
   const databaseUrl = String(url);
   const pool = new Pool({ connectionString: databaseUrl, max: 6 });
+  // Registered first, so a failure from here on still drops the database.
+  let workflow = null;
+  let listener = null;
+  let platform = null;
+  t.after(async () => {
+    if (process.env.WF_DEBUG) {
+      const { rows } = await pool.query(`SELECT kind, data->>'module' AS m, data->>'fn' AS fn, data->>'url' AS url, count(*)::int AS n
+        FROM wf_test_effects WHERE kind IN ('fake.unexpected', 'net.refused') GROUP BY 1, 2, 3, 4 ORDER BY 5 DESC`).catch(() => ({ rows: [] }));
+      console.log('outside calls the flows reached unfaked:', rows);
+    }
+    await workflow?.stop();
+    await platform?.stopWorkflow();
+    await listener?.end();
+    await pool.end();
+    await admin.query(`DROP DATABASE ${dbName} WITH (FORCE)`);
+    await admin.end();
+  });
   await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
   await procs.prepare(pool);
 
   // The flags, as config.js reads them; the child adds the database URL.
   const flags = { dataEncryptionKey: DATA_KEY, wfGovernanceEnabled: true, wfMergeFollowupsEnabled: true,
     wfPoolMax: 4, wfSlots: 2, wfOwnershipMode: 'raise' };
-  let workflow = null;
   const startWorkflow = async () => {
     workflow = procs.startWorkflowProcess({ databaseUrl, config: flags, fixture: FAKES });
     await workflow.ready;
@@ -55,27 +71,13 @@ test('workflow machines in a process of their own, and through its crash', { tim
   // The web side: appends and waits, decides nothing (no pipeline slot).
   const stub = (p, exports) => { const id = require.resolve(p); require.cache[id] = { id, filename: id, loaded: true, exports, paths: [] }; };
   stub('../src/db/pool', { getPool: () => pool });
-  const platform = require('../src/workflow/platform.ts');
+  platform = require('../src/workflow/platform.ts');
   // What browsers hear, as every web process does.
   const heard = [];
-  const listener = new Client({ connectionString: databaseUrl });
+  listener = new Client({ connectionString: databaseUrl });
   await listener.connect();
   listener.on('notification', (m) => { const e = JSON.parse(m.payload); if (e.i === 'workflow') heard.push(e); });
   await listener.query('LISTEN usernode_ws');
-
-  t.after(async () => {
-    if (process.env.WF_DEBUG) {
-      const { rows } = await pool.query(`SELECT kind, data->>'module' AS m, data->>'fn' AS fn, data->>'url' AS url, count(*)::int AS n
-        FROM wf_test_effects WHERE kind IN ('fake.unexpected', 'net.refused') GROUP BY 1, 2, 3, 4 ORDER BY 5 DESC`);
-      console.log('outside calls the flows reached unfaked:', rows);
-    }
-    await workflow?.stop();
-    await platform.stopWorkflow();
-    await listener.end();
-    await pool.end();
-    await admin.query(`DROP DATABASE ${dbName} WITH (FORCE)`);
-    await admin.end();
-  });
 
   let seq = 0;
   const user = async () => (await pool.query(

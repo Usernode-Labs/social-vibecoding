@@ -16,7 +16,7 @@ const assert = require('node:assert/strict');
 // The machines that predate the list. Any other machine may enter it only
 // with the other writers of its own columns (removed by the end of its step,
 // when the legacy paths go); nothing else.
-const PREDATE = new Set(['governance-proposal', 'merge-followups', 'platform', 'kernel']);
+const PREDATE = new Set(['governance-proposal', 'merge-followups', 'platform', 'kernel', 'relay']);
 
 // One trace of the checkout, shared by the tests (about two seconds).
 let traced = null;
