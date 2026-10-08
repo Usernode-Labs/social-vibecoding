@@ -38,8 +38,9 @@ spec:
       # is what the platform did in-process.
       serviceAccountName: social-platform-runtime
       automountServiceAccountToken: true
-      # Running work is aborted at SIGTERM and resumed from its checkpoint by
-      # the next claim; this bounds closing the pools.
+      # At SIGTERM the worker signals its running work to abort and waits for
+      # it, up to 80 seconds (workflow-worker.js); what is still running then
+      # is resumed from its checkpoint by the next claim.
       terminationGracePeriodSeconds: 90
       securityContext:
         runAsNonRoot: true

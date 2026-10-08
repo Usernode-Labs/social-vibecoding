@@ -26,10 +26,13 @@ const { getPool } = require('./src/db/pool');
 const platform = require('./src/workflow/platform.ts');
 
 const PORT = 8081;
-// Inside the chart's 90-second grace period: running work is aborted at
-// once (its lease lapses and the next claim resumes from its checkpoint),
-// so this only bounds closing the pools.
-const STOP_TIMEOUT_MS = 30000;
+// At SIGTERM the runtime stops claiming and signals its running work to
+// abort, then waits for it. A handler that honours the signal ends at once;
+// several (a production deploy, the main check, closing requests, a preview
+// teardown) run on to the end of their current step. Whatever is still
+// running when this runs out is reclaimed after its lease and resumed from its
+// checkpoint. Inside the chart's 90-second grace period.
+const STOP_TIMEOUT_MS = 80000;
 
 let state = 'starting';
 let healthServer = null;
