@@ -769,13 +769,9 @@
         // the menu at all, and it lands here — possibly AFTER a cold-boot
         // deep link has already painted. Re-resolve the menu.
         this._renderWalletSection();
-        // The preference lands here too, and its page may already be
-        // painted (a cold-boot deep link to #settings/build-venue renders
-        // before this resolves). Same reasoning as the wallet row above.
-        this._renderDevFlowSection();
         // `locale` is what the Language select shows, and it lands here
         // too: a cold-boot deep link to #settings/language paints before
-        // this resolves. Same reasoning as the two rows above.
+        // this resolves. Same reasoning as the wallet row above.
         this._renderLanguageSection();
         this._renderNavIfOpen();
       } catch {}
