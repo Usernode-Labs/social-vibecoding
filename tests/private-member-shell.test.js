@@ -109,11 +109,13 @@ test('the shell follows the tier: a reload when it changes, the store told, "Wan
 
 test('the mark menu: "Go to Homeroom" for a private member, and no terminal or Build it yourself', () => {
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
-  assert.match(sheet, /\{mounted && privateMember \? \(\s+<button\s+id="app-menu-row-homeroom"/);
+  assert.match(sheet, /\{mounted && privateMember \? \(\s+<div\s+id="app-menu-homeroom-card"[^>]*>\s+<button\s+id="app-menu-row-homeroom"/);
   // A white card leading the list, right under "Suggest an improvement"
   // (#4401): 20px, one inset hairline, the mark, rows' 15 over 13, a chevron.
+  // The card is a wrapper since #4399, which can add a second row to it.
+  assert.match(sheet, /id="app-menu-homeroom-card"\s+className="[^"]*\brounded-\[20px\][^"]*\bbg-white\b[^"]*shadow-\[inset_0_0_0_1px_var\(--app-sheet-line\)\]/);
   const card = sheet.slice(sheet.indexOf('id="app-menu-row-homeroom"'));
-  assert.match(card, /^id="app-menu-row-homeroom"\s+type="button"\s+className="[^"]*\brounded-\[20px\][^"]*\bbg-white\b[^"]*shadow-\[inset_0_0_0_1px_var\(--app-sheet-line\)\]/);
+  assert.match(card, /^id="app-menu-row-homeroom"\s+type="button"/);
   assert.match(card, /src="\/brand\/homeroom-mark\.png"[\s\S]*?className="platform-mark-tile w-10 h-10/);
   assert.match(card, /text-\[15px\] font-\[650\][^>]*>Go to Homeroom</);
   assert.match(card, /text-\[13px\][^>]*>Your Home, your communities and Homeroom bot</);
@@ -126,6 +128,27 @@ test('the mark menu: "Go to Homeroom" for a private member, and no terminal or B
   const nav = sheet.indexOf('id="switcher-nav"');
   assert.ok(nav < sheet.indexOf('id="app-menu-row-homeroom"'));
   assert.ok(sheet.indexOf('id="app-menu-row-homeroom"') < sheet.indexOf('id="app-menu-row-workshop"'));
+});
+
+test('the Go to Homeroom card carries the home-screen offer, and the banner waits (#4399)', () => {
+  const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  const card = sheet.slice(sheet.indexOf('id="app-menu-homeroom-card"'), sheet.indexOf('GIVE FEEDBACK IS NOT A ROW'));
+  // A second row in the same card, under a hairline, only while Go to
+  // Homeroom is offered and only when the banner would offer the home screen.
+  assert.match(sheet, /const homeScreenOs = useHomeScreenOffer\(open && newcomer\);/);
+  assert.match(card, /\{newcomer && homeScreenOs \? \(\s+<>\s+<div aria-hidden="true" className="[^"]*h-px bg-\[color:var\(--app-sheet-line\)\]"/);
+  assert.match(card, /id="app-menu-row-add-home"/);
+  assert.match(card, /w-10 h-10 rounded-\[11px\] bg-zinc-100[^"]*"[^>]*>\s+<PhonePlusIcon/);
+  assert.match(card, /text-\[15px\] font-\[650\][^>]*>Add Homeroom to your home screen</);
+  assert.match(card, /<InstallStepsSheet os=\{homeScreenOs\}/);
+  // The offer is the banner's own decision, an a2hs one, minus its dismissal.
+  const hook = read('frontend/src/features/mobile-install/home-screen-offer.ts');
+  assert.match(hook, /installOffer\(\{/);
+  assert.match(hook, /dismissed: false,/);
+  assert.match(hook, /offer && offer\.kind === 'a2hs' \? offer\.os : null/);
+  // The banner stays down while Go to Homeroom is offered.
+  const banner = read('frontend/src/features/mobile-install/install-banner.tsx');
+  assert.match(banner, /if \(offeringGoToHomeroom\(!!privateMember\)\) \{ setOffer\(null\); return; \}/);
 });
 
 test('the waitlist card: join, an email, a code, then On the waitlist with "Want in sooner?"', () => {
