@@ -37,21 +37,17 @@ const globalClients = new Set(); // Set<{ ws, user }> for /ws/events
 // not sent. The audience still needs to know something moved, so they get the
 // nudge their own reconnect path already handles — `resyncCurrentView` in
 // public/js/app.js — rather than a truncated event.
-function _onBusMessage({ kind, routing, data, oversize, type, fromWorkflow }) {
+function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
   const r = routing || {};
   const payload = oversize ? { type: 'resync_hint' } : data;
   if (payload == null) return;
-  if (fromWorkflow) {
-    // A workflow machine's push has no emitting process to run what its push
-    // helper runs beside the sockets, so every process that relays it does;
-    // for one too big to carry, from its type and routing.
-    afterWorkflowPush(kind, r, oversize ? { type, ...r } : payload);
-    // A notification is named, not carried: the relay reads it for the
-    // recipient's tabs here, outside the transition that created it.
-    if (kind === 'user' && !oversize && payload.type === 'notification_new' && payload.notificationId != null && !payload.notification) {
-      relayNotification(r.userId, payload.notificationId);
-      return;
-    }
+  // A workflow machine names a notification instead of carrying it: the
+  // relay reads it for the recipient's open tabs, outside the transition
+  // that created it (src/workflow/merge-followups/machine.ts).
+  if (fromWorkflow && kind === 'user' && !oversize && payload.type === 'notification_new'
+      && payload.notificationId != null && !payload.notification) {
+    relayNotification(r.userId, payload.notificationId);
+    return;
   }
   switch (kind) {
     case 'global':
@@ -2117,6 +2113,18 @@ function pushSessionUpdate(data) {
   noteBoardChange(data);
 }
 
+// Read only where the recipient has an events socket (what deliverToUser
+// writes to); the notification's access predicates run now, at relay time.
+function relayNotification(userId, notificationId) {
+  if (userId == null || !_pool) return;
+  let here = false;
+  for (const client of globalClients) if (Number(client.user.id) === Number(userId)) { here = true; break; }
+  if (!here) return;
+  require('./notifications').hydrateNotification(_pool, notificationId)
+    .then((shown) => { if (shown) deliverToUser(shown.userId, { type: 'notification_new', notification: shown.notification }); })
+    .catch((err) => log.warn('ws', 'could not read a notification to relay', { notificationId, err: err.message }));
+}
+
 // #1038: live working-state for one session (services/session-state.js).
 // Scoping is the whole point of having a dedicated helper rather than
 // reusing broadcastGlobal: the payload names an app and a session, so an
@@ -2182,10 +2190,6 @@ function pushAppUpdate(data) {
 function pushIssueUpdate(data) {
   broadcastGlobalScoped({ type: 'issue_update', ...data },
     { appId: data.appId, appSlug: data.appSlug });
-  afterIssueUpdate(data);
-}
-
-function afterIssueUpdate(data) {
   // An edit or an unclaim names the GitHub issue; a create names the local
   // row, so routes/issues.js wakes the bot itself once the twin exists.
   if (data && data.issueNumber != null && data.appId != null
@@ -2193,28 +2197,6 @@ function afterIssueUpdate(data) {
     noteIssueActivityForBot(data.appId, data.issueNumber, data.action);
   }
   noteBoardChange(data);
-}
-
-// What the push helpers run beside the sockets, for a push a workflow
-// machine published (services/ws-bus.js WORKFLOW_SENDER). Before, only the
-// emitting process ran it; now each process that relays the push does: once
-// with the shipped single replica, N times with N. That repeats the
-// Workshop's GitHub read before its lease decides who re-places (only one
-// does), the bot's wake (idempotent) and the phone badge sync (one silent
-// badge push per process). Traced as `relay` in
-// tests/baselines/workflow-process-state.json; it becomes a reaction to the
-// stream with its own single owner when the bot and the Workshop migrate.
-function relayNotification(userId, notificationId) {
-  if (userId == null || !_pool || !connectedUserIds().includes(Number(userId))) return;
-  require('./notifications').hydrateNotification(_pool, notificationId)
-    .then((shown) => { if (shown) deliverToUser(shown.userId, { type: 'notification_new', notification: shown.notification }); })
-    .catch((err) => log.warn('ws', 'could not read a notification to relay', { notificationId, err: err.message }));
-}
-
-function afterWorkflowPush(kind, routing, payload) {
-  if (kind === 'scoped' && payload.type === 'issue_update') afterIssueUpdate(payload);
-  else if (kind === 'scoped' && payload.type === 'session_update') noteBoardChange(payload);
-  else if (kind === 'user' && routing.userId != null) afterUserPush(routing.userId, payload);
 }
 
 // The Workshop's grouping for an app moved — cards were placed into
@@ -2291,20 +2273,15 @@ function deliverToUser(userId, payload) {
 function pushToUser(userId, payload) {
   const sent = deliverToUser(userId, payload);
   wsBus.publish('user', { userId }, payload);
-  afterUserPush(userId, payload);
-  return sent;
-}
-
-// #2904: every read path announces itself with this event, so it is also
-// where the iOS icon badge learns the count moved. Only the emitting
-// instance gets here (bus peers call deliverToUser), so one change is one
-// debounced sync; a workflow push has no emitting instance, so each one
-// that relays it schedules the sync. Lazy and guarded: the badge is
-// best-effort and must never break the socket fan-out.
-function afterUserPush(userId, payload) {
+  // #2904: every read path announces itself with this event, so it is also
+  // where the iOS icon badge learns the count moved. Only the emitting
+  // instance gets here (bus peers call deliverToUser), so one change is one
+  // debounced sync. Lazy and guarded: the badge is best-effort and must never
+  // break the socket fan-out.
   if (payload && payload.type === 'notifications_changed') {
     try { require('./mobile-push').scheduleBadgeSync(userId); } catch {}
   }
+  return sent;
 }
 
 // Platform conversations have no app room. Their service resolves a fresh
@@ -2348,4 +2325,4 @@ function pushConversationEvent(memberUserIds, payload, { excludeUserId = null } 
 
 const pushNotificationToUser = pushToUser;
 
-module.exports = { connectedUserIds, disconnectUser, attach, broadcast, _onBusMessage, _onBusListening, broadcastGlobal, broadcastSessionEvent, sessionEventAudience, canWatchSessionRow, SESSION_FANOUT_EVENTS, MAX_WATCHED_SESSIONS_PER_SOCKET, SLOW_CLIENT_MAX_BUFFERED, SLOW_CLIENT_RESUME_BUFFERED, _checkLaggingClients: checkLaggingClients, _sessionMetaCache: sessionMetaCache, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, sendBotMessage, sendFirstVersionMessage, getOnlineUsers, pushAppStatusUpdate, pushAppCreationPhase, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushWorkshopUpdate, onBoardChange, pushToUser, pushConversationEvent, pushNotificationToUser, pushPlatformVersion, getReactionsForMessages, validateThread, handleMessage, admitSocketFrame, SOCKET_RATE_BUDGETS, SOCKET_RATE_WINDOW_MS, MAX_CHAT_LEN };
+module.exports = { noteBoardChange, connectedUserIds, disconnectUser, attach, broadcast, _onBusMessage, _onBusListening, broadcastGlobal, broadcastSessionEvent, sessionEventAudience, canWatchSessionRow, SESSION_FANOUT_EVENTS, MAX_WATCHED_SESSIONS_PER_SOCKET, SLOW_CLIENT_MAX_BUFFERED, SLOW_CLIENT_RESUME_BUFFERED, _checkLaggingClients: checkLaggingClients, _sessionMetaCache: sessionMetaCache, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, sendBotMessage, sendFirstVersionMessage, getOnlineUsers, pushAppStatusUpdate, pushAppCreationPhase, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushWorkshopUpdate, onBoardChange, pushToUser, pushConversationEvent, pushNotificationToUser, pushPlatformVersion, getReactionsForMessages, validateThread, handleMessage, admitSocketFrame, SOCKET_RATE_BUDGETS, SOCKET_RATE_WINDOW_MS, MAX_CHAT_LEN };

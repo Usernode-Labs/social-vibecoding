@@ -225,8 +225,16 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
   };
 }
 
-export function mergeFollowupsNotifiers({ config }: Deps): Record<string, (n: any) => Promise<void> | void> {
+export function mergeFollowupsNotifiers({ config, pool }: Deps): Record<string, (n: any) => Promise<void> | void> {
   return {
+    // A request board changed: the Workshop re-places its cards.
+    boardChange: (n) => legacy('services/ws').noteBoardChange({ appId: n.appId, appSlug: n.appSlug }),
+    // Everyone with a bell row about the change: their phone's badge count.
+    async badgeSync(n) {
+      const { rows } = await pool.query('SELECT DISTINCT user_id FROM notifications WHERE session_id = $1', [n.sessionId]);
+      const push = legacy('services/mobile-push');
+      for (const r of rows) push.scheduleBadgeSync(r.user_id);
+    },
     // The next merge for the app: the queue's drain (backed by the 4-minute
     // eligible-merge sweeper when this kick is lost).
     kickQueue: (n) => legacy('services/conflict-resolver')

@@ -1,7 +1,6 @@
 // What a web process does with a push a workflow machine published
 // (services/ws-bus.js WORKFLOW_SENDER, src/workflow/pushes.ts): it relays it
-// to its own sockets, and runs what the push helper would have run beside
-// them, since no process emitted it.
+// to its own sockets.
 //
 //   * a notification is named by id, not carried: the relay reads it for the
 //     recipient's open tabs, and nobody else gets it;
@@ -89,17 +88,9 @@ test('a notification named by a workflow push is read by the relay and reaches i
   other.terminate();
 });
 
-test('notifications_changed from a workflow push syncs the badge; from a peer it does not', async () => {
+test('a relayed workflow push schedules no badge sync: the deciding process\'s badgeSync notifier does', async () => {
   badges.length = 0;
-  relay({ kind: 'user', routing: { userId: 2 }, data: { type: 'notifications_changed' } });
-  assert.deepEqual(badges, [], 'a peer\'s push: its emitter synced it');
   relay({ kind: 'user', routing: { userId: 2 }, data: { type: 'notifications_changed' }, fromWorkflow: true });
-  assert.deepEqual(badges, [2]);
-});
-
-test('a workflow push too big to carry still runs the board-change reaction', async () => {
-  const boards = [];
-  ws.onBoardChange((info) => boards.push(info));
-  relay({ kind: 'scoped', routing: { appId: 5, appSlug: 'five' }, data: null, oversize: true, type: 'issue_update', fromWorkflow: true });
-  assert.deepEqual(boards, [{ appId: 5, appSlug: 'five' }]);
+  relay({ kind: 'user', routing: { userId: 2 }, data: { type: 'notifications_changed' } });
+  assert.deepEqual(badges, []);
 });

@@ -1,10 +1,12 @@
 // test:changed: when src/ (any module a workflow machine reaches; scripts/workflow-state-trace.mjs)
 'use strict';
 
-// Every place a workflow machine still depends on something a restart
-// erases, or bends the workflow contract (docs/workflows.md), traced from
-// source by scripts/workflow-state-trace.mjs and checked in at
-// tests/baselines/workflow-process-state.json. The list may only shrink:
+// The boundary between each workflow machine and the code not migrated yet,
+// read exactly from source by scripts/workflow-state-trace.mjs and checked
+// in at tests/baselines/workflow-process-state.json: each function outside
+// src/workflow/ a part of a machine calls, what its own code does that the
+// contract forbids, each notifier, each table a handler writes itself, each
+// other writer of a column it owns. The list may only shrink:
 // a change that adds an entry fails here with the path that reaches it; a
 // change that removes one fails until the entry leaves the list too
 // (`node scripts/workflow-state-trace.mjs --shrink` drops what is no longer
@@ -16,7 +18,7 @@ const assert = require('node:assert/strict');
 // The machines that predate the list. Any other machine may enter it only
 // with the other writers of its own columns (removed by the end of its step,
 // when the legacy paths go); nothing else.
-const PREDATE = new Set(['governance-proposal', 'merge-followups', 'platform', 'kernel', 'relay']);
+const PREDATE = new Set(['governance-proposal', 'merge-followups', 'platform', 'kernel']);
 
 // One trace of the checkout, shared by the tests (about two seconds).
 let traced = null;
@@ -25,7 +27,7 @@ function trace() {
   return traced;
 }
 
-test('the workflow machines reach nothing new that a restart erases', async () => {
+test('the workflow machines cross no new boundary into code not migrated yet', async () => {
   const { m: { ratchetEntries, readBaseline, BASELINE }, trace: traced } = await trace();
   const baseline = readBaseline();
   const allowed = new Set(Object.keys(baseline.allowed));

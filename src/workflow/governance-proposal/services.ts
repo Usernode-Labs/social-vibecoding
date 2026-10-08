@@ -72,6 +72,7 @@ export function governanceServices({ config, pool }: Deps): Record<string, WorkH
 
 export function governanceNotifiers({ config, pool }: Deps): Record<string, (n: any) => Promise<void> | void> {
   return {
+    boardChange: (n) => legacy('services/ws').noteBoardChange({ appId: n.appId, appSlug: n.appSlug }),
     scoreVote: () => legacy('services/topochain/challenge-scorer').scoreOnVote(pool, config),
     // The campaign row is committed as `running`; the engine resumes running
     // campaigns at boot, so this kick may be lost to a crash and nothing else.

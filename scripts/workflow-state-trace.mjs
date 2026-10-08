@@ -1,42 +1,42 @@
 #!/usr/bin/env node
-// Where a workflow machine still depends on something a restart erases, or
-// bends the workflow contract (docs/workflows.md), traced from source.
+// The boundary between each workflow machine and the code not migrated
+// yet, read from source, and what lies behind it.
 //
 // A release, a crash or a restart can happen at any moment, and a machine
 // resumes its work right after a boot, when process memory is empty. So
 // nothing a machine runs may depend on process memory, and what anyone
-// relies on must be durable work or a message. This script finds where that
-// does not hold yet, mechanically, so the answer does not depend on someone
-// reading the code. It parses every module under src/ (and server.js),
-// builds a call graph of functions, walks it from each part of each machine
-// under src/workflow/, and lists what the walk meets:
+// relies on must be durable work or a message (docs/workflows.md). This
+// script parses every module under src/ (and server.js), builds a call
+// graph of functions, and for each part of each machine under src/workflow/
+// (transitions, work handlers, notifiers, the routes' side, the kernel)
+// lists, exactly, its boundary: each function outside src/workflow/ its
+// code calls, what its own code does that the part may not, each notifier,
+// each table a handler writes itself, each other writer of a column the
+// machine owns (ratchetEntries). That is the list
+// tests/workflow-process-state.test.js gates on; it may only shrink.
 //
+// Behind each call, the walk reports (--reach) what it meets:
 //   state     a module-level binding that changes after load (a reassigned
 //             `let`, a Map/Set/array/object changed at run time, in its own
-//             module or another, a factory's locals when it runs at load);
+//             module or another, a factory's locals when it runs at load, a
+//             process-wide value such as globalThis or process.env);
 //   timer     a timer that defers work (its callback is not followed);
 //   wait      a timer that only bounds or paces something awaited;
-//   detached  a promise nobody waits for (not followed either);
+//   detached  work nobody awaits (not followed either);
 //   hook      a listener on `process` or on a module-level emitter;
-//   io        outside I/O: network, other programs, the local disk;
-// and, per part of a machine (see FORBIDDEN): each notifier, each table a
-// work handler writes itself, each legacy function a transition calls, and
-// each other writer of a column the machine owns (schema.sql's
-// wf_guard_owned_columns triggers).
-//
-// The walk over-approximates where it must guess: a function defined inside
-// a reached one counts as reached, and a method called on a value it cannot
-// type (`d.closeRequests()`, `d` a parameter) is matched by name against the
-// modules the caller imports or that the reached code hands around. What it
-// cannot resolve is printed (`--unresolved`), never dropped silently.
-// tests/workflow-state-trace.test.js pins each rule on a small source tree.
-//
-// Used by tests/workflow-process-state.test.js: the list per machine is
-// checked in (tests/baselines/workflow-process-state.json) and may only
-// shrink. From the command line:
+//   io        outside I/O: network, other programs, the local disk.
+// That walk reads a dynamic codebase and is an approximation: a function
+// defined inside a reached one counts as reached, and a method called on a
+// value it cannot type is matched by name against the modules the caller
+// imports or that the reached code hands around. It is a report, not the
+// gate; tests/workflow-state-trace.test.js pins its rules on a small source
+// tree, and what it cannot resolve is printed (--unresolved).
 //
 //   node scripts/workflow-state-trace.mjs              the list per machine
-//         --paths                                      with how each is reached
+//         --paths                                      with where each comes from
+//         --reach                                      and what each call reaches
+//                                                      behind it (a report, not
+//                                                      part of the list)
 //         --unresolved                                 and the calls not resolved
 //         --repo <dir>                                 of another checkout
 //   node scripts/workflow-state-trace.mjs --json       the list, as JSON
@@ -74,10 +74,6 @@ export function machineGroups(root = REPO) {
     if (files.length) groups.set(entry.name, { files });
   }
   groups.set('platform', { files: ['src/workflow/platform.ts'] });
-  // What a web process runs when it relays a machine's push, beside the
-  // sockets (services/ws.js afterWorkflowPush): a machine's decision still
-  // starts it, so it is traced too, though no machine calls it.
-  if (fs.existsSync(path.join(root, 'src/services/ws.js'))) groups.set('relay', { files: [], roots: ['src/services/ws.js#afterWorkflowPush'] });
   return groups;
 }
 
@@ -1374,7 +1370,6 @@ const FORBIDDEN = new Map([
   ['services', new Set(['state', 'timer', 'hook', 'detached'])],
   ['notifiers', new Set(['state', 'timer', 'hook', 'detached', 'io'])],
   ['web', new Set(['state', 'timer', 'hook', 'detached', 'io'])],
-  ['relay', new Set(['state', 'timer', 'hook', 'detached', 'io'])],
   ['kernel', new Set(['state', 'timer', 'wait', 'hook', 'detached', 'io'])],
 ]);
 
@@ -1386,7 +1381,6 @@ export function machineRoles(program, name, group) {
   };
   if (name === 'kernel') { add('kernel', 'kernel', program.unitsIn(group.files)); return roles; }
   if (name === 'platform') { add('web', 'web', program.unitsIn(group.files)); return roles; }
-  if (group.roots) { add('relay', 'relay', group.roots.map((l) => program.findUnit(l)).filter(Boolean)); return roles; }
   for (const file of group.files) {
     const mod = program.modules.get(file);
     if (!mod) continue;
@@ -1427,7 +1421,7 @@ export function traceMachines(root = REPO, program = new Program(root)) {
     const stops = stopsFor(program, name, groups);
     for (const [key, r] of machineRoles(program, name, group)) {
       const roots = r.roots.filter((u) => !stops.has(u));
-      roles.set(key, { ...r, roots, ...program.walk(roots, stops) });
+      roles.set(key, { ...r, roots, stops, ...program.walk(roots, stops) });
     }
     out.set(name, { files: group.files, roles });
   }
@@ -1504,42 +1498,63 @@ export function ownership(program, root = program.root) {
 
 // The ratchet's entries: per machine, `<role> | <entry>`, minus what the
 // baseline allows (process resources every module shares).
+// The list the ratchet gates on: the boundary between a machine and the
+// code not migrated yet, which can be read exactly, per part of the machine:
+//   calls      each function outside src/workflow/ its code calls directly;
+//   <kind>     what its own code does that the part may not: module state,
+//              timers, unawaited work, process listeners, outside I/O from
+//              a transition (FORBIDDEN);
+//   notifier   each notifier still declared;
+//   writes     each table a work handler's own code writes;
+//   ownership  each other writer of a column the machine owns.
+// How far a call reaches into the code behind it is a report (--reach), not
+// part of the list: reading that from a dynamic codebase is an
+// approximation, and a gate must not move when the approximation does. The
+// two-process and restart tests prove what the list cannot.
+const isWorkflowCode = (file) => file.startsWith('src/workflow/');
+
 export function ratchetEntries(trace, allowed = new Set(), root = REPO) {
   const tables = schemaTables(root);
   const out = new Map();
   for (const [name, t] of trace.machines) {
     const set = new Map();   // entry -> detail
+    const add = (e, detail) => { if (!set.has(e)) set.set(e, detail); };
     for (const r of t.roles.values()) {
       const forbidden = FORBIDDEN.get(r.role);
-      for (const m of r.met.values()) {
-        if (!forbidden.has(m.kind) || allowed.has(m.key)) continue;
-        const e = `${r.role} | ${m.key}`;
-        if (!set.has(e)) set.set(e, { from: r.name, meet: m, walk: r });
+      // The part's own code: workflow code it reaches without leaving it (a
+      // call out and back in is that call's business).
+      const own = [];
+      const seen = new Set(r.roots);
+      for (const u of r.roots) own.push(u);
+      for (let i = 0; i < own.length; i++) {
+        for (const e of trace.program.step(own[i]).edges) {
+          if (!e.unit || seen.has(e.unit) || !isWorkflowCode(e.unit.mod.file) || r.stops?.has(e.unit)) continue;
+          seen.add(e.unit);
+          own.push(e.unit);
+        }
       }
-      if (r.role === 'notifiers') set.set(`notifiers | ${r.name}`, { from: r.name });
-      // Each function outside the workflow code a transition or a domain
-      // write calls: checked once, and listed so a new one is a decision.
-      if (r.role === 'decider') {
-        for (const u of r.reached) {
-          if (!u.mod.file.startsWith('src/workflow/')) continue;
-          for (const e of trace.program.step(u).edges) {
-            if (!e.unit || e.unit.mod.file.startsWith('src/workflow/') || e.via === 'load') continue;
-            const target = e.unit.parent ? e.unit.top : e.unit;
-            const k = `decider | calls ${stable(target.label)}`;
-            if (!set.has(k)) set.set(k, { detail: `from ${u.label}` });
+      for (const u of own) {
+        const step = trace.program.step(u);
+        for (const e of step.edges) {
+          if (!e.unit || isWorkflowCode(e.unit.mod.file) || e.via === 'load') continue;
+          const target = e.unit.parent ? e.unit.top : e.unit;
+          add(`${r.role} | calls ${stable(target.label)}`, { from: r.name, detail: `from ${stable(u.label)}`, target });
+        }
+        for (const m of step.meets) {
+          const key = entryKey(m);
+          if (!forbidden.has(m.kind) || allowed.has(key) || !isWorkflowCode(m.mod.file)) continue;
+          add(`${r.role} | ${key}`, { from: r.name, meet: m, walk: r });
+        }
+        if (r.role === 'services') {
+          for (const [tbl, cols] of u.sql?.writes || []) {
+            if (tables.has(tbl)) add(`services | writes ${tbl}`, { from: r.name, detail: `${[...cols].sort().join(', ')}; ${stable(u.label)}` });
           }
         }
       }
-      if (r.role === 'services') {
-        for (const [tbl, w] of writesOf(r, tables)) {
-          const e = `services | writes ${tbl}`;
-          if (!set.has(e)) set.set(e, { from: r.name, write: { tbl, ...w }, walk: r });
-          else set.get(e).also = [...(set.get(e).also || []), r.name];
-        }
-      }
+      if (r.role === 'notifiers') add(`notifiers | ${r.name}`, { from: r.name });
     }
     for (const [e, detail] of trace.ownership.writers.get(name) || []) set.set(`ownership | ${e.replace(/^ownership /, '')}`, { detail });
-    out.set(name, new Map([...set].sort(([a], [b]) => a.localeCompare(b))));
+    out.set(name, new Map([...set].sort(([x], [y]) => x.localeCompare(y))));
   }
   return out;
 }
@@ -1562,6 +1577,13 @@ function describe(m) {
 function report(trace, allowed, opts, root) {
   const lines = [];
   const entries = ratchetEntries(trace, allowed, root);
+  // --reach: what a boundary call reaches behind it, walked from the called
+  // function (once per function). A report, never part of the list.
+  const reaches = new Map();
+  const reachOf = (unit) => {
+    if (!reaches.has(unit)) reaches.set(unit, trace.program.walk([unit]));
+    return reaches.get(unit);
+  };
   for (const [name, list] of entries) {
     const t = trace.machines.get(name);
     const reached = new Set([...t.roles.values()].flatMap((r) => r.reached)).size;
@@ -1573,7 +1595,15 @@ function report(trace, allowed, opts, root) {
       else if (d.detail) why = `  [${d.detail}]`;
       lines.push(`- ${e}${why}`);
       if (opts.paths && d.meet) lines.push(`    via ${d.walk.pathTo(d.meet.via).join(' → ')}`);
-      if (opts.paths && d.write) lines.push(`    via ${d.walk.pathTo(d.write.via).join(' → ')}`);
+      if (opts.reach && d.target) {
+        const met = [...reachOf(d.target).met.values()].filter((m) => !allowed.has(m.key));
+        if (met.length) {
+          const kinds = new Map();
+          for (const m of met) kinds.set(m.kind, (kinds.get(m.kind) || 0) + 1);
+          lines.push(`    reaches ${[...kinds].map(([k, n]) => `${n} ${k}`).join(', ')}`);
+          for (const m of met.sort((x, y) => x.key.localeCompare(y.key))) lines.push(`      ${m.key}`);
+        }
+      }
     }
     if (opts.unresolved) {
       const seen = new Set();
@@ -1673,7 +1703,7 @@ async function main(argv) {
     process.stdout.write(`${JSON.stringify(Object.fromEntries([...now].map(([n, l]) => [n, [...l.keys()]])), null, 2)}\n`);
     return;
   }
-  process.stdout.write(`${report(trace, allowed, { paths: args.has('--paths'), unresolved: args.has('--unresolved') }, root)}\n`);
+  process.stdout.write(`${report(trace, allowed, { paths: args.has('--paths'), unresolved: args.has('--unresolved'), reach: args.has('--reach') }, root)}\n`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

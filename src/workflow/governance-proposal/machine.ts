@@ -80,12 +80,12 @@ export interface MachineDeps {
   dataKey: string;               // config.dataEncryptionKey, to check a secret decrypts
   backstopMs?: number;           // re-evaluate an open proposal at least this often
   targetCheckMs?: number;        // how often an open close proposal checks its target on GitHub
-  // One implementation per NOTIFIERS entry: post-commit kicks. What
-  // browsers hear is a push, published with the transition.
+  // One implementation per NOTIFIERS entry: post-commit kicks into flows not
+  // migrated yet. What browsers hear is a push, published with the transition.
   notifiers: Record<string, (n: any) => void | Promise<void>>;
 }
 
-export const NOTIFIERS = ['scoreVote', 'startCampaign'] as const;
+export const NOTIFIERS = ['boardChange', 'scoreVote', 'startCampaign'] as const;
 
 // ── Copy ────────────────────────────────────────────────────────────────
 
@@ -140,6 +140,9 @@ const chat = (event: Event<any>, issue: Issue, content: string, thread: { type: 
 const governanceThread = (issue: Issue) => ({ type: 'governance', ref: issue.id });
 const issueUpdate = (issue: Issue, action: string, extra: Record<string, Json> = {}): Push =>
   issuePush({ action, appId: issue.appId, appSlug: issue.app.slug, issueId: issue.id, ...extra });
+// A request board changed: the Workshop re-places its cards (the kick
+// ws.pushIssueUpdate gave its in-process listeners; services/workshop-themes.js).
+const boardChange = (appId: number | null, appSlug: string | null): Notification => ({ type: 'boardChange', appId, appSlug });
 
 // The thread lines an outcome writes push themselves (the chat and vote
 // writes), with the rows they inserted.
@@ -162,7 +165,7 @@ function close(
     work,
     timer: null,
     push: [...(extra.push || []), issueUpdate(issue, 'closed')],
-    notify: extra.notify,
+    notify: [...(extra.notify || []), boardChange(issue.appId, issue.app.slug)],
   };
 }
 
@@ -287,6 +290,7 @@ function followupResult(s: { name: Closed; data: ClosedData }, e: Event<WorkResu
   return {
     next: { name: s.name, data: { ...s.data, followups } },
     push: closed ? [issuePush({ action: 'github_synced', appSlug: input.appSlug ?? null, appId: input.appId ?? null, source: 'close_issue_vote' })] : undefined,
+    notify: closed ? [boardChange(input.appId as number ?? null, input.appSlug as string ?? null)] : undefined,
   };
 }
 
@@ -410,7 +414,7 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
               : null;
             const writes: DomainWrite[] = [{ type: 'vote', issueId: issue.id, appId: issue.appId, userId: e.payload.userId, vote, reason: r, line }];
             const push = [issueUpdate(issue, 'voted', vote ? { vote } : { toggled: true })];
-            const notify: Notification[] = vote ? [{ type: 'scoreVote' }] : [];
+            const notify: Notification[] = [boardChange(issue.appId, issue.app.slug), ...(vote ? [{ type: 'scoreVote' }] : [])];
             return decide(s as any, e, f, ctx, timing, withVote(f.gate!, f.voter!, vote), { writes, push, notify });
           },
         }),

@@ -227,6 +227,9 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     assert.ok(toAuthor.some((p) => p.data.type === 'notifications_changed'));
     // The requests it closed: the issue lists re-read once that work ended.
     assert.ok(heard.some((p) => p.data.type === 'issue_update' && p.data.action === 'github_synced' && p.data.source === 'pr_merged'));
+    // Kicks into flows not migrated yet, once, where it decided.
+    assert.ok(notified.some((x) => x.type === 'badgeSync' && x.sessionId === s.id), 'the phone badges of everyone with a bell row');
+    assert.ok(notified.some((x) => x.type === 'boardChange' && x.appId === a.id), 'the Workshop re-places the requests it closed');
   });
 
   await t.test('F6: a failed deploy is visible, and a later deploy makes it live', async () => {

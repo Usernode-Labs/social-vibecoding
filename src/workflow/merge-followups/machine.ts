@@ -36,9 +36,10 @@ export const WORK = Object.freeze({
   journey: 'journey.changeLive',
 });
 
-// Post-commit kicks. What browsers hear is a push, published with the
-// transition (thread lines, the vote card, the version pill, the bell).
-export const NOTIFIERS = ['kickQueue', 'nudgeDeployer'] as const;
+// Post-commit kicks into flows not migrated yet. What browsers hear is a
+// push, published with the transition (thread lines, the vote card, the
+// version pill, the bell).
+export const NOTIFIERS = ['kickQueue', 'nudgeDeployer', 'boardChange', 'badgeSync'] as const;
 
 // ── States ──────────────────────────────────────────────────────────────
 
@@ -201,7 +202,9 @@ function toLive(e: Event<any>, data: Data, deliveredSha: string | null, ctx: Tra
   }))];
   const push = [...(x.push || []), voteUpdate(d, { live: true })];
   if (d.role === 'merge') push.push(appVersion({ appId: d.appId, appSlug: d.appSlug, sha: deliveredSha, prNumber: d.prNumber }));
-  return outcome('live', d, { writes, work, messages, push, notify: x.notify });
+  // The author's new "your change is live" moves their phone's badge.
+  const notify = [...(x.notify || []), { type: 'badgeSync', sessionId: d.sessionId }];
+  return outcome('live', d, { writes, work, messages, push, notify });
 }
 
 function lineInput(d: Data) {
@@ -276,7 +279,8 @@ function merged(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFStat
     work.push({ kind: WORK.find, key: 'included', input: { sessionId: d.sessionId, appId: d.appId, prNumber: d.prNumber, ...d.repo } });
   }
   if (d.mergeSha) work.push({ kind: WORK.mainCheck, key: 'main-check', input: { appId: d.appId, sessionId: d.sessionId, prNumber: d.prNumber, mergeSha: d.mergeSha } });
-  const notify: Notification[] = [{ type: 'kickQueue', appId: d.appId, excludeSessionId: d.sessionId }];
+  const notify: Notification[] = [{ type: 'kickQueue', appId: d.appId, excludeSessionId: d.sessionId },
+    { type: 'badgeSync', sessionId: d.sessionId }];
   if (app.selfHosted) notify.push({ type: 'nudgeDeployer', sha: d.mergeSha, prNumber: d.prNumber });
   const x: Extra = {
     writes: [{ type: 'secrets', eventId: e.id, sessionId: d.sessionId, appId: d.appId }, ...settleWrites(e, d, s)],
@@ -341,6 +345,7 @@ function included(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFSt
       { included: { sessionId: d.sessionId, inSessionId: ref.sessionId, inPrNumber: ref.prNumber } })],
     work,
     push: [voteUpdate(d, { includedIn: ref.sessionId })],
+    notify: [{ type: 'badgeSync', sessionId: d.sessionId }],
   };
   if (p.carrierState === 'live') return toLive(e, d, p.deliveredSha, ctx, x);
   if (p.carrierState === 'deploy_failed') return toFailed(e, d, 'the change that carried it did not deploy', { ...x });
@@ -380,7 +385,8 @@ function workResult(status: Followup['status']) {
       // The requests it closed: the open-issues lists re-read. (The handler
       // used to say so midway; it is said when the work ends.)
       if (p.kind === WORK.issues && !(prev.input as { closeOnly?: boolean } | null)?.closeOnly) {
-        return { next: { name: s.name, data: d }, push: [issueUpdate({ action: 'github_synced', appSlug: d.appSlug, appId: d.appId, source: 'pr_merged' })] };
+        return { next: { name: s.name, data: d }, push: [issueUpdate({ action: 'github_synced', appSlug: d.appSlug, appId: d.appId, source: 'pr_merged' })],
+          notify: [{ type: 'boardChange', appId: d.appId, appSlug: d.appSlug }] };
       }
       return { next: { name: s.name, data: d } };
     },

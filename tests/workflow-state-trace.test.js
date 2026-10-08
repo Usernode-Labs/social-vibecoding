@@ -127,14 +127,18 @@ export function legacy(path: string): any { return load('./' + path); }
 `,
   'src/workflow/demo/machine.ts': `
 import { legacy } from '../legacy.ts';
+const memo = new Map();
 export function decide(): number { return legacy('services/effects').shell(); }
 export function pure(): number { return legacy('services/helper').helped(); }
+export function remembers(k: string): void { memo.set(k, 1); }
+export async function fetched(): Promise<unknown> { return fetch('https://example.com'); }
 `,
   'src/workflow/demo/services.ts': `
 import { legacy } from '../legacy.ts';
 export function demoServices() {
   return {
     'demo.write': { async run() { await legacy('services/writer').write(null); } },
+    'demo.own': { async run(ctx: any) { await ctx.pool.query("UPDATE things SET note = 'x' WHERE id = 1"); } },
     'demo.remember': { async run() { legacy('services/store').remember('a', 1); legacy('services/lifecycle').run(1); } },
   };
 }
@@ -222,24 +226,31 @@ test('calls are followed through parameters, thunks, injected defaults and this'
   for (const n of [1, 2, 3, 4]) assert.ok(many.has(`state src/services/m${n}.js#s${n}`), `m${n}`);
 });
 
-test('roles: the decider, each handler, each notifier, and the owned columns', async () => {
-  const { m, root } = await fixture();
+test('the list is the boundary: each call out of the workflow code, and what that code does itself', async () => {
+  const { m, root, program } = await fixture();
   const trace = m.traceMachines(root);
   const entries = [...m.ratchetEntries(trace, new Set(), root).get('demo').keys()];
   const has = (e) => assert.ok(entries.includes(e), `${e}\nin:\n${entries.join('\n')}`);
-  has('decider | io src/services/effects.js#shell child_process');
   has('decider | calls src/services/effects.js#shell');
   has('decider | calls src/services/helper.js#helped');
-  has('decider | state src/services/helper.js#seen');
-  has('services | state src/services/store.js#cache');
-  has('services | state src/services/lifecycle.js#createThing().active');
+  has('decider | state src/workflow/demo/machine.ts#memo');
+  has('decider | io src/workflow/demo/machine.ts#fetched fetch');
+  has('services | calls src/services/writer.js#write');
+  has('services | calls src/services/store.js#remember');
+  has('services | calls src/services/lifecycle.js#createThing');
   has('services | writes things');
-  has('services | writes logs');
   has('notifiers | notifier kick');
-  has('notifiers | timer src/services/effects.js#schedule setTimeout');
+  has('notifiers | calls src/services/effects.js#schedule');
   has('ownership | things.status ← src/services/writer.js#write');
   has('ownership | things.status ← trigger things_fill');
   assert.ok(!entries.some((e) => e.startsWith('ownership | things.note')), 'only owned columns');
+  // What lies behind a call is not in the list: the call is.
+  for (const behind of ['state src/services/helper.js#seen', 'state src/services/store.js#cache', 'io src/services/effects.js#shell child_process']) {
+    assert.ok(!entries.some((e) => e.endsWith(behind)), behind);
+  }
+  assert.ok(!entries.includes('services | writes logs'), 'a table the code behind a call writes');
+  // ...it is the report's (--reach), walked from the called function.
+  assert.ok(program.walk([program.findUnit('src/services/store.js#remember')]).met.has('state src/services/store.js#cache'));
   const web = [...m.ratchetEntries(trace, new Set(), root).get('platform').keys()];
   assert.deepEqual(web, ['web | state src/workflow/platform.ts#runtime']);
 });

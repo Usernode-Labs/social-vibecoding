@@ -144,17 +144,16 @@ id). `src/workflow/pushes.ts` shapes them as `services/ws.js`'s helpers do. The 
 bus's channel before `COMMIT`, so it is heard only if the transition commits. The
 sender is `workflow` (`services/ws-bus.js WORKFLOW_SENDER`), so every web process relays
 it, the one whose slot decided included. No machine calls into web code to reach a
-browser. Delivery is at most once, as a WebSocket broadcast always was, with three
-differences from a push helper called in the deciding process:
+browser. A push is delivery only. What `ws.js`'s push helpers also kick in the process
+that calls them (the Workshop's board-change reaction, the phone badge sync) is the
+machine's own notifier (`boardChange`, `badgeSync`), run once where it decided, and
+listed until those flows migrate. Delivery is at most once, as a WebSocket broadcast
+always was, with two differences from a push helper called in the deciding process:
 - every process, the deciding one included, hears it through its own `LISTEN`
   connection; while that connection is down its sockets miss it, and get the resync
   nudge when it is back (a client also resyncs after its own reconnect);
 - a push over the NOTIFY budget becomes the resync nudge for every socket, the deciding
-  process's included;
-- what the push helper ran beside the sockets (the Workshop's board-change reaction, the
-  bot's wake, the phone badge sync) runs in each relaying process: once with the shipped
-  single replica, N times with N, and for an oversize push from its type and routing.
-  It is traced as `relay` in the list below until it has a single owner.
+  process's included.
 
 A notification is named, not carried: the transition pushes its id
 (`notification_new` with `notificationId`), and the relaying process reads it for the
@@ -425,23 +424,25 @@ then a deployment change, with more than one replica and alerts on overdue work.
 
 ### What the machines still depend on (the list)
 
-`node scripts/workflow-state-trace.mjs` reads the source and walks each part of each
-machine: transitions and domain writes, each work handler, each notifier, the routes'
-side (`platform.ts`), the kernel, and what a web process runs when it relays a machine's
-push (`relay`). Work it finds started and not awaited (a timer, an async function run in
-place, a dropped promise) is listed where it starts and not followed. It lists what
-breaks the rules above:
-- module state that changes after load;
-- timers and promises nobody awaits (work that lives only in this process);
-- process listeners;
-- outside I/O from a transition;
+`node scripts/workflow-state-trace.mjs` reads the source and lists, for each part of each
+machine (transitions and domain writes, each work handler, each notifier, the routes'
+side in `platform.ts`, the kernel), the boundary between it and the code not migrated
+yet:
+- each function outside `src/workflow/` its code calls (`calls`);
+- what its own code does that the part may not: module state, timers, work nobody
+  awaits, process listeners, outside I/O from a transition;
 - each notifier still declared;
-- each table a work handler writes itself;
-- each legacy function a transition calls;
-- each other writer of a column the machine owns.
+- each table a work handler's own code writes;
+- each other writer of a column the machine owns (schema.sql's ownership triggers).
 
-`--paths` shows how each entry is reached. The list is checked in, with the process
-resources it allows (the connection pool, the logger, API clients made at boot) and why.
+That boundary can be read exactly, so it is what the list holds. How far a call reaches
+into the code behind it (the in-memory state, timers and I/O there) is a report,
+`--reach`, and not part of the list: reading it from a dynamic codebase is an
+approximation, and a gate must not move when the approximation does. The two-process
+and restart tests (below) show what the list cannot. `--paths` says where each entry
+comes from.
+
+The list is checked in, with the kernel's own mechanisms it allows and why.
 `tests/workflow-process-state.test.js` fails when a change adds an entry, and when an
 entry disappears until the list is shrunk with `--shrink`, which never adds anything.
 So the list only shrinks, and a migration step is done when its entries are gone. A

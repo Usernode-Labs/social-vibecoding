@@ -311,9 +311,7 @@ function flushBatches() {
 function workflowBody(kind, routing, data) {
   const body = JSON.stringify({ i: WORKFLOW_SENDER, k: kind, r: routing || null, d: data });
   if (Buffer.byteLength(body, 'utf8') <= MAX_PAYLOAD_BYTES) return body;
-  // The nudge keeps the message's type, so what a relay runs beside the
-  // sockets (services/ws.js afterWorkflowPush) still runs for it.
-  return JSON.stringify({ i: WORKFLOW_SENDER, k: kind, r: routing || null, o: 1, t: data && data.type ? String(data.type) : null });
+  return JSON.stringify({ i: WORKFLOW_SENDER, k: kind, r: routing || null, o: 1 });
 }
 
 function _handleNotification(msg) {
@@ -328,7 +326,7 @@ function _handleNotification(msg) {
   if (!env || env.i === INSTANCE_ID) return;
   if (env.i === WORKFLOW_SENDER) {
     if (typeof _onMessage === 'function' && env.k !== HELLO_KIND) {
-      _deliver({ kind: env.k, routing: env.r || null, data: env.d, oversize: !!env.o, type: env.t || null, fromWorkflow: true });
+      _deliver({ kind: env.k, routing: env.r || null, data: env.d, oversize: !!env.o, fromWorkflow: true });
     }
     return;
   }
