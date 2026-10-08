@@ -53,7 +53,15 @@ interface OpenOptions {
    * 'app': open with "This app" chosen, when it can be. For a caller whose
    * own button named the open app (Getting started's Suggest).
    */
-  target?: 'app';
+  target?: 'app' | 'platform';
+  /**
+   * The experimental C comment handing itself over (features/comment-pin/):
+   * its words, added after anything already typed, and its screenshot,
+   * attached as Photos would. 'platform' above comes only from it: the
+   * person chose that destination on the comment.
+   */
+  description?: string;
+  screenshotBlob?: Blob;
   firstFeedback?: { userId: number; appSlug: string | null; issueNumber: number; canFix: boolean };
 }
 

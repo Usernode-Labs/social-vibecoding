@@ -36,33 +36,29 @@ integrity attribute at all.
 
 - **marked-15.0.12.min.js** — Markdown → HTML for renderMarkdown() in public/js/dev-chat.js (also used by group-chat.js and app-view.js).
 - **purify-3.4.4.min.js** — Sanitizes that rendered markdown before it reaches innerHTML. Never bypass it.
-- **qrcode-1.0.0.min.js** — Wallet address QR codes (frontend/src/features/header/wallet-sheet.js, frontend/src/features/settings/settings.js). npm mirror of davidshimjs/qrcodejs, which the old /gh/ CDN URL served UNPINNED.
+- **qrcode-1.0.0.min.js** — Wallet address QR codes (frontend/src/features/header/wallet-sheet.js, public/js/settings.js). npm mirror of davidshimjs/qrcodejs, which the old /gh/ CDN URL served UNPINNED.
 
-## Centrally-hosted Tailwind runtime (served to child apps)
+## Centrally-hosted runtimes (served to child apps)
 
-Not under `public/vendor/` — it lives at a versioned path modelled on
-`/usernode-bridge/v1/` and `/usernode-native/v1/`, because it is
-infrastructure this platform *serves to other apps* rather than an asset the
-shell itself loads (the shell compiles its own stylesheet). Written by the
-same `npm run vendor:assets` run.
+Not under `public/vendor/`: they live under the versioned trees the platform
+serves on every app's own origin (`/usernode-bridge/v1/`,
+`/usernode-tailwind/v1/`), because they are infrastructure this platform
+*serves to other apps*. `/vendor/` is reachable on the platform's origin
+only. Written by the same `npm run vendor:assets` run.
 
-Tailwind v3 publishes no browser bundle to npm, so the source is the
-version-pinned CDN URL. The script holds the download in memory, checks the
-sha384 below, and only then writes the file — a truncated or tampered fetch
-fails the run instead of poisoning the copy the whole fleet loads.
+The source of each is a version-pinned URL. The script holds the download in
+memory, checks the sha384 below, and only then writes the file: a truncated
+or tampered fetch fails the run instead of poisoning the copy the whole fleet
+loads. Each is kept **byte-for-byte verbatim**; editing one would break the
+digest guarantee that lets anyone re-verify it against upstream.
 
 | Served at | Source URL | Version | sha384 (base64) | Size |
 |---|---|---|---|---|
 | `/usernode-tailwind/v1/tailwind.js` | `https://cdn.tailwindcss.com/3.4.17` | 3.4.17 | `igm5BeiBt36UU4gqwWS7imYmelpTsZlQ45FZf+XBn9MuJbn4nQr7yx1yFydocC/K` | 397.7 KB |
+| `/usernode-bridge/v1/snapdom.js` | `https://cdn.jsdelivr.net/npm/@zumer/snapdom@3.1.1/dist/snapdom.js` | 3.1.1 | `X1VJfUghgBqHQ1Y6iba5l0ab1AuLfNDhnTt/tiVjeokfy/D/UGmvEiAOQ6fcj1AS` | 244.9 KB |
 
-- **public/usernode-tailwind/v1/tailwind.js** — The in-browser Tailwind engine child apps load instead of cdn.tailwindcss.com. Reads the inline `tailwind.config` set beside it, exactly as the CDN copy does, so an app swapping to it is behaviour-identical.
-
-Kept **byte-for-byte verbatim**, including the bundle's own
-`console.warn` about not using the CDN in production. That warning is
-expected and harmless (it is a warn, not an error, so it does not trip the
-baseline no-console-errors proposal check, and apps already emit it today);
-editing it out would break the digest guarantee that lets anyone re-verify
-this file against upstream.
+- **public/usernode-tailwind/v1/tailwind.js** — The in-browser Tailwind engine child apps load instead of cdn.tailwindcss.com. Reads the inline `tailwind.config` set beside it, exactly as the CDN copy does, so an app swapping to it is behaviour-identical. Tailwind v3 publishes no browser bundle to npm, so the source is the version-pinned CDN URL. Kept byte-for-byte verbatim, including the bundle's own `console.warn` about not using the CDN in production: a warn, not an error, so it does not trip the no-console-errors proposal check.
+- **public/usernode-bridge/v1/snapdom.js** — Draws a page into an image for the experimental C comment (#4289 follow-up): the shell loads it to picture its own screen, and the bridge loads it on an app's own origin, only when the shell asks that app for its picture. Never loaded otherwise. The same bytes as the npm package's dist/snapdom.js (npm pack @zumer/snapdom@3.1.1).
 
 ## Bumping a version
 
