@@ -1290,10 +1290,10 @@ const AppView = {
           // judged the page after an unfold was undone failed intermittently.
           if (document.querySelector('[data-ws-since-seen]')) return;
           // A week's seen rows follow its new ones behind that week's one
-          // `Show N more` (#3524), so an open week's reveal is the press when
-          // there is one; `Show an earlier week` steps back a week to find
-          // one when there is not.
-          const more = document.querySelector('button[data-ws-since-week-more]')
+          // disclosure (#3947), so a FOLDED week's is the press when there
+          // is one (an open week's would fold it again); `Show an earlier
+          // week` steps back a week to find one when there is not.
+          const more = document.querySelector('button[data-ws-since-week-more][aria-expanded="false"]')
             || document.querySelector('button[data-ws-since-more]:not([disabled])');
           if (more) more.click();
         }, 300);

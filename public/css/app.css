@@ -17090,10 +17090,11 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 
 /* ── Since your last visit, week by week (the Workshop page) ──────────
    Each week is a division of the pane, as the walk's windows were: a
-   hairline, the week's heading and range, its line, and what moved in it
-   nested under a rule at the left, so the rows read as the line's
-   evidence. A week's rows past the first three, new and then already seen,
-   come out a few at a time under ONE quiet reveal (#3524). */
+   hairline, the week's heading and range, its line, and ONE quiet reveal
+   under the line that puts what moved in it out, in the week's own column
+   (#3947). It was nested under a rule at the left, three rows out and the
+   rest paged by a second reveal under them: two levels of reveal, and the
+   rule made a box inside the pane's box. */
 .dev-ws-since-week {
   display: flex; flex-direction: column;
   border-top: 1px solid var(--app-sheet-line);
@@ -17105,21 +17106,19 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 }
 .dev-ws-since-week-n { font-size: 12px; font-weight: 500; letter-spacing: 0; color: var(--text-muted); }
 .dev-ws-since-week-line { margin: 6px 0 0; font-size: 14px; line-height: 1.45; color: var(--text-primary); }
-.dev-ws-since-nest {
+.dev-ws-since-items {
   display: flex; flex-direction: column; gap: 4px;
-  margin: 10px 0 0; padding-left: 10px;
-  border-left: 2px solid var(--app-sheet-line);
+  margin: 6px 0 0;
 }
-/* #3524: the week's one reveal. It was two grey 36px pill rows stacked
-   here ("N more new" in the accent, "N more you have seen" with a check),
-   the most solid-looking things in the week and two different chevrons
-   side by side. Now it is the pane's own `.dev-ws-reveal`, the gesture
-   every other "more" in the pane uses, set to the LEFT, inside the week's
-   rule, so it belongs to the rows above it and not to `Show an earlier
-   week` below. The count still hidden rides it in the lighter weight. */
-.dev-ws-since-week-more { justify-content: flex-start; padding: 4px 12px 2px; }
-.dev-ws-since-week-left { font-weight: 500; }
-.dev-ws-since-nest > .dev-ws-since-seen { margin-top: 2px; padding-left: 0; }
+/* The week's one reveal (#3947): the pane's own `.dev-ws-reveal`, the
+   gesture every other "more" in the pane uses, set to the LEFT, under the
+   line it opens, so it reads as the week's and not as `Show an earlier
+   week` at the foot of the list. Its caret turns over while the rows are
+   out. The new count rides it in the accent: a number that asks for the
+   reader. */
+.dev-ws-since-week-more { justify-content: flex-start; padding: 6px 0 2px; }
+.dev-ws-since-week-new { color: var(--accent); }
+.dev-ws-since-items > .dev-ws-since-seen { margin-top: 2px; padding-left: 0; }
 
 /* ── Share it (community-card.tsx ShareItCard) ──────────────────────
    A project that is just yours: its two ways to grow, side by side. The
