@@ -7679,11 +7679,19 @@
       return host && host !== String(location.hostname).toLowerCase() ? host : null;
     }
 
+    // Could this page be an app at its own address at all? Inside the
+    // platform's frame, the native shell or the platform's own document,
+    // never.
+    function pageEligible() {
+      if (_inIframe || _hasNativeChannel || window.Usernode) return false;
+      if (window.__usernodePlatformShell) return false;
+      return true;
+    }
+
     // Gate 1, synchronous: could this page be an app at its own address?
     // Returns the single label (the app's slug) or null.
     function candidateSlug() {
-      if (_inIframe || _hasNativeChannel || window.Usernode) return null;
-      if (window.__usernodePlatformShell) return null;
+      if (!pageEligible()) return null;
       var host = String(location.hostname || "").toLowerCase();
       var dot = host.indexOf(".");
       if (dot <= 0) return null;
@@ -7736,6 +7744,42 @@
       // A tag that names a host must name this deployment's platform.
       var tagged = taggedHost();
       if (tagged && tagged !== platformHost) return null;
+      var site = httpsUrl(config.site_url);
+      var origin = platform.protocol + "//" + platform.host;
+      return {
+        slug: slug,
+        openHref: origin + "/#app/" + slug,
+        siteHref: site ? site.href : origin + "/",
+      };
+    }
+
+    // A CUSTOM DOMAIN (#4405): an app served at an address its manager owns,
+    // say app.example.com, which is under neither the apps domain nor the
+    // platform's. The hostname says nothing about which app it is, so the
+    // platform is asked: GET <platform_origin>/api/public/app-host?host=<this
+    // host>, anonymous and CORS-open, answers the slug for a LIVE custom
+    // domain and 404 for anything else. Only a host that could be one is
+    // asked about (two or more dots, not under this deployment's domains),
+    // and the same tagged-host rule applies.
+    function customCandidateHost(config) {
+      if (!pageEligible()) return null;
+      if (!config || typeof config !== "object") return null;
+      var apps = typeof config.apps_domain === "string" ? config.apps_domain.toLowerCase() : "";
+      if (!isDomain(apps)) return null;
+      var platform = httpsUrl(config.platform_origin);
+      if (!platform) return null;
+      var host = String(location.hostname || "").toLowerCase();
+      if (!isDomain(host) || host.split(".").length < 3) return null;
+      if (under(host, apps) || under(host, platform.hostname.toLowerCase())) return null;
+      var tagged = taggedHost();
+      if (tagged && tagged !== platform.hostname.toLowerCase()) return null;
+      return host;
+    }
+
+    function customTargetsFrom(config, slug) {
+      if (typeof slug !== "string" || !/^[a-z0-9-]+$/.test(slug)) return null;
+      var platform = httpsUrl(config.platform_origin);
+      if (!platform) return null;
       var site = httpsUrl(config.site_url);
       var origin = platform.protocol + "//" + platform.host;
       return {
@@ -7909,9 +7953,9 @@
     }
 
     function start() {
-      var slug = candidateSlug();
-      if (!slug) return;
+      if (!pageEligible()) return;
       if (typeof window.fetch !== "function") return;
+      var slug = candidateSlug();
       var request;
       try {
         request = window.fetch(CONFIG_SRC, { credentials: "omit", cache: "no-cache" });
@@ -7920,8 +7964,21 @@
         if (!res || !res.ok) return null;
         return res.json();
       }).then(function (config) {
-        var t = targetsFrom(config, slug);
-        if (t) draw(t);
+        var t = slug ? targetsFrom(config, slug) : null;
+        if (t) { draw(t); return null; }
+        // Not <slug>.<apps domain>: a custom domain, if the platform says so.
+        var host = customCandidateHost(config);
+        if (!host) return null;
+        var platform = httpsUrl(config.platform_origin);
+        var url = platform.protocol + "//" + platform.host + "/api/public/app-host?host=" + encodeURIComponent(host);
+        return Promise.resolve(window.fetch(url, { credentials: "omit", cache: "no-cache" })).then(function (res) {
+          if (!res || !res.ok) return null;
+          return res.json();
+        }).then(function (answer) {
+          var ct = answer && typeof answer === "object" ? customTargetsFrom(config, answer.slug) : null;
+          if (ct) draw(ct);
+          return null;
+        });
       }).catch(function () { /* no config, no button */ });
     }
 

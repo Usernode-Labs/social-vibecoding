@@ -155,6 +155,32 @@ TLS references until reconciled or migrated. The infra runbook
 `docs/23-social-vibecoding-shared-tls.md` includes a read-only migration planner,
 issuance-limit recovery and explicit retirement of legacy Certificates.
 
+## Custom domains
+
+A project's manager can serve it at a web address they own (#4405,
+`services/app-domains.js`): they add a CNAME from `app.example.com` to
+`<slug>.USERNODE_APPS_DOMAIN` and a TXT record `_homeroom.app.example.com`
+carrying the claim's token, and the leader's sweep verifies both against
+public resolvers every minute. Once verified, `deployCustomDomain`
+(`services/kubernetes.js`) writes a second Ingress, `sv-domain-<id>`, beside
+the app's own: the same asset prefixes and gate routing, the custom host, and
+a `cert-manager.io/cluster-issuer` annotation naming `CLUSTER_ISSUER`
+(default `letsencrypt-public`), the one place an app Ingress asks for a
+certificate of its own. The certificate lands in `sv-domain-<id>-tls` in
+`APP_NAMESPACE` and goes with the Ingress when the domain is removed,
+disabled or the app is deleted.
+
+Prerequisites: the ClusterIssuer must have an HTTP-01 solver for the apps'
+ingress class (the platform host's own certificate is issued the same way),
+port 80 must reach the ingress for the challenge, and the app namespace's
+policy must let ingress-controller traffic reach cert-manager's solver pods
+there. The app's own Ingress and the shared wildcard Secret are never touched
+(`tests/kubernetes-app-tls.test.js`).
+
+To take a domain out of service without touching the project, use Disable in
+the admin console's Domains section (`#admin/domains`), which deletes the
+Ingress and its Secret; Enable verifies the claim again from the start.
+
 ## Before/after shots cleanup
 
 Shots recovery retries resource cleanup for every terminal run outcome, including

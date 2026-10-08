@@ -1726,6 +1726,69 @@ function adminRoutes(config) {
     }
   });
 
+  // ── Custom domains (#4405) ─────────────────────────────────
+  //
+  // Every custom domain with its project and where it stands. The read is
+  // open to view-only admins; the levers (check again, disable, enable,
+  // remove) change what the edge serves, so they requireAdminWrite. Disable
+  // takes the host out of service without touching the project: its Homeroom
+  // address keeps working, and Enable verifies the claim again from the
+  // start.
+  const appDomains = require('../services/app-domains');
+
+  function adminDomainRow(row) {
+    return {
+      id: row.id,
+      appSlug: row.app_slug,
+      appName: row.app_name,
+      createdBy: row.created_by_username || null,
+      ...appDomains.publicRow(row),
+      disabledAt: row.disabled_at ? new Date(row.disabled_at).toISOString() : null,
+      failureCount: row.failure_count,
+    };
+  }
+
+  router.get('/api/admin/domains', async (req, res) => {
+    try {
+      const rows = await appDomains.adminList(pool);
+      res.json({ domains: rows.map(adminDomainRow), sweep: appDomains.getStatus() });
+    } catch (err) {
+      log.error('admin', 'Read custom domains failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  async function adminDomainAction(req, res, act) {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid domain id' });
+    try {
+      const row = await appDomains.byId(pool, id);
+      if (!row) return res.status(404).json({ error: 'Domain not found' });
+      const result = await act(row);
+      log.info('admin', 'Custom domain action', { by: req.user.username, id, hostname: row.hostname, action: req.path.split('/').pop() });
+      if (result === null) return res.status(204).end();
+      const rows = await appDomains.adminList(pool);
+      const fresh = rows.find((r) => r.id === id);
+      res.json({ domain: fresh ? adminDomainRow(fresh) : null });
+    } catch (err) {
+      log.error('admin', 'Custom domain action failed', { id, message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+
+  router.post('/api/admin/domains/:id/check', requireAdminWrite, (req, res) => adminDomainAction(req, res,
+    (row) => (row.status === 'disabled' ? row : appDomains.checkNow(pool, config, row))));
+  router.post('/api/admin/domains/:id/disable', requireAdminWrite, (req, res) => adminDomainAction(req, res,
+    (row) => (row.status === 'disabled' ? row : appDomains.disable(pool, config, row, req.user))));
+  router.post('/api/admin/domains/:id/enable', requireAdminWrite, (req, res) => adminDomainAction(req, res,
+    (row) => (row.status === 'disabled' ? appDomains.enable(pool, row, req.user) : row)));
+  router.delete('/api/admin/domains/:id', requireAdminWrite, (req, res) => adminDomainAction(req, res,
+    async (row) => {
+      const { rows } = await pool.query('SELECT id, slug FROM apps WHERE id = $1', [row.app_id]);
+      await appDomains.remove(pool, config, rows[0] || { id: row.app_id }, row, req.user);
+      return null;
+    }));
+
   // ── Featured apps ──────────────────────────────────────────
   //
   // The admin-curated row under "Find more apps" on every user's home

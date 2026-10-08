@@ -127,6 +127,9 @@ async function migrate(config) {
   await seedStagingApproverPanel(pool);
   await seedStagingAppAdminsPanel(pool);
   await seedStagingReadonlyDevTab(pool);
+  // #4405: must run AFTER seedStagingReadonlyDevTab (its live domain hangs
+  // off that app) and after the check sign-in account exists.
+  await seedStagingCustomDomains(pool);
   await seedStagingQuietDiscussion(pool);
   await seedStagingYourApps(pool, config);
   await require('../services/staging-apps').seedCatalog(pool, config);
@@ -5915,6 +5918,61 @@ async function seedStagingMembersPanel(pool) {
     log.info('db', 'Staging members-panel fixtures seeded');
   } catch (err) {
     log.warn('db', 'Staging members-panel seeding failed', { message: err.message });
+  }
+}
+
+// Fixtures for custom domains (#4405). app_domains is staging:private, so
+// a preview's copy is empty: these rows give the Custom domain dialog, Share
+// and the admin Domains section something to show. `.invalid` never
+// resolves, and the sweep runs on the leader only (never a preview), so
+// nothing can act on them.
+//
+// The project the dialog is photographed on, `staging-demo-custom-domain`,
+// is managed by the check sign-in account (an app admin of it, the way
+// seedStagingAppAdminsPanel gives its roster app admins): the Custom domain
+// row shows only to whoever manages a project, and the declared checks sign
+// in as that account. It is a public, running project owned by the demo
+// user, so it changes nothing about what the account has made. Its claim is
+// still waiting for DNS, with the sentence the sweep would have recorded.
+// The read-only demo app carries a LIVE one, so Share there offers the
+// custom address with the Homeroom address named under it.
+async function seedStagingCustomDomains(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    await pool.query(
+      `INSERT INTO apps (id, name, slug, status, collab_visibility, view_visibility, created_by,
+                         repo_url, admin_usernames)
+       VALUES (900140, 'Staging demo custom domain', 'staging-demo-custom-domain', 'running',
+               'public', 'public', 900001, 'https://github.com/staging-demo/staging-demo-custom-domain',
+               ARRAY['staging-code-signin@usernode.test'])
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO app_admins (app_id, user_id)
+       SELECT 900140, id FROM users WHERE username = 'staging-code-signin@usernode.test'
+       ON CONFLICT (app_id, user_id) DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO app_domains (id, app_id, hostname, verification_token, status, dns_checked_at,
+                                last_error, failure_count, created_by)
+       VALUES (900102, 900140, 'staging-demo-pending.example.invalid', '0123456789abcdef0123456789abcdef',
+               'pending', NOW() - INTERVAL '1 minute',
+               'No CNAME record found for staging-demo-pending.example.invalid.', 3, 900001)
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO app_domains (id, app_id, hostname, verification_token, status, verified_at, live_at,
+                                cert_expires_at, dns_checked_at, created_by)
+       SELECT 900101, id, 'staging-demo.example.invalid', 'f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff', 'live',
+              NOW() - INTERVAL '2 days', NOW() - INTERVAL '2 days', NOW() + INTERVAL '80 days', NOW(), 900001
+         FROM apps WHERE slug = 'staging-demo-readonly'
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `SELECT setval('app_domains_id_seq', GREATEST((SELECT MAX(id) FROM app_domains), 1))`
+    );
+  } catch (err) {
+    log.warn('db', 'Staging custom-domain fixtures skipped', { err: err.message });
   }
 }
 

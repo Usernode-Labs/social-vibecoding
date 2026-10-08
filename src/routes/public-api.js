@@ -161,6 +161,28 @@ function publicApiRoutes(config) {
     }
   });
 
+  // GET /api/public/app-host?host= — which app a LIVE custom domain serves
+  // (#4405): the slug and the name, nothing else. The hosted bridge asks
+  // from the app's own page to draw its Homeroom button there, which is why
+  // this is anonymous and under the CORS-open prefix. 404 for anything that
+  // is not a live custom host, a Homeroom host included (the bridge already
+  // knows those from platform.json).
+  router.get('/api/public/app-host', async (req, res) => {
+    const host = String(req.query.host || '').trim().toLowerCase().replace(/:\d+$/, '');
+    if (!host || host.length > 253 || !/^[a-z0-9.-]+$/.test(host) || !host.includes('.')) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+    try {
+      const found = await require('../services/app-domains').lookupLiveHost(pool, host);
+      if (!found) return res.status(404).json({ error: 'Not found' });
+      res.set('Cache-Control', 'public, max-age=60');
+      res.json({ slug: found.slug, name: found.name });
+    } catch (err) {
+      log.error('public-api', 'app-host lookup failed', { host, message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // GET /api/public/waitlist/options — the survey question definitions
   // (option keys + labels, countries, limits). The SPA renders both
   // waitlist forms from this so client and server validation can't

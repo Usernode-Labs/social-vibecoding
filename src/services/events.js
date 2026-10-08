@@ -63,6 +63,10 @@ const EVENT_TYPES = Object.freeze({
   // The app's lock toggled (POST /api/apps/:slug/lock), with { locked }.
   // Read back by services/app-notices.js with the settings changes above.
   APP_LOCK_CHANGED: 'app_lock_changed',
+  // A project's custom domain (#4405, services/app-domains.js): metadata
+  // carries { hostname, action } with action one of added | live | removed
+  // | failed | disabled | enabled. Read back by services/app-notices.js.
+  APP_DOMAIN_CHANGED: 'app_domain_changed',
   // The Friday card (services/weekly-digest.js), its data as metadata. A
   // channel carries no activity, so this is where the card lives, and a
   // project's Workshop shows it for a few days (services/app-notices.js).

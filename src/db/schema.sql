@@ -13164,3 +13164,44 @@ INSERT INTO platform_settings (key, value, description) VALUES
   ('waitlist_spots_backfilled', 'true',
     'Marker: the one-time backfill giving every waiting account a waitlist row (#4083) has run.')
 ON CONFLICT (key) DO NOTHING;
+
+-- Custom domains (#4405): a project served at a web address its manager
+-- owns, beside its Homeroom address. One row per claim; the hostname is
+-- proved by two DNS records (a CNAME to the app's Homeroom hostname and a
+-- TXT `_homeroom.<hostname>` carrying the verification token), then the
+-- edge issues a certificate and the gate routes the host to the app
+-- (services/app-domains.js has the status machine). Private in staging: a
+-- preview never serves a custom host, and the sweep never runs there.
+CREATE TABLE IF NOT EXISTS app_domains (
+  id                 SERIAL PRIMARY KEY,
+  app_id             INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  hostname           VARCHAR(253) UNIQUE NOT NULL,
+  verification_token CHAR(32) NOT NULL,
+  status             VARCHAR(16) NOT NULL DEFAULT 'pending',
+  dns_checked_at     TIMESTAMPTZ,
+  verified_at        TIMESTAMPTZ,
+  live_at            TIMESTAMPTZ,
+  cert_expires_at    TIMESTAMPTZ,
+  last_error         TEXT,
+  failure_count      INTEGER NOT NULL DEFAULT 0,
+  created_by         INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  disabled_at        TIMESTAMPTZ,
+  disabled_by        INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+COMMENT ON TABLE app_domains IS 'staging:private';
+-- One custom domain per project in this version.
+CREATE UNIQUE INDEX IF NOT EXISTS app_domains_one_per_app ON app_domains (app_id);
+CREATE INDEX IF NOT EXISTS app_domains_status_idx ON app_domains (status);
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'app_domains_status_check') THEN
+    ALTER TABLE app_domains ADD CONSTRAINT app_domains_status_check
+      CHECK (status IN ('pending', 'verified', 'live', 'failed', 'disabled'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'app_domains_hostname_check') THEN
+    ALTER TABLE app_domains ADD CONSTRAINT app_domains_hostname_check
+      CHECK (hostname ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$');
+  END IF;
+END $$;
