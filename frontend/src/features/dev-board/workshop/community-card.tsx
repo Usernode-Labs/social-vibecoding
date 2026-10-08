@@ -76,6 +76,8 @@ import { useEffect, useReducer, useRef, useState, type ReactNode, type Ref } fro
 import { Button } from '@/components/ui/button';
 import { CheckIcon, ChevronRightIcon, LockIcon, PersonSilhouetteIcon, PlayIcon, ShieldCheckIcon, UserGroupIcon, UserIcon } from '@/components/ui/icons';
 import { swatchFor } from '../../messages/format';
+import { RichMessage, useMessages } from '../../../lib/i18n/react';
+import { t as translate } from '../../../lib/i18n/runtime';
 import { offerJoin, registerJoinAnchor } from '../../../lib/join-required';
 import { askToVerifyForPublic, identityNeededHere } from '../../auth/verify-identity';
 import { invitedByLine, joinByInvite, useInviteOffer, type InviteJoin, type InviteOffer } from './invite-offer';
@@ -170,19 +172,53 @@ export type CommunityPayload = {
   };
 };
 
-const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
-
 /**
- * Who has to say yes, out of how many: "2 of the 12 active members", "both
- * active members", "the only approver". A count dapp.json set can name more
- * people than there are, and then says how many there are.
+ * The rule's sentences for one kind of voter, as message ids. Each is the
+ * whole sentence, because who has to say yes is worded by how many that is
+ * out of how many: "2 of the 12 active members", "both active members", "the
+ * only approver". A count dapp.json set can name more people than there are
+ * (`short`), and then says how many there are. The `Quiet` ones add the
+ * path that needs one Yes and no objection.
  */
-function whoApproves(required: number, of: number, one: string, many: string): string {
-  if (required < of) return `${required} of the ${of} ${many}`;
-  if (required > of) return `${plural(required, one, many)} (there ${of === 1 ? 'is' : 'are'} ${of})`;
-  if (of === 1) return `the only ${one}`;
-  if (of === 2) return `both ${many}`;
-  return `all ${of} ${many}`;
+type RuleIds = {
+  some: string; someQuiet: string;
+  short: string; shortQuiet: string;
+  only: string;
+  both: string; bothQuiet: string;
+  all: string; allQuiet: string;
+};
+
+const APPROVER_RULE: RuleIds = {
+  some: 'project:communityCard.rule.approvers.some',
+  someQuiet: 'project:communityCard.rule.approvers.someQuiet',
+  short: 'project:communityCard.rule.approvers.short',
+  shortQuiet: 'project:communityCard.rule.approvers.shortQuiet',
+  only: 'project:communityCard.rule.approvers.only',
+  both: 'project:communityCard.rule.approvers.both',
+  bothQuiet: 'project:communityCard.rule.approvers.bothQuiet',
+  all: 'project:communityCard.rule.approvers.all',
+  allQuiet: 'project:communityCard.rule.approvers.allQuiet',
+};
+
+const MEMBER_RULE: RuleIds = {
+  some: 'project:communityCard.rule.members.some',
+  someQuiet: 'project:communityCard.rule.members.someQuiet',
+  short: 'project:communityCard.rule.members.short',
+  shortQuiet: 'project:communityCard.rule.members.shortQuiet',
+  only: 'project:communityCard.rule.members.only',
+  both: 'project:communityCard.rule.members.both',
+  bothQuiet: 'project:communityCard.rule.members.bothQuiet',
+  all: 'project:communityCard.rule.members.all',
+  allQuiet: 'project:communityCard.rule.members.allQuiet',
+};
+
+function ruleLine(ids: RuleIds, required: number, of: number, quiet: boolean): string {
+  if (required < of) return translate(quiet ? ids.someQuiet : ids.some, { count: required, total: of });
+  // Counted by how many there are: that is the number English words differently.
+  if (required > of) return translate(quiet ? ids.shortQuiet : ids.short, { count: of, required });
+  if (of === 1) return translate(ids.only);
+  if (of === 2) return translate(quiet ? ids.bothQuiet : ids.both);
+  return translate(quiet ? ids.allQuiet : ids.all, { count: of });
 }
 
 /**
@@ -212,25 +248,23 @@ export function approvalLine(
   // A Just you project's one approver is the person reading it (#4246).
   if (viewer?.audience === 'solo' && viewer.is_member
     && Number(approval.electorate) === 1 && Number(approval.required) === 1) {
-    return 'A change goes live when you approve it.';
+    return translate('project:communityCard.rule.you');
   }
   const fixed = approval.approvals_required != null;
   const quiet = !fixed && required > 1;
   if (approval.policy === 'invited') {
-    const who = whoApproves(required, electorate, 'approver', 'approvers');
-    return `A change goes live when ${who} ${required === 1 ? 'says' : 'say'} yes${quiet ? ', or after a wait if one says yes and nobody says no' : ''}.`;
+    return ruleLine(APPROVER_RULE, required, electorate, quiet);
   }
   if (fixed) {
-    return `A change goes live once ${plural(required, 'member approves', 'members approve')} it.`;
+    return translate('project:communityCard.rule.fixed', { count: required });
   }
-  const who = whoApproves(required, electorate, 'active member', 'active members');
-  return `A change goes live when ${who} ${required === 1 ? 'approves' : 'approve'} it${quiet ? ', or after a wait if one approves and nobody objects' : ''}.`;
+  return ruleLine(MEMBER_RULE, required, electorate, quiet);
 }
 
 /** "Public community · 12 members"; "Just you" alone, because there is one. */
 export function audienceLine(p: Pick<CommunityPayload, 'audience' | 'audience_label' | 'member_count'>): string {
-  if (p.audience === 'solo') return p.audience_label || 'Just you';
-  return `${p.audience_label} · ${plural(Number(p.member_count) || 0, 'member', 'members')}`;
+  if (p.audience === 'solo') return p.audience_label || translate('project:communityCard.audience.justYou');
+  return translate('project:communityCard.audience.withMembers', { audience: p.audience_label, count: Number(p.member_count) || 0 });
 }
 
 /**
@@ -240,9 +274,9 @@ export function audienceLine(p: Pick<CommunityPayload, 'audience' | 'audience_la
  */
 export function audienceChangeLine(title: string | null | undefined): string {
   const t = String(title || '');
-  if (/ public$/.test(t)) return 'Making it a public community is waiting for approval';
-  if (/private \(collaborators only\)$/.test(t)) return 'Making it a private community is waiting for approval';
-  return 'A change to who it is for is waiting for approval';
+  if (/ public$/.test(t)) return translate('project:communityCard.audienceChange.toPublic');
+  if (/private \(collaborators only\)$/.test(t)) return translate('project:communityCard.audienceChange.toPrivate');
+  return translate('project:communityCard.audienceChange.other');
 }
 
 function AudienceGlyph({ audience }: { audience: Audience }) {
@@ -381,12 +415,13 @@ export function WeekPeople({ members, count, audience, audienceLabel, seats }: {
   audienceLabel?: string;
   seats?: boolean;
 }) {
+  const t = useMessages('project');
   const solo = audience === 'solo';
   const shown: Audience | undefined = seats ? 'invited' : audience;
-  const label = seats ? 'Private community' : audienceLabel;
+  const label = seats ? t('project:communityCard.week.privateCommunity') : audienceLabel;
   const you = (members || [])[0];
   const faces = seats ? [] : solo ? [] : (members || []).slice(0, WEEK_FACES);
-  const countLine = seats || solo ? '' : plural(count, 'person', 'people');
+  const countLine = seats || solo ? '' : t('project:communityCard.week.people', { count });
   return (
     <div className="dev-ws-hero-week-people" data-ws-members="" data-ws-seats={seats ? '' : undefined}>
       {seats && you ? (
@@ -444,16 +479,30 @@ export function HeroPeople({ members, count, audience, audienceLabel, children }
 
 /** "Public community · 23 members", the audience's glyph leading it. */
 function HeroCount({ count, audience, audienceLabel }: { count: number; audience?: Audience; audienceLabel?: string }) {
+  const t = useMessages('project');
   const solo = audience === 'solo';
   return (
     <span className="dev-ws-hero-count" data-ws-members-cell="members">
-      {audienceLabel ? (
-        <span className="dev-ws-hero-audience" data-ws-community-audience="">
-          {audience ? <AudienceGlyph audience={audience} /> : null}
-          <b>{audienceLabel}</b>
-        </span>
-      ) : null}
-      {solo ? null : `${audienceLabel ? ' · ' : ''}${plural(count, 'member', 'members')}`}
+      {!audienceLabel ? (solo ? null : t('project:communityCard.people.members', { count }))
+        : solo ? <AudienceLabel audience={audience}>{audienceLabel}</AudienceLabel>
+          : (
+            // One message: the audience, drawn with its glyph, then the count.
+            <RichMessage
+              id="project:communityCard.people.audienceMembers"
+              values={{ audience: audienceLabel, count }}
+              components={[<AudienceLabel audience={audience} />]}
+            />
+          )}
+    </span>
+  );
+}
+
+/** The audience's words in bold, its glyph leading them. */
+function AudienceLabel({ audience, children }: { audience?: Audience; children?: ReactNode }) {
+  return (
+    <span className="dev-ws-hero-audience" data-ws-community-audience="">
+      {audience ? <AudienceGlyph audience={audience} /> : null}
+      <b>{children}</b>
     </span>
   );
 }
@@ -467,7 +516,7 @@ export function sparkDay(day: string): string {
 
 /** The tip's first line: "Sat, Sep 26 · 21 people". */
 export function sparkTip(d: { day: string; n: number }): string {
-  return `${sparkDay(d.day)} · ${plural(Number(d.n) || 0, 'person', 'people')}`;
+  return translate('project:communityCard.spark.tip', { day: sparkDay(d.day), count: Number(d.n) || 0 });
 }
 
 /** How long a tip stays up after a finger lifts off the chart. */
@@ -496,6 +545,7 @@ const TIP_LINGER_MS = 2500;
  * lists every day's count, and the tip is hidden from it.
  */
 function Spark({ days, peak }: { days: Array<{ day: string; n: number }>; peak: number }) {
+  const t = useMessages('project');
   const [at, setAt] = useState<number | null>(null);
   const boxRef = useRef<HTMLSpanElement | null>(null);
   const linger = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -521,7 +571,7 @@ function Spark({ days, peak }: { days: Array<{ day: string; n: number }>; peak: 
         data-ws-members-trend=""
         {...(active ? { 'data-ws-spark-active': '' } : {})}
         role="img"
-        aria-label={`People taking part each day, last ${days.length} days: ${days.map((d) => Number(d.n) || 0).join(', ')}`}
+        aria-label={t('project:communityCard.spark.label', { count: days.length, counts: days.map((d) => Number(d.n) || 0).join(', ') })}
         onPointerDown={(e) => {
           stopLinger();
           if (e.pointerType !== 'mouse') {
@@ -555,7 +605,7 @@ function Spark({ days, peak }: { days: Array<{ day: string; n: number }>; peak: 
       {active ? (
         <span className="dev-ws-hero-spark-tip" aria-hidden="true" data-ws-spark-tip="">
           <span className="dev-ws-hero-spark-tip-day">{sparkTip(active)}</span>
-          <span className="dev-ws-hero-spark-tip-cap">Who took part, last 14 days</span>
+          <span className="dev-ws-hero-spark-tip-cap">{t('project:communityCard.spark.caption')}</span>
         </span>
       ) : null}
     </span>
@@ -584,6 +634,7 @@ export function HeroPulse({ members, count, audience, audienceLabel, activity }:
   audienceLabel?: string;
   activity: CommunityPayload['activity'] | null | undefined;
 }) {
+  const t = useMessages('project');
   const days = activity?.daily || [];
   const active = Number(activity?.active_week) || 0;
   const shipped = Number(activity?.shipped_month) || 0;
@@ -596,14 +647,22 @@ export function HeroPulse({ members, count, audience, audienceLabel, activity }:
         <HeroCount count={count} audience={audience} audienceLabel={audienceLabel} />
         {quiet ? (
           <span className="dev-ws-hero-activity-line" data-ws-members-trend="" data-ws-trend-empty="">
-            Nobody has been around in the last 14 days.
+            {t('project:communityCard.pulse.nobody')}
           </span>
         ) : (
           <span className="dev-ws-hero-activity-line" data-ws-members-stats="">
-            {active ? <span data-ws-members-cell="active"><b>{active}</b> active this week</span> : null}
+            {active ? (
+              <span data-ws-members-cell="active">
+                <RichMessage id="project:communityCard.pulse.active" values={{ count: active }} components={[<b />]} />
+              </span>
+            ) : null}
             {active && shipped ? '\u00a0· ' : null}
-            {shipped ? <span data-ws-members-cell="shipped"><b>{shipped}</b> changes shipped this month</span> : null}
-            {!active && !shipped ? 'Quiet this week' : null}
+            {shipped ? (
+              <span data-ws-members-cell="shipped">
+                <RichMessage id="project:communityCard.pulse.shipped" values={{ count: shipped }} components={[<b />]} />
+              </span>
+            ) : null}
+            {!active && !shipped ? t('project:communityCard.pulse.quiet') : null}
           </span>
         )}
       </span>
@@ -641,7 +700,7 @@ export async function proposeAudience(slug: string, to: 'public' | 'private'): P
       if (res.ok || res.status === 409) return true;
       body = await res.json().catch(() => ({}));
     }
-    throw new Error((body && body.error) || 'That did not go through. Try again.');
+    throw new Error((body && body.error) || translate('project:communityCard.audienceChange.failed'));
   }
   return true;
 }
@@ -656,18 +715,15 @@ export async function verifiedToGoPublic(): Promise<boolean> {
   return askToVerifyForPublic();
 }
 
-/** What making it public means, said before it is proposed (the Share it popup and ⋯'s confirm). */
-export const MAKE_PUBLIC_LINE = 'Anyone can find it on Discover, join, and propose changes. '
-  + 'Members vote on this first, and it applies once it merges.';
+/** What making it public means, said before it is proposed (the Share it popup and ⋯'s confirm): a message id. */
+export const MAKE_PUBLIC_LINE = 'project:communityCard.makePublic.explain';
 
 /**
  * What making it private means, said before it is proposed. Who can OPEN
  * it: the repository stays public on GitHub (services/github.js createRepo)
- * whatever this setting says.
+ * whatever this setting says. A message id.
  */
-export const MAKE_PRIVATE_LINE = 'Only people who are invited can open it and build it. '
-  + 'Its code stays public on GitHub. '
-  + 'Members vote on this first, and it applies once it merges.';
+export const MAKE_PRIVATE_LINE = 'project:communityCard.makePrivate.explain';
 
 /**
  * "Make it private", from the hub's ⋯ (../actions-row.tsx DevPlusMenu's
@@ -681,16 +737,16 @@ export async function confirmMakePrivate(slug: string, name: string): Promise<vo
   const ui = (window as any).PlatformUI;
   if (!ui || typeof ui.confirm !== 'function') return;
   const ok = await ui.confirm({
-    title: `Make ${name} a private community?`,
-    message: MAKE_PRIVATE_LINE,
-    confirmLabel: 'Propose making it private',
-    cancelLabel: 'Not now',
+    title: translate('project:communityCard.makePrivate.question', { project: name }),
+    message: translate(MAKE_PRIVATE_LINE),
+    confirmLabel: translate('project:communityCard.makePrivate.propose'),
+    cancelLabel: translate('project:communityCard.makePrivate.notNow'),
   });
   if (!ok) return;
   try {
     await proposeAudience(slug, 'private');
   } catch (err) {
-    ui.toast?.(err instanceof Error ? err.message : 'That did not go through. Try again.');
+    ui.toast?.(err instanceof Error ? err.message : translate('project:communityCard.audienceChange.failed'));
     return;
   }
   await reloadCommunity(slug);
@@ -708,16 +764,16 @@ export async function confirmMakePublic(slug: string, name: string): Promise<voi
   if (!ui || typeof ui.confirm !== 'function') return;
   if (!(await verifiedToGoPublic())) return;
   const ok = await ui.confirm({
-    title: `Make ${name} a public community?`,
-    message: MAKE_PUBLIC_LINE,
-    confirmLabel: 'Propose making it public',
-    cancelLabel: 'Not now',
+    title: translate('project:communityCard.makePublic.question', { project: name }),
+    message: translate(MAKE_PUBLIC_LINE),
+    confirmLabel: translate('project:communityCard.makePublic.propose'),
+    cancelLabel: translate('project:communityCard.makePublic.notNow'),
   });
   if (!ok) return;
   try {
     if (!(await proposeAudience(slug, 'public'))) return;
   } catch (err) {
-    ui.toast?.(err instanceof Error ? err.message : 'That did not go through. Try again.');
+    ui.toast?.(err instanceof Error ? err.message : translate('project:communityCard.audienceChange.failed'));
     return;
   }
   await reloadCommunity(slug);
@@ -764,6 +820,7 @@ function MakePublic({ slug, name, onOpened }: {
   name: string;
   onOpened: () => void;
 }) {
+  const t = useMessages('project');
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -795,7 +852,7 @@ function MakePublic({ slug, name, onOpened }: {
       setOpen(false);
       if (proposed) onOpened();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'That did not go through. Try again.');
+      setError(err instanceof Error ? err.message : t('project:communityCard.audienceChange.failed'));
     } finally {
       setBusy(false);
     }
@@ -819,18 +876,18 @@ function MakePublic({ slug, name, onOpened }: {
           void verifiedToGoPublic().then((go) => { if (go) setOpen(true); });
         }}
       >
-        Make it public
+        {t('project:communityCard.share.makePublic')}
       </Button>
       {open ? (
         <div
           ref={popRef}
           className="dev-ws-join-pop"
           role="dialog"
-          aria-label={`Make ${name} a public community?`}
+          aria-label={t('project:communityCard.makePublic.question', { project: name })}
           data-ws-audience-pop=""
         >
-          <p className="dev-ws-ask-q">{`Make ${name} a public community?`}</p>
-          <p className="dev-ws-vote-sub">{MAKE_PUBLIC_LINE}</p>
+          <p className="dev-ws-ask-q">{t('project:communityCard.makePublic.question', { project: name })}</p>
+          <p className="dev-ws-vote-sub">{t(MAKE_PUBLIC_LINE)}</p>
           {error ? <p className="dev-ws-audience-error" role="alert" data-ws-audience-error="">{error}</p> : null}
           <div className="dev-ws-answer-row">
             <button
@@ -841,11 +898,11 @@ function MakePublic({ slug, name, onOpened }: {
               disabled={busy}
               onClick={() => { void propose(); }}
             >
-              Propose making it public
+              {t('project:communityCard.makePublic.propose')}
             </button>
           </div>
           <button type="button" className="dev-ws-vote-later" data-ws-audience-answer="later" onClick={() => setOpen(false)}>
-            Not now
+            {t('project:communityCard.makePublic.notNow')}
           </button>
         </div>
       ) : null}
@@ -878,10 +935,12 @@ export function InviteCard({ offer, name, busy, onJoin, joinRef, children }: {
   joinRef?: Ref<HTMLButtonElement>;
   children?: ReactNode;
 }) {
+  // Subscribed: who invited them is read by invitedByLine.
+  const t = useMessages('project');
   return (
     <div className="dev-ws-invite" data-ws-invite="">
       <p className="dev-ws-invite-from" data-ws-invite-from="">{invitedByLine(offer)}</p>
-      {offer.note ? <p className="dev-ws-invite-note" data-ws-invite-note="">{`“${offer.note}”`}</p> : null}
+      {offer.note ? <p className="dev-ws-invite-note" data-ws-invite-note="">{t('project:communityCard.inviteCard.note', { note: offer.note })}</p> : null}
       <div className="dev-ws-join-anchor">
         <Button
           ref={joinRef}
@@ -895,7 +954,7 @@ export function InviteCard({ offer, name, busy, onJoin, joinRef, children }: {
           disabled={busy}
           onClick={onJoin}
         >
-          {`Join ${name}`}
+          {t('project:communityCard.inviteCard.join', { project: name })}
         </Button>
         {children}
       </div>
@@ -918,6 +977,7 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedBy
       (./invite-offer.ts): the page's own choice, Needs you or the hub. */
   onJoinedByInvite?: () => void;
 }) {
+  const t = useMessages('project');
   const data = useCommunity(slug);
   // The invite link this page was opened from, if it was (#3700).
   const offer = useInviteOffer(slug);
@@ -991,7 +1051,7 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedBy
       onClick={() => { (window as any).App?.openAppTab?.(slug, 'app'); }}
     >
       <PlayIcon className="w-3 h-3" aria-hidden="true" />
-      Open app
+      {t('project:communityCard.openApp')}
     </button>
   ) : null;
   if (!data) {
@@ -1056,11 +1116,11 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedBy
       ref={popRef}
       className="dev-ws-join-pop"
       role="dialog"
-      aria-label={`Join ${displayName}?`}
+      aria-label={t('project:communityCard.join.question', { project: displayName })}
       data-ws-join-pop=""
     >
-      <p className="dev-ws-ask-q">Join {displayName}?</p>
-      <p className="dev-ws-vote-sub">Members start changes, file requests, vote and chat here.</p>
+      <p className="dev-ws-ask-q">{t('project:communityCard.join.question', { project: displayName })}</p>
+      <p className="dev-ws-vote-sub">{t('project:communityCard.join.explain')}</p>
       <div className="dev-ws-answer-row">
         <button
           type="button"
@@ -1072,11 +1132,11 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedBy
           disabled={invited && busy}
           onClick={() => { if (invited) answerThroughLink(asking.answer); else asking.answer(true); }}
         >
-          Join
+          {t('project:communityCard.join.answer')}
         </button>
       </div>
       <button type="button" className="dev-ws-vote-later" data-ws-join-answer="later" onClick={() => asking.answer(false)}>
-        Not now
+        {t('project:communityCard.join.notNow')}
       </button>
     </div>
   ) : null;
@@ -1115,7 +1175,7 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedBy
         disabled={busy && !asking}
         onClick={() => { void join(); }}
       >
-        Join
+        {t('project:communityCard.join.button')}
       </Button>
       {popup}
     </span>
@@ -1193,10 +1253,10 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedBy
             size="sm"
             ink="neutral"
             data-ws-community-invite=""
-            title="Invite people with a link"
+            title={t('project:communityCard.invite.title')}
             onClick={openInviteLinks}
           >
-            Invite
+            {t('project:communityCard.invite.button')}
           </Button>
         ) : null}
         {menu}
@@ -1234,11 +1294,12 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedBy
  */
 export function shareItLine(building: boolean): string {
   return building
-    ? 'Invite people to follow along while it’s being built, or make it public so anyone can join.'
-    : 'Invite people to make it a private community, or make it public so anyone can join.';
+    ? translate('project:communityCard.share.lineBuilding')
+    : translate('project:communityCard.share.line');
 }
 
 export function ShareItCard({ slug, name }: { slug: string; name?: string }) {
+  const t = useMessages('project');
   const data = useCommunity(slug);
   if (!data || data.audience !== 'solo') return null;
   const canInvite = !!data.is_member;
@@ -1247,7 +1308,7 @@ export function ShareItCard({ slug, name }: { slug: string; name?: string }) {
   return (
     <section className="dev-ws-strip dev-ws-share" data-ws-share="">
       <div className="dev-ws-head">
-        <span className="dev-ws-head-title">Share it</span>
+        <span className="dev-ws-head-title">{t('project:communityCard.share.title')}</span>
       </div>
       <p className="dev-ws-strip-text">{shareItLine(!!data.first_version && !data.first_version.ready)}</p>
       <div className="dev-ws-share-actions">
@@ -1260,7 +1321,7 @@ export function ShareItCard({ slug, name }: { slug: string; name?: string }) {
             data-ws-share-invite=""
             onClick={openInviteLinks}
           >
-            Invite people
+            {t('project:communityCard.share.invite')}
           </Button>
         ) : null}
         {canOpenUp ? (
@@ -1374,6 +1435,7 @@ export function approvalStep(
  * card and stack on a phone and beside the Workshop's side panel (app.css).
  */
 export function ApprovalRules({ slug }: { slug: string }) {
+  const t = useMessages('project');
   const data = useCommunity(slug);
   const invited = !!(data && data.approval && data.approval.policy === 'invited');
   const approvers = useApprovers(slug, invited);
@@ -1389,7 +1451,7 @@ export function ApprovalRules({ slug }: { slug: string }) {
   return (
     <section className="dev-ws-strip" data-ws-approval-rules="">
       <div className="dev-ws-head">
-        <span className="dev-ws-head-title">Approval rules</span>
+        <span className="dev-ws-head-title">{t('project:communityCard.rule.title')}</span>
       </div>
       <ol className="dev-ws-rules" data-ws-community-rule="" aria-label={approvalLine(data.approval, data)}>
         <li className="dev-ws-rule-step">

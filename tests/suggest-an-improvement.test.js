@@ -73,8 +73,10 @@ test('every door to filing a request says Suggest an improvement', () => {
   assert.match(message('dialogs:feedback.draftSaved'),
     /Reopen Suggest an improvement to finish it\./, 'the rescued-draft toast names it');
   const row = read('frontend/src/features/dev-board/actions-row.tsx');
-  assert.match(row, /data-plus="issue"[\s\S]{0,200}title="Suggest an improvement"/, 'the hub\'s ⋯ leads with it');
-  assert.match(row, /'Suggest an improvement, import a PR or manage this app'/, 'and the ⋯ says so to a screen reader');
+  assert.match(row, /data-plus="issue"[\s\S]{0,200}title=\{t\('project:menu\.suggest\.title'\)\}/, 'the hub\'s ⋯ leads with it');
+  assert.equal(message('project:menu.suggest.title'), 'Suggest an improvement');
+  assert.match(row, /: t\('project:menu\.button\.manage'\);/, 'and the ⋯ says so to a screen reader');
+  assert.equal(message('project:menu.button.manage'), 'Suggest an improvement, import a PR or manage this app');
   const mine = read('frontend/src/features/profile/my-proposals.tsx');
   assert.match(mine, /data-profile-work-ask=""[\s\S]{0,200}>\s*Suggest an improvement\s*<\/Button>/, 'Your requests ends on it');
   assert.match(mine, /requests: 'You have not suggested an improvement yet\.'/, 'and says so when it is empty');
@@ -85,7 +87,8 @@ test('every door to filing a request says Suggest an improvement', () => {
     /hint: 'messages:inbox\.new\.bot\.hint'/, 'Messages\' new-chat menu');
   assert.equal(message('messages:inbox.new.bot.hint'), 'Make an app or suggest an improvement');
   assert.match(read('frontend/src/features/dev-board/workshop/hub-cards.tsx'),
-    /\{' to suggest an improvement\.'\}/, 'the hub\'s Your work, with nothing in progress');
+    /<RichMessage\s+id="project:hub\.work\.emptyMenu"/, 'the hub\'s Your work, with nothing in progress');
+  assert.equal(message('project:hub.work.emptyMenu'), 'Nothing in progress. Press <0>⋯</0> to suggest an improvement.');
   assert.match(read('src/services/homeroom-bot-dm.js'),
     /tell me here or tap Suggest an improvement on its page\./, 'the bot\'s hello to somebody who joined');
 });

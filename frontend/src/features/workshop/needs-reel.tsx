@@ -39,6 +39,8 @@ import type { DevWorkshopView } from '../dev-board/card/model';
 import { callAppView } from '../dev-board/card/fold';
 import { NeedsFeed } from '../dev-board/workshop/workshop';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
+import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { agoStamp } from '../../lib/timestamp';
 
 export type NeedsFeedItem = {
@@ -108,7 +110,7 @@ export function reelRows(
         cls: '',
         attrs,
         icon: null,
-        title: { text: item.title || (change ? 'A change' : 'A group decision'), title: '' },
+        title: { text: item.title || (change ? translate('communities:reel.fallbackTitle.change') : translate('communities:reel.fallbackTitle.decision')), title: '' },
         meta: [],
         pill: null,
         linked: [],
@@ -124,9 +126,9 @@ export function reelRows(
         uncapped: false,
       },
       kind: 'vote',
-      ask: change ? 'Should this change go in?' : 'Should this go ahead?',
-      yes: change ? { label: 'Yes', act: { fn: 'castVote', args: [item.id, 'yes', ...rev] }, ...(item.approve ? { approve: true } : {}) } : null,
-      no: change ? { label: 'No', act: { fn: 'castVote', args: [item.id, 'no', ...rev] } } : null,
+      ask: change ? translate('communities:reel.ask.change') : translate('communities:reel.ask.decision'),
+      yes: change ? { label: translate('communities:reel.yes'), act: { fn: 'castVote', args: [item.id, 'yes', ...rev] }, ...(item.approve ? { approve: true } : {}) } : null,
+      no: change ? { label: translate('communities:reel.no'), act: { fn: 'castVote', args: [item.id, 'no', ...rev] } } : null,
       who: item.author || null,
       ago: item.at ? agoStamp(item.at).text : '',
       number: item.number,
@@ -176,10 +178,13 @@ export function NeedsReel({ items, error, capped, onDone }: {
   /** The end card's way on: back to the list of communities. */
   onDone: () => void;
 }) {
+  // `t` changes with the language on screen, so the rows' words (reelRows)
+  // are read again when it does.
+  const t = useMessages('communities');
   const rows = useMemo(() => (items ? reelRows(items, (md) => {
     const out = callAppView('_proposalSummaryHtml', { pr_summary_md: md });
     return typeof out === 'string' ? out : '';
-  }) : []), [items]);
+  }) : []), [items, t]);
   // The ask box's models: the dev session's own list, as on a project page.
   const models = useMemo(() => {
     const m = callAppView('_workshopModels') as DevWorkshopView['models'] | undefined;
@@ -193,13 +198,13 @@ export function NeedsReel({ items, error, capped, onDone }: {
   }, []);
 
   if (error) {
-    return <p className="px-4 pt-3 text-sm text-zinc-500 dark:text-zinc-400" data-needs-error="">Couldn't load what is waiting on you. Each project's own Needs you page still has it.</p>;
+    return <p className="px-4 pt-3 text-sm text-zinc-500 dark:text-zinc-400" data-needs-error="">{t('communities:reel.error')}</p>;
   }
   if (!items) {
-    return <div className="workshop-needs-feed workshop-reel-loading" data-needs-reel="" aria-busy="true" aria-label="Loading what needs you" />;
+    return <div className="workshop-needs-feed workshop-reel-loading" data-needs-reel="" aria-busy="true" aria-label={t('communities:reel.loading')} />;
   }
   if (!items.length) {
-    return <p className="px-4 pt-3 text-sm text-zinc-500 dark:text-zinc-400" data-needs-empty="">Nothing is waiting on your vote in any of your projects.</p>;
+    return <p className="px-4 pt-3 text-sm text-zinc-500 dark:text-zinc-400" data-needs-empty="">{t('communities:reel.empty')}</p>;
   }
   return (
     <>
@@ -211,13 +216,13 @@ export function NeedsReel({ items, error, capped, onDone }: {
           slug=""
           canPost
           onDone={onDone}
-          doneLabel="Back to your communities"
+          doneLabel={t('communities:reel.done')}
           renderApp={ReelApp}
         />
       </div>
       {capped ? (
         <p className="px-4 pt-2 text-xs text-zinc-500 dark:text-zinc-400" data-needs-capped="">
-          Showing the newest {items.length}. Each project's own Needs you page has the rest.
+          {t('communities:reel.capped', { count: items.length })}
         </p>
       ) : null}
     </>

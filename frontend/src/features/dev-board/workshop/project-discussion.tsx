@@ -53,6 +53,7 @@ import { AppReplyThreadPane, EmbeddedConversation } from '../../messages';
 import { closeThread, embeddedThreadOpen } from '../../messages/store';
 import { navStore } from '../../nav/nav-store.js';
 import { registerLevel } from '../../workshop/tab-ladder';
+import { useMessages } from '../../../lib/i18n/react';
 import { useStoreState } from '../../../lib/use-store-state';
 
 type Channel = NonNullable<CommunityPayload['channel']>;
@@ -102,6 +103,7 @@ export function ProjectDiscussion({ slug, name, data }: {
   name: string;
   data: CommunityPayload | null;
 }): ReactNode {
+  const t = useMessages('project');
   const host = useRef<HTMLDivElement | null>(null);
   const channel = data?.channel || null;
   const mountable = embeddable(channel);
@@ -214,14 +216,14 @@ export function ProjectDiscussion({ slug, name, data }: {
         className="dev-ws-discussion"
         data-ws-discussion=""
         data-ws-discussion-room={channel?.handle || ''}
-        aria-label={`${name} discussion`}
+        aria-label={t('project:discussion.label', { project: name })}
       >
         <EmbeddedConversation conversationId={room} active={onShow} at={roomAt} />
       </section>
     );
   }
   if (!mountable) {
-    return <p className="dev-ws-week-note" data-ws-discussion-none="">This project has no discussion you can read.</p>;
+    return <p className="dev-ws-week-note" data-ws-discussion-none="">{t('project:discussion.none')}</p>;
   }
   // The section's class says whether a thread is beside the room; the
   // host's own never changes, and its subtree stays the group chat's.
@@ -233,7 +235,7 @@ export function ProjectDiscussion({ slug, name, data }: {
       className={`dev-ws-discussion${thread ? ' dev-ws-discussion-threaded' : ''}`}
       data-ws-discussion=""
       data-discussion-app={slug}
-      aria-label={`${name} discussion`}
+      aria-label={t('project:discussion.label', { project: name })}
     >
       <div ref={host} className="dev-ws-discussion-host" />
       {thread ? (
@@ -248,8 +250,8 @@ export function ProjectDiscussion({ slug, name, data }: {
             <button
               type="button"
               className="messages-thread-action"
-              aria-label="Close thread"
-              title="Close thread"
+              aria-label={t('project:discussion.closeThread')}
+              title={t('project:discussion.closeThread')}
               onClick={() => setThread(null)}
             >
               <XIcon aria-hidden="true" />

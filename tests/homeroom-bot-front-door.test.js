@@ -32,7 +32,9 @@ test('B8: the doors that open the chat with Homeroom bot, and what they are call
   assert.match(read('frontend/src/features/app-context/app-context-sheet.tsx'), /label="Build it now"/);
   const row = read('frontend/src/features/dev-board/actions-row.tsx');
   assert.ok(row.indexOf('data-plus="issue"') < row.indexOf('data-plus="new-change"'), 'Suggest an improvement leads the hub\'s ⋯');
-  assert.match(row, /title="Build it now"\s+sub="With a coding agent, then ask for approval"/);
+  assert.match(row, /title=\{t\('project:menu\.build\.title'\)\}\s+sub=\{t\('project:menu\.build\.sub'\)\}/);
+  assert.deepEqual(['title', 'sub'].map((part) => require('./lib/platform-i18n').message(`project:menu.build.${part}`)),
+    ['Build it now', 'With a coding agent, then ask for approval']);
   // The tour no longer sends a newcomer to the menu's Build it now: that
   // row shows only once they have had an agent session (first-session
   // run-through, 5 Oct 2026). The hub's ⋯ still offers it, above.

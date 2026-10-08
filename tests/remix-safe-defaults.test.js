@@ -104,7 +104,8 @@ test('the four doors say "Remix", and keep their ids and data attributes', () =>
   assert.match(about, /id="app-about-fork"[\s\S]{0,120}label="Remix"\s+sub="Make your own copy"/);
 
   const plus = read('frontend/src/features/dev-board/actions-row.tsx');
-  assert.match(plus, /data-plus="fork"[\s\S]{0,140}title="Remix"\s+sub="Make your own copy"/);
+  assert.match(plus, /data-plus="fork"[\s\S]{0,140}title=\{t\('project:menu\.remix\.title'\)\}\s+sub=\{t\('project:menu\.remix\.sub'\)\}/);
+  assert.deepEqual([message('project:menu.remix.title'), message('project:menu.remix.sub')], ['Remix', 'Make your own copy']);
 
   const home = read('frontend/src/features/home/home.js');
   assert.match(home, /key: 'fork',\s+label: message\('home:menu\.remix\.label'\),\s+sub: message\('home:menu\.remix\.sub'\),/,

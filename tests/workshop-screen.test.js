@@ -38,6 +38,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { createElement, loadTsx, renderComponent, renderToHtml } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 const { tokenize } = require('./helpers/html-tokens');
 
 const ROOT = path.join(__dirname, '..');
@@ -495,7 +496,10 @@ test('rows go most recently active first; undated ones last, in the server\'s or
 
 test('groupRows: three sections in order, empty ones left out, an unknown audience read as open', () => {
   const { groupRows, SECTIONS, SECTION_LIMIT } = loadTsx('frontend/src/features/workshop/index.tsx');
+  // A section's label is a message id; the words are what the English catalog holds for it.
   assert.deepEqual(SECTIONS.map((s) => [s.key, s.label]),
+    [['open', 'communities:sections.open.label'], ['invited', 'communities:sections.invited.label'], ['solo', 'communities:sections.solo.label']]);
+  assert.deepEqual(SECTIONS.map((s) => [s.key, message(s.label)]),
     [['open', 'Public communities'], ['invited', 'Private communities'], ['solo', 'Just you']]);
   assert.equal(SECTION_LIMIT, 3, 'three most recent, then "Show N more"');
   const out = groupRows([
@@ -914,7 +918,11 @@ test('the Needs you row names the communities waiting on you, and the tabs are g
   assert.match(src, /data-workshop-needs-open=""/);
   // #3526: the title counts the votes not yet swiped past; with none new it
   // says how many were skipped, since the row is still the way to them.
-  assert.match(src, /title=\{totals\.needs > 0\s*\? `\$\{totals\.needs\} \$\{totals\.needs === 1 \? 'vote' : 'votes'\} waiting on you`\s*: `\$\{totals\.owed\} \$\{totals\.owed === 1 \? 'vote' : 'votes'\} you skipped`\}/);
+  assert.match(src, /title=\{totals\.needs > 0\s*\? t\('communities:needsYou\.waiting', \{ count: totals\.needs \}\)\s*: t\('communities:needsYou\.skipped', \{ count: totals\.owed \}\)\}/);
+  assert.deepEqual([1, 2].map((count) => message('communities:needsYou.waiting', { count })),
+    ['1 vote waiting on you', '2 votes waiting on you']);
+  assert.deepEqual([1, 2].map((count) => message('communities:needsYou.skipped', { count })),
+    ['1 vote you skipped', '2 votes you skipped']);
   assert.match(src, /onClick=\{\(\) => workshopController\.setTab\('needs'\)\}/, 'the row opens the feed');
   assert.match(src, /data-workshop-needs-back=""/, 'and the feed has a way back');
   assert.doesNotMatch(src, /—'|'[^'\n]*—[^'\n]*'/, 'no em dash in the screen\'s copy');

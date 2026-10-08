@@ -15,14 +15,18 @@
 
 import type { KeyboardEvent, ReactNode } from 'react';
 
+import { useMessages } from '../../../lib/i18n/react';
+
 export type ProjectTabKey = 'status' | 'discussion' | 'workshop' | 'needs' | 'all' | 'plan';
 
-/** The four tabs, in the band's order. All items is the Workshop's page. */
+/** The four tabs, in the band's order. All items is the Workshop's page.
+ *  `label` is a message id (frontend/locales/en/project.json), read when the
+ *  band renders. */
 export const PROJECT_TABS: ReadonlyArray<{ key: ProjectTabKey; label: string }> = [
-  { key: 'status', label: 'Hub' },
-  { key: 'discussion', label: 'Discussion' },
-  { key: 'needs', label: 'Needs you' },
-  { key: 'workshop', label: 'Workshop' },
+  { key: 'status', label: 'project:band.tab.hub' },
+  { key: 'discussion', label: 'project:band.tab.discussion' },
+  { key: 'needs', label: 'project:band.tab.needsYou' },
+  { key: 'workshop', label: 'project:band.tab.workshop' },
 ];
 
 /** The tab lit for a page: All items is the Workshop's, the plan the Hub's. */
@@ -52,6 +56,7 @@ export function ProjectBand({ tab, owed, filtered, onTab, barRef }: {
   onTab: (key: ProjectTabKey) => void;
   barRef?: (el: HTMLElement | null) => void;
 }): ReactNode {
+  const translate = useMessages('project');
   const lit = litTab(tab);
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
@@ -68,7 +73,7 @@ export function ProjectBand({ tab, owed, filtered, onTab, barRef }: {
       className="dev-ws-tabs dev-ws-band"
       data-ws-band=""
     >
-      <div className="dev-ws-tabtrack" role="tablist" aria-label="Project" onKeyDown={onKeyDown}>
+      <div className="dev-ws-tabtrack" role="tablist" aria-label={translate('project:band.label')} onKeyDown={onKeyDown}>
         {PROJECT_TABS.map((t) => {
           const on = lit === t.key;
           return (
@@ -83,7 +88,7 @@ export function ProjectBand({ tab, owed, filtered, onTab, barRef }: {
               onClick={() => onTab(t.key)}
             >
               <span className="dev-ws-ctab-text">
-                <span className="dev-ws-ctab-label">{t.label}</span>
+                <span className="dev-ws-ctab-label">{translate(t.label)}</span>
                 {t.key === 'needs' && owed > 0 ? (
                   <span className="dev-ws-ctab-count" data-ws-tab-count="">{owed > 99 ? '99+' : owed}</span>
                 ) : null}
@@ -91,7 +96,7 @@ export function ProjectBand({ tab, owed, filtered, onTab, barRef }: {
                   <span className="dev-ws-filter-dot" data-ws-filtered="" aria-hidden="true" />
                 ) : null}
               </span>
-              {t.key === 'workshop' && filtered ? <span className="sr-only"> (filtered)</span> : null}
+              {t.key === 'workshop' && filtered ? <span className="sr-only">{` ${translate('project:band.filtered')}`}</span> : null}
             </button>
           );
         })}

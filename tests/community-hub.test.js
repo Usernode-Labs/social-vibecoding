@@ -76,14 +76,17 @@ test('the bar reads Home, Discover, Messages, Communities, you — Messages in t
 test('a project page is four tabs, Hub, Discussion, Needs you and Workshop, with All items the Workshop\'s page (#852)', () => {
   const { pageParent, pageTitle } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
   const band = loadTsx('frontend/src/features/dev-board/workshop/project-band.tsx');
+  // A tab's label is a message id; the word is what the English catalog holds for it.
   assert.deepEqual(band.PROJECT_TABS.map((t) => [t.key, t.label]),
-    [['status', 'Hub'], ['discussion', 'Discussion'], ['needs', 'Needs you'], ['workshop', 'Workshop']]);
+    [['status', 'project:band.tab.hub'], ['discussion', 'project:band.tab.discussion'], ['needs', 'project:band.tab.needsYou'], ['workshop', 'project:band.tab.workshop']]);
+  assert.deepEqual(band.PROJECT_TABS.map((t) => message(t.label)), ['Hub', 'Discussion', 'Needs you', 'Workshop']);
   assert.equal(band.litTab('all'), 'workshop', 'the Workshop tab stays lit over All items');
   assert.equal(pageParent('all'), 'workshop', 'All items goes back to the Workshop');
   assert.deepEqual(['needs', 'workshop', 'all', 'discussion'].map(pageTitle), ['Needs you', 'Workshop', 'All items', 'Discussion']);
   // The band on every page; All items adds its way back under it.
   assert.match(LANDER, /const pageBar = tab === 'all' \? \(/);
-  assert.match(LANDER, /<PageBack\s+label="Workshop"\s+title=\{pageTitle\(tab\)\}\s+onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}/);
+  assert.equal(message('project:page.backToWorkshop'), 'Workshop');
+  assert.match(LANDER, /<PageBack\s+label=\{t\('project:page\.backToWorkshop'\)\}\s+title=\{pageTitle\(tab\)\}\s+onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}/);
   assert.match(LANDER, /\{band\}\s*\{pageBar\}/);
   // The hub's order, as agreed: the hero (who is here, what it is, what you
   // can do, the fortnight), the first version while Homeroom bot builds it
@@ -129,7 +132,8 @@ test('a project page is four tabs, Hub, Discussion, Needs you and Workshop, with
   assert.match(ws, /rows=\{v\.mine\.rows\.slice\(0, mineAll \? undefined : WORKSHOP_WORK_FIRST\)/, 'your work shows its first rows');
   assert.equal(loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx').WORKSHOP_WORK_FIRST, 3);
   assert.match(ws, /data-ws-mine-more=""[\s\S]{0,160}onClick=\{\(\) => setMineAll\(!mineAll\)\}/, 'and the rest behind Show N more');
-  assert.match(ws, /<span className="dev-ws-head-title">All items<\/span>\s*<button[\s\S]*?data-ws-all-open=""\s*onClick=\{\(\) => openTab\('all'\)\}/);
+  assert.equal(message('project:workshop.allItems.title'), 'All items');
+  assert.match(ws, /<span className="dev-ws-head-title">\{t\('project:workshop\.allItems\.title'\)\}<\/span>\s*<button[\s\S]*?data-ws-all-open=""\s*onClick=\{\(\) => openTab\('all'\)\}/);
   // All items is the Workshop page's head now, its first section; the
   // approval rules come straight after it. They were the head (#3528), the
   // page's foot for a round (#3487), and the head of All items before that.

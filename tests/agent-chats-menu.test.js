@@ -258,7 +258,8 @@ test('the sheet draws Agent chats after mount only, and only when the store says
 
 test('a newcomer still has every other door to building it themselves', () => {
   const row = read('frontend/src/features/dev-board/actions-row.tsx');
-  assert.match(row, /data-plus="new-change"[\s\S]{0,300}title="Build it now"[\s\S]{0,200}Improve\.startSession\(\)/, 'the hub\'s ⋯');
+  assert.match(row, /data-plus="new-change"[\s\S]{0,300}title=\{t\('project:menu\.build\.title'\)\}[\s\S]{0,200}Improve\.startSession\(\)/, 'the hub\'s ⋯');
+  assert.equal(message('project:menu.build.title'), 'Build it now');
   const view = read('public/js/app-view.js');
   assert.match(view, /label: 'Build it now',\s*title: 'Start an agent session on this request',\s*act: \{ fn: 'chooseIssueWork', args: \[n\] \}/, 'a request\'s own');
   assert.equal(message('messages:inbox.new.agent.label'), 'Build it now');

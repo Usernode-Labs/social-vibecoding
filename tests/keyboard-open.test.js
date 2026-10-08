@@ -599,6 +599,8 @@ test('every button labelled Send in the shell keeps focus (a new composer is cau
     return /\.(tsx|jsx)$/.test(d.name) ? [rel] : [];
   });
   assert.equal(message('messages:composer.send'), 'Send message');
+  assert.equal(message('project:feedThread.reply.send'), 'Send reply');
+  assert.equal(message('project:hub.composer.send'), 'Send');
   let seen = 0;
   for (const file of walk('frontend/src')) {
     const src = read(file);

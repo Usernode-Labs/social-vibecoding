@@ -43,6 +43,7 @@ import { Button } from '@/components/ui/button';
 import { ArrowUpIcon } from '@/components/ui/icons';
 import { SECTION_TAB_ACTIVE, SECTION_TAB_INACTIVE } from '@/components/ui/tabs';
 
+import { useMessages } from '../../../lib/i18n/react';
 import { useNarrowViewport } from '../../../lib/use-narrow';
 import { useStoreState } from '../../../lib/use-store-state';
 import { devKanbanStore } from './cards-store';
@@ -115,12 +116,12 @@ function Column(
   // The one open card, by row key. Toggling the open one closes it; opening
   // another closes the first. Survives republishes because it is here and
   // not in the view model.
+  const t = useMessages('project');
   const [openKey, setOpenKey] = useState<string | null>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const hasReviewSort = col.key === 'inreview' && !!col.reviewSort;
-  const sortLabel = col.reviewSort === 'priority' ? 'Vote priority' : 'Newest';
+  const sortLabel = col.reviewSort === 'priority' ? t('project:kanban.sort.priority') : t('project:kanban.sort.newest');
   const nextSort = col.reviewSort === 'priority' ? 'newest' : 'priority';
-  const nextSortLabel = nextSort === 'priority' ? 'Vote priority' : 'Newest';
   const statusTone = col.status?.tone === 'blocked'
     ? 'text-red-700 dark:text-red-300'
     : col.status?.tone === 'progress'
@@ -172,7 +173,7 @@ function Column(
     // Two rows, not four: the point is to show the column is filling, and a
     // full-height stack of placeholders in each of four columns is a busier
     // screen than the one it is standing in for.
-    cards = <CardSkeleton n={2} label={`Loading ${col.title}`} />;
+    cards = <CardSkeleton n={2} label={t('project:kanban.column.loading', { column: col.title })} />;
   } else if (col.empty) {
     cards = <div className="text-xs text-zinc-500 dark:text-zinc-500 italic py-2">{col.empty}</div>;
   } else {
@@ -229,10 +230,8 @@ function Column(
               variant="unstyled"
               size="none"
               ink="muted"
-              aria-label={`Sort Waiting for approval: ${sortLabel}. Switch to ${nextSortLabel}.`}
-              title={`${col.reviewSort === 'priority'
-                ? 'Unvoted first, then fewest qualifying votes still needed. Within each vote group, already-qualified proposals follow those still short. Newest breaks ties.'
-                : 'Most recently submitted for review first.'} Click to switch to ${nextSortLabel}.`}
+              aria-label={col.reviewSort === 'priority' ? t('project:kanban.sort.namePriority') : t('project:kanban.sort.nameNewest')}
+              title={col.reviewSort === 'priority' ? t('project:kanban.sort.titlePriority') : t('project:kanban.sort.titleNewest')}
               className="ml-auto inline-flex min-h-[44px] shrink-0 items-center gap-1.5 rounded-lg px-2 text-xs font-medium whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
               onClick={() => callAppView('_setReviewSort', nextSort)}
             >
@@ -262,6 +261,7 @@ export function DevKanban(): ReactNode {
   // Wide viewports render every column, exactly as before — including the
   // proposal-checks runner, which asserts in a fixed 1280x800 frame.
   const narrow = useNarrowViewport();
+  const t = useMessages('project');
   if (!v.cols.length) return null;
   return (
     <>
@@ -274,7 +274,7 @@ export function DevKanban(): ReactNode {
       <div
         id="dev-kanban-tabs"
         role="tablist"
-        aria-label="Board columns"
+        aria-label={t('project:kanban.tabs.name')}
         className="sm:hidden flex items-stretch gap-0.5 mb-2 rounded-full bg-white dark:bg-zinc-900 p-0.5"
       >
         {v.cols.map((col) => (

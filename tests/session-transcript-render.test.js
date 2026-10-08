@@ -19,6 +19,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { message } = require('./lib/platform-i18n');
 
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'session-transcript.js'),
@@ -197,7 +198,8 @@ test('headerText labels both the collapsed and expanded states', () => {
   assert.doesNotMatch(ST.headerText(s, { expanded: true }), /read-only/);
   const HEAD = fs.readFileSync(path.join(
     __dirname, '..', 'frontend', 'src', 'features', 'dev-board', 'topic', 'topic-head.tsx'), 'utf8');
-  assert.match(HEAD, /className="st-readonly-tag">read-only</, 'the chip is the one that says it');
+  assert.match(HEAD, /className="st-readonly-tag">\{t\('project:topic\.transcript\.readOnly'\)\}</, 'the chip is the one that says it');
+  assert.equal(message('project:topic.transcript.readOnly'), 'read-only');
   // Singular, and a missing count degrades rather than printing "0 messages".
   assert.strictEqual(
     ST.headerText({ username: 'alice', message_count: 1 }, { expanded: true }),

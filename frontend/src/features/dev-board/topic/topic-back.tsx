@@ -63,6 +63,7 @@ import type { MouseEvent, ReactNode } from 'react';
 
 import { ChevronLeftIcon } from '@/components/ui/icons';
 
+import { useMessages } from '../../../lib/i18n/react';
 import { useStoreState } from '../../../lib/use-store-state';
 import { improveStore, topicBackHref, topicBackLabel, topicWorkshopHref } from '../../improve/improve-store.js';
 
@@ -82,17 +83,28 @@ function onBackClick(event: MouseEvent<HTMLAnchorElement>): void {
   window.location.hash = href;
 }
 
+/**
+ * The chip's words by destination, as message ids. The key is what
+ * `topicBackLabel` answers (../../improve/improve-store.js): it names the
+ * destination, and is read here as that, never shown.
+ */
+const CHIP_TEXT: Record<'Messages' | 'Workshop', { label: string; name: string }> = {
+  Messages: { label: 'project:topic.back.messages', name: 'project:topic.back.toMessages' },
+  Workshop: { label: 'project:topic.back.workshop', name: 'project:topic.back.toWorkshop' },
+};
+
 /** One chip: the destination's name behind the chevron. */
 function TopicChip({ href, label }: { href: string; label: 'Messages' | 'Workshop' }): ReactNode {
+  const t = useMessages('project');
   return (
     <a
       className="dev-topic-back un-touch-target"
       href={href}
-      aria-label={`Back to ${label}`}
+      aria-label={t(CHIP_TEXT[label].name)}
       onClick={onBackClick}
     >
       <ChevronLeftIcon className="dev-topic-back-icon" aria-hidden="true" />
-      <span>{label}</span>
+      <span>{t(CHIP_TEXT[label].label)}</span>
     </a>
   );
 }

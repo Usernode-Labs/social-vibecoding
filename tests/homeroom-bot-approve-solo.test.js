@@ -30,6 +30,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -206,8 +207,10 @@ test('#3977: a solo Don\'t approve sends its note the way a group\'s No sends it
   assert.match(fn, /onSend=\{submit\}/);
   // Fallback with no kit sheet: Approve asks for nothing, Don't approve asks
   // for its line through castVote's own prompt, as any No.
-  assert.match(fn, /\{ label: '✓  Approve', handler: \(\) => send\(yes, null\) \}/);
-  assert.match(fn, /label: approve \? '✕  Don’t approve' : [^\n]*handler: \(\) => pickTouch\(no\) \}/);
+  assert.match(fn, /\{ label: t\('project:card\.vote\.sheet\.approve'\), handler: \(\) => send\(yes, null\) \}/);
+  assert.match(fn, /label: approve \? t\('project:card\.vote\.sheet\.dontApprove'\) : [^\n]*handler: \(\) => pickTouch\(no\) \}/);
+  assert.equal(message('project:card.vote.sheet.approve'), '✓  Approve');
+  assert.equal(message('project:card.vote.sheet.dontApprove'), '✕  Don’t approve');
 
   // And castVote posts that line with the No: the server stores it on the
   // vote (pr_votes.reason) and writes it into the change's own discussion,
@@ -246,7 +249,8 @@ test('#4270: ⋯ no longer offers a separate "Don\'t approve"', () => {
   assert.doesNotMatch(menu, /castVote\(/, 'no vote is cast from ⋯');
   assert.doesNotMatch(menu, /label: 'Don’t approve'/);
   // The picker still has it, worded so, on every face that draws VoteButton.
-  assert.match(CARD_SRC, /const noWord = approve \? 'Don’t approve' :/);
+  assert.match(CARD_SRC, /const noWord = approve\s*\? t\('project:card\.vote\.picker\.dontApprove'\)\s*:/);
+  assert.equal(message('project:card.vote.picker.dontApprove'), 'Don’t approve');
 });
 
 test('#3977: the Needs you tab\'s vote sheet is the same picker, as an approval', () => {
