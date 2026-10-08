@@ -137,30 +137,34 @@ test('the landing: the story in place of the pitch unless switched off, for nobo
   assert.doesNotMatch(story, /Join the waitlist|Learn more about Homeroom/i);
 });
 
-// #4037, decisions A and B on the onboarding canvas: one headline, the
-// three examples as rows (icon, name, what it is for), "Make an account" and
-// what it leads to, then "Sign in". The kicker, the line under the headline
-// and the label over the examples are gone.
-test('the story: one headline, the three examples, "Make an account" and the waitlist line, then Sign in', () => {
+// #4037, decisions A and B on the onboarding canvas, and the owner's review of
+// 8 October (C1-story): "Welcome to Homeroom" over the picture, one headline,
+// "For example" over three communities (an emoji, the name and what it made),
+// "Get started", then "Already have an account? Sign in". Nothing under the
+// button says what a new account waits for.
+test('the story: label, headline, "For example" and three communities, "Get started", then Sign in', () => {
   const html = renderComponent('frontend/src/features/auth/story.tsx', 'Story', { primaryClass: 'pill', onStart() {}, onSignIn() {} });
   const text = html.replace(/<[^>]+>/g, '\n').split('\n').map((t) => t.trim()).filter(Boolean)
     .map((t) => t.replace(/&#x27;/g, "'"));
   assert.deepEqual(text, [
-    'Communities make apps together.',
-    '🏃', 'A run tracker', 'Weekly miles for a running club',
-    '🎬', 'A movie-night poll', "Pick Friday's film together",
-    '🏕️', 'A trip planner', 'Dates, beds and who brings what',
-    'Make an account',
-    "You'll get a spot on the waitlist.",
+    'Welcome to Homeroom',
+    'On Homeroom, communities make apps together.',
+    'For example',
+    '🏃', 'Sunday Run Club', 'Weekly miles',
+    '🎬', 'Friday Film Night', 'Movie poll',
+    '🏕️', 'Lake Trip Crew', 'Trip plan',
+    'Get started',
+    'Already have an account?',
     'Sign in',
   ]);
-  assert.match(html, /<a href="#signup" data-landing-story-start="" class="pill">Make an account<\/a>/);
+  assert.match(html, /<a href="#signup" data-landing-story-start="" class="pill">Get started<\/a>/);
+  assert.match(html, /Already have an account\? <a href="#login" data-landing-story-signin=""/);
   assert.match(html, /<a href="#login" data-landing-story-signin=""[^>]*>Sign in<\/a>/);
   // In a phone browser too, the story fills the screen and its foot is at the foot.
   const css = read('public/css/app.css');
   assert.match(css, /html\[data-browser-scroller="auth-landing-scroll"\] #auth-landing-scroll:has\(> \* > \[data-landing-story\]\) \{\s+flex: 1 0 auto;\s+display: flex;\s+flex-direction: column;\s+\}/);
   assert.match(css, /html\[data-browser-scroller="auth-landing-scroll"\] #auth-landing-scroll > :has\(> \[data-landing-story\]\) \{\s+flex: 1 0 auto;\s+width: 100%;\s+\}/);
-  for (const gone of [/Welcome to Homeroom/, /On Homeroom,/, /Anyone using an app/, /What groups make/, /What communities make/, /Get started/, /Already have an account/]) {
+  for (const gone of [/Make an account/, /spot on the waitlist/, /Anyone using an app/, /What groups make/, /What communities make/]) {
     assert.doesNotMatch(html, gone);
   }
 });

@@ -133,7 +133,7 @@ test('the waitlist card: join, an email, a code, then On the waitlist with "Want
     standing: { state: 'listed', email: null, accountEmail: null, hasPhone: true, moreToken: token },
     onListed: () => {},
   });
-  assert.match(byPhone, /We’ll text you when it’s your turn\./);
+  assert.match(byPhone, /We’ll text you when your spot is ready\./);
   assert.match(byPhone, /id="home-waitlist-add-email"[^>]*>Add an email too</);
   assert.match(byPhone, new RegExp(`href="#more/${token}"`));
   assert.doesNotMatch(listed, /Add an email too/, 'an email row has nothing to add');

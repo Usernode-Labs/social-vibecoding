@@ -247,10 +247,10 @@ const PROVIDER_LABEL: Record<SignInProvider, string> = { apple: 'Apple', google:
 // Apple's button is solid black (white on dark), Google's is white with a
 // hairline, as their sign-in guidelines draw them; both the sheet's pill shape.
 const PROVIDER_BUTTON: Record<SignInProvider, string> = {
-  apple: 'flex h-[50px] w-full items-center justify-center gap-2 rounded-full bg-black text-[17px] font-semibold text-white dark:bg-white dark:text-black disabled:opacity-60',
-  google: 'flex h-[50px] w-full items-center justify-center gap-2 rounded-full bg-white text-[17px] font-semibold text-zinc-900 shadow-[inset_0_0_0_1px_rgba(0,0,0,0.15)] dark:bg-zinc-800 dark:text-zinc-100 dark:shadow-[inset_0_0_0_1px_rgba(255,255,255,0.15)] disabled:opacity-60',
+  apple: 'flex h-[50px] w-full items-center justify-center gap-2 rounded-full bg-black text-[17px] font-[650] text-white dark:bg-white dark:text-black disabled:opacity-60',
+  google: 'flex h-[50px] w-full items-center justify-center gap-2 rounded-full bg-white text-[17px] font-[650] text-zinc-900 shadow-[inset_0_0_0_1px_rgba(0,0,0,0.15)] dark:bg-zinc-800 dark:text-zinc-100 dark:shadow-[inset_0_0_0_1px_rgba(255,255,255,0.15)] disabled:opacity-60',
 };
-const EMAIL_BUTTON = 'flex h-[50px] w-full items-center justify-center rounded-full bg-zinc-200 text-[17px] font-semibold text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100 disabled:opacity-60';
+const EMAIL_BUTTON = 'flex h-[50px] w-full items-center justify-center rounded-full bg-zinc-200 text-[17px] font-[650] text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100 disabled:opacity-60';
 
 // The server holds a second code back for this long (routes/auth.js); the
 // resend counts it down rather than pretending to send.
@@ -418,9 +418,9 @@ export type SignInSheetProps = {
   /** "Join Sunday Run Club", "Make your account", "Sign in" */
   title: string;
   /**
-   * The line under the title on the first step, only where the title and the
-   * field do not say it: the phone sign-up's "No app, no password". The
-   * email and provider steps have none (#4037).
+   * A line under the title on the first step. Nobody passes one now: the
+   * title, the field and the button say it, and the phone sign-up's own
+   * copy is trimmed (#4326, #4037).
    */
   intro?: string;
   /** This sign-in is the Join pressed on an invite's page. */

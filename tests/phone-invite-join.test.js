@@ -247,7 +247,7 @@ test('a provisional handle: private groups see it, public places ask for a usern
   assert.doesNotMatch(pub, /Nobody sees your number/);
   const landing = read('frontend/src/features/auth/landing.tsx');
   assert.match(landing, /askName=\{!invite!\.project!\.public\}/);
-  assert.match(landing, /intro=\{phoneSignIn\s+\? ''\s+: providers\.length/);
+  assert.doesNotMatch(landing, /\bintro=/, 'no line under the title, the phone join included');
   assert.doesNotMatch(landing, /No app, no password/);
   assert.match(read('src/routes/phone-auth.js'), /const name = result\.next === 'username' && !invite\?\.public\s+\? phoneAuth\.cleanName\(req\.body\?\.name\) : null;/);
   assert.match(read('src/services/firebase-phone-auth.js'), /username_provisional_since = NOW\(\),/);

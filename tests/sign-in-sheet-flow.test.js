@@ -293,10 +293,9 @@ test('each way into the sheet says only what is true for it', () => {
   assert.equal(signin.match(/<p[\s>]/g).length, 2, 'the password link and the terms');
   const landing = read(LANDING);
   assert.doesNotMatch(landing, /It takes a minute|Welcome back|Sign in or make an account/);
-  // The one line left is the phone sign-up's (#4069), on an invite's Join
-  // when the phone comes first; the email and provider steps get none.
-  assert.equal(landing.match(/\bintro=/g).length, 1);
-  assert.match(landing, /intro=\{phoneSignIn\s*\?[\s\S]{0,240}?No app, no password\.'\)\s*: undefined\}/);
+  // No line under any title, the phone's join included (#4326 trimmed its copy).
+  assert.doesNotMatch(landing, /\bintro=/);
+  assert.doesNotMatch(landing, /No app, no password/);
 });
 
 // ─── the way out to the make screen ─────────────────────────────────────

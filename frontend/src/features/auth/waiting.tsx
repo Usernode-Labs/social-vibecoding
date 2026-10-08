@@ -31,11 +31,12 @@
  *
  * The onboarding canvas's waiting screen: the wordmark, "You're on the
  * waitlist", "We let people in a few at a time.", the invite box when a link
- * queued a community, and
- * Sign out. It does not promise an email: an account made by email code
- * has no waitlist row, so nothing would send one (#4083 makes every
- * newcomer get a spot and the email). The waitlist is said with its own words, waitlist, your spot,
- * a few at a time and access, and never queue, batches or your turn. The
+ * queued a community (only then: the list comes from the links this account
+ * followed), one picture, and Sign out as a small link. It does not promise
+ * an email: an account made by email code has no waitlist row, so nothing
+ * would send one (#4083 makes every newcomer get a spot and the email). The
+ * waitlist is said with its own words, waitlist, your spot, a few at a time
+ * and access, and never queue, batches or your turn. The
  * line under the title was the account's username and "platform access",
  * and a status line said when the page last checked; both are gone. The
  * page still checks every 30 seconds, quietly, and a check that fails is
@@ -273,6 +274,10 @@ export function WaitingScreen() {
             <AddPhoneCard groups={queued.map((q) => q.name)} onJoined={onJoined} />
           ) : null}
           {/*
+              The room's one picture, in the space between the lines and
+              Sign out (C1b-waiting on the onboarding canvas): the same
+              people the story shows, so it is a known face and no new art.
+
               QA 2026-09-24 Q12: this used to open with a violet "Use apps
               while you wait" pill to `#landing`. The landing stopped listing
               apps when its directory grid was removed (landing.tsx,
@@ -282,12 +287,22 @@ export function WaitingScreen() {
               reach lists apps today, so the pill is gone rather than pointed
               at something that does not exist. Sign out is the one action
               left ("Sign out", as Settings says it, beside every "Sign in"),
-              at the foot of the screen.
+              a small link at the foot of the screen.
           */}
-          <div className="grow" />
+          <div className="flex grow items-center justify-center py-6">
+            <img
+              src="/brand/people.png"
+              alt=""
+              width={816}
+              height={612}
+              draggable={false}
+              className="block h-auto w-[220px] max-w-full"
+            />
+          </div>
           <button
             id="waiting-logout"
-            className="mt-8 flex h-11 w-full items-center justify-center rounded-full bg-white text-[16px] font-semibold text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+            type="button"
+            className="mx-auto px-2 py-3 text-[15px] font-medium text-violet-700 hover:underline dark:text-violet-400"
             onClick={onLogout}
           >
             Sign out

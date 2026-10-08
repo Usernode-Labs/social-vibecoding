@@ -4,7 +4,8 @@
 // waitlist, your spot, a few at a time and access, never queue, batches or
 // your turn. frontend/src/features/auth/waiting.tsx draws the onboarding
 // canvas's screen: the wordmark, "You're on the waitlist", one line, the
-// invite box when a link queued a community, and Sign out. The landing's
+// invite box when a link queued a community, one picture, and Sign out as a
+// small link. The landing's
 // way back to it, for a waiting account, says the same.
 //
 // Run with: node --test tests/waiting-screen-words.test.js
@@ -39,6 +40,13 @@ test('the waiting screen: the title, one line, the invite box, Sign out', () => 
   assert.match(src, /data-waiting-queued=""/);
   assert.match(src, /<Wordmark className="mx-auto h-6 w-auto text-\[color:var\(--brand-ink\)\]" \/>/);
   assert.match(src, /id="waiting-logout"[\s\S]{0,400}?>\s*Sign out\s*<\/button>/);
+  // Sign out is a small text link, not a pill; the room draws one picture, the
+  // story's own, in the space above it (C1b-waiting).
+  const logout = src.match(/<button\s+id="waiting-logout"[\s\S]*?>/)[0];
+  assert.match(logout, /text-\[15px\] font-medium text-violet-700/);
+  assert.doesNotMatch(logout, /rounded-full|h-11|w-full|bg-white/);
+  assert.equal((src.match(/<img\b/g) || []).length, 1);
+  assert.match(src, /<img\s+src="\/brand\/people\.png"/);
   // What it said before, and the two lines that went with it.
   for (const gone of [/in the queue/i, /batches/i, /your turn/i, /platform access/i, /Last checked/, /Connection issue/, /When you're let in/, /id="waiting-who"/, /id="waiting-check-state"/]) {
     assert.doesNotMatch(src, gone);
@@ -46,6 +54,17 @@ test('the waiting screen: the title, one line, the invite box, Sign out', () => 
   // It still lets the account in the moment access is granted.
   assert.match(src, /const POLL_MS = 30000;/);
   assert.match(src, /if \(user\.hasPlatformAccess\) \{/);
+});
+
+// The box is drawn from `queued`, which /api/invite-links/queued fills from
+// the invite links this account followed (queuedFor reads redemptions only):
+// someone who came another way has none, and sees no box.
+test('the invite box shows only for someone who came from an invite link', () => {
+  const src = code(read(WAITING));
+  assert.match(src, /\{queued\.length \? \(\s+<p data-waiting-queued=""/);
+  assert.match(read('src/services/community-invites.js'), /async function queuedFor[\s\S]*?FROM community_invite_redemptions x/);
+  // The shot's plain room draws none.
+  assert.match(src, /setQueued\(shot === 'invite' \? \[\{ name: 'Sunday Run Club', inviter: null \}\] : \[\]\)/);
 });
 
 test('the invite box names every community a link queued, in one sentence', () => {

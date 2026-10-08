@@ -39,6 +39,7 @@ import { alertVariants } from '@/components/ui/alert';
 import { buttonVariants } from '@/components/ui/button';
 import { ChevronLeftIcon, LockIcon } from '@/components/ui/icons';
 import { Wordmark } from '@/components/ui/wordmark';
+import { cn } from '@/lib/utils';
 
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -419,12 +420,17 @@ const LANDING_BACK_CLASS = 'inline-flex items-center justify-center w-7 h-7 roun
  * `flex items-center justify-center` is what an anchor needs and a button
  * gets from the browser; `w-full` comes from `layout: 'full'`.
  */
-const PRIMARY_PILL = `${buttonVariants({
-  layout: 'full',
-  variant: 'pillAccent',
-  size: 'pillLg',
-  ink: 'solidLate',
-})} flex items-center justify-center`;
+const PRIMARY_PILL = cn(
+  buttonVariants({
+    layout: 'full',
+    variant: 'pillAccent',
+    size: 'pillLg',
+    ink: 'solidLate',
+  }),
+  // Weight 650 for the main buttons on the story and its sheets (the C1
+  // boards), where pillLg's own is 600.
+  'flex items-center justify-center font-[650]',
+);
 
 /**
  * The secondary pill, transcribed from `PILL_LINK` in login.tsx — the white
@@ -1719,11 +1725,6 @@ export function LandingScreen() {
         <SignInSheet
           open={sheet === 'join'}
           title={`Join ${invite!.project!.name}`}
-          intro={phoneSignIn
-            ? (invite!.project!.public
-              ? 'Just your phone number and a username. No app, no password.'
-              : 'Just your name and phone number. No app, no password.')
-            : undefined}
           followInvite
           providers={providers}
           native={nativeSignIn}
