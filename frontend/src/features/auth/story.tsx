@@ -5,9 +5,8 @@
  *
  * From the top, under the landing's logo bar: the small caps "Welcome to
  * Homeroom", the picture, one headline, the small caps "For example" over
- * three communities (an emoji, the community's name and what it made; to
- * show, not to press), the "Get started" button and "Already have an
- * account? Sign in" under it. Nothing under the button says what a new
+ * the make screen's three examples (to show, not to press), the "Get
+ * started" button and "Already have an account? Sign in" under it. Nothing under the button says what a new
  * account waits for: the waiting screen does (C1-story on the onboarding
  * canvas, the owner's review of 8 October).
  *
@@ -16,16 +15,10 @@
  * (../first-session/make.tsx).
  */
 
-/**
- * The three communities the story shows. Its own list, not the make screen's
- * starting points (../first-session/examples.ts): those are being reworked
- * on their own, and what a community made is said here as a noun.
- */
-const COMMUNITIES = [
-  { key: 'run', emoji: '🏃', name: 'Sunday Run Club', made: 'Weekly miles' },
-  { key: 'film', emoji: '🎬', name: 'Friday Film Night', made: 'Movie poll' },
-  { key: 'trip', emoji: '🏕️', name: 'Lake Trip Crew', made: 'Trip plan' },
-] as const;
+// The three examples are the make screen's own starting points (Evan, 8 Oct
+// 2026, #4354): the same three here and there, the tier list drawn as one.
+import { TEMPLATES } from '../first-session/examples';
+import { TierChart } from '../first-session/tier-chart';
 
 const SMALL_CAPS = 'text-[12px] leading-4 font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400';
 
@@ -54,12 +47,12 @@ export function Story({ primaryClass, onStart, onSignIn }: {
         <div className="flex w-full max-w-sm md:max-w-md flex-col gap-2 text-left">
           <div className={`px-1 ${SMALL_CAPS}`}>For example</div>
           <ul className="w-full overflow-hidden rounded-[20px] bg-white dark:bg-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)]">
-            {COMMUNITIES.map((c) => (
-              <li key={c.key} className="flex items-center gap-3 px-3.5 py-2.5 [&+&]:shadow-[inset_0_1px_0_var(--app-sheet-line)]">
-                <span className="app-icon-tile flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-2xl" aria-hidden="true">{c.emoji}</span>
+            {TEMPLATES.map((e) => (
+              <li key={e.key} className="flex items-center gap-3 px-3.5 py-2.5 [&+&]:shadow-[inset_0_1px_0_var(--app-sheet-line)]">
+                <span className="app-icon-tile flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-2xl" aria-hidden="true">{e.chart ? <TierChart /> : e.emoji}</span>
                 <span className="min-w-0 flex-1">
-                  <span className="block text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">{c.name}</span>
-                  <span className="block text-[13px] text-zinc-500 dark:text-zinc-400">{c.made}</span>
+                  <span className="block text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">{e.title}</span>
+                  <span className="block text-[13px] text-zinc-500 dark:text-zinc-400">{e.line}</span>
                 </span>
               </li>
             ))}

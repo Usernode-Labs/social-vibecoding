@@ -139,20 +139,21 @@ test('the landing: the story in place of the pitch unless switched off, for nobo
 
 // #4037, decisions A and B on the onboarding canvas, and the owner's review of
 // 8 October (C1-story): "Welcome to Homeroom" over the picture, one headline,
-// "For example" over three communities (an emoji, the name and what it made),
-// "Get started", then "Already have an account? Sign in". Nothing under the
-// button says what a new account waits for.
-test('the story: label, headline, "For example" and three communities, "Get started", then Sign in', () => {
+// "For example" over the make screen's three examples (Evan's, #4354; their
+// rows are pinned by the templates test below), "Get started", then "Already
+// have an account? Sign in". Nothing under the button says what a new account
+// waits for.
+test('the story: label, headline, "For example" and the three examples, "Get started", then Sign in', () => {
   const html = renderComponent('frontend/src/features/auth/story.tsx', 'Story', { primaryClass: 'pill', onStart() {}, onSignIn() {} });
+  // Each row: its emoji (the tier list draws a chart, no text), title and line.
+  const TEMPLATE_ROWS = loadTsx(`${DIR}/examples.ts`).TEMPLATES.flatMap((t) => (t.chart ? [t.title, t.line] : [t.emoji, t.title, t.line]));
   const text = html.replace(/<[^>]+>/g, '\n').split('\n').map((t) => t.trim()).filter(Boolean)
     .map((t) => t.replace(/&#x27;/g, "'"));
   assert.deepEqual(text, [
     'Welcome to Homeroom',
     'On Homeroom, communities make apps together.',
     'For example',
-    '🏃', 'Sunday Run Club', 'Weekly miles',
-    '🎬', 'Friday Film Night', 'Movie poll',
-    '🏕️', 'Lake Trip Crew', 'Trip plan',
+    ...TEMPLATE_ROWS,
     'Get started',
     'Already have an account?',
     'Sign in',
