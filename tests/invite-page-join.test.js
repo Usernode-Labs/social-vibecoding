@@ -339,12 +339,11 @@ test('just let in by a sign-up from the invite card, and "You\'re in" will not s
 
 test('who invited them, in the confirm\'s words, over the Join', () => {
   const { invitedByLine, seenByLine } = loadTsx(OFFER);
+  assert.equal(seenByLine, undefined, 'no line saying the inviter will see the join (#4395)');
   assert.equal(invitedByLine({ inviter: 'maya', inviterName: 'Maya', inviterMadeIt: false, building: false }), '@maya invited you');
   assert.equal(invitedByLine({ inviter: 'maya', inviterName: 'Maya', inviterMadeIt: true, building: false }), 'Maya made it and invited you');
   assert.equal(invitedByLine({ inviter: 'maya', inviterName: 'Maya', inviterMadeIt: true, building: true }), 'Maya is making it and invited you');
   assert.equal(invitedByLine({ inviter: null, inviterName: null, inviterMadeIt: false, building: false }), 'You were invited');
-  assert.equal(seenByLine({ inviter: 'maya', inviterName: 'Maya' }), 'Maya will see that you joined.');
-  assert.equal(seenByLine({ inviter: null, inviterName: null }), '');
 });
 
 /** joinByInvite against a fake window, answering the redeem with `answer`. */
@@ -437,7 +436,7 @@ test('the hero of a page opened from a link leads with who invited them and one 
   assert.match(html, /<p class="dev-ws-invite-note" data-ws-invite-note="">“Come vote”<\/p>/);
   assert.match(html, /<div class="dev-ws-join-anchor"><button type="button" data-ws-invite-join="" class="w-full rounded-full bg-violet-600 hover:bg-violet-500 disabled:opacity-50 px-5 py-3 text-\[17px\] font-semibold text-white transition-colors">Join Arena<\/button><\/div>/,
     'the screen\'s primary button, the full width of the card');
-  assert.match(html, /data-ws-invite-seen="">Maya will see that you joined\.<\/p>/);
+  assert.doesNotMatch(html, /will see that you joined|data-ws-invite-seen/, 'the Join stands alone (#4395)');
   assert.doesNotMatch(html, /data-ws-community-join=""/, 'one Join on the hero');
   assert.match(html, /data-ws-community-open-app=""/, 'Open app, to try it first');
   assert.match(html, /data-ws-community-description="">Who plays when</, 'and what it is');
@@ -450,7 +449,8 @@ test('a member, or a page opened any other way, has no invite head', async () =>
   assert.match(plain, /data-ws-community-join=""[^>]*>Join<\/button>/, 'the ordinary Join');
   const member = await hero({ offer: PAGE_OFFER, community: { ...COMMUNITY, is_member: true } });
   assert.doesNotMatch(member, /data-ws-invite=""/, 'joined already (in another tab, say): the hero as for any member');
-  assert.match(member, /data-ws-community-leave=""/);
+  assert.match(member, /data-ws-community-invite=""/, 'a member\'s Invite');
+  assert.doesNotMatch(member, /data-ws-community-join=""/, 'and no Join (Leave is a row of the ⋯, #4045)');
   // `?shot=invite-join`: drawn as an invitee sees it, whoever is looking.
   const shot = await hero({ offer: { ...PAGE_OFFER, token: null, preview: true }, community: { ...COMMUNITY, is_member: true } });
   assert.match(shot, /data-ws-invite=""/);
@@ -497,7 +497,7 @@ test('a private community\'s invite preview shows the community and Join, and no
   assert.match(html, />@maya invited you</);
   assert.match(html, />“Come read”</);
   assert.match(html, /data-ws-invite-join=""[^>]*>Join Book Club<\/button>/);
-  assert.match(html, />Maya will see that you joined\.</);
+  assert.doesNotMatch(html, /will see that you joined/, 'the Join stands alone (#4395)');
   assert.match(html, /<b>Private community<\/b><\/span> · 4 members/, 'the member count');
   assert.match(html, /data-invite-preview-description="">Our monthly pick</);
   assert.ok(html.includes(CLOSED_LINE), 'and why there is no more to see');
@@ -535,8 +535,12 @@ test('the signed-out invite card says what the project is, beside its icon and c
   assert.equal((html.match(/app-icon-tile/g) || []).length, 1, 'the icon shows once beside a picture too');
   assert.match(html, /data-landing-invite="live"[\s\S]*Maya invited you to Arena[\s\S]*data-landing-invite-picture="illustration"/);
   assert.doesNotMatch(html, /data-landing-invite-signup|Join Arena/, 'Join is the pinned bar, not in the scroller');
+  // The foot line closes the scroller, after the picture and the note (#4049).
+  assert.match(html, /data-landing-invite-picture="illustration"[\s\S]*data-landing-invite-homeroom=""[^>]*>On Homeroom, people using an app build and improve it together\.<\/p>$/);
+  assert.doesNotMatch(html, /will see that you joined/);
   const bar = renderToHtml(createElement(card.InviteJoinBar, { preview, primaryClass: 'x', onJoin() {} }));
-  assert.match(bar, /data-landing-invite-join=""[\s\S]*data-landing-invite-signup=""[^>]*>Join Arena<\/a>[\s\S]*data-landing-invite-seen=""[^>]*>Maya will see that you joined\.<\/p>/);
+  assert.match(bar, /data-landing-invite-join=""[\s\S]*data-landing-invite-signup=""[^>]*>Join Arena<\/a>/);
+  assert.doesNotMatch(bar, /will see that you joined|data-landing-invite-seen/, 'the bar is Join alone');
   assert.match(bar, /padding-bottom:calc\(0\.75rem \+ var\(--platform-safe-bottom, env\(safe-area-inset-bottom, 0px\)\)\)/);
   assert.equal(card.pictureIsTile({ picture: { kind: 'sketch', card: null } }), true);
 });

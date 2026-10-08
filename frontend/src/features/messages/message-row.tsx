@@ -15,6 +15,7 @@ import { fileSize, fullTime, MessageMarkdown, ObjectCard, UserAvatar, senderName
 import { BotActivityCard, isActivityMessage } from './bot-activity';
 import { BotQuestion, botMeta } from './bot-question';
 import { BotPlanCard, BotTwoQuestions, isPlanMessage, isTwoQuestions } from './bot-plan';
+import { BotThanksCard, isThanksMessage } from './bot-thanks-card';
 import { BotReadyCard, isReadyMessage } from './bot-ready';
 import { BotHeadWords, botHead, isHeadCard } from './bot-head-card';
 import { LinkEmbeds } from './link-cards';
@@ -267,6 +268,10 @@ export const MessageRow = memo(function MessageRow({
       {message.reply ? <button type="button" className="messages-quote" onClick={() => document.getElementById(`messages-message-${message.reply?.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}><span>{senderName(message.reply.sender)}</span><p>{message.reply.deleted ? 'Message deleted' : plainText(message.reply.content) || 'Attachment'}</p></button> : null}
       {editing ? (
         <div className="messages-edit"><textarea ref={editRef} aria-label="Edit message" value={editValue} onChange={(event) => setEditValue(event.target.value.slice(0, 8000))} rows={2} maxLength={8000} autoFocus onKeyDown={(event) => { if (event.key === 'Escape') setEditing(false); if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void saveEdit(); } }} /><div><button type="button" disabled={busy} onClick={() => void saveEdit()}>Save</button><button type="button" onClick={() => setEditing(false)}>Cancel</button></div></div>
+      ) : isThanksMessage(message) ? (
+        // #4392: the activity card Build it moved under a plan is the bot's
+        // thanks: its words over the app's card and build line.
+        <BotThanksCard message={message} words={words} />
       ) : isActivityMessage(message) ? (
         // #3736: the bot's activity card stands in place of its words, which
         // say the same for the inbox preview and the bell (./bot-activity.tsx).

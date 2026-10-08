@@ -8,7 +8,7 @@
 //
 //   1. Send closed the sheet with nothing said. Now the sheet stays up and
 //      says where the invite went, or, in its own words, why it did not.
-//   2. Share invite opened again on "Come try it with me!", not alex's own
+//   2. Share invite opened again on "I'm making this for us. Join and tell me what it needs.", not alex's own
 //      note. Now the note is kept per project on the device (else read back
 //      from alex's own newest link), and the invite carries it.
 //   4. mo's invite read "invited you to build", with no note and no
@@ -81,23 +81,25 @@ test('1. the made screen\'s sheet is a link alone; a username is invited from Me
   });
 });
 
-test('1. what they\'ll get: "is making" while its first version is not live', () => {
+test('1. the invite as they will see it: "alex invited you to Page Turners" (#4042), made or still being made', () => {
   const made = loadTsx(MADE);
-  assert.equal(made.makerLine('alex_t1005', 'Page Turners', true), 'alex_t1005 is making Page Turners');
-  assert.equal(made.makerLine('alex_t1005', 'Page Turners', false), 'alex_t1005 made Page Turners');
+  assert.equal(made.makerLine, undefined, 'no "is making" / "made": the thumbnail\'s build line says where it is');
+  assert.equal(made.inviteLine('alex_t1005', 'Page Turners'), 'alex_t1005 invited you to Page Turners');
+  assert.equal(made.inviteLine('', 'Page Turners'), 'You\'re invited to Page Turners');
   withStorage({}, () => {
-    assert.match(renderToHtml(createElement(made.InviteSheet, MADE_PROPS)), /data-first-session-invite-maker="" class="[^"]*">alex_t1005 is making Page Turners</,
-      'being made unless told otherwise');
-    assert.match(renderToHtml(createElement(made.InviteSheet, { ...MADE_PROPS, making: false })), />alex_t1005 made Page Turners</);
+    const html = renderToHtml(createElement(made.InviteSheet, MADE_PROPS));
+    assert.match(html, /data-first-session-invite-line="" class="[^"]*">alex_t1005 invited you to Page Turners</);
+    assert.match(html, /<h2 id="first-session-invite-title"[^>]*>Invite people to Page Turners<\/h2>/);
+    assert.doesNotMatch(html, /is making|A link to see it/);
   });
   const src = read(MADE);
   // The shared link's title says the same.
-  assert.match(src, /const title = makerLine\(me, made\.name, making\);/);
+  assert.match(src, /const title = inviteLine\(me, made\.name\);/);
   // Live once a first version that was on its way is read as gone.
   assert.match(src, /if \(app\.firstVersion && !app\.firstVersion\.ready\) setBuilding\(true\);/);
   // A setup that stopped is not live either (tests/create-front-door.test.js).
-  // An import is live once it runs (it has no first version).
-  assert.match(src, /const making = imported \? appStatus !== 'running' : \(!!stalled \|\| !\(building && !fv\)\);/);
+  // An import, or a ready-made app, is live once it runs (it has no first version).
+  assert.match(src, /const making = imported \|\| readyMade \? appStatus !== 'running' : \(!!stalled \|\| !\(building && !fv\)\);/);
 });
 
 // ── 2. The note is remembered ───────────────────────────────────────────
@@ -106,14 +108,14 @@ test('2. the sheet opens on the maker\'s last note for that project', () => {
   const { InviteSheet, noteKey, openingNote, linkNote } = loadTsx(MADE);
   assert.equal(noteKey('page-turners'), 'usernode:first-session:note:page-turners');
   withStorage({}, () => {
-    assert.equal(openingNote('page-turners', null), 'Come try it with me!', 'nothing kept: the default');
+    assert.equal(openingNote('page-turners', null), 'I\'m making this for us. Join and tell me what it needs.', 'nothing kept: the default');
     assert.equal(openingNote('page-turners', 'Pick our next book!'), 'Pick our next book!', 'an example\'s own note');
     const html = renderToHtml(createElement(InviteSheet, MADE_PROPS));
-    assert.match(html, /<textarea[^>]*>Come try it with me!<\/textarea>/);
+    assert.match(html, /<textarea[^>]*>I&#x27;m making this for us\. Join and tell me what it needs\.<\/textarea>/);
   });
   withStorage({ 'usernode:first-session:note:page-turners': 'Fridays at mine, bring a book' }, () => {
     assert.equal(openingNote('page-turners', 'Pick our next book!'), 'Fridays at mine, bring a book');
-    assert.equal(openingNote('another-project', null), 'Come try it with me!', 'per project');
+    assert.equal(openingNote('another-project', null), 'I\'m making this for us. Join and tell me what it needs.', 'per project');
     const html = renderToHtml(createElement(InviteSheet, MADE_PROPS));
     assert.match(html, /<textarea[^>]*>Fridays at mine, bring a book<\/textarea>/);
   });

@@ -11,6 +11,8 @@ public/css/tailwind.css
 public/shell/assets/
 public/shell/release.json
 public/shell/worker.js
+public/locales/
+frontend/src/lib/i18n/catalogs.generated.json
 public.precompressed/
 SPEC.md
 TODO

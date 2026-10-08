@@ -118,10 +118,17 @@ test('locked credits render an unlock meter and lead with the identity action', 
     { key: 'locked', text: 'verify account · unlock $10/day' },
   ]);
   assert.equal(CO.meterTone(state), 'amber');
-  assert.match(CO.lead(state), /Connect GitHub or X.*\$10\/day/);
+  // #4378: the card says they are out, and asks them to verify for more.
+  assert.equal(CO.lead({ ...state, capWindow: 'weekly' }), "You're out of this week's free AI credits.");
   const options = CO.options({ verificationRequired: true });
-  assert.equal(options[0].id, 'social-identity');
-  assert.equal(options[0].hash, '#settings/connectors');
+  assert.equal(options[0].id, 'verify-account');
+  assert.equal(options[0].cta, 'Verify my account');
+  assert.equal(options[0].hash, '#settings/linked-accounts');
+  const card = CO.cardHtml({ verificationRequired: true, capWindow: 'weekly', error: 'server words' });
+  assert.match(card, /<div class="dc-credits-card-lead">You&#39;re out of this week&#39;s free AI credits\.<\/div><div class="dc-credits-card-detail" data-credits-verify-line="1">Verify your account to get more: add your phone number, or link GitHub and X\.<\/div>/);
+  assert.match(card, /data-credits-verify-line="1">[^<]*<\/div><div class="dc-credits-verify"><button type="button" class="dc-pr-btn dc-credits-go" data-credits-verify="1" data-credits-hash="#settings\/linked-accounts">Verify my account<\/button>/);
+  assert.equal((card.match(/Verify my account/g) || []).length, 1, 'once, not again as a row of the list');
+  assert.doesNotMatch(card, /server words/, 'the verify line says it in place of the refusal');
 });
 
 test('the meter states what is left, in words a builder can act on', () => {

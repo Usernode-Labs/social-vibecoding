@@ -192,6 +192,32 @@ export const A2HS_STEPS: Record<MobileOs, string> = {
   android: 'Open the browser menu, then Add to Home screen.',
 };
 
+/** One numbered line of the banner's "How" sheet, with the glyph it names. */
+export interface A2hsStep {
+  text: string;
+  /** The toolbar control the line tells you to tap, drawn beside it. */
+  glyph?: 'share' | 'menu';
+}
+
+/**
+ * The same instructions as `A2HS_STEPS`, one line per step, for the install
+ * banner's "How" sheet (#4400). The sentence form stays for the app's About
+ * pane, which has one line to spend; the sheet has room to number them and to
+ * show the control the first step names.
+ */
+export const A2HS_STEP_LIST: Record<MobileOs, readonly A2hsStep[]> = {
+  ios: [
+    { text: "Tap Share in Safari's toolbar", glyph: 'share' },
+    { text: 'Choose Add to Home Screen' },
+    { text: 'Open Homeroom from its icon' },
+  ],
+  android: [
+    { text: "Tap the menu in your browser's toolbar", glyph: 'menu' },
+    { text: 'Choose Add to Home screen' },
+    { text: 'Open Homeroom from its icon' },
+  ],
+};
+
 /**
  * Is this a beta invite rather than a public store listing?
  *

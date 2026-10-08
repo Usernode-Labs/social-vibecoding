@@ -69,8 +69,11 @@ test('with a clock, the TIME section comes before the browser block, which defer
 
 test('the live build hands its prompt the clock its turn is stopped on', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'homeroom-bot-live.js'), 'utf8');
-  assert.match(src, /clock: \{ startedAt: Date\.now\(\), budgetMs: turnBudgetMs \},/);
-  assert.match(src, /prompt, budgetMs: turnBudgetMs, commitMsg:/, 'the same budget the turn\'s timer uses');
+  // Read once, as the turn starts: the prompt's clock and the nudge's share
+  // of it (homeroom-bot-live.js buildNudgePrompt) are the same clock.
+  assert.match(src, /const turnStartedMs = Date\.now\(\);\n  const prompt = buildPrompt\(\{/);
+  assert.match(src, /clock: \{ startedAt: turnStartedMs, budgetMs: turnBudgetMs \},/);
+  assert.match(src, /runBuildTurn\(\{ prompt, budgetMs: turnBudgetMs, commitMsg, progress \}\)/, 'the same budget the turn\'s timer uses');
 });
 
 test('a drag is tried with the tools the build has, twice at most, and a failed gesture is said', () => {

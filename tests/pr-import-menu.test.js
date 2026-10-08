@@ -126,7 +126,7 @@ test('import-pr item renders for a collaborator', () => {
     'the group heading renders above the gate');
   assert.ok(FRAME_SRC.indexOf('data-plus="issue"') < start,
     'File an issue leads the group, outside the gate');
-  assert.ok(FRAME_SRC.indexOf('data-plus="import-pr"') < FRAME_SRC.indexOf('groupKey="settings"'),
+  assert.ok(FRAME_SRC.indexOf('data-plus="import-pr"') < FRAME_SRC.indexOf('data-plus="settings"'),
     'import-pr renders before the settings group');
   // …and the prop is fed from appData.can_collaborate, read in the module.
   assert.match(

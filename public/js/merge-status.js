@@ -94,8 +94,9 @@
   }
 
   // A checks error the merge gate still counts as in progress: the run
-  // overlapped a platform update and goes again on its own
-  // (visuals.settleCaptureRun). Every other error blocks on the author.
+  // overlapped a platform update and goes again on its own. Nothing records
+  // that any more (#3828); rows stored before still read this way. Every
+  // other error blocks on the author.
   function checksWillRetry(p) {
     if (!p || p.check_state !== 'error') return false;
     var mr = (p.mergeRequirements && typeof p.mergeRequirements === 'object') ? p.mergeRequirements : null;
@@ -397,6 +398,20 @@
           + 'were not run: they would judge a tree that cannot merge. They run automatically '
           + 'once it merges cleanly.',
       });
+    }
+    if (check === 'pending' && p.check_phase === 'queued') {
+      // Built, and waiting its turn: the platform runs a few proposals'
+      // checks at a time (services/checks-queue.js). In progress, nobody has
+      // to act, so it keeps the running treatment, and says its place.
+      var q = p.checks_progress && p.checks_progress.queue;
+      var ahead = q && typeof q.ahead === 'number' && q.ahead >= 0 && Math.floor(q.ahead) === q.ahead ? q.ahead : null;
+      return descriptor('checks_queued',
+        ahead === null ? 'Checks waiting' : (ahead === 0 ? 'Checks waiting · next' : 'Checks waiting · ' + ahead + ' ahead'),
+        'neutral', true, {
+          votes: votes,
+          title: 'The preview is up, and its checks are waiting for a slot: Homeroom runs a few proposals\u2019 '
+            + 'checks at a time. They start on their own. It can\u2019t go live until they pass.',
+        });
     }
     if (check === 'pending') {
       // A run that has been going a while says for how long, so "pending for

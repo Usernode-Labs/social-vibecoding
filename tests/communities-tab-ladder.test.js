@@ -324,7 +324,8 @@ test('the pages say what is below their tabs: All items on the project page, a r
   assert.match(climb[1], /callAppView\('_pushWorkshopTab', v\.slug, was, next\);/, 'a new entry, as a tab press pushes');
   assert.doesNotMatch(climb[1], /_upWorkshopTab/);
   assert.match(climb[1], /callAppView\('_saveFeedScroll', v\.slug, 0\);\s*scrollToHead\(hostRef\.current\);/, 'at its top');
-  assert.match(workshop, /registerLevel\(\{\s*slug: v\.slug,\s*below: \(\) => tabRef\.current === 'all',\s*up: \(\) => climbRef\.current\(\),\s*host: \(\) => hostRef\.current,\s*\}\)/);
+  // #4074: the plan is a page under the Hub, as All items is under the Workshop.
+  assert.match(workshop, /registerLevel\(\{\s*slug: v\.slug,\s*below: \(\) => tabRef\.current === 'all' \|\| tabRef\.current === 'plan',\s*up: \(\) => climbRef\.current\(\),\s*host: \(\) => hostRef\.current,\s*\}\)/);
   const discussion = read('frontend/src/features/dev-board/workshop/project-discussion.tsx');
   assert.match(discussion, /below: \(\) => \(room \? embeddedThreadOpen\(room\) : !!threadRef\.current\),\s*up: \(\) => \{ if \(room\) closeThread\(\); else setThread\(null\); \},/);
   const store = read('frontend/src/features/messages/store.ts');

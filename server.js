@@ -1650,9 +1650,6 @@ async function becomeLeader() {
 
 async function start() {
   const startedAt = Date.now();
-  // The checks settlement reads a red run that started in the first minutes
-  // after this boot as one that overlapped the rollout (visuals.js).
-  visualsSvc.markPlatformBooted(startedAt);
   const migrationsOnStartup = process.env.RUN_MIGRATIONS_ON_STARTUP !== 'false';
   let migration = null;
   // Schema migration is serialized across colors with an advisory lock so
@@ -2112,8 +2109,7 @@ const CHECKS_STALE_MS = stagingRecovery.checksStaleMs();
 // has elapsed AND it's still under this cap; past the cap we stop auto-retrying
 // and leave it 'error' (the owner is already notified, and a NEW commit resets
 // the streak via setChecksPending so a fix re-enables checks). Tunable via
-// CHECK_MAX_AUTO_RETRIES; read in staging-recovery so the checks settlement
-// asks the same cap before it records a red run as one to retry.
+// CHECK_MAX_AUTO_RETRIES; read in staging-recovery.
 const CHECK_MAX_AUTO_RETRIES = stagingRecovery.checkMaxAutoRetries();
 
 function checkRecoveryInFlight(sessionId) {

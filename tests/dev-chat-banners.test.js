@@ -359,7 +359,8 @@ test('the three reasons the red banner can appear each state their own remedy', 
   DevChat._creditState = () => ({ level: 'locked' });
   let v = view().credits;
   assert.equal(v.icon, 'person');
-  assert.match(v.lead, /Connect GitHub or X/);
+  assert.equal(v.lead, 'You\u2019re out of this week\u2019s free AI credits.');
+  assert.equal(v.tail, ' Verify your account to get more: add your phone number, or link GitHub and X.');
   assert.equal(v.reset, null, 'there is no allowance to reset yet');
 
   DevChat._creditState = () => ({ level: 'unavailable' });

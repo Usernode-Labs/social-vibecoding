@@ -108,11 +108,17 @@ import { Wordmark } from '@/components/ui/wordmark';
 import { useKeyboardSurface } from '../../lib/keyboard-surface';
 import { AppAllowance, useAppAllowance } from '../dialogs/app-allowance';
 import { deviceTimeZone, postCreateApp } from '../dialogs/post-create-app';
-import { descriptionOf, firstChoice, OWN, sentence, suggestedName, TEMPLATES, type Template } from './examples';
+import { descriptionOf, firstChoice, OWN, readyMadeOf, sentence, suggestedName, TEMPLATES, type Template } from './examples';
 import { ImportForm, type RepoManifest } from './import-repo';
 import { TierChart } from './tier-chart';
 
 export { deviceTimeZone };
+
+/**
+ * Under the sentence when its choice is one of the ready-made apps
+ * (examples.ts `readyMadeOf`): Make it makes that app, with nothing to build.
+ */
+export const READY_LINE = 'Ready-made: nothing to build, so it is ready as soon as it is set up.';
 
 /** The server's floor and ceiling for a description (services/homeroom-bot-dm.js MIN_/MAX_BRIEF_CHARS). */
 export const BRIEF_MIN = 10;
@@ -134,6 +140,8 @@ export type Made = {
   conversationId: number | null;
   /** Imported from a GitHub repo (./import-repo.tsx): nothing is built from a description. */
   imported?: boolean;
+  /** One of Homeroom's ready-made apps (examples.ts `readyMadeOf`): nothing is built, it is ready once it runs. */
+  readyMade?: boolean;
 };
 
 const FIELD = 'px-4 pt-3 pb-2 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800';
@@ -185,14 +193,6 @@ export function makeEyebrow(entry: MakeEntry, who: string): string {
   if (entry === 'create') return 'New project';
   return who ? `Hi ${who}!` : 'You\'re in!';
 }
-
-/**
- * Under Make it, quietly: what is public once it is made (#4174). Every
- * project's repository is public on GitHub, and its first request is a
- * public issue holding the description word for word, with the plan as a
- * comment (services/github.js, services/homeroom-bot-dm.js).
- */
-export const MAKE_PUBLIC_LINE = 'What you write here, and the app’s code, are public on GitHub.';
 
 /**
  * Under the description box, quietly, while it still holds the answer the
@@ -376,12 +376,16 @@ export function MakeScreen({
     // is still the template's: words of their own in the plain box let go
     // of it (`picked` is Your own idea then), and are theirs to describe later.
     const example = template;
+    // A choice that needs no typing, its sentence as drawn, is one of the
+    // ready-made apps: it is made from that, with nothing for Homeroom bot
+    // to build, so no brief.
+    const ready = templated && example ? readyMadeOf(example, choice) : null;
     const timeZone = deviceTimeZone();
     try {
       const reply = await postCreateApp({
         name: name.trim(),
         audience: 'invited',
-        brief: text.trim(),
+        ...(ready ? { template: ready.template } : { brief: text.trim() }),
         ...(example ? { description: descriptionOf(example, choice) } : {}),
         from: entry,
         // So the sketch's "today" is the maker's (services/app-sketch.js).
@@ -397,10 +401,11 @@ export function MakeScreen({
       onMade({
         slug: data.app.slug,
         name: data.app.name || name.trim(),
-        emoji: example ? example.emoji : null,
+        emoji: ready ? ready.emoji : example ? example.emoji : null,
         description: example ? descriptionOf(example, choice) : null,
         example,
         conversationId: Number(data.homeroomBot?.conversationId) || null,
+        ...(ready ? { readyMade: true } : {}),
       });
     } finally {
       makingRef.current = false;
@@ -464,7 +469,7 @@ export function MakeScreen({
             <XIcon className="h-4 w-4" aria-hidden="true" />
           </button>
         ) : null}
-        {underHeader ? null : <Wordmark className="h-6 w-auto text-[color:var(--brand-ink)]" />}
+        {underHeader ? null : <Wordmark className="h-6 w-auto text-zinc-950 dark:text-white" />}
       </div>
       {/* The scroller the keyboard surface reveals fields in. Its className
           stays constant: nothing here varies it. */}
@@ -601,6 +606,7 @@ export function MakeScreen({
                       </Chip>
                     ))}
                   </div>
+                  {readyMadeOf(template, choice) ? <p data-make-ready="" className={HINT}>{READY_LINE}</p> : null}
                 </>
               ) : (
                 <>
@@ -673,7 +679,6 @@ export function MakeScreen({
           >
             {busy ? 'Making it…' : 'Make it'}
           </Button>
-          <p data-make-public="" className="mt-2 text-center text-[13px] leading-snug text-zinc-500 dark:text-zinc-400">{MAKE_PUBLIC_LINE}</p>
           {fromCreate ? (
             // Small, under Make it: the one other way to start a project.
             <p className="mt-3 text-center">

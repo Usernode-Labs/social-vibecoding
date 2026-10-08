@@ -232,6 +232,8 @@ interface Run {
   build_queued_at: string | null;
   // The spec the bot wrote before building, live or shadow.
   build_spec_md: string | null;
+  // A build turn that changed nothing, and its nudge (NoChangeNote).
+  build_no_change?: NoChange | null;
   // #3654: the verdict a labeller says was right, the build's model, and the
   // stages this run can be replayed at by the benchmark.
   label_verdict?: LabelVerdict | null;
@@ -242,6 +244,29 @@ interface Run {
   app_slug: string;
   app_name: string;
   issueUrl: string | null;
+}
+
+/** One build turn of a build that changed nothing (homeroom-bot-live.js turnFacts), and what it said last. */
+interface NoChangeTurn {
+  turn: 'build' | 'nudge';
+  ended?: string | null;
+  said?: string | null;
+  provider?: string | null;
+  providers?: string[] | null;
+  model?: string | null;
+  requests?: number | null;
+  toolCalls?: number | null;
+  fileEdits?: number | null;
+  outputTokens?: number | null;
+  seconds?: number | null;
+}
+
+interface NoChange {
+  turns?: NoChangeTurn[];
+  nudged?: boolean;
+  notNudged?: string | null;
+  committed?: boolean | null;
+  recovered?: boolean;
 }
 
 type LabelVerdict = 'question' | 'ready' | 'person' | 'empty' | 'answer' | 'revise';
@@ -449,6 +474,61 @@ function LiveBuild({ run }: { run: Run }) {
   );
 }
 
+// How each build turn ended, in words (homeroom-bot-live.js turnFacts).
+const TURN_ENDED: Record<string, string> = {
+  changed: 'built the change',
+  no_change: 'changed nothing',
+  not_pushed: 'pushed nothing',
+  stopped: 'was stopped on its clock',
+  failed: 'failed',
+};
+
+/** One build turn's facts as a line: how it ended, who served it, what it did. */
+function noChangeTurnLine(t: NoChangeTurn): string {
+  const count = (n: number | null | undefined, one: string, many: string) => (
+    n == null ? null : `${n} ${n === 1 ? one : many}`
+  );
+  const providers = Array.isArray(t.providers) && t.providers.length ? t.providers : (t.provider ? [t.provider] : []);
+  const parts = [
+    providers.length ? `served by ${providers.join(', ')}` : 'provider unknown',
+    count(t.requests, 'request', 'requests'),
+    count(t.toolCalls, 'tool call', 'tool calls'),
+    count(t.fileEdits, 'file edit', 'file edits'),
+    count(t.outputTokens, 'output token', 'output tokens'),
+    t.seconds == null ? null : `${t.seconds}s`,
+  ].filter(Boolean);
+  const ended = t.ended && TURN_ENDED[t.ended] ? ` ${TURN_ENDED[t.ended]}` : '';
+  return `${t.turn === 'nudge' ? 'The nudge' : 'The build turn'}${ended}: ${parts.join(', ')}.`;
+}
+
+/**
+ * A build turn that ended without failing and changed nothing
+ * (homeroom-bot-live.js buildNudgePrompt): whether it was nudged and what
+ * came of it, what each turn did and which provider served it, and what the
+ * agent said last. The agent's words are untrusted: shown as plain text,
+ * never as a link or markup.
+ */
+function NoChangeNote({ run }: { run: Run }) {
+  const nc = run.build_no_change;
+  if (!nc || !Array.isArray(nc.turns) || !nc.turns.length) return null;
+  const head = !nc.nudged
+    ? `Its build turn changed nothing, and it was not nudged${nc.notNudged ? ` (${nc.notNudged})` : ''}.`
+    : nc.committed
+      ? 'Its build turn changed nothing, so it was nudged once, and the nudge built the change.'
+      : 'Its build turn changed nothing, so it was nudged once, and the nudge did not build it either.';
+  return (
+    <div className="space-y-0.5" data-build-no-change={nc.nudged ? (nc.committed ? 'nudged-built' : 'nudged-failed') : 'not-nudged'}>
+      <p className={AdminUI.muted}>{head}</p>
+      {nc.turns.map((t, i) => (
+        <div key={i}>
+          <p className={AdminUI.muted}>{noChangeTurnLine(t)}</p>
+          {t.said ? <p className={`${AdminUI.muted} whitespace-pre-line break-words`}>{`It said: ${t.said}`}</p> : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** A question's "user_facing: why" as words. */
 function blockerLabel(reason: string): string {
   const [kind, ...rest] = reason.split(': ');
@@ -494,6 +574,7 @@ function VerdictBody({ run }: { run: Run }) {
         <p className="text-sm whitespace-pre-line">{run.build_note || '(no build note)'}</p>
         {run.reason ? <p className={AdminUI.muted} data-demoted-question>{run.reason}</p> : null}
         {run.mode === 'live' ? <LiveBuild run={run} /> : <ShadowBuild run={run} />}
+        <NoChangeNote run={run} />
         <BuildSpec run={run} />
         {run.proposal_session_id ? (
           <p className={AdminUI.muted}>

@@ -134,7 +134,7 @@ const OTP_PASSWORD_INTRO_HANDLE = 'Code verified. Choose a username and a passwo
 // signed in to the waitlist, not to the platform. The waitlist's own words
 // (#4073): a spot, a few at a time.
 const OTP_WAITLIST_NOTE =
-  'New accounts get a spot on the waitlist. We let people in a few at a time.';
+  'New accounts get a spot on the waitlist. We\u2019re letting people in a few at a time.';
 
 /** Which reset path the recovery view offers. */
 type RecoveryPath = 'wallet' | 'email';
@@ -1409,7 +1409,7 @@ export function LoginScreen() {
           */}
           <Wordmark
             title="Homeroom"
-            className="mx-auto self-center mb-10 h-6 w-auto text-zinc-900 dark:text-zinc-100"
+            className="mx-auto self-center mb-10 h-6 w-auto text-zinc-950 dark:text-white"
           />
           <h1 className={view === 'recovery' || view === 'reset' ? SCREEN_H1_HIDDEN : SCREEN_H1}>
             {heading}

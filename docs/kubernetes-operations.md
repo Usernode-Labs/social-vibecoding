@@ -487,6 +487,17 @@ quota sets `node --test`'s process-pool size), requesting 4 CPUs / 1Gi.
 Evidence replays share the capture reservation. A smaller explicit CPU limit
 also caps the request; coding-worker resource settings are independent.
 
+`CHECKS_MAX_CONCURRENT_RUNS` (default 4, chart `config.checksMaxConcurrentRuns`)
+bounds how many proposal checks runs have Jobs in the worker namespace at once;
+main-watch's run of main has one slot besides them. A run waits for its slot
+after its preview is built and before it creates a Job, so the namespace
+quota no longer queues Pods whose deadlines are already running. The slots are
+the live `check_runs` rows: `admitted_at IS NULL` is a run waiting,
+`queued_at` its place in line. Red check runs track check-Job CPU across the
+cluster (9% under 10 cores, 24 to 29% above, October 2026), because every
+preview under test loads the one shared Postgres primary; lower the cap
+before raising quotas when proposals' checks go red together.
+
 All three check kinds carry `social.usernode.io/workload=check`. A hostname
 topology-spread preference counts that group across sessions in the worker
 namespace, honoring node affinity and taints. It favors an even distribution
