@@ -20,9 +20,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 const { composerHtml } = require('./lib/dev-composer-html');
-const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
@@ -153,6 +153,7 @@ function loadGroupChat() {
   const sandbox = {
     // The binding the controller's i18n import gives it (the import line is stripped above).
     t: englishPlatformI18n().t,
+    PlatformI18n: englishPlatformI18n(),
     location: { search: '', protocol: 'http:', host: 'localhost' },
     URLSearchParams,
     URL: { createObjectURL: () => 'blob:x', revokeObjectURL() {} },

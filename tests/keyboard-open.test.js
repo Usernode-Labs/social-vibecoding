@@ -598,20 +598,23 @@ test('every button labelled Send in the shell keeps focus (a new composer is cau
     if (d.isDirectory()) return rel.endsWith('/admin') ? [] : walk(rel);
     return /\.(tsx|jsx)$/.test(d.name) ? [rel] : [];
   });
-  // A Send whose name is still written in the tag, and one that reads it from
-  // the catalog (its id is listed here, and the catalog holds the words).
-  const SEND_LABELS = ['aria-label="Send', "aria-label={t('messages:composer.send')}"];
   assert.equal(message('messages:composer.send'), 'Send message');
   let seen = 0;
   for (const file of walk('frontend/src')) {
     const src = read(file);
-    for (const label of SEND_LABELS) {
-      for (let at = src.indexOf(label); at >= 0; at = src.indexOf(label, at + 1)) {
-        const tag = openingTagAt(src, at, file);
-        seen += 1;
-        // The dev session's Send carries it in the shared props pinned above.
-        assert.ok(KEEPS_FOCUS.test(tag) || /\{\.\.\.common\}/.test(tag), `${file}: ${tag.slice(0, 80)}`);
+    // A Send is labelled in the source, or by a catalog entry whose English
+    // starts with "Send" (aria-label={t('chat:group.composer.send')}).
+    const labelled = /aria-label=(?:"Send|\{t\('([a-z]+:[A-Za-z0-9.]+)'\)\})/g;
+    for (let found = labelled.exec(src); found; found = labelled.exec(src)) {
+      if (found[1]) {
+        let english = '';
+        try { english = message(found[1]); } catch { /* an id from another reader */ }
+        if (!english.startsWith('Send')) continue;
       }
+      const tag = openingTagAt(src, found.index, file);
+      seen += 1;
+      // The dev session's Send carries it in the shared props pinned above.
+      assert.ok(KEEPS_FOCUS.test(tag) || /\{\.\.\.common\}/.test(tag), `${file}: ${tag.slice(0, 80)}`);
     }
   }
   assert.ok(seen >= 7, `found ${seen}`);

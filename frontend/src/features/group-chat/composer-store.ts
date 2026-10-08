@@ -30,7 +30,13 @@ import type { PendingAttachmentView } from '../attachments/pending-strip';
 
 /** The staged reply chip: "↩ Replying to @alice" over a one-line snippet. */
 export interface QuoteChipView {
+  /** Who is being replied to: "@alice", "PR #12". Empty when `unnamed` is set. */
   label: string;
+  /**
+   * A row with nobody to name: a platform message (`event`), or a message
+   * whose author is gone (`message`). The strip then has a sentence of its own.
+   */
+  unnamed?: 'event' | 'message' | null;
   snippet: string;
 }
 

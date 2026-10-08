@@ -17,6 +17,8 @@
  * app's name, which is user content and lands as a text child.
  */
 
+import { useMessages } from '../../lib/i18n/react';
+
 export interface QuietCardProps {
   exhausted: boolean;
   canPost: boolean;
@@ -30,22 +32,23 @@ export interface QuietCardProps {
 }
 
 export function QuietCard({ exhausted, canPost, appName, variant = 'app' }: QuietCardProps) {
+  const t = useMessages('chat');
   const change = variant === 'change';
   return (
     <div className="gc-quiet mx-3 my-3 rounded-2xl bg-zinc-100 px-4 py-4 text-center dark:bg-zinc-800" data-quiet-chat={change ? 'change' : ''}>
       <div className="text-[15px] font-semibold leading-snug text-zinc-900 dark:text-zinc-100">
         {change
-          ? (exhausted ? 'Nobody has commented on this change yet' : 'It has been quiet on this change lately')
-          : (exhausted ? 'Nobody has said anything here yet' : 'It has been quiet in here lately')}
+          ? (exhausted ? t('chat:group.quiet.change.nobody') : t('chat:group.quiet.change.lately'))
+          : (exhausted ? t('chat:group.quiet.app.nobody') : t('chat:group.quiet.app.lately'))}
       </div>
       <div className="mt-1 text-[13px] leading-snug text-zinc-500 dark:text-zinc-400">
         {change
           ? (canPost
-            ? '\u{1F44B} Ask a question, or say what you think of it.'
-            : 'Comments from the group will show up here.')
+            ? t('chat:group.quiet.change.invite')
+            : t('chat:group.quiet.change.readOnly'))
           : (canPost
-            ? `\u{1F44B} Say hi, ask a question, or share what you would like to see next in ${appName}.`
-            : `Messages from the people building ${appName} will show up here.`)}
+            ? (appName ? t('chat:group.quiet.app.invite', { app: appName }) : t('chat:group.quiet.app.inviteUnnamed'))
+            : (appName ? t('chat:group.quiet.app.readOnly', { app: appName }) : t('chat:group.quiet.app.readOnlyUnnamed')))}
       </div>
     </div>
   );

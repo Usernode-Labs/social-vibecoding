@@ -107,7 +107,8 @@ test('an agent chat and a Mayor session: handed to their panels, drawn at the en
   // The global chat: last in its toolbar, after New. Its own screen passes
   // nothing, so that surface is unchanged.
   assert.match(CHAT, /export function GlobalChatPanel\(\{ embedded = false, headerAction = null \}: \{ embedded\?: boolean; headerAction\?: ReactNode \}\)/);
-  assert.match(CHAT, /<span>New<\/span>\s*<\/button>\s*\{headerAction\}\s*<\/header>/);
+  assert.match(CHAT, /<span>\{t\('chat:global\.toolbar\.new'\)\}<\/span>\s*<\/button>\s*\{headerAction\}\s*<\/header>/);
+  assert.equal(message('chat:global.toolbar.new'), 'New');
   assert.match(CHAT, /\{snapshot\.host === 'messages' \? null : <GlobalChatPanel \/>\}/);
 
   // The Mayor: the session bar's `action`, after Changes, the "Open app"

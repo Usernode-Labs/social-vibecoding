@@ -20,6 +20,11 @@ const path = require('node:path');
 const { Pool } = require('pg');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
+
+// The card's two fixed lines, as the catalog holds them (bot-request.tsx reads them by id).
+const STAYS_LINE = 'It stays in the project’s requests with your name on it.';
+const SHARED_LINE = message('chat:group.botCard.shared');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
   || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -28,7 +33,7 @@ const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const botChat = require('../src/services/homeroom-bot-chat');
 
 test('WP-C: the offer card, and the line under a first request', () => {
-  const { BotRequestCardView, cardWords, STAYS_LINE } = loadTsx('frontend/src/features/group-chat/bot-request.tsx');
+  const { BotRequestCardView, cardWords } = loadTsx('frontend/src/features/group-chat/bot-request.tsx');
   assert.equal(cardWords({ kind: 'offer', title: 'Add a Sunday reminder' }),
     'Suggest this to the group? It goes in the project’s requests as “Add a Sunday reminder”, in your name.');
   const offer = renderToHtml(createElement(BotRequestCardView, { card: { messageId: 5, kind: 'offer', title: 'Add tags', issueNumber: null } }));
@@ -36,8 +41,10 @@ test('WP-C: the offer card, and the line under a first request', () => {
   assert.match(offer, /data-bot-request-action="file"><span>Suggest it/);
   assert.match(offer, /data-bot-request-action="not-now"><span>Not now/);
   assert.equal(cardWords({ kind: 'group', title: 'Add tags', first: true }), `Filed as a request for the group: Add tags. ${STAYS_LINE}`);
+  // The line is the end of a whole catalog message that follows what the card already said.
+  assert.equal(cardWords({ kind: 'group', title: 'Add tags', first: true }), message('chat:group.botCard.withStays', { words: 'Filed as a request for the group: Add tags.' }));
   assert.equal(cardWords({ kind: 'group', title: 'Add tags' }), 'Filed as a request for the group: Add tags.', 'only the first says it');
-  assert.equal(STAYS_LINE, 'It stays in the project’s requests with your name on it.');
+  assert.equal(message('chat:group.botCard.withStays', { words: 'X.' }), `X. ${STAYS_LINE}`);
 });
 
 // 5 October 2026 (Evan, on his phone): "if you choose to submit it an idea,
@@ -48,7 +55,7 @@ test('WP-C: the offer card, and the line under a first request', () => {
 // say in words that Homeroom bot has it. Without PostgreSQL: the pool answers
 // the path's own queries, and nothing but Suggest it runs.
 test('WP-C: Suggest it puts the chip on the message for the whole room at once, saying Homeroom bot has it', async (t) => {
-  const { BotStatusChip, BotRequestCardView, cardWords, sharedNow, SHARED_LINE } = loadTsx('frontend/src/features/group-chat/bot-request.tsx');
+  const { BotStatusChip, BotRequestCardView, cardWords, sharedNow } = loadTsx('frontend/src/features/group-chat/bot-request.tsx');
   const APP = { id: 7, slug: 'page-turners', name: 'Page Turners', repo_url: 'https://github.com/example/page-turners' };
   const priya = { id: 21, username: 'priya', hasPlatformAccess: true };
   const MSG = 501;
@@ -147,8 +154,10 @@ test('WP-C: Suggest it puts the chip on the message for the whole room at once, 
 });
 
 test('WP-C: the card says the room can see it only while the bot has it and has not started building', () => {
-  const { sharedNow, SHARED_LINE, BotRequestCardView } = loadTsx('frontend/src/features/group-chat/bot-request.tsx');
+  const { sharedNow, BotRequestCardView } = loadTsx('frontend/src/features/group-chat/bot-request.tsx');
   assert.equal(SHARED_LINE, 'Everyone here can see Homeroom bot has it.');
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/group-chat/bot-request.tsx'), 'utf8'),
+    /data-bot-request-shared="">\{t\('chat:group\.botCard\.shared'\)\}<\/p>/);
   const filed = (stage) => ({ messageId: 5, kind: 'filed', title: 'Add tags', issueNumber: 3, ...(stage ? { state: { stage } } : {}) });
   for (const stage of [null, 'reading', 'waiting', 'waiting_first_version']) assert.equal(sharedNow(filed(stage)), true, String(stage));
   for (const stage of ['building', 'checking', 'proposed', 'live', 'stopped', 'question']) assert.equal(sharedNow(filed(stage)), false, stage);

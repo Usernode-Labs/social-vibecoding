@@ -3,10 +3,12 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 function setup(scope) {
   const requests = [];
   const sandbox = {
+    PlatformI18n: englishPlatformI18n(),
     window: {}, URLSearchParams, location: { search: '' },
     document: { getElementById: () => null },
     fetch: (url) => new Promise((resolve, reject) => requests.push({ url, resolve, reject })),
@@ -116,6 +118,7 @@ function setupPublished(scope) {
   const published = [];
   const host = { dataset: {}, scrollHeight: 0, scrollTop: 0 };
   const sandbox = {
+    PlatformI18n: englishPlatformI18n(),
     window: {}, URLSearchParams, location: { search: '' },
     document: { getElementById: (id) => (id === 'gc-messages' || id === 'gc-thread-messages' ? host : null) },
     fetch: (url) => new Promise((resolve, reject) => requests.push({ url, resolve, reject })),
@@ -187,6 +190,7 @@ function setupScroll(scope) {
   const host = { dataset: {}, scrollHeight: 0, scrollTop: 0, clientHeight: 300 };
   const flushes = [];
   const sandbox = {
+    PlatformI18n: englishPlatformI18n(),
     window: {}, URLSearchParams, location: { search: '' },
     document: { getElementById: (id) => (id === 'gc-messages' || id === 'gc-thread-messages' ? host : null) },
     fetch: (url) => new Promise((resolve, reject) => requests.push({ url, resolve, reject })),

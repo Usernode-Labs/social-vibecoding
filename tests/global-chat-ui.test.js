@@ -11,6 +11,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 
+
 const ROOT = path.join(__dirname, '..');
 const read = (...parts) => fs.readFileSync(path.join(ROOT, ...parts), 'utf8');
 const screen = read('frontend', 'src', 'features', 'global-chat', 'index.tsx');
@@ -39,8 +40,10 @@ function sourceTree(...parts) {
 test('Global Chat ships as an experimental hash-routed sibling screen', () => {
   assert.match(shell, /<GlobalChatScreen\s*\/>/);
   assert.match(screen, /id="global-chat-screen"/);
-  assert.match(screen, /Chat\s*<span>\(experimental\)<\/span>/);
-  assert.match(screen, /Saved in Messages\./);
+  assert.match(screen, /<RichMessage id="chat:global\.toolbar\.title" components=\{\[<span \/>\]\} \/>/);
+  assert.equal(message('chat:global.toolbar.title'), 'Chat <0>(experimental)</0>');
+  assert.match(screen, /chat:global\.toolbar\.saved/);
+  assert.equal(message('chat:global.toolbar.saved'), 'Saved in Messages.');
   assert.match(screen, /useVisibilityHiddenClass\(screenRef, 'global-chat-screen', false\)/);
   assert.match(screen, /className="hidden flex flex-1 min-h-0 overflow-hidden"/);
   assert.match(appJs, /parts\[0\] === 'chat'/);
@@ -88,7 +91,8 @@ test('chat navigation uses the shared screen router instead of a body-wide mode'
   assert.match(store, /api\.thread\(threadId\)/);
   assert.match(store, /api\.threads\(\)/);
   assert.match(store, /deactivateGlobalChat/);
-  assert.match(screen, /aria-label="Close chat"/);
+  assert.match(screen, /aria-label=\{t\('chat:global\.toolbar\.closeChat'\)\}/);
+  assert.equal(message('chat:global.toolbar.closeChat'), 'Close chat');
   assert.match(screen, /onClick=\{\(\) => closeGlobalChat\(\)\}/);
 });
 
@@ -118,10 +122,12 @@ test('suggestions stay compact, button-like, and append through a separate More 
   assert.match(screen, /suggestions\.map\(\(suggestion\) => \(\s*<button/s);
   assert.match(screen, />\s*\{suggestion\.label\}\s*<\/button>/s);
   assert.match(screen, /className="global-chat-more-suggestions"/);
-  assert.match(screen, />\s*More suggestions\s*<\/button>/s);
+  assert.match(screen, />\s*\{t\('chat:global\.suggestions\.more'\)\}\s*<\/button>/);
+  assert.equal(message('chat:global.suggestions.more'), 'More suggestions');
   assert.doesNotMatch(screen, /suggestion\.description|Fewer suggestions|Hide suggestions/);
   assert.match(store, /\.\.\.current\.messages\.map[\s\S]*assistant,/);
-  assert.match(screen, /Hold an option for related suggestions\./);
+  assert.match(screen, /chat:global\.suggestions\.holdHint/);
+  assert.equal(message('chat:global.suggestions.holdHint'), 'Hold an option for related suggestions.');
   assert.match(screen, /onPointerDown/);
   assert.match(screen, /onContextMenu/);
   assert.match(screen, /event\.shiftKey && event\.key === 'F10'/);
@@ -129,7 +135,8 @@ test('suggestions stay compact, button-like, and append through a separate More 
   assert.match(screen, /selectGlobalChatSuggestion\(suggestion\)/);
   assert.match(screen, /requestMoreSuggestions\(context\)/);
   assert.match(store, /if \(!boot\.available && !more\)/);
-  assert.match(screen, /The direct options below still work without it\./);
+  assert.match(screen, /chat:global\.unavailable\.noModelBody/);
+  assert.equal(message('chat:global.unavailable.noModelBody'), 'The direct options below still work without it.');
   assert.match(screen, /snapshot\.bootstrap && !snapshot\.messages\.length/);
 });
 
@@ -144,7 +151,8 @@ test('authoritative results never execute model HTML and retain exact Classic es
   );
   assert.doesNotMatch(renderers, /dangerouslySetInnerHTML|innerHTML|eval\s*\(/);
   assert.match(renderers, /result\.authoritativeResult/);
-  assert.match(renderers, /Open in Classic/);
+  assert.match(renderers, /chat:global\.openInClassic/);
+  assert.equal(message('chat:global.openInClassic'), 'Open in Classic');
   assert.match(renderers, /closeGlobalChat\(classicPath\)/);
   assert.match(renderers, /status === 'confirmation_required'/);
   assert.match(renderers, /confirmGlobalChatAction\(result, token\)/);
@@ -152,7 +160,8 @@ test('authoritative results never execute model HTML and retain exact Classic es
   assert.match(renderers, /result\.renderer === 'app' \? 6 : 3/);
   assert.match(renderers, /items\.slice\(0, visibleCount\)/);
   assert.match(renderers, /Math\.min\(count \+ pageSize, items\.length\)/);
-  assert.match(renderers, />\s*Show more\s*<ChevronDownIcon/s);
+  assert.match(renderers, />\s*\{`\$\{t\('chat:global\.result\.showMore'\)\} `\}<ChevronDownIcon/);
+  assert.equal(message('chat:global.result.showMore'), 'Show more');
   assert.doesNotMatch(renderers, /Show \{items\.length - visible\.length\} more/);
   assert.match(renderers, /#apps\/\$\{segment\(slug\)\}/);
   assert.match(renderers, /#app\/\$\{segment\(slug\)\}\/dev\/issues\/\$\{segment\(issueNumber\)\}/);
@@ -169,17 +178,25 @@ test('authoritative results never execute model HTML and retain exact Classic es
   assert.match(renderers, /itemAction\([\s\S]*?'notification\.detail'/);
   assert.match(renderers, /itemAction\([\s\S]*?'leaderboard\.profile'/);
   assert.ok(renderers.includes("|| /\\/dev\\/chat$/.test(base)"));
-  assert.match(renderers, /Platform issues/);
-  assert.match(renderers, /GitHub issues/);
-  assert.match(renderers, /Recent app activity/);
-  assert.match(renderers, /Messages \(7d\)/);
-  assert.match(renderers, /Active time \(7d\)/);
-  assert.match(renderers, /No current proposals\./);
+  assert.match(renderers, /chat:global\.result\.platformIssues/);
+  assert.equal(message('chat:global.result.platformIssues'), 'Platform issues');
+  assert.match(renderers, /chat:global\.result\.githubIssues/);
+  assert.equal(message('chat:global.result.githubIssues'), 'GitHub issues');
+  assert.match(renderers, /chat:global\.result\.appActivity/);
+  assert.equal(message('chat:global.result.appActivity'), 'Recent app activity');
+  assert.match(renderers, /chat:global\.field\.messages7d/);
+  assert.equal(message('chat:global.field.messages7d'), 'Messages (7d)');
+  assert.match(renderers, /chat:global\.field\.activeTime7d/);
+  assert.equal(message('chat:global.field.activeTime7d'), 'Active time (7d)');
+  assert.match(renderers, /chat:global\.empty\.proposal/);
+  assert.equal(message('chat:global.empty.proposal'), 'No current proposals.');
   assert.match(renderers, /SettingInstruction/);
   assert.match(renderers, /LocalSettingEditor/);
   assert.match(renderers, /'settings\.local\.update'/);
   assert.match(renderers, /await runGlobalChatClientAction\(pending\)/);
-  assert.match(renderers, /selected === saved \? 'Saved' : 'Save'/);
+  assert.match(renderers, /selected === saved \? t\('chat:global\.setting\.saved'\) : t\('chat:global\.setting\.save'\)/);
+  assert.equal(message('chat:global.setting.saved'), 'Saved');
+  assert.equal(message('chat:global.setting.save'), 'Save');
   assert.match(renderers, /In the "\$\{title\}" settings group \(key: \$\{group\}\)/);
   assert.match(renderers, /Preserve every value I did not ask to change/);
   assert.doesNotMatch(renderers, /function safeFields/);
@@ -230,7 +247,8 @@ test('the browser transport uses authenticated POST SSE and same-origin client a
   assert.match(api, /method:\s*'DELETE'/);
   assert.match(api, /\/api\/global-chat\/threads\/\$\{encodeURIComponent\(threadId\)\}/);
   assert.match(store, /recoverInterruptedTurn/);
-  assert.match(store, /Reconnecting…/);
+  assert.match(store, /chat:global\.activity\.reconnecting/);
+  assert.equal(message('chat:global.activity.reconnecting'), 'Reconnecting…');
   assert.match(store, /executeDirectAction/);
   assert.match(store, /executeInlineAction/);
   assert.match(store, /api\.deleteThread\(threadId\)/);
@@ -243,13 +261,20 @@ test('Global Chat has a mobile/native layout and accessible composer controls', 
   assert.match(api, /native_android/);
   assert.match(api, /native_ios/);
   assert.match(api, /viewport: window\.matchMedia\('\(max-width: 767px\)'\)/);
-  assert.match(screen, /aria-label="Chat \(experimental\)"/);
-  assert.match(screen, /aria-label="Message Global Chat"/);
-  assert.match(screen, /aria-label=\{sending \? 'Stop response' : 'Send message'\}/);
+  assert.match(screen, /aria-label=\{t\('chat:global\.screen\.label'\)\}/);
+  assert.equal(message('chat:global.screen.label'), 'Chat (experimental)');
+  assert.match(screen, /aria-label=\{t\('chat:global\.composer\.label'\)\}/);
+  assert.equal(message('chat:global.composer.label'), 'Message Global Chat');
+  assert.match(screen, /aria-label=\{sending \? t\('chat:global\.composer\.stopLabel'\) : t\('chat:global\.composer\.sendLabel'\)\}/);
+  assert.equal(message('chat:global.composer.stopLabel'), 'Stop response');
+  assert.equal(message('chat:global.composer.sendLabel'), 'Send message');
   assert.match(screen, /className="global-chat-progress"/);
-  assert.match(screen, /<summary>Activity<\/summary>/);
-  assert.match(screen, /Model: \{progress\.model\}/);
-  assert.match(screen, /Reasoning: \{progress\.reasoningEffort\} effort/);
+  assert.match(screen, /<summary>\{t\('chat:global\.progress\.activity'\)\}<\/summary>/);
+  assert.equal(message('chat:global.progress.activity'), 'Activity');
+  assert.match(screen, /t\('chat:global\.progress\.model', \{ model: progress\.model \}\)/);
+  assert.equal(message('chat:global.progress.model', { model: 'gpt' }), 'Model: gpt');
+  assert.match(screen, /t\('chat:global\.progress\.reasoning', \{ effort: progress\.reasoningEffort \}\)/);
+  assert.equal(message('chat:global.progress.reasoning', { effort: 'high' }), 'Reasoning: high effort');
   assert.match(store, /event\.type === 'turn\.progress'/);
   assert.match(store, /event\.type === 'tool\.completed'/);
   // BUG e: on a phone #global-chat-screen keeps the platform tab bar up, and
@@ -300,8 +325,10 @@ test('rendered rows disclose locally and settings can be edited and saved in pla
   assert.match(renderers, /<DevelopmentAISettingsEditor \/>/);
   assert.match(developmentSettings, /\/api\/me\/coding-agent/);
   assert.match(developmentSettings, /method: 'PATCH'/);
-  assert.match(developmentSettings, /Save development AI/);
-  assert.match(developmentSettings, /does not change the Global Chat model/);
+  assert.match(developmentSettings, /chat:global\.devSettings\.save/);
+  assert.equal(message('chat:global.devSettings.save'), 'Save development AI');
+  assert.match(developmentSettings, /chat:global\.devSettings\.note/);
+  assert.match(message('chat:global.devSettings.note'), /does not change the Global Chat model/);
   assert.match(css, /\.global-chat-item-toggle/);
   assert.match(css, /\.global-chat-result-nested/);
 });

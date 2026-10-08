@@ -1,3 +1,5 @@
+import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { waitingWords } from '../messages/approval-words';
 import type { BotRequestCard, BotRequestChip, BotRequestState } from './transcript-store';
 
@@ -22,7 +24,8 @@ import type { BotRequestCard, BotRequestChip, BotRequestState } from './transcri
  * this": what was taken from it and how long it usually takes, or the
  * question it asks first. It is read from their own requests, never from the
  * room's messages, so nobody else's transcript can hold it. Just after a
- * request is filed it also says that the chip is everybody's (SHARED_LINE).
+ * request is filed it also says that the chip is everybody's
+ * (chat:group.botCard.shared).
  *
  * The card follows its request (`state`, read from the platform's records
  * each time the card is: homeroom-bot-chat.js cardsOf): building, built and
@@ -47,34 +50,34 @@ const CHIP_CLASS = 'inline-flex max-w-full items-center gap-1 rounded-full bg-[c
  * Live names Homeroom bot: the room learns from it that the bot has the
  * message. Each fits on one line under a message on a 390px phone.
  */
+// `words` and `said` are message ids (frontend/locales/en/chat.json), read
+// when the chip renders.
 export const CHIP_WORDS: Readonly<Record<Exclude<BotRequestChip['status'], 'ready'>, { glyph: string; words: string; said?: string }>> = Object.freeze({
-  reading: { glyph: '👀', words: 'Homeroom bot is looking at this' },
-  building: { glyph: '🔨', words: 'Homeroom bot is building this' },
-  fixing: { glyph: '🔧', words: 'Homeroom bot is fixing this' },
+  reading: { glyph: '👀', words: 'chat:group.botChip.reading' },
+  building: { glyph: '🔨', words: 'chat:group.botChip.building' },
+  fixing: { glyph: '🔧', words: 'chat:group.botChip.fixing' },
   waiting_first_version: {
     glyph: '⏳',
-    words: 'Homeroom bot has this',
-    said: 'Homeroom bot has this, and starts on it once the first version is live',
+    words: 'chat:group.botChip.hasThis',
+    said: 'chat:group.botChip.hasThisSaid',
   },
-  live: { glyph: '✅', words: 'Live', said: 'Homeroom bot built this, and it’s live' },
+  live: { glyph: '✅', words: 'chat:group.botChip.live', said: 'chat:group.botChip.liveSaid' },
 });
 
 /** Pure: what a screen reader hears for a chip (the Try it button says Try it). */
 export function chipLabel(status: Exclude<BotRequestChip['status'], 'ready'>): string {
   const { words, said } = CHIP_WORDS[status];
-  return said || words;
+  return translate(said || words);
 }
-
-/** What a request held for its project's first version waits for (the DM card's words). */
-export const FIRST_VERSION_WAIT_LINE = 'Waiting for the first version to go live. I’ll start on this as soon as it does.';
 
 export function BotStatusChip({ chip, mine = false, onTry, onProgress }: {
   chip: BotRequestChip;
   mine?: boolean;
   onTry?: (sessionId: number) => void;
-  /** The requester's own chip opens their progress card in the bot's chat. */
+  /** The requester's own chip opens their chat with the bot, where the progress is. */
   onProgress?: () => void;
 }) {
+  const t = useMessages('chat');
   if (chip.status === 'ready') {
     return (
       <button
@@ -85,7 +88,7 @@ export function BotStatusChip({ chip, mine = false, onTry, onProgress }: {
         onClick={() => { if (chip.sessionId) onTry?.(chip.sessionId); }}
       >
         <span aria-hidden="true">▶</span>
-        <span>Try it</span>
+        <span>{t('chat:group.botChip.tryIt')}</span>
       </button>
     );
   }
@@ -94,31 +97,26 @@ export function BotStatusChip({ chip, mine = false, onTry, onProgress }: {
   return mine ? (
     <button type="button" className={CHIP_CLASS} data-bot-request={chip.status} aria-label={label} onClick={() => onProgress?.()}>
       <span aria-hidden="true">{glyph}</span>
-      <span>{words}</span>
+      <span>{t(words)}</span>
     </button>
   ) : (
     <span className={CHIP_CLASS} data-bot-request={chip.status} aria-label={label}>
       <span aria-hidden="true">{glyph}</span>
-      <span>{words}</span>
+      <span>{t(words)}</span>
     </span>
   );
 }
-
-/** WP-C: under somebody's first request on a project. */
-export const STAYS_LINE = 'It stays in the project’s requests with your name on it.';
-
-/**
- * Under a request the bot has just taken (sharedNow): the card is theirs
- * alone, but the chip on their message is the room's. 5 October 2026: an
- * idea suggested with Suggest it read as if it had stayed private.
- */
-export const SHARED_LINE = 'Everyone here can see Homeroom bot has it.';
 
 // The stages at which a filed request's card still says "Got it": the bot
 // has it and has not started building. Its chip names the bot for the room.
 const JUST_FILED = new Set(['waiting_first_version', 'reading', 'waiting']);
 
-/** Pure: whether a card says that the room can see the bot has it (SHARED_LINE). */
+/**
+ * Pure: whether a card says that the room can see the bot has it
+ * (chat:group.botCard.shared). The card is theirs alone, but the chip on
+ * their message is the room's. 5 October 2026: an idea suggested with
+ * Suggest it read as if it had stayed private.
+ */
 export function sharedNow(card: BotRequestCard): boolean {
   return card.kind === 'filed' && !!card.issueNumber && (!card.state?.stage || JUST_FILED.has(card.state.stage));
 }
@@ -131,81 +129,118 @@ export function sharedNow(card: BotRequestCard): boolean {
  * them will do, and nobody named once it has the approvals it needs.
  */
 export function approvalWords(state?: BotRequestState): string {
-  if (state?.missing === 0) return 'It has the approvals it needs.';
+  if (state?.missing === 0) return translate('chat:group.botCard.approval.has');
   const words = waitingWords({
     you: !!state?.youApprove, names: state?.waitingOn || [], more: state?.more, missing: state?.missing, needed: state?.needed,
   });
-  return words ? `${words}.` : 'Waiting for approval.';
+  return words ? translate('chat:group.botCard.approval.waitingOn', { waiting: words }) : translate('chat:group.botCard.approval.waiting');
 }
 
-/** Pure: a request the bot builds, where it stands. */
-function filedWords(card: BotRequestCard, stays: string): string {
-  const title = card.title || 'your request';
+/**
+ * Pure: a request the bot builds, where it stands. Every sentence is a whole
+ * message; one that names the request has a second wording for a request
+ * with no title.
+ */
+function filedWords(card: BotRequestCard): string {
+  const title = card.title;
+  const say = (titled: string, untitled: string, values: Record<string, string | number> = {}) => (
+    title ? translate(titled, { ...values, title }) : translate(untitled, values)
+  );
   switch (card.state?.stage) {
-    case 'waiting_first_version': return `Got it: ${title}. ${FIRST_VERSION_WAIT_LINE}${stays}`;
-    case 'waiting': return `Got it: ${title}. Waiting for a free builder.${stays}`;
-    case 'building': return `Building it now: ${title}.${stays}`;
-    case 'question': return 'I have a question about this. It’s in our chat.';
-    case 'checking': return `Built: ${title}. Testing it now.`;
-    case 'proposed': return `Built: ${title}. ${approvalWords(card.state)}`;
-    case 'approved': return `Approved: ${title}. It’s going live.`;
-    case 'live': return `Live: ${title}.`;
-    case 'closed': return `Closed: ${title}. It won’t go live.`;
-    case 'person': return 'I left this for the group to decide.';
-    case 'stopped': return 'I couldn’t finish this. Our chat says why.';
+    // What a request held for its project's first version waits for (the DM card's words).
+    case 'waiting_first_version': return say('chat:group.botCard.filed.firstVersionWait', 'chat:group.botCard.filed.firstVersionWaitUntitled');
+    case 'waiting': return say('chat:group.botCard.filed.waitingBuilder', 'chat:group.botCard.filed.waitingBuilderUntitled');
+    case 'building': return say('chat:group.botCard.filed.building', 'chat:group.botCard.filed.buildingUntitled');
+    case 'question': return translate('chat:group.botCard.filed.question');
+    case 'checking': return say('chat:group.botCard.filed.checking', 'chat:group.botCard.filed.checkingUntitled');
+    case 'proposed': return say('chat:group.botCard.filed.proposed', 'chat:group.botCard.filed.proposedUntitled', { approval: approvalWords(card.state) });
+    case 'approved': return say('chat:group.botCard.filed.approved', 'chat:group.botCard.filed.approvedUntitled');
+    case 'live': return say('chat:group.botCard.filed.live', 'chat:group.botCard.filed.liveUntitled');
+    case 'closed': return say('chat:group.botCard.filed.closed', 'chat:group.botCard.filed.closedUntitled');
+    case 'person': return translate('chat:group.botCard.filed.person');
+    case 'stopped': return translate('chat:group.botCard.filed.stopped');
     default:
-      return `Got it: ${title}.${card.typicalMinutes ? ` Usually about ${card.typicalMinutes} minutes.` : ''}${stays}`;
+      return card.typicalMinutes
+        ? say('chat:group.botCard.filed.gotItMinutes', 'chat:group.botCard.filed.gotItMinutesUntitled', { count: Number(card.typicalMinutes) })
+        : say('chat:group.botCard.filed.gotIt', 'chat:group.botCard.filed.gotItUntitled');
   }
 }
 
-/** Pure: the change a fix went to: "the first version", or its name. */
-function changeName(card: BotRequestCard): string {
-  if (card.firstVersion) return 'the first version';
-  return card.title ? `“${card.title}”` : 'that change';
+// Every stage filedWords has a sentence of its own for; any other stage
+// reads as a request just taken.
+const FILED_STAGES = new Set(['waiting_first_version', 'waiting', 'building', 'question', 'checking', 'proposed', 'approved', 'live', 'closed', 'person', 'stopped']);
+
+// The stages of a filed request whose card also says, on a person's first
+// request (WP-C), that it stays in the project's requests under their name.
+const STAYS_STAGES = new Set(['waiting_first_version', 'waiting', 'building']);
+
+/**
+ * A fix sent to one of the bot's changes, where it stands: for each stage,
+ * the message that names the change as the first version, by its title, or
+ * (with no title) as "that change".
+ */
+const REVISE_WORDS: Readonly<Record<string, readonly [firstVersion: string, titled: string, untitled: string]>> = Object.freeze({
+  checking: ['chat:group.botCard.revise.checking.firstVersion', 'chat:group.botCard.revise.checking.titled', 'chat:group.botCard.revise.checking.untitled'],
+  proposed: ['chat:group.botCard.revise.proposed.firstVersion', 'chat:group.botCard.revise.proposed.titled', 'chat:group.botCard.revise.proposed.untitled'],
+  asked: ['chat:group.botCard.revise.asked.firstVersion', 'chat:group.botCard.revise.asked.titled', 'chat:group.botCard.revise.asked.untitled'],
+  answered: ['chat:group.botCard.revise.answered.firstVersion', 'chat:group.botCard.revise.answered.titled', 'chat:group.botCard.revise.answered.untitled'],
+  person: ['chat:group.botCard.revise.person.firstVersion', 'chat:group.botCard.revise.person.titled', 'chat:group.botCard.revise.person.untitled'],
+  approved: ['chat:group.botCard.revise.approved.firstVersion', 'chat:group.botCard.revise.approved.titled', 'chat:group.botCard.revise.approved.untitled'],
+  live: ['chat:group.botCard.revise.live.firstVersion', 'chat:group.botCard.revise.live.titled', 'chat:group.botCard.revise.live.untitled'],
+  closed: ['chat:group.botCard.revise.closed.firstVersion', 'chat:group.botCard.revise.closed.titled', 'chat:group.botCard.revise.closed.untitled'],
+  stopped: ['chat:group.botCard.revise.stopped.firstVersion', 'chat:group.botCard.revise.stopped.titled', 'chat:group.botCard.revise.stopped.untitled'],
+  taken: ['chat:group.botCard.revise.taken.firstVersion', 'chat:group.botCard.revise.taken.titled', 'chat:group.botCard.revise.taken.untitled'],
+  refused: ['chat:group.botCard.revise.refused.firstVersion', 'chat:group.botCard.revise.refused.titled', 'chat:group.botCard.revise.refused.untitled'],
+});
+
+/** Pure: one of REVISE_WORDS' sentences, about the change this fix went to. */
+function reviseSentence(key: string, card: BotRequestCard, values: Record<string, string> = {}): string {
+  const [firstVersion, titled, untitled] = REVISE_WORDS[key];
+  if (card.firstVersion) return translate(firstVersion, values);
+  return card.title ? translate(titled, { ...values, title: card.title }) : translate(untitled, values);
 }
 
 /** Pure: a fix sent to one of the bot's changes, where it stands. */
 function reviseWords(card: BotRequestCard): string {
-  const it = changeName(card);
-  const It = it.charAt(0).toUpperCase() + it.slice(1);
-  switch (card.state?.stage) {
-    case 'checking': return `Updated ${it}. Testing it now.`;
-    case 'proposed': return `Updated ${it}. ${approvalWords(card.state)}`;
-    case 'asked': return `I have a question about your fix. It’s in the discussion of ${it}.`;
-    case 'answered': return `I answered you in the discussion of ${it}.`;
-    case 'person': return `I left your fix to ${it} for the group to decide.`;
-    case 'approved': return `${It} was approved. It’s going live.`;
-    case 'live': return `${It} is live.`;
-    case 'closed': return `${It} was closed. It won’t go live.`;
-    case 'stopped': return `I couldn’t finish fixing ${it}.`;
-    default: return `Got it. I’ll fix that in ${it} before it goes live.`;
-  }
+  const stage: string | undefined = card.state?.stage;
+  if (stage === 'proposed') return reviseSentence('proposed', card, { approval: approvalWords(card.state) });
+  if (stage && stage !== 'taken' && stage !== 'refused' && Object.hasOwn(REVISE_WORDS, stage)) return reviseSentence(stage, card);
+  return reviseSentence('taken', card);
 }
 
 /** Pure: what a card says. */
 export function cardWords(card: BotRequestCard): string {
-  const stays = card.first ? ` ${STAYS_LINE}` : '';
+  // WP-C: under somebody's first request on a project, the card adds that it
+  // stays in the project's requests with their name on it.
+  const withStays = (words: string) => (card.first ? translate('chat:group.botCard.withStays', { words }) : words);
   switch (card.kind) {
-    case 'filed':
-      return filedWords(card, stays);
+    case 'filed': {
+      const stage = card.state?.stage;
+      const words = filedWords(card);
+      return !stage || STAYS_STAGES.has(stage) || !FILED_STAGES.has(stage) ? withStays(words) : words;
+    }
     case 'revise':
       return reviseWords(card);
     case 'revise_refused':
-      return `I couldn’t change ${changeName(card)} just now. You can say what you want in its discussion.`;
+      return reviseSentence('refused', card);
     case 'group':
-      return `Filed as a request for the group: ${card.title || 'your request'}.${stays}`;
+      return withStays(card.title
+        ? translate('chat:group.botCard.group', { title: card.title })
+        : translate('chat:group.botCard.groupUntitled'));
     case 'offer':
       return card.title
-        ? `Suggest this to the group? It goes in the project’s requests as “${card.title}”, in your name.`
-        : 'Suggest this to the group? It goes in the project’s requests, in your name.';
+        ? translate('chat:group.botCard.offer', { title: card.title })
+        : translate('chat:group.botCard.offerUntitled');
     case 'unsure':
-      return `Want me to file this as a request?${card.title ? ` ${card.title}` : ''}`;
+      return card.title
+        ? translate('chat:group.botCard.unsureTitled', { title: card.title })
+        : translate('chat:group.botCard.unsure');
     case 'question':
-      return 'I answer questions in our chat.';
+      return translate('chat:group.botCard.question');
     case 'busy':
-      return 'You’ve asked me for a lot in the last hour. Try again in a little while.';
+      return translate('chat:group.botCard.busy');
     default:
-      return 'I couldn’t file it just now. Try again in a minute.';
+      return translate('chat:group.botCard.failed');
   }
 }
 
@@ -225,50 +260,51 @@ export interface BotRequestCardActions {
 const GOING = new Set(['waiting_first_version', 'reading', 'waiting', 'building', 'checking']);
 
 export function BotRequestCardView({ card, actions = {} }: { card: BotRequestCard; actions?: BotRequestCardActions }) {
+  const t = useMessages('chat');
   const buttons: Array<{ key: string; label: string; primary?: boolean; act?: () => void }> = [];
   const stage = card.state?.stage;
   const change = card.state?.sessionId || card.sessionId || null;
-  const tryIt = { key: 'try', label: 'Try it', primary: true, act: () => { if (change) actions.onTry?.(change); } };
-  const seeChange = { key: 'change', label: 'See change', act: () => { if (change) actions.onChange?.(change); } };
+  const tryIt = { key: 'try', label: t('chat:group.botCard.action.tryIt'), primary: true, act: () => { if (change) actions.onTry?.(change); } };
+  const seeChange = { key: 'change', label: t('chat:group.botCard.action.seeChange'), act: () => { if (change) actions.onChange?.(change); } };
   if (card.kind === 'filed') {
     if (stage === 'proposed' && change) buttons.push(tryIt);
-    else if (stage === 'question' || stage === 'stopped') buttons.push({ key: 'chat', label: 'Open chat', act: actions.onOpenChat });
+    else if (stage === 'question' || stage === 'stopped') buttons.push({ key: 'chat', label: t('chat:group.botCard.action.openChat'), act: actions.onOpenChat });
     else if ((stage === 'closed' || stage === 'person') && card.issueNumber) {
-      buttons.push({ key: 'request', label: 'See request', act: () => actions.onRequest?.(card.issueNumber as number) });
-    } else if (!stage || GOING.has(stage)) buttons.push({ key: 'progress', label: 'See progress', act: actions.onProgress });
+      buttons.push({ key: 'request', label: t('chat:group.botCard.action.seeRequest'), act: () => actions.onRequest?.(card.issueNumber as number) });
+    } else if (!stage || GOING.has(stage)) buttons.push({ key: 'progress', label: t('chat:group.botCard.action.seeProgress'), act: actions.onProgress });
   }
   if ((card.kind === 'revise' || card.kind === 'revise_refused') && change && stage !== 'live' && stage !== 'approved') {
     if (stage === 'proposed') buttons.push(tryIt);
     buttons.push(seeChange);
   }
-  if (card.kind === 'group' && card.issueNumber) buttons.push({ key: 'request', label: 'See request', act: () => actions.onRequest?.(card.issueNumber as number) });
+  if (card.kind === 'group' && card.issueNumber) buttons.push({ key: 'request', label: t('chat:group.botCard.action.seeRequest'), act: () => actions.onRequest?.(card.issueNumber as number) });
   if (card.kind === 'unsure') {
-    buttons.push({ key: 'file', label: 'File it', primary: true, act: actions.onFile });
-    buttons.push({ key: 'not-now', label: 'Not now', act: actions.onDismiss });
+    buttons.push({ key: 'file', label: t('chat:group.botCard.action.fileIt'), primary: true, act: actions.onFile });
+    buttons.push({ key: 'not-now', label: t('chat:group.botCard.action.notNow'), act: actions.onDismiss });
   }
   if (card.kind === 'offer') {
-    buttons.push({ key: 'file', label: 'Suggest it', primary: true, act: actions.onFile });
-    buttons.push({ key: 'not-now', label: 'Not now', act: actions.onDismiss });
+    buttons.push({ key: 'file', label: t('chat:group.botCard.action.suggestIt'), primary: true, act: actions.onFile });
+    buttons.push({ key: 'not-now', label: t('chat:group.botCard.action.notNow'), act: actions.onDismiss });
   }
-  if (card.kind === 'question') buttons.push({ key: 'chat', label: 'Open chat', act: actions.onOpenChat });
-  if (card.kind === 'failed') buttons.push({ key: 'again', label: 'Try again', act: actions.onFile });
+  if (card.kind === 'question') buttons.push({ key: 'chat', label: t('chat:group.botCard.action.openChat'), act: actions.onOpenChat });
+  if (card.kind === 'failed') buttons.push({ key: 'again', label: t('chat:group.botCard.action.tryAgain'), act: actions.onFile });
   return (
     <div
       className="mt-1.5 flex max-w-[480px] flex-col gap-2 rounded-2xl bg-[color:var(--messages-surface)] px-3 py-2.5"
       role="group"
-      aria-label="Homeroom bot, only you can see this"
+      aria-label={t('chat:group.botCard.label')}
       data-bot-request-card={card.kind}
     >
       <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
         <img className="h-4 w-4 rounded" src="/brand/homeroom-mark.png" alt="" aria-hidden="true" />
-        <span>Only you can see this</span>
+        <span>{t('chat:group.botCard.onlyYou')}</span>
       </div>
       <p className="text-[0.9375rem] leading-[1.35] text-zinc-900 dark:text-zinc-100">{cardWords(card)}</p>
       {sharedNow(card) ? (
-        <p className="text-[0.8125rem] leading-snug text-zinc-500 dark:text-zinc-400" data-bot-request-shared="">{SHARED_LINE}</p>
+        <p className="text-[0.8125rem] leading-snug text-zinc-500 dark:text-zinc-400" data-bot-request-shared="">{t('chat:group.botCard.shared')}</p>
       ) : null}
       {buttons.length ? (
-        <div className="messages-bot-answers" role="group" aria-label="Choices">
+        <div className="messages-bot-answers" role="group" aria-label={t('chat:group.botCard.choices')}>
           {buttons.map((b) => (
             <button
               key={b.key}

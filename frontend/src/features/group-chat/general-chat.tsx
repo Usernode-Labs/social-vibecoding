@@ -35,6 +35,7 @@
 import { useMemo, useRef, useState, type RefObject } from 'react';
 
 import { NewMessagesBanner, TranscriptOverlay } from '@/components/ui/chat';
+import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { JumpToLatest } from '../messages/jump-to-latest';
 import {
@@ -119,6 +120,7 @@ export interface GeneralChatProps {
 }
 
 export function GeneralChat({ readOnly, notice, maxLength }: GeneralChatProps) {
+  const t = useMessages('chat');
   const messages = useRef<HTMLDivElement>(null);
   return (
     <div className="flex flex-col h-full min-h-0 dc-lift dc-lift-session">
@@ -146,7 +148,7 @@ export function GeneralChat({ readOnly, notice, maxLength }: GeneralChatProps) {
           <div className={`shrink-0 px-3 pt-1 pb-2 ${SAFE_BAR}`}>
             {readOnly ? (
               <div className="px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400 text-center" data-gc-readonly-notice="">
-                {notice || 'You\u2019re viewing this app\u2019s dev space read-only. Only collaborators can post.'}
+                {notice || t('chat:group.readOnly.devSpace')}
               </div>
             ) : (
               <>
@@ -158,7 +160,7 @@ export function GeneralChat({ readOnly, notice, maxLength }: GeneralChatProps) {
                 <ComposerForm
                   scope="general"
                   fill
-                  placeholder="Type a message..."
+                  placeholder={t('chat:group.composer.placeholder')}
                   maxLength={maxLength}
                 />
               </>
@@ -170,7 +172,7 @@ export function GeneralChat({ readOnly, notice, maxLength }: GeneralChatProps) {
           className="gc-spec-resizer"
           role="separator"
           aria-orientation="vertical"
-          aria-label="Resize spec panel"
+          aria-label={t('chat:group.specPanel.resize')}
         />
         <div id="gc-spec-side-panel" className="gc-spec-side-panel" />
       </div>

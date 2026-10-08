@@ -9,6 +9,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { renderComponent } = require('./lib/render-tsx');
 
 const root = path.join(__dirname, '..');
 const css = fs.readFileSync(path.join(root, 'public/css/app.css'), 'utf8');
@@ -54,12 +55,26 @@ function labelFor(replyDraft) {
   gc._publishComposer = (scope, patch) => published.push(patch);
   gc.replyDraft = replyDraft;
   gc._renderQuotePreview();
-  return published[0].quote && published[0].quote.label;
+  return published[0].quote;
+}
+
+// What the strip says for a staged reply: the composer's own render of it.
+function lineFor(replyDraft) {
+  const html = renderComponent('frontend/src/features/group-chat/composer.tsx', 'ComposerSlotsView', {
+    scope: 'general',
+    slot: { quote: labelFor(replyDraft), attachError: null, attachments: [], status: '' },
+  });
+  return (/<span class="gc-reply-preview-label">([^<]*)<\/span>/.exec(html) || [])[1];
 }
 
 test('the label names what the reply is to', () => {
-  assert.equal(labelFor({ source: 'message', author: 'alice', snippet: 'hi' }), '@alice');
-  assert.equal(labelFor({ source: 'pr', prNumber: 12, snippet: 'x' }), 'PR #12');
-  assert.equal(labelFor({ source: 'event', author: null, snippet: 'Proposed PR #12' }), 'a platform message');
-  assert.equal(labelFor({ source: 'message', author: null, snippet: 'gone' }), 'a message');
+  assert.equal(labelFor({ source: 'message', author: 'alice', snippet: 'hi' }).label, '@alice');
+  assert.equal(labelFor({ source: 'pr', prNumber: 12, snippet: 'x' }).label, 'PR #12');
+  assert.equal(lineFor({ source: 'message', author: 'alice', snippet: 'hi' }), '↩ Replying to @alice');
+  assert.equal(lineFor({ source: 'pr', prNumber: 12, snippet: 'x' }), '↩ Replying to PR #12');
+  // A row with nobody to name has a whole sentence of its own in the catalog.
+  assert.equal(labelFor({ source: 'event', author: null, snippet: 'Proposed PR #12' }).unnamed, 'event');
+  assert.equal(labelFor({ source: 'message', author: null, snippet: 'gone' }).unnamed, 'message');
+  assert.equal(lineFor({ source: 'event', author: null, snippet: 'Proposed PR #12' }), '↩ Replying to a platform message');
+  assert.equal(lineFor({ source: 'message', author: null, snippet: 'gone' }), '↩ Replying to a message');
 });

@@ -34,6 +34,7 @@ const panelTsx = read('frontend', 'src', 'features', 'group-chat', 'spec-panel.t
 // #1078: the dev-chat viewer's markup moved the same way the panel's did.
 const viewerTsx = read('frontend', 'src', 'features', 'dev-chat', 'spec-viewer.tsx');
 const { renderComponent } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 const appCss = read('public', 'css', 'app.css');
 const sessionsSrc = read('src', 'routes', 'sessions.js');
 
@@ -192,7 +193,8 @@ test('the panel copy button is gated on canCopy and a non-error body', () => {
 
 test('the reload-restore skeleton is not copyable', () => {
   const src = methodSource(groupChatSrc, '_restoreSpecPanelIfSaved', 'group-chat.js');
-  assert.ok(/content: 'Loading…',[\s\S]{0,240}canCopy: false/.test(src),
+  assert.equal(message('chat:group.spec.loading'), 'Loading…');
+  assert.ok(/content: PlatformI18n\.t\('chat:group\.spec\.loading'\),[\s\S]{0,240}canCopy: false/.test(src),
     "the 'Loading…' skeleton render must pass canCopy: false");
 });
 
