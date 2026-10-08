@@ -292,6 +292,94 @@ test('flush: concurrent callers share one pass, so nothing is filed twice', asyn
   assert.equal((await FQ.pending()).length, 0);
 });
 
+// #3994: "Try again" in the dialog. A message stuck behind the backoff (or
+// behind a probe that still says offline) is sent on the press, not ten
+// minutes later, and a press that fails again keeps the words.
+test('retryNow: sends a message that is waiting out its backoff, straight away', async () => {
+  const FQ = load();
+  await FQ.enqueue(entry({ description: 'stuck while offline' }));
+  stubFetch({ throws: true });
+  await FQ.flush('reconnect');
+  const [backedOff] = await FQ.pending();
+  assert.ok(backedOff.nextAttemptAt > Date.now(), 'the record is waiting out its backoff');
+  assert.equal((await FQ.flush('timer')).sent, 0, 'an ordinary pass leaves it alone');
+
+  const calls = stubFetch({ status: 200 });
+  const res = await FQ.retryNow();
+  assert.equal(res.sent, 1);
+  assert.equal(res.reason, 'manual');
+  assert.equal(calls.length, 1);
+  assert.equal(JSON.parse(calls[0].body).description, 'stuck while offline');
+  assert.deepEqual(await FQ.pending(), []);
+});
+
+test('retryNow: a press that fails again keeps the message and its words', async () => {
+  const FQ = load();
+  await FQ.enqueue(entry({ description: 'still stuck' }));
+  stubFetch({ throws: true });
+  await FQ.flush();
+  const res = await FQ.retryNow();
+  assert.equal(res.sent, 0);
+  assert.equal(res.remaining, 1);
+  const [rec] = await FQ.pending();
+  assert.equal(rec.payload.description, 'still stuck');
+  assert.equal(rec.status, 'pending');
+  assert.ok(rec.nextAttemptAt > Date.now(), 'it goes back on the schedule');
+});
+
+test('retryNow: a record another tab is sending is left to that tab', async () => {
+  const FQ = load();
+  const rec = await FQ.enqueue(entry());
+  // The in-memory adapter keeps the very object enqueue returned, so this is
+  // the stored record: claimed the way a flush in another tab claims it.
+  rec.sendingSince = Date.now();
+  rec.nextAttemptAt = Date.now() + 60_000;
+  const calls = stubFetch({ status: 200 });
+  const res = await FQ.retryNow();
+  assert.equal(calls.length, 0, 'a live claim is never sent twice');
+  assert.equal(res.sent, 0);
+  assert.equal((await FQ.pending()).length, 1);
+});
+
+test('retryNow: a pass that starts during the press does not swallow it', async () => {
+  const FQ = load();
+  await FQ.enqueue(entry({ description: 'raced' }));
+  stubFetch({ throws: true });
+  await FQ.flush();
+  const calls = stubFetch({ status: 200 });
+  // The timer fires in the same tick as the press, after retryNow's first
+  // look at the slot: it picks no record (still backed off) and must not be
+  // the pass the press settles for.
+  const press = FQ.retryNow();
+  const timer = FQ.flush('timer');
+  const res = await press;
+  await timer;
+  assert.equal(calls.length, 1, 'the press sent it');
+  assert.equal(res.reason, 'manual');
+  assert.deepEqual(await FQ.pending(), []);
+});
+
+test('putBack: a record taken for the composer can be returned, words intact', async () => {
+  const FQ = load();
+  await FQ.enqueue(entry({ description: 'refused words' }));
+  stubFetch({ status: 400, body: { error: 'nope' } });
+  await FQ.flush();
+  const taken = await FQ.takeFailed();
+  await FQ.putBack(taken);
+  const again = await FQ.takeFailed();
+  assert.equal(again.payload.description, 'refused words');
+});
+
+test('retryNow: a screenshot link never sends', async () => {
+  const FQ = load();
+  FQ.seedDisplayOnly([{ payload: { description: 'a saved message', target: 'platform' } }]);
+  const calls = stubFetch({ status: 200 });
+  const res = await FQ.retryNow();
+  assert.equal(res.sent, 0);
+  assert.equal(calls.length, 0);
+  assert.equal((await FQ.pending()).length, 1);
+});
+
 test('flush: a screenshot is uploaded first and its id attached to the submit', async () => {
   const FQ = load();
   // The in-memory adapter keeps blobs, like IndexedDB does.

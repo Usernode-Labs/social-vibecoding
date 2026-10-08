@@ -121,7 +121,9 @@ test('a permanently-refused message is handed back with the words intact', () =>
   assert.match(openModal, /feedbackText\.value = p\.description \|\| '';/);
   assert.match(openModal, /This message couldn't be sent/);
   // Live text always wins — a returned draft must not overwrite typing.
-  assert.match(openModal, /if \(feedbackText\.readOnly \|\| feedbackText\.value\.trim\(\)\) return;/);
+  assert.match(openModal, /if \(modal\.classList\.contains\('hidden'\) \|\| feedbackText\.readOnly \|\| feedbackText\.value\.trim\(\)\) \{/);
+  // #3994: and the record it took goes back rather than being dropped.
+  assert.match(openModal, /FeedbackQueue\.putBack\?\.\(failed\)/);
 });
 
 test('a captured screenshot survives a failed upload', () => {
@@ -140,6 +142,34 @@ test('a captured screenshot survives a failed upload', () => {
   // online submit so the promise on screen stays true.
   assert.match(feedbackJs, /for \(const shot of screenshots\.slice\(\)\) discardScreenshot\(shot\);/);
   assert.match(submitFeedback, /if \(shot\.id \|\| !shot\.blob \|\| isOfflineNow\(\)\) continue;/);
+});
+
+// #3994: "my submission got stuck while offline and there was no way to push
+// it again". A waiting message has a Try again that sends it now, and the
+// words are never dropped on the way.
+test('a message waiting in the outbox can be sent again on a press', () => {
+  const feedbackTsx = read('frontend', 'src', 'features', 'dialogs', 'feedback.tsx');
+  // Rendered hidden (the controller shows it), right under the status line.
+  assert.match(feedbackTsx,
+    /id="feedback-status"[^>]*>\s*<\/div>[\s\S]{0,400}?<button\s+id="feedback-queue-retry"\s+type="button"\s+className="hidden /);
+  assert.match(indexHtml, /id="feedback-queue-retry"/);
+  // Shown while anything is waiting, and not under a just-saved message.
+  const paint = feedbackJs.slice(feedbackJs.indexOf('const paintQueueRetry = () => {'));
+  assert.match(paint.slice(0, 400), /queuePendingCount > 0 && !feedbackText\.readOnly/);
+  assert.match(feedbackJs, /const paintQueueDot = \(n\) => \{[\s\S]{0,120}?paintQueueRetry\(\);/);
+  // The press goes through the outbox, never around it.
+  const retry = feedbackJs.slice(feedbackJs.indexOf('const retryQueuedNow = async () => {'));
+  assert.match(retry.slice(0, 800), /window\.FeedbackQueue\.retryNow\(\)/);
+  assert.match(feedbackJs, /queueRetryBtn\?\.addEventListener\('click'/);
+  // A refused message comes back into an empty box only.
+  assert.match(retry, /res\.failed > 0 && !feedbackText\.readOnly && !feedbackText\.value\.trim\(\)/);
+  // ...and typing that started while the store was read wins: the record goes back.
+  assert.match(retry, /FeedbackQueue\.putBack\?\.\(failed\)/);
+  // The declared check sees the button in the pinned queued state.
+  assert.ok(dapp.tests.some((c) => c.path === '/?shot=feedback-queued' && /#feedback-queue-retry:not\(\.hidden\)/.test(c.expectSelector)));
+  // And the online line no longer promises a send that may be minutes away.
+  assert.doesNotMatch(feedbackJs, /saved on this device, sending now/);
+  assert.match(queueJs, /async retryNow\(\) \{/);
 });
 
 test('the outbox is armed once, and flushed when a session exists', () => {
