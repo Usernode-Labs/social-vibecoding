@@ -284,6 +284,18 @@ test('publishBatched sends the first event at once and batches the rest of its w
   for (const call of pool.calls) assert.ok(Buffer.byteLength(call.params[1], 'utf8') < 8000);
 });
 
+test('a session that goes quiet after a timed flush leaves no batch queue behind', async () => {
+  const pool = fakePool();
+  bus.start({ pool, connectionString: null, onMessage: () => {} });
+  const key = `session:quiet-${Math.random()}`;
+  for (let i = 0; i < 3; i++) bus.publishBatched(key, 'session', { sessionId: 5 }, { n: i });
+  await new Promise((r) => setTimeout(r, bus.BATCH_WINDOW_MS + 50));
+  assert.equal(pool.calls.length, 2, 'the first at once, the other two on the timer');
+  assert.ok(bus._batches.has(key), 'kept for one more window after the timed flush');
+  await new Promise((r) => setTimeout(r, bus.BATCH_WINDOW_MS + 50));
+  assert.equal(bus._batches.has(key), false, 'forgotten once a window passes with nothing new');
+});
+
 test('a batch never outgrows the NOTIFY budget, and an oversize item still nudges', () => {
   const pool = fakePool();
   bus.start({ pool, connectionString: null, onMessage: () => {} });

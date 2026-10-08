@@ -243,6 +243,21 @@ function _flushBatch(key) {
   _sendRaw(items.length === 1 ? items[0].k : 'batch', body);
 }
 
+// After a flush, keep the queue (with lastFlushAt) for one more window, so the
+// next event waits for it; send what arrived meanwhile and look again, and
+// forget the queue once a window passes with nothing new. Without the re-arm,
+// a session that went quiet right after a timed flush kept its entry forever.
+function _armTrailing(key, q) {
+  q.timer = setTimeout(() => {
+    q.timer = null;
+    if (_batches.get(key) !== q) return;
+    if (!q.items.length) { _batches.delete(key); return; }
+    _flushBatch(key);
+    _armTrailing(key, q);
+  }, BATCH_WINDOW_MS);
+  if (typeof q.timer.unref === 'function') q.timer.unref();
+}
+
 /**
  * Like publish, but events sharing `key` are sent at most once per
  * BATCH_WINDOW_MS, together and in order. Never throws.
@@ -265,13 +280,16 @@ function publishBatched(key, kind, routing, data) {
   const wait = q.lastFlushAt + BATCH_WINDOW_MS - now;
   if (wait <= 0) {
     _flushBatch(key);
-    // Keep the queue (with lastFlushAt) for the window, so the next event
-    // waits for it; forget it once the window has passed with nothing new.
-    q.timer = setTimeout(() => { q.timer = null; if (!q.items.length) _batches.delete(key); else _flushBatch(key); }, BATCH_WINDOW_MS);
+    _armTrailing(key, q);
   } else {
-    q.timer = setTimeout(() => _flushBatch(key), wait);
+    q.timer = setTimeout(() => {
+      q.timer = null;
+      if (_batches.get(key) !== q) return;
+      _flushBatch(key);
+      _armTrailing(key, q);
+    }, wait);
+    if (typeof q.timer.unref === 'function') q.timer.unref();
   }
-  if (q.timer && typeof q.timer.unref === 'function') q.timer.unref();
 }
 
 /** Send everything still waiting in a batch window. Used at shutdown and by tests. */
@@ -441,6 +459,7 @@ module.exports = {
   BATCH_WINDOW_MS, PEER_HELLO_MS, PEER_TTL_MS, PEER_POLL_MS,
   _isAlone,
   _peers,
+  _batches,
   // Test seams: drive a notification, or a fresh subscription, without a
   // database.
   _handleNotification,
