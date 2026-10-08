@@ -145,6 +145,11 @@ config:
   workerCpus: "2"
   captureMemory: 6g
   captureCpus: "8"
+  # Proposal checks runs with Jobs on the cluster at once (a capture Job and a
+  # unit-suite Job each); further runs wait for a slot after their preview is
+  # built. Main-watch's run of main has one slot besides these. 0 turns the
+  # queue off. See the chart README.
+  checksMaxConcurrentRuns: 4
   # Match application defaults here; each cluster declares its own capacity.
   dbPoolMax: 10
   maxGlobalSessions: 25

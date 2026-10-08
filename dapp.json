@@ -2696,6 +2696,11 @@
       "expectText": "prepare checks (waiting for an earlier run)"
     },
     {
+      "name": "Checks card says a built preview's run is waiting for a checks slot, and where it is in line",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000054",
+      "expectText": "Waiting for a checks slot (2 ahead)"
+    },
+    {
       "name": "Checks card says an author's commit started the run (#1144), in Details (B10b)",
       "path": "/?demo=1&details=1#app/usernode-2d5619/dev/proposals/9000022",
       "expectText": "Triggered by a new commit on this proposal."
