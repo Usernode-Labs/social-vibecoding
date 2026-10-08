@@ -779,6 +779,10 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
  * either way, its line included. `approve` (#3977) is a solo change whose
  * Yes is the one it needs: the header is "Your approval", the halves and the
  * button read "Approve" / "Don't approve", and neither half carries a tally.
+ * Its Yes line is a note too, whatever `solo` says (#4346): an approval is
+ * only ever asked on a project that is just yours, and a caller's `solo` can
+ * lag (the Needs you sheet reads it from a community lookup that may not have
+ * landed, and the staging demo's Just you project reads as public).
  * Exported for the tests that render it directly; the state lives in
  * `VoteButton`.
  */
@@ -850,7 +854,7 @@ export function VotePicker({
         <div className="dev-vote-reason" data-vote-reason={side}>
           <label className="dev-vote-reason-label" htmlFor={reasonId}>
             {yesOn
-              ? (solo ? 'Add a note, if you like.' : 'Add a line for the group, if you like.')
+              ? (solo || approve ? 'Add a note, if you like.' : 'Add a line for the group, if you like.')
               : 'What’s not working for you? One line is plenty.'}
           </label>
           <textarea
