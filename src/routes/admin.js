@@ -227,6 +227,52 @@ function adminRoutes(config) {
     }
   });
 
+  // ── Unexpected errors (platform incidents) ─────────────────
+  //
+  // The admin page's one read (features/admin/admin-incidents.tsx): the
+  // errors the platform should never make (services/platform-incidents.js),
+  // with counts per kind per UTC day, and the two "right now" health signals
+  // the platform already stores elsewhere summarized beside them — release
+  // stalls (apps.release_stall, services/release-watch.js) and apps sitting
+  // in a failed deploy state (apps.status = 'error', apps.last_failure). The
+  // details stay where they already live; only the counts and names are here.
+  // Read-only, so it stays on the plain adminMiddleware gate — view-only
+  // admins can read the page, they just get no alerts.
+  router.get('/api/admin/incidents', async (req, res) => {
+    try {
+      const incidents = require('../services/platform-incidents');
+      const kind = typeof req.query.kind === 'string' ? req.query.kind : null;
+      const data = await incidents.list(pool, { kind, days: req.query.days });
+      if (!data) {
+        return res.status(500).json({ error: 'Could not read unexpected errors' });
+      }
+      // What is true right now, capped like the log above them.
+      const [releaseStalls, failedDeploys] = await Promise.all([
+        pool.query(
+          `SELECT slug, release_stall->>'since' AS since FROM apps
+            WHERE release_stall IS NOT NULL ORDER BY slug LIMIT 50`,
+        ),
+        pool.query(
+          `SELECT slug, last_failure->>'stage' AS stage, last_failure->>'at' AS at FROM apps
+            WHERE status = 'error' AND last_failure IS NOT NULL ORDER BY slug LIMIT 50`,
+        ),
+      ]).catch((err) => {
+        log.warn('admin', 'Health signals read failed', { err: err.message });
+        return [[], []];
+      });
+      res.json({
+        ...data,
+        signals: {
+          releaseStalls: releaseStalls.rows || [],
+          failedDeploys: failedDeploys.rows || [],
+        },
+      });
+    } catch (err) {
+      log.error('admin', 'Incidents read failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // ── Stale staging previews ─────────────────────────────────
   //
   // The preview half of the rollover above. A preview's env is assembled by

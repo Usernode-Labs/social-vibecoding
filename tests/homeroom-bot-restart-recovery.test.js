@@ -845,6 +845,9 @@ test('admins read the week\'s incidents newest first, and a line says what happe
   assert.equal(out.total, 3);
   assert.deepEqual(out.items[0], {
     at: '2026-10-07T12:00:00.000Z', kind: 'build_interrupted', app: 'tiers', runId: 950, issueNumber: 1, why: 'the worker is gone', outcome: 'resumed',
+    // toItem now carries the session too (#4296): the Unexpected errors
+    // page links a listed incident to its session.
+    sessionId: null,
   });
   assert.match(calls[0].sql, /event_type = \$1 AND e\.created_at > NOW\(\) - make_interval\(days => \$2\)/);
   assert.deepEqual(calls[0].params, ['platform_incident', 7, 20]);

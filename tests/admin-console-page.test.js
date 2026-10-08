@@ -133,6 +133,9 @@ test('the console island imports every admin module, console first', () => {
     'admin-gallery',
     // #2684: the Homeroom bot's shadow-mode verdicts and their ratings.
     'admin-homeroom-bot',
+    // #4296: the Unexpected errors page — the incidents log, its counts and
+    // the health signals that live elsewhere.
+    'admin-incidents',
     // #3369: Journey, the user journey and the North Star.
     'admin-journey',
     'admin-limits', 'admin-mail', 'admin-merges',
@@ -198,7 +201,7 @@ test('the console is not gated on the environment', () => {
 
 test('the menu carries every section, grouped, with no external tools left', () => {
   const KEYS = [
-    'overview', 'status', 'node', 'push', 'merges', 'rollover', 'staging-reap',
+    'overview', 'status', 'incidents', 'node', 'push', 'merges', 'rollover', 'staging-reap',
     'seasons', 'season-events', 'challenge-templates',
     'users', 'codes', 'limits', 'waitlist', 'onchain-accounts', 'user-activities',
     'journey', 'analytics', 'estimator', 'gallery', 'features',

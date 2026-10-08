@@ -1474,6 +1474,11 @@ async function becomeLeader() {
   // MAX_GLOBAL_SESSIONS) nears or reaches its ceiling.
   startPlatformLimitSweeper(config);
 
+  // The daily "unexpected errors" summary, in its hour once a day, and the
+  // burst threshold's de-dupe window both live in
+  // services/platform-incidents.js; this only drives the clock.
+  startIncidentDigestSweeper(config);
+
   // #907: release local coding-agent leases whose machine stopped
   // heartbeating, and fail the turn they were holding.
   startLocalAgentLeaseSweeper(config);
@@ -6200,6 +6205,40 @@ function startPlatformLimitSweeper(config) {
   platformLimitFirstRunHandle.unref?.();
   platformLimitSweeperHandle = setInterval(run, platformLimits.SWEEP_INTERVAL_MS);
   platformLimitSweeperHandle.unref?.();
+}
+
+// The daily "unexpected errors" summary (services/platform-incidents.js
+// digest): every 15 minutes the leader looks for the digest hour and sends
+// one notification per day when the past 24 hours logged anything. Leader-only
+// like the sweeper above, so two processes cannot both send — the digest's
+// own advisory lock and de-dupe would stop the double notification anyway.
+let incidentDigestSweeperHandle = null;
+let incidentDigestFirstRunHandle = null;
+
+function startIncidentDigestSweeper(config) {
+  if (incidentDigestSweeperHandle) return;
+  const pool = getPool(config);
+  const platformIncidents = require('./src/services/platform-incidents');
+  log.info('server', 'Incident digest sweeper started', {
+    digestHourUtc: platformIncidents.DIGEST_HOUR_UTC,
+    intervalMs: platformIncidents.DIGEST_SWEEP_INTERVAL_MS,
+  });
+  let running = false;
+  const run = async () => {
+    if (lifecycle.isShuttingDown() || running) return;
+    running = true;
+    try {
+      await platformIncidents.digest(pool);
+    } catch (err) {
+      log.warn('server', 'Incident digest sweep failed', { err: err.message });
+    } finally {
+      running = false;
+    }
+  };
+  incidentDigestFirstRunHandle = setTimeout(run, 30 * 1000);
+  incidentDigestFirstRunHandle.unref?.();
+  incidentDigestSweeperHandle = setInterval(run, platformIncidents.DIGEST_SWEEP_INTERVAL_MS);
+  incidentDigestSweeperHandle.unref?.();
 }
 
 // Graceful shutdown: mark drain state so new chats/app-creates/builds get

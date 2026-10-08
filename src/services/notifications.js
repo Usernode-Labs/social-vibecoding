@@ -25,6 +25,11 @@
 // 'platform_limit' tells full admins a server-wide cap (MAX_APPS,
 // MAX_GLOBAL_SESSIONS) is nearly or completely used; `detail` carries the
 // cap, level and figures (services/platform-limit-alerts.js).
+// 'platform_incident' is the same audience one kind of row later: an error
+// the platform should never make (services/platform-incidents.js), either a
+// burst of one kind inside an hour or the daily summary when anything was
+// logged; `detail` carries that module's burst:<kind>:<n> or
+// digest:<day>:<total> token.
 // 'channel_message' is a person's message in the discussion of a private
 // project of 8 people or fewer, to the rest of its people: one row per
 // discussion that folds later messages into a count in `detail`
@@ -1006,6 +1011,29 @@ async function createPlatformLimitNotifications(pool, { detail }) {
   return rows;
 }
 
+// An error that should not happen, as services/platform-incidents.js records
+// and decides when to page (a burst of one kind inside an hour, or the daily
+// summary in its hour). Full admins only, same audience as platform_limit:
+// they are the people who can look at the page. No app — an incident belongs
+// to the platform, and an app_id would let opening the platform's own app
+// mark the alert read unseen (markReadForApp). `detail` is that module's
+// token; the de-dupe lives in the caller, which holds the advisory lock and
+// the window.
+async function createPlatformIncidentNotifications(pool, { detail }) {
+  const token = String(detail || '').slice(0, 32);
+  if (!token) return [];
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, source_user_id, kind, detail)
+     SELECT admin.id, NULL, 'platform_incident', $1::varchar(32)
+       FROM users admin
+      WHERE admin.is_admin = TRUE
+        AND admin.admin_readonly = FALSE
+      RETURNING id, user_id, source_user_id, kind, detail, created_at`,
+    [token],
+  );
+  return rows;
+}
+
 async function notifyManagedOpenRouterReviewAdmins(pool, args) {
   const rows = await createManagedOpenRouterReviewNotifications(pool, args);
   await Promise.all(rows.map((row) => hydrateAndPush(pool, row)));
@@ -1976,6 +2004,7 @@ module.exports = {
   createRevisionRecheckNotifications,
   createAppHealthNotification,
   createPlatformLimitNotifications,
+  createPlatformIncidentNotifications,
   createCheckFailedNotification,
   createSessionDoneNotification,
   createSessionStalledNotification,

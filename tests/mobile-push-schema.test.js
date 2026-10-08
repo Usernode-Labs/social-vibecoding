@@ -117,7 +117,9 @@ test('closed database kind registry matches the reviewed service mapping and def
   // discussion (messages; services/group-channel-notify.js).
   // 44 → 45: #3952's issue_mention, named with @ in a request
   // (direct_interactions, beside mention).
-  assert.equal(new Set(rows.map((row) => row.kind)).size, 45);
+  // 45 → 46: #4296's platform_incident, unexpected errors on the platform
+  // (app_alerts, beside platform_limit).
+  assert.equal(new Set(rows.map((row) => row.kind)).size, 46);
   assert.match(schema, /DELETE FROM mobile_push_kind_categories[\s\S]*kind NOT IN/,
     'stale policy rows cannot silently keep a removed kind push-enabled');
 });

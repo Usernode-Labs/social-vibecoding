@@ -144,6 +144,51 @@ function minutesSince(value, now) {
 // database helpers, and copy assembly stays dependency-free.
 const PLATFORM_LIMIT_DETAIL_RE = /^(apps|sessions|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/;
 
+// services/platform-incidents.js detail tokens. `burst:<kind>:<n>` is the
+// threshold alert (one kind reaching its count inside an hour); `digest:<day>:<n>`
+// is the daily summary, whose token carries only the total, so the kind is
+// named from this file's own kind list while there is exactly one of them —
+// the same simplification the bell copy makes. Parsed here rather than
+// required from there: that module reaches the database helpers, and copy
+// assembly stays dependency-free.
+const INCIDENT_BURST_RE = /^burst:([a-z_]{1,20}):(\d{1,4})$/;
+const INCIDENT_DIGEST_RE = /^digest:(\d{4}-\d{2}-\d{2}):(\d{1,4})$/;
+
+const INCIDENT_LABELS = Object.freeze({ build_interrupted: 'Build interrupted' });
+const INCIDENT_BURST_NOUNS = Object.freeze({ build_interrupted: 'builds interrupted' });
+
+function incidentBurstCopy(detail) {
+  const m = INCIDENT_BURST_RE.exec(detail);
+  if (!m) {
+    return {
+      title: 'Unexpected errors',
+      body: 'Something happened that should not have. Open Admin to see it',
+    };
+  }
+  const [, kind, n] = m;
+  const noun = INCIDENT_BURST_NOUNS[kind];
+  return {
+    title: noun ? `${n} ${noun} in the last hour` : `${n} unexpected errors (${kind}) in the last hour`,
+    body: 'Open Admin → Unexpected errors to see them',
+  };
+}
+
+function incidentDigestCopy(detail) {
+  const m = INCIDENT_DIGEST_RE.exec(detail);
+  if (!m) {
+    return {
+      title: 'Unexpected errors',
+      body: 'Something happened that should not have. Open Admin to see it',
+    };
+  }
+  const total = Number(m[2]);
+  const kinds = Object.keys(INCIDENT_LABELS);
+  return {
+    title: `Unexpected errors yesterday: ${total}`,
+    body: kinds.length === 1 ? `${INCIDENT_LABELS[kinds[0]]} ${total}` : 'Open Admin to see what happened',
+  };
+}
+
 function platformLimitCopy(detail) {
   const m = PLATFORM_LIMIT_DETAIL_RE.exec(detail);
   if (!m) {
@@ -593,6 +638,13 @@ function buildCopy(kind, context, now) {
     // cap, the level and the figures, so the push can say how close it is.
     case 'platform_limit':
       return platformLimitCopy(detail);
+    // An error that should not happen (services/platform-incidents.js):
+    // a burst of one kind inside an hour, or the daily summary. Full
+    // admins only, same audience as platform_limit.
+    case 'platform_incident':
+      return detail && detail.startsWith('burst:')
+        ? incidentBurstCopy(detail)
+        : incidentDigestCopy(detail);
     default:
       return null;
   }

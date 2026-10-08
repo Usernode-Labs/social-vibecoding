@@ -95,7 +95,12 @@ const CATEGORY_DEFINITIONS = Object.freeze([
     // only: the SERVER is nearing a cap that stops apps being created or
     // sessions starting (services/platform-limit-alerts.js). Only full
     // admins ever receive one, so nobody else's switch is affected.
-    kinds: Object.freeze(['issue_opened', 'app_health', 'platform_limit']),
+    kinds: Object.freeze(['issue_opened', 'app_health', 'platform_limit',
+      // 'platform_incident' rides the same audience again: an error the
+      // platform should never make, burst alert or daily summary, for full
+      // admins only (services/platform-incidents.js). Nobody else's switch
+      // is affected.
+      'platform_incident']),
   }),
   Object.freeze({
     key: 'lightweight_activity',

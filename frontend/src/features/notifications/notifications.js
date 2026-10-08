@@ -919,6 +919,17 @@ const Notifications = {
       }
       return;
     }
+    // An unexpected error (services/platform-incidents.js): the page has the
+    // whole log, whichever of the two alerts led here.
+    if (item.kind === 'platform_incident') {
+      Notifications._dismissSheetForNav();
+      if (typeof App !== 'undefined' && App.navigateToAdminConsole) {
+        App.navigateToAdminConsole('incidents');
+      } else {
+        window.location.hash = '#admin/incidents';
+      }
+      return;
+    }
     // #161/#194: completion notifications deep-link to their change.
     // session_done opens the lifecycle-aware detail page around its workspace;
     // auto_solve_done opens the Issues tab with that issue's accordion
@@ -1698,6 +1709,40 @@ function parsePlatformLimitDetail(detail) {
   return m ? { limit: m[1], level: m[2], used: Number(m[3]), cap: Number(m[4]) } : null;
 }
 
+// services/platform-incidents.js tokens: "burst:<kind>:<n>" (one kind
+// reaching its threshold inside an hour) and "digest:<day>:<total>" (the
+// daily summary). Kinded words are copied here rather than imported from
+// features/admin: that module pulls the whole console chunk in, and this
+// list ships with every visitor. Same simplification as the push copy: the
+// digest token carries only the total, so the kind is named from this list
+// while there is exactly one of them.
+const INCIDENT_BURST_RE = /^burst:([a-z_]{1,20}):(\d{1,4})$/;
+const INCIDENT_DIGEST_RE = /^digest:(\d{4}-\d{2}-\d{2}):(\d{1,4})$/;
+const INCIDENT_KIND_LABELS = { build_interrupted: 'Build interrupted' };
+const INCIDENT_BURST_NOUNS = { build_interrupted: 'builds interrupted' };
+
+function parsePlatformIncidentDetail(detail) {
+  const d = String(detail || '');
+  const burst = INCIDENT_BURST_RE.exec(d);
+  if (burst) {
+    const n = Number(burst[2]);
+    const noun = INCIDENT_BURST_NOUNS[burst[1]];
+    return {
+      line: noun ? `${n} ${noun} in the last hour` : `${n} unexpected errors (${burst[1]}) in the last hour`,
+      segments: [{ t: 'text', v: 'Open Admin → Unexpected errors to see them.' }],
+    };
+  }
+  const digest = INCIDENT_DIGEST_RE.exec(d);
+  if (digest) {
+    const total = Number(digest[2]);
+    const kinds = Object.keys(INCIDENT_KIND_LABELS);
+    const segments = [{ t: 'strong', v: `Unexpected errors yesterday: ${total}` }];
+    if (kinds.length === 1) segments.push({ t: 'text', v: ` ${INCIDENT_KIND_LABELS[kinds[0]]} ${total}` });
+    return { line: 'Unexpected errors', segments };
+  }
+  return null;
+}
+
 // #161 defined these as the kinds that "demand attention": a finished dev
 // session or headless run, while still unread.
 //
@@ -2333,6 +2378,20 @@ function rowView(n) {
         { t: 'text', v: consequence },
       ],
     };
+  }
+
+  // An error that should not happen (services/platform-incidents.js), burst
+  // alert or daily summary. Same audience and no app as platform_limit above,
+  // so the meta line says Admin and the icon is the same warning mark; a
+  // token this build cannot read still says what kind of alert it is.
+  if (n.kind === 'platform_incident') {
+    const incident = parsePlatformIncidentDetail(n.detail);
+    if (!incident) {
+      return { ...base, appLine: 'Admin', wrap: true, icon: '⚠️',
+        ...headline('Unexpected errors', 'Open Admin to see what happened') };
+    }
+    return { ...base, appLine: 'Admin', wrap: true, icon: '⚠️',
+      label: incident.line, segments: incident.segments };
   }
 
   const prLabel = n.prTitle || null;
