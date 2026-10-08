@@ -146,7 +146,7 @@ test('the made screen reads the waiting plan off the real GET /api/apps/:slug, f
 
   let card;
   await t.test('the bot\'s own plan path leaves the first version waiting on its creator', async () => {
-    assert.equal(await bot.awaitGo(pool, { runId: run.id, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot }), true);
+    assert.equal(await bot.awaitGo(pool, { runId: run.id, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot }), 'waiting');
     const state = (await progress.requestStates(pool, { userId: alex.id }))
       .find((s) => Number(s.row.issue_number) === 1).state;
     assert.deepEqual([state.stage, state.waitingOn], ['plan', 'them']);

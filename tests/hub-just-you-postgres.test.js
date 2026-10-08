@@ -204,7 +204,7 @@ test('a just-you project\'s hub: what it is, and where its first version stands'
     ));
     // The bot's own plan path, as the made screen's test drives it.
     const plan = { bullets: ['A list of trails near Geneva', 'Who is coming, and when'], questions: [] };
-    assert.equal(await bot.awaitGo(pool, { runId: run.id, app, issueNumber: 1, parsed: { plan }, bot: homeroomBot }), true);
+    assert.equal(await bot.awaitGo(pool, { runId: run.id, app, issueNumber: 1, parsed: { plan }, bot: homeroomBot }), 'waiting');
     assert.deepEqual((await get()).first_version, fv({ step: 3, step_name: await named(evan), waits_on: 'plan' }),
       'named as the App tab names it for its maker, and no build time');
   });

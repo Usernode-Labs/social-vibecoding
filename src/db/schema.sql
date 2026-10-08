@@ -10216,6 +10216,15 @@ ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS plan_change TEXT;
 COMMENT ON COLUMN homeroom_bot_runs.plan_change IS 'staging:private';
 CREATE INDEX IF NOT EXISTS homeroom_bot_runs_awaiting_go_idx
   ON homeroom_bot_runs(awaiting_go_at) WHERE awaiting_go_at IS NOT NULL;
+-- #4175: a first version's plan that could not be sent keeps its run
+-- waiting (awaiting_go_at) and is tried again on later wakes, a few times
+-- over about an hour (homeroom-bot.js retryUnsentPlans), never built without
+-- its creator's Build it. `plan_send_attempts` counts the sends tried;
+-- `plan_unsent_at` is when the last one failed, NULL once one reached them.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS plan_send_attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS plan_unsent_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS homeroom_bot_runs_plan_unsent_idx
+  ON homeroom_bot_runs(plan_unsent_at) WHERE plan_unsent_at IS NOT NULL;
 -- #4239: a `person` verdict whose request is about the Homeroom platform
 -- itself rather than the project it was filed on (the triage's `platform`
 -- flag). Its requester is offered to move it to Homeroom's own board.
