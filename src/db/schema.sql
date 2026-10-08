@@ -132,15 +132,16 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS locale VARCHAR(35);
 
 -- Preferred development flow (issue #1049). NULL = "ask me every time", the
 -- default: the dev-chat picker renders and the user chooses per proposal.
--- A non-NULL value is the "remember my option" checkbox — 'platform' builds
--- here with the platform's own agent, 'claude-code' / 'codex' hand the work
--- order to the user's own Claude Code / Codex web UI (the external-agent
--- flow in services/external-agent-tasks.js).
+-- RETAINED but no longer written or read (issue #4311): the saved
+-- "where changes get built" choice. The Settings control, POST
+-- /api/me/dev-flow and the GET /api/auth/me echo are all gone; the
+-- column stays so restoring the previous build restores a working
+-- setting with its data. A later migration may drop it.
 --
--- Written by POST /api/me/dev-flow, echoed by GET /api/auth/me as
--- `devFlowPreference`, and clearable back to NULL from Settings →
--- Connections. The CHECK is the same allowlist the route enforces, so a
--- direct DB write can never park an unrenderable value here.
+-- A non-NULL value was the "remember my option" checkbox — 'platform'
+-- builds here with the platform's own agent, 'claude-code' / 'codex'
+-- hand the work order to the user's own Claude Code / Codex web UI (the
+-- external-agent flow in services/external-agent-tasks.js).
 ALTER TABLE users ADD COLUMN IF NOT EXISTS dev_flow_preference TEXT;
 DO $$
 BEGIN

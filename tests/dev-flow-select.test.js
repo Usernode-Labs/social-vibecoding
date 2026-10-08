@@ -28,9 +28,6 @@ const path = require('node:path');
 
 const DevFlowSelect = require('../public/js/dev-flow-select.js');
 
-const AUTH_SRC = fs.readFileSync(
-  path.join(__dirname, '../src/routes/auth.js'), 'utf8'
-);
 const DEV_CHAT_SRC = fs.readFileSync(
   path.join(__dirname, '../frontend/src/features/dev-chat/dev-chat.js'), 'utf8'
 );
@@ -89,39 +86,36 @@ test('FLOWS is the allowlist plus the venue name, and nothing else', () => {
     'and the gating that fed it went with it');
 });
 
-test('the flow ids match the server allowlist exactly', () => {
-  // Three places have to agree: this list, DEV_FLOWS in src/routes/auth.js
-  // (which validates POST /api/me/dev-flow) and the CHECK constraint on
-  // users.dev_flow_preference. A fourth flow that lands in one only would
-  // either be unsaveable or be rejected by Postgres.
-  const declared = AUTH_SRC.match(/const DEV_FLOWS = \[([^\]]+)\]/);
-  assert.ok(declared, 'src/routes/auth.js declares DEV_FLOWS');
-  const serverFlows = declared[1].match(/'([^']+)'/g).map((s) => s.replace(/'/g, ''));
-  assert.deepEqual(
-    serverFlows,
-    DevFlowSelect.FLOWS.map((f) => f.id),
-    'DEV_FLOWS and DevFlowSelect.FLOWS must list the same flows'
-  );
-
+test('the flow ids match the retained column exactly', () => {
+  // Two places have to agree now (issue #4311): this list and the CHECK
+  // constraint on users.dev_flow_preference, whose column is retained even
+  // though nothing writes or reads it. The route copy (DEV_FLOWS in
+  // src/routes/auth.js) is gone with POST /api/me/dev-flow. A fourth flow
+  // that landed in one place only would be unsaveable or rejected by
+  // Postgres if the column ever came back into use.
   const schema = fs.readFileSync(path.join(__dirname, '../src/db/schema.sql'), 'utf8');
   const check = schema.match(/dev_flow_preference IN \(([^)]+)\)/);
   assert.ok(check, 'schema.sql constrains users.dev_flow_preference');
   const dbFlows = check[1].match(/'([^']+)'/g).map((s) => s.replace(/'/g, ''));
-  assert.deepEqual(dbFlows.sort(), serverFlows.slice().sort(),
-    'the CHECK constraint must accept exactly the flows the route accepts');
+  assert.deepEqual(
+    dbFlows.sort(),
+    DevFlowSelect.FLOWS.map((f) => f.id).sort(),
+    'the CHECK constraint must accept exactly the flows DevFlowSelect.FLOWS lists'
+  );
 });
 
 test('picking a venue persists it, with no second question about it', () => {
   // The picker asked twice: once for the flow, once for "remember my
   // choice — don't ask again", unticked by default. So the common path
   // answered the same question in every new session. Opening the venue
-  // sheet is already the deliberate act, so the save rides along with it.
+  // sheet is already the deliberate act. The global default it used to
+  // also save is gone (issue #4311); the sheet records the venue on THIS
+  // session, which is the question it was answering.
   const devChat = fs.readFileSync(
     path.join(__dirname, '../frontend/src/features/dev-chat/dev-chat.js'), 'utf8'
   );
-  assert.match(devChat, /_saveDevFlowPreference\(pick\.flow\)/,
-    'a flow picked in the sheet becomes the saved default');
-  assert.match(devChat, /'\/api\/me\/dev-flow'/, 'through the route that owns the column');
+  assert.match(devChat, /_persistBuildVenue\(pick\.venue\)/,
+    'a flow picked in the sheet is recorded on this session');
   assert.ok(!devChat.includes('data-flow-remember'),
     'and there is no "remember my choice" tick left to forget');
 });

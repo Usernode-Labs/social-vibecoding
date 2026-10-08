@@ -1528,11 +1528,15 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // check is on that route. The agent session's hand-off walkthrough and its
   // out-of-credits card stay unchecked: both open only after a tap (the
   // composer's Build with, a refused send), and no route reaches them
-  // without a screenshot-only parameter. 733 leaves 147 slots.
+  // without a screenshot-only parameter. 732 leaves 148 slots.
+  //
+  // 733 → 732 (issue #4311): minus one, the declared check whose subject
+  // ("Where changes get built") is removed goes with it. This is a removal,
+  // not a fold — there is nothing left to fold the check into.
   //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 733);
+  checkCap.assertPinned(DAPP.tests.length, 732);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

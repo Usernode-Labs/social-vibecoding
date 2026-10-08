@@ -165,8 +165,8 @@ async function enrichImportedUnderwaySessions(pool, sessions, viewerUserId, { al
 // public/js/build-venues.js and it is the authoritative list; this is the
 // server-side domain for chat_sessions.build_venue, and
 // tests/build-venue-route.test.js scrapes that file to keep the two in
-// step, the same way tests/dev-flow-preference.test.js pins the three
-// dev_flow_preference values across their three homes. The CHECK
+// step, the same way tests/dev-flow-select.test.js pins DevFlowSelect.FLOWS
+// against the retained users.dev_flow_preference CHECK. The CHECK
 // constraint in schema.sql is the third copy and the last line of defence.
 const BUILD_VENUES = [
   'usernode-claude', 'usernode-openrouter', 'local',
@@ -4438,10 +4438,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
 
       // #1348: an EXPLICIT pick is also the answer to "which one did you
       // use last", so it is remembered. This is the rule the venue sheet
-      // already applies to the other group — picking a web hand-off saves
-      // dev_flow_preference, because "asked once" means the answer counts
-      // for next time — extended to the in-chat pair now that one coarse
-      // row stands for both.
+      // already applies to the other group — picking a web hand-off records
+      // the venue on the session, because "asked once" means the answer
+      // counts for next time — extended to the in-chat pair now that one
+      // coarse row stands for both.
       //
       // AFTER the commit and best-effort: the switch has already happened,
       // and a preference that failed to save must not turn a successful

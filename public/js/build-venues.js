@@ -9,8 +9,8 @@
  * mechanism, none named the others, and two of them said "Claude Code"
  * about two different products — the platform backend
  * (chat_sessions.agent_backend = 'claude_code', billed to Homeroom) and
- * the web hand-off (users.dev_flow_preference = 'claude-code', billed to
- * the user's own Claude plan). Picking the wrong one cost real money.
+ * the web hand-off (billed to the user's own Claude plan). Picking the
+ * wrong one cost real money.
  *
  * So: ONE list, named venue-first — WHERE the work happens, then what runs
  * it. Every surface that offers the choice reads it from here, and
@@ -23,7 +23,7 @@
  *     `id` here is a presentation key and the other persisted values are
  *     untouched — 'claude_code' / 'codex_openrouter' in
  *     chat_sessions.agent_backend, 'claude-code' / 'codex' in
- *     users.dev_flow_preference and external_agent, 'imported' in
+ *     external_agent, 'imported' in
  *     chat_sessions.source. `mechanism` on each row is the mapping, and
  *     it is the only place the two vocabularies meet. The exception is
  *     chat_sessions.build_venue, which stores one of these ids verbatim
@@ -89,7 +89,9 @@
   //
   //   backend  → POST /api/apps/:slug/sessions { backend } and
   //              chat_sessions.agent_backend
-  //   flow     → users.dev_flow_preference + external_agent_tasks
+  //   flow     → external_agent_tasks (the venue id itself rides on the
+  //              session, chat_sessions.build_venue; the saved default
+  //              this list once also wrote is gone, issue #4311)
   //   lease    → session_agent_leases (#907), set up from the CLI card
   //   import   → POST /api/apps/:slug/pr-import → source='imported'
   //

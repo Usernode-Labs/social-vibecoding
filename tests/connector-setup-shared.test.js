@@ -174,7 +174,7 @@ function makeDevChat({ venue = 'web-claude-code' } = {}) {
   // test — the derivation itself is tests/launchpad.test.js's subject.
   sandbox.Launchpad = { isLaunchpad: (v) => ['web-claude-code', 'web-codex', 'own-tools-pr'].includes(v) };
   sandbox.BuildVenues = { currentVenue: () => venue };
-  sandbox.App = { user: { id: 7, externalFlowsAvailable: true, devFlowPreference: null }, currentApp: 'x' };
+  sandbox.App = { user: { id: 7, externalFlowsAvailable: true }, currentApp: 'x' };
   sandbox.PlatformUI = { toast() {}, hasKit: () => false, menu: () => Promise.resolve(null) };
   sandbox.UsernodeReact = {};
   vm.createContext(sandbox);

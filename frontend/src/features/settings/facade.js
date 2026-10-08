@@ -67,7 +67,6 @@ const state = {
   homeroomBotDm: false,
   homeroomBotForEveryone: false,
   locale: null,
-  devFlowPreference: null,
   externalFlowsAvailable: false,
 };
 
@@ -252,7 +251,6 @@ const Facade = {
       state.homeroomBotDm = !!u.homeroomBotDm;
       state.homeroomBotForEveryone = !!u.homeroomBotForEveryone;
       state.locale = u.locale || null;
-      state.devFlowPreference = u.devFlowPreference || null;
       state.externalFlowsAvailable = !!u.externalFlowsAvailable;
       // The CLI-credentials gate's memo, primed from the same payload. Written
       // to whichever object is window.Settings NOW — this one, or the module

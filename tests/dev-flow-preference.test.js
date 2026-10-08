@@ -1,24 +1,26 @@
-// The saved build-flow preference (#1049).
+// The saved build-flow preference (#1049), REMOVED (issue #4311).
 //
 // "Remember my choice" on the dev-chat flow picker, and the same dropdown in
-// Settings, write ONE nullable column: users.dev_flow_preference. Null is
-// load-bearing — it means "ask me every time", which is the default and the
-// only state in which the picker renders at all.
+// Settings, wrote ONE nullable column: users.dev_flow_preference. #4268
+// removed every part of the classic dev chat that read the value to choose a
+// venue — agent sessions pick where work runs in their own Build-with sheet —
+// so a setting that does nothing but mislead goes, end to end: the Settings
+// block, POST /api/me/dev-flow, the /api/auth/me echo and Global Chat's
+// settings-inspector row. The COLUMN stays (nullable TEXT, CHECK intact) so
+// restoring the previous build restores a working setting with its data; a
+// later change may drop it.
 //
-// Three layers, in the shape tests/user-locale.test.js established for the
+// Layers, still in the shape tests/user-locale.test.js established for the
 // sibling `locale` preference:
-//   1. Behavioural: POST /api/me/dev-flow mounted with a stubbed pool — the
-//      three allowed flows persist, null / "" / a missing body clear it, a
-//      value outside the allowlist is a 400 that never reaches the database,
-//      and unauthenticated is a 401.
-//   2. /api/auth/me round-trips the stored value, and reports whether the
-//      external flows are offerable in this deployment at all.
-//   3. Source guards down the rest of the chain: the column and its CHECK,
-//      the Settings dropdown, and the two client surfaces that read the
-//      preference (the dev-chat picker gate, and the "+" menu entry).
+//   1. Behavioural: the routes with a stubbed pool — POST /api/me/dev-flow is
+//      no longer mounted (an ordinary 404), and /api/auth/me keeps
+//      externalFlowsAvailable but carries no devFlowPreference.
+//   2. Source guards down the chain: no DEV_FLOWS export, no Settings
+//      control, the three shell ids in RETIRED_IDS, the column and its
+//      CHECK still in the schema, and Global Chat's authProjection.
 //
-// The three-way agreement between DEV_FLOWS, the CHECK constraint and
-// DevFlowSelect.FLOWS is pinned in tests/dev-flow-select.test.js.
+// The two-way agreement between DevFlowSelect.FLOWS and the CHECK constraint
+// is pinned in tests/dev-flow-select.test.js.
 //
 // Run with: node --test tests/dev-flow-preference.test.js
 
@@ -46,7 +48,8 @@ poolMod.getPool = () => ({
   },
 });
 
-const { authRoutes, DEV_FLOWS } = require('../src/routes/auth');
+const authMod = require('../src/routes/auth');
+const { authRoutes } = authMod;
 const { shellMarkup } = require('./lib/shell-markup');
 
 // With OAuth credentials configured the hand-off is offerable; the
@@ -94,93 +97,41 @@ test.beforeEach(() => {
   user = { id: 42, username: 'tester', isAdmin: false, appQuota: 0, locale: null };
 });
 
-const post = (body) => fetch(`${base}/api/me/dev-flow`, {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify(body),
+// ── 1. The route is gone ─────────────────────────────────────────────────
+
+test('POST /api/me/dev-flow is no longer mounted', async () => {
+  const r = await fetch(`${base}/api/me/dev-flow`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ flow: 'codex' }),
+  });
+  assert.equal(r.status, 404, 'an ordinary not-found, the platform\'s answer to an unknown path');
+  assert.equal(calls.find((c) => /UPDATE users SET dev_flow_preference/.test(c.sql)), undefined,
+    'a stale cached shell\'s save must never write a row');
 });
 
-const flowUpdate = () => calls.find((c) => /UPDATE users SET dev_flow_preference/.test(c.sql));
-
-// ── 1. POST /api/me/dev-flow behaviour ──────────────────────────────────
-
-test('401 when not authenticated', async () => {
-  user = null;
-  const r = await post({ flow: 'codex' });
-  assert.equal(r.status, 401);
-  assert.equal(flowUpdate(), undefined, 'an anonymous caller must not write a row');
-});
-
-test('each allowed flow persists and is echoed back', async () => {
-  for (const flow of DEV_FLOWS) {
-    calls = [];
-    const r = await post({ flow });
-    assert.equal(r.status, 200, `expected 200 for ${flow}`);
-    assert.deepEqual(await r.json(), { ok: true, flow });
-    assert.deepEqual(flowUpdate().params, [flow, 42]);
-  }
-});
-
-test('null, empty string and a missing body clear it back to "ask me"', async () => {
-  // Unticking "remember my choice" sends null. Clearing has to be possible:
-  // a preference you cannot un-save is a trap, and null is what makes the
-  // picker come back.
-  for (const cleared of [{ flow: null }, { flow: '' }, {}]) {
-    calls = [];
-    const r = await post(cleared);
-    assert.equal(r.status, 200, `expected 200 for ${JSON.stringify(cleared)}`);
-    assert.deepEqual(await r.json(), { ok: true, flow: null });
-    assert.deepEqual(flowUpdate().params, [null, 42]);
-  }
-});
-
-test('anything outside the allowlist is a 400 and never reaches the database', async () => {
-  for (const bad of [
-    'claude',            // close, but not the enum value
-    'CODEX',             // the column's CHECK is case-sensitive
-    'platform ',
-    'external',          // a real agent value, but not a pickable flow
-    'DROP TABLE users',
-    123,
-    true,
-    ['codex'],
-    { flow: 'codex' },
-  ]) {
-    calls = [];
-    const r = await post({ flow: bad });
-    assert.equal(r.status, 400, `expected 400 for ${JSON.stringify(bad)}`);
-    assert.equal(flowUpdate(), undefined, 'no UPDATE on invalid input');
-    // The refusal names the values that would work.
-    assert.match((await r.json()).error, /platform/);
-  }
+test('auth.js exports no DEV_FLOWS and reads no dev_flow_preference', () => {
+  const authSrc = read('src/routes/auth.js');
+  assert.equal(authMod.DEV_FLOWS, undefined,
+    'the route allowlist is gone with the route');
+  assert.doesNotMatch(authSrc, /dev_flow_preference/,
+    'the /api/auth/me lookup selects the column no more');
+  assert.doesNotMatch(authSrc, /devFlowPreference/,
+    'and the response projection carries no devFlowPreference');
 });
 
 // ── 2. /api/auth/me ─────────────────────────────────────────────────────
 
-test('/api/auth/me round-trips the stored preference', async () => {
-  for (const flow of DEV_FLOWS) {
-    storedFlow = flow;
-    const j = await (await fetch(`${base}/api/auth/me`)).json();
-    assert.equal(j.user.devFlowPreference, flow);
-  }
-});
-
-test('/api/auth/me reports null when unset', async () => {
+test('/api/auth/me no longer echoes a saved preference', async () => {
+  // A stored value keeps its column unread; the response must not carry
+  // the field at all, whatever the lookup happens to read.
+  storedFlow = 'claude-code';
   const j = await (await fetch(`${base}/api/auth/me`)).json();
-  assert.equal(j.user.devFlowPreference, null, 'unset means "ask me every time"');
+  assert.ok(!('devFlowPreference' in j.user),
+    'a field that controls nothing must not be reported');
 });
 
-test('a value the column should never hold is reported as null, not passed through', async () => {
-  // Defence in depth: the CHECK constraint makes this unreachable through
-  // the route, but the client branches on this string, and an unknown value
-  // arriving there would suppress the picker while matching no flow — the
-  // one state in which a user can pick nothing at all.
-  storedFlow = 'something-else';
-  const j = await (await fetch(`${base}/api/auth/me`)).json();
-  assert.equal(j.user.devFlowPreference, null);
-});
-
-test('/api/auth/me says whether the hand-off is offerable at all', async () => {
+test('/api/auth/me still says whether the hand-off is offerable at all', async () => {
   const linked = await (await fetch(`${base}/api/auth/me`)).json();
   assert.equal(linked.user.externalFlowsAvailable, true,
     'with GitHub OAuth configured, Claude Code / Codex can be offered');
@@ -195,112 +146,101 @@ test('/api/auth/me says whether the hand-off is offerable at all', async () => {
 
 // ── 3. Chain source guards ──────────────────────────────────────────────
 
-test('schema adds the nullable column and constrains its values', () => {
+test('schema keeps the nullable column and its constraint', () => {
+  // No migration: restoring the previous build restores a working setting
+  // with its data. The comment above the column says it is retained but
+  // no longer written or read.
   const schema = read('src/db/schema.sql');
   assert.match(schema, /ALTER TABLE users ADD COLUMN IF NOT EXISTS dev_flow_preference TEXT/);
   assert.match(schema, /users_dev_flow_preference_chk/,
-    'the allowed values must be enforced in the database, not only in the route');
+    'the constraint stays so a direct DB write can never park an unrenderable value here');
   assert.match(schema, /CHECK \(dev_flow_preference IS NULL/,
-    'NULL must stay legal — it is the "ask me every time" default');
-  // Re-runnable: schema.sql is applied on every boot.
-  assert.match(schema, /DROP CONSTRAINT IF EXISTS users_dev_flow_preference_chk/);
+    'NULL must stay legal — it was the "ask me every time" default');
+  assert.match(schema, /RETAINED but no longer written or read/,
+    'the column\'s comment says what this change did to it');
 });
 
-test('Settings offers the same preference as a dropdown', () => {
+test('Settings no longer offers the preference as a dropdown', () => {
   const js = read('frontend/src/features/settings/settings.js');
-  assert.match(js, /_renderDevFlowSection/);
-  assert.match(js, /_saveDevFlow/);
-  assert.match(js, /\/api\/me\/dev-flow/);
-  assert.match(js, /devFlowPreference/, 'the control renders from the /me value');
-
-  // ── This assertion INVERTED, on purpose (#1191) ────────────────────
-  //
-  // It used to require that the block be INJECTED and that the dropdown NOT
-  // appear in public/index.html. The reason was real at the time: the shell
-  // body was a hand-written document frozen against a pre-migration fixture,
-  // so a new settings control could only be added by
-  // `document.createElement` at runtime. #1078 replaced that fixture with the
-  // id/script baselines, and the Connections pane is a React component, so
-  // the injection became a legacy module writing a node into a subtree React
-  // owns — the one thing the ownership rule forbids.
-  //
-  // The block is markup now, its three ids are declared in
-  // tests/shell-id-inventory.test.js's ADDED_IDS with that reason, and the
-  // module keeps exactly what it keeps for every other control on the screen.
-  const pane = read('frontend/src/features/settings/sections/connectors.tsx');
-  assert.match(pane, /id="dev-flow-pref-section"/);
-  assert.match(pane, /id="settings-dev-flow"/);
-  assert.match(pane, /data-settings-section="connectors"/,
-    'and it is in the Connections pane, where the flows it configures live');
-  const html = shellMarkup();
-  assert.ok(html.includes('id="settings-dev-flow"'),
-    'so the dropdown IS in the prerendered document');
-  // ── This assertion INVERTED again (#2370) ──────────────────────────
-  //
-  // It required the preference to sit ABOVE the GitHub block, reading as the
-  // question with the link below it as one answer. #2370 measured the pane at
-  // 390x844: the social-account block started at 5,703px of a 6,330px page,
-  // last on a screen whose nav item is named after it. Social accounts leads
-  // now, and the preference stays last — it is about work you have not started
-  // yet, not the thing you opened this pane to do.
-  assert.ok(html.indexOf('id="github-link-section"') < html.indexOf('id="dev-flow-pref-section"'),
-    'social accounts leads the pane (#2370) and the build-flow preference '
-    + 'follows it');
-  // Nothing builds it any more.
-  const render = js.slice(js.indexOf('    _renderDevFlowSection() {'));
-  assert.doesNotMatch(render.slice(0, 1400), /createElement|innerHTML|insertBefore/,
-    'the renderer binds and reflects; it does not build');
-});
-
-test('Settings disables the hand-offs when the deployment cannot offer them', () => {
-  const js = read('frontend/src/features/settings/settings.js');
+  assert.doesNotMatch(js, /_renderDevFlowSection|_saveDevFlow\b/,
+    'the render and save are gone whole, behind a control that no longer renders');
+  assert.doesNotMatch(js, /\/api\/me\/dev-flow/,
+    'no dead fetch');
+  assert.doesNotMatch(js, /devFlowPreference/,
+    'the state, the read off /api/auth/me and the mirror onto App.user are gone');
   assert.match(js, /externalFlowsAvailable/,
-    'a deployment with no GitHub link must not offer a preference it cannot honour');
+    'the offerable-at-all flag stays — Global Chat and the CLI page still read it');
+
+  const pane = read('frontend/src/features/settings/sections/connectors.tsx');
+  assert.doesNotMatch(pane, /dev-flow-pref-section|settings-dev-flow|data-settings-section="build-venue"/,
+    'the block is gone from the Connectors & CLI page');
+  assert.match(pane, /data-settings-section="connectors"/,
+    'and the connectors it shared the page with are untouched');
+  assert.doesNotMatch(shellMarkup(), /id="settings-dev-flow"/,
+    'so the dropdown is NOT in the prerendered document');
+  const index = read('frontend/src/features/settings/sections/index.tsx');
+  assert.doesNotMatch(index, /BuildVenueSection/,
+    'the section is not imported or rendered');
+  const settings = read('frontend/src/features/settings/settings.js');
+  assert.doesNotMatch(settings, /key: 'build-venue'/,
+    'and there is no row in the Settings sections list to deep-link to');
 });
 
-test('the dev chat asks nothing at creation, and assumes nothing either', () => {
+test('the three shell ids are retired with a reason', () => {
+  const inventory = read('tests/shell-id-inventory.test.js');
+  for (const id of ['dev-flow-pref-section', 'settings-dev-flow', 'settings-dev-flow-status']) {
+    assert.match(inventory, new RegExp(`'${id}':`),
+      `${id} is a line in RETIRED_IDS, not silently dropped`);
+  }
+  assert.match(inventory, /#4311/, 'and the reason names this change');
+});
+
+test('the dev chat no longer saves a global default', () => {
   const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
-  assert.doesNotMatch(devChat, /forcePicker/,
-    'nothing re-asks at creation time — the venue dropdown is the door now');
-  // #1353: and nothing ANSWERS for the user either. The saved default used
-  // to turn any untouched session into a web hand-off before a word was
-  // typed — while the venue derivation, which never read the preference,
-  // went on telling the header and the sheet that the session was
-  // On-Platform. One preference, two screens, and the only way back was per
-  // tab. A hand-off is a choice made about THIS session now, through the
-  // dropdown, and recorded on it (chat_sessions.build_venue).
-  const target = devChat.match(/_devFlowTarget\(\) \{[\s\S]*?\n  \},/);
-  assert.ok(target, '_devFlowTarget must exist');
-  assert.doesNotMatch(target[0], /devFlowPreference/,
-    'the walkthrough is not summoned by a standing preference');
-  const venue = devChat.match(/_currentVenueId\(\) \{[\s\S]*?\n  \},/);
-  assert.ok(venue, '_currentVenueId must exist');
-  assert.doesNotMatch(venue[0], /devFlowPreference/,
-    'nor does the venue the whole session paints from claim one');
-});
-
-test('the walkthrough appears exactly where the session says it is handed over', () => {
+  assert.doesNotMatch(devChat, /_saveDevFlowPreference/,
+    'the best-effort save of the default is deleted, not kept as an empty gesture');
+  assert.doesNotMatch(devChat, /\/api\/me\/dev-flow/,
+    'and nothing in the venue sheet or the launchpad calls the removed route');
+  // The sheet's real job — tying the session to its venue — stays.
+  assert.match(devChat, /_persistBuildVenue/,
+    'the per-session venue write is untouched');
+  assert.doesNotMatch(devChat, /dev_flow_preference/,
+    'the comment that named a saved dev_flow_preference as a way back is gone');
   // The gates this used to check — no PR, still active, nothing typed —
   // existed to keep a walkthrough summoned by a standing PREFERENCE from
   // landing on work already under way. With that door closed (#1353) the
   // walkthrough has one cause left: the venue this session is in, which is
-  // a deliberate act and outranks all three of those states by design
-  // (#1281 — a hand-off chosen halfway through a session is still a
-  // hand-off). So the assertion is that there is ONE input, not four.
-  const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
+  // a deliberate act and outranks those states by design (#1281).
   const fnStart = devChat.indexOf('_devFlowTarget() {');
   assert.ok(fnStart !== -1, '_devFlowTarget must exist');
   const fn = devChat.slice(fnStart, devChat.indexOf('\n  },', fnStart));
   assert.match(fn, /DevChat\._currentVenueId\(\)/, 'the venue is the whole question');
   assert.match(fn, /'web-codex'/);
   assert.match(fn, /'web-claude-code'/);
-  assert.doesNotMatch(fn, /pr_number|status !== 'active'|role === 'user'/,
-    'no second set of gates to fall out of step with the header');
-  // And the surface asks the same one thing, which is the invariant
-  // tests/venue-surface-sync.test.js drives for real.
-  const launchpad = devChat.match(/_launchpadVenue\(\) \{[\s\S]*?\n  \},/);
-  assert.ok(launchpad, '_launchpadVenue must exist');
-  assert.match(launchpad[0], /DevChat\._currentVenueId\(\)/);
+  assert.doesNotMatch(fn, /devFlowPreference|pr_number|status !== 'active'|role === 'user'/,
+    'no second input to fall out of step with the header');
+});
+
+test('Global Chat keeps externalFlowsAvailable without devFlowPreference', () => {
+  const caps = read('src/services/global-chat/classic-capabilities.js');
+  // Scope to the authProjection fields block — the SOURCES map also has a
+  // 'build-venue' entry, which stays.
+  const block = caps.match(/const fields = \{[\s\S]*?\}\[group\] \|\| \[\];/);
+  assert.ok(block, 'the authProjection fields block exists');
+  const group = block[0].match(/'build-venue': \[([^\]]*)\]/);
+  assert.ok(group, 'the build-venue group still exists');
+  assert.match(group[1], /externalFlowsAvailable/,
+    'the inspector still says whether hand-offs are possible in this deployment');
+  assert.doesNotMatch(group[1], /devFlowPreference/,
+    'the saved-preference row is gone from the auth projection');
+
+  const inventory = read('src/services/global-chat/classic-inventory.generated.json');
+  assert.ok(!inventory.includes('/api/me/dev-flow'),
+    'the route entry is gone from the generated inventory');
+  assert.ok(!inventory.includes('#settings/build-venue'),
+    'and the Settings section entry with it');
+  assert.match(inventory, /\/api\/apps\/:slug\/dev-flow\/status/,
+    'the per-app dev-flow route, which this change does not touch, stays');
 });
 
 test('the "+" menu asks nothing about venue', () => {
@@ -317,34 +257,4 @@ test('the "+" menu asks nothing about venue', () => {
   // them.
   assert.match(appView, /createProposal\(\{ flow \}\)/,
     'the out-of-credits hand-off still opens its walkthrough directly');
-});
-
-test('the ⋯ menu leads with its asks and names its settings group', () => {
-  const appView = read('public/js/app-view.js');
-  // #1084 chunk G converted the menu to JSX: the two headings are
-  // <PlusMenuHeading> elements in the toolbar row now (actions-row.tsx, split
-  // out of the board frame when the Workshop gained its own copy), not
-  // AppView._plusMenuHeading() calls. #1490 moved New change to Improve and
-  // left import alone in the first group; #1900 put filing an issue back
-  // beside it, under "Add to the board". The hub's ⋯ leads with that row as
-  // "Suggest an improvement", and the first group needs no heading: it is the
-  // menu's first, and "Settings & rules" says where the rest begins.
-  const frame = read('frontend/src/features/dev-board/actions-row.tsx');
-  assert.doesNotMatch(frame, /label="Add to the board"/);
-  assert.ok(frame.indexOf('data-plus="issue"') < frame.indexOf('data-plus="import-pr"')
-    && frame.indexOf('data-plus="import-pr"') < frame.indexOf('groupKey="settings"'));
-  assert.match(frame, /label="Settings &amp; rules"[\s\S]{0,80}groupKey="settings"[\s\S]{0,40}divider/);
-  // A heading must not be a <button>: _wirePlusMenu collects
-  // `button[data-plus]` for the touch action sheet, and a heading that
-  // matched would arrive there as a tappable row that does nothing.
-  const fnStart = frame.indexOf('function PlusMenuHeading(');
-  assert.ok(fnStart !== -1, 'the PlusMenuHeading primitive must exist');
-  // Slice from the RETURN, not the signature: the destructured props' type
-  // annotation closes with a `}` in column 0, which is not the function's end.
-  const fn = frame.slice(fnStart, frame.indexOf('\n}\n', frame.indexOf('return (', fnStart)));
-  assert.match(fn, /<div\s+data-plus-group=/, 'headings render as a div');
-  assert.ok(!fn.includes('data-plus="'), 'a heading carries no data-plus');
-  // The touch sheet renders them too, since it has no heading primitive.
-  assert.match(appView, /button\[data-plus\], \[data-plus-group\]/,
-    'the action sheet walks headings and rows together, in DOM order');
 });

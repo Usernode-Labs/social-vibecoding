@@ -7,14 +7,16 @@
 //
 //     _currentVenueId()   → BuildVenues.currentVenue(the session's columns)
 //     _launchpadVenue()   → …that, OR a wizard target derived from the
-//                            user's saved dev_flow_preference
+//                            user's then-saved dev_flow_preference
 //
 // and the second knew something the first did not. So a fresh session,
 // belonging to anyone who had ever picked a web venue once (picking one
-// saves the preference), opened saying "On-Platform" over the Claude Code
-// walkthrough. The only way out was to pick another venue and come back,
-// which set an in-memory `dismissed` flag — per tab, so a reload put the
-// launchpad straight back.
+// used to save the preference), opened saying "On-Platform" over the
+// Claude Code walkthrough. The only way out was to pick another venue and
+// come back, which set an in-memory `dismissed` flag — per tab, so a
+// reload put the launchpad straight back. #1353 closed the door, and the
+// saved preference is gone with it (issue #4311): the session's columns
+// are the only input left, which is what makes the invariant hold now.
 //
 // This is a BEHAVIOURAL test, for the reason tests/venue-return-to-chat.js
 // spells out: the previous fix in this area was guarded by a regex over the
@@ -71,7 +73,7 @@ function makeDevChat() {
   sandbox.globalThis = sandbox;
   sandbox.window.addEventListener = () => {};
   sandbox.DevFlowSelect = { wizardHtml: () => '<div data-flow-wizard="1"></div>' };
-  sandbox.App = { user: { externalFlowsAvailable: true, devFlowPreference: null }, currentApp: 'x' };
+  sandbox.App = { user: { externalFlowsAvailable: true }, currentApp: 'x' };
   sandbox.PlatformUI = { toast: () => {}, hasKit: () => false, menu: () => Promise.resolve(null) };
   vm.createContext(sandbox);
   vm.runInContext(BUILD_VENUES_SRC, sandbox);
@@ -111,34 +113,6 @@ function assertAgrees(DevChat, sandbox, because) {
   return { venue, surface };
 }
 
-test('a saved web default no longer opens a launchpad over an On-Platform header', () => {
-  // The bug, exactly as reported: the window starts saying On-Platform and
-  // shows the WebUI screen, and you have to change type and change back.
-  const { DevChat, sandbox } = makeDevChat();
-  sandbox.App.user.devFlowPreference = 'claude-code';
-
-  const { venue } = assertAgrees(DevChat, sandbox, 'a saved claude-code default');
-  assert.equal(venue, 'usernode-claude',
-    'nothing has been chosen for THIS session, so it is an ordinary chat');
-  assert.equal(DevChat._launchpadVenue(), null, 'and it opens on the composer');
-  // The walkthrough must not arrive in the transcript by the other door
-  // either — that would be the same mismatch, one element lower.
-  assert.equal(DevChat._devFlowTarget(), null);
-  assert.equal(DevChat._devFlowHtml(), '');
-});
-
-test('the saved default survives a reload, so the fix has to as well', () => {
-  // The old escape hatch was `dismissed`, which lives in the tab. Re-opening
-  // the session is a fresh _resetDevFlow, and the preference is still set —
-  // which is why "pick another venue and come back" had to be done again
-  // every single time.
-  const { DevChat, sandbox } = makeDevChat();
-  sandbox.App.user.devFlowPreference = 'codex';
-  DevChat._resetDevFlow(7);
-  assertAgrees(DevChat, sandbox, 'a reopened session with a saved codex default');
-  assert.equal(DevChat._launchpadVenue(), null);
-});
-
 test('picking a hand-off in this tab moves the header with the screen', () => {
   // The other half of "synced": choosing the WebUI venue must not leave the
   // header claiming On-Platform. Nothing is stored yet at this point — the
@@ -167,8 +141,9 @@ test('every stored venue paints the surface it names', () => {
 });
 
 test('an in-chat venue is a chat, whatever else is true of the session', () => {
-  // A saved web default in every case, because that is the input that used
-  // to be able to turn any of these into a launchpad the header denied.
+  // A saved web default used to be the input that could turn any of these
+  // into a launchpad the header denied; it is gone (issue #4311), so the
+  // session's own columns are the only thing that can.
   const cases = [
     ['an OpenRouter session', (dc) => { dc.currentSession.agent_backend = 'codex_openrouter'; }],
     ['a leased session', (dc) => { dc._localAgent = { label: 'Laptop', leaseId: 'l1' }; }],
@@ -178,7 +153,6 @@ test('an in-chat venue is a chat, whatever else is true of the session', () => {
   ];
   for (const [because, mutate] of cases) {
     const { DevChat, sandbox } = makeDevChat();
-    sandbox.App.user.devFlowPreference = 'claude-code';
     mutate(DevChat);
     assertAgrees(DevChat, sandbox, because);
     assert.equal(DevChat._launchpadVenue(), null, `${because} keeps its composer`);

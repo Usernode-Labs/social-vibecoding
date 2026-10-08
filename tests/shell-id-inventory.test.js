@@ -58,6 +58,15 @@ const withInteriors = `${after}\n${lazyInteriorsHtml()}`;
 
 // Ids a conversion chunk deliberately removed, each with the reason.
 const RETIRED_IDS = {
+  // ── #4311: the "Where changes get built" setting is removed ────────
+  // The setting has done nothing since #4268 removed the parts that read
+  // the value: no code picks a venue from it any more (agent sessions pick
+  // where work runs in their own Build-with sheet). The whole block goes —
+  // question, dropdown, status line — with POST /api/me/dev-flow and the
+  // /api/auth/me echo.
+  'dev-flow-pref-section': 'The "Where changes get built" block in Settings → Connectors & CLI (#1049). Removed with the setting: nothing read the saved value to choose a venue.',
+  'settings-dev-flow': 'The build-flow dropdown itself. Nothing acts on the choice any more; the per-session venue sheet stays.',
+  'settings-dev-flow-status': 'Save/error line for the build-flow dropdown. Gone with the dropdown.',
   // ── The create-project dialog is retired ───────────────────────────
   // Create opens "What do you want to make?" (features/first-session/
   // make.tsx), the screen the first session asks with, for everyone. It
@@ -728,17 +737,6 @@ const ADDED_IDS = {
   // (#1412's #improve-version-dot came and went: the Streamlined Concept
   // returned the version cue to the hamburger under its original
   // #header-menu-deploy-dot id — see the note in RETIRED_IDS.)
-  // ── #1191: the build-flow preference stops being injected ────────
-  // These three were BUILT AT RUNTIME by Settings._renderDevFlowSection,
-  // which created the block and inserted it into the Connections pane on
-  // every render. The reason was this very baseline: the shell's body used to
-  // be a hand-written document, so a new settings control had nowhere to go.
-  // The pane is a component now, so the block is markup and its ids are a
-  // deliberate line here — which is also what stops a legacy module writing
-  // into a subtree React owns.
-  'dev-flow-pref-section': 'The "Preferred build flow" block in Settings → Connections (#1049) — the escape hatch for the dev-chat picker\'s "remember my option" checkbox.',
-  'settings-dev-flow': 'The build-flow dropdown itself. Settings binds its change and gates the two hand-off options on whether the deployment has external flows.',
-  'settings-dev-flow-status': 'Save/error line for the build-flow dropdown.',
   'cli-setup-guide': 'Always-visible local-agent setup in Settings → CLI access (#1609). It is static section markup so capability detection and credential-list state cannot blank the instructions.',
   'native-app-version-slot': 'Mobile app version/build rendered through the native bridge (#1101).',
   'feedback-queue-dot': 'Header dot for feedback saved offline and still waiting to send (#1054). It has changed parents twice without changing id or writer — off the retired #feedback-btn onto #improve-btn, and off that onto the Homeroom mark when #2718 retired it — because it belongs on whichever control is the way to this dialog from the header. Bottom-left, opposite the working dot.',

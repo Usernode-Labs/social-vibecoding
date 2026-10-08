@@ -4,7 +4,7 @@
 //
 // Before this test the product had two different things called "Claude
 // Code" — the platform backend (chat_sessions.agent_backend='claude_code')
-// and the web hand-off (users.dev_flow_preference='claude-code') — offered
+// and the web hand-off (chat_sessions.build_venue='web-claude-code') — offered
 // in menus inches apart, plus a third `claude-code` as an external_agent
 // provenance value. Choosing one when you meant the other cost real money
 // on the wrong plan, and nothing in the codebase stopped the two labels

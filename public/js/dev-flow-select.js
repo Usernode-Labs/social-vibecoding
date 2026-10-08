@@ -55,9 +55,10 @@
   // URL to the system browser instead; see _devFlowLinkGithub there.
   var GITHUB_CONNECT_HREF = '/api/me/social-identities/github/connect?intent=connect';
 
-  // Same allowlist as DEV_FLOWS in src/routes/auth.js and the CHECK on
-  // users.dev_flow_preference. tests/dev-flow-preference.test.js pins the
-  // three together so a fourth flow cannot land in one place only.
+  // Same allowlist as the CHECK on users.dev_flow_preference. The route
+  // copy (DEV_FLOWS in src/routes/auth.js) is gone with POST
+  // /api/me/dev-flow (issue #4311), so it is a two-way agreement now:
+  // tests/dev-flow-preference.test.js pins these two together.
   //
   // Id and venue label only. The blurbs and CTAs that used to live here
   // belonged to the PICKER card, and the picker is gone — public/js/

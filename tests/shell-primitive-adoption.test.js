@@ -69,8 +69,9 @@ const PRIMARY_FILL = 'bg-violet-600';
  *
  * `<select>` is NOT scanned. It has the same three fills and the same
  * primitive (@/components/ui/select.tsx), and adding it here flags four raw
- * selects that predate this rule — #dc-runner-select, the share dialog's two,
- * and #settings-dev-flow — in three files none of which #2437 is about.
+ * selects that predate this rule — #dc-runner-select and the share dialog's
+ * two — in two files neither of which #2437 is about. (#settings-dev-flow
+ * was one; it is retired with the setting it belonged to, issue #4311.)
  * Converting them is a slice of its own; widening the scan without converting
  * them would mean three allow-list entries, which is the one thing this file's
  * header says an allow-list is not for. The three selects on the waitlist

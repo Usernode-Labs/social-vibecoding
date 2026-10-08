@@ -166,12 +166,11 @@
     // use below goes through `?.` for exactly that reason.
     _store: null,
     _footerHome: null,
-    // `devFlowPreference` is the "remember my option" answer from the
-    // dev-chat flow picker (#1049): null = ask every time (the default),
-    // otherwise 'platform' | 'claude-code' | 'codex'. `externalFlowsAvailable`
-    // says whether this deployment can offer the Claude Code / Codex
-    // hand-off at all — the server decides, we only render what it reports.
-    state: { hasApiKey: false, demoKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false, sessionBridgeEnabled: false, homeroomBotDm: false, homeroomBotForEveryone: false, locale: null, devFlowPreference: null, externalFlowsAvailable: false },
+    // `externalFlowsAvailable` says whether this deployment can offer the
+    // Claude Code / Codex hand-off at all — the server decides, we only
+    // render what it reports. (The saved "where changes get built"
+    // preference is gone: nothing read it any more, issue #4311.)
+    state: { hasApiKey: false, demoKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false, sessionBridgeEnabled: false, homeroomBotDm: false, homeroomBotForEveryone: false, locale: null, externalFlowsAvailable: false },
     _walletPollTimer: null,
     _alertsTestTimer: null,
     _walletExpiresAt: null,
@@ -312,7 +311,6 @@
       // keyed by it: a page key that named a LATER part would open the page
       // scrolled past everything above that part.
       { key: 'connectors', label: 'Connectors', group: 'AI & building', page: 'connectors' },
-      { key: 'build-venue', label: 'Where changes get built', group: 'AI & building', page: 'connectors' },
       { key: 'cli', label: 'CLI & coding-agent access', group: 'AI & building', page: 'connectors' },
       { key: 'agent-files', label: 'Agent instructions & skills', group: 'AI & building' },
       { key: 'global-chat', label: 'Global Chat (experimental)', group: 'AI & building' },
@@ -383,7 +381,6 @@
       usage: 'allowance limit credits budget spend remaining weekly',
       'api-key': 'claude byok key sk-ant billing',
       openrouter: 'model glm deepseek reasoning default coding agent key',
-      'build-venue': 'claude code codex hand off handoff default build',
       connectors: 'mcp claude chatgpt codex chat connector',
       cli: 'terminal token credentials revoke local agent opencode claude code',
       'agent-files': 'instructions skills agents md claude md prompt files',
@@ -773,7 +770,6 @@
         this.state.homeroomBotDm = !!j.user?.homeroomBotDm;
         this.state.homeroomBotForEveryone = !!j.user?.homeroomBotForEveryone;
         this.state.locale = j.user?.locale || null;
-        this.state.devFlowPreference = j.user?.devFlowPreference || null;
         this.state.externalFlowsAvailable = !!j.user?.externalFlowsAvailable;
         // Same payload the CLI-credentials gate needs, so prime its memo
         // rather than let it issue a second /api/auth/me. (It still
@@ -785,10 +781,6 @@
         // the menu at all, and it lands here — possibly AFTER a cold-boot
         // deep link has already painted. Re-resolve the menu.
         this._renderWalletSection();
-        // The preference lands here too, and its page may already be
-        // painted (a cold-boot deep link to #settings/build-venue renders
-        // before this resolves). Same reasoning as the wallet row above.
-        this._renderDevFlowSection();
         // #1556: `locale` decides whether the Language row is in the menu at
         // all, and it lands here too — a cold-boot deep link paints before
         // this resolves. Same reasoning as the two rows above.
@@ -873,7 +865,6 @@
       this._loadGithubLink();
       this._renderAgentFilesSection();
       this._renderWalletSection();
-      this._renderDevFlowSection();
       this._renderChangeUsernameSection();
       this._renderChangePasswordSection();
       this._renderDevConsoleSection();
@@ -1720,33 +1711,6 @@
       }
       select.value = value;
       const status = document.getElementById('settings-locale-status');
-      if (status) { status.classList.add('hidden'); status.textContent = ''; }
-    },
-
-    // "Preferred build flow" (#1049). The BLOCK is markup now
-    // (sections/connectors.tsx) — it was injected here at runtime until
-    // #1191, because the shell's body was a hand-written document pinned
-    // id-for-id and a new settings control had nowhere else to go. What is
-    // left is what this module does for every other control on the screen:
-    // bind the change, reflect the stored value, and gate the two hand-off
-    // options on whether this deployment has the external flows at all.
-    //
-    // Idempotent — _renderAllSections and refresh() both call it, and the
-    // listener is attached once, to an element React keeps.
-    _renderDevFlowSection() {
-      const select = document.getElementById('settings-dev-flow');
-      if (!select) return;
-      if (!select.__devFlowWired) {
-        select.__devFlowWired = true;
-        select.addEventListener('change', (e) => this._saveDevFlow(e.target.value));
-      }
-      // A deployment without the external flows can still express "always
-      // build on Homeroom" vs "ask me" — just not the two hand-offs.
-      select.querySelectorAll('option[value="claude-code"], option[value="codex"]').forEach((opt) => {
-        opt.disabled = !this.state.externalFlowsAvailable;
-      });
-      select.value = this.state.devFlowPreference || '';
-      const status = document.getElementById('settings-dev-flow-status');
       if (status) { status.classList.add('hidden'); status.textContent = ''; }
     },
 
@@ -2746,41 +2710,6 @@
         if (window.AppView && typeof AppView.notifyLocaleChanged === 'function') {
           try { AppView.notifyLocaleChanged(this.state.locale); } catch {}
         }
-        if (status) {
-          status.textContent = '✓ Saved';
-          status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-zinc-500', 'dark:text-zinc-400');
-          status.classList.add('text-emerald-700', 'dark:text-emerald-400');
-        }
-      } catch (err) {
-        fail(`Network error: ${err.message}`);
-      }
-    },
-
-    // Same shape as _saveLocale: POST on change, revert the select and paint
-    // the status line on failure, mirror onto App.user so anything reading
-    // the cached user (the dev-chat picker) sees the new value immediately.
-    async _saveDevFlow(value) {
-      const select = document.getElementById('settings-dev-flow');
-      const status = document.getElementById('settings-dev-flow-status');
-      const fail = (msg) => {
-        if (select) select.value = this.state.devFlowPreference || '';
-        if (status) {
-          status.textContent = msg;
-          status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
-          status.classList.add('text-red-700', 'dark:text-red-400');
-        }
-      };
-      try {
-        const r = await fetch('/api/me/dev-flow', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ flow: value || null }),
-        });
-        const j = await r.json().catch(() => ({}));
-        if (!r.ok) return fail(j.error || 'Failed to save.');
-        this.state.devFlowPreference = j.flow || null;
-        if (typeof App !== 'undefined' && App.user) App.user.devFlowPreference = this.state.devFlowPreference;
         if (status) {
           status.textContent = '✓ Saved';
           status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-zinc-500', 'dark:text-zinc-400');

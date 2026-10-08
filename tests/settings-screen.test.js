@@ -270,7 +270,8 @@ test('the registry groups pages under four headings, Account first', () => {
   assert.equal(registryPages().find((p) => p.key === 'account').parts.at(-1).key, 'delete-account',
     'and Delete account closes it');
   assert.deepEqual(['usage', 'openrouter', 'api-key'].map(pageOf), Array(3).fill('ai'));
-  assert.deepEqual(['connectors', 'build-venue', 'cli'].map(pageOf), Array(3).fill('connectors'));
+  assert.deepEqual(['connectors', 'cli'].map(pageOf), Array(2).fill('connectors'),
+    'the "Where changes get built" row is gone with the setting (issue #4311)');
   // A page key that is also the key of a LATER part on that page would make
   // the page's own nav row resolve as a deep link to that part, opening the
   // page scrolled past everything above it.
@@ -342,7 +343,9 @@ test('a part address resolves to its page, scrolled to the part', () => {
   assert.deepEqual(S._resolve('cli'), { page: 'connectors', anchor: 'cli' });
   assert.deepEqual(S._resolve('connectors'), { page: 'connectors', anchor: null },
     'connectors leads its page, so its address is the page');
-  assert.deepEqual(S._resolve('build-venue'), { page: 'connectors', anchor: 'build-venue' });
+  // #settings/build-venue is an unknown address now (issue #4311) and lands
+  // on the Settings root like any other.
+  assert.deepEqual(S._resolve('build-venue'), { page: null, anchor: null });
   assert.deepEqual(S._resolve('api-key'), { page: 'ai', anchor: 'api-key' });
   assert.deepEqual(S._resolve('theme'), { page: 'theme', anchor: null });
   assert.deepEqual(S._resolve('usernode'), { page: 'usernode', anchor: null });

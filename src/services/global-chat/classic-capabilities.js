@@ -497,7 +497,7 @@ function authProjection(group, data) {
     profile: ['username', 'displayName'],
     username: ['username'],
     'api-key': ['hasApiKey', 'keyLast4', 'demoKey'],
-    'build-venue': ['devFlowPreference', 'externalFlowsAvailable'],
+    'build-venue': ['externalFlowsAvailable'],
     experimental: ['aiProgressEstimate', 'sessionBridgeEnabled', 'homeroomBotDm'],
   }[group] || [];
   return Object.fromEntries(fields.filter((key) => Object.hasOwn(user, key)).map((key) => [key, user[key]]));
