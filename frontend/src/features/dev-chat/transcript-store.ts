@@ -209,7 +209,7 @@ export type TranscriptRow =
     prNumber: number | null;
     title: string;
     /** #3605: the requests this change closes, each opening in Homeroom. */
-    closes: { n: number; verb: 'Closes' | 'Closed' }[];
+    closes: { n: number; closed: boolean }[];
     /** #3605: the session id whose vote page the status opens, once proposed. */
     proposalId: number | null;
     stamp: string;

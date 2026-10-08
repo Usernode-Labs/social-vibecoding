@@ -21,6 +21,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const { makeComposerBridge } = require('./lib/dev-composer-html');
 
@@ -126,6 +127,7 @@ function makeAppViewHarness({ fetchImpl, wideViewport = true, withSlot = true } 
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   return { AppView: sandbox.__AppView, getEl, sandbox, media };
@@ -369,6 +371,7 @@ function makeDevChatHarness() {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   sandbox.UsernodeReact = { devChat: react.bridge };
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${DEV_CHAT_SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;

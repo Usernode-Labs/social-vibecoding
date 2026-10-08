@@ -23,9 +23,10 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const { makeComposerBridge } = require('./lib/dev-composer-html');
-const { loadTsx, renderComponent } = require('./lib/render-tsx');
+const { loadTsx, renderComponent, renderToHtml, createElement } = require('./lib/render-tsx');
 const { SW_VERSION } = require('../public/sw.js');
 
 const SRC = fs.readFileSync(
@@ -182,6 +183,7 @@ function makeHarness() {
     }),
   });
 
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;
@@ -934,6 +936,14 @@ test('a machine that has gone leaves a past-tense chip, not a live one', () => {
   assert.match(html, /the next turn runs on Homeroom/);
 });
 
+// A component that reads its words with a hook can only be called while
+// React is rendering, so the call is made inside a probe's render.
+function duringRender(call) {
+  let result;
+  renderToHtml(createElement(() => { result = call(); return null; }));
+  return result;
+}
+
 test('choosing Homeroom hands the session back and never leaves a half-set select', async () => {
   const { DevChat, runnerView } = makeHarness();
   const requests = [];
@@ -951,7 +961,7 @@ test('choosing Homeroom hands the session back and never leaves a half-set selec
   // directly rather than through a listener registry.
   const { RunnerControlsView } = loadTsx('frontend/src/features/dev-chat/composer-chrome.tsx');
   const onChange = () => {
-    const parts = RunnerControlsView(runnerView()).props.children;
+    const parts = duringRender(() => RunnerControlsView(runnerView())).props.children;
     const select = parts.find((child) => child && child.props && child.props.id === 'dc-runner-select');
     assert.ok(select, 'the live strip renders a selector');
     return select.props.onChange;

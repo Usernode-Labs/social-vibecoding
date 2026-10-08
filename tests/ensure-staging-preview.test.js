@@ -21,6 +21,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -720,7 +721,8 @@ test('the preview bar says Back, not Back to session, and its title is not set i
     path.join(__dirname, '..', 'frontend', 'src', 'features', 'staging', 'staging-overlay.tsx'), 'utf8');
   const back = overlay.match(/<button\s+id="staging-back"[\s\S]*?<\/button>/);
   assert.ok(back, '#staging-back keeps its id');
-  assert.match(back[0], /<ChevronLeftIcon className="w-4 h-4" \/>\s*Back\s*<\/button>/);
+  assert.match(back[0], /<ChevronLeftIcon className="w-4 h-4" \/>\s*\{t\('core:common\.back'\)\}\s*<\/button>/);
+  assert.equal(message('core:common.back'), 'Back');
   assert.doesNotMatch(back[0], /Back to session/);
   const label = overlay.match(/<span id="staging-url-label" className="([^"]*)"/);
   assert.ok(label, '#staging-url-label keeps its id');

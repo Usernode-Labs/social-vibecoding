@@ -24,6 +24,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'),
@@ -111,6 +112,7 @@ function makeHarness() {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
 
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;

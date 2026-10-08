@@ -232,7 +232,8 @@ test('"paused" is shown nowhere, and nobody is asked to pause or resume anything
   const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
   assert.doesNotMatch(devChat, /key: 'pause', label: 'Pause'/);
   assert.doesNotMatch(devChat, /key: 'resume', label: 'Resume'/);
-  assert.match(devChat, /key: 'free', label: 'Free worker'/, 'a promoted session can still free its worker');
+  assert.match(devChat, /key: 'free', label: PlatformI18n\.t\('devchat:sessions\.action\.free'\)/, 'a promoted session can still free its worker');
+  assert.equal(message('devchat:sessions.action.free'), 'Free worker');
   for (const file of ['src/routes/sessions.js', 'src/routes/proposal-handoff.js', 'src/services/connector-limits.js']) {
     assert.doesNotMatch(read(file), /Pause or archive one first|Pause one first/, `${file} never asks the user to pause`);
   }

@@ -218,7 +218,8 @@ test('dev chat: the same summary, and the zone only where a drop is taken', asyn
   const src = read('frontend/src/features/dev-chat/dev-chat.js');
   assert.match(src, /dragging: DevChat\._dragging && !DevChat\._dropDisabled\(\),/);
   assert.match(src, /_dropDisabled\(\) \{\s*return !DevChat\.currentSession \|\| !!DevChat\.isStreaming/);
-  assert.match(src, /refuse\(`Up to \$\{L\.maxPerMessage\} files per message\.`, files\.length - i\);/);
+  assert.match(src, /refuse\(PlatformI18n\.t\('devchat:attach\.tooMany', \{ count: L\.maxPerMessage \}\), files\.length - i\);/);
+  assert.equal(message('devchat:attach.tooMany', { count: 4 }), 'Up to 4 files per message.');
   assert.match(src, /DevChat\._setAttachError\(DevChat\._refusalSummary\(firstRefusal, refused - 1\)\);/);
 });
 

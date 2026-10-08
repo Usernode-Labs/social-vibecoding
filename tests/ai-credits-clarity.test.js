@@ -21,6 +21,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 const { renderComponent } = require('./lib/render-tsx');
 
 const root = path.join(__dirname, '..');
@@ -236,6 +237,7 @@ function makeDevChat({ hasApiKey = false, search = '' } = {}) {
       publishAttachStrip: () => {},
     },
   };
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(fs.readFileSync(path.join(root, 'public/js/build-venues.js'), 'utf8'), sandbox);
   vm.runInContext(fs.readFileSync(path.join(root, 'public/js/credit-options.js'), 'utf8'), sandbox);
