@@ -1,8 +1,10 @@
 /**
  * The build line (#4053): one line that says where a project's first version
- * is, the same way on every screen that shows it. It is the bottom row of the
- * project's thumbnail (./sketch-card.tsx) on the made screen and the App tab,
- * and the hub's First version card draws it too.
+ * is, the same way on every screen that shows it. It is separate from the
+ * project's thumbnail (./sketch-card.tsx): one line about 8px under the card,
+ * not a row in it (owner, 8 Oct 2026, reversing the 6 October call to keep it
+ * inside), on the made screen and the App tab, and the hub's First version
+ * card draws it too.
  *
  * The server says which line, for the person reading (`first_version.line`,
  * services/homeroom-bot-progress.js buildLineOf); the words are here, once:

@@ -67,7 +67,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { ArrowUpIcon, ChevronDownIcon, ChevronRightIcon } from '@/components/ui/icons';
+import { ArrowUpIcon, ChatIcon, ChevronDownIcon, ChevronRightIcon } from '@/components/ui/icons';
 import { agoStamp } from '../../../lib/timestamp';
 import { BuildLine, type BuildLineState, buildLineOf } from '../../first-session/build-line';
 import { swatchFor } from '../../messages/format';
@@ -333,8 +333,9 @@ export function firstVersionKind(fv: HubFirstVersion): 'ready' | 'plan' | 'quest
  * (GET /api/apps/:slug/community `first_version`).
  *
  * When the bot waits on its maker (its plan, for their Build it, or a
- * question), the card says so and "Go to chat" opens their chat with it,
- * where the plan is decided. Ready to try, "See the change" opens the change,
+ * question), the card says so and a button opens their chat with it, where
+ * the plan is decided: "Review the plan" for the plan (the canvas's FVCard),
+ * "Go to chat" for a question. Ready to try, "See the change" opens the change,
  * where it is tried and approved. Nothing for a project the bot is not
  * building, or once its first version is live.
  *
@@ -376,11 +377,17 @@ export function FirstVersionCard({ slug, data }: { slug: string; data: Community
           variant="pillAccent"
           size="sm"
           ink="solid"
+          layout={fv.waits_on === 'plan' ? 'iconRow' : 'none'}
           className="self-start"
           data-ws-first-version-chat=""
           onClick={chat}
         >
-          Go to chat
+          {fv.waits_on === 'plan' ? (
+            <>
+              <ChatIcon className="h-4 w-4" aria-hidden="true" />
+              Review the plan
+            </>
+          ) : 'Go to chat'}
         </Button>
       ) : fv.ready && fv.session_id ? (
         <a

@@ -3152,11 +3152,14 @@ const AppView = {
   },
 
   /**
-   * #4053: while it is being built, the thumbnail and one line, for
-   * everyone: "It opens here when it’s ready." The build line says where it
-   * is ("Your plan is ready to review" to the person who started it), and
-   * nothing here asks for an answer: the plan and the bot's questions are
-   * answered in their chat with Homeroom bot. While a first-session tour
+   * #4053: while it is being built, the thumbnail with its build line one
+   * line under it, and one line below that, for everyone: "It opens here
+   * when it’s ready." The build line says where it is ("Your plan is ready
+   * to review" to the person who started it). The plan and the bot's
+   * questions are answered in the creator's chat with Homeroom bot, so the
+   * creator, and only they, gets a way there under the card: "Review the
+   * plan" while their plan waits (the build line asks them, in blue), else
+   * a small "Open Homeroom bot" (owner, 8 Oct 2026). While a first-session tour
    * card that says where the app opens is over this screen, the line hides
    * (`tourSays`: the card carries `data-tour-says-where-it-opens`;
    * features/app-frame/app-status.tsx). A card that does not say it, such as
@@ -3166,14 +3169,28 @@ const AppView = {
     const fv = appData.first_version || {};
     // Built and up for approval: no longer "being built" (_firstVersionReadyView).
     if (fv.ready) return AppView._firstVersionReadyView(appData);
+    const thumb = AppView._firstVersionThumb(appData);
+    // Their DM, by its id when the record names it (members get neither).
+    const chat = fv.mine === true
+      ? {
+        key: 'botChat',
+        label: thumb.buildLine === 'plan' ? 'Review the plan' : 'Open Homeroom bot',
+        slug: appData.slug,
+        conversationId: Number.isInteger(fv.conversationId) ? fv.conversationId : null,
+        // The plan is the one thing that waits on them: the primary button.
+        // Otherwise it is a small, quiet way into the chat.
+        quiet: thumb.buildLine !== 'plan',
+        underCard: true,
+      }
+      : null;
     return {
       dot: null,
       message: appData.name || appData.slug,
       detail: null,
-      ...AppView._firstVersionThumb(appData),
+      ...thumb,
       lines: ['It opens here when it’s ready.'],
       tourSays: true,
-      action: null,
+      action: chat,
     };
   },
 

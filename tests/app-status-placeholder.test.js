@@ -288,7 +288,7 @@ test('an empty view renders nothing, so a swept host stays empty', () => {
 
 // ── #15: the first version, being built from the description (D9) ──
 //
-// #4053 and #4043: the project's thumbnail with its build line at its foot,
+// #4053 and #4043: the project's thumbnail with its build line one line under it,
 // and one line under it, for everyone. No step count ("Step 4 of 7: Build
 // it" read as an instruction), no plan with its questions (it is answered in
 // the chat with Homeroom bot), and no "Show the starter for now".
@@ -312,7 +312,8 @@ test('#4053: while it is being built, the thumbnail with its build line, and whe
     buildLine: 'planning',
     lines: ['It opens here when it’s ready.'],
     tourSays: true,
-    action: null,
+    // The creator's way into their chat, under the card (owner, 8 Oct 2026).
+    action: { key: 'botChat', label: 'Open Homeroom bot', slug: 'plant-pal', conversationId: 42, quiet: true, underCard: true },
   });
   const out = html(v);
   assert.match(out, /data-app-first-version="planning"/);
@@ -321,8 +322,22 @@ test('#4053: while it is being built, the thumbnail with its build line, and whe
   assert.match(out, />Know which plants need water today</);
   assert.match(out, /data-build-line="planning"[^>]*>.*Homeroom bot is planning it/);
   assert.match(out, />It opens here when it’s ready\.</);
-  assert.doesNotMatch(out, /status-dot|Step \d of|being built from|<button/, 'no dot, no step count, no title, nothing to press');
+  assert.doesNotMatch(out, /status-dot|Step \d of|being built from/, 'no dot, no step count, no title');
   assert.doesNotMatch(out, /Start a new change|starter/i);
+  // One small button, under the card and its build line and ahead of the note.
+  assert.equal((out.match(/<button/g) || []).length, 1);
+  assert.match(out, /<\/span><\/span><\/div><\/div><\/div><button id="app-first-version-chat"[^>]*>Open Homeroom bot<\/button><p /);
+  assert.match(out, /rounded-full bg-white shadow-sm[^"]*text-violet-600[^"]*min-h-9/, 'secondary and small: raised pill, accent ink');
+  // Members get no way into somebody else's chat.
+  const member = html(view(makeAppView().AppView, firstVersionApp({}, { mine: false, conversationId: null })));
+  assert.doesNotMatch(member, /<button|Open Homeroom bot/);
+});
+
+test('#4053: the build line is one line under the card (8px below it), not a row inside it', () => {
+  const { AppView } = makeAppView();
+  const out = html(view(AppView, firstVersionApp()));
+  assert.match(out, /<div class="flex flex-col gap-2"><div data-featured-card="ready"/);
+  assert.match(out, /<\/p><\/div><\/div><div data-featured-card-line="" class="px-1"><span role="status" data-build-line="planning"/);
 });
 
 test('#4053: "It opens here when it’s ready." hides only while a tour card that says it is on the page', () => {
@@ -347,14 +362,18 @@ test('#4053: the line is the server\'s for this reader; the plan and the bot\'s 
   const mine = view(AppView, firstVersionApp({}, { line: 'plan', plan }));
   assert.equal(mine.buildLine, 'plan');
   assert.deepEqual(mine.lines, ['It opens here when it’s ready.']);
-  assert.equal(mine.action, null);
+  // Its plan waits on them: "Review the plan", the primary button, opens their chat with Homeroom bot.
+  assert.deepEqual({ ...mine.action }, { key: 'botChat', label: 'Review the plan', slug: 'plant-pal', conversationId: 42, quiet: false, underCard: true });
   assert.equal('plan' in mine, false, 'no plan card on the App tab');
   const out = html(mine);
   assert.match(out, /data-build-line="plan"[^>]*>.*Your plan is ready to review/);
   assert.doesNotMatch(out, /data-bot-plan|Build it|Change something/);
+  assert.match(out, /<button[^>]* id="app-first-version-chat"[^>]*>Review the plan<\/button>/);
+  assert.doesNotMatch(out, /Open Homeroom bot/, 'one button, not two to the same chat');
   // Anyone else, the same moment.
   const theirs = view(AppView, firstVersionApp({}, { mine: false, conversationId: null, line: 'plan-member' }));
   assert.equal(theirs.buildLine, 'plan-member');
+  assert.equal(theirs.action, null, 'members get neither button');
   assert.match(html(theirs), /data-build-line="plan-member"[^>]*>.*Planning it/);
   // A question waiting on its creator, and the build itself.
   assert.match(html(view(AppView, firstVersionApp({}, { line: 'question', question: true }))), /Homeroom bot has a question for you/);
@@ -565,7 +584,7 @@ test('#15: while the project is still being set up, the same thumbnail: Homeroom
   const v = view(AppView, firstVersionApp({ status: 'creating', url: null }, { step: 1, line: 'planning' }));
   assert.equal(v.buildLine, 'planning');
   assert.deepEqual(v.lines, ['It opens here when it’s ready.']);
-  assert.equal(v.action, null);
+  assert.equal(v.action.label, 'Open Homeroom bot');
   // Not building any more (or never was): the ordinary states, unchanged.
   assert.deepEqual(view(AppView, { status: 'creating', slug: 'plant-pal', first_version: null }),
     { dot: 'creating', message: 'App is spinning up...', detail: null, action: null });

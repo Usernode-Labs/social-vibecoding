@@ -761,7 +761,9 @@ test('#15: a first version being built shows its thumbnail, not the starter, and
   assert.equal(shown.thumb.slug, SLUG, 'the project\'s thumbnail');
   assert.equal(shown.buildLine, 'building');
   assert.deepEqual([...shown.lines], ['It opens here when it’s ready.']);
-  assert.equal(shown.action, null, 'nothing to press while it is being built');
+  // The creator (the record is theirs: mine) gets a small way into their chat
+  // under the card; the plan is answered there (owner, 8 Oct 2026).
+  assert.deepEqual({ ...shown.action }, { key: 'botChat', label: 'Open Homeroom bot', slug: SLUG, conversationId: 9, quiet: true, underCard: true });
   assert.equal('secondary' in shown, false, 'and no way to the starter');
   assert.notEqual(AppView._firstVersionTimer, null, 'one recheck is armed while it is up');
 
@@ -823,7 +825,7 @@ test('#15: the first-version screenshot state is self-contained, and mounts no f
     'a made-up project: no sketch is asked for');
   assert.equal(shown.buildLine, 'building');
   assert.deepEqual([...shown.lines], ['It opens here when it’s ready.']);
-  assert.equal(shown.action, null);
+  assert.equal(shown.action.label, 'Open Homeroom bot');
   assert.equal(AppView.appData.url, null, 'no address, so nothing is ever framed');
   const appJs = read('public/js/app.js');
   const routeShots = appJs.slice(appJs.indexOf('  _applyRouteShots() {'), appJs.indexOf('\n  },', appJs.indexOf('  _applyRouteShots() {')));
@@ -836,7 +838,7 @@ test('#15: the first-version screenshot state is self-contained, and mounts no f
   const planned = h.status();
   assert.equal(planned.buildLine, 'plan', 'its plan waits for its creator');
   assert.deepEqual([...planned.lines], ['It opens here when it’s ready.']);
-  assert.equal(planned.action, null, 'the plan is answered in the chat, not here');
+  assert.equal(planned.action.label, 'Review the plan', 'the plan is answered in their chat: the button opens it');
   assert.equal('plan' in planned, false);
   AppView.showFirstVersionShot('plan');
   assert.equal(h.status().buildLine, 'plan', '\'plan\' is the same shot');

@@ -9,7 +9,7 @@
  * would have re-attached. A sixth since #15: the first version, being built
  * by the Homeroom bot from the project's description. Since #4053 that is
  * the project's thumbnail (features/first-session/sketch-card.tsx) with its
- * build line at its foot, and "It opens here when it’s ready." under it:
+ * build line one line under it, and "It opens here when it’s ready." below that:
  * no plan, no step count, nothing to press (#4043). Once that version is
  * built and up for approval, the same thumbnail says Ready to try, and the
  * screen says what it waits on, with Try it and See the change.
@@ -55,7 +55,7 @@ export interface AppStatusView {
   lines?: string[];
   /**
    * #4053: the project whose first version is on its way, drawn as its
-   * thumbnail in place of the message, with `buildLine` at its foot.
+   * thumbnail in place of the message, with `buildLine` one line under it.
    */
   thumb?: FirstVersionThumb | null;
   /** None: no line (a screen that cannot know the step). */
@@ -69,7 +69,9 @@ export interface AppStatusView {
   tourSays?: boolean;
   /**
    * At most one, and only for a viewer who can act on it. `botChat` opens
-   * the viewer's DM with the Homeroom bot (#15), by its id when known.
+   * the viewer's DM with the Homeroom bot (#15), by its id when known. "Review the
+   * plan" while their plan waits, "Open Homeroom bot" (`quiet`) while it
+   * builds, "Open my chat with Homeroom bot" once it is ready to try.
    * `tryChange` and `seeChange` are a first version that is ready to try:
    * its change's preview and its change page, by the change's id.
    */
@@ -79,6 +81,10 @@ export interface AppStatusView {
     slug: string;
     conversationId?: number | null;
     sessionId?: number | null;
+    /** A small secondary button, not the screen's one primary action. */
+    quiet?: boolean;
+    /** Drawn right under the thumbnail and its build line, ahead of the lines. */
+    underCard?: boolean;
   } | null;
   /** A second way on, beside the action (a first version's change page, under Try it). */
   alt?: { key: 'seeChange'; label: string; slug: string; sessionId: number } | null;
@@ -146,6 +152,23 @@ const THUMB_LINE = 'max-w-sm pt-1 text-[15px] leading-5';
 // Hidden while a tour card that says where the app opens is on the page.
 const THUMB_LINE_TOUR_SAYS = 'max-w-sm pt-1 text-[15px] leading-5 [body:has([data-tour-says-where-it-opens])_&]:hidden';
 
+function actionButton(action: NonNullable<AppStatusView['action']>): ReactNode {
+  // "Open Homeroom bot": the creator's small, quiet way into the chat while
+  // the first version builds, under the thumbnail and its build line.
+  if (action.quiet) {
+    return (
+      <Button id={ACTIONS[action.key].id} variant="pillRaised" size="sm" ink="accent" className="min-h-9" onClick={() => press(action)}>
+        {action.label}
+      </Button>
+    );
+  }
+  return (
+    <Button id={ACTIONS[action.key].id} className={action.underCard ? 'mt-1' : 'mt-3'} onClick={() => press(action)}>
+      {action.label}
+    </Button>
+  );
+}
+
 export function AppStatusView_({ view }: { view: AppStatusView }): ReactNode {
   const action = view.action;
   const titled = !!view.lines?.length;
@@ -158,6 +181,7 @@ export function AppStatusView_({ view }: { view: AppStatusView }): ReactNode {
       ) : (
         <p className={titled ? 'max-w-sm text-base font-semibold text-zinc-900 dark:text-zinc-100' : 'text-sm'}>{view.message}</p>
       )}
+      {action && action.underCard ? actionButton(action) : null}
       {titled ? view.lines!.map((line) => (
         <p
           key={line}
@@ -170,11 +194,7 @@ export function AppStatusView_({ view }: { view: AppStatusView }): ReactNode {
       {view.detail ? (
         <p className="text-xs font-mono text-red-700 max-w-md break-words dark:text-red-400">{view.detail}</p>
       ) : null}
-      {action ? (
-        <Button id={ACTIONS[action.key].id} className="mt-3" onClick={() => press(action)}>
-          {action.label}
-        </Button>
-      ) : null}
+      {action && !action.underCard ? actionButton(action) : null}
       {view.alt ? (
         <Button id={ACTIONS[view.alt.key].id} variant="neutral" ink="neutral" onClick={() => press(view.alt!)}>
           {view.alt.label}

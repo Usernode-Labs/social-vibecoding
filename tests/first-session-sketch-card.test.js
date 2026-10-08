@@ -2,7 +2,7 @@
 
 // The project's thumbnail (frontend/src/features/first-session/
 // sketch-card.tsx), on the made screen, the App tab and an invite, and the
-// build line at its foot (./build-line.tsx).
+// build line one line under it (./build-line.tsx).
 //
 // #4053 and #4041, onboarding test on iPhone, 6 October 2026: the card of
 // the idea had diagonal stripes, a "Being made" pill, the points it would do
@@ -14,7 +14,9 @@
 //   - a THUMBNAIL: the icon on its colour, the name, one line (the sketch's
 //     tagline, else the project's description), and nothing else: no
 //     stripes, no pill, no points;
-//   - the BUILD LINE is its bottom row, under a hairline, when the screen
+//   - the BUILD LINE is SEPARATE from the card (owner, 8 Oct 2026, reversing
+//     the 6 October "inside the card" call): one line about 8px under it,
+//     with no hairline and no row of the card's, when the screen
 //     knows where the first version is: the same words on every screen, a
 //     spinner that turns, a blue dot only on the line that waits on the
 //     reader, a check once it is ready or live, and no step count;
@@ -133,6 +135,7 @@ test('while it is sketched: the same frame, the name in place, a band of light o
   assert.match(html, /motion-safe:animate-card-sweep/);
   assert.match(html, /pointer-events-none absolute inset-0 overflow-hidden motion-reduce:hidden/);
   assert.match(html, /data-featured-card-line=""[^>]*><span role="status" data-build-line="planning"/);
+  assert.ok(lineOutsideCard(html), 'while it is sketched too, the line is under the card and the light passes over the card alone');
   assert.match(html, />Homeroom bot is planning it<\/span>/);
   assert.match(html, /Homeroom is making your app\. It will message you when the first version is ready to try, or if it has any questions\./);
   // No words yet, no frame.
@@ -141,14 +144,27 @@ test('while it is sketched: the same frame, the name in place, a band of light o
   assert.match(sketchCard({ made: { ...MADE, emoji: '🏃' }, sketch: { state: 'pending', card: null } }), /<span class="transition-\[opacity,transform\][^"]*">🏃<\/span>/);
 });
 
-test('once it is here: the idea\'s emoji and its one line, with the build line at its foot', () => {
+// The line's own element sits after the card's closing tag, not in it: the
+// divs between the card's opening tag and the line's balance out.
+function lineOutsideCard(html) {
+  const between = html.slice(html.indexOf('<div data-featured-card='), html.indexOf('data-featured-card-line'));
+  const opens = (between.match(/<div[\s>]/g) || []).length;
+  const closes = (between.match(/<\/div>/g) || []).length;
+  return opens - closes === 1;
+}
+
+test('once it is here: the idea\'s emoji and its one line, with the build line just under the card', () => {
   const html = sketchCard({ sketch: { state: 'ready', card: CARD } });
   assert.match(html, /data-first-session-sketch="ready"/);
   assert.match(html, /data-featured-card="ready"/);
   assert.match(html, />🪴<\/span>/);
   assert.match(html, /<p data-featured-card-words="" class="line-clamp-2 text-\[15px\] leading-5 text-zinc-500[^"]*">Never forget to water the flat&#x27;s plants<\/p>/);
   for (const point of CARD.points) assert.doesNotMatch(html, new RegExp(point), 'no points: a thumbnail, not a plan');
-  assert.match(html, /shadow-\[inset_0_1px_0_var\(--app-sheet-line\)\]/, 'the line sits under a hairline');
+  // The line is its own element after the card, 8px below it (gap-2), not a row inside it.
+  assert.ok(lineOutsideCard(html), 'the build line is outside the card');
+  assert.match(html, /<div class="flex flex-col gap-2"><div data-featured-card="ready"/, 'the card and its line, 8px apart');
+  assert.match(html, /<\/p><\/div><\/div><div data-featured-card-line="" class="px-1"><span role="status" data-build-line="planning"/);
+  assert.doesNotMatch(html, /shadow-\[inset_0_1px_0_var\(--app-sheet-line\)\]/, 'no hairline: it is not a row of the card');
   assert.doesNotMatch(html, /Sketching|animate-card-sweep|role="status" class="sr-only"/);
   // Each line the made screen can say.
   assert.match(sketchCard({ sketch: { state: 'ready', card: CARD }, line: 'plan' }), />Your plan is ready to review</);
@@ -199,10 +215,13 @@ test('the small size, for a row: the tile on its colour, the name, and the line 
 test('the made screen draws the thumbnail with its line, its emoji is the screen\'s icon, and nothing is framed', () => {
   const made = read(`${DIR}/made.tsx`);
   assert.match(made, /import \{ SketchCard, showsCard, useSketch \} from '\.\/sketch-card';/);
-  assert.match(made, /\{card \? \(\n\s+<SketchCard made=\{made\} sketch=\{sketch\} line=\{line\} note=\{note\} />/);
+  assert.match(made, /\{card \? \(\n\s+<SketchCard made=\{made\} sketch=\{sketch\} line=\{line\} note=\{note\} \/>/);
   assert.match(made, /const tile = sketch\.card\?\.emoji \|\| made\.emoji \|\| made\.name\.slice\(0, 1\);/);
   assert.match(made, /made=\{sketch\.card \? \{ \.\.\.made, emoji: sketch\.card\.emoji \} : made\}/, 'the invite sheet shows it too');
-  assert.doesNotMatch(made, /<iframe|sketch\.html|sketchCaption|status-dot|Step \$\{/);
+  // (The plain card of a project with no sketch, such as an import, keeps its
+  // status dot; the thumbnail never draws one.)
+  assert.doesNotMatch(made, /<iframe|sketch\.html|sketchCaption|Step \$\{/);
+  assert.doesNotMatch(SRC, /status-dot/);
   // Rendered with nothing read yet: the card being sketched, Homeroom bot planning it.
   const { MadeScreen } = loadTsx(`${DIR}/made.tsx`);
   const html = renderToHtml(createElement(MadeScreen, { made: MADE, me: 'Maya', onContinue() {}, onOpenChat() {} }));

@@ -3,7 +3,7 @@
  * do with it.
  *
  *   what      The project, being built: its thumbnail, with the build line
- *             at its foot (#4053, ./build-line.tsx: "Homeroom bot is
+ *             one line under it (#4053, ./build-line.tsx: "Homeroom bot is
  *             planning it") from GET /api/apps/:slug (`app.first_version`),
  *             read again every ten seconds, past the service worker's cache
  *             (madeAppOf, madeAppUrl).
@@ -47,7 +47,7 @@
  *   sketch    The project's thumbnail (./sketch-card.tsx,
  *             services/app-sketch.js): its emoji, now the project's icon, and
  *             a tagline, made from the description in a few seconds, with
- *             the build line at its foot. The same frame stands while it is
+ *             the build line under the card. The same frame stands while it is
  *             sketched. Without one (a project with no sketch, or one that
  *             never came) it says the description instead.
  *
@@ -78,7 +78,7 @@ import { Wordmark } from '@/components/ui/wordmark';
 import { askForPingWhileBotBuilds } from '../dialogs/ping-ask';
 import type { HomeroomBotPlanQuestion } from '../messages/types';
 
-import { type BuildLineState, buildLineOf } from './build-line';
+import { BUILD_LINE_WORDS, type BuildLineState, buildLineOf } from './build-line';
 import { copyText, inviteText } from './copy-invite';
 import type { Made, MakeEntry } from './make';
 import { SketchCard, showsCard, useSketch } from './sketch-card';
@@ -162,7 +162,7 @@ export function stalledOf(appStatus: string | null): Stalled {
   return null;
 }
 
-/** "Step 2 of 7: Read the description", or what to say without a build. */
+/** The build line's words ("Building it"), or what to say without a build. */
 export function buildLine(fv: FirstVersion, appStatus: string | null, botBuilds = true, imported = false): string {
   // Before any step: nothing is built on a setup that stopped.
   const stalled = stalledOf(appStatus);
@@ -171,13 +171,14 @@ export function buildLine(fv: FirstVersion, appStatus: string | null, botBuilds 
   // An import has no first version: it is coming over, then it runs.
   if (imported) return appStatus === 'running' ? 'Imported. It’s running.' : 'Importing it from GitHub…';
   if (fv && fv.ready) return 'Version one is ready to try.';
-  if (fv && fv.step && fv.of) return `Step ${fv.step} of ${fv.of}${fv.stepName ? `: ${fv.stepName}` : ''}`;
+  // The plain card (no sketch) says the build line's words too, never a step count (#4053).
+  if (fv && fv.step && fv.of) return BUILD_LINE_WORDS[buildLineOf(fv.line) || 'planning'];
   if (appStatus === 'creating') return 'Setting it up…';
   return botBuilds ? 'Homeroom bot builds it from your description.' : 'Your description is its first request.';
 }
 
 /**
- * #4053: the build line at the foot of the thumbnail, the server's for this
+ * #4053: the build line under the thumbnail, the server's for this
  * reader (`first_version.line`). Before the first read, and while the
  * project is being set up, Homeroom bot is planning it; once a first version
  * read as on its way is gone (`live`: merged), it is live. None for a
@@ -723,6 +724,7 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
   underHeader?: boolean;
 }) {
   const [fv, setFv] = useState<FirstVersion>(null);
+  const [appStatus, setAppStatus] = useState<string | null>('creating');
   const [inviting, setInviting] = useState(false);
   // How the link last went out from the invite sheet, or null.
   const [sentHow, setSentHow] = useState<SentHow | null>(null);
@@ -742,6 +744,7 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
         const app = madeAppOf(body);
         if (live && app) {
           setFv(app.firstVersion);
+          setAppStatus(app.status);
           if (app.firstVersion && !app.firstVersion.ready) setBuilding(true);
         }
       })

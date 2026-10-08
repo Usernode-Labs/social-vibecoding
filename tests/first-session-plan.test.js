@@ -104,7 +104,7 @@ test('a waiting plan is one small "Needs you" card under the project, with the w
 test('while the plan waits, the build\'s note says so instead of promising a message', () => {
   const { buildNote } = loadTsx(`${DIR}/made.tsx`);
   assert.equal(buildNote(true, true), 'Homeroom bot is waiting for your go-ahead.');
-  assert.equal(buildNote(false, true), 'Your description is its first request. You or anyone you invite can build it from there.');
+  assert.equal(buildNote(false, true), 'You or anyone you invite can build it from there.');
   const src = read(`${DIR}/made.tsx`);
   assert.match(src, /const note = buildNote\(botBuilds, !!plan, stalled, imported\);/);
   // Under the card of the idea (./sketch-card.tsx), and in the plain card

@@ -91,17 +91,19 @@ test('a just-you project being built: the build line, and no step count or build
     /typical_minutes|\$\{minutes\}|usually in about|ProgressRing/, 'and nothing reads one');
 });
 
-test('a plan or a question waiting on its maker: the blue line, and Go to chat', () => {
+test('a plan or a question waiting on its maker: the blue line, and a button to the chat', () => {
   const plan = card(building({ step: 3, line: 'plan', waits_on: 'plan' }));
   assert.match(plan, /data-ws-first-version="plan"/);
   assert.match(plan, /data-build-line="plan"[^>]*>.*Your plan is ready to review/);
-  assert.match(plan, /<button[^>]*data-ws-first-version-chat=""[^>]*>Go to chat<\/button>/);
-  assert.match(plan, /data-ws-first-version-chat="" class="rounded-full bg-violet-600[^"]*self-start"/,
+  // The canvas's FVCard: "Review the plan", with the chat glyph, opens Homeroom bot's chat.
+  assert.match(plan, /<button[^>]*data-ws-first-version-chat=""[^>]*><svg[^>]*aria-hidden="true">.*<\/svg>Review the plan<\/button>/);
+  assert.match(plan, /data-ws-first-version-chat="" class="inline-flex items-center gap-2 rounded-full bg-violet-600[^"]*self-start"/,
     'the accent: it is the one thing on the hub that waits on them');
+  assert.doesNotMatch(plan, /Go to chat/);
   const question = card(building({ step: 2, line: 'question', waits_on: 'question' }));
   assert.match(question, /data-ws-first-version="question"/);
   assert.match(question, /Homeroom bot has a question for you/);
-  assert.match(question, /data-ws-first-version-chat=""/);
+  assert.match(question, /data-ws-first-version-chat="" class="rounded-full bg-violet-600[^"]*self-start"[^>]*>Go to chat<\/button>/);
   // The chat is theirs: their DM when the record names it, else the bot's door.
   const src = read(HUB);
   assert.match(src, /if \(fv\.conversation_id\) openConversation\(fv\.conversation_id\);\s*else void openBot\(\);/);

@@ -4,27 +4,30 @@
  * it, the sketch's tagline (services/app-sketch.js makes it from the
  * description, a few seconds after Make it) or, without one, the project's
  * own description. While its first version is on its way, the build line
- * (./build-line.tsx) is its bottom row, under a hairline.
+ * (./build-line.tsx) is one line just under the card, with its spinner.
  *
  *   art     the idea's colour (read off its emoji, lib/community-color.ts,
  *           so it is the colour the project's own page wears later), with
  *           its emoji as the icon it now is;
  *   body    its name and the line, clamped to two lines;
- *   line    where its first version is, when the screen knows.
+ *   line    where its first version is, when the screen knows: under the
+ *           card, not in it.
  *
  * It used to be a featured card under construction: faint diagonal stripes,
  * a "Being made" pill, the points it would do with open dashed rings, and
  * "Step 1 of 7: Set up the project" in its footer. Three of its parts talked
  * about the build and the points read like a plan, so the card read as the
  * build rather than as a thumbnail of the app (Evan, onboarding test on
- * iPhone, 6 October 2026, #4041). Now one row says where it is, and the rest
- * shows what it will be. The row stays inside the card: kept together, the
- * thumbnail and its line move as one piece to every screen that shows the
- * app, and a person finds the line in the same place each time.
+ * iPhone, 6 October 2026, #4041). Now one line says where it is, and the card
+ * shows what it will be. The line is SEPARATE from the card (owner, 8 Oct
+ * 2026, reversing the 6 October call to keep it inside): one line about 8px
+ * under it, so the card stays the app's picture and the line reads as the
+ * build's progress. FeaturedCard draws both, so every screen that shows the
+ * app has the line in the same place.
  *
  * WHILE IT IS SKETCHED the same frame stands with the name already in place
  * (and the example's emoji, if one was picked), on a neutral ground, and a
- * band of light passes over where the line will land. When the card comes,
+ * band of light passes over the card. When the card comes,
  * its colour fades in and its words rise into place. Transform and opacity
  * only, no delay; with reduced motion nothing moves.
  *
@@ -108,7 +111,7 @@ function Tagline({ text }: { text: string }) {
   );
 }
 
-/** Where the line will land, while the card is sketched. */
+/** Where the one line will land, while the card is sketched. */
 function Placeholder() {
   return (
     <div aria-hidden="true" className="flex h-10 flex-col justify-center gap-2">
@@ -126,7 +129,8 @@ function glyphOf(name: string, emoji: string | null, sketched: boolean): string 
 
 /**
  * The thumbnail. Art 132px (88px `compact`), the name and its line, and the
- * build line as the bottom row when `line` is given. `sketching` is the card
+ * build line just under the card (8px below it, not in it) when `line` is
+ * given. `sketching` is the card
  * still being sketched (by default, while there is no `card`); `description`
  * stands in for the sketch's tagline when there is none.
  */
@@ -153,35 +157,37 @@ export function FeaturedCard({ name, colorKey, emoji, card, description = null, 
   const tagline = (card && card.tagline) || (description || '').trim();
   const Title = heading ? 'h1' : 'p';
   return (
-    <div
-      data-featured-card={sketched ? 'sketching' : 'ready'}
-      className="relative overflow-hidden rounded-[20px] bg-white text-left text-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900 dark:text-zinc-100"
-    >
-      <div className={`relative flex items-center justify-center overflow-hidden bg-zinc-200 dark:bg-zinc-800 ${compact ? 'h-[88px]' : 'h-[132px]'}`}>
-        <div
-          aria-hidden="true"
-          className={`absolute inset-0 transition-opacity duration-500 ease-out motion-reduce:transition-none ${color ? 'opacity-100' : 'opacity-0'}`}
-          style={color ? { backgroundColor: color } : undefined}
-        />
-        <span
-          aria-hidden="true"
-          className={`app-icon-tile relative flex items-center justify-center leading-none shadow-[0_6px_18px_rgba(0,0,0,0.16)] ${compact ? 'h-14 w-14 rounded-2xl text-[32px]' : 'h-[76px] w-[76px] rounded-[22px] text-[44px]'}`}
-        >
-          {glyph ? <Glyph key={glyph} glyph={glyph} /> : null}
-        </span>
-      </div>
-      <div className="flex flex-col gap-1 px-4 pb-4 pt-3.5">
-        <Title id={titleId} className="truncate text-[17px] font-bold leading-[22px]">{name}</Title>
-        {sketched ? <Placeholder /> : tagline ? <Tagline key={tagline} text={tagline} /> : null}
+    <div className="flex flex-col gap-2">
+      <div
+        data-featured-card={sketched ? 'sketching' : 'ready'}
+        className="relative overflow-hidden rounded-[20px] bg-white text-left text-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900 dark:text-zinc-100"
+      >
+        <div className={`relative flex items-center justify-center overflow-hidden bg-zinc-200 dark:bg-zinc-800 ${compact ? 'h-[88px]' : 'h-[132px]'}`}>
+          <div
+            aria-hidden="true"
+            className={`absolute inset-0 transition-opacity duration-500 ease-out motion-reduce:transition-none ${color ? 'opacity-100' : 'opacity-0'}`}
+            style={color ? { backgroundColor: color } : undefined}
+          />
+          <span
+            aria-hidden="true"
+            className={`app-icon-tile relative flex items-center justify-center leading-none shadow-[0_6px_18px_rgba(0,0,0,0.16)] ${compact ? 'h-14 w-14 rounded-2xl text-[32px]' : 'h-[76px] w-[76px] rounded-[22px] text-[44px]'}`}
+          >
+            {glyph ? <Glyph key={glyph} glyph={glyph} /> : null}
+          </span>
+        </div>
+        <div className="flex flex-col gap-1 px-4 pb-4 pt-3.5">
+          <Title id={titleId} className="truncate text-[17px] font-bold leading-[22px]">{name}</Title>
+          {sketched ? <Placeholder /> : tagline ? <Tagline key={tagline} text={tagline} /> : null}
+        </div>
+        {sketched ? (
+          <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden motion-reduce:hidden">
+            <div className="h-full w-2/5 bg-gradient-to-r from-transparent via-white/60 to-transparent motion-safe:animate-card-sweep dark:via-white/[0.06]" />
+          </div>
+        ) : null}
       </div>
       {line ? (
-        <div data-featured-card-line="" className="px-4 py-3 shadow-[inset_0_1px_0_var(--app-sheet-line)]">
+        <div data-featured-card-line="" className="px-1">
           <BuildLine state={line} />
-        </div>
-      ) : null}
-      {sketched ? (
-        <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden motion-reduce:hidden">
-          <div className="h-full w-2/5 bg-gradient-to-r from-transparent via-white/60 to-transparent motion-safe:animate-card-sweep dark:via-white/[0.06]" />
         </div>
       ) : null}
     </div>
@@ -265,8 +271,8 @@ export function useSketch(slug: string | null): Sketch {
 
 /**
  * The made screen's card (./made.tsx): the thumbnail, being sketched and
- * then the idea, with the build line at its foot and the line about what
- * happens next below it.
+ * then the idea, with the build line just under the card and the line about
+ * what happens next below that.
  */
 export function SketchCard({ made, sketch, line, note }: {
   made: Made;

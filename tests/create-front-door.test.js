@@ -311,10 +311,12 @@ test('a stopped setup is not "Ready to try", and a Just me sketch is shared with
   // shared point off a solo project's sketch for any other caller.)
   const src = read(`${DIR}/made.tsx`);
   assert.match(src, /const stalled = stalledOf\(appStatus\);[\s\S]{0,500}const making = imported \? appStatus !== 'running' : \(!!stalled \|\| !\(building && !fv\)\);/);
-  // Not the bot's "Being made" either: nothing is being made while it is stopped.
-  assert.match(src, /botBuilds=\{botBuilds && !stalled\} built=\{!making \|\| !!\(fv && fv\.ready\)\}/);
-  const { pillLabel } = loadTsx(`${DIR}/sketch-card.tsx`);
-  assert.equal(pillLabel('idea'), 'Not built yet');
+  // #4053: no build line either: nothing is being made while it is stopped.
+  assert.match(src, /const line = madeLine\(fv, botBuilds, !making, stalled, imported\);/);
+  const { madeLine } = loadTsx(`${DIR}/made.tsx`);
+  assert.equal(madeLine({ ready: true, line: 'ready' }, true, false, 'failed'), null);
+  assert.equal(madeLine({ ready: true, line: 'ready' }, true, false, 'needs-secrets'), null);
+  assert.equal(loadTsx(`${DIR}/sketch-card.tsx`).pillLabel, undefined, 'the "Not built yet" pill is gone');
 
   const sketch = require('../src/services/app-sketch');
   const brief = 'A tracker for our weekly miles, so we can see who is keeping up';
