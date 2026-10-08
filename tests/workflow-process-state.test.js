@@ -1,49 +1,37 @@
-// test:changed: when src/ (any module a workflow machine reaches; scripts/workflow-state-trace.mjs)
+// test:changed: when src/ (the workflow code and every SQL writer of an owned column; tests/lib/workflow-boundary.js)
 'use strict';
 
 // The boundary between each workflow machine and the code not migrated yet,
-// read exactly from source by scripts/workflow-state-trace.mjs and checked
-// in at tests/baselines/workflow-process-state.json: each function outside
-// src/workflow/ a part of a machine calls, what its own code does that the
-// contract forbids, each notifier, each table a handler writes itself, each
-// other writer of a column it owns. The list may only shrink:
-// a change that adds an entry fails here with the path that reaches it; a
-// change that removes one fails until the entry leaves the list too
-// (`node scripts/workflow-state-trace.mjs --shrink` drops what is no longer
-// reached and never adds anything). The migration is done when it is empty.
+// read from source by tests/lib/workflow-boundary.js and checked in at
+// tests/baselines/workflow-process-state.json: each place a part of a machine
+// names code outside src/workflow/, what its own code does that the contract
+// forbids, each notifier, each table a handler writes itself, each other
+// writer of a column it owns. The list may only shrink: a change that adds
+// an entry fails here; a change that removes one fails until the entry
+// leaves the list too (`node tests/lib/workflow-boundary.js --shrink` drops
+// what is gone and never adds anything). The migration is done when it is
+// empty.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { boundary, readBaseline, BASELINE } = require('./lib/workflow-boundary');
 
 // The machines that predate the list. Any other machine may enter it only
 // with the other writers of its own columns (removed by the end of its step,
 // when the legacy paths go); nothing else.
 const PREDATE = new Set(['governance-proposal', 'merge-followups', 'platform', 'kernel']);
 
-// One trace of the checkout, shared by the tests (about two seconds).
-let traced = null;
-function trace() {
-  traced ||= import('../scripts/workflow-state-trace.mjs').then((m) => ({ m, trace: m.traceMachines() }));
-  return traced;
-}
-
-test('the workflow machines cross no new boundary into code not migrated yet', async () => {
-  const { m: { ratchetEntries, readBaseline, BASELINE }, trace: traced } = await trace();
+test('the workflow machines cross no new boundary into code not migrated yet', () => {
   const baseline = readBaseline();
-  const allowed = new Set(Object.keys(baseline.allowed));
-  const now = ratchetEntries(traced, allowed);
+  const now = boundary(undefined, new Set(Object.keys(baseline.allowed)));
   const problems = [];
-
   for (const [name, entries] of now) {
     const listed = new Set(baseline.machines[name] || []);
-    for (const [entry, d] of entries) {
-      if (listed.has(entry)) continue;
-      const path = d.meet ? d.walk.pathTo(d.meet.via).join(' → ')
-        : d.write ? d.walk.pathTo(d.write.via).join(' → ') : (d.detail || '');
-      problems.push(`${name}: new entry "${entry}"${path ? `\n    via ${path}` : ''}`);
+    for (const [entry, from] of entries) {
+      if (!listed.has(entry)) problems.push(`${name}: new entry "${entry}" (${from})`);
     }
     for (const entry of listed) {
-      if (!entries.has(entry)) problems.push(`${name}: "${entry}" is no longer reached; remove it from the list (--shrink)`);
+      if (!entries.has(entry)) problems.push(`${name}: "${entry}" is gone; remove it from the list (--shrink)`);
     }
     if (!PREDATE.has(name)) {
       for (const entry of listed) {
@@ -57,13 +45,12 @@ test('the workflow machines cross no new boundary into code not migrated yet', a
   assert.deepEqual(problems, [], `${problems.length} difference(s) from ${BASELINE}:\n${problems.join('\n')}`);
 });
 
-test('each allowed process resource says why, and is still reached', async () => {
-  const { m: { readBaseline }, trace: traced } = await trace();
+test('each allowed entry says why, and is still there', () => {
   const baseline = readBaseline();
-  const reached = new Set();
-  for (const t of traced.machines.values()) for (const r of t.roles.values()) for (const k of r.met.keys()) reached.add(k);
+  const all = boundary(undefined, new Set());
+  const present = new Set([...all.values()].flatMap((m) => [...m.keys()].map((e) => e.replace(/^\w+ \| /, ''))));
   for (const [entry, reason] of Object.entries(baseline.allowed)) {
     assert.ok(typeof reason === 'string' && reason.length > 20, `${entry}: give the reason it is allowed`);
-    assert.ok(reached.has(entry), `${entry}: allowed but no longer reached; remove it`);
+    assert.ok(present.has(entry), `${entry}: allowed but no longer there; remove it`);
   }
 });

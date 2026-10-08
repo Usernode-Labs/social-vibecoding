@@ -431,34 +431,32 @@ then a deployment change, with more than one replica and alerts on overdue work.
 
 ### What the machines still depend on (the list)
 
-`node scripts/workflow-state-trace.mjs` lists, for each part of each machine
-(transitions and domain writes, each work handler, each notifier, the routes' side in
-`platform.ts`, the kernel), the boundary between it and the code not migrated yet:
-- each place its code names code outside `src/workflow/` (`uses`), as the workflow code
-  writes it: `legacy('services/x').fn` is `uses src/services/x.js:fn`, a module handed
-  on whole is `(whole module)`, a member chosen at run time is `[computed]`. It is read
-  from the workflow code's own text, so an edit to the code behind it does not move it;
-- what its own code does that the part may not: module state, timers, work nobody
-  awaits, process listeners, outside I/O from a transition. For transitions and domain
-  writes, also what their calls reach, since all of it runs inside the transaction;
-  their reach is small;
+`tests/lib/workflow-boundary.js` reads each machine's code (`src/workflow/<machine>/`, the
+shared workflow modules it imports, `platform.ts` for the routes' side, the kernel) and
+lists, per part (transitions and domain writes, work handlers, notifiers), the boundary
+between it and the code not migrated yet:
+- each place its code names code outside `src/workflow/` (`uses`), as written there:
+  `legacy('services/x').fn` is `uses src/services/x.js:fn`, a module handed on whole is
+  `(whole module)`, a member chosen at run time is `[computed]`, a dynamic `import()`
+  counts too;
+- what its own code does that the part may not: module state that changes after load,
+  timers, process listeners, and outside I/O from a transition;
 - each notifier still declared;
 - each table a work handler's own code writes;
-- each other writer of a column the machine owns (schema.sql's ownership triggers).
+- each other writer of a column the machine owns: SQL anywhere under `src/` that
+  updates it, and triggers that assign it (schema.sql's ownership triggers).
 
-How far a work handler's or a notifier's call reaches into the code behind it (the
-in-memory state, timers and I/O there) is a report, `--reach`, and not part of the list:
-that reach is large, and reading it from a dynamic codebase is an approximation, which
-a gate must not follow. The two-process and restart tests (below) show what the list
-cannot. `--paths` says where each entry comes from.
+It reads only the text, never what lies behind a call: the two-process and restart
+tests (below) show that. Transitions are held to the strictest form of it: a step moves
+the helpers its transitions use into the machine's own code, so that `decider | uses`
+reaches zero, and nothing outside the workflow code runs inside a transaction.
 
-The list is checked in, with what it allows and why (the kernel's own mechanisms, the
-logger).
+The list is checked in, with what it allows and why (the kernel's own timers).
 `tests/workflow-process-state.test.js` fails when a change adds an entry, and when an
-entry disappears until the list is shrunk with `--shrink`, which never adds anything.
-So the list only shrinks, and a migration step is done when its entries are gone. A
-new machine may enter it only with the other writers of its own columns, which go when
-its legacy paths are deleted.
+entry disappears until the list is shrunk with `node tests/lib/workflow-boundary.js
+--shrink`, which never adds anything. So the list only shrinks, and a migration step is
+done when its entries are gone. A new machine may enter it only with the other writers of
+its own columns, which go when its legacy paths are deleted.
 
 ### In production (Kubernetes)
 
@@ -533,7 +531,7 @@ governance machine.
 | `tests/workflow-governance-services.test.js` | The governance work handlers. |
 | `tests/admin-workflows.test.js` | The admin section. |
 | `tests/workflow-process-state.test.js` | The list of what the machines still depend on only shrinks. |
-| `tests/workflow-state-trace.test.js` | The tracer's rules, on a small source tree of its own. |
+| `tests/workflow-boundary.test.js` | The boundary check's rules, on a small source tree of its own. |
 | `tests/workflow-processes-postgres.test.js` | Each machine's flows with every decision and work item in a child process, the test process being the web side; and the same flows with the child killed (SIGKILL) mid-item, restarted, and compared with an uninterrupted run. Only outside services are faked (`tests/fixtures/workflow-outside-fakes.js`); the harness is `tests/lib/workflow-processes.js`. The known dependencies on the web process's memory are `todo` scenarios, each naming its entry in the list. |
 
 The kernel guarantees cover:
