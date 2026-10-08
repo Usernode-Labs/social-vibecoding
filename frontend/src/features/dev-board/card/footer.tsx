@@ -35,6 +35,6 @@ export function FooterView({ f }: { f: FooterSpec }): ReactNode {
       </a>
     );
   }
-  return <span className="text-xs text-zinc-500 dark:text-zinc-500 italic">{`+${f.n} more completed`}</span>;
+  return <span className="text-xs text-zinc-500 dark:text-zinc-400 italic">{`+${f.n} more completed`}</span>;
 }
 

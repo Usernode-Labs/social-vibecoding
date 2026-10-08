@@ -168,7 +168,7 @@ export function CardIcon({ spec }: { spec: CardIconSpec }): ReactNode {
 
 /** The tap-through chevron (`DEV_CARD_CHEVRON`). */
 export function Chevron(): ReactNode {
-  return <ChevronRightIcon className="w-4 h-4 text-zinc-500 dark:text-zinc-500 shrink-0" aria-hidden="true" />;
+  return <ChevronRightIcon className="w-4 h-4 text-zinc-500 dark:text-zinc-400 shrink-0" aria-hidden="true" />;
 }
 
 /**
@@ -1093,7 +1093,7 @@ const REQ_TONE: Record<string, string> = {
   active: 'text-zinc-500 dark:text-zinc-400',
   waiting: 'text-amber-600 dark:text-amber-400',
   blocked: 'text-red-600 dark:text-red-400',
-  pending: 'text-zinc-400 dark:text-zinc-500',
+  pending: 'text-zinc-400 dark:text-zinc-400',
 };
 // No "who acts" column: the headline already says whose turn it is, and the
 // change page's steps carry none either, so the two read alike.
@@ -1118,7 +1118,7 @@ function RequirementsRow({ x }: { x: Extract<ExtraSpec, { t: 'requirements' }> }
       <summary className="cursor-pointer list-none px-2.5 py-1.5 text-[0.72rem] leading-snug text-zinc-600 dark:text-zinc-300 flex items-center gap-1.5">
         <span className="font-semibold text-zinc-800 dark:text-zinc-100" data-req-headline>{x.headline}</span>
         {x.detail ? <span className="truncate text-zinc-500 dark:text-zinc-400">{`· ${x.detail}`}</span> : null}
-        <span className="ml-auto tabular-nums text-[0.68rem] text-zinc-400 dark:text-zinc-500" data-req-count>
+        <span className="ml-auto tabular-nums text-[0.68rem] text-zinc-400 dark:text-zinc-400" data-req-count>
           {`${x.done}/${x.total}`}
         </span>
       </summary>
@@ -1141,7 +1141,7 @@ function RequirementsRow({ x }: { x: Extract<ExtraSpec, { t: 'requirements' }> }
               {g.label}
             </span>
             {g.note
-              ? <span className="col-start-2 text-[0.68rem] leading-snug text-zinc-400 dark:text-zinc-500">{g.note}</span>
+              ? <span className="col-start-2 text-[0.68rem] leading-snug text-zinc-400 dark:text-zinc-400">{g.note}</span>
               : null}
             {g.action
               ? (

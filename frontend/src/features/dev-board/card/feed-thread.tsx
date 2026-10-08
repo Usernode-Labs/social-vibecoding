@@ -357,7 +357,7 @@ export function FeedThread({
           where the replies it stands for would be — then the bubbles, then
           the box. It used to sit under the bubbles, reading as a footer. */}
       {hidden > 0 ? (
-        <div className="dev-feed-earlier text-xs text-zinc-400 dark:text-zinc-500">
+        <div className="dev-feed-earlier text-xs text-zinc-400 dark:text-zinc-400">
           {`${hidden} earlier ${hidden === 1 ? 'reply' : 'replies'}`}
         </div>
       ) : null}

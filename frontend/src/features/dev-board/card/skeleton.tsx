@@ -168,7 +168,7 @@ export function skeletonKanbanHtml(): string {
     `<div class="dev-kanban-col${i === 0 ? ' dev-kanban-col-active' : ''}">`
     + '<div class="dev-kanban-col-head text-[0.9375rem] font-semibold '
     + 'text-zinc-500 dark:text-zinc-400 mb-2 px-0.5">'
-    + `${title} <span class="text-zinc-500 dark:text-zinc-500 font-mono">· ${COUNT_BAR}</span>`
+    + `${title} <span class="text-zinc-500 dark:text-zinc-400 font-mono">· ${COUNT_BAR}</span>`
     + '</div>'
     + '<div class="space-y-2 animate-pulse" aria-hidden="true">'
     + cardHtml(i) + cardHtml(i + 1)

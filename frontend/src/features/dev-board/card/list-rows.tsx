@@ -101,7 +101,7 @@ export function ListRowView({ row, fold }: { row: ListRow; fold?: RowFold | null
         </div>
       );
     case 'note':
-      return <div className="text-xs text-zinc-500 dark:text-zinc-500 italic px-0.5">{row.text}</div>;
+      return <div className="text-xs text-zinc-500 dark:text-zinc-400 italic px-0.5">{row.text}</div>;
     case 'archived':
       return <ArchivedBlock rows={row.rows} />;
     default:

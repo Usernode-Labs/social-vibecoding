@@ -2972,10 +2972,17 @@ form.agent-session-composer:focus-within {
   --state-attention-bg: rgba(245, 158, 11, 0.18);
   --state-blocked: #f87171;
   --state-blocked-bg: rgba(239, 68, 68, 0.18);
-  --state-blocked-fill: rgba(239, 68, 68, 0.38);
+  /* The proportional fill's dark value (the gc-vote tally bars) sat at
+     rgba(…, 0.38) of the LIGHT ink on #0b0b0c: 2.1:1 ok, 1.6:1 blocked —
+     under the 3:1 non-text bar, the bar nearly vanishing inside the pill.
+     The bases move to the dark ink tokens' own hues (red-400, emerald-400)
+     at an alpha that clears it: 3.2:1 and 3.7:1 on the pill ground, while
+     the pill's #f5f5f7 label keeps 5.7:1 and 4.9:1 on them (AA for its
+     11px bold). Light's :root values are untouched. */
+  --state-blocked-fill: rgba(248, 113, 113, 0.6);
   --state-ok: #34d399;
   --state-ok-bg: rgba(34, 197, 94, 0.18);
-  --state-ok-fill: rgba(34, 197, 94, 0.38);
+  --state-ok-fill: rgba(52, 211, 153, 0.55);
   --state-admin: #fbbf24;
   --state-admin-bg: rgba(245, 158, 11, 0.14);
 }

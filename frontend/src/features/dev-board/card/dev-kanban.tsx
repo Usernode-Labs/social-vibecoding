@@ -87,7 +87,7 @@ function Tab({ col, active, loading }: { col: KanbanColView; active: boolean; lo
   // fill, the zinc ladder off it (a zero column stays the lightest of the
   // three, which is how an empty column reads as empty at a glance).
   const countCls = 'font-mono text-[11px] leading-tight '
-    + (active ? 'text-white dark:text-zinc-900' : (col.count ? 'text-zinc-500 dark:text-zinc-500' : 'text-zinc-300 dark:text-zinc-500'));
+    + (active ? 'text-white dark:text-zinc-900' : (col.count ? 'text-zinc-500 dark:text-zinc-400' : 'text-zinc-300 dark:text-zinc-400'));
   return (
     <button
       type="button"
@@ -174,7 +174,7 @@ function Column(
     // screen than the one it is standing in for.
     cards = <CardSkeleton n={2} label={`Loading ${col.title}`} />;
   } else if (col.empty) {
-    cards = <div className="text-xs text-zinc-500 dark:text-zinc-500 italic py-2">{col.empty}</div>;
+    cards = <div className="text-xs text-zinc-500 dark:text-zinc-400 italic py-2">{col.empty}</div>;
   } else {
     cards = (
       <div className="space-y-2">
@@ -220,8 +220,8 @@ function Column(
           <span className={`${hasReviewSort ? 'hidden sm:inline ' : ''}text-[0.9375rem] font-semibold text-zinc-500 dark:text-zinc-400 whitespace-nowrap`}>
             {`${col.title} `}
             {loading
-              ? <span className="text-zinc-500 dark:text-zinc-500 font-mono">{'· '}<CountSkeleton /></span>
-              : <span className="text-zinc-500 dark:text-zinc-500 font-mono">{`· ${col.count}`}</span>}
+              ? <span className="text-zinc-500 dark:text-zinc-400 font-mono">{'· '}<CountSkeleton /></span>
+              : <span className="text-zinc-500 dark:text-zinc-400 font-mono">{`· ${col.count}`}</span>}
           </span>
           {hasReviewSort ? (
             <Button
