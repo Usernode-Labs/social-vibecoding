@@ -5260,8 +5260,9 @@ const AppView = {
     if (agent) bits.push(`built with ${agent}`);
     if (item.source === 'maintenance') bits.push('platform maintenance');
     return {
-      // B10b: the eyebrow is "Change · Waiting for approval"; the pull
-      // request it names moved into Details (`ref`, drawn there).
+      // B10b: the eyebrow is "Change · PR#2473 · Waiting for approval";
+      // the pull request it names is drawn in the eyebrow and in Details
+      // (`ref`, drawn in both).
       kind: 'Change',
       ref: n ? { s: `PR#${n}`, href: item.pr_url || null } : null,
       status,

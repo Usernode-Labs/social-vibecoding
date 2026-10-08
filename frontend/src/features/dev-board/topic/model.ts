@@ -389,7 +389,7 @@ export interface IssueClosedBand {
 export interface HeroView {
   /** The eyebrow's first word, "Change" (B10b). */
   kind: string;
-  /** "PR#2473", linking to GitHub when the change has a pull request. Drawn in Details (B10b). */
+  /** "PR#2473", linking to GitHub when the change has a pull request. Drawn in the eyebrow and in Details (B10b). */
   ref: { s: string; href: string | null } | null;
   /** "Waiting for approval", "Merged", "Not shared yet", "Visible to the group". */
   status: string;

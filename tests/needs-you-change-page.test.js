@@ -106,9 +106,10 @@ test('the hero: the eyebrow with its state, the age, the title, the by-line, the
     age: hero.age, author: 'maya', verb: 'proposed', provenance: null, tint: 'b',
   });
   assert.ok(v.body.hero.age && v.body.hero.age.s, 'the age is the card meta line’s own part');
-  // B10b: "Change · Waiting for approval"; the pull request is Details'.
-  assert.match(page, /<span class="dev-ws-eyebrow dev-topic-hero-eyebrow">Change · Waiting for approval<\/span><span class="dev-ws-item-of"[^>]*>/);
-  assert.ok(!page.includes('PR#12') && !page.includes('github.com/example/app/pull/12'), 'no pull request on the page');
+  // B10b: "Change · PR#12 · Waiting for approval"; the pull request is
+  // linked in the hero's top line as well as in Details.
+  assert.match(page, /<span class="dev-ws-eyebrow dev-topic-hero-eyebrow">Change · <a href="https:\/\/github\.com\/example\/app\/pull\/12" target="_blank" rel="noopener">PR#12<\/a> · Waiting for approval<\/span><span class="dev-ws-item-of"[^>]*>/);
+  assert.ok(page.includes('PR#12') && page.includes('github.com/example/app/pull/12'), 'the pull request is named in the hero');
   assert.match(details, /^<p class="dev-details-pr" data-details-part="pr"><span>PR#12<\/span><a href="https:\/\/github\.com\/example\/app\/pull\/12" target="_blank" rel="noopener">Open on GitHub<\/a><\/p>/);
   assert.match(html, /<h2 class="dev-ws-item-title dev-topic-hero-title">Authenticate previews<\/h2>/);
   assert.match(html, /<p class="dev-ws-item-by dev-topic-hero-by"><span class="dev-ws-item-avatar" style="background:#[0-9a-f]{6}" aria-hidden="true">M<\/span><span><b>maya<\/b><span> · proposed /);
@@ -144,7 +145,7 @@ test('a merged change reads Live in the eyebrow and the pill, and the pill is gr
   const merged = { ...PR, status: 'merged', merged_at: '2026-09-19T12:00:00Z', mergeRequirements: undefined };
   const { v, page } = render(av, merged);
   assert.equal(v.body.hero.status, 'Live');
-  assert.match(page, /<span class="dev-ws-eyebrow dev-topic-hero-eyebrow">Change · Live<\/span>/);
+  assert.match(page, /<span class="dev-ws-eyebrow dev-topic-hero-eyebrow">Change · <a href="https:\/\/github\.com\/example\/app\/pull\/12" target="_blank" rel="noopener">PR#12<\/a> · Live<\/span>/);
   const hero = page.slice(page.indexOf('data-topic-sheet="hero"'));
   assert.match(hero, /class="gc-vote-count gc-vote-count-ok dev-status-pill[^"]*"[^>]*><span class="gc-vote-count-label">✓ Live<\/span>/);
   assert.doesNotMatch(hero, /gc-vote-count-neutral/, 'not the grey of #3848');
@@ -170,7 +171,7 @@ test('a change that went live inside another one says so and links to it', () =>
   };
   const { v, page, details } = render(av, included);
   assert.equal(v.body.hero.status, 'Live, included in #8');
-  assert.match(page, /<span class="dev-ws-eyebrow dev-topic-hero-eyebrow">Change · Live, included in #8<\/span>/);
+  assert.match(page, /<span class="dev-ws-eyebrow dev-topic-hero-eyebrow">Change · <a href="https:\/\/github\.com\/example\/app\/pull\/12" target="_blank" rel="noopener">PR#12<\/a> · Live, included in #8<\/span>/);
   assert.equal(v.body.steps.headline, 'Live, included in #8');
   assert.match(details, /Live, included in #8/);
   assert.deepEqual(plain(v.body.includedIn), {
@@ -566,6 +567,8 @@ test('before review the page is the same shape: the change’s own status in the
   assert.equal(v.body.hero.status, 'Not shared yet');
   assert.equal(v.body.hero.verb, 'started');
   assert.match(html, /<span class="dev-ws-eyebrow dev-topic-hero-eyebrow">Change · Not shared yet<\/span>/);
+  // No pull request yet, the same as its board card: the top line names no PR#.
+  assert.ok(!html.includes('PR#'), 'no pull request number in the hero');
   // The draft's own step, then the gates it will meet once it is up for a
   // vote, drawn the way a proposal's are: one short line each, and no
   // ledger sentences under "Where it stands".
@@ -586,6 +589,14 @@ test('before review the page is the same shape: the change’s own status in the
   assert.match(html, />Continue building</);
   // The spec stands in for the technical half, behind the ⋯ row.
   assert.ok(av._cardMenuItems(v.card.rail.menuKey).some((a) => a.label === 'Details'));
+});
+
+test('a number with no GitHub address names itself plain in the eyebrow, not linked', () => {
+  const av = context();
+  const { page } = render(av, { ...PR, pr_url: null });
+  assert.match(page, /<span class="dev-ws-eyebrow dev-topic-hero-eyebrow">Change · <span>PR#12<\/span> · Waiting for approval<\/span>/);
+  const eyebrow = page.slice(page.indexOf('dev-topic-hero-eyebrow'), page.indexOf('dev-ws-item-of'));
+  assert.doesNotMatch(eyebrow, /<a /, 'no anchor in the eyebrow');
 });
 
 test('a draft’s steps: who is waiting, what the checks are doing, and Sync with main only for the owner of a conflicting draft', () => {
