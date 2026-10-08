@@ -108,7 +108,7 @@ import { Wordmark } from '@/components/ui/wordmark';
 import { useKeyboardSurface } from '../../lib/keyboard-surface';
 import { AppAllowance, useAppAllowance } from '../dialogs/app-allowance';
 import { deviceTimeZone, postCreateApp } from '../dialogs/post-create-app';
-import { descriptionOf, firstChoice, OWN, readyMadeOf, sentence, suggestedName, TEMPLATES, type Template } from './examples';
+import { descriptionOf, firstChoice, OWN, readyMadeOf, sentence, starterOf, suggestedName, TEMPLATES, type Template } from './examples';
 import { ImportForm, type RepoManifest } from './import-repo';
 import { TierChart } from './tier-chart';
 
@@ -119,6 +119,15 @@ export { deviceTimeZone };
  * (examples.ts `readyMadeOf`): Make it makes that app, with nothing to build.
  */
 export const READY_LINE = 'Ready-made: nothing to build, so it is ready as soon as it is set up.';
+
+/**
+ * Under the sentence when its choice is a game preset with a starter
+ * (examples.ts `starterOf`): the project starts as that working game, and
+ * Homeroom bot builds their idea on it.
+ */
+export function starterLine(starts: string): string {
+  return `Starts from a game that already works, ${starts}, and Homeroom bot builds your idea on it.`;
+}
 
 /** The server's floor and ceiling for a description (services/homeroom-bot-dm.js MIN_/MAX_BRIEF_CHARS). */
 export const BRIEF_MIN = 10;
@@ -380,12 +389,15 @@ export function MakeScreen({
     // ready-made apps: it is made from that, with nothing for Homeroom bot
     // to build, so no brief.
     const ready = templated && example ? readyMadeOf(example, choice) : null;
+    // A game preset starts the project from its working game: the brief is
+    // still built, on it.
+    const starter = templated && example ? starterOf(example, choice) : null;
     const timeZone = deviceTimeZone();
     try {
       const reply = await postCreateApp({
         name: name.trim(),
         audience: 'invited',
-        ...(ready ? { template: ready.template } : { brief: text.trim() }),
+        ...(ready ? { template: ready.template } : { brief: text.trim(), ...(starter ? { template: starter.template } : {}) }),
         ...(example ? { description: descriptionOf(example, choice) } : {}),
         from: entry,
         // So the sketch's "today" is the maker's (services/app-sketch.js).
@@ -607,6 +619,7 @@ export function MakeScreen({
                     ))}
                   </div>
                   {readyMadeOf(template, choice) ? <p data-make-ready="" className={HINT}>{READY_LINE}</p> : null}
+                  {starterOf(template, choice) ? <p data-make-starter="" className={HINT}>{starterLine(starterOf(template, choice)!.starts)}</p> : null}
                 </>
               ) : (
                 <>

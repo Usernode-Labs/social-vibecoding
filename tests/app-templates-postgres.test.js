@@ -18,8 +18,11 @@
 // platform conventions' "Members"): a stand-in platform answers it here,
 // for members only, as the real one does.
 //
-// The app's dependencies (express, pg, jsonwebtoken) resolve from this
-// repository's node_modules through NODE_PATH. Skipped when no server is
+// The game starters play over a WebSocket (game/live.js): their flows open
+// real ones, as a page does, beside the plain requests.
+//
+// The app's dependencies (express, pg, jsonwebtoken, and ws for a game)
+// resolve from this repository's node_modules through NODE_PATH. Skipped when no server is
 // reachable, required when TEST_DATABASE_URL is set.
 
 const test = require('node:test');
@@ -54,6 +57,41 @@ const ada = token(101, 'ada');
 const grace = token(102, 'grace');
 const sam = token(103, 'sam');
 const DAY = 24 * 60 * 60 * 1000;
+
+/**
+ * A game's live connection, as its page opens one (/api/live?token=):
+ * `opened` resolves once connected, or rejects with the refusal's status;
+ * `next(test)` resolves with the next message that passes `test`.
+ */
+function liveOf(app, tok) {
+  const WebSocket = require('ws');
+  const ws = new WebSocket(`${app.base.replace(/^http/, 'ws')}/api/live${tok ? `?token=${encodeURIComponent(tok)}` : ''}`);
+  const waiters = [];
+  ws.on('message', (data) => {
+    const msg = JSON.parse(String(data));
+    for (const w of waiters.slice()) {
+      if (w.test(msg)) { waiters.splice(waiters.indexOf(w), 1); w.resolve(msg); }
+    }
+  });
+  const opened = new Promise((resolve, reject) => {
+    ws.once('open', resolve);
+    ws.once('unexpected-response', (_req, res) => reject(Object.assign(new Error('refused'), { status: res.statusCode })));
+    ws.once('error', (err) => reject(err));
+  });
+  opened.catch(() => {});
+  return {
+    opened,
+    send: (msg) => ws.send(JSON.stringify(msg)),
+    next(test, ms = 6000) {
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('no such message in time')), ms);
+        waiters.push({ test, resolve: (m) => { clearTimeout(timer); resolve(m); } });
+      });
+    },
+    close: () => ws.close(),
+  };
+}
+const isView = (test = () => true) => (m) => m.t === 'view' && test(m.view);
 
 function freePort() {
   return new Promise((resolve, reject) => {
@@ -171,7 +209,7 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
     const page = await app.call('GET', `/?token=${encodeURIComponent(ada)}`, { raw: true });
     assert.equal(page.status, 200);
     assert.match(page.headers.get('content-type'), /text\/html/);
-    assert.match(await page.text(), /<script src="\/app\.js"><\/script>/);
+    assert.match(await page.text(), /<script (?:type="module" )?src="\/app\.js"><\/script>/);
     const script = await app.call('GET', '/app.js', { raw: true });
     assert.equal(script.status, 200, 'the screen\'s script is served as a static file');
     assert.equal((await app.call('GET', apiPath)).status, 401, 'no token, no data');
@@ -522,6 +560,204 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
       assert.equal((await app.call('DELETE', `/api/potlucks/${id}`, { as: ada })).status, 200);
       p = (await app.call('GET', '/api/potlucks', { as: ada, now })).data.upcoming.find((x) => x.id === id);
       assert.equal(p, undefined);
+    });
+  });
+
+  // ── The game starters ──────────────────────────────────────────────────
+
+  // Nobody without a token, nor with another app's, gets a live connection.
+  async function refusesStrangers(app) {
+    for (const bad of [null, token(101, 'ada', 'usernode:app:999'), 'not-a-token']) {
+      await assert.rejects(liveOf(app, bad).opened, (err) => err.status === 401, String(bad && bad.slice(0, 8)));
+    }
+  }
+
+  await t.test('a board game: the lobby, turns over the live connection, a roll made for somebody away, a winner kept', async () => {
+    const roomCount = (d) => d.players.length + d.leaders.length;
+    await run('game-board', '/api/room', roomCount, async (app) => {
+      await refusesStrangers(app);
+      const a = liveOf(app, ada);
+      let first = a.next(isView());
+      await a.opened;
+      let v = (await first).view;
+      assert.deepEqual([v.phase, v.players.map((p) => p.username), v.you.joined], ['lobby', ['staging-demo-ana'], false]);
+      assert.deepEqual(v.leaders.map((l) => [l.username, l.wins]), [['staging-demo-ana', 1], ['staging-demo-user', 1]]);
+      let p = a.next(isView((x) => x.players.length === 2));
+      a.send({ t: 'join' });
+      await p;
+      // A plain request is the same room, and the socket hears it.
+      p = a.next(isView((x) => x.players.length === 3));
+      assert.equal((await app.call('POST', '/api/room/join', { as: grace })).status, 200);
+      v = (await p).view;
+      assert.deepEqual(v.players.map((x) => [x.username, x.here]), [['staging-demo-ana', false], ['ada', true], ['grace', true]]);
+      p = a.next(isView((x) => x.phase === 'playing'));
+      a.send({ t: 'start' });
+      v = (await p).view;
+      assert.equal(v.game.order[v.game.turn], 900001, 'the first seat starts');
+      p = a.next((m) => m.t === 'error');
+      a.send({ t: 'act', action: { type: 'roll' } });
+      assert.equal((await p).error, 'It is not your turn yet.');
+      v = (await a.next(isView((x) => x.game && x.game.rollNo >= 1))).view;
+      assert.match(v.game.log[0].text, /^@staging-demo-ana rolled \d \(rolled for them\)/, 'away: rolled for her');
+      assert.equal((await app.call('POST', '/api/room/act', { as: sam, body: { action: { type: 'roll' } } })).status, 409, 'watching, not playing');
+      a.close();
+    });
+    // A game to its winner, on a fresh production room, kept across a restart.
+    const dir = writeRepo('game-board');
+    dirs.push(dir);
+    const db = await database();
+    let prod = await boot(dir, db, 'production', env);
+    const a = liveOf(prod, ada);
+    await a.opened;
+    let p = a.next(isView((x) => x.players.length === 1));
+    a.send({ t: 'join' });
+    await p;
+    p = a.next(isView((x) => x.phase === 'playing'));
+    a.send({ t: 'start' });
+    await p;
+    let over = null;
+    for (let i = 0; i < 80 && !over; i += 1) {
+      p = a.next(isView((x) => x.game && x.game.rollNo === i + 1));
+      a.send({ t: 'act', action: { type: 'roll' } });
+      const after = (await p).view;
+      if (after.phase === 'over') over = after;
+      else if (after.game.winner != null) over = (await a.next(isView((x) => x.phase === 'over'))).view;
+    }
+    assert.ok(over, 'somebody reaches the finish');
+    assert.deepEqual(over.results.map((r) => [r.username, r.place, r.score]), [['ada', 1, 30]]);
+    const leaders = (await a.next(isView((x) => x.leaders.length === 1))).view.leaders;
+    assert.deepEqual(leaders.map((l) => [l.username, l.wins, l.played]), [['ada', 1, 1]]);
+    a.close();
+    await new Promise((r) => setTimeout(r, 600)); // the room saves a moment after a change
+    assert.equal(await prod.stop(), 0, prod.output());
+    prod = await boot(dir, db, 'production', env);
+    const back = (await prod.call('GET', '/api/room', { as: ada })).data;
+    assert.deepEqual([back.phase, back.players.map((x) => x.username), back.leaders.length], ['over', ['ada'], 1], 'saved across a restart');
+    assert.equal((await prod.call('POST', '/api/room/again', { as: ada })).data.phase, 'lobby');
+    assert.equal(await prod.stop(), 0);
+  });
+
+  await t.test('trivia: questions about each other, the answer hidden until it shows, scored live', async () => {
+    const roomCount = (d) => d.players.length + d.leaders.length;
+    await run('game-trivia', '/api/room', roomCount, async (app) => {
+      await refusesStrangers(app);
+      // The bank: your own questions in full, everyone else's only counted.
+      assert.equal((await app.call('POST', '/api/questions', { as: grace, body: { text: 'My first job?', answer: 'Baker', wrong: [] } })).status, 400);
+      assert.equal((await app.call('POST', '/api/questions', { as: grace, body: { text: 'My first job?', answer: 'Baker', wrong: ['baker'] } })).status, 400, 'every answer different');
+      const q = await app.call('POST', '/api/questions', { as: grace, body: { text: 'My first job?', answer: 'Baker', wrong: ['Lifeguard', 'Paper round'] } });
+      assert.equal(q.status, 201);
+      const graceBank = (await app.call('GET', '/api/questions', { as: grace })).data;
+      assert.deepEqual(graceBank.mine.map((x) => [x.text, x.answer, x.wrong]), [['My first job?', 'Baker', ['Lifeguard', 'Paper round']]]);
+      const adaBank = (await app.call('GET', '/api/questions', { as: ada })).data;
+      assert.deepEqual(adaBank.mine, []);
+      assert.ok(!JSON.stringify(adaBank).includes('Baker'), 'nobody else sees the answer');
+      assert.equal((await app.call('GET', '/api/questions')).status, 401);
+      // A game: everyone here answers, then the answer shows with the points.
+      const a = liveOf(app, ada);
+      const g = liveOf(app, grace);
+      await Promise.all([a.opened, g.opened]);
+      let p = a.next(isView((x) => x.players.length === 3));
+      a.send({ t: 'join' });
+      g.send({ t: 'join' });
+      await p;
+      p = a.next(isView((x) => x.phase === 'playing'));
+      a.send({ t: 'start' });
+      let v = (await p).view;
+      assert.equal(v.game.of, 6, 'every question in the bank, up to eight');
+      assert.equal(v.game.question.correct, null, 'not before it shows');
+      const author = v.game.question.authorId;
+      const answers = [[a, 101], [g, 102]].filter(([, id]) => id !== author);
+      if (answers.length < 2) {
+        p = g.next((m) => m.t === 'error');
+        g.send({ t: 'act', action: { type: 'answer', choice: 0 } });
+        assert.match((await p).error, /about you/);
+      }
+      p = a.next(isView((x) => x.game && x.game.stage === 'reveal'));
+      for (const [s] of answers) s.send({ t: 'act', action: { type: 'answer', choice: 0 } });
+      v = (await p).view;
+      assert.equal(typeof v.game.question.correct, 'number', 'it shows once everyone here answered');
+      assert.equal(Object.keys(v.game.picks).length, answers.length);
+      const right = Object.entries(v.game.picks).filter(([, c]) => c === v.game.question.correct).map(([id]) => Number(id));
+      for (const id of right) assert.ok(v.game.points[id] >= 100, 'a right answer scores');
+      a.close();
+      g.close();
+      assert.equal((await app.call('DELETE', `/api/questions/${q.data.id}`, { as: ada })).status, 404, 'only its author');
+      assert.equal((await app.call('DELETE', `/api/questions/${q.data.id}`, { as: grace })).status, 200);
+    });
+  });
+
+  await t.test('the space game: a run ticks live, ships fly by their own page, and the run is kept when it ends', async () => {
+    await run('game-space', '/api/room', (d) => d.leaders.length, async (app) => {
+      await refusesStrangers(app);
+      const a = liveOf(app, ada);
+      await a.opened;
+      let p = a.next(isView((x) => x.players.length === 1));
+      a.send({ t: 'join' });
+      await p;
+      p = a.next(isView((x) => x.phase === 'playing'));
+      a.send({ t: 'start' });
+      const v = (await p).view;
+      const ship = v.game.ships.find((s) => s[0] === 101);
+      // Frames arrive about twenty times a second.
+      let frames = 0;
+      const started = Date.now();
+      while (Date.now() - started < 1000) {
+        // eslint-disable-next-line no-await-in-loop
+        await a.next((m) => m.t === 'frame');
+        frames += 1;
+      }
+      assert.ok(frames >= 12, `${frames} frames in a second`);
+      a.send({ t: 'input', input: { x: ship[1] + 15, y: ship[2], a: 0, beam: true } });
+      const moved = await a.next((m) => m.t === 'frame' && m.frame.ships.some((s) => s[0] === 101 && s[1] === ship[1] + 15 && s[4] === 1));
+      assert.ok(moved, 'the server takes the page\'s word for where its ship is');
+      a.send({ t: 'input', input: { x: ship[1] + 300, y: ship[2], a: 0, beam: true } });
+      const later = await a.next((m) => m.t === 'frame');
+      assert.equal(later.frame.ships.find((s) => s[0] === 101)[1], ship[1] + 15, 'but not a jump');
+      // Grace drops in mid-run; then both leave and the run is over and kept.
+      assert.equal((await app.call('POST', '/api/room/join', { as: grace })).status, 200);
+      const both = await a.next((m) => m.t === 'frame' && m.frame.ships.length === 2);
+      assert.ok(both);
+      p = a.next(isView((x) => x.phase === 'over'));
+      await app.call('POST', '/api/room/leave', { as: grace });
+      a.send({ t: 'leave' });
+      const over = (await p).view;
+      assert.deepEqual(over.results.map((r) => r.username).sort(), ['ada', 'grace'], 'everyone who flew');
+      const kept = await a.next(isView((x) => x.leaders.some((l) => l.username === 'ada')));
+      assert.ok(kept);
+      a.close();
+    });
+  });
+
+  await t.test('the block world: always on, every block sent to everyone as it is placed, and checked', async () => {
+    await run('game-blocks', '/api/room', (d) => (d.game ? d.game.count : 0), async (app) => {
+      await refusesStrangers(app);
+      const a = liveOf(app, ada);
+      const g = liveOf(app, grace);
+      const first = a.next(isView());
+      await Promise.all([a.opened, g.opened]);
+      const v = (await first).view;
+      assert.equal(v.phase, 'playing', 'no lobby');
+      assert.ok(v.game.blocks.length > 50, 'the staging demo world');
+      const empty = [5, 0, 25];
+      assert.ok(!v.game.blocks.some((b) => b[0] === empty[0] && b[1] === empty[1] && b[2] === empty[2]));
+      let p = g.next((m) => m.t === 'event');
+      a.send({ t: 'act', action: { type: 'place', x: empty[0], y: empty[1], z: empty[2], c: 4 } });
+      assert.deepEqual((await p).event, { type: 'place', x: 5, y: 0, z: 25, c: 4, by: 'ada' }, 'grace sees it at once');
+      p = g.next((m) => m.t === 'error');
+      g.send({ t: 'act', action: { type: 'place', x: 5, y: 0, z: 25, c: 1 } });
+      assert.match((await p).error, /already/);
+      g.send({ t: 'act', action: { type: 'place', x: 99, y: 0, z: 0, c: 1 } });
+      assert.match((await g.next((m) => m.t === 'error')).error, /outside/);
+      // Where ada points shows on grace's screen.
+      a.send({ t: 'input', input: { x: 6, y: 0, z: 25, c: 2 } });
+      const cursor = await g.next((m) => m.t === 'frame' && m.frame.cursors.length);
+      assert.deepEqual(cursor.frame.cursors[0], [101, 'ada', 6, 0, 25, 2, 0]);
+      const room = (await app.call('GET', '/api/room', { as: grace })).data;
+      assert.ok(room.game.blocks.some((b) => b.join() === '5,0,25,4'), 'a plain request sees the same world');
+      assert.equal((await app.call('POST', '/api/room/act', { as: grace, body: { action: { type: 'remove', x: 5, y: 0, z: 25 } } })).status, 200);
+      assert.equal((await app.call('POST', '/api/room/act', { body: { action: { type: 'remove', x: 6, y: 0, z: 25 } } })).status, 401, 'no account, no building');
+      a.close();
+      g.close();
     });
   });
 });

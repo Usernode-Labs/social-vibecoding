@@ -405,6 +405,8 @@ function triagePrompt(snapshot, seed, readsImages = false, guidance = null) {
     decider: snapshot.extra?.decider || null,
     // A first version's people when the original look ran (membersNote).
     members: snapshot.extra?.members || null,
+    // The game starter its first version builds on (firstVersionNote).
+    starter: snapshot.extra?.starter || null,
     // A studio trial's context pack (services/bench/packs.js).
     guidance,
   });
@@ -603,6 +605,7 @@ async function buildStage(ctx) {
     ...(ctx.presetSpec ? { presetSpec: ctx.presetSpec } : {}),
     platformRepo: !!snapshot.extra?.platformRepo,
     firstVersion: !!snapshot.extra?.firstVersion,
+    starter: snapshot.extra?.starter || null,
     sessionTitle: title,
     telemetry: TELEMETRY,
     // A turn that changed nothing is nudged as a live build's is, and
@@ -1259,7 +1262,12 @@ async function firstVersionStage(ctx) {
   const replay = {
     ...snapshot, issueNumber: taste.ISSUE_NUMBER, baseSha: base, promptHash: null,
     texts: { seed, build_note: '' }, thread: { issue: { title: request.title } },
-    extra: { ...(snapshot.extra || {}), firstVersion: true },
+    extra: {
+      ...(snapshot.extra || {}), firstVersion: true,
+      // A task scaffolded from a game starter (taste.js `template`) is
+      // planned, specced and built on it, as a live project made from it is.
+      ...(require('../app-templates').botStarter(input.template) ? { starter: input.template } : {}),
+    },
   };
   const started = {
     scaffold: { sha: made.sha, branch: made.branch || null },

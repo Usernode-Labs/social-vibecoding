@@ -22,6 +22,13 @@
  * Homeroom bot to build a first version, so the project is usable as soon
  * as it runs. Its `emoji` is that app's icon. Your own words, and every
  * game, still go to Homeroom bot.
+ *
+ * GAME STARTERS. Each game preset (board game, space shooter, 3D blocks,
+ * trivia) names a `starter` too: a working multiplayer game the project is
+ * made from (services/app-templates.js, `kind: 'game'`), so Homeroom bot
+ * builds the maker's own idea as changes to a game that already plays,
+ * instead of from an empty page. Make it sends it as the create's
+ * `template` beside their words, the brief.
  */
 
 /** The choice that puts the maker's own words in the blank. */
@@ -45,6 +52,10 @@ export type Choice = {
   template?: string;
   /** That app's icon (its entry's `icon`), where it is not the template's own emoji. */
   emoji?: string;
+  /** A game starter (services/app-templates.js): the project starts from it, and the bot builds their idea on it. */
+  starter?: string;
+  /** What the starter is, for the line under the chips: "a dice race". */
+  starts?: string;
 };
 
 export type Template = {
@@ -107,10 +118,10 @@ export const TEMPLATES: readonly Template[] = [
     tail: '',
     finish: true,
     choices: [
-      { key: 'board', label: 'Board game', fill: 'a board game where', example: 'we roll dice and race each other around the board', name: 'Board Game Night', description: 'A board game' },
-      { key: 'shooter', label: 'Space shooter', fill: 'an arcade space shooter where', example: 'we fly together against waves of asteroids', name: 'Space Shooter', description: 'An arcade space shooter' },
-      { key: 'blocks', label: '3D blocks', fill: 'a 3D block game where', example: 'we build whatever we want together', name: 'Block World', description: 'A 3D block game' },
-      { key: 'trivia', label: 'Trivia', fill: 'a trivia game where', example: 'every question is about one of us', name: 'Trivia Night', description: 'A trivia game' },
+      { key: 'board', label: 'Board game', fill: 'a board game where', example: 'we roll dice and race each other around the board', name: 'Board Game Night', description: 'A board game', starter: 'game-board', starts: 'a dice race' },
+      { key: 'shooter', label: 'Space shooter', fill: 'an arcade space shooter where', example: 'we fly together against waves of asteroids', name: 'Space Shooter', description: 'An arcade space shooter', starter: 'game-space', starts: 'ships flying through asteroids' },
+      { key: 'blocks', label: '3D blocks', fill: 'a 3D block game where', example: 'we build whatever we want together', name: 'Block World', description: 'A 3D block game', starter: 'game-blocks', starts: 'a shared 3D block world' },
+      { key: 'trivia', label: 'Trivia', fill: 'a trivia game where', example: 'every question is about one of us', name: 'Trivia Night', description: 'A trivia game', starter: 'game-trivia', starts: 'trivia about each other' },
     ],
     own: { example: 'a drawing game where one of us draws and everyone guesses', name: '', description: 'A game' },
     note: 'I\'m making us a game. Join and tell me what it needs.',
@@ -190,6 +201,16 @@ export function suggestedName(t: Template, key: string, words: string): string {
 export function readyMadeOf(t: Template, key: string): { template: string; emoji: string } | null {
   const c = key === OWN ? null : choiceOf(t, key);
   return c && c.template ? { template: c.template, emoji: c.emoji || t.emoji } : null;
+}
+
+/**
+ * The game starter a choice makes its project from, and what it is, or
+ * null: for Your own words, or a choice with none. Unlike a ready-made app,
+ * Homeroom bot still builds the first version, on it.
+ */
+export function starterOf(t: Template, key: string): { template: string; starts: string } | null {
+  const c = key === OWN ? null : choiceOf(t, key);
+  return c && c.starter ? { template: c.starter, starts: c.starts || 'a working game' } : null;
 }
 
 /** The project's one-line description for a choice. */

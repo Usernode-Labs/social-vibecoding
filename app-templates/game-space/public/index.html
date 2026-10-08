@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  {{DEV_CONSOLE_FORWARDER}}
+  <title>{{APP_NAME}}</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%237c3aed'/><circle cx='50' cy='50' r='18' fill='white'/></svg>">
+  <!-- This app's precompiled Tailwind (npm run build writes it on every
+       image build; tailwind.config.js says which files it scans). -->
+  <link rel="stylesheet" href="/tailwind.css">
+  <!-- The platform bridge, centrally hosted and loaded by RELATIVE path.
+       Never vendor it and never write a hostname in front of it. It is also
+       how the app answers the shell, so keep it even if no bridge API is
+       called. -->
+  <script src="/usernode-bridge/v1/bridge.js"></script>
+  <!-- Follow the viewer's Homeroom theme (the bridge reports it), with the
+       OS preference as the fallback outside Homeroom. -->
+  <script>
+    (function () {
+      var media = window.matchMedia('(prefers-color-scheme: dark)');
+      function applyTheme() {
+        var theme = (window.usernode && window.usernode.theme) || (media.matches ? 'dark' : 'light');
+        document.documentElement.classList.toggle('dark', theme === 'dark');
+        document.documentElement.style.colorScheme = theme;
+      }
+      applyTheme();
+      window.addEventListener('usernode:theme-changed', applyTheme);
+      media.addEventListener('change', applyTheme);
+    })();
+  </script>
+</head>
+<body class="min-h-screen bg-ground text-fg">
+  <main class="mx-auto flex max-w-3xl flex-col gap-5 px-4 py-8">
+    <header class="flex flex-col gap-1">
+      <h1 class="text-title">{{APP_NAME}}</h1>
+      <p class="text-body text-muted">Fly together through waves of asteroids: crack them with your mining beam and collect the crystals inside. A rock that hits you costs a shield.</p>
+    </header>
+
+    <!-- Only when the live connection is lost. -->
+    <p id="connection" class="text-small text-muted" role="status" hidden></p>
+
+    <!-- Loading: shapes where the game will be. -->
+    <div id="loading" class="flex flex-col gap-2" aria-label="Loading">
+      <div class="skeleton aspect-[8/5] w-full"></div>
+      <div class="skeleton h-12 w-full"></div>
+    </div>
+
+    <!-- Error: only when the first load failed. -->
+    <div id="error" class="state-error card" hidden>
+      <p class="text-heading">The game did not load</p>
+      <p class="text-body text-muted">Nothing is lost. Check your connection and try again.</p>
+      <button id="retry" type="button" class="btn-secondary">Retry</button>
+    </div>
+
+    <div id="game" class="flex flex-col gap-4" hidden>
+      <!-- The run's numbers. -->
+      <div class="flex flex-wrap items-center gap-x-5 gap-y-1 px-1">
+        <p class="text-body"><span class="text-muted">Crystals</span> <span id="score" class="font-medium">0</span></p>
+        <p class="text-body"><span class="text-muted">Wave</span> <span id="wave" class="font-medium">0</span></p>
+        <p class="text-body"><span class="text-muted">Shields</span> <span id="shields" class="font-medium" aria-live="polite"></span></p>
+      </div>
+
+      <!-- The field: a scene of its own, dark in both looks. -->
+      <div id="field" class="relative w-full touch-none select-none overflow-hidden rounded-xl border border-line">
+        <canvas id="field-canvas" class="block aspect-[8/5] w-full" tabindex="0" aria-label="The asteroid field. Move with the arrow keys or WASD, hold Space for the beam."></canvas>
+        <div id="overlay" class="absolute inset-0 flex flex-col items-center justify-center gap-3 p-4 text-center" hidden>
+          <p id="overlay-title" class="text-heading text-white"></p>
+          <p id="overlay-text" class="text-body text-white/80"></p>
+          <button id="overlay-action" type="button" class="btn-primary" hidden></button>
+        </div>
+        <!-- On a touch screen: hold to mine. The left half of the field steers. -->
+        <button id="beam" type="button" class="absolute bottom-3 right-3 flex h-16 w-16 items-center justify-center rounded-full border border-white/40 bg-white/10 text-small font-medium text-white" hidden>Beam</button>
+      </div>
+      <p id="how" class="px-1 text-small text-muted">Arrow keys or WASD to fly, hold Space to mine. On a touch screen, drag on the left half to steer and hold Beam.</p>
+
+      <!-- The end of a run. -->
+      <section id="over" class="card flex flex-col gap-3" hidden>
+        <p id="over-line" class="text-heading"></p>
+        <p id="over-note" class="text-body text-muted"></p>
+        <button id="again" type="button" class="btn-primary self-start">Fly again</button>
+      </section>
+
+      <section class="flex flex-col gap-2">
+        <h2 class="section-label mb-0">Pilots</h2>
+        <ul id="players" class="list"></ul>
+        <!-- Empty: only when nobody has joined yet. -->
+        <div id="empty" class="state-empty card" hidden>
+          <p class="text-heading">Nobody has joined yet</p>
+          <p class="text-body text-muted">Join, and launch on your own or with whoever is here. Others can join while you fly.</p>
+        </div>
+        <p id="lobby-note" class="px-1 text-small text-muted"></p>
+        <div id="lobby-actions" class="flex flex-wrap gap-2">
+          <button id="join" type="button" class="btn-secondary">Join</button>
+          <button id="start" type="button" class="btn-primary">Launch</button>
+          <button id="leave" type="button" class="btn-secondary border-0 bg-transparent text-muted">Leave</button>
+        </div>
+      </section>
+
+      <section id="leaders-section" class="flex flex-col" hidden>
+        <h2 class="section-label">Best runs</h2>
+        <ol id="leaders" class="list"></ol>
+      </section>
+    </div>
+  </main>
+
+  <div id="toast" class="pointer-events-none fixed inset-x-0 bottom-6 z-50 flex justify-center px-4" role="status" aria-live="polite" hidden>
+    <p id="toast-text" class="rounded-lg bg-fg px-4 py-2 text-small text-ground shadow-lg"></p>
+  </div>
+
+  <script src="/game/room.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

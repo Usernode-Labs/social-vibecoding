@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  {{DEV_CONSOLE_FORWARDER}}
+  <title>{{APP_NAME}}</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%237c3aed'/><circle cx='50' cy='50' r='18' fill='white'/></svg>">
+  <!-- This app's precompiled Tailwind (npm run build writes it on every
+       image build; tailwind.config.js says which files it scans). -->
+  <link rel="stylesheet" href="/tailwind.css">
+  <!-- The platform bridge, centrally hosted and loaded by RELATIVE path.
+       Never vendor it and never write a hostname in front of it. It is also
+       how the app answers the shell, so keep it even if no bridge API is
+       called. -->
+  <script src="/usernode-bridge/v1/bridge.js"></script>
+  <!-- Follow the viewer's Homeroom theme (the bridge reports it), with the
+       OS preference as the fallback outside Homeroom. -->
+  <script>
+    (function () {
+      var media = window.matchMedia('(prefers-color-scheme: dark)');
+      function applyTheme() {
+        var theme = (window.usernode && window.usernode.theme) || (media.matches ? 'dark' : 'light');
+        document.documentElement.classList.toggle('dark', theme === 'dark');
+        document.documentElement.style.colorScheme = theme;
+      }
+      applyTheme();
+      window.addEventListener('usernode:theme-changed', applyTheme);
+      media.addEventListener('change', applyTheme);
+    })();
+  </script>
+</head>
+<body class="min-h-screen bg-ground text-fg">
+  <main class="mx-auto flex max-w-xl flex-col gap-5 px-4 py-8">
+    <header class="flex flex-col gap-1">
+      <h1 class="text-title">{{APP_NAME}}</h1>
+      <p class="text-body text-muted">Trivia about each other: write questions about yourself, then see who knows you best.</p>
+    </header>
+
+    <!-- Only when the live connection is lost. -->
+    <p id="connection" class="text-small text-muted" role="status" hidden></p>
+
+    <!-- Loading: shapes where the game will be. -->
+    <div id="loading" class="flex flex-col gap-2" aria-label="Loading">
+      <div class="skeleton h-40 w-full"></div>
+      <div class="skeleton h-12 w-full"></div>
+      <div class="skeleton h-12 w-full"></div>
+    </div>
+
+    <!-- Error: only when the first load failed. -->
+    <div id="error" class="state-error card" hidden>
+      <p class="text-heading">The game did not load</p>
+      <p class="text-body text-muted">Nothing is lost. Check your connection and try again.</p>
+      <button id="retry" type="button" class="btn-secondary">Retry</button>
+    </div>
+
+    <div id="game" class="flex flex-col gap-5" hidden>
+      <!-- The question being asked, or its answer. -->
+      <section id="ask" class="card flex flex-col gap-4" hidden>
+        <div class="flex items-center justify-between gap-3">
+          <p id="ask-count" class="text-small text-muted"></p>
+          <p id="ask-about" class="text-small font-medium text-accent"></p>
+        </div>
+        <div class="h-1.5 w-full overflow-hidden rounded-full bg-line" aria-hidden="true">
+          <div id="timer" class="h-full rounded-full bg-accent"></div>
+        </div>
+        <p id="ask-text" class="text-heading"></p>
+        <div id="options" class="grid grid-cols-1 gap-2 sm:grid-cols-2"></div>
+        <p id="ask-note" class="text-small text-muted"></p>
+      </section>
+
+      <!-- The end of a game: who won, and everyone's score. -->
+      <section id="over" class="card flex flex-col gap-3" hidden>
+        <p id="over-line" class="text-heading"></p>
+        <ol id="standings" class="list"></ol>
+        <button id="again" type="button" class="btn-primary self-start">Play again</button>
+      </section>
+
+      <section id="scores-section" class="flex flex-col" hidden>
+        <h2 class="section-label">Scores</h2>
+        <ol id="scores" class="list"></ol>
+      </section>
+
+      <section class="flex flex-col gap-2">
+        <h2 class="section-label mb-0">Players</h2>
+        <ul id="players" class="list"></ul>
+        <!-- Empty: only when nobody has joined yet. -->
+        <div id="empty" class="state-empty card" hidden>
+          <p class="text-heading">Nobody has joined yet</p>
+          <p class="text-body text-muted">Join, write a question or two about yourself, and start a game.</p>
+        </div>
+        <p id="lobby-note" class="px-1 text-small text-muted"></p>
+        <div id="lobby-actions" class="flex flex-wrap gap-2">
+          <button id="join" type="button" class="btn-secondary">Join the game</button>
+          <button id="start" type="button" class="btn-primary">Start the game</button>
+          <button id="leave" type="button" class="btn-secondary border-0 bg-transparent text-muted">Leave</button>
+        </div>
+      </section>
+
+      <!-- The question bank: write questions about yourself. -->
+      <section id="bank" class="flex flex-col gap-3">
+        <div class="flex flex-col gap-1 px-1">
+          <h2 class="text-heading">Questions about you</h2>
+          <p id="bank-line" class="text-small text-muted"></p>
+        </div>
+        <form id="question-form" class="card flex flex-col gap-2" autocomplete="off">
+          <label for="q-text" class="section-label mb-0">A question about yourself</label>
+          <input id="q-text" name="text" type="text" maxlength="200" required class="field" placeholder="e.g. What was my first job?">
+          <input name="answer" type="text" maxlength="80" required class="field" aria-label="The right answer" placeholder="The right answer">
+          <input name="wrong1" type="text" maxlength="80" required class="field" aria-label="A wrong answer" placeholder="A wrong answer">
+          <input name="wrong2" type="text" maxlength="80" class="field" aria-label="Another wrong answer, if you like" placeholder="Another wrong answer (optional)">
+          <input name="wrong3" type="text" maxlength="80" class="field" aria-label="One more wrong answer, if you like" placeholder="One more (optional)">
+          <button type="submit" class="btn-secondary self-start">Add the question</button>
+        </form>
+        <ul id="mine" class="list" hidden></ul>
+      </section>
+
+      <section id="leaders-section" class="flex flex-col" hidden>
+        <h2 class="section-label">Most wins</h2>
+        <ol id="leaders" class="list"></ol>
+      </section>
+    </div>
+  </main>
+
+  <div id="toast" class="pointer-events-none fixed inset-x-0 bottom-6 z-50 flex justify-center px-4" role="status" aria-live="polite" hidden>
+    <p id="toast-text" class="rounded-lg bg-fg px-4 py-2 text-small text-ground shadow-lg"></p>
+  </div>
+
+  <script src="/game/room.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

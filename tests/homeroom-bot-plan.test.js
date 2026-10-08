@@ -189,9 +189,38 @@ test('the look reads a live first version\'s people into its prompt and its snap
   const src = read('src/services/homeroom-bot.js');
   assert.match(src, /const members = liveMode && requester\?\.firstVersion\s+\? await projectMembers\(pool, app\)\.catch\(/);
   assert.match(src, /seed, issueNumber, firstVersion: !!requester\?\.firstVersion, decider,\s+\.\.\.\(members \? \{ members \} : \{\}\),/);
-  assert.match(src, /\.\.\.\(decider\?\.requesterDecides \? \{ decider \} : \{\}\),[\s\S]{0,120}\.\.\.\(members \? \{ members \} : \{\}\),\s+\},/,
+  assert.match(src, /\.\.\.\(decider\?\.requesterDecides \? \{ decider \} : \{\}\),[\s\S]{0,120}\.\.\.\(members \? \{ members \} : \{\}\),\s+(?:\.\.\.\(starter \? \{ starter \} : \{\}\),\s+)?\},/,
     'kept in the snapshot');
   assert.match(read('src/services/bench/runner.js'), /members: snapshot\.extra\?\.members \|\| null,/);
+});
+
+// Evan, 8 Oct 2026: a project made from a game starter (services/
+// app-templates.js `bot`) is planned, specced and built ON that working game.
+// The look reads its starter off the app's row, keeps it in the snapshot,
+// and the benchmark replays it, as it does the project's people.
+test('a first version made from a game starter is planned on it, and the benchmark replays the starter', () => {
+  const src = read('src/services/homeroom-bot.js');
+  assert.match(src, /const starter = liveMode && requester\?\.firstVersion\s+\? await starterOfApp\(pool, app\.id\)\.catch\(/);
+  assert.match(src, /seed, issueNumber, firstVersion: !!requester\?\.firstVersion, decider,\s+\.\.\.\(members \? \{ members \} : \{\}\),\s+\.\.\.\(starter \? \{ starter \} : \{\}\),/,
+    'in the prompt');
+  assert.match(src, /\.\.\.\(members \? \{ members \} : \{\}\),\s+\.\.\.\(starter \? \{ starter \} : \{\}\),\s+\},\n  \};/, 'kept in the snapshot');
+  const runner = read('src/services/bench/runner.js');
+  assert.match(runner, /members: snapshot\.extra\?\.members \|\| null,\n[^\n]*\n    starter: snapshot\.extra\?\.starter \|\| null,/, 'the replayed triage');
+  assert.match(runner, /firstVersion: !!snapshot\.extra\?\.firstVersion,\n    starter: snapshot\.extra\?\.starter \|\| null,/, 'the replayed build');
+  assert.match(runner, /botStarter\(input\.template\) \? \{ starter: input\.template \} : \{\}/, 'a taste task from a starter');
+
+  const bot = require('../src/services/homeroom-bot');
+  const plain = bot.firstVersionNote(null);
+  for (const notStarter of ['empty', 'grocery-list', 'tier-list-hikes', 'nope']) assert.equal(bot.firstVersionNote(notStarter), plain, notStarter);
+  for (const id of ['game-board', 'game-space', 'game-blocks', 'game-trivia']) {
+    const note = bot.firstVersionNote(id);
+    assert.doesNotMatch(note, /still the platform's starter template|the starter's screen is placeholder/, `${id}: no empty-scaffold wording`);
+    assert.match(note, /built ON that starter by changing it, never by starting\nover\./);
+    assert.match(note, /^STARTER: /m);
+    assert.ok(note.includes(require('../src/services/app-templates').get(id).title), `${id}: names its starter`);
+    assert.ok(bot.triagePromptFor({ seed: 'x', issueNumber: 1, firstVersion: true, starter: id }).includes(note));
+  }
+  assert.ok(!bot.triagePromptFor({ seed: 'x', issueNumber: 1, firstVersion: false, starter: 'game-board' }).includes('STARTER:'), 'a later change has no first-version note');
 });
 
 test('B6: what a plan falls back to, and the answer each choice goes with', () => {
@@ -728,4 +757,45 @@ test('B6: where the waiting state is read, and where it ends', () => {
     assert.ok(schema.includes(`ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS ${column};`), column);
   }
   assert.equal(live.questionText({ question: 'Q?' }).includes('If nobody answers'), false);
+});
+
+test('a first version made from a game starter is specced and built on it; without one, nothing changes', () => {
+  const live = require('../src/services/homeroom-bot-live');
+  const prompts = require('../src/services/prompts');
+  const appTemplates = require('../src/services/app-templates');
+  // Without a starter (or with one that is not a game's), every line is as it was.
+  for (const none of [null, 'empty', 'grocery-list']) {
+    assert.deepEqual(live.specScopeLines(true, none), live.specScopeLines(true), String(none));
+    assert.equal(live.specDesignBrief(true, none), prompts.FIRST_VERSION_SPEC_DESIGN_BRIEF ?? live.specDesignBrief(true), String(none));
+    assert.deepEqual(live.firstVersionDesignLines(none), live.firstVersionDesignLines(), String(none));
+  }
+  assert.deepEqual(live.specScopeLines(false, 'game-board'), live.specScopeLines(false), 'a later change is as small as asked');
+  for (const id of ['game-board', 'game-space', 'game-blocks', 'game-trivia']) {
+    const s = appTemplates.get(id);
+    const scope = live.specScopeLines(true, id).join('\n');
+    assert.ok(scope.includes(`Built ON the repository's ${s.title}`), `${id}: the spec builds on it`);
+    assert.ok(scope.includes(s.bot.build));
+    assert.match(scope, /never plan to start over/);
+    const brief = live.specDesignBrief(true, id);
+    assert.doesNotMatch(brief, /the starter template's is placeholder/);
+    assert.match(brief, /the game starter's screen works but wears the design kit's default look/);
+    const lines = live.firstVersionDesignLines(id).join('\n');
+    assert.ok(lines.includes(`This repository starts as Homeroom's ${s.title}`), `${id}: the build is told`);
+    assert.match(lines, /never by deleting it to start over/);
+    assert.doesNotMatch(lines, /the starter's screen and default colours are placeholder/);
+    const spec = live.specPrompt({ seed: 'seed', buildNote: 'plan', firstVersion: true, starter: id });
+    assert.ok(spec.includes(scope) && spec.includes(brief));
+    const html = live.specPrompt({ seed: 'seed', buildNote: 'plan', firstVersion: true, starter: id, html: true });
+    assert.ok(html.includes(scope) && html.includes(brief), `${id}: the HTML spec too`);
+    assert.ok(live.buildPrompt({ seed: 'seed', buildNote: 'plan', firstVersion: true, starter: id }).includes(lines));
+  }
+  // The starter reaches both turns of a build.
+  const src = read('src/services/homeroom-bot-live.js');
+  assert.match(src, /firstVersion, starter, guidance: specGuidance, onProgress,/);
+  assert.match(src, /platformRepo, readsImages, firstVersion, starter, guidance: buildGuidance,/);
+  assert.match(src, /seed, buildNote, firstVersion, guidance, starter,/);
+  const bot = read('src/services/homeroom-bot.js');
+  assert.equal((bot.match(/const starter = firstVersion \? await starterOfApp\(pool, app\.id\)\.catch\(\(\) => null\) : null;/g) || []).length, 2,
+    'the live build and the shadow build');
+  assert.match(bot, /firstVersion, platformRepo: isPlatformRepo\(app, config\), model, specModel, starter,\n  \}\);/);
 });
