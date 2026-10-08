@@ -14,6 +14,7 @@ const appSecrets = require('../services/app-secrets');
 const platformEnv = require('../services/platform-env');
 const pendingSecrets = require('../services/pending-secrets');
 const appManifest = require('../services/app-manifest');
+const importManifest = require('../services/import-manifest');
 const { ADMIN_MUTATION_LOCK } = require('../services/advisory-locks');
 const renamePr = require('../services/rename-pr');
 const staging = require('../services/staging');
@@ -905,14 +906,17 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
   // own. One bucket covers both routes.
   // The four dapp.json fields that replace a create answer on an import's
   // first deploy, read with the deploy's own readers: its name, description,
-  // visibility and approval rule. An unparseable file reads as {}, the way
-  // the deploy reader treats it.
+  // visibility and approval rule. An unparseable file is a distinct marker
+  // (the route surfaces it as `manifestInvalid`): the deploy reader would
+  // treat it as {}, but the form has to say the file is broken rather than
+  // quietly ignore it. The read is bounded and retried like the other
+  // pre-flight calls (readFileForVerify).
   async function readImportManifest(parsed) {
     try {
-      const raw = await github.getFileContent(parsed.owner, parsed.repo, appManifest.MANIFEST_FILENAME);
+      const raw = await github.readFileForVerify(parsed.owner, parsed.repo, appManifest.MANIFEST_FILENAME);
       if (raw == null) return {};
       let json;
-      try { json = JSON.parse(raw); } catch { return {}; }
+      try { json = JSON.parse(raw); } catch { return { manifestInvalid: true }; }
       const governance = appManifest.readGovernance(json);
       return {
         name: appManifest.readName(json),
@@ -943,6 +947,11 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     }
     const verify = await github.verifyBotAccess(parsed.owner, parsed.repo);
     if (!verify.ok) return res.status(verify.status).json({ error: verify.message, code: verify.code });
+    // Both reads are best-effort: the check has already passed, so neither
+    // can fail it. manifestInvalid is present only when dapp.json exists
+    // and does not parse; warnings is [] when there is nothing to say.
+    const manifest = await readImportManifest(parsed);
+    const invalid = !!(manifest && manifest.manifestInvalid);
     res.json({
       ok: true,
       owner: parsed.owner,
@@ -953,7 +962,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // What the repo's own dapp.json already says, so the dialog can say
       // which answers it replaces. {} when there is no dapp.json; null when
       // it could not be read, which the dialog says as well.
-      manifest: await readImportManifest(parsed),
+      manifest: invalid ? {} : manifest,
+      ...(invalid ? { manifestInvalid: true } : {}),
+      warnings: await importManifest.readRepoRuntimeWarnings(parsed),
     });
   });
 

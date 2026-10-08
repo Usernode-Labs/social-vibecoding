@@ -69,4 +69,61 @@ async function commitCreateAnswers({ repoUrl, description = null, governance = n
   return added;
 }
 
-module.exports = { mergeCreateAnswers, commitCreateAnswers };
+// ── Runtime warnings read at the repo check ───────────────────────────
+//
+// After the check proves the bot's Write access, the form reads the repo's
+// package.json so it can warn (never refuse) when the repo would not build
+// or start as it stands. The platform builds with kpack and runs `build`
+// through BP_NODE_RUN_SCRIPTS only when the script exists, and the launch
+// process needs a `start` script, so a missing script is a real gap the
+// owner can push a fix for on GitHub and re-check.
+
+/** The warning lines, verbatim what the form shows. Pure, for tests. */
+function packageRuntimeWarnings(pkg) {
+  const scripts = pkg && typeof pkg === 'object' && !Array.isArray(pkg) && pkg.scripts
+    && typeof pkg.scripts === 'object' && !Array.isArray(pkg.scripts)
+    ? pkg.scripts : null;
+  const deps = pkg && typeof pkg === 'object' && !Array.isArray(pkg)
+    ? { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) } : {};
+  const isNext = Object.prototype.hasOwnProperty.call(deps, 'next');
+  const lines = [];
+  if (!scripts || typeof scripts.start !== 'string' || !scripts.start.trim()) {
+    lines.push('Its package.json has no "start" script, so Homeroom can\'t start the app after it builds. '
+      + 'Add a start script; for Next.js that is "start": "next start".');
+  }
+  if (isNext && (!scripts || typeof scripts.build !== 'string' || !scripts.build.trim())) {
+    lines.push('This repo uses Next.js but has no "build" script, so nothing compiles it. '
+      + 'Add "build": "next build" to its package.json.');
+  }
+  return lines;
+}
+
+/**
+ * Read the repo's package.json and map it to the warning lines the check
+ * shows. Best-effort: a read that fails after its retry produces no warning
+ * (logged), because a wrong one is worse than none. `parsed` is
+ * github.parseGithubUrl's { owner, repo }.
+ */
+async function readRepoRuntimeWarnings(parsed) {
+  let raw = null;
+  try {
+    raw = await github.readFileForVerify(parsed.owner, parsed.repo, 'package.json');
+  } catch (err) {
+    log.warn('import-manifest', 'package.json read failed at the repo check; no runtime warning', {
+      repo: `${parsed.owner}/${parsed.repo}`, err: err.message,
+    });
+    return [];
+  }
+  if (raw == null) {
+    return ['The repo has no package.json, so Homeroom can\'t tell how to build and start it.'];
+  }
+  let pkg;
+  try {
+    pkg = JSON.parse(raw);
+  } catch {
+    return ['The repo\'s package.json doesn\'t parse, so Homeroom can\'t tell how it builds or starts.'];
+  }
+  return packageRuntimeWarnings(pkg);
+}
+
+module.exports = { mergeCreateAnswers, commitCreateAnswers, packageRuntimeWarnings, readRepoRuntimeWarnings };

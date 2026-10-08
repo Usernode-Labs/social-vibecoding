@@ -65,9 +65,63 @@ test('the commit reads the file, leaves one that does not parse alone, and pushe
 
 test('the import check returns what the repo’s dapp.json says, and the creator commits before the clone', () => {
   const route = fs.readFileSync(path.join(__dirname, '../src/routes/apps.js'), 'utf8');
-  assert.match(route, /manifest: await readImportManifest\(parsed\),/);
+  assert.match(route, /const manifest = await readImportManifest\(parsed\);/);
+  assert.match(route, /manifest: invalid \? \{\} : manifest,\s*\n\s*\.\.\.\(invalid \? \{ manifestInvalid: true \} : \{\}\),\s*\n\s*warnings: await importManifest\.readRepoRuntimeWarnings\(parsed\),/);
   assert.match(route, /name: appManifest\.readName\(json\),\s*description: appManifest\.readDescription\(json\),\s*visibility: appManifest\.readVisibility\(json\),/);
   const creator = fs.readFileSync(path.join(__dirname, '../src/services/app-creator.js'), 'utf8');
   const commit = creator.indexOf("require('./import-manifest').commitCreateAnswers(");
   assert.ok(commit > 0 && commit < creator.indexOf('// 3. Clone (or write) the working tree'), 'before the clone reads the file');
+});
+
+test('the runtime warnings say what a package.json cannot do, and stay silent when it can', () => {
+  const { packageRuntimeWarnings } = importManifest;
+  // Next.js detected, no build script: nothing compiles it.
+  assert.deepEqual(packageRuntimeWarnings({
+    scripts: { dev: 'next dev', start: 'next start' },
+    dependencies: { next: '^15.0.0', react: '^19.0.0' },
+  }), ['This repo uses Next.js but has no "build" script, so nothing compiles it. Add "build": "next build" to its package.json.']);
+  // Next.js detected, no start script.
+  assert.deepEqual(packageRuntimeWarnings({
+    scripts: { build: 'next build' },
+    devDependencies: { next: '15.0.0' },
+  }), ['Its package.json has no "start" script, so Homeroom can\'t start the app after it builds. Add a start script; for Next.js that is "start": "next start".']);
+  // A plain repo without a start script: only the start warning, no Next.js line.
+  assert.deepEqual(packageRuntimeWarnings({ scripts: { build: 'vite build' }, dependencies: { vite: '^5.0.0' } }), [
+    'Its package.json has no "start" script, so Homeroom can\'t start the app after it builds. Add a start script; for Next.js that is "start": "next start".',
+  ]);
+  // Both scripts present: nothing to say, Next.js or not.
+  assert.deepEqual(packageRuntimeWarnings({
+    scripts: { build: 'next build', start: 'next start' },
+    dependencies: { next: '^15.0.0' },
+  }), []);
+  assert.deepEqual(packageRuntimeWarnings({
+    scripts: { build: 'vite build', start: 'node server.js' },
+    dependencies: { vite: '^5.0.0' },
+  }), []);
+});
+
+test('the runtime warnings come off the repo’s package.json, missing and unparseable included', async (t) => {
+  const saved = { readFileForVerify: github.readFileForVerify };
+  t.after(() => Object.assign(github, saved));
+  const parsed = { owner: 'ada', repo: 'site' };
+
+  github.readFileForVerify = async () => null;
+  assert.deepEqual(await importManifest.readRepoRuntimeWarnings(parsed), [
+    'The repo has no package.json, so Homeroom can\'t tell how to build and start it.',
+  ]);
+
+  github.readFileForVerify = async () => '{ not json';
+  assert.deepEqual(await importManifest.readRepoRuntimeWarnings(parsed), [
+    'The repo\'s package.json doesn\'t parse, so Homeroom can\'t tell how it builds or starts.',
+  ]);
+
+  github.readFileForVerify = async () => JSON.stringify({
+    scripts: { build: 'next build', start: 'next start' },
+    dependencies: { next: '^15.0.0' },
+  });
+  assert.deepEqual(await importManifest.readRepoRuntimeWarnings(parsed), []);
+
+  // A read that fails after its retry yields no warning rather than a wrong one.
+  github.readFileForVerify = async () => { throw new Error('GitHub is having trouble right now. Wait a moment and check again.'); };
+  assert.deepEqual(await importManifest.readRepoRuntimeWarnings(parsed), []);
 });

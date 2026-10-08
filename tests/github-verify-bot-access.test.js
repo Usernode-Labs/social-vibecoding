@@ -65,7 +65,15 @@ function stubOctokit({ invitations = [], repo, repoError, acceptFails = [] }) {
 
 function withStub(t, stub) {
   github._setOctokitFactoryForTests(() => stub.client);
-  t.after(() => github._setOctokitFactoryForTests(null));
+  // The pre-flight's retry and timeout tunables are injected so tests do
+  // not sleep: retries are immediate, the per-call ceiling 50ms.
+  github._setVerifyRetryDelaysForTests([0]);
+  github._setVerifyTimeoutForTests(50);
+  t.after(() => {
+    github._setOctokitFactoryForTests(null);
+    github._setVerifyRetryDelaysForTests(null);
+    github._setVerifyTimeoutForTests(null);
+  });
 }
 
 function repoData({ ownerType = 'User', push = false, isPrivate = false } = {}) {
@@ -180,4 +188,81 @@ test('an invitation-list failure does not mask the real access answer', async (t
   };
   withStub(t, stub);
   assert.equal((await github.verifyBotAccess('alice', 'demo')).ok, true);
+});
+
+// ── The generic tail: GitHub itself failing, in plain words ──────────
+
+function rateLimitError() {
+  const err = new Error('API rate limit exceeded for user ID 203.0.113.7.');
+  err.status = 403;
+  err.response = { headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(Math.floor(Date.now() / 1000) + 1380) } };
+  return err;
+}
+
+test('a rate-limited repos.get answers the plain limit notice, not the raw message', async (t) => {
+  const stub = stubOctokit({ invitations: [], repoError: rateLimitError() });
+  withStub(t, stub);
+
+  const r = await github.verifyBotAccess('alice', 'demo');
+  assert.equal(r.ok, false);
+  assert.equal(r.code, 'rate_limited');
+  assert.match(r.message, /GitHub's hourly limit for Homeroom is used up/);
+  assert.match(r.message, /resets in/);
+  assert.doesNotMatch(r.message, /user ID/);
+});
+
+test('a 502 is retried once and the check passes', async (t) => {
+  const stub = stubOctokit({ invitations: [], repo: repoData({ push: true }) });
+  const err = new Error('Server Error');
+  err.status = 502;
+  stub.client.rest.repos.get = async () => {
+    stub.calls.get++;
+    if (stub.calls.get === 1) throw err;
+    return { data: repoData({ push: true }) };
+  };
+  withStub(t, stub);
+
+  const r = await github.verifyBotAccess('alice', 'demo');
+  assert.equal(r.ok, true);
+  assert.equal(stub.calls.get, 2, 'the 5xx was retried exactly once');
+});
+
+test('a persistent 502 answers github_unavailable in plain words, not the raw message', async (t) => {
+  const err = new Error('Server Error');
+  err.status = 502;
+  const stub = stubOctokit({ invitations: [], repoError: err });
+  withStub(t, stub);
+
+  const r = await github.verifyBotAccess('alice', 'demo');
+  assert.equal(r.ok, false);
+  assert.equal(r.code, 'github_unavailable');
+  assert.equal(r.status, 502);
+  assert.equal(r.message, 'GitHub is having trouble right now. Wait a moment and check again.');
+  assert.doesNotMatch(r.message, /Server Error/);
+  assert.equal(stub.calls.get, 2, 'one retry, then the plain answer');
+});
+
+test('a timeout answers timeout, not not-found', async (t) => {
+  const stub = stubOctokit({ invitations: [] });
+  stub.calls.get = 0;
+  // A call that never settles and ignores the abort signal, as a hung
+  // connection behind an unresponsive client would.
+  stub.client.rest.repos.get = () => new Promise(() => {});
+  withStub(t, stub);
+
+  const r = await github.verifyBotAccess('alice', 'demo');
+  assert.equal(r.ok, false);
+  assert.equal(r.code, 'timeout');
+  assert.equal(r.status, 504);
+  assert.equal(r.message, "GitHub didn't answer in time. Wait a moment and check again.");
+  assert.notEqual(r.code, 'not_found');
+});
+
+test('a timed-out invitation listing still does not fail the check', async (t) => {
+  const stub = stubOctokit({ repo: repoData({ push: true }) });
+  stub.client.rest.repos.listInvitationsForAuthenticatedUser = () => new Promise(() => {});
+  withStub(t, stub);
+
+  const r = await github.verifyBotAccess('alice', 'demo');
+  assert.equal(r.ok, true);
 });

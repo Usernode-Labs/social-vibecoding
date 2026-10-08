@@ -42,13 +42,23 @@ export interface RepoManifest {
 }
 
 export type CheckResult =
-  | { ok: true; fullName: string; manifest: RepoManifest; unread: boolean }
+  | {
+    ok: true;
+    fullName: string;
+    manifest: RepoManifest;
+    unread: boolean;
+    /** The repo's dapp.json exists but does not parse, so none of it applies. */
+    manifestInvalid: boolean;
+    /** Why the repo would not build or start as it stands; [] when nothing to say. */
+    warnings: string[];
+  }
   | { ok: false; error: string };
 
 /**
  * GET /api/github/verify-access for a URL, read into what the form shows.
  * `manifest` is {} when the repo has no dapp.json; `unread` when the server
- * could not read it. Never throws.
+ * could not read it. `manifestInvalid` and `warnings` default (to false and
+ * []) so an older server keeps working. Never throws.
  */
 export async function checkRepo(url: string, fetcher: typeof fetch = fetch): Promise<CheckResult> {
   if (!url) return { ok: false, error: 'Paste a GitHub repo URL first.' };
@@ -66,11 +76,16 @@ export async function checkRepo(url: string, fetcher: typeof fetch = fetch): Pro
   }
   if (!res.ok) return { ok: false, error: (typeof data.error === 'string' && data.error) || `Check failed (HTTP ${res.status}).` };
   const manifest = data.manifest as RepoManifest | null | undefined;
+  const warnings = Array.isArray(data.warnings)
+    ? data.warnings.filter((w): w is string => typeof w === 'string')
+    : [];
   return {
     ok: true,
     fullName: (data.fullName as string) || `${data.owner}/${data.repo}`,
     manifest: manifest && typeof manifest === 'object' ? manifest : {},
     unread: manifest === null,
+    manifestInvalid: data.manifestInvalid === true,
+    warnings,
   };
 }
 
@@ -86,11 +101,13 @@ export function visibilityWords(v: NonNullable<RepoManifest['visibility']>): str
 }
 
 /**
- * The line under a checked repo: what its dapp.json decides that this screen
- * would otherwise decide (who it is for), or that it could not be read. Null
- * when it changes nothing. Pure, for tests/create-front-door.test.js.
+ * The line under a checked repo: that its dapp.json does not parse (none of
+ * it is applied), that it could not be read, or what it decides that this
+ * screen would otherwise decide (who it is for). Null when it changes
+ * nothing. Pure, for tests/create-front-door.test.js.
  */
-export function repoNote(manifest: RepoManifest | null, unread: boolean): string | null {
+export function repoNote(manifest: RepoManifest | null, unread: boolean, invalid = false): string | null {
+  if (invalid) return 'This repo’s dapp.json doesn’t parse, so none of it is applied. Fix the JSON on GitHub and check again.';
   if (unread) return 'Couldn’t read this repo’s dapp.json. Anything it sets still applies once it’s imported.';
   const v = manifest?.visibility;
   if (v && (v.build === 'public' || v.view === 'public')) {
@@ -143,6 +160,8 @@ export function ImportForm({ className, header, submit, onDescribe, allowance, b
   const [status, setStatus] = useState('');
   const [manifest, setManifest] = useState<RepoManifest | null>(null);
   const [unread, setUnread] = useState(false);
+  const [invalid, setInvalid] = useState(false);
+  const [warnings, setWarnings] = useState<string[]>([]);
   const [missing, setMissing] = useState<ImportMissing>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -156,6 +175,7 @@ export function ImportForm({ className, header, submit, onDescribe, allowance, b
     setError(null);
     setState('checking');
     setManifest(null);
+    setWarnings([]);
     setStatus('Checking bot access…');
     const result = await checkRepo(normalized);
     if (!result.ok) {
@@ -165,6 +185,8 @@ export function ImportForm({ className, header, submit, onDescribe, allowance, b
     }
     setManifest(result.manifest);
     setUnread(result.unread);
+    setInvalid(result.manifestInvalid);
+    setWarnings(result.warnings);
     setState('ok');
     setStatus(`✓ usernode-bot has Write access to ${result.fullName}.`);
     // The name opens on the repo's own, unless one was already typed.
@@ -192,7 +214,7 @@ export function ImportForm({ className, header, submit, onDescribe, allowance, b
     }
   }, [busy, state, name, url, manifest, submit]);
 
-  const note = state === 'ok' ? repoNote(manifest, unread) : null;
+  const note = state === 'ok' ? repoNote(manifest, unread, invalid) : null;
   return (
     <form data-make-import="" className={className} onSubmit={(e) => { e.preventDefault(); void go(); }}>
       {header}
@@ -214,6 +236,7 @@ export function ImportForm({ className, header, submit, onDescribe, allowance, b
                 setUrl(e.target.value);
                 // A new address is an unchecked one.
                 setState('idle'); setStatus(''); setManifest(null); setUnread(false);
+                setInvalid(false); setWarnings([]);
                 setMissing(null); setError(null);
               }}
               // Leaving the field visibly canonicalises it (#1604: a bare
@@ -270,6 +293,9 @@ export function ImportForm({ className, header, submit, onDescribe, allowance, b
         </div>
       </div>
       {note ? <p data-make-import-note="" className="mt-2 px-1 text-[13px] leading-snug text-zinc-500 dark:text-zinc-400">{note}</p> : null}
+      {state === 'ok' && warnings.map((line) => (
+        <p key={line} data-make-import-warnings="" className="mt-2 px-1 text-[13px] leading-snug text-amber-800 dark:text-amber-300">{line}</p>
+      ))}
       {allowance}
       {error ? <p role="alert" className="mt-3 text-[14px] text-red-700 dark:text-red-400">{error}</p> : null}
       <div className="grow" />

@@ -891,11 +891,14 @@ async function createRootCommit(owner, repo, files, { message = 'Initial commit'
 // (default the repo's default branch). Returns the string, or null when
 // the file doesn't exist (404) so callers can branch on "create vs
 // edit" without try/catch noise. Other errors propagate.
-async function getFileContent(owner, repo, filePath, ref) {
+async function getFileContent(owner, repo, filePath, ref, { signal } = {}) {
   const octokit = await getReadOctokit(owner);
   try {
     const params = { owner, repo, path: filePath };
     if (ref) params.ref = ref;
+    // An optional abort signal rides in octokit's own `request` envelope,
+    // the way the import pre-flight bounds each of its calls.
+    if (signal) params.request = { signal };
     const { data } = await octokit.rest.repos.getContent(params);
     // getContent returns an array for directories; a file has a base64
     // `content` field we decode to UTF-8.
@@ -2085,6 +2088,119 @@ async function botPatOctokit() {
   return patOctokit(pat);
 }
 
+// ── Import pre-flight hardening ────────────────────────────────────────
+//
+// The repo check (verifyBotAccess, the invitation accept it runs first, and
+// the dapp.json / package.json reads that follow it) is a person staring at
+// a form, so every GitHub call it makes is bounded and retried: an
+// eight-second ceiling per call, then one retry on a TRANSIENT failure
+// only — no HTTP status (a network error), an HTTP 5xx, or a timeout abort.
+// 404, 401 and 403 are never retried, and a rate-limit refusal is never
+// retried (isRateLimitError): the answer would be the same. The slowest
+// check is a few seconds longer, not minutes.
+const VERIFY_TIMEOUT_MS = 8000;
+let verifyTimeoutMs = VERIFY_TIMEOUT_MS;
+function _setVerifyTimeoutForTests(ms) { verifyTimeoutMs = ms || VERIFY_TIMEOUT_MS; }
+let verifyRetryDelaysMs = [2000];
+function _setVerifyRetryDelaysForTests(delays) {
+  verifyRetryDelaysMs = delays || [2000];
+}
+
+// Plain wording for the generic tail of a failed check — GitHub itself is
+// the problem, so no raw GitHub error is printed to the form.
+const VERIFY_UNAVAILABLE_MESSAGE = 'GitHub is having trouble right now. Wait a moment and check again.';
+const VERIFY_TIMEOUT_MESSAGE = "GitHub didn't answer in time. Wait a moment and check again.";
+
+// Is this failure worth another attempt? A timeout (the caller passes a
+// plain `{ timeout: true }` marker) is; a rate limit and every fixed 4xx
+// are not.
+function verifyTransient(err) {
+  if (err && err.timeout === true) return true;
+  if (!err) return true;
+  if (budget.isRateLimitError(err)) return false;
+  const status = Number(err.status || (err.response && err.response.status)) || 0;
+  if (status && status < 500) return false;
+  return true;
+}
+
+// The plain-words error a check reports once a transient failure has used
+// its retry: the hourly limit says so and when it resets, anything else
+// says GitHub is unreachable. Never the raw GitHub message.
+function classifyVerifyFailure(err) {
+  const notice = budget.rateLimitNotice(err);
+  if (notice) {
+    const e = new Error(notice);
+    e.code = 'rate_limited';
+    e.status = 503;
+    return e;
+  }
+  const e = new Error(VERIFY_UNAVAILABLE_MESSAGE);
+  e.code = 'github_unavailable';
+  e.status = 502;
+  return e;
+}
+
+// Run one pre-flight GitHub call with the ceiling and the retry. `fn`
+// receives an abort signal to pass to octokit (`request: { signal }`) and
+// resolves the call's value; errors thrown are classified: a transient
+// failure that outlives its retry comes back as code `github_unavailable`,
+// `rate_limited` or `timeout` with plain wording; anything else (404, 401,
+// …) is rethrown as GitHub gave it.
+async function withVerifyRetry(fn) {
+  const delays = verifyRetryDelaysMs;
+  const attempts = delays.length + 1;
+  for (let attempt = 1; ; attempt++) {
+    const controller = new AbortController();
+    // The timer both aborts the request and settles the race: a client
+    // that ignores the signal (a test double, an old octokit) cannot hang
+    // the check past the ceiling.
+    let timer;
+    const outcome = await new Promise((resolveRace) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        resolveRace({ timeout: true });
+      }, verifyTimeoutMs);
+      // Deliberately NOT unref'd: this timer is what resolves the check
+      // when GitHub hangs, so it must hold the event loop.
+      fn(controller.signal).then(
+        (value) => { clearTimeout(timer); resolveRace({ value }); },
+        (err) => { clearTimeout(timer); resolveRace({ err }); },
+      );
+    });
+    if (outcome.timeout) {
+      if (attempt < attempts) {
+        log.warn('github', 'Import pre-flight call timed out — retrying', { attempt, attempts, ms: verifyTimeoutMs });
+        await new Promise((resolve) => setTimeout(resolve, delays[attempt - 1]));
+        continue;
+      }
+      const e = new Error(VERIFY_TIMEOUT_MESSAGE);
+      e.code = 'timeout';
+      e.status = 504;
+      throw e;
+    }
+    const err = outcome.err; // { value } resolves have no err key
+    if (!('err' in outcome)) return outcome.value;
+    if (!verifyTransient(err)) throw err;
+    if (attempt < attempts) {
+      log.warn('github', 'Import pre-flight call failed — retrying', {
+        attempt, attempts, ...describeGithubError(err),
+      });
+      await new Promise((resolve) => setTimeout(resolve, delays[attempt - 1]));
+      continue;
+    }
+    throw classifyVerifyFailure(err);
+  }
+}
+
+// One pre-flight FILE read (the check's dapp.json, and the package.json
+// its warnings come from): the same timeout and retry as the other
+// pre-flight calls, on the shared read path. Returns the text, or null
+// when the file is missing. A transient GitHub failure is classified (see
+// withVerifyRetry), never printed raw.
+async function readFileForVerify(owner, repo, filePath) {
+  return withVerifyRetry((signal) => getFileContent(owner, repo, filePath, undefined, { signal }));
+}
+
 // GET /user/repository_invitations returns 30 invitations per page by
 // default, oldest first. usernode-bot is ONE account every importer
 // invites, and invitations nobody finished importing linger until they
@@ -2106,9 +2222,9 @@ async function acceptInvitationFor(owner, repo) {
   if (!octokit) return false;
   const matches = [];
   for (let page = 1; page <= INVITATION_MAX_PAGES; page++) {
-    const { data } = await octokit.rest.repos.listInvitationsForAuthenticatedUser({
-      per_page: INVITATION_PAGE_SIZE, page,
-    });
+    const { data } = await withVerifyRetry((signal) => octokit.rest.repos.listInvitationsForAuthenticatedUser({
+      per_page: INVITATION_PAGE_SIZE, page, request: { signal },
+    }));
     const invites = Array.isArray(data) ? data : [];
     for (const i of invites) {
       const r = i && i.repository;
@@ -2127,7 +2243,9 @@ async function acceptInvitationFor(owner, repo) {
   let accepted = false;
   for (const invite of live) {
     try {
-      await octokit.rest.repos.acceptInvitationForAuthenticatedUser({ invitation_id: invite.id });
+      await withVerifyRetry((signal) => octokit.rest.repos.acceptInvitationForAuthenticatedUser({
+        invitation_id: invite.id, request: { signal },
+      }));
       log.info('github', 'Accepted repo invitation', { repo: `${owner}/${repo}`, id: invite.id });
       accepted = true;
     } catch (err) {
@@ -2160,7 +2278,7 @@ async function verifyBotAccess(owner, repo) {
 
   let resp;
   try {
-    resp = await octokit.rest.repos.get({ owner, repo });
+    resp = await withVerifyRetry((signal) => octokit.rest.repos.get({ owner, repo, request: { signal } }));
   } catch (err) {
     if (err.status === 404) {
       // A private repo is refused below even once the bot can see it, so
@@ -2176,6 +2294,18 @@ async function verifyBotAccess(owner, repo) {
         message: 'Platform GitHub credentials are invalid. Contact an admin.',
       };
     }
+    // The classified tails from withVerifyRetry — a timed-out repos.get is
+    // reported as a timeout, never as a missing repo.
+    if (err.code === 'timeout') {
+      return { ok: false, status: 504, code: 'timeout', message: err.message };
+    }
+    if (err.code === 'rate_limited' || err.code === 'github_unavailable') {
+      return { ok: false, status: err.status, code: err.code, message: err.message };
+    }
+    // A refusal the retry never classifies (a rate-limit-shaped 403 whose
+    // headers say so) still gets the plain words.
+    const notice = budget.rateLimitNotice(err);
+    if (notice) return { ok: false, status: 503, code: 'rate_limited', message: notice };
     return { ok: false, status: 502, code: 'github_error', message: `GitHub error: ${err.message}` };
   }
 
@@ -2870,6 +3000,9 @@ module.exports = {
   parseGithubUrl,
   acceptInvitationFor,
   verifyBotAccess,
+  readFileForVerify,
+  _setVerifyRetryDelaysForTests,
+  _setVerifyTimeoutForTests,
   checkRepoPublic,
   fetchPublicRepoInfo,
   // The header builder for read-only PUBLIC GitHub reads, exported so other

@@ -221,10 +221,45 @@ test('the import check reads GET /api/github/verify-access, and says what failed
     return answer(200, { fullName: 'o/r', manifest: { name: 'R' } })();
   });
   assert.deepEqual(seen, [['/api/github/verify-access?url=https%3A%2F%2Fgithub.com%2Fo%2Fr', 'same-origin']]);
-  assert.deepEqual(ok, { ok: true, fullName: 'o/r', manifest: { name: 'R' }, unread: false });
-  assert.deepEqual(await checkRepo('x', answer(200, { owner: 'o', repo: 'r', manifest: null })), { ok: true, fullName: 'o/r', manifest: {}, unread: true });
+  assert.deepEqual(ok, { ok: true, fullName: 'o/r', manifest: { name: 'R' }, unread: false, manifestInvalid: false, warnings: [] });
+  assert.deepEqual(await checkRepo('x', answer(200, { owner: 'o', repo: 'r', manifest: null })), { ok: true, fullName: 'o/r', manifest: {}, unread: true, manifestInvalid: false, warnings: [] });
   assert.deepEqual(await checkRepo('x', answer(403, { error: 'Invite usernode-bot first.' })), { ok: false, error: 'Invite usernode-bot first.' });
   assert.deepEqual(await checkRepo('x', async () => { throw new TypeError('offline'); }), { ok: false, error: 'Network error. Try again.' });
+
+  // The check carries the dapp.json does-not-parse marker and the runtime
+  // warnings; an older server that sends neither still checks green.
+  const flagged = await checkRepo('x', answer(200, {
+    owner: 'o', repo: 'r',
+    manifest: {},
+    manifestInvalid: true,
+    warnings: [
+      'Its package.json has no "start" script, so Homeroom can\'t start the app after it builds. Add a start script; for Next.js that is "start": "next start".',
+      'This repo uses Next.js but has no "build" script, so nothing compiles it. Add "build": "next build" to its package.json.',
+      42,
+    ],
+  }));
+  assert.equal(flagged.ok, true);
+  assert.equal(flagged.manifestInvalid, true);
+  assert.deepEqual(flagged.warnings.length, 2, 'non-string warning lines are dropped');
+  assert.match(flagged.warnings[1], /no "build" script/);
+});
+
+test('the form says the dapp.json does not parse, and warns in amber', () => {
+  const mod = loadTsx(`${DIR}/import-repo.tsx`);
+  // A broken dapp.json is said out loud, ahead of the unread note.
+  assert.match(mod.repoNote(null, false, true), /^This repo’s dapp\.json doesn’t parse, so none of it is applied\. Fix the JSON on GitHub and check again\.$/);
+  assert.match(mod.repoNote(null, true, true), /^This repo’s dapp\.json doesn’t parse/);
+  // The form holds the warnings, resets them with the check, and renders
+  // each line in its own amber paragraph under the note.
+  const src = read(`${DIR}/import-repo.tsx`);
+  assert.match(src, /const \[warnings, setWarnings\] = useState<string\[\]>\(\[\]\);/);
+  assert.match(src, /setInvalid\(false\); setWarnings\(\[\]\);/, 'an edited URL clears the warnings with the check');
+  assert.match(src, /data-make-import-warnings="" className="mt-2 px-1 text-\[13px\] leading-snug text-amber-800 dark:text-amber-300"/);
+  assert.match(src, /repoNote\(manifest, unread, invalid\)/);
+  assert.match(src, /setInvalid\(result\.manifestInvalid\);\s*\n\s*setWarnings\(result\.warnings\);/);
+  // The strings the error-text styling anchors on are unchanged.
+  assert.match(src, /const NEEDED = 'pb-1 text-xs text-red-700 dark:text-red-400';/);
+  assert.match(src, /text-emerald-700 dark:text-emerald-400/);
 });
 
 test('the made screen from Create goes to the project; an import lands there too, with Share invite', () => {
