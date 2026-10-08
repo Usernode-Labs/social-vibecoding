@@ -212,7 +212,8 @@ test('the import form: the repo and Check, then the name, Import it, and a way b
 });
 
 test('the import check reads GET /api/github/verify-access, and says what failed', async () => {
-  const { checkRepo } = loadTsx(`${DIR}/import-repo.tsx`);
+  const mod = loadTsx(`${DIR}/import-repo.tsx`);
+  const { checkRepo } = mod;
   const answer = (status, body) => async () => ({ ok: status < 400, status, json: async () => body });
   assert.deepEqual(await checkRepo(''), { ok: false, error: 'Paste a GitHub repo URL first.' });
   const seen = [];
@@ -221,10 +222,39 @@ test('the import check reads GET /api/github/verify-access, and says what failed
     return answer(200, { fullName: 'o/r', manifest: { name: 'R' } })();
   });
   assert.deepEqual(seen, [['/api/github/verify-access?url=https%3A%2F%2Fgithub.com%2Fo%2Fr', 'same-origin']]);
-  assert.deepEqual(ok, { ok: true, fullName: 'o/r', manifest: { name: 'R' }, unread: false });
-  assert.deepEqual(await checkRepo('x', answer(200, { owner: 'o', repo: 'r', manifest: null })), { ok: true, fullName: 'o/r', manifest: {}, unread: true });
+  assert.deepEqual(ok, { ok: true, fullName: 'o/r', manifest: { name: 'R' }, unread: false, framework: null, warnings: [] });
+  assert.deepEqual(await checkRepo('x', answer(200, { owner: 'o', repo: 'r', manifest: null })), { ok: true, fullName: 'o/r', manifest: {}, unread: true, framework: null, warnings: [] });
   assert.deepEqual(await checkRepo('x', answer(403, { error: 'Invite usernode-bot first.' })), { ok: false, error: 'Invite usernode-bot first.' });
   assert.deepEqual(await checkRepo('x', async () => { throw new TypeError('offline'); }), { ok: false, error: 'Network error. Try again.' });
+
+  // The shape answers travel: the form shows what the server found, and
+  // treats a server from before the field existed as "nothing to show".
+  const shaped = await checkRepo('x', answer(200, {
+    owner: 'o', repo: 'r', manifest: {}, framework: 'nextjs',
+    warnings: [{ code: 'next_no_build', message: 'Add "build": "next build" to its package.json scripts.' }],
+  }));
+  assert.equal(shaped.ok ? shaped.framework : null, 'nextjs');
+  assert.deepEqual(shaped.ok ? shaped.warnings : [], [{ code: 'next_no_build', message: 'Add "build": "next build" to its package.json scripts.' }]);
+
+  // A gateway status with no JSON body says GitHub was slow, not "HTTP 504".
+  const noBody = (status) => async () => ({ ok: status < 400, status, json: async () => { throw new TypeError('no body'); } });
+  assert.deepEqual(await checkRepo('x', noBody(504)), { ok: false, error: 'GitHub took too long to answer. Try Check again.' });
+  assert.deepEqual(await checkRepo('x', noBody(502)), { ok: false, error: 'GitHub took too long to answer. Try Check again.' });
+  assert.deepEqual(await checkRepo('x', noBody(418)), { ok: false, error: 'Check failed (HTTP 418).' });
+
+  // The lead line above the warnings: Next.js when one of its own fixes is
+  // listed, the general line otherwise.
+  const nextWarnings = [{ code: 'next_no_build', message: 'x' }];
+  assert.match(mod.warningsLead('nextjs', nextWarnings), /^This Next\.js app won’t start on Homeroom until its package\.json is fixed:$/);
+  assert.equal(mod.warningsLead('nextjs', [{ code: 'wrong_port', message: 'x' }]), 'Fix these in the repo so it runs on Homeroom:',
+    'a port fix alone is not a Next.js fix');
+  assert.equal(mod.warningsLead(null, nextWarnings), 'Fix these in the repo so it runs on Homeroom:');
+  assert.equal(mod.warningsLead(null, []), 'Fix these in the repo so it runs on Homeroom:');
+
+  // Any edit to the address clears the warnings with the rest of the check.
+  const form = read(`${DIR}/import-repo.tsx`);
+  assert.match(form, /setState\('idle'\); setStatus\(''\); setManifest\(null\); setUnread\(false\); setWarnings\(\[\]\); setFramework\(null\);/);
+  assert.match(form, /data-make-import-warnings=""/);
 });
 
 test('the made screen from Create goes to the project; an import lands there too, with Share invite', () => {

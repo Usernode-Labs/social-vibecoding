@@ -65,7 +65,15 @@ function stubOctokit({ invitations = [], repo, repoError, acceptFails = [] }) {
 
 function withStub(t, stub) {
   github._setOctokitFactoryForTests(() => stub.client);
-  t.after(() => github._setOctokitFactoryForTests(null));
+  // The pre-flight retries slow GitHub calls; the zero delays and a tiny
+  // timeout make the retry paths below run instantly.
+  github._setPreflightDelaysForTests([0, 0]);
+  github._setPreflightTimeoutForTests(50);
+  t.after(() => {
+    github._setOctokitFactoryForTests(null);
+    github._setPreflightDelaysForTests(null);
+    github._setPreflightTimeoutForTests(null);
+  });
 }
 
 function repoData({ ownerType = 'User', push = false, isPrivate = false } = {}) {
@@ -180,4 +188,139 @@ test('an invitation-list failure does not mask the real access answer', async (t
   };
   withStub(t, stub);
   assert.equal((await github.verifyBotAccess('alice', 'demo')).ok, true);
+});
+
+// ── Retry and timeout on the pre-flight calls ──────────────────────────
+
+test('a GitHub 5xx is retried and the check recovers', async (t) => {
+  const err = new Error('bad gateway');
+  err.status = 502;
+  let gets = 0;
+  const stub = stubOctokit({ repo: repoData({ push: true }) });
+  stub.client.rest.repos.get = async () => {
+    gets++;
+    if (gets < 3) throw err;
+    return { data: repoData({ push: true }) };
+  };
+  withStub(t, stub);
+
+  const r = await github.verifyBotAccess('alice', 'demo');
+  assert.equal(r.ok, true);
+  assert.equal(gets, 3, 'succeeded on the third try');
+});
+
+test('GitHub failing every try is a 503 github_unavailable, after three calls', async (t) => {
+  const err = new Error('internal error');
+  err.status = 500;
+  const stub = stubOctokit({ invitations: [], repo: repoData({ push: true }), repoError: err });
+  withStub(t, stub);
+
+  const r = await github.verifyBotAccess('alice', 'demo');
+  assert.equal(r.ok, false);
+  assert.equal(r.status, 503);
+  assert.equal(r.code, 'github_unavailable');
+  assert.equal(stub.calls.get, 3);
+  assert.match(r.message, /Try Check again in a minute/);
+  assert.match(r.message, /Nothing was changed/);
+});
+
+test('a 404 is answered, not retried', async (t) => {
+  const err = new Error('Not Found');
+  err.status = 404;
+  const stub = stubOctokit({ invitations: [], repoError: err });
+  withStub(t, stub);
+
+  const r = await github.verifyBotAccess('alice', 'demo');
+  assert.equal(r.code, 'not_found');
+  assert.equal(stub.calls.get, 1);
+});
+
+test('a rate-limit refusal is a 429 rate_limited with when to come back, not retried', async (t) => {
+  const err = new Error('API rate limit exceeded for 1.2.3.4.');
+  err.status = 403;
+  const stub = stubOctokit({ invitations: [], repoError: err });
+  withStub(t, stub);
+
+  const r = await github.verifyBotAccess('alice', 'demo');
+  assert.equal(r.ok, false);
+  assert.equal(r.status, 429);
+  assert.equal(r.code, 'rate_limited');
+  assert.match(r.message, /hourly limit/);
+  assert.equal(stub.calls.get, 1);
+});
+
+test('a hanging repos.get times out and is retried to the end', async (t) => {
+  let gets = 0;
+  const stub = stubOctokit({ invitations: [], repo: repoData({ push: true }) });
+  stub.client.rest.repos.get = () => {
+    gets++;
+    return new Promise(() => {});
+  };
+  withStub(t, stub); // 50ms per-attempt timeout
+
+  const r = await github.verifyBotAccess('alice', 'demo');
+  assert.equal(r.ok, false);
+  assert.equal(r.code, 'github_unavailable');
+  assert.equal(gets, 3);
+});
+
+// ── The new specific refusal codes ─────────────────────────────────────
+
+test('only an expired invitation plus no push names the expired invitation', async (t) => {
+  const stub = stubOctokit({
+    invitations: [invite(5, 'alice', 'demo', { expired: true })],
+    repo: repoData({ ownerType: 'User', push: false }),
+  });
+  withStub(t, stub);
+
+  const r = await github.verifyBotAccess('alice', 'demo');
+  assert.equal(r.ok, false);
+  assert.equal(r.status, 403);
+  assert.equal(r.code, 'invitation_expired');
+  assert.match(r.message, /has expired/);
+  assert.match(r.message, /invite usernode-bot again/);
+});
+
+test('a live invitation whose accept fails says so and asks for another Check', async (t) => {
+  const stub = stubOctokit({
+    invitations: [invite(9, 'alice', 'demo')],
+    repo: repoData({ ownerType: 'User', push: false }),
+    acceptFails: [9],
+  });
+  withStub(t, stub);
+
+  const r = await github.verifyBotAccess('alice', 'demo');
+  assert.equal(r.ok, false);
+  assert.equal(r.status, 403);
+  assert.equal(r.code, 'invitation_accept_failed');
+  assert.match(r.message, /didn't let it accept/);
+  assert.match(r.message, /Press Check again/);
+});
+
+test('an expired invitation next to a refused live one reports the live one', async (t) => {
+  const stub = stubOctokit({
+    invitations: [invite(1, 'alice', 'demo', { expired: true }), invite(2, 'alice', 'demo')],
+    repo: repoData({ ownerType: 'User', push: false }),
+    acceptFails: [2],
+  });
+  withStub(t, stub);
+
+  assert.equal((await github.acceptInvitationFor('alice', 'demo', {})).expired === undefined, true,
+    'acceptInvitationFor still returns a bare boolean');
+  const r = await github.verifyBotAccess('alice', 'demo');
+  assert.equal(r.code, 'invitation_accept_failed');
+});
+
+test("an unexpected GitHub status says what to do, not GitHub's raw error", async (t) => {
+  const err = new Error('Repository access blocked: secret scanning');
+  err.status = 451;
+  const stub = stubOctokit({ invitations: [], repoError: err });
+  withStub(t, stub);
+
+  const r = await github.verifyBotAccess('alice', 'demo');
+  assert.equal(r.ok, false);
+  assert.equal(r.status, 502);
+  assert.equal(r.code, 'github_error');
+  assert.doesNotMatch(r.message, /secret scanning/);
+  assert.match(r.message, /GitHub refused the check \(HTTP 451\)/);
 });

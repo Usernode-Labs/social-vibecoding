@@ -41,14 +41,26 @@ export interface RepoManifest {
   governance?: { approvers: 'anyone' | 'invited'; approvals: number | null } | null;
 }
 
+/** One thing to fix in the repo before the imported app will run here. */
+export type RepoWarning = { code: string; message: string };
+
 export type CheckResult =
-  | { ok: true; fullName: string; manifest: RepoManifest; unread: boolean }
+  | {
+    ok: true;
+    fullName: string;
+    manifest: RepoManifest;
+    unread: boolean;
+    framework: 'nextjs' | null;
+    warnings: RepoWarning[];
+  }
   | { ok: false; error: string };
 
 /**
  * GET /api/github/verify-access for a URL, read into what the form shows.
  * `manifest` is {} when the repo has no dapp.json; `unread` when the server
- * could not read it. Never throws.
+ * could not read it. `framework` and `warnings` say what the repo's shape
+ * means for running it here, and default to null / [] when the server is
+ * from before they existed. Never throws.
  */
 export async function checkRepo(url: string, fetcher: typeof fetch = fetch): Promise<CheckResult> {
   if (!url) return { ok: false, error: 'Paste a GitHub repo URL first.' };
@@ -64,13 +76,27 @@ export async function checkRepo(url: string, fetcher: typeof fetch = fetch): Pro
   } catch {
     /* a non-JSON body is reported through the HTTP status below */
   }
-  if (!res.ok) return { ok: false, error: (typeof data.error === 'string' && data.error) || `Check failed (HTTP ${res.status}).` };
+  if (!res.ok) {
+    const message = typeof data.error === 'string' && data.error ? data.error : null;
+    if (message) return { ok: false, error: message };
+    // A gateway status with no JSON body: the check already retried
+    // GitHub on the server, so say that rather than a bare HTTP code.
+    if (res.status === 502 || res.status === 503 || res.status === 504) {
+      return { ok: false, error: 'GitHub took too long to answer. Try Check again.' };
+    }
+    return { ok: false, error: `Check failed (HTTP ${res.status}).` };
+  }
   const manifest = data.manifest as RepoManifest | null | undefined;
+  const rawWarnings = Array.isArray(data.warnings) ? data.warnings : [];
   return {
     ok: true,
     fullName: (data.fullName as string) || `${data.owner}/${data.repo}`,
     manifest: manifest && typeof manifest === 'object' ? manifest : {},
     unread: manifest === null,
+    framework: data.framework === 'nextjs' ? 'nextjs' : null,
+    warnings: rawWarnings
+      .filter((w): w is RepoWarning => !!w && typeof w.message === 'string')
+      .map((w) => ({ code: typeof w.code === 'string' ? w.code : '', message: w.message })),
   };
 }
 
@@ -97,6 +123,18 @@ export function repoNote(manifest: RepoManifest | null, unread: boolean): string
     return `Its dapp.json says ${visibilityWords(v)}, so it starts that way rather than as a private community.`;
   }
   return null;
+}
+
+/**
+ * The lead line above the shape warnings. The Next.js wording when the repo
+ * is one and a Next.js-specific fix is in the list, else the general one.
+ * Pure, for tests/create-front-door.test.js.
+ */
+export function warningsLead(framework: 'nextjs' | null, warnings: RepoWarning[]): string {
+  if (framework === 'nextjs' && warnings.some((w) => w.code === 'next_no_build' || w.code === 'next_no_start' || w.code === 'next_dev_start')) {
+    return 'This Next.js app won’t start on Homeroom until its package.json is fixed:';
+  }
+  return 'Fix these in the repo so it runs on Homeroom:';
 }
 
 export type ImportMissing = 'repo' | 'name' | null;
@@ -143,6 +181,8 @@ export function ImportForm({ className, header, submit, onDescribe, allowance, b
   const [status, setStatus] = useState('');
   const [manifest, setManifest] = useState<RepoManifest | null>(null);
   const [unread, setUnread] = useState(false);
+  const [framework, setFramework] = useState<'nextjs' | null>(null);
+  const [warnings, setWarnings] = useState<RepoWarning[]>([]);
   const [missing, setMissing] = useState<ImportMissing>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -156,6 +196,8 @@ export function ImportForm({ className, header, submit, onDescribe, allowance, b
     setError(null);
     setState('checking');
     setManifest(null);
+    setWarnings([]);
+    setFramework(null);
     setStatus('Checking bot access…');
     const result = await checkRepo(normalized);
     if (!result.ok) {
@@ -165,6 +207,8 @@ export function ImportForm({ className, header, submit, onDescribe, allowance, b
     }
     setManifest(result.manifest);
     setUnread(result.unread);
+    setFramework(result.framework);
+    setWarnings(result.warnings);
     setState('ok');
     setStatus(`✓ usernode-bot has Write access to ${result.fullName}.`);
     // The name opens on the repo's own, unless one was already typed.
@@ -213,7 +257,7 @@ export function ImportForm({ className, header, submit, onDescribe, allowance, b
               onChange={(e) => {
                 setUrl(e.target.value);
                 // A new address is an unchecked one.
-                setState('idle'); setStatus(''); setManifest(null); setUnread(false);
+                setState('idle'); setStatus(''); setManifest(null); setUnread(false); setWarnings([]); setFramework(null);
                 setMissing(null); setError(null);
               }}
               // Leaving the field visibly canonicalises it (#1604: a bare
@@ -269,6 +313,15 @@ export function ImportForm({ className, header, submit, onDescribe, allowance, b
             : <p id="make-import-name-hint" className={HINT}>It's your group's name too. You can change it later.</p>}
         </div>
       </div>
+      {state === 'ok' && warnings.length > 0 ? (
+        <div data-make-import-warnings="" role="status" className="mt-2 px-1 text-[13px] leading-snug text-amber-700 dark:text-amber-300">
+          <p className="font-semibold">{warningsLead(framework, warnings)}</p>
+          <ul className="list-disc pl-[18px]">
+            {warnings.map((w) => <li key={w.code || w.message}>{w.message}</li>)}
+          </ul>
+          <p className="mt-1">You can import it now and fix these later.</p>
+        </div>
+      ) : null}
       {note ? <p data-make-import-note="" className="mt-2 px-1 text-[13px] leading-snug text-zinc-500 dark:text-zinc-400">{note}</p> : null}
       {allowance}
       {error ? <p role="alert" className="mt-3 text-[14px] text-red-700 dark:text-red-400">{error}</p> : null}

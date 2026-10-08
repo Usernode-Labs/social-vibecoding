@@ -14,6 +14,7 @@ const appSecrets = require('../services/app-secrets');
 const platformEnv = require('../services/platform-env');
 const pendingSecrets = require('../services/pending-secrets');
 const appManifest = require('../services/app-manifest');
+const importManifest = require('../services/import-manifest');
 const { ADMIN_MUTATION_LOCK } = require('../services/advisory-locks');
 const renamePr = require('../services/rename-pr');
 const staging = require('../services/staging');
@@ -905,16 +906,27 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
   // own. One bucket covers both routes.
   // The four dapp.json fields that replace a create answer on an import's
   // first deploy, read with the deploy's own readers: its name, description,
-  // visibility and approval rule. An unparseable file reads as {}, the way
-  // the deploy reader treats it.
+  // visibility and approval rule. An unparseable file reads as {} (the way
+  // the deploy reader treats it) with its parse error kept, so the shape
+  // warnings can say the file is ignored; a read failure reads as null.
+  // The dapp.json read goes through github.preflightCall like the other
+  // pre-flight reads, so a slow GitHub is retried instead of reported.
   async function readImportManifest(parsed) {
+    let raw = null;
     try {
-      const raw = await github.getFileContent(parsed.owner, parsed.repo, appManifest.MANIFEST_FILENAME);
-      if (raw == null) return {};
-      let json;
-      try { json = JSON.parse(raw); } catch { return {}; }
-      const governance = appManifest.readGovernance(json);
-      return {
+      raw = await github.preflightCall(() =>
+        github.getFileContent(parsed.owner, parsed.repo, appManifest.MANIFEST_FILENAME));
+    } catch (err) {
+      log.warn('apps', 'Import dapp.json read failed', { repo: `${parsed.owner}/${parsed.repo}`, err: err.message });
+      return { manifest: null, invalid: null };
+    }
+    if (raw == null) return { manifest: {}, invalid: null };
+    let json;
+    try { json = JSON.parse(raw); } catch (err) { return { manifest: {}, invalid: err.message }; }
+    const governance = appManifest.readGovernance(json);
+    return {
+      invalid: null,
+      manifest: {
         name: appManifest.readName(json),
         description: appManifest.readDescription(json),
         visibility: appManifest.readVisibility(json),
@@ -922,11 +934,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           approvers: governance.approvers || 'anyone',
           approvals: typeof governance.approvals === 'number' ? governance.approvals : null,
         } : null,
-      };
-    } catch (err) {
-      log.warn('apps', 'Import dapp.json read failed', { repo: `${parsed.owner}/${parsed.repo}`, err: err.message });
-      return null;
-    }
+      },
+    };
   }
 
   router.get('/api/github/verify-access', githubLookupLimiter, async (req, res) => {
@@ -943,6 +952,18 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     }
     const verify = await github.verifyBotAccess(parsed.owner, parsed.repo);
     if (!verify.ok) return res.status(verify.status).json({ error: verify.message, code: verify.code });
+    // What the repo is made of, read once access is proved: its dapp.json
+    // and its shape (root files, package.json). The shape answers what
+    // would stop the app building or starting on Homeroom, as warnings —
+    // they never fail the check, and a failed shape read means no
+    // warnings rather than an error.
+    const [read, shape] = await Promise.all([
+      readImportManifest(parsed),
+      importManifest.readRepoShape(parsed.owner, parsed.repo),
+    ]);
+    const { framework = null, warnings = [] } = shape
+      ? importManifest.repoWarnings({ ...shape, manifestInvalid: read.invalid })
+      : {};
     res.json({
       ok: true,
       owner: parsed.owner,
@@ -953,7 +974,11 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // What the repo's own dapp.json already says, so the dialog can say
       // which answers it replaces. {} when there is no dapp.json; null when
       // it could not be read, which the dialog says as well.
-      manifest: await readImportManifest(parsed),
+      manifest: read.manifest,
+      // What the repo's shape says about running here: 'nextjs' or null,
+      // and the things to fix in the repo, each with a code.
+      framework,
+      warnings,
     });
   });
 

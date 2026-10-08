@@ -2093,6 +2093,67 @@ async function botPatOctokit() {
 const INVITATION_PAGE_SIZE = 100;
 const INVITATION_MAX_PAGES = 20;
 
+// Slow GitHub calls in the import pre-flight are retried. A timeout, a
+// network failure or a GitHub 5xx is often gone by the second try, while a
+// refusal — not found, private, rate limited — is not going to change and
+// is answered straight back. Each attempt races the call against a
+// timeout, so one hanging request cannot hold the Check open; the timeout
+// rejects with a status-less error, which is exactly the shape retried.
+// Delays and the timeout are injectable so tests run instantly.
+let preflightDelaysMs = [500, 1500];
+let preflightTimeoutMs = 8000;
+const PREFLIGHT_ATTEMPTS = 3;
+function _setPreflightDelaysForTests(delays) {
+  preflightDelaysMs = Array.isArray(delays) && delays.length ? delays : [500, 1500];
+}
+function _setPreflightTimeoutForTests(ms) {
+  preflightTimeoutMs = Number(ms) > 0 ? Number(ms) : 8000;
+}
+
+// Run `fn()` once, racing it against a per-attempt timeout; retry it while
+// the failure is one a retry can fix, and rethrow the last error (marked
+// `preflightExhausted` when every try was spent on a transient one) when
+// they are not.
+async function preflightCall(fn, { attempts = PREFLIGHT_ATTEMPTS, timeoutMs } = {}) {
+  const tries = Math.max(1, attempts);
+  const limit = Number(timeoutMs) > 0 ? Number(timeoutMs) : preflightTimeoutMs;
+  let last;
+  for (let attempt = 1; attempt <= tries; attempt++) {
+    let timer;
+    try {
+      const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          const err = new Error(`GitHub didn't answer within ${limit}ms.`);
+          err.code = 'timeout';
+          reject(err);
+        }, limit);
+      });
+      const work = Promise.resolve().then(fn);
+      // A late rejection after the timeout already won this attempt is not
+      // ours to report; without this it would surface as unhandled.
+      work.catch(() => {});
+      return await Promise.race([work, timeout]);
+    } catch (err) {
+      last = err;
+      // A refusal GitHub already answered is not going to change: a rate
+      // limit needs its window to elapse and a 4xx needs the person to act.
+      // Only a timeout, a network failure (no status) or a GitHub 5xx is
+      // worth trying again.
+      const status = Number(err && err.status) || 0;
+      const transient = !status || status >= 500;
+      if (!transient || budget.rateLimitNotice(err) || attempt >= tries) break;
+      await new Promise((resolve) => setTimeout(resolve, preflightDelaysMs[attempt - 1] ?? 1500));
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  const status = Number(last && last.status) || 0;
+  if (last && (!status || status >= 500) && !budget.rateLimitNotice(last)) {
+    last.preflightExhausted = true;
+  }
+  throw last;
+}
+
 // Find the pending invitation(s) for *this exact repo* and accept them.
 // Used only as a side-effect of the import-flow pre-flight, never as a
 // background poller — that's the user-confirmed scoping rule.
@@ -2100,15 +2161,21 @@ const INVITATION_MAX_PAGES = 20;
 // Returns true if an invitation was found+accepted, false otherwise.
 // Errors are swallowed by the caller (verifyBotAccess) so a transient
 // invitation-list failure doesn't mask the real problem on the get-repo
-// call that follows.
-async function acceptInvitationFor(owner, repo) {
+// call that follows. `outcome`, when given, is filled with `{ expired,
+// failed }`: how many invitations for this exact repo had lapsed, and how
+// many live ones could not be accepted — which is what lets
+// verifyBotAccess say those two things apart from a plain "not a
+// collaborator".
+async function acceptInvitationFor(owner, repo, outcome = {}) {
   const octokit = await botPatOctokit();
   if (!octokit) return false;
+  outcome.expired = 0;
+  outcome.failed = 0;
   const matches = [];
   for (let page = 1; page <= INVITATION_MAX_PAGES; page++) {
-    const { data } = await octokit.rest.repos.listInvitationsForAuthenticatedUser({
+    const { data } = await preflightCall(() => octokit.rest.repos.listInvitationsForAuthenticatedUser({
       per_page: INVITATION_PAGE_SIZE, page,
-    });
+    }));
     const invites = Array.isArray(data) ? data : [];
     for (const i of invites) {
       const r = i && i.repository;
@@ -2123,6 +2190,7 @@ async function acceptInvitationFor(owner, repo) {
   // on the list; accepting the expired one first fails and used to end the
   // attempt with the live one still pending. Skip expired invitations.
   const live = matches.filter((i) => i.expired !== true);
+  outcome.expired = matches.length - live.length;
   if (live.length === 0) return false;
   let accepted = false;
   for (const invite of live) {
@@ -2131,6 +2199,7 @@ async function acceptInvitationFor(owner, repo) {
       log.info('github', 'Accepted repo invitation', { repo: `${owner}/${repo}`, id: invite.id });
       accepted = true;
     } catch (err) {
+      outcome.failed += 1;
       log.warn('github', 'Accepting repo invitation failed', { repo: `${owner}/${repo}`, id: invite.id, err: err.message });
     }
   }
@@ -2154,13 +2223,16 @@ async function verifyBotAccess(owner, repo) {
   // clicking submit, the invitation accept turns this into a one-step
   // flow. Failures here are non-fatal — the get-repo call below will
   // still produce the correct 404/403 if there's a real access problem.
-  await acceptInvitationFor(owner, repo).catch((err) => {
+  // `invitation` records what that pass saw (an expired invitation, a
+  // refused accept) so the refusals below can name the actual cause.
+  const invitation = {};
+  const accepted = await acceptInvitationFor(owner, repo, invitation).catch((err) => {
     log.warn('github', 'acceptInvitationFor failed (non-fatal)', { repo: `${owner}/${repo}`, err: err.message });
   });
 
   let resp;
   try {
-    resp = await octokit.rest.repos.get({ owner, repo });
+    resp = await preflightCall(() => octokit.rest.repos.get({ owner, repo }));
   } catch (err) {
     if (err.status === 404) {
       // A private repo is refused below even once the bot can see it, so
@@ -2176,7 +2248,23 @@ async function verifyBotAccess(owner, repo) {
         message: 'Platform GitHub credentials are invalid. Contact an admin.',
       };
     }
-    return { ok: false, status: 502, code: 'github_error', message: `GitHub error: ${err.message}` };
+    const notice = budget.rateLimitNotice(err);
+    if (notice) {
+      return { ok: false, status: 429, code: 'rate_limited', message: notice };
+    }
+    if (err.preflightExhausted) {
+      return {
+        ok: false, status: 503, code: 'github_unavailable',
+        message: `GitHub didn't answer after ${PREFLIGHT_ATTEMPTS} tries. Nothing was changed. Try Check again in a minute.`,
+      };
+    }
+    log.warn('github', 'Import repo check refused by GitHub', {
+      repo: `${owner}/${repo}`, ...describeGithubError(err),
+    });
+    return {
+      ok: false, status: 502, code: 'github_error',
+      message: `GitHub refused the check (HTTP ${err.status || 'unknown'}). Try again, or ask an admin if it keeps happening.`,
+    };
   }
 
   // Public-only enforcement. Homeroom workers run with zero GitHub
@@ -2197,6 +2285,21 @@ async function verifyBotAccess(owner, repo) {
   // relaxed: read-only is refused for every owner type.
   const perms = resp.data.permissions || {};
   if (!perms.push) {
+    // What the invitation pass just saw names the cause when it can: a
+    // live invitation GitHub refused to accept, or invitations that have
+    // all lapsed. Both are fixed on GitHub, not by a permission level.
+    if (invitation.failed > 0) {
+      return {
+        ok: false, status: 403, code: 'invitation_accept_failed',
+        message: `Homeroom found your invitation to usernode-bot on ${owner}/${repo} but GitHub didn't let it accept. Press Check again in a moment.`,
+      };
+    }
+    if (!accepted && invitation.expired > 0) {
+      return {
+        ok: false, status: 403, code: 'invitation_expired',
+        message: `Your invitation to usernode-bot on ${owner}/${repo} has expired. On GitHub, open Settings → Collaborators, invite usernode-bot again, then press Check.`,
+      };
+    }
     // A repository owned by a personal account has no permission levels:
     // every collaborator on it can push (GitHub docs, "Permission levels
     // for a personal account repository"). So push:false on a User-owned
@@ -2870,6 +2973,9 @@ module.exports = {
   parseGithubUrl,
   acceptInvitationFor,
   verifyBotAccess,
+  preflightCall,
+  _setPreflightDelaysForTests,
+  _setPreflightTimeoutForTests,
   checkRepoPublic,
   fetchPublicRepoInfo,
   // The header builder for read-only PUBLIC GitHub reads, exported so other

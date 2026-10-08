@@ -65,9 +65,152 @@ test('the commit reads the file, leaves one that does not parse alone, and pushe
 
 test('the import check returns what the repo’s dapp.json says, and the creator commits before the clone', () => {
   const route = fs.readFileSync(path.join(__dirname, '../src/routes/apps.js'), 'utf8');
-  assert.match(route, /manifest: await readImportManifest\(parsed\),/);
+  assert.match(route, /manifest: read\.manifest,/);
+  assert.match(route, /importManifest\.readRepoShape\(parsed\.owner, parsed\.repo\)/);
+  assert.match(route, /importManifest\.repoWarnings\(\{ \.\.\.shape, manifestInvalid: read\.invalid \}\)/);
   assert.match(route, /name: appManifest\.readName\(json\),\s*description: appManifest\.readDescription\(json\),\s*visibility: appManifest\.readVisibility\(json\),/);
   const creator = fs.readFileSync(path.join(__dirname, '../src/services/app-creator.js'), 'utf8');
   const commit = creator.indexOf("require('./import-manifest').commitCreateAnswers(");
   assert.ok(commit > 0 && commit < creator.indexOf('// 3. Clone (or write) the working tree'), 'before the clone reads the file');
+});
+
+// ── The shape and Next.js warnings (repoWarnings) ──────────────────────
+
+// A Next.js repo with a build and a start script on the default port: the
+// shape everything else is measured against.
+const HEALTHY_NEXT = {
+  files: ['package.json'],
+  packageText: JSON.stringify({
+    dependencies: { next: '15.0.0', react: '19.0.0' },
+    scripts: { build: 'next build', start: 'next start' },
+  }),
+};
+
+const codes = (out) => out.warnings.map((w) => w.code);
+
+test('a Next.js app that builds and starts on 3000 warns of nothing', () => {
+  const out = importManifest.repoWarnings(HEALTHY_NEXT);
+  assert.equal(out.framework, 'nextjs');
+  assert.deepEqual(out.warnings, []);
+});
+
+test('a Next.js app without a build script is told what to add', () => {
+  const out = importManifest.repoWarnings({
+    ...HEALTHY_NEXT,
+    packageText: JSON.stringify({
+      dependencies: { next: '15.0.0' },
+      scripts: { start: 'next start' },
+    }),
+  });
+  assert.deepEqual(codes(out), ['next_no_build']);
+  assert.match(out.warnings[0].message, /Add "build": "next build" to its package\.json scripts\./);
+});
+
+test('a Next.js app without a start script is told what to add, and next in devDependencies counts', () => {
+  const out = importManifest.repoWarnings({
+    ...HEALTHY_NEXT,
+    packageText: JSON.stringify({
+      devDependencies: { next: '15.0.0' },
+      scripts: { build: 'next build' },
+    }),
+  });
+  assert.equal(out.framework, 'nextjs');
+  assert.deepEqual(codes(out), ['next_no_start']);
+  assert.match(out.warnings[0].message, /Add "start": "next start" to its package\.json scripts\./);
+});
+
+test('a start script running the dev server is named', () => {
+  const out = importManifest.repoWarnings({
+    ...HEALTHY_NEXT,
+    packageText: JSON.stringify({
+      dependencies: { next: '15.0.0' },
+      scripts: { build: 'next build', start: 'next dev' },
+    }),
+  });
+  assert.deepEqual(codes(out), ['next_dev_start']);
+  assert.match(out.warnings[0].message, /Change it to "next start"\./);
+});
+
+test('a start script pinned to another port is named; port 3000 is left alone', () => {
+  const out = importManifest.repoWarnings({
+    ...HEALTHY_NEXT,
+    packageText: JSON.stringify({
+      dependencies: { next: '15.0.0' },
+      scripts: { build: 'next build', start: 'next start -p 8080' },
+    }),
+  });
+  assert.deepEqual(codes(out), ['wrong_port']);
+  assert.match(out.warnings[0].message, /uses port 8080/);
+  assert.match(out.warnings[0].message, /port 3000/);
+
+  const on3000 = importManifest.repoWarnings({
+    ...HEALTHY_NEXT,
+    packageText: JSON.stringify({
+      dependencies: { next: '15.0.0' },
+      scripts: { build: 'next build', start: 'next start -p 3000' },
+    }),
+  });
+  assert.deepEqual(on3000.warnings, []);
+});
+
+test('a plain Node app with no start script and no server file is told what to add; a server file answers', () => {
+  const out = importManifest.repoWarnings({
+    files: ['package.json'],
+    packageText: JSON.stringify({ scripts: {} }),
+  });
+  assert.equal(out.framework, null);
+  assert.deepEqual(codes(out), ['no_start']);
+  assert.match(out.warnings[0].message, /starts the server on port 3000/);
+
+  const withServer = importManifest.repoWarnings({
+    files: ['package.json', 'server.js'],
+    packageText: JSON.stringify({ scripts: {} }),
+  });
+  assert.deepEqual(withServer.warnings, []);
+});
+
+test('no package.json and no Dockerfile at the root says so; a truncated tree does not guess', () => {
+  const out = importManifest.repoWarnings({ files: ['README.md', 'src/index.js'], packageText: null });
+  assert.deepEqual(codes(out), ['no_package']);
+  assert.match(out.warnings[0].message, /no package\.json or Dockerfile/);
+
+  const truncated = importManifest.repoWarnings({ files: ['README.md'], packageText: null, truncated: true });
+  assert.deepEqual(truncated.warnings, []);
+});
+
+test('a root Dockerfile silences the package.json findings but the dapp.json finding stands', () => {
+  const out = importManifest.repoWarnings({
+    ...HEALTHY_NEXT,
+    files: ['package.json', 'Dockerfile'],
+    packageText: JSON.stringify({ dependencies: { next: '15.0.0' }, scripts: {} }),
+  });
+  assert.equal(out.framework, 'nextjs');
+  assert.deepEqual(out.warnings, []);
+
+  const withManifest = importManifest.repoWarnings({
+    files: ['package.json', 'Dockerfile'],
+    packageText: JSON.stringify({ dependencies: { next: '15.0.0' }, scripts: {} }),
+    manifestInvalid: 'Unexpected token } in JSON',
+  });
+  assert.deepEqual(codes(withManifest), ['manifest_invalid']);
+});
+
+test('a package.json that does not parse is named, unless a Dockerfile decides instead', () => {
+  const out = importManifest.repoWarnings({ files: ['package.json'], packageText: '{ not json' });
+  assert.equal(out.framework, null);
+  assert.deepEqual(codes(out), ['package_invalid']);
+
+  const withDockerfile = importManifest.repoWarnings({
+    files: ['package.json', 'Dockerfile.kubernetes'], packageText: '{ not json',
+  });
+  assert.deepEqual(withDockerfile.warnings, []);
+});
+
+test('an invalid dapp.json is the first warning, ahead of the package findings', () => {
+  const out = importManifest.repoWarnings({
+    ...HEALTHY_NEXT,
+    packageText: JSON.stringify({ dependencies: { next: '15.0.0' }, scripts: {} }),
+    manifestInvalid: 'Unexpected token < in JSON',
+  });
+  assert.deepEqual(codes(out), ['manifest_invalid', 'next_no_build', 'next_no_start']);
 });
