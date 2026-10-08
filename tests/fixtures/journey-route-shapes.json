@@ -253,6 +253,14 @@
       "people": "number",
       "steps": []
     },
+    "look": {
+      "notRecorded": {
+        "reason": "string",
+        "recorded": "boolean"
+      },
+      "people": "number",
+      "steps": []
+    },
     "make": {
       "aha": "number",
       "notRecorded": {
@@ -267,6 +275,7 @@
       "recorded": "boolean"
     },
     "recordedFrom": {
+      "look": "object",
       "make": "object",
       "opens": "object",
       "reward": "object",

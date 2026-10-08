@@ -48,7 +48,7 @@ test('the Vote buttons open the verify sheet on identity_required, and vote agai
   assert.match(castIssueVote, /finish\(\);\s+\/\/ A public app's vote counts from a verified account \(castVote\)\.\s+if \(data\.code === 'identity_required' && AppView\._verifyThenVote\(\s+\(\) => AppView\.castIssueVote\(issueId, vote, opts\)\)\) \{\s+AppView\.refreshDevData\('vote'\);\s+return;\s+\}/);
   // The bridge is published at module scope, imported by the entry.
   assert.match(read('frontend/src/main.tsx'), /\nimport '\.\/features\/auth\/verify-identity';/);
-  assert.match(read('frontend/src/features/auth/verify-identity.tsx'), /bridge\.verifyIdentity = \{ ask: askToVerifyIdentity \};/);
+  assert.match(read('frontend/src/features/auth/verify-identity.tsx'), /bridge\.verifyIdentity = \{ ask: askToVerifyIdentity,/);
 });
 
 test('the verify sheet: the phone where it is offered, GitHub and X in Settings always', () => {
@@ -58,7 +58,7 @@ test('the verify sheet: the phone where it is offered, GitHub and X in Settings 
   assert.match(withPhone, />Verify to vote on public apps</);
   assert.match(withPhone, /Add your phone number to vote now\. Nobody sees your number\./);
   assert.match(withPhone, /Or link both GitHub and X in <a href="#settings\/linked-accounts" data-verify-identity-settings=""[^>]*>Settings<\/a>/);
-  // "Not now" is the first-run step's, never the vote's.
+  // "Not now" is the public-project ask's, never the vote's.
   assert.doesNotMatch(withPhone, /data-verify-identity-not-now/);
   const without = renderToHtml(createElement(mod.VerifyIdentityBody, { phoneOffered: false, onVerified() {}, onSettings() {} }));
   assert.doesNotMatch(without, /data-add-phone/);
@@ -93,69 +93,67 @@ test('Admin, Limits: the switch records its time once, and the phone tier has a 
   assert.match(ui, /if \(ruleOn !== !!ruleSince\) body\.identityRule = ruleOn;/);
 });
 
-test('the first-run phone step: on a phone, with "Not now", before the make screen and the join screen', () => {
-  const step = read('frontend/src/features/auth/phone-first-run.tsx');
-  // Who: held to the rule (`phoneAsk`), let in, and on a phone.
-  assert.match(step, /export function comesFirst\(user: AskUser\): boolean \{\s+return !!user && user\.phoneAsk === true && user\.hasPlatformAccess !== false && onPhone\(\);/);
-  assert.match(step, /if \(isNative\(\)\) return true;\s+return typeof window\.matchMedia === 'function' && window\.matchMedia\(MOBILE_PAGE_QUERY\)\.matches;/);
-  // After the terms, with "Not now"; any answer but a phone is recorded.
-  assert.match(step, /inFlight = true;\s+await afterTerms\(\);/);
-  assert.match(step, /openVerifySheet\(\{ copy: PHONE_STEP_COPY, notNow: true \}\)/);
-  assert.match(step, /\} else if \(outcome !== 'unavailable'\) \{\s+noteAnswered\(\);\s+void recordAnswered\(\);/);
-  // The join screen and the story's make flag wait on it.
-  const join = read('frontend/src/features/auth/communities-first-run.js');
-  assert.match(join, /&& !CommunitiesFirstRun\._phoneFirst\(user\)\s+&& !CommunitiesFirstRun\._onInvitePath\(\)\);/);
-  assert.match(join, /const phone = window\.PhoneFirstRun;\s+if \(phone && typeof phone\.settled === 'function'\) \{\s+try \{ await phone\.settled\(\); \}/);
-  const make = read('frontend/src/features/first-session/index.tsx');
-  assert.match(make, /if \(now && phone\?\.comesFirst\?\.\(legacy\(\)\.App\?\.user\)\) \{\s+void phone\.settled\(\)\.then\(\(\) => check\(false\)\);\s+return;\s+\}/);
-  // Imported before the join screen, and asked again after a snapshot boot.
-  const main = read('frontend/src/main.tsx');
-  assert.ok(main.indexOf("import './features/auth/phone-first-run';") < main.indexOf("import './features/auth/communities-first-run.js';"));
-  assert.match(read('public/js/app.js'), /window\.TermsFirstRun\?\.maybePrompt\?\.\(\);[\s\S]{0,400}window\.PhoneFirstRun\?\.maybePrompt\?\.\(\);[\s\S]{0,900}window\.CommunitiesFirstRun\?\.maybePrompt\?\.\(\);/);
-  // The server: who is asked, and the answer.
+test('#4378: no phone ask after sign-in, on any device', () => {
+  assert.equal(fs.existsSync(path.join(__dirname, '..', 'frontend/src/features/auth/phone-first-run.tsx')), false);
+  assert.doesNotMatch(read('frontend/src/main.tsx'), /phone-first-run/);
+  assert.doesNotMatch(read('public/js/app.js'), /PhoneFirstRun/);
+  assert.doesNotMatch(read('frontend/src/features/auth/communities-first-run.js'), /PhoneFirstRun|_phoneFirst/);
+  assert.doesNotMatch(read('frontend/src/features/first-session/index.tsx'), /PhoneFirstRun/);
   const auth = read('src/routes/auth.js');
-  assert.match(auth, /identityNeeded = rows\[0\]\?\.identity_needed === true && !!req\.user\.hasPlatformAccess;\s+phoneAsk = identityNeeded && rows\[0\]\?\.phone_ask_answered !== true && phoneAuth\.offered\(config\);/);
-  assert.match(read('src/routes/onboarding.js'), /router\.post\('\/api\/me\/phone-ask\/answered', drainGuard, sameOriginBrowserOnly, async[\s\S]{0,200}SET phone_ask_answered_at = COALESCE\(phone_ask_answered_at, NOW\(\)\)/);
+  assert.doesNotMatch(auth, /phoneAsk|phone_ask_answered/);
+  assert.match(auth, /identityNeeded = rows\[0\]\?\.identity_needed === true && !!req\.user\.hasPlatformAccess;/);
+  assert.doesNotMatch(read('src/routes/onboarding.js'), /phone-ask/);
 });
 
-test('the step asks only on a phone, and the bodies say why', () => {
-  const saved = { window: global.window, document: global.document };
-  let phone = true;
-  const listeners = { addEventListener() {}, removeEventListener() {} };
-  global.window = { ...listeners, matchMedia: () => ({ matches: phone, ...listeners }) };
-  global.document = { ...listeners, documentElement: { classList: { contains: () => false } } };
-  try {
-    // browser-scroll installs its scroll controller on import; the query is all this needs.
-    const mod = loadTsx('frontend/src/features/auth/phone-first-run.tsx', {
-      stubs: { '../../lib/browser-scroll': { MOBILE_PAGE_QUERY: '(max-width: 767px), (hover: none) and (pointer: coarse)' } },
-    });
-    assert.match(read('frontend/src/lib/browser-scroll.ts'), /export const MOBILE_PAGE_QUERY = '\(max-width: 767px\), \(hover: none\) and \(pointer: coarse\)';/);
-    assert.equal(typeof global.window.PhoneFirstRun.settled, 'function', 'published for the legacy steps');
-    assert.equal(mod.comesFirst({ phoneAsk: true, hasPlatformAccess: true }), true);
-    assert.equal(mod.comesFirst({ phoneAsk: false, hasPlatformAccess: true }), false);
-    assert.equal(mod.comesFirst({ phoneAsk: true, hasPlatformAccess: false }), false);
-    assert.equal(mod.comesFirst(null), false);
-    phone = false;
-    assert.equal(mod.comesFirst({ phoneAsk: true, hasPlatformAccess: true }), false, 'a computer gets the Home card instead');
-    global.window.usernode = { isNative: true };
-    assert.equal(mod.comesFirst({ phoneAsk: true, hasPlatformAccess: true }), true, 'the native app is a phone');
-    const verify = loadTsx('frontend/src/features/auth/verify-identity.tsx');
-    const html = renderToHtml(createElement(verify.VerifyIdentityBody, {
-      phoneOffered: true, copy: mod.PHONE_STEP_COPY, onVerified() {}, onSettings() {}, onNotNow() {},
-    }));
-    assert.match(html, />Add your phone number</);
-    assert.match(html, /Verified accounts vote on public apps and get the full AI budget, so each person counts once\. Nobody sees your number\./);
-    assert.match(html, /<button type="button" data-verify-identity-not-now=""[^>]*>Not now<\/button>/);
-  } finally {
-    if (saved.window === undefined) delete global.window; else global.window = saved.window;
-    if (saved.document === undefined) delete global.document; else global.document = saved.document;
-  }
+test('#4378: making a project public needs a verified owner, on the server and through the verify sheet', async () => {
+  const apps = read('src/routes/apps.js');
+  const route = apps.slice(apps.indexOf("router.post('/api/apps/:slug/visibility-pr'"));
+  assert.match(route, /if \(viewVisibility === 'public' && app\.view_visibility !== 'public'\) \{\s+const identityRefusal = await communities\.identityPublicRefusal\(pool, req\.user\?\.id\);\s+if \(identityRefusal\) return res\.status\(403\)\.json\(identityRefusal\);\s+\}/);
+  assert.ok(route.indexOf('identityPublicRefusal') < route.indexOf('renamePr.createVisibilityPR'), 'refused before any PR is opened');
+
+  const communities = require('../src/services/communities');
+  const asked = [];
+  const pool = (needs) => ({ query: async (sql, params) => { asked.push({ sql, params }); return { rows: [{ needs }] }; } });
+  assert.equal(await communities.identityPublicRefusal(pool(false), 3), null);
+  assert.match(asked[0].sql, /identity_needed\(\$1\)/, 'the predicate inside the vote routes\' public_vote_needs_identity');
+  assert.deepEqual(asked[0].params, [3]);
+  const refusal = await communities.identityPublicRefusal(pool(true), 3);
+  assert.equal(refusal.code, 'identity_required');
+  assert.match(refusal.error, /Verify your phone number, or link both GitHub and X in Settings\./);
+  assert.equal(await communities.identityPublicRefusal(pool(true), null), null);
+  assert.match(read('src/db/schema.sql'), /CREATE OR REPLACE FUNCTION public_vote_needs_identity[\s\S]{0,300}AND identity_needed\(voter_id\)/);
+
+  const card = read('frontend/src/features/dev-board/workshop/community-card.tsx');
+  assert.match(card, /if \(body && body\.code === 'identity_required'\) \{\s+if \(!\(await askToVerifyForPublic\(\)\)\) return false;\s+res = await send\(\);/);
+  const conf = card.slice(card.indexOf('export async function confirmMakePublic('));
+  assert.match(conf, /if \(!\(await verifiedToGoPublic\(\)\)\) return;\s+const ok = await ui\.confirm\(/);
+  assert.match(card, /void verifiedToGoPublic\(\)\.then\(\(go\) => \{ if \(go\) setOpen\(true\); \}\);/);
+
+  const verify = loadTsx('frontend/src/features/auth/verify-identity.tsx');
+  const html = renderToHtml(createElement(verify.VerifyIdentityBody, {
+    phoneOffered: true, copy: verify.MAKE_PUBLIC_COPY, onVerified() {}, onSettings() {}, onNotNow() {},
+  }));
+  assert.match(html, />Verify to make it public</);
+  assert.match(html, />Public projects need a verified owner, so each person counts once\. Add your phone number and it goes public\. Nobody sees your number\.</);
+  assert.match(html, /Or link both GitHub and X in /);
+  assert.match(html, /<button type="button" data-verify-identity-not-now=""[^>]*>Not now<\/button>/);
+  assert.match(read('frontend/src/features/auth/verify-identity.tsx'), /openVerifySheet\(\{ copy: MAKE_PUBLIC_COPY, notNow: true \}\)/);
+  // No kit: nothing is asked, and the caller leaves it private.
+  assert.equal(await verify.askToVerifyForPublic(), false);
 });
 
-test('Home\'s card: for a member held to the rule, after the shell knows, hidden here by "Not now"', () => {
+test('#4378: closing the sheet or Not now records that the person was asked, which Home\'s card waits for', () => {
+  const src = read('frontend/src/features/auth/verify-identity.tsx');
+  assert.match(src, /if \(outcome === 'dismissed' \|\| outcome === 'not-now'\) noteAsked\(\);/);
+  assert.match(src, /localStorage\.setItem\(ASKED_KEY, '1'\)/);
+  assert.match(src, /bridge\.verifyIdentity = \{ ask: askToVerifyIdentity, askForPublic: askToVerifyForPublic, askForCredits: askToVerifyForCredits \};/);
+});
+
+test('Home\'s card: for a member held to the rule, once asked at a public step, hidden here by "Not now"', () => {
   const card = read('frontend/src/features/home/verify-card.tsx');
   assert.match(card, /const \{ identityNeeded \} = useStoreState\(navStore\);/);
-  assert.match(card, /if \(!identityNeeded \|\| hidden \|\| phoneOffered === null\) return null;/);
+  assert.match(card, /if \(!identityNeeded \|\| !asked \|\| hidden \|\| phoneOffered === null\) return null;/);
+  assert.match(card, /setAsked\(wasAskedHere\(\)\);\s+const onAsked = \(\) => setAsked\(wasAskedHere\(\)\);\s+window\.addEventListener\(ASKED_EVENT, onAsked\);/);
   assert.match(card, /<section id="home-verify-card"/);
   assert.match(card, /onVerified=\{noteVerified\}/);
   assert.match(read('frontend/src/features/home/index.tsx'), /<WaitlistCard \/>[\s\S]{0,300}<VerifyCard \/>/);

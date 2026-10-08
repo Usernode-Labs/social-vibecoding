@@ -179,9 +179,11 @@ test('WP-C: an unaddressed message is read as an idea, not as something said to 
   assert.match(llm, /'Somebody new to the group wrote this'/);
   const schema = read('src/db/schema.sql');
   assert.match(schema, /CHECK \(kind IN \('filed', 'group', 'unsure', 'question', 'dismissed', 'offer', 'revise'\)\)/);
-  // The invited person's tour says the bot does this, now that it does.
+  // The invited person's tour ends where this happens, in Discussion, and
+  // says who decides; one sentence per card (#4044), so the offer is the
+  // bot's own to make there, not the card's to describe.
   assert.match(read('frontend/src/features/first-session/tour-steps.ts'),
-    /Homeroom bot offers to suggest an idea to the group in your name, and the group decides what goes in\./);
+    /title: 'Say hi, or share an idea',\s+text: 'The people using the app decide what goes in\.',/);
 });
 
 test('WP-C: offers against the full PostgreSQL schema', { timeout: 180000 }, async (t) => {

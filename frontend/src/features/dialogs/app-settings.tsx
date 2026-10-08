@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { useHiddenClass } from '../../lib/legacy-dom';
+import { askToVerifyForPublic } from '../auth/verify-identity';
 import { useDialog } from './use-dialog';
 
 // `delete_block` is the server's reason can_delete is false (routes/apps.js
@@ -162,7 +163,7 @@ export function AppSettingsDialog() {
     setAccessMessage('');
     setAccessMessageIsError(false);
     try {
-      const response = await fetch(`/api/apps/${encodeURIComponent(app.slug)}/visibility-pr`, {
+      const send = () => fetch(`/api/apps/${encodeURIComponent(app.slug)}/visibility-pr`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -170,7 +171,16 @@ export function AppSettingsDialog() {
           viewVisibility: target.viewVisibility,
         }),
       });
-      const data = await response.json().catch(() => ({}));
+      let response = await send();
+      let data = await response.json().catch(() => ({}));
+      // #4378: making it public needs a verified owner. The verify sheet
+      // asks; once a phone is linked the proposal goes again, and Not now
+      // leaves the access as it was.
+      if (data && data.code === 'identity_required') {
+        if (!(await askToVerifyForPublic())) return;
+        response = await send();
+        data = await response.json().catch(() => ({}));
+      }
       if (response.status === 409) {
         setAccessProposalOpen(true);
         setAccessMessage('A visibility change is already waiting for approval. See it in the Workshop.');

@@ -185,6 +185,14 @@ test('"Still yes" re-casts the Yes with no line of its own, and marks the row re
   assert.equal(await Notifications._onRowAction(99, 'still_yes'), false, 'an unknown row does nothing');
   assert.equal(calls.length, 1);
 
+  // #3984: a Yes that did not go through (castVote resolves false and its
+  // toast says why) leaves the row unread, its button there to press again.
+  globalThis.window.AppView = { castVote: async () => false };
+  Notifications.items = [{ id: 2, kind: 'revision_recheck', sessionId: 42 }];
+  assert.equal(await Notifications._onRowAction(2, 'still_yes'), false);
+  assert.deepEqual(marked, [1], 'not marked read');
+  assert.equal(refreshed, 1);
+
   const sheet = fs.readFileSync(path.join(__dirname, '../frontend/src/features/notifications/notifications-sheet.tsx'), 'utf8');
   assert.match(sheet, /data-notif-action=\{a\.key\}/, 'the screen draws a row\'s actions as real buttons');
   assert.match(sheet, /controller\(\)\?\._onRowAction\(view\.id, a\.key\)/);

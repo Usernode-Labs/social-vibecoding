@@ -49,6 +49,7 @@ require.cache[require.resolve('../src/services/merge-queue')] = {
 
 const unitSuite = require('../src/services/unit-suite');
 const mainWatch = require('../src/services/main-watch');
+const checkRuns = require('../src/services/check-runs');
 
 const SHA = 'c'.repeat(40);
 const OLD = 'd'.repeat(40);
@@ -523,7 +524,7 @@ test('resumeInterrupted: an interrupted confirmation resumes at the re-run, with
     // Only the rows a live run could not still be stamping.
     const sel = pool.calls.find((c) => /main_check_state IN \('running', 'confirming'\)/.test(c.sql));
     assert.match(sel.sql, /main_check_at < NOW\(\) - \(\$1::int \* interval '1 millisecond'\)/);
-    assert.deepEqual(sel.params, [1000]);
+    assert.deepEqual(sel.params, [1000, checkRuns.ORPHAN_MS]);
     assert.equal(suite.calls.length, 1, 'ONE run: the confirmation, not the first run again');
     assert.equal(suite.calls[0].ref, SHA);
     assert.equal(suite.calls[0].sessionId, 'main-12');
@@ -583,7 +584,7 @@ test('resumeInterrupted: nothing interrupted, nothing runs; the switch off, no q
     // else in the cluster is stamped within it.
     assert.equal(mainWatch.staleMs(), unitSuite.UNIT_SUITE_TIMEOUT_MS + 120000);
     const sel = pool.calls.find((c) => /main_check_state IN \('running', 'confirming'\)/.test(c.sql));
-    assert.deepEqual(sel.params, [mainWatch.staleMs()]);
+    assert.deepEqual(sel.params, [mainWatch.staleMs(), checkRuns.ORPHAN_MS]);
 
     process.env.MAIN_WATCH_ENABLED = '0';
     const off = await mainWatch.resumeInterrupted(config, { pool });

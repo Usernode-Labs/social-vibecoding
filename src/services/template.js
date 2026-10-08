@@ -82,10 +82,10 @@ const DEV_CONSOLE_FORWARDER = `
 // (the theme <script> after the bridge tag in public/index.html, the same one
 // a starter under app-templates/ would ship); this is what its CLAUDE.md tells the
 // agent that replaces that screen, so the first real version keeps both.
-// Shared by the Empty scaffold's notes and every starter's. Empty's screen is
-// built from its design kit, whose colour tokens carry both looks, and its
-// notes record a fixed look under their own "## Design"; a starter's screen
-// uses `dark:` variants, and its notes have no such section.
+// Shared by the Empty scaffold's notes and every starter's. Every screen is
+// built from the design kit, whose colour tokens carry both looks, and the
+// notes record a fixed look under their own "## Design". The default wording
+// (`dark:` variants) is for a screen drawn without the kit.
 function themeClaudeNote({ how = 'Tailwind\'s `dark:` variants', where = '"App-specific conventions"' } = {}) {
   return `The screen has a light and a dark look and follows the viewer's Homeroom
 theme, switching live when they change it: the theme \`<script>\` right after
@@ -705,7 +705,9 @@ tables you've marked private), etc.
 
 ${about ? `${about}\n\n_(add a sentence or two more of product context here so Claude Code has a\nshared understanding of what this app is for)_` : `_(add a sentence or two of product context here so Claude Code has a
 shared understanding of what this app is for)_`}
-${starter ? '' : `\n${DESIGN_CLAUDE_SECTION}\n`}
+
+${DESIGN_CLAUDE_SECTION}
+
 ## App-specific conventions
 
 _(optional — e.g. "all currency values stored as integer cents, not
@@ -1274,7 +1276,10 @@ ${server.start}start().catch(err => { console.error(err); process.exit(1); });
   if (!starter) return card ? withCard(files, appName, sketch) : files;
   // A starter's own screen replaces the Press! page, and its api.js and
   // scripts join the shared plumbing.
+  // The entry's own `fill` (what a tier list ranks) lands in the page's
+  // markup, so it is escaped like the name.
   const own = appTemplates.starterFiles(template, {
+    ...Object.fromEntries(Object.entries(starter.fill || {}).map(([key, value]) => [key, escapeHtml(value)])),
     APP_NAME: escapeHtml(appName),
     DEV_CONSOLE_FORWARDER: DEV_CONSOLE_FORWARDER.trim(),
   });
@@ -1295,14 +1300,16 @@ function withCard(files, appName, sketch) {
 }
 
 // The CLAUDE.md section a starter writes in place of the Press! example's.
-// Same job: tell the coding agent what is placeholder and what to keep.
+// Same job: tell the coding agent what the app already is and what to keep.
+// A starter is a ready-made app (services/app-templates.js), so its screen
+// carries no "started from a template" notice to delete: it is the app.
 function starterClaudeSection(starter) {
   return `## Starter template: ${starter.title}
 
-This app was created from Homeroom's **${starter.title}** template:
-${starter.summary.charAt(0).toLowerCase()}${starter.summary.slice(1)} It is a working starting point, not
-product intent. Keep what the people building this app want and change
-the rest freely.
+This app was created from Homeroom's ready-made **${starter.title}**.
+${starter.summary} It works as it is, and it is a starting point, not a fixed
+product: keep what the people building this app want and change the rest
+freely.
 
 Where things are:
 
@@ -1313,15 +1320,15 @@ Where things are:
 - \`dapp.json\` \`tests\`: the checks every proposal runs. Keep them passing,
   and change them when you change what they look for.
 
-The \`usernode-starter-notice@1\` block in \`public/index.html\` (both sentinel
-comments and everything between them) is the "started from a template"
-notice: remove it with the first real change. Rewrite \`README.md\` to
-describe the actual app once it has one.
+Update \`README.md\` when what the app does changes.
 
 Keep the \`usernode-dev-console@1\` forwarder \`<script>\` and the bridge
 \`<script>\` when rewriting the HTML: both are platform infrastructure.
+The screen is built from the design kit, which is not placeholder either:
+keep building with it, and fill in "## Design" below with the first change
+that gives this app a look of its own.
 
-${themeClaudeNote()}
+${themeClaudeNote({ how: 'the design kit\'s colour tokens carry both', where: '"## Design"' })}
 
 `;
 }
@@ -1329,8 +1336,8 @@ ${themeClaudeNote()}
 function starterReadme(appName, starter) {
   return `# ${appName}
 
-> **Started from a template.** This repo was scaffolded by Homeroom from
-> the **${starter.title}** template. Make it your own.
+> **Ready-made.** This repo was scaffolded by Homeroom as its ready-made
+> **${starter.title}**. It works as it is; make it your own.
 
 ${starter.summary}
 

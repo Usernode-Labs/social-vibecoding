@@ -1058,7 +1058,11 @@ const AppView = {
       // fetches trigger (each dismisses an open menu by design), bounded, and
       // ended by a human's first real gesture so a person following one of
       // these links does not get a menu put back under them.
-      if (shot === 'plus-menu') {
+      // `?shot=plus-menu-settings` goes one step further (#4045): the menu,
+      // then its "Settings & rules" row, so the settings it now folds away
+      // are URL-reachable for the checks and the shots.
+      const plusMenuSettings = shot === 'plus-menu-settings';
+      if (shot === 'plus-menu' || plusMenuSettings) {
         let tries = 0;
         const done = () => {
           clearInterval(tick);
@@ -1073,7 +1077,12 @@ const AppView = {
           const menu = document.getElementById('dev-plus-menu');
           // Already up: nothing to do this tick, but keep the window open so a
           // repaint that dismisses it gets it back.
-          if (menu && !menu.classList.contains('hidden')) return;
+          if (menu && !menu.classList.contains('hidden')) {
+            if (plusMenuSettings && menu.getAttribute('data-plus-view') !== 'settings') {
+              menu.querySelector('[data-plus="settings"]')?.click();
+            }
+            return;
+          }
           document.getElementById('dev-plus-btn')?.click();
         }, 300);
       }
@@ -3164,6 +3173,9 @@ const AppView = {
    * (`tourSays`: the card carries `data-tour-says-where-it-opens`;
    * features/app-frame/app-status.tsx). A card that does not say it, such as
    * today's "this shows how the build is going", leaves it in place.
+   * While a first-session tour runs, app-status.tsx holds "Review the plan"
+   * back and its line says the bot is working on it (heldForTour): the
+   * tour's last card is what names the plan.
    */
   _firstVersionView(appData) {
     const fv = appData.first_version || {};
@@ -5517,7 +5529,7 @@ const AppView = {
     let note = null;
     if (live) {
       const why = AppView._checksTriggerCopy(item.check_trigger);
-      const title = AppView._checksPhaseCopy(item.check_phase).title;
+      const title = AppView._checksPhaseCopy(item.check_phase, item).title;
       note = why ? `${title} ${why}` : title;
     } else if (item.check_state === 'error' && item.check_error_detail) {
       // The run's own reason first: it is the one that can say "not this
@@ -5808,7 +5820,15 @@ const AppView = {
       return { state: 'failed', text: broken === 1 ? 'Tested · One thing isn’t working' : `Tested · ${broken} things aren’t working` };
     }
     if (state === 'passing') return { state: 'passed', text: 'Tested · All checks passed' };
-    if (state === 'pending') return { state: 'running', text: 'Testing it…' };
+    if (state === 'pending') {
+      // A run waiting for a checks slot says so, with its place in line
+      // ("Waiting for a checks slot (2 ahead)"). This is the one line about
+      // the checks the change page shows without opening Details, and a long
+      // wait that read "Testing it…" would look like a stuck run.
+      return item.check_phase === 'queued'
+        ? { state: 'running', text: AppView._checksPhaseCopy('queued', item).title }
+        : { state: 'running', text: 'Testing it…' };
+    }
     if (state === 'failing') return { state: 'failed', text: 'Testing found a problem' };
     if (state === 'skipped') return { state: 'skipped', text: 'Not tested' };
     if (AppView._checksWillRetry(item)) return { state: 'running', text: 'Testing will run again' };
@@ -6978,10 +6998,35 @@ const AppView = {
     const ac = new AbortController();
     AppView._plusMenuAbort = ac;
     const { signal } = ac;
+    // #4045: "Settings & rules" is one row that opens the project's
+    // settings on top of the menu (actions-row.tsx #dev-plus-settings). On
+    // desktop the dropdown turns to that panel (`data-plus-view`, app.css)
+    // and its back row turns it back; closing always returns it to the menu.
+    const settingsPanel = document.getElementById('dev-plus-settings');
+    const showSettings = (on) => {
+      if (on) menu.setAttribute?.('data-plus-view', 'settings');
+      else menu.removeAttribute?.('data-plus-view');
+    };
     const close = () => {
       menu.classList.add('hidden');
       btn.setAttribute('aria-expanded', 'false');
+      showSettings(false);
     };
+    // A sheet's rows, in DOM order, so a group heading arrives between the
+    // rows it heads (see below).
+    const sheetActions = (nodes) => nodes.map((node) => {
+      if (!node.hasAttribute('data-plus')) {
+        return { heading: true, label: node.textContent.replace(/\s+/g, ' ').trim() };
+      }
+      const titleEl = node.querySelector('[data-plus-title]') || node.querySelector('span');
+      const glyph = node.querySelector('svg')?.cloneNode(true);
+      if (glyph) glyph.removeAttribute('class');
+      return {
+        label: (titleEl?.textContent || node.textContent).replace(/\s+/g, ' ').trim(),
+        iconEl: glyph || undefined,
+        handler: () => node.click(),
+      };
+    });
     // The rows a keyboard can reach (QA 2026-09-24 Q18).
     const PLUS_ROWS = 'button[data-plus]:not([disabled])';
     btn.addEventListener('click', (e) => {
@@ -7001,7 +7046,11 @@ const AppView = {
         // nothing, labelled `— Build a change —`: same weight and ink as the
         // actions around it, and tappable, so the dashes were the only thing
         // saying it was not a choice.
-        const nodes = Array.from(menu.querySelectorAll('button[data-plus], [data-plus-group]'));
+        //
+        // The settings panel's rows are not this sheet's: its "Settings &
+        // rules" row presents them as a sheet of their own (below).
+        const nodes = Array.from(menu.querySelectorAll('button[data-plus], [data-plus-group]'))
+          .filter((node) => !(settingsPanel && settingsPanel.contains(node)));
         PlatformUI.actionSheet({
           actions: nodes.map((node) => {
             if (!node.hasAttribute('data-plus')) {
@@ -7030,12 +7079,17 @@ const AppView = {
             return {
               label: (titleEl?.textContent || node.textContent).replace(/\s+/g, ' ').trim(),
               iconEl: glyph || undefined,
+              // The menu's one lit row, Suggest an improvement (actions-row.tsx
+              // `lit`, the owner, 8 Oct 2026), is lit in the sheet too.
+              highlighted: node.hasAttribute('data-plus-lit'),
               handler: () => node.click(),
             };
           }),
         });
         return;
       }
+      // Every open starts on the menu itself, never on the settings panel.
+      showSettings(false);
       const open = menu.classList.toggle('hidden') === false;
       btn.setAttribute('aria-expanded', open ? 'true' : 'false');
       // Refresh the App secrets item's "N required missing" state only
@@ -7090,6 +7144,31 @@ const AppView = {
         App.openFeedbackModal({ fromDev: true, intent: 'issue' });
       }, { signal });
     }
+    const settingsBtn = menu.querySelector('[data-plus="settings"]');
+    settingsBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (PlatformUI.isTouch()) {
+        // On touch the first sheet has gone by now: the settings come up as
+        // a sheet of their own, headed with the row's name.
+        // The owner, 7 Oct: a second sheet of the same kind, titled, whose
+        // last card is Back rather than Cancel. Back brings the menu back.
+        const rows = settingsPanel
+          ? Array.from(settingsPanel.querySelectorAll('button[data-plus]')) : [];
+        Promise.resolve(PlatformUI.actionSheet({
+          title: 'Settings & rules', cancelLabel: 'Back', actions: sheetActions(rows),
+        })).then((picked) => { if (!picked && btn.isConnected) btn.click(); });
+        return;
+      }
+      showSettings(true);
+      const first = settingsPanel && Array.from(settingsPanel.querySelectorAll('button[data-plus]'))
+        .find((el) => !el.disabled && el.getClientRects().length > 0);
+      if (first) first.focus({ preventScroll: true });
+    }, { signal });
+    settingsPanel?.querySelector('[data-plus-back]')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      showSettings(false);
+      if (settingsBtn) settingsBtn.focus({ preventScroll: true });
+    }, { signal });
     const importPrBtn = menu.querySelector('[data-plus="import-pr"]');
     if (importPrBtn) {
       importPrBtn.addEventListener('click', () => {
@@ -7544,18 +7623,9 @@ const AppView = {
         ? { slug: AppView.appData.slug, name: AppView.appData.name, readOnly: !!AppView.readOnly || archived }
         : null);
 
-    // (#3) First-arrival framing: name what Group Chat is for. Group chat
-    // is rarely empty (system messages), so a permanent banner would be
-    // clutter — show it once per browser, then it disappears. The read AND
-    // the write stay here: whether it has been seen is a browser fact, and a
-    // component that stamped it would fire again on every re-render.
-    let introAppName = null;
-    try {
-      if (!localStorage.getItem('usernode_seen_gc_intro')) {
-        introAppName = (app && app.name) ? app.name : 'this app';
-        localStorage.setItem('usernode_seen_gc_intro', '1');
-      }
-    } catch { /* private-mode / disabled storage: just skip the intro */ }
+    // No first-arrival banner (#3's "This is where everyone using … talks
+    // and votes on proposed changes to it."): the owner, 6 October 2026. The
+    // Discussion tab's name and its messages say what it is.
 
     // The PANE is features/group-chat/general-chat.tsx's — the message
     // stream, the status line, the composer and the spec panel's slot —
@@ -7574,7 +7644,6 @@ const AppView = {
     const previousList = content.querySelector('#gc-messages');
     if (previousList) AppView._reactGroupChat()?.unmountTranscript(previousList);
     AppView._reactGroupChat()?.mountGeneralChat(content, {
-      introAppName,
       readOnly: !!(app && app.readOnly),
       notice: archived
         ? 'This was Homeroom\u2019s project discussion. It is read-only now: Homeroom\u2019s channel is #general.'
@@ -8789,11 +8858,13 @@ const AppView = {
   WORKSHOP_SEEN_KEY: 'workshopSeen',
   // A project page's four tabs under its coloured header: the hub (`status`),
   // Discussion (its channel), Needs you and the Workshop, and All items, the
-  // page under the Workshop. A query param reaches
+  // page under the Workshop, and `plan`, the page under the hub where the
+  // people who joined read the first version's plan (#4074; visited, never
+  // reopened on: _setWorkshopTab keeps the hub). A query param reaches
   // each directly (`?ws=needs`) because the platform's own rule is that a
   // screen only reachable by interacting needs a URL: the declared checks
   // select against it and the proposal screenshots are shot from it.
-  WORKSHOP_TABS: ['status', 'discussion', 'workshop', 'needs', 'all'],
+  WORKSHOP_TABS: ['status', 'discussion', 'workshop', 'needs', 'all', 'plan'],
   _workshopModels() {
     const src = (typeof DevChat !== 'undefined' && DevChat && DevChat.MODELS) || null;
     if (!src || typeof src !== 'object') return { list: [], selected: null };
@@ -8850,7 +8921,7 @@ const AppView = {
       const stored = window.localStorage.getItem(AppView.WORKSHOP_TAB_KEY);
       // A remembered page (Needs you, All items) reopens as itself, with its
       // way back to the tab it hangs off above it.
-      if (AppView.WORKSHOP_TABS.indexOf(stored) !== -1) return stored;
+      if (AppView.WORKSHOP_TABS.indexOf(stored) !== -1 && stored !== 'plan') return stored;
       // A viewer who last left the Dev screen on the Board gets the tab those
       // columns live in, for the same reason _getWorkshopGroup gives them the
       // pane: migrating the retired mode without carrying what it MEANT would
@@ -8996,7 +9067,8 @@ const AppView = {
   },
 
   _setWorkshopTab(key) {
-    const next = AppView.WORKSHOP_TABS.indexOf(key) !== -1 ? key : 'status';
+    // The plan is gone once it is built, so the page reopens on the hub.
+    const next = AppView.WORKSHOP_TABS.indexOf(key) !== -1 && key !== 'plan' ? key : 'status';
     // An explicit tap retires the URL override, exactly as `_setWorkshopGroup`
     // does — otherwise `?ws=` would keep winning over every later press.
     AppView._workshopTabUrlOverride = null;
@@ -12308,7 +12380,7 @@ const AppView = {
         && typeof window !== 'undefined' && window.MergeStatus) {
       const life = MergeStatus.lifecycle(s);
       if (life.key === 'checks_running' && s.check_phase) {
-        const phase = AppView._checksPhaseCopy(s.check_phase);
+        const phase = AppView._checksPhaseCopy(s.check_phase, s);
         return {
           t: 'ms', key: 'state', tone: 'neutral',
           label: phase.title, title: phase.detail, spinner: true,
@@ -13885,6 +13957,11 @@ const AppView = {
         const steps = prog.build.steps || [];
         const at = Math.min(steps.filter((s) => s.state === 'done').length + 1, steps.length || 1);
         return `Building preview · ${at} of ${steps.length || 5}`;
+      }
+      // Built, and in line for a checks slot: where it is in the line.
+      if (p.check_phase === 'queued') {
+        const place = AppView._checksQueuePlace(p);
+        return place ? `Waiting for a slot · ${place}` : 'Waiting for a slot';
       }
       if (prog && prog.bar.expected) return `Running · ${prog.bar.ran} of ${prog.bar.expected}`;
       if (prog && prog.bar.ran) return `Running · ${prog.bar.ran} so far`;
@@ -15565,16 +15642,21 @@ const AppView = {
       // manually. #607: a FRESH run (under the ~10-min stale window) shows
       // just the spinner + started-at line — offering "Re-run checks" seconds
       // after a run began was the confusion in the issue report.
-      const stale = AppView._checksRunStale(pr.checks_checked_at);
+      // A run waiting for a checks slot is not stuck however long it waits:
+      // the queue starts it, and a re-run would only join the line again.
+      const queued = pr.check_phase === 'queued';
+      const stale = !queued && AppView._checksRunStale(pr.checks_checked_at);
       // Name the STAGE the run is actually in. A checks run is two very
       // differently-sized halves — build the branch + clone the app's data,
       // then run the suite against the live preview — and one opaque message
       // for both made a mid-flight build look identical to a wedged one. An
       // unrecognised / absent phase (legacy rows, a proposal checked before
       // this shipped) keeps the previous wording verbatim.
-      const phase = AppView._checksPhaseCopy(pr.check_phase);
+      const phase = AppView._checksPhaseCopy(pr.check_phase, pr);
       const rows = [{ t: 'line', parts: [`${phase.detail} Merge is blocked until all tests pass.`] }];
-      if (pr.checks_checked_at) rows.push({ t: 'line', parts: [`Started ${relTime(pr.checks_checked_at)}.`], weight: 'foot' });
+      if (pr.checks_checked_at) {
+        rows.push({ t: 'line', parts: [`${queued ? 'Waiting since' : 'Started'} ${relTime(pr.checks_checked_at)}.`], weight: 'foot' });
+      }
       // …and WHY it started. "Started 4 minutes ago" answers a different
       // question from "who asked for this": a run kicked off by the
       // platform's own recovery sweeper reads as inexplicable churn without
@@ -15891,6 +15973,14 @@ const AppView = {
       title: 'Running the automated tests…',
       detail: 'The preview is up and the automated tests are running against it.',
     },
+    // Between the two: the preview is up and the run waits its turn, because
+    // the platform runs a few proposals' checks at a time
+    // (services/checks-queue.js). Nothing is wrong and nobody has to act.
+    // The title gains the place in line when the row carries it.
+    queued: {
+      title: 'Waiting for a checks slot',
+      detail: 'The preview is up. Homeroom runs a few proposals’ checks at a time so they don’t slow each other down, and these start on their own when a slot frees up.',
+    },
     // Not a stage of a run: the run stopped on purpose after the build. The
     // head conflicts with main, so the preview exists for reviewers and the
     // tests wait for a head that can merge. No spinner belongs on this.
@@ -15900,11 +15990,24 @@ const AppView = {
     },
   },
 
-  _checksPhaseCopy(phase) {
-    return AppView.CHECKS_PHASE_COPY[phase] || {
+  // `pr` is optional: a queued run's title says how many runs are ahead of
+  // it when the row carries that (checks_progress.queue.ahead).
+  _checksPhaseCopy(phase, pr) {
+    const copy = AppView.CHECKS_PHASE_COPY[phase] || {
       title: 'Checks are still running…',
       detail: 'The staging build is being tested.',
     };
+    if (phase !== 'queued') return copy;
+    const place = AppView._checksQueuePlace(pr);
+    return place ? { ...copy, title: `${copy.title} (${place})` } : copy;
+  },
+
+  // "2 ahead", "next in line", or '' when the row does not say.
+  _checksQueuePlace(pr) {
+    const q = pr && pr.checks_progress && pr.checks_progress.queue;
+    const ahead = q && Number.isInteger(q.ahead) && q.ahead >= 0 ? q.ahead : null;
+    if (ahead === null) return '';
+    return ahead === 0 ? 'next in line' : `${ahead} ahead`;
   },
 
   // Why the run in flight started (chat_sessions.check_trigger). Written in
@@ -19480,8 +19583,9 @@ const AppView = {
   },
 
   // A checks error the merge gate still counts as in progress: the run
-  // overlapped a platform update and goes again on its own
-  // (visuals.settleCaptureRun). Every other error blocks on the author.
+  // overlapped a platform update and goes again on its own. Nothing records
+  // that any more (#3828), but rows stored before still run again and read
+  // this way. Every other error blocks on the author.
   // Same reading as MergeStatus.checksWillRetry.
   _checksWillRetry(pr) {
     if (!pr || pr.check_state !== 'error') return false;
@@ -21927,8 +22031,10 @@ const AppView = {
   async castVote(sessionId, vote, expectedEpoch = null, opts = null) {
     // Guard against double-click / mashing: one in-flight vote per session.
     // The server is idempotent on an unchanged vote, but blocking here
-    // avoids pointless round-trips and keeps the UI responsive.
-    const key = `${sessionId}:${vote}`;
+    // avoids pointless round-trips and keeps the UI responsive. #3984: per
+    // session, not per side, so a No pressed while a Yes is on its way does
+    // not race it (and the "Sending…" mark is cleared by the one vote).
+    const key = `${sessionId}`;
     if (AppView._voteInFlight.has(key)) return false;
     AppView._voteInFlight.add(key);
     // #1688: the line, before anything is painted — a cancelled No must
@@ -21947,6 +22053,9 @@ const AppView = {
     if (onSend) {
       try { onSend(vote); } catch { /* the caller's paint, never the vote's */ }
     }
+    // #3984: every Vote button for this change reads "Sending…" until the
+    // server answers (the finally below), whichever surface sent it.
+    AppView._publishVoteSending(`castVote:${sessionId}`, vote);
     // #1924: the card leaves "Needs your vote" on the click, not after the
     // 1–2 s round-trip. The lane (and the Board's needs-vote filter, and the
     // card's own Yes/No highlight) all read `my_vote` off the cached row, so
@@ -22037,7 +22146,14 @@ const AppView = {
     }
     finally {
       AppView._voteInFlight.delete(key);
+      AppView._publishVoteSending(`castVote:${sessionId}`, null);
     }
+  },
+
+  // #3984: a vote on its way, for the card's Vote button (cards-store.ts
+  // voteSendingStore). `key` is `<fn>:<id>`; a null side clears it.
+  _publishVoteSending(key, side) {
+    try { AppView._reactDevBoard()?.publishVoteSending?.(key, side); } catch { /* paint only */ }
   },
 
   // Vote on a governance proposal (env-var change, close-issue, rename,
@@ -22076,7 +22192,6 @@ const AppView = {
       AppView._voteInFlight.delete(key);
       return;
     }
-
     const issue = (AppView._govProposals || []).find((g) => g.id === issueId);
     const kind = issue ? issue.kind : null;
     const targetN = (issue && issue.payload && issue.payload.issueNumber) || null;
@@ -22092,6 +22207,8 @@ const AppView = {
       if (deciding) AppView._endGovApply(issueId, phase, error);
     };
 
+    // #3984: as castVote, cleared in the finally below.
+    AppView._publishVoteSending(`castIssueVote:${issueId}`, vote === 'down' ? 'no' : 'yes');
     try {
       const res = await fetch(`/api/issues/${issueId}/vote`, {
         method: 'POST',
@@ -22167,6 +22284,7 @@ const AppView = {
       PlatformUI.toast(`Vote failed: ${(err && err.message) || 'connection lost'}`);
     } finally {
       AppView._voteInFlight.delete(key);
+      AppView._publishVoteSending(`castIssueVote:${issueId}`, null);
     }
   },
 

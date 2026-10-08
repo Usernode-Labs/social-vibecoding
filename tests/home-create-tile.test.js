@@ -106,12 +106,11 @@ test('the tile is #app-list\'s LAST child, after every app tile', () => {
   assert.match(tile.attrs.class, /\bhome-create-btn\b/, 'the focus-ring hook app.css keys');
 });
 
-test('with no apps it follows the "No apps added yet" note', () => {
+test('with no apps it is all the grid shows (no "No apps added yet" line)', () => {
   const html = renderGrid({ ready: true, create: CREATE });
   const kids = childrenOf(html, 'app-list');
-  assert.equal(kids.length, 2);
-  assert.equal(kids[0].attrs['data-home-apps-empty'], '');
-  assert.equal(kids[1].attrs.id, 'home-create-tile');
+  assert.equal(kids.length, 1);
+  assert.equal(kids[0].attrs.id, 'home-create-tile');
 });
 
 // ── 3. hydration ──────────────────────────────────────────────────────

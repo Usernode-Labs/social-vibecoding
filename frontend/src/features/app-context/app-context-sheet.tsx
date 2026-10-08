@@ -121,9 +121,9 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   FlagIcon,
-  HomeIcon,
   InfoCircleIcon,
   PlusIcon,
+  PhonePlusIcon,
   PlusWideIcon,
   SparklesIcon,
   TerminalIcon,
@@ -134,6 +134,8 @@ import {
 import { AboutPane } from './about-pane';
 import { offeringGoToHomeroom } from './about-data';
 import { InvitePane } from './invite-pane';
+import { useHomeScreenOffer } from '../mobile-install/home-screen-offer';
+import { InstallStepsSheet } from '../mobile-install/install-steps-sheet';
 import { useStoreState } from '../../lib/use-store-state';
 import { ImproveQuickActions, UpdateStatus } from '../improve/actions';
 import { openReport } from '../dialogs/report';
@@ -539,6 +541,11 @@ export function AppsSwitcherSheet(): ReactNode {
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
   const newcomer = mounted && offeringGoToHomeroom(!!privateMember);
+  // #4399: the home-screen offer that rides in the Go to Homeroom card while
+  // it is offered (the banner is held down meanwhile). Asked only while the
+  // menu is open, so a closed menu costs no request.
+  const homeScreenOs = useHomeScreenOffer(open && newcomer);
+  const [homeScreenSteps, setHomeScreenSteps] = useState(false);
   const workshopRowRef = useRef<HTMLAnchorElement | null>(null);
   useIsomorphicLayoutEffect(() => {
     const hide = !!restricted || newcomer;
@@ -806,6 +813,85 @@ export function AppsSwitcherSheet(): ReactNode {
               nests a mini-app's menu.
           */}
           {/*
+              GO TO HOMEROOM, for a private member only, and only after mount
+              (the store says who is signed in after hydration, so the
+              prerender has no such row). Home, and the first time its tour
+              (features/first-session goHome).
+
+              A CARD, NOT A ROW (#4401): as a plain row among the app's own it
+              was easy to miss, and it is the one door a private member has to
+              the rest of Homeroom. So it leads the list, right under the blue
+              "Suggest an improvement" (which stays the menu's one filled
+              button): a white card in the shell's card shape (20px, one inset
+              hairline), the Homeroom mark as the header's mark button draws
+              it, and the row type, 15 over 13. It sits INSIDE #switcher-nav
+              so `#improve-quick-actions + #switcher-nav` still holds.
+
+              ADD TO HOME SCREEN, IN THE SAME CARD (#4399): while Go to
+              Homeroom is still offered, the install banner stays down over
+              the app they were invited into, and the offer is a second row
+              here under a hairline instead. It opens the banner's How sheet
+              for their OS, and only when the banner itself would offer the
+              home-screen install (../mobile-install/home-screen-offer.ts).
+              Once they have been Home the row goes and the banner is back.
+          */}
+          {mounted && privateMember ? (
+            <div
+              id="app-menu-homeroom-card"
+              className="mx-4 mt-1 mb-2 w-[calc(100%_-_2rem)] rounded-[20px] bg-white dark:bg-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)]"
+            >
+              <button
+                id="app-menu-row-homeroom"
+                type="button"
+                className="flex w-full items-center gap-3 rounded-[20px] px-3.5 py-3 text-left hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
+                onClick={() => {
+                  const info = { slug: slug || null, name: name || null };
+                  void AppContext.dismissForNav().then(() => {
+                    (window as any).UsernodeReact?.firstSession?.goHome?.(info);
+                  });
+                }}
+              >
+                <span className="shrink-0 inline-flex w-10 h-10 rounded-[11px] overflow-hidden bg-zinc-950" aria-hidden="true">
+                  <img
+                    src="/brand/homeroom-mark.png"
+                    alt=""
+                    draggable="false"
+                    width={40}
+                    height={40}
+                    className="platform-mark-tile w-10 h-10 rounded-[11px]"
+                  />
+                </span>
+                <span className="flex-1 min-w-0">
+                  <span className="block truncate text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">Go to Homeroom</span>
+                  <span className="block truncate text-[13px] text-zinc-500 dark:text-zinc-400">Your Home, your communities and Homeroom bot</span>
+                </span>
+                <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-300 dark:text-zinc-600" aria-hidden="true" />
+              </button>
+              {newcomer && homeScreenOs ? (
+                <>
+                  <div aria-hidden="true" className="mx-3.5 h-px bg-[color:var(--app-sheet-line)]" />
+                  <button
+                    id="app-menu-row-add-home"
+                    type="button"
+                    aria-haspopup="dialog"
+                    aria-expanded={homeScreenSteps}
+                    className="flex w-full items-center gap-3 rounded-[20px] px-3.5 py-3 text-left hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
+                    onClick={() => setHomeScreenSteps(true)}
+                  >
+                    <span className="shrink-0 inline-flex items-center justify-center w-10 h-10 rounded-[11px] bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200" aria-hidden="true">
+                      <PhonePlusIcon className="w-5 h-5" aria-hidden="true" />
+                    </span>
+                    <span className="flex-1 min-w-0 block truncate text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">Add Homeroom to your home screen</span>
+                    <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-300 dark:text-zinc-600" aria-hidden="true" />
+                  </button>
+                  {open && homeScreenSteps ? (
+                    <InstallStepsSheet os={homeScreenOs} onClose={() => setHomeScreenSteps(false)} />
+                  ) : null}
+                </>
+              ) : null}
+            </div>
+          ) : null}
+          {/*
               GIVE FEEDBACK IS NOT A ROW HERE ANY MORE (#2718 review). It led
               this list, on the reading that it is the thing somebody who is
               not a developer of this app wants while every other row assumes
@@ -923,31 +1009,6 @@ export function AppsSwitcherSheet(): ReactNode {
               want it one tap away. Same id, same gate (`showTerminal`, which
               DevConsole publishes), same method.
           */}
-          {/*
-              GO TO HOMEROOM, for a private member only, and only after mount
-              (the store says who is signed in after hydration, so the
-              prerender has no such row). Home, and the first time its tour
-              (features/first-session goHome).
-          */}
-          {mounted && privateMember ? (
-            <button
-              id="app-menu-row-homeroom"
-              type="button"
-              className={`${ROW} w-full text-left`}
-              onClick={() => {
-                const info = { slug: slug || null, name: name || null };
-                void AppContext.dismissForNav().then(() => {
-                  (window as any).UsernodeReact?.firstSession?.goHome?.(info);
-                });
-              }}
-            >
-              <RowBody
-                icon={<HomeIcon />}
-                label="Go to Homeroom"
-                sub="Your Home, your communities and Homeroom bot"
-              />
-            </button>
-          ) : null}
           {showTerminal && !privateMember ? (
             <MenuRow
               id="improve-row-terminal"

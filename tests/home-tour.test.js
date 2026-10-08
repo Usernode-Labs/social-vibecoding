@@ -170,7 +170,7 @@ test("a press on the tour never dismisses the menu it is pointing into", () => {
   const onDoc = MENU_SRC.slice(MENU_SRC.indexOf('const onDoc = (event: Event) => {'));
   const body = onDoc.slice(0, onDoc.indexOf('void AppContext.close();'));
   assert.match(body, /const tour = document\.getElementById\(TOUR_ID\);/);
-  assert.match(body, /if \(t && \(sheet\?\.contains\(t\) \|\| mark\?\.contains\(t\) \|\| tour\?\.contains\(t\)\)\) return;/);
+  assert.match(body, /if \(t && \(sheet\?\.contains\(t\) \|\| mark\?\.contains\(t\) \|\| tour\?\.contains\(t\) \|\| firstSession\?\.contains\(t\)\)\) return;/);
   // And the id it spares is the overlay's root, which holds the card, the
   // shades and every button the tour draws.
   assert.match(OVERLAY_SRC, /ref=\{rootRef\}\s*id="home-tour"/);

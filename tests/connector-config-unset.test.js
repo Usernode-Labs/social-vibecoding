@@ -300,5 +300,7 @@ test('the out-of-credits card is unaffected by any of this', () => {
   const src = fs.readFileSync(path.join(ROOT, 'public/js/credit-options.js'), 'utf8');
   assert.doesNotMatch(src, /GITHUB_LINK|MCP_CONNECTOR|process\.env/);
   const opts = [...src.matchAll(/'(#settings\/[a-z-]+)'/g)].map((m) => m[1]);
-  assert.deepEqual(opts, ['#settings/api-key', '#settings/cli', '#settings/connectors']);
+  // #4378: and Linked accounts, the verify sheet's fallback for an
+  // unverified account, which needs no GitHub app either (the phone comes first).
+  assert.deepEqual(opts, ['#settings/api-key', '#settings/cli', '#settings/connectors', '#settings/linked-accounts']);
 });

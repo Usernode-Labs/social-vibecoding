@@ -1363,7 +1363,12 @@ async function listWithStats(pool, { scope: rawScope = null } = {}) {
     const mine = results.filter((r) => Number(r.config_version_id) === v.id);
     const costs = mine.map((r) => num(r.cost)).filter((c) => c != null);
     const builtN = mine.filter((r) => r.built === true).length;
-    const bootKnown = mine.filter((r) => r.booted != null || r.built === false);
+    // Booted out of the builds whose boot was measured. A build that failed
+    // had no boot to measure, and one with no capture (every later change,
+    // a first version without a final capture) is unknown, not a failure:
+    // counting failed builds as "didn't boot" while leaving unmeasured ones
+    // out read 0% for configurations none of whose builds failed to boot.
+    const bootKnown = mine.filter((r) => r.built === true && r.booted != null);
     const involving = pairs.filter((p) => Number(p.current_version) === v.id || Number(p.side_version) === v.id);
     let vsCurrent = null;
     if (current && current.id !== v.id) {
@@ -1401,7 +1406,7 @@ async function listWithStats(pool, { scope: rawScope = null } = {}) {
         // the remainder no stage names (stage-costs.js averages).
         avgCostByStage: stageCosts.averages(mine.map((r) => r.cost_parts).filter(Boolean)),
         medianActiveMs: median(mine.map((r) => num(r.ms))),
-        bootRate: bootKnown.length ? mine.filter((r) => r.booted === true).length / bootKnown.length : null,
+        bootRate: bootKnown.length ? bootKnown.filter((r) => r.booted === true).length / bootKnown.length : null,
         pairsWaiting: involving.filter((p) => p.status === 'waiting').length,
         vsCurrent,
       },

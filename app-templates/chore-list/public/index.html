@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  {{DEV_CONSOLE_FORWARDER}}
+  <title>{{APP_NAME}}</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%237c3aed'/><circle cx='50' cy='50' r='18' fill='white'/></svg>">
+  <!-- This app's precompiled Tailwind (npm run build writes it on every
+       image build; tailwind.config.js says which files it scans). -->
+  <link rel="stylesheet" href="/tailwind.css">
+  <!-- The platform bridge, centrally hosted and loaded by RELATIVE path.
+       Never vendor it and never write a hostname in front of it. It is also
+       how the app answers the shell, so keep it even if no bridge API is
+       called. -->
+  <script src="/usernode-bridge/v1/bridge.js"></script>
+  <!-- Follow the viewer's Homeroom theme (the bridge reports it), with the
+       OS preference as the fallback outside Homeroom. -->
+  <script>
+    (function () {
+      var media = window.matchMedia('(prefers-color-scheme: dark)');
+      function applyTheme() {
+        var theme = (window.usernode && window.usernode.theme) || (media.matches ? 'dark' : 'light');
+        document.documentElement.classList.toggle('dark', theme === 'dark');
+        document.documentElement.style.colorScheme = theme;
+      }
+      applyTheme();
+      window.addEventListener('usernode:theme-changed', applyTheme);
+      media.addEventListener('change', applyTheme);
+    })();
+  </script>
+</head>
+<body class="min-h-screen bg-ground text-fg">
+  <main class="mx-auto flex max-w-xl flex-col gap-8 px-4 py-8">
+    <header class="flex flex-col gap-1">
+      <h1 class="text-title">{{APP_NAME}}</h1>
+      <p class="text-body text-muted">Who does what this week. A chore is always one person's, or takes turns round everyone and moves on every Monday.</p>
+    </header>
+
+    <!-- Loading: shapes where the chores will be. -->
+    <div id="loading" class="flex flex-col gap-2" aria-label="Loading">
+      <div class="skeleton h-14 w-full"></div>
+      <div class="skeleton h-14 w-full"></div>
+      <div class="skeleton h-14 w-full"></div>
+    </div>
+
+    <!-- Error: only when the load failed. -->
+    <div id="error" class="state-error card" hidden>
+      <p class="text-heading">The chores did not load</p>
+      <p class="text-body text-muted">Nothing is lost. Check your connection and try again.</p>
+      <button id="retry" type="button" class="btn-secondary">Retry</button>
+    </div>
+
+    <section id="week-section" class="flex flex-col" hidden>
+      <div class="flex items-baseline justify-between gap-3">
+        <h2 id="week" class="section-label">This week</h2>
+        <p id="done-count" class="mb-2 px-1 text-small text-muted"></p>
+      </div>
+      <ul id="chores" class="list"></ul>
+      <!-- Empty: only when the load worked and there are no chores yet. -->
+      <div id="empty" class="state-empty card" hidden>
+        <p class="text-heading">No chores yet</p>
+        <p class="text-body text-muted">Add the jobs that come round every week below, and they will be shared out.</p>
+      </div>
+      <p id="rota-note" class="mt-2 px-1 text-small text-muted" hidden></p>
+    </section>
+
+    <form id="add-form" class="flex flex-col gap-2" autocomplete="off">
+      <label for="add-name" class="section-label mb-0">Add a chore</label>
+      <div class="flex gap-2">
+        <input id="add-name" name="name" type="text" maxlength="80" required class="field flex-1 min-w-0"
+          placeholder="e.g. take the bins out">
+        <button type="submit" class="btn-primary shrink-0">Add</button>
+      </div>
+      <div class="flex items-center gap-2">
+        <label for="add-who" class="shrink-0 px-1 text-small text-muted">Who does it</label>
+        <select id="add-who" name="who" class="field min-w-0 flex-1"></select>
+      </div>
+      <p id="status" class="text-small text-danger" role="alert" hidden></p>
+    </form>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

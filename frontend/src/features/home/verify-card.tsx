@@ -6,11 +6,13 @@
  * says so where they land, with the phone to add (where phone sign-in is
  * offered) and GitHub and X in Settings.
  *
- * On a phone the first-run step (../auth/phone-first-run.tsx) has asked
- * already; this is where they come back to it. On a computer this IS the
- * ask. A phone linked here hides it everywhere (the nav store's
- * `identityNeeded`); "Not now" hides it on this device only, a convenience
- * kept in localStorage: the vote's own sheet still asks when it matters.
+ * #4378: it is the follow-up, never the first ask. It shows only once the
+ * person has been asked at a public step (a public vote, making a project
+ * public, more AI credits: ../auth/verify-identity.tsx) and closed the sheet
+ * or chose "Not now" there, which that module keeps in localStorage
+ * (ASKED_KEY) the way this card keeps its own dismissal. A phone linked here
+ * hides it everywhere (the nav store's `identityNeeded`); its own "Not now"
+ * hides it on this device only: the public steps still ask when they matter.
  *
  * NOT IN THE PRERENDER: who is signed in arrives after hydration (the nav
  * store's `identityNeeded`, published by App._syncViewer), so the first
@@ -20,7 +22,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 
 import { useStoreState } from '../../lib/use-store-state';
-import { noteVerified, VerifyIdentityBody, type VerifyCopy } from '../auth/verify-identity';
+import { ASKED_EVENT, noteVerified, VerifyIdentityBody, wasAskedHere, type VerifyCopy } from '../auth/verify-identity';
 import { waitlistOptions } from '../auth/waitlist-shared';
 import { navStore } from '../nav/nav-store.js';
 
@@ -40,16 +42,20 @@ export function VerifyCard(): ReactNode {
   const { identityNeeded } = useStoreState(navStore);
   const [phoneOffered, setPhoneOffered] = useState<boolean | null>(null);
   const [hidden, setHidden] = useState(false);
+  const [asked, setAsked] = useState(false);
 
   useEffect(() => {
     if (!identityNeeded) return undefined;
     setHidden(hiddenHere());
+    setAsked(wasAskedHere());
+    const onAsked = () => setAsked(wasAskedHere());
+    window.addEventListener(ASKED_EVENT, onAsked);
     let live = true;
     void waitlistOptions().then((options) => { if (live) setPhoneOffered(options?.phone_sign_in === true); });
-    return () => { live = false; };
+    return () => { live = false; window.removeEventListener(ASKED_EVENT, onAsked); };
   }, [identityNeeded]);
 
-  if (!identityNeeded || hidden || phoneOffered === null) return null;
+  if (!identityNeeded || !asked || hidden || phoneOffered === null) return null;
 
   const notNow = () => {
     try { localStorage.setItem(HIDDEN_KEY, '1'); } catch { /* hidden for this visit */ }

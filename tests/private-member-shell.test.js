@@ -2,11 +2,11 @@
 
 // A PRIVATE MEMBER in the shell (users.private_member_since): an invite link
 // lands them inside the group's app with no ✕, the mark menu's "Go to
-// Homeroom" is their way on, and its first use runs a four-step tour of a
-// Home that has Discover but no Challenges and no New project, and has the
-// waitlist card. The invite's Join that makes them asks for a name and a
-// phone first (tests/phone-invite-join.test.js). The server half is
-// tests/private-member-postgres.test.js and
+// Homeroom" is their way on, and its first use runs a nine-step tour of
+// their app, its hub and a Home that has Discover but no Challenges and no
+// New project, and has the waitlist card. The invite's Join that makes
+// them asks for a name and a phone first (tests/phone-invite-join.test.js).
+// The server half is tests/private-member-postgres.test.js and
 // tests/community-invites-postgres.test.js.
 
 const test = require('node:test');
@@ -20,27 +20,52 @@ const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const APP = read('public/js/app.js');
 
-test('the private tour: four steps on Home, Next through each, ending on the waitlist card', () => {
-  const { privateSteps } = loadTsx('frontend/src/features/first-session/tour-steps.ts');
-  const steps = privateSteps({ slug: 'best-brunch', name: 'Best brunch spots' });
-  assert.deepEqual(steps.map((s) => s.screen), ['home', 'home', 'home', 'home']);
-  assert.deepEqual(steps.map((s) => !!s.tap), [false, false, false, false], 'nothing to press but Next');
+test('the private tour: the maker\'s nine cards, three reworded for someone invited, ending on the waitlist card', () => {
+  const { privateSteps, makerSteps, invitedSteps } = loadTsx('frontend/src/features/first-session/tour-steps.ts');
+  const project = { slug: 'best-brunch', name: 'Best brunch spots' };
+  const steps = privateSteps(project);
+  assert.deepEqual(steps.map((s) => s.screen), ['home', 'app', 'app', 'app', 'app', 'home', 'hub', 'hub', 'home']);
+  assert.deepEqual(steps.map((s) => s.tap || null), ['Tap it', null, 'Tap the menu', null, 'Tap ✕', 'Tap Communities', null, null, null]);
   assert.deepEqual(steps.map((s) => s.target), [
     '.app-card[data-slug="best-brunch"]',
+    '#app-view',
+    '#platform-mark-btn',
+    '#improve-row-feedback',
+    '#back-btn',
     '#platform-tab-workshop',
+    '#app-content',
     '#platform-tab-messages',
     '#home-waitlist-card',
   ]);
-  assert.deepEqual(steps.map((s) => s.title), [
-    'Best brunch spots is on your Home',
-    'The group lives in Communities',
-    'Homeroom bot is in Messages',
-    'Make and share your own apps',
+  // The owner-approved words (#4398): the maker's where they match, the app,
+  // Suggest and hub cards said to someone who was invited, and the bot card
+  // whose words the owner approved for #4397.
+  assert.deepEqual(steps.map((s) => [s.title, s.text]), [
+    ['Best brunch spots is on your Home', 'Open it any time from here.'],
+    ['Best brunch spots opens here', 'You and everyone in its community use it, and make it better together.'],
+    ['Suggest an improvement', 'Every app has this menu. Tap it.'],
+    ['Suggest an improvement', 'Got an idea for Best brunch spots? Suggest it here. Homeroom bot builds it, or brings it to the group, and you can follow along.'],
+    ['✕ takes you back to Home', 'Open Best brunch spots again from Home any time.'],
+    ['You can find Best brunch spots here', 'Communities lists every community you\'re in.'],
+    ['The Best brunch spots hub', 'Talk with the group here, and vote on what changes.'],
+    ['Meet Homeroom bot', 'Tell it what Best brunch spots should do next, and it builds it for the group to try. It\'s always here in Messages.'],
+    ['Your own apps start here', 'Join the waitlist to get your spot.'],
   ]);
-  assert.deepEqual(steps.map((s) => !!s.last), [false, false, false, true]);
-  // No challenges, and no ✕ to teach: the invited tour's step about it is
-  // not in this one.
-  assert.doesNotMatch(JSON.stringify(steps), /challenge|points|✕|back-btn/i);
+  // The first seven are the maker's own steps, the same places and presses,
+  // with only the three reworded cards' text differing.
+  const maker = makerSteps({ ...project, conversationId: 12 }).slice(0, 7);
+  assert.deepEqual(maker, invitedSteps(project).slice(0, 7), 'which the join tour shares');
+  steps.slice(0, 7).forEach((s, i) => {
+    assert.deepEqual({ ...s, text: '' }, { ...maker[i], text: '' }, `step ${i + 1} is the maker's`);
+    if (![1, 3, 6].includes(i)) assert.equal(s.text, maker[i].text, `step ${i + 1} in the maker's words`);
+  });
+  // The Suggest card is the one in the menu, pointed at and not pressed.
+  assert.equal(steps[3].inMenu, true);
+  // The bot and waitlist cards point at their place and lead on with Next.
+  assert.deepEqual(steps.map((s) => !!s.ringed), [false, false, false, true, false, false, false, true, true]);
+  assert.deepEqual(steps.map((s) => !!s.last), [false, false, false, false, false, false, false, false, true]);
+  // No challenges or points.
+  assert.doesNotMatch(JSON.stringify(steps), /challenge|points/i);
   // Every target is one the shell draws: the tabs are the bar's own ids, the
   // card is the waitlist card's own section.
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
@@ -84,14 +109,46 @@ test('the shell follows the tier: a reload when it changes, the store told, "Wan
 
 test('the mark menu: "Go to Homeroom" for a private member, and no terminal or Build it yourself', () => {
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
-  assert.match(sheet, /\{mounted && privateMember \? \(\s+<button\s+id="app-menu-row-homeroom"/);
-  assert.match(sheet, /label="Go to Homeroom"/);
+  assert.match(sheet, /\{mounted && privateMember \? \(\s+<div\s+id="app-menu-homeroom-card"[^>]*>\s+<button\s+id="app-menu-row-homeroom"/);
+  // A white card leading the list, right under "Suggest an improvement"
+  // (#4401): 20px, one inset hairline, the mark, rows' 15 over 13, a chevron.
+  // The card is a wrapper since #4399, which can add a second row to it.
+  assert.match(sheet, /id="app-menu-homeroom-card"\s+className="[^"]*\brounded-\[20px\][^"]*\bbg-white\b[^"]*shadow-\[inset_0_0_0_1px_var\(--app-sheet-line\)\]/);
+  const card = sheet.slice(sheet.indexOf('id="app-menu-row-homeroom"'));
+  assert.match(card, /^id="app-menu-row-homeroom"\s+type="button"/);
+  assert.match(card, /src="\/brand\/homeroom-mark\.png"[\s\S]*?className="platform-mark-tile w-10 h-10/);
+  assert.match(card, /text-\[15px\] font-\[650\][^>]*>Go to Homeroom</);
+  assert.match(card, /text-\[13px\][^>]*>Your Home, your communities and Homeroom bot</);
+  assert.match(card.slice(0, card.indexOf('</button>')), /<ChevronRightIcon/);
   assert.match(sheet, /firstSession\?\.goHome\?\.\(info\)/);
   assert.match(sheet, /\{showTerminal && !privateMember \? \(/);
   assert.match(sheet, /readOnly: writeBarred,\s+\} = useStoreState\(improveStore\);[\s\S]*const readOnly = writeBarred \|\| privateMember;/);
-  // After "Go to community", so it stays the list's first row (dapp.json).
-  assert.ok(sheet.indexOf('id="app-menu-row-workshop"') < sheet.indexOf('id="app-menu-row-homeroom"'));
-  assert.ok(sheet.indexOf('id="app-menu-row-homeroom"') < sheet.indexOf('id="app-menu-row-about"'));
+  // First in the list, inside #switcher-nav, so the quick actions stay its
+  // previous sibling (dapp.json: #improve-quick-actions + #switcher-nav).
+  const nav = sheet.indexOf('id="switcher-nav"');
+  assert.ok(nav < sheet.indexOf('id="app-menu-row-homeroom"'));
+  assert.ok(sheet.indexOf('id="app-menu-row-homeroom"') < sheet.indexOf('id="app-menu-row-workshop"'));
+});
+
+test('the Go to Homeroom card carries the home-screen offer, and the banner waits (#4399)', () => {
+  const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  const card = sheet.slice(sheet.indexOf('id="app-menu-homeroom-card"'), sheet.indexOf('GIVE FEEDBACK IS NOT A ROW'));
+  // A second row in the same card, under a hairline, only while Go to
+  // Homeroom is offered and only when the banner would offer the home screen.
+  assert.match(sheet, /const homeScreenOs = useHomeScreenOffer\(open && newcomer\);/);
+  assert.match(card, /\{newcomer && homeScreenOs \? \(\s+<>\s+<div aria-hidden="true" className="[^"]*h-px bg-\[color:var\(--app-sheet-line\)\]"/);
+  assert.match(card, /id="app-menu-row-add-home"/);
+  assert.match(card, /w-10 h-10 rounded-\[11px\] bg-zinc-100[^"]*"[^>]*>\s+<PhonePlusIcon/);
+  assert.match(card, /text-\[15px\] font-\[650\][^>]*>Add Homeroom to your home screen</);
+  assert.match(card, /<InstallStepsSheet os=\{homeScreenOs\}/);
+  // The offer is the banner's own decision, an a2hs one, minus its dismissal.
+  const hook = read('frontend/src/features/mobile-install/home-screen-offer.ts');
+  assert.match(hook, /installOffer\(\{/);
+  assert.match(hook, /dismissed: false,/);
+  assert.match(hook, /offer && offer\.kind === 'a2hs' \? offer\.os : null/);
+  // The banner stays down while Go to Homeroom is offered.
+  const banner = read('frontend/src/features/mobile-install/install-banner.tsx');
+  assert.match(banner, /if \(offeringGoToHomeroom\(!!privateMember\)\) \{ setOffer\(null\); return; \}/);
 });
 
 test('the waitlist card: join, an email, a code, then On the waitlist with "Want in sooner?"', () => {
@@ -101,7 +158,9 @@ test('the waitlist card: join, an email, a code, then On the waitlist with "Want
     onListed: () => {},
   });
   assert.match(none, /data-waitlist-card="join"/);
-  assert.match(none, /Make and share your own apps/);
+  assert.match(none, />Make your own apps</);
+  assert.doesNotMatch(none, /suggest changes to them now/, 'the pitch paragraph is gone');
+  assert.match(none, /We&#x27;re letting people in a few at a time\./);
   assert.match(none, /id="home-waitlist-join"[^>]*>Join the waitlist</);
   assert.doesNotMatch(none, /On the waitlist/);
 
@@ -112,8 +171,13 @@ test('the waitlist card: join, an email, a code, then On the waitlist with "Want
   });
   assert.match(listed, /data-waitlist-card="listed"/);
   assert.match(listed, /On the waitlist/);
-  assert.match(listed, /We’ll email lina@example\.com when your spot is ready\./);
-  assert.match(listed, new RegExp(`href="#more/${token}"[^>]*>Answer them now<`));
+  assert.match(listed, />Make your own apps</);
+  assert.match(listed, /We’ll email you when your spot is ready\./);
+  assert.doesNotMatch(listed, /few at a time|Until then/, 'one line under the title');
+  // "Want in sooner?" is one row: the question, and a link to the questions.
+  assert.match(listed, /Want in sooner\?/);
+  assert.match(listed, new RegExp(`href="#more/${token}"[^>]*>Answer 4 questions<`));
+  assert.doesNotMatch(listed, /Optional \(moves you up the list\)|Answer them now/);
 
   const src = read(card);
   // Not in the prerender: nothing until the shell knows who is signed in.
