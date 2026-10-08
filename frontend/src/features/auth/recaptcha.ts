@@ -127,11 +127,14 @@ export async function phoneRecaptchaToken(): Promise<string | null> {
   }
 }
 
-/** Google's own wording for a page that hides the badge. */
+/**
+ * The short notice Google asks for where its badge is hidden: a quiet
+ * credit with both links, not the long sentence whose "apply" read as
+ * though Google's terms govern Homeroom (#4379).
+ */
 export const RECAPTCHA_NOTICE = {
-  lead: 'This is protected by reCAPTCHA, and Google’s ',
-  privacy: { label: 'Privacy Policy', href: 'https://policies.google.com/privacy' },
-  and: ' and ',
+  lead: 'Protected by reCAPTCHA',
+  sep: ' · ',
+  privacy: { label: 'Google Privacy Policy', href: 'https://policies.google.com/privacy' },
   terms: { label: 'Terms of Service', href: 'https://policies.google.com/terms' },
-  tail: ' apply.',
 } as const;

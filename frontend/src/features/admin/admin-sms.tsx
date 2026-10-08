@@ -271,10 +271,10 @@ function SmsSection() {
             </p>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
               {n.lead}
+              {n.sep}
               <a href={n.privacy.href} target="_blank" rel="noopener noreferrer" className="underline">{n.privacy.label}</a>
-              {n.and}
+              {n.sep}
               <a href={n.terms.href} target="_blank" rel="noopener noreferrer" className="underline">{n.terms.label}</a>
-              {n.tail}
             </p>
           </>
         ) : (

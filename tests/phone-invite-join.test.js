@@ -71,8 +71,11 @@ test('the invite\'s Join sheet starts with a phone number when the server offers
   assert.match(phone, /id="sign-in-sheet-phone"[^>]*type="tel"[^>]*autoComplete="tel"|id="sign-in-sheet-phone"[^>]*type="tel"/);
   assert.match(phone, />Text me a code</);
   assert.match(phone, /Already on Homeroom\? <a href="#login" data-sign-in-sheet-other-ways=""[^>]*>Sign in another way<\/a>/);
-  // Google's notice, for the badge the sheet hides, is in the fine print.
-  assert.match(phone, /data-terms-notice="recaptcha"[^>]*>By continuing, you agree to Homeroom&#x27;s (<!-- -->)?terms(<!-- -->)? and Google&#x27;s (<!-- -->)?<a href="https:\/\/policies\.google\.com\/privacy"[^>]*>Privacy Policy<\/a>(<!-- -->)? and (<!-- -->)?<a href="https:\/\/policies\.google\.com\/terms"[^>]*>Terms of Service<\/a>(<!-- -->)? \(reCAPTCHA\)(<!-- -->)?\.<\/p>/);
+  // Google's notice, for the badge the sheet hides, is a quiet credit on its
+  // own line under the terms sentence (#4379); "you agree to" covers only
+  // Homeroom's terms.
+  assert.match(phone, /data-terms-notice="recaptcha"[^>]*>By continuing, you agree to Homeroom&#x27;s (<!-- -->)?terms(<!-- -->)?\.(<!-- -->)?<span class="mt-1 block text-\[12px\]">(<!-- -->)?Protected by reCAPTCHA(<!-- -->)? · (<!-- -->)?<a href="https:\/\/policies\.google\.com\/privacy"[^>]*>Google Privacy Policy<\/a>(<!-- -->)? · (<!-- -->)?<a href="https:\/\/policies\.google\.com\/terms"[^>]*>Terms of Service<\/a>(<!-- -->)?<\/span>(<!-- -->)?<\/p>/);
+  assert.doesNotMatch(phone, /Google&#x27;s|\(reCAPTCHA\)/, 'the terms sentence no longer folds Google in');
   assert.doesNotMatch(phone, /Continue with Apple|Sign in with a password|This makes your account/, 'the other ways are one tap away, not first');
   assert.doesNotMatch(phone, /—/);
   // Without the offer it is the sheet it was.
@@ -216,7 +219,8 @@ test('the waiting room: a queued group can be joined now by adding a phone, and 
   assert.match(card, /Add your phone number and you’re in, no waiting\. The group sees your name, never your number\./);
   assert.match(card, /<label for="add-phone-number"[^>]*>Phone number<\/label>/);
   assert.match(card, />Text me a code</);
-  assert.match(card, /This is protected by reCAPTCHA/);
+  assert.match(card, /Protected by reCAPTCHA/);
+  assert.doesNotMatch(card, /Google&#x27;s|\(reCAPTCHA\)|This is protected by reCAPTCHA/);
   assert.doesNotMatch(card, /—/);
   const two = renderToHtml(createElement(AddPhoneCard, { groups: ['A', 'B'], onJoined() {} }));
   assert.match(two, />Join them now</);

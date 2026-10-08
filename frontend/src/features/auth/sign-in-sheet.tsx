@@ -355,10 +355,10 @@ export function RecaptchaNotice() {
   return (
     <p data-sign-in-sheet-recaptcha="" className="text-center text-[12px] leading-snug text-zinc-500 dark:text-zinc-400">
       {n.lead}
+      {n.sep}
       <a href={n.privacy.href} target="_blank" rel="noopener noreferrer" className={link}>{n.privacy.label}</a>
-      {n.and}
+      {n.sep}
       <a href={n.terms.href} target="_blank" rel="noopener noreferrer" className={link}>{n.terms.label}</a>
-      {n.tail}
     </p>
   );
 }

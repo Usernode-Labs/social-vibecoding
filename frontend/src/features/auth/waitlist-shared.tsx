@@ -400,16 +400,16 @@ export function useSurveyAnswered(token: string | null): boolean {
  * (../settings/terms-first-run.js), so nothing asks again after sign-in.
  * The link arrives with the options; until then, and when there is none,
  * the line names the terms without one, which is also what the prerender
- * draws. Where a step runs reCAPTCHA with its badge hidden (./recaptcha.ts,
- * the sign-in sheet's phone and code steps), `recaptcha` (the sheet hands
- * its RECAPTCHA_NOTICE, for the links) folds in the notice Google asks for
- * in the badge's place: "...and Google's Privacy Policy and Terms of
- * Service (reCAPTCHA)." (#4207).
+ * draws. Where a step runs reCAPTCHA with its badge hidden (./recaptcha.ts),
+ * `recaptcha` (the sheet hands its RECAPTCHA_NOTICE, for the links) adds the
+ * quiet credit Google asks for in the badge's place, on its own smaller
+ * line under the sentence, so "you agree to" covers only Homeroom's terms
+ * (#4379).
  */
 export function TermsNotice({ verb = 'continuing', className = '', recaptcha = null }: {
   verb?: string;
   className?: string;
-  recaptcha?: { privacy: { href: string; label: string }; terms: { href: string; label: string } } | null;
+  recaptcha?: { lead: string; sep: string; privacy: { href: string; label: string }; terms: { href: string; label: string } } | null;
 }) {
   const link = useWaitlistOptions()?.terms_link || null;
   const linkClass = 'underline underline-offset-2 hover:text-zinc-700 dark:hover:text-zinc-200';
@@ -419,16 +419,16 @@ export function TermsNotice({ verb = 'continuing', className = '', recaptcha = n
       {link ? (
         <a href={link} target="_blank" rel="noopener noreferrer" className={linkClass}>terms</a>
       ) : 'terms'}
-      {recaptcha ? (
-        <>
-          {' and Google\'s '}
-          <a href={recaptcha.privacy.href} target="_blank" rel="noopener noreferrer" className={linkClass}>{recaptcha.privacy.label}</a>
-          {' and '}
-          <a href={recaptcha.terms.href} target="_blank" rel="noopener noreferrer" className={linkClass}>{recaptcha.terms.label}</a>
-          {' (reCAPTCHA)'}
-        </>
-      ) : null}
       .
+      {recaptcha ? (
+        <span className="mt-1 block text-[12px]">
+          {recaptcha.lead}
+          {recaptcha.sep}
+          <a href={recaptcha.privacy.href} target="_blank" rel="noopener noreferrer" className={linkClass}>{recaptcha.privacy.label}</a>
+          {recaptcha.sep}
+          <a href={recaptcha.terms.href} target="_blank" rel="noopener noreferrer" className={linkClass}>{recaptcha.terms.label}</a>
+        </span>
+      ) : null}
     </p>
   );
 }
