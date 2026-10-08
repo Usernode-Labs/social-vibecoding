@@ -51,6 +51,41 @@
     return node;
   }
 
+  /**
+   * A tap that cannot be undone asks for a second one. window.confirm() is no
+   * use here: Homeroom's app frame does not allow dialogs, so it returns false
+   * without showing anything. The first tap says what the second will do, and
+   * the button goes back to how it was after a few seconds.
+   */
+  function tapTwice(button, armedLabel, action) {
+    var timer = null;
+    var resting = null;
+    var label = null;
+    var className = null;
+    function rest() {
+      timer = null;
+      button.textContent = '';
+      resting.forEach(function (n) { button.appendChild(n); });
+      if (label) button.setAttribute('aria-label', label);
+      button.className = className;
+    }
+    button.addEventListener('click', function () {
+      if (timer) {
+        clearTimeout(timer);
+        rest();
+        action();
+        return;
+      }
+      resting = Array.prototype.slice.call(button.childNodes);
+      label = button.getAttribute('aria-label');
+      className = button.className;
+      button.textContent = armedLabel;
+      button.setAttribute('aria-label', armedLabel);
+      button.className = 'btn-secondary shrink-0 whitespace-nowrap border-0 bg-transparent px-2 text-small text-danger';
+      timer = setTimeout(rest, 4000);
+    });
+  }
+
   function button(className, text, onClick) {
     var b = h('button', className, text);
     b.type = 'button';
@@ -124,10 +159,10 @@
         act(api('POST', '/api/things/' + thing.id + '/return'));
       }));
     } else if (!thing.out && thing.mine) {
-      var remove = button('btn-secondary shrink-0 border-0 bg-transparent px-0 text-muted', null, function () {
-        if (window.confirm('Take "' + thing.name + '" out of the library?')) act(api('DELETE', '/api/things/' + thing.id));
-      });
+      var remove = h('button', 'btn-secondary shrink-0 border-0 bg-transparent px-0 text-muted');
+      remove.type = 'button';
       remove.setAttribute('aria-label', 'Take ' + thing.name + ' out of the library');
+      tapTwice(remove, 'Tap again', function () { act(api('DELETE', '/api/things/' + thing.id)); });
       remove.appendChild(crossIcon());
       top.appendChild(remove);
     } else if (!thing.out && me && choosing !== thing.id) {

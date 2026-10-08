@@ -54,6 +54,41 @@
     return node;
   }
 
+  /**
+   * A tap that cannot be undone asks for a second one. window.confirm() is no
+   * use here: Homeroom's app frame does not allow dialogs, so it returns false
+   * without showing anything. The first tap says what the second will do, and
+   * the button goes back to how it was after a few seconds.
+   */
+  function tapTwice(button, armedLabel, action) {
+    var timer = null;
+    var resting = null;
+    var label = null;
+    var className = null;
+    function rest() {
+      timer = null;
+      button.textContent = '';
+      resting.forEach(function (n) { button.appendChild(n); });
+      if (label) button.setAttribute('aria-label', label);
+      button.className = className;
+    }
+    button.addEventListener('click', function () {
+      if (timer) {
+        clearTimeout(timer);
+        rest();
+        action();
+        return;
+      }
+      resting = Array.prototype.slice.call(button.childNodes);
+      label = button.getAttribute('aria-label');
+      className = button.className;
+      button.textContent = armedLabel;
+      button.setAttribute('aria-label', armedLabel);
+      button.className = 'btn-secondary shrink-0 whitespace-nowrap border-0 bg-transparent px-2 text-small text-danger';
+      timer = setTimeout(rest, 4000);
+    });
+  }
+
   function showStatus(err) {
     el.status.textContent = err ? err.message : '';
     el.status.hidden = !err;
@@ -118,11 +153,8 @@
       var remove = h('button', 'btn-secondary -my-1 shrink-0 border-0 bg-transparent px-2 text-small text-muted', 'Remove');
       remove.type = 'button';
       remove.setAttribute('aria-label', 'Remove ' + item.name);
-      remove.addEventListener('click', function () {
-        if (window.confirm('Take "' + item.name + '" off the list, with everyone\'s tiers for it?')) {
-          act(api('DELETE', '/api/items/' + item.id));
-        }
-      });
+      // Everyone's tiers for it go with it.
+      tapTwice(remove, 'Tap again to remove', function () { act(api('DELETE', '/api/items/' + item.id)); });
       top.appendChild(remove);
     }
     row.appendChild(top);

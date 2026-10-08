@@ -52,6 +52,41 @@
     return node;
   }
 
+  /**
+   * A tap that cannot be undone asks for a second one. window.confirm() is no
+   * use here: Homeroom's app frame does not allow dialogs, so it returns false
+   * without showing anything. The first tap says what the second will do, and
+   * the button goes back to how it was after a few seconds.
+   */
+  function tapTwice(button, armedLabel, action) {
+    var timer = null;
+    var resting = null;
+    var label = null;
+    var className = null;
+    function rest() {
+      timer = null;
+      button.textContent = '';
+      resting.forEach(function (n) { button.appendChild(n); });
+      if (label) button.setAttribute('aria-label', label);
+      button.className = className;
+    }
+    button.addEventListener('click', function () {
+      if (timer) {
+        clearTimeout(timer);
+        rest();
+        action();
+        return;
+      }
+      resting = Array.prototype.slice.call(button.childNodes);
+      label = button.getAttribute('aria-label');
+      className = button.className;
+      button.textContent = armedLabel;
+      button.setAttribute('aria-label', armedLabel);
+      button.className = 'btn-secondary shrink-0 whitespace-nowrap border-0 bg-transparent px-2 text-small text-danger';
+      timer = setTimeout(rest, 4000);
+    });
+  }
+
   /** A small "x" drawn as an SVG, for remove buttons. */
   function crossIcon() {
     var ns = 'http://www.w3.org/2000/svg';
@@ -118,11 +153,7 @@
     remove.type = 'button';
     remove.setAttribute('aria-label', 'Take ' + chore.name + ' off the list');
     remove.appendChild(crossIcon());
-    remove.addEventListener('click', function () {
-      if (window.confirm('Take "' + chore.name + '" off the chore list for everyone?')) {
-        act(api('DELETE', '/api/chores/' + chore.id));
-      }
-    });
+    tapTwice(remove, 'Tap again', function () { act(api('DELETE', '/api/chores/' + chore.id)); });
     row.appendChild(remove);
     return row;
   }

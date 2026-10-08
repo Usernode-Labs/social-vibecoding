@@ -38,6 +38,9 @@ const { getTemplateFiles } = require('../src/services/template');
 const appManifest = require('../src/services/app-manifest');
 
 const ROOT = path.join(__dirname, '..');
+// The app frame's sandbox flags, read from the source the shell builds from.
+const APP_FRAME_SANDBOX = /APP_FRAME_SANDBOX =\s*'([^']+)'/.exec(
+  fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/app-frame/app-frame-policy.js'), 'utf8'))[1];
 const DELETED = ['social-productivity', 'multimedia-social', 'game-2d', 'game-3d'];
 const READY = [
   'tier-list-restaurants', 'tier-list-hikes', 'tier-list-cities', 'tier-list-games',
@@ -190,6 +193,10 @@ for (const id of READY) {
     assert.match(script, /var headers = \{ 'x-usernode-token': token \};/);
     assert.match(script, /if \(window\.usernode && window\.usernode\.previewNow\) headers\['x-usernode-now'\] = window\.usernode\.now\(\)\.toISOString\(\);/);
     assert.match(script, /data\.error === 'account_required'/, 'a guest\'s write is asked to make an account, not shown a code');
+    // Homeroom's app frame allows no dialogs (no allow-modals), so confirm()
+    // answers false unseen and the action never happens: ask in the page.
+    assert.doesNotMatch(APP_FRAME_SANDBOX, /allow-modals/);
+    assert.doesNotMatch(script.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, ''), /\b(?:confirm|alert|prompt)\(/, `${id}: no browser dialogs`);
     // Its server half: mounted after the sign-in check, tables on boot,
     // staging rows only in staging and owned by fake identities, now from req.now.
     assert.doesNotThrow(() => new vm.Script(`(function (module, require, process) {${api}\n})`), `${id}: api.js parses`);
