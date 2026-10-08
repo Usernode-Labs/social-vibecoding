@@ -520,7 +520,7 @@ test('"You\'re in" fills its middle with the project, as its invite showed it', 
 const TOKEN = 'AAAAAAAAAAAAAAAAAAAAAA';
 
 /** App._followInvite (and _endWelcomeHold) from app.js, against stand-ins. */
-function followHarness({ fromLanding = true, pressed = false, standing }) {
+function followHarness({ fromLanding = true, landed = null, pressed = false, standing }) {
   const app = read('public/js/app.js');
   const methods = app.slice(app.indexOf('  async _followInvite(token) {'), app.indexOf('\n  _deepLinkTarget() {'));
   const events = [];
@@ -529,7 +529,11 @@ function followHarness({ fromLanding = true, pressed = false, standing }) {
     console, Promise, setTimeout, clearTimeout, Date, JSON, encodeURIComponent,
     location: { pathname: `/invite/${TOKEN}`, search: '' },
     history: { replaceState() { events.push('address'); } },
-    sessionStorage: { getItem: () => (pressed ? `/invite/${TOKEN}` : null), removeItem() {} },
+    sessionStorage: {
+      store: { 'usernode:invite-join': pressed ? `/invite/${TOKEN}` : null, 'usernode:invite-landing': landed },
+      getItem(key) { return this.store[key] ?? null; },
+      removeItem(key) { this.store[key] = null; },
+    },
     fetch: (url) => {
       events.push(url.endsWith('/redeem') ? 'redeem' : 'standing');
       if (url.endsWith('/redeem')) {
@@ -548,6 +552,7 @@ function followHarness({ fromLanding = true, pressed = false, standing }) {
   };
   const App = vm.runInNewContext(`({ ${methods} })`, sandbox);
   Object.assign(App, {
+    INVITE_LANDING_KEY: 'usernode:invite-landing',
     _markNavigationVia() {},
     _rootUrl: () => '/',
     restoreFromHash() { events.push('home'); },
@@ -557,7 +562,7 @@ function followHarness({ fromLanding = true, pressed = false, standing }) {
     _inviteLandingToken: fromLanding ? TOKEN : null,
   });
   sandbox.App = App;
-  return { App, events, answer: () => answer() };
+  return { App, events, answer: () => answer(), sessionStorage: sandbox.sessionStorage };
 }
 
 const JOINED = {
@@ -619,11 +624,11 @@ test('the held frame goes for every other ending, and before a confirm', async (
 test('the island draws the held frame at once, and only the frame goes when the follow ends otherwise', () => {
   const src = read(`${DIR}/index.tsx`);
   assert.match(src, /holdWelcome\(\): boolean \{\s+let held = false;\s+flushSync\(\(\) => setMode\(\(prev\) => \{/);
-  assert.match(src, /endHold\(\): void \{\s+setMode\(\(prev\) => \(prev\.kind === 'held' \? \{ kind: 'none' \} : prev\)\);/);
+  assert.match(src, /endHold\(\): void \{\s+setMode\(\(prev\) => \(prev\.kind === 'held' && !prev\.app \? \{ kind: 'none' \} : prev\)\);/);
   assert.match(src, /if \(mode\.kind === 'held'\) return <WelcomeHeld \/>;/);
   // The landing marks the link it showed signed out.
   const app = read('public/js/app.js');
-  assert.match(app, /App\._inviteLandingToken = inviteToken;\s+AuthScreens\.rememberDeepLink\(location\.pathname\);\s+AuthScreens\.show\('landing'\);/);
+  assert.match(app, /App\._inviteLandingToken = inviteToken;\s+try \{ sessionStorage\.setItem\(App\.INVITE_LANDING_KEY, inviteToken\); \} catch \(_\) \{ \/\* this document only \*\/ \}\s+AuthScreens\.rememberDeepLink\(location\.pathname\);\s+AuthScreens\.show\('landing'\);/);
   // The frame is "You're in"'s own ground, so the welcome arrives on it.
   const { WelcomeHeld } = loadTsx(`${DIR}/index.tsx`);
   const { renderToHtml, createElement } = require('./lib/render-tsx');
@@ -632,6 +637,132 @@ test('the island draws the held frame at once, and only the frame goes when the 
   assert.match(html, /class="fixed inset-0 z-\[9000\] flex flex-col overflow-y-auto/);
   assert.match(html, /background:var\(--home-wallpaper, #f4f2e4\)/);
   assert.match(html, /role="status">Opening your invite</);
+});
+
+// #4215: a sign-in from the invite's page does not always finish in the
+// document that showed it. The move onto the live build reloads it after the
+// code step, and a provider's trip comes back in a new one; the landing's
+// mark rides this tab's sessionStorage so that boot is held too.
+test('a sign-in that reloads after the code step is still held: the landing\'s mark survives in sessionStorage', async () => {
+  const run = followHarness({ fromLanding: false, landed: TOKEN, standing: JOINED });
+  const done = run.App._followInvite(TOKEN);
+  assert.deepEqual(run.events, ['hold', 'address', 'home'], 'held before Home is drawn');
+  assert.equal(run.sessionStorage.getItem('usernode:invite-landing'), null, 'the stored mark is spent at once');
+  await Promise.resolve();
+  run.answer();
+  await done;
+  assert.ok(run.events.includes('welcome:geneva'));
+
+  // A mark left by another link's landing holds nothing.
+  const other = followHarness({ fromLanding: false, landed: 'BBBBBBBBBBBBBBBBBBBBBB', standing: JOINED });
+  const otherDone = other.App._followInvite(TOKEN);
+  assert.deepEqual(other.events, ['address', 'home']);
+  await Promise.resolve();
+  other.answer();
+  await otherDone;
+  assert.equal(other.events.includes('hold'), false);
+
+  // The landing writes the mark where finishLogin's reload cannot drop it,
+  // under the key the follow reads.
+  const app = read('public/js/app.js');
+  assert.match(app, /INVITE_LANDING_KEY: 'usernode:invite-landing',/);
+  const follow = app.slice(app.indexOf('  async _followInvite(token) {'), app.indexOf('    const island = window.UsernodeReact && window.UsernodeReact.firstSession;\n      held ='));
+  assert.match(follow, /landed = sessionStorage\.getItem\(App\.INVITE_LANDING_KEY\);\s+sessionStorage\.removeItem\(App\.INVITE_LANDING_KEY\);/);
+  assert.match(follow, /const fromLanding = App\._inviteLandingToken === token \|\| landed === token;/);
+});
+
+/** A stand-in shell for appDrawn: which screens are up, frame by frame. */
+function drawnHarness(screens, opts = {}) {
+  const frames = [];
+  const savedRaf = global.requestAnimationFrame;
+  global.requestAnimationFrame = (fn) => { frames.push(fn); return frames.length; };
+  const host = {
+    App: { _isScreenVisible: (id) => !!screens[id] },
+    UsernameFirstRun: opts.asking ? { _publicAsk: Promise.resolve(true) } : {},
+  };
+  const step = () => { const fn = frames.shift(); if (fn) fn(); };
+  return { host, step, frames, restore: () => { global.requestAnimationFrame = savedRaf; } };
+}
+
+test('a private member\'s held frame goes only once the app is the screen, never onto Home', async () => {
+  const { appDrawn, APP_DRAWN_MAX_MS } = loadTsx(`${DIR}/index.tsx`);
+  const flush = () => new Promise((r) => setImmediate(r));
+
+  // Revealed in the same tick (a phone, a username already chosen): at once.
+  let h = drawnHarness({ 'app-view': true });
+  try {
+    let resolved = false;
+    appDrawn(new Promise(() => {}), h.host).then(() => { resolved = true; });
+    await flush();
+    assert.equal(resolved, true);
+  } finally { h.restore(); }
+
+  // A provisional handle's navigation reads the app's audience first: the
+  // frame stays over Home through the read, and through the zoom out of
+  // Home's tile, and goes when Home does.
+  const screens = { 'home-screen': true };
+  h = drawnHarness(screens);
+  try {
+    let settle;
+    let resolved = false;
+    appDrawn(new Promise((r) => { settle = r; }), h.host).then(() => { resolved = true; });
+    h.step(); await flush();
+    assert.equal(resolved, false, 'Home only, the audience still being read');
+    screens['app-view'] = true;
+    h.step(); await flush();
+    assert.equal(resolved, false, 'the app growing out of Home\'s tile');
+    settle(); await flush();
+    h.step(); await flush();
+    assert.equal(resolved, false, 'the navigation settled mid-zoom, Home still under it');
+    screens['home-screen'] = false;
+    h.step(); await flush();
+    assert.equal(resolved, true, 'the app alone');
+  } finally { h.restore(); }
+
+  // A navigation that ends somewhere else ("Not now" goes Home) lets it go.
+  h = drawnHarness({ 'home-screen': true });
+  try {
+    let resolved = false;
+    appDrawn(Promise.resolve(false), h.host).then(() => { resolved = true; });
+    await flush();
+    h.step(); await flush();
+    assert.equal(resolved, true);
+  } finally { h.restore(); }
+
+  // Asking for a username: the sheet is not drawn under the frame.
+  h = drawnHarness({ 'home-screen': true }, { asking: true });
+  try {
+    let resolved = false;
+    appDrawn(new Promise(() => {}), h.host).then(() => { resolved = true; });
+    await flush();
+    assert.equal(resolved, true);
+  } finally { h.restore(); }
+
+  // Bounded: a navigation that never settles cannot keep the frame up.
+  h = drawnHarness({ 'home-screen': true });
+  try {
+    let clock = 0;
+    let resolved = false;
+    appDrawn(new Promise(() => {}), h.host, () => clock).then(() => { resolved = true; });
+    h.step(); await flush();
+    assert.equal(resolved, false);
+    clock = APP_DRAWN_MAX_MS + 1;
+    h.step(); await flush();
+    assert.equal(resolved, true);
+  } finally { h.restore(); }
+});
+
+test('welcome() hands the held frame to a private member\'s app, and the follow\'s ending leaves it there', () => {
+  const src = read(`${DIR}/index.tsx`);
+  const welcome = src.slice(src.indexOf('welcome(info: FirstSessionInfo): boolean {'), src.indexOf('goHome('));
+  // Marked as handed on BEFORE the navigation starts, so the endHold that
+  // App._followInvite's finally runs right after welcome() returns is a no-op.
+  const mark = welcome.indexOf("setMode((prev) => (prev.kind === 'held' ? { kind: 'held', app: slug } : prev));");
+  const nav = welcome.indexOf("legacy().App?.navigateToApp?.(slug, 'app')");
+  assert.ok(mark > -1 && nav > mark, 'marked, then navigated');
+  assert.match(welcome, /void appDrawn\(going\)\.then\(\(\) => setMode\(\(prev\) => \(prev\.kind === 'held' && prev\.app === slug \? \{ kind: 'none' \} : prev\)\)\);/);
+  // Nothing takes the frame down before the navigation in this branch.
+  assert.doesNotMatch(welcome.slice(0, nav), /kind: 'none'/);
 });
 
 test('"You\'re in", drawn: the project under the welcome, and "is making" while it is built', () => {
