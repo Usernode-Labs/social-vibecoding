@@ -37,7 +37,7 @@ test('the private tour: four steps on Home, Next through each, ending on the wai
     ['Best brunch spots is on your Home', 'Open it any time from here.'],
     ['You can find Best brunch spots here', 'Communities lists every community you\'re in.'],
     ['Homeroom bot is in Messages', 'It makes Best brunch spots with you. You can always find it here.'],
-    ['Your own apps start here', 'Join the waitlist to get your spot.'],
+    ['Your own apps start here', 'Join the waitlist to make projects of your own.'],
   ]);
   // One short sentence a card; the Messages card says its second ("You can always find it here.").
   for (const s of steps) assert.ok(s.text.split(/[.?]\s/).length <= (s.title === 'Homeroom bot is in Messages' ? 2 : 1), `short: ${s.text}`);
@@ -111,6 +111,11 @@ test('the waitlist card: join, an email, a code, then On the waitlist with "Want
   assert.match(none, /Make and share your own apps/);
   assert.match(none, /id="home-waitlist-join"[^>]*>Join the waitlist</);
   assert.doesNotMatch(none, /On the waitlist/);
+  // #4381: one short line and the button. The old two-sentence pitch and the
+  // footnote under the button are gone.
+  assert.match(none, /You’re already in your community\. The waitlist is only for your own projects\./);
+  assert.doesNotMatch(none, /suggest changes to them now/);
+  assert.doesNotMatch(none, /a few at a time/);
 
   const token = 'ab'.repeat(24);
   const listed = renderComponent(card, 'WaitlistCardBody', {

@@ -254,7 +254,7 @@ export function WaitlistCardBody({ standing, onListed }: {
     <div className="flex flex-col gap-2 p-4" data-waitlist-card="join">
       <h3 className="text-[17px] font-semibold leading-snug text-zinc-900 dark:text-zinc-100">Make and share your own apps</h3>
       <p className={BODY}>
-        You can use the apps in your communities and suggest changes to them now. To make apps of your own and share them with anyone, join the waitlist.
+        You’re already in your community. The waitlist is only for your own projects.
       </p>
       <Button
         id="home-waitlist-join"
@@ -269,7 +269,6 @@ export function WaitlistCardBody({ standing, onListed }: {
         Join the waitlist
       </Button>
       {phoneOnly ? <p role="alert" className={msgClass(error ? 'error' : null)}>{error}</p> : null}
-      <p className={`${SMALL} text-center`}>We let people in a few at a time.</p>
     </div>
   );
 }
