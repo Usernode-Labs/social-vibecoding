@@ -311,7 +311,10 @@ const BUILD_SCRIPT = [
 //    records the clone URL and is removed. Past 256 MB the mirror is dropped
 //    and the next build fetches the whole tree once.
 //  - The build. No cache upload: the store is the cache. The registry cache
-//    is imported only until the store has completed one build.
+//    is imported only until the store has completed one build. (Should that
+//    one build be served entirely from the registry cache, nothing was
+//    unpacked into the store, and the next build installs dependencies
+//    itself, once.)
 //  - A build that fails here is run once more without the store, so the
 //    store is never the reason a preview fails; if that second build passes,
 //    the store was at fault and the next build starts it empty.

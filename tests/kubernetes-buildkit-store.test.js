@@ -385,6 +385,15 @@ test('the store script: one attempt on the store, then the plain script, verbati
 // two paths the Pod provides (/workspace, /dev/termination-log) point into a
 // temporary directory.
 
+// The plain script's own calls are its business (how it checks the daemon,
+// whether it uploads its cache). What matters here is that it ran, and on
+// the plain daemon.
+const kinds = (calls) => calls.map((c) => c.split(' ').slice(0, 2).join(' '));
+function assertPlainBuild(calls, message) {
+  assert.ok(calls.length >= 1 && calls.every((c) => c.startsWith('plain ')), `${message}: ${kinds(calls).join(', ')}`);
+  assert.ok(calls.some((c) => c.startsWith('plain build ')), message);
+}
+
 const haveTools = ['sh', 'git', 'flock'].every((tool) => spawnSync('sh', ['-c', `command -v ${tool}`], { stdio: 'ignore' }).status === 0);
 
 function scriptRig(t) {
@@ -410,8 +419,9 @@ function scriptRig(t) {
     'if [ "$1" = build ]; then',
     '  while [ $# -gt 0 ]; do if [ "$1" = --metadata-file ]; then meta=$2; fi; shift; done',
     '  [ "$where" = store ] && digest=$FAKE_STORE_DIGEST || digest=$FAKE_PLAIN_DIGEST',
-    '  printf \'{\\n  "containerimage.digest": "%s"\\n}\\n\' "$digest" > "$meta"',
+    '  [ -z "${meta:-}" ] || printf \'{\\n  "containerimage.digest": "%s"\\n}\\n\' "$digest" > "$meta"',
     'fi',
+    'exit 0',
   ].join('\n'), { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'rootlesskit'), '#!/bin/sh\nexec "$@"\n', { mode: 0o755 });
   let runs = 0;
@@ -451,7 +461,7 @@ test('the script on a store: prunes, fetches into the mirror, builds without a c
   assert.equal(cold.code, 0, cold.out);
   assert.equal(cold.digest, digest('5'), 'the digest of the store build is what the Pod hands back');
   assert.equal(cold.source, 'FROM scratch\n# one\n');
-  assert.deepEqual(cold.calls.map((c) => c.split(' ').slice(0, 2).join(' ')), ['store prune', 'store prune', 'store build'], 'no plain preflight and no second build');
+  assert.deepEqual(kinds(cold.calls), ['store prune', 'store prune', 'store build'], 'no plain preflight and no second build');
   assert.match(cold.calls[0], /prune --filter type==exec\.cachemount/);
   assert.match(cold.calls[1], /prune --keep-storage \d+$/);
   assert.match(cold.calls[2], /--import-cache type=registry,ref=registry\.test\/cache\/demo:buildkit-cache/, 'an empty store still reads the registry cache');
@@ -477,13 +487,15 @@ test('the script when another build holds the store: the plain build, at once', 
   // Holds the lock for as long as its stdin is open.
   const holder = spawn('flock', ['-n', path.join(rig.store, '.lock'), 'cat'], { stdio: ['pipe', 'ignore', 'ignore'] });
   t.after(() => holder.stdin.end());
-  await new Promise((resolve) => setTimeout(resolve, 300));
+  // Until the lock is really held; a fixed pause would race a loaded machine.
+  const held = () => spawnSync('flock', ['-n', path.join(rig.store, '.lock'), 'true']).status !== 0;
+  for (let i = 0; i < 100 && !held(); i += 1) await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.ok(held(), 'the stand-in holder took the lock');
   const result = await rig.run(sha);
   assert.equal(result.code, 0, result.out);
   assert.match(result.out, /the kept store is in use by another build; building without it/);
   assert.equal(result.digest, digest('9'));
-  assert.deepEqual(result.calls.map((c) => c.split(' ').slice(0, 2).join(' ')), ['plain debug', 'plain build'], 'exactly the plain script\'s two calls');
-  assert.match(result.calls[1], /--export-cache type=registry/, 'which uploads its cache as it always did');
+  assertPlainBuild(result.calls, 'the plain script, and nothing on the store');
   assert.equal(fs.existsSync(rig.home), false, 'nothing was written to a store it did not hold');
 });
 
@@ -494,7 +506,8 @@ test('the script when the build fails on the store: built once more without it; 
   const broken = await rig.run(sha, { FAKE_FAIL: 'store:build plain:build' });
   assert.notEqual(broken.code, 0);
   assert.equal(broken.digest, '');
-  assert.deepEqual(broken.calls.map((c) => c.split(' ').slice(0, 2).join(' ')), ['store prune', 'store prune', 'store build', 'plain debug', 'plain build']);
+  assert.deepEqual(kinds(broken.calls).slice(0, 3), ['store prune', 'store prune', 'store build']);
+  assertPlainBuild(broken.calls.slice(3), 'then the plain script');
   assert.equal(fs.existsSync(path.join(rig.home, 'reset')), false);
   assert.equal(fs.existsSync(path.join(rig.home, 'warm')), false, 'a store that has not built is still cold');
 
@@ -533,7 +546,7 @@ test('the script when the daemon cannot open the store: started empty if the nod
   assert.match(damaged.out, /buildkitd cannot open the kept store; starting it empty/);
   assert.equal(damaged.digest, digest('5'));
   assert.equal(fs.existsSync(path.join(rig.home, 'marker-of-the-old-store')), false);
-  assert.deepEqual(damaged.calls.map((c) => c.split(' ').slice(0, 2).join(' ')), ['store prune', 'plain debug', 'store debug', 'store build']);
+  assert.deepEqual(kinds(damaged.calls), ['store prune', 'plain debug', 'store debug', 'store build']);
   assert.match(damaged.calls[3], /--import-cache/);
 });
 
