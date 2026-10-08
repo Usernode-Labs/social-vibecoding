@@ -312,3 +312,50 @@ test('a batch never outgrows the NOTIFY budget, and an oversize item still nudge
   assert.deepEqual(items.map((item) => (item.o ? 'nudge' : item.d.n)), [0, 1, 2, 3, 4, 5, 6, 'nudge']);
   assert.deepEqual(items[7].r, { sessionId: 9 }, 'the nudge keeps its audience');
 });
+
+// ── A process with no sockets: the workflow worker ────────────────────
+
+test('a publisher-only process publishes without ever listening', () => {
+  const pool = fakePool();
+  bus.startPublisher({ pool });
+  try {
+    bus.publish('global', null, { type: 'app_status' });
+    assert.equal(pool.calls.length, 1);
+    assert.equal(bus._peers.listenerSince, 0, 'it never listens, so it never counts itself alone');
+  } finally {
+    bus.startPublisher({ pool: null });
+  }
+});
+
+test('issue-cache changes cross to the other instances, and a receiver does not publish them again', () => {
+  const github = require('../src/services/github');
+  const pool = fakePool();
+  bus.startPublisher({ pool });
+  try {
+    assert.equal(github.noteIssuesClosed('Org', 'Repo', [5, 6]), 2);
+    github.invalidateIssuesCache('Org', 'Repo');
+    github.unsuppressIssues('Org', 'Repo', [6]);
+    const sent = pool.calls.map((c) => JSON.parse(c.params[1]));
+    assert.deepEqual(sent.map((e) => e.k), ['github_issues', 'github_issues', 'github_issues']);
+    assert.deepEqual(sent.map((e) => e.d), [
+      { owner: 'Org', repo: 'Repo', closed: [5, 6], ttlMs: 10 * 60 * 1000 },
+      { owner: 'Org', repo: 'Repo', invalidate: true },
+      { owner: 'Org', repo: 'Repo', unsuppress: [6] },
+    ]);
+    pool.calls.length = 0;
+    // What another instance does with the first one: record it here only.
+    github.applyIssueChange({ owner: 'Other', repo: 'Repo', closed: [9] });
+    assert.equal(pool.calls.length, 0, 'applied without publishing');
+    bus.startPublisher({ pool: null });
+    assert.equal(github.unsuppressIssues('Other', 'Repo', [9]), 1, 'the closed issue was recorded');
+  } finally {
+    bus.startPublisher({ pool: null });
+  }
+});
+
+test('the bus handler hands issue changes and turn stops to their local halves', () => {
+  const at = WS_SRC.indexOf('function _onBusMessage(');
+  const body = WS_SRC.slice(at, WS_SRC.indexOf('\n}', at));
+  assert.match(body, /case 'github_issues':[\s\S]*?applyIssueChange\(data\)/);
+  assert.match(body, /case 'worker_stop':[\s\S]*?notePendingStop\(data\?\.sessionId, data\?\.at\)/);
+});

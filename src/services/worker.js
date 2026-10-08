@@ -4195,7 +4195,12 @@ async function _consumeJournal(containerName, journal, progress, state, { sessio
 async function stopTurn(sessionId, { force = false } = {}) {
   const meta = _registryGet(sessionId);
   const containerName = meta?.containerName || workerRuntimeName(sessionId);
-  _registryUpsert(sessionId, { stopRequestedAt: Date.now() });
+  const at = Date.now();
+  _registryUpsert(sessionId, { stopRequestedAt: at });
+  // The turn may be running in another platform process: another web Pod,
+  // or a web Pod when the workflow worker stops a build after a merge. That
+  // process records the pending stop too (notePendingStop, through ws.js).
+  require('./ws-bus').publish('worker_stop', null, { sessionId: Number(sessionId), at });
   const command = execWorkerCommand(containerName, ['sh', '-c',
     buildTurnStopScript(meta?.journal || null, { force }),
   ], null, { timeoutMs: force ? 5000 : 30000 });
@@ -4225,6 +4230,15 @@ function clearPendingStop(sessionId) {
   const sid = Number(sessionId);
   if (!_warmRegistry.has(sid)) return;
   _registryUpsert(sid, { stopRequestedAt: null });
+}
+
+// Another process stopped a turn (stopTurn there). If this process runs
+// it, the stop is pending here too; a process that does not run it records
+// nothing, so a stop never outlives a turn it did not reach.
+function notePendingStop(sessionId, at) {
+  const sid = Number(sessionId);
+  if (!_warmRegistry.has(sid)) return;
+  _registryUpsert(sid, { stopRequestedAt: Number(at) || Date.now() });
 }
 
 // Epoch ms of the pending stop for this session, or null when none is
@@ -5059,6 +5073,7 @@ module.exports = {
   isRetryableBootstrapError,
   execInWorker,
   stopTurn,
+  notePendingStop,
   // #937: pending-stop record (survives the dispatch it guards)
   clearPendingStop,
   getPendingStop,

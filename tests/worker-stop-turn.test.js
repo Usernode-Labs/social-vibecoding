@@ -665,3 +665,23 @@ test('immediate stop errors reach the caller, and its remote command has a short
     assert.doesNotMatch(calls[0].args[4], /kill -TERM/);
   } finally { restore(); }
 });
+
+test('a stop is published, and another process records it only for a turn it runs', async () => {
+  const bus = require('../src/services/ws-bus');
+  const sent = [];
+  bus.startPublisher({ pool: { query: (sql, params) => { sent.push(JSON.parse(params[1])); return Promise.resolve({ rows: [] }); } } });
+  const { worker, restore } = loadWorker();
+  try {
+    await worker.stopTurn(8200);
+    assert.deepEqual(sent.filter((e) => e.k === 'worker_stop').map((e) => e.d.sessionId), [8200]);
+    // On another process (notePendingStop, from the bus): it runs 8201's turn.
+    warmSession(worker, 8201);
+    worker.notePendingStop(8201, 1234);
+    worker.notePendingStop(8202, 1234);
+    assert.equal(worker.getPendingStop(8201), 1234);
+    assert.equal(worker.warmRegistrySnapshot().find((e) => e.sessionId === 8202), undefined, 'no phantom entry');
+  } finally {
+    restore();
+    bus.startPublisher({ pool: null });
+  }
+});

@@ -439,6 +439,18 @@ function start({ pool, connectionString, onMessage, onListening }) {
   _connect();
 }
 
+/**
+ * Publish only, for a process that holds no sockets (the workflow worker).
+ * It never listens, so it never counts itself alone and always publishes.
+ */
+function startPublisher({ pool }) {
+  _pool = pool || null;
+  _connectionString = null;
+  _onMessage = null;
+  _onListening = null;
+  _stopped = false;
+}
+
 async function stop() {
   flushBatches();
   _stopped = true;
@@ -454,7 +466,7 @@ async function stop() {
 }
 
 module.exports = {
-  start, stop, publish, publishBatched, flushBatches,
+  start, startPublisher, stop, publish, publishBatched, flushBatches,
   CHANNEL, MAX_PAYLOAD_BYTES, INSTANCE_ID,
   BATCH_WINDOW_MS, PEER_HELLO_MS, PEER_TTL_MS, PEER_POLL_MS,
   _isAlone,

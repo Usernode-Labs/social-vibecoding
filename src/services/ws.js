@@ -75,6 +75,16 @@ function _onBusMessage({ kind, routing, data, oversize }) {
       if (!oversize) void require('./mayor/agent-turn').receiveStopRequest(_pool, payload)
         .catch(() => log.warn('ws', 'Agent stop notification will retry from durable state'));
       return;
+    case 'github_issues':
+      // Not a socket event: another process recorded issues closed or
+      // expired a repository's issue list (github.js applyIssueChange).
+      if (!oversize) require('./github').applyIssueChange(data);
+      return;
+    case 'worker_stop':
+      // Not a socket event: another process stopped a turn this one may
+      // be running (worker.js notePendingStop).
+      if (!oversize) require('./worker').notePendingStop(data?.sessionId, data?.at);
+      return;
     case 'homeroom_bot':
       // Not a socket event at all: the Homeroom bot's loop runs on one Pod
       // and an issue event can land on any, so the wake rides this bus.
@@ -243,6 +253,15 @@ function admitSocketFrame(client, msg, now = Date.now()) {
     if (client.ws && client.ws.readyState === 1) client.ws.send(JSON.stringify(frame));
   } catch { /* a closed socket has nobody to tell */ }
   return false;
+}
+
+// A process with no sockets of its own (the workflow worker, workflow-worker.js):
+// what it broadcasts is published for the web Pods to deliver, and it listens
+// to nothing. The pool is the one attach() would capture, which the session
+// event routing and the scoped broadcasts read.
+function startPublisher(config) {
+  _pool = getPool(config);
+  wsBus.startPublisher({ pool: _pool });
 }
 
 function attach(server, config) {
@@ -2305,4 +2324,4 @@ function pushConversationEvent(memberUserIds, payload, { excludeUserId = null } 
 
 const pushNotificationToUser = pushToUser;
 
-module.exports = { connectedUserIds, disconnectUser, attach, broadcast, _onBusMessage, _onBusListening, broadcastGlobal, broadcastSessionEvent, sessionEventAudience, canWatchSessionRow, SESSION_FANOUT_EVENTS, MAX_WATCHED_SESSIONS_PER_SOCKET, SLOW_CLIENT_MAX_BUFFERED, SLOW_CLIENT_RESUME_BUFFERED, _checkLaggingClients: checkLaggingClients, _sessionMetaCache: sessionMetaCache, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, sendBotMessage, sendFirstVersionMessage, getOnlineUsers, pushAppStatusUpdate, pushAppCreationPhase, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushWorkshopUpdate, onBoardChange, pushToUser, pushConversationEvent, pushNotificationToUser, pushPlatformVersion, getReactionsForMessages, validateThread, handleMessage, admitSocketFrame, SOCKET_RATE_BUDGETS, SOCKET_RATE_WINDOW_MS, MAX_CHAT_LEN };
+module.exports = { connectedUserIds, disconnectUser, attach, startPublisher, broadcast, _onBusMessage, _onBusListening, broadcastGlobal, broadcastSessionEvent, sessionEventAudience, canWatchSessionRow, SESSION_FANOUT_EVENTS, MAX_WATCHED_SESSIONS_PER_SOCKET, SLOW_CLIENT_MAX_BUFFERED, SLOW_CLIENT_RESUME_BUFFERED, _checkLaggingClients: checkLaggingClients, _sessionMetaCache: sessionMetaCache, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, sendBotMessage, sendFirstVersionMessage, getOnlineUsers, pushAppStatusUpdate, pushAppCreationPhase, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushWorkshopUpdate, onBoardChange, pushToUser, pushConversationEvent, pushNotificationToUser, pushPlatformVersion, getReactionsForMessages, validateThread, handleMessage, admitSocketFrame, SOCKET_RATE_BUDGETS, SOCKET_RATE_WINDOW_MS, MAX_CHAT_LEN };

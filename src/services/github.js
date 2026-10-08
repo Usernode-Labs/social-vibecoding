@@ -1,5 +1,6 @@
 const log = require('./logger');
 const budget = require('./github-budget');
+const wsBus = require('./ws-bus');
 
 let App;
 let app;
@@ -160,6 +161,23 @@ const ISSUE_COMMENT_BODY_MAX = 2000;  // per-comment body clip
 // Map<normalized "owner/repo", Map<issueNumber, expiresAtMs>>.
 const closedIssueSuppressions = new Map();
 const ISSUES_CLOSED_SUPPRESS_TTL_MS = 10 * 60 * 1000;
+
+// The cache and the suppressions are per process, and an issue can be
+// recorded closed by a process that serves no page (the workflow worker,
+// after a merge) or by another web Pod. So noteIssuesClosed,
+// unsuppressIssues and invalidateIssuesCache apply the change here and
+// publish it on the WebSocket bus (ws-bus.js); every other process applies
+// it without publishing again (applyIssueChange, from ws.js).
+function shareIssueChange(change) {
+  wsBus.publish('github_issues', null, change);
+}
+
+function applyIssueChange(change) {
+  const { owner, repo, closed, unsuppress, invalidate, ttlMs } = change || {};
+  if (Array.isArray(closed)) noteIssuesClosedHere(owner, repo, closed, Number(ttlMs) || ISSUES_CLOSED_SUPPRESS_TTL_MS);
+  if (Array.isArray(unsuppress)) unsuppressIssuesHere(owner, repo, unsuppress);
+  if (invalidate) invalidateIssuesCacheHere(owner, repo);
+}
 
 // #192: recently-created overlay — the create-side mirror of #144 above.
 // noteIssueCreated's cache seeding only helps when the repo has a LIVE
@@ -357,6 +375,12 @@ function invalidateActionsSecretsCache(owner, repo) {
 // late) and from the issue-close watcher (with observed closes).
 // Returns how many numbers were recorded.
 function noteIssuesClosed(owner, repo, numbers, ttlMs = ISSUES_CLOSED_SUPPRESS_TTL_MS) {
+  const recorded = noteIssuesClosedHere(owner, repo, numbers, ttlMs);
+  if (recorded) shareIssueChange({ owner, repo, closed: numbers, ttlMs });
+  return recorded;
+}
+
+function noteIssuesClosedHere(owner, repo, numbers, ttlMs = ISSUES_CLOSED_SUPPRESS_TTL_MS) {
   if (!owner || !repo || !Array.isArray(numbers) || !numbers.length) return 0;
   const key = normRepoKey(owner, repo);
   let entry = closedIssueSuppressions.get(key);
@@ -385,6 +409,12 @@ function noteIssuesClosed(owner, repo, numbers, ttlMs = ISSUES_CLOSED_SUPPRESS_T
 // so a `Closes #N` GitHub didn't honor doesn't hide a live issue for
 // the full suppression TTL. Returns how many entries were removed.
 function unsuppressIssues(owner, repo, numbers) {
+  if (!owner || !repo || !Array.isArray(numbers) || !numbers.length) return 0;
+  shareIssueChange({ owner, repo, unsuppress: numbers });
+  return unsuppressIssuesHere(owner, repo, numbers);
+}
+
+function unsuppressIssuesHere(owner, repo, numbers) {
   if (!owner || !repo || !Array.isArray(numbers) || !numbers.length) return 0;
   const entry = closedIssueSuppressions.get(normRepoKey(owner, repo));
   if (!entry) return 0;
@@ -2743,6 +2773,12 @@ function clipIssueComments(comments, { max = ISSUE_COMMENTS_KEEP, bodyMax = ISSU
 // cache entry. Returns true if an entry was expired.
 function invalidateIssuesCache(owner, repo) {
   if (!owner || !repo) return false;
+  shareIssueChange({ owner, repo, invalidate: true });
+  return invalidateIssuesCacheHere(owner, repo);
+}
+
+function invalidateIssuesCacheHere(owner, repo) {
+  if (!owner || !repo) return false;
   const target = `${owner}/${repo}`.toLowerCase();
   for (const key of issuesCache.keys()) {
     if (key.toLowerCase() === target) {
@@ -2889,6 +2925,7 @@ module.exports = {
   refreshPublicIssues,
   truncateIssueBodies,
   invalidateIssuesCache,
+  applyIssueChange,
   noteIssueCreated,
   noteIssuesClosed,
   unsuppressIssues,
