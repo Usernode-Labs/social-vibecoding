@@ -28,6 +28,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -376,6 +377,7 @@ function loadLeaderboard({ isRestoring = false, open = true, hash = '#leaderboar
   };
   ctx.window = ctx;
   vm.createContext(ctx);
+  ctx.PlatformI18n = englishPlatformI18n();
   vm.runInContext(`${LEADERBOARD.replace(/^export .*$/gm, '')}\n;globalThis.__lb = Leaderboard;`, ctx);
   const Leaderboard = ctx.__lb;
   Leaderboard._open = open;

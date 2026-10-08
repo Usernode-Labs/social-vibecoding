@@ -266,6 +266,7 @@ test('#3984: castVote and castIssueVote set the mark once the vote is committed 
 test('#3984: a notification\'s "Still yes" reads "Sending…" and its row takes no second press', () => {
   const sheet = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/notifications/notifications-sheet.tsx'), 'utf8');
   assert.match(sheet, /disabled=\{a\.key === 'still_yes' && busy\}/, 'only the vote waits; Accept, Decline and the rest do not');
-  assert.match(sheet, /\{a\.key === 'still_yes' && busy \? 'Sending…' : a\.label\}/);
+  assert.match(sheet, /\{a\.key === 'still_yes' && busy \? t\('notifications:row\.sending'\) : a\.label\}/);
+  assert.equal(message('notifications:row.sending'), 'Sending…');
   assert.match(sheet, /\.then\(\(\) => setBusy\(false\)\)/);
 });

@@ -49,6 +49,14 @@
  */
 
 import { createStore } from '../../lib/plain-store.js';
+import { t } from '../../lib/i18n/runtime';
+
+/** Short facts on one small line, each a whole message, joined the way the
+ *  language on screen separates them (`profile:line.factPair`). */
+function factLine(parts) {
+  const said = parts.filter(Boolean);
+  return said.length ? said.reduce((first, second) => t('profile:line.factPair', { first, second })) : null;
+}
 
 /**
  * @typedef {Object} ProfileState
@@ -100,7 +108,7 @@ export function safeHref(url) {
 export function displayNameOf(user) {
   const u = user || {};
   const name = u.displayName ? String(u.displayName).trim() : '';
-  return name || (u.username ? `@${u.username}` : 'Your profile');
+  return name || (u.username ? `@${u.username}` : t('profile:identity.fallbackName'));
 }
 
 /**
@@ -131,15 +139,15 @@ export function avatarUrlOf(state) {
  *  anything unparseable, so the caller just omits the segment. */
 export function relativeDate(iso, now = Date.now()) {
   if (!iso) return null;
-  const t = Date.parse(iso);
-  if (!Number.isFinite(t)) return null;
-  const days = Math.floor((now - t) / 86400000);
+  const at = Date.parse(iso);
+  if (!Number.isFinite(at)) return null;
+  const days = Math.floor((now - at) / 86400000);
   if (days < 0) return null;
-  if (days === 0) return 'today';
-  if (days === 1) return 'yesterday';
-  if (days < 14) return `${days} days ago`;
+  if (days === 0) return t('profile:date.today');
+  if (days === 1) return t('profile:date.yesterday');
+  if (days < 14) return t('profile:date.daysAgo', { count: days });
   try {
-    return new Date(t).toLocaleDateString();
+    return new Date(at).toLocaleDateString();
   } catch (_) {
     return null;
   }
@@ -154,7 +162,7 @@ export function breakdownRows(breakdown) {
   const rows = [];
   const pushEvent = (ev) => {
     if (!ev) return;
-    const name = (ev.event && ev.event.name) || ev.event_name || 'Event';
+    const name = (ev.event && ev.event.name) || ev.event_name || t('profile:breakdown.event');
     rows.push({ label: name, points: ev.total_points });
   };
   if (breakdown.scope === 'event') {
@@ -167,7 +175,7 @@ export function breakdownRows(breakdown) {
     }
   }
   if (Number(breakdown.offchain_points || 0) > 0) {
-    rows.push({ label: 'Bonus points', points: breakdown.offchain_points });
+    rows.push({ label: t('profile:breakdown.bonus'), points: breakdown.offchain_points });
   }
   return rows;
 }
@@ -193,11 +201,11 @@ export function verifiedSocialLinksView(profile) {
     }
   };
   if (typeof links.github === 'string' && links.github) {
-    add('github', `Verified GitHub · ${links.github}`,
+    add('github', t('profile:social.github', { handle: links.github }),
       `https://github.com/${encodeURIComponent(links.github)}`);
   }
   if (typeof links.x === 'string' && links.x) {
-    add('x', `Verified X · @${links.x}`,
+    add('x', t('profile:social.x', { handle: links.x }),
       `https://x.com/${encodeURIComponent(links.x)}`);
   }
   return rows;
@@ -205,10 +213,12 @@ export function verifiedSocialLinksView(profile) {
 
 /** "Building since March 2026" — the prototype card's second line. */
 export function memberSinceLabel(iso) {
-  const t = Date.parse(iso || '');
-  if (!Number.isFinite(t)) return null;
+  const at = Date.parse(iso || '');
+  if (!Number.isFinite(at)) return null;
   try {
-    return `Building since ${new Date(t).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}`;
+    return t('profile:identity.buildingSince', {
+      date: new Date(at).toLocaleDateString(undefined, { month: 'long', year: 'numeric' }),
+    });
   } catch (_) {
     return null;
   }
@@ -233,13 +243,13 @@ export function identityView(state) {
   const since = summary ? memberSinceLabel(summary.memberSince) : null;
   if (since) facts.push(since);
   const apps = summary ? Number(summary.apps) || 0 : 0;
-  if (apps > 0) facts.push(`${apps} app${apps === 1 ? '' : 's'}`);
+  if (apps > 0) facts.push(t('profile:identity.apps', { count: apps }));
   return {
     avatarUrl: avatarUrlOf(state),
     initial: initialOf(u),
     name: displayNameOf(u),
     handle,
-    sub: facts.length ? facts.join(' · ') : null,
+    sub: factLine(facts),
     bio: u.bio || null,
     chips: verifiedSocialLinksView(u),
   };
@@ -254,12 +264,12 @@ export function statsView(summary) {
   const has = !!summary;
   const value = (n) => (has ? Number(n || 0).toLocaleString() : '–');
   return [
-    { key: 'merged', value: value(summary && summary.merged), label: 'live' },
-    { key: 'kudos', value: value(summary && summary.kudos), label: 'kudos' },
+    { key: 'merged', value: value(summary && summary.merged), label: t('profile:stats.live') },
+    { key: 'kudos', value: value(summary && summary.kudos), label: t('profile:stats.kudos') },
     {
       key: 'challenges',
       value: value(summary && summary.challenges && summary.challenges.done),
-      label: 'challenges',
+      label: t('profile:stats.challenges'),
     },
   ];
 }
@@ -277,14 +287,16 @@ export function moreRowsView(data) {
   const seasonName = r.season_name || (summary && summary.challenges && summary.challenges.season
     && summary.challenges.season.name) || null;
   if (seasonName) challenges.push(seasonName);
-  if (r.rank) challenges.push(`rank #${Number(r.rank)}`);
+  if (r.rank) challenges.push(t('profile:more.challenges.rank', { rank: Number(r.rank) }));
   if (summary && summary.challenges && Number(summary.challenges.total) > 0) {
-    challenges.push(`${Number(summary.challenges.done || 0)} of ${Number(summary.challenges.total)} done`);
+    challenges.push(t('profile:more.challenges.done', {
+      done: Number(summary.challenges.done || 0), count: Number(summary.challenges.total),
+    }));
   }
   const kudos = summary ? Number(summary.kudos) || 0 : null;
   return {
-    challenges: challenges.length ? challenges.join(' · ') : null,
-    kudos: kudos == null ? null : `${kudos.toLocaleString()} received`,
+    challenges: factLine(challenges),
+    kudos: kudos == null ? null : t('profile:more.kudos.received', { count: kudos, number: kudos.toLocaleString() }),
     changes: changesLine(summary),
     requests: requestsLine(d.requests),
     votes: votesLine(d.votes),
@@ -306,9 +318,9 @@ function changesLine(summary) {
   const parts = [];
   const merged = Number(summary.merged) || 0;
   const underway = Number(summary.inProgress) || 0;
-  if (merged) parts.push(`${merged.toLocaleString()} live`);
-  if (underway) parts.push(`${underway.toLocaleString()} in progress`);
-  return parts.length ? parts.join(' · ') : null;
+  if (merged) parts.push(t('profile:work.changes.live', { count: merged, number: merged.toLocaleString() }));
+  if (underway) parts.push(t('profile:work.changes.inProgress', { count: underway, number: underway.toLocaleString() }));
+  return factLine(parts);
 }
 
 /** "2 open · 1 done", from GET /api/me/requests. */
@@ -317,9 +329,9 @@ function requestsLine(requests) {
   const parts = [];
   const open = Number(requests.open) || 0;
   const done = Number(requests.done) || 0;
-  if (open) parts.push(`${open.toLocaleString()} open`);
-  if (done) parts.push(`${done.toLocaleString()} done`);
-  return parts.length ? parts.join(' · ') : null;
+  if (open) parts.push(t('profile:work.requests.open', { count: open, number: open.toLocaleString() }));
+  if (done) parts.push(t('profile:work.requests.done', { count: done, number: done.toLocaleString() }));
+  return factLine(parts);
 }
 
 /** "Latest: <what you voted on>", from GET /api/me/history?type=votes&limit=1. */
@@ -327,14 +339,14 @@ function votesLine(votes) {
   const item = votes && Array.isArray(votes.items) ? votes.items[0] : null;
   if (!item) return null;
   const title = voteTitle(item);
-  return title ? `Latest: ${title}` : null;
+  return title ? t('profile:work.votes.latest', { title }) : null;
 }
 
 /** "1 request waiting". Friends are never counted (#2386), only requests to answer. */
 function friendsLine(friends) {
   const incoming = friends && Array.isArray(friends.incoming) ? friends.incoming.length : 0;
   if (!incoming) return null;
-  return `${incoming.toLocaleString()} ${incoming === 1 ? 'request' : 'requests'} waiting`;
+  return t('profile:more.friends.waiting', { count: incoming, number: incoming.toLocaleString() });
 }
 
 /** "4 sent · 1 counted", from GET /api/feedback/mine (#3186); "4 sent" while
@@ -344,22 +356,22 @@ function friendsLine(friends) {
 function feedbackLine(feedback) {
   if (!feedback || typeof feedback !== 'object' || !Number.isFinite(Number(feedback.sent))) return null;
   const sent = Number(feedback.sent) || 0;
-  if (sent === 0) return 'Nothing sent yet';
+  if (sent === 0) return t('profile:feedback.summary.none');
   const counted = Number(feedback.counted) || 0;
   return counted
-    ? `${sent.toLocaleString()} sent · ${counted.toLocaleString()} counted`
-    : `${sent.toLocaleString()} sent`;
+    ? t('profile:feedback.summary.sentCounted', { count: sent, number: sent.toLocaleString(), counted: counted.toLocaleString() })
+    : t('profile:feedback.summary.sent', { count: sent, number: sent.toLocaleString() });
 }
 
 /** A report's status as the list says it. Two, not three: see
  *  MY_FEEDBACK_SQL in src/routes/feedback.js for why there is no "reviewed". */
 const FEEDBACK_STATUS = {
   received: {
-    label: 'Received',
+    label: 'profile:feedback.status.received',
     className: 'shrink-0 rounded-full bg-zinc-500/15 px-2 py-0.5 text-[0.7rem] font-semibold text-zinc-700 dark:text-zinc-300',
   },
   counted: {
-    label: 'Counted',
+    label: 'profile:feedback.status.counted',
     className: 'shrink-0 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[0.7rem] font-semibold text-emerald-700 dark:text-emerald-400',
   },
 };
@@ -383,19 +395,19 @@ export function feedbackListView(feedback, now = Date.now()) {
     const issue = Number(r.issueNumber);
     const slug = typeof r.appSlug === 'string' && APP_SLUG.test(r.appSlug) ? r.appSlug : null;
     const linked = !!slug && Number.isSafeInteger(issue) && issue > 0;
-    const meta = [r.appName ? String(r.appName) : (r.target === 'platform' ? 'Homeroom' : 'An app')];
-    if (linked) meta.push(`request #${issue}`);
+    const meta = [r.appName ? String(r.appName) : (r.target === 'platform' ? 'Homeroom' : t('profile:feedback.anApp'))];
+    if (linked) meta.push(t('profile:feedback.request', { number: issue }));
     const when = mergedAgo(r.createdAt, now);
-    if (when) meta.push(`sent ${when}`);
+    if (when) meta.push(t('profile:feedback.sent', { when }));
     const points = Number(r.points);
     return {
       key: String(r.id),
-      title: r.title ? String(r.title) : 'Feedback',
-      meta: meta.join(' · '),
+      title: r.title ? String(r.title) : t('profile:feedback.fallbackTitle'),
+      meta: factLine(meta),
       status,
       statusLabel: status === 'counted' && points > 0
-        ? `${FEEDBACK_STATUS.counted.label} · ${points.toLocaleString()} pts`
-        : FEEDBACK_STATUS[status].label,
+        ? t('profile:feedback.status.countedPoints', { count: points, points: points.toLocaleString() })
+        : t(FEEDBACK_STATUS[status].label),
       statusClassName: FEEDBACK_STATUS[status].className,
       href: linked ? `#app/${encodeURIComponent(slug)}/dev/issues/${issue}` : null,
     };
@@ -411,11 +423,11 @@ export function feedbackListView(feedback, now = Date.now()) {
 /** "3 days ago", or "Sep 3" (with the year once it is not this one) past a
  *  fortnight — a month and day reads in every locale, "9/3/2026" does not. */
 export function mergedAgo(iso, now = Date.now()) {
-  const t = Date.parse(iso || '');
-  if (!Number.isFinite(t)) return null;
-  const days = Math.floor((now - t) / 86400000);
+  const at = Date.parse(iso || '');
+  if (!Number.isFinite(at)) return null;
+  const days = Math.floor((now - at) / 86400000);
   if (days >= 0 && days < 14) return relativeDate(iso, now);
-  const date = new Date(t);
+  const date = new Date(at);
   const opts = date.getFullYear() === new Date(now).getFullYear()
     ? { month: 'short', day: 'numeric' }
     : { month: 'short', day: 'numeric', year: 'numeric' };
@@ -446,16 +458,16 @@ export function proposalsView(data, now = Date.now()) {
     const app = row.appName || row.appSlug;
     const when = mergedAgo(row.at, now);
     let where = when;
-    if (key === 'openForVote') where = 'waiting for approval';
-    else if (key === 'inProgress') where = 'in progress';
-    else if (key === 'closed') where = 'closed without going live';
+    if (key === 'openForVote') where = t('profile:changes.state.waiting');
+    else if (key === 'inProgress') where = t('profile:changes.state.inProgress');
+    else if (key === 'closed') where = t('profile:changes.state.closed');
     const slug = encodeURIComponent(row.appSlug);
     const id = Number(row.sessionId);
     return {
       key: String(row.sessionId),
       href: key === 'inProgress' ? `#app/${slug}/dev/sessions/${id}` : `#app/${slug}/dev/proposals/${id}`,
-      title: row.title || 'Change',
-      meta: [app, where].filter(Boolean).join(' · '),
+      title: row.title || t('profile:changes.fallbackTitle'),
+      meta: factLine([app, where]) || '',
       // The project's own icon leads the row, so one list across every
       // project still reads project by project (#3364). In app-card.js's
       // field names, which is what AppIconContent draws from.
@@ -471,9 +483,9 @@ export function proposalsView(data, now = Date.now()) {
   const underway = rowsOf('openForVote').concat(rowsOf('inProgress')).map(shape)
     .sort((x, y) => y.at - x.at);
   const sections = [
-    { key: 'inProgress', label: 'In progress', rows: underway },
-    { key: 'merged', label: 'Live', rows: rowsOf('merged').map(shape) },
-    { key: 'closed', label: 'Closed', rows: rowsOf('closed').map(shape) },
+    { key: 'inProgress', label: t('profile:changes.group.inProgress'), rows: underway },
+    { key: 'merged', label: t('profile:changes.group.live'), rows: rowsOf('merged').map(shape) },
+    { key: 'closed', label: t('profile:changes.group.closed'), rows: rowsOf('closed').map(shape) },
   ].filter((section) => section.rows.length > 0);
   return { loaded: true, sections, empty: sections.length === 0 };
 }
@@ -481,10 +493,10 @@ export function proposalsView(data, now = Date.now()) {
 /** Where a request stands, as its line says it. See MY_REQUESTS_SQL in
  *  src/routes/profile.js for what each is read from. */
 const REQUEST_STATE = {
-  waiting: 'nobody on it yet',
-  underway: 'someone is on it',
-  shipped: 'live',
-  closed: 'closed',
+  waiting: 'profile:requests.state.waiting',
+  underway: 'profile:requests.state.underway',
+  shipped: 'profile:requests.state.shipped',
+  closed: 'profile:requests.state.closed',
 };
 
 /**
@@ -502,14 +514,14 @@ export function requestsView(data) {
     return {
       key: `${r.appSlug || ''}#${r.number}`,
       href: slug ? `#app/${encodeURIComponent(slug)}/dev/issues/${Number(r.number)}` : null,
-      title: r.title ? String(r.title) : `Request #${Number(r.number)}`,
-      meta: [r.appName || 'An app', REQUEST_STATE[state]].join(' · '),
+      title: r.title ? String(r.title) : t('profile:requests.fallbackTitle', { number: Number(r.number) }),
+      meta: factLine([r.appName || t('profile:requests.anApp'), t(REQUEST_STATE[state])]),
       done: state === 'shipped' || state === 'closed',
     };
   });
   const sections = [
-    { key: 'open', label: 'Open', rows: rows.filter((r) => !r.done) },
-    { key: 'done', label: 'Done', rows: rows.filter((r) => r.done) },
+    { key: 'open', label: t('profile:requests.group.open'), rows: rows.filter((r) => !r.done) },
+    { key: 'done', label: t('profile:requests.group.done'), rows: rows.filter((r) => r.done) },
   ].filter((section) => section.rows.length > 0);
   return { loaded: true, sections, empty: sections.length === 0, truncated: !!data.truncated };
 }
@@ -518,10 +530,11 @@ export function requestsView(data) {
 function voteTitle(item) {
   if (item.type === 'pr_vote') {
     const pr = item.pr || {};
-    return pr.title ? String(pr.title) : (pr.number ? `Change #${Number(pr.number)}` : 'A change');
+    return pr.title ? String(pr.title)
+      : (pr.number ? t('profile:votes.title.change', { number: Number(pr.number) }) : t('profile:votes.title.aChange'));
   }
   const issue = item.issue || {};
-  return issue.title ? String(issue.title) : 'A group decision';
+  return issue.title ? String(issue.title) : t('profile:votes.title.decision');
 }
 
 /** Whether the thing voted on is still being decided. */
@@ -533,12 +546,12 @@ function voteOpen(item) {
 /** How it was decided, once it was. */
 function voteOutcome(item) {
   if (item.type === 'pr_vote') {
-    if (item.status === 'merged') return 'live';
+    if (item.status === 'merged') return t('profile:votes.outcome.live');
     // Merged, its deploy still to come (api/me/history).
-    if (item.status === 'going_live') return 'going live';
-    return 'closed';
+    if (item.status === 'going_live') return t('profile:votes.outcome.goingLive');
+    return t('profile:votes.outcome.closed');
   }
-  return 'decided';
+  return t('profile:votes.outcome.decided');
 }
 
 /**
@@ -558,8 +571,8 @@ export function votesView(data) {
       const slug = typeof app.slug === 'string' && APP_SLUG.test(app.slug) ? app.slug : null;
       const open = voteOpen(item);
       const vote = item.vote === 'yes' || item.vote === 'no' ? item.vote : null;
-      const meta = [app.name || app.slug || 'An app'];
-      if (vote) meta.push(`you voted ${vote}`);
+      const meta = [app.name || app.slug || t('profile:votes.anApp')];
+      if (vote) meta.push(vote === 'yes' ? t('profile:votes.votedYes') : t('profile:votes.votedNo'));
       if (!open) meta.push(voteOutcome(item));
       let href = null;
       if (slug && item.type === 'pr_vote' && Number(item.pr && item.pr.sessionId) > 0) {
@@ -571,13 +584,13 @@ export function votesView(data) {
         key: `${item.type}:${(item.pr && item.pr.sessionId) || (item.issue && (item.issue.id || item.issue.number)) || index}`,
         href,
         title: voteTitle(item),
-        meta: meta.join(' · '),
+        meta: factLine(meta),
         open,
       };
     });
   const sections = [
-    { key: 'open', label: 'Still open', rows: rows.filter((r) => r.open) },
-    { key: 'decided', label: 'Decided', rows: rows.filter((r) => !r.open) },
+    { key: 'open', label: t('profile:votes.group.open'), rows: rows.filter((r) => r.open) },
+    { key: 'decided', label: t('profile:votes.group.decided'), rows: rows.filter((r) => !r.open) },
   ].filter((section) => section.rows.length > 0);
   return { loaded: true, sections, empty: sections.length === 0, more: !!data.nextBefore };
 }
@@ -594,10 +607,10 @@ export function publicControlsView(state) {
     // #2787: the second line of the sheet's "Public profile" switch row, so it
     // says what the state MEANS rather than a bare "Published"/"Private".
     visibility: owner.moderationDisabled
-      ? 'Hidden by moderation'
+      ? t('profile:edit.public.hidden')
       : owner.published
-        ? 'On: anyone with the link can view it, no account needed'
-        : 'Off: your profile has no public link',
+        ? t('profile:edit.public.on')
+        : t('profile:edit.public.off'),
     visibilityClass: owner.moderationDisabled
       ? 'text-red-700 dark:text-red-400'
       : owner.published
@@ -621,10 +634,10 @@ export function publicAvatarView(profile) {
 
 /** "March 2026" — how long two people have been friends. */
 function monthYear(iso) {
-  const t = Date.parse(iso || '');
-  if (!Number.isFinite(t)) return null;
+  const at = Date.parse(iso || '');
+  if (!Number.isFinite(at)) return null;
   try {
-    return new Date(t).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+    return new Date(at).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
   } catch (_) {
     return null;
   }
@@ -669,15 +682,15 @@ export function friendsView(lists, now = Date.now()) {
       // Short, because the row also carries Accept and Decline: on a phone
       // the name and this line share what the two buttons leave.
       const when = mergedAgo(p.requestedAt, now);
-      return row(p, when ? `Asked ${when}` : 'Asked to be friends');
+      return row(p, when ? t('profile:friends.asked', { when }) : t('profile:friends.askedUndated'));
     }),
     friends: people(lists.friends).map((p) => {
       const since = monthYear(p.since);
-      return row(p, since ? `Friends since ${since}` : 'Friends');
+      return row(p, since ? t('profile:friends.since', { date: since }) : t('profile:friends.sinceUndated'));
     }),
     outgoing: people(Array.isArray(lists.outgoing) ? lists.outgoing : []).map((p) => {
       const when = mergedAgo(p.requestedAt, now);
-      return row(p, when ? `Requested ${when}` : 'Requested');
+      return row(p, when ? t('profile:friends.requested', { when }) : t('profile:friends.requestedUndated'));
     }),
   };
 }

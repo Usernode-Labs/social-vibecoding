@@ -22,6 +22,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx } = require('./lib/render-tsx');
@@ -301,7 +302,9 @@ test('an agent session\'s finished run opens the conversation from the bell and 
   // #3181: a change that stopped before finishing opens the same place.
   assert.match(client, /const sessionTurnEnd = item\.kind === 'session_done' \|\| item\.kind === 'session_stalled';/);
   assert.match(client, /sessionTurnEnd && item\.agentSessionId[\s\S]{0,200}#messages\/agent\//);
-  assert.match(client, /n\.agentSessionId \? 'The coding agent finished' : 'Session finished'/);
+  assert.match(client, /n\.agentSessionId \? t\('notifications:row\.session\.agentFinished'\) : t\('notifications:row\.session\.finished'\)/);
+  assert.deepEqual([message('notifications:row.session.agentFinished'), message('notifications:row.session.finished')],
+    ['The coding agent finished', 'Session finished']);
   assert.match(read('public/js/dev-alerts.js'), /if \(info && info\.agentSessionId\) return `#messages\/agent\/\$\{info\.agentSessionId\}`;/);
   assert.equal(typeof require('../src/services/session-bus').subscriberCount, 'function');
 });

@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -24,6 +25,7 @@ const notificationsSource = fs.readFileSync(
 // module graph.
 function runNotifications(sandbox) {
   sandbox.agoStamp = agoStamp;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.runInContext(notificationsSource, sandbox);
 }
 const settingsSource = fs.readFileSync(

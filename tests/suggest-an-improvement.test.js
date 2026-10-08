@@ -78,8 +78,10 @@ test('every door to filing a request says Suggest an improvement', () => {
   assert.match(row, /: t\('project:menu\.button\.manage'\);/, 'and the ⋯ says so to a screen reader');
   assert.equal(message('project:menu.button.manage'), 'Suggest an improvement, import a PR or manage this app');
   const mine = read('frontend/src/features/profile/my-proposals.tsx');
-  assert.match(mine, /data-profile-work-ask=""[\s\S]{0,200}>\s*Suggest an improvement\s*<\/Button>/, 'Your requests ends on it');
-  assert.match(mine, /requests: 'You have not suggested an improvement yet\.'/, 'and says so when it is empty');
+  assert.match(mine, /data-profile-work-ask=""[\s\S]{0,200}>\s*\{t\('profile:work\.requests\.suggest'\)\}\s*<\/Button>/);
+  assert.equal(message('profile:work.requests.suggest'), 'Suggest an improvement', 'Your requests ends on it');
+  assert.match(mine, /requests: 'profile:work\.requests\.empty'/);
+  assert.equal(message('profile:work.requests.empty'), 'You have not suggested an improvement yet.', 'and says so when it is empty');
   assert.match(read('frontend/src/features/home/tour/tour-steps.ts'),
     /id: 'menu-actions',\s*title: 'onboarding:tour\.step\.menuActions\.title',/, 'the tour names the button by its words');
   assert.equal(require('./lib/platform-i18n').message('onboarding:tour.step.menuActions.title'), 'Suggest an improvement');

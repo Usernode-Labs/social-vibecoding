@@ -256,12 +256,16 @@ test('both shot checks survive the manifest reader', () => {
 test('the Kudos-tab subtitle reads the cap from the budget', () => {
   assert.doesNotMatch(lbJs, /'5 kudos per week/);
   assert.match(lbJs, /window\.Kudos\?\.Budget\?\.state\?\.limit \|\| 20/);
-  assert.match(lbJs, /kudos per week, resets \$\{/);
-  assert.match(lbJs, /window\.ResetTime\.resetWhen\('weekly'\) : 'Monday 00:00 UTC'/,
-    '#3230: in the viewer\u2019s own clock where ResetTime is loaded');
+  assert.match(lbJs, /PlatformI18n\.t\('leaderboard:kudos\.subtitle',\s*\{ count: Number\(window\.Kudos\?\.Budget\?\.state\?\.limit \|\| 20\), when: window\.ResetTime\.resetWhen\('weekly'\) \}\)/,
+    '#3230: in the viewer’s own clock where ResetTime is loaded');
+  assert.match(lbJs, /: PlatformI18n\.t\('leaderboard:kudos\.subtitleUtc', \{ count: Number\(window\.Kudos\?\.Budget\?\.state\?\.limit \|\| 20\) \}\)/);
+  assert.equal(message('leaderboard:kudos.subtitle', { count: 20, when: 'Sunday at 8:00 PM' }),
+    '20 kudos per week, resets Sunday at 8:00 PM. Give them to changes you appreciate.');
+  assert.equal(message('leaderboard:kudos.subtitleUtc', { count: 20 }),
+    '20 kudos per week, resets Monday 00:00 UTC. Give them to changes you appreciate.');
   // The newcomer's word (first-session run-through, 4 Oct 2026): a change,
   // not a PR.
-  assert.match(lbJs, /Give them to changes you appreciate\./);
+  assert.match(message('leaderboard:kudos.subtitle', { count: 20, when: 'Monday' }), /Give them to changes you appreciate\.$/);
   assert.doesNotMatch(lbJs, /PRs you appreciate/);
 });
 

@@ -26,6 +26,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx } = require('./lib/render-tsx');
@@ -123,7 +124,10 @@ test('app-view.js keeps a kudos spec in the folded list and draws it through the
 });
 
 test('kudos.js: the line\'s tail is its own span and the whole line is the button\'s name', () => {
-  assert.match(KUDOS, /<span class="dev-thanks-label">Thank \$\{escapeHtml\(thanks\)\}<span class="dev-thanks-tail"> for putting this up<\/span><\/span>/);
+  // One catalog message holds the line; its numbered tag is the tail's span.
+  assert.match(KUDOS, /<span class="dev-thanks-label">\$\{htmlRich\('leaderboard:kudos\.button\.thankFace', \{ username: thanks \}, \[\(tail\) => `<span class="dev-thanks-tail">\$\{tail\}<\/span>`\]\)\}<\/span>/);
+  assert.equal(message('leaderboard:kudos.button.thankFace', { username: 'ada' }), 'Thank ada<0> for putting this up</0>');
+  assert.equal(message('leaderboard:kudos.button.thank', { username: 'ada' }), 'Thank ada for putting this up');
   assert.match(KUDOS, /\$\{thanks \? ` aria-label="\$\{escapeAttr\(line\)\}" title="\$\{escapeAttr\(line\)\}"` : tipAttr\}/);
 });
 

@@ -17,6 +17,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createElement, loadTsx, renderToHtml } = require('./lib/render-tsx');
@@ -36,15 +37,21 @@ test('Q34: the API key note has a space either side of the spend-limits link', (
 test('Q32c: the standings line reads "done · View challenges", spaced both sides', () => {
   const src = read('frontend/src/features/leaderboard/topochain-standings.tsx');
   const line = src.slice(src.indexOf('function ChallengeLine('), src.indexOf('function Cell('));
-  assert.match(line, /`\$\{line\.done\} of \$\{line\.total\} challenges done `/, 'the space before the dot');
-  assert.match(line, /<span className="text-zinc-500 dark:text-zinc-500">\{'· '\}<\/span>\s*(\{\/\*[\s\S]*?\*\/\}\s*)?<button/,
-    'and the space after it, inside the dot\'s own span');
+  // The whole line is one catalog message: the tally, the dot in its own
+  // span (tag 0) and the link (tag 1).
+  assert.match(line, /id=\{line\.done == null \? 'leaderboard:standings\.viewChallenges' : 'leaderboard:standings\.challengesDone'\}/);
+  assert.equal(message('leaderboard:standings.challengesDone', { done: 3, count: 9 }),
+    '3 of 9 challenges done <0>· </0><1>View challenges →</1>', 'the space before the dot, and the one after it inside the dot\'s own span');
+  assert.equal(message('leaderboard:standings.viewChallenges'), '<0>· </0><1>View challenges →</1>');
+  assert.match(line, /components=\{\[\s*<span className="text-zinc-500 dark:text-zinc-500" \/>,\s*<button/,
+    'the dot\'s own span, then the button');
 });
 
 test('Q32c: My history names a proposal\'s kind in words, never the column value', () => {
   const had = Object.prototype.hasOwnProperty.call(global, 'window');
   const saved = global.window;
   global.window = {};
+  global.PlatformI18n = englishPlatformI18n();
   try {
     loadTsx('frontend/src/features/leaderboard/leaderboard.js');
     const { Leaderboard } = global.window;
@@ -97,7 +104,9 @@ test('Q30f: invites scroll with the sheet and fold past three behind "Show N mor
   const src = read('frontend/src/features/notifications/notifications-list.tsx');
   assert.match(src, /<div id="notifications-invites" className="shrink-0">/,
     'no scroller of its own inside the sheet\'s scroller (it was overflow-y-auto max-h-48)');
-  assert.match(src, /\{`Show \$\{hiddenInvites\} more \$\{hiddenInvites === 1 \? 'invite' : 'invites'\}`\}/);
+  assert.match(src, /\{t\('notifications:invite\.showMore', \{ count: hiddenInvites \}\)\}/);
+  assert.equal(message('notifications:invite.showMore', { count: 1 }), 'Show 1 more invite');
+  assert.equal(message('notifications:invite.showMore', { count: 3 }), 'Show 3 more invites');
   assert.match(src, /const \[invitesOpen, setInvitesOpen\] = useState\(false\);/);
 });
 

@@ -991,18 +991,6 @@
     "text": "{{done}} of {{total}} · {{points}} pts left",
     "description": "Summary of Home's Challenges block: {{done}} challenges completed out of {{total}}, and {{points}} points still to be earned, already formatted (\"1,500\"). {{count}} is the same number of points, for the plural."
   },
-  "challenges.season.done": {
-    "text": "done",
-    "description": "Follows a count such as \"3/12\" at the top of Home's Challenges section, and completes the screen-reader phrase \"3 of 12 done\": that many challenges are completed. Lower case because it follows the numbers."
-  },
-  "challenges.season.doneIn": {
-    "text": "done in {{season}}",
-    "description": "Follows a count such as \"3/12\" at the top of Home's Challenges section, and completes the screen-reader phrase \"3 of 12 done in …\". {{season}} is the season's name. Lower case because it follows the numbers."
-  },
-  "challenges.season.doneInFirst": {
-    "text": "done in First challenges",
-    "description": "Follows a count such as \"1/4\" at the top of Home's Challenges section while the first challenges are unfinished. \"First challenges\" is the name of that group; use the same words as its heading. Lower case at the start because it follows the numbers."
-  },
   "tone.cream": {
     "text": "Cream",
     "description": "Name of a card colour, a pale warm off-white: tooltip and accessible name of its swatch in the featured illustration editor."

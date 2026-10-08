@@ -15,11 +15,11 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { shellMarkup } = require('./lib/shell-markup');
-const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 
 const PUBLIC = path.join(__dirname, '..', 'public');
 const read = (...p) => fs.readFileSync(path.join(PUBLIC, ...p), 'utf8');
@@ -80,6 +80,7 @@ function makeNotifEnv() {
     createElement: () => ({ set textContent(v) { this._t = v; }, get innerHTML() { return this._t || ''; } }),
   };
   sandbox.agoStamp = agoStamp;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.runInNewContext(NOTIF_SRC, sandbox);
   return { Notifications: sandbox.window.Notifications, elements, sandbox };
 }

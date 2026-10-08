@@ -18,6 +18,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -61,6 +62,7 @@ function loadLeaderboard(App, { hash = '#leaderboard/challenges', detail = null 
   };
   ctx.window = ctx;
   vm.createContext(ctx);
+  ctx.PlatformI18n = englishPlatformI18n();
   // The module is a plain object literal; only its trailing publish needs a
   // tweak to run as a script, and its store accessor reads `window`.
   const code = lbSrc.replace(/^export .*$/gm, '');
@@ -79,9 +81,14 @@ test('every address titles the bar with the label of the tab it shows', () => {
   const App = realTitles();
   const labels = Object.fromEntries([...island.matchAll(/\{ key: '([a-z]+)', label: '([^']+)' \}/g)]
     .map((m) => [m[1], m[2]]));
-  assert.deepEqual(labels, { challenges: 'Challenges', kudos: 'Kudos', topochain: 'Standings', seasons: 'History' });
-  for (const [key, label] of Object.entries(labels)) {
-    assert.equal(App._leaderboardTitle(key), label, `#leaderboard/${key} says "${label}"`);
+  // The strip's labels are catalog entries; the table holds their ids.
+  assert.deepEqual(labels, {
+    challenges: 'leaderboard:tabs.challenges', kudos: 'leaderboard:tabs.kudos',
+    topochain: 'leaderboard:tabs.standings', seasons: 'leaderboard:tabs.history',
+  });
+  assert.deepEqual(Object.values(labels).map((id) => message(id)), ['Challenges', 'Kudos', 'Standings', 'History']);
+  for (const [key, id] of Object.entries(labels)) {
+    assert.equal(App._leaderboardTitle(key), message(id), `#leaderboard/${key} says "${message(id)}"`);
   }
   // The Kudos pane's own sub-views are the Kudos tab.
   for (const sub of ['prs', 'users', 'history']) assert.equal(App._leaderboardTitle(sub), 'Kudos');

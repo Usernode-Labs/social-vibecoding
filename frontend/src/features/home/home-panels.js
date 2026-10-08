@@ -1021,7 +1021,7 @@ const HomePanels = {
       return {
         done: Math.max(0, Math.min(t, Number(gate.completed) || 0)),
         total: t,
-        caption: message('home:challenges.season.doneInFirst'),
+        scope: 'first',
       };
     }
     const name = panel.season && typeof panel.season.name === 'string'
@@ -1029,7 +1029,8 @@ const HomePanels = {
     return {
       done: Math.max(0, Math.min(total, Number(hasAll ? panel.all_done : panel.done) || 0)),
       total,
-      caption: name ? message('home:challenges.season.doneIn', { season: name }) : message('home:challenges.season.done'),
+      scope: name ? 'season' : null,
+      name: name || null,
     };
   },
 

@@ -13,6 +13,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -92,6 +93,7 @@ test('#leaderboard/users/<name>: the same gate, decided in the Kudos pane\'s mod
     const ctx = { window: null, App: { user }, location: { hash: '' } };
     ctx.window = ctx;
     vm.createContext(ctx);
+    ctx.PlatformI18n = englishPlatformI18n();
     vm.runInContext(`${src.replace(/^export .*$/gm, '')}\n;globalThis.__lb = Leaderboard;`, ctx);
     ctx.__lb.profileUser = who;
     return ctx.__lb.chromeView().canMessage;

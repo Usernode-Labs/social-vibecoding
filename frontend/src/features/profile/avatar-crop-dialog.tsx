@@ -78,6 +78,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { DialogCard } from '@/components/ui/dialog';
 import { PhotoIcon, SpinnerArcIcon } from '@/components/ui/icons';
+import { useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
 import {
@@ -147,6 +148,7 @@ export function AvatarCropDialog({ source, onAccept, onCancel }: {
   onAccept: (crop: CropRect) => Promise<void>;
   onCancel: () => void;
 }): ReactNode {
+  const t = useMessages('profile');
   const { width, height } = source;
   const [crop, setCrop] = useState<CropRect>(() => initialCrop(width, height));
   const [dragging, setDragging] = useState(false);
@@ -340,10 +342,9 @@ export function AvatarCropDialog({ source, onAccept, onCancel }: {
       aria-describedby="profile-photo-crop-help"
     >
       <DialogCard id="profile-photo-crop-card" ref={cardRef}>
-        <h2 id="profile-photo-crop-title" className="text-lg font-bold">Position your photo</h2>
+        <h2 id="profile-photo-crop-title" className="text-lg font-bold">{t('profile:crop.title')}</h2>
         <p id="profile-photo-crop-help" className="mt-1 mb-4 text-sm text-zinc-600 dark:text-zinc-400">
-          Drag to choose the part of your photo that shows in the circle.
-          Nothing is saved until you press Save.
+          {t('profile:crop.help')}
         </p>
 
         <div
@@ -354,8 +355,8 @@ export function AvatarCropDialog({ source, onAccept, onCancel }: {
           // `application`, so a screen reader in browse mode hands the arrow
           // keys to the frame instead of reading the next line with them.
           role="application"
-          aria-roledescription="photo position"
-          aria-label="Photo position. Drag to move the photo, or use the arrow keys. Plus and minus zoom."
+          aria-roledescription={t('profile:crop.role')}
+          aria-label={t('profile:crop.stageLabel')}
           data-dragging={dragging ? '' : undefined}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
@@ -391,8 +392,8 @@ export function AvatarCropDialog({ source, onAccept, onCancel }: {
             max={CROP_MAX_ZOOM}
             step={0.01}
             value={zoom}
-            aria-label="Zoom"
-            aria-valuetext={`${Math.round(zoom * 100)}%`}
+            aria-label={t('profile:crop.zoom')}
+            aria-valuetext={t('profile:crop.zoomValue', { percent: Math.round(zoom * 100) })}
             disabled={busy}
             className="flex-1 min-w-0 h-11 accent-violet-600"
             onChange={(e) => {
@@ -413,7 +414,7 @@ export function AvatarCropDialog({ source, onAccept, onCancel }: {
             className="min-h-[44px]"
             onClick={() => onCancel()}
           >
-            Cancel
+            {t('core:common.cancel')}
           </Button>
           <Button
             type="button"
@@ -426,7 +427,7 @@ export function AvatarCropDialog({ source, onAccept, onCancel }: {
             onClick={() => { void accept(); }}
           >
             {busy ? <SpinnerArcIcon className="inline-block h-4 w-4 mr-2 -mt-0.5 align-middle animate-spin" aria-hidden="true" /> : null}
-            {busy ? 'Preparing…' : 'Use photo'}
+            {busy ? t('profile:crop.preparing') : t('profile:crop.use')}
           </Button>
         </div>
       </DialogCard>

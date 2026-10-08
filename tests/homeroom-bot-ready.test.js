@@ -15,6 +15,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -216,6 +217,7 @@ test('B7: "ready to try" in the bell and on the phone, on by default', async () 
   assert.equal(copy.title, "@ben's change to Supper Club is ready to try");
   assert.equal(copy.body, 'Sunday host reminder');
   if (!globalThis.window) globalThis.window = globalThis;
+  globalThis.PlatformI18n = englishPlatformI18n();
   loadTsx('frontend/src/features/notifications/notifications.js');
   const row = globalThis.window.Notifications._rowView({
     id: 1, kind: 'change_ready', createdAt: new Date().toISOString(), readAt: null,

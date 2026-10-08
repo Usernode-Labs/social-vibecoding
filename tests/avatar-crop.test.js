@@ -22,6 +22,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -246,7 +247,8 @@ test('the step checks and measures the file before it opens, and only over an op
   const fn = PROFILE.slice(PROFILE.indexOf('  async beginAvatarCrop('), PROFILE.indexOf('  async acceptAvatarCrop('));
   assert.match(fn, /Profile\._checkAvatarType\(file\);/);
   assert.match(fn, /Profile\._decodeImage\(file\)/);
-  assert.match(fn, /That image could not be read\./);
+  assert.match(fn, /throw new Error\(t\('profile:edit\.photo\.unreadable'\)\)/);
+  assert.equal(message('profile:edit.photo.unreadable'), 'That image could not be read.');
   assert.match(fn, /if \(!profileStore\.get\(\)\.sheetOpen\) return;/);
   assert.match(fn, /cropSource: \{ url: URL\.createObjectURL\(file\), width, height \}/);
 });
@@ -319,9 +321,12 @@ test('the frame keeps a drag from scrolling the modal, and joins the gesture arb
 
 test('it is reachable and named for a keyboard and a screen reader', () => {
   assert.match(DIALOG, /tabIndex=\{0\}\s*\/\/[^\n]*\n(\s*\/\/[^\n]*\n)*\s*role="application"/);
-  assert.match(DIALOG, /aria-label="Photo position\. Drag to move the photo, or use the arrow keys\. Plus and minus zoom\."/);
+  assert.match(DIALOG, /aria-label=\{t\('profile:crop\.stageLabel'\)\}/);
+  assert.equal(message('profile:crop.stageLabel'),
+    'Photo position. Drag to move the photo, or use the arrow keys. Plus and minus zoom.');
   assert.match(DIALOG, /onKeyDown=\{onKeyDown\}/);
-  assert.match(DIALOG, /aria-label="Zoom"/);
+  assert.match(DIALOG, /aria-label=\{t\('profile:crop\.zoom'\)\}/);
+  assert.equal(message('profile:crop.zoom'), 'Zoom');
   assert.match(DIALOG, /shell\.setAttribute\('aria-labelledby', 'profile-photo-crop-title'\)/);
 });
 

@@ -1,0 +1,962 @@
+{
+  "identity.fallbackName": {
+    "text": "Your profile",
+    "description": "Shown where the viewer's name would be at the top of their own profile screen, when they have neither a display name nor a username."
+  },
+  "identity.edit": {
+    "text": "Edit profile",
+    "description": "Button on the viewer's own profile screen: opens the sheet where they change their photo, name and bio."
+  },
+  "identity.buildingSince": {
+    "text": "Building since {{date}}",
+    "description": "Under the viewer's name on their profile: when they joined. {{date}} is a month and year, such as \"March 2026\". \"Building\" means making things on Homeroom."
+  },
+  "identity.apps_one": {
+    "text": "{{count}} app",
+    "description": "Under the viewer's name on their profile. {{count}} is how many apps they have made."
+  },
+  "identity.apps_other": {
+    "text": "{{count}} apps",
+    "description": "Under the viewer's name on their profile. {{count}} is how many apps they have made."
+  },
+  "line.factPair": {
+    "text": "{{first}} · {{second}}",
+    "description": "Joins two short facts on one small line of the profile screen (\"@ada · Building since March 2026\", \"Notes · sent today\"). {{first}} is everything said so far and {{second}} the next fact, each already a complete phrase. Use the separator your language uses between such facts."
+  },
+  "stats.live": {
+    "text": "live",
+    "description": "Label under a number on the viewer's profile: how many of their changes were approved and are running. Lower case; an adjective."
+  },
+  "stats.kudos": {
+    "text": "kudos",
+    "description": "Label under a number on the viewer's profile: how many kudos (thank-yous from other members) they have received. Lower case."
+  },
+  "stats.challenges": {
+    "text": "challenges",
+    "description": "Label under a number on the viewer's profile: how many challenges they have completed this season. Lower case."
+  },
+  "screen.loading": {
+    "text": "Loading your profile",
+    "description": "Accessible name of the grey placeholder shown while the viewer's profile is being fetched."
+  },
+  "signedOut.text": {
+    "text": "Sign in to see your profile.",
+    "description": "Shown on the profile screen to a person who is not signed in."
+  },
+  "signedOut.signIn": {
+    "text": "Sign in",
+    "description": "Button on the profile screen for a person who is not signed in: goes to the sign-in screen."
+  },
+  "screen.loadFailed": {
+    "text": "Could not load your profile. Check your connection and try again.",
+    "description": "Shown on the profile screen when the viewer's own profile could not be fetched."
+  },
+  "public.unavailable": {
+    "text": "This profile is unavailable.",
+    "description": "Shown in place of another person's public profile when it does not exist or is not published."
+  },
+  "public.report": {
+    "text": "Report user",
+    "description": "Link under another person's public profile: opens the form for reporting that person to the moderators. \"Report\" is a verb."
+  },
+  "work.heading": {
+    "text": "Your work",
+    "description": "Heading over the first list of rows on the viewer's own profile: their changes, requests and votes."
+  },
+  "work.changes.title": {
+    "text": "Your changes",
+    "description": "Row on the viewer's own profile, and the title of the screen it opens: the changes to projects they started. \"Changes\" is a noun."
+  },
+  "work.changes.hint": {
+    "text": "Everything you have started",
+    "description": "Small line under \"Your changes\" on the viewer's profile when there are no counts to show."
+  },
+  "work.changes.loadFailed": {
+    "text": "Your changes could not be loaded.",
+    "description": "Shown on the \"Your changes\" screen when the list could not be fetched. \"Changes\" is a noun."
+  },
+  "work.changes.empty": {
+    "text": "You have not started a change yet.",
+    "description": "Shown on the \"Your changes\" screen when the viewer has never started a change to a project. \"Change\" is a noun."
+  },
+  "work.requests.title": {
+    "text": "Your requests",
+    "description": "Row on the viewer's own profile, and the title of the screen it opens: the improvements they asked for on projects. \"Requests\" is a noun."
+  },
+  "work.requests.hint": {
+    "text": "What you asked for, and where it stands",
+    "description": "Small line under \"Your requests\" on the viewer's profile when there are no counts to show."
+  },
+  "work.requests.loadFailed": {
+    "text": "Your requests could not be loaded.",
+    "description": "Shown on the \"Your requests\" screen when the list could not be fetched. \"Requests\" is a noun."
+  },
+  "work.requests.empty": {
+    "text": "You have not suggested an improvement yet.",
+    "description": "Shown on the \"Your requests\" screen when the viewer has never asked for anything."
+  },
+  "work.requests.suggest": {
+    "text": "Suggest an improvement",
+    "description": "Button at the foot of the \"Your requests\" screen: opens the form for asking for an improvement."
+  },
+  "work.votes.title": {
+    "text": "Your votes",
+    "description": "Row on the viewer's own profile, and the title of the screen it opens: the changes and decisions they voted on."
+  },
+  "work.votes.hint": {
+    "text": "The changes and decisions you voted on",
+    "description": "Small line under \"Your votes\" on the viewer's profile when there is no latest vote to show. \"Changes\" is a noun."
+  },
+  "work.votes.loadFailed": {
+    "text": "Your votes could not be loaded.",
+    "description": "Shown on the \"Your votes\" screen when the list could not be fetched."
+  },
+  "work.votes.empty": {
+    "text": "You have not voted on anything yet.",
+    "description": "Shown on the \"Your votes\" screen when the viewer has never voted."
+  },
+  "work.votes.note": {
+    "text": "A vote can be changed while it is open, so each row says your vote as it stands.",
+    "description": "Note under the list on the \"Your votes\" screen. \"Open\" means the voting has not ended."
+  },
+  "work.votes.latest": {
+    "text": "Latest: {{title}}",
+    "description": "Small line under \"Your votes\" on the viewer's profile. {{title}} is the title of the change or decision they voted on most recently."
+  },
+  "work.fold.allLive": {
+    "text": "Show all live",
+    "description": "Row at the end of the \"Live\" group on the \"Your changes\" screen when only the first few are shown: unfolds the rest. \"Live\" means changes that are running."
+  },
+  "work.fold.allDecided": {
+    "text": "Show all",
+    "description": "Row at the end of the \"Decided\" group on the \"Your votes\" screen when only the first few are shown: unfolds the rest."
+  },
+  "work.changes.live_one": {
+    "text": "{{number}} live",
+    "description": "Small line under \"Your changes\" on the viewer's profile. {{number}} is how many of their changes are running, already formatted (\"1,500\"); {{count}} is the same number, for the plural."
+  },
+  "work.changes.live_other": {
+    "text": "{{number}} live",
+    "description": "Small line under \"Your changes\" on the viewer's profile. {{number}} is how many of their changes are running, already formatted (\"1,500\"); {{count}} is the same number, for the plural."
+  },
+  "work.changes.inProgress_one": {
+    "text": "{{number}} in progress",
+    "description": "Small line under \"Your changes\" on the viewer's profile. {{number}} is how many of their changes are still being worked on or voted on, already formatted (\"1,500\"); {{count}} is the same number, for the plural."
+  },
+  "work.changes.inProgress_other": {
+    "text": "{{number}} in progress",
+    "description": "Small line under \"Your changes\" on the viewer's profile. {{number}} is how many of their changes are still being worked on or voted on, already formatted (\"1,500\"); {{count}} is the same number, for the plural."
+  },
+  "work.requests.open_one": {
+    "text": "{{number}} open",
+    "description": "Small line under \"Your requests\" on the viewer's profile. {{number}} is how many of their requests are not finished, already formatted (\"1,500\"); {{count}} is the same number, for the plural. \"Open\" is an adjective."
+  },
+  "work.requests.open_other": {
+    "text": "{{number}} open",
+    "description": "Small line under \"Your requests\" on the viewer's profile. {{number}} is how many of their requests are not finished, already formatted (\"1,500\"); {{count}} is the same number, for the plural. \"Open\" is an adjective."
+  },
+  "work.requests.done_one": {
+    "text": "{{number}} done",
+    "description": "Small line under \"Your requests\" on the viewer's profile. {{number}} is how many of their requests are finished, already formatted (\"1,500\"); {{count}} is the same number, for the plural."
+  },
+  "work.requests.done_other": {
+    "text": "{{number}} done",
+    "description": "Small line under \"Your requests\" on the viewer's profile. {{number}} is how many of their requests are finished, already formatted (\"1,500\"); {{count}} is the same number, for the plural."
+  },
+  "more.heading": {
+    "text": "More",
+    "description": "Heading over the second list of rows on the viewer's own profile."
+  },
+  "more.appSlots.title": {
+    "text": "App slots",
+    "description": "Row on the viewer's own profile: opens the dialog for creating an app, which says how many apps they may have. A \"slot\" is room for one app."
+  },
+  "more.appSlots.hint": {
+    "text": "How many apps you can create",
+    "description": "Small line under \"App slots\" on the viewer's profile when the numbers are not known yet."
+  },
+  "more.challenges.title": {
+    "text": "Challenges & standings",
+    "description": "Row on the viewer's own profile: opens the Leaderboard screen with the season's challenges and rankings."
+  },
+  "more.challenges.hint": {
+    "text": "This season’s challenges and standings",
+    "description": "Small line under \"Challenges & standings\" on the viewer's profile when there is nothing more specific to show."
+  },
+  "more.challenges.rank": {
+    "text": "rank #{{rank}}",
+    "description": "Part of the small line under \"Challenges & standings\" on the viewer's profile. {{rank}} is their position in the season's ranking. Lower case."
+  },
+  "more.challenges.done_one": {
+    "text": "{{done}} of {{count}} done",
+    "description": "Part of the small line under \"Challenges & standings\" on the viewer's profile. {{done}} is how many of the season's challenges they completed and {{count}} how many there are."
+  },
+  "more.challenges.done_other": {
+    "text": "{{done}} of {{count}} done",
+    "description": "Part of the small line under \"Challenges & standings\" on the viewer's profile. {{done}} is how many of the season's challenges they completed and {{count}} how many there are."
+  },
+  "more.kudos.title": {
+    "text": "Kudos",
+    "description": "Row on the viewer's own profile: opens the Kudos leaderboard. \"Kudos\" is the feature's name: thank-yous members give for changes."
+  },
+  "more.kudos.hint": {
+    "text": "Kudos on your changes",
+    "description": "Small line under \"Kudos\" on the viewer's profile. \"Changes\" is a noun."
+  },
+  "more.kudos.received_one": {
+    "text": "{{number}} received",
+    "description": "Summary of the kudos the viewer has been given, for the \"Kudos\" row of their profile. {{number}} is how many, already formatted (\"1,500\"); {{count}} is the same number, for the plural."
+  },
+  "more.kudos.received_other": {
+    "text": "{{number}} received",
+    "description": "Summary of the kudos the viewer has been given, for the \"Kudos\" row of their profile. {{number}} is how many, already formatted (\"1,500\"); {{count}} is the same number, for the plural."
+  },
+  "more.friends.title": {
+    "text": "Friends",
+    "description": "Row on the viewer's own profile: opens their list of friends."
+  },
+  "more.friends.hint": {
+    "text": "Only you can see your friends",
+    "description": "Small line under \"Friends\" on the viewer's profile when no friend request is waiting."
+  },
+  "more.friends.waiting_one": {
+    "text": "{{number}} request waiting",
+    "description": "Small line under \"Friends\" on the viewer's profile. {{number}} is how many friend requests wait for their answer, already formatted (\"1,500\"); {{count}} is the same number, for the plural."
+  },
+  "more.friends.waiting_other": {
+    "text": "{{number}} requests waiting",
+    "description": "Small line under \"Friends\" on the viewer's profile. {{number}} is how many friend requests wait for their answer, already formatted (\"1,500\"); {{count}} is the same number, for the plural."
+  },
+  "more.settings.title": {
+    "text": "Settings",
+    "description": "Row on the viewer's own profile: opens the Settings screen."
+  },
+  "more.settings.hint": {
+    "text": "Account, alerts, keys",
+    "description": "Small line under \"Settings\" on the viewer's profile: what is in there. \"Keys\" are API keys."
+  },
+  "more.settings.hintWallet": {
+    "text": "Account, alerts, keys, wallet",
+    "description": "Small line under \"Settings\" on the viewer's profile, for a person who has a wallet: what is in there. \"Keys\" are API keys."
+  },
+  "more.settings.hintAdmin": {
+    "text": "Account, alerts, keys, admin",
+    "description": "Small line under \"Settings\" on the viewer's profile, for an administrator: what is in there. \"Keys\" are API keys; \"admin\" is the admin console."
+  },
+  "more.settings.hintWalletAdmin": {
+    "text": "Account, alerts, keys, wallet, admin",
+    "description": "Small line under \"Settings\" on the viewer's profile, for an administrator who has a wallet: what is in there. \"Keys\" are API keys; \"admin\" is the admin console."
+  },
+  "date.today": {
+    "text": "today",
+    "description": "A date said relative to now, placed inside a longer line such as \"sent today\" or after an app's name. Lower case."
+  },
+  "date.yesterday": {
+    "text": "yesterday",
+    "description": "A date said relative to now, placed inside a longer line such as \"sent yesterday\" or after an app's name. Lower case."
+  },
+  "date.daysAgo_one": {
+    "text": "{{count}} day ago",
+    "description": "A date said relative to now, placed inside a longer line such as \"sent 3 days ago\" or after an app's name. {{count}} is a number of days from 2 to 13."
+  },
+  "date.daysAgo_other": {
+    "text": "{{count}} days ago",
+    "description": "A date said relative to now, placed inside a longer line such as \"sent 3 days ago\" or after an app's name. {{count}} is a number of days from 2 to 13."
+  },
+  "changes.group.inProgress": {
+    "text": "In progress",
+    "description": "Heading on the \"Your changes\" screen over the changes still being worked on or voted on."
+  },
+  "changes.group.live": {
+    "text": "Live",
+    "description": "Heading on the \"Your changes\" screen over the changes that were approved and are running. An adjective."
+  },
+  "changes.group.closed": {
+    "text": "Closed",
+    "description": "Heading on the \"Your changes\" screen over the changes that ended without going live. An adjective."
+  },
+  "changes.fallbackTitle": {
+    "text": "Change",
+    "description": "Stands in for a change's title on the \"Your changes\" screen when it has none. A noun."
+  },
+  "changes.state.waiting": {
+    "text": "waiting for approval",
+    "description": "After the app's name on a row of the \"Your changes\" screen: the change is being voted on. Lower case."
+  },
+  "changes.state.inProgress": {
+    "text": "in progress",
+    "description": "After the app's name on a row of the \"Your changes\" screen: the change is still being worked on. Lower case."
+  },
+  "changes.state.closed": {
+    "text": "closed without going live",
+    "description": "After the app's name on a row of the \"Your changes\" screen: the change was withdrawn or archived. Lower case."
+  },
+  "requests.group.open": {
+    "text": "Open",
+    "description": "Heading on the \"Your requests\" screen over the requests that are not finished. An adjective."
+  },
+  "requests.group.done": {
+    "text": "Done",
+    "description": "Heading on the \"Your requests\" screen over the requests that are finished, whether built or closed."
+  },
+  "requests.fallbackTitle": {
+    "text": "Request #{{number}}",
+    "description": "Stands in for a request's title on the \"Your requests\" screen when it has none. {{number}} is the request's number. \"Request\" is a noun."
+  },
+  "requests.anApp": {
+    "text": "An app",
+    "description": "Stands in for the app's name on a row of the \"Your requests\" screen when it is not known."
+  },
+  "requests.state.waiting": {
+    "text": "nobody on it yet",
+    "description": "After the app's name on a row of the \"Your requests\" screen: nobody has started working on the request. Lower case."
+  },
+  "requests.state.underway": {
+    "text": "someone is on it",
+    "description": "After the app's name on a row of the \"Your requests\" screen: somebody is working on the request. Lower case."
+  },
+  "requests.state.shipped": {
+    "text": "live",
+    "description": "After the app's name on a row of the \"Your requests\" screen: what was asked for has been built and is running. Lower case; an adjective."
+  },
+  "requests.state.closed": {
+    "text": "closed",
+    "description": "After the app's name on a row of the \"Your requests\" screen: the request was closed without being built. Lower case; an adjective."
+  },
+  "votes.group.open": {
+    "text": "Still open",
+    "description": "Heading on the \"Your votes\" screen over the votes whose voting has not ended. \"Open\" is an adjective."
+  },
+  "votes.group.decided": {
+    "text": "Decided",
+    "description": "Heading on the \"Your votes\" screen over the votes whose outcome is settled."
+  },
+  "votes.title.change": {
+    "text": "Change #{{number}}",
+    "description": "Stands in for the title of a change the viewer voted on, when it has none. {{number}} is the change's number. \"Change\" is a noun."
+  },
+  "votes.title.aChange": {
+    "text": "A change",
+    "description": "Stands in for the title of a change the viewer voted on, when it has neither a title nor a number. \"Change\" is a noun."
+  },
+  "votes.title.decision": {
+    "text": "A group decision",
+    "description": "Stands in for the title of a community decision the viewer voted on, when it has none."
+  },
+  "votes.anApp": {
+    "text": "An app",
+    "description": "Stands in for the app's name on a row of the \"Your votes\" screen when it is not known."
+  },
+  "votes.votedYes": {
+    "text": "you voted yes",
+    "description": "On a row of the \"Your votes\" screen, after the app's name: the viewer's vote was yes. Lower case."
+  },
+  "votes.votedNo": {
+    "text": "you voted no",
+    "description": "On a row of the \"Your votes\" screen, after the app's name: the viewer's vote was no. Lower case."
+  },
+  "votes.outcome.live": {
+    "text": "live",
+    "description": "On a row of the \"Your votes\" screen, after the viewer's vote: the change was approved and is running. Lower case; an adjective."
+  },
+  "votes.outcome.goingLive": {
+    "text": "going live",
+    "description": "On a row of the \"Your votes\" screen, after the viewer's vote: the change was approved and is being put into the running project. Lower case."
+  },
+  "votes.outcome.closed": {
+    "text": "closed",
+    "description": "On a row of the \"Your votes\" screen, after the viewer's vote: the change ended without going live. Lower case; an adjective."
+  },
+  "votes.outcome.decided": {
+    "text": "decided",
+    "description": "On a row of the \"Your votes\" screen, after the viewer's vote: the community decision has been settled. Lower case."
+  },
+  "feedback.title": {
+    "text": "Your feedback",
+    "description": "Title of the sheet listing the feedback the viewer has sent."
+  },
+  "feedback.close": {
+    "text": "Close your feedback",
+    "description": "Accessible name of the × button on the \"Your feedback\" sheet: closes the sheet. \"Close\" is a verb."
+  },
+  "feedback.legend": {
+    "text": "Received: it was filed as a request. Counted: it earned points in the feedback challenge.",
+    "description": "Explanation at the top of the \"Your feedback\" sheet of its two status labels, \"Received\" and \"Counted\". Use the same words as those labels."
+  },
+  "feedback.loadFailed": {
+    "text": "Your feedback could not be loaded. Check your connection and try again.",
+    "description": "Shown in the \"Your feedback\" sheet when the list could not be fetched."
+  },
+  "feedback.empty": {
+    "text": "Nothing sent yet. Feedback you send shows up here, with its status.",
+    "description": "Shown in the \"Your feedback\" sheet when the viewer has never sent feedback."
+  },
+  "feedback.truncated": {
+    "text": "Showing the 50 you sent most recently.",
+    "description": "Note under the list in the \"Your feedback\" sheet when the viewer has sent more than the 50 shown."
+  },
+  "feedback.status.received": {
+    "text": "Received",
+    "description": "Status label on a row of the \"Your feedback\" sheet: the feedback was filed as a request."
+  },
+  "feedback.status.counted": {
+    "text": "Counted",
+    "description": "Status label on a row of the \"Your feedback\" sheet: the feedback earned points in the feedback challenge."
+  },
+  "feedback.status.countedPoints_one": {
+    "text": "Counted · {{points}} pts",
+    "description": "Status label on a row of the \"Your feedback\" sheet: the feedback earned points in the feedback challenge. {{points}} is how many, already formatted (\"1,500\"); {{count}} is the same number, for the plural; \"pts\" abbreviates points."
+  },
+  "feedback.status.countedPoints_other": {
+    "text": "Counted · {{points}} pts",
+    "description": "Status label on a row of the \"Your feedback\" sheet: the feedback earned points in the feedback challenge. {{points}} is how many, already formatted (\"1,500\"); {{count}} is the same number, for the plural; \"pts\" abbreviates points."
+  },
+  "feedback.fallbackTitle": {
+    "text": "Feedback",
+    "description": "Stands in for the title of a piece of feedback in the \"Your feedback\" sheet when it has none."
+  },
+  "feedback.anApp": {
+    "text": "An app",
+    "description": "Stands in for the app's name on a row of the \"Your feedback\" sheet when it is not known."
+  },
+  "feedback.request": {
+    "text": "request #{{number}}",
+    "description": "On a row of the \"Your feedback\" sheet, after the app's name: the request the feedback was filed as. {{number}} is its number. \"Request\" is a noun; lower case."
+  },
+  "feedback.sent": {
+    "text": "sent {{when}}",
+    "description": "On a row of the \"Your feedback\" sheet: when the feedback was sent. {{when}} is \"today\", \"yesterday\", \"3 days ago\" or a date such as \"Mar 4\". Lower case."
+  },
+  "feedback.summary.none": {
+    "text": "Nothing sent yet",
+    "description": "Summary line of the feedback the viewer has sent, when there is none."
+  },
+  "feedback.summary.sent_one": {
+    "text": "{{number}} sent",
+    "description": "Summary line at the top of the \"Your feedback\" sheet. {{number}} is how many pieces of feedback the viewer has sent, already formatted (\"1,500\"); {{count}} is the same number, for the plural."
+  },
+  "feedback.summary.sent_other": {
+    "text": "{{number}} sent",
+    "description": "Summary line at the top of the \"Your feedback\" sheet. {{number}} is how many pieces of feedback the viewer has sent, already formatted (\"1,500\"); {{count}} is the same number, for the plural."
+  },
+  "feedback.summary.sentCounted_one": {
+    "text": "{{number}} sent · {{counted}} counted",
+    "description": "Summary line at the top of the \"Your feedback\" sheet. {{number}} is how many pieces of feedback the viewer has sent, already formatted (\"1,500\"); {{count}} is the same number, for the plural. {{counted}} is how many of them earned points, also formatted."
+  },
+  "feedback.summary.sentCounted_other": {
+    "text": "{{number}} sent · {{counted}} counted",
+    "description": "Summary line at the top of the \"Your feedback\" sheet. {{number}} is how many pieces of feedback the viewer has sent, already formatted (\"1,500\"); {{count}} is the same number, for the plural. {{counted}} is how many of them earned points, also formatted."
+  },
+  "friends.title": {
+    "text": "Friends",
+    "description": "Title of the sheet listing the viewer's friends, and the heading over the same list where it is shown on a page."
+  },
+  "friends.close": {
+    "text": "Close friends",
+    "description": "Accessible name of the × button on the Friends sheet: closes the sheet. \"Close\" is a verb."
+  },
+  "friends.label": {
+    "text": "Friends, visible only to you",
+    "description": "Accessible name of the viewer's list of friends."
+  },
+  "friends.accept": {
+    "text": "Accept",
+    "description": "Button beside a friend request in the viewer's list of friends: accepts it."
+  },
+  "friends.decline": {
+    "text": "Decline",
+    "description": "Button beside a friend request in the viewer's list of friends: turns it down."
+  },
+  "friends.cancelRequest": {
+    "text": "Cancel",
+    "description": "Button beside a friend request the viewer sent and that has not been answered: takes the request back."
+  },
+  "friends.sentHeading": {
+    "text": "Sent requests",
+    "description": "Heading over the friend requests the viewer sent that have not been answered."
+  },
+  "friends.empty": {
+    "text": "No friends yet. Find someone by username above.",
+    "description": "Shown in the viewer's list of friends when it is empty. \"Above\" is the search box over the list."
+  },
+  "friends.loadFailed": {
+    "text": "Your friends could not be loaded. Check your connection and try again.",
+    "description": "Shown in the viewer's list of friends when it could not be fetched."
+  },
+  "friends.privacy": {
+    "text": "Only you can see your friends. Nobody else sees this list or how long it is.",
+    "description": "Note at the foot of the viewer's list of friends."
+  },
+  "friends.asked": {
+    "text": "Asked {{when}}",
+    "description": "Under the name of a person who sent the viewer a friend request. {{when}} is \"today\", \"yesterday\", \"3 days ago\" or a date such as \"Mar 4\"."
+  },
+  "friends.askedUndated": {
+    "text": "Asked to be friends",
+    "description": "Under the name of a person who sent the viewer a friend request, when the date is not known."
+  },
+  "friends.since": {
+    "text": "Friends since {{date}}",
+    "description": "Under a friend's name in the viewer's list of friends. {{date}} is a month and year, such as \"March 2026\"."
+  },
+  "friends.sinceUndated": {
+    "text": "Friends",
+    "description": "Under a friend's name in the viewer's list of friends, when the date they became friends is not known."
+  },
+  "friends.requested": {
+    "text": "Requested {{when}}",
+    "description": "Under the name of a person the viewer sent a friend request to. {{when}} is \"today\", \"yesterday\", \"3 days ago\" or a date such as \"Mar 4\". A past participle: the friendship was requested."
+  },
+  "friends.requestedUndated": {
+    "text": "Requested",
+    "description": "Under the name of a person the viewer sent a friend request to, when the date is not known. A past participle: the friendship was requested."
+  },
+  "message.button": {
+    "text": "Message",
+    "description": "Button on another person's profile: starts a private conversation with them. A verb."
+  },
+  "message.buttonLabel": {
+    "text": "Message @{{username}}",
+    "description": "Accessible name of the Message button on another person's profile. \"Message\" is a verb. Keep the @ before the username."
+  },
+  "message.nobody": {
+    "text": "There is nobody here to message.",
+    "description": "Error shown when the Message button on a profile has no person to write to. \"Message\" is a verb."
+  },
+  "message.unreachable": {
+    "text": "Couldn’t reach Messages. Check your connection and try again.",
+    "description": "Error shown when starting a conversation from a profile failed because the server could not be reached. \"Messages\" is the name of the Messages screen."
+  },
+  "message.cannot": {
+    "text": "You can’t message @{{username}}.",
+    "description": "Error shown when the viewer may not start a conversation with this person. \"Message\" is a verb. Keep the @ before the username."
+  },
+  "message.cannotNow": {
+    "text": "You can’t message @{{username}} right now.",
+    "description": "Error shown when a conversation with this person cannot be started at the moment. \"Message\" is a verb. Keep the @ before the username."
+  },
+  "message.startFailed": {
+    "text": "Couldn’t start this conversation. Try again.",
+    "description": "Error shown when starting a conversation from a profile failed for an unknown reason."
+  },
+  "edit.title": {
+    "text": "Edit profile",
+    "description": "Title of the sheet where the viewer changes their photo, name and bio."
+  },
+  "edit.saveFailed": {
+    "text": "Could not save your profile.",
+    "description": "Error shown in the Edit profile sheet when saving failed and the server gave no reason."
+  },
+  "edit.saved": {
+    "text": "Profile saved",
+    "description": "Brief message shown after the Edit profile sheet saved the viewer's changes."
+  },
+  "edit.photo.group": {
+    "text": "Photo",
+    "description": "Heading of the photo section of the Edit profile sheet."
+  },
+  "edit.photo.label": {
+    "text": "Profile photo",
+    "description": "Label beside the current photo in the Edit profile sheet."
+  },
+  "edit.photo.note": {
+    "text": "PNG, JPEG or WebP. You choose the part that shows before it is used.",
+    "description": "Note under \"Profile photo\" in the Edit profile sheet: the accepted image formats. Keep the format names."
+  },
+  "edit.photo.noteNew": {
+    "text": "New photo, not saved yet. Press Save to use it.",
+    "description": "Note under \"Profile photo\" in the Edit profile sheet after a new photo was chosen. \"Save\" is the button at the foot of the sheet."
+  },
+  "edit.photo.noteRemoved": {
+    "text": "Your photo will be removed when you press Save.",
+    "description": "Note under \"Profile photo\" in the Edit profile sheet after \"Remove photo\" was pressed. \"Save\" is the button at the foot of the sheet."
+  },
+  "edit.photo.change": {
+    "text": "Change photo",
+    "description": "Row in the Edit profile sheet: opens the file picker to choose a new profile photo. \"Change\" is a verb."
+  },
+  "edit.photo.remove": {
+    "text": "Remove photo",
+    "description": "Row in the Edit profile sheet: removes the profile photo once the sheet is saved."
+  },
+  "edit.photo.unusable": {
+    "text": "That image could not be used. Try a PNG, JPEG or WebP.",
+    "description": "Error under the photo section of the Edit profile sheet when the chosen file failed for an unknown reason. Keep the format names."
+  },
+  "edit.photo.wrongType": {
+    "text": "Choose a PNG, JPEG or WebP image.",
+    "description": "Error under the photo section of the Edit profile sheet when the chosen file is not an accepted image format. Keep the format names."
+  },
+  "edit.photo.unreadable": {
+    "text": "That image could not be read.",
+    "description": "Error under the photo section of the Edit profile sheet when the chosen file could not be decoded as an image."
+  },
+  "edit.photo.unprocessable": {
+    "text": "That image could not be processed here.",
+    "description": "Error under the photo section of the Edit profile sheet when this browser could not resize the chosen image."
+  },
+  "edit.photo.removeFailed": {
+    "text": "Could not remove the photo.",
+    "description": "Error shown in the Edit profile sheet when removing the profile photo failed and the server gave no reason."
+  },
+  "edit.photo.uploadFailed": {
+    "text": "Could not upload the photo.",
+    "description": "Error shown in the Edit profile sheet when uploading the new profile photo failed and the server gave no reason."
+  },
+  "edit.name.group": {
+    "text": "Your name",
+    "description": "Heading of the name section of the Edit profile sheet."
+  },
+  "edit.name.label": {
+    "text": "Display name",
+    "description": "Label of the field in the Edit profile sheet for the name other people see."
+  },
+  "edit.name.note": {
+    "text": "The name other people see. Leave it empty to show your @handle.",
+    "description": "Note under the Display name field in the Edit profile sheet. \"@handle\" is the username with its @ sign."
+  },
+  "edit.about.group": {
+    "text": "About",
+    "description": "Heading of the section of the Edit profile sheet that holds the bio."
+  },
+  "edit.about.bio": {
+    "text": "Bio",
+    "description": "Label of the field in the Edit profile sheet for a few lines about oneself."
+  },
+  "edit.public.group": {
+    "text": "Public page",
+    "description": "Heading of the section of the Edit profile sheet about the profile page that people without an account can see."
+  },
+  "edit.public.label": {
+    "text": "Public profile",
+    "description": "Label of the switch in the Edit profile sheet that publishes or unpublishes the viewer's public profile page."
+  },
+  "edit.public.hidden": {
+    "text": "Hidden by moderation",
+    "description": "Under \"Public profile\" in the Edit profile sheet: moderators have taken the viewer's public page down."
+  },
+  "edit.public.on": {
+    "text": "On: anyone with the link can view it, no account needed",
+    "description": "Under \"Public profile\" in the Edit profile sheet when the public page is published."
+  },
+  "edit.public.off": {
+    "text": "Off: your profile has no public link",
+    "description": "Under \"Public profile\" in the Edit profile sheet when the public page is not published."
+  },
+  "edit.public.open": {
+    "text": "Open public page",
+    "description": "Row in the Edit profile sheet: goes to the viewer's published public profile page. \"Open\" is a verb."
+  },
+  "edit.public.copy": {
+    "text": "Copy public link",
+    "description": "Row in the Edit profile sheet: copies the address of the viewer's public profile page to the clipboard."
+  },
+  "edit.public.whatsOnIt": {
+    "text": "What's on it",
+    "description": "Row in the Edit profile sheet that unfolds a preview of the viewer's public profile page. \"It\" is the public page."
+  },
+  "edit.public.moderationNote": {
+    "text": "You can keep editing or turn it off, but the public page stays unavailable.",
+    "description": "Note in the Edit profile sheet when moderators have taken the viewer's public page down. \"It\" is the Public profile switch."
+  },
+  "edit.public.previewNote": {
+    "text": "Only your username, display name, bio, Homeroom-hosted photo and verified social accounts. Never your email, wallet, roles, memberships, unverified handles or private activity. Changes take effect at once, and nobody can search for the page.",
+    "description": "Explanation over the preview of the viewer's public profile page in the Edit profile sheet: what the page shows and what it never shows. Homeroom is the product's name. \"Changes\" is a noun."
+  },
+  "edit.public.copied": {
+    "text": "Public link copied.",
+    "description": "Status line in the Edit profile sheet after the public page's address was copied to the clipboard."
+  },
+  "edit.public.copyManually": {
+    "text": "Copy this link: {{url}}",
+    "description": "Status line in the Edit profile sheet when the public page's address could not be copied automatically. {{url}} is the address to copy by hand."
+  },
+  "edit.public.publishing": {
+    "text": "Publishing…",
+    "description": "Status line in the Edit profile sheet while the public page is being published."
+  },
+  "edit.public.unpublishing": {
+    "text": "Unpublishing…",
+    "description": "Status line in the Edit profile sheet while the public page is being taken down."
+  },
+  "edit.public.updateFailed": {
+    "text": "Could not update publication.",
+    "description": "Status line in the Edit profile sheet when publishing or unpublishing the public page failed and the server gave no reason."
+  },
+  "edit.public.published": {
+    "text": "Public profile published",
+    "description": "Brief message shown after the viewer's public profile page was published."
+  },
+  "edit.public.unpublished": {
+    "text": "Public profile unpublished",
+    "description": "Brief message shown after the viewer's public profile page was taken down."
+  },
+  "edit.social.group": {
+    "text": "Verified social accounts",
+    "description": "Heading of the section of the Edit profile sheet listing the viewer's verified GitHub and X accounts."
+  },
+  "edit.social.verified": {
+    "text": "Verified",
+    "description": "Small green label beside a social account in the Edit profile sheet: the viewer proved the account is theirs."
+  },
+  "edit.social.notShown": {
+    "text": "Not shown",
+    "description": "Beside GitHub or X in the Edit profile sheet when no verified account of that kind is shown on the profile."
+  },
+  "edit.social.manage": {
+    "text": "Connect or change social accounts",
+    "description": "Row in the Edit profile sheet: goes to the Settings section where social accounts are linked. \"Change\" is a verb."
+  },
+  "edit.social.note": {
+    "text": "Provider verification and public visibility are managed separately in Settings.",
+    "description": "Note under the social accounts in the Edit profile sheet. \"Provider\" is GitHub or X."
+  },
+  "edit.username.group": {
+    "text": "Username",
+    "description": "Heading of the username section of the Edit profile sheet."
+  },
+  "edit.username.label": {
+    "text": "Username",
+    "description": "Label of the read-only field in the Edit profile sheet that shows the viewer's username."
+  },
+  "edit.username.note": {
+    "text": "Your @handle is your sign-in name and your public page address. To change it, go to <0>Settings → Username</0>. To change only how your name appears, set a display name above.",
+    "description": "Note under the username in the Edit profile sheet. The numbered tag is a link to the Username section of Settings; \"Settings → Username\" is the path to it. \"@handle\" is the username with its @ sign."
+  },
+  "edit.email.group": {
+    "text": "Account email",
+    "description": "Heading of the email section of the Edit profile sheet."
+  },
+  "edit.email.link": {
+    "text": "Email & recovery",
+    "description": "Row in the Edit profile sheet: goes to the Settings section for the account's email address and account recovery."
+  },
+  "edit.email.note": {
+    "text": "Add or verify a private email address in Settings.",
+    "description": "Note under \"Email & recovery\" in the Edit profile sheet."
+  },
+  "social.github": {
+    "text": "Verified GitHub · {{handle}}",
+    "description": "Link chip on a profile: the person's verified GitHub account. {{handle}} is their GitHub username."
+  },
+  "social.x": {
+    "text": "Verified X · @{{handle}}",
+    "description": "Link chip on a profile: the person's verified X account. X is the social network's name. {{handle}} is their username there; keep the @ before it."
+  },
+  "report.received": {
+    "text": "Report received.",
+    "description": "Status shown after the viewer's report about a person was sent to the moderators. \"Report\" is a noun."
+  },
+  "report.failed": {
+    "text": "Could not send the report. Try again.",
+    "description": "Status shown when the viewer's report about a person could not be sent. \"Report\" is a noun."
+  },
+  "crop.title": {
+    "text": "Position your photo",
+    "description": "Title of the dialog where the viewer chooses which part of a new profile photo shows. \"Position\" is a verb."
+  },
+  "crop.help": {
+    "text": "Drag to choose the part of your photo that shows in the circle. Nothing is saved until you press Save.",
+    "description": "Explanation in the photo-positioning dialog. \"Save\" is the button on the Edit profile sheet behind it."
+  },
+  "crop.role": {
+    "text": "photo position",
+    "description": "What a screen reader calls the draggable photo area in the photo-positioning dialog, in place of a generic role name. Lower case."
+  },
+  "crop.stageLabel": {
+    "text": "Photo position. Drag to move the photo, or use the arrow keys. Plus and minus zoom.",
+    "description": "Accessible name of the draggable photo area in the photo-positioning dialog, with its keyboard instructions. \"Plus\" and \"minus\" are the + and − keys."
+  },
+  "crop.zoom": {
+    "text": "Zoom",
+    "description": "Accessible name of the slider in the photo-positioning dialog that enlarges the photo."
+  },
+  "crop.zoomValue": {
+    "text": "{{percent}}%",
+    "description": "What a screen reader reads as the value of the zoom slider in the photo-positioning dialog. {{percent}} is a whole number from 100 to 400."
+  },
+  "crop.preparing": {
+    "text": "Preparing…",
+    "description": "Shown on the confirm button of the photo-positioning dialog while the photo is being cropped and resized."
+  },
+  "crop.use": {
+    "text": "Use photo",
+    "description": "Button in the photo-positioning dialog: accepts the chosen part of the photo."
+  },
+  "staking.title": {
+    "text": "Staking",
+    "description": "Row in the wallet sheet, and the title and accessible name of the sheet it opens: the wallet's staking on the Usernode network."
+  },
+  "staking.close": {
+    "text": "Close staking",
+    "description": "Accessible name of the × button on the Staking sheet: closes the sheet. \"Close\" is a verb."
+  },
+  "staking.status.delegated": {
+    "text": "Delegated",
+    "description": "At the right of the Staking row: the wallet's stake is delegated to somebody else's validator."
+  },
+  "staking.status.active": {
+    "text": "Active",
+    "description": "At the right of the Staking row: the wallet is staking by itself."
+  },
+  "staking.status.checking": {
+    "text": "Checking…",
+    "description": "At the right of the Staking row while the wallet's staking state is being looked up."
+  },
+  "staking.activeDot": {
+    "text": "● Active",
+    "description": "At the top of the Staking sheet: the wallet is staking by itself. Keep the dot."
+  },
+  "staking.manageInApp": {
+    "text": "Open the Homeroom app to manage delegation.",
+    "description": "Brief message shown when the delegate button is pressed in a staging preview of the Staking sheet. \"Open\" is a verb; Homeroom is the product's name."
+  },
+  "staking.opening": {
+    "text": "Opening…",
+    "description": "Shown on the Delegate or Undelegate button of the Staking sheet while the wallet app is being opened."
+  },
+  "staking.undelegate": {
+    "text": "Undelegate",
+    "description": "Button on the Staking sheet: takes the wallet's stake back from the validator it was delegated to."
+  },
+  "staking.delegate": {
+    "text": "Delegate",
+    "description": "Button on the Staking sheet: hands the wallet's stake to a validator. A verb."
+  },
+  "staking.unavailable": {
+    "text": "Staking status is not available yet.",
+    "description": "Shown in the Staking sheet when the wallet's staking state could not be determined."
+  },
+  "staking.rechecking": {
+    "text": "Checking…",
+    "description": "Shown on the Retry button of the Staking sheet while the staking state is being looked up again."
+  },
+  "staking.epoch.loading": {
+    "text": "Loading epoch data…",
+    "description": "Shown in the Staking sheet while the record of an epoch is being fetched. An epoch is a fixed period of the network's time."
+  },
+  "staking.epoch.title": {
+    "text": "Epoch {{epoch}}",
+    "description": "Heading of a card in the Staking sheet. {{epoch}} is the number of the epoch, a fixed period of the network's time."
+  },
+  "staking.epoch.current": {
+    "text": "Current",
+    "description": "Small label on an epoch's card in the Staking sheet: this is the epoch now running. An adjective."
+  },
+  "staking.epoch.completed": {
+    "text": "Completed",
+    "description": "Small label on an epoch's card in the Staking sheet: this epoch has ended and its record is final."
+  },
+  "staking.epoch.wonSlots": {
+    "text": "Won slots",
+    "description": "Label over a number on an epoch's card in the Staking sheet: how many block-producing slots the wallet won in that epoch."
+  },
+  "staking.epoch.upcoming": {
+    "text": "Upcoming",
+    "description": "Label under a number on an epoch's card in the Staking sheet: won slots whose time has not come yet."
+  },
+  "staking.epoch.produced": {
+    "text": "Produced",
+    "description": "Label under a number on an epoch's card in the Staking sheet: won slots in which the wallet produced a block."
+  },
+  "staking.epoch.missed": {
+    "text": "Missed",
+    "description": "Label under a number on an epoch's card in the Staking sheet: won slots in which the wallet failed to produce a block."
+  },
+  "staking.epoch.unobserved": {
+    "text": "Some slots have no confirmed observation.",
+    "description": "Note on an epoch's card in the Staking sheet: for some won slots it is not known whether a block was produced."
+  },
+  "staking.epoch.collecting": {
+    "text": "Epoch data is still being collected.",
+    "description": "Shown on an epoch's card in the Staking sheet when its record exists but has no counts yet."
+  },
+  "staking.epoch.history": {
+    "text": "Epoch history",
+    "description": "Accessible name of the row of epoch cards in the Staking sheet that is swiped sideways."
+  },
+  "staking.epoch.previous": {
+    "text": "Previous epoch",
+    "description": "Accessible name of the ‹ button under the epoch cards in the Staking sheet: shows the epoch before."
+  },
+  "staking.epoch.next": {
+    "text": "Next epoch",
+    "description": "Accessible name of the › button under the epoch cards in the Staking sheet: shows the epoch after."
+  },
+  "staking.epoch.swipe": {
+    "text": "Swipe to browse epochs",
+    "description": "Hint between the two arrow buttons under the epoch cards in the Staking sheet."
+  },
+  "staking.error.preview": {
+    "text": "Could not load the preview.",
+    "description": "Error shown in a staging preview of the Staking sheet when its sample data could not be fetched."
+  },
+  "staking.error.epochData": {
+    "text": "Could not load epoch data.",
+    "description": "Error shown in the Staking sheet when an epoch's record could not be fetched and no reason is known."
+  },
+  "staking.error.changed": {
+    "text": "The wallet or network changed. Retry to refresh epoch data.",
+    "description": "Error shown in the Staking sheet when the fetched record belongs to a different wallet or network than expected. \"Retry\" is the button under it."
+  },
+  "staking.error.network": {
+    "text": "The network is unavailable.",
+    "description": "Error shown in the Staking sheet when the blockchain network the wallet is on is not known."
+  },
+  "staking.error.currentEpoch": {
+    "text": "Could not load the current epoch.",
+    "description": "Error shown in the Staking sheet when the record of the epoch now running could not be fetched."
+  },
+  "staking.error.misconfigured": {
+    "text": "The epoch data service is not configured correctly.",
+    "description": "Error shown in the Staking sheet when the address of the service that supplies epoch records is invalid."
+  },
+  "staking.error.http": {
+    "text": "Epoch data service returned HTTP {{status}}. Please retry.",
+    "description": "Error shown in the Staking sheet when the service that supplies epoch records answered with an error. {{status}} is the numeric HTTP status code; keep \"HTTP\"."
+  },
+  "staking.error.emptyResponse": {
+    "text": "Epoch data service returned an empty response.",
+    "description": "Error shown in the Staking sheet when the service that supplies epoch records answered with nothing."
+  },
+  "staking.error.tooLarge": {
+    "text": "Epoch data response is too large.",
+    "description": "Error shown in the Staking sheet when the service that supplies epoch records sent more data than is accepted."
+  },
+  "staking.error.invalidResponse": {
+    "text": "Epoch data service returned an invalid response.",
+    "description": "Error shown in the Staking sheet when the answer of the service that supplies epoch records could not be read."
+  },
+  "staking.error.timeout": {
+    "text": "Epoch data request timed out. Please retry.",
+    "description": "Error shown in the Staking sheet when the service that supplies epoch records took too long to answer."
+  },
+  "staking.error.unreachable": {
+    "text": "Could not reach the epoch data service. Please retry.",
+    "description": "Error shown in the Staking sheet when the service that supplies epoch records could not be contacted."
+  },
+  "staking.error.wallet": {
+    "text": "A valid wallet address is required.",
+    "description": "Error shown in the Staking sheet when the wallet's address is missing or malformed."
+  },
+  "staking.error.epoch": {
+    "text": "A valid epoch is required.",
+    "description": "Error shown in the Staking sheet when the requested epoch number is malformed."
+  },
+  "staking.error.notYet": {
+    "text": "Epoch data is not available yet.",
+    "description": "Error shown in the Staking sheet when the service has no usable record for the epoch yet."
+  },
+  "staking.error.notStarted": {
+    "text": "That epoch has not started yet.",
+    "description": "Error shown in the Staking sheet when the requested epoch is in the future."
+  },
+  "breakdown.event": {
+    "text": "Event",
+    "description": "Stands in for an event's name in the list of where a person's points came from, when the event has no name. An event is a season or competition."
+  },
+  "breakdown.bonus": {
+    "text": "Bonus points",
+    "description": "Row in the list of where a person's points came from: points awarded by hand, outside any event."
+  }
+}

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { StakingIcon } from '@/components/ui/icons';
+import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { useStoreState } from '../../lib/use-store-state';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
@@ -10,6 +12,7 @@ import { createStakingHistory } from './staking-history.js';
 const controller = () => (window as any).WalletSheet;
 
 export function StakingRow() {
+  const t = useMessages('profile');
   const liveWallet = useStoreState(walletSheetStore);
   const [preview, setPreview] = useState<WalletSheetState | null>(null);
   useEffect(() => {
@@ -39,10 +42,10 @@ export function StakingRow() {
       className="flex items-center gap-3 px-4 min-h-[44px] w-full text-left text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
       onClick={() => setOpen(true)}>
       <StakingIcon aria-hidden="true" className="w-5 h-5 shrink-0" />
-      <span className="text-sm font-medium">Staking</span>
+      <span className="text-sm font-medium">{t('profile:staking.title')}</span>
       <span className={delegated ? 'ml-auto text-xs font-semibold text-violet-700 dark:text-violet-400'
         : ready ? 'ml-auto text-xs font-semibold text-emerald-700 dark:text-emerald-400'
-          : 'ml-auto text-xs text-zinc-500 dark:text-zinc-400'}>{ready ? (delegated ? 'Delegated' : 'Active') : 'Checking…'}</span>
+          : 'ml-auto text-xs text-zinc-500 dark:text-zinc-400'}>{ready ? (delegated ? t('profile:staking.status.delegated') : t('profile:staking.status.active')) : t('profile:staking.status.checking')}</span>
       <span aria-hidden="true">›</span>
     </button>
     {open ? <StakingSheet preview={preview} onClose={() => setOpen(false)} /> : null}
@@ -50,6 +53,7 @@ export function StakingRow() {
 }
 
 function StakingSheet({ onClose, preview }: { onClose: () => void; preview: WalletSheetState | null }) {
+  const t = useMessages('profile');
   const panel = useRef<HTMLDivElement>(null);
   const dismiss = useRef(onClose); dismiss.current = onClose;
   const [adopted, setAdopted] = useState(false);
@@ -70,7 +74,7 @@ function StakingSheet({ onClose, preview }: { onClose: () => void; preview: Wall
   }, []);
   return <div className={adopted ? 'contents' : 'fixed inset-0 z-50 bg-black/60 flex items-end sm:items-center justify-center p-3'}
     onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-    <div ref={panel} data-staking-sheet role="dialog" aria-modal="true" aria-label="Staking"
+    <div ref={panel} data-staking-sheet role="dialog" aria-modal="true" aria-label={t('profile:staking.title')}
       className="w-full max-w-md bg-white dark:bg-zinc-900 rounded-2xl p-4 flex-col max-h-[85dvh] overflow-y-auto"
       onKeyDown={(event) => {
         if (event.key === 'Escape') { event.stopPropagation(); onClose(); }
@@ -83,8 +87,8 @@ function StakingSheet({ onClose, preview }: { onClose: () => void; preview: Wall
         }
       }}>
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-xl font-bold">Staking</h2>
-        <Button variant="neutral" size="sm" aria-label="Close staking" onClick={onClose}>×</Button>
+        <h2 className="text-xl font-bold">{t('profile:staking.title')}</h2>
+        <Button variant="neutral" size="sm" aria-label={t('profile:staking.close')} onClick={onClose}>×</Button>
       </div>
       <StakingContent wallet={preview || wallet} demo={!!preview} />
     </div>
@@ -94,36 +98,38 @@ function StakingSheet({ onClose, preview }: { onClose: () => void; preview: Wall
 // Delegated is an early return: no status card, explanatory copy, epoch hook
 // or network request is mounted in that state.
 export function StakingContent({ wallet, demo = false }: { wallet: WalletSheetState; demo?: boolean }) {
+  const t = useMessages('profile');
   const manage = async () => {
-    if (demo) { (window as any).PlatformUI?.toast?.('Open the Homeroom app to manage delegation.'); return; }
+    if (demo) { (window as any).PlatformUI?.toast?.(t('profile:staking.manageInApp')); return; }
     await controller()?._manageStaking?.();
     const error = walletSheetStore.get().stateError;
     if (error) (window as any).PlatformUI?.toast?.(error, { error: true });
   };
   if (wallet.staking.kind === 'delegated') return <Button layout="full" size="narrowBold"
     disabled={wallet.stakingPending} onClick={() => { void manage(); }}>
-    {wallet.stakingPending ? 'Opening…' : 'Undelegate'}
+    {wallet.stakingPending ? t('profile:staking.opening') : t('profile:staking.undelegate')}
   </Button>;
   if (wallet.staking.kind !== 'local' || !wallet.address) return <div>
-    <p className="text-sm text-zinc-500 dark:text-zinc-400">Staking status is not available yet.</p>
+    <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('profile:staking.unavailable')}</p>
     <Button layout="full" size="narrowBold" className="mt-3" disabled={wallet.refreshPending}
-      onClick={() => controller()?.retryState?.()}>{wallet.refreshPending ? 'Checking…' : 'Retry'}</Button>
+      onClick={() => controller()?.retryState?.()}>{wallet.refreshPending ? t('profile:staking.rechecking') : t('core:common.retry')}</Button>
   </div>;
   return <>
-    <div className="mb-4 text-sm font-semibold text-emerald-700 dark:text-emerald-400">● Active</div>
+    <div className="mb-4 text-sm font-semibold text-emerald-700 dark:text-emerald-400">{t('profile:staking.activeDot')}</div>
     <Button layout="full" size="narrowBold" disabled={wallet.stakingPending}
-      onClick={() => { void manage(); }}>{wallet.stakingPending ? 'Opening…' : 'Delegate'}</Button>
+      onClick={() => { void manage(); }}>{wallet.stakingPending ? t('profile:staking.opening') : t('profile:staking.delegate')}</Button>
     <ActiveEpochs key={wallet.address} wallet={wallet.address} demo={demo} />
   </>;
 }
 
 async function readPreview(path: string, signal: AbortSignal) {
   const response = await fetch(path + (path.includes('?') ? '&' : '?') + 'demo=staking', { credentials: 'same-origin', signal });
-  if (!response.ok) throw new Error('Could not load the preview.');
+  if (!response.ok) throw new Error(translate('profile:staking.error.preview'));
   return response.json();
 }
 
 function ActiveEpochs({ wallet, demo }: { wallet: string; demo: boolean }) {
+  const t = useMessages('profile');
   const [history] = useState(() => createStakingHistory(wallet, demo ? {
     read: readPreview,
     readEpoch: ({ epoch }: { epoch: string }, signal: AbortSignal) =>
@@ -138,8 +144,8 @@ function ActiveEpochs({ wallet, demo }: { wallet: string; demo: boolean }) {
     return () => { clearInterval(timer); document.removeEventListener('visibilitychange', refresh); history.dispose(); };
   }, [history]);
   if (state.selectedEpoch === null) return <div className="mt-5" role="status">
-    <p className="text-sm text-zinc-500 dark:text-zinc-400">{state.error || 'Loading epoch data…'}</p>
-    {state.error ? <Button className="mt-3" size="sm" onClick={() => { void history.refresh(); }}>Retry</Button> : null}
+    <p className="text-sm text-zinc-500 dark:text-zinc-400">{state.error || t('profile:staking.epoch.loading')}</p>
+    {state.error ? <Button className="mt-3" size="sm" onClick={() => { void history.refresh(); }}>{t('core:common.retry')}</Button> : null}
   </div>;
   return <div className="mt-5">
     <EpochCarousel state={state} select={(epoch: number) => { void history.select(epoch); }} retry={() => { void history.retry(); }} />
@@ -148,30 +154,32 @@ function ActiveEpochs({ wallet, demo }: { wallet: string; demo: boolean }) {
 }
 
 export function EpochCard({ epoch, record, current, error, retry }: any) {
+  const t = useMessages('profile');
   return <section data-staking-epoch={epoch} className="rounded-2xl border border-zinc-200 dark:border-zinc-700 p-5 h-full">
     <div className="flex items-center justify-between gap-2">
-      <h3 className="text-lg font-bold">Epoch {epoch}</h3>
-      {current || record?.complete ? <span className="text-xs text-zinc-500 dark:text-zinc-400">{current ? 'Current' : 'Completed'}</span> : null}
+      <h3 className="text-lg font-bold">{t('profile:staking.epoch.title', { epoch })}</h3>
+      {current || record?.complete ? <span className="text-xs text-zinc-500 dark:text-zinc-400">{current ? t('profile:staking.epoch.current') : t('profile:staking.epoch.completed')}</span> : null}
     </div>
     {record?.counts ? <>
-      <div className="mt-5 text-sm text-zinc-500 dark:text-zinc-400">Won slots</div>
+      <div className="mt-5 text-sm text-zinc-500 dark:text-zinc-400">{t('profile:staking.epoch.wonSlots')}</div>
       <div className="mt-1 text-4xl font-bold tabular-nums">{record.counts.won}</div>
       <div className="mt-5 pt-4 border-t border-zinc-200 dark:border-zinc-800 grid grid-cols-3 gap-2 text-center">
         {[
-          ['Upcoming', record.counts.upcoming, 'text-amber-700 dark:text-amber-300'],
-          ['Produced', record.counts.produced, 'text-emerald-700 dark:text-emerald-400'],
-          ['Missed', record.counts.missed, 'text-red-700 dark:text-red-400'],
+          ['profile:staking.epoch.upcoming', record.counts.upcoming, 'text-amber-700 dark:text-amber-300'],
+          ['profile:staking.epoch.produced', record.counts.produced, 'text-emerald-700 dark:text-emerald-400'],
+          ['profile:staking.epoch.missed', record.counts.missed, 'text-red-700 dark:text-red-400'],
         ].map(([label, count, color]) => <div key={label} className={color}>
-          <div className="text-2xl font-bold tabular-nums">{count}</div><div className="mt-1 text-xs">{label}</div>
+          <div className="text-2xl font-bold tabular-nums">{count}</div><div className="mt-1 text-xs">{t(label)}</div>
         </div>)}
       </div>
-      {record.counts.unobserved > 0 ? <p className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">Some slots have no confirmed observation.</p> : null}
-    </> : <p className="mt-5 text-sm text-zinc-500 dark:text-zinc-400" role="status">{error || (record ? 'Epoch data is still being collected.' : 'Loading epoch data…')}</p>}
-    {error ? <Button size="sm" className="mt-3" onClick={retry}>Retry</Button> : null}
+      {record.counts.unobserved > 0 ? <p className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">{t('profile:staking.epoch.unobserved')}</p> : null}
+    </> : <p className="mt-5 text-sm text-zinc-500 dark:text-zinc-400" role="status">{error || (record ? t('profile:staking.epoch.collecting') : t('profile:staking.epoch.loading'))}</p>}
+    {error ? <Button size="sm" className="mt-3" onClick={retry}>{t('core:common.retry')}</Button> : null}
   </section>;
 }
 
 export function EpochCarousel({ state, select, retry }: any) {
+  const t = useMessages('profile');
   const rail = useRef<HTMLDivElement>(null);
   const settle = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const centering = useRef(false);
@@ -193,7 +201,7 @@ export function EpochCarousel({ state, select, retry }: any) {
     if (epochs[index] !== epoch) select(epochs[index]);
   }
   return <>
-    <div ref={rail} data-staking-epochs aria-label="Epoch history"
+    <div ref={rail} data-staking-epochs aria-label={t('profile:staking.epoch.history')}
       className="flex gap-3 overflow-x-auto overscroll-x-contain snap-x snap-mandatory pb-2 select-none"
       style={{ scrollbarWidth: 'none', touchAction: 'pan-x' }}
       onScroll={() => { clearTimeout(settle.current); settle.current = setTimeout(finishScroll, 140); }}
@@ -216,9 +224,9 @@ export function EpochCarousel({ state, select, retry }: any) {
       </div>)}
     </div>
     <div className="flex items-center justify-between gap-2 mt-3">
-      <Button variant="neutral" size="sm" aria-label="Previous epoch" disabled={epoch === 0} onClick={() => select(epoch - 1)}>‹</Button>
-      <span className="text-xs text-zinc-500 dark:text-zinc-400">Swipe to browse epochs</span>
-      <Button variant="neutral" size="sm" aria-label="Next epoch" disabled={epoch === state.currentEpoch} onClick={() => select(epoch + 1)}>›</Button>
+      <Button variant="neutral" size="sm" aria-label={t('profile:staking.epoch.previous')} disabled={epoch === 0} onClick={() => select(epoch - 1)}>‹</Button>
+      <span className="text-xs text-zinc-500 dark:text-zinc-400">{t('profile:staking.epoch.swipe')}</span>
+      <Button variant="neutral" size="sm" aria-label={t('profile:staking.epoch.next')} disabled={epoch === state.currentEpoch} onClick={() => select(epoch + 1)}>›</Button>
     </div>
   </>;
 }

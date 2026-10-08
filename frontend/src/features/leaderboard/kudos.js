@@ -19,6 +19,7 @@
 // without a panel reload.
 
 import { agoStamp } from '../../lib/timestamp';
+import { t, htmlText, htmlRich } from '../../lib/i18n/runtime';
 
 const Kudos = {
   // appSlug => Map<sessionId, { count, my_kudos, givers? }>. We cache
@@ -78,17 +79,17 @@ const Kudos = {
     const readOnly = !!(window.AppView && AppView.readOnly);
     const direct = !!entry.my_kudos_direct;
     const disabledReason = readOnly
-      ? 'Only collaborators can give kudos'
+      ? t('leaderboard:kudos.button.collaboratorsOnly')
       : opts.disabled
         ? opts.disabledReason || ''
         : isSelf
-          ? 'You can\u2019t give kudos to your own change'
+          ? t('leaderboard:kudos.button.ownChange')
           : mine && !direct
-            ? 'Credited via a bounty award, so it can\u2019t be retracted'
+            ? t('leaderboard:kudos.button.viaBounty')
             : '';
     const disabled = !!disabledReason;
     const tip = disabledReason || (mine && direct
-      ? 'You gave kudos to this change. Click again to retract'
+      ? t('leaderboard:kudos.button.retract')
       : '');
 
     // Locked = disabled for a reason no later state change can lift
@@ -116,14 +117,14 @@ const Kudos = {
     // name and hides the tail, then the whole label (dev-card.tsx
     // useFoldedActions, `data-thanks`), so the button carries the whole
     // line as its name and tooltip at every face.
-    const line = thanks ? `Thank ${thanks} for putting this up` : '';
+    const line = thanks ? t('leaderboard:kudos.button.thank', { username: thanks }) : '';
     // #4455: on a change page's Addresses row (`opts.thread`) the thanks is
     // "👏 Thank snait" (app.css hides the tail there), and the count pill
     // says nothing while it is zero: the wrap is left out of the row until
     // it is not.
     const thread = !!opts.thread;
     const face = thanks
-      ? `<span aria-hidden="true">\u{1F44F}</span><span class="dev-thanks-label">Thank ${escapeHtml(thanks)}<span class="dev-thanks-tail"> for putting this up</span></span><span data-kudos-count class="hidden">${count}</span>`
+      ? `<span aria-hidden="true">\u{1F44F}</span><span class="dev-thanks-label">${htmlRich('leaderboard:kudos.button.thankFace', { username: thanks }, [(tail) => `<span class="dev-thanks-tail">${tail}</span>`])}</span><span data-kudos-count class="hidden">${count}</span>`
       : `<span aria-hidden="true">\u{1F44F}</span>
           <span data-kudos-count>${count}</span>`;
     const quiet = thread && !thanks && count === 0;
@@ -197,7 +198,7 @@ const Kudos = {
           popover.classList.remove('hidden');
           const entry = Kudos._ensureCache(sid);
           if (entry.count === 0) {
-            popover.innerHTML = '<span class="text-zinc-500 dark:text-zinc-400">No kudos yet. Be the first.</span>';
+            popover.innerHTML = `<span class="text-zinc-500 dark:text-zinc-400">${htmlText('leaderboard:kudos.popover.none')}</span>`;
             return;
           }
           if (!entry.givers) {
@@ -209,7 +210,7 @@ const Kudos = {
                 else popover.innerHTML = Kudos.GIVERS_ERROR_HTML;
               });
             }
-            popover.innerHTML = '<span class="text-zinc-500 dark:text-zinc-400">Loading…</span>';
+            popover.innerHTML = `<span class="text-zinc-500 dark:text-zinc-400">${htmlText('leaderboard:kudos.popover.loading')}</span>`;
             return;
           }
           Kudos._renderPopover(sid, popover);
@@ -224,11 +225,11 @@ const Kudos = {
   _renderPopover(sid, popover) {
     const entry = Kudos._ensureCache(sid);
     if (!entry.givers || !entry.givers.length) {
-      popover.innerHTML = '<span class="text-zinc-500 dark:text-zinc-400">No kudos yet. Be the first.</span>';
+      popover.innerHTML = `<span class="text-zinc-500 dark:text-zinc-400">${htmlText('leaderboard:kudos.popover.none')}</span>`;
       return;
     }
     const items = entry.givers.map((g) => {
-      const who = escapeHtml(g.username || 'someone');
+      const who = escapeHtml(g.username || t('leaderboard:kudos.popover.someone'));
       // #1808: the age, with the unelided instant one hover away.
       const when = agoStamp(g.createdAt);
       const stamp = when.text
@@ -239,11 +240,13 @@ const Kudos = {
         ${stamp}
       </div>`;
     }).join('');
-    popover.innerHTML = `<div class="mb-1 text-zinc-500 dark:text-zinc-400">Kudos givers (${entry.givers.length})</div>${items}`;
+    popover.innerHTML = `<div class="mb-1 text-zinc-500 dark:text-zinc-400">${htmlText('leaderboard:kudos.popover.givers', { count: entry.givers.length })}</div>${items}`;
   },
 
   // Shown in place of the giver list when it couldn't be fetched (#2994).
-  GIVERS_ERROR_HTML: '<span class="text-zinc-500 dark:text-zinc-400">Couldn\u2019t load who gave kudos.</span>',
+  get GIVERS_ERROR_HTML() {
+    return `<span class="text-zinc-500 dark:text-zinc-400">${htmlText('leaderboard:kudos.popover.failed')}</span>`;
+  },
 
   // Resolves true once the giver list is cached, false when the request
   // failed (non-2xx or network error), so a caller can tell "no givers"
@@ -295,7 +298,7 @@ const Kudos = {
           // WS bounce).
           if (entry.givers) {
             entry.givers.push({
-              username: window.App?.user?.username || 'you',
+              username: window.App?.user?.username || t('leaderboard:kudos.popover.you'),
               createdAt: new Date().toISOString(),
             });
           }
@@ -310,19 +313,19 @@ const Kudos = {
         // its cached panes so the next visit re-fetches.
         if (window.Leaderboard?.invalidateHistory) Leaderboard.invalidateHistory();
       } else if (res.status === 429) {
-        Kudos._toast(data.error || 'Weekly kudos quota exceeded.');
+        Kudos._toast(data.error || t('leaderboard:kudos.toast.quota'));
       } else if (res.status === 403) {
-        Kudos._toast('You can\u2019t give kudos to your own change.');
+        Kudos._toast(t('leaderboard:kudos.toast.ownChange'));
       } else if (res.status === 409) {
-        Kudos._toast('You already gave kudos to this change.');
+        Kudos._toast(t('leaderboard:kudos.toast.already'));
       } else if (res.status === 404) {
-        Kudos._toast(data.error || 'This change isn\u2019t eligible for kudos.');
+        Kudos._toast(data.error || t('leaderboard:kudos.toast.notEligible'));
       } else {
-        Kudos._toast('Failed to give kudos. Try again?');
+        Kudos._toast(t('leaderboard:kudos.toast.giveFailed'));
       }
     } catch (err) {
       console.warn('[kudos] give failed', err);
-      Kudos._toast('Network error giving kudos.');
+      Kudos._toast(t('leaderboard:kudos.toast.giveNetwork'));
     }
   },
 
@@ -357,16 +360,16 @@ const Kudos = {
         // the budget endpoint is authoritative either way.
         Kudos.Budget.refresh();
       } else if (res.status === 404) {
-        Kudos._toast(data.error || 'No kudos to retract.');
+        Kudos._toast(data.error || t('leaderboard:kudos.toast.nothingToRetract'));
         // Cache was stale (e.g. bounty-derived credit, or already
         // retracted in another tab) — reconcile from the server.
         Kudos.fetchGivers(sessionId);
       } else {
-        Kudos._toast('Failed to retract kudos. Try again?');
+        Kudos._toast(t('leaderboard:kudos.toast.retractFailed'));
       }
     } catch (err) {
       console.warn('[kudos] retract failed', err);
-      Kudos._toast('Network error retracting kudos.');
+      Kudos._toast(t('leaderboard:kudos.toast.retractNetwork'));
     }
   },
 
@@ -435,13 +438,13 @@ const Kudos = {
         btn.classList.add('gc-vote-active');
         btn.classList.remove('opacity-60', 'cursor-not-allowed');
         btn.disabled = false;
-        btn.setAttribute('title', 'You gave kudos to this change. Click again to retract');
+        btn.setAttribute('title', t('leaderboard:kudos.button.retract'));
       } else if (entry.my_kudos) {
         // Bounty-derived credit: shows as the viewer's but isn't a
         // pr_kudos row, so there's nothing to retract here.
         btn.classList.add('gc-vote-active', 'opacity-60', 'cursor-not-allowed');
         btn.disabled = true;
-        btn.setAttribute('title', 'Credited via a bounty award, so it can’t be retracted');
+        btn.setAttribute('title', t('leaderboard:kudos.button.viaBounty'));
       } else {
         // No kudos from the viewer (incl. just-retracted): back to the
         // plain give state.
@@ -518,18 +521,28 @@ const Kudos = {
       // #3230: the reset in the viewer's own clock, with the exact UTC
       // instant beside it, since this text is the hover.
       const RT = window.ResetTime;
-      const resets = RT
-        ? `Resets ${RT.resetWhen('weekly')} (${RT.resetUtc('weekly')}).`
-        : 'Resets Monday 00:00 UTC.';
+      // One whole sentence per case: with bounties or without, and with the
+      // reset in the viewer's own time or, when that helper is absent, in UTC.
+      const resets = RT ? { when: RT.resetWhen('weekly'), utc: RT.resetUtc('weekly') } : null;
       const tip = bounties
-        ? `${remaining} of ${limit} thanks and ${bounties.remaining} of ${bounties.limit} bounties left this week. ${resets}`
-        : `${remaining} of ${limit} kudos left this week. ${resets}`;
+        ? t(resets ? 'leaderboard:kudos.budget.tipBounties' : 'leaderboard:kudos.budget.tipBountiesUtc', {
+          remaining, limit, bountiesRemaining: bounties.remaining, count: Number(bounties.limit), ...resets,
+        })
+        : t(resets ? 'leaderboard:kudos.budget.tip' : 'leaderboard:kudos.budget.tipUtc',
+          { remaining, count: Number(limit), ...resets });
       const tone = remaining === 0
         ? 'text-zinc-500 dark:text-zinc-400'
         : 'text-violet-700 dark:text-violet-400';
-      const bountyPart = bounties
-        ? `<span class="drawer-meter-dim"> · </span><span class="drawer-meter-part"><span class="drawer-meter-strong">${bounties.remaining}</span><span class="drawer-meter-dim"> of ${bounties.limit} bounties</span></span>`
-        : '';
+      // The meter is one message: each figure's wrapper, its number and its
+      // words are numbered tags, and so is the separator between two figures.
+      const part = (inner) => `<span class="drawer-meter-part">${inner}</span>`;
+      const strong = (inner) => `<span class="drawer-meter-strong">${inner}</span>`;
+      const dim = (inner) => `<span class="drawer-meter-dim">${inner}</span>`;
+      const meter = bounties
+        ? htmlRich('leaderboard:kudos.budget.thanksBounties', {
+          remaining, limit, bountiesRemaining: bounties.remaining, count: Number(bounties.limit),
+        }, [part, strong, dim, dim])
+        : htmlRich('leaderboard:kudos.budget.left', { remaining, count: Number(limit) }, [part, strong, dim]);
       // Plain inline text, NOT a pill: the row already labels itself
       // "Kudos", so the badge chrome was framing a number that needed no
       // frame — and it read as a tappable chip competing with the nav
@@ -541,7 +554,7 @@ const Kudos = {
       // longer has to account for this slot's width.
       slot.innerHTML = `
         <a href="#leaderboard/prs" class="drawer-meter ${tone}" title="${escapeAttr(tip)}">
-          <span class="drawer-meter-part"><span class="drawer-meter-strong">${remaining}</span><span class="drawer-meter-dim"> of ${limit} ${bounties ? 'thanks' : 'left'}</span></span>${bountyPart}
+          ${meter}
         </a>`;
     },
   },
@@ -579,3 +592,9 @@ function escapeAttr(str) {
 // frontend/scripts/build-shell.mjs evaluates the island's whole module graph
 // in Node, where there is no window.
 if (typeof window !== 'undefined') window.Kudos = Kudos;
+
+// The weekly meter is this module's to repaint; a kudos button is redrawn by
+// whichever surface drew it.
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  document.addEventListener('homeroom:language-changed', () => { Kudos.Budget._render(); });
+}

@@ -33,6 +33,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -207,7 +208,7 @@ test('the tab strip reads Challenges, Kudos, Standings, History (#1917, the prot
   assert.ok(list.length > 0, 'SECTION_TABS located in the island');
   const labels = [...list.matchAll(/\{ key: '([a-z]+)', label: '([^']+)' \}/g)]
     .map((m) => [m[1], m[2]]);
-  assert.deepEqual(labels, [
+  assert.deepEqual(labels.map(([key, id]) => [key, message(id)]), [
     ['challenges', 'Challenges'],
     ['kudos', 'Kudos'],
     ['topochain', 'Standings'],
@@ -652,14 +653,18 @@ test('the challenges grid summarises and groups the completed set', () => {
   // ("3/9 done in Season 2" over one segment per challenge) rather than
   // "3 of 9 challenges completed". This pin moved with it, deliberately.
   // QA 2026-09-24 Q17: an event's tally says it is an event's.
-  assert.match(chJs, /caption: name \? `done in this event · \$\{name\}` : 'done'/, 'and states the tally in words');
+  assert.match(chJs, /return name \? \{ done, total, scope: 'event', name \} : \{ done, total \};/, 'and names the tally\'s scope');
+  assert.equal(message('leaderboard:progress.eventLabel', { done: 3, count: 9, event: 'Season 2' }),
+    '3 of 9 done in this event · Season 2', 'which the shared progress states in words');
+  assert.equal(message('leaderboard:progress.plainLabel', { done: 3, count: 9 }), '3 of 9 done');
   assert.match(chJs, /progress: TopochainChallenges\._progressView\(doneCount, ordered\.length\)/,
     'which is what the summary line carries');
   assert.match(chTsx, /<SeasonProgress id="tc-se-challenge-summary"/,
     'drawn by the component Home shares');
   assert.match(chTsx, /\{g\.heading\}/,
     'the grouping subheading renders');
-  assert.match(chJs, /heading: 'Completed'/,
+  assert.equal(message('leaderboard:challenges.group.completed'), 'Completed');
+  assert.match(chJs, /heading: PlatformI18n\.t\('leaderboard:challenges\.group\.completed'\)/,
     'and the module is what names it');
   // Suppressed when everything (or nothing) is finished — every public event
   // in production is currently 100% completed, where the heading says nothing.
@@ -676,7 +681,8 @@ test('the challenges grid summarises and groups the completed set', () => {
   assert.match(chCardTsx,
     /done: 'bg-emerald-500\/10 text-emerald-700 dark:text-emerald-400'/,
     'completed cards carry the done rail instead');
-  assert.match(chJs, /state: 'done', stateLabel: 'Done'/,
+  assert.equal(message('leaderboard:challenges.state.done'), 'Done');
+  assert.match(chJs, /state: 'done', stateLabel: PlatformI18n\.t\('leaderboard:challenges\.state\.done'\)/,
     'and the rail names the state in the board\'s word for it');
 });
 
@@ -848,7 +854,8 @@ test('#3887: a board whose every scorer is excluded reads as the filter working,
   // does — the declared check accepts "table or this hint".
   assert.match(standingsTsx, /id="tc-lb-non-podium-toggle"/, 'the chip has its id');
   assert.match(standingsTsx, /aria-pressed=\{toggle\.on\}/, 'and publishes its on-state');
-  assert.match(standingsTsx, /Everyone with a score on this board is excluded from the ranking\./);
+  assert.match(standingsTsx, /\{t\('leaderboard:standings\.allExcluded'\)\}/);
+  assert.equal(message('leaderboard:standings.allExcluded'), 'Everyone with a score on this board is excluded from the ranking.');
   assert.match(standingsTsx,
     /state === 'allexcluded'[\s\S]{0,600}?data-tc-lb-empty/,
     'the all-excluded hint keeps the declared-check contract');
@@ -989,8 +996,10 @@ test('the season caption replaces the "nothing is running" caption', () => {
   assert.ok(!/_seasonDefault/.test(ctxJs),
     'the default-pick flag is gone — the selection is the single source of truth');
   // The picker and the hero must not label the season event "(past)".
-  assert.match(ctxJs, /if \(isSeason\) return ' \(season\)';/, 'the option reads (season)');
-  assert.match(ctxJs, /const statusLabel = isSeason \? 'season'/, 'so does the hero badge');
+  assert.match(ctxJs, /if \(isSeason\) return t\('leaderboard:eventBar\.option\.season', \{ event \}\);/, 'the option reads (season)');
+  assert.equal(message('leaderboard:eventBar.option.season', { event: 'Season 1' }), 'Season 1 (season)');
+  assert.match(ctxJs, /const statusLabel = isSeason \? t\('leaderboard:eventBar\.status\.season'\)/, 'so does the hero badge');
+  assert.equal(message('leaderboard:eventBar.status.season'), 'season');
 });
 
 test('both #981 checks are declared and the reader keeps them', () => {
@@ -1109,8 +1118,9 @@ test('the standings tally counts the viewer\'s progress, in the word Home uses',
     'the organiser\'s closed flag is not the viewer\'s progress');
   assert.match(load, /c\.progress && c\.progress\.done === true/,
     'the tally counts done-ness per row');
-  assert.match(standingsTsx, /challenges done/,
+  assert.match(message('leaderboard:standings.challengesDone', { done: 3, count: 9 }), /^3 of 9 challenges done /,
     'and says "done", the word Home uses for this same number');
+  assert.doesNotMatch(message('leaderboard:standings.challengesDone', { done: 3, count: 9 }), /completed/);
   assert.doesNotMatch(standingsTsx, /challenges completed/,
     'never "completed", which on a challenge row means the organiser closed it');
 });
@@ -1121,7 +1131,7 @@ test('a signed-out reader gets the cross-link without a tally that is not theirs
   assert.match(load, /const signedIn = data\.data\.some\(\(c\) => c && c\.progress\)/,
     'progress rides along per row for a signed-in viewer only, which is the signal');
   assert.match(load, /done: signedIn/, 'so the tally is null when nobody is signed in');
-  assert.match(standingsTsx, /line\.done == null \? null :/,
+  assert.match(standingsTsx, /id=\{line\.done == null \? 'leaderboard:standings\.viewChallenges' : 'leaderboard:standings\.challengesDone'\}/,
     'and the line renders the link alone rather than a zero read as the reader\'s own');
   // The declared check anchors on the link INSIDE the paragraph, so the
   // paragraph must survive a null tally.

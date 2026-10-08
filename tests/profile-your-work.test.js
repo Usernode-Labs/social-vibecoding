@@ -16,6 +16,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -220,7 +221,10 @@ test('the screen ships hidden and empty, one root for all three views', () => {
   assert.doesNotMatch(html, /data-profile-work-group|Loading/, 'nothing but the frame until it is opened');
   assert.equal(mod.workKind('votes'), 'votes');
   assert.equal(mod.workKind('anything'), 'changes');
-  assert.deepEqual(mod.WORK_TITLES, { changes: 'Your changes', requests: 'Your requests', votes: 'Your votes' });
+  // The titles are catalog entries; the table holds their ids.
+  assert.deepEqual(mod.WORK_TITLES,
+    { changes: 'profile:work.changes.title', requests: 'profile:work.requests.title', votes: 'profile:work.votes.title' });
+  assert.deepEqual(Object.values(mod.WORK_TITLES).map((id) => message(id)), ['Your changes', 'Your requests', 'Your votes']);
 });
 
 test('each view draws its own groups; long ones fold; Your requests ends on Suggest an improvement', () => {

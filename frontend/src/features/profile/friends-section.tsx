@@ -20,6 +20,7 @@ import { type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { GroupedList, ListRow, PLANE_FILL, SectionHeader } from '@/components/ui/grouped-list';
+import { useMessages } from '../../lib/i18n/react';
 import { FriendSearch } from '../friends/friend-search';
 import { Profile } from './profile.js';
 
@@ -77,9 +78,10 @@ export function FriendsSection({
   /** Off in the Friends card (./friends-sheet.tsx), whose own title says it. */
   heading?: boolean;
 }): ReactNode {
+  const t = useMessages('profile');
   return (
-    <section id="profile-friends" className="mt-2" aria-label="Friends, visible only to you">
-      {heading ? <SectionHeader>Friends</SectionHeader> : null}
+    <section id="profile-friends" className="mt-2" aria-label={t('profile:friends.label')}>
+      {heading ? <SectionHeader>{t('profile:friends.title')}</SectionHeader> : null}
       {/* #3048: find people by username and add them right here. */}
       <FriendSearch lists={view} />
       {view.incoming.length ? (
@@ -106,7 +108,7 @@ export function FriendsSection({
                     className="disabled:opacity-60"
                     onClick={() => { void Profile.answerFriendRequest(row.id, true); }}
                   >
-                    Accept
+                    {t('profile:friends.accept')}
                   </Button>
                   <Button
                     type="button"
@@ -118,7 +120,7 @@ export function FriendsSection({
                     className="disabled:opacity-60"
                     onClick={() => { void Profile.answerFriendRequest(row.id, false); }}
                   >
-                    Decline
+                    {t('profile:friends.decline')}
                   </Button>
                 </div>
               )}
@@ -148,13 +150,13 @@ export function FriendsSection({
           className={`rounded-2xl ${PLANE_FILL} p-4 text-center text-sm text-zinc-500 dark:text-zinc-400`}
         >
           {view.loaded
-            ? 'No friends yet. Find someone by username above.'
-            : 'Your friends could not be loaded. Check your connection and try again.'}
+            ? t('profile:friends.empty')
+            : t('profile:friends.loadFailed')}
         </div>
       )}
       {view.outgoing?.length ? (
         <>
-          <p className="px-4 pt-4 pb-2 text-[0.8125rem] text-zinc-500 dark:text-zinc-400">Sent requests</p>
+          <p className="px-4 pt-4 pb-2 text-[0.8125rem] text-zinc-500 dark:text-zinc-400">{t('profile:friends.sentHeading')}</p>
           <GroupedList id="profile-friend-sent" className="mx-0" tone="plane">
             {view.outgoing.map((row) => (
               <ListRow
@@ -177,7 +179,7 @@ export function FriendsSection({
                     className="shrink-0 disabled:opacity-60"
                     onClick={() => { void Profile.cancelFriendRequest(row.id); }}
                   >
-                    Cancel
+                    {t('profile:friends.cancelRequest')}
                   </Button>
                 )}
               />
@@ -189,7 +191,7 @@ export function FriendsSection({
         <p role="alert" className="px-4 pt-2 text-sm text-red-700 dark:text-red-400">{status}</p>
       ) : null}
       <p className="px-4 pt-2 text-xs text-zinc-500 dark:text-zinc-400">
-        Only you can see your friends. Nobody else sees this list or how long it is.
+        {t('profile:friends.privacy')}
       </p>
     </section>
   );

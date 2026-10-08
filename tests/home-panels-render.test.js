@@ -800,17 +800,21 @@ test('QA 2026-09-24 Q17: the season progress counts the whole season, as the pro
   const { HP } = makeHomePanels({ slots: [] });
   const season = { id: 1, name: 'Season 1' };
   const whole = HP.challengesView(panel({ season, total: 6, done: 2, all_total: 15, all_done: 4 }));
-  assert.deepEqual({ ...whole.season }, { done: 4, total: 15, caption: 'done in Season 1' });
+  // The words are the shared SeasonProgress's (leaderboard:progress.*); the
+  // panel names the scope and the season.
+  assert.deepEqual({ ...whole.season }, { done: 4, total: 15, scope: 'season', name: 'Season 1' });
+  assert.equal(message('leaderboard:progress.seasonLabel', { done: 4, count: 15, season: 'Season 1' }), '4 of 15 done in Season 1');
   const expanded = HP.seasonView(panel({ season, total: 15, done: 4, all_total: 15, all_done: 4 }));
   assert.deepEqual({ ...expanded }, { ...whole.season }, 'expanding the block does not change it');
   const older = HP.challengesView(panel({ season, total: 6, done: 2, all_total: 15 }));
-  assert.deepEqual({ ...older.season }, { done: 2, total: 6, caption: 'done in Season 1' },
+  assert.deepEqual({ ...older.season }, { done: 2, total: 6, scope: 'season', name: 'Season 1' },
     'no all_done: the open counts, as before');
   const gated = HP.seasonView(panel({
     season, total: 6, done: 2, all_total: 15, all_done: 4,
     onboarding: { unlocked: false, total: 3, completed: 1 },
   }));
-  assert.deepEqual({ ...gated }, { done: 1, total: 3, caption: 'done in First challenges' },
+  assert.equal(message('leaderboard:progress.firstLabel', { done: 1, count: 3 }), '1 of 3 done in First challenges');
+  assert.deepEqual({ ...gated }, { done: 1, total: 3, scope: 'first' },
     'setup still gates the scope while it is closed');
 });
 
@@ -822,10 +826,10 @@ test('the season progress names its scope, and leaves deadlines to the cards and
     total: 1, done: 1,
     challenges: [challenge({ progress: { done: true, current: null, target: null } })],
   }));
-  assert.deepEqual({ ...allDone.season }, { done: 1, total: 1, caption: 'done in Season 1' },
+  assert.deepEqual({ ...allDone.season }, { done: 1, total: 1, scope: 'season', name: 'Season 1' },
     'every card finished: still just the tally, no "3d left" moved onto it');
   const open = HP.challengesView(panel({ season: { id: 1, name: 'Season 1', ends_at: ends } }));
-  assert.equal(open.season.caption, 'done in Season 1');
+  assert.deepEqual([open.season.scope, open.season.name], ['season', 'Season 1']);
   assert.equal(open.groups[0].meta, '3d left', 'the group header says the deadline');
   assert.equal(open.rows[0].deadline, null, 'and its card leaves it to the header');
   const setup = HP.challengesView(panel({
@@ -834,7 +838,8 @@ test('the season progress names its scope, and leaves deadlines to the cards and
   }));
   assert.equal(setup.rows[0].deadline, '3d left', 'a First challenges card says its own');
   const unnamed = HP.challengesView(panel({ season: { id: 1, name: '' } }));
-  assert.equal(unnamed.season.caption, 'done', 'no name, no scope words');
+  assert.deepEqual([unnamed.season.scope, unnamed.season.name], [null, null], 'no name, no scope words');
+  assert.equal(message('leaderboard:progress.plainLabel', { done: 1, count: 6 }), '1 of 6 done');
 });
 
 // ── Group headers ─────────────────────────────────────────────────
