@@ -1329,9 +1329,16 @@ async function deleteApplication(config, runtimeName) {
     deleteIfPresent(core, 'deleteNamespacedSecret', withSuffix(runtimeName, 'env'), namespace),
     // Keep shared and legacy TLS material across rebuilds, idle teardown and
     // failed rollouts. Certificate retirement is a separate operator action.
-    deleteIfPresent(apps, 'deleteNamespacedDeployment', runtimeName, namespace, {
-      propagationPolicy: 'Foreground', ...(uid ? { body: { preconditions: { uid } } } : {}),
-    }),
+    //
+    // Foreground keeps the Deployment until its Pods are gone, which is what
+    // the wait below reads. With a body the API server takes the delete
+    // options from the body alone, so the policy goes in with the
+    // precondition; beside it, as a query option, it was ignored, the
+    // Deployment went at once and the wait returned with its Pods still
+    // running (the same mistake orphaned check Pods, #4310).
+    deleteIfPresent(apps, 'deleteNamespacedDeployment', runtimeName, namespace, uid
+      ? { body: { propagationPolicy: 'Foreground', preconditions: { uid } } }
+      : { propagationPolicy: 'Foreground' }),
   ]);
   const failed = deletions.find(result => result.status === 'rejected');
   if (failed) throw failed.reason;
