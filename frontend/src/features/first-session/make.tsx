@@ -194,6 +194,13 @@ export function makeEyebrow(entry: MakeEntry, who: string): string {
  */
 export const MAKE_PUBLIC_LINE = 'What you write here, and the app’s code, are public on GitHub.';
 
+/**
+ * Under the description box, quietly, while it still holds the answer the
+ * person gave on the waitlist (#4040): it opens on Your own idea with that
+ * answer in the box. Gone once they change a word of it.
+ */
+export const WAITLIST_IDEA_LINE = 'Filled in from your waitlist answer.';
+
 /** The import form's heading and line (./import-repo.tsx). */
 export const IMPORT_TITLE = 'Import a GitHub repo';
 export const IMPORT_LINE = 'Bring an app that already exists. Your group builds on it from here.';
@@ -210,7 +217,7 @@ export const MAKE_ROOT = 'platform-kb-surface fixed inset-0 z-[9000] flex flex-c
 export const MAKE_ROOT_UNDER_HEADER = 'platform-kb-surface platform-under-header fixed inset-x-0 bottom-0 z-[9000] flex flex-col text-zinc-900 dark:text-zinc-100';
 
 export function MakeScreen({
-  who, onMade, onLookAround, entry = 'first-session', onClose, startImport = false, underHeader = false,
+  who, onMade, onLookAround, entry = 'first-session', onClose, startImport = false, underHeader = false, idea = null,
 }: {
   who: string;
   onMade: (made: Made) => void;
@@ -223,7 +230,14 @@ export function MakeScreen({
   startImport?: boolean;
   /** From Create, with the platform header showing: below it, not over it (MAKE_ROOT). */
   underHeader?: boolean;
+  /**
+   * The first session's: what the person answered on the waitlist, known at
+   * mount (the signed-in user's, or a screenshot state's). When there is
+   * one, the screen opens on Your own idea with it in the box.
+   */
+  idea?: string | null;
 }) {
+  const waitlistIdea = typeof idea === 'string' && idea.trim() ? idea : null;
   const fromCreate = entry === 'create';
   // At the allowance's limit (or a full server), Make it and Import it are
   // pale and the row above says why (the retired dialog's rule: never offer
@@ -231,10 +245,10 @@ export function MakeScreen({
   const { blocked: quotaBlocks } = useAppAllowance();
   // Make it, or (from Create only) Import it.
   const [mode, setMode] = useState<'make' | 'import'>(fromCreate && startImport ? 'import' : 'make');
-  const [brief, setBrief] = useState('');
+  const [brief, setBrief] = useState(waitlistIdea ?? '');
   const [name, setName] = useState('');
   // The tile picked: a template, Your own idea, or nothing yet.
-  const [picked, setPicked] = useState<Template | typeof OWN_IDEA | null>(null);
+  const [picked, setPicked] = useState<Template | typeof OWN_IDEA | null>(waitlistIdea ? OWN_IDEA : null);
   // The template's choice, and their own words: in its blank, or the rest
   // of the game's sentence.
   const [choice, setChoice] = useState('');
@@ -615,6 +629,7 @@ export function MakeScreen({
                     placeholder="A map of our favorite swimming spots…"
                     className={`${INPUT} resize-none leading-[22px]`}
                   />
+                  {waitlistIdea && brief === waitlistIdea ? <p data-make-waitlist-idea="" className={HINT}>{WAITLIST_IDEA_LINE}</p> : null}
                 </>
               )}
               {missing === 'brief' || missing === 'blank' ? <p id="first-session-brief-needed" role="alert" className={NEEDED}>{needed}</p> : null}

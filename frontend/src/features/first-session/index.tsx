@@ -104,6 +104,7 @@ type Legacy = {
     user?: {
       id?: number; username?: string; displayName?: string | null; needsCommunitiesChoice?: boolean; privateMember?: boolean;
       homeroomBotDm?: boolean;
+      waitlistIdea?: string | null;
     } | null;
     _privateHomeVisited?: () => boolean;
     _notePrivateHome?: () => void;
@@ -685,7 +686,7 @@ export type Mode =
   | { kind: 'held'; app?: string }
   | { kind: 'welcome'; info: FirstSessionInfo }
   // `entry` 'create' is the Create button's (see the header); none is the first session's.
-  | { kind: 'make'; entry?: MakeEntry; startImport?: boolean }
+  | { kind: 'make'; shot?: MakeShot; entry?: MakeEntry; startImport?: boolean }
   | { kind: 'made'; made: Made; entry?: MakeEntry }
   | { kind: 'tour'; info: FirstSessionInfo; path: 'invited' | 'maker' | 'private' };
 
@@ -700,6 +701,30 @@ export type Mode =
 const MAKE_FLAG = 'usernode:first-session:make';
 
 export const LOOK_AROUND_PATH = '/api/me/first-session/look-around';
+
+/**
+ * The make screen's screenshot states. Only a brand-new account's first run
+ * reaches it, and staging's accounts are not new, so the before/after shots
+ * open it by address instead (owner, 6 Oct 2026; app-view.js's
+ * `?shot=first-version` is the same idea): `?shot=make` as it opens, and
+ * `?shot=make-waitlist` with an answer from the waitlist in its first field.
+ * Opened once the shell is signed in, as the real one is, and it writes
+ * nothing: "Make it" makes nothing, "Look around first" only closes it.
+ * Every first-run step before it skips itself on a `?shot=` address.
+ */
+export type MakeShot = { idea: string | null };
+export const MAKE_SHOTS: Readonly<Record<string, string | null>> = Object.freeze({
+  make: null,
+  'make-waitlist': 'A tracker for my run club, so we can see who keeps up with their weekly miles',
+});
+
+/** The make screen's screenshot state a query string asks for, or null. */
+export function makeShot(search: string): MakeShot | null {
+  let shot: string | null = null;
+  try { shot = new URLSearchParams(search).get('shot'); } catch { return null; }
+  if (!shot || !Object.prototype.hasOwnProperty.call(MAKE_SHOTS, shot)) return null;
+  return { idea: MAKE_SHOTS[shot] };
+}
 
 /**
  * The question was answered in this document: Make it made a project, or
@@ -802,6 +827,13 @@ export function FirstSession() {
   // only then; somebody still waiting is in the waiting room instead).
   useEffect(() => {
     const check = (now: boolean) => {
+      const shot = makeShot(window.location.search);
+      if (shot) {
+        const open = () => setMode((prev) => (prev.kind === 'none' ? { kind: 'make', shot } : prev));
+        if (now) flushSync(open);
+        else open();
+        return;
+      }
       let flagged = false;
       try { flagged = sessionStorage.getItem(MAKE_FLAG) === '1'; } catch { /* no make screen */ }
       if (!flagged) return;
@@ -985,12 +1017,17 @@ export function FirstSession() {
     );
   }
   if (mode.kind === 'make') {
+    const { shot } = mode;
     return (
       <MakeScreen
         who={viewerName()}
+        // What they said on the waitlist, if anything: known now, from the
+        // signed-in user (or the screenshot state), so the box opens filled.
+        idea={shot ? shot.idea : legacy().App?.user?.waitlistIdea ?? null}
         // POST /api/apps answered the question as it made the project.
         onMade={(made) => { noteAnswered(); setMode({ kind: 'made', made }); }}
         onLookAround={() => {
+          if (shot) { setMode({ kind: 'none' }); return; }
           noteAnswered();
           void recordLookAround();
           setMode({ kind: 'none' });

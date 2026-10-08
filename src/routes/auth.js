@@ -752,6 +752,11 @@ function authRoutes(config) {
     // that is due it; FALSE when the whole lookup fails, which leaves the
     // join screen as it was.
     let storyFirstSession = false;
+    // What they told us on the waitlist the app should do, to open that
+    // question with (#4040). Only read while the question is theirs to
+    // answer, so it stops being sent once it is; null for no waitlist row
+    // linked to the account, or no answer in it.
+    let waitlistIdea = null;
     // The verified-identity rule (schema.sql identity_needed): a member it
     // holds to it, let in after it was switched on with no phone, GitHub and
     // X, or zkPassport. `identityNeeded` draws Home's "Verify your account"
@@ -804,6 +809,7 @@ function authRoutes(config) {
       identityNeeded = rows[0]?.identity_needed === true && !!req.user.hasPlatformAccess;
       phoneAsk = identityNeeded && rows[0]?.phone_ask_answered !== true && phoneAuth.offered(config);
       if (needsCommunitiesChoice) storyFirstSession = await firstSession.asksWhatToMake(pool, req.user.id);
+      if (storyFirstSession) waitlistIdea = await firstSession.waitlistIdea(pool, req.user.id);
       const verifiedLinks = await socialIdentity.verifiedProfileLinks(pool, req.user.id);
       profile = shapeProfile(rows[0], verifiedLinks);
     } catch {}
@@ -916,6 +922,9 @@ function authRoutes(config) {
         // alongside needsCommunitiesChoice, and stays TRUE until that
         // question is answered, so a reload asks it again.
         storyFirstSession,
+        // Only alongside storyFirstSession: the waitlist answer "What should
+        // it do?" opens with (frontend/src/features/first-session/make.tsx).
+        waitlistIdea,
         // The Getting started card on Home: shown to an account that came
         // through the join screen, until it is closed.
         showGettingStarted,
