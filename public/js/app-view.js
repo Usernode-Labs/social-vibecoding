@@ -21916,8 +21916,10 @@ const AppView = {
   async castVote(sessionId, vote, expectedEpoch = null, opts = null) {
     // Guard against double-click / mashing: one in-flight vote per session.
     // The server is idempotent on an unchanged vote, but blocking here
-    // avoids pointless round-trips and keeps the UI responsive.
-    const key = `${sessionId}:${vote}`;
+    // avoids pointless round-trips and keeps the UI responsive. #3984: per
+    // session, not per side, so a No pressed while a Yes is on its way does
+    // not race it (and the "Sending…" mark is cleared by the one vote).
+    const key = `${sessionId}`;
     if (AppView._voteInFlight.has(key)) return false;
     AppView._voteInFlight.add(key);
     // #1688: the line, before anything is painted — a cancelled No must
@@ -21936,6 +21938,9 @@ const AppView = {
     if (onSend) {
       try { onSend(vote); } catch { /* the caller's paint, never the vote's */ }
     }
+    // #3984: every Vote button for this change reads "Sending…" until the
+    // server answers (the finally below), whichever surface sent it.
+    AppView._publishVoteSending(`castVote:${sessionId}`, vote);
     // #1924: the card leaves "Needs your vote" on the click, not after the
     // 1–2 s round-trip. The lane (and the Board's needs-vote filter, and the
     // card's own Yes/No highlight) all read `my_vote` off the cached row, so
@@ -22026,7 +22031,14 @@ const AppView = {
     }
     finally {
       AppView._voteInFlight.delete(key);
+      AppView._publishVoteSending(`castVote:${sessionId}`, null);
     }
+  },
+
+  // #3984: a vote on its way, for the card's Vote button (cards-store.ts
+  // voteSendingStore). `key` is `<fn>:<id>`; a null side clears it.
+  _publishVoteSending(key, side) {
+    try { AppView._reactDevBoard()?.publishVoteSending?.(key, side); } catch { /* paint only */ }
   },
 
   // Vote on a governance proposal (env-var change, close-issue, rename,
@@ -22065,7 +22077,6 @@ const AppView = {
       AppView._voteInFlight.delete(key);
       return;
     }
-
     const issue = (AppView._govProposals || []).find((g) => g.id === issueId);
     const kind = issue ? issue.kind : null;
     const targetN = (issue && issue.payload && issue.payload.issueNumber) || null;
@@ -22081,6 +22092,8 @@ const AppView = {
       if (deciding) AppView._endGovApply(issueId, phase, error);
     };
 
+    // #3984: as castVote, cleared in the finally below.
+    AppView._publishVoteSending(`castIssueVote:${issueId}`, vote === 'down' ? 'no' : 'yes');
     try {
       const res = await fetch(`/api/issues/${issueId}/vote`, {
         method: 'POST',
@@ -22156,6 +22169,7 @@ const AppView = {
       PlatformUI.toast(`Vote failed: ${(err && err.message) || 'connection lost'}`);
     } finally {
       AppView._voteInFlight.delete(key);
+      AppView._publishVoteSending(`castIssueVote:${issueId}`, null);
     }
   },
 

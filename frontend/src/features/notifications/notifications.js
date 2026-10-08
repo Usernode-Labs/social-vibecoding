@@ -771,7 +771,10 @@ const Notifications = {
     const sessionId = Number(item.sessionId);
     if (key === 'still_yes' && Number.isFinite(sessionId) && sessionId > 0
         && window.AppView && typeof AppView.castVote === 'function') {
-      await AppView.castVote(sessionId, 'yes', null, { reason: null });
+      // #3984: a vote that did not go through (castVote resolves false and
+      // says why in its toast) leaves the row, and its button, where it was.
+      const ok = await AppView.castVote(sessionId, 'yes', null, { reason: null });
+      if (ok === false) return false;
       Notifications._markOneRead(id);
       if (typeof Notifications.refresh === 'function') Notifications.refresh();
       return true;
