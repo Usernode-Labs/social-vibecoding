@@ -65,7 +65,9 @@ function browser(t, { root, deviceLanguages = ['en-US'], storage = new Map() } =
     saved[name] = Object.getOwnPropertyDescriptor(globalThis, name);
   }
   const define = (name, value) => Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
-  const state = { requests: [], events: [], tamper: null, unavailable: null, storage };
+  // tamper(bytes): alter a pack. unavailable(url): answer 503. hold(url): a
+  // promise the pack waits on. api(url, init): answer a non-pack request.
+  const state = { requests: [], events: [], tamper: null, unavailable: null, hold: null, api: null, storage };
   define('localStorage', {
     getItem: (key) => (storage.has(key) ? storage.get(key) : null),
     setItem: (key, value) => { storage.set(key, String(value)); },
@@ -76,8 +78,13 @@ function browser(t, { root, deviceLanguages = ['en-US'], storage = new Map() } =
     documentElement: { lang: 'en' },
     dispatchEvent: (event) => { state.events.push(event); return true; },
   });
-  define('fetch', async (url) => {
+  define('fetch', async (url, init) => {
+    if (!String(url).startsWith('/locales/')) {
+      if (!state.api) throw new Error(`unexpected request: ${url}`);
+      return state.api(String(url), init);
+    }
     state.requests.push(url);
+    if (state.hold) await state.hold(url);
     if (state.unavailable && state.unavailable(url)) return new Response('', { status: 503 });
     const bytes = fs.readFileSync(path.join(root, 'public', url));
     return new Response(state.tamper ? state.tamper(bytes) : bytes);

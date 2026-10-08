@@ -65,18 +65,24 @@ export function createLanguageRuntime(catalogs: Catalogs) {
   let signedIn = false;
   let notice: LanguageNotice | null = null;
   // How a choice reaches the screen, and what keeps the two from parting:
-  //   switchId   the newest attempt. An older one that has not saved yet
-  //              gives way to it.
-  //   committed  the newest choice that WAS saved and is not on screen yet.
-  //   inFlight   attempts that have not finished. While one is, it may still
-  //              replace `committed`; once none is, settle() shows it.
-  //   shownId    the attempt whose choice is on screen.
-  //   epoch      moves on when the person does (sign-out, another account), so
-  //              a choice still being saved for the last one is not shown here.
-  let switchId = 0;
+  //   clock          numbers every attempt, and each time the screen follows one.
+  //   newestChoice   the choice the person made last. An older one that has
+  //                  not saved yet gives way to it, and is no longer news.
+  //   choices        the choices still on their way.
+  //   committed      the newest choice that WAS saved and is not on screen yet.
+  //                  Only a NEWER choice still on its way can replace it, so
+  //                  it waits for those and never for an older one.
+  //   newestSession  the latest answer about who is signed in.
+  //   shown          the clock when the screen last followed an attempt.
+  //   epoch          moves on when the person does (sign-out, another account),
+  //                  so a choice still being saved for the last one is not
+  //                  shown here.
+  let clock = 0;
+  let newestChoice = 0;
+  const choices = new Set<number>();
   let committed: Commit | null = null;
-  let inFlight = 0;
-  let shownId = 0;
+  let newestSession = 0;
+  let shown = 0;
   let epoch = 0;
   let account: string | null = null;
   let saveQueue: Promise<unknown> = Promise.resolve();
@@ -217,55 +223,71 @@ export function createLanguageRuntime(catalogs: Catalogs) {
   }
 
   /**
-   * The screen follows the last choice that was saved. An attempt that ends,
-   * whether it saved, lost or failed, calls this: while a newer attempt is
-   * still on its way that one decides, and once none is, whatever was saved
-   * last goes on screen. So a newer choice that fails after an older one was
-   * saved cannot leave the screen showing something the account does not hold.
+   * The screen follows the last choice that was saved. Called whenever a
+   * choice ends, however it ends: unless a newer choice is still on its way,
+   * what was saved goes on screen now. An older choice, still loading or
+   * about to fail, is never waited for. Returns the choice it showed, or 0.
    */
-  async function settle(): Promise<void> {
-    inFlight -= 1;
-    if (inFlight > 0 || !committed) return;
+  async function showCommitted(): Promise<number> {
+    if (!committed) return 0;
+    for (const id of choices) if (id > committed.id) return 0;
     const next = committed;
     committed = null;
-    shownId = next.id;
+    shown = ++clock;
     await activate(next.language, next.value, next.auto);
+    return next.id;
   }
 
   /**
-   * Load first, save next, activate last. A failed load or save rejects, and
-   * the screen is left as it was or, if an earlier choice had been saved
-   * meanwhile, on that one. Resolves true when this choice is what the screen
-   * shows; false when a newer attempt took over.
+   * Load first, save next, activate last.
+   *
+   * Resolves true when this choice is what the screen shows. Resolves false
+   * when it gave way to a newer choice, whatever then became of it: once the
+   * person has chosen again, this one failing is not news, and the newer
+   * choice reports for itself. Rejects only when the newest choice could not
+   * be loaded or saved; the screen is then left as it was or, if an earlier
+   * choice had been saved meanwhile, on that one.
    */
   async function changeLanguage(value: string | null, save?: Save): Promise<boolean> {
-    const id = ++switchId;
+    const id = ++clock;
+    newestChoice = id;
     const startedIn = epoch;
-    inFlight += 1;
-    try {
+    // Chosen again since, or the person this was for has gone.
+    const gaveWay = () => id !== newestChoice || startedIn !== epoch;
+    choices.add(id);
+    const attempt = async (): Promise<void> => {
       const { language, auto } = await prepareLanguage(value);
-      if (id !== switchId) return false;
+      if (gaveWay()) return;
       if (save) {
         // Writes are serialized, so a slow old save can never overwrite the
         // newest account preference, and one that is no longer the newest
         // when its turn comes is not sent at all.
         const operation = saveQueue.catch(() => {}).then(async () => {
-          if (id !== switchId) return false;
+          if (gaveWay()) return false;
           await save(value);
           return true;
         });
         saveQueue = operation;
-        if (!(await operation)) return false;
+        if (!(await operation)) return;
       }
-      // Saved for someone who has since signed out or changed account.
-      if (startedIn !== epoch) return false;
+      // It was saved, so it stands even if a newer choice has been made
+      // since: that one may still fail. Unless it was saved for someone who
+      // has since signed out or changed account.
+      if (startedIn !== epoch) return;
       // An account choice replaces one made on this device while signed out.
       writeStored(DEVICE_KEY, save ? null : value);
       committed = { id, language, value, auto };
-    } finally {
-      await settle();
+    };
+    let failure: { error: unknown } | null = null;
+    try {
+      await attempt();
+    } catch (error) {
+      failure = { error };
     }
-    return shownId === id;
+    choices.delete(id);
+    const shownNow = await showCommitted();
+    if (failure && !gaveWay()) throw failure.error;
+    return shownNow === id;
   }
 
   /** The session resolved: `user` signed in, or null for the sign-in screens. */
@@ -278,25 +300,21 @@ export function createLanguageRuntime(catalogs: Catalogs) {
     }
     signedIn = !!user;
     const value = user?.locale || readStored(DEVICE_KEY);
-    const id = ++switchId;
-    inFlight += 1;
+    const id = ++clock;
+    newestSession = id;
+    let resolved: { language: string; auto: boolean };
     try {
-      let resolved: { language: string; auto: boolean };
-      try {
-        resolved = await prepareLanguage(value);
-      } catch {
-        // English is always available. A pack that cannot be loaded never
-        // leaves sign-in or the shell without text.
-        resolved = { language: 'en', auto: false };
-      }
-      if (id === switchId) {
-        shownId = id;
-        await activate(resolved.language, value, resolved.auto);
-      }
-    } finally {
-      // A choice saved while this was loading is newer than what it read.
-      await settle();
+      resolved = await prepareLanguage(value);
+    } catch {
+      // English is always available. A pack that cannot be loaded never
+      // leaves sign-in or the shell without text.
+      resolved = { language: 'en', auto: false };
     }
+    // A newer answer replaces this one. So does a choice shown while this was
+    // loading: it was saved after the preference this answer carries was read.
+    if (id !== newestSession || shown > id) return;
+    shown = ++clock;
+    await activate(resolved.language, value, resolved.auto);
   }
 
   return {

@@ -91,7 +91,9 @@ Use complete message ids in code. Do not build one by joining strings.
   Signed in, the preference is `users.locale` (Settings → Language). A change
   loads the packs, then saves, then switches, so a failed save leaves the
   screen as it was. The screen follows the last choice that was saved: when a
-  newer choice fails after an older one was saved, the older one is shown.
+  newer choice fails after an older one was saved, the older one is shown. A
+  saved choice never waits on an older one still loading, and once the person
+  has chosen again an older choice failing is not reported.
 - The first time the language was picked from the device rather than chosen,
   a notice above the tab bar says so once ("Showing Homeroom in Español")
   with a "Switch to English" button. There is no language picker on the

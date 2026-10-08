@@ -9,6 +9,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 const {
@@ -179,6 +180,142 @@ test('the screen follows the last choice that was saved when a newer save fails'
   await assert.rejects(auto, /Failed to save\./);
   assert.equal(runtime.getPreference(), 'en', 'the account holds English, and so does the runtime');
   assert.equal(runtime.getLanguage(), 'en');
+});
+
+test('the newest saved choice shows at once, and an older attempt that then fails is not reported', async (t) => {
+  const { runtime, page } = setup(t, { deviceLanguages: ['en-US'] });
+  await runtime.applySessionLanguage({ id: 7, locale: null });
+  let releasePack = null;
+  page.hold = () => new Promise((resolve) => { releasePack = resolve; });
+  const saved = [];
+  const save = async (value) => { saved.push(value); };
+  const spanish = runtime.changeLanguage('es', save);
+  await until(() => releasePack, 'the Spanish pack request');
+  // English is chosen while the Spanish pack is still on its way.
+  assert.equal(await runtime.changeLanguage('en', save), true, 'it does not wait on the Spanish pack');
+  assert.deepEqual(saved, ['en']);
+  assert.equal(runtime.getPreference(), 'en');
+  // The Spanish pack then fails. Spanish had been given up: no error, nothing saved.
+  page.unavailable = () => true;
+  releasePack();
+  assert.equal(await spanish, false);
+  assert.deepEqual(saved, ['en']);
+  assert.deepEqual([runtime.getLanguage(), runtime.getPreference()], ['en', 'en']);
+});
+
+// The real shipped handler: settings.js is a classic script with no imports
+// that publishes window.Settings, and account.ts is the save it calls.
+function settingsPage(t, runtime, page) {
+  const classes = new Set(['hidden']);
+  const status = {
+    textContent: '',
+    classList: {
+      add: (...names) => names.forEach((name) => classes.add(name)),
+      remove: (...names) => names.forEach((name) => classes.delete(name)),
+      contains: (name) => classes.has(name),
+    },
+  };
+  const select = {
+    value: '',
+    options: [{ value: '' }, { value: 'en' }, { value: 'es' }],
+    appendChild(option) { this.options.push(option); },
+  };
+  const elements = { 'settings-locale': select, 'settings-locale-status': status };
+  const noop = () => {};
+  const sandbox = {
+    console, setTimeout, clearTimeout, setInterval, clearInterval,
+    Promise, JSON, URL, URLSearchParams, Date, Math, Object, Array,
+    String, Number, Boolean, RegExp, Error,
+  };
+  sandbox.window = sandbox;
+  sandbox.globalThis = sandbox;
+  sandbox.location = { search: '', hash: '', origin: 'http://x', href: 'http://x/' };
+  sandbox.localStorage = { getItem: () => null, setItem: noop, removeItem: noop };
+  sandbox.document = {
+    getElementById: (id) => elements[id] || null, querySelector: () => null, querySelectorAll: () => [],
+    addEventListener: noop, removeEventListener: noop, createElement: () => ({}), readyState: 'complete',
+  };
+  sandbox.navigator = { userAgent: 'node', onLine: true };
+  sandbox.fetch = () => Promise.resolve({ ok: false });
+  vm.createContext(sandbox);
+  vm.runInContext(read('frontend/src/features/settings/settings.js'), sandbox, { filename: 'settings.js' });
+
+  const { saveAccountLocale } = loadTsx('frontend/src/lib/i18n/account.ts');
+  sandbox.PlatformI18n = {
+    changeLanguage: runtime.changeLanguage, languageName: runtime.languageName, saveAccountLocale,
+  };
+  const posted = [];
+  page.api = async (url, init) => {
+    assert.equal(url, '/api/me/locale');
+    const { locale } = JSON.parse(init.body);
+    posted.push(locale);
+    return new Response(JSON.stringify({ ok: true, locale }), { headers: { 'Content-Type': 'application/json' } });
+  };
+  // account.ts keeps window.Settings in step, in the realm it runs in.
+  const had = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  Object.defineProperty(globalThis, 'window', { configurable: true, writable: true, value: { Settings: sandbox.Settings } });
+  t.after(() => {
+    if (had) Object.defineProperty(globalThis, 'window', had); else delete globalThis.window;
+  });
+  return { Settings: sandbox.Settings, select, status, classes, posted };
+}
+
+test('Settings reports the newest choice, whatever an older pack request does afterwards', async (t) => {
+  const { runtime, page } = setup(t, { deviceLanguages: ['en-US'] });
+  await runtime.applySessionLanguage({ id: 7, locale: null });
+  const ui = settingsPage(t, runtime, page);
+  let releasePack = null;
+  page.hold = () => new Promise((resolve) => { releasePack = resolve; });
+
+  // Spanish is chosen, and its pack is still on its way when English is.
+  ui.select.value = 'es';
+  const spanish = ui.Settings._saveLocale('es');
+  await until(() => releasePack, 'the Spanish pack request');
+  ui.select.value = 'en';
+  await ui.Settings._saveLocale('en');
+  const englishIsSaved = (when) => {
+    assert.equal(ui.status.textContent, '✓ Saved', when);
+    assert.equal(ui.classes.has('hidden'), false, when);
+    assert.equal(ui.classes.has('text-red-700'), false, when);
+    assert.equal(ui.select.value, 'en', when);
+    assert.deepEqual(ui.posted, ['en'], when);
+    assert.equal(ui.Settings.state.locale, 'en', when);
+    assert.deepEqual([runtime.getLanguage(), runtime.getPreference()], ['en', 'en'], when);
+  };
+  englishIsSaved('as soon as English is saved');
+
+  // The Spanish request fails afterwards. It was given up already: Settings
+  // must not turn the saved choice into "Could not load that language."
+  page.unavailable = () => true;
+  releasePack();
+  await spanish;
+  englishIsSaved('after the older request failed');
+});
+
+test('Settings ends on what the account holds when the newest choice cannot load', async (t) => {
+  const { runtime, page } = setup(t, { deviceLanguages: ['en-US'] });
+  await runtime.applySessionLanguage({ id: 7, locale: null });
+  const ui = settingsPage(t, runtime, page);
+  // English is being saved when Spanish, whose pack cannot load, is chosen.
+  let finishSave = null;
+  const answer = page.api;
+  page.api = async (url, init) => {
+    await new Promise((resolve) => { finishSave = resolve; });
+    return answer(url, init);
+  };
+  page.unavailable = () => true;
+  ui.select.value = 'en';
+  const english = ui.Settings._saveLocale('en');
+  await until(() => finishSave, 'the English save to begin');
+  ui.select.value = 'es';
+  await ui.Settings._saveLocale('es');
+  assert.equal(ui.status.textContent, 'Could not load that language. Try again.');
+  finishSave();
+  await english;
+  assert.equal(ui.status.textContent, '✓ Saved', 'English is saved, and that is the last word');
+  assert.equal(ui.select.value, 'en');
+  assert.deepEqual(ui.posted, ['en']);
+  assert.deepEqual([runtime.getLanguage(), runtime.getPreference()], ['en', 'en']);
 });
 
 test('a choice still being saved follows its own account, not the next session', async (t) => {
