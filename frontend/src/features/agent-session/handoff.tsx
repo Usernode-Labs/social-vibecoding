@@ -205,6 +205,13 @@ export function HandoffPanel({ agent, onClose }: { agent: HandoffAgent; onClose:
 
   const label = AGENT_LABELS[agent];
   const product = AGENT_PRODUCT[agent];
+  // The live connector endpoint, for the ChatGPT walkthrough's step that
+  // names it. Derived here, like the URL line in the connector section
+  // below renders it, for the reason sections/connectors.tsx gives: a
+  // host written into the copy goes stale on a fork or a config change,
+  // and the prerender has no window to read one from (the steps show
+  // their fill-in placeholder there).
+  const connectorUrl = typeof window === 'undefined' ? undefined : `${window.location.origin}/mcp`;
   const checks = handoffChecks(status, agent);
   const ready = checks.length > 0 && checks.every((check) => check.done);
   const instructions = status && typeof status.instructions === 'string' ? status.instructions : '';
@@ -302,7 +309,7 @@ export function HandoffPanel({ agent, onClose }: { agent: HandoffAgent; onClose:
             {'Your MCP server URL: '}
             <code className="break-all rounded bg-zinc-100 px-1 py-0.5 text-xs dark:bg-zinc-900">{typeof window === 'undefined' ? '/mcp' : `${window.location.origin}/mcp`}</code>
           </p>
-          {product === 'ChatGPT' ? <ChatgptSetupSteps /> : <ClaudeSetupSteps />}
+          {product === 'ChatGPT' ? <ChatgptSetupSteps url={connectorUrl} /> : <ClaudeSetupSteps />}
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
             {`Then start a new ${product} conversation: one you already had open will not see a connector added after it started.`}
           </p>
