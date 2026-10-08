@@ -108,6 +108,10 @@ test('teardown waits for the original Deployment UID to disappear', async t => {
   const pending = kubernetes.deleteApplication(config, 'sv-preview-42').then(() => { complete = true; });
   await flush();
   assert.equal(deleted.body.preconditions.uid, 'original');
+  // The policy rides in the body with the precondition: a query option
+  // beside a body is ignored, and the Deployment would go before its Pods.
+  assert.equal(deleted.body.propagationPolicy, 'Foreground');
+  assert.equal(deleted.propagationPolicy, undefined);
   assert.equal(complete, false);
   stopping = false; t.mock.timers.tick(250); await pending;
 });
@@ -138,4 +142,20 @@ test('failed teardown settles all in-flight deletes before releasing ownership',
   const pending = kubernetes.deleteApplication(config, 'preview').catch(err => { settled = true; return err; });
   await flush(); assert.equal(settled, false);
   finishIngress(); assert.match((await pending).message, /API failed/);
+});
+
+test('teardown outside the preview lifecycle deletes the Deployment with Foreground as a query option and no body', async t => {
+  const oldFlag = process.env.PREVIEW_LIFECYCLE_ENABLED;
+  delete process.env.PREVIEW_LIFECYCLE_ENABLED;
+  let deleted;
+  kubernetes._setClientsForTest({ apps: { deleteNamespacedDeployment: async request => { deleted = request; } },
+    core: { deleteNamespacedService: async () => {}, deleteNamespacedSecret: async () => {} },
+    networking: { deleteNamespacedIngress: async () => {} } });
+  t.after(() => {
+    kubernetes._setClientsForTest(null);
+    if (oldFlag !== undefined) process.env.PREVIEW_LIFECYCLE_ENABLED = oldFlag;
+  });
+  await kubernetes.deleteApplication(config, 'sv-preview-42');
+  assert.equal(deleted.propagationPolicy, 'Foreground');
+  assert.equal(deleted.body, undefined);
 });
