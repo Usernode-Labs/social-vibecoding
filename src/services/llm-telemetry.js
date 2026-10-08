@@ -319,6 +319,10 @@ function normalizeDiagnostics(event = {}) {
     first_app_boot_ms: finiteNonnegative(event.firstAppBootMs),
     first_browser_call_ms: finiteNonnegative(event.firstBrowserCallMs),
     last_browser_call_ms: finiteNonnegative(event.lastBrowserCallMs),
+    // The Homeroom bot's build turns in Claude Code: how many times the stop
+    // guard (worker/build-stop-hook.js) sent the agent back to work after it
+    // tried to end a turn that had changed nothing. Absent without the guard.
+    stop_hook_blocks: tokenCount(event.stopHookBlocks),
     usage_reset_detected: booleanOrNull(event.usageResetDetected),
   });
 }
@@ -438,7 +442,7 @@ const DIAGNOSTIC_METRIC_NAMES = Object.freeze([
   'image_sent_count', 'image_moved_count', 'image_omitted_count',
   'model_request_ms', 'browser_tool_ms', 'shell_tool_ms', 'edit_tool_ms', 'read_tool_ms',
   'other_tool_ms', 'first_file_change_ms', 'first_app_boot_ms', 'first_browser_call_ms',
-  'last_browser_call_ms',
+  'last_browser_call_ms', 'stop_hook_blocks',
   'turn_duration_ms', 'turn_invocation_count', 'turn_result_count',
 ]);
 

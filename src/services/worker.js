@@ -1455,6 +1455,9 @@ function parseLine(line, onProgress, state) {
       // The agent ended on a line that does not build on the session branch
       // (worker/session-branch.sh): nothing was committed or pushed.
       else if (k === 'branch_mismatch') state.branchMismatch = v === '1';
+      // How many times the stop guard sent the agent back (run-cc.sh,
+      // STOP_GUARD=1 only): telemetry_metrics.stop_hook_blocks.
+      else if (k === 'stop_hook_blocks') state.stopHookBlocks = /^\d+$/.test(v || '') ? parseInt(v, 10) : null;
     }
     state.resultSeen = true;
     const terminalExit = Number.isInteger(state.agentExit) ? state.agentExit : state.ccExit;
@@ -1757,6 +1760,10 @@ function newWatchState() {
     // The build ended off the session branch, on work that does not build
     // on it; the runner committed and pushed nothing (session-branch.sh).
     branchMismatch: false,
+    // Times the stop guard kept the agent from ending a turn that had
+    // changed nothing (worker/build-stop-hook.js). Null for a turn without
+    // the guard, so "none asked for" stays apart from "none needed".
+    stopHookBlocks: null,
     // #361: conflicted file paths from a MODE=sync turn's
     // __USERNODE_RESULT__ line. Defaults empty.
     conflictFiles: [],
@@ -3148,6 +3155,12 @@ async function execInWorker(sessionId, {
   // pushes is what it proposes, or a revision of a proposal up for a vote. A
   // person's dev chat keeps a failed turn's work, as it always has.
   discardFailedTurn = false,
+  // The stop guard: a Claude Code Stop hook (worker/build-stop-hook.js) that
+  // sends the agent back to work, twice at most, when it tries to end a turn
+  // that has changed nothing. The Homeroom bot's build and review-fix turns
+  // ask for it (homeroom-bot-live.js buildTurnRunner); it reaches run-cc.sh
+  // as STOP_GUARD=1 for a build that Claude Code runs, and nothing else.
+  stopGuard = false,
   shotsRunId = null,
   shotsOrigins = null,
   shotsAuthTokens = null,
@@ -3512,6 +3525,9 @@ async function execInWorker(sessionId, {
     // the (already-validated) base so generation and catalog agree.
     safeEnv.OPENROUTER_API_BASE = openrouterApiBase || '';
   }
+  // Only a Claude Code build has the hook: a scout changes nothing by design,
+  // and the Codex runner has no Stop hook to install.
+  if (stopGuard === true && mode === 'build' && runsClaude) safeEnv.STOP_GUARD = '1';
   const runner = registry.runnerFor(resolvedBackend, resolvedHarness);
  // Journal transport: the turn runs DETACHED from this process. The
   // wrapper below redirects run-cc.sh's combined output to a journal

@@ -48,6 +48,12 @@
 #   DISCARD_FAILED_TURN        1: a build whose claude failed commits and
 #                              pushes nothing (the Homeroom bot's turns);
 #                              needs TURN_JOURNAL to read the final result
+#   STOP_GUARD                 1: a build installs build-stop-hook.js as a
+#                              Claude Code Stop hook, which sends the agent
+#                              back to work (twice at most) when it tries to
+#                              end a turn that has changed nothing (the
+#                              Homeroom bot's build and review-fix turns).
+#                              The result line then carries stop_hook_blocks
 #   PAT                        legacy back-compat — not set by the
 #                              current platform. The push step uses
 #                              `usernode-push` (which calls back into
@@ -467,6 +473,30 @@ fi
 # the agent committed its own work this turn.
 TURN_START_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
 
+# The stop guard (STOP_GUARD=1, build turns only): a Claude Code Stop hook,
+# build-stop-hook.js, installed through --settings for this invocation alone.
+# When the agent tries to end its turn while HEAD is still TURN_START_SHA and
+# the working tree is clean, it sends the agent back to work, at most twice.
+# It counts its blocks in a file of this turn's own, which the result line
+# below reports. Anything that goes wrong here leaves the turn without the
+# hook, exactly as it ran before, rather than failing it.
+STOP_GUARD_FLAGS=""
+STOP_GUARD_DIR=""
+if [ "$MODE" = "build" ] && [ "${STOP_GUARD:-}" = "1" ]; then
+  if [ -n "$TURN_START_SHA" ] \
+      && STOP_GUARD_DIR=$(mktemp -d /tmp/usernode-stop-guard.XXXXXX 2>/dev/null) \
+      && node "$(dirname "$0")/build-stop-hook.js" --settings > "$STOP_GUARD_DIR/settings.json" 2>/dev/null \
+      && [ -s "$STOP_GUARD_DIR/settings.json" ]; then
+    USERNODE_STOP_GUARD_START="$TURN_START_SHA"
+    USERNODE_STOP_GUARD_COUNT="$STOP_GUARD_DIR/blocks"
+    USERNODE_STOP_GUARD_REPO=$(pwd)
+    export USERNODE_STOP_GUARD_START USERNODE_STOP_GUARD_COUNT USERNODE_STOP_GUARD_REPO
+    STOP_GUARD_FLAGS="--settings $STOP_GUARD_DIR/settings.json"
+  else
+    echo "__USERNODE_WARN__ the stop guard could not be set up; this build runs without it"
+  fi
+fi
+
 # stream-json emits one JSON object per line. The host parses this via
 # the docker-exec child's stdout (long-lived path) or `docker logs -f`
 # (legacy single-shot path) — same pipeline, different transport.
@@ -476,7 +506,7 @@ TURN_START_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
 # move the host-side E2BIG failure here.
 if [ -n "$CLAUDE_RESUME_SESSION_ID" ]; then
   echo "__USERNODE_PHASE__ claude (resume $CLAUDE_RESUME_SESSION_ID, mode $MODE)"
-  run_claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS $SYSTEM_PROMPT_FLAGS --verbose \
+  run_claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS $SYSTEM_PROMPT_FLAGS --verbose $STOP_GUARD_FLAGS \
     --resume "$CLAUDE_RESUME_SESSION_ID" \
     --model "$MODEL" --include-partial-messages --output-format stream-json < "$PROMPT_FILE"
   CC_EXIT=$?
@@ -486,16 +516,30 @@ if [ -n "$CLAUDE_RESUME_SESSION_ID" ]; then
     if [ -n "$RESUME_FALLBACK_PROMPT_FILE" ]; then
       RETRY_PROMPT_FILE="$RESUME_FALLBACK_PROMPT_FILE"
     fi
-    run_claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS $SYSTEM_PROMPT_FLAGS --verbose \
+    run_claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS $SYSTEM_PROMPT_FLAGS --verbose $STOP_GUARD_FLAGS \
       --model "$MODEL" --include-partial-messages --output-format stream-json < "$RETRY_PROMPT_FILE"
     CC_EXIT=$?
   fi
 else
   echo "__USERNODE_PHASE__ claude (mode $MODE)"
-  run_claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS $SYSTEM_PROMPT_FLAGS --verbose \
+  run_claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS $SYSTEM_PROMPT_FLAGS --verbose $STOP_GUARD_FLAGS \
     --model "$MODEL" --include-partial-messages --output-format stream-json < "$PROMPT_FILE"
   CC_EXIT=$?
 fi
+
+# How many times the stop guard sent the agent back, for the turn's telemetry
+# (worker.js parseLine → telemetry_metrics.stop_hook_blocks) and, when it did,
+# the progress log. Only a turn that had the guard reports the field.
+STOP_HOOK_BLOCKS_FIELD=""
+if [ -n "$STOP_GUARD_FLAGS" ]; then
+  STOP_HOOK_BLOCKS=$(cat "$USERNODE_STOP_GUARD_COUNT" 2>/dev/null || echo 0)
+  case "$STOP_HOOK_BLOCKS" in ''|*[!0-9]*) STOP_HOOK_BLOCKS=0 ;; esac
+  STOP_HOOK_BLOCKS_FIELD=" stop_hook_blocks=$STOP_HOOK_BLOCKS"
+  if [ "$STOP_HOOK_BLOCKS" -gt 0 ]; then
+    echo "__USERNODE_WARN__ The agent tried to end its turn having changed nothing; the stop guard sent it back to work (stop_hook_blocks=$STOP_HOOK_BLOCKS)"
+  fi
+fi
+if [ -n "$STOP_GUARD_DIR" ]; then rm -rf "$STOP_GUARD_DIR" 2>/dev/null || true; fi
 
 if [ "$MODE" = "scout" ] || [ "$MODE" = "shots" ]; then
   # Read-only run: no commit, no push. The host pulls scout output out
@@ -529,7 +573,7 @@ if [ "${DISCARD_FAILED_TURN:-}" = "1" ]; then
   if [ -n "$TURN_FAILED" ]; then
     echo "__USERNODE_WARN__ $TURN_FAILED; skipping commit/push"
     echo "__USERNODE_PHASE__ done"
-    echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=0 behind=0 sha= push_ok=0 mode=build"
+    echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=0 behind=0 sha= push_ok=0 mode=build$STOP_HOOK_BLOCKS_FIELD"
     if [ "$CC_EXIT" -ne 0 ]; then exit "$CC_EXIT"; fi
     exit 1
   fi
@@ -579,5 +623,5 @@ if [ "$PUSH_OK" = "1" ]; then
 else
   echo "__USERNODE_PHASE__ push_failed"
 fi
-echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=$PUSH_OK mode=build$BRANCH_MISMATCH_FIELD"
+echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=$PUSH_OK mode=build$BRANCH_MISMATCH_FIELD$STOP_HOOK_BLOCKS_FIELD"
 exit "$CC_EXIT"
