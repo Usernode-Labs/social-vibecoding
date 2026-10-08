@@ -99,10 +99,19 @@ test('a cohort by admit date: one row per person, the furthest step, and where e
     // account on the left-out list.
     const old = await user('old_hand', { platform_access_granted_at: '2026-03-01T00:00:00Z' });
     await signup('old@example.test', old);
-    const boss = await user('boss', { is_admin: true });
+    const boss = await user('boss', { is_admin: true, email: 'boss@example.test' });
     await signup('boss@example.test', boss);
-    const qa = await user('qa_phone');
+    const qa = await user('qa_phone', { email: 'qa@example.test' });
     await signup('qa@example.test', qa);
+    // Team addresses, with no left-out entry: admitted waitlist test signups
+    // that never made an account (a team domain, and +tag variants of an
+    // admin's and a left-out account's address), and an account at a team
+    // domain. ben@example.test shares the admin's domain and still counts.
+    await signup('salah+te123@onhomeroom.com', null);
+    await signup('Boss+wl0929@example.test', null);
+    await signup('qa+2@example.test', null);
+    const teammate = await user('teammate', { email: 'andrea@usernodelabs.org' });
+    await signup('andrea+waitlist@gmail.example', teammate);
     // Test accounts (services/test-accounts.js) are left out by their own
     // flag, with no left-out entry: one admitted in the cohort, and one let
     // in another way.
@@ -140,7 +149,7 @@ test('a cohort by admit date: one row per person, the furthest step, and where e
     assert.deepEqual(list.cohorts, [
       { day: '2026-09-26', admitted: 1, withAccount: 0 },
       { day: D, admitted: 4, withAccount: 3 },
-    ], 'old members, admins, test accounts and left-out accounts are not newcomers');
+    ], 'old members, admins, test accounts, left-out accounts and team addresses are not newcomers');
     assert.deepEqual(list.otherWay, { people: 1 });
 
     const mile = await journey.firstMile(pool, { day: D, now, leftOutIds });

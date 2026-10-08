@@ -749,6 +749,10 @@ test('#1130: no credential-SHAPED column name in schema.sql is readable without 
     // and every route that takes one also requires an admin who can write.
     'bench_tasks.label_token',
     'bench_trials.item_token',
+    // The same for a blind pair of two bot configurations' first versions
+    // (services/bot-configs.js): it hides which side is which from the admin
+    // picking, and the pick route also requires an admin who can write.
+    'bot_config_pairs.token',
 
     // Foreign keys TO a credential row. The id is a row number; the secret
     // itself lives in a column that IS denied (or, for user_ai_credentials,
@@ -756,6 +760,7 @@ test('#1130: no credential-SHAPED column name in schema.sql is readable without 
     'cli_auth_audit_events.access_token_id',
     'session_agent_leases.access_token_id',
     'mcp_auth_audit_events.access_token_id',
+    'external_agent_patch_uploads.token_id', // #4264: which upload credential row sent it; the hash is denied
     'agent_turns.credential_id',
     'agent_turns.credential_revision',     // an INTEGER version counter
 
@@ -771,6 +776,7 @@ test('#1130: no credential-SHAPED column name in schema.sql is readable without 
     'chat_sessions.pr_summary_source_body_hash', // digest of the public PR description, not a credential
     'shot_runs.plan_hash',                 // SHA-256 naming the published shots, not authentication material
     'homeroom_bot_run_snapshots.prompt_hash', // #3654: SHA-256 of the bot's prompt text, to group runs by prompt
+    'wf_receipts.payload_hash',            // SHA-256 of a workflow event's type, payload and actor, to recognise a retried request
 
     // Counters and flags.
     'chat_session_messages.token_count',   // an LLM token COUNT

@@ -19,6 +19,15 @@
 //             `.claude/skills/<name>/SKILL.md`, a section of CLAUDE.md, an
 //             example. A file with a starter file's path replaces it.
 //
+// PACK 0, "no pack", is today's platform: what a live first version gets.
+// Since 7 October 2026 that includes pack 4 ("frontend-design-kit" v2,
+// services/design-skill.js): the frontend-design skill in every new
+// repository's first commit, and its nudge and look-and-fix loop in the
+// spec's and the build's prompts. A pack that repeats a paragraph the
+// platform already says is not said twice (design-skill.js guidanceWith),
+// so pack 4 now runs as pack 0, and pack 2 (v1) does too. Compare a new pack
+// against pack 0, not against pack 4.
+//
 // Versions. Saving a pack makes the next version of its name; a version is
 // never edited. `used_at` is stamped when a run is launched with it, and the
 // gallery and the report name the exact version every trial was given.

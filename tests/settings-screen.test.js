@@ -270,7 +270,9 @@ test('the registry groups pages under four headings, Account first', () => {
   assert.equal(registryPages().find((p) => p.key === 'account').parts.at(-1).key, 'delete-account',
     'and Delete account closes it');
   assert.deepEqual(['usage', 'openrouter', 'api-key'].map(pageOf), Array(3).fill('ai'));
-  assert.deepEqual(['connectors', 'build-venue', 'cli'].map(pageOf), Array(3).fill('connectors'));
+  assert.deepEqual(['connectors', 'cli'].map(pageOf), Array(2).fill('connectors'));
+  // #4311: "Where changes get built" is gone; nothing acted on its value.
+  assert.equal(byKey['build-venue'], undefined, 'the build-venue part is retired');
   // A page key that is also the key of a LATER part on that page would make
   // the page's own nav row resolve as a deep link to that part, opening the
   // page scrolled past everything above it.
@@ -342,7 +344,7 @@ test('a part address resolves to its page, scrolled to the part', () => {
   assert.deepEqual(S._resolve('cli'), { page: 'connectors', anchor: 'cli' });
   assert.deepEqual(S._resolve('connectors'), { page: 'connectors', anchor: null },
     'connectors leads its page, so its address is the page');
-  assert.deepEqual(S._resolve('build-venue'), { page: 'connectors', anchor: 'build-venue' });
+  assert.deepEqual(S._resolve('build-venue'), { page: null, anchor: null }, 'a retired part (#4311)');
   assert.deepEqual(S._resolve('api-key'), { page: 'ai', anchor: 'api-key' });
   assert.deepEqual(S._resolve('theme'), { page: 'theme', anchor: null });
   assert.deepEqual(S._resolve('usernode'), { page: 'usernode', anchor: null });

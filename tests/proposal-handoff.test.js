@@ -874,6 +874,37 @@ test('an update may carry a summary, capped exactly as the import caps it', () =
   assert.match(route.slice(0, 3000), /summary: input\.summary/);
 });
 
+// #4263. The connector's update work order hands a fix in as a patch, so the
+// update route takes one in place of the fork branch: never both, and always
+// with the commit it was made from, which is where the service applies it.
+test('an update may carry a patch instead of a branch, with the commit it was made from', () => {
+  const { subject, restore } = makeHarness();
+  const PATCH = 'diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n';
+  try {
+    const parsed = subject.parseUpdateFromForkBody({ patch: PATCH, expectedHeadSha: HEAD.toUpperCase() });
+    assert.equal(parsed.patch, PATCH, 'verbatim: a patch is whitespace-sensitive, so it is not trimmed');
+    assert.equal(parsed.branch, null);
+    assert.equal(parsed.expectedHeadSha, HEAD);
+    assert.equal(subject.parseUpdateFromForkBody({ branch: 'dev/x' }).patch, null);
+
+    assert.throws(() => subject.parseUpdateFromForkBody({ patch: PATCH }), /expectedHeadSha/);
+    assert.throws(() => subject.parseUpdateFromForkBody({
+      patch: PATCH, branch: 'dev/x', expectedHeadSha: HEAD,
+    }), /branch or patch, not both/);
+    assert.throws(() => subject.parseUpdateFromForkBody({ patch: '', expectedHeadSha: HEAD }), /patch/);
+    assert.throws(() => subject.parseUpdateFromForkBody({ patch: 7, expectedHeadSha: HEAD }), /patch/);
+    // Neither is still a missing branch, as before.
+    assert.throws(() => subject.parseUpdateFromForkBody({}), /branch/);
+  } finally { restore(); }
+  const routeSrc = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '../src/routes/proposal-handoff.js'), 'utf8');
+  const route = routeSrc.slice(routeSrc.indexOf("'/api/apps/:slug/proposals/:id/update-from-fork'"));
+  assert.match(route.slice(0, 3000), /patch: input\.patch/, 'handed to the service that applies it');
+  // The share route creates a card from a fork branch only: no patch there.
+  const share = routeSrc.slice(routeSrc.indexOf('function parseShareInProgressBody(body)'));
+  assert.doesNotMatch(share.slice(0, share.indexOf('\n}\n')), /'patch'/);
+});
+
 test('build adoption is serialized per handoff session', async () => {
   const { subject, restore } = makeHarness();
   try {

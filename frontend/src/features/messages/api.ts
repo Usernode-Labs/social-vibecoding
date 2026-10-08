@@ -107,7 +107,8 @@ const BOT_QUESTION_STATES = new Set(['open', 'answered', 'closed']);
 // HomeroomBotAction). An unknown one is dropped, never drawn as a dead button.
 // B7: a change's ready card adds three: its preview (Try it), the person's
 // own Yes (Approve) and a reply quoting the card (Change something).
-const BOT_ACTION_TYPES = new Set(['server', 'open', 'prompt', 'preview', 'vote', 'reply']);
+// #4231: and `invite`, under a new project's first version going live.
+const BOT_ACTION_TYPES = new Set(['server', 'open', 'prompt', 'preview', 'vote', 'reply', 'invite']);
 const MAX_BOT_ACTIONS = 3;
 
 /** B3: a bot message's buttons, as types.ts HomeroomBotAction: at most three, one primary. */
@@ -470,8 +471,13 @@ function demoQuery(path: string): string {
  * bot's DM is where it showed, because its page is the slowest to answer.
  *
  * `cache: 'no-store'` is the worker's existing "leave this to the network"
- * signal: its fetch handler returns before classifying such a request. A
- * first open keeps the ordinary read, and with it the offline copy.
+ * signal: its fetch handler returns before classifying such a request.
+ *
+ * Opening a conversation reads fresh too while the browser is online
+ * (#4243): its offline copy was the last visit's transcript, drawn for a
+ * moment before the newest messages snapped in. The open takes the ordinary
+ * read, and with it the offline copy, only when the browser is offline or
+ * the fresh read failed (store.ts loadThread).
  */
 export interface ReadOptions {
   fresh?: boolean;
@@ -825,12 +831,19 @@ export async function listBlocks(): Promise<ConversationUser[]> {
 const ACTIVITY_OUTCOMES = new Set<HomeroomBotActivityOutcome>([
   'question', 'proposed', 'live', 'closed', 'blocked', 'build_failed',
   'person', 'empty', 'failed', 'held', 'stopped', 'answer', 'revise',
+  'checking', 'needs_look', 'going_live',
 ]);
 
 /** An in-app address (`#app/…`), or null: a card's link never leaves the shell. */
 function inAppHref(value: unknown): string | null {
   const href = text(value);
   return href.startsWith('#app/') ? href : null;
+}
+
+/** #4201: an app's icon as the platform serves it (`/app-icons/<id>`), or null. */
+function appIconUrl(value: unknown): string | null {
+  const src = text(value);
+  return /^\/app-icons\/[\w-]+$/.test(src) ? src : null;
 }
 
 const BOT_PHASES = new Set<HomeroomBotPhase>([
@@ -853,6 +866,8 @@ function normalizeBotJob(row: JsonRecord): HomeroomBotJob {
     key: text(pick(row, 'key')) || `${appSlug || ''}#${issueNumber || 'first'}`,
     appSlug,
     appName: text(pick(row, 'appName')) || appSlug || 'A project',
+    iconUrl: appIconUrl(pick(row, 'iconUrl')),
+    iconEmoji: text(pick(row, 'iconEmoji')) || null,
     issueNumber,
     title: text(pick(row, 'title')) || null,
     firstVersion,

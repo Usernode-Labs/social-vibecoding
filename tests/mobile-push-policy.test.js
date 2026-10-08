@@ -181,6 +181,10 @@ test('each kind renders its own title and body from send-time context', () => {
     ['issue_opened', { ...CONTEXT, detail: '2273' },
       '@alice filed request #2273 · MyPage',
       'Open the request to see what needs attention'],
+    // #3952: named with @ in a request somebody filed.
+    ['issue_mention', { ...CONTEXT, detail: '3952' },
+      '@alice mentioned you in request #3952 · MyPage',
+      'Open the request to see what they wrote'],
     ['vote_digest', { ...CONTEXT, detail: '3' },
       '3 changes are waiting for your approval',
       'See them under Needs you in Communities'],
@@ -413,6 +417,22 @@ test('app health alerts say what happened and what to do (#2253, #2273)', () => 
     title: 'App needs attention · MyPage',
     body: 'Open the app to see what needs attention',
   });
+});
+
+test('unexpected events alerts say how many of what, with no app (#4296)', () => {
+  const copy = (detail) => buildMessage({
+    ...INPUT, kind: 'platform_incident', context: { detail },
+  }).notification;
+  assert.deepEqual(copy('hour:build_interrupted:6'), {
+    title: 'Unexpected events piling up',
+    body: '6 build interrupted in the last hour. Admin \u2192 Unexpected events has each one',
+  });
+  assert.deepEqual(copy('digest:9:build_interrupted=7'), {
+    title: '9 unexpected events yesterday',
+    body: 'build interrupted 7, other 2',
+  });
+  assert.deepEqual(copy('digest:1:build_interrupted=1').title, '1 unexpected event yesterday');
+  assert.equal(copy('garbage').title, 'Unexpected events');
 });
 
 test('platform limit alerts name the cap, how full it is, and the lever', () => {

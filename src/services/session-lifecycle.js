@@ -725,18 +725,22 @@ async function purgeArchivedCc({ pool, sessionId }) {
 //   sessionId - numeric session id
 //   username  - optional; the branch's owner segment. Defaults to the
 //               session owner's stored username.
+//   label     - optional; words for what the session is about (#3229), the
+//               first turn's deterministic title. Defaults to the session's
+//               stored title, so a titled session (the bot's builds, a
+//               dispatch backstop) is still named after its change.
 //
 // Returns { branchName, created }. Throws with `code` set when the session
 // is gone ('no_session') or GitHub refused the ref ('branch_create_failed',
 // carrying a userMessage safe to show in chat).
-async function ensureSessionBranch({ pool, sessionId, username = null }) {
+async function ensureSessionBranch({ pool, sessionId, username = null, label = null }) {
   const client = await pool.connect();
   let open = false;
   try {
     await client.query('BEGIN');
     open = true;
     const { rows } = await client.query(
-      `SELECT cs.id, cs.branch_name, cs.user_id, u.username, a.repo_url
+      `SELECT cs.id, cs.branch_name, cs.user_id, cs.session_title, u.username, a.repo_url
          FROM chat_sessions cs
          JOIN apps a ON a.id = cs.app_id
          LEFT JOIN users u ON u.id = cs.user_id
@@ -758,7 +762,9 @@ async function ensureSessionBranch({ pool, sessionId, username = null }) {
       return { branchName: row.branch_name, created: false };
     }
 
-    const branchName = branchNames.devBranchName(username || row.username || `u${row.user_id}`);
+    const branchName = branchNames.devBranchName(
+      username || row.username || `u${row.user_id}`, Date.now(), label || row.session_title || null,
+    );
     const [owner, repo] = ownerRepo(row.repo_url);
     if (github.isEnabled() && owner && repo) {
       try {

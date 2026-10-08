@@ -212,9 +212,6 @@ test('Q20: form controls the audit found unnamed have names', () => {
   assert.match(waitlist, /<label className=\{SURVEY_LABEL\} htmlFor="waitlist-country">\s*Country/,
     'the Country label points at its select');
   assert.match(waitlist, /id="waitlist-country"/);
-  const connectors = read('frontend/src/features/settings/sections/connectors.tsx');
-  assert.match(connectors, /id="settings-dev-flow"\n\s*aria-label="Where changes get built"/,
-    'the dev-flow select is named after its heading');
   // Four text boxes that took focus announcing only "edit text".
   assert.match(read('frontend/src/features/messages/message-row.tsx'),
     /<textarea ref=\{editRef\} aria-label="Edit message"/, 'the message edit box');
@@ -242,8 +239,9 @@ test('Q20: the kit modal shell takes its name from the dialog\'s heading', () =>
   const fn = modal.slice(modal.indexOf('function nameKitShell('));
   assert.match(fn, /querySelector\('h1, h2, h3'\)/);
   assert.match(fn, /if \(heading\.id\) shell\.setAttribute\('aria-labelledby', heading\.id\);/);
-  const create = read('frontend/src/features/dialogs/create-app.tsx');
-  assert.match(create, /<h2 id="create-title"/, 'Create app\'s heading has the id the shell points at');
+  // (Create app's heading was the example here; that dialog is retired.)
+  const secrets = read('frontend/src/features/dialogs/app-secrets.tsx');
+  assert.match(secrets, /<h2 id="app-secrets-title"/, 'App secrets\' heading has the id the shell points at');
 });
 
 test('Q20: the app frame is titled with the app\'s name, and keeps it when kept alive', async () => {

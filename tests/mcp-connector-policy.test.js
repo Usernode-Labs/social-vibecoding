@@ -664,11 +664,12 @@ test('the studio\'s twenty-three connector routes are allowed, and every one is 
 // per-admin limiter, then the same-origin browser guard, on all three; and no
 // path carries a `password` segment, which the canonical-target wall would
 // refuse anyway.
-test('the three test-account routes are allowed, full-admin gated first, limited, and never under /password', () => {
+test('the four test-account routes are allowed, full-admin gated first, limited, and never under /password', () => {
   for (const [method, target] of [
     ['POST', '/api/test-accounts'],
     ['GET', '/api/test-accounts'],
     ['POST', '/api/test-accounts/12/retire'],
+    ['POST', '/api/test-accounts/phone-sign-ins'],
   ]) {
     assert.equal(policy.isConnectorApiRequest(method, target), true, `${method} ${target}`);
   }
@@ -682,6 +683,8 @@ test('the three test-account routes are allowed, full-admin gated first, limited
     ['POST', '/api/test-accounts/12/retire/extra'],
     ['POST', '/api/test-accounts/12/password'],
     ['GET', '/api/test-accounts/password'],
+    ['GET', '/api/test-accounts/phone-sign-ins'],
+    ['DELETE', '/api/test-accounts/phone-sign-ins'],
     // The admin console's own user routes stay out of reach.
     ['POST', '/api/admin/users'],
     ['POST', '/api/v4/admin/users'],
@@ -695,6 +698,7 @@ test('the three test-account routes are allowed, full-admin gated first, limited
     'GET /api/test-accounts',
     'POST /api/test-accounts',
     'POST /api/test-accounts/:id/retire',
+    'POST /api/test-accounts/phone-sign-ins',
   ]);
   for (const [, method, route, chain] of routes) {
     assert.equal(chain, 'requireAdminWrite, testAccountLimiter, sameOriginBrowserOnly, ',
@@ -702,5 +706,5 @@ test('the three test-account routes are allowed, full-admin gated first, limited
     assert.doesNotMatch(route, /password|credentials|secrets/, `${route} carries no credential segment`);
   }
   // Nothing else in the file registers a route.
-  assert.equal((src.match(/router\.(get|post|put|patch|delete|use|all)\(/g) || []).length, 3);
+  assert.equal((src.match(/router\.(get|post|put|patch|delete|use|all)\(/g) || []).length, 4);
 });

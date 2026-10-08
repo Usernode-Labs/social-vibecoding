@@ -103,16 +103,28 @@ export interface AgentSessionBannerView {
   href: string;
 }
 
+/**
+ * #3976: a classic session is read-only (services/classic-sessions.js). Its
+ * chat takes no new message, so the composer gives way to this strip, which
+ * says so and starts an agent session on the same app. Shown to whoever has
+ * the session open: nobody can continue it.
+ */
+export interface ClassicReadOnlyBannerView {
+  /** False when the app cannot be resolved; the strip then has no button. */
+  canStart: boolean;
+}
+
 export interface BannersState {
   sync: SyncBannerView | null;
   newChange: NewChangeBannerView | null;
   credits: CreditsBannerView | null;
   creditsLow: CreditsBannerView | null;
   agentSession?: AgentSessionBannerView | null;
+  classicReadOnly?: ClassicReadOnlyBannerView | null;
 }
 
 export const NO_BANNERS: BannersState = {
-  sync: null, newChange: null, credits: null, creditsLow: null, agentSession: null,
+  sync: null, newChange: null, credits: null, creditsLow: null, agentSession: null, classicReadOnly: null,
 };
 
 export const bannersStore = createStore<BannersState>(NO_BANNERS);

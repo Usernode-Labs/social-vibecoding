@@ -9,10 +9,12 @@ import { returnKeyHandler } from '../../lib/return-to-next';
 import { agoStamp } from '../../lib/timestamp';
 
 // Test accounts (#admin/test-accounts): make a genuinely new account for
-// first-time-user testing, see the live ones, and retire one when testing is
-// done. The routes are src/routes/test-accounts.js, the same three the
-// connector's create_test_account / list_test_accounts / retire_test_account
-// wrap; this section replaces pasting a fetch() into devtools.
+// first-time-user testing, get a one-time phone sign-in for a test number,
+// see the live ones, and retire one when testing is done. The routes are
+// src/routes/test-accounts.js, the same four the connector's
+// create_test_account / create_test_phone_sign_in / list_test_accounts /
+// retire_test_account wrap; this section replaces pasting a fetch() into
+// devtools.
 //
 // PERMISSIONS: every one of those routes is requireAdminWrite, the LIST
 // included, so a view-only admin can neither make nor see test accounts. The
@@ -530,6 +532,122 @@ export function CreateCard({ full, max, onCreated }: { full: boolean; max: numbe
   );
 }
 
+// ── A one-time phone sign-in ────────────────────────────────────────────
+//
+// POST /api/test-accounts/phone-sign-ins (services/test-accounts.js
+// mintPhoneSignIn): a fictional test number and a code that signs in once,
+// for the flows that ask for a phone, above all an invite's Join sheet. The
+// code is handled like the password above: held only in PhoneSignInCard's
+// state, cleared on Hide, on a new request, on unmount and on pagehide.
+
+export interface PhoneSignIn {
+  phoneNumber: string;
+  code: string;
+  expiresAt: string;
+  signsInTo: string | null;
+}
+
+/** "18:42", the local time a sign-in's code stops working. */
+export function untilText(expiresAt: string): string {
+  const at = new Date(expiresAt);
+  if (Number.isNaN(at.getTime())) return 'in 30 minutes';
+  return at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+/** One press: POST, and the sign-in or the sentence to show. Never throws. */
+export async function runPhoneSignIn(fetchImpl: Fetch = browserFetch):
+  Promise<{ ok: true; signIn: PhoneSignIn } | { ok: false; error: string }> {
+  const reply = await send(fetchImpl, 'POST', '/api/test-accounts/phone-sign-ins', {});
+  const s = is2xx(reply.status) && reply.data ? reply.data.signIn : null;
+  if (s && typeof s.code === 'string' && s.code && typeof s.phoneNumber === 'string') {
+    return {
+      ok: true,
+      signIn: {
+        phoneNumber: s.phoneNumber,
+        code: s.code,
+        expiresAt: String(s.expiresAt || ''),
+        signsInTo: s.signsInTo ? String(s.signsInTo) : null,
+      },
+    };
+  }
+  return { ok: false, error: refusal(reply, 'Try again in a moment.').error };
+}
+
+export function PhoneSignInResult({ signIn, onDone }: { signIn: PhoneSignIn; onDone: () => void }) {
+  return (
+    <section id="admin-test-accounts-phone-result" aria-label="The one-time phone sign-in"
+      className="mt-4 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 p-4">
+      <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">Shown once. Copy it now.</p>
+      <p className="text-xs text-amber-800 dark:text-amber-300 mt-1 mb-3">
+        {`The code works once, until ${untilText(signIn.expiresAt)}. Leaving this section or asking for another clears it.`}
+      </p>
+      <div className="space-y-2">
+        <CopyValue id="admin-test-accounts-phone-number" label="Number" value={signIn.phoneNumber} />
+        <CopyValue id="admin-test-accounts-phone-code" label="Code" value={signIn.code} />
+      </div>
+      <ul className="mt-3 list-disc pl-5 space-y-1 text-sm text-amber-900 dark:text-amber-200">
+        <li>Sign out on the device first.</li>
+        <li>Open the invite link and enter this number. Tap Text me a code: no text is sent.</li>
+        <li>Enter the code.</li>
+        {signIn.signsInTo
+          ? <li>{`It signs in to the test account @${signIn.signsInTo}.`}</li>
+          : <li>The account it makes is a test account. Retire it below when testing is done.</li>}
+      </ul>
+      <button id="admin-test-accounts-phone-done" type="button" className={`${AdminUI.btn.outline} mt-3`} onClick={onDone}>
+        Hide it
+      </button>
+    </section>
+  );
+}
+
+export function PhoneSignInCard({ full }: { full: boolean }) {
+  const [busy, setBusy] = useState(false);
+  const [signIn, setSignIn] = useState<PhoneSignIn | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; }, []);
+
+  // As for the password: clear the code before a back/forward cache snapshot.
+  useEffect(() => {
+    const forget = () => { flushSync(() => setSignIn(null)); };
+    window.addEventListener('pagehide', forget);
+    return () => window.removeEventListener('pagehide', forget);
+  }, []);
+
+  const ask = async () => {
+    if (busy || full) return;
+    setBusy(true);
+    setSignIn(null);
+    setError(null);
+    const out = await runPhoneSignIn();
+    if (!alive.current) return;
+    setBusy(false);
+    if (out.ok) setSignIn(out.signIn);
+    else setError(out.error);
+  };
+
+  return (
+    <div id="admin-test-accounts-phone" className={`${AdminUI.card} p-4`}>
+      <div className={AdminUI.cardHeader}>
+        <h2 className={AdminUI.cardTitle}>A one-time phone sign-in</h2>
+      </div>
+      <p className={`${AdminUI.muted} mb-4`}>
+        For the flows that ask for a phone number, like an invite&apos;s Join sheet. You get a
+        made-up test number and a code that works once, within 30 minutes. No text is sent. The
+        account it makes is a test account, like the ones above.
+      </p>
+      <div className="flex flex-wrap items-center gap-3">
+        <button id="admin-test-accounts-phone-submit" type="button" className={AdminUI.btn.primary}
+          disabled={busy || full} onClick={() => { void ask(); }}>
+          {busy ? 'Getting one…' : 'Get a number and code'}
+        </button>
+      </div>
+      {error ? <p id="admin-test-accounts-phone-error" role="alert" className={ERROR}>{error}</p> : null}
+      {signIn ? <PhoneSignInResult signIn={signIn} onDone={() => setSignIn(null)} /> : null}
+    </div>
+  );
+}
+
 // ── The live accounts ───────────────────────────────────────────────────
 
 function appsText(apps: LiveApp[]): string {
@@ -696,6 +814,7 @@ function ManageTestAccounts() {
   return (
     <div id="admin-test-accounts" className="space-y-4">
       <CreateCard full={full} max={max} onCreated={() => { void load(); }} />
+      <PhoneSignInCard full={full} />
       <LiveAccounts state={list} retiring={retiring} status={status}
         onRefresh={() => { setStatus(null); void load(); }} onRetire={(a) => { void retire(a); }} />
     </div>

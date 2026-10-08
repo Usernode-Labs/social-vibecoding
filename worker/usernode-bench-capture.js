@@ -33,6 +33,19 @@
 //                   screen taken about 300 ms after the document loads;
 //        empty      the same database with every row removed (the tables
 //                   the app made at boot stay), no ?demo=1.
+//      And a fifth, on the phone in both looks and the desktop in the light
+//      one, while its time lasts:
+//        result     the populated screen after its PRIMARY ACTION was
+//                   tapped once, for an app whose main content appears only
+//                   after the person acts (a calculator's answer below its
+//                   form). Deterministic, no model: chooseAction picks the
+//                   control (a marked one, else the design kit's single
+//                   .btn-primary, else a form's submit button, else the
+//                   button filled with the page's accent colour) or says why
+//                   none; primaryAction taps it with dialogs dismissed,
+//                   navigation to another origin blocked and a few seconds'
+//                   bound, waits for the network to go quiet and scrolls
+//                   what changed into view. Never a reason the capture fails.
 //   4. AUTOMATIC CHECKS, as numbers: console errors (populated and empty
 //      screens; the error and loading states provoke their own), horizontal
 //      overflow at 360 px, tap targets under 44 px, text below the WCAG AA
@@ -62,8 +75,32 @@ const VIEWPORTS = Object.freeze([
 ]);
 const LOOKS = Object.freeze(['light', 'dark']);
 // The order they are taken in: the empty state last, because it empties the
-// database the others read.
-const STATES = Object.freeze(['populated', 'error', 'loading', 'empty']);
+// database the others read, and the result state just before it, because
+// tapping an app's primary action may write to it.
+const STATES = Object.freeze(['populated', 'error', 'loading', 'result', 'empty']);
+// The screens the result state is taken on, most telling first: the step
+// stops taking them when RESULT_BUDGET_MS is spent.
+const RESULT_SCREENS = Object.freeze(['phone-light', 'phone-dark', 'desktop-light']);
+// The attribute an app may put on the one control the result state should
+// tap. Optional: without it the step looks for the screen's primary button.
+const ACTION_MARKER = 'data-capture-action';
+// The step's handle on the candidates it found, kept on the page between
+// finding them and tapping one.
+const CANDIDATES_KEY = '__usernodeBenchCaptureCandidates';
+const CHANGES_KEY = '__usernodeBenchCaptureChanges';
+// One control is the most prominent of several only when its box is at
+// least this much larger than the next one's.
+const PROMINENCE_MARGIN = 1.25;
+const ACTION_CLICK_MS = 2000;
+// After the tap: no request in flight for this long is network idle, and
+// the step waits no longer than ACTION_WAIT_MS for it.
+const ACTION_QUIET_MS = 500;
+const ACTION_WAIT_MS = 3000;
+const ACTION_SETTLE_MS = 500;
+// The whole extra step on one screen (finding, tapping, waiting, revealing).
+const ACTION_BUDGET_MS = 8000;
+// The result state on all its screens, their page loads included.
+const RESULT_BUDGET_MS = 30000;
 const OVERFLOW_WIDTH = 360;
 const MIN_TAP_PX = 44;
 const LOADING_DELAY_MS = 2000;
@@ -94,6 +131,7 @@ function capturePlan({ viewports = VIEWPORTS, looks = LOOKS, states = STATES } =
   for (const state of states) {
     for (const viewport of viewports) {
       for (const look of looks) {
+        if (state === 'result' && !RESULT_SCREENS.includes(`${viewport.name}-${look}`)) continue;
         shots.push({
           id: `${viewport.name}-${look}-${state}`,
           viewport: viewport.name, width: viewport.width, height: viewport.height, mobile: !!viewport.mobile,
@@ -105,12 +143,12 @@ function capturePlan({ viewports = VIEWPORTS, looks = LOOKS, states = STATES } =
   return shots;
 }
 
-/** The URL a shot opens: the app's root, its look, its sign-in, and ?demo=1 when populated. Pure. */
+/** The URL a shot opens: the app's root, its look, its sign-in, and ?demo=1 on the populated screen (the result state's too). Pure. */
 function shotUrl(baseUrl, { look, state }, token) {
   const params = new URLSearchParams();
   if (token) params.set('token', token);
   params.set('un-theme', look);
-  if (state === 'populated') params.set('demo', '1');
+  if (state === 'populated' || state === 'result') params.set('demo', '1');
   return `${String(baseUrl).replace(/\/+$/, '')}/?${params.toString()}`;
 }
 
@@ -122,6 +160,355 @@ function interceptsApi(baseUrl, method, url) {
     const base = new URL(baseUrl);
     return target.origin === base.origin && target.pathname.startsWith('/api/');
   } catch { return false; }
+}
+
+/** Whether `url` is on the app's own origin (what the result state lets a tap navigate to). Pure. */
+function sameOrigin(baseUrl, url) {
+  try {
+    return new URL(url).origin === new URL(baseUrl).origin;
+  } catch { return false; }
+}
+
+// ── The result state: which control is the screen's primary action ──────
+
+// Where a control sits, in the order the step looks: the main content
+// (inside <main> when the page has one), elsewhere on the page, and last
+// the page's header, footer and navigation, whose buttons are passed over
+// whenever the main content has one of its own.
+const ACTION_REGIONS = Object.freeze([
+  Object.freeze({ region: 'main', where: 'in the main content' }),
+  Object.freeze({ region: 'other', where: 'outside the main content' }),
+  Object.freeze({ region: 'chrome', where: 'in the page\'s header or navigation (the main content has none)' }),
+]);
+// What counts as a primary action, in the order the step looks, after a
+// control the app marks itself. The first rule with any candidate decides:
+// two equally prominent kit primary buttons are a skip, not a reason to
+// fall through to a form's submit button.
+const ACTION_RULES = Object.freeze([
+  Object.freeze({
+    rule: 'kit-primary', flag: 'kitPrimary',
+    one: 'the design kit\'s primary button (.btn-primary)', many: 'design kit primary buttons (.btn-primary)',
+  }),
+  Object.freeze({ rule: 'form-submit', flag: 'formSubmit', one: 'a form\'s submit button', many: 'form submit buttons' }),
+  Object.freeze({
+    rule: 'accent', flag: 'accent',
+    one: 'the button filled with the page\'s accent colour', many: 'buttons filled with the page\'s accent colour',
+  }),
+]);
+const MARKED_RULE = Object.freeze({ rule: 'marked', one: `the control marked ${ACTION_MARKER}`, many: `controls marked ${ACTION_MARKER}` });
+const MAX_ACTION_LABEL = 40;
+
+/** A control's label as captions quote it: one line, no double quotes, at most 40 characters. Pure. */
+function actionLabel(text) {
+  const s = String(text == null ? '' : text).replace(/\s+/g, ' ').replace(/"/g, '\'').trim();
+  return s.length > MAX_ACTION_LABEL ? `${s.slice(0, MAX_ACTION_LABEL - 1)}…` : s;
+}
+
+function quoted(label) { return label ? `"${label}"` : 'an unlabelled control'; }
+
+function pickProminent(list, rule, where, margin) {
+  const area = (c) => Number(c.area) || 0;
+  const ranked = [...list].sort((a, b) => area(b) - area(a) || (Number(a.index) || 0) - (Number(b.index) || 0));
+  const [top, next] = ranked;
+  const place = where ? ` ${where}` : '';
+  if (next && area(top) < area(next) * margin) {
+    const tied = ranked.filter((c) => area(c) * margin > area(top));
+    const names = tied.slice(0, 3).map((c) => quoted(actionLabel(c.label))).join(', ');
+    return { skipped: `no clear primary action: ${tied.length} equally prominent ${rule.many}${place} (${names}${tied.length > 3 ? ', …' : ''})` };
+  }
+  const label = actionLabel(top.label);
+  if (top.disabled) return { skipped: `the primary action ${quoted(label)} is disabled` };
+  if (top.offOrigin) return { skipped: `the primary action ${quoted(label)} leads to another site` };
+  const why = ranked.length === 1 ? `${rule.one}, the only one${place}` : `the largest of ${ranked.length} ${rule.many}${place}`;
+  return { index: Number(top.index), label, rule: rule.rule, why };
+}
+
+/**
+ * Which control is the screen's primary action, from descriptors of the
+ * page's candidates (actionCandidates collects them in the page): each
+ * { index, label, visible, disabled, region ('main' | 'other' | 'chrome'),
+ * marked, kitPrimary, formSubmit, accent, offOrigin, area }. Pure.
+ *
+ * A control marked data-capture-action wins wherever it is. Otherwise the
+ * main content's candidates come first, then the rest of the page's, then
+ * its header's and navigation's; within them, a .btn-primary, then a
+ * form's submit button, then a button filled with the accent colour. Of
+ * several, the one clearly the largest (PROMINENCE_MARGIN) is chosen.
+ *
+ * Resolves { index, label, rule, why } for the control to tap, or
+ * { skipped } saying why none is tapped: there is no candidate, two or
+ * more are equally prominent, or the chosen one is disabled or leads to
+ * another site.
+ */
+function chooseAction(candidates, { margin = PROMINENCE_MARGIN } = {}) {
+  const shown = (Array.isArray(candidates) ? candidates : []).filter((c) => c && c.visible !== false);
+  const marked = shown.filter((c) => c.marked);
+  if (marked.length) return pickProminent(marked, MARKED_RULE, '', margin);
+  for (const { region, where } of ACTION_REGIONS) {
+    const pool = shown.filter((c) => (c.region || 'main') === region);
+    for (const rule of ACTION_RULES) {
+      const list = pool.filter((c) => c[rule.flag]);
+      if (list.length) return pickProminent(list, rule, where, margin);
+    }
+  }
+  return { skipped: 'no clear primary action: no marked control, .btn-primary, form submit button or accent-coloured button on the screen' };
+}
+
+/**
+ * The candidates for the screen's primary action, described. Runs IN THE
+ * PAGE, like measurePage (actionExpression sends it with colorMath), and
+ * keeps the elements themselves on the page under `key` so the step can
+ * tap the one chooseAction picks.
+ */
+function actionCandidates({ marker, key, maxLabel, maxCandidates }, math) {
+  const css = getComputedStyle(document.body || document.documentElement);
+  // The page's accent: the starter kit's --accent ("15 118 110"), else the
+  // native kit's --un-accent ("#7c3aed").
+  const toColor = (raw) => {
+    const v = String(raw || '').trim();
+    if (!v) return null;
+    if (/^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(v)) {
+      const h = v.length <= 5 ? v.slice(1).split('').map((ch) => ch + ch).join('') : v.slice(1);
+      return { r: parseInt(h.slice(0, 2), 16), g: parseInt(h.slice(2, 4), 16), b: parseInt(h.slice(4, 6), 16), a: 1 };
+    }
+    if (/^[\d.]+(\s*,\s*|\s+)[\d.]+(\s*,\s*|\s+)[\d.]+$/.test(v)) return math.parse(`rgb(${v})`);
+    return math.parse(v);
+  };
+  const accent = toColor(css.getPropertyValue('--accent')) || toColor(css.getPropertyValue('--un-accent'));
+  const near = (a, b) => Math.abs(a.r - b.r) <= 6 && Math.abs(a.g - b.g) <= 6 && Math.abs(a.b - b.b) <= 6;
+  const hasMain = !!document.querySelector('main, [role=main]');
+  const regionOf = (el) => {
+    if (el.closest('nav, [role=navigation], [role=banner], [role=contentinfo], [role=tablist], [role=menubar]')) return 'chrome';
+    // A header or footer is the page's own unless it heads a section.
+    const edge = el.closest('header, footer');
+    if (edge && !(edge.parentElement && edge.parentElement.closest('article, aside, main, nav, section, [role=main]'))) return 'chrome';
+    if (!hasMain) return 'main';
+    return el.closest('main, [role=main]') ? 'main' : 'other';
+  };
+  const visible = (el) => {
+    const r = el.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) return false;
+    const cs = getComputedStyle(el);
+    return cs.visibility !== 'hidden' && cs.display !== 'none' && Number(cs.opacity) > 0;
+  };
+  const elements = [];
+  const out = [];
+  const selector = `[${marker}], .btn-primary, button, input[type=submit], input[type=button], input[type=image], [role=button], a[href]`;
+  for (const el of document.querySelectorAll(selector)) {
+    if (out.length >= maxCandidates) break;
+    const tag = el.tagName.toLowerCase();
+    const marked = el.hasAttribute(marker);
+    const kitPrimary = el.classList.contains('btn-primary');
+    const formSubmit = (tag === 'button' || tag === 'input') && !!el.form && el.type === 'submit';
+    const bg = math.parse(getComputedStyle(el).backgroundColor);
+    const accentFill = !!accent && !!bg && bg.a >= 0.9 && near(bg, accent);
+    if (!marked && !kitPrimary && !formSubmit && !accentFill) continue;
+    // Where a tap would take the page: a link's address, a submit button's form action.
+    let offOrigin = false;
+    const target = tag === 'a' ? el.href : (formSubmit ? el.formAction : '');
+    if (target) {
+      try {
+        const u = new URL(target, location.href);
+        offOrigin = /^https?:$/.test(u.protocol) && u.origin !== location.origin;
+      } catch { offOrigin = false; }
+    }
+    const r = el.getBoundingClientRect();
+    elements.push(el);
+    out.push({
+      index: out.length,
+      tag,
+      label: String(el.getAttribute('aria-label') || el.innerText || el.value || el.getAttribute('title') || el.getAttribute('alt') || '')
+        .replace(/\s+/g, ' ').trim().slice(0, maxLabel),
+      visible: visible(el),
+      disabled: el.matches(':disabled') || el.getAttribute('aria-disabled') === 'true',
+      region: regionOf(el),
+      marked, kitPrimary, formSubmit, accent: accentFill, offOrigin,
+      area: Math.round(r.width * r.height),
+    });
+  }
+  window[key] = elements;
+  return { candidates: out, accent: !!accent };
+}
+
+/** The expression page.evaluate runs to find the candidates. Pure. */
+function actionExpression() {
+  const opts = { marker: ACTION_MARKER, key: CANDIDATES_KEY, maxLabel: 80, maxCandidates: 200 };
+  return `(${actionCandidates.toString()})(${JSON.stringify(opts)}, (${colorMath.toString()})())`;
+}
+
+/** Start noting what changes on the page. Runs IN THE PAGE, just before the tap. */
+function watchChanges({ key }) {
+  const changed = new Set();
+  const note = (records) => {
+    for (const rec of records) {
+      if (rec.type === 'childList') rec.addedNodes.forEach((n) => changed.add(n.nodeType === 1 ? n : n.parentElement));
+      else if (rec.type === 'characterData') changed.add(rec.target.parentElement);
+      else changed.add(rec.target);
+    }
+  };
+  const observer = new MutationObserver(note);
+  observer.observe(document.body || document.documentElement, {
+    subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['class', 'style', 'hidden', 'open'],
+  });
+  window[key] = { observer, changed, note };
+  return true;
+}
+
+/**
+ * After the tap: count what changed (the tapped control's own label aside)
+ * and, when the largest change sits out of view, as a calculator's answer
+ * below its form does on a phone, scroll it into view with a little room
+ * above. Takes focus off the tapped control. Runs IN THE PAGE.
+ */
+function revealChange({ key, controlKey, controlIndex, headroom }) {
+  const control = (window[controlKey] || [])[controlIndex] || null;
+  try { delete window[controlKey]; } catch { window[controlKey] = undefined; }
+  if (control && document.activeElement === control && typeof control.blur === 'function') control.blur();
+  const watch = window[key];
+  // None means a new document: the tap navigated.
+  if (!watch) return { changes: null, revealed: false };
+  try { delete window[key]; } catch { window[key] = undefined; }
+  watch.note(watch.observer.takeRecords());
+  watch.observer.disconnect();
+  let target = null;
+  let changes = 0;
+  for (const el of watch.changed) {
+    if (!el || el.nodeType !== 1 || !el.isConnected || el === document.body || el === document.documentElement) continue;
+    if (control && (el === control || control.contains(el))) continue;
+    const cs = getComputedStyle(el);
+    // A toast or a fixed bar is on screen wherever the page is scrolled.
+    if (cs.display === 'none' || cs.visibility === 'hidden' || cs.position === 'fixed') continue;
+    const r = el.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) continue;
+    changes += 1;
+    if (!target || r.width * r.height > target.area) target = { el, area: r.width * r.height };
+  }
+  if (!target) return { changes, revealed: false };
+  const vh = window.innerHeight;
+  const top = target.el.getBoundingClientRect().top;
+  if (top >= 0 && top < vh * 0.75) return { changes, revealed: false };
+  target.el.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'instant' });
+  if (window.scrollY > 0) window.scrollBy({ top: -Math.round(vh * headroom), behavior: 'instant' });
+  return { changes, revealed: Math.abs(target.el.getBoundingClientRect().top - top) >= 1 };
+}
+
+function withTimeout(promise, ms, message) {
+  let timer = null;
+  const limit = new Promise((resolve, reject) => { timer = setTimeout(() => reject(new Error(message)), ms); });
+  return Promise.race([promise, limit]).finally(() => clearTimeout(timer));
+}
+
+/** Requests in flight on a page, to tell when it has gone quiet after the tap. */
+function watchNetwork(page) {
+  let inFlight = 0;
+  let lastChange = Date.now();
+  const start = () => { inFlight += 1; lastChange = Date.now(); };
+  const end = () => { inFlight = Math.max(0, inFlight - 1); lastChange = Date.now(); };
+  page.on('request', start);
+  page.on('requestfinished', end);
+  page.on('requestfailed', end);
+  return {
+    async quiet(idleMs, maxMs) {
+      const deadline = Date.now() + maxMs;
+      while (Date.now() < deadline) {
+        if (inFlight === 0 && Date.now() - lastChange >= idleMs) return 'network idle';
+        // eslint-disable-next-line no-await-in-loop
+        await sleep(50);
+      }
+      return `still busy after ${Math.round(maxMs / 1000)} s`;
+    },
+    stop() {
+      page.off('request', start);
+      page.off('requestfinished', end);
+      page.off('requestfailed', end);
+    },
+  };
+}
+
+/**
+ * Tap the screen's primary action once, on a page already loaded and
+ * settled. Never throws. Resolves the record the capture keeps:
+ * { used: { label, rule, why }, settled, changes, revealed, dialogs,
+ * blocked, ms } when it tapped, { skipped } when no control is clearly the
+ * primary action, { failed } when the tap or what followed went wrong.
+ * Native dialogs are dismissed, a navigation to another origin is blocked
+ * and a new window closed (both counted in `blocked`), and the whole step
+ * is bound by ACTION_BUDGET_MS.
+ */
+async function primaryAction(page, baseUrl) {
+  const started = Date.now();
+  const state = { dialogs: 0, blocked: 0, choice: null };
+  const run = async () => {
+    const found = await page.evaluate(actionExpression());
+    const choice = chooseAction(found && found.candidates);
+    if (choice.skipped) return { skipped: choice.skipped };
+    state.choice = choice;
+    const handle = await page.evaluateHandle(`(window[${JSON.stringify(CANDIDATES_KEY)}] || [])[${Number(choice.index)}] || null`);
+    const control = handle.asElement();
+    if (!control) return { failed: `${quoted(choice.label)} left the page before it could be tapped` };
+    // What a tap may set off, guarded from here on. The page loaded as the
+    // populated screen did, so a tap that changes nothing leaves the same
+    // picture, which pickShots then names identical.
+    page.on('dialog', (dialog) => { state.dialogs += 1; dialog.dismiss().catch(() => {}); });
+    page.context().on('page', (popup) => { state.blocked += 1; popup.close().catch(() => {}); });
+    await page.route((url) => !sameOrigin(baseUrl, url.toString()), (route) => {
+      const req = route.request();
+      let topLevel = false;
+      try { topLevel = req.isNavigationRequest() && req.frame() === page.mainFrame(); } catch { topLevel = false; }
+      if (topLevel) {
+        state.blocked += 1;
+        return route.abort('blockedbyclient').catch(() => {});
+      }
+      return route.continue().catch(() => {});
+    });
+    const net = watchNetwork(page);
+    try {
+      await page.evaluate(`(${watchChanges.toString()})(${JSON.stringify({ key: CHANGES_KEY })})`);
+      await control.click({ timeout: ACTION_CLICK_MS });
+      const settled = await net.quiet(ACTION_QUIET_MS, ACTION_WAIT_MS);
+      // Off the control, so a hover style is not what changed.
+      await page.mouse.move(0, 0).catch(() => {});
+      const shown = await page.evaluate(`(${revealChange.toString()})(${JSON.stringify({
+        key: CHANGES_KEY, controlKey: CANDIDATES_KEY, controlIndex: Number(choice.index), headroom: 0.1,
+      })})`).catch(() => ({ changes: null, revealed: false }));
+      await sleep(ACTION_SETTLE_MS);
+      return {
+        used: { label: choice.label, rule: choice.rule, why: choice.why },
+        settled, changes: shown.changes, revealed: !!shown.revealed,
+      };
+    } finally {
+      net.stop();
+    }
+  };
+  let out;
+  try {
+    out = await withTimeout(run(), ACTION_BUDGET_MS, `the primary action took longer than ${ACTION_BUDGET_MS / 1000} s`);
+  } catch (err) {
+    out = {
+      failed: clip(err && err.message ? err.message.split('\n')[0] : err, 200),
+      ...(state.choice ? { tried: { label: state.choice.label, rule: state.choice.rule } } : {}),
+    };
+  }
+  return { ...out, ...(out.used ? { dialogs: state.dialogs, blocked: state.blocked } : {}), ms: Date.now() - started };
+}
+
+/**
+ * The capture record's account of the result state, one entry per planned
+ * result screen: the control used and why, or why none was. Pure.
+ */
+function primaryActionRecord(shots) {
+  return (shots || []).filter((s) => s && s.state === 'result').map((s) => {
+    const a = s.action || {};
+    const settledWhy = a.used || a.skipped || a.failed;
+    return {
+      id: s.id,
+      ...a,
+      ...(settledWhy ? {} : (s.failed ? { failed: s.failed } : { skipped: s.skipped || 'not taken' })),
+      // Tapped, but the screenshot after it could not be taken.
+      ...(a.used && s.failed ? { failed: s.failed } : {}),
+      ...(s.sameAs ? { sameAs: s.sameAs } : {}),
+    };
+  });
 }
 
 // ── Sign-in: a throwaway identity the app can verify ─────────────────────
@@ -581,6 +968,7 @@ async function takeShot(browser, baseUrl, token, shot) {
   });
   const errors = [];
   const started = Date.now();
+  let action = null;
   try {
     const page = await context.newPage();
     page.on('console', (msg) => { if (msg.type() === 'error') errors.push(clip(msg.text())); });
@@ -606,6 +994,17 @@ async function takeShot(browser, baseUrl, token, shot) {
       status = resp ? resp.status() : status;
       await sleep(SETTLE_MS);
     }
+    if (shot.state === 'result') {
+      // The populated screen, then its primary action tapped once. No tap,
+      // no screenshot: it would be the populated one again.
+      action = await primaryAction(page, baseUrl);
+      if (!action.used) {
+        return {
+          ...shot, status, action, ...(action.failed ? { failed: `the primary action failed: ${action.failed}` } : { skipped: action.skipped }),
+          consoleErrors: errors.length, errorSamples: errors.slice(0, MAX_SAMPLES), ms: Date.now() - started,
+        };
+      }
+    }
     const png = await page.screenshot({ type: 'png', fullPage: false });
     let metrics = null;
     if (shot.state === 'populated' || shot.state === 'empty') {
@@ -613,10 +1012,13 @@ async function takeShot(browser, baseUrl, token, shot) {
     }
     return {
       ...shot, status, png, ...pngSize(png), consoleErrors: errors.length, errorSamples: errors.slice(0, MAX_SAMPLES),
-      metrics, ms: Date.now() - started,
+      metrics, ...(action ? { action } : {}), ms: Date.now() - started,
     };
   } catch (err) {
-    return { ...shot, failed: clip(err.message, 300), consoleErrors: errors.length, errorSamples: errors.slice(0, MAX_SAMPLES), ms: Date.now() - started };
+    return {
+      ...shot, failed: clip(err.message, 300), ...(action ? { action } : {}),
+      consoleErrors: errors.length, errorSamples: errors.slice(0, MAX_SAMPLES), ms: Date.now() - started,
+    };
   } finally {
     await context.close().catch(() => {});
   }
@@ -650,7 +1052,7 @@ async function main() {
   // corner, which no screen inside the platform's frame ever shows.
   const baseUrl = `http://localhost:${port}`;
   const started = Date.now();
-  const result = { ok: true, booted: false, error: null, steps: {}, shots: [], checks: null, tells: null };
+  const result = { ok: true, booted: false, error: null, steps: {}, shots: [], primaryAction: null, checks: null, tells: null };
   const emit = () => {
     result.ms = Date.now() - started;
     const shots = result.shots.map((s) => ({ ...s, png: s.png ? s.png.toString('base64') : null }));
@@ -697,19 +1099,43 @@ async function main() {
     });
     const plan = capturePlan();
     const overflow = [];
+    let resultMs = 0;
+    // A screen whose primary action was skipped, by viewport: its other look
+    // is the same page, so it is skipped for the same reason, unopened.
+    const skippedAt = new Map();
     for (const shot of plan) {
-      if (shot.state === 'empty' && !result.steps.emptied) {
-        // Before the first empty screen: the 360-px pass on the seeded data,
-        // then every row gone.
+      if ((shot.state === 'result' || shot.state === 'empty') && !overflow.length) {
+        // Before the first screen that may change the data (a tap on the
+        // primary action may write; the empty state empties it): the 360-px
+        // pass on the seeded data.
         for (const look of LOOKS) {
           // eslint-disable-next-line no-await-in-loop
           overflow.push(await overflowAt360(browser, baseUrl, identity.token, look));
         }
-        result.steps.emptied = emptyDatabase(env);
+      }
+      if (shot.state === 'empty' && !result.steps.emptied) result.steps.emptied = emptyDatabase(env);
+      if (shot.state === 'result') {
+        const earlier = skippedAt.get(shot.viewport);
+        if (earlier) {
+          result.shots.push({ ...shot, skipped: earlier.skipped, sameAs: earlier.id });
+          continue;
+        }
+        if (resultMs >= RESULT_BUDGET_MS) {
+          result.shots.push({ ...shot, skipped: `not taken: the result screens had used their ${RESULT_BUDGET_MS / 1000} s` });
+          continue;
+        }
+        const t0 = Date.now();
+        // eslint-disable-next-line no-await-in-loop
+        const taken = await takeShot(browser, baseUrl, identity.token, shot);
+        resultMs += Date.now() - t0;
+        if (taken.action && taken.action.skipped) skippedAt.set(shot.viewport, { id: shot.id, skipped: taken.action.skipped });
+        result.shots.push(taken);
+        continue;
       }
       // eslint-disable-next-line no-await-in-loop
       result.shots.push(await takeShot(browser, baseUrl, identity.token, shot));
     }
+    result.primaryAction = primaryActionRecord(result.shots);
     result.checks = summarizeChecks(result.shots, overflow);
     result.checks.overflow360.samples = overflow.filter((o) => o.failed).map((o) => `${o.look}: ${o.failed}`);
   } catch (err) {
@@ -751,9 +1177,21 @@ module.exports = {
   MIN_TAP_PX,
   LOADING_DELAY_MS,
   LOADING_SHOT_MS,
+  RESULT_SCREENS,
+  ACTION_MARKER,
+  ACTION_BUDGET_MS,
+  RESULT_BUDGET_MS,
+  PROMINENCE_MARGIN,
   capturePlan,
   shotUrl,
   interceptsApi,
+  sameOrigin,
+  chooseAction,
+  actionLabel,
+  actionExpression,
+  primaryAction,
+  primaryActionRecord,
+  takeShot,
   throwawayIdentity,
   colorMath,
   measurePage,

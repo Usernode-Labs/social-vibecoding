@@ -124,6 +124,28 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 // reviewable on staging via ?demo=1; the rest stay assigned to
 // staging-tester with myValue null, so opening their dropdown pre-fills
 // the viewer's own username.
+// #4313: a ?demo=1 Needs-you card's own page ("Open card"), so the read
+// that opens it is answered rather than refused. The mock rows' shape, with
+// the card's own words, no tally and nobody's chips: a demo card names no
+// real people. Null for any id that is not one of the feed's demo cards on
+// that card's own project.
+function stagingDemoNeedsProposal(id, slug) {
+  const { DEMO_NEEDS_FEED, isDemoNeedsProposal } = require('./workshop-overview');
+  if (!isDemoNeedsProposal(id)) return null;
+  const card = DEMO_NEEDS_FEED.find((it) => it.kind === 'proposal' && it.id === id);
+  if (!card || card.app.slug !== slug) return null;
+  const base = stagingMockProposals()[0];
+  return {
+    ...base,
+    id, pr_number: null, pr_title: card.title, pr_summary_md: card.summary, pr_body: null,
+    username: card.author || null, user_id: 0,
+    created_at: card.at, promoted_at: card.at, approval_epoch: card.epoch,
+    yes_count: card.yes || 0, no_count: card.no || 0, my_vote: null,
+    chat_count: 0, last_message_at: null, votes_required: 1,
+    priority: null, assignee: null, category: null,
+  };
+}
+
 function stagingMockProposals(viewer) {
   const hoursAgo = (h) => new Date(Date.now() - h * 3600 * 1000).toISOString();
   const hoursAhead = (h) => new Date(Date.now() + h * 3600 * 1000).toISOString();
@@ -564,19 +586,58 @@ function stagingMockProposals(viewer) {
     },
     {
       ...mk(9000093, 900193,
-        '[Mock] #2061: waiting on the author — two checks are failing',
+        '[Mock] #2061: waiting on the author — checks are failing',
         5, 3, 0, 4, { required: 3 }),
       check_state: 'failing',
+      // #3978: the failing rows carry their diagnosis, and the unit-suite
+      // row carries its per-test excerpts, so the "Why it failed" fold on
+      // this route shows what a real failing proposal shows. Kept in the
+      // shape services/unit-suite.js shapes and the connector reads.
       test_results: [
-        { name: 'Kudos totals survive a rename', path: '/dev', status: 'fail' },
-        { name: 'The board folds on a narrow screen', path: '/dev', status: 'fail' },
+        {
+          name: 'Kudos totals survive a rename', path: '/dev', status: 'fail',
+          failureReason: 'Expected element "[data-kudos-total]" was not found',
+          consoleErrors: [],
+        },
+        {
+          name: 'The board folds on a narrow screen', path: '/dev', status: 'fail',
+          failureReason: '1 console error on load',
+          consoleErrors: [
+            { kind: 'pageerror', message: 'TypeError: Cannot read properties of undefined (reading \'rows\')', source: 'dev-kanban.tsx' },
+          ],
+        },
+        {
+          index: -3,
+          name: 'Repo unit suite (npm test) passes', path: 'package.json', status: 'fail',
+          advisory: false, consoleErrors: [],
+          failureReason: 'tests/kudos-totals.test.js (1): kudos totals survive a rename | # tests 20913 | # pass 20912 | # fail 1 | # cancelled 0',
+          failureDetails: [
+            {
+              file: 'tests/kudos-totals.test.js',
+              test: 'kudos totals survive a rename',
+              excerpt: [
+                "    error: 'expected 42 to equal 41',",
+                "    code: 'ERR_ASSERTION',",
+                "    actual: 42,",
+                "    expected: 41,",
+                "    failureType: 'testCodeFailure',",
+                '    stack: |',
+                "      AssertionError [ERR_ASSERTION]: expected 42 to equal 41",
+                '          at Test.<anonymous> (tests/kudos-totals.test.js:88:5)',
+                '  — stdout just before the failure —',
+                'renaming @mara → @mara-renamed: kudos rows moved 3',
+                'recount after rename: total=42 (expected 41)',
+              ].join('\n'),
+            },
+          ],
+        },
       ],
       merge_requirements: {
         context: { explicitApproval: false, locked: false, selfHosted: false },
         evaluated: [
           { key: 'approvals', state: 'done', detail: { note: '3 of 3' } },
           { key: 'integration', state: 'done', detail: { note: 'level with main, merges cleanly' } },
-          { key: 'checks', state: 'blocked', detail: { checkState: 'failing', failingCount: 2, note: '2 failing. They re-run on the next push' } },
+          { key: 'checks', state: 'blocked', detail: { checkState: 'failing', failingCount: 3, note: '3 failing. They re-run on the next push' } },
         ],
       },
       merge_requirements_at: new Date(Date.now() - 90 * 1000).toISOString(),
@@ -1837,6 +1898,10 @@ async function reconcileNativeReviewedHead({
     changed: true,
     kind: move.kind,
     votesKept: keepsApprovals,
+    // The green verdict about the old head now stands for this one, so
+    // nothing rebuilds. services/proposal-update.js reports that to the
+    // author instead of a rebuild that is not happening.
+    checksCarry,
     checksDeferred: needsChecks && deferChecks,
   };
 }
@@ -2121,6 +2186,9 @@ function mergedRowSelect() {
            -- merged before the column existed — consumers must keep the
            -- created_at fallback forever.
            cs.merged_at, cs.promoted_at, cs.shared_at, cs.session_title,
+           -- When production first ran it; NULL while a merge is still going
+           -- live (the merge-followups workflow machine), so the card says so.
+           cs.live_at,
            COALESCE(cs.merged_at, cs.created_at) AS completed_at,
            cs.revert_of_session_id,
            -- A change that went live inside another one
@@ -3592,10 +3660,24 @@ function voteRoutes(config) {
         });
         return res.json({ ok: true, merged: false, unchanged: true, ...readyCard });
       }
+      // #3977: a No's line on Homeroom bot's own change, while it is up for
+      // a vote, goes to the bot as this voter's reply in the change's
+      // discussion, and its follow-up is queued first to fix what the line
+      // says (homeroom-bot-dm.js voteLineFor / voteLineTarget). Nothing for
+      // a Yes, a No re-cast with the same words (returned above), or a
+      // change that is not the bot's (one indexed read). Never throws.
+      const botDm = require('../services/homeroom-bot-dm');
+      const botLine = botDm.voteLineFor({ vote, reason: recordedReason, unchanged });
+      const botTarget = botLine ? await botDm.voteLineTarget(pool, { sessionId: session.id }) : null;
+      const handToBot = async () => (botTarget
+        ? !!(await botDm.handVoteLine(pool, { user: req.user, target: botTarget, line: botLine }))?.ok
+        : false);
       if (reasonOnly) {
         // #1688: the same vote with new words. The roster and the proposer's
         // notification read the row live, so a tally push is all the
         // clients need; no line is re-posted and no merge is re-checked.
+        // #3977: new words on a No on the bot's change reach the bot.
+        await handToBot();
         const { pushVoteUpdate: pushReason } = require('../services/ws');
         pushReason({ sessionId: session.id, appSlug: session.app_slug, merged: false });
         log.debug('votes', 'Vote reason updated', { sessionId: session.id, userId: req.user.id });
@@ -3635,15 +3717,20 @@ function voteRoutes(config) {
       // their tally — the thread it lands in is the proposal's own, so the
       // PR label it used to repeat is the thread's title. Without one, the
       // line reads exactly as before.
-      const voteLine = recordedReason
-        ? `${req.user.username} voted ${vote}: “${recordedReason}”`
+      // #3977: a line handed to Homeroom bot is already in the thread, as
+      // the voter's own reply just above this row, so the row leaves it out
+      // and the discussion shows it once. Handed first, so it is there
+      // whichever way the hand-off goes.
+      const shownReason = (await handToBot()) ? null : recordedReason;
+      const voteLine = shownReason
+        ? `${req.user.username} voted ${vote}: “${shownReason}”`
         : `${req.user.username} voted ${vote} on ${voteLabel}`;
       await sendSystemMessage(pool, session.app_id,
         voteLine,
         'vote',
         // Lets the group-chat client render live vote buttons inline on
         // this activity row (see group-chat.js renderMessageHtml).
-        { vote: { sessionId: session.id, prNumber: session.pr_number || null, reason: recordedReason } },
+        { vote: { sessionId: session.id, prNumber: session.pr_number || null, reason: shownReason } },
         // #194: per-vote activity lands in the proposal's own thread, not
         // general chat — the promote/merge announcements remain the
         // general-chat entry points.
@@ -4645,7 +4732,7 @@ function voteRoutes(config) {
              FROM (
                SELECT COALESCE(merged_at, created_at) AS t
                  FROM chat_sessions
-                WHERE app_id = $1 AND status = 'merged'
+                WHERE app_id = $1 AND status = 'merged' AND live_at IS NOT NULL
                UNION ALL
                SELECT created_at AS t
                  FROM issues
@@ -4930,6 +5017,7 @@ function voteRoutes(config) {
       if (!proposal && IS_STAGING && req.query.demo === '1') {
         proposal = stagingMockMerged().find((m) => m.id === id)
           || stagingMockProposals().find((m) => m.id === id)
+          || stagingDemoNeedsProposal(id, req.params.slug)
           || null;
       }
 
@@ -5230,7 +5318,10 @@ async function resolveIssueBounty(pool, { appId, sessionId, awardeeUserId, issue
 //   shapers — everyone else who took part: a No with a line on the version
 //             that merged (an objection that did not stop it), or a word in
 //             the proposal's thread before it landed. Nobody is named twice.
-async function mergeCredits(pool, session) {
+// `before` bounds the thread's speakers to those who spoke before it: the
+// merge-followups machine names them when the change goes live, which can
+// be well after the merge.
+async function mergeCredits(pool, session, { before = null } = {}) {
   const { rows: authorRows } = session.user_id
     ? await pool.query('SELECT username FROM users WHERE id = $1', [session.user_id])
     : { rows: [] };
@@ -5250,9 +5341,10 @@ async function mergeCredits(pool, session) {
        JOIN users u ON u.id = cm.user_id
       WHERE cm.app_id = $1 AND cm.thread_type = 'session' AND cm.thread_ref = $2
         AND cm.msg_type = 'message'
+        AND ($3::timestamptz IS NULL OR cm.created_at <= $3::timestamptz)
       GROUP BY u.username
       ORDER BY first_at ASC`,
-    [session.app_id, session.id]
+    [session.app_id, session.id, before]
   );
   const seen = new Set(author ? [author] : []);
   const backers = [];
@@ -5509,7 +5601,7 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
     // keeps any earlier snapshot (defensive; the promoted→merging claim
     // already guarantees a single merge transition).
     await pool.query(
-      `UPDATE chat_sessions SET status = 'merged', merged_at = NOW(),
+      `UPDATE chat_sessions SET status = 'merged', merged_at = NOW(), live_at = NOW(),
                                 merge_commit_sha = COALESCE($2, merge_commit_sha),
                                 votes_required = COALESCE(votes_required, $3),
                                 active_users_at_merge = COALESCE(active_users_at_merge, $4)
@@ -6964,6 +7056,34 @@ async function checkAndMerge(config, pool, session, options = {}) {
       dstep({ phase: 'github_merge', message: 'GitHub not enabled or PR-less, so skipping the GitHub merge call.' });
     }
 
+    // With WF_MERGE_FOLLOWUPS_ENABLED on, everything after GitHub's merge
+    // belongs to the merge-followups workflow machine
+    // (src/workflow/merge-followups/): the status move, delivery, teardown,
+    // included changes, requests and the announcements, each durable. The
+    // merge reports it and waits briefly for the status move.
+    const workflow = require('../workflow/platform.ts');
+    if (workflow.mergeFollowupsEnabled()) {
+      const handed = await workflow.mergeConfirmed({
+        sessionId: session.id, appId: session.app_id, mergeSha: mergeCommitSha,
+        force, forcedBy: forceBy?.username || null,
+        tally: { yes: yesCount, required, active: activeCount },
+      });
+      if (handed.status === 'rejected' || handed.status === 'faulted') {
+        log.error('votes', 'The merge-followups machine refused a confirmed merge', {
+          sessionId: session.id, status: handed.status, reason: handed.reason,
+        });
+      }
+      dstep({
+        phase: 'merged',
+        message: `Merged${mergeCommitSha ? ` (commit ${String(mergeCommitSha).slice(0, 9)})` : ''}. Delivery and the follow-ups are the merge-followups workflow's (${handed.status}).`,
+        detail: { sha: mergeCommitSha, workflowEvent: handed.eventId, outcome: handed.status },
+      });
+      gateTrace.revise('github', 'done', { note: 'merged' });
+      gateSave();
+      dend('merged', `Merged${force ? ` (force by ${forceBy?.username || 'admin'})` : ''}.`);
+      return { merged: true, ...(handed.status === 'pending' ? { followupsPending: true } : {}) };
+    }
+
     // #687 Slice 4: run the shared post-merge finalizer. Both native and
     // imported merges converge here after the (only-difference) github.mergePR
     // call above, so the deploy/teardown/announce tail is byte-for-byte
@@ -6995,11 +7115,20 @@ async function checkAndMerge(config, pool, session, options = {}) {
     // fix the cause and re-run the rebuild ("Check for updates" / drift
     // poller). The pre-merge conflict/behind_main handling further down is
     // premised on the merge NOT having happened, so we return early.
+    // With the merge-followups machine on, the only step after GitHub's merge
+    // is reporting it. A report that failed leaves the row 'merging', and
+    // recoverStuckMerges finds the merge on GitHub and reports it again.
+    if (githubMerged && require('../workflow/platform.ts').mergeFollowupsEnabled()) {
+      dend('merged', 'Merged on GitHub; recovery records the merge.');
+      return { merged: true, followupsPending: true };
+    }
+
     if (githubMerged) {
       await pool.query(
         `UPDATE chat_sessions
             SET status = 'merged',
                 merged_at = COALESCE(merged_at, NOW()),
+                live_at = COALESCE(live_at, NOW()),
                 merge_commit_sha = COALESCE(merge_commit_sha, $2),
                 votes_required = COALESCE(votes_required, $3),
                 active_users_at_merge = COALESCE(active_users_at_merge, $4)

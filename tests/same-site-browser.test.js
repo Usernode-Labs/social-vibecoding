@@ -204,6 +204,9 @@ const EXEMPT = new Map([
   ['feedback.js POST /api/feedback/video', RAW],
   ['feedback.js POST /api/feedback', JSON_FIELD],
   ['github-webhook.js POST /api/github/webhook', TOKEN],
+  // #4264: a coding agent's sandbox, authenticated by the task's one-time
+  // upload token in Authorization; no cookie is read.
+  ['external-agent-patch-upload.js POST /api/external-tasks/:taskId/patch', TOKEN],
   ['mail-webhooks.js POST /api/mail/webhooks/resend', 'Resend raw-body Svix signature; no cookie or browser session authorizes a callback'],
   ['global-chat.js POST /api/global-chat/threads/:id/direct-actions', JSON_FIELD],
   ['global-chat.js POST /api/global-chat/threads/:id/inline-actions', JSON_FIELD],
@@ -269,6 +272,8 @@ const EXEMPT = new Map([
   ['votes.js POST /api/sessions/:id/vote', JSON_FIELD],
   ['waitlist-connect.js POST /waitlist/connect/:provider/complete', JSON_FIELD],
   ['workshop-ask.js POST /api/apps/:slug/workshop/ask', JSON_FIELD],
+  // #4313: the ?demo=1 Needs-you cards' vote, answered and never cast (staging only).
+  ['workshop-overview.js POST /api/sessions/:id/vote', JSON_FIELD],
   // Declarations the literal-path scan used to miss.
   ['anthropic-proxy.js ALL `${ROUTE_PREFIX}*`', TOKEN],
   ['app-illustrations.js POST /api/apps/:slug/featured-illustration', RAW],

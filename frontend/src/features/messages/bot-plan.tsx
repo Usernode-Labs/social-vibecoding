@@ -3,13 +3,15 @@ import { useState } from 'react';
 import { InfoCircleIcon } from '@/components/ui/icons';
 
 import * as api from './api';
+import { isActivityMessage, isMovedActivity } from './bot-activity';
+import { useBotActivity } from './bot-activity-store';
 import { botMeta, requestPlace } from './bot-question';
-import { PlanCardView, type PlanCardState } from './bot-plan-view';
+import { AnsweredChoices, PlanCardView, type AnsweredChoice, type PlanCardState } from './bot-plan-view';
 import { BotHeadWords, botHead } from './bot-head-card';
 import { MessageMarkdown } from './format';
 import { NotifyMe, notifyMeChosen } from './notify-me';
-import { answerBotQuestion, scopeKey, setReply } from './store';
-import type { ConversationMessage, HomeroomBotMeta } from './types';
+import { answerBotQuestion, scopeKey, setReply, useMessagesSnapshot } from './store';
+import type { ConversationMessage, HomeroomBotActivity, HomeroomBotMeta } from './types';
 
 /*
  * B6: two kinds of bot message that stand in place of their words, as the
@@ -31,6 +33,8 @@ import type { ConversationMessage, HomeroomBotMeta } from './types';
  * on the request's public discussion, which the note says), with the
  * suggested answer for any left alone. Something else quotes it for answers
  * of one's own. One question keeps BotQuestion's one tap (./bot-question.tsx).
+ * #4197: answered, each question is a label over its answer's chip, read
+ * back from the message's lines; an answer of one's own stays as written.
  */
 
 /** Whether a message is a plan the bot drew as its card. */
@@ -55,6 +59,43 @@ export function planState(meta: HomeroomBotMeta, pressed = false): PlanCardState
   return 'open';
 }
 
+/**
+ * #4197: pure: two questions' answer, one "question answer" line each as
+ * Build it sends it, back as pairs. Null for anything else (an answer typed
+ * in one's own words), which is shown as written.
+ */
+export function answeredPairs(questions: ReadonlyArray<{ question: string }>, text: string | null | undefined): AnsweredChoice[] | null {
+  const lines = String(text || '').split('\n');
+  if (!questions.length || lines.length !== questions.length) return null;
+  const pairs = questions.map((q, i) => {
+    const line = lines[i];
+    return line.startsWith(`${q.question} `) ? { question: q.question, answer: line.slice(q.question.length + 1).trim() } : null;
+  });
+  return pairs.every((pair) => pair && pair.answer) ? pairs as AnsweredChoice[] : null;
+}
+
+/**
+ * Pure (#4227): whether the build a plan's Build it started is running now,
+ * from its request's activity card in the transcript (the one moved under
+ * the plan: services/homeroom-bot-activity.js cardUnderPlan): working, or
+ * not read yet. Undefined when the transcript has no card for it, so the
+ * plan card decides by its own press.
+ */
+export function planBuilding(
+  meta: HomeroomBotMeta, messages: readonly ConversationMessage[], cards: ReadonlyMap<number, HomeroomBotActivity>,
+): boolean | undefined {
+  let newest: ConversationMessage | null = null;
+  for (const m of messages) {
+    if (!isActivityMessage(m) || isMovedActivity(m)) continue;
+    const card = m.metadata?.homeroomBot;
+    if (card?.appSlug !== meta.appSlug || Number(card?.issueNumber) !== Number(meta.issueNumber)) continue;
+    if (!newest || m.id > newest.id) newest = m;
+  }
+  if (!newest) return undefined;
+  const card = cards.get(newest.id);
+  return !card || card.state === 'working';
+}
+
 /** Put the card in the composer's reply bar, and the caret after it. */
 function quote(message: ConversationMessage, conversationId: number) {
   setReply(scopeKey(conversationId, null), message);
@@ -67,6 +108,8 @@ export function BotPlanCard({ message, conversationId }: { message: Conversation
   const meta = botMeta(message);
   const [pressed, setPressed] = useState(false);
   const [offerNotify, setOfferNotify] = useState(false);
+  const { messages } = useMessagesSnapshot();
+  const { cards } = useBotActivity();
   if (!meta?.plan) return null;
   const actionId = meta.actionId;
   const userId = typeof window !== 'undefined' ? Number(window.App?.user?.id) || null : null;
@@ -87,6 +130,7 @@ export function BotPlanCard({ message, conversationId }: { message: Conversation
       state={planState(meta)}
       choices={meta.choices}
       busy={pressed && meta.status !== 'answered'}
+      building={planBuilding(meta, messages, cards)}
       onBuild={build}
       onChange={() => quote(message, conversationId)}
       footer={pressed && offerNotify ? <NotifyMe userId={userId} /> : null}
@@ -104,6 +148,7 @@ export function BotTwoQuestions({ message, conversationId }: { message: Conversa
   const head = meta.lead ? botHead(meta.lead, meta) : null;
   const open = meta.status === 'open' && !sent;
   const answered = meta.status === 'answered' ? (meta.answer || sent) : sent;
+  const pairs = answered ? answeredPairs(questions, answered) : null;
 
   function build() {
     const text = questions.map((q, i) => `${q.question} ${picked[i] || q.answers[0]}`).join('\n');
@@ -133,7 +178,7 @@ export function BotTwoQuestions({ message, conversationId }: { message: Conversa
             ))}
           </div>
         </div>
-      )) : (
+      )) : pairs ? <AnsweredChoices items={pairs} className="mt-2" /> : (
         <ol className="mt-1.5 list-decimal space-y-0.5 pl-5 text-[0.9375rem] text-zinc-900 dark:text-zinc-100">
           {questions.map((q) => <li key={q.question}>{q.question}</li>)}
         </ol>
@@ -144,7 +189,7 @@ export function BotTwoQuestions({ message, conversationId }: { message: Conversa
           <button type="button" className="messages-bot-other" onClick={() => quote(message, conversationId)}>Something else</button>
         </div>
       ) : null}
-      {answered ? <p className="messages-bot-answered whitespace-pre-line">{`You answered:\n${answered}`}</p> : null}
+      {answered && !pairs ? <p className="messages-bot-answered whitespace-pre-line">{`You answered:\n${answered}`}</p> : null}
       {meta.status === 'closed' && !answered ? <p className="messages-bot-answered">No longer needed.</p> : null}
       {open || sent ? (
         <p className="messages-bot-note">

@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import {
   CheckLongIcon,
   ClockIcon,
+  InfoCircleIcon,
   PlusThinIcon,
   SparklesIcon,
   SpinnerArcIcon,
@@ -21,6 +22,7 @@ import { useStoreState } from '../../lib/use-store-state';
 import {
   bannersStore,
   type AgentSessionBannerView,
+  type ClassicReadOnlyBannerView,
   type CreditsBannerView,
   type NewChangeBannerView,
   type SyncBannerView,
@@ -249,10 +251,36 @@ function AgentSessionBanner({ b }: { b: AgentSessionBannerView }): ReactNode {
   );
 }
 
+// #3976: a classic session is read-only. The action is the banner's own
+// primary, so it routes through <Button> exactly as "Start a new change"
+// does, and it calls the same controller method: an unsent agent session on
+// this session's app (`DevChat.startNewChange`).
+function ClassicReadOnlyBanner({ b }: { b: ClassicReadOnlyBannerView }): ReactNode {
+  return (
+    <div id="dc-classic-read-only-banner" className={SHELL.violet} role="status">
+      <InfoCircleIcon className="w-4 h-4 text-violet-700 dark:text-violet-400 shrink-0" />
+      <span className="text-violet-800 dark:text-violet-200 flex-1">
+        This is an older session. You can read it, but it can no longer be continued. New work happens in agent sessions.
+      </span>
+      {b.canStart ? (
+        <Button
+          id="dc-classic-start-agent" type="button"
+          variant="pill" disabledStyle="dim60" size="xsText" ink="solid"
+          className="col-start-2 justify-self-start sm:col-auto sm:justify-self-auto shrink-0"
+          onClick={() => controller()?.startNewChange?.()}
+        >
+          Start an agent session
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
 export function DevChatBanners(): ReactNode {
   const s = useStoreState(bannersStore);
   return (
     <>
+      {s.classicReadOnly ? <ClassicReadOnlyBanner b={s.classicReadOnly} /> : null}
       {s.agentSession ? <AgentSessionBanner b={s.agentSession} /> : null}
       {s.sync ? <SyncBanner b={s.sync} /> : null}
       {s.newChange ? <NewChangeBanner b={s.newChange} /> : null}
@@ -262,4 +290,4 @@ export function DevChatBanners(): ReactNode {
   );
 }
 
-export { SyncBanner, NewChangeBanner, CreditsBanner };
+export { SyncBanner, NewChangeBanner, CreditsBanner, ClassicReadOnlyBanner };

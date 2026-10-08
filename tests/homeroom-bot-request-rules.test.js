@@ -59,7 +59,10 @@ test('the words people gave the bot stay out of staging and prod-debug', () => {
   assert.match(schema, /COMMENT ON COLUMN homeroom_bot_requesters\.asked_text IS 'staging:private';/);
   assert.match(schema, /COMMENT ON COLUMN homeroom_bot_runs\.plan_change IS 'staging:private';/);
   assert.deepEqual(DENIED_COLUMNS.homeroom_bot_requesters, ['asked_text']);
-  assert.deepEqual(DENIED_COLUMNS.homeroom_bot_runs, ['plan_change']);
+  // And a first version's review, whose issues quote a private project's
+  // screens (services/bot-review.js), beside it.
+  assert.deepEqual(DENIED_COLUMNS.homeroom_bot_runs, ['plan_change', 'review']);
+  assert.match(schema, /COMMENT ON COLUMN homeroom_bot_runs\.review IS 'staging:private';/);
   // Deleting an account clears them before the purge takes the rows that
   // find them (tests/account-deletion-postgres.test.js runs it).
   const del = read('src/services/account-deletion.js');

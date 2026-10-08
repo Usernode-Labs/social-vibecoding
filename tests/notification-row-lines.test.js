@@ -267,7 +267,7 @@ test('no row can reach the renderer with an empty kind line', async () => {
     'reply', 'openrouter_key_created', 'openrouter_key_review',
     'conversation_message', 'conversation_invite', 'conversation_mention',
     'conversation_reply', 'conversation_reaction', 'app_delete_attempted', 'app_deleted',
-    'platform_limit', 'something_unheard_of'];
+    'platform_limit', 'platform_incident', 'something_unheard_of'];
   for (const kind of kinds) {
     const view = (await load())({ ...ROW, kind });
     assert.equal(typeof view.label, 'string', `${kind} has a label`);
@@ -333,6 +333,22 @@ test('platform limit rows say which cap, how full, and what happens next', async
   const odd = await lines({ kind: 'platform_limit', detail: 'disk_warn:1:2',
     appName: null, sourceUsername: null });
   assert.equal(odd.label, 'Platform limit');
+  assert.ok(odd.subject.length > 0);
+});
+
+test('unexpected events rows say how many, of what, and where to look (#4296)', async () => {
+  const hour = await lines({ kind: 'platform_incident', detail: 'hour:build_interrupted:6',
+    appName: null, sourceUsername: null });
+  assert.equal(hour.label, 'Unexpected events piling up');
+  assert.match(hour.subject, /^6 build interrupted in the last hour\. +Admin → Unexpected events has each one\.$/);
+  assert.equal(hour.meta, 'Admin · 4m ago', 'no app, nobody credited');
+  const digest = await lines({ kind: 'platform_incident', detail: 'digest:9:build_interrupted=7',
+    appName: null, sourceUsername: null });
+  assert.equal(digest.label, '9 unexpected events yesterday');
+  assert.equal(digest.subject, 'build interrupted 7, other 2.');
+  const odd = await lines({ kind: 'platform_incident', detail: 'nonsense',
+    appName: null, sourceUsername: null });
+  assert.equal(odd.label, 'Unexpected events');
   assert.ok(odd.subject.length > 0);
 });
 

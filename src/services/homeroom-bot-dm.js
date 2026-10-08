@@ -280,6 +280,23 @@ function openAppAction({ slug, appName }) {
   return { id: 'open_app', label: `Open ${name}`, style: 'primary', type: 'open', target: `#app/${encodeURIComponent(slug)}/app` };
 }
 
+/**
+ * Pure (#4231): the buttons under a NEW project's first version going live,
+ * after its Open: its community page, where the project's hub is
+ * (`#app/<slug>/workshop`, frontend/src/features/messages/bot-shared.ts
+ * openAppTarget lands it on the hub), and Invite people, which the client
+ * answers itself by opening the first-session invite sheet in place
+ * (bot-question.tsx; an invite link is made from the browser, as the sheet
+ * always makes it). Empty for no slug.
+ */
+function firstLiveActions({ slug }) {
+  if (typeof slug !== 'string' || !slug) return [];
+  return [
+    { id: 'open_community', label: 'Open community', style: 'secondary', type: 'open', target: `#app/${encodeURIComponent(slug)}/workshop` },
+    { id: 'invite_people', label: 'Invite people', style: 'secondary', type: 'invite' },
+  ];
+}
+
 // What routes/conversations.js does after a send, done here because the
 // service pushes nothing (the welcome DM does the same).
 async function pushLive(pool, result, conversationId, { opened = false } = {}) {
@@ -346,6 +363,8 @@ const MOMENTS = Object.freeze({
   // Stopped: it did not finish, or waits on something only time or a person changes.
   build_failed: 'stopped', blocked: 'stopped', person: 'stopped', empty: 'stopped',
   first_version_failed: 'stopped', preview_failed: 'stopped', allowance: 'held', paused: 'held',
+  // #4242: built, but nothing will offer it to try without a person.
+  needs_look: 'stopped',
   // An update they asked for that did not happen ("your change stopped. I
   // said why in our chat", the stop's own words).
   followup_failed: 'stopped',
@@ -364,6 +383,7 @@ const STOPPED_DETAIL = Object.freeze({
   empty: 'stopped_empty',
   first_version_failed: 'stopped_first',
   preview_failed: 'stopped_preview',
+  needs_look: 'stopped_look',
 });
 
 // WP-E: the notification kind each moment rings as, in the "Your builds" push
@@ -1051,6 +1071,13 @@ function dmText(kind, dm, context) {
       return `${line}\n\n${words} It's as it was. ${next}`;
     }
     case 'person':
+      // #4239: about Homeroom itself, so nothing on this project can do it:
+      // the offer to move it to Homeroom's own board follows (relayIssuePost).
+      if (dm.platform) {
+        return `${line}\n\nThis is about Homeroom itself rather than ${context.appName}, so no change to ${context.appName} `
+          + `can do it, and I haven't built anything: ${clip(dm.reason, 600)}\n\n`
+          + 'I can move it to Homeroom\'s own board, where the people who work on Homeroom look. Tap below to choose.';
+      }
       // #3772: and what to do about it. "Left for the group" was a dead end
       // for somebody who was the group: a reply here is posted on the
       // request, and the bot looks at it again with it.
@@ -1295,7 +1322,9 @@ async function relayIssuePost({
     } : {}),
     ...(dm.link ? { link: dm.link } : {}),
     // Where it is stuck, what to tap (STUCK_ACTIONS).
-    ...(STUCK_ACTIONS[kind] ? { actions: STUCK_ACTIONS[kind], status: 'open' } : {}),
+    // #4239: not Go ahead on a request about Homeroom itself; its own
+    // message offers the move instead.
+    ...(STUCK_ACTIONS[kind] && !(kind === 'person' && dm.platform) ? { actions: STUCK_ACTIONS[kind], status: 'open' } : {}),
     // B7: a change ready to try, as a card with its buttons: whether it is
     // one person's project (the title), who else it waits on and how many of
     // them it needs, their words.
@@ -1364,6 +1393,14 @@ async function relayIssuePost({
   log.info('homeroom-bot-dm', 'Told the requester in their DM', {
     app: app.slug, issueNumber, kind, userId: requester.userId, question: asks,
   });
+  // #4239: and the offer to move a request about Homeroom itself to
+  // Homeroom's own board, under its own buttons. Never throws.
+  if (kind === 'person' && dm.platform) {
+    await require('./homeroom-bot-move').offerMove(pool, {
+      bot, userId: requester.userId, app, issueNumber, title: requester.issueTitle, reason: dm.reason,
+      key: `${app.id}-${issueNumber}-${runId || postId || sent.messageId}`,
+    });
+  }
   return told;
 }
 
@@ -1413,13 +1450,18 @@ async function planCards(pool, { userId, appId, issueNumber }) {
  * B6: send a first version's plan to its creator, when they are somebody the
  * bot talks to: the card with its buttons (metadata.plan, actionId), a "needs
  * your answer" moment. Earlier plans for it now read "Replaced by a newer
- * plan". Resolves what sendDm did, or null when it reached nobody.
+ * plan". Resolves what sendDm did; { messageId: null, stop } when there is
+ * nobody to send it to (`no_requester`, or `no_bot`: the requester is no
+ * longer someone the bot works for); or null when the send failed.
  */
 async function sendPlanCard(pool, { app, issueNumber, runId, plan, bot, ws = null }) {
   if (!bot?.id || !app?.id || !runId || !plan?.bullets?.length) return null;
   const settings = await settingsModule().readSettings(pool);
   const requester = await requesterOf(pool, app.id, issueNumber);
-  if (!requester || !hasBot(settings, requester)) return null;
+  // #4175: nobody to send it to is said apart from a send that failed: the
+  // first stops its run at once, the second is tried again.
+  if (!requester) return { messageId: null, stop: 'no_requester' };
+  if (!hasBot(settings, requester)) return { messageId: null, stop: 'no_bot' };
   const name = app.name || app.slug;
   const questions = (plan.questions || []).slice(0, 2);
   const { rows: [action] } = await pool.query(
@@ -1507,7 +1549,7 @@ async function closePlanCards(pool, runIds, { stopped = false, ws = null } = {})
  * B6: Build it, tapped under a plan (`action`, a `build_plan`), on any device:
  * decided once, as decideOfferTap decides an offer. `answers` are the choices
  * tapped, in order; one left untouched goes with the suggested answer. The
- * card then reads "You chose Build it" everywhere. Resolves { ok: true,
+ * card then reads "Building it", with its answers, everywhere. Resolves { ok: true,
  * choice, label } or { ok: false, status, error }.
  */
 async function decidePlanTap(pool, { user, action, choice, answers = [], deps = {} }) {
@@ -2107,7 +2149,7 @@ const MAX_READY_APPROVALS = 4;
 /** The reader's newest ready cards, each with its change and its app (with the columns app-access reads). */
 async function readyRows(pool, userId) {
   const { rows } = await pool.query(
-    `SELECT d.message_id, cs.id AS session_id, cs.status,
+    `SELECT d.message_id, cs.id AS session_id, cs.status, cs.live_at,
             a.id, a.slug, a.name, a.created_by, a.self_hosted, a.collab_visibility, a.view_visibility,
             a.moderation_suspended_at
        FROM homeroom_bot_dm_messages d
@@ -2127,17 +2169,20 @@ async function readyRows(pool, userId) {
 
 /**
  * Pure: where a ready card's change stands, from a readyRows row: `live`
- * (merged; with the button that opens the app, but for the platform's own,
- * which has none), `going_live` (being merged), `closed` (closed without
- * going live), or `open` (still up for approval; its approval is read
- * apart). Null for anything else: the card keeps what it said.
+ * (merged), `going_live` (being merged), `closed` (closed without going
+ * live), or `open` (still up for approval; its approval is read apart).
+ * Null for anything else: the card keeps what it said.
+ *
+ * #4228: a live card has no button. The news that it went live comes right
+ * after it with its own Open (noteProposalMerged), and the card's second
+ * Open just above it was the same button twice.
  */
 function readyStateOf(row) {
   const base = { messageId: Number(row.message_id) };
-  if (row.status === 'merged') {
-    const open = row.self_hosted ? null : openAppAction({ slug: row.slug, appName: row.name || row.slug });
-    return { ...base, state: 'live', actions: open ? [open] : [] };
-  }
+  // Merged is live once production runs it (chat_sessions.live_at); until
+  // then it is going live, as while it merges.
+  if (row.status === 'merged' && !row.live_at) return { ...base, state: 'going_live', actions: [] };
+  if (row.status === 'merged') return { ...base, state: 'live', actions: [] };
   if (row.status === 'merging') return { ...base, state: 'going_live', actions: [] };
   if (row.status === 'closed' || row.status === 'archived') return { ...base, state: 'closed', actions: [] };
   if (row.status === 'promoted') return { ...base, state: 'open', actions: [] };
@@ -2281,6 +2326,127 @@ async function noteChangeStopped(pool, sessionId, { why = 'preview', deps = {} }
   }
 }
 
+/**
+ * Pure (#4242): what the "needs a look" message says: `checks`, its checks
+ * failed in a way that looks like the platform's (the bot leaves those for
+ * the platform's own re-run, homeroom-bot.js noteProposalChecks); `built`,
+ * its build finished and no change came of it.
+ */
+function needsLookText(line, why) {
+  if (why === 'checks') {
+    return `${line}\n\nI built it, but its checks failed in a way that looks like a problem on Homeroom's side, `
+      + 'not in the change, so it isn\'t ready to try yet. Homeroom runs them again, and I\'ll tell you here if they pass. '
+      + 'If nothing changes, the change needs a person to look at it.';
+  }
+  return `${line}\n\nI built it, but it didn't become a change you can try, and I can't fix that from here. `
+    + 'It needs a person to look at it. Your request is still open.';
+}
+
+/**
+ * #4242: one of the bot's builds came to nothing anybody will be told about
+ * without a person: its proposal's checks failed on what looks like the
+ * platform (`why` 'checks', by `sessionId`), or its build succeeded and no
+ * proposal was recorded for it (`why` 'built', by `runId`). Its requester
+ * hears it, ringing, once per approval epoch or per run, and the request's
+ * activity card stops saying it is still being checked (homeroom-bot-
+ * activity.js outcomeOf, which reads the row recorded here). Never throws.
+ */
+async function noteNeedsLook(pool, { sessionId = null, runId = null, why = 'checks', deps = {} } = {}) {
+  const id = Number(why === 'checks' ? sessionId : runId);
+  if (!Number.isInteger(id) || id <= 0) return null;
+  try {
+    const { rows } = why === 'checks'
+      ? await pool.query(
+        `SELECT r.id AS run_id, r.issue_number, a.id, a.slug, a.name, cs.status, cs.approval_epoch
+           FROM homeroom_bot_runs r JOIN apps a ON a.id = r.app_id JOIN chat_sessions cs ON cs.id = r.proposal_session_id
+          WHERE r.proposal_session_id = $1
+          ORDER BY r.id DESC LIMIT 1`,
+        [id],
+      )
+      : await pool.query(
+        `SELECT r.id AS run_id, r.issue_number, a.id, a.slug, a.name, NULL::text AS status, 0 AS approval_epoch
+           FROM homeroom_bot_runs r JOIN apps a ON a.id = r.app_id
+          WHERE r.id = $1 AND r.build_ok IS TRUE AND r.proposal_session_id IS NULL`,
+        [id],
+      );
+    const run = rows[0];
+    if (!run || (why === 'checks' && run.status !== 'promoted')) return null;
+    const settings = await settingsModule().readSettings(pool);
+    const issueNumber = Number(run.issue_number);
+    const requester = await requesterOf(pool, run.id, issueNumber);
+    if (!requester || !hasBot(settings, requester)) return null;
+    const bot = deps.bot || await botAccount(pool);
+    if (!bot) return null;
+    const context = {
+      appName: run.name || run.slug, issueNumber, issueTitle: requester.issueTitle, firstVersion: requester.firstVersion,
+    };
+    const sent = await sendDm(pool, {
+      bot,
+      userId: requester.userId,
+      replyToId: await requestStart(pool, { userId: requester.userId, appId: run.id, issueNumber }),
+      idempotencyKey: why === 'checks'
+        ? `hrbot-needs-look-checks-${id}-${Number(run.approval_epoch) || 0}`
+        : `hrbot-needs-look-built-${id}`,
+      content: needsLookText(requestLine(context), why),
+      metadata: {
+        kind: 'needs_look', appSlug: run.slug, appName: context.appName, issueNumber,
+        ...(context.firstVersion ? { firstVersion: true } : {}),
+      },
+      objects: why === 'checks' ? cardsFor('proposal', { sessionId: id }, { id: run.id }, issueNumber) : [],
+    });
+    if (sent?.messageId && !sent.duplicate) {
+      await pool.query(
+        `INSERT INTO homeroom_bot_dm_messages (message_id, user_id, conversation_id, app_id, issue_number, kind, run_id)
+         VALUES ($1, $2, $3, $4, $5, 'needs_look', $6)
+         ON CONFLICT (message_id) DO NOTHING`,
+        [sent.messageId, requester.userId, sent.conversationId, run.id, issueNumber, Number(run.run_id) || null],
+      );
+      require('./homeroom-bot-tray').noteWorkChanged(requester.userId, deps);
+      log.info('homeroom-bot-dm', 'Told the requester their change needs a look', {
+        app: run.slug, issueNumber, why, sessionId: why === 'checks' ? id : null, runId: Number(run.run_id) || null,
+      });
+    }
+    return sent;
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not tell the requester their change needs a look', { why, id, err: err.message });
+    return null;
+  }
+}
+
+// How long a build that succeeded may go without a proposal before its
+// requester is told it needs a look, and how far back the bot's refresh
+// looks for one (a few passes of it, so a short pause does not miss it).
+const UNPROPOSED_AFTER_MS = 30 * 60 * 1000;
+const UNPROPOSED_WINDOW_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * #4242: the bot's refresh: a live build of the bot's that succeeded and
+ * recorded no proposal for UNPROPOSED_AFTER_MS (homeroom-bot.js
+ * announceBuilt records it right after the build) came to nothing anybody
+ * is told about, so its requester hears it needs a look (noteNeedsLook,
+ * once per run). Resolves how many were looked at; never throws.
+ */
+async function sweepUnproposedBuilds(pool, deps = {}) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT r.id FROM homeroom_bot_runs r
+        WHERE r.mode = 'live' AND r.verdict = 'ready' AND r.build_ok IS TRUE AND r.proposal_session_id IS NULL
+          AND r.created_at <= NOW() - ($1::bigint * INTERVAL '1 millisecond')
+          AND r.created_at > NOW() - ($2::bigint * INTERVAL '1 millisecond')
+          AND NOT EXISTS (
+            SELECT 1 FROM homeroom_bot_dm_messages d WHERE d.run_id = r.id AND d.kind = 'needs_look'
+          )
+        ORDER BY r.id LIMIT 20`,
+      [UNPROPOSED_AFTER_MS, UNPROPOSED_WINDOW_MS],
+    );
+    for (const row of rows) await noteNeedsLook(pool, { runId: row.id, why: 'built', deps });
+    return rows.length;
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not look for builds that recorded no proposal', { err: err.message });
+    return 0;
+  }
+}
+
 // #7 (WP3): how many times, and how far apart, a merged app's health is read
 // before its requester is told it is live now.
 const LIVE_PROBES = 3;
@@ -2386,6 +2552,38 @@ function laterChatLive(pool, run, { config, sha, deps = {} }) {
 }
 
 /**
+ * Pure (#4238): what Homeroom bot says in a new project's channel when its
+ * first version is made. Its Open button (openAppAction) is the way in.
+ */
+function firstVersionText({ appName, live }) {
+  const ready = live ? '' : ' It will be ready to open in a few minutes.';
+  return `I've made the first version of ${appName}!${ready} Let me know if you need anything else.`;
+}
+
+/**
+ * #4238: the one line the bot writes in a project's channel (the group
+ * chat), when its first version is made: ws.sendFirstVersionMessage, which
+ * writes it once per project. Never throws: the DM still goes.
+ */
+async function announceFirstVersion(pool, run, { live = false, deps = {} } = {}) {
+  try {
+    const bot = deps.bot || await botAccount(pool);
+    if (!bot) return null;
+    const appName = run.name || run.slug;
+    const open = openAppAction({ slug: run.slug, appName });
+    const ws = deps.ws || require('./ws');
+    return await ws.sendFirstVersionMessage(pool, run.app_id, {
+      user: bot,
+      content: firstVersionText({ appName, live }),
+      metadata: { appSlug: run.slug, ...(open ? { actions: [open] } : {}) },
+    });
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not announce a first version in its channel', { app: run?.slug, err: err.message });
+    return null;
+  }
+}
+
+/**
  * A proposal the bot built is merged: its requester hears it in their DM.
  * #7 (WP3): `sha` is what the merge deployed (routes/votes.js finalizeMerge),
  * and "live now" waits for the app to answer its health check on it
@@ -2395,8 +2593,12 @@ function laterChatLive(pool, run, { config, sha, deps = {} }) {
  * card cannot be (a project the bot cannot see). Its ready card says it is
  * live by itself: that card reads where the change stands each time it is
  * read (readyStates), and this news landing is one of those times.
+ *
+ * `live: true` is the merge-followups workflow machine's word that production
+ * runs a build containing the change: then nothing is probed, and nothing is
+ * re-read later.
  */
-async function noteProposalMerged(pool, session, { config = null, sha = null, deps = {} } = {}) {
+async function noteProposalMerged(pool, session, { config = null, sha = null, live: known = null, deps = {} } = {}) {
   if (!session?.id) return null;
   const { rows } = await pool.query(
     `SELECT r.app_id, r.issue_number, a.slug, a.name, a.self_hosted, a.runtime_kind, a.runtime_name
@@ -2408,7 +2610,7 @@ async function noteProposalMerged(pool, session, { config = null, sha = null, de
   if (!rows.length) return null;
   const run = rows[0];
   const platform = !!run.self_hosted;
-  const live = await liveAfterMerge(config, { ...run, id: run.app_id }, { sha, deps });
+  const live = known === true ? true : await liveAfterMerge(config, { ...run, id: run.app_id }, { sha, deps });
   // B9: the chat message it was asked in, if it was, says it is live, once
   // it is (WP-F): an app that did not answer yet is asked again a little
   // later. The platform's own app has no health check to read here, so its
@@ -2419,6 +2621,8 @@ async function noteProposalMerged(pool, session, { config = null, sha = null, de
   // #8: their activity tray reads again, whether or not the DM says it.
   if (requester) require('./homeroom-bot-tray').noteWorkChanged(requester.userId, deps);
   const settings = await settingsModule().readSettings(pool);
+  // #4238: a new project's first version: the bot says so in its channel, once.
+  if (requester?.firstVersion && !platform) await announceFirstVersion(pool, run, { live, deps });
   if (!requester || !hasBot(settings, requester)) return null;
   const bot = await botAccount(pool);
   if (!bot) return null;
@@ -2429,6 +2633,9 @@ async function noteProposalMerged(pool, session, { config = null, sha = null, de
   };
   // The platform's own app has no app of its own to open: its proposal.
   const open = platform ? null : openAppAction({ slug: run.slug, appName: context.appName });
+  // #4231: a new project's first version also offers its community and
+  // inviting people to it.
+  const actions = open ? [open, ...(context.firstVersion ? firstLiveActions({ slug: run.slug }) : [])] : [];
   return sendDm(pool, {
     bot,
     userId: requester.userId,
@@ -2441,7 +2648,7 @@ async function noteProposalMerged(pool, session, { config = null, sha = null, de
       kind: 'merged', appSlug: run.slug, appName: context.appName, issueNumber: run.issue_number,
       link: `#app/${encodeURIComponent(run.slug)}`, live,
       ...(context.firstVersion ? { firstVersion: true } : {}),
-      ...(open ? { actions: [open] } : {}),
+      ...(actions.length ? { actions } : {}),
     },
     objects: cardsFor('merged', { sessionId: session.id }, { id: run.app_id }, run.issue_number),
   });
@@ -2579,7 +2786,9 @@ async function postOnRequest(pool, { user, target, text, prepared = false, reaso
  * reply is read after it), and null when it could not be put first: the
  * post still wakes the bot, as any reply there does.
  */
-async function postOnProposal(pool, { user, app, sessionId, issueNumber, text, deps = {}, payerId = null }) {
+async function postOnProposal(pool, {
+  user, app, sessionId, issueNumber, text, deps = {}, payerId = null, queueReason = 'dm_revise',
+}) {
   const ws = deps.ws || require('./ws');
   const posted = await ws.handleMessage(
     pool,
@@ -2598,7 +2807,7 @@ async function postOnProposal(pool, { user, app, sessionId, issueNumber, text, d
   let queued = null;
   try {
     queued = !!(await settingsModule().enqueueFront(pool, {
-      appId: app.id, issueNumber: Number(issueNumber), userId: user.id, reason: 'dm_revise',
+      appId: app.id, issueNumber: Number(issueNumber), userId: user.id, reason: queueReason,
       // Whoever asked for the change pays for it (homeroom-bot.js billingOf).
       payerId,
     }));
@@ -2609,6 +2818,89 @@ async function postOnProposal(pool, { user, app, sessionId, issueNumber, text, d
     app: app.slug, sessionId, issueNumber, userId: user.id, queued,
   });
   return { ok: true, queued };
+}
+
+// ── A No vote's line, on one of its own changes (#3977) ──────────────────
+//
+// A No comes with a line (#1688), and on a change the bot built that line
+// is what it should fix. It used to stop at the vote row in the change's
+// discussion, a system row the bot neither wakes on nor reads (its
+// follow-up reads people's messages there, homeroom-bot.js runFollowUp).
+// Now, while the change is still up for a vote, the line is handed to the
+// bot exactly as Change something hands a DM: posted in that discussion as
+// the voter's own reply (postOnProposal), with its follow-up queued first,
+// which revises the change (clearing its votes, as any revision does) or
+// asks one question. The vote row then reads "voted no" without the line,
+// so the discussion shows it once, as theirs (routes/votes.js).
+
+/**
+ * Pure: the line a vote just recorded hands the bot, or null. A No, with
+ * words sent with it now (not the earlier line a re-cast keeps), that moved
+ * something: a new vote, a flip, or new words on the same No. A re-cast
+ * with the same words (`unchanged`, the route's own test) hands nothing,
+ * so one line is handed once.
+ */
+function voteLineFor({ vote, reason, unchanged }) {
+  if (vote !== 'no' || unchanged) return null;
+  const line = typeof reason === 'string' ? reason.trim() : '';
+  return line || null;
+}
+
+/**
+ * Where a No's line on `sessionId` goes, when every gate a reply's
+ * follow-up meets holds now: the bot's own change, up for a vote (not
+ * merging, merged or closed), answering a request, on a project the bot
+ * works on and has not paused, revised fewer than MAX_REVISIONS times.
+ * Resolves { app, sessionId, issueNumber }, or null and the line stays on
+ * the vote row as it always has. Never throws.
+ */
+async function voteLineTarget(pool, { sessionId }) {
+  const id = Number(sessionId);
+  if (!Number.isInteger(id) || id <= 0) return null;
+  try {
+    const { rows: [row] } = await pool.query(
+      `SELECT cs.linked_issues, a.id AS app_id, a.slug, a.name
+         FROM chat_sessions cs
+         JOIN users u ON u.id = cs.user_id
+         JOIN apps a ON a.id = cs.app_id
+        WHERE cs.id = $1 AND u.username = $2 AND cs.status = 'promoted'
+          AND cs.is_headless IS NOT TRUE`,
+      [id, BOT_USERNAME],
+    );
+    if (!row) return null;
+    const issueNumber = Array.isArray(row.linked_issues) ? Number(row.linked_issues[0]) : null;
+    if (!Number.isInteger(issueNumber) || issueNumber <= 0) return null;
+    const app = { id: Number(row.app_id), slug: row.slug, name: row.name };
+    const settings = await settingsModule().readSettings(pool);
+    if (!require('./homeroom-bot-live').isLiveFor(settings, app)
+      || (settings?.pausedApps || []).includes(app.slug)) return null;
+    const { rows: [revisions] } = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM homeroom_bot_runs WHERE proposal_session_id = $1 AND verdict = 'revise'`,
+      [id],
+    );
+    if ((revisions?.n || 0) >= require('./homeroom-bot-followup').MAX_REVISIONS) return null;
+    return { app, sessionId: id, issueNumber };
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not read where a No\'s line goes', { sessionId: id, err: err.message });
+    return null;
+  }
+}
+
+/**
+ * Hand `line` to the bot as `user`'s reply on `target` (voteLineTarget).
+ * Resolves postOnProposal's answer; { ok: false } when it could not be
+ * posted, and the caller keeps the line on the vote row. Never throws.
+ */
+async function handVoteLine(pool, { user, target, line, deps = {} }) {
+  try {
+    return await postOnProposal(pool, {
+      user, app: target.app, sessionId: target.sessionId, issueNumber: target.issueNumber,
+      text: line, deps, queueReason: 'vote_no',
+    });
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not hand a No\'s line to the bot', { sessionId: target?.sessionId, err: err.message });
+    return { ok: false, why: 'something went wrong on my side' };
+  }
 }
 
 /** The deterministic path: words posted on the request, and the bot says where. */
@@ -3248,6 +3540,10 @@ async function fileFirstVersion(pool, config, appId, deps = {}) {
     await ws.sendSystemMessage(pool, row.app_id, `${username} created issue: "${title}" (#${issueNumber})`,
       'system', null, { type: 'issue', ref: issueNumber }).catch(() => {});
     ws.pushIssueUpdate({ action: 'created', appSlug: row.slug, appId: row.app_id, issueId: issueRows[0]?.id, kind: 'general' });
+    // #3952: the people the creator's description names with @. Never rejects.
+    (deps.notifications || require('./notifications')).notifyIssueMentions?.(pool, {
+      appId: row.app_id, issueNumber, authorId: row.user_id, text: `${title}\n\n${body}`,
+    });
     if (botBuilds) settingsModule().noteIssueActivity({ appId: row.app_id, issueNumber, reason: 'created' });
     log.info('homeroom-bot-dm', 'Filed a first version', { app: row.slug, issueNumber, userId: row.user_id, botBuilds });
     return { issueNumber };
@@ -3416,6 +3712,7 @@ async function firstVersionState(pool, appId, deps = {}) {
               SELECT 1 FROM homeroom_bot_runs r
                 JOIN chat_sessions cs ON cs.id = r.proposal_session_id
                WHERE r.app_id = f.app_id AND r.issue_number = f.issue_number AND cs.status = 'merged'
+                 AND cs.live_at IS NOT NULL
             ) AS merged,
             (SELECT p.conversation_id
                FROM users b
@@ -3548,6 +3845,9 @@ module.exports = {
   noteShotsSettled,
   sweepHeldReady,
   noteChangeStopped,
+  needsLookText,
+  noteNeedsLook,
+  sweepUnproposedBuilds,
   MAX_BRIEF_CHARS,
   MIN_BRIEF_CHARS,
   HELP_TEXT,
@@ -3600,6 +3900,7 @@ module.exports = {
   readyStates,
   noteVoted,
   openAppAction,
+  firstLiveActions,
   // B6: a first version's plan.
   PLAN_KIND,
   planCardText,
@@ -3625,7 +3926,12 @@ module.exports = {
   newestOpenQuestion,
   postOnRequest,
   postOnProposal,
+  voteLineFor,
+  voteLineTarget,
+  handVoteLine,
   noteProposalMerged,
+  firstVersionText,
+  announceFirstVersion,
   // #7, #8, #20 (WP3)
   LIVE_PROBES,
   LIVE_PROBE_WAIT_MS,

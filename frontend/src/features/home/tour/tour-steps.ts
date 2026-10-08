@@ -114,7 +114,7 @@ export interface TourStep {
  * ── #3567: a fifth stop, first: what a community is ─────────────────────
  *
  * The join screen asks which communities to join and never says what one
- * does, and the four stops above take it for granted: Shortcuts names a
+ * does, and the four stops above take it for granted: My apps names a
  * private community's mark, Suggest an improvement posts a request "the members"
  * vote on. So the tour opens on the idea everything after it rests on:
  * communities build projects together, by proposing changes and voting them
@@ -137,11 +137,11 @@ export const TOUR_STEPS: readonly TourStep[] = [
     targets: ['#platform-tab-workshop'],
   },
   {
-    // The Shortcuts section, heading and grid together, so the card never
+    // The My apps section, heading and grid together, so the card never
     // sits on the heading the step is about. `#app-list` is the fallback
     // for a section that has not rendered its box yet.
     id: 'apps',
-    title: 'Shortcuts',
+    title: 'My apps',
     body: 'The apps you keep close. A small mark says where each one lives: people for a private community, a lock for one that is just yours. The last tile starts a new project.',
     targets: ['#home-apps-section', '#app-list'],
   },
@@ -168,7 +168,9 @@ export const TOUR_STEPS: readonly TourStep[] = [
     // feedback and New change side by side, and people found both
     // confusing; the step says what the button does. B8: the request goes
     // to Homeroom bot, which builds it (or, where it does not build, it
-    // goes to the group).
+    // goes to the group). #4225: and it says so against what people expect
+    // of a feedback button elsewhere, honestly: the bot starts on it, or
+    // brings it to the group, never "it builds it" as a promise.
     //
     // NO "BUILD IT YOURSELF" SENTENCE (first-session run-through, 5 Oct
     // 2026). It said "To build it yourself with a coding agent, tap Build it
@@ -178,7 +180,7 @@ export const TOUR_STEPS: readonly TourStep[] = [
     // not have. The hub's ⋯ and a request's own page still offer it.
     id: 'menu-actions',
     title: 'Suggest an improvement',
-    body: 'Tell Homeroom bot what should change. It builds it for you, or passes it to the group as a request.',
+    body: 'Say what should change. It doesn\'t vanish into a feedback box: Homeroom bot starts building it for you, or brings it to the group as a request, and you can follow along.',
     targets: ['#improve-quick-actions', '#improve-row-feedback'],
     needsPanel: true,
   },

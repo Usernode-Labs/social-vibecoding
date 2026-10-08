@@ -1388,6 +1388,43 @@ html:not(.dark) .messages-markdown .gc-ref-issue { background: rgba(16, 185, 129
   color: var(--text-muted);
   font-size: 13px;
 }
+/* #4197: a question once answered: its words as a small label, the answer
+   under it as the tapped answer's accent pill, drawn as a chip (it is not a
+   button any more). Only the answer chosen; the other options go. */
+.messages-bot-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+}
+.messages-bot-choices dd { margin: 0; }
+.messages-bot-choice-label {
+  margin-bottom: 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.messages-bot-chosen {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-height: 32px;
+  padding: 6px 13px;
+  border-radius: 9999px;
+  color: var(--accent-ink);
+  background: var(--accent);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+/* #4197: Build it pressed: a check, then "Building it". */
+.messages-bot-done {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
 /* B8: Homeroom bot's row in Messages' "+" wears its mark, at the glyphs' size. */
 .messages-new-option-mark {
   width: 20px;
@@ -1412,8 +1449,9 @@ html:not(.dark) .messages-markdown .gc-ref-issue { background: rgba(16, 185, 129
 .messages-reply-draft .messages-bot-note { display: block; white-space: normal; }
 /* #3770: the Activity disc in the bot's DM header, which opens its activity
    panel. Shaded while the panel is open, as a disc is under the pointer.
-   Its badge sits on the disc's shoulder: the live dot while the bot works,
-   or, in the accent, the number of requests that wait on the viewer. */
+   Its badge sits on the disc's shoulder, in the accent: the number of
+   requests that wait on the viewer. While the bot works, the disc's glyph
+   is itself the live cue, a turning ring (#4198). */
 .messages-bot-work-button { position: relative; }
 .messages-bot-work-button[aria-expanded="true"] { background: var(--messages-surface-2); }
 .messages-bot-work-badge {
@@ -1423,7 +1461,6 @@ html:not(.dark) .messages-markdown .gc-ref-issue { background: rgba(16, 185, 129
   justify-content: center;
   pointer-events: none;
 }
-.messages-bot-work-dot { top: 6px; right: 6px; }
 .messages-bot-work-count {
   top: -3px;
   right: -3px;
@@ -1778,7 +1815,8 @@ form.agent-session-composer:focus-within {
      right-hand cap;
    - the field is 36px tall (7 + 22 + 7) and keeps its 17px type;
    - the count's line is not laid out until the text nears the limit, where
-     it appears in amber (`data-near-limit`);
+     it appears in amber (`data-near-limit`); #4202 made that true at every
+     width (the rule after this block);
    - the "+" and the disc are drawn at 36px and stay 44px tap targets, the
      platform's minimum: a pseudo-element overhangs each by 4px, into the
      card's padding and the row's 6px gap, and so never over the field.
@@ -1804,8 +1842,17 @@ form.agent-session-composer:focus-within {
   .messages-send { position: relative; }
   .messages-composer-action::after,
   .messages-send::after { content: ''; position: absolute; inset: -4px; }
-  .messages-composer-count:not([data-near-limit]) { display: none; }
 }
+/* #4202: THE SAME CARD ON DESKTOP AS AN APP CHANNEL'S. The count's line was
+   laid out on desktop even while empty, a 4px gap and a 15px blank band
+   under the row, so every Messages composer (the Homeroom bot's thread, a
+   DM, a group, #general, a reply thread) stood about 75px against the app
+   channel's 56px (`.gc-composer-card`: 8 + 40 + 8). It is now laid out at
+   every width only once the text nears the limit, where it appears in amber,
+   so the card is that same 8 + 40 + 8. The element stays in the DOM (a
+   declared check selects it). Two selectors' worth of specificity, so it
+   outranks the element's own `flex` although tailwind.css loads later. */
+.messages-composer-count:not([data-near-limit]) { display: none; }
 .messages-reply-draft,
 .messages-pending-object { margin-bottom: 6px; }
 .messages-reply-draft {
@@ -1864,7 +1911,8 @@ form.agent-session-composer:focus-within {
 .messages-emoji-option-glyph { flex: none; width: 24px; font-size: 20px; line-height: 24px; text-align: center; }
 .messages-emoji-option-code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .messages-composer-dragging .messages-composer-card { outline: 2px solid var(--accent); outline-offset: -2px; }
-.messages-drop-overlay {
+.messages-drop-overlay,
+.attach-drop-overlay {
   position: absolute;
   z-index: 30;
   inset: 4px 12px;
@@ -1879,6 +1927,21 @@ form.agent-session-composer:focus-within {
   font-weight: 700;
   pointer-events: none;
 }
+/* #4065: the same outline over the other composers. It lies over the card
+   itself rather than the bar around it, so it takes the card's own edges;
+   the card is the positioned parent. `#feedback-form` is "Suggest an
+   improvement", where the whole form is the drop zone. */
+.attach-drop-overlay { inset: 0; border-radius: inherit; background: color-mix(in srgb, var(--bg-primary) 94%, transparent); }
+.gc-composer-card,
+#gc-form,
+#gc-thread-form,
+.dc-card,
+.agent-session-composer,
+#feedback-form { position: relative; }
+#feedback-form > .attach-drop-overlay { inset: -6px; border-radius: 16px; }
+/* The boxed thread composer inside a board card has no card radius of its own. */
+#gc-form:not(.gc-composer-card) > .attach-drop-overlay,
+#gc-thread-form:not(.gc-composer-card) > .attach-drop-overlay { border-radius: 12px; }
 
 /* ── The two panes, and the width they are actually drawn at ────────────
    From 768px up both panes sit on the one strip: the list column fixed at
@@ -1940,6 +2003,22 @@ form.agent-session-composer:focus-within {
   /* The list is already out of the way; its toggle would do nothing. */
   .messages-layout.messages-has-reply-thread .messages-list-toggle { display: none; }
   .messages-layout.messages-has-reply-thread > .messages-thread-pane { margin-left: 12px; }
+}
+
+/* ── Too narrow for the list beside a conversation (#4229) ──────────────
+   From 768px up the list and the sheet share the strip, but a strip under
+   860px (the list's 22rem and 8px, the sheet's margins, and a 480px sheet)
+   leaves the conversation too narrow to read. There an open discussion takes
+   the strip, as on a phone: the list steps aside, the full-width toggle
+   would do nothing so it is not drawn, and the bar's back arrow returns to
+   the list. The class is the strip's own width, measured by the screen
+   (store.ts measureLayout), so folding the platform rail counts. It is not a
+   container query: containing the strip would make it the box every
+   `position: fixed` overlay inside it is placed against. */
+@media (min-width: 768px) {
+  .messages-layout.messages-list-crowded > .messages-list-pane { display: none; }
+  .messages-layout.messages-list-crowded .messages-list-toggle { display: none; }
+  .messages-layout.messages-list-crowded > .messages-thread-pane { margin-left: 12px; }
 }
 .messages-reply-count {
   display: flex;
@@ -3435,12 +3514,6 @@ html.un-ios.in-native-webview .dc-active-dot-busy.dc-active-dot-promoted {
    flush against siblings (segmented pills, theme mode pills, the Dev
    board's tab strip) — the scale makes adjacent cells appear to shift.
    Keep the brightness dim, drop the transform. */
-.create-template-pill:active,
-.create-kind-row:active,
-.create-mode-pill:active,
-.create-who-pill:active,
-.create-approver-pill:active,
-.create-approvals-pill:active,
 .members-vis-pill:active,
 [data-theme-mode]:active {
   transform: none;
@@ -6274,6 +6347,14 @@ body:has(#platform-header.hidden) #app-frame-host {
   animation: dc-spin 0.8s linear infinite;
   vertical-align: -2px;
 }
+/* Still, for someone who has asked for less motion. The arc with its gap
+   says "in flight" without turning, the label beside it names what is, and
+   the header's cog already holds still under the same setting. A board can
+   carry dozens of these at once (41 on this repository's own, every card
+   open), most of them in cards scrolled out of view. */
+@media (prefers-reduced-motion: reduce) {
+  .dc-status-spinner-arc { animation: none; }
+}
 
 /* Completed state — explicit green check so a glance at the chat tells
    the user which steps finished. Kept at the same box dimensions as
@@ -8564,6 +8645,12 @@ span.gc-vote-btn-icon { cursor: default; }
   opacity: 0.75;
   animation: ping 1s cubic-bezier(0, 0, 0.2, 1) infinite;
 }
+/* A vote can stay open for days, and this ring pulses for as long as it does.
+   Under reduced motion it rests where it starts, on the dot, as the
+   `motion-safe:animate-ping` rings in Messages do. */
+@media (prefers-reduced-motion: reduce) {
+  .gc-vote-count-dot-ping { animation: none; }
+}
 .gc-vote-count-dot-core {
   position: relative;
   border-radius: 9999px;
@@ -10694,6 +10781,47 @@ html .un-backdrop.platform-backdrop-dim {
   background-color: var(--dc-sheet-solid);
   box-shadow: 0 -1px 0 var(--app-sheet-line);
 }
+/* THE PAPERCLIP'S POPOVER (#4127): Photo and Video, in the vote popover's
+   frame (.dev-vote-pop / .messages-new-pop: same radius, surface, hairline
+   and shadow) and the "+" menu's rows. Absolute under the paperclip rather
+   than body-mounted and fixed: it lives inside the kit modal, which is a
+   transformed scroller, and scrolls with the field it hangs from. Above the
+   sticky Cancel/Post row (z-index 1), which it can overlap on a short form. */
+.feedback-attach-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 2;
+  width: 168px;
+  box-sizing: border-box;
+  padding: 6px;
+  border-radius: 16px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.feedback-attach-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.feedback-attach-option:hover, .feedback-attach-option:focus-visible { background: var(--bg-tertiary); outline: none; }
+.feedback-attach-option:disabled { opacity: .5; cursor: default; }
+.feedback-attach-option svg { flex: 0 0 auto; width: 20px; height: 20px; color: var(--brand-ink); }
 .un-sheet, .un-sheet::after, .un-panel, .un-panel::after,
 #apps-switcher-sheet, .un-sheet:has(#apps-switcher-sheet),
 .un-sheet:has(#apps-switcher-sheet)::after {
@@ -11870,8 +11998,13 @@ html.web-browser-chrome {
 #header-title.is-centered {
   position: absolute;
   left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
+  /* `top: auto`, not 50%: the bar is pt-2/pb-4 (8px over the row, 16px
+     under it), so its middle is 4px below the row's and a title centred on
+     the box sat 4px under the bell and the mark beside it (#4237). Left at
+     auto, an absolute child of a flex container takes the row's own
+     `items-center` position, safe-area padding included. */
+  top: auto;
+  transform: translateX(-50%);
   flex: none;
   text-align: center;
 }
@@ -12456,8 +12589,8 @@ a.drawer-ver--fork:hover {
 }
 
 /* ── Drawer theme selector: 3-segment toggle + sliding caret ──────
-   The first control in the drawer. Segment faces reuse the create-app
-   modal's segmented language verbatim (see .create-mode-pill below) so
+   The first control in the drawer. Segment faces reuse the segmented
+   language the retired create-app modal's mode pills had verbatim, so
    the platform has ONE segmented look; the caret underneath is what's
    new here, and it's the affordance that says "this one is selected"
    without relying on the raised face alone.
@@ -12529,236 +12662,8 @@ a.drawer-ver--fork:hover {
   }
 }
 
-/* ── The create-app dialog on the PANE GROUND (#1910) ──────────────────
-   The dialog is drawn in the widget language the shell's panes wear (see
-   the recipe in frontend/src/features/dialogs/create-app.tsx): white cards
-   floating on a grey ground. Presented, the card rides inside the kit's
-   modal shell, which neutralises the card's own chrome (`.un-modal
-   .platform-modal-card` above) and paints the surface itself from
-   `--un-sheet-bg` — so the ground has to come from the SHELL, and the
-   sanctioned way to restyle the kit is its variables, never its rules.
-   `:has()` scopes the override to the one shell that holds this card;
-   the other dialogs keep the kit's white. The token is `--dc-strip`, the
-   ground every `.dc-lift` sheet and the settings screen sit on.
-
-   Since #1839 the shell's kit modal is glass (`--dc-sheet-fill` over
-   `--dc-frost`, see "THE KIT'S SURFACES TAKE THE PANE GLASS"), so this
-   card's ground is the strip's frosted tint, `--dc-strip-fill`, the same
-   plane the dev screen's strip is drawn on; the opaque `--dc-strip` is the
-   no-backdrop-filter fallback, and stays on `--un-sheet-bg` for whatever
-   inside the kit still reads that. */
-.un-modal:has(> #create-card) {
-  --un-sheet-bg: var(--dc-strip);
-  --un-modal-width: var(--create-modal-width);
-  --un-modal-height: var(--create-modal-height);
-  --un-modal-max-height: var(--create-modal-height);
-  --un-modal-padding: var(--create-modal-padding);
-  --un-modal-radius: var(--create-modal-radius);
-  /* Centred, it floats over the dimmed page, and with no blur on any
-     platform a 38% fill would let that page read through: the strip's
-     colour, solid. Full screen sets its own ground below. */
-  background-color: var(--create-modal-fill, var(--dc-strip-solid));
-}
-
-/* Create / import fills mobile screens, including wide touch browsers and
-   the native webview. These optional layout tokens affect only this dialog;
-   on desktop the kit and the unadopted card keep their existing defaults.
-   Reserve safe areas INSIDE the full-screen surface and leave the keyboard
-   strip outside it. The surface remains the scroller on every step.
-
-   THE TOP INSET IS NOT PADDING (#25). Padding scrolls with the content, so
-   once the form scrolled, its fields slid up under the iOS status bar. The
-   top inset is `--create-modal-safe-top` instead, drawn as a border in the
-   screen's own ground (the rule after these two blocks): a border sits
-   outside the scrollport, so nothing scrolls under it.
-
-   FULL SCREEN IS OPAQUE (QA 2026-09-24 Q8). The centred desktop card
-   floats over a dimmed page, so the pane glass above (`--dc-strip-fill`,
-   38%) is legible there. Filling the viewport, the same 38% let the header,
-   the bell, "Your apps" and the "Get the app" strip read through behind the
-   dialog's own title, and even #2887's 95% for floating surfaces still
-   ghosted the strip's logo there. A screen that IS the page has nothing
-   worth showing through it, so `--create-modal-fill` is the opaque grey
-   ground itself, `--dc-strip`, on every platform alike, so the white
-   cards keep their contrast.
-   Being opaque and above the strip (z-45) is also why the top padding does
-   not add `--install-strip-h`: the strip is covered, not overlapped, which
-   is what that strip's own rule asks of a surface the person opened. */
-@media (max-width: 767px), (hover: none) and (pointer: coarse) {
-  :root {
-    --create-modal-fill: var(--dc-strip);
-    --create-modal-width: 100vw;
-    --create-modal-height: calc(100dvh - var(--un-kb-inset, 0px));
-    --create-modal-radius: 0px;
-    --create-modal-gutter: 0px;
-    --create-modal-align: flex-start;
-    --create-modal-overflow: auto;
-    --create-modal-overscroll: contain;
-    --create-modal-safe-top: var(--un-safe-inset-top, env(safe-area-inset-top, 0px));
-    --create-modal-padding: 20px calc(16px + env(safe-area-inset-right, 0px)) calc(20px + var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px))) calc(16px + env(safe-area-inset-left, 0px));
-  }
-}
-html.in-native-webview {
-  --create-modal-fill: var(--dc-strip);
-  --create-modal-width: 100vw;
-  --create-modal-height: calc(100dvh - var(--un-kb-inset, 0px));
-  --create-modal-radius: 0px;
-  --create-modal-gutter: 0px;
-  --create-modal-align: flex-start;
-  --create-modal-overflow: auto;
-  --create-modal-overscroll: contain;
-  --create-modal-safe-top: var(--un-safe-inset-top, env(safe-area-inset-top, 0px));
-  --create-modal-padding: 20px calc(16px + env(safe-area-inset-right, 0px)) calc(20px + var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px))) calc(16px + env(safe-area-inset-left, 0px));
-}
-/* The status-bar band (#25): the full-screen create screen's top inset, as
-   a border in its own ground on whichever box is the scroller, the kit's
-   shell or, without the kit, the card. Zero wherever the dialog is not full
-   screen, since only the two layouts above set the token. Kept apart from
-   the box-shadow rules below, which tests/transition-glitches.test.js pins. */
-.un-modal:has(> #create-card),
-#create-modal #create-card {
-  border-top: var(--create-modal-safe-top, 0px) solid var(--create-modal-fill, transparent);
-}
-/* FULL SCREEN HAS NOTHING BEHIND IT. With the keyboard up the screen ends
-   where the visible band does, and on iOS the keys and their accessory bar
-   are translucent: the strip between showed Home through them, dimmed —
-   "Challenges" under a form about a new app. The screen's own backdrop
-   takes its ground instead, so what shows below it is more of the screen.
-   It still fades in and out with the kit's backdrop, under a screen that
-   fades the same way. The centred desktop card keeps its dim. The screen's
-   lift shadow goes too: cast on that same ground it drew a line across the
-   strip where the screen ends. */
-@media (max-width: 767px), (hover: none) and (pointer: coarse) {
-  html .un-backdrop:has(+ .un-modal > #create-card) {
-    background: var(--create-modal-fill);
-  }
-  html .un-modal:has(> #create-card) {
-    box-shadow: none;
-  }
-}
-html.in-native-webview .un-backdrop:has(+ .un-modal > #create-card) {
-  background: var(--create-modal-fill);
-}
-html.in-native-webview .un-modal:has(> #create-card) {
-  box-shadow: none;
-}
-/* The native Android create screen always fills the viewport. Anchoring its
-   box directly gives the same bounds as 50% plus translate(-50%, -50%), but
-   avoids keeping the settled full-screen form on a transformed layer during
-   every keyboard resize. Its scale and fade still use the kit's timing.
-   Keep the normal shadow through the 260ms entrance (including overshoot),
-   then stop rendering it outside the viewport. Removing un-in restores it
-   before the exit begins. The frosted fill and blur stay unchanged. */
-html.in-native-webview.un-android .un-modal:has(> #create-card) {
-  left: 0;
-  top: 0;
-  transform: scale(1.04);
-  will-change: auto;
-}
-html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
-  transform: none;
-  animation: create-fullscreen-shadow-settled 1ms step-end 260ms forwards;
-}
-@keyframes create-fullscreen-shadow-settled {
-  to { box-shadow: none; }
-}
-@media (prefers-reduced-motion: reduce) {
-  html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
-    animation-delay: 0s;
-  }
-}
-/* The same layout if the kit is unavailable. Keep max-width measurable:
-   adoption remembers that desktop width before it moves the card. */
-#create-modal > [data-modal-backdrop] {
-  padding: var(--create-modal-gutter, 1rem);
-  align-items: var(--create-modal-align, center);
-}
-#create-modal #create-card {
-  min-width: var(--create-modal-width, auto);
-  height: var(--create-modal-height, auto);
-  border-radius: var(--create-modal-radius, 1.5rem);
-  padding: var(--create-modal-padding, 1.5rem);
-  overflow-y: var(--create-modal-overflow, visible);
-  overscroll-behavior-y: var(--create-modal-overscroll, auto);
-}
-
-/* ── The create dialog's choices (communities, stage 3; the rework) ────
-   Every choice in #create-card is a white card (or a segment) that takes
-   ONE selected look: the accent fill with white ink. The selection is keyed
-   off the CARD's data attributes — data-audience, data-kind, data-mode,
-   data-approvers, data-approvals — so the component only flips an attribute
-   (no per-button class juggling, no race with the form-reset path). It must
-   be the CARD, not #create-modal: the native-kit modal adoption
-   (frontend/src/lib/static-modal.ts) lifts the card out of #create-modal
-   while presented, so selectors rooted at the modal stop matching.
-
-   THE FILL IS THE ACCENT THE CREATE BUTTON WEARS (#2566): Tailwind's
-   violet-600, which tailwind.config.js remaps to the platform blue #0a6ee0.
-   A literal, with no dark step, for the reason the button carries none:
-   white on #0a6ee0 is 4.9:1 in both themes, where the dark theme's lighter
-   accent would not carry white text. */
-#create-card :is(.create-who-pill, .create-kind-row, .create-mode-pill, .create-template-pill, .create-approver-pill, .create-approvals-pill) {
-  color: var(--text-primary);
-  cursor: pointer;
-}
-#create-card .create-approvals-pill { color: var(--text-muted); }
-#create-card .create-approvals-pill:hover { color: var(--text-primary); }
-#create-card :is(.create-who-pill, .create-kind-row, .create-mode-pill, .create-template-pill, .create-approver-pill) .create-choice-caption {
-  color: var(--text-muted);
-}
-/* A row that is there but cannot be pressed yet (Document, Video, a
-   template): it takes no fill and no pointer. */
-#create-card .create-soon-row { cursor: default; }
-/* NOTHING IS CHOSEN FOR THE PERSON, AND A ROW IS A SELECTION. Every answer
-   starts empty (the attributes are ""), so no row is filled on arrival.
-   Pressing a row fills it at once, on its own step, and Next (beside
-   Cancel on every step) moves on. */
-#create-card[data-audience="solo"]      .create-who-pill[data-audience-pill="solo"],
-#create-card[data-audience="invited"]   .create-who-pill[data-audience-pill="invited"],
-#create-card[data-audience="open"]      .create-who-pill[data-audience-pill="open"],
-#create-card[data-kind="app"]           .create-kind-row[data-kind-pill="app"],
-#create-card[data-mode="new"]           .create-mode-pill[data-mode-pill="new"],
-#create-card[data-mode="template"]      .create-mode-pill[data-mode-pill="template"],
-#create-card[data-mode="import"]        .create-mode-pill[data-mode-pill="import"],
-#create-card                            .create-template-pill[aria-pressed="true"],
-#create-card[data-approvers="anyone"]   .create-approver-pill[data-approver-pill="anyone"],
-#create-card[data-approvers="invited"]  .create-approver-pill[data-approver-pill="invited"],
-#create-card[data-approvals="majority"] .create-approvals-pill[data-approvals-pill="majority"],
-#create-card[data-approvals="atLeast"]  .create-approvals-pill[data-approvals-pill="atLeast"] {
-  background: #0a6ee0; /* violet-600, as tailwind.config.js compiles it */
-  color: #ffffff;
-}
-/* 0.9 on the fill: the caption is 12px, and full white would outweigh the
-   title above it; 0.9 still clears AA on #0a6ee0. */
-#create-card[data-audience="solo"]      .create-who-pill[data-audience-pill="solo"] .create-choice-caption,
-#create-card[data-audience="invited"]   .create-who-pill[data-audience-pill="invited"] .create-choice-caption,
-#create-card[data-audience="open"]      .create-who-pill[data-audience-pill="open"] .create-choice-caption,
-#create-card[data-kind="app"]           .create-kind-row[data-kind-pill="app"] .create-choice-caption,
-#create-card[data-mode="new"]           .create-mode-pill[data-mode-pill="new"] .create-choice-caption,
-#create-card[data-mode="template"]      .create-mode-pill[data-mode-pill="template"] .create-choice-caption,
-#create-card[data-mode="import"]        .create-mode-pill[data-mode-pill="import"] .create-choice-caption,
-#create-card                            .create-template-pill[aria-pressed="true"] .create-choice-caption,
-#create-card[data-approvers="anyone"]   .create-approver-pill[data-approver-pill="anyone"] .create-choice-caption,
-#create-card[data-approvers="invited"]  .create-approver-pill[data-approver-pill="invited"] .create-choice-caption {
-  color: inherit;
-  opacity: 0.9;
-}
-/* THE SELECTION MARKER (#24, D8). Who it is for and what you are making are
-   chosen, then Next moves on, so their rows end in a ring, like a radio's,
-   not in a chevron that promised a jump. The chosen row's ring fills with
-   its own ink (white on the accent) and its check takes the accent. Keyed
-   off the row's aria-pressed, which the component renders from the same
-   answer as the card's data attribute above. */
-#create-card :is(.create-who-pill, .create-kind-row)[aria-pressed="true"] > .create-choice-marker {
-  background-color: currentColor;
-  opacity: 1;
-}
-#create-card :is(.create-who-pill, .create-kind-row)[aria-pressed="true"] > .create-choice-marker > svg {
-  color: #0a6ee0; /* violet-600, the fill the row wears */
-}
-
-/* The Members modal's visibility pills keep the recessed-track look they
-   shared with the create dialog before #1910 restyled it; that dialog is
+/* The Members modal's visibility pills: the recessed-track look the
+   retired create dialog wore before #1910 restyled it. The Members modal is
    not in the pane language yet. */
 .members-vis-pill {
   color: var(--text-muted);
@@ -12777,120 +12682,10 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
   cursor: not-allowed;
 }
 
-/* The repo URL and its check belong to "Import a GitHub repo" alone. */
-#create-card:not([data-mode="import"]) .create-import-block { display: none; }
-
-/* THE STEPS UNFOLD IN ONE CARD (#1911; seven of them since the rework).
-   Every step's section ships on every step — the declared checks select on
-   the same ids whichever steps are showing — and #create-card[data-step] is
-   the FURTHEST step reached: everything up to it is on screen, the rest is
-   folded. Keyed on the CARD, like data-mode. The order is who, invite,
-   kind, start, details, about, approve.
-
-   The invite step belongs to a private community, the one-line "about" step
-   to a project made here (an import's repo describes it), and the approval
-   step to a private or a public community: Just me has nobody else to
-   approve anything. The footer follows data-final, which the component sets
-   from the same rule: Cancel always; Next until the last step, then Create
-   / Import (QA 2026-09-24 Q6: never two accent buttons at once). Either
-   stays dimmed until its step is answered. */
-#create-card[data-step="who"]     :is([data-create-step="invite"], [data-create-step="kind"], [data-create-step="start"], [data-create-step="details"], [data-create-step="about"], [data-create-step="approve"]),
-#create-card[data-step="invite"]  :is([data-create-step="kind"], [data-create-step="start"], [data-create-step="details"], [data-create-step="about"], [data-create-step="approve"]),
-#create-card[data-step="kind"]    :is([data-create-step="start"], [data-create-step="details"], [data-create-step="about"], [data-create-step="approve"]),
-#create-card[data-step="start"]   :is([data-create-step="details"], [data-create-step="about"], [data-create-step="approve"]),
-#create-card[data-step="details"] :is([data-create-step="about"], [data-create-step="approve"]),
-#create-card[data-step="about"]   [data-create-step="approve"],
-#create-card:not([data-audience="invited"]) [data-create-step="invite"],
-#create-card:is([data-audience="solo"], [data-audience=""]) [data-create-step="approve"],
-#create-card[data-mode="import"] :is([data-create-step="about"], .create-brief-row) {
-  display: none;
-}
-#create-card[data-final="false"] #create-submit,
-#create-card[data-final="true"]  #create-next {
-  display: none;
-}
-
-/* A question step COLLAPSES to its chosen row once the card moves past it:
-   the other rows and the captions fold away, the marker gives way to
-   "Change", and pressing the row reopens the step, its answer still
-   picked. How to start collapses the same way, keeping the starter picked
-   under a template and the repo's check under an import. The invite rows,
-   the name, the description and the approval answers stay as they are,
-   still editable. */
-#create-card[data-step="who"] [data-create-step="who"] .create-choice-change,
-#create-card:is([data-step="who"], [data-step="invite"], [data-step="kind"]) [data-create-step="kind"] .create-choice-change,
-#create-card:is([data-step="who"], [data-step="invite"], [data-step="kind"], [data-step="start"]) [data-create-step="start"] .create-choice-change {
-  display: none;
-}
-#create-card:not([data-step="who"]) [data-create-step="who"] :is(.create-choice-marker, .create-choice-caption),
-#create-card:not([data-step="who"])[data-audience="solo"]    .create-who-pill:not([data-audience-pill="solo"]),
-#create-card:not([data-step="who"])[data-audience="invited"] .create-who-pill:not([data-audience-pill="invited"]),
-#create-card:not([data-step="who"])[data-audience="open"]    .create-who-pill:not([data-audience-pill="open"]),
-#create-card:is([data-step="start"], [data-step="details"], [data-step="about"], [data-step="approve"]) [data-create-step="kind"] :is(.create-choice-marker, .create-choice-caption, .create-kind-soon),
-#create-card:is([data-step="details"], [data-step="about"], [data-step="approve"]) [data-create-step="start"] :is(.create-choice-caption, .create-template-pill:not([aria-pressed="true"]), .create-import-hint),
-#create-card:is([data-step="details"], [data-step="about"], [data-step="approve"])[data-mode="new"]      .create-mode-pill:not([data-mode-pill="new"]),
-#create-card:is([data-step="details"], [data-step="about"], [data-step="approve"])[data-mode="template"] .create-mode-pill:not([data-mode-pill="template"]),
-#create-card:is([data-step="details"], [data-step="about"], [data-step="approve"])[data-mode="import"]   .create-mode-pill:not([data-mode-pill="import"]) {
-  display: none;
-}
-#create-card:not([data-step="who"]) .create-who-pill,
-#create-card:is([data-step="start"], [data-step="details"], [data-step="about"], [data-step="approve"]) .create-kind-row,
-#create-card:is([data-step="details"], [data-step="about"], [data-step="approve"]) :is(.create-mode-pill, .create-template-pill) {
-  padding-top: 0.5rem;
-  padding-bottom: 0.5rem;
-}
-/* The invite rows: one card, a hairline between rows (the GroupedList
-   recipe's inset sheet line). */
-#create-card .create-invite-list > * + * { box-shadow: inset 0 1px 0 var(--app-sheet-line); }
-#create-card .create-invitee-email { white-space: normal; overflow-wrap: break-word; }
-
-/* AN IMPORT'S DAPP.JSON WINS. Once the check has read it, each earlier
-   answer it replaces is dimmed and its heading says so; the notice under
-   the check names them (data-repo-sets lists them: name, vis, gov). The
-   name step comes after the check and opens on the repo's own name, so it
-   is never dimmed: a name typed over it is only tagged. The approval step
-   comes after it too: a repo that sets the rule dims the choices and says
-   so, in place of asking. */
-#create-card .create-repo-sets-tag { display: none; font-weight: 500; color: var(--text-muted); }
-#create-card[data-mode="import"][data-repo-sets~="vis"]  [data-repo-tag="vis"],
-#create-card[data-mode="import"][data-repo-sets~="gov"]  [data-repo-tag="gov"],
-#create-card[data-mode="import"][data-repo-sets~="name"] [data-repo-tag="details"] {
-  display: inline;
-}
-#create-card[data-mode="import"][data-repo-sets~="gov"]  #create-approve-block,
-#create-card[data-mode="import"][data-repo-sets~="vis"]  [data-create-step="who"] .create-who-pill {
-  opacity: 0.45;
-  pointer-events: none;
-}
-
-/* "At least N" is a follow-up under "People I pick", and the number only
-   once it is chosen. */
-#create-card .create-approvals-block,
-#create-card .create-approvals-n-block { display: none; }
-#create-card[data-approvers="invited"] .create-approvals-block { display: block; }
-#create-card[data-approvers="invited"][data-approvals="atLeast"] .create-approvals-n-block { display: block; }
-
-/* Import status row — spinner on checking, green check on success,
-   red text on failure. JS sets the text + adds an --ok / --err
-   modifier on #import-status. */
-#import-status:empty { display: none; }
-#import-status.import-status--ok  { color: #10b981; }
-#import-status.import-status--err { color: #f87171; }
-/* The Members modal's invite status line reuses the same ok/err tones. */
+/* The Members modal's invite status line: ok and err tones, which
+   members-controller.js sets as classes. */
 #members-invite-status.import-status--ok  { color: #10b981; }
-#members-invite-status.import-status--err { color: #f87171; }
-#import-status .import-spinner {
-  display: inline-block;
-  width: 12px;
-  height: 12px;
-  margin-right: 6px;
-  border-radius: 50%;
-  border: 2px solid rgba(10, 124, 255, 0.25);
-  border-top-color: var(--accent);
-  animation: import-spin 0.8s linear infinite;
-  vertical-align: -2px;
-}
-@keyframes import-spin { to { transform: rotate(360deg); } }
+#members-invite-status.import-status--err { color: #f87171; } }
 
 /* ── Priority / assigned-person chips + dropdown (community-voted) ───── */
 /* Strip the <button> UA chrome so an interactive chip is pixel-identical
@@ -14408,8 +14203,10 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   transition: background 150ms, color 150ms;
 }
 .dev-vote-btn svg { width: 14px; height: 14px; }
-/* B7: the one-tap Approve on a project that is just yours has no caret. */
-.dev-vote-btn-approve { padding: 0 11px; }
+/* B7: on a project that is just yours, "Approved" is the one face with no
+   caret (nothing is left to pick), so its sides are even. "Approve" opens the
+   picker like any vote and keeps the caret's padding (#3977). */
+.dev-vote-btn-approve[data-vote-btn="approved"] { padding: 0 11px; }
 .dev-vote-btn .dev-vote-caret { width: 12px; height: 12px; opacity: 0.7; }
 .dev-vote-btn:hover { background: var(--accent-light); }
 .dev-vote-btn-yes, .dev-vote-btn-yes:hover { background: var(--accent-tint); color: var(--accent); }
@@ -14899,6 +14696,21 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
 }
 .dev-topic-sheet.dev-topic-card { padding: 6px; }
+/* #4244: a closed request's one status band, the first thing in its card
+   (topic-head.tsx `ClosedBand`). Inset to the card's 6px padding, so its
+   radius is the card's 26px less that. Emerald when a merged change closed
+   it, the neutral grey when a vote or an admin did. */
+.dev-issue-closed-band {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px;
+  min-width: 0; margin-bottom: 6px; padding: 9px 14px;
+  border-radius: 20px; font-size: 13px; line-height: 1.35;
+  background: var(--state-neutral-bg); color: var(--text-secondary);
+}
+.dev-issue-closed-band[data-tone="merged"] { background: var(--state-ok-bg); color: var(--state-ok); }
+.dev-issue-closed-band-glyph { width: 16px; height: 16px; flex: none; stroke-width: 2.5; }
+.dev-issue-closed-band-k { font-weight: 700; }
+.dev-issue-closed-band-dot { opacity: .6; }
+.dev-issue-closed-band .dev-topic-issue { min-width: 0; }
 .dev-topic-sheet:empty { display: none; }
 .dev-topic-h {
   margin: 0 0 8px;
@@ -15381,6 +15193,22 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   overflow-wrap: anywhere;
 }
 .dev-ledger-why-errors { margin: 4px 0 0; padding-left: 16px; list-style: disc; }
+/* The unit-suite row's per-test excerpts (#3978): each failing test's name,
+   its file, and the captured error text on its own block, pre-wrap so the
+   expected/actual and stack lines keep their shape. */
+.dev-ledger-why-details { margin: 6px 0 0; padding-left: 16px; list-style: disc; }
+.dev-ledger-why-details > li { margin: 4px 0; }
+.dev-ledger-why-test { color: var(--text-primary); font-weight: 600; }
+.dev-ledger-why-file { color: var(--text-muted); }
+.dev-ledger-why-excerpt {
+  display: block;
+  margin-top: 3px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--dc-sheet-fill, rgba(113, 113, 122, 0.08));
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 /* ── The Review line ────────────────────────────────────────────────────
    "Approved by @alice ✓", and at its right end the "How voting works" link
    and the "?" — this is the row they explain, so they sit on it. */
@@ -17693,9 +17521,9 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 }
 .dev-ws-hero-line { margin: 0; font-size: 13px; line-height: 18px; color: var(--text-muted); }
 /* WHO IS HERE, IN THE HERO (#3268). The people row: up to five faces, then
-   "Public community · 23 members". The activity line under the actions: this
-   week in words, and the last fourteen days as a small bar chart at its end,
-   the busiest day the tallest bar.
+   "Public community · 23 members". A public or private community draws it as
+   the pulse below, with this week's activity under the count; the row is
+   Just you's, and the invite preview's.
 
    THE ROW WRAPS (#3276). Nothing in it can shrink: the faces are a fixed
    stack and the count is `nowrap`. So when five faces and the count come to
@@ -17711,10 +17539,34 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 }
 .dev-ws-hero-face:last-child { margin-right: 0; }
 .dev-ws-hero-count { font-size: 14px; font-weight: 650; color: var(--text-primary); white-space: nowrap; }
-.dev-ws-hero-activity { display: flex; align-items: flex-end; gap: 14px; }
-.dev-ws-hero-activity-words { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.dev-ws-hero-activity-line { font-size: 14px; line-height: 19px; color: var(--text-primary); }
+/* WHO IS HERE AND HOW LIVELY, ONE BLOCK (community-card.tsx HeroPulse): the
+   faces, the count over this week in words, and the fortnight's chart across
+   from both, the busiest day the tallest bar.
+
+   ON A PHONE THE CHART MOVES UP, across from the faces, and the words take
+   the full width under them. Faces, words and chart in one row left the
+   words about 130px on a 390px phone, so the count and the activity line
+   broke into five short lines. The breakpoint is the tabs' own: under 768px
+   they are the coloured band. Each cell of the activity line stays whole,
+   so a line too long for a narrow phone breaks at its separator. */
+.dev-ws-hero-pulse {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas: "faces words chart";
+  align-items: center; gap: 8px 10px;
+}
+.dev-ws-hero-pulse > .dev-ws-hero-faces { grid-area: faces; }
+.dev-ws-hero-pulse > .dev-ws-hero-spark-wrap { grid-area: chart; }
+.dev-ws-hero-pulse-words { grid-area: words; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+@media (max-width: 767.98px) {
+  .dev-ws-hero-pulse {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "faces chart" "words words";
+    column-gap: 12px;
+  }
+}
+.dev-ws-hero-activity-line { font-size: 13px; line-height: 18px; color: var(--text-muted); }
 .dev-ws-hero-activity-line b { font-weight: 650; }
+.dev-ws-hero-activity-line > [data-ws-members-cell] { white-space: nowrap; }
 .dev-ws-hero-spark { flex: none; width: 112px; height: 30px; display: flex; align-items: flex-end; gap: 2px; }
 .dev-ws-hero-spark-bar {
   flex: 1 1 0; min-width: 0; border-radius: 2px 2px 1px 1px;
@@ -17776,8 +17628,35 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
   border-bottom-left-radius: 0;
   border-bottom-right-radius: 0;
 }
-html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #header-app-tile {
-  box-shadow: 0 0 0 1.5px rgba(255, 255, 255, .55);
+/* The tile's light ring is drawn INSIDE its edge (#4237). It was an outer
+   box-shadow, and the h1 around the tile is `truncate` (overflow: hidden)
+   with a line box exactly the tile's 28px, so the ring was clipped on the
+   top, bottom and left and only its right edge showed: the tile read as
+   nudged off its place. An outline pulled in by its own width paints over
+   the icon's edge, inside the box nothing clips. */
+html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #header-app-tile:not(:focus-visible) {
+  outline: 1.5px solid rgba(255, 255, 255, .55);
+  outline-offset: -1.5px;
+}
+/* ON ITS OWN, THE BAR'S ROW IS CENTRED (#4237). From 768px the band under
+   the bar is the page's own ink, so the tinted bar ends at its own 52px
+   foot, and its pt-2/pb-4 (8px over the row, 16px under) put every control
+   in it 4px above its middle. The same 52px, split 12 and 12. Below 768px
+   the band continues the colour and the 16px is part of one taller block,
+   so the shared split stays. The top keeps the safe-area inset, and the
+   browser-tab clamp (#2509) keeps its zero inset. */
+@media (min-width: 768px) {
+  html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
+    padding-bottom: 0.75rem;
+  }
+  @supports (padding: env(safe-area-inset-top)) {
+    html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header.un-safe-top-extend {
+      padding-top: calc(0.75rem + var(--un-safe-inset-top, env(safe-area-inset-top, 0px))) !important;
+    }
+    html.web-browser-chrome[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header.un-safe-top-extend {
+      padding-top: 0.75rem !important;
+    }
+  }
 }
 /* THE BAND: Hub, Discussion, Needs you, Workshop, under the header, in its
    colour. It keeps the old strip's box (`.dev-ws-tabs` > `.dev-ws-tabtrack`)
@@ -17934,9 +17813,21 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
    `topEl` finds no band), and everything in the scroller slides, as it all
    did. AT EVERY WIDTH, outside the phone block above: the kit only pulls on
    a touch device, and an iPad's row of tabs holds still the same way (the
-   row the band becomes from 768px is the same `.dev-ws-band`). */
+   row the band becomes from 768px is the same `.dev-ws-band`).
+
+   A CLASS, NOT `:has()`. This was `#dev-forum-scroll:not(:has(.dev-ws-band))
+   > *`, and a `:has()` on the scroller that picks its children is a question
+   the browser has to ask again whenever anything is added inside it: every
+   comment the board filled in re-applied the stylesheet to the whole board
+   (about 9,000 elements with every card open, 67ms a time). The Workshop
+   sets `dev-ws-has-band` while its band is on screen and the pull re-reads
+   it when it starts (workshop.tsx `useWorkshopHostState`, app-view.js
+   `topEl`). The same holds for `dev-ws-has-board` and `dev-ws-on-needs` on
+   #dev-workshop further down. Each selector weighs what its `:has()` form
+   did, except the Needs release of the column, which now weighs what the
+   board's has always weighed. */
 #dev-forum-scroll .dev-ws > .dev-ws-band ~ *,
-#dev-forum-scroll:not(:has(.dev-ws-band)) > * {
+#dev-forum-scroll:not(.dev-ws-has-band) > * {
   transform: translateY(var(--dev-ptr-pull));
 }
 
@@ -18475,7 +18366,7 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
        alignment below: 740px with auto side margins is a shrink-to-fit box
        centred in the column, and a row cannot be left-aligned inside a box
        that has already centred itself. The board pane re-states both at
-       higher specificity (`#dev-workshop:has(.dev-ws-board) > .dev-ws > …`),
+       higher specificity (`#dev-workshop.dev-ws-has-board > .dev-ws > …`),
        which is the one place they are wanted up here. */
     inset: auto;
     /* AFTER `inset: auto`, and that ordering is the whole of it. Written
@@ -18619,12 +18510,12 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
      the item stays readable while you use it; the vote is a popover on its
      own button. The Workshop column widens past its 760px reading measure
      for this tab alone — the same release the Board pane has. */
-  #dev-workshop:has(.dev-ws[data-ws-tab="needs"]) { max-width: none; }
+  #dev-workshop.dev-ws-on-needs { max-width: none; }
   /* The tab strip keeps the reading column while the stage takes the window
      (the same re-statement the board pane makes for itself below): a
      left-aligned strip inside a 1440px nav would sit at the window's edge,
      lined up with nothing, while the card it belongs to sits at the centre. */
-  #dev-workshop:has(.dev-ws[data-ws-tab="needs"]) > .dev-ws > :not(.dev-ws-tabbody) {
+  #dev-workshop.dev-ws-on-needs > .dev-ws[data-ws-tab="needs"] > :not(.dev-ws-tabbody) {
     width: 100%; max-width: 760px; margin-left: auto; margin-right: auto;
   }
   /* `place-content`, not `justify-content: center`, here and on the key
@@ -18699,7 +18590,7 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
   .dev-ws-sheet-vote { --ws-sheet-in: dev-ws-pop-in; --ws-sheet-out: dev-ws-pop-out; }
   .dev-ws-sheet-vote > .dev-ws-scrim { position: fixed; background: transparent; }
   .dev-ws-sheet-vote > .dev-ws-sheet-card {
-    max-height: none; padding: 18px 18px 16px;
+    max-height: none; overflow: visible; padding: 18px 18px 16px;
     border-radius: 18px; border: 1px solid var(--app-sheet-line);
     box-shadow: 0 18px 50px rgba(24, 39, 75, .22);
   }
@@ -19063,7 +18954,7 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
    `100vw` counts the scrollbar that `#dev-forum-scroll` always has, so it
    overflows by its width and adds a horizontal scrollbar to the page.
    Re-parenting the bound has no such edge. */
-#dev-workshop:has(.dev-ws-board) { max-width: none; }
+#dev-workshop.dev-ws-has-board { max-width: none; }
 /* THE TAB BODY IS A LEVEL THIS RULE HAS TO REACH THROUGH. It used to bound
    every direct child of `.dev-ws` except the pane; the tabs put the pane one
    level deeper, inside `.dev-ws-tabbody`, so the bound landed on the WRAPPER
@@ -19071,8 +18962,8 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
    body's children instead, and leave the body itself unbounded — the rail is
    still a direct child of `.dev-ws`, so it keeps the column width, which is
    what it wants: a pill spanning 1440px is not a tab bar. */
-#dev-workshop:has(.dev-ws-board) > .dev-ws > :not(.dev-ws-tabbody),
-#dev-workshop:has(.dev-ws-board) > .dev-ws > .dev-ws-tabbody > :not(.dev-ws-pane) {
+#dev-workshop.dev-ws-has-board > .dev-ws > :not(.dev-ws-tabbody),
+#dev-workshop.dev-ws-has-board > .dev-ws > .dev-ws-tabbody > :not(.dev-ws-pane) {
   width: 100%; max-width: 760px; margin-left: auto; margin-right: auto;
 }
 /* On By stage the pane WIDENS AND STAYS A PANE. An earlier cut stripped its
@@ -19089,7 +18980,7 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
    the same pair at reading width — the strip in particular reads as pulled
    apart rather than as a segmented pair. So the head still spans the pane, as
    a pinned edge must, while what sits IN it keeps the reading column. */
-#dev-workshop:has(.dev-ws-board) .dev-ws-pane-head > * {
+#dev-workshop.dev-ws-has-board .dev-ws-pane-head > * {
   /* 760px is the reading column; the 20px is the head's own left+right
      padding. Bounding to the column's OUTER width instead made the controls
      20px wider on By stage than on By category — a toolbar that grew slightly
@@ -19266,8 +19157,8 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
    :active matches every ancestor of the pressed element, so without the
    :not(:has(...)) a press on the Vote button would tint the whole card
    behind it, for a press that toggles nothing. */
-/* The kit's scale-press, opted out of — the fourth entry in the list of
-   opt-outs up at `.create-mode-pill:active`, for a different reason. The
+/* The kit's scale-press, opted out of — like the list of opt-outs up at
+   `.members-vis-pill:active`, for a different reason. The
    kit gives every button an instant scale on press; the row carries
    role="button" so a keyboard can reach it and the open card is a plain
    div, so the scale landed on ONE of the two sizes. That is the inset a
@@ -19714,6 +19605,24 @@ html.un-kb #platform-tabs {
     max-height: calc(100% - var(--platform-vv-top, 0px) - var(--platform-kb-cover, 0px) - 12px);
     /* The home indicator is behind the keys. */
     padding-bottom: 1.25rem;
+  }
+}
+
+/* A FULL-SCREEN SURFACE THAT LEAVES THE PLATFORM HEADER SHOWING (#4195).
+   The make and made screens opened from Create are `fixed` from the header's
+   foot down rather than `inset-0` over it, so the header's back, bell and
+   menus stay where they always are (first-session/make.tsx MAKE_ROOT). The
+   tab bar stays covered. With the keyboard up, the band the
+   `.platform-kb-surface` rule above pads into starts at the pan
+   (`--platform-vv-top`) from the page's top, and this box starts the
+   header's height further down, so only the part of the pan past that is
+   padding here. */
+.platform-under-header {
+  top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h) + var(--platform-safe-top));
+}
+@media (max-width: 767px) {
+  html.platform-kb-open .platform-kb-surface.platform-under-header {
+    padding-top: max(0px, calc(var(--platform-vv-top, 0px) - var(--browser-banner-h, 0px) - var(--platform-header-h) - var(--platform-safe-top)));
   }
 }
 

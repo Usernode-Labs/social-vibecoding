@@ -64,7 +64,12 @@ test('recommendations start favorited, durable overrides win, and refresh stays 
       refreshedAt: '2026-09-10T12:00:00.000Z',
       recommendedModelId: 'z-ai/glm-5.3-flash',
       models: [
-        { id: 'z-ai/glm-5.3-flash', isRecommended: true },
+        // The cache prices are non-enumerable on the shared catalog's own
+        // models (agent-models.js sanitizeModel), as they are here.
+        Object.defineProperties({ id: 'z-ai/glm-5.3-flash', isRecommended: true }, {
+          cacheReadPricePerMillion: { value: 0.03, enumerable: false },
+          cacheWritePricePerMillion: { value: null, enumerable: false },
+        }),
         { id: 'deepseek/deepseek-v4.1-flash', isRecommended: true },
         { id: 'openai/gpt-6-astra', isRecommended: true },
         { id: 'vendor/ordinary', isRecommended: false },
@@ -108,6 +113,11 @@ test('recommendations start favorited, durable overrides win, and refresh stays 
   assert.equal(catalog.models[2].isFavorite, true, 'a recommendation starts starred');
   assert.equal(catalog.models[2].isDefaultFavorite, true);
   assert.equal(catalog.models[3].isFavorite, false, 'ordinary models do not start starred');
+  // The picker prices a typical change's cached share from the cache prices
+  // the catalog lists; a price the catalog does not list is left out.
+  assert.equal(catalog.models[0].cacheReadPricePerMillion, 0.03);
+  assert.equal('cacheWritePricePerMillion' in catalog.models[0], false);
+  assert.equal('cacheReadPricePerMillion' in catalog.models[3], false);
   assert.equal(forceRefreshes[0], true);
 
   const add = await fetch(`${base}/api/me/coding-agent/models/favorite`, {

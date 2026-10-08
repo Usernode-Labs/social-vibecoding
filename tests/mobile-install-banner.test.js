@@ -176,6 +176,7 @@ function env(over = {}) {
     maxTouchPoints: 5,
     native: false,
     standalone: false,
+    member: true,
     dismissed: false,
     urls: URLS,
     ...over,
@@ -221,6 +222,31 @@ test('installOffer: suppressed inside the native app', () => {
 test('installOffer: suppressed when already installed as a PWA', () => {
   const { installOffer } = loadTsx('frontend/src/features/mobile-install/detect.ts');
   assert.equal(installOffer(env({ standalone: true })), null);
+});
+
+test('#4204: suppressed until the visitor is signed in and let in', () => {
+  // The signed-out landing (an invite link's page before Join), the sign-in
+  // page and the waiting room: nothing is offered, store listing or not.
+  const { installOffer } = loadTsx('frontend/src/features/mobile-install/detect.ts');
+  assert.equal(installOffer(env({ member: false })), null);
+  assert.equal(installOffer(env({ member: false, urls: { ios: null, android: null } })), null);
+  assert.equal(installOffer(env({ member: false, ua: ANDROID })), null);
+  // Once in, the offer is what it was.
+  assert.deepEqual(installOffer(env({ urls: { ios: null, android: null } })), { kind: 'a2hs', os: 'ios' });
+});
+
+test('#4204: the island asks only once there is a platform viewer', () => {
+  // The fetch and the member flag both wait on the authed shell, so an
+  // anonymous document never requests /api/public/mobile-app, and a sign-in
+  // without a reload (sv:authed) still turns the strip on.
+  const src = fs.readFileSync(
+    path.join(ROOT, 'frontend/src/features/mobile-install/install-banner.tsx'), 'utf8');
+  assert.match(src, /from '\.\.\/\.\.\/lib\/platform-viewer'/);
+  const gate = src.indexOf('whenPlatformViewer(');
+  assert.ok(gate > 0, 'the island waits for a platform viewer');
+  assert.ok(src.indexOf("fetch('/api/public/mobile-app')") > gate,
+    'the store-listing fetch runs inside the viewer gate');
+  assert.match(src, /member: member && hasPlatformViewer\(\)/);
 });
 
 test('installOffer: suppressed once dismissed', () => {

@@ -31,14 +31,16 @@
  * (features/app-context/invite-pane.tsx, with live links, their limits, an
  * invite by username and the project's joining rule, which stays where it
  * is): what they'll get, "<maker> is making <name>" while its first version
- * is not live, with the note edited in place, then Share link. Nothing else:
+ * is not live, with the note edited in place, then Share link and Copy link
+ * (inviteActions: which one leads depends on the device). Nothing else:
  * somebody brand new knows nobody on Homeroom to invite by username yet, and
  * the joining rule is the project's business later (both taken out after
  * Evan's run-through, 5 October 2026). The link it makes works until it is
  * turned off, for anyone it reaches (WP-D): the project is the gift, so the
- * link should outlive a week. The first note shared is also the maker's
- * first message in the group's chat (the sheet says so), so the people it
- * brings find it waiting there. The note is kept per project on this device
+ * link should outlive a week. A note they wrote themselves and shared
+ * (the share sheet, not Copy link) is also the maker's first message in the
+ * group's chat (the sheet says so, #4238), so the people it brings find it
+ * waiting there. The note is kept per project on this device
  * (noteKey), else read back from the maker's own newest link.
  *
  *   sketch    A featured card of the idea (./sketch-card.tsx,
@@ -52,6 +54,18 @@
  * it (`made.conversationId`, its DM), its step and "messages you"; when it
  * does not, the description is the project's first request, for whoever
  * builds it. Nothing says how long a first version takes (buildNote).
+ *
+ * FROM CREATE TOO, IMPORTS INCLUDED. Every new project lands here: from the
+ * first session, from the Create button's make screen, and from its import
+ * form (`made.imported`, ./import-repo.tsx), which is the retired New
+ * project dialog's last job. So this screen also says what that dialog's
+ * progress view used to: a setup that stopped (status `error`, with Try
+ * again, POST /api/apps/:slug/retry) or one waiting on its secrets
+ * (`awaiting_secrets`, with Set secrets, which an imported repo can declare),
+ * in a card under the project like the plan's (SetupStoppedCard). An import
+ * has no sketch and nothing built from a description: its lines say it is
+ * being imported, then that it runs (buildLine, buildNote). Every one is a
+ * private community, so every one ends on Share invite.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -63,7 +77,8 @@ import { Wordmark } from '@/components/ui/wordmark';
 import { askForPingWhileBotBuilds } from '../dialogs/ping-ask';
 import type { HomeroomBotPlanQuestion } from '../messages/types';
 
-import type { Made } from './make';
+import { copyText, inviteText } from './copy-invite';
+import type { Made, MakeEntry } from './make';
 import { SketchCard, showsCard, useSketch } from './sketch-card';
 
 /** B6: the plan Homeroom bot waits on before it builds anything. */
@@ -130,8 +145,27 @@ export function planWaitsLine(name: string): string {
   return `Homeroom bot has a plan for ${name}`;
 }
 
+/**
+ * A setup that is not going on by itself (creation-progress-store.js
+ * outcomeOf): it failed, or it waits on secrets. Null while it is creating,
+ * once it runs, and before anything has been read.
+ */
+export type Stalled = 'failed' | 'needs-secrets' | null;
+
+export function stalledOf(appStatus: string | null): Stalled {
+  if (appStatus === 'error') return 'failed';
+  if (appStatus === 'awaiting_secrets') return 'needs-secrets';
+  return null;
+}
+
 /** "Step 2 of 7: Read the description", or what to say without a build. */
-export function buildLine(fv: FirstVersion, appStatus: string | null, botBuilds = true): string {
+export function buildLine(fv: FirstVersion, appStatus: string | null, botBuilds = true, imported = false): string {
+  // Before any step: nothing is built on a setup that stopped.
+  const stalled = stalledOf(appStatus);
+  if (stalled === 'failed') return 'Setting it up didn’t finish.';
+  if (stalled === 'needs-secrets') return 'It needs its secrets before it can start.';
+  // An import has no first version: it is coming over, then it runs.
+  if (imported) return appStatus === 'running' ? 'Imported. It’s running.' : 'Importing it from GitHub…';
   if (fv && fv.ready) return 'Version one is ready to try.';
   if (fv && fv.step && fv.of) return `Step ${fv.step} of ${fv.of}${fv.stepName ? `: ${fv.stepName}` : ''}`;
   if (appStatus === 'creating') return 'Setting it up…';
@@ -156,7 +190,10 @@ export function buildLine(fv: FirstVersion, appStatus: string | null, botBuilds 
  * The plan, when it comes, has its own card under the project
  * (PlanWaitsCard), and while it waits this line says so instead.
  */
-export function buildNote(botBuilds: boolean, planWaits = false): string {
+export function buildNote(botBuilds: boolean, planWaits = false, stalled: Stalled = null, imported = false): string {
+  if (stalled === 'failed') return 'Trying again usually clears it. If it stops again, ask an admin.';
+  if (stalled === 'needs-secrets') return 'Set them, and it finishes starting.';
+  if (imported) return 'Its repo says what it does. You and anyone you invite build on it from here.';
   if (!botBuilds) return 'You or anyone you invite can build it from there.';
   if (planWaits) return 'Homeroom bot is waiting for your go-ahead.';
   return 'Homeroom is making your app. It will message you when the first version is ready to try, or if it has any questions.';
@@ -203,6 +240,18 @@ export function openingNote(slug: string, example: string | null | undefined): s
   return kept !== null ? kept : (example || NOTE_DEFAULT);
 }
 
+/**
+ * Whether a note goes in the group chat as the maker's first message
+ * (#4238): only when the share sheet took the link (a copy may never be
+ * pasted anywhere), and only a note they wrote themselves, never the
+ * untouched default or the example's preset one.
+ */
+export function notePostable(how: SentHow, note: string, example: string | null | undefined): boolean {
+  const text = note.trim();
+  if (how !== 'shared' || !text) return false;
+  return text !== NOTE_DEFAULT && text !== (example || '').trim();
+}
+
 /** The newest note on the maker's own live links (GET .../invite-links `links`), or null. */
 export function linkNote(links: unknown): string | null {
   if (!Array.isArray(links)) return null;
@@ -211,20 +260,87 @@ export function linkNote(links: unknown): string | null {
   return mine ? (mine as { note: string }).note : null;
 }
 
+/** One of the sheet's two ways to send the link. */
+export type InviteAction = 'share' | 'copy';
+
+/**
+ * The sheet's buttons, the main one first (#4180). On a phone or tablet the
+ * share sheet leads, with Copy link beside it. On a computer Copy link leads,
+ * with Share… beside it: a desktop share sheet (Safari's: AirDrop, Mail,
+ * Messages, Notes) has no plain way to copy the link. With no share sheet at
+ * all, Copy link alone.
+ */
+export function inviteActions(touch: boolean, canShare: boolean): InviteAction[] {
+  if (!canShare) return ['copy'];
+  return touch ? ['share', 'copy'] : ['copy', 'share'];
+}
+
+/** PlatformUI.isTouch(): a phone or tablet, as the native kit tells them apart. */
+function onTouch(): boolean {
+  const ui = (globalThis as unknown as { PlatformUI?: { isTouch?: () => boolean } }).PlatformUI;
+  return typeof ui?.isTouch === 'function' && ui.isTouch();
+}
+
+function hasShareSheet(): boolean {
+  return typeof navigator !== 'undefined' && typeof navigator.share === 'function';
+}
+
+// How long "✓ Copied" stays on the button before it reads Copy link again.
+const COPIED_MS = 1200;
+
+// How long after the share sheet goes an Escape is still taken as its own:
+// the key that dismissed the OS popover can reach the page after the share's
+// promise has settled.
+const SHARE_ESCAPE_MS = 400;
+
+/**
+ * How the link went out. A share says only that it was handed to the share
+ * sheet: the page cannot know a message was actually sent (#4196).
+ */
+export type SentHow = 'shared' | 'copied';
+
+/** The sheet's status once the link has gone out, said the way it went. */
+export function sentStatus(how: SentHow): string {
+  return how === 'shared' ? '✓ Link shared' : 'Link copied. Paste it in your group chat.';
+}
+
+/**
+ * The sheet stays open once the link has gone out, with what happened said
+ * on it, and Done closes it (#4196: closing at once read as "Share link just
+ * goes back"). Share link and Copy link can be pressed again.
+ *
+ * The link is still made only on a press (copy-invite.ts). A share press
+ * that has to make it first waits on that request, and a browser may then
+ * refuse the share sheet for want of the press (NotAllowedError, Safari
+ * above all). Such a refusal copies instead, the way a missing share sheet
+ * always did; when even the copy is refused, the sheet says the link is
+ * ready, and the next press shares at once, because the link exists by then
+ * and is not waited on. Cancelling the share sheet (AbortError) changes
+ * nothing.
+ */
 export function InviteSheet({ made, me, making = true, onClose, onSent }: {
   made: Made;
   me: string;
   /** Its first version is not live yet: "<me> is making <name>" (makerLine). */
   making?: boolean;
   onClose: () => void;
-  /** The link went out (shared or copied). */
-  onSent: () => void;
+  /** The link went out, shared or copied. The sheet stays open. */
+  onSent: (how: SentHow) => void;
 }) {
   const [note, setNote] = useState(() => openingNote(made.slug, made.example?.note));
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [shown, setShown] = useState(false);
+  // When Copy link last copied (0: not lately), for "✓ Copied" on its button.
+  const [copied, setCopied] = useState(0);
+  // Something went out from this sheet: Done is offered.
+  const [out, setOut] = useState(false);
+  // The OS share sheet is up, or has only just gone (SHARE_ESCAPE_MS).
+  const sharing = useRef(false);
+  const shareGoneAt = useRef(0);
+  // Which button leads, read once as the sheet opens (inviteActions).
+  const [actions] = useState(() => inviteActions(onTouch(), hasShareSheet()));
   const linkRef = useRef<string | null>(null);
   // Whether the note in the box is theirs from this device (kept, or typed
   // here); until it is, a note on one of their own links replaces it.
@@ -243,16 +359,28 @@ export function InviteSheet({ made, me, making = true, onClose, onSent }: {
       .catch(() => {});
     return () => { live = false; };
   }, [made.slug]);
+  // Escape closes the sheet, unless it is dismissing the OS share sheet
+  // over it (or has just done so).
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (sharing.current || Date.now() - shareGoneAt.current < SHARE_ESCAPE_MS) return;
+      onClose();
+    };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
+  useEffect(() => {
+    if (!copied) return undefined;
+    const t = window.setTimeout(() => setCopied(0), COPIED_MS);
+    return () => window.clearTimeout(t);
+  }, [copied]);
 
-  // The maker's note, as their first message in the group's chat, once.
-  const postNote = useCallback(async () => {
+  // The maker's note, as their first message in the group's chat, once,
+  // when they shared a note of their own (notePostable).
+  const postNote = useCallback(async (how: SentHow) => {
+    if (!notePostable(how, note, made.example?.note)) return;
     const text = note.trim();
-    if (!text) return;
     try { if (localStorage.getItem(postedKey(made.slug))) return; } catch { /* post it */ }
     const res = await fetch(`/api/apps/${encodeURIComponent(made.slug)}/messages`, {
       method: 'POST',
@@ -261,7 +389,7 @@ export function InviteSheet({ made, me, making = true, onClose, onSent }: {
       body: JSON.stringify({ content: text }),
     }).catch(() => null);
     if (res && res.ok) { try { localStorage.setItem(postedKey(made.slug), '1'); } catch { /* once is best effort */ } }
-  }, [note, made.slug]);
+  }, [note, made.slug, made.example?.note]);
 
   const link = useCallback(async (): Promise<string | null> => {
     if (linkRef.current) return linkRef.current;
@@ -277,33 +405,76 @@ export function InviteSheet({ made, me, making = true, onClose, onSent }: {
     return linkRef.current;
   }, [made.slug, note]);
 
+  // The link went out, shared or copied: said on the sheet, which stays
+  // open; the note kept, posted once as their first message in the group
+  // chat when it was shared (postNote), and the made screen told.
+  const sent = useCallback(async (how: SentHow) => {
+    setStatus(sentStatus(how));
+    setOut(true);
+    keepNote(made.slug, note);
+    await postNote(how);
+    onSent(how);
+  }, [made.slug, note, postNote, onSent]);
+
   const shareLink = useCallback(async () => {
     if (busy) return;
-    setBusy(true); setError(null); setStatus(null);
+    setBusy(true); setError(null);
     try {
-      const url = await link();
+      // A link already made is shared from inside the press; one still to
+      // make is waited on first (see the header).
+      const url = linkRef.current || await link();
       if (!url) return;
       const title = makerLine(me, made.name, making);
       const nav = navigator as Navigator & { share?: (d: ShareData) => Promise<void> };
-      let shared = false;
       if (typeof nav.share === 'function') {
-        try { await nav.share({ title, text: note.trim() || undefined, url }); shared = true; } catch (err) {
+        sharing.current = true;
+        try {
+          await nav.share({ title, text: note.trim() || undefined, url });
+          await sent('shared');
+          return;
+        } catch (err) {
           if ((err as Error)?.name === 'AbortError') return;
+          // Refused (no press left to open it with) or failed: copy below.
+        } finally {
+          sharing.current = false;
+          shareGoneAt.current = Date.now();
         }
       }
-      if (!shared) {
-        await navigator.clipboard.writeText(note.trim() ? `${note.trim()} ${url}` : url);
-        setStatus('Link copied. Paste it in your group chat.');
+      const outcome = await copyText(inviteText(note, url));
+      if (outcome === 'copied') {
+        setCopied(Date.now());
+        await sent('copied');
+        return;
       }
-      keepNote(made.slug, note);
-      await postNote();
-      onSent();
+      // Nothing went out, but the link is made: the next press shares it at once.
+      setStatus('Your link is ready. Press Share again to send it.');
     } catch {
       setError('Could not share the link. Try again.');
     } finally {
       setBusy(false);
     }
-  }, [busy, link, me, made.name, making, note, postNote, onSent]);
+  }, [busy, link, me, made.name, making, note, sent]);
+
+  // Copy link: the note and the link, put on the clipboard inside the press
+  // even while the link is still being made (copyText: Safari copies nothing
+  // after the press has waited on a request), then what a share does.
+  const copyLink = useCallback(async () => {
+    if (busy) return;
+    setBusy(true); setError(null);
+    try {
+      const ready = linkRef.current;
+      const outcome = await copyText(ready ? inviteText(note, ready)
+        : link().then((url) => (url ? inviteText(note, url) : null)));
+      if (outcome === 'no-link') { setError((was) => was || 'Could not make a link. Try again.'); return; }
+      if (outcome === 'refused') { setError('Could not copy the link. Try again.'); return; }
+      setCopied(Date.now());
+      await sent('copied');
+    } catch {
+      setError('Could not copy the link. Try again.');
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, link, note, sent]);
 
   const tile = made.emoji || made.name.slice(0, 1);
   return (
@@ -347,14 +518,50 @@ export function InviteSheet({ made, me, making = true, onClose, onSent }: {
             />
           </div>
         </div>
-        <p className="mt-2 text-[13px] text-zinc-500 dark:text-zinc-400">Your note is also your first message in the group chat.</p>
-        <div className="mt-4">
-          <Button type="button" onClick={() => { void shareLink(); }} disabled={busy} layout="full" variant="pillAccent" size="pillLg" ink="solidLate" className="flex items-center justify-center disabled:opacity-60">
-            Share link
-          </Button>
+        <p className="mt-2 text-[13px] text-zinc-500 dark:text-zinc-400">When you share, your note also goes in the group chat as your first message.</p>
+        {/* The main button, then the other way beside it (inviteActions), a
+            white pill on the sheet's grey (pillRaised). Not dimmed while
+            "✓ Copied" shows: busy then only holds off a second press. */}
+        <div className="mt-4 flex gap-2.5">
+          {actions.map((action, i) => {
+            const label = action === 'share' ? (i === 0 ? 'Share link' : 'Share…') : copied ? '✓ Copied' : 'Copy link';
+            const press = () => { void (action === 'share' ? shareLink() : copyLink()); };
+            const main = i === 0;
+            return (
+              <Button
+                key={action}
+                type="button"
+                data-first-session-invite-action={action}
+                onClick={press}
+                disabled={busy && !copied}
+                layout={main ? 'flex' : 'shrink'}
+                variant={main ? 'pillAccent' : 'pillRaised'}
+                size="pillLg"
+                ink={main ? 'solidLate' : 'neutral'}
+                className="flex items-center justify-center disabled:opacity-60"
+              >
+                {label}
+              </Button>
+            );
+          })}
         </div>
         {status ? <p role="status" data-first-session-invite-status="" className="mt-3 text-center text-[14px] text-emerald-700 dark:text-emerald-400">{status}</p> : null}
         {error ? <p id="first-session-invite-error" role="alert" className="mt-3 text-center text-[14px] text-red-600 dark:text-red-400">{error}</p> : null}
+        {/* Once the link has gone out the sheet stays, with Done to close it. */}
+        {out ? (
+          <Button
+            type="button"
+            data-first-session-invite-done=""
+            onClick={onClose}
+            layout="full"
+            variant="pillRaised"
+            size="pillLg"
+            ink="neutral"
+            className="mt-3 flex items-center justify-center"
+          >
+            Done
+          </Button>
+        ) : null}
         <p className="mt-3 text-center text-[13px] text-zinc-500 dark:text-zinc-400">Anyone with the link can join for the next 7 days, up to 25 people.</p>
       </div>
     </div>
@@ -384,15 +591,63 @@ export function PlanWaitsCard({ name, onOpenChat }: { name: string; onOpenChat: 
   );
 }
 
+/**
+ * A setup that stopped, under the project where the plan's card goes: what
+ * it needs, and the one thing that does it. What the New project dialog's
+ * progress view said with its Retry and Set secrets.
+ */
+export function SetupStoppedCard({ stalled, busy, onRetry, onSetSecrets }: {
+  stalled: Exclude<Stalled, null>;
+  busy: boolean;
+  onRetry: () => void;
+  onSetSecrets: () => void;
+}) {
+  const failed = stalled === 'failed';
+  return (
+    <section data-made-stalled={stalled} aria-labelledby="made-stalled-label" className="mt-4">
+      <p id="made-stalled-label" className="px-1 pb-1.5 text-[12px] font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{PLAN_LABEL}</p>
+      <div className="flex items-center gap-3 rounded-[20px] bg-white py-3 pl-4 pr-3 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
+        <p className="min-w-0 flex-1 text-[15px] font-[650] leading-snug">
+          {failed ? 'Setup stopped before it was running' : 'It needs secrets to start'}
+        </p>
+        <Button
+          type="button"
+          data-made-stalled-action=""
+          disabled={busy}
+          onClick={failed ? onRetry : onSetSecrets}
+          variant="pillAccent"
+          size="sm"
+          ink="solid"
+          className="shrink-0 text-[15px] font-semibold disabled:opacity-60"
+        >
+          {failed ? 'Try again' : 'Set secrets'}
+        </Button>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * The made screen's second button: on the first session, on to the tour
+ * ("Invite people later", then "Go to the Homeroom app" once an invite is
+ * out); from Create, to the project itself.
+ */
+export function continueLabel(entry: MakeEntry, sent: boolean, name: string): string {
+  if (entry === 'create') return sent ? `Go to ${name}` : 'Invite people later';
+  return sent ? 'Go to the Homeroom app' : 'Invite people later';
+}
+
 type CommunityMember = { username?: string; display_name?: string | null; source?: string };
 type Community = { member_count?: number; members?: CommunityMember[] } | null;
 
 /**
- * The made screen's line once an invite is out: who has joined (joinedLine),
- * or, before anyone has, "✓ Invite sent."
+ * The made screen's line once the link is out: who has joined (joinedLine),
+ * or, before anyone has, how it went out, "✓ Link shared." or "✓ Link
+ * copied." Never "Invite sent": handing the link to the share sheet is not
+ * a message known to have gone (#4196).
  */
-export function sentLines(joined: string | null): string[] {
-  return [joined || '✓ Invite sent.'];
+export function sentLines(joined: string | null, how: SentHow = 'shared'): string[] {
+  return [joined || (how === 'copied' ? '✓ Link copied.' : '✓ Link shared.')];
 }
 
 /**
@@ -433,18 +688,31 @@ function useCommunity(slug: string, on: boolean): Community {
   return community;
 }
 
-export function MadeScreen({ made, me, onContinue, onOpenChat }: {
+/** The made screen's root, full screen or under the platform header as make.tsx MAKE_ROOT is. */
+export const MADE_ROOT = 'fixed inset-0 z-[9000] flex flex-col overflow-y-auto text-zinc-900 dark:text-zinc-100';
+export const MADE_ROOT_UNDER_HEADER = 'platform-under-header fixed inset-x-0 bottom-0 z-[9000] flex flex-col overflow-y-auto text-zinc-900 dark:text-zinc-100';
+
+export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-session', onSetSecrets, underHeader = false }: {
   made: Made;
   me: string;
-  /** "Invite people later" / "Go to the Homeroom app": `skipped` when nothing went out. */
+  /** "Invite people later" / "Go to …" (continueLabel): `skipped` when nothing went out. */
   onContinue: (skipped: boolean) => void;
   /** Go to chat, on the plan's card: the chat with Homeroom bot, where the plan is answered. */
   onOpenChat: (conversationId: number | null) => void;
+  entry?: MakeEntry;
+  /** Set secrets, on a setup that waits on them: the project's secrets dialog. */
+  onSetSecrets?: () => void;
+  /** From Create, with the platform header showing: below it, with no wordmark bar of its own. */
+  underHeader?: boolean;
 }) {
   const [fv, setFv] = useState<FirstVersion>(null);
   const [appStatus, setAppStatus] = useState<string | null>('creating');
   const [inviting, setInviting] = useState(false);
-  const [sent, setSent] = useState(false);
+  // How the link last went out from the invite sheet, or null.
+  const [sentHow, setSentHow] = useState<SentHow | null>(null);
+  const sent = sentHow !== null;
+  const [retrying, setRetrying] = useState(false);
+  const imported = !!made.imported;
   // Whether a first version has been read as on its way: once it has, a read
   // without one means it is live (or came to something else), and the
   // project is no longer "being made" (makerLine).
@@ -468,38 +736,63 @@ export function MadeScreen({ made, me, onContinue, onOpenChat }: {
     return () => { live = false; window.clearInterval(t); };
   }, [made.slug]);
 
+  // Try again, on a setup that stopped: creation starts over server-side and
+  // the next read finds it creating; until then it says so here.
+  const retry = useCallback(async () => {
+    if (retrying) return;
+    setRetrying(true);
+    try {
+      const res = await fetch(`/api/apps/${encodeURIComponent(made.slug)}/retry`, { method: 'POST', credentials: 'same-origin' });
+      if (res.ok) setAppStatus('creating');
+    } catch { /* still stopped: the card stays, and pressing it again tries again */ }
+    setRetrying(false);
+  }, [made.slug, retrying]);
+
   const community = useCommunity(made.slug, sent);
   const joined = joinedLine(community);
   const plan = waitingPlan(fv);
-  // Not live yet: nothing read, still on its way, or up for approval.
-  const making = !(building && !fv);
+  // A setup that failed or waits on secrets (stalledOf).
+  const stalled = stalledOf(appStatus);
+  // Not live yet: nothing read, still on its way, up for approval, or a
+  // setup that stopped. That last reads no first version either, and is
+  // nothing to try: the card said "Ready to try" over "Setting it up didn't
+  // finish" until it counted here. An import has no first version at all:
+  // it is live once it runs.
+  const making = imported ? appStatus !== 'running' : (!!stalled || !(building && !fv));
 
   const botBuilds = made.conversationId != null;
   // WP-E: "Get a ping when it's ready?" in the Homeroom app, now that there
   // is something to be pinged about (features/dialogs/ping-ask.ts: it shows
   // nothing on the web, or once the phone's answer is decided).
   useEffect(() => { if (botBuilds) askForPingWhileBotBuilds(); }, [botBuilds]);
-  const note = buildNote(botBuilds, !!plan);
+  const note = buildNote(botBuilds, !!plan, stalled, imported);
   const sketch = useSketch(made.slug);
-  const line = buildLine(fv, appStatus, botBuilds);
+  // An import is never sketched: its plain card, not the sketch's frame
+  // while the (absent) sketch is read.
+  const card = !imported && showsCard(sketch.state);
+  const line = buildLine(fv, appStatus, botBuilds, imported);
   // Something is under way: the project being set up, or the bot's build
-  // (not while its plan waits on them: then nothing is).
-  const busy = appStatus === 'creating' || (botBuilds && !(fv && fv.ready) && !plan);
+  // (not while its plan waits on them, nor on a setup that stopped: then
+  // nothing is).
+  const busy = appStatus === 'creating' || (botBuilds && !(fv && fv.ready) && !plan && !stalled);
   const tile = sketch.card?.emoji || made.emoji || made.name.slice(0, 1);
   return (
     <div
       role="dialog"
       aria-labelledby="first-session-made-title"
       data-first-session-made=""
-      className="fixed inset-0 z-[9000] flex flex-col overflow-y-auto text-zinc-900 dark:text-zinc-100"
+      data-make-entry={entry}
+      className={underHeader ? MADE_ROOT_UNDER_HEADER : MADE_ROOT}
       style={{ background: 'var(--home-wallpaper, #f4f2e4)' }}
     >
-      <div className="flex h-[52px] shrink-0 items-center justify-center pt-[env(safe-area-inset-top)]">
-        <Wordmark className="h-6 w-auto text-[color:var(--brand-ink)]" />
-      </div>
+      {underHeader ? null : (
+        <div className="flex h-[52px] shrink-0 items-center justify-center pt-[env(safe-area-inset-top)]">
+          <Wordmark className="h-6 w-auto text-[color:var(--brand-ink)]" />
+        </div>
+      )}
       <div className="mx-auto flex w-full max-w-sm grow flex-col px-4 pb-[max(34px,env(safe-area-inset-bottom))]">
-        {showsCard(sketch.state) ? (
-          <SketchCard made={made} sketch={sketch} line={line} note={note} busy={busy} botBuilds={botBuilds} built={!making || !!(fv && fv.ready)} />
+        {card ? (
+          <SketchCard made={made} sketch={sketch} line={line} note={note} busy={busy} botBuilds={botBuilds && !stalled} built={!making || !!(fv && fv.ready)} />
         ) : (
           <div className="mt-4 flex flex-col items-center rounded-[20px] bg-white px-6 py-7 text-center shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
             <span className="app-icon-tile flex h-20 w-20 items-center justify-center rounded-[22px] text-5xl" aria-hidden="true">{tile}</span>
@@ -513,11 +806,14 @@ export function MadeScreen({ made, me, onContinue, onOpenChat }: {
           </div>
         )}
         {/* Under the project, never above it: the sketch stays where it is when the plan lands. */}
-        {plan ? <PlanWaitsCard name={made.name} onOpenChat={() => onOpenChat(plan.conversationId ?? made.conversationId)} /> : null}
+        {stalled ? (
+          <SetupStoppedCard stalled={stalled} busy={retrying} onRetry={() => { void retry(); }} onSetSecrets={() => onSetSecrets?.()} />
+        ) : null}
+        {plan && !stalled ? <PlanWaitsCard name={made.name} onOpenChat={() => onOpenChat(plan.conversationId ?? made.conversationId)} /> : null}
         <div className="mt-6">
           <p className="text-[17px] font-semibold">{`Invite people to ${made.name}`}</p>
           <p className="mt-0.5 text-[14px] leading-snug text-zinc-500 dark:text-zinc-400">They can follow along and chat with you while it's being built.</p>
-          {sent ? sentLines(joined).map((line) => (
+          {sent ? sentLines(joined, sentHow).map((line) => (
             <p key={line} data-first-session-sent={joined ? 'joined' : ''} className="mt-2 text-[14px] font-semibold text-emerald-700 dark:text-emerald-400">
               {line}
             </p>
@@ -534,7 +830,7 @@ export function MadeScreen({ made, me, onContinue, onOpenChat }: {
             onClick={() => onContinue(!sent)}
             className="flex h-11 w-full items-center justify-center rounded-full bg-white text-[16px] font-semibold text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
           >
-            {sent ? 'Go to the Homeroom app' : 'Invite people later'}
+            {continueLabel(entry, sent, made.name)}
           </button>
         </div>
       </div>
@@ -544,7 +840,7 @@ export function MadeScreen({ made, me, onContinue, onOpenChat }: {
           me={me}
           making={making}
           onClose={() => setInviting(false)}
-          onSent={() => { setSent(true); setInviting(false); }}
+          onSent={(how) => setSentHow(how)}
         />
       ) : null}
     </div>

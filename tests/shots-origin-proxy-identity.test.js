@@ -23,7 +23,7 @@ const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
 const { spawn, execFileSync } = require('node:child_process');
-const { closedPromise, waitForReady, stopProxy } = require('./lib/shots-proxy');
+const { closedPromise, waitForReady, stopProxy, startOnFreePorts } = require('./lib/shots-proxy');
 
 const TOKENS = Object.freeze({
   member: 'member.fixture.jwt',
@@ -36,14 +36,6 @@ async function listen(handler) {
   const server = http.createServer(handler);
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   return { server, origin: `http://127.0.0.1:${server.address().port}` };
-}
-
-async function freePort() {
-  const server = http.createServer();
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const { port } = server.address();
-  await new Promise((resolve) => server.close(resolve));
-  return port;
 }
 
 // Three upstreams that record the identity header each request arrived with:
@@ -62,7 +54,11 @@ async function upstreams(t) {
   return { seen, base: await make('base'), head: await make('head'), hosted: await make('hosted') };
 }
 
-async function startProxy(t, {
+function startProxy(t, options) {
+  return startOnFreePorts((ports) => startProxyOn(t, ports, options));
+}
+
+async function startProxyOn(t, ports, {
   base, head, hosted, platformAssets = '1', withPersonaPorts = true, guestToken = null,
 }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-proxy-identity-'));
@@ -71,10 +67,6 @@ async function startProxy(t, {
   fs.writeFileSync(hostedFile, JSON.stringify({
     version: 2, baseOrigin: base, headOrigin: head, apps: [{ origin: hosted, slug: 'hosted-app' }],
   }));
-  const ports = {
-    member: await freePort(), read_only_admin: await freePort(), full_admin: await freePort(),
-    guest: await freePort(),
-  };
   const proxy = spawn(process.execPath, [path.join(__dirname, '..', 'worker', 'shots-origin-proxy.js')], {
     env: {
       PATH: process.env.PATH,

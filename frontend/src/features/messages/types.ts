@@ -143,8 +143,11 @@ export interface HomeroomBotAction {
   id: string;
   label: string;
   style: 'primary' | 'secondary';
-  /** B7: `preview` opens a change's preview, `vote` casts the person's own Yes, `reply` quotes the card. */
-  type: 'server' | 'open' | 'prompt' | 'preview' | 'vote' | 'reply';
+  /**
+   * B7: `preview` opens a change's preview, `vote` casts the person's own Yes, `reply` quotes the card.
+   * #4231: `invite` opens the invite sheet for the message's project (`appSlug`), in place.
+   */
+  type: 'server' | 'open' | 'prompt' | 'preview' | 'vote' | 'reply' | 'invite';
   target?: string;
   sessionId?: number;
   epoch?: number;
@@ -186,6 +189,10 @@ export interface HomeroomBotJob {
   key: string;
   appSlug: string | null;
   appName: string;
+  /** #4201: the app's own icon, `/app-icons/<id>`, else null. */
+  iconUrl: string | null;
+  /** #4201: the app's emoji icon, for an app with no image; else null. */
+  iconEmoji: string | null;
   issueNumber: number | null;
   title: string | null;
   firstVersion: boolean;
@@ -232,7 +239,10 @@ export interface HomeroomBotWork {
  */
 export type HomeroomBotActivityOutcome =
   | 'question' | 'proposed' | 'live' | 'closed' | 'blocked' | 'build_failed'
-  | 'person' | 'empty' | 'failed' | 'held' | 'stopped' | 'answer' | 'revise';
+  | 'person' | 'empty' | 'failed' | 'held' | 'stopped' | 'answer' | 'revise'
+  // #4242 / #4227: built and being checked before it is offered, built and
+  // needing a person to look, and merged but not live yet.
+  | 'checking' | 'needs_look' | 'going_live';
 
 export interface HomeroomBotActivity {
   messageId: number;
@@ -611,6 +621,12 @@ export interface MessagesSnapshot {
   nextAfter: number | null;
   /** #2387: the list pane folded away on a desktop — single-panel mode. */
   listCollapsed: boolean;
+  /**
+   * #4229: the strip is wider than a phone but too narrow for an open
+   * conversation to keep a readable measure beside the list, so the list
+   * steps aside while one is open and the bar's back arrow returns to it.
+   */
+  listCrowded: boolean;
   /** #2967: the channels outside Your apps shown, under "Show more". */
   showMoreChannels: boolean;
   /**

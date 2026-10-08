@@ -528,7 +528,29 @@ test('the signed-out invite card says what the project is, beside its icon and c
   assert.match(html, /data-landing-invite-description="[^"]*"[^>]*>Who plays when<\/p>/);
   assert.match(html, /4 people are in it/);
   const tile = renderToHtml(createElement(card.MadeForYou, { preview: { ...preview, project: { ...preview.project, picture: null } }, primaryClass: 'x', onJoin() {} }));
-  assert.doesNotMatch(tile, /data-landing-invite-description/, 'the tile carries it already');
-  assert.match(tile, /data-landing-invite-picture="tile"[\s\S]*Who plays when/);
+  // #4203: one hero, the tile, the name and the invitation under them; with
+  // no picture the hero is the tile, and the icon shows once either way.
+  assert.match(tile, /data-landing-invite-picture="tile"[\s\S]*>Arena<\/p>[\s\S]*data-landing-invite-line=""[^>]*>Maya invited you to Arena · 4 people are in it<\/p>[\s\S]*Who plays when/);
+  assert.equal((tile.match(/app-icon-tile/g) || []).length, 1, 'the icon shows once');
+  assert.equal((html.match(/app-icon-tile/g) || []).length, 1, 'the icon shows once beside a picture too');
+  assert.match(html, /data-landing-invite="live"[\s\S]*Maya invited you to Arena[\s\S]*data-landing-invite-picture="illustration"/);
+  assert.doesNotMatch(html, /data-landing-invite-signup|Join Arena/, 'Join is the pinned bar, not in the scroller');
+  const bar = renderToHtml(createElement(card.InviteJoinBar, { preview, primaryClass: 'x', onJoin() {} }));
+  assert.match(bar, /data-landing-invite-join=""[\s\S]*data-landing-invite-signup=""[^>]*>Join Arena<\/a>[\s\S]*data-landing-invite-seen=""[^>]*>Maya will see that you joined\.<\/p>/);
+  assert.match(bar, /padding-bottom:calc\(0\.75rem \+ var\(--platform-safe-bottom, env\(safe-area-inset-bottom, 0px\)\)\)/);
   assert.equal(card.pictureIsTile({ picture: { kind: 'sketch', card: null } }), true);
+});
+
+test('#4203: the invite page pins Join below its scroller, clear of the home indicator', () => {
+  const landing = read('frontend/src/features/auth/landing.tsx');
+  const scroller = landing.indexOf('<div id="auth-landing-scroll"');
+  const cards = landing.indexOf('{madeForYou ? <MadeForYou preview={invite!} /> : null}');
+  const bar = landing.indexOf("<InviteJoinBar preview={invite!} primaryClass={PRIMARY_PILL} onJoin={() => setSheet('join')} />");
+  const viewer = landing.indexOf('<ViewerRegion />');
+  assert.ok(scroller > 0 && cards > scroller, 'the hero scrolls');
+  assert.ok(bar > cards && bar < viewer, 'the bar is the column\'s child after the scroller');
+  assert.match(landing, /\{madeForYou && !openApp \? \(\s+<InviteJoinBar /, 'not over an open app');
+  // The scroller ends above the bar, so its own 34px home-indicator clearance
+  // is the bar's job on an invite.
+  assert.ok(landing.includes("flex min-h-full flex-col ${madeForYou ? 'pb-4' : 'pb-[34px]'}"));
 });
