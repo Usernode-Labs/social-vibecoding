@@ -1535,9 +1535,14 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // read its row after the connectors on #settings/connectors went with it.
   // 732 leaves 148 slots.
   //
+  // 732 → 733: +1 (#4296): the admin console's Unexpected events section,
+  // a new route (#admin/incidents) with its filters, its links and its read
+  // in one selector; the Homeroom bot's check takes the link to it by :has().
+  // 733 leaves 147 slots.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 732);
+  checkCap.assertPinned(DAPP.tests.length, 733);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

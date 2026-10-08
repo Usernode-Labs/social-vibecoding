@@ -1477,6 +1477,10 @@ async function becomeLeader() {
   // MAX_GLOBAL_SESSIONS) nears or reaches its ceiling.
   startPlatformLimitSweeper(config);
 
+  // #4296: a daily digest of errors that should not happen, and an alert
+  // when one kind piles up within an hour, for the full admins.
+  startPlatformIncidentAlertSweeper(config);
+
   // #907: release local coding-agent leases whose machine stopped
   // heartbeating, and fail the turn they were holding.
   startLocalAgentLeaseSweeper(config);
@@ -6205,6 +6209,40 @@ function startPlatformLimitSweeper(config) {
   platformLimitSweeperHandle.unref?.();
 }
 
+// #4296: the unexpected events digest and hourly alert
+// (services/platform-incident-alerts.js). Leader-only, beside the platform
+// limit sweep and on the same pattern; the sweep's own advisory lock and
+// per-admin "already sent" check keep two processes from sending twice.
+let platformIncidentAlertSweeperHandle = null;
+let platformIncidentAlertFirstRunHandle = null;
+
+function startPlatformIncidentAlertSweeper(config) {
+  if (platformIncidentAlertSweeperHandle) return;
+  const pool = getPool(config);
+  const incidentAlerts = require('./src/services/platform-incident-alerts');
+  log.info('server', 'Unexpected events alert sweeper started', {
+    hourlyThreshold: incidentAlerts.HOURLY_THRESHOLD,
+    digestHourUtc: incidentAlerts.DIGEST_HOUR_UTC,
+    intervalMs: incidentAlerts.SWEEP_INTERVAL_MS,
+  });
+  let running = false;
+  const run = async () => {
+    if (lifecycle.isShuttingDown() || running) return;
+    running = true;
+    try {
+      await incidentAlerts.sweep(pool);
+    } catch (err) {
+      log.warn('server', 'Unexpected events alert sweep failed', { err: err.message });
+    } finally {
+      running = false;
+    }
+  };
+  platformIncidentAlertFirstRunHandle = setTimeout(run, 45 * 1000);
+  platformIncidentAlertFirstRunHandle.unref?.();
+  platformIncidentAlertSweeperHandle = setInterval(run, incidentAlerts.SWEEP_INTERVAL_MS);
+  platformIncidentAlertSweeperHandle.unref?.();
+}
+
 // Graceful shutdown: mark drain state so new chats/app-creates/builds get
 // 503'd, wait up to DRAIN_TIMEOUT_MS for in-flight HTTP handlers to
 // finish flushing DB writes, then exit.
@@ -6386,6 +6424,14 @@ async function cleanup() {
   if (platformLimitSweeperHandle) {
     clearInterval(platformLimitSweeperHandle);
     platformLimitSweeperHandle = null;
+  }
+  if (platformIncidentAlertFirstRunHandle) {
+    clearTimeout(platformIncidentAlertFirstRunHandle);
+    platformIncidentAlertFirstRunHandle = null;
+  }
+  if (platformIncidentAlertSweeperHandle) {
+    clearInterval(platformIncidentAlertSweeperHandle);
+    platformIncidentAlertSweeperHandle = null;
   }
   if (governanceApplyTickerHandle) {
     clearInterval(governanceApplyTickerHandle);

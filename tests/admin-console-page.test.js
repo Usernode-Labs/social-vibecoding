@@ -134,6 +134,8 @@ test('the console island imports every admin module, console first', () => {
     // #2684: the Homeroom bot's shadow-mode verdicts and their ratings.
     'admin-homeroom-bot',
     // #3369: Journey, the user journey and the North Star.
+    // #4296: Unexpected events, beside Health & status.
+    'admin-incidents',
     'admin-journey',
     'admin-limits', 'admin-mail', 'admin-merges',
     // #2570: Model costs, where the picker's per-model notes and cost
