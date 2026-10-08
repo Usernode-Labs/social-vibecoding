@@ -115,3 +115,22 @@ test('#22: on a solo project the Yes line is a note, asked of the row\'s own pro
   assert.match(draw(), /Add a line for the group, if you like\./, 'a group keeps its wording');
   assert.match(WORKSHOP, /<NeedsVoteForm\s+row=\{row\}\s+slug=\{slug\}/, 'the sheet hands the form the page\'s project for rows without their own');
 });
+
+// #4313: the sheet's subline, under the vote question, used to say "Nobody
+// has voted yet." on a Just-you change too — as if a group was voting. The
+// line is approval-aware: waiting on you before you answer, and what you did
+// (the facts line's words) once you answer, which a reopen after the swipe
+// can show. Group rows and a Just-you change with votes keep their lines.
+test('#4313: the sheet\'s subline speaks of approval on a Just-you change', () => {
+  const { tallyLine } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
+  const solo = reelRows([{ ...item, yes: 0, no: 0, approve: true }])[0];
+  assert.equal(tallyLine(solo), 'Waiting for your approval.', 'nothing tallied, it waits on you');
+  assert.equal(tallyLine(solo, 'yes'), 'You approved it.');
+  assert.equal(tallyLine(solo, 'no'), 'You didn’t approve it.', 'answered, the sheet says what you did');
+  const group = reelRows([{ ...item, yes: 0, no: 0 }])[0];
+  assert.equal(tallyLine(group), 'Nobody has voted yet.', 'a group change keeps its line');
+  const counted = reelRows([{ ...item, yes: 1, no: 0, approve: true }])[0];
+  assert.equal(tallyLine(counted), '1 yes and 0 no so far.', 'a Just-you change with votes keeps the plain tally');
+  // The sheet passes the viewer's answer on the row through.
+  assert.match(WORKSHOP, /<p className="dev-ws-vote-sub">\{tallyLine\(row, voted\)\}<\/p>/);
+});

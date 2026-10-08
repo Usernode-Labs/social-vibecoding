@@ -259,11 +259,15 @@ test('GET /api/workshop/counts says which votes `needs` counts, in the record\'s
 
   // The demo's counts name the demo feed's cards, by the keys the client
   // builds from those cards, so a swipe in the preview lowers the preview's
-  // numbers as a real one does.
+  // numbers as a real one does. Per project: the feed mixes two demo apps
+  // now (#4313), and each count names only its own rows.
   const seen = loadTsx(SEEN_SRC);
   const reel = loadTsx('frontend/src/features/workshop/needs-reel.tsx');
-  const keys = reel.reelRows(route.DEMO_NEEDS_FEED).map(seen.needsRowKey);
-  const slug = 'staging-demo-your-app';
-  assert.deepEqual(route.DEMO_COUNTS[slug].owed, keys);
-  assert.equal(route.DEMO_COUNTS[slug].needs, keys.length);
+  const rows = reel.reelRows(route.DEMO_NEEDS_FEED);
+  for (const slug of ['staging-demo-your-app', 'staging-demo-emoji-icon']) {
+    const keys = rows.filter((r) => r.app && r.app.slug === slug).map(seen.needsRowKey);
+    assert.ok(keys.length, `${slug} has demo rows`);
+    assert.deepEqual(route.DEMO_COUNTS[slug].owed, keys);
+    assert.equal(route.DEMO_COUNTS[slug].needs, keys.length);
+  }
 });

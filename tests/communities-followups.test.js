@@ -165,6 +165,14 @@ test('#3270: the feed reads the owed populations for member projects only, newes
   assert.equal(merged.length, 1 + route.DEMO_NEEDS_FEED.length);
   assert.ok(route.DEMO_NEEDS_FEED.every((it) => it.id < 0), 'a demo card can never vote on a real proposal');
   assert.ok(route.DEMO_NEEDS_FEED.some((it) => it.kind === 'governance'));
+  // #4313: the approval wording is previewable, too — one made-up Just-you
+  // change, first in the demo feed so the preview opens on its Approve.
+  const approvals = route.DEMO_NEEDS_FEED.filter((it) => it.approve === true);
+  assert.equal(approvals.length, 1, 'exactly one demo row asks for your approval');
+  assert.equal(approvals[0].app.slug, 'staging-demo-emoji-icon', 'and it is the Just-you demo project\'s');
+  assert.equal(route.DEMO_NEEDS_FEED[0], approvals[0], 'first in the feed, so the preview opens on it');
+  const approval = loadTsx('frontend/src/features/workshop/needs-reel.tsx').reelRows(approvals)[0];
+  assert.equal(approval.yes.approve, true, 'the Yes is an approval, as the reel reads it');
 });
 
 test('#3271, #852: the Communities screen\'s header is its switcher, at every width', () => {

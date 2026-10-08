@@ -1421,9 +1421,24 @@ function labelTally(a: { label?: string }): string {
   return m ? m[1] : '';
 }
 
-function tallyLine(row: QueueRow): string {
+/**
+ * The line under the vote question. On a project that is just yours the
+ * change is approved, not voted on (#4270), so an unanswered sheet says it
+ * waits on you rather than that nobody has voted, and once answered it says
+ * what you did — the facts line's words (youAnswered). A group change's
+ * lines are as they were, and a Just-you change that already has votes keeps
+ * the plain tally. `voted` is the viewer's answer on this row, when there is
+ * one. Exported for the render test.
+ */
+export function tallyLine(row: QueueRow, voted?: string | null): string {
   const st = row.card.pill ? row.card.pill.state : null;
   if (!st) {
+    if (approves(row)) {
+      if (voted) return `${youAnswered(row, voted)}.`;
+      const { yes = 0, no = 0 } = row.tally || {};
+      if (!yes && !no) return 'Waiting for your approval.';
+      return `${yes} yes and ${no} no so far.`;
+    }
     if (!row.tally) return '';
     const { yes, no } = row.tally;
     if (!yes && !no) return 'Nobody has voted yet.';
@@ -3118,7 +3133,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
               <div className="dev-ws-sheet-card">
                 <span className="dev-ws-sheet-handle" aria-hidden="true" />
                 <p className="dev-ws-ask-q">{row.ask}</p>
-                <p className="dev-ws-vote-sub">{tallyLine(row)}</p>
+                <p className="dev-ws-vote-sub">{tallyLine(row, voted)}</p>
                 {/* A group decision (a rename, a secret, closing a request)
                     carries no pair here: its votes can apply it on the spot,
                     so it is decided on its own page, which shows the options

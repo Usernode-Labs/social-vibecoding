@@ -97,12 +97,13 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 // Display-only: nothing in the platform reads these back, and strictly a
 // no-op in production.
 const DEMO_COUNTS = {
-  // `owed` names DEMO_NEEDS_FEED's three, below, so a vote swiped past in
-  // the demo feed takes its count off the row, as a real one does (#3526).
+  // `owed` names DEMO_NEEDS_FEED's rows, below — three for this slug and one
+  // for the Just-you demo app (#4313) — so a vote swiped past in the demo
+  // feed takes its count off the row, as a real one does (#3526).
   'staging-demo-your-app': {
     working: 2, needs: 3, owed: ['proposal:-103@0', 'proposal:-104@0', 'governance:-105'],
   },
-  'staging-demo-emoji-icon': { working: 0, needs: 5 },
+  'staging-demo-emoji-icon': { working: 0, needs: 1, owed: ['proposal:-106@0'] },
   'staging-demo-image-icon': { working: 1, needs: 0 },
   'staging-demo-long-name': { working: 4, needs: 1 },
 };
@@ -531,8 +532,19 @@ const DEMO_ITEMS = {
 // tab and the counts beside it tell one story. Negative ids, as there: a
 // vote on one is refused, never cast on a real proposal. They come AFTER
 // the real rows (withDemoNeedsFeed), the same "real rows win" rule the
-// counts and items overlays keep, and the demo slug is in no database.
+// counts and items overlays keep, and the demo slugs are in no database.
+// The first row is a Just-you project's change, `approve` so the sheet asks
+// for your approval rather than a vote — the wording #4313 adds, visible in
+// a staging preview and in the before/after shots. Demo data only: a
+// pretend author, and voting on it does nothing.
 const DEMO_NEEDS_FEED = [
+  {
+    kind: 'proposal', id: -106, title: 'Add a pause button to the game',
+    summary: 'A Pause button in the corner that stops the timer until you press it again.',
+    author: 'staging-demo-you', number: null, epoch: 0, at: '2026-09-25T09:00:00Z', yes: 0, no: 0,
+    approve: true,
+    app: { slug: 'staging-demo-emoji-icon', name: 'Staging demo emoji icon', icon_url: null, icon_emoji: '🎮' },
+  },
   {
     kind: 'proposal', id: -103, title: 'Sort recipes by rating',
     summary: 'Adds a Rating option to the sort menu, highest first, and remembers the choice per person.',
