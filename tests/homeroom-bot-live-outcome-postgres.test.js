@@ -220,7 +220,8 @@ test('a live build always records its outcome, against the full PostgreSQL schem
     for (const p of posts) {
       assert.equal(p.kind, 'build_failed');
       assert.equal(p.sender.id, botUser.id);
-      assert.match(p.text, /^Homeroom bot tried to build this but couldn't finish: the platform restarted while it was building, and the build was lost\./);
+      assert.equal(p.text, 'Homeroom bot couldn\'t finish building this: Homeroom restarted in the middle of the build. '
+        + 'Reply here (or on the GitHub issue) and it will try again.', 'what happened in plain words, and how to start it again');
       assert.deepEqual(p.dm, { reason: bot.ABANDONED_LIVE_REASON }, 'in the requester\'s DM too');
       assert.deepEqual(p.mentions, ['cyrcle_0'], 'whoever filed it is told');
     }
@@ -496,7 +497,66 @@ test('a live build always records its outcome, against the full PostgreSQL schem
     await pool.query('DELETE FROM homeroom_bot_queue');
   });
 
-  // WP1 (#9): a build a restart sent back to be built again is said, once.
+  // The merge-followups workflow machine can run this long after the merge
+  // (a crash, a retry): only what started before the merge was made
+  // unneeded by it. Plans, waiting builds, duplicate proposals and queue rows
+  // made since are new work, and stay.
+  await t.test('a late run, bounded by the merge time, leaves work started after the merge alone', async () => {
+    bot._resetForTests();
+    await pool.query('DELETE FROM homeroom_bot_runs');
+    await pool.query('DELETE FROM homeroom_bot_queue');
+    const merged = await proposalOn(96, 'merged', { mergedAgo: 0 });
+    await pool.query(`UPDATE chat_sessions SET linked_issues = '{96}' WHERE id = $1`, [merged]);
+    const before = new Date(Date.now() - 60 * 60 * 1000);
+    const old = `NOW() - interval '2 hours'`;
+    const plan = async (when) => (await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, awaiting_go_at, created_at)
+       VALUES ($1, 96, 'live', 'ready', NOW(), ${when}) RETURNING id`, [recipebot.id])).rows[0].id;
+    const waitingBuild = async (when) => (await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_note, live_build_waiting_at, created_at)
+       VALUES ($1, 96, 'live', 'ready', 'x', NOW(), ${when}) RETURNING id`, [recipebot.id])).rows[0].id;
+    const oldPlan = await plan(old);
+    const newPlan = await plan('NOW()');
+    const oldBuild = await waitingBuild(old);
+    const newBuild = await waitingBuild('NOW()');
+    const oldDuplicate = await proposalOn(96, 'promoted');
+    await pool.query(`UPDATE chat_sessions SET created_at = ${old} WHERE id = $1`, [oldDuplicate]);
+    const newDuplicate = await proposalOn(96, 'promoted');
+    await pool.query(
+      `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason, enqueued_at)
+       VALUES ($1, 96, 2, 'changed', ${old})`, [recipebot.id]);
+
+    const archived = [];
+    const deps = {
+      before,
+      dm: { async closePlanCards() {} },
+      worker: { async stopTurn() {} },
+      sessionLifecycle: {
+        async archiveSession(args) {
+          archived.push(args.sessionId);
+          await pool.query(`UPDATE chat_sessions SET status = 'archived', archived_at = NOW() WHERE id = $1`, [args.sessionId]);
+          return { archived: true };
+        },
+      },
+    };
+    const out = await bot.noteRequestMerged(pool, { id: merged }, deps);
+    assert.deepEqual(out, { skipped: 2, stopped: 0, withdrawn: 1, dequeued: 1 }, 'the old plan and the old waiting build');
+    assert.equal((await runRow(oldPlan)).build_ok, false);
+    assert.equal((await runRow(newPlan)).build_ok, null, 'a plan made after the merge still waits for Build it');
+    assert.equal((await runRow(oldBuild)).build_ok, false);
+    assert.equal((await runRow(newBuild)).build_ok, null, 'a build queued after the merge still runs');
+    assert.deepEqual(archived, [oldDuplicate]);
+    assert.equal(await statusOf(newDuplicate), 'promoted', 'a proposal made after the merge is not a duplicate of it');
+    // A queue row put there after the merge stays (the old one went).
+    await pool.query(
+      `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason) VALUES ($1, 96, 2, 'changed')`, [recipebot.id]);
+    assert.equal((await bot.noteRequestMerged(pool, { id: merged }, deps)).dequeued, 0);
+    await pool.query('DELETE FROM homeroom_bot_runs');
+    await pool.query('DELETE FROM homeroom_bot_queue');
+  });
+
+  // WP1 (#9): a build a restart sent back to be built again is said, once;
+  // one that carries on from its plan is not (#4210).
   await t.test('a plan a restart interrupted is kept: the build goes on from it, and the request is not planned again', async () => {
     bot._resetForTests();
     await pool.query('DELETE FROM homeroom_bot_runs');
@@ -523,7 +583,20 @@ test('a live build always records its outcome, against the full PostgreSQL schem
     assert.deepEqual(kept, { build_ok: null, build_error: null, build_session_id: null, build_spec_md: PLAN, waiting: true },
       'the same run waits for its build again, with its plan');
     assert.deepEqual(await queueRows(), [], 'not sent back to be triaged and planned again');
-    assert.deepEqual(told, [runId], 'its requester hears once that it started again');
+    // #4210: it is still building, so its requester is told nothing; the
+    // interruption is kept for admins instead.
+    assert.deepEqual(told, [], 'its requester is not told: it carries on');
+    const { rows: incidents } = await pool.query(
+      `SELECT app_id, session_id, metadata FROM events
+        WHERE event_type = 'platform_incident' AND metadata->>'runId' = $1`, [String(runId)],
+    );
+    assert.equal(incidents.length, 1, 'recorded for admins');
+    assert.equal(Number(incidents[0].session_id), Number(sessionId));
+    assert.deepEqual([incidents[0].metadata.kind, Number(incidents[0].metadata.runId), incidents[0].metadata.outcome],
+      ['build_interrupted', Number(runId), 'resumed']);
+    const { recent } = require('../src/services/platform-incidents');
+    const listed = await recent(pool);
+    assert.equal(listed.items.find((i) => i.runId === Number(runId))?.outcome, 'resumed', 'and listed in the console');
 
     // The lane hands it over with its plan, and the build is made from it.
     // What the plan cost, as recovery would have recorded it from the

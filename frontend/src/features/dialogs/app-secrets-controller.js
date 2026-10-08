@@ -38,6 +38,9 @@
 //   row.githubSecret        — an existing row whose name exactly matches
 //                             one of those secrets; annotated rather than
 //                             duplicated.
+
+import { attachReturnKey, pressButton } from '../../lib/return-to-next';
+
 // The island's open/close controller, or null before hydration. Registered by
 // `useDialog('appSecrets')` — see use-dialog.ts. Looked up on every call
 // rather than captured, because the island unregisters on unmount.
@@ -190,7 +193,7 @@ const Secrets = {
     unset: { label: 'Not set', cls: 'bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400' },
     managed: { label: 'Deploy-managed', cls: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300' },
     orphan: { label: 'No longer declared', cls: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300' },
-    proposed: { label: 'Up for vote', cls: 'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300' },
+    proposed: { label: 'Waiting for approval', cls: 'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300' },
   },
 
   // The group heading the server files GitHub-Actions rows under. Kept in
@@ -448,11 +451,11 @@ const Secrets = {
         ${!isGithubRow && s.githubSecret ? `<p class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
           ${alsoGithub(s.githubSecret)}</p>` : ''}
         ${isProposed ? `<p class="text-xs text-violet-700 dark:text-violet-300 mb-2">
-          Not declared yet. A proposal adding it to <code class="text-[0.65rem]">dapp.json</code>
-          is up for vote${s.pending && s.pending.proposedBy
+          Not declared yet. A change adding it to <code class="text-[0.65rem]">dapp.json</code>
+          is waiting for approval${s.pending && s.pending.proposedBy
     ? ` (opened by ${escapeHtml(s.pending.proposedBy)})` : ''}.</p>` : ''}
         ${!isProposed && s.pending ? `<p class="text-xs text-violet-700 dark:text-violet-300 mb-2">
-          Value set · its declaration is up for vote${s.pending.prNumber
+          Value set · its declaration is waiting for approval${s.pending.prNumber
     ? ` (PR #${escapeHtml(String(s.pending.prNumber))})` : ''}.</p>` : ''}
         ${s.state === 'orphan' ? `<p class="text-xs text-amber-800 dark:text-amber-400 mb-2">
           No longer declared in <code class="text-[0.65rem]">dapp.json</code>. Its value is kept so a
@@ -512,7 +515,7 @@ const Secrets = {
     ? escapeHtml(data.declareDisabledReason || 'Unavailable right now.')
     : (canWrite
       ? 'Declares it in dapp.json (a proposal) and stores your value now.'
-      : 'Declaration and value go up for vote together.')}</span>
+      : 'Declaration and value wait for approval together.')}</span>
         </div>`;
       document.getElementById('app-secrets-declare-open')?.addEventListener('click', () => {
         Secrets.declareOpen = true;
@@ -548,17 +551,18 @@ const Secrets = {
           <div>
             <label class="${lbl}" for="decl-key">Key</label>
             <input id="decl-key" class="${input} font-mono" placeholder="MY_NEW_TOKEN"
-              autocapitalize="characters" autocomplete="off" spellcheck="false">
+              autocapitalize="characters" autocomplete="off" spellcheck="false" enterkeyhint="next">
             <p class="${help}">UPPER_SNAKE_CASE: the name your code reads from the environment.</p>
           </div>
           <div>
             <label class="${lbl}" for="decl-description">Description</label>
-            <input id="decl-description" class="${input}" placeholder="What this value is and where to get it">
+            <input id="decl-description" class="${input}" placeholder="What this value is and where to get it"
+              enterkeyhint="next">
           </div>
           <div>
             <label class="${lbl}" for="decl-value">Value</label>
             <input id="decl-value" class="${input} font-mono" placeholder="leave blank to declare only"
-              autocomplete="off" spellcheck="false">
+              autocomplete="off" spellcheck="false" enterkeyhint="next">
             <p class="${help}">${canWrite
     ? 'Stored as soon as you submit. Optional if you give a default below.'
     : 'Held encrypted and stored when the proposal merges. Optional if you give a default below.'}</p>
@@ -575,7 +579,7 @@ const Secrets = {
             rest and never displayed again${isPlatform ? '' : ', and never copied into PR previews'}.</p>
           <div>
             <label class="${lbl}" for="decl-default">Default</label>
-            <input id="decl-default" class="${input} font-mono" placeholder="optional">
+            <input id="decl-default" class="${input} font-mono" placeholder="optional" enterkeyhint="next">
             <p class="${help}">${isPlatform
     ? 'Documents the fallback your code already uses. The platform\'s deploy does not apply it, so set a value above if the variable really needs one.'
     : 'Used at deploy time when no value is stored.'}</p>
@@ -583,13 +587,15 @@ const Secrets = {
           ${isPlatform ? `
           <div>
             <label class="${lbl}" for="decl-group">Group</label>
-            <input id="decl-group" class="${input}" list="decl-group-options" placeholder="General">
+            <input id="decl-group" class="${input}" list="decl-group-options" placeholder="General"
+              enterkeyhint="done">
             <datalist id="decl-group-options">${groups.map((g) => `<option value="${escapeAttr(g)}"></option>`).join('')}</datalist>
             <p class="${help}">The heading this row files under in this panel.</p>
           </div>` : `
           <div>
             <label class="${lbl}" for="decl-staging-default">Staging default</label>
-            <input id="decl-staging-default" class="${input} font-mono" placeholder="optional">
+            <input id="decl-staging-default" class="${input} font-mono" placeholder="optional"
+              enterkeyhint="done">
             <p class="${help}">What PR previews use. A required + private secret needs one (or a
               default), otherwise no preview of this app can boot.</p>
           </div>`}
@@ -604,6 +610,14 @@ const Secrets = {
         </div>
       </div>`;
 
+    // #3907: Return walks the five fields (the checkboxes are stepped over)
+    // and the last one presses the submit button, so a blocked form still
+    // refuses the same way a tap does. The iOS keyboard has no chevrons to
+    // walk them with any more. On the node this render just wrote, so a
+    // re-render never stacks a second listener.
+    attachReturnKey(host.firstElementChild, {
+      submit: () => { pressButton(document.getElementById('app-secrets-declare-submit')); },
+    });
     document.getElementById('app-secrets-declare-cancel')?.addEventListener('click', () => {
       Secrets.declareOpen = false;
       Secrets.setStatus('', '');

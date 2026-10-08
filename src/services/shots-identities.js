@@ -4,7 +4,11 @@
 // read-only administrator, and a full administrator that exists only in the
 // paired disposable databases. Their passwords cannot be used to sign in;
 // short-lived app-scoped iframe JWTs are minted only for a controlled run.
+// A fourth browser, the guest, is not signed in at all (shotsGuestIdentity).
 
+const appAccess = require('./app-access');
+const edgeGate = require('./edge-gate');
+const platformJwt = require('./platform-jwt');
 const visuals = require('./visuals');
 const fixtures = require('./shots-fixtures');
 
@@ -38,4 +42,70 @@ async function mintShotsAuthTokens(pool, appId) {
   };
 }
 
-module.exports = { mintShotsAuthTokens };
+// What the guest browser is to the app it shoots, and the token it carries
+// if any. Homeroom's own copies show a browser with no session their
+// signed-out pages, so it needs nothing. A child app learns of a visitor
+// with no account only from the guest token the production edge adds at a
+// view-public app's own address (services/edge-gate.js); the shots copies
+// have no edge in front of them, so the shots proxy adds one instead. It is
+// minted only where the edge would mint it: the app is view-public by the
+// edge's own lookup and not suspended, app-host sign-in is on, and the
+// platform can sign guests at all. Anywhere else the guest carries no
+// identity, and the app shows it what it shows a signed-out visitor outside
+// Homeroom. The kind is one of 'homeroom', 'guest' (a token), 'private'
+// (view-private, or suspended, where the edge admits nobody) and
+// 'unavailable' (guests are off here, or there is no guest signer).
+async function shotsGuestKind(pool, app, { selfApp = false } = {}) {
+  if (selfApp) return 'homeroom';
+  const visibility = app?.slug ? await appAccess.getHostVisibility(pool, app.slug) : null;
+  if (!visibility || Number(visibility.appId) !== Number(app.id)
+      || visibility.viewPrivate || visibility.suspended) {
+    return 'private';
+  }
+  if (!edgeGate.signinEnabled() || !platformJwt.guestPublicKeyPem()) return 'unavailable';
+  return 'guest';
+}
+
+async function shotsGuestIdentity(pool, app, options = {}) {
+  const kind = await shotsGuestKind(pool, app, options);
+  if (kind !== 'guest') return { kind, token: null };
+  return {
+    kind,
+    token: platformJwt.signGuestToken({ appId: Number(app.id), ttl: platformJwt.CAPTURE_TTL }),
+  };
+}
+
+// Words in a claim that describe a visitor who is not signed in.
+const SIGNED_OUT_WORDS = /\b(?:signed[- ]out|logged[- ]out|not signed in|not logged in|without an account)\b/i;
+
+// What the author should know, when a change is declared, about whose
+// browser the shots agent will use for it. Two declarations kept failing:
+// a guest change on an app whose guests are shown nothing of it (the guest
+// browser only finds the sign-in wall a signed-out visitor gets outside
+// Homeroom), and a claim about signed-out visitors declared for a signed-in
+// persona (that browser cannot sign out). These are warnings, never
+// refusals: a change to the sign-in wall itself is a real guest change.
+async function personaWarnings(pool, app, intent, { selfApp = false } = {}) {
+  const stories = Array.isArray(intent?.stories) ? intent.stories : [];
+  const warnings = [];
+  const guests = stories.filter((story) => story.persona === 'guest').map((story) => story.id);
+  if (guests.length) {
+    const kind = await shotsGuestKind(pool, app, { selfApp });
+    if (kind === 'private' || kind === 'unavailable') {
+      warnings.push(`${guests.join(', ')} ${guests.length > 1 ? 'are' : 'is'} declared for guest, but `
+        + (kind === 'private' ? 'this app is private, so ' : 'guests are not available for this app, so ')
+        + 'a visitor who is not signed in only sees what a signed-out visitor sees outside Homeroom, '
+        + 'usually a sign-in page. If the change is for people who are signed in, declare it again with persona member.');
+    }
+  }
+  const signedOut = stories.filter((story) => story.persona !== 'guest' && SIGNED_OUT_WORDS.test(story.claim || ''))
+    .map((story) => story.id);
+  if (signedOut.length) {
+    warnings.push(`${signedOut.join(', ')} describes a visitor who is not signed in, but is declared for a `
+      + 'signed-in persona, whose browser cannot sign out. If the change is what signed-out visitors see, '
+      + 'declare it again with persona guest.');
+  }
+  return warnings;
+}
+
+module.exports = { mintShotsAuthTokens, shotsGuestKind, shotsGuestIdentity, personaWarnings };

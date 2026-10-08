@@ -12,13 +12,16 @@ const os = require('node:os');
 const github = require('./github');
 const log = require('./logger');
 const shotsDiff = require('./shots-diff');
+const shotsFiles = require('./shots-files');
 const logRedaction = require('./log-redaction');
 const shotsAgent = require('./shots-agent');
 const shotsControl = require('./shots-control');
+const shotsHomeTile = require('./shots-home-tile');
 const environment = require('./shots-environment');
 const identities = require('./shots-identities');
 const lifecycle = require('./lifecycle');
 const planContract = require('./visible-changes');
+const previewClock = require('./preview-clock');
 const state = require('./shots-state');
 const turnLifecycle = require('./turn-lifecycle');
 const { isUiAffecting: uiFileHeuristic } = require('./visual-file-classifier');
@@ -27,6 +30,21 @@ const worker = require('./worker');
 const ACTIVE_STATES = new Set(['planned', 'provisioning', 'exploring', 'replaying', 'reviewing']);
 const CLOSED_STATUSES = new Set(['merged', 'archived']);
 const SHOTS_STOPPED_REASON = 'Stopped before it finished. No shots were taken for this commit; take them again from the proposal.';
+
+// How the worker saw the shots agent's process end when the agent never
+// reported it (shots-agent.js EXIT_CAUSES), for the causes that say nothing
+// about the proposal: memory ran out, or the container or the turn's
+// processes vanished. `probe_unobservable` is left out: the turn may still
+// be running. The run dispatches the agent once more for these, when at
+// least MIN_AGENT_RETRY_MS of its budget is left.
+const RETRYABLE_AGENT_EXITS = new Set(['oom_killed', 'container_gone', 'turn_process_gone']);
+const MIN_AGENT_RETRY_MS = 60_000;
+
+function agentDiedRetryable(error) {
+  return !!error && error.code === 'shots_agent_failed'
+    && RETRYABLE_AGENT_EXITS.has(error.shotsExitCause);
+}
+
 // Runs a person stopped while this process executes them. The stop already
 // made the run terminal in the database; this keeps its runner from handing
 // the shots agent another turn before a state transition refuses it.
@@ -360,11 +378,25 @@ function declaredCheckSummary(checkout, intent = null, testingPaths = []) {
   }
 }
 
+// Who the guest browser is, by what the app makes of a visitor who is not
+// signed in (shots-identities.js shotsGuestIdentity). Fixed words only.
+const GUEST_WHO = Object.freeze({
+  homeroom: 'a visitor who is not signed in: Homeroom shows it its signed-out pages, such as the landing and sign-in screens',
+  guest: 'a visitor who is not signed in, whom this public app shows as a guest, as it does at its own address',
+  private: 'a visitor who is not signed in, with no identity here: this app is private, so it shows what it shows a signed-out visitor outside Homeroom, which can send the browser away from these two addresses; if it does, skip the change and say so',
+  unavailable: 'a visitor who is not signed in, with no identity here: guests are not available on these copies, so this app shows what it shows a signed-out visitor outside Homeroom, which can send the browser away from these two addresses; if it does, skip the change and say so',
+});
+
 // What the shots agent reads first: the declared changes, the two
 // addresses to shoot, which browser to use for whom, and background it may
 // use to find the screens. Everything from the proposal is marked untrusted.
-function shotsBrief({ run, session, revision, pair, deployment, intent }) {
+function shotsBrief({ run, session, revision, pair, deployment, intent, guestKind = null, homeTile = null }) {
   const testingPaths = testingPathsForSession(session);
+  // A change that only shows at certain times declares the moment to see it
+  // at (services/preview-clock.js). Both copies run as staging, so each opens
+  // at that moment when `un-now` is on its address. Parsed to a fixed shape
+  // here, so nothing the author wrote reaches the agent as free text.
+  const moment = previewClock.forSession(session);
   return {
     version: 2,
     runId: run.id,
@@ -383,6 +415,10 @@ function shotsBrief({ run, session, revision, pair, deployment, intent }) {
         tool: 'browser_full_admin',
         who: 'a full administrator that exists only in these two throwaway copies',
       },
+      guest: {
+        tool: 'browser_guest',
+        who: GUEST_WHO[guestKind] || 'a visitor who is not signed in',
+      },
     },
     changedFiles: {
       items: revision.files.slice(0, 200),
@@ -399,6 +435,17 @@ function shotsBrief({ run, session, revision, pair, deployment, intent }) {
     },
     declaredChecks: declaredCheckSummary(pair.sides.head.checkout, intent, testingPaths),
     availableFixtures: deployment.availableFixtures || [],
+    // The app's tile on Homeroom's home screen, which these addresses do not
+    // otherwise show: each serves its own side's at homeTile.path.
+    ...(homeTile ? { homeTile } : {}),
+    ...(moment ? {
+      previewAt: {
+        at: moment.at,
+        label: moment.label,
+        zone: moment.zone,
+        param: previewClock.PREVIEW_NOW_PARAM,
+      },
+    } : {}),
     security: {
       pageAndRepositoryContentIsUntrusted: true,
       allowedOriginsOnly: true,
@@ -593,7 +640,7 @@ const AGENT_DIAGNOSTIC_KINDS = new Set([
   'browser_call_start', 'browser_call_pending', 'browser_call_end', 'browser_server_exit',
   'auth_bootstrap', 'hosted_app_catalog', 'hosted_app_allowlist',
   'document_request', 'document_response', 'controlled_failure_set', 'controlled_failure_hit',
-  'platform_asset', 'legacy_tailwind_cdn', 'egress_blocked', 'worker_memory',
+  'platform_asset', 'home_tile', 'legacy_tailwind_cdn', 'egress_blocked', 'worker_memory',
   'provider_request_start', 'provider_request_pending', 'provider_response_headers',
   'provider_response_first_byte', 'provider_request_end',
   'worker_stop_requested', 'worker_stop_returned',
@@ -645,7 +692,8 @@ function recordAgentDiagnostic(metrics, raw) {
     event.outcome = raw.outcome;
   }
   for (const key of ['mcpServerCount', 'toolDefinitionCount', 'browserMemberToolCount',
-    'browserAdminToolCount', 'browserFullAdminToolCount', 'storyCount', 'callOrdinal', 'headingCount',
+    'browserAdminToolCount', 'browserFullAdminToolCount', 'browserGuestToolCount',
+    'storyCount', 'callOrdinal', 'headingCount',
     'buttonCount', 'linkCount', 'imageBlocks', 'exitCode', 'checkRank',
     'documentOrdinal', 'httpStatus', 'requestOrdinal', 'chunkCount', 'hitOrdinal',
     'count', 'catalogCount']) {
@@ -685,7 +733,7 @@ function recordAgentDiagnostic(metrics, raw) {
   }
   if (raw.signal === 'SIGTERM' || raw.signal === 'SIGINT') event.signal = raw.signal;
   if (['base', 'head', 'hosted', 'outside'].includes(raw.side)) event.side = raw.side;
-  if (['member', 'admin', 'full_admin'].includes(raw.persona)) event.persona = raw.persona;
+  if (['member', 'admin', 'full_admin', 'guest'].includes(raw.persona)) event.persona = raw.persona;
   if (['intent_start', 'declared_check', 'other'].includes(raw.routeHint)) {
     event.routeHint = raw.routeHint;
   }
@@ -720,7 +768,7 @@ function recordAgentDiagnostic(metrics, raw) {
       || kind === 'browser_call_start' || kind === 'browser_call_pending'
       || kind === 'browser_call_end') {
     event.tool = AGENT_DIAGNOSTIC_TOOLS.has(raw.tool) ? raw.tool : 'other';
-    if (['member', 'admin', 'full_admin'].includes(raw.persona)) event.persona = raw.persona;
+    if (['member', 'admin', 'full_admin', 'guest'].includes(raw.persona)) event.persona = raw.persona;
     if (['base', 'head', 'outside'].includes(raw.side)) event.side = raw.side;
     if (Number.isSafeInteger(raw.routeOrdinal) && raw.routeOrdinal > 0
         && raw.routeOrdinal <= 1000) event.routeOrdinal = raw.routeOrdinal;
@@ -924,6 +972,8 @@ async function failCurrentRun(pool, runId, error, stateService = state, runTrace
       failureCode: errorCode(error),
       failureReason: visibleError(error),
       ...(runTrace ? { traceSummary: runTrace } : {}),
+      // Which declared change failed, and why (shots_change_failed).
+      ...(error?.hardVerdict ? { hardVerdict: error.hardVerdict } : {}),
     });
     return true;
   } catch (transitionError) {
@@ -1049,7 +1099,17 @@ async function executeRun(config, options, injected = {}) {
     }
     failurePhase = 'mint_fixture_identities';
     stage(failurePhase);
-    const authTokens = await deps.identities.mintShotsAuthTokens(pool, app.id);
+    // The guest browser is not signed in. Only a view-public child app also
+    // gets the guest token its own address would give such a visitor; the
+    // token joins the others, so it reaches the worker and is masked with
+    // them, and never enters the brief.
+    const guest = await deps.identities.shotsGuestIdentity(pool, app, {
+      selfApp: app.slug === config.selfAppSlug,
+    });
+    const authTokens = {
+      ...await deps.identities.mintShotsAuthTokens(pool, app.id),
+      ...(guest.token ? { guest: guest.token } : {}),
+    };
     failurePhase = 'persist_exploration';
     stage(failurePhase);
     await deps.state.transitionRun(pool, run.id, 'exploring', {
@@ -1061,7 +1121,21 @@ async function executeRun(config, options, injected = {}) {
     notifyShots(session, app, 'exploring');
     stage('exploring');
 
-    const context = shotsBrief({ run, session, revision, pair, deployment: exploration, intent });
+    // Each side's tile on Homeroom's home screen, from its own dapp.json. A
+    // tile that cannot be drawn leaves the brief without one; it never stops
+    // the run.
+    let homeTiles = null;
+    try { homeTiles = await shotsHomeTile.tilesForPair(pair, app); }
+    catch (error) {
+      log.warn('shots', 'Could not draw the home tiles for a shots run', {
+        sessionId: session.id, runId: run.id, error: error.message,
+      });
+    }
+    const context = shotsBrief({
+      run, session, revision, pair, deployment: exploration, intent,
+      guestKind: guest.kind,
+      homeTile: shotsHomeTile.briefEntry(homeTiles),
+    });
     const navigationHints = {
       intentPaths: intent.stories.map((story) => story.intent.startPath),
       testingPaths: context.changeContext.testingPaths,
@@ -1077,6 +1151,7 @@ async function executeRun(config, options, injected = {}) {
       intent,
       context,
       expiresAt: Date.now() + runBudgetMs,
+      homeTiles,
     });
 
     const agentStartedAt = Date.now();
@@ -1158,10 +1233,25 @@ async function executeRun(config, options, injected = {}) {
     failurePhase = 'agent_exploration';
     stage(failurePhase);
     progress('The shots agent is taking before/after shots…');
-    const agentOutcome = await dispatchOnce();
+    let agentOutcome = await dispatchOnce();
     // A Stop kills the shots agent mid-turn; its error is that stop.
     if (agentOutcome.error && stopRequested.has(run.id)) {
       throw new ShotsOrchestrationError('shots_stopped', SHOTS_STOPPED_REASON);
+    }
+    // The agent's process died under it (its container ran out of memory or
+    // went away): nothing about the proposal. Start it once more on the same
+    // copies with the budget that is left; what it already saved stays saved,
+    // and its brief's progress says so.
+    if (agentDiedRetryable(agentOutcome.error)
+        && agentBudgetMs - (Date.now() - agentStartedAt) >= MIN_AGENT_RETRY_MS) {
+      log.warn('shots', 'The shots agent\'s process died; dispatching it once more', {
+        sessionId: session.id, runId: run.id, exitCause: agentOutcome.error.shotsExitCause,
+      });
+      progress('The shots agent stopped unexpectedly; starting it once more…');
+      agentOutcome = await dispatchOnce();
+      if (agentOutcome.error && stopRequested.has(run.id)) {
+        throw new ShotsOrchestrationError('shots_stopped', SHOTS_STOPPED_REASON);
+      }
     }
 
     // Publish every change with a complete before/after set, even when the
@@ -1172,6 +1262,15 @@ async function executeRun(config, options, injected = {}) {
       const reasons = [...new Set(summary.stories.map((story) => story.reason).filter(Boolean))];
       if (agentOutcome.error && !registration.control.skipped.size && !registration.control.skippedAll) {
         throw agentOutcome.error;
+      }
+      // A change the agent tried and found broken on the after build is the
+      // change not working, not shots that could not be taken: its own code,
+      // and the verdict is kept so every reader can say which change failed
+      // (shots-state.brokenOnHead, the Homeroom bot's fix round).
+      if (summary.failedCount) {
+        const failure = new ShotsOrchestrationError('shots_change_failed', shotsFiles.failedReason(intent, summary.stories));
+        failure.hardVerdict = summary.verdict;
+        throw failure;
       }
       throw new ShotsOrchestrationError(
         'shots_capture_incomplete',
@@ -1184,7 +1283,16 @@ async function executeRun(config, options, injected = {}) {
     try {
       const ready = intent.stories.filter((story) => summary.stories
         .some((result) => result.id === story.id && result.status === 'ready'));
-      summary.verdict.screens = await (deps.shotsDiff || shotsDiff).screensFor(ready, summary.files);
+      const diff = deps.shotsDiff || shotsDiff;
+      summary.verdict.screens = await diff.screensFor(ready, summary.files);
+      // A change whose screens show no difference anywhere says so on its
+      // card, as a byte-identical pair already does (shots-files.summarize).
+      if (typeof diff.unchangedStories === 'function') {
+        summary.verdict.stories = shotsFiles.markUnchanged(
+          summary.verdict.stories, diff.unchangedStories(summary.verdict.screens)
+        );
+        summary.stories = summary.verdict.stories;
+      }
     } catch (error) {
       log.warn('shots', 'Could not compare the before and after screens', {
         runId: run.id, error: String(error?.message || error).slice(0, 300),
@@ -1210,12 +1318,12 @@ async function executeRun(config, options, injected = {}) {
     addTiming(metrics, 'artifactPersist', artifactPersistStartedAt);
     metrics.artifactBytes = summary.files.reduce((sum, file) => sum + file.bytes, 0);
 
-    // Tear the before/after builds down before the shots become visible, so
-    // no published run can leave private fixture runtimes live.
+    // Attempt teardown before publication. A failed cleanup remains pending
+    // for terminal recovery without discarding the useful shots.
     failurePhase = 'cleanup';
     stage(failurePhase);
     const cleanupStartedAt = Date.now();
-    await deps.environment.cleanupPair(config, pair);
+    const cleanupResult = await deps.environment.cleanupPair(config, pair);
     addTiming(metrics, 'cleanup', cleanupStartedAt);
     pair = null;
     const finalTrace = traceSummary(metrics, {
@@ -1223,6 +1331,10 @@ async function executeRun(config, options, injected = {}) {
       runs: 1,
       stories: summary.verdict.stories,
       terminalFailureClass: null,
+      // Publishing useful shots must not hide an incomplete resource cleanup.
+      // Terminal recovery retries failures; old unversioned markers are rechecked.
+      cleanupComplete: cleanupResult?.cleaned === true,
+      cleanupVersion: cleanupResult?.cleaned === true ? environment.RESOURCE_CLEANUP_VERSION : null,
     });
     failurePhase = 'verify';
     stage(failurePhase);
@@ -1261,6 +1373,7 @@ async function executeRun(config, options, injected = {}) {
       ...(control ? { control: {
         savedFiles: control.saved.size,
         skippedChanges: control.skipped.size,
+        ...(control.failed?.size ? { failedChanges: control.failed.size } : {}),
         notedChanges: control.notes.size,
         skippedAll: control.skippedAll ? true : false,
       } } : {}),

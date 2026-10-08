@@ -889,6 +889,9 @@ const Home = {
         hint: Home.CREATE_DISABLED_HINT,
         placement: flows ? null : { ...HomeLayout.trailingCell(placed, cols), w: 1, h: 1 },
       };
+      // A private member makes no apps until they are let in off the
+      // waitlist (their Home's waitlist card says so), so no tile at all.
+      if (App.user?.privateMember) create = null;
     }
 
     // The search view is a flat, transient list — it must not inherit the
@@ -2124,7 +2127,7 @@ const Home = {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || `HTTP ${res.status}`);
       }
-      PlatformUI.toast(desired ? 'Added to Shortcuts' : 'Removed from Shortcuts');
+      PlatformUI.toast(desired ? 'Added to My apps' : 'Removed from My apps');
       if (!desired) await Home._offerLeaveAfterUnpin(app);
     } catch (err) {
       app.is_favorited = prev.is_favorited;
@@ -2180,6 +2183,16 @@ const Home = {
   // are afraid to touch. The creator is never offered it: the server refuses
   // (409) and the confirm would be a dead end.
   //
+  // A WRITE THAT LANDS SAYS SO on `document`, as the tour's done does
+  // (`sv:tour-done`): `sv:membership-changed`, with `{ slug, joined }`. The
+  // flags above keep the grid and Discover's pill in step, but Home's
+  // Challenges block holds a copy of what the server counted, for a minute
+  // (./home-panels.js), and a join changes it: the server counts "Join a
+  // community" before it answers (challengeScorer.scoreOnJoin). The block
+  // listens and reads again, so the challenge ticks on Home as it does on
+  // the Challenges tab, which reads afresh each time it opens. A leave says
+  // so the same way. A refused write says nothing: nothing changed.
+  //
   // Resolves true when the membership is now `desired`, false otherwise.
   async setMembership(slug, desired, onChange, opts = {}) {
     const known = (list) => (Array.isArray(list) ? list : []).find((a) => a && a.slug === slug);
@@ -2221,15 +2234,20 @@ const Home = {
       if (typeof onChange === 'function') onChange();
     }
     try {
-      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/membership`, {
+      // Joining a public community asks a provisional handle for a username
+      // first (username-first-run.js publicRetry).
+      const write = () => fetch(`/api/apps/${encodeURIComponent(slug)}/membership`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ joined: desired }),
       });
+      const retry = typeof window !== 'undefined' ? window.UsernameFirstRun?.publicRetry : null;
+      const res = desired && retry ? await retry(write) : await write();
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       if (app && Number.isFinite(Number(data.member_count))) app.member_count = Number(data.member_count);
       PlatformUI.toast(desired ? `Joined ${name}` : `Left ${name}`);
+      Home._announceMembership(slug, desired);
       if (!app) {
         await Home.load();
         if (typeof onChange === 'function') onChange();
@@ -2243,6 +2261,20 @@ const Home = {
       if (typeof onChange === 'function') onChange();
       return false;
     }
+  },
+
+  // The event setMembership's landed write dispatches (see there). Never
+  // throws: the write has landed, and a document without CustomEvent (the
+  // server-side prerender, a test's stub) only means nobody is listening.
+  MEMBERSHIP_EVENT: 'sv:membership-changed',
+  _announceMembership(slug, joined) {
+    try {
+      if (typeof document === 'undefined' || typeof document.dispatchEvent !== 'function') return;
+      if (typeof CustomEvent !== 'function') return;
+      document.dispatchEvent(new CustomEvent(Home.MEMBERSHIP_EVENT, {
+        detail: { slug, joined: !!joined },
+      }));
+    } catch (_) { /* a listener's trouble is not the write's */ }
   },
 
   // The slow path for a slug neither app list carries — see toggleAdded.
@@ -2261,7 +2293,7 @@ const Home = {
         throw new Error(data.error || `HTTP ${res.status}`);
       }
       if (desired) Home._revealSlug = slug;
-      PlatformUI.toast(desired ? 'Added to Shortcuts' : 'Removed from Shortcuts');
+      PlatformUI.toast(desired ? 'Added to My apps' : 'Removed from My apps');
     } catch (err) {
       Home._revealSlug = null;
       PlatformUI.toast(`Update failed: ${err.message}`);
@@ -2466,9 +2498,9 @@ const Home = {
           ? 'bg-emerald-500 border-emerald-500 text-white'
           : 'bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-600 text-violet-700 dark:text-violet-400 hover:border-violet-400'
       }" data-slug="${app.slug}" data-added="${isAdded}" title="${
-        isAdded ? 'Added. Tap to remove from Shortcuts' : 'Add to Shortcuts'
+        isAdded ? 'Added. Tap to remove from My apps' : 'Add to My apps'
       }" aria-label="${
-        isAdded ? `Remove ${escapeHtml(app.name)} from Shortcuts` : `Add ${escapeHtml(app.name)} to Shortcuts`
+        isAdded ? `Remove ${escapeHtml(app.name)} from My apps` : `Add ${escapeHtml(app.name)} to My apps`
       }" aria-pressed="${isAdded}">${
         isAdded
           ? '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>'
@@ -2497,14 +2529,14 @@ const Home = {
       : '';
 
     // Fork lineage tag: a small amber ⑂ badge on the icon's bottom-left
-    // corner (opposite the hamburger badge) marking this tile as a fork.
-    // The full "Forked from <name>" label lives in the app-view header;
+    // corner (opposite the hamburger badge) marking this tile as a remix.
+    // The full "Remixed from <name>" label lives on the app's own page;
     // here it's glyph-only with the resolved live name (or "<deleted>")
     // in the tooltip. `forked_from` is null for non-forks.
     const forkName = app.forked_from && typeof app.forked_from === 'object'
       ? (app.forked_from.name || '<deleted>') : null;
     const forkTagHtml = forkName
-      ? `<span class="fork-tag absolute -bottom-1 -left-1 w-5 h-5 flex items-center justify-center rounded-full bg-amber-500 text-white text-xs font-bold shadow-sm" title="Forked from ${escapeHtml(forkName)}" aria-label="Forked from ${escapeHtml(forkName)}">⑂</span>`
+      ? `<span class="fork-tag absolute -bottom-1 -left-1 w-5 h-5 flex items-center justify-center rounded-full bg-amber-500 text-white text-xs font-bold shadow-sm" title="Remixed from ${escapeHtml(forkName)}" aria-label="Remixed from ${escapeHtml(forkName)}">⑂</span>`
       : '';
 
     const icon = Home.iconTileFor(app);
@@ -3594,16 +3626,16 @@ const Home = {
     if (app.is_collaborator) {
       items.push({
         key: 'favorite',
-        label: app.your_apps_hidden ? 'Add to Shortcuts' : 'Remove from Shortcuts',
+        label: app.your_apps_hidden ? 'Add to My apps' : 'Remove from My apps',
         title: app.your_apps_hidden
-          ? 'Show this app in Shortcuts again. You keep your builder access either way.'
-          : 'Hide this app from Shortcuts. It stays live and you keep your builder access.',
+          ? 'Show this app in My apps again. You keep your builder access either way.'
+          : 'Hide this app from My apps. It stays live and you keep your builder access.',
         run: () => Home._menuToggleFavorite(app, !!app.your_apps_hidden),
       });
     } else {
       items.push({
         key: 'favorite',
-        label: app.is_favorited ? 'Remove from Shortcuts' : 'Add to Shortcuts',
+        label: app.is_favorited ? 'Remove from My apps' : 'Add to My apps',
         run: () => Home._menuToggleFavorite(app, !app.is_favorited),
       });
     }
@@ -3730,16 +3762,19 @@ const Home = {
         run: (itemEl) => Home._menuCheckUpdates(app, itemEl),
       });
     }
-    // Fork: available to anyone who can see the app (every card in this
-    // list is already visibility-filtered server-side, so presence here
-    // implies view access). Hidden for the platform self-app, which has
-    // no per-app repo/DB/container to clone. Reuses the same fork dialog
-    // + POST /api/apps/:slug/fork flow as the app-view header action.
+    // Fork, which people see as "Remix": available to anyone who can see
+    // the app (every card in this list is already visibility-filtered
+    // server-side, so presence here implies view access). Hidden for the
+    // platform self-app, which has no per-app repo/DB/container to copy.
+    // Reuses the same dialog + POST /api/apps/:slug/fork flow as the
+    // Workshop "+" menu. `sub` is the line a row with room for one shows
+    // under the label (About, Discover); the popover shows it as a tooltip.
     if (!app.self_hosted && typeof AppView !== 'undefined' && AppView.promptFork) {
       items.push({
         key: 'fork',
-        label: 'Fork this app',
-        title: 'Create your own independent copy of this app',
+        label: 'Remix',
+        sub: 'Make your own copy',
+        title: 'Make your own copy',
         run: () => AppView.promptFork({ slug: app.slug, name: app.name }),
       });
     }

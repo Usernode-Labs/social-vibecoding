@@ -10,6 +10,7 @@ const appAccess = require('./app-access');
 const communities = require('./communities');
 const attachmentsSvc = require('./attachments');
 const appChat = require('./app-chat');
+const groupChannelNotify = require('./group-channel-notify');
 const wsBus = require('./ws-bus');
 
 // #328: server-side cap on a single chat message body. Must match the
@@ -80,6 +81,18 @@ function _onBusMessage({ kind, routing, data, oversize }) {
   }
 }
 
+// #4177: the bus listener has just been subscribed again, so whatever other
+// instances published while it was down never reached this instance's sockets
+// (services/ws-bus.js `_listening`). Every one of them gets the nudge an
+// oversize payload becomes: the events socket answers it with
+// `App.resyncCurrentView`, a chat room with `GroupChat.resyncLoaded`. It says
+// only "re-read", so it leaks nothing to anyone in any room.
+function _onBusListening() {
+  const hint = { type: 'resync_hint' };
+  deliverGlobal(hint);
+  for (const appId of rooms.keys()) deliverToRoom(appId, hint);
+}
+
 // The Homeroom bot follows issue activity. Best-effort by construction: the
 // event has already been delivered, and a bot that fails to hear it is
 // caught up by its reconcile sweep.
@@ -114,6 +127,119 @@ function connectedUserIds() {
     .flatMap(clients => [...clients].map(client => Number(client.user.id))))];
 }
 
+// ── How fast one person may write over the chat socket ─────────────────
+//
+// The REST twins are limited (POST and DELETE /api/apps/:slug/messages
+// mount groupChatWriteLimiter, middleware/rate-limits.js), and the socket
+// used to be the open door beside them: every frame ran the live-account
+// query and handleMessage, so a script could post, react (each reaction can
+// notify the author) or delete as fast as it could send. attach() now runs
+// admitSocketFrame on each parsed frame BEFORE any of that.
+//
+// The check lives here and not in handleMessage on purpose: the REST twins
+// call handleMessage behind their own limiter, and the Homeroom bot's relays
+// (homeroom-bot-dm.js) call it on a person's behalf. Counting either again
+// would charge one message twice.
+//
+// Budgets per person (user.id, across all their sockets), in one-minute
+// windows that start at the first frame, like express-rate-limit's store:
+//   - chat, edit and delete share 60, the REST twins' groupChatWriteLimiter;
+//   - react has 120, the size of conversationReactionLimiter;
+//   - typing has its own 120. The composer sends at most one every two
+//     seconds, so only a script reaches it, and over it the frame is
+//     dropped without a word: nobody needs telling that a typing dot was
+//     not shown.
+// In process, which is exact at the one replica the platform ships with; at
+// several, each pod counts its own sockets. The Postgres token bucket is not
+// worth a round trip per typing frame.
+const SOCKET_RATE_WINDOW_MS = 60 * 1000;
+const SOCKET_RATE_BUDGETS = Object.freeze({
+  chat: Object.freeze({ bucket: 'write', max: 60 }),
+  edit: Object.freeze({ bucket: 'write', max: 60 }),
+  delete: Object.freeze({ bucket: 'write', max: 60 }),
+  react: Object.freeze({ bucket: 'react', max: 120 }),
+  typing: Object.freeze({ bucket: 'typing', max: 120, silent: true }),
+});
+const socketRateWindows = new Map(); // `${bucket}:${userId}` -> { used, resetAt, logged }
+let socketRateSweepAt = 0;
+
+// "in 12 seconds", "in 1 second", or "in a moment" when there is no number.
+// public/js/group-chat.js words its toast the same way.
+function socketRetryPhrase(seconds) {
+  const n = Number(seconds);
+  if (!Number.isFinite(n) || n <= 0) return 'in a moment';
+  const whole = Math.ceil(n);
+  return `in ${whole} ${whole === 1 ? 'second' : 'seconds'}`;
+}
+
+// Spend one frame of `type` from `userId`'s budget. A type with no budget
+// (and a frame with no sender) always passes. Over the budget, nothing is
+// spent and the answer says how long until the window resets.
+function takeSocketRate(userId, type, now = Date.now()) {
+  const budget = Object.prototype.hasOwnProperty.call(SOCKET_RATE_BUDGETS, type)
+    ? SOCKET_RATE_BUDGETS[type] : null;
+  if (!budget || userId == null) return { ok: true };
+  // Forget finished windows once a window, so the map holds only the people
+  // who wrote in the last minute.
+  if (now >= socketRateSweepAt) {
+    for (const [key, win] of socketRateWindows) {
+      if (win.resetAt <= now) socketRateWindows.delete(key);
+    }
+    socketRateSweepAt = now + SOCKET_RATE_WINDOW_MS;
+  }
+  const key = `${budget.bucket}:${userId}`;
+  let win = socketRateWindows.get(key);
+  if (!win || win.resetAt <= now) {
+    win = { used: 0, resetAt: now + SOCKET_RATE_WINDOW_MS, logged: false };
+    socketRateWindows.set(key, win);
+  }
+  if (win.used >= budget.max) {
+    const firstRefusal = !win.logged;
+    win.logged = true;
+    return {
+      ok: false,
+      bucket: budget.bucket,
+      silent: !!budget.silent,
+      firstRefusal,
+      retryAfterSeconds: Math.max(1, Math.ceil((win.resetAt - now) / 1000)),
+    };
+  }
+  win.used += 1;
+  return { ok: true };
+}
+
+// The frame check attach() runs before handleMessage. True lets the frame
+// through; false means it was refused, and the sender has been told when
+// there is something to tell: a delete gets the `delete_error` its composer
+// already rolls back on, and chat, edit and react get `rate_limited`
+// carrying the refused frame as `retry`, like `join_required` does. Only the
+// sending socket hears about it; nothing is broadcast.
+function admitSocketFrame(client, msg, now = Date.now()) {
+  const type = msg && typeof msg === 'object' ? msg.type : null;
+  const userId = client && client.user ? client.user.id : null;
+  const verdict = takeSocketRate(userId, type, now);
+  if (verdict.ok) return true;
+  // One line per person and window, not one per refused frame: a flood
+  // would otherwise write the log as fast as it writes the socket.
+  if (verdict.firstRefusal) {
+    log.warn('ws', 'Throttled', { name: `ws-${verdict.bucket}`, userId, appId: client.appId, type });
+  }
+  if (verdict.silent) return false;
+  const { retryAfterSeconds } = verdict;
+  const frame = type === 'delete'
+    ? { type: 'delete_error', id: appChat.positiveInt(msg.id), code: 'rate_limited', retryAfterSeconds }
+    : {
+      type: 'rate_limited',
+      retryAfterSeconds,
+      error: `You're sending messages too fast. Try again ${socketRetryPhrase(retryAfterSeconds)}.`,
+      retry: msg,
+    };
+  try {
+    if (client.ws && client.ws.readyState === 1) client.ws.send(JSON.stringify(frame));
+  } catch { /* a closed socket has nobody to tell */ }
+  return false;
+}
+
 function attach(server, config) {
   const pool = getPool(config);
   // Also reconcile after a missed NOTIFY or reconnect. This includes HTTP
@@ -133,6 +259,7 @@ function attach(server, config) {
     pool,
     connectionString: config.databaseUrl,
     onMessage: _onBusMessage,
+    onListening: _onBusListening,
   });
 
   wss = new WebSocketServer({ noServer: true });
@@ -231,9 +358,12 @@ function attach(server, config) {
 
     ws.on('message', async (raw) => {
       try {
+        const msg = JSON.parse(raw);
+        // The rate check comes first, so a frame over the budget costs no
+        // query at all (see admitSocketFrame).
+        if (!admitSocketFrame(client, msg)) return;
         const live = await pool.query('SELECT id FROM users WHERE id = $1 AND anonymised_at IS NULL', [user.id]);
         if (!live.rows.length) { disconnectUser(user.id); return; }
-        const msg = JSON.parse(raw);
         await handleMessage(pool, client, msg);
       } catch (err) {
         log.warn('ws', 'Invalid message', { err: err.message });
@@ -882,6 +1012,24 @@ async function handleMessage(pool, client, msg) {
       };
 
       await broadcastFromSender(pool, client.appId, outMsg, client.user.id);
+      // B9: a message in the main stream that mentions Homeroom bot asks it
+      // for something (services/homeroom-bot-chat.js). Not awaited: the read
+      // takes a moment, and the room has the message already. Never an edit
+      // (that is chat_edit), and never a connector's post.
+      if (!thread) {
+        void require('./homeroom-bot-chat').noteChatMessage(pool, null, {
+          appId: client.appId, userId: client.user.id, messageId: rows[0].id, content, thread, postedVia,
+        });
+      }
+      // WP-E: somebody an invite brought, writing here for the first time:
+      // the link's maker hears they said hi (services/invite-activity.js).
+      // Not awaited here; the small-group ring below waits for it, so the
+      // maker is not told about the same message twice. It never throws.
+      const hello = postedVia !== 'agent'
+        ? require('./invite-activity').noteFirstMessage(pool, {
+          appId: client.appId, userId: client.user.id, chatMessageId: rows[0].id,
+        })
+        : null;
       // A person answering on an issue's thread is exactly what the Homeroom
       // bot waits for; a system row (a claim, a bounty) is not a message.
       if (thread && thread.type === 'issue') noteIssueActivityForBot(client.appId, thread.ref, 'thread');
@@ -997,6 +1145,29 @@ async function handleMessage(pool, client, msg) {
         log.warn('ws', 'mention notify failed', { err: err.message });
       }
 
+      // A small private group's discussion is its group chat: a person's
+      // message in the main stream reaches the rest of the group, one row
+      // per discussion that folds the next ones in
+      // (services/group-channel-notify.js). Whoever this message already
+      // reached above, or as the invite maker's "said hi", is not told
+      // twice. Never a connector's post.
+      if (!thread && postedVia !== 'agent') {
+        try {
+          const said = hello ? await hello : null;
+          if (said?.row && Number(said.row.chat_message_id) === Number(rows[0].id)) {
+            directlyNotified.add(Number(said.row.user_id));
+          }
+          await groupChannelNotify.notifyChannelMessage(pool, {
+            appId: client.appId,
+            messageId: rows[0].id,
+            senderId: client.user.id,
+            excludeUserIds: [...directlyNotified],
+          });
+        } catch (err) {
+          log.warn('ws', 'group channel notify failed', { appId: client.appId, err: err.message });
+        }
+      }
+
       // #2387: a reply in a reply thread pings the root's author and the
       // earlier repliers ('thread_reply'), minus the sender and anybody the
       // two blocks above already reached — a mention wins.
@@ -1023,9 +1194,23 @@ async function handleMessage(pool, client, msg) {
       // cleared, fan out notifications_changed so the sender's bell badge +
       // other tabs (and their chat dots) re-sync.
       try {
-        const cleared = await notifications.markReadForAction(
+        let cleared = await notifications.markReadForAction(
           pool, client.user.id, 'message_sent', client.appId
         );
+        // Writing in the main stream is reading it to here, so this
+        // person's own small-group discussion row is read too. Its own
+        // guard: a failure here must not cost the clear above its re-sync.
+        if (!thread) {
+          try {
+            cleared += await groupChannelNotify.markChannelRead(
+              pool, client.user.id, client.appId, rows[0].id
+            );
+          } catch (err) {
+            log.warn('ws', 'discussion notification clear failed', {
+              appId: client.appId, userId: client.user.id, err: err.message,
+            });
+          }
+        }
         if (cleared > 0) {
           pushNotificationToUser(client.user.id, { type: 'notifications_changed' });
         }
@@ -1397,6 +1582,11 @@ async function sendSystemMessage(pool, appId, content, msgType = 'system', metad
  * `msgType` may also be 'spec_share': the bot's spec, drawn as the same spec
  * card a person's "Share to group" posts (metadata.specShare), with the
  * card's summary line as its content. Nothing else.
+ *
+ * services/request-specs.js posts a PERSON's spec card on a request through
+ * this too, as that person: the same thread card, and it should not wake the
+ * bot either. Its route has already applied the membership and collaborator
+ * gates this function skips.
  */
 const BOT_MESSAGE_TYPES = new Set(['message', 'spec_share']);
 async function sendBotMessage(pool, appId, { user, content, metadata = null, thread = null, msgType = 'message' } = {}) {
@@ -1419,6 +1609,47 @@ async function sendBotMessage(pool, appId, { user, content, metadata = null, thr
     msgType: kind,
     ...(metadata ? { metadata } : {}),
     thread,
+    createdAt: rows[0].created_at,
+    postedVia: null,
+  }, Number(user.id));
+  return { id: rows[0].id, createdAt: rows[0].created_at };
+}
+
+/**
+ * #4238: the ONE line Homeroom writes into a project's channel. When a new
+ * project's first version goes live, Homeroom bot says so there, once, as
+ * its own message (a bubble with its name, not a system line), with an Open
+ * button (metadata.actions). Everything else Homeroom says still goes to a
+ * thread (sendSystemMessage, sendBotMessage): a channel is what people said,
+ * and this is the bot telling the people there that what they asked for is
+ * made. Once per project: a second call finds the first and writes nothing.
+ * Not wired to handleMessage, for the reasons sendBotMessage gives.
+ */
+const FIRST_VERSION_KIND = 'first_version';
+async function sendFirstVersionMessage(pool, appId, { user, content, metadata = null } = {}) {
+  if (!user || !Number.isInteger(Number(user.id)) || !Number.isInteger(Number(appId))) return null;
+  const text = String(content || '').trim().slice(0, MAX_CHAT_LEN);
+  if (!text) return null;
+  const meta = { ...(metadata || {}), kind: FIRST_VERSION_KIND };
+  const { rows } = await pool.query(
+    `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata)
+     SELECT $1, $2, $3, 'message', $4::jsonb
+      WHERE NOT EXISTS (
+        SELECT 1 FROM chat_messages
+         WHERE app_id = $1 AND user_id = $2 AND thread_type IS NULL
+           AND metadata->>'kind' = '${FIRST_VERSION_KIND}')
+     RETURNING id, created_at`,
+    [Number(appId), Number(user.id), text, JSON.stringify(meta)]
+  );
+  if (!rows.length) return null;
+  await broadcastFromSender(pool, Number(appId), {
+    type: 'chat',
+    id: rows[0].id,
+    userId: Number(user.id),
+    username: user.username,
+    content: text,
+    msgType: 'message',
+    metadata: meta,
     createdAt: rows[0].created_at,
     postedVia: null,
   }, Number(user.id));
@@ -1752,4 +1983,4 @@ function pushConversationEvent(memberUserIds, payload, { excludeUserId = null } 
 
 const pushNotificationToUser = pushToUser;
 
-module.exports = { connectedUserIds, disconnectUser, attach, broadcast, _onBusMessage, broadcastGlobal, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, sendBotMessage, getOnlineUsers, pushAppStatusUpdate, pushAppCreationPhase, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushWorkshopUpdate, onBoardChange, pushToUser, pushConversationEvent, pushNotificationToUser, pushPlatformVersion, getReactionsForMessages, validateThread, handleMessage, MAX_CHAT_LEN };
+module.exports = { connectedUserIds, disconnectUser, attach, broadcast, _onBusMessage, _onBusListening, broadcastGlobal, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, sendBotMessage, sendFirstVersionMessage, getOnlineUsers, pushAppStatusUpdate, pushAppCreationPhase, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushWorkshopUpdate, onBoardChange, pushToUser, pushConversationEvent, pushNotificationToUser, pushPlatformVersion, getReactionsForMessages, validateThread, handleMessage, admitSocketFrame, SOCKET_RATE_BUDGETS, SOCKET_RATE_WINDOW_MS, MAX_CHAT_LEN };

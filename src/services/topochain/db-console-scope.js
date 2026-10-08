@@ -211,6 +211,19 @@ const CONSOLE_CREDENTIAL_COLUMNS = {
   // Account email proof and the password snapshot are both offline-guessable.
   account_email_verifications: ['code_hash', 'password_hash'],
   web_signup_sessions: ['token_hash'],
+  // Apple and Google sign-in (services/sign-in-providers.js). The provider
+  // settings' secret is a client secret or a private key; the round trip's
+  // state, binder, nonce and PKCE verifier would let a callback be forged;
+  // the username step's hash is a bearer continuation. Which provider is on,
+  // its IDs and who changed it stay readable, and so does every linked
+  // identity (user_oauth_identities), which is what "I cannot sign in with
+  // Google" needs.
+  sign_in_providers: ['secret_enc'],
+  oauth_sign_in_states: ['state_hash', 'binder_hash', 'nonce', 'code_verifier'],
+  oauth_signup_sessions: ['token_hash'],
+  // A spent native sign-in's ID token, hashed: nothing to read in it, and
+  // nothing a console needs.
+  native_sign_in_tokens: ['token_hash'],
   mobile_auth_tokens: ['token_hash'],
   // The waitlist's own email verification code, same shape and same
   // reasoning as mobile_otp_codes above: bcrypt, but a six-digit space is
@@ -244,6 +257,9 @@ const CONSOLE_CREDENTIAL_COLUMNS = {
   // public half of the exchange and stays readable.
   mcp_authorization_codes: ['code_hash'],
   mcp_tokens: ['token_hash', 'token_hint'],
+  // Work-order patch upload credentials (#4264): the hash locates a live
+  // upload capability. Which task it is for, and until when, stay readable.
+  external_agent_upload_tokens: ['token_hash'],
   // Social identity is private account metadata. The short-lived OAuth row
   // additionally contains the callback-state hash and live PKCE verifier.
   user_social_identities: ['provider_subject', 'handle'],

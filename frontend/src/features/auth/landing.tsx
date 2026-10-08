@@ -32,7 +32,7 @@
  *     is what the legacy module did for exactly the same reason.
  */
 
-import { type KeyboardEvent, memo, useCallback, useEffect, useRef, useState } from 'react';
+import { type KeyboardEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 
 import { alertVariants } from '@/components/ui/alert';
@@ -46,18 +46,89 @@ import { FRAME_THEME_PARAM } from '../app-frame/app-frame-policy.js';
 import {
   AUTH_SCREEN_IDS,
   byId,
+  firstSessionNext,
   fx,
   hasSession,
   hiddenLast,
+  isNative,
+  keepReleaseLink,
   legacy,
+  noteSignInBegun,
   type PublicApp,
+  type ReleaseLink,
+  takeReleaseLink,
   useAuthScreensPatch,
   zoomFx,
 } from './shared';
-import { InviteCard } from './invite-card';
+import { DeadInvite, InvitePending, inviteTokenFrom, MadeForYou, useInvitePreview } from './invite-card';
+import { SignInSheet, type SignInProvider, type SignInResume } from './sign-in-sheet';
+import { Story } from './story';
 import { useWaitlistOptions, type WaitlistOptions, waitlistOptions } from './waitlist-shared';
 
 const LANDING_TITLE = 'Homeroom';
+
+/**
+ * Apple and Google, as the sign-in sheet offers them: those the options say
+ * an admin set up, Apple first, and none inside the Homeroom app, whose web
+ * view the providers' own pages refuse to sign in from.
+ */
+export function signInProvidersFrom(options: WaitlistOptions | null): SignInProvider[] {
+  const list = Array.isArray(options?.sign_in_providers) ? options!.sign_in_providers! : [];
+  // Nothing listed is also the prerender's answer, where there is no window
+  // to ask whether this is the app.
+  if (!list.length || typeof window === 'undefined' || isNative()) return [];
+  return (['apple', 'google'] as const).filter((p) => list.includes(p));
+}
+
+// The capability an app build advertises for each provider's own sheet
+// (NATIVE-BRIDGE.md, Native sign-in).
+const NATIVE_SIGN_IN_CAPABILITY: Record<SignInProvider, string> = {
+  apple: 'signInWithApple',
+  google: 'signInWithGoogle',
+};
+
+/**
+ * Inside the Homeroom app: those the server lists for the app's own sheets
+ * (an admin saved the app's client IDs) and this build of the app can show.
+ */
+export function nativeSignInProvidersFrom(options: WaitlistOptions | null, capabilities: readonly unknown[]): SignInProvider[] {
+  const list = Array.isArray(options?.native_sign_in_providers) ? options!.native_sign_in_providers! : [];
+  return (['apple', 'google'] as const)
+    .filter((p) => list.includes(p) && capabilities.includes(NATIVE_SIGN_IN_CAPABILITY[p]));
+}
+
+/** nativeSignInProvidersFrom, with this build's capabilities read once the page is up; none outside the app. */
+export function useNativeSignInProviders(options: WaitlistOptions | null): SignInProvider[] {
+  const [capabilities, setCapabilities] = useState<readonly unknown[]>([]);
+  useEffect(() => {
+    if (!isNative()) return undefined;
+    let live = true;
+    const read = legacy().usernode?.getBridgeInfo;
+    if (typeof read === 'function') {
+      read().then((info) => {
+        if (live && Array.isArray(info?.capabilities)) setCapabilities(info!.capabilities as unknown[]);
+      }).catch(() => {});
+    }
+    return () => { live = false; };
+  }, []);
+  return useMemo(() => nativeSignInProvidersFrom(options, capabilities), [options, capabilities]);
+}
+
+// The way back from a provider (routes/sign-in-providers.js) leaves its
+// outcome in a short-lived cookie the page can read, never in the URL. Read
+// once and cleared, so a reload does not reopen the sheet.
+const PROVIDER_RESULT_COOKIE = 'hr_oauth_result';
+const PROVIDER_RESULT_RE = /^(username|error-[a-z_]{1,40})$/;
+
+export function takeProviderResult(): SignInResume | null {
+  if (typeof document === 'undefined') return null;
+  const match = document.cookie.match(new RegExp(`(?:^|;\\s*)${PROVIDER_RESULT_COOKIE}=([^;]*)`));
+  if (!match) return null;
+  document.cookie = `${PROVIDER_RESULT_COOKIE}=; Max-Age=0; path=/`;
+  let value = '';
+  try { value = decodeURIComponent(match[1]); } catch { return null; }
+  return PROVIDER_RESULT_RE.test(value) ? (value as SignInResume) : null;
+}
 
 /**
  * The offline explanation's box (#2443) — the Alert primitive's `notice`
@@ -481,6 +552,35 @@ const CHIPS: readonly { line: string; dot: string }[] = [
   },
 ];
 
+/**
+ * The story's sheet, once a sign-in through it has a session and before the
+ * shell takes over (its `beforeFinish`).
+ *
+ * A new account made from the story is asked what to make next
+ * (../first-session/make.tsx), not which communities to join: the session's
+ * flag says so to the island, and the start is recorded as the story's. So
+ * is an account that already existed and has not answered that question
+ * yet (one an admin made, say, through the password step, or one that saw
+ * it, left without answering and is signing in again); the join step opens
+ * its make screen in the same tick the shell starts
+ * (./communities-first-run.js). Either way the sheet hands off to that
+ * screen (`handOff`) while this runs, so the two read as one movement.
+ * Recording the start answers nothing: the question is asked until Make it
+ * or "Look around first". Anyone else goes where they always have, with no
+ * hand-off.
+ */
+export async function startedFromStory(kind: 'existing' | 'new', handOff: () => Promise<void>): Promise<void> {
+  if (kind !== 'new') {
+    if (await firstSessionNext()) await handOff();
+    return;
+  }
+  try { sessionStorage.setItem('usernode:first-session:make', '1'); } catch { /* the make screen is then skipped */ }
+  await Promise.all([
+    fetch('/api/me/first-session/started', { method: 'POST', credentials: 'same-origin' }).catch(() => {}),
+    handOff(),
+  ]);
+}
+
 export function LandingScreen() {
   const rootRef = useRef<HTMLElement>(null);
   useVisibilityHiddenClass(rootRef, AUTH_SCREEN_IDS.landing, false);
@@ -490,6 +590,27 @@ export function LandingScreen() {
   // hooks this component patches onto AuthScreens are installed and the
   // interior's nodes exist by the time the on-show hook runs.
   const mounted = useMountedOnReveal(AUTH_SCREEN_IDS.landing);
+
+  // An invite link's preview (./invite-card.tsx), read in an effect like
+  // everything else here. A LIVE link turns the screen into "Made for you":
+  // its three cards take the place of the illustration, the rail and the
+  // waitlist pitch, which are hidden rather than unmounted for the same
+  // reason the session's two action blocks are (the id inventory reads them).
+  // While the preview is on its way the pitch stays hidden too, with a quiet
+  // placeholder where the cards go, so an invited friend never sees the
+  // waitlist first; a dead link, or one whose preview cannot be read, gets
+  // the pitch back once that is known.
+  const { preview: invite, pending: invitePending } = useInvitePreview();
+  const madeForYou = !!invite?.live;
+  // Which sign-in sheet is up (./sign-in-sheet.tsx): an invite's Join, or
+  // the story's Get started or Sign in.
+  const [sheet, setSheet] = useState<null | 'join' | 'start' | 'signin'>(null);
+  // Back from Apple or Google: where the sheet picks up (./sign-in-sheet.tsx).
+  const [resume, setResume] = useState<SignInResume | null>(null);
+  // A waitlist "you're in" mail's link (AuthScreens.enter): this story with
+  // the sheet already open, at the step the link asked for.
+  const [release, setRelease] = useState<ReleaseLink | null>(null);
+  const closeSheet = useCallback(() => { setSheet(null); setResume(null); setRelease(null); }, []);
 
   // Both start at the value the prerendered markup shipped with: no session,
   // no app open. `_renderLandingHeader`'s equivalent (refreshHeader) runs on
@@ -505,6 +626,19 @@ export function LandingScreen() {
   const waitlistPayload = useWaitlistOptions();
   const waitlistUrl = marketingWaitlistUrl(waitlistPayload);
   const siteUrl = marketingSiteUrl(waitlistPayload);
+
+  // THE STORY (./story.tsx), unless the first session's switch is off: what
+  // Homeroom is and "Get started", in place of the waitlist pitch, for a
+  // visitor with no session who did not come by an invite link. It is the
+  // default, so it is what this interior's first render draws, before the
+  // options say otherwise: the interior mounts on reveal
+  // (lib/mount-on-reveal.ts), so there is no prerendered pitch to match and
+  // no reason to flash one. The invite path is read in that first render
+  // too, for the same reason; the prerender pass has no location.
+  const [onInvitePath, setOnInvitePath] = useState(
+    () => typeof location !== 'undefined' && !!inviteTokenFrom(location.pathname),
+  );
+  useEffect(() => { setOnInvitePath(!!inviteTokenFrom(location.pathname)); }, []);
 
   // Non-render state, mirroring the legacy module's fields one for one.
   const st = useRef({
@@ -539,6 +673,37 @@ export function LandingScreen() {
   const refreshHeader = useCallback(() => {
     setSession(hasSession());
   }, []);
+  const storyOn = waitlistPayload?.story_landing !== false && !onInvitePath && !session;
+  const pitchHidden = madeForYou || storyOn || invitePending;
+  const webProviders = useMemo(() => signInProvidersFrom(waitlistPayload), [waitlistPayload]);
+  const nativeProviders = useNativeSignInProviders(waitlistPayload);
+  const nativeSignIn = nativeProviders.length > 0;
+  const providers = nativeSignIn ? nativeProviders : webProviders;
+  // An invite makes a private member, who signs up with a phone number
+  // (services/community-invites.js): the Join sheet starts there when the
+  // server offers it.
+  const phoneSignIn = waitlistPayload?.phone_sign_in === true;
+  // Back from a provider without a session: reopen the sheet the trip left,
+  // the invite's Join on its link, the story's otherwise.
+  useEffect(() => {
+    const result = takeProviderResult();
+    if (!result) return;
+    // The result is read once, so a reload now would lose where this
+    // sign-in had got to.
+    noteSignInBegun();
+    setResume(result);
+    setSheet(inviteTokenFrom(location.pathname) ? 'join' : 'start');
+  }, []);
+  // The story switched off while a release link waited for it: no sheet to
+  // open, so the link goes where it always went, the sign-in screen, which
+  // takes the token from here (./login.tsx).
+  useEffect(() => {
+    if (!release || waitlistPayload?.story_landing !== false) return;
+    if (release.token) keepReleaseLink(release);
+    setRelease(null);
+    setSheet(null);
+    location.hash = `#${release.route}`;
+  }, [release, waitlistPayload]);
 
   const clearViewerCover = useCallback(() => {
     st.timers.forEach((t) => clearTimeout(t));
@@ -894,6 +1059,17 @@ export function LandingScreen() {
 
   const landingOnShow = useCallback(() => {
     refreshHeader();
+    // Arrived by a waitlist "you're in" link: the sheet, open over the story
+    // at the step the link asked for. Read once, so a reload now would lose
+    // it; a sign-in has begun, so the shell does not swap the build in under
+    // it (App.noteSignInBegun).
+    const link = takeReleaseLink();
+    if (link) {
+      noteSignInBegun();
+      setRelease(link);
+      setResume(null);
+      setSheet(link.route === 'signup' ? 'start' : 'signin');
+    }
     if (!st.appsLoaded) {
       st.appsLoaded = true;
       st.appsReady = loadLandingApps();
@@ -1174,11 +1350,15 @@ export function LandingScreen() {
             </button>
           </div>
           {/*
-              AN INVITE LINK'S CARD (./invite-card.tsx): who invited you to
-              what, and the two ways in. Only on /invite/<token>, and only
-              once its preview is back — nothing here on any other visit.
+              AN INVITE LINK'S CARDS (./invite-card.tsx): who made it, the
+              project itself, the note and the way in. Only on
+              /invite/<token>, with a placeholder in their place until its
+              preview is back — nothing here on any other visit. A dead link
+              says why, above the pitch.
           */}
-          <InviteCard primaryClass={PRIMARY_PILL} secondaryClass={SECONDARY_PILL} />
+          {invitePending && !invite ? <InvitePending /> : null}
+          {madeForYou ? <MadeForYou preview={invite!} primaryClass={PRIMARY_PILL} onJoin={() => setSheet('join')} /> : null}
+          {invite && !invite.live ? <DeadInvite preview={invite} /> : null}
           {/*
               DECORATIVE, so `alt` is empty: everything it says is said again
               in the words below it, and a screen reader announcing a
@@ -1221,14 +1401,14 @@ export function LandingScreen() {
               space to split, so this is zero high and the layout is exactly
               the one a short viewport had before.
           */}
-          <div className="grow" />
+          <div className={hiddenLast(pitchHidden, 'grow')} />
           <img
             src="/brand/people.png"
             alt=""
             width={816}
             height={612}
             draggable={false}
-            className="mx-auto mt-6 block h-auto w-[272px] xl:w-[320px] max-w-full"
+            className={hiddenLast(pitchHidden, 'mx-auto mt-6 block h-auto w-[272px] xl:w-[320px] max-w-full')}
           />
           {/*
               The rail deliberately overflows AND loops: its four chips are
@@ -1252,7 +1432,7 @@ export function LandingScreen() {
               Board 1 draws the row as `padding: 20px 0 4px`: `mt-3` plus
               `pt-2` is the 20 above, `pb-1` the 4 below.
           */}
-          <div className="mt-3 overflow-hidden pt-2 pb-1 pl-4">
+          <div className={hiddenLast(pitchHidden, 'mt-3 overflow-hidden pt-2 pb-1 pl-4')}>
             <div className="landing-rail-track">
               {[0, 1].map((copy) => CHIPS.map(({ line, dot }) => (
                 <span
@@ -1308,7 +1488,7 @@ export function LandingScreen() {
               alignment is a property of the composition, not of any one
               string, and a later line added here should inherit it.
           */}
-          <div className="px-4 flex grow flex-col text-center">
+          <div className={hiddenLast(pitchHidden, 'px-4 flex grow flex-col text-center')}>
             <p className="mt-5 text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">
               Opening gradually
             </p>
@@ -1512,9 +1692,58 @@ export function LandingScreen() {
               </a>
             </div>
           </div>
+          {storyOn ? (
+            <Story primaryClass={PRIMARY_PILL} onStart={() => setSheet('start')} onSignIn={() => setSheet('signin')} />
+          ) : null}
         </div>
       </div>
       <ViewerRegion />
+      {/*
+          The sign-in sheet "Made for you"'s Join opens (./sign-in-sheet.tsx).
+          Rendered nothing until then, so the interior's first commit is the
+          markup the prerender shipped.
+      */}
+      {madeForYou ? (
+        <SignInSheet
+          open={sheet === 'join'}
+          title={`Join ${invite!.project!.name}`}
+          intro={phoneSignIn
+            ? (invite!.project!.public
+              ? 'Just your phone number and a username. No app, no password.'
+              : 'Just your name and phone number. No app, no password.')
+            : providers.length
+              ? 'Sign in or make an account. It takes a minute.'
+              : 'Sign in or make an account with your email. It takes a minute.'}
+          followInvite
+          providers={providers}
+          native={nativeSignIn}
+          phone={phoneSignIn}
+          askName={!invite!.project!.public}
+          from="invite"
+          returnTo={location.pathname}
+          resume={resume}
+          onClose={closeSheet}
+          primaryClass={PRIMARY_PILL}
+        />
+      ) : null}
+      {storyOn ? (
+        <SignInSheet
+          open={sheet === 'start' || sheet === 'signin'}
+          title={sheet === 'signin' ? 'Sign in' : 'Make your account'}
+          intro={sheet === 'signin'
+            ? (providers.length ? 'Welcome back.' : 'Welcome back. We\'ll email you a code.')
+            : (providers.length ? 'It takes a minute.' : 'With your email. It takes a minute.')}
+          providers={providers}
+          native={nativeSignIn}
+          from={sheet === 'signin' ? 'signin' : 'story'}
+          returnTo="/"
+          resume={resume}
+          releaseToken={sheet === 'start' ? release?.token ?? null : null}
+          beforeFinish={startedFromStory}
+          onClose={closeSheet}
+          primaryClass={PRIMARY_PILL}
+        />
+      ) : null}
         </>
       ) : null}
     </main>

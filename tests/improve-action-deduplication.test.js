@@ -36,10 +36,11 @@ const board = (props = {}) => renderToHtml(createElement(DevActionsRow, { ...BAS
 const actions = (html) => [...html.matchAll(/<button data-plus="([^"]+)"/g)].map((m) => m[1]);
 
 test('the rendered + menu keeps only distinct actions, including app-management gates', () => {
-  assert.deepEqual(actions(board()), ['new-change', 'issue', 'import-pr', 'members', 'rename', 'secrets', 'fork']);
-  assert.deepEqual(actions(board({ showsMembers: false })), ['new-change', 'issue', 'import-pr', 'rename', 'secrets', 'fork']);
+  // B8: Suggest an improvement leads; Build it yourself is second.
+  assert.deepEqual(actions(board()), ['issue', 'new-change', 'import-pr', 'members', 'rename', 'secrets', 'fork']);
+  assert.deepEqual(actions(board({ showsMembers: false })), ['issue', 'new-change', 'import-pr', 'rename', 'secrets', 'fork']);
   const platform = board({ selfHosted: true });
-  assert.deepEqual(actions(platform), ['new-change', 'issue', 'import-pr', 'members', 'rename', 'secrets']);
+  assert.deepEqual(actions(platform), ['issue', 'new-change', 'import-pr', 'members', 'rename', 'secrets']);
   assert.match(platform, /Proposal approvals/);
   assert.match(platform, /Platform variables/);
   assert.doesNotMatch(platform, /Members &amp; visibility/);
@@ -61,7 +62,7 @@ test('read-only viewers still get only Fork, and no + button on the platform app
   assert.deepEqual(actions(strip), []);
 });
 
-test('hiding import leaves Ask for a change first, so the settings divider under it stays', () => {
+test('hiding import leaves Suggest an improvement first, so the settings divider under it stays', () => {
   // #1490 gated the heading with the import row so that hiding the row could
   // not leave an empty heading. Since #1900 the group always holds the ask
   // row, so the settings divider under it is unconditional — and import's
@@ -69,7 +70,7 @@ test('hiding import leaves Ask for a change first, so the settings divider under
   // heading any more: it is the menu's first, and "Settings & rules" says
   // where the rest begins.
   const html = board({ canCollaborate: false });
-  assert.deepEqual(actions(html), ['new-change', 'issue', 'members', 'rename', 'secrets', 'fork']);
+  assert.deepEqual(actions(html), ['issue', 'new-change', 'members', 'rename', 'secrets', 'fork']);
   assert.doesNotMatch(html, /data-plus-group="build"/);
   assert.doesNotMatch(html, /Add to the board/);
   const settings = html.match(/<div data-plus-group="settings"[^>]*>/);
@@ -81,7 +82,7 @@ test('hiding import leaves Ask for a change first, so the settings divider under
   const firstRow = withImport.match(/<button data-plus="new-change"[^>]*>/);
   assert.doesNotMatch(firstRow[0], /border-t/, 'the first row of the group has no rule above it');
   const issueRow = withImport.match(/<button data-plus="issue"[^>]*>/);
-  assert.doesNotMatch(issueRow[0], /border-t/, 'nor does Ask for a change, under it');
+  assert.doesNotMatch(issueRow[0], /border-t/, 'nor does Suggest an improvement, under it');
 });
 
 // Only the DOM operations _wirePlusMenu needs. The nodes and labels come
@@ -168,12 +169,13 @@ function menuHarness(touch) {
     App: {
       openFeedbackModal: (opts) => {
         assert.equal(opts?.fromDev, true, 'the dev-context mode');
-        // #21: `target: 'app'` is what preselects the open app since #2707.
-        assert.equal(opts?.target, 'app', 'the open app is preselected as the target');
+        // #4236: no `target`, so "Where should this go?" opens with nothing
+        // chosen; only `target: 'app'` preselects since #2707.
+        assert.equal(opts?.target, undefined, 'no destination is preselected');
         // QA 2026-09-24: and the dialog is told what it was asked for, so it
-        // is headed "Ask for a change" rather than "Send feedback".
+        // is headed "Suggest an improvement" rather than "Send feedback".
         assert.equal(opts?.intent, 'issue', 'the dialog is headed with the row\'s own words');
-        assert.deepEqual(Object.keys(opts), ['fromDev', 'target', 'intent']);
+        assert.deepEqual(Object.keys(opts), ['fromDev', 'intent']);
         calls.push('issue');
       },
     },
@@ -203,8 +205,8 @@ for (const touch of [false, true]) {
         assert.equal(h.sheets.length, index + 1, 'one sheet per click after re-wiring');
         const sheet = h.sheets.at(-1);
         assert.deepEqual(Array.from(sheet.actions, (item) => item.label), [
-          'Start a new change', 'Ask for a change', 'Import Feature from a PR', 'Settings & rules',
-          'Members & approvals', 'App display name', 'App secrets', 'Fork this app',
+          'Suggest an improvement', 'Build it yourself', 'Import Feature from a PR', 'Settings & rules',
+          'Members & approvals', 'App display name', 'App secrets', 'Remix',
         ]);
         // #1930: every action row carries its own glyph, class-stripped.
         for (const item of sheet.actions.filter((a) => !a.heading)) {
@@ -212,9 +214,9 @@ for (const touch of [false, true]) {
           assert.equal(item.iconEl.classRemoved, true, `${item.label}'s icon drops its Tailwind classes`);
         }
         assert.ok(h.classes.has('hidden'), 'touch never opens the desktop dropdown');
-        // Start a new change is React's own onClick (the sheet's handler
+        // Build it yourself is React's own onClick (the sheet's handler
         // clicks the row), so _wirePlusMenu dispatches the rest.
-        sheet.actions.filter((item) => !item.heading && item.label !== 'Start a new change')[index].handler();
+        sheet.actions.filter((item) => !item.heading && item.label !== 'Build it yourself')[index].handler();
       } else {
         assert.equal(h.attributes['aria-expanded'], 'true');
         assert.equal(h.classes.has('hidden'), false);
@@ -228,25 +230,26 @@ for (const touch of [false, true]) {
   });
 }
 
-test('Ask for a change and Start a new change each exist once, and the read-only gate holds', () => {
+test('Suggest an improvement and Start a new change each exist once, and the read-only gate holds', () => {
   // ONE BUTTON AND ONE ROW (UI overhaul). The menu's well held two buttons,
   // Give feedback and New change, and people found both confusing. The
-  // button is Ask for a change now (the same dialog), and New change is
-  // "Start a new change" under Agent sessions in the menu's list, because
+  // button is Suggest an improvement now (the same dialog), and New change is
+  // "Build it yourself" under Agent chats in the menu's list, because
   // what it opens is an agent session.
   //
   // WHAT THIS FILE IS ABOUT is unchanged: each action exists ONCE and calls
   // ONE method, whichever surface it is on.
   const MENU = read('frontend/src/features/app-context/app-context-sheet.tsx');
   assert.equal(PANEL.split('id="improve-row-feedback"').length - 1, 1, 'the button is here');
-  assert.match(PANEL, /id="improve-row-feedback"\s+label="Ask for a change"\s+onClick=\{\(\) => Improve\.giveFeedback\(\)\}/);
+  assert.match(PANEL, /id="improve-row-feedback"\s+label="Suggest an improvement"\s+onClick=\{\(\) => Improve\.giveFeedback\(\)\}/);
   assert.equal(PANEL.split('id="improve-row-new-session"').length - 1, 0, 'and it is alone in its well');
   assert.equal(MENU.split('id="improve-row-feedback"').length - 1, 0,
     'and not in two places — that id is what the outbox dot\'s writer selects');
   assert.ok(!MENU.includes('giveFeedback'),
     'the menu does not keep a second caller of the same method');
   assert.equal(MENU.split('id="improve-row-new-session"').length - 1, 1);
-  assert.match(MENU, /id="improve-row-new-session"[\s\S]{0,160}onClick=\{\(\) => Improve\.startSession\(\)\}[\s\S]{0,240}label="Start a new change"/);
+  // B8: the row is Build it yourself, beside Suggest an improvement going to Homeroom bot.
+  assert.match(MENU, /id="improve-row-new-session"[\s\S]{0,160}onClick=\{\(\) => Improve\.startSession\(\)\}[\s\S]{0,480}label="Build it yourself"/);
   // A read-only viewer may not start a change, as the button's gate was.
   assert.match(MENU, /\{readOnly \? null : \(\s*<button\s+id="improve-row-new-session"/);
   // #852 review: the hub's ⋯ leads with it too, calling the same method, and
@@ -260,22 +263,22 @@ test('Ask for a change and Start a new change each exist once, and the read-only
 
 // ── #1900: asking for a change is on the board again ─────────────────────
 
-test('Ask for a change is a real button[data-plus] row that leads the writeable menu', () => {
+test('Suggest an improvement is a real button[data-plus] row that leads the writeable menu', () => {
   const html = board();
   const row = html.match(/<button data-plus="issue"[^>]*>[\s\S]*?<\/button>/);
   assert.ok(row, 'the row exists');
   // A <button>, so _wirePlusMenu's `button[data-plus]` walk hands it to the
   // touch action sheet as a tappable row — and the sheet reads its title by
   // name, which is what the marked span is for.
-  assert.match(row[0], /<span data-plus-title="[^"]*"[^>]*>Ask for a change<\/span>/);
+  assert.match(row[0], /<span data-plus-title="[^"]*"[^>]*>Suggest an improvement<\/span>/);
   assert.match(row[0], /Report a problem or idea without building it yourself/);
   assert.match(row[0], /<svg\b[^>]*aria-hidden="true"/, 'a glyph, decorative like the others');
   // It needs nothing of the viewer beyond a writeable board: present without
   // the collaborator bit, absent for the read-only viewer, who keeps Fork —
   // and on the platform app no "+" at all, as before.
-  // Second, under Start a new change (#852 review), and ahead of the rest.
-  assert.deepEqual(actions(html).slice(0, 2), ['new-change', 'issue'], 'it follows Start a new change');
-  assert.deepEqual(actions(board({ canCollaborate: false })).slice(0, 2), ['new-change', 'issue']);
+  // B8: first, with Build it yourself under it, and ahead of the rest.
+  assert.deepEqual(actions(html).slice(0, 2), ['issue', 'new-change'], 'it leads, Build it yourself second');
+  assert.deepEqual(actions(board({ canCollaborate: false })).slice(0, 2), ['issue', 'new-change']);
   assert.deepEqual(actions(board({ readOnly: true, canCollaborate: false })), ['fork']);
   assert.deepEqual(actions(board({ selfHosted: true, readOnly: true, canCollaborate: false })), []);
   // Nothing outside React lifts the dialog for it: the row is wired by the
@@ -284,19 +287,19 @@ test('Ask for a change is a real button[data-plus] row that leads the writeable 
   assert.match(VIEW, /const issueBtn = menu\.querySelector\('\[data-plus="issue"\]'\);/);
   const wired = VIEW.slice(VIEW.indexOf('const issueBtn = '));
   // QA 2026-09-24: with `intent: 'issue'`, so the dialog is headed with the
-  // row's own words ("Ask for a change") rather than "Send feedback". #21:
-  // and with `target: 'app'`, the one thing that preselects the open app
-  // since #2707; `fromDev` alone opened the dialog asking which one.
-  assert.match(wired.slice(0, 700), /App\.openFeedbackModal\(\{ fromDev: true, target: 'app', intent: 'issue' \}\)/);
+  // row's own words ("Suggest an improvement") rather than "Send feedback".
+  // #4236: and with no `target`, so the dialog asks where it goes with
+  // neither destination chosen (#2707).
+  assert.match(wired.slice(0, 700), /App\.openFeedbackModal\(\{ fromDev: true, intent: 'issue' \}\)/);
 });
 
 for (const touch of [false, true]) {
-  test(`${touch ? 'the touch sheet' : 'the desktop dropdown'} routes Ask for a change to the feedback dialog, once, and closes`, () => {
+  test(`${touch ? 'the touch sheet' : 'the desktop dropdown'} routes Suggest an improvement to the feedback dialog, once, and closes`, () => {
     const h = menuHarness(touch);
     h.button.click();
     if (touch) {
       const sheet = h.sheets.at(-1);
-      const item = sheet.actions.find((entry) => entry.label === 'Ask for a change');
+      const item = sheet.actions.find((entry) => entry.label === 'Suggest an improvement');
       assert.ok(item && !item.heading, 'the sheet carries it as an action, not a heading');
       item.handler();
     } else {
@@ -359,10 +362,10 @@ function improveHarness(currentApp = 'demo') {
 test('Give feedback still opens the shared dialog for the current app', () => {
   const { Improve, calls } = improveHarness();
   Improve.giveFeedback();
-  // #21: `target: 'app'` preselects the app the change is for. Since #2707
-  // `fromDev` alone opens the dialog asking which one, which is what "Ask
-  // for a change" from inside an app did.
-  assert.deepEqual(calls, [['close'], ['feedback', true, 'app']]);
+  // #4236: `fromDev` with no `target`, so the dialog asks where it goes
+  // with neither destination chosen (#2707). Only Getting started's
+  // "Suggest a change to <app>", which named the app, preselects it.
+  assert.deepEqual(calls, [['close'], ['feedback', true, undefined]]);
 });
 
 test('#21: from another app Give feedback names no target: there is no open app for "This app" to mean', () => {

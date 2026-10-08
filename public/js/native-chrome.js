@@ -1582,6 +1582,7 @@
       const startedAt = Date.now();
       NativeChrome._pingAskOpen = true;
       let shown = false;
+      let attempt = null;
       try {
         const plan = NativeChrome.decidePingAsk(
           await NativeChrome._pingAskState());
@@ -1599,6 +1600,11 @@
           return { shown: false, outcome: 'skipped', reason: 'no UI kit' };
         }
         shown = true;
+        // The first-session plan's guardrail: how the ask is answered
+        // (services/ui-telemetry.js push_permission).
+        const telemetry = window.UITelemetry;
+        attempt = telemetry && typeof telemetry.attempt === 'function'
+          ? telemetry.attempt('push_permission', { screen: 'ping_ask' }) : null;
         const yes = await ui.confirm({
           title: copy.title,
           message: copy.message,
@@ -1607,6 +1613,7 @@
         });
         if (!yes) {
           NativeChrome._pingAskDeclined = true;
+          if (attempt) telemetry.outcome(attempt, 'cancelled');
           return { shown, outcome: 'not-now' };
         }
         NativeChrome._markPingAskPrompted();
@@ -1616,6 +1623,7 @@
         } catch (err) {
           console.warn('[native-chrome] requestPermissions failed:',
             err && err.message ? err.message : err);
+          if (attempt) telemetry.outcome(attempt, 'failure', { errorCode: 'unknown' });
           return { shown, outcome: 'notify', granted: false };
         }
         const perms = next && next.permissions;
@@ -1625,6 +1633,10 @@
         // Same completion as the Settings row: wait out a lagging status,
         // and start push registration now rather than on the next resume.
         const settled = await NativeChrome.settleIosPushGrant(flag);
+        if (attempt) {
+          telemetry.outcome(attempt, settled.granted ? 'success' : 'failure',
+            settled.granted ? {} : { errorCode: 'access_denied' });
+        }
         return { shown, outcome: 'notify', granted: settled.granted };
       } catch (err) {
         console.warn('[native-chrome] askForPing failed:',
@@ -1632,6 +1644,151 @@
         return { shown, outcome: 'skipped', reason: 'failed' };
       } finally {
         NativeChrome._pingAskOpen = false;
+      }
+    },
+
+    // ── "Notify me when it's ready" (the plan card, 5 October) ────────
+    //
+    // Under a plan Build it was just pressed on, Homeroom bot's card offers
+    // "Notify me when it's ready" (frontend/src/features/messages/
+    // notify-me.tsx). Its tap is the only thing that asks: nothing here runs
+    // on render, and nothing asks twice. The platform rules stay in this
+    // file, beside askForPing's:
+    //   iOS      requestPermissions() presents the OS prompt, while the
+    //            permission is undetermined (iOS shows it once); then
+    //            settleIosPushGrant reads what it became and starts push
+    //            registration. A denial can only be undone in the OS
+    //            settings page.
+    //   Android  requestNotificationPermission(), the notification
+    //            permission (requestPermissions() there is the exact-alarm
+    //            one). Android may ask again after a "Don't allow".
+    //   browser  nothing to ask: Homeroom has no web push. The card says
+    //            the bot will message them in Homeroom.
+    // A grant also turns this phone's Activity notifications back on when
+    // they were off: "Notify me" is asking for exactly that.
+    //
+    // Pure, like decidePingAsk. `permission` is 'granted' | 'denied' |
+    // 'undetermined' | null (unreadable). Returns { verdict }: 'no-app',
+    // 'granted' (already allowed: confirm, ask nothing), 'ask', 'denied'
+    // (iOS shows no prompt any more) or 'unknown' (this build can neither
+    // say nor ask).
+    decideReadyPing(state) {
+      const s = state || {};
+      if (s.isNative !== true) return { verdict: 'no-app' };
+      if (s.permission === 'granted') return { verdict: 'granted' };
+      if (s.canRequest !== true) {
+        return { verdict: s.permission === 'denied' ? 'denied' : 'unknown' };
+      }
+      // Android asks again after a "Don't allow" (and, past its own limit,
+      // resolves without a dialog, which the answer then says).
+      if (s.platform === 'android') return { verdict: 'ask' };
+      if (s.permission === 'denied') return { verdict: 'denied' };
+      // Undetermined, or unreadable: a tap may ask. iOS resolves at once,
+      // with nothing shown, when it was decided after all, and the settle
+      // below reads what it is.
+      return { verdict: 'ask' };
+    },
+
+    // Everything decideReadyPing needs, read without asking anything.
+    async _readyPingState() {
+      const bridge = window.usernode;
+      const isNative = !!bridge && bridge.isNative === true;
+      const kit = window.unNative;
+      const state = {
+        isNative,
+        platform: kit && typeof kit.platform === 'string' ? kit.platform : null,
+        permission: null,
+        canRequest: false,
+        canOpenSettings: false,
+      };
+      if (!isNative) return state;
+      let perms = null;
+      if (typeof bridge.getSettingsState === 'function' &&
+          (await NativeChrome.supports('getSettingsState')) !== false) {
+        try {
+          const snapshot = await bridge.getSettingsState();
+          perms = snapshot && snapshot.permissions;
+        } catch (_) { /* unreadable: decided from what else is known */ }
+      }
+      if (perms && typeof perms.platform === 'string') state.platform = perms.platform;
+      const can = async (method) => typeof bridge[method] === 'function' &&
+        (await NativeChrome.supports(method)) !== false;
+      if (state.platform === 'android') {
+        if (perms && perms.notificationsGranted === true) state.permission = 'granted';
+        else if (perms && perms.notificationsGranted === false) state.permission = 'denied';
+        state.canRequest = await can('requestNotificationPermission');
+      } else {
+        state.permission = NativeChrome._permissionStatusOf(
+          perms && perms.notificationPermission);
+        if (!state.permission) state.permission = await NativeChrome._iosPushPermissionStatus();
+        state.canRequest = await can('requestPermissions');
+      }
+      state.canOpenSettings = await can('openNotificationSettings');
+      return state;
+    },
+
+    // This phone's Activity notifications, on. Best effort: the permission
+    // is what the tap was about, and Settings shows the switch either way.
+    async _activityPushOn() {
+      const push = window.SocialPush;
+      if (!push || typeof push.getState !== 'function' ||
+          typeof push.setEnabled !== 'function') return;
+      try {
+        const state = await push.getState();
+        if (state && state.enabled === false) await push.setEnabled(true);
+      } catch (err) {
+        console.warn('[native-chrome] Activity notifications not turned on:',
+          err && err.message ? err.message : err);
+      }
+    },
+
+    // From the tap only. Never throws. Resolves { outcome, settings }:
+    // outcome 'granted' | 'denied' | 'no-app' | 'unknown', and settings true
+    // when a denial can be undone from the OS settings page
+    // (usernode.openNotificationSettings).
+    async notifyWhenReady() {
+      let state = null;
+      try {
+        state = await NativeChrome._readyPingState();
+        const plan = NativeChrome.decideReadyPing(state);
+        let outcome = plan.verdict;
+        if (plan.verdict === 'ask') {
+          const bridge = window.usernode;
+          if (state.platform === 'android') {
+            const next = await bridge.requestNotificationPermission();
+            const granted = !!(next && (next.granted === true ||
+              (next.permissions && next.permissions.notificationsGranted === true)));
+            outcome = granted ? 'granted' : 'denied';
+          } else {
+            // The same record askForPing keeps: this device has been asked.
+            NativeChrome._markPingAskPrompted();
+            const next = await bridge.requestPermissions();
+            const perms = next && next.permissions;
+            const reported = NativeChrome._permissionStatusOf(
+              perms && perms.notificationPermission);
+            const flag = !!(next && next.granted === true) || reported === 'granted';
+            const settled = await NativeChrome.settleIosPushGrant(flag);
+            outcome = settled.granted ? 'granted'
+              : (settled.status === 'denied' || reported === 'denied') ? 'denied' : 'unknown';
+          }
+        }
+        if (outcome === 'granted') {
+          // Registration now, not on the next resume; settleIosPushGrant
+          // already did on iOS.
+          if (state.platform === 'android' && window.SocialPush &&
+              typeof SocialPush.getState === 'function') {
+            try { SocialPush.getState(); } catch (_) {}
+          }
+          await NativeChrome._activityPushOn();
+        }
+        return {
+          outcome,
+          settings: outcome === 'denied' && state.canOpenSettings === true,
+        };
+      } catch (err) {
+        console.warn('[native-chrome] notifyWhenReady failed:',
+          err && err.message ? err.message : err);
+        return { outcome: state && state.isNative === false ? 'no-app' : 'unknown', settings: false };
       }
     },
 

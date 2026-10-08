@@ -107,6 +107,13 @@ const EVENT_TYPES = Object.freeze({
   // the provider accepted it. No backfill — the button didn't exist
   // before this shipped.
   MAIL_TEST_SENT: 'mail_test_sent',
+  // An admin sent a diagnostic text from Admin → SMS delivery
+  // (src/routes/admin.js POST /api/admin/sms/test). Metadata carries
+  // { status, providerCode, phoneLast4 } — the last four digits only,
+  // never the whole number, the code or a credential. Emitted for every
+  // outcome Firebase gave, including `refused` and `unreachable`. No
+  // backfill — the button didn't exist before this shipped.
+  SMS_TEST_SENT: 'sms_test_sent',
   // An admin ran the bulk container rollover (src/services/app-rollover.js
   // via POST /api/admin/rollover): every running child-app container
   // recreated with freshly assembled env. Metadata carries the tally
@@ -159,6 +166,51 @@ const EVENT_TYPES = Object.freeze({
   // observations so the admin report can say how much telemetry arrived,
   // how much was retried/dropped locally, and when reporting last worked.
   UI_TELEMETRY_DELIVERY: 'ui_telemetry_delivery',
+  // The admin Journey's creation path, written by services/journey-events.js
+  // and read by services/journey.js creationPath. No backfill: nothing
+  // recorded these moments before.
+  //   app_running    a project's first successful run (once, beside
+  //                  apps.first_running_at). metadata: { secondsFromCreation }
+  //   preview_opened a preview answered as ready to somebody, once per
+  //                  viewer per change. metadata: { sessionId, viewerRole }
+  //   change_live    a change merged and deployed, once per change.
+  //                  metadata: { sessionId, requesterIds, firstVersion, live, sha }
+  APP_RUNNING: 'app_running',
+  PREVIEW_OPENED: 'preview_opened',
+  CHANGE_LIVE: 'change_live',
+  // The admin Journey's first session (services/journey.js firstSession).
+  // No backfill: nothing recorded these moments before.
+  //   first_artefact_shown  the first thing of theirs a maker sees: the sketch
+  //                         of a project made from the first session, shown
+  //                         to its maker (once per project, written by
+  //                         journey-events.noteFirstArtefactShown).
+  //                         metadata: { artefact, secondsFromCreation }
+  //   invite_opened         a live invite link opened, once per person
+  //                         (an account, else a browser) and maker and
+  //                         project (services/invite-activity.js); user_id
+  //                         is the visitor when signed in. Recorded signed
+  //                         out too, though only a signed-in open tells the
+  //                         maker (#4176). metadata: { inviteId, signedIn }
+  //   invite_signed_in      the invite funnel's middle step: somebody signed
+  //                         up or in from a live invite link (the sign-in
+  //                         carried it: communityInvites.redeemCarried, or
+  //                         dropCarried when it does not follow it), or
+  //                         opened one already signed in, before joining.
+  //                         Once per person per link (the unique index in
+  //                         schema.sql), written by
+  //                         journey-events.noteInviteSignedIn. metadata:
+  //                         { inviteId, how: 'signed_up' | 'signed_in' |
+  //                         'was_signed_in' }; the first two are the
+  //                         sign-ins the link brought, the last somebody
+  //                         already signed in (#4272)
+  FIRST_ARTEFACT_SHOWN: 'first_artefact_shown',
+  INVITE_OPENED: 'invite_opened',
+  INVITE_SIGNED_IN: 'invite_signed_in',
+  // Something on the platform that should not happen, kept for admins
+  // (services/platform-incidents.js, #4210). metadata: { kind, ... } where
+  // kind names the incident ('build_interrupted': a bot build a restart or
+  // a lost worker cut short; { runId, issueNumber, why, outcome }).
+  PLATFORM_INCIDENT: 'platform_incident',
 });
 
 // Record a single analytics event. Fire-and-forget — returns a promise

@@ -4,8 +4,11 @@
 //
 // The bot never competes with a person who started on a request: a live
 // claim, a person's session on it or their proposal for it keeps the bot
-// off it (homeroom-bot.js issueHolders, classifyIssue). It used to keep off
-// SILENTLY, so "@homeroom_bot try again?" on a request somebody had claimed
+// off it (homeroom-bot.js issueHolders, classifyIssue). #4190: a claim made
+// once the bot is already on the request is not a hold: the bot finishes
+// and delivers, and only a claim made before it started keeps it off.
+//
+// It used to keep off SILENTLY, so "@homeroom_bot try again?" on a request somebody had claimed
 // three days earlier came to nothing, and the person asking could not tell
 // why (Todo List #75).
 //
@@ -66,7 +69,8 @@ function ageText(since, now = new Date()) {
 /** Pure: one hold, as a clause. */
 function holdClause(hold, now) {
   const who = hold.username || 'Somebody';
-  if (hold.kind === 'proposal') return `${who}'s proposal for it is up for a vote`;
+  // B10a: plain words, as every shared screen says it.
+  if (hold.kind === 'proposal') return `${who}'s change for it is waiting for approval`;
   if (hold.kind === 'session') return `${who} has a change in progress for it (last worked on ${ageText(hold.since, now)})`;
   return `${who} claimed this request ${ageText(hold.since, now)}`;
 }

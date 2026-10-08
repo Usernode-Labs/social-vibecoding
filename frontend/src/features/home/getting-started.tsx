@@ -38,7 +38,7 @@
  *                            Workshop, and opening it from here ticks the
  *                            step (POST …/workshop-visit; the server checks
  *                            that nothing waits)
- *   suggest   Suggest ›      the "Ask for a change" dialog, for the default
+ *   suggest   Suggest ›      the "Suggest an improvement" dialog, for the default
  *                            app (opened first, since the dialog's "This app"
  *                            is the app that is open)
  *   other     <its CTA> ›    the challenge's own call-to-action
@@ -55,8 +55,8 @@
  * Try, Vote and Suggest say "Join a community first." and carry no button:
  * the server's `needs_join`, which is that step's own done state, and
  * nothing else. It used to be "no default app", which disagreed with the
- * tick both ways. Keeping Homeroom, or making a project only you can see,
- * does not tick Join (onboarding.js COMMUNITY_JOINED, by design), so the Join
+ * tick both ways. Keeping Homeroom, or making a Just-you project, does
+ * not tick Join (onboarding.js COMMUNITY_JOINED, by design), so the Join
  * row says so while it is to do. Once Join is ticked nothing is locked: with
  * no default app the server sends the first app Discover leads with
  * (onboarding.js fallbackApp), and with none at all the three go to
@@ -214,7 +214,7 @@ const FIXTURE_STEPS: Array<Omit<GettingStartedStep, 'done' | 'earned_points'>> =
   },
   {
     id: 'challenge-43', kind: 'challenge', action: 'vote', challenge_id: 43, event_id: 7,
-    title: 'Vote on an app', detail: 'Help decide what ships next.', href: null, reward: '250 pts',
+    title: 'Vote on an app', detail: 'Help decide what goes live next.', href: null, reward: '250 pts',
   },
   {
     id: 'challenge-44', kind: 'challenge', action: 'suggest', challenge_id: 44, event_id: 7,
@@ -228,7 +228,7 @@ const FIXTURE_STEPS: Array<Omit<GettingStartedStep, 'done' | 'earned_points'>> =
 // the block under it agree when a shot draws both.
 const FIXTURE_UNLOCKS = {
   count: 5,
-  names: ['Make your first proposal', 'Get a change merged', 'Invite a friend', 'Start a community'],
+  names: ['Make your first change', 'Get a change live', 'Invite a friend', 'Start a community'],
 };
 
 function fixture(doneIds: string[], vote: VoteTarget['kind'] = 'needs'): GettingStartedModel {
@@ -356,12 +356,12 @@ const plural = (n: number) => (n === 1 ? '1 change is' : `${n} changes are`);
 
 /**
  * What does not tick Join, said on its row while it is to do: the
- * platform's own project every account starts in, and a project only you
- * can see ("Just me" when it was made). Neither is a community you found
+ * platform's own project every account starts in, and a Just-you project
+ * ("Just me" when it was made). Neither is a community you found
  * (onboarding.js COMMUNITY_JOINED). After the challenge's own task, which is
  * the admin's words.
  */
-export const JOIN_NOTE = 'Homeroom and projects only you can see don’t count.';
+export const JOIN_NOTE = 'Homeroom and Just-you projects don’t count.';
 
 /** The Join row's line while it is to do: its task, then what does not count. */
 export function joinDetail(detail: string): string {
@@ -453,7 +453,7 @@ export function stepView(
   }
   const long = `See what ${vote.app.name} is building`;
   return {
-    detail: 'Nothing is up for a vote yet. See what people are building.',
+    detail: 'Nothing is waiting for approval yet. See what people are building.',
     button: { short: 'Look', long, aria: long, app: vote.app, arrow: true, go: { to: 'workshop', slug: vote.app.slug } },
   };
 }

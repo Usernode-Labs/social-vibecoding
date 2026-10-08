@@ -2,13 +2,14 @@ import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } fro
 
 import { Button } from '@/components/ui/button';
 import { SectionHeader } from '@/components/ui/grouped-list';
-import { ChevronDownIcon, ClockIcon } from '@/components/ui/icons';
+import { ChevronDownIcon, ListLinesIcon, SpinnerRingIcon } from '@/components/ui/icons';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { agoStamp } from '../../lib/timestamp';
 import * as api from './api';
 import {
-  ACTIVITY_OUTCOME_LABELS, ACTIVITY_OUTCOME_TONES, ActivityLead, ActivityLink, TONE_WORDS, spanText, type ActivityTone,
+  ACTIVITY_OUTCOME_LABELS, ACTIVITY_OUTCOME_TONES, ActivityBadge, ActivityLead, ActivityLink, TONE_WORDS, spanText, type ActivityTone,
 } from './bot-activity';
+import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { POLL_MS } from './bot-activity-store';
 import { WORK_CHANGED_EVENT, jobName, jobTitle } from './bot-shared';
 import type {
@@ -40,7 +41,9 @@ export { WORK_CHANGED_EVENT, jobName, jobTitle };
  *     toggle beside it, which only widens the pane under it. Its tiles are
  *     the activity cards' language (./bot-activity.tsx): the ring with the
  *     step while the bot works, then Done / Needs you / Ended / Didn't
- *     finish, the request, what came of it, and where to open it. Each
+ *     finish, the request, what came of it, and where to open it. History's
+ *     tiles lead with the app's own icon instead, the ending a badge on its
+ *     corner (#4201). Each
  *     request is one tile, in the first group that fits: Now, Needs you,
  *     History. History starts folded away. A request's other runs fold into
  *     its tile.
@@ -134,17 +137,24 @@ function resetBotWork(): void {
 
 // ── Words ────────────────────────────────────────────────────────────────
 
+/*
+ * The words below are the person's, never the platform's: a change, waiting
+ * for approval, live. "proposed Flat 4B Chores" in the header after a first
+ * version was ready (4 October) is what this rule is for, and
+ * tests/homeroom-bot-tray.test.js holds every line here to it.
+ */
+
 /** What a tile of Now says the bot is doing when the server sends no words of its own. */
 export const PHASE_LABELS: Record<HomeroomBotPhase, string> = {
   looking: 'looking at it',
   building: 'building',
-  following_up: 'following up on its proposal',
+  following_up: 'following up on its change',
   setting_up: 'getting the project ready',
   // #3734: one per step services/homeroom-bot-tray.js draws an in-flight
   // stage of the bot's progress as.
   queued: 'waiting its turn in my queue',
-  follow_up_queued: 'waiting its turn to follow up on its proposal',
-  merging: 'merging its approved proposal',
+  follow_up_queued: 'waiting its turn to follow up on its change',
+  merging: 'making the approved change live',
 };
 
 /** The same, as the header's status line says it after the request's name. */
@@ -155,15 +165,20 @@ export const SHORT_PHASES: Record<HomeroomBotPhase, string> = {
   setting_up: 'setting up',
   queued: 'in my queue',
   follow_up_queued: 'queued to follow up',
-  merging: 'merging',
+  merging: 'going live',
 };
 
-/** The last thing the bot did, as the status line says it when nothing else is going on. */
+/**
+ * The last thing the bot did, as the status line says it when nothing else
+ * is going on: the same ending its activity card names
+ * (ACTIVITY_OUTCOME_LABELS, and the server's copy in
+ * services/homeroom-bot-activity.js), with the request's name in it.
+ */
 export const LAST_WORDS: Record<HomeroomBotActivityOutcome, (name: string) => string> = {
   question: (name) => `asked you about ${name}`,
-  proposed: (name) => `proposed ${name}`,
+  proposed: (name) => `${name} waiting for approval`,
   live: (name) => `${name} went live`,
-  closed: (name) => `${name}’s proposal was closed`,
+  closed: (name) => `the change for ${name} was closed`,
   blocked: (name) => `couldn’t build ${name} as written`,
   build_failed: (name) => `couldn’t finish building ${name}`,
   person: (name) => `left ${name} to the group`,
@@ -172,7 +187,10 @@ export const LAST_WORDS: Record<HomeroomBotActivityOutcome, (name: string) => st
   held: (name) => `held ${name} back for now`,
   stopped: (name) => `stopped on ${name}`,
   answer: (name) => `answered on ${name}`,
-  revise: (name) => `changed ${name}’s proposal`,
+  revise: (name) => `updated the change for ${name}`,
+  checking: (name) => `checking ${name} before you try it`,
+  needs_look: (name) => `${name} needs a look`,
+  going_live: (name) => `${name} going live`,
 };
 
 function capitalized(text: string): string {
@@ -292,10 +310,16 @@ export function BotWorkStatusLine() {
  * #3770: the toggle, a disc among the header's discs (index.tsx
  * ThreadHeader), drawn on a phone too. A press on it is not "outside" the
  * panel, and Escape hands focus back to it: both find it by
- * `data-bot-work-toggle`. Its badge carries the tray's state as
- * `data-bot-work-status`, as the line does: the number of requests that
- * wait on the viewer, the accent's job (AGENTS.md), else the live dot while
- * the bot works, else nothing. A pure render.
+ * `data-bot-work-toggle`. Its badge is the number of requests that wait on
+ * the viewer, the accent's job (AGENTS.md), else nothing.
+ *
+ * #4198: its glyph says what the bot is doing. While it works, a turning
+ * ring, the same "building" cue the platform mark draws (header/
+ * platform-mark.tsx), held still where motion is unwelcome; otherwise a
+ * list, for what the panel holds. A clock read as "history". The ring
+ * carries the tray's state as `data-bot-work-status`, as the line and the
+ * count do, which is what the declared check (dapp.json
+ * homeroom-bot-dm-activity-tray) selects the toggle by. A pure render.
  */
 export function BotWorkButtonView({ work, open, onToggle }: { work: HomeroomBotWork | null; open: boolean; onToggle?: () => void }) {
   const { kind } = trayStatus(work);
@@ -307,9 +331,10 @@ export function BotWorkButtonView({ work, open, onToggle }: { work: HomeroomBotW
         {waiting > 9 ? '9+' : waiting}
       </span>
     );
-  } else if (kind === 'working') {
-    badge = <span className="messages-bot-work-badge messages-bot-work-dot" data-bot-work-status={kind}><PingDot /></span>;
   }
+  const glyph = kind === 'working'
+    ? <SpinnerRingIcon className="motion-safe:animate-spin motion-reduce:animate-none" data-bot-work-status={kind} aria-hidden="true" />
+    : <ListLinesIcon aria-hidden="true" />;
   return (
     <button
       type="button"
@@ -321,7 +346,7 @@ export function BotWorkButtonView({ work, open, onToggle }: { work: HomeroomBotW
       data-bot-work-toggle=""
       onClick={onToggle}
     >
-      <ClockIcon aria-hidden="true" />
+      {glyph}
       {badge}
     </button>
   );
@@ -343,7 +368,7 @@ function PanelNote({ children, className = '' }: { children: string; className?:
 /** Where a tile can be opened: its proposal once people can open it, its request, or its project. */
 function tileLinks(job: HomeroomBotJob): ReactNode[] {
   const links: ReactNode[] = [];
-  if (job.links.proposal) links.push(<ActivityLink key="proposal" data="bot-work" href={job.links.proposal}>Open proposal</ActivityLink>);
+  if (job.links.proposal) links.push(<ActivityLink key="proposal" data="bot-work" href={job.links.proposal}>Open change</ActivityLink>);
   if (job.links.request) {
     links.push(
       <ActivityLink key="request" data="bot-work" href={job.links.request}>
@@ -383,7 +408,6 @@ function Tile({ job, group, tone, lead, eyebrow, status, ago }: TileProps) {
         {lead}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-            {group === 'now' ? <PingDot /> : null}
             <span className="truncate">{eyebrow}</span>
           </div>
           <div className="line-clamp-2 text-[0.9375rem] font-semibold leading-5 text-zinc-900 dark:text-zinc-100">{jobTitle(job)}</div>
@@ -434,11 +458,34 @@ function NowTile({ job, at, ago }: { job: HomeroomBotCurrentJob; at: Date; ago: 
       job={job}
       group="now"
       tone={null}
-      lead={<ActivityLead step={job.step} of={job.of} stepName={job.stepName} />}
+      lead={<ActivityLead step={job.step} of={job.of} stepName={job.stepName} working />}
       eyebrow={eyebrow}
       status={withTime(capitalized(job.doing || PHASE_LABELS[job.phase]), elapsed ? `${elapsed} so far` : '')}
       ago={ago}
     />
+  );
+}
+
+/**
+ * #4201: a History tile's lead: the app's own icon (its image, else its
+ * emoji, else its initial, as every app tile draws it) in the ring's 38px,
+ * with how the work ended as a badge on its corner. The tile is app.css's
+ * `.app-icon-tile`, which owns its face; the emoji and the initial are sized
+ * down to the box here. Not a link: the tile's own links say where to go.
+ */
+export function AppStatusLead({ job, tone }: { job: HomeroomBotJob; tone: ActivityTone }) {
+  const app = { icon_url: job.iconUrl, icon_emoji: job.iconEmoji, name: job.appName };
+  return (
+    <span className="relative shrink-0" data-bot-work-app-lead="">
+      <span
+        className="app-icon-tile flex h-[38px] w-[38px] items-center justify-center overflow-hidden rounded-xl text-base font-bold [&>span]:text-xl"
+        data-icon={appIconKind(app)}
+        aria-hidden="true"
+      >
+        <AppIconContent app={app} />
+      </span>
+      <ActivityBadge tone={tone} className="absolute -bottom-1 -right-1" />
+    </span>
   );
 }
 
@@ -450,7 +497,7 @@ function PastTile({ job, group, ago }: { job: HomeroomBotPastJob; group: 'you' |
       job={job}
       group={group}
       tone={tone}
-      lead={<ActivityLead tone={tone} />}
+      lead={group === 'history' ? <AppStatusLead job={job} tone={tone} /> : <ActivityLead tone={tone} />}
       eyebrow={TONE_WORDS[tone]}
       status={withTime(said, ago(job.at))}
       ago={ago}

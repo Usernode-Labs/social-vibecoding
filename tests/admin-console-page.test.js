@@ -125,7 +125,10 @@ test('the console island imports every admin module, console first', () => {
     .map((m) => m[1]);
   assert.equal(order[0], 'admin-console', 'admin-console.js is imported first');
   assert.deepEqual(order.slice(1).sort(), [
-    'admin-analytics', 'admin-campaigns', 'admin-codes', 'admin-db-export',
+    'admin-analytics',
+    // How the Homeroom bot builds first versions, and how each configuration measures up.
+    'admin-bot-configs',
+    'admin-campaigns', 'admin-codes', 'admin-db-export',
     'admin-e2e', 'admin-estimator', 'admin-featured-apps', 'admin-features',
     'admin-gallery',
     // #2684: the Homeroom bot's shadow-mode verdicts and their ratings.
@@ -137,14 +140,25 @@ test('the console island imports every admin module, console first', () => {
     // estimates are kept honest against what changes actually cost.
     'admin-model-costs',
     'admin-node',
-    'admin-overview', 'admin-push', 'admin-reports', 'admin-rollover', 'admin-staging-reap',
+    'admin-overview', 'admin-push', 'admin-reports', 'admin-rollover',
+    // Sign-in providers: Continue with Apple / Google, set up with each one's keys.
+    'admin-sign-in',
+    // The watch-only small-change tag's verdicts.
+    'admin-small-changes',
+    // #4128: SMS delivery, a test text through Firebase Phone Auth.
+    'admin-sms',
+    'admin-staging-reap',
     // #2253: App storage, the per-app database cap's console section.
     'admin-status', 'admin-storage',
     // Support: one user's account, points, events, kudos and history.
     'admin-support',
+    // Test accounts: make, list and retire first-time-user test accounts.
+    'admin-test-accounts',
     'admin-topochain', 'admin-users',
     // Welcome messages: the group and first message somebody let in gets.
     'admin-welcome-dm',
+    // The workflow machines: problems, instances and timelines.
+    'admin-workflows',
   ], 'every section module is imported by the island');
 });
 

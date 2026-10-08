@@ -64,6 +64,7 @@ const FILE_EXEMPTIONS = new Map([
   ['src/routes/app-storage.js', 'child-app storage transport authenticated by app grants'],
   ['src/routes/agent-sessions.js', 'the agent-session Mayor\'s own conversation (#2779); one assistant does not drive another'],
   ['src/routes/cli-agent.js', 'local coding-agent protocol, represented by CLI Settings and development capabilities'],
+  ['src/routes/external-agent-patch-upload.js', 'coding-agent patch upload authenticated by a one-time work-order token (#4264), never a signed-in Classic control'],
   ['src/routes/internal.js', 'platform-to-worker/internal service protocol'],
   ['src/routes/public-api.js', 'anonymous public integration and waitlist surface'],
   ['src/routes/topochain/ingest.js', 'authenticated partner ingestion protocol'],
@@ -71,7 +72,7 @@ const FILE_EXEMPTIONS = new Map([
 ]);
 
 const PATH_EXEMPTIONS = [
-  [/^\/(?:app-icons|avatars|illustrations|issue-images|visuals|challenge-illustrations)\//, 'binary asset delivery rather than an interactive control'],
+  [/^\/(?:app-icons|avatars|illustrations|issue-images|issue-videos|visuals|challenge-illustrations)\//, 'binary asset delivery rather than an interactive control'],
   [/^\/reports\//, 'public immutable share document'],
   [/^\/\.well-known\//, 'protocol discovery metadata'],
   [/^\/api\/connect\/oauth\/(?:register|token|revoke)$/, 'OAuth protocol endpoint represented by connector Settings'],
@@ -112,8 +113,26 @@ const REVIEWED_ROUTE_EXEMPTIONS = [
     reason: 'legacy or catch-all document route represented by in-app navigation capabilities',
   },
   {
+    matches: (route) => route.source === 'src/routes/mail-tracking.js'
+      && ['/mail/c/:messageId/:linkIndex', '/mail/o/:messageId.gif'].includes(route.path),
+    reason: 'signed sessionless email redirect and image endpoints, never model-visible interactive controls',
+  },
+  {
+    matches: (route) => route.source === 'src/routes/mail-webhooks.js' && route.path === '/api/mail/webhooks/resend',
+    reason: 'provider callback authenticated by a raw-body signature, never a signed-in Classic control',
+  },
+  {
+    matches: (route) => route.source === 'src/routes/activity-mail.js' && route.path === '/mail/unsubscribe',
+    reason: 'the unsubscribe link in activity mail: a sessionless page and its one-click POST, never a model-visible capability',
+  },
+  {
     matches: (route) => route.source === 'src/routes/community-invites.js' && route.path === '/invite/:token',
     reason: 'invite-link document: the shell with a link preview, represented by the invite-link capabilities',
+  },
+  {
+    matches: (route) => route.source === 'server.js'
+      && route.method === 'GET' && route.path === '/usernode-bridge/v1/platform.json',
+    reason: 'bridge asset: where the platform is, read by the app-host Homeroom button, never a model-visible capability',
   },
   {
     matches: (route) => route.path === '/api/iframe-token',

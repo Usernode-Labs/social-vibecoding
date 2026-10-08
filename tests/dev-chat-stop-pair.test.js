@@ -174,9 +174,12 @@ test('the landed-stop branch precedes the generic system row', () => {
   assert.match(branch, /msg\.stopLanding\.headline \|\| msg\.content/);
 });
 
-test('a declared check guards the pair in a browser', () => {
+test('the pair is no longer a declared check: it is the classic chat\'s (#3976)', () => {
+  // It was guarded on the classic transcript fixture (990412). Classic
+  // sessions are read-only now and that chat's checks were retired with it;
+  // an agent session draws a turn that did not finish as its own note
+  // (agent-session/transcript.ts), not this card. The unit tests above still
+  // pin the card for as long as the classic transcript renders it.
   const dapp = JSON.parse(read('dapp.json'));
-  const check = dapp.tests.find((t) => (t.expectSelector || '').includes('.dc-failure-stopped'));
-  assert.ok(check, 'the stopped card must be guarded on a real route');
-  assert.match(check.path, /sessions\/990412/, 'on the transcript fixture');
+  assert.ok(!dapp.tests.some((t) => (t.expectSelector || '').includes('.dc-failure-stopped')));
 });

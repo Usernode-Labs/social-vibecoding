@@ -252,14 +252,39 @@ const HomePanels = {
 
   // Called from Home.load(). At most one fetch per TTL, and concurrent
   // callers share the in-flight promise.
+  //
+  // A FORCED read is a refresh, not a boot. Its caller knows the copy is
+  // behind something that just happened (a join the server has counted, the
+  // block expanded, Getting started finished), so two things that suit a
+  // boot are wrong for it:
+  //   * sharing a read already in flight, which may have left before that
+  //     thing happened. It waits for that read and then reads again, once,
+  //     however many forced callers arrive meanwhile (Home.load()'s rule);
+  //   * the service worker's zero-deadline lane, which answers
+  //     /api/home-panels from its cache on a device that has drawn Home
+  //     before. It is told first (App._announceRefreshIntent), as a pull and
+  //     a board refresh tell it.
+  _queued: null,
+
   ensureLoaded(opts) {
     const force = !!(opts && opts.force);
     if (!window.App || !App.user) return Promise.resolve();
-    if (HomePanels._inflight) return HomePanels._inflight;
+    if (HomePanels._inflight) {
+      if (!force) return HomePanels._inflight;
+      if (!HomePanels._queued) {
+        const again = () => {
+          HomePanels._queued = null;
+          return HomePanels.ensureLoaded({ force: true });
+        };
+        HomePanels._queued = HomePanels._inflight.then(again, again);
+      }
+      return HomePanels._queued;
+    }
     if (!force && HomePanels._data
         && Date.now() - HomePanels._fetchedAt < HomePanels.TTL_MS) {
       return Promise.resolve();
     }
+    if (force) App._announceRefreshIntent?.();
     // ?demo=1 rides along exactly like Home.load()'s own demoQS — the
     // server only honours it in staging. `expand` names the one panel the
     // viewer has opened in place, so the fetch brings its full list.
@@ -362,6 +387,13 @@ const HomePanels = {
     });
   },
 
+  // A NEW ACCOUNT SEES CHALLENGES (first-session run-through, 2026-10-05).
+  // #3847 hid this block for an account's first seven days (the first
+  // chapter, without points). Evan reversed that: a brand-new account found
+  // Challenges missing from Home and expected it there, with its Getting
+  // started challenges. So nothing about an account's age hides it, and GET
+  // /api/auth/me no longer reports `firstWeek`.
+
   // `_stampState` and `STATE_ATTRS` lived here. They mirrored a block's own
   // state attributes (`data-create-enabled`, Discover's two lane counts) from
   // the markup up onto its HOST, because a selector written the way the spec,
@@ -450,7 +482,13 @@ const HomePanels = {
     // server still sends are the gate's own, and wait for it to open. With
     // nothing hidden to count (a season of First challenges only) there is no
     // card to draw, and the block falls back to drawing them, as it always has.
-    const locked = HomePanels.lockedOnboarding(panel);
+    //
+    // Only while that card IS on Home (`App.user.showGettingStarted`). An
+    // account its first session brought in has no card (first-session.js:
+    // communities_onboarded_at stays unset), and a locked card pointing at a
+    // list it cannot see said nothing; the block draws the First challenges
+    // itself instead, done or not, with the unlock note under them.
+    const locked = HomePanels.gettingStartedOnHome() ? HomePanels.lockedOnboarding(panel) : null;
     if (locked) {
       if (HomePanels._expanded[panel.key]) HomePanels._expanded[panel.key] = false;
       return {
@@ -546,6 +584,12 @@ const HomePanels = {
   // (the server's additive `hidden_count` and `hidden_names`). Null once
   // unlocked, for a viewer the gate does not apply to (whose payload has no
   // `onboarding` at all), and when there is nothing hidden to count.
+  // Whether Home draws the Getting started card (./getting-started.tsx reads
+  // the same flag).
+  gettingStartedOnHome() {
+    return !!(typeof window !== 'undefined' && window.App && App.user && App.user.showGettingStarted === true);
+  },
+
   lockedOnboarding(panel) {
     const o = panel && panel.onboarding;
     if (!o || o.unlocked) return null;
@@ -585,6 +629,25 @@ const HomePanels = {
     const category = String(c && c.label != null ? c.label : '').trim().toUpperCase();
     return Object.prototype.hasOwnProperty.call(HomePanels.CHALLENGE_GROUPS, category)
       ? HomePanels.CHALLENGE_GROUPS[category] : HomePanels.OTHER_GROUP;
+  },
+
+  // When a row's time runs out, for its countdown: its own `ends_at`, else
+  // `fallback` (the season's end). A This week challenge's cap starts again
+  // every Monday 00:00 UTC, the week the scorer counts by, so its clock runs
+  // to the end of this week when that comes first. The same rule as the
+  // Challenges tab's TopochainChallenges._endOf.
+  endsOf(c, fallback = null) {
+    const raw = (c && c.ends_at) || fallback || null;
+    if (HomePanels.groupOf(c).key !== 'week') return raw;
+    const weekEnd = HomePanels.weekEnd();
+    return !raw || Date.parse(weekEnd) < Date.parse(raw) ? weekEnd : raw;
+  },
+
+  // The next Monday 00:00 UTC, as an ISO string.
+  weekEnd(now = Date.now()) {
+    const d = new Date(now);
+    const sinceMonday = (d.getUTCDay() + 6) % 7;
+    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - sinceMonday + 7)).toISOString();
   },
 
   // Whether setup is behind the viewer, which decides where the First challenges group sits.
@@ -653,7 +716,7 @@ const HomePanels = {
       for (const c of payload) {
         if (!c || HomePanels.groupOf(c).key !== key) continue;
         if (c.open === false || (c.progress && c.progress.done)) continue;
-        const ends = c.ends_at || seasonEnd;
+        const ends = HomePanels.endsOf(c, seasonEnd);
         if (!HomePanels.timeLeft(ends)) continue;
         if (soonest == null || Date.parse(ends) < Date.parse(soonest)) soonest = ends;
       }
@@ -880,7 +943,7 @@ const HomePanels = {
       // carries while it is not open (organiser-closed, or outside its
       // window). `ends_at` is the challenge's own end, else its event's.
       deadline: done || c.open === false ? null
-        : HomePanels.timeLeft(c.ends_at || (panel && panel.season && panel.season.ends_at)),
+        : HomePanels.timeLeft(HomePanels.endsOf(c, panel && panel.season && panel.season.ends_at)),
       earned: done && points ? `Earned ${points.toLocaleString('en-US')} pts` : null,
     };
   },
@@ -1028,3 +1091,32 @@ const HomePanels = {
 // Home calls this module through the legacy global. Guard the
 // publication for the shell's server-side prerender, where window is absent.
 if (typeof window !== 'undefined') window.HomePanels = HomePanels;
+
+// A boot paints from the device's snapshot of the session and verifies it
+// afterwards (App._reconcileSession). Repaint once the verified user lands,
+// so `showGettingStarted` (HomePanels.gettingStartedOnHome) is the server's
+// current answer rather than the snapshot's: the card can have been closed
+// between two visits. Only once there is something to paint; before the
+// first read, render() would mark the sections settled with nothing in them.
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  document.addEventListener('sv:session', () => {
+    if (HomePanels._data) HomePanels.render();
+  });
+}
+
+// A join or a leave has landed: Home.setMembership's `sv:membership-changed`
+// (Discover's Join pill and detail page, the join-required prompt, the
+// Mayor's join card, a project page's Leave) or the join screen's
+// `sv:communities-joined`. The server counted a join before it answered
+// ("Join a community", challengeScorer.scoreOnJoin), so the block reads
+// again now rather than at the end of its minute, and the challenge ticks on
+// Home as it does on the Challenges tab. Only once there is a block to
+// correct, or a first read under way that may predate the write: before
+// that, Home's own first load brings the current answer.
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  const reread = () => {
+    if (HomePanels._data || HomePanels._inflight) HomePanels.ensureLoaded({ force: true });
+  };
+  document.addEventListener('sv:membership-changed', reread);
+  document.addEventListener('sv:communities-joined', reread);
+}

@@ -138,3 +138,39 @@ test('the pinned set holds only mock topics', () => {
     assert.ok(ref >= 900000 && ref < 1000000, `${key} is a staging mock issue number`);
   }
 });
+
+test('#4238: an empty channel\'s demo stream ends with Homeroom bot\'s first-version line and its Open button', () => {
+  const app = { id: 7, slug: 'staging-demo-app', name: 'Staging demo app' };
+  const rows = stagingDemoTranscript(7, null, [], app);
+  const last = rows[rows.length - 1];
+  assert.equal(last.id, 9902009);
+  assert.equal(last.username, 'homeroom_bot');
+  assert.equal(last.content, '[Mock] I\'ve made the first version of Staging demo app! Let me know if you need anything else.');
+  assert.deepEqual(last.metadata, {
+    kind: 'first_version', appSlug: 'staging-demo-app',
+    actions: [{ id: 'open_app', label: 'Open Staging demo app', style: 'primary', type: 'open', target: '#app/staging-demo-app/app' }],
+  });
+  assert.deepEqual(ids(rows.slice(0, -1)), ids(stagingMockGeneralStream(7)), 'the rest of the mock is unchanged');
+  const general = rows.filter((r) => !r.thread_type).map((r) => r.id);
+  assert.deepEqual(general, [...general].sort((a, b) => a - b), 'id order is still time order');
+  assert.equal(stagingDemoTranscript(7, null, [tester(5, { thread_type: null, thread_ref: null })], app), null, 'a real channel is never padded');
+  assert.ok(!stagingDemoTranscript(7, DEMO_ISSUE, [], app).some((r) => r.id === 9902009), 'a topic never carries it');
+  assert.ok(!stagingDemoTranscript(7, null, []).some((r) => r.id === 9902009), 'no app, no line');
+});
+
+test('#4238: the read cursor on the mock first-version line answers from the mock, not a 404', () => {
+  const { stagingMockUnreadCount } = require('../src/routes/chat');
+  assert.equal(stagingMockUnreadCount(7, 9902009, 'read'), 0);
+  assert.equal(stagingMockUnreadCount(7, 9902009, 'unread'), 1, 'just the line itself');
+  assert.equal(stagingMockUnreadCount(7, 9902008, 'unread'), 2, 'the agent row and the line after it');
+});
+
+test('#4238: a permalink or catch-up on the mock first-version line answers from the mock', () => {
+  const { stagingMockStreamPage } = require('../src/routes/chat');
+  const app = { id: 7, slug: 'staging-demo-app', name: 'Staging demo app' };
+  const around = stagingMockStreamPage(7, { around: 9902009, app });
+  assert.deepEqual(around.focus, { message_id: 9902009, thread_ref: null });
+  assert.equal(around.messages[around.messages.length - 1].id, 9902009);
+  assert.ok(stagingMockStreamPage(7, { after: 9902008, app }).messages.some((m) => m.id === 9902009), 'catch-up after the agent row brings it');
+  assert.equal(stagingMockStreamPage(7, { around: 9902009 }), null, 'no app, no line: the real read');
+});

@@ -37,6 +37,7 @@ import { Button } from '@/components/ui/button';
 import { ArrowUpIcon, PaperClipIcon } from '@/components/ui/icons';
 import { Textarea } from '@/components/ui/textarea';
 
+import { DropOverlay } from '../attachments/file-drag';
 import {
   PendingStrip,
   type PendingAttachmentView,
@@ -188,6 +189,11 @@ export interface ComposerFormProps {
 
 export function ComposerForm({ scope, fill, placeholder, maxLength }: ComposerFormProps) {
   const ids = IDS[scope];
+  // #4065: the drop zone, while a file is held over this composer or its
+  // messages. The module's tracker publishes the flag; it lies over the card,
+  // and takes no pointer events, so the drop still lands on the form.
+  const dragging = !!useComposerSlot(scope).dragging;
+  const dropZone = dragging ? <DropOverlay /> : null;
   // THE CARD. The two full-height composers — the Discussion's and a topic
   // thread's — are the same card Messages draws at the foot of its sheet: a
   // white surface with bare glyphs, a borderless field at reading size and
@@ -219,9 +225,21 @@ export function ComposerForm({ scope, fill, placeholder, maxLength }: ComposerFo
           hint="muted"
           ring="bare"
         />
-        <button type="submit" className="gc-send shrink-0" aria-label="Send" title="Send">
+        {/* A press on Send must not take focus from the field. The blur would
+            drop the keyboard, the tab bar and the Resume strip would come back
+            (lib/keyboard-open.ts), the composer would fall by the keyboard's
+            height, and the click would land on nothing: the message stayed
+            in the box (5 Oct 2026, the iOS app). Messages' Send does the same. */}
+        <button
+          type="submit"
+          className="gc-send shrink-0"
+          aria-label="Send"
+          title="Send"
+          onMouseDown={(event) => event.preventDefault()}
+        >
           <ArrowUpIcon aria-hidden="true" />
         </button>
+        {dropZone}
       </form>
     );
   }
@@ -249,9 +267,11 @@ export function ComposerForm({ scope, fill, placeholder, maxLength }: ComposerFo
         hint="muted"
         ring="seamless"
       />
-      <Button type="submit" size="sm" className="shrink-0">
+      {/* Keeps the field focused through the press, as the card's Send above. */}
+      <Button type="submit" size="sm" className="shrink-0" onMouseDown={(event) => event.preventDefault()}>
         Send
       </Button>
+      {dropZone}
     </form>
   );
 }

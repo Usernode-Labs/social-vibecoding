@@ -79,6 +79,9 @@ test('every Journey route answers, refuses bad input, and is admins only', { tim
     nextSteps: '/api/admin/journey/next-steps',
     person: `/api/admin/journey/people/${mia}`,
     leftOut: '/api/admin/journey/left-out',
+    creation: '/api/admin/journey/creation',
+    pairs: '/api/admin/journey/pairs',
+    firstSession: '/api/admin/journey/first-session',
   };
   const shapes = {};
   for (const [key, p] of Object.entries(paths)) {
@@ -90,9 +93,23 @@ test('every Journey route answers, refuses bad input, and is admins only', { tim
   assert.equal((await get(paths.firstMile)).json.people[0].name, 'mia');
   assert.equal((await get('/api/admin/journey/cohorts')).json.cohorts[0].day, admitted);
 
+  // A test account (services/test-accounts.js) is left out of every reading
+  // by its own flag, with no left-out entry: tess used an app just as mia did.
+  const { rows: [{ id: tess }] } = await pool.query(
+    `INSERT INTO users (username, password, has_platform_access, platform_access_granted_at, test_account_created_at)
+     VALUES ('tess', 'x', TRUE, NOW(), NOW()) RETURNING id`);
+  const { rows: [{ id: appId }] } = await pool.query(
+    "INSERT INTO apps (name, slug, created_by, status) VALUES ('Run Club', 'run-club', $1, 'running') RETURNING id", [lead]);
+  await pool.query(
+    `INSERT INTO app_activity (app_id, user_id, seconds_spent, date)
+     SELECT $1, x, 90, (NOW() AT TIME ZONE 'UTC')::date - 1 FROM unnest($2::int[]) x`,
+    [appId, [mia, tess]]);
+
   // The page's filters: all time, and one admit cohort.
   const allStages = (await get('/api/admin/journey/stages?week=all')).json;
   assert.equal(allStages.week, 'all');
+  assert.deepEqual(allStages.people.map((x) => x.name), ['mia'], 'the test account is not a real person');
+  assert.equal(allStages.people.some((x) => x.userId === tess), false);
   assert.equal(typeof allStages.counts.stay, 'number', 'Stay over all time is a count, not "known next week"');
   const allSummary = (await get('/api/admin/journey/summary?week=all')).json;
   assert.equal(allSummary.allTime, true);
@@ -101,12 +118,24 @@ test('every Journey route answers, refuses bad input, and is admins only', { tim
   const cohortStages = (await get(`/api/admin/journey/stages?cohort=${admitted}`)).json;
   assert.ok(cohortStages.people.every((x) => x.userId === mia), 'a cohort narrows to its members');
   assert.equal((await get('/api/admin/journey/summary?week=all&cohort=other_way')).status, 200);
+  // The creation path and the pairs take the same filters.
+  for (const reading of ['creation', 'pairs']) {
+    const allTime = (await get(`/api/admin/journey/${reading}?week=all`)).json;
+    assert.equal(allTime.week, 'all', `${reading} reads all time`);
+    assert.equal(allTime.trend ? allTime.trend.length : allTime.weeks.length, 8, `${reading} carries eight weeks`);
+    assert.equal((await get(`/api/admin/journey/${reading}?cohort=${admitted}`)).status, 200);
+  }
+  const creation = (await get('/api/admin/journey/creation')).json;
+  assert.deepEqual(creation.steps.map((x) => x.key), ['created', 'running', 'first_version', 'preview', 'change_live']);
+  assert.deepEqual(creation.targets, { running: 300, first_version: 120, change_live: 600 });
 
   for (const bad of ['/api/admin/journey/stages?week=2026-10-06', '/api/admin/journey/summary?week=monday',
     '/api/admin/journey/stages?cohort=yesterday', '/api/admin/journey/loops?cohort=2026-02-30',
     '/api/admin/journey/summary?week=all&cohort=x',
     '/api/admin/journey/first-mile', '/api/admin/journey/first-mile?admitted=2026-02-30',
-    '/api/admin/journey/next-steps?admitted=x']) {
+    '/api/admin/journey/next-steps?admitted=x',
+    '/api/admin/journey/creation?week=monday', '/api/admin/journey/creation?cohort=x',
+    '/api/admin/journey/pairs?week=2026-10-06', '/api/admin/journey/pairs?cohort=yesterday']) {
     assert.equal((await get(bad)).status, 400, bad);
   }
   assert.equal((await get('/api/admin/journey/people/999999')).status, 404);

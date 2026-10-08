@@ -93,6 +93,19 @@
     return null;
   }
 
+  // A checks error the merge gate still counts as in progress: the run
+  // overlapped a platform update and goes again on its own
+  // (visuals.settleCaptureRun). Every other error blocks on the author.
+  function checksWillRetry(p) {
+    if (!p || p.check_state !== 'error') return false;
+    var mr = (p.mergeRequirements && typeof p.mergeRequirements === 'object') ? p.mergeRequirements : null;
+    var gates = mr && Array.isArray(mr.gates) ? mr.gates : [];
+    for (var i = 0; i < gates.length; i++) {
+      if (gates[i] && gates[i].key === 'checks') return gates[i].state === 'active';
+    }
+    return false;
+  }
+
   // "measured 30 seconds ago" — the honest half of a cached number. A card
   // that states a figure without its age is making a claim about the present
   // that it cannot support, which is what every "the UI is out of sync"
@@ -119,6 +132,41 @@
     if (!Number.isFinite(t)) return '';
     var mins = Math.floor((Date.now() - t) / 60000);
     return mins >= 1 ? mins + ' min' : '';
+  }
+
+  // #788 / the member floor: why a flagged proposal needs a Yes from a member
+  // other than its author, in the words every surface uses. The server's copy
+  // is src/services/explicit-approval.js; this file loads before app-view.js
+  // in the browser and cannot require it, so the phrases are repeated here
+  // and tests/explicit-approval-vote-panel.test.js holds the two together.
+  var EXPLICIT_PHRASES = {
+    admins: 'who runs this app',
+    governance: 'how changes are approved',
+    visibility: 'who can see this app',
+    platform_env: 'this app\u2019s platform settings',
+    secrets: 'this app\u2019s keys',
+  };
+
+  // { phrase, sentence, line } for a reason; an unknown or missing reason
+  // still reads as a sentence.
+  function explicitApprovalCopy(reason) {
+    var phrase = Object.prototype.hasOwnProperty.call(EXPLICIT_PHRASES, reason)
+      ? EXPLICIT_PHRASES[reason] : null;
+    return {
+      phrase: phrase,
+      sentence: phrase
+        ? 'Changes to ' + phrase + ' need a Yes from another member.'
+        : 'This change needs a Yes from another member.',
+      line: phrase ? 'It changes ' + phrase : 'It changes a protected setting',
+    };
+  }
+
+  // Whether a flagged row is still waiting on the member floor: its
+  // community has more than one member and nobody but the author has said
+  // Yes. Only a row the server described says so (needs_other_member_yes).
+  function awaitingOtherMember(p) {
+    if (!p || !p.requires_explicit_approval || !p.needs_other_member_yes) return false;
+    return num(p.other_member_yes_count) < 1;
   }
 
   function esc(s) {
@@ -216,6 +264,15 @@
       });
     }
 
+    // 1a — merged, its deploy still to come: live_at is null until production
+    // runs it (the merge-followups workflow machine). A row without the
+    // field (undefined) reads as it always did.
+    if (status === 'merged' && p.live_at === null) {
+      return descriptor('going_live', 'Going live\u2026', 'amber', true, {
+        votes: votes,
+        title: 'This change is merged. Production is being updated to run it.',
+      });
+    }
     // 1 — terminal: merged.
     if (status === 'merged') {
       return descriptor('merged', 'Merged', 'violet', false, { glyph: '✓', votes: votes });
@@ -252,8 +309,8 @@
     if (mcs === 'conflict') {
       return descriptor('merge_conflict', 'Merge failed: conflict', 'red', false, {
         glyph: '⚠', votes: votes,
-        title: 'A merge was attempted but this proposal conflicts with main. '
-          + 'The proposal\u2019s creator needs to finish the merge from their dev session ("Sync with main").',
+        title: 'Going live was attempted but this change conflicts with main. '
+          + 'The change\u2019s creator needs to bring it up to date from their agent session ("Sync with main").',
       });
     }
     // 4c (#1442) — GitHub predicts the NEXT merge will conflict. States 4/4b
@@ -272,12 +329,12 @@
       // once beforehand, unasked), so the creator is never the ONLY way out
       // unless the lane has said so.
       var who = served.indexOf('unresolvable') !== -1
-        ? 'The platform tried to resolve it and could not. The proposal\u2019s creator needs to bring it up to date from their dev session ("Sync with main").'
+        ? 'The platform tried to resolve it and could not. The change\u2019s creator needs to bring it up to date from their agent session ("Sync with main").'
         : served.indexOf('fork_head') !== -1
           ? 'Its branch lives on the creator\u2019s own fork, which the platform cannot write to, so only the creator can bring it up to date.'
           : served.indexOf('awaiting_approval') !== -1
-            ? 'The platform resolves it once the vote passes. The creator can bring it up to date sooner from their dev session ("Sync with main").'
-            : 'The platform resolves it automatically. The creator can also bring it up to date from their dev session ("Sync with main").';
+            ? 'The platform resolves it once the vote passes. The creator can bring it up to date sooner from their agent session ("Sync with main").'
+            : 'The platform resolves it automatically. The creator can also bring it up to date from their agent session ("Sync with main").';
       return descriptor('mergeability_conflict',
         nf ? 'Conflicts with main · ' + nf : 'Conflicts with main', 'red', false, {
           glyph: '⚠', votes: votes,
@@ -292,8 +349,15 @@
       return descriptor('preview_failed', "Preview won't boot", 'red', false, {
         glyph: '⚠', votes: votes,
         title: p.staging_error
-          ? ('The staging preview failed to start, so automated checks can\u2019t run. Merge is blocked. Reason: ' + p.staging_error)
-          : 'The staging preview failed to start, so automated checks couldn\u2019t run. Merge is blocked until it boots cleanly.',
+          ? ('The preview failed to start, so it can\u2019t be tested. It can\u2019t go live until it starts. Reason: ' + p.staging_error)
+          : 'The preview failed to start, so it couldn\u2019t be tested. It can\u2019t go live until it starts.',
+      });
+    }
+    if (check === 'error' && checksWillRetry(p)) {
+      // In flight and nobody need act: the same treatment as a running check.
+      return descriptor('checks_running', 'Checks will run again', 'neutral', true, {
+        votes: votes,
+        title: (p.check_error_detail ? p.check_error_detail + ' ' : '') + 'Merge is blocked until they pass.',
       });
     }
     if (check === 'error') {
@@ -317,7 +381,7 @@
       var label = n ? 'Checks failing · ' + n : 'Checks failing';
       return descriptor('checks_failing', label, 'amber', false, {
         glyph: '⚠', votes: votes,
-        title: 'Automated tests are not passing on the staging build. Merge is blocked until they pass.',
+        title: 'Checks are not passing on the preview. It can\u2019t go live until they pass.',
       });
     }
     // 6 — checks still running (not yet a verdict). Grey, not amber: it's
@@ -341,7 +405,7 @@
       return descriptor('checks_running',
         runningFor ? 'Checks running · ' + runningFor : 'Checks running…', 'neutral', true, {
         votes: votes,
-        title: 'Automated tests are still running on the staging build. Merge is blocked until they pass.',
+        title: 'Still testing the preview. It can\u2019t go live until the checks pass.',
       });
     }
     // 6a (#607) — a promoted proposal with NO verdict recorded at all: the
@@ -352,7 +416,7 @@
     if (!check && status === 'promoted' && !p.console_check_state) {
       return descriptor('checks_running', 'Checks starting…', 'neutral', true, {
         votes: votes,
-        title: 'The staging preview is being prepared and automated tests are about to run. Merge is blocked until they pass.',
+        title: 'The preview is being prepared and testing is about to start. It can\u2019t go live until the checks pass.',
       });
     }
     // 6b — checks explicitly skipped (#461): there was genuinely nothing to
@@ -363,8 +427,8 @@
       return descriptor('checks_skipped', 'Checks skipped', 'neutral', false, {
         votes: votes,
         title: p.check_error_detail
-          ? ('Automated checks were skipped: ' + p.check_error_detail + '. This does not block the merge.')
-          : 'Automated checks were skipped: there was nothing to test. This does not block the merge.',
+          ? ('Checks were skipped: ' + p.check_error_detail + '. It can still go live.')
+          : 'Checks were skipped: there was nothing to test. It can still go live.',
       });
     }
     // 7 — behind main. ('conflict' no longer falls through here — it has its
@@ -392,35 +456,49 @@
         title: 'App is locked, so it also needs at least one admin yes before it merges.',
       });
     }
+    // 8a — the member floor: the votes are in, but none of them is from a
+    // member other than the author. "Merging shortly" would be untrue.
+    if (status === 'promoted' && reached && awaitingOtherMember(p)) {
+      return descriptor('awaiting_member', 'Needs another member\u2019s Yes', 'amber', false, {
+        votes: votes,
+        title: explicitApprovalCopy(p.explicit_approval_reason).sentence,
+        explicitApproval: true,
+      });
+    }
     // 8b — passed the vote, checks green, and the APP's merges are paused by
     // a red main (services/main-watch.js). Nothing about this proposal is
     // wrong, and "merging shortly" would be a promise nobody is keeping: the
     // row says so, and the tooltip names the test and the way out.
     var mainPause = mainPauseOf(p);
     if (status === 'promoted' && reached && check === 'passing' && mainPause) {
-      return descriptor('main_paused', 'Passed, merges paused', 'amber', false, {
+      return descriptor('main_paused', 'Approved, going live is paused', 'amber', false, {
         votes: votes,
-        title: 'Votes passed and checks are green, but ' + (mainPause.note || 'main\u2019s unit suite is failing and merges for this app are paused')
-          + '. Nothing about this proposal is wrong; it merges once main is green again or an admin resumes merges.',
+        title: 'Approved and checks passed, but ' + (mainPause.note || 'main\u2019s unit suite is failing and going live is paused for this app')
+          + '. Nothing about this change is wrong; it goes live once the app is healthy again or an admin resumes.',
       });
     }
     // 9 — passed the vote, checks green, not behind: eligible and queued to
     // merge (one proposal per app merges at a time). The new explicit state.
     if (status === 'promoted' && reached && check === 'passing') {
-      return descriptor('ready', 'Passed, merging shortly', 'green', false, {
+      return descriptor('ready', 'Approved, going live shortly', 'green', false, {
         votes: votes,
-        title: 'Votes passed and checks are green. This is queued to merge.',
+        title: 'Approved and checks passed. It goes live shortly.',
       });
     }
-    // 10 — proposed, still collecting votes. #788: a proposal that
-    // changes the app's admins keeps this ordinary state — its threshold
-    // is unchanged — but carries an explanatory tooltip and the
-    // `explicitApproval` flag so callers can render the amber chip.
+    // 10 — proposed, still collecting votes. #788: a flagged proposal
+    // keeps this ordinary state — its threshold is unchanged — but carries
+    // an explanatory tooltip and the `explicitApproval` flag so callers can
+    // render the lock.
     if (status === 'promoted') {
-      return descriptor('in_vote', 'In vote', 'violet', false, {
+      // B10a: one word for a change that waits on the group, and the
+      // creator's own words on a project that is just them, whose one Yes is
+      // the Yes it needs.
+      var solo = (opts.audience || p.app_audience) === 'solo' && majority <= 1;
+      return descriptor('in_vote', solo ? 'Waiting for your approval' : 'Waiting for approval', 'violet', false, {
         votes: votes,
         title: p.requires_explicit_approval
-          ? 'This changes who can administer the app, so it won’t merge on a timer. It needs real Yes votes to reach the app’s normal threshold.'
+          ? explicitApprovalCopy(p.explicit_approval_reason).sentence
+            + ' It won\u2019t merge on a timer: it needs real Yes votes to reach the app\u2019s normal threshold.'
           : undefined,
         explicitApproval: !!p.requires_explicit_approval,
       });
@@ -434,7 +512,7 @@
     if (status === 'active' && check === 'passing') {
       return descriptor('checks_passed', 'Checks passed', 'green', false, {
         glyph: '✓',
-        title: 'Automated checks passed on the staging build. This draft is ready to propose.',
+        title: 'Checks passed on the preview. It is ready to send for approval.',
       });
     }
     // 11 — building; not yet proposed.
@@ -494,6 +572,9 @@
     lifecycle: lifecycle,
     badgeHtml: badgeHtml,
     pillHtml: pillHtml,
+    explicitApprovalCopy: explicitApprovalCopy,
+    awaitingOtherMember: awaitingOtherMember,
+    checksWillRetry: checksWillRetry,
     // Keys whose canonical badge belongs in the feed card's "state" slot.
     // In-vote / draft are conveyed by the vote pill; checks states keep their
     // own detailed badge (with per-test counts), so they're excluded here.

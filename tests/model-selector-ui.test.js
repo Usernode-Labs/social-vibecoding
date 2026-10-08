@@ -382,47 +382,9 @@ test('a saved OpenRouter model is offered even when it is not a starter', () => 
     'the starting pair still leads — a saved choice does not reorder the list');
 });
 
-test('an unsent change displays the saved OpenRouter default before creation', () => {
-  const pending = {
-    pending: true,
-    id: null,
-    app_slug: 'demo',
-    pending_agent_choice: null,
-  };
-  const saved = render({
-    session: pending,
-    pickerData: pickerData({
-      backends: {
-        codex_openrouter: {
-          model: 'anthropic/claude-sonnet-4.5', reasoningEffort: 'medium',
-        },
-      },
-    }),
-  });
-
-  assert.equal(
-    saved.view().models.selected,
-    'openrouter:anthropic/claude-sonnet-4.5',
-    'the client-only placeholder must reflect the provider the server will resolve on first send',
-  );
-  assert.equal(saved.DevChat.currentSession.pending_agent_choice, null,
-    'displaying the saved default must not turn it into an explicit per-session override');
-});
-
-test('an explicit pending Anthropic pick overrides a saved OpenRouter default', () => {
-  const pending = {
-    pending: true,
-    id: null,
-    app_slug: 'demo',
-    pending_agent_choice: {
-      backend: 'claude_code', model: null, reasoningEffort: null,
-    },
-    agent_backend: 'claude_code',
-  };
-  const selected = render({ session: pending });
-
-  assert.equal(selected.view().models.selected, 'anthropic:claude-opus-5-5');
-});
+// #4268: the unsent classic change, and with it the picker's staged
+// `pending_agent_choice`, is gone. Every session the picker reads is a row,
+// so it states that row's backend (tests above).
 
 test('the saved OpenRouter default ships through a fresh shell cache', () => {
   const version = Number(String(SW_VERSION).replace(/^v/, ''));
@@ -430,38 +392,20 @@ test('the saved OpenRouter default ships through a fresh shell cache', () => {
     `expected the OpenRouter-default shell cache, got ${SW_VERSION}`);
 });
 
-test('the declared checks follow the flat native selector', () => {
+test('the classic picker is no longer a declared check (#3976)', () => {
+  // Five checks guarded the dev chat's in-composer selector on classic
+  // sessions (direct selection, the catalog door, an OpenRouter selection,
+  // no caption #2807, mid-turn availability #2812, and #3579's Sonnet 5.5).
+  // Classic sessions are read-only now: the composer, and the picker in it,
+  // is put away, so those checks were retired with the chat. The unit tests
+  // above still pin the flat list. An agent session's model is chosen from
+  // its composer's model pill, which /dev/sessions/new's check reads.
   const dapp = JSON.parse(fs.readFileSync(
     path.join(__dirname, '..', 'dapp.json'), 'utf8'));
-  const picker = dapp.tests.filter(
-    (t) => (t.expectSelector || '').includes('dc-model-select'));
-  assert.equal(picker.length, 5,
-    'direct selection, catalog door, OpenRouter selection, no caption (#2807) '
-      + 'and mid-turn availability (#2812) are guarded');
-  // #3579 folded into the flat-list check rather than declaring a new one.
-  assert.ok(picker.some((t) => t.expectSelector.includes(':not(:has(option[value="anthropic:claude-sonnet-5"]))')
-    && t.expectSelector.includes(':has(option[value="anthropic:claude-sonnet-5-5"])')),
-    '#3579: the picker offers Sonnet 5.5, and not Sonnet 5');
-  assert.ok(picker.some((t) => /:not\(:has\(#dc-model-note\)\)/.test(t.expectSelector)),
-    '#2807: the caption stays gone');
-  assert.ok(picker.some((t) => /busy/.test(t.path)
-    && /dc-btn-stop/.test(t.expectSelector)
-    && /select#dc-model-select:not\(:disabled\)/.test(t.expectSelector)),
-    '#2812: the picker is usable while the Stop button shows');
-  // #2569: no check may depend on an optgroup, and one of them asserts
-  // there is none.
-  for (const t of picker) {
-    assert.ok(!/optgroup\[label=/.test(t.expectSelector),
-      `${t.name} still selects inside a provider heading`);
-    assert.ok(!/(?:OpenRouter|Anthropic) key ·/.test(t.expectText || ''),
-      `${t.name} still expects a key prefix in an option label`);
-  }
-  assert.ok(picker.some((t) => /:not\(:has\(optgroup\)\)/.test(t.expectSelector)
-    && /Opus 5\.5/.test(t.expectText || '')), 'the flat shape and a direct model are guarded');
-  assert.ok(picker.some((t) => /__add_more__/.test(t.expectSelector)
-    && /Add more OpenRouter/.test(t.expectText || '')), 'the catalog action is guarded');
-  assert.ok(picker.some((t) => /openai\/gpt-5\.3-codex/.test(t.expectSelector)
-    && /Runs on your OpenRouter key/.test(t.expectSelector)), 'the key hint is guarded');
+  assert.ok(!dapp.tests.some((t) => (t.expectSelector || '').includes('dc-model-select')),
+    'no declared check drives the classic picker');
+  assert.ok(dapp.tests.some((t) => /button\[data-agent-session-model\]/.test(t.expectSelector || '')),
+    'the agent session\'s model pill is checked');
 });
 
 test('the guidance copy survives on the helper and proposal summaries stay concise', () => {

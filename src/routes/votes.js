@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const { connectionExhaustionMessage } = require('../db/connection-census');
+const { ROLLOUT_RETRY_DETAIL } = require('../services/staging-recovery');
 const { governanceVoteLimiter } = require('../middleware/rate-limits');
 const log = require('../services/logger');
 const github = require('../services/github');
@@ -177,9 +178,12 @@ function stagingMockProposals(viewer) {
     // Auto-takedown (rejection) fields.
     reject_window_ends_at: gate.rejectEndsAt ?? null,
     rejection_armed: gate.rejectionArmed ?? false,
-    // #788: ordinary rows are not admins-changing; the three
-    // explicit-approval mocks below override this to true.
+    // #788: ordinary rows are not flagged; the three explicit-approval
+    // mocks below override these.
     requires_explicit_approval: false,
+    explicit_approval_reason: null,
+    needs_other_member_yes: false,
+    other_member_yes_count: null,
     // #381: console-error check snapshot. Clean by default; the dedicated
     // error mock below overrides these so the warning badge + detail block
     // are reviewable on staging via ?demo=1.
@@ -398,6 +402,9 @@ function stagingMockProposals(viewer) {
         '[Mock] Explicit-approval test: add @staging-demo-maintainer as an app admin',
         20, 1, 0, 2, { required: 3 }),
       requires_explicit_approval: true,
+      explicit_approval_reason: 'admins',
+      needs_other_member_yes: true,
+      other_member_yes_count: 0,
     },
     // (b) Threshold met. No visibility window to sit out — it goes
     // straight to "queued to merge shortly" the moment the third Yes
@@ -407,6 +414,9 @@ function stagingMockProposals(viewer) {
         '[Mock] Explicit-approval test: remove an app admin (threshold reached)',
         26, 3, 0, 4, { required: 3 }),
       requires_explicit_approval: true,
+      explicit_approval_reason: 'admins',
+      needs_other_member_yes: true,
+      other_member_yes_count: 2,
     },
     // (c) Rejection still applies. The auto-takedown countdown is
     // untouched by the modifier, so a flagged proposal the group is
@@ -416,6 +426,23 @@ function stagingMockProposals(viewer) {
         '[Mock] Explicit-approval test: admins change nobody wants (rejecting)',
         22, 0, 3, 3, { required: 3, rejectEndsAt: hoursAhead(9), rejectionArmed: true }),
       requires_explicit_approval: true,
+      explicit_approval_reason: 'admins',
+      needs_other_member_yes: true,
+      other_member_yes_count: 0,
+    },
+    // (d) Threshold met, floor not (#3826). All three Yes votes are the
+    // author's, so the tally reads full while the member floor is still
+    // unmet: the card says "Needs another member's Yes" (a viewer who has
+    // voted) or "Needs your Yes" (one who has not), instead of a bare
+    // "3 / 3" that reads as passed. No window, like (a) and (b).
+    {
+      ...mk(9000095, 900195,
+        '[Mock] Explicit-approval test: votes all in, waiting on another member (floor unmet)',
+        21, 3, 0, 2, { required: 3 }),
+      requires_explicit_approval: true,
+      explicit_approval_reason: 'visibility',
+      needs_other_member_yes: true,
+      other_member_yes_count: 0,
     },
     // ── #1442 freshness fixtures ───────────────────────────────────────
     //
@@ -537,19 +564,58 @@ function stagingMockProposals(viewer) {
     },
     {
       ...mk(9000093, 900193,
-        '[Mock] #2061: waiting on the author — two checks are failing',
+        '[Mock] #2061: waiting on the author — checks are failing',
         5, 3, 0, 4, { required: 3 }),
       check_state: 'failing',
+      // #3978: the failing rows carry their diagnosis, and the unit-suite
+      // row carries its per-test excerpts, so the "Why it failed" fold on
+      // this route shows what a real failing proposal shows. Kept in the
+      // shape services/unit-suite.js shapes and the connector reads.
       test_results: [
-        { name: 'Kudos totals survive a rename', path: '/dev', status: 'fail' },
-        { name: 'The board folds on a narrow screen', path: '/dev', status: 'fail' },
+        {
+          name: 'Kudos totals survive a rename', path: '/dev', status: 'fail',
+          failureReason: 'Expected element "[data-kudos-total]" was not found',
+          consoleErrors: [],
+        },
+        {
+          name: 'The board folds on a narrow screen', path: '/dev', status: 'fail',
+          failureReason: '1 console error on load',
+          consoleErrors: [
+            { kind: 'pageerror', message: 'TypeError: Cannot read properties of undefined (reading \'rows\')', source: 'dev-kanban.tsx' },
+          ],
+        },
+        {
+          index: -3,
+          name: 'Repo unit suite (npm test) passes', path: 'package.json', status: 'fail',
+          advisory: false, consoleErrors: [],
+          failureReason: 'tests/kudos-totals.test.js (1): kudos totals survive a rename | # tests 20913 | # pass 20912 | # fail 1 | # cancelled 0',
+          failureDetails: [
+            {
+              file: 'tests/kudos-totals.test.js',
+              test: 'kudos totals survive a rename',
+              excerpt: [
+                "    error: 'expected 42 to equal 41',",
+                "    code: 'ERR_ASSERTION',",
+                "    actual: 42,",
+                "    expected: 41,",
+                "    failureType: 'testCodeFailure',",
+                '    stack: |',
+                "      AssertionError [ERR_ASSERTION]: expected 42 to equal 41",
+                '          at Test.<anonymous> (tests/kudos-totals.test.js:88:5)',
+                '  — stdout just before the failure —',
+                'renaming @mara → @mara-renamed: kudos rows moved 3',
+                'recount after rename: total=42 (expected 41)',
+              ].join('\n'),
+            },
+          ],
+        },
       ],
       merge_requirements: {
         context: { explicitApproval: false, locked: false, selfHosted: false },
         evaluated: [
           { key: 'approvals', state: 'done', detail: { note: '3 of 3' } },
           { key: 'integration', state: 'done', detail: { note: 'level with main, merges cleanly' } },
-          { key: 'checks', state: 'blocked', detail: { checkState: 'failing', failingCount: 2, note: '2 failing. They re-run on the next push' } },
+          { key: 'checks', state: 'blocked', detail: { checkState: 'failing', failingCount: 3, note: '3 failing. They re-run on the next push' } },
         ],
       },
       merge_requirements_at: new Date(Date.now() - 90 * 1000).toISOString(),
@@ -781,6 +847,20 @@ function stagingMockProposals(viewer) {
       check_error_detail: connectionExhaustionMessage(
         { max: 100, used: 98 }, { where: 'ran its checks' }
       ),
+      recheckable: true,
+      test_results: [],
+    },
+    // The other red badge that is not the author's to fix: a run that
+    // overlapped a platform rollout and came back red is stored as 'error'
+    // and runs again on its own. No ordinary staging steps can make a run
+    // overlap a rollout, so this row is how the sentence is reviewable. It
+    // reads the constant the settle path writes, so the copy cannot drift.
+    {
+      ...mk(9000046, 900146,
+        '[Mock] Checks-error test: the checks ran while Homeroom was updating',
+        4, 1, 0, 1, { required: 2 }),
+      check_state: 'error',
+      check_error_detail: ROLLOUT_RETRY_DETAIL,
       recheckable: true,
       test_results: [],
     },
@@ -1365,7 +1445,13 @@ async function annotateDeploymentState(config, pool, app, rows) {
   }
 
   const releaseWatch = require('../services/release-watch');
-  const stall = releaseWatch.describe(app, runningSha);
+  let stall = releaseWatch.describe(app, runningSha);
+  // Several merges, one release: the record can name a commit that never
+  // ran by itself and is already inside the running build. Resolved, though
+  // the poller has not cleared it yet; the column says no stall.
+  if (stall.stalled && await releaseWatch.carriedBy(pool, app.id, stall.sha, runningSha)) {
+    stall = releaseWatch.describe(null);
+  }
   const stalledSha = stall.stalled ? normalizedSha(stall.sha) : null;
   for (const row of prRows) {
     if (!isAfterDeploymentBoundary(row, boundary)) {
@@ -1790,6 +1876,10 @@ async function reconcileNativeReviewedHead({
     changed: true,
     kind: move.kind,
     votesKept: keepsApprovals,
+    // The green verdict about the old head now stands for this one, so
+    // nothing rebuilds. services/proposal-update.js reports that to the
+    // author instead of a rebuild that is not happening.
+    checksCarry,
     checksDeferred: needsChecks && deferChecks,
   };
 }
@@ -2074,8 +2164,17 @@ function mergedRowSelect() {
            -- merged before the column existed — consumers must keep the
            -- created_at fallback forever.
            cs.merged_at, cs.promoted_at, cs.shared_at, cs.session_title,
+           -- When production first ran it; NULL while a merge is still going
+           -- live (the merge-followups workflow machine), so the card says so.
+           cs.live_at,
            COALESCE(cs.merged_at, cs.created_at) AS completed_at,
            cs.revert_of_session_id,
+           -- A change that went live inside another one
+           -- (services/included-changes.js): the change that carried it, for
+           -- its page's "Live, included in #8".
+           cs.included_in_session_id,
+           inc.pr_number AS included_in_pr_number,
+           inc.pr_title  AS included_in_pr_title,
            -- #2779: the agent session the change was started from. Only its
            -- id: the conversation itself answers to its owner alone.
            cs.agent_session_id,
@@ -2121,6 +2220,19 @@ function mergedRowSelect() {
            -- both are present.
            cs.votes_required,
            cs.active_users_at_merge,
+           -- #788: the explicit-approval flag and its reason. The proposal
+           -- page refetches a live row through this select and merges it
+           -- into the board's copy key-wise, so a row without them read as
+           -- unflagged after every vote and the lock went missing.
+           cs.requires_explicit_approval, cs.explicit_approval_reason,
+           -- The member floor: Yes votes from someone other than the
+           -- author, read only for a flagged row that is still open.
+           CASE WHEN cs.requires_explicit_approval AND cs.status IN ('promoted', 'merging') THEN
+             (SELECT COUNT(*)::int FROM pr_votes pv
+               WHERE pv.session_id = cs.id AND pv.vote = 'yes'
+                 AND pv.user_id IS DISTINCT FROM cs.user_id
+                 AND ${countedVotePredicateSql('pv', 'cs')})
+           END AS other_yes_count,
            -- Vote tally + per-viewer vote carried through so the group-chat
            -- activity row can keep its "x / y" pill and "You voted X" box
            -- after the PR merges (status='merged'), rather than the controls
@@ -2166,7 +2278,20 @@ function mergedRowSelect() {
          FROM chat_sessions cs
          LEFT JOIN users u ON cs.user_id = u.id
          LEFT JOIN chat_sessions rv ON rv.revert_of_session_id = cs.id
-           AND rv.status IN ('promoted', 'merging', 'merged')`;
+           AND rv.status IN ('promoted', 'merging', 'merged')
+         LEFT JOIN chat_sessions inc ON inc.id = cs.included_in_session_id`;
+}
+
+// #3893: whether a promote was sent by the owner's own agent with a bearer
+// token: the local Homeroom CLI's proposal_promote, or a connector's
+// promote_change and submit_work `propose: true`. cli-auth.js sets
+// req.cliAuthenticated for those two token kinds only, never for a browser
+// session. A delegated grant is the platform's own agent session, whose
+// conversation already tells its owner, and the Homeroom bot promotes
+// in-process as itself; neither counts.
+function promotedByOwnersAgent(req) {
+  return req.cliAuthenticated === true && !req.mcpDelegation
+    && !(req.user && req.user.is_synthetic);
 }
 
 function voteRoutes(config) {
@@ -2177,7 +2302,7 @@ function voteRoutes(config) {
   // (promote / vote / votes / undo / admin-merge): collab-level access,
   // 404 on deny. Admins always pass inside the guard.
   router.use('/api/sessions/:id', appAccess.sessionCollabGuard(pool));
-  // Proposing and voting are for the community's members
+  // Proposing, voting and undoing a merge are for the community's members
   // (services/communities.js). Mounted per route rather than beside the
   // collab guard: the guard covers every session write, and building a
   // change, archiving one or giving kudos stay open to anyone who may
@@ -2192,7 +2317,8 @@ function voteRoutes(config) {
   // production rebuild) that must not be started by a process seconds from
   // exiting — a half-run rebuild leaves the app down until the next heal
   // sweep. 503 here is honest and the client retries against the new
-  // container. Read-only vote/undo paths stay ungated.
+  // container. Undo is gated the same way: it is not a read, it clones,
+  // pushes and opens a revert PR in the background.
   router.post('/api/sessions/:id/promote', drainGuard, requireMembership, sameOriginBrowserOnly, async (req, res) => {
     try {
       // #183: headless rows are excluded — auto sessions are never
@@ -2236,7 +2362,7 @@ function voteRoutes(config) {
       );
       if (parseInt(promotedRows[0].cnt) >= caps.promotedSessions) {
         return res.status(429).json({
-          error: `You already have ${caps.promotedSessions} PRs up for vote. Wait for one to merge, or archive one first.`,
+          error: `You already have ${caps.promotedSessions} changes waiting for approval. Wait for one to go live, or archive one first.`,
         });
       }
 
@@ -2434,7 +2560,7 @@ function voteRoutes(config) {
           if (pr && pr.state === 'closed') {
             if (imported) {
               return res.status(409).json({
-                error: `PR #${session.pr_number} is closed on GitHub and cannot be put up for vote.`,
+                error: 'This change was closed on GitHub, so it can\'t ask for approval.',
               });
             }
             try {
@@ -2796,6 +2922,25 @@ function voteRoutes(config) {
         }
       } catch (err) {
         log.warn('votes', 'pr_proposed notify failed', { sessionId: session.id, err: err.message });
+      }
+
+      // #3893: the fan-out above leaves the proposer out, which is right for
+      // a person pressing Propose and wrong when their agent did it for them
+      // while they were away. submit_work tells them when it opens a
+      // proposal (#1405, connector_submitted); an agent that puts its change
+      // up for the vote here gets the same "Submitted by your agent". Before
+      // this, work proposed through the local Homeroom CLI, promote_change or
+      // `propose: true` reached the vote without a word to its owner.
+      // Unread-deduped per (owner, change), and best-effort like the above.
+      if (promotedByOwnersAgent(req)) {
+        try {
+          const created = await notifications.createConnectorSubmittedNotification(pool, {
+            userId: req.user.id, appId: session.app_id, sessionId: session.id, detail: 'submitted',
+          });
+          if (created.length) await notifications.hydrateAndPush(pool, created[0]);
+        } catch (err) {
+          log.warn('votes', 'connector_submitted notify failed', { sessionId: session.id, err: err.message });
+        }
       }
     } catch (err) {
       log.error('votes', 'Promote failed', { message: err.message });
@@ -3305,6 +3450,12 @@ function voteRoutes(config) {
       );
       if (!sessionRows.length) return res.status(404).json({ error: 'Promoted session not found' });
       const session = sessionRows[0];
+      // A private member does not vote on a public app (communities.js).
+      const privateRefusal = await communities.privateVoteRefusal(pool, session.app_id, req.user?.id);
+      if (privateRefusal) return res.status(403).json(privateRefusal);
+      // A public app's vote counts from a verified account (communities.js).
+      const identityRefusal = await communities.identityVoteRefusal(pool, session.app_id, req.user?.id);
+      if (identityRefusal) return res.status(403).json(identityRefusal);
 
       // #2782: the revision as the ROW has it — no GitHub round-trip. This
       // used to be a fresh reconcile, which meant a full `git fetch` of the
@@ -3451,7 +3602,16 @@ function voteRoutes(config) {
       // the nudge is cleared, and it's idempotent (clears only unread rows).
       // Non-fatal: a notification hiccup must never 500 a successful vote.
       try {
-        const cleared = await notifications.markReadForSession(pool, req.user.id, session.id);
+        let cleared = await notifications.markReadForSession(pool, req.user.id, session.id);
+        // 5 October (Page Turners): and a "Waiting for your approval" digest
+        // with nothing left waiting on them, this being the last one. On its
+        // own: a digest that could not be read never loses the push above.
+        try {
+          const settled = await notifications.settleVoteDigests?.(pool, { userIds: [req.user.id] });
+          cleared += Array.isArray(settled) ? settled.length : 0;
+        } catch (err) {
+          log.warn('votes', 'Settling the voter\'s digests failed', { sessionId: session.id, err: err.message });
+        }
         if (cleared > 0) {
           // Fan out to the voter's OTHER tabs/devices so their unread badge
           // syncs without a manual refresh; the acting tab refreshes itself.
@@ -3462,22 +3622,49 @@ function voteRoutes(config) {
           sessionId: session.id, userId: req.user.id, err: err.message,
         });
       }
+      // B7: a Yes settles the "ready to try" card Homeroom bot sent this
+      // voter about the change, on every device, and the card says what
+      // happens next. The answer carries that too (`goesLive`), so the card
+      // that was tapped says it at once rather than when the update lands.
+      // One query when the voter has no such card. Never throws.
+      const goesLive = vote === 'yes'
+        ? await require('../services/homeroom-bot-dm').noteApproved(pool, session.id, req.user.id)
+        : null;
+      const readyCard = goesLive ? { goesLive } : {};
 
       if (unchanged) {
         log.debug('votes', 'Vote unchanged, skipping broadcast+merge', {
           sessionId: session.id, userId: req.user.id, vote,
         });
-        return res.json({ ok: true, merged: false, unchanged: true });
+        return res.json({ ok: true, merged: false, unchanged: true, ...readyCard });
       }
+      // #3977: a No's line on Homeroom bot's own change, while it is up for
+      // a vote, goes to the bot as this voter's reply in the change's
+      // discussion, and its follow-up is queued first to fix what the line
+      // says (homeroom-bot-dm.js voteLineFor / voteLineTarget). Nothing for
+      // a Yes, a No re-cast with the same words (returned above), or a
+      // change that is not the bot's (one indexed read). Never throws.
+      const botDm = require('../services/homeroom-bot-dm');
+      const botLine = botDm.voteLineFor({ vote, reason: recordedReason, unchanged });
+      const botTarget = botLine ? await botDm.voteLineTarget(pool, { sessionId: session.id }) : null;
+      const handToBot = async () => (botTarget
+        ? !!(await botDm.handVoteLine(pool, { user: req.user, target: botTarget, line: botLine }))?.ok
+        : false);
       if (reasonOnly) {
         // #1688: the same vote with new words. The roster and the proposer's
         // notification read the row live, so a tally push is all the
         // clients need; no line is re-posted and no merge is re-checked.
+        // #3977: new words on a No on the bot's change reach the bot.
+        await handToBot();
         const { pushVoteUpdate: pushReason } = require('../services/ws');
         pushReason({ sessionId: session.id, appSlug: session.app_slug, merged: false });
         log.debug('votes', 'Vote reason updated', { sessionId: session.id, userId: req.user.id });
-        return res.json({ ok: true, merged: false, unchanged: false, reasonUpdated: true });
+        return res.json({ ok: true, merged: false, unchanged: false, reasonUpdated: true, ...readyCard });
       }
+      // 5 Oct: whoever asked Homeroom bot for this change reads their ready
+      // card again, so it says who it still waits on now. One indexed read
+      // when it is not the bot's. Never throws.
+      void require('../services/homeroom-bot-dm').noteVoted(pool, session.id);
 
       const voteLabel = session.pr_title
         ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
@@ -3508,15 +3695,20 @@ function voteRoutes(config) {
       // their tally — the thread it lands in is the proposal's own, so the
       // PR label it used to repeat is the thread's title. Without one, the
       // line reads exactly as before.
-      const voteLine = recordedReason
-        ? `${req.user.username} voted ${vote}: “${recordedReason}”`
+      // #3977: a line handed to Homeroom bot is already in the thread, as
+      // the voter's own reply just above this row, so the row leaves it out
+      // and the discussion shows it once. Handed first, so it is there
+      // whichever way the hand-off goes.
+      const shownReason = (await handToBot()) ? null : recordedReason;
+      const voteLine = shownReason
+        ? `${req.user.username} voted ${vote}: “${shownReason}”`
         : `${req.user.username} voted ${vote} on ${voteLabel}`;
       await sendSystemMessage(pool, session.app_id,
         voteLine,
         'vote',
         // Lets the group-chat client render live vote buttons inline on
         // this activity row (see group-chat.js renderMessageHtml).
-        { vote: { sessionId: session.id, prNumber: session.pr_number || null, reason: recordedReason } },
+        { vote: { sessionId: session.id, prNumber: session.pr_number || null, reason: shownReason } },
         // #194: per-vote activity lands in the proposal's own thread, not
         // general chat — the promote/merge announcements remain the
         // general-chat entry points.
@@ -3576,7 +3768,7 @@ function voteRoutes(config) {
       // moved nothing, and the schedule counts the rare one that matters.
       // Never throws, so the vote answers the same either way.
       await challengeScorer.scoreOnVote(pool, config);
-      res.json({ ok: true, merged: false });
+      res.json({ ok: true, merged: false, ...readyCard });
 
       // The live head read the response no longer waits on, then the
       // majority check. If it turns into a merge, a second broadcast flips
@@ -3680,7 +3872,15 @@ function voteRoutes(config) {
                 cs.checks_base_sha, cs.checks_base_verdict, cs.checks_base_behind_by,
                 cs.mergeability, cs.mergeability_files, cs.mergeability_files_complete,
                 cs.freshness_behind_by, cs.freshness_checked_at,
-                cs.requires_explicit_approval,
+                cs.requires_explicit_approval, cs.explicit_approval_reason,
+                -- The member floor: Yes votes from someone other than the
+                -- author, read only for a flagged row.
+                CASE WHEN cs.requires_explicit_approval THEN
+                  (SELECT COUNT(*)::int FROM pr_votes pv
+                    WHERE pv.session_id = cs.id AND pv.vote = 'yes'
+                      AND pv.user_id IS DISTINCT FROM cs.user_id
+                      AND ${countedVotePredicateSql('pv', 'cs')})
+                END AS other_yes_count,
                 -- #866: so the home strip can derive the same
                 -- building/unavailable preview state the proposal card
                 -- shows (see staging.previewDisplayState below).
@@ -3701,10 +3901,16 @@ function voteRoutes(config) {
       );
 
       const { rows: governance } = await pool.query(
-        `SELECT i.id, i.title, i.kind, i.created_at,
+        `SELECT i.id, i.title, i.kind, i.created_at, i.created_by,
                 a.id AS app_id, a.slug AS app_slug, a.name AS app_name,
+                a.self_hosted AS app_self_hosted,
                 (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'up' AND counts_toward_outcome(user_id, i.app_id)) AS up_count,
-                (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'down' AND counts_toward_outcome(user_id, i.app_id)) AS down_count
+                (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'down' AND counts_toward_outcome(user_id, i.app_id)) AS down_count,
+                -- The member floor: a secret-change request is always flagged.
+                (SELECT COUNT(*)::int FROM issue_votes
+                  WHERE issue_id = i.id AND vote = 'up'
+                    AND user_id IS DISTINCT FROM i.created_by
+                    AND counts_toward_outcome(user_id, i.app_id)) AS other_up_count
          FROM issues i JOIN apps a ON a.id = i.app_id
          WHERE i.created_by = $1 AND i.kind = 'secret_change' AND i.status = 'open'
          ORDER BY i.created_at DESC`,
@@ -3721,10 +3927,20 @@ function voteRoutes(config) {
       const statsByApp = {};
       const govByApp = {};
       const electorateByApp = {};
+      // The member floor's community size, read only for an app with a
+      // flagged proposal (or a secret-change request, which is always one).
+      const membersByApp = {};
+      const floorApps = new Set([
+        ...sessions.filter((r) => r.requires_explicit_approval).map((r) => r.app_id),
+        ...governance.map((r) => r.app_id),
+      ]);
       for (const appId of appIds) {
         statsByApp[appId] = await getActiveUserStats(pool, appId);
         govByApp[appId] = await governanceSvc.getGovernance(pool, appId);
         electorateByApp[appId] = await governanceSvc.getElectorate(pool, appId, govByApp[appId]);
+        if (floorApps.has(appId)) {
+          membersByApp[appId] = await governanceSvc.communityMemberCount(pool, appId);
+        }
       }
 
       const proposals = [];
@@ -3733,17 +3949,22 @@ function voteRoutes(config) {
         const electorate = electorateByApp[s.app_id];
         const q = electorate?.approverIds
           ? await governanceSvc.qualifiedCounts(
-            pool, 'pr', s.id, electorate.approverIds, reviewedHeadForSession(s)
+            pool, 'pr', s.id, electorate.approverIds,
+            s.requires_explicit_approval ? { authorId: s.user_id ?? null } : undefined
           )
-          : { yes: s.yes_count, no: s.no_count };
+          : { yes: s.yes_count, no: s.no_count, otherYes: s.other_yes_count };
         // Per-row dynamic merge gate + rejection countdown, mirroring
         // /api/apps/:slug/promoted (same anchor: promoted_at || created_at).
         // #788: the stamped flag rides on the row (added to this
         // endpoint's SELECT), so the no-timer modifier applies here
-        // without a per-row GitHub call.
+        // without a per-row GitHub call — and with it the member floor.
         const gate = governanceSvc.computeGate(
           gov, electorate?.active || 1, q.yes, q.no, s.promoted_at || s.created_at, null,
-          { explicitApproval: !!s.requires_explicit_approval }
+          {
+            explicitApproval: !!s.requires_explicit_approval,
+            otherYes: q.otherYes,
+            memberCount: membersByApp[s.app_id],
+          }
         );
         proposals.push({
           ...s,
@@ -3757,10 +3978,11 @@ function voteRoutes(config) {
           rejection_armed: gate.rejectionArmed,
           approval_policy: gate.policy,
           approvals_required: gate.approvalsRequired,
-          requires_explicit_approval: !!s.requires_explicit_approval,
+          ...governanceSvc.explicitApprovalRowFields(s, gate),
           qualified_yes_count: gate.qualifiedYes,
           qualified_no_count: gate.qualifiedNo,
         });
+        delete proposals[proposals.length - 1].other_yes_count;
       }
 
       // #405: staging-only demo rows (?demo=1) so the home "Your proposals"
@@ -3828,15 +4050,25 @@ function voteRoutes(config) {
         const gov = govByApp[g.app_id];
         const electorate = electorateByApp[g.app_id];
         const q = electorate?.approverIds
-          ? await governanceSvc.qualifiedCounts(pool, 'issue', g.id, electorate.approverIds)
-          : { yes: g.up_count, no: g.down_count };
+          ? await governanceSvc.qualifiedCounts(
+            pool, 'issue', g.id, electorate.approverIds, { authorId: g.created_by ?? null }
+          )
+          : { yes: g.up_count, no: g.down_count, otherYes: g.other_up_count };
         // Governance proposals have no promote step — created_at is the
-        // visibility-window anchor. down votes feed both gates.
+        // visibility-window anchor. down votes feed both gates. A
+        // secret-change request carries a value, so it is flagged: no
+        // timer, and a Yes from another member (services/governance.js).
         const gate = governanceSvc.computeGate(
-          gov, electorate?.active || 1, q.yes, q.no, g.created_at
+          gov, electorate?.active || 1, q.yes, q.no, g.created_at, null,
+          { explicitApproval: true, otherYes: q.otherYes, memberCount: membersByApp[g.app_id] }
         );
+        const { other_up_count: _otherUp, app_self_hosted: selfHosted, ...rest } = g;
         governanceRows.push({
-          ...g,
+          ...rest,
+          ...governanceSvc.explicitApprovalRowFields({
+            requires_explicit_approval: true,
+            explicit_approval_reason: require('../services/explicit-approval').secretChangeReason(selfHosted),
+          }, gate),
           majority: statsByApp[g.app_id]?.majority || 1,
           activeUsers: statsByApp[g.app_id]?.active || 1,
           votes_required: gate.required,
@@ -3953,11 +4185,20 @@ function voteRoutes(config) {
            -- #237: captured reason when checks are 'error' (staging preview
            -- failed to boot) — drives the "Preview won't boot" badge tooltip.
            cs.check_error_detail,
-           -- #788: does this proposal change dapp.json's admins block? A
+           -- #788: does this proposal change a protected dapp.json block
+           -- (admins, governance, visibility, platform_env, secrets)? A
            -- flagged row loses the time-based merge paths (the gate below
-           -- reports no merge_window_ends_at, so no countdown renders) and
-           -- shows the "Explicit approval" chip.
-           cs.requires_explicit_approval,
+           -- reports no merge_window_ends_at, so no countdown renders),
+           -- needs a Yes from another member, and shows the lock.
+           cs.requires_explicit_approval, cs.explicit_approval_reason,
+           -- The member floor: Yes votes from someone other than the
+           -- author, read only for a flagged row.
+           CASE WHEN cs.requires_explicit_approval THEN
+             (SELECT COUNT(*)::int FROM pr_votes pv
+               WHERE pv.session_id = cs.id AND pv.vote = 'yes'
+                 AND pv.user_id IS DISTINCT FROM cs.user_id
+                 AND ${countedVotePredicateSql('pv', 'cs')})
+           END AS other_yes_count,
            -- #3234: the electorate the vote opened with (display only).
            cs.active_users_at_promote,
            (SELECT COUNT(*) FROM pr_votes pv
@@ -4128,19 +4369,29 @@ function voteRoutes(config) {
           electorate.approverIds
         );
       }
+      // The member floor's community size: one read per panel, and only
+      // when a live row is flagged.
+      const memberCount = rows.some((r) => r.votes_required == null && r.requires_explicit_approval)
+        ? await governance.communityMemberCount(pool, appRows[0].id)
+        : undefined;
       for (const row of rows) {
         if (row.votes_required != null) continue;
         const q = qualifiedByRow
-          ? (qualifiedByRow.get(row.id) || { yes: 0, no: 0 })
-          : { yes: row.yes_count, no: row.no_count };
+          ? (qualifiedByRow.get(row.id) || { yes: 0, no: 0, otherYes: 0 })
+          : { yes: row.yes_count, no: row.no_count, otherYes: row.other_yes_count };
         // #788: the stamped flag rides on the row (chat_sessions.* is
         // selected here), so the no-timer modifier applies with no extra
         // per-row work — a flagged row simply reports no
-        // merge_window_ends_at and never renders a countdown.
+        // merge_window_ends_at and never renders a countdown — and the
+        // member floor with it.
         const gate = governance.computeGate(
           gov, electorate.active, q.yes, q.no,
           row.promoted_at || row.created_at, null,
-          { explicitApproval: !!row.requires_explicit_approval }
+          {
+            explicitApproval: !!row.requires_explicit_approval,
+            otherYes: q.otherYes,
+            memberCount,
+          }
         );
         row.votes_required = gate.required;
         row.merge_window_ends_at = gate.windowEndsAt;
@@ -4149,7 +4400,8 @@ function voteRoutes(config) {
         row.rejection_armed = gate.rejectionArmed;
         row.approval_policy = gate.policy;
         row.approvals_required = gate.approvalsRequired;
-        row.requires_explicit_approval = !!row.requires_explicit_approval;
+        Object.assign(row, governance.explicitApprovalRowFields(row, gate));
+        delete row.other_yes_count;
         row.qualified_yes_count = gate.qualifiedYes;
         row.qualified_no_count = gate.qualifiedNo;
         // #3234: display only — the threshold as it stood when voting opened.
@@ -4458,7 +4710,7 @@ function voteRoutes(config) {
              FROM (
                SELECT COALESCE(merged_at, created_at) AS t
                  FROM chat_sessions
-                WHERE app_id = $1 AND status = 'merged'
+                WHERE app_id = $1 AND status = 'merged' AND live_at IS NOT NULL
                UNION ALL
                SELECT created_at AS t
                  FROM issues
@@ -4679,13 +4931,22 @@ function voteRoutes(config) {
         const governance = require('../services/governance');
         const gov = await governance.getGovernance(pool, gatedApp.id);
         const electorate = await governance.getElectorate(pool, gatedApp.id, gov);
+        const flagged = !!proposal.requires_explicit_approval;
         const q = electorate.approverIds
-          ? await governance.qualifiedCounts(pool, 'pr', proposal.id, electorate.approverIds)
-          : { yes: proposal.yes_count, no: proposal.no_count };
+          ? await governance.qualifiedCounts(
+            pool, 'pr', proposal.id, electorate.approverIds,
+            flagged ? { authorId: proposal.user_id ?? null } : undefined
+          )
+          : { yes: proposal.yes_count, no: proposal.no_count, otherYes: proposal.other_yes_count };
         const gate = governance.computeGate(
           gov, electorate.active, q.yes, q.no,
           proposal.promoted_at || proposal.created_at, null,
-          { explicitApproval: !!proposal.requires_explicit_approval }
+          {
+            explicitApproval: flagged,
+            otherYes: q.otherYes,
+            memberCount: flagged
+              ? await governance.communityMemberCount(pool, gatedApp.id) : undefined,
+          }
         );
         proposal.votes_required = gate.required;
         proposal.merge_window_ends_at = gate.windowEndsAt;
@@ -4694,7 +4955,7 @@ function voteRoutes(config) {
         proposal.rejection_armed = gate.rejectionArmed;
         proposal.approval_policy = gate.policy;
         proposal.approvals_required = gate.approvalsRequired;
-        proposal.requires_explicit_approval = !!proposal.requires_explicit_approval;
+        Object.assign(proposal, governance.explicitApprovalRowFields(proposal, gate));
         proposal.qualified_yes_count = gate.qualifiedYes;
         proposal.qualified_no_count = gate.qualifiedNo;
         // #3234: display only — the threshold as it stood when voting opened.
@@ -4760,7 +5021,17 @@ function voteRoutes(config) {
   //
   // The caller becomes the revert session's owner (user_id) so they
   // "own" the resulting PR for chat / status purposes.
-  router.post('/api/sessions/:id/undo', sameOriginBrowserOnly, async (req, res) => {
+  //
+  // Undo is a write, not a read: it clones the repo, pushes a branch, opens
+  // a PR and inserts a promoted session owned by the caller. So it takes
+  // the same gates as promote. drainGuard keeps a process about to exit
+  // from starting that background work, and requireMembership keeps it to
+  // the community's members: on a public community the collab guard above
+  // lets every signed-in person through, and only membership stops a
+  // passer-by from putting a revert up for a vote. A non-member's 403
+  // `join_required` becomes the Join prompt in the client's fetch wrapper
+  // (frontend/src/lib/join-required.ts), which sends the undo again on a yes.
+  router.post('/api/sessions/:id/undo', drainGuard, requireMembership, sameOriginBrowserOnly, async (req, res) => {
     try {
       const { rows: sessionRows } = await pool.query(
       `SELECT cs.*, a.slug as app_slug, a.repo_url
@@ -4782,6 +5053,17 @@ function voteRoutes(config) {
       // this is the server-side enforcement.
       if (session.revert_of_session_id) {
         return res.status(409).json({ error: 'Cannot undo a revert PR' });
+      }
+
+      // A change that went live inside another one has no merge of its own
+      // to revert: its merge commit is the carrying change's, and reverting
+      // that would undo the carrying change too. The button is hidden on the
+      // client; undoing the carrying change is the way.
+      if (session.included_in_session_id) {
+        return res.status(409).json({
+          error: 'This change went live as part of another change. Undo that change instead.',
+          includedInSessionId: Number(session.included_in_session_id),
+        });
       }
 
       // Block if a revert is already in flight or landed for this merge.
@@ -4875,15 +5157,17 @@ function voteRoutes(config) {
 
       // #788: force-merge is no longer platform-admin-only — an app's
       // own declared admins may force-merge that app's proposals. The
-      // one exception is a proposal that changes the admins block
-      // itself: letting an app admin force-merge that would be
-      // unilateral self-escalation, so it stays platform-admin-only.
+      // one exception is a proposal flagged for explicit approval (it
+      // changes the admins, the approval rules, who can see the app, its
+      // platform settings or its keys): letting an app admin force-merge
+      // that would skip the other member's Yes it exists to ask for, so
+      // it stays platform-admin-only.
       const explicitApproval = !!session.requires_explicit_approval;
       const appForGate = { id: session.app_id, created_by: session.app_created_by };
       if (!(await appAdmins.canForceMerge(pool, appForGate, req.user, { explicitApproval }))) {
         if (explicitApproval && await appAdmins.isAppAdmin(pool, session.app_id, req.user?.id)) {
           return res.status(403).json({
-            error: "This proposal changes the app's admins, so it needs explicit approval: only a platform admin can force-merge it",
+            error: `${require('../services/explicit-approval').reasonSentence(session.explicit_approval_reason)} Only a platform admin can merge it without that vote.`,
           });
         }
         return res.status(403).json({ error: 'Full admin access required' });
@@ -5011,7 +5295,10 @@ async function resolveIssueBounty(pool, { appId, sessionId, awardeeUserId, issue
 //   shapers — everyone else who took part: a No with a line on the version
 //             that merged (an objection that did not stop it), or a word in
 //             the proposal's thread before it landed. Nobody is named twice.
-async function mergeCredits(pool, session) {
+// `before` bounds the thread's speakers to those who spoke before it: the
+// merge-followups machine names them when the change goes live, which can
+// be well after the merge.
+async function mergeCredits(pool, session, { before = null } = {}) {
   const { rows: authorRows } = session.user_id
     ? await pool.query('SELECT username FROM users WHERE id = $1', [session.user_id])
     : { rows: [] };
@@ -5031,9 +5318,10 @@ async function mergeCredits(pool, session) {
        JOIN users u ON u.id = cm.user_id
       WHERE cm.app_id = $1 AND cm.thread_type = 'session' AND cm.thread_ref = $2
         AND cm.msg_type = 'message'
+        AND ($3::timestamptz IS NULL OR cm.created_at <= $3::timestamptz)
       GROUP BY u.username
       ORDER BY first_at ASC`,
-    [session.app_id, session.id]
+    [session.app_id, session.id, before]
   );
   const seen = new Set(author ? [author] : []);
   const backers = [];
@@ -5290,7 +5578,7 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
     // keeps any earlier snapshot (defensive; the promoted→merging claim
     // already guarantees a single merge transition).
     await pool.query(
-      `UPDATE chat_sessions SET status = 'merged', merged_at = NOW(),
+      `UPDATE chat_sessions SET status = 'merged', merged_at = NOW(), live_at = NOW(),
                                 merge_commit_sha = COALESCE($2, merge_commit_sha),
                                 votes_required = COALESCE(votes_required, $3),
                                 active_users_at_merge = COALESCE(active_users_at_merge, $4)
@@ -5313,6 +5601,28 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
         ...(force && forceBy ? { forcedBy: forceBy.username } : {}),
       },
     });
+
+    // A change built on another one that was up for a vote carried it (its
+    // head is one of this pull request's commits), so that one is live now
+    // too: it is marked merged as included in this one before anything
+    // below reads the app's open changes (the bot's request bookkeeping, the
+    // cascade at the end), and its pull request, requests and first version
+    // are settled in the background (services/included-changes.js). Never a
+    // reason the merge fails.
+    try {
+      const inclusion = await require('../services/included-changes').includeStackedChanges({
+        config, pool, session, sha: deployedSha,
+      });
+      if (inclusion?.included?.length) {
+        dstep({
+          phase: 'included',
+          message: `Marked ${inclusion.included.length === 1 ? 'an open change' : `${inclusion.included.length} open changes`} this one was built on as live with it.`,
+          detail: { sessionIds: inclusion.included },
+        });
+      }
+    } catch (err) {
+      log.warn('votes', 'Including the changes this merge carried failed', { sessionId: session.id, err: err.message });
+    }
 
     // #2779: the agent session that started this change, if one did, hears
     // that it landed and stops treating it as its active change. A classic
@@ -5357,6 +5667,16 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
     } catch (err) {
       log.error('votes', 'Merged notification threw', { sessionId: session.id, err: err.message });
     }
+    // 5 October (Page Turners): the bell stops asking about it. Its "ready
+    // to try" rows say it is live (unread again for whoever had not said
+    // yes), and the vote nudges and digests it answered are read
+    // (notifications.settleDecidedChange). Never a reason the merge fails.
+    try {
+      notifications.settleDecidedChange?.(pool, session.id)
+        ?.catch?.((err) => log.warn('votes', 'Settling the bell after a merge failed', { sessionId: session.id, err: err.message }));
+    } catch (err) {
+      log.warn('votes', 'Settling the bell after a merge threw', { sessionId: session.id, err: err.message });
+    }
     // #3624: a proposal the Homeroom bot built for somebody it talks to in
     // a DM: they hear it is live there (the notification above goes to the
     // proposal's author, which for a bot build is the bot). Never a reason
@@ -5366,6 +5686,19 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
         ?.catch?.((err) => log.warn('votes', 'Homeroom bot merged DM failed', { sessionId: session.id, err: err.message }));
     } catch (err) {
       log.warn('votes', 'Homeroom bot merged DM threw', { sessionId: session.id, err: err.message });
+    }
+
+    // The admin Journey's change_live record: who asked for this change,
+    // whether it was a project's first version, and whether the project
+    // answered its health check on what was deployed (the reading the DM
+    // above says "live now" on, which until this lived only in that DM).
+    // Recorded for every merged change, not only the bot's. Never awaited,
+    // and never a reason the merge fails.
+    try {
+      require('../services/journey-events').recordChangeLive(pool, { config, session, sha: deployedSha })
+        ?.catch?.((err) => log.warn('votes', 'Journey change_live record failed', { sessionId: session.id, err: err.message }));
+    } catch (err) {
+      log.warn('votes', 'Journey change_live record threw', { sessionId: session.id, err: err.message });
     }
 
     // WP1 (#2): and nothing else of the bot's on the same request goes on: a
@@ -5704,7 +6037,8 @@ async function checkAndMerge(config, pool, session, options = {}) {
   const openedAt = session.promoted_at || session.created_at || null;
   const governance = require('../services/governance');
 
-  // #788: does this proposal change dapp.json's `admins` block? This is
+  // #788: does this proposal change a protected dapp.json block (admins,
+  // governance, visibility, platform_env, secrets)? This is
   // the AUTHORITATIVE check — the stamped column can be stale (a push
   // that raced its own stamp), so we re-diff against the live head here,
   // right before the gate.
@@ -5715,10 +6049,11 @@ async function checkAndMerge(config, pool, session, options = {}) {
   // path (a manifest PR opened by the platform itself) is stamped at
   // creation time, so the stale-and-outage case is vanishingly narrow.
   let explicitApproval = !!session.requires_explicit_approval;
+  let explicitApprovalReason = session.explicit_approval_reason || null;
   let explicitApprovalSource = 'stored';
   let explicitApprovalDetail = null;
   try {
-    const detected = await appAdmins.detectAdminsChange(session, {
+    const detected = await appAdmins.detectExplicitApprovalChange(session, {
       headRef: appAdmins.headRefForSession(session),
     });
     // An INDETERMINATE result (no head ref / GitHub off / unparseable
@@ -5726,20 +6061,29 @@ async function checkAndMerge(config, pool, session, options = {}) {
     // may overwrite it.
     if (detected.determinate) {
       explicitApproval = detected.changed;
+      explicitApprovalReason = detected.reason;
       explicitApprovalSource = 'live';
       explicitApprovalDetail = {
+        reasons: detected.reasons,
         from: detected.from, to: detected.to, mergeBaseSha: detected.mergeBaseSha,
       };
-      if (detected.changed !== !!session.requires_explicit_approval) {
+      // A row that carries its reason and names a different one (a branch
+      // that went on to change another block) is re-stamped too; a thin
+      // row without the column is not, or every check would rewrite it.
+      const reasonMoved = detected.changed
+        && Object.prototype.hasOwnProperty.call(session, 'explicit_approval_reason')
+        && detected.reason !== (session.explicit_approval_reason || null);
+      if (detected.changed !== !!session.requires_explicit_approval || reasonMoved) {
         // The flip itself is worth a trace: a below-threshold clear
         // returns before any merge_debug_run opens, so without this
         // line a disappearing chip has no server-side explanation.
         log.info('votes', 'Explicit-approval flag overwritten by live check', {
           sessionId: session.id, stored: !!session.requires_explicit_approval,
-          live: detected.changed, from: detected.from, to: detected.to,
+          live: detected.changed, reasons: detected.reasons,
+          from: detected.from, to: detected.to,
           mergeBaseSha: detected.mergeBaseSha,
         });
-        await appAdmins.stampExplicitApproval(pool, session.id, detected.changed);
+        await appAdmins.stampExplicitApproval(pool, session.id, detected.changed, detected.reason);
       }
     }
   } catch (err) {
@@ -5747,13 +6091,22 @@ async function checkAndMerge(config, pool, session, options = {}) {
       sessionId: session.id, stored: explicitApproval, err: err.message,
     });
   }
+  if (!explicitApproval) explicitApprovalReason = null;
 
   const gate = await governance.governedGate(pool, session.app_id, {
     kind: 'pr', id: session.id, openedAt, explicitApproval,
+    // The member floor's author: someone else has to say Yes to a flagged
+    // proposal (services/governance.js applyNoTimerMerge).
+    authorId: session.user_id ?? null,
     // #2038: scoped by approval epoch inside the gate. No revision is passed,
     // because a proposal's commit changes for reasons that say nothing about
     // whether its approvals still describe it.
   });
+  // The member floor, when it is what stands between this proposal and the
+  // merge: the votes are there, but none of them is from someone other than
+  // the author. Reported as its own step rather than as missing votes.
+  const floorWaiting = !!(gate.memberFloor && gate.memberFloor.applies && !gate.memberFloor.met);
+  const explicitApprovalCopy = require('../services/explicit-approval');
   const yesCount = gate.qualifiedYes;
   const noCount = gate.qualifiedNo;
   const activeCount = gate.activeCount;
@@ -5834,8 +6187,32 @@ async function checkAndMerge(config, pool, session, options = {}) {
           windowEndsAt: gate.windowEndsAt, waitingForWindow: true,
         };
       }
+      // The votes are in, but only from the author: the member floor holds
+      // it. Its own step, so the card names what is missing.
+      if (explicitApproval && gate.thresholdMet && floorWaiting) {
+        log.info('votes', 'Threshold met but no Yes from another member yet; deferring merge', {
+          sessionId: session.id, yesCount, required, reason: explicitApprovalReason,
+        });
+        gateTrace.context({ explicitApproval, memberFloor: true, locked: null, selfHosted: null })
+          .pass('approvals', { yesCount, required, note: `${yesCount} of ${required}` })
+          .stop('explicit', 'waiting', {
+            reason: explicitApprovalReason,
+            otherYes: gate.memberFloor.otherYes,
+            note: explicitApprovalCopy.reasonSentence(explicitApprovalReason),
+          });
+        gateSave();
+        return {
+          merged: false, yesCount, needed: required, windowEndsAt: gate.windowEndsAt,
+          awaitingOtherMember: true,
+        };
+      }
       // No clock at all: not enough support (or contested / No leading).
-      gateTrace.context({ explicitApproval, locked: null, selfHosted: null })
+      gateTrace.context({
+        explicitApproval,
+        memberFloor: explicitApproval ? !!gate.memberFloor?.applies : null,
+        locked: null,
+        selfHosted: null,
+      })
         .stop('approvals', 'waiting', {
           yesCount, required,
           note: `${yesCount} of ${required}`,
@@ -5846,11 +6223,16 @@ async function checkAndMerge(config, pool, session, options = {}) {
 
     await startDebugIfNeeded();
     if (explicitApproval) {
+      const floor = gate.memberFloor;
       dstep({
         phase: 'gate:explicit_approval',
-        message: `Proposal changes dapp.json's admins block (${explicitApprovalSource} check). Time-based merge paths are off: no visibility window, no lazy consensus. The app's normal threshold still applies.`,
+        message: `Proposal changes a protected dapp.json block (${explicitApprovalReason || 'unknown'}; ${explicitApprovalSource} check). Time-based merge paths are off: no visibility window, no lazy consensus. The app's normal threshold still applies, ${floor && floor.applies
+          ? `and it has ${floor.otherYes} Yes vote${floor.otherYes === 1 ? '' : 's'} from someone other than the author.`
+          : 'and the community has one member, so the author\'s Yes is enough.'}`,
         detail: {
-          explicitApproval: true, source: explicitApprovalSource, mode: gate.mode,
+          explicitApproval: true, reason: explicitApprovalReason,
+          source: explicitApprovalSource, mode: gate.mode,
+          memberFloor: floor || null,
           ...(explicitApprovalDetail || {}),
         },
       });
@@ -5864,9 +6246,18 @@ async function checkAndMerge(config, pool, session, options = {}) {
           : `Lazy-consensus window elapsed: ${yesCount} yes vote${yesCount === 1 ? '' : 's'} (threshold ${required}) with no opposition, so silence is consent.`,
       detail: { yesCount, required, majority, noCount, activeCount, lazyArmed: gate.lazyArmed, mode: gate.mode, policy: gate.policy },
     });
-    gateTrace.context({ explicitApproval })
+    gateTrace.context({
+      explicitApproval,
+      memberFloor: explicitApproval ? !!gate.memberFloor?.applies : null,
+    })
       .pass('approvals', { yesCount, required, note: `${yesCount} of ${required}` });
-    if (explicitApproval) gateTrace.pass('explicit', { source: explicitApprovalSource });
+    if (explicitApproval) {
+      gateTrace.pass('explicit', {
+        source: explicitApprovalSource,
+        reason: explicitApprovalReason,
+        otherYes: gate.memberFloor ? gate.memberFloor.otherYes : null,
+      });
+    }
 
     // Locked apps additionally require at least one admin yes vote (see
     // services/admin-approval.js + the apps.locked column). The active-user
@@ -6108,12 +6499,18 @@ async function checkAndMerge(config, pool, session, options = {}) {
       // staging preview that crashed on boot, e.g. a bad migration/seed) so
       // the block isn't an unexplained dead-end — the owner can act on it.
       const errorDetail = checkState === 'error' ? (checkRows[0]?.check_error_detail || null) : null;
+      // A red run that overlapped a platform rollout was recorded as an
+      // 'error' the stuck-checks reconcile runs again (visuals.js
+      // settleCaptureRun). Its preview started fine and nobody has to act.
+      const rolloutRetry = errorDetail === require('../services/staging-recovery').ROLLOUT_RETRY_DETAIL;
       const reason = checkState === 'failing'
         ? `has ${failingCount || 'failing'} test${failingCount === 1 ? '' : 's'} failing`
         : checkState === 'error'
-          ? (errorDetail
-            ? `couldn't run its tests, because its staging preview failed to start (${errorDetail})`
-            : "couldn't run its tests")
+          ? (rolloutRetry
+            ? 'ran its tests while Homeroom was updating, so they will run again on their own'
+            : errorDetail
+              ? `couldn't run its tests, because its staging preview failed to start (${errorDetail})`
+              : "couldn't run its tests")
           : 'is still running its tests';
       const blockMsg = `${label} reached the vote threshold but ${reason}. Merge is blocked until checks pass. The proposal's tests re-run automatically when its owner pushes a fix.`;
       // Said once. This gate runs on every vote and every check re-run, and
@@ -6138,17 +6535,20 @@ async function checkAndMerge(config, pool, session, options = {}) {
       dstep({ phase: 'gate:checks', level: 'warn', message: `Merge blocked: checks not passing (state = ${checkState || 'pending'}${failingCount ? `, ${failingCount} failing` : ''}).`, detail: { checkState: checkState || 'pending', failingCount, checksRevisionMismatch } });
       // 'pending' is in flight and needs nobody; 'failing' and 'error' need
       // the author. The card tones them differently for exactly that reason.
+      // A rollout retry is an 'error' that needs nobody either.
       gateTrace.stop('checks',
-        (checkState === 'failing' || checkState === 'error') ? 'blocked' : 'active',
+        ((checkState === 'failing' || checkState === 'error') && !rolloutRetry) ? 'blocked' : 'active',
         {
           checkState: checkState || 'pending', failingCount,
           note: checkState === 'failing'
             ? `${failingCount || 'some'} failing. They re-run on the next push`
-            : checkState === 'error'
-              ? 'the staging preview could not start, so the tests could not run'
-              : checksDeferred
-                ? 'waited for the head to merge cleanly; running now'
-                : 'still running',
+            : rolloutRetry
+              ? 'they ran while Homeroom was updating and will run again'
+              : checkState === 'error'
+                ? 'the staging preview could not start, so the tests could not run'
+                : checksDeferred
+                  ? 'waited for the head to merge cleanly; running now'
+                  : 'still running',
         });
       gateSave();
       dend('blocked', 'Blocked: votes reached, but checks must pass first.');
@@ -6633,6 +7033,34 @@ async function checkAndMerge(config, pool, session, options = {}) {
       dstep({ phase: 'github_merge', message: 'GitHub not enabled or PR-less, so skipping the GitHub merge call.' });
     }
 
+    // With WF_MERGE_FOLLOWUPS_ENABLED on, everything after GitHub's merge
+    // belongs to the merge-followups workflow machine
+    // (src/workflow/merge-followups/): the status move, delivery, teardown,
+    // included changes, requests and the announcements, each durable. The
+    // merge reports it and waits briefly for the status move.
+    const workflow = require('../workflow/platform.ts');
+    if (workflow.mergeFollowupsEnabled()) {
+      const handed = await workflow.mergeConfirmed({
+        sessionId: session.id, appId: session.app_id, mergeSha: mergeCommitSha,
+        force, forcedBy: forceBy?.username || null,
+        tally: { yes: yesCount, required, active: activeCount },
+      });
+      if (handed.status === 'rejected' || handed.status === 'faulted') {
+        log.error('votes', 'The merge-followups machine refused a confirmed merge', {
+          sessionId: session.id, status: handed.status, reason: handed.reason,
+        });
+      }
+      dstep({
+        phase: 'merged',
+        message: `Merged${mergeCommitSha ? ` (commit ${String(mergeCommitSha).slice(0, 9)})` : ''}. Delivery and the follow-ups are the merge-followups workflow's (${handed.status}).`,
+        detail: { sha: mergeCommitSha, workflowEvent: handed.eventId, outcome: handed.status },
+      });
+      gateTrace.revise('github', 'done', { note: 'merged' });
+      gateSave();
+      dend('merged', `Merged${force ? ` (force by ${forceBy?.username || 'admin'})` : ''}.`);
+      return { merged: true, ...(handed.status === 'pending' ? { followupsPending: true } : {}) };
+    }
+
     // #687 Slice 4: run the shared post-merge finalizer. Both native and
     // imported merges converge here after the (only-difference) github.mergePR
     // call above, so the deploy/teardown/announce tail is byte-for-byte
@@ -6664,11 +7092,20 @@ async function checkAndMerge(config, pool, session, options = {}) {
     // fix the cause and re-run the rebuild ("Check for updates" / drift
     // poller). The pre-merge conflict/behind_main handling further down is
     // premised on the merge NOT having happened, so we return early.
+    // With the merge-followups machine on, the only step after GitHub's merge
+    // is reporting it. A report that failed leaves the row 'merging', and
+    // recoverStuckMerges finds the merge on GitHub and reports it again.
+    if (githubMerged && require('../workflow/platform.ts').mergeFollowupsEnabled()) {
+      dend('merged', 'Merged on GitHub; recovery records the merge.');
+      return { merged: true, followupsPending: true };
+    }
+
     if (githubMerged) {
       await pool.query(
         `UPDATE chat_sessions
             SET status = 'merged',
                 merged_at = COALESCE(merged_at, NOW()),
+                live_at = COALESCE(live_at, NOW()),
                 merge_commit_sha = COALESCE(merge_commit_sha, $2),
                 votes_required = COALESCE(votes_required, $3),
                 active_users_at_merge = COALESCE(active_users_at_merge, $4)
@@ -6678,6 +7115,29 @@ async function checkAndMerge(config, pool, session, options = {}) {
         'Failed to mark session merged after post-merge error', {
           sessionId: session.id, err: e.message,
         }));
+
+      // What this merge carried is on main too (services/included-changes.js).
+      // finalizeMerge may already have marked it before the step that threw;
+      // a second pass finds nothing left up for a vote. Nobody is told it is
+      // live: the deploy failed.
+      try {
+        await require('../services/included-changes').includeStackedChanges({
+          config, pool, session, deployed: false,
+        });
+      } catch (e) {
+        log.warn('votes', 'Including the changes a merge carried failed after its deploy failed', {
+          sessionId: session.id, err: e.message,
+        });
+      }
+      // The vote is over all the same: nothing is asked of anybody about it
+      // (notifications.settleDecidedChange). Never a reason this path fails.
+      try {
+        await notifications.settleDecidedChange?.(pool, session.id);
+      } catch (e) {
+        log.warn('votes', 'Settling the bell after a merge whose deploy failed failed', {
+          sessionId: session.id, err: e.message,
+        });
+      }
 
       const failLabel = session.pr_title
         ? `PR #${session.pr_number || session.id}: ${session.pr_title}`

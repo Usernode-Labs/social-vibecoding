@@ -28,7 +28,9 @@ const express = require('express');
 const { getPool } = require('../db/pool');
 const { AGENT_SCOPE } = require('../services/cli-auth-constants');
 const localAgent = require('../services/local-agent');
+const classicSessions = require('../services/classic-sessions');
 const github = require('../services/github');
+const githubBudget = require('../services/github-budget');
 const { drainGuard } = require('../services/lifecycle');
 const log = require('../services/logger');
 
@@ -143,6 +145,12 @@ function cliAgentRoutes(config, { pool = getPool(config), auth } = {}) {
   // Claim a session for this machine. The session must be an active dev
   // session the caller owns; a promoted/merged/archived one is refused
   // because its coding turns are over.
+  //
+  // #4268: so is an older (classic) session. It is read-only since #3976,
+  // so POST /chat never hands it another turn, and a machine attached to it
+  // would wait forever. Refused here, with the 409 and message every other
+  // classic refusal uses, so an older CLI (which prints `error` when it is
+  // not a code it knows) says why too.
   router.post('/attach', drainGuard, json4kb, ...authenticated, async (req, res) => {
     const body = req.body;
     if (!exactKeys(body, ['sessionId', 'label', 'runtime'])) {
@@ -158,6 +166,7 @@ function cliAgentRoutes(config, { pool = getPool(config), auth } = {}) {
       const { rows } = await pool.query(
         `SELECT cs.id, cs.status, cs.branch_name, cs.session_title,
                 cs.handoff_base_sha, cs.checks_commit_sha, cs.handoff_uploaded_sha,
+                cs.agent_session_id, cs.is_headless, cs.source,
                 a.slug AS app_slug, a.repo_url
            FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
           WHERE cs.id = $1 AND cs.user_id = $2`,
@@ -167,6 +176,9 @@ function cliAgentRoutes(config, { pool = getPool(config), auth } = {}) {
       if (!session) return res.status(404).json({ error: 'not_found' });
       if (session.status !== 'active' && session.status !== 'promoted') {
         return res.status(409).json({ error: 'session_not_attachable' });
+      }
+      if (classicSessions.isClassicSession(session)) {
+        return res.status(409).json(classicSessions.refusal());
       }
       const { lease, reattached } = await localAgent.attach(pool, {
         sessionId,
@@ -400,7 +412,7 @@ function cliAgentRoutes(config, { pool = getPool(config), auth } = {}) {
         log.warn('cli-agent', 'Local agent commit upload failed', {
           sessionId: Number(session.id), status: detail.status, message: detail.message,
         });
-        return res.status(503).json({ error: 'github_unavailable' });
+        return res.status(503).json(githubBudget.githubUnavailableBody(err));
       }
 
       const advanced = await localAgent.recordTurnHead(pool, {

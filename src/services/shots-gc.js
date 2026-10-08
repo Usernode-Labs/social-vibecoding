@@ -9,6 +9,7 @@ const environment = require('./shots-environment');
 const lifecycle = require('./lifecycle');
 const log = require('./logger');
 const state = require('./shots-state');
+const kubernetes = require('./kubernetes');
 const { visualHeadForSession, sameSha } = require('./pr-vote-revision');
 
 const FAILED_MEDIA_HOURS = 24;
@@ -27,18 +28,23 @@ async function cleanupRunResources(config, run) {
   const errors = [];
   for (const side of ['base', 'head']) {
     const runtimeName = environment.runtimeName(run.id, side, applicationRuntime.mode(config));
-    await applicationRuntime.remove(config, {
+    await environment.removeRuntime(config, {
       runtimeKind: applicationRuntime.mode(config), runtimeName,
     }).catch((err) => errors.push(err));
     const dbName = dbManager.shotsDbName(run.app_slug, run.id, side);
     await dbManager.dropDatabase(dbName, { strict: true }).catch((err) => errors.push(err));
     // A run the previous release started used the names from before the
-    // rename. Best-effort: a newer run has nothing by those names.
-    await applicationRuntime.remove(config, {
+    // rename. Removal is idempotent for absent resources, but API/database
+    // errors must keep the durable cleanup pending.
+    await environment.removeRuntime(config, {
       runtimeKind: applicationRuntime.mode(config),
       runtimeName: environment.legacyRuntimeName(run.id, side, applicationRuntime.mode(config)),
-    }).catch(() => {});
-    await dbManager.dropDatabase(dbManager.legacyShotsDbName(run.app_slug, run.id, side)).catch(() => {});
+    }).catch((err) => errors.push(err));
+    await dbManager.dropDatabase(dbManager.legacyShotsDbName(run.app_slug, run.id, side), { strict: true })
+      .catch((err) => errors.push(err));
+  }
+  for (const ref of environment.hostedFixtureRefs(config, run.id)) {
+    await environment.removeRuntime(config, ref).catch((err) => errors.push(err));
   }
   const prepared = dbManager.preparedCloneSourceName(dbManager.appDbName(run.app_slug), run.id);
   await dbManager.releasePreparedCloneSource(prepared).catch((err) => errors.push(err));
@@ -67,11 +73,10 @@ async function recoverInterrupted(config, pool, {
   let cancelled = 0;
   const markCleaned = (id) => pool.query(
     `UPDATE shot_runs
-        SET trace_summary = jsonb_set(COALESCE(trace_summary, '{}'::jsonb),
-          '{cleanupComplete}', 'true'::jsonb, true)
-      WHERE id = $1 AND state IN ('failed','cancelled')
-        AND failure_code = 'shots_run_interrupted'`,
-    [id]
+        SET trace_summary = COALESCE(trace_summary, '{}'::jsonb)
+          || jsonb_build_object('cleanupComplete', true, 'cleanupVersion', $2::int)
+      WHERE id = $1 AND state IN ('verified','failed','stale','cancelled','not_required','overridden')`,
+    [id, environment.RESOURCE_CLEANUP_VERSION]
   );
   for (const run of rows) {
     const minIdleMs = run.trace_summary?.progress ? ageMs : legacyAgeMs;
@@ -117,7 +122,7 @@ async function recoverInterrupted(config, pool, {
     if (!terminalized) continue;
     // Terminalize first, then clean up. A live worker can no longer renew a
     // row after this point, and a process exit during cleanup is retried below.
-    const cleanupErrors = await cleanup(config, run);
+    const cleanupErrors = await cleanup(config, run).catch((err) => [err]);
     if (cleanupErrors.length) {
       log.warn('shots', 'Interrupted shots cleanup was incomplete', {
         runId: run.id, errors: cleanupErrors.map((error) => error.message).slice(0, 4),
@@ -126,25 +131,37 @@ async function recoverInterrupted(config, pool, {
       await markCleaned(run.id);
     }
   }
-  // A process can stop after terminalizing an interrupted run but before
-  // resource cleanup finishes. Retry only rows without a completion marker;
-  // cleanup is deterministic and safe to repeat for missing resources.
+  // Every terminal outcome can lose its in-process cleanup. Older completion
+  // markers omitted hosted fixtures, so recheck them once with this version.
+  // Wait for the runner's finally block, and rotate failures behind untried
+  // rows so one broken resource cannot starve the rest of the backlog.
   const retries = await pool.query(
     `SELECT r.*, a.slug AS app_slug
        FROM shot_runs r
        JOIN chat_sessions s ON s.id = r.session_id
        JOIN apps a ON a.id = s.app_id
-      WHERE r.state IN ('failed','cancelled')
-        AND r.failure_code = 'shots_run_interrupted'
-        AND NOT (COALESCE(r.trace_summary, '{}'::jsonb) @> '{"cleanupComplete":true}'::jsonb)
-      ORDER BY r.updated_at ASC LIMIT $1`,
-    [Math.max(1, Math.min(100, Number(limit) || 20))]
+      WHERE r.state IN ('verified','failed','stale','cancelled','not_required','overridden')
+        AND r.updated_at < NOW() - ($3::bigint * INTERVAL '1 millisecond')
+        AND NOT (COALESCE(r.trace_summary, '{}'::jsonb)
+          @> jsonb_build_object('cleanupComplete', true, 'cleanupVersion', $2::int))
+        AND COALESCE((r.trace_summary->>'cleanupAttemptAt')::bigint, 0)
+          < (EXTRACT(EPOCH FROM NOW()) * 1000)::bigint - $3::bigint
+      ORDER BY COALESCE((r.trace_summary->>'cleanupAttemptAt')::bigint, 0), r.updated_at, r.id
+      LIMIT $1`,
+    [Math.max(1, Math.min(100, Number(limit) || 20)), environment.RESOURCE_CLEANUP_VERSION,
+      HEARTBEAT_SILENCE_MS]
   );
   let cleanupRetried = 0;
   for (const run of retries.rows) {
-    const errors = await cleanup(config, run);
+    await pool.query(
+      `UPDATE shot_runs SET trace_summary = COALESCE(trace_summary, '{}'::jsonb)
+         || jsonb_build_object('cleanupComplete', false, 'cleanupAttemptAt', $2::bigint)
+        WHERE id = $1`,
+      [run.id, Date.now()]
+    );
+    const errors = await cleanup(config, run).catch((err) => [err]);
     if (errors.length) {
-      log.warn('shots', 'Interrupted shots cleanup retry failed', {
+      log.warn('shots', 'Shots resource cleanup retry failed', {
         runId: run.id, errors: errors.map((error) => error.message).slice(0, 4),
       });
       continue;
@@ -314,11 +331,13 @@ async function prune(pool, config = {}) {
   const runs = await pool.query(
     `DELETE FROM shot_runs r
       WHERE r.state IN ('failed','stale','cancelled','not_required','overridden')
+        AND COALESCE(r.trace_summary, '{}'::jsonb)
+          @> jsonb_build_object('cleanupComplete', true, 'cleanupVersion', $2::int)
         AND COALESCE(r.completed_at, r.updated_at) < NOW() - ($1::int * INTERVAL '1 day')
         AND NOT EXISTS (
           SELECT 1 FROM chat_sessions s WHERE s.shots_run_id = r.id
         )`,
-    [failedRunDays]
+    [failedRunDays, environment.RESOURCE_CLEANUP_VERSION]
   );
   return {
     failedArtifacts: failedMedia.rowCount || 0,
@@ -368,14 +387,63 @@ async function sweepOrphanCheckouts(pool, { maxAgeMs = 720_000, tmpDir = os.tmpd
   return { examined, removed };
 }
 
+// A session deletion can cascade away its run, and an old or late-finishing
+// runner can leave resources after a completion marker was written. Reconcile
+// the actual runtime inventory too, without touching media or ordinary previews.
+async function sweepOrphanRuntimes(config, pool, {
+  limit = 100, minAgeMs = LEGACY_RUN_GRACE_MS, now = Date.now(),
+  list = kubernetes.listShotsRuntimes, remove = applicationRuntime.remove,
+} = {}) {
+  const result = { examined: 0, removed: 0, failed: 0 };
+  if (applicationRuntime.mode(config) !== 'kubernetes') return result;
+  const cutoff = now - Math.max(LEGACY_RUN_GRACE_MS, Number(minAgeMs) || 0);
+  const runtimes = (await list(config)).filter((ref) => {
+    const created = new Date(ref.createdAt || '').getTime();
+    return Number.isFinite(created) && created < cutoff;
+  }).sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+  if (!runtimes.length) return result;
+  // No deletion is attempted unless the entire state lookup succeeds. A
+  // nonterminal row is left to heartbeat recovery, however old its runtime.
+  const { rows } = await pool.query(
+    `SELECT id, session_id, state, updated_at FROM shot_runs WHERE id = ANY($1::text[])`,
+    [[...new Set(runtimes.map((ref) => ref.runId))]]
+  );
+  const runs = new Map(rows.map((run) => [run.id, run]));
+  const max = Math.max(1, Math.min(100, Number(limit) || 100));
+  let attempted = 0;
+  for (const ref of runtimes) {
+    result.examined += 1;
+    const run = runs.get(ref.runId);
+    if (run && (Number(run.session_id) !== ref.sessionId
+        || !state.TERMINAL_STATES.has(run.state)
+        || !(new Date(run.updated_at).getTime() < cutoff))) continue;
+    if (attempted >= max) break;
+    attempted += 1;
+    try {
+      await remove(config, ref);
+      result.removed += 1;
+    } catch (error) {
+      result.failed += 1;
+      log.warn('shots', 'Orphan shots runtime cleanup failed', {
+        runId: ref.runId, runtimeName: ref.runtimeName, error: error.message,
+      });
+    }
+  }
+  return result;
+}
+
 async function sweep(config, pool) {
   const recovered = await recoverInterrupted(config, pool);
+  const runtimes = await sweepOrphanRuntimes(config, pool);
   const checkouts = await sweepOrphanCheckouts(pool, {
     maxAgeMs: config.shots?.maxRunMs || 1_440_000,
   });
   const pruned = await prune(pool, config);
   return {
     ...recovered,
+    orphanRuntimesExamined: runtimes.examined,
+    orphanRuntimesRemoved: runtimes.removed,
+    orphanRuntimeFailures: runtimes.failed,
     orphanCheckoutsExamined: checkouts.examined,
     orphanCheckoutsRemoved: checkouts.removed,
     ...pruned,
@@ -397,5 +465,6 @@ module.exports = {
   INTERRUPTED_RETRY_TRIGGER,
   prune,
   sweepOrphanCheckouts,
+  sweepOrphanRuntimes,
   sweep,
 };

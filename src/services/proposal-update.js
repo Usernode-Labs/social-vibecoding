@@ -19,8 +19,10 @@
 //       proposal's current head
 //     → Homeroom pushes that branch onto the proposal's bot-owned branch
 //       under a `--force-with-lease`, with the platform's own credentials
-//     → the EXISTING head-moved machinery clears the votes, posts the
-//       "please re-review" note and rebuilds the preview and the checks.
+//     → the EXISTING head-moved machinery decides what the move costs the
+//       approvals (see the last paragraph below). For an ordinary revision
+//       it retires the votes, posts the "please re-review" note and rebuilds
+//       the preview and the checks.
 //
 // Three properties this file exists to keep, all of them checked by
 // tests/proposal-update.test.js:
@@ -40,11 +42,19 @@
 //      somebody else advanced in the meantime produces `branch_moved` rather
 //      than a silently discarded revision.
 //
-// Deliberately NOT here: any call to services/sync-main.js's
-// `recordPlatformPush`. The head this path installs is the AUTHOR'S work, so
-// it must classify as an `author_push` and clear the tally. Recording it as a
-// platform push would carry every existing approval onto code nobody in the
-// group has read.
+// Deliberately NOT here: any say in what the push costs the approvals. Since
+// #2038 a vote counts while its approval_epoch equals the proposal's
+// chat_sessions.approval_epoch (services/pr-vote-revision.js), and only the
+// head-moved machinery moves that epoch. It asks services/integration.js's
+// classifyHeadMove what kind of move this was (same, mechanical, resolved,
+// authored or unknown) by redoing git's merge of the approved head with the
+// slice of main the new head contains and comparing trees. Mechanical and
+// resolved keep the approvals. Anything else bumps the epoch, so every
+// earlier vote stops counting, and no vote row is deleted. The author's push
+// goes through that classifier like any other head move, and nothing here
+// vouches for it. An ordinary revision is authored and retires the votes. A
+// push that is exactly git's merge of the approved head with main keeps
+// them, because nobody wrote anything the group had not approved.
 
 const log = require('./logger');
 const summaryFreshness = require('./summary-freshness');
@@ -277,14 +287,21 @@ async function reloadSession(pool, sessionId) {
   }
 }
 
-// How many votes the update is about to invalidate. Counted BEFORE the write,
-// because both reconciliation paths delete the rows — and "your update
-// cleared 4 votes" is the one consequence the caller must be able to relay to
-// the user without guessing.
+// How many votes the update puts at risk: the ones counting right now,
+// counted before the push. Neither reconciliation path deletes a row. Since
+// #2038 a move that retires votes bumps chat_sessions.approval_epoch and the
+// rows stay, so counting every row would also count votes an earlier move
+// already retired. This is the count services/vote-revision.js takes before
+// a native session's authored push. "Your update cleared 4 votes" is the one
+// consequence the caller must be able to relay to the user without guessing.
 async function countVotes(pool, sessionId) {
   try {
     const { rows } = await pool.query(
-      `SELECT COUNT(*)::int AS n FROM pr_votes WHERE session_id = $1`,
+      `SELECT COUNT(*)::int AS n
+         FROM pr_votes pv
+         JOIN chat_sessions cs ON cs.id = pv.session_id
+        WHERE pv.session_id = $1
+          AND pv.approval_epoch = cs.approval_epoch`,
       [sessionId]
     );
     return Number(rows[0] && rows[0].n) || 0;
@@ -1247,8 +1264,8 @@ async function applyLinkedIssues({ pool, gh, session, owner, repo, linkedIssues 
 // whose screenshots came out wrong UNFIXABLE: the routes are only read when a
 // capture runs, a capture only runs when the head moves, and the head cannot
 // move for a change that is already correct. The advice left was "push an
-// empty commit", which clears every vote the proposal has collected to correct
-// a screenshot.
+// empty commit", which then cleared every vote the proposal had collected to
+// correct a screenshot.
 //
 // So a resubmit that carries DIFFERENT testing metadata now stores it and
 // re-runs the checks against it. What it deliberately does not do is touch the
@@ -1522,8 +1539,9 @@ async function advanceAppRepoBranch(ctx) {
   const kind = isContinuableStatus(session.status);
   const promoted = kind === 'proposal';
 
-  // Votes exist only on a proposal that is up for a vote, and the count has to
-  // happen BEFORE the write that deletes them. A session nobody is voting on
+  // Votes count only on a proposal that is up for a vote, and the count has
+  // to happen BEFORE the head move that may retire them: once the epoch
+  // moves, none of them is current any more. A session nobody is voting on
   // has nothing to count and nothing to clear.
   const votesCleared = promoted ? await countVotes(pool, sessionId) : 0;
 
@@ -1636,9 +1654,9 @@ async function advanceAppRepoBranch(ctx) {
   //
   // `syncImportedProposal` is that sweep's own per-proposal step: it re-reads
   // the pull request, sees the head this push just moved, and runs the
-  // existing imported-head machinery — advance the tracked SHA, clear the
-  // tally, post the re-review note, re-run the SHA-pinned checks. Nothing
-  // about it is reimplemented here.
+  // existing imported-head machinery — advance the tracked SHA, classify the
+  // move (an authored one retires the votes), post the note, re-run the
+  // SHA-pinned checks. Nothing about it is reimplemented here.
   //
   // 'unchanged' means GitHub's pull request still reads the commit before
   // this push — it updates a PR's head a few seconds after the branch moves.
@@ -1698,6 +1716,9 @@ async function advanceAppRepoBranch(ctx) {
       // the count that will go.
       votesClearing,
       votesAtRisk: votesCleared,
+      // The classifier kept the approvals. A 0 above can also mean nobody had
+      // voted, so the connector needs this to say "they still stand".
+      votesKept: !!(viaMirror && repinned.votesKept),
       checksRerun: rebuilding,
       previewRebuilding: rebuilding,
     };
@@ -1757,9 +1778,12 @@ async function advanceAppRepoBranch(ctx) {
   // already has one place that reconciles a moved native head.
   // `fresh: true` makes it re-read GitHub rather than trust the stored pin.
   //
-  // And no `recordPlatformPush` call anywhere above — which is exactly what
-  // makes classifyNativeHeadMove see an `author_push` and DELETE the tally
-  // instead of carrying it onto code the group has not read.
+  // Nothing above tells it who pushed, either. It asks services/integration.js
+  // classifyHeadMove what the move was and spends the answer on
+  // chat_sessions.approval_epoch: an authored or unknown move bumps it, so
+  // the earlier votes stop counting instead of carrying onto code the group
+  // has not read, and a mechanical or resolved one keeps them. No vote row is
+  // deleted either way.
   let reconciled = null;
   try {
     reconciled = await votes.reconcileNativeReviewedHead({
@@ -1777,23 +1801,35 @@ async function advanceAppRepoBranch(ctx) {
   // Boolean, not the truthy value: `checksRerun` and `previewRebuilding` are
   // reported to a client that branches on them, and `null` is neither answer.
   const settled = !!(reconciled && reconciled.updated === true);
+  // What the move actually cost, in the reconcile's own words, as Tail 1a
+  // reads them off its re-pin. A mechanical or resolved move keeps the
+  // approvals, and a mechanical one carries a green verdict onto the merged
+  // commit, so nothing rebuilds. A first binding (`changed: false`, a row
+  // with no pin yet) clears nothing and kicks nothing.
+  const moved = settled && reconciled.changed !== false;
+  const cleared = moved && reconciled.votesKept !== true;
+  const rebuilding = moved && reconciled.checksCarry !== true;
+  let votesClearing = votesCleared > 0 ? 'on_sync' : 'none';
+  if (settled) votesClearing = cleared ? 'now' : 'none';
 
   log.info('proposal-update', 'advanced a proposal from its author\'s fork', {
     sessionId, owner, repo, targetBranch, previousHeadSha: liveHead,
-    headSha: verified.headSha, votesCleared: settled ? votesCleared : 0,
-    votesClearing: settled ? 'now' : (votesCleared > 0 ? 'on_sync' : 'none'), votesAtRisk: votesCleared,
+    headSha: verified.headSha, votesCleared: cleared ? votesCleared : 0,
+    votesClearing, votesAtRisk: votesCleared,
+    moveKind: settled ? (reconciled.kind || null) : null,
   });
 
   return {
     ...landed,
     // Honest about what actually happened: the votes were counted before the
-    // write and are only reported cleared when the reconciliation that
-    // clears them ran.
-    votesCleared: settled ? votesCleared : 0,
-    votesClearing: settled ? 'now' : (votesCleared > 0 ? 'on_sync' : 'none'),
+    // write and are only reported cleared when the reconciliation ran and
+    // retired them.
+    votesCleared: cleared ? votesCleared : 0,
+    votesClearing,
     votesAtRisk: votesCleared,
-    checksRerun: settled,
-    previewRebuilding: settled,
+    votesKept: moved && reconciled.votesKept === true,
+    checksRerun: rebuilding,
+    previewRebuilding: rebuilding,
   };
 }
 
@@ -1969,10 +2005,11 @@ async function recordChangesReadyCard({ pool, session, sessionId, headSha }) {
 //
 // Here the author already has write access to the head — it is a branch in
 // their own fork — so there is nothing to push. Their push IS the update;
-// this only advances the head the platform TRACKS, which is what clears the
-// votes and rebuilds the checks. Calling it is still worth it: the sweeper
-// would get there eventually, and "eventually" is minutes of the group
-// voting on a revision that no longer exists.
+// this only advances the head the platform TRACKS, which is what retires the
+// votes (unless the move is a mechanical or resolved merge) and rebuilds the
+// checks. Calling it is still worth it: the sweeper would get there
+// eventually, and "eventually" is minutes of the group voting on a revision
+// that no longer exists.
 async function advanceForkHead(ctx) {
   const {
     pool, config, gh, head, prImportSync, githubPublic, session,
@@ -2098,11 +2135,13 @@ async function advanceForkHead(ctx) {
   });
 
   // The existing imported-head machinery, unchanged: it advances the tracked
-  // SHA, clears the tally, re-classifies dapp.json admins, posts the
-  // "earlier votes were cleared" note and re-runs the SHA-pinned checks and
-  // staging build.
+  // SHA, asks the same classifier what the move cost the approvals (an
+  // authored or unknown move bumps the epoch and posts the "earlier votes
+  // were cleared" note), re-classifies dapp.json admins and re-runs the
+  // SHA-pinned checks and staging build.
+  let moved = null;
   try {
-    await prImportSync.applyHeadChange({
+    moved = await prImportSync.applyHeadChange({
       config, pool, session, pr, repo: { owner, repo }, newHead: liveHead, oldHead,
     });
   } catch (err) {
@@ -2115,8 +2154,19 @@ async function advanceForkHead(ctx) {
     );
   }
 
+  // What the move actually cost, in applyHeadChange's own words. A mechanical
+  // or resolved move keeps the approvals, and a mechanical one can carry a
+  // green verdict, so nothing rebuilds. When another pass applied this head
+  // first (`applied: false`), the answer is that pass's, so the report stays
+  // what it has always been.
+  const applied = !!(moved && moved.applied);
+  const kept = applied && moved.votesKept === true;
+  const rebuilding = !(applied && moved.checksCarry === true);
+
   log.info('proposal-update', 'advanced an imported proposal to its fork\'s head', {
-    sessionId, prNumber, previousHeadSha: oldHead, headSha: liveHead, votesCleared,
+    sessionId, prNumber, previousHeadSha: oldHead, headSha: liveHead,
+    votesCleared: kept ? 0 : votesCleared, votesAtRisk: votesCleared,
+    moveKind: applied ? (moved.kind || null) : null,
   });
 
   return {
@@ -2130,9 +2180,11 @@ async function advanceForkHead(ctx) {
     branch,
     headSha: liveHead,
     previousHeadSha: oldHead,
-    votesCleared,
-    checksRerun: true,
-    previewRebuilding: true,
+    votesCleared: kept ? 0 : votesCleared,
+    votesAtRisk: votesCleared,
+    votesKept: kept,
+    checksRerun: rebuilding,
+    previewRebuilding: rebuilding,
     submittedVia: 'update_fork_head',
     titleUpdated: titleApplied.changed,
     ...(titleApplied.rejected ? { titleRejected: titleApplied.rejected } : {}),

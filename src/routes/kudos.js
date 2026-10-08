@@ -577,7 +577,8 @@ function kudosRoutes(config) {
       if (typeArg === 'all' || typeArg === 'votes') {
         arms.push(`
           SELECT 'pr_vote' AS type, pv.created_at, pv.vote,
-                 cs.status AS status,
+                 -- Merged but not live yet (chat_sessions.live_at): going live.
+                 CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'going_live' ELSE cs.status END AS status,
                  cs.id AS session_id, cs.pr_number, cs.pr_title,
                  au.username AS author_username,
                  a.slug AS app_slug, a.name AS app_name,
@@ -687,7 +688,9 @@ function kudosRoutes(config) {
             WHERE ib.status = 'awarded' AND ib.awarded_session_id IS NOT NULL
          )
          SELECT cs.id AS session_id,
-                cs.pr_number, cs.pr_url, cs.pr_title, cs.status,
+                cs.pr_number, cs.pr_url, cs.pr_title,
+                -- Merged but not live yet (chat_sessions.live_at): the badge says going live.
+                CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'merging' ELSE cs.status END AS status,
                 cs.created_at AS session_created_at,
                 u.id AS author_id, u.username AS author_username,
                 a.slug AS app_slug, a.name AS app_name,
@@ -896,7 +899,9 @@ function kudosRoutes(config) {
       params.push(limit);
       const { rows } = await pool.query(
         `SELECT cs.id AS session_id,
-                cs.pr_number, cs.pr_url, cs.pr_title, cs.status,
+                cs.pr_number, cs.pr_url, cs.pr_title,
+                -- Merged but not live yet (chat_sessions.live_at): the badge says going live.
+                CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'merging' ELSE cs.status END AS status,
                 cs.created_at, cs.promoted_at, cs.merged_at,
                 a.slug AS app_slug, a.name AS app_name,
                 (${creditCount})::int AS kudos_count

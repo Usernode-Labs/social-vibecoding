@@ -53,7 +53,8 @@ test('scaffold server.js redirects unauthenticated document navigations to the c
   // The redirect must live INSIDE the unauthenticated branch, before the
   // landing-page fallback (iframe loads must keep getting the 401 page,
   // never a redirect that would nest the shell inside its own iframe).
-  const unauthBranch = server.indexOf('if (!req.user) {');
+  // P15: a guest (no account, read-only) is served the page too.
+  const unauthBranch = server.indexOf('if (!req.user && !req.guest) {');
   const redirect = server.indexOf("req.get('sec-fetch-dest')");
   const landing = server.indexOf('Open this app inside Homeroom');
   assert.ok(unauthBranch !== -1 && unauthBranch < redirect && redirect < landing,

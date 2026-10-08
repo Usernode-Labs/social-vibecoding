@@ -161,7 +161,8 @@ test('a PRIVATE own session carries the muted shell; a visible one does not', ()
   AppView._sharedById = {};
   const priv = mySessionCardHtml(AppView, mySess({}));
   assert.match(priv, /dev-card-muted/, 'the muted/draft treatment IS the "only you" signal');
-  assert.match(priv, /Only you can see this/, 'and the subtitle says so');
+  assert.match(priv, /Only you can see this here\. Code is on public GitHub\./,
+    'and the subtitle says so, and that its code is on public GitHub all the same');
   const vis = mySessionCardHtml(AppView, mySess({ shared_at: '2026-06-01T03:00:00Z' }));
   assert.doesNotMatch(vis, /dev-card-muted/, 'a visible session is not muted');
 });
@@ -213,11 +214,11 @@ test('an owned imported PR shows proposal metadata with one promotion action', (
   assert.match(html, /High/);
   assert.match(html, /@tester/);
   assert.match(html, />Bug</);
-  assert.match(html, /Imported pull request by octo-contributor · not up for vote yet/);
+  assert.match(html, /Imported by octo-contributor · not waiting for approval yet/);
   // `passNode` appends the clicked button, which the model cannot hold.
   assert.ok(hasAction(model, 'promoteImportedSession', 88), 'the promote pill is wired');
   assert.ok(model.actions.find((a) => a.key === 'promote').passNode);
-  assert.match(html, />Put up for vote</);
+  assert.match(html, />Ask for approval</);
   assert.doesNotMatch(html, />Yes \(|>No \(/, 'voting stays hidden until promotion');
   assert.doesNotMatch(html, /Make visible|>Hide<|Share chat/);
   assert.equal(menuLabels(AppView, html).join('|'),
@@ -236,7 +237,7 @@ test('another user’s imported PR names its people and exposes proposal attribu
   assert.match(html, /Imported PR/);
   assert.match(html, /@sam/);
   assert.match(html, /Imported pull request by octo-contributor · imported by maya/);
-  assert.doesNotMatch(html, /Put up for vote|is working on this/);
+  assert.doesNotMatch(html, /Ask for approval|is working on this/);
   assert.ok(menuHas(AppView, html, /Change assignee/));
   assert.ok(menuHas(AppView, html, /View PR on GitHub/));
 });
@@ -247,7 +248,7 @@ test('an imported PR detail header shows all three editable attribute slots', ()
     source: 'imported', imported_pr_author: 'octo-contributor', username: 'maya',
   }), { noNav: true });
   assert.match(html, /Set priority/);
-  assert.match(html, /Unassigned/);
+  assert.doesNotMatch(html, /Unassigned/, 'B10c: who is on it shows only when somebody is');
   assert.match(html, /Set category/);
   assert.doesNotMatch(html, />Yes \(|>No \(/);
 });
@@ -354,7 +355,7 @@ test('private own card offers NO chat-sharing row (nowhere to read it from yet)'
   const html = mySessionCardHtml(AppView, mySess({}));
   assert.ok(!menuHas(AppView, html, /Share chat|Chat shared/));
   assert.doesNotMatch(html, /chat readable/);
-  assert.match(html, /Only you can see this/, 'subtitle names the private state');
+  assert.match(html, /Only you can see this here\. Code is on public GitHub\./, 'subtitle names the unshared state');
 });
 
 test('visible own card offers "Share chat"; the subtitle stays plain', () => {
@@ -503,7 +504,7 @@ test('kanban In progress: private → archived toggle → visible → issues →
   ];
   const html = rowsHtml(AppView._inProgressRows(entries));
   assertOrder(html, [
-    'Yours · private',
+    'Yours · not shared',
     'data-session-chip="1"',
     'Show archived (1)',
     'Yours · visible',
@@ -514,7 +515,7 @@ test('kanban In progress: private → archived toggle → visible → issues →
   ]);
   // The long copy survives as the divider label's tooltip rather than as a
   // full grey sentence occupying its own line in the column.
-  assert.match(html, /title="Only you can see your active sessions\."/);
+  assert.match(html, /title="Only you can see your active sessions here\. Their code is on public GitHub\."/);
   assert.match(html, /dev-col-divider/, 'rendered as a hairline divider');
 });
 
@@ -526,7 +527,7 @@ test('kanban In progress: no private sessions → no private caption; block stil
     { kind: 'my-session', item: mySess({ id: 2, shared_at: '2026-06-01T03:00:00Z' }) },
   ];
   const html = rowsHtml(AppView._inProgressRows(entries));
-  assert.doesNotMatch(html, /Yours · private/);
+  assert.doesNotMatch(html, /Yours · not shared/);
   assertOrder(html, ['Yours · visible', 'data-session-chip="2"']);
 });
 
@@ -537,7 +538,7 @@ test('kanban In progress: no visible sessions → nothing below the archived tog
   const entries = [{ kind: 'my-session', item: mySess({ id: 1 }) }];
   const html = rowsHtml(AppView._inProgressRows(entries));
   assert.doesNotMatch(html, /Yours · visible/);
-  assertOrder(html, ['Yours · private', 'data-session-chip="1"', 'Show archived (1)']);
+  assertOrder(html, ['Yours · not shared', 'data-session-chip="1"', 'Show archived (1)']);
 });
 
 // ── #1112: the work-state chip belongs to issue cards only ─────────────────
@@ -566,7 +567,7 @@ test('kanban Underway: only the issue row carries the work-state chip', () => {
   assert.match(html, /working…/, 'the busy session still says working…');
   assert.doesNotMatch(html, />paused</, 'a paused session is not labelled so (#2779 follow-up)');
   // …and none of the seven issue-state labels leaked onto a session row.
-  for (const label of ['Being worked on', 'In review', 'Claimed', 'Needs an answer',
+  for (const label of ['Being worked on', 'Waiting for approval', 'Picked up', 'Needs an answer',
     'Draft ready to review']) {
     assert.ok(!html.includes(label), `session rows must not say "${label}"`);
   }
@@ -592,7 +593,7 @@ test('the Underway column mirrors the private/visible split', () => {
     { kind: 'my-session', item: mySess({ id: 2, session_title: 'Visible one', shared_at: '2026-06-01T03:00:00Z' }) },
   ]));
   assertOrder(html, [
-    'Yours · private',
+    'Yours · not shared',
     'data-session-chip="1"',
     'Show archived (1)',
     'Yours · visible',

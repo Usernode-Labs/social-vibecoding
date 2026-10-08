@@ -49,9 +49,14 @@ test('every kind is framed, and framed exactly once', () => {
     assert.match(html, /Homeroom<br>You are receiving this because/, `${kind}: carries the footer`);
     // A project invite goes to an address somebody else typed, so it says
     // that instead of claiming the recipient asked for it.
+    // WP-E: activity mail (build_ready, invite_activity) stands in for a
+    // push, so it says that, and how to turn it off.
+    const activity = kind === 'build_ready' || kind === 'invite_activity';
     assert.match(html, kind === 'project_invite'
       ? /someone on Homeroom invited this address to a project\. You will not hear from us again unless you join, or somebody invites you again\./
-      : /activity on your account or your place on the waitlist/,
+      : activity
+        ? /there was news on Homeroom for you and no phone to send it to\. Turn these emails off with the link above\./
+        : /activity on your account or your place on the waitlist/,
     `${kind}: says why it arrived`);
     if (kind === 'project_invite') assert.doesNotMatch(html, /mail you asked for/, 'an invite was not asked for');
   }
@@ -67,7 +72,9 @@ test('the frame is applied in one place, not by the templates', () => {
   // A template may say why its mail arrived (`why`) and set its inbox
   // preview line (`preheader`); the frame still wraps every kind, here and
   // only here.
-  assert.match(build, /const \{ why, preheader, \.\.\.message \} = template\(payload\);\s*return \{ \.\.\.message, html: HTML_SHELL\(message\.html, why, preheader\) \};/);
+  // WP-E: and the extra headers a kind needs (activity mail's
+  // List-Unsubscribe) ride beside the framed html, never inside it.
+  assert.match(build, /const \{ why, preheader, headers, \.\.\.message \} = template\(tracking\.attributedPayload\(kind, payload\)\);\s*return tracking\.decorate\(kind, \{\s*\.\.\.message,\s*html: HTML_SHELL\(message\.html, why, preheader\),/);
 });
 
 test('an unknown kind still throws rather than sending a blank frame', () => {

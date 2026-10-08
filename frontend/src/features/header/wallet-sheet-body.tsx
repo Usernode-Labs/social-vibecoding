@@ -29,6 +29,7 @@ import { Button } from '@/components/ui/button';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
+import { returnKeyHandler } from '../../lib/return-to-next';
 import { walletSheetStore, type StakingView, type WalletSheetState } from './wallet-sheet-store';
 
 function controller(): any {
@@ -190,15 +191,21 @@ function SendForm({ onSent }: { onSent: () => void }): ReactNode {
     if (ok) onSent(); else setSending(false);
   };
 
+  // Return in the address goes on to the amount, and in the amount sends
+  // (#3907: the iOS keyboard's chevrons are gone). The amount's number pad
+  // has no Return key at all; a tap anywhere outside the field puts it away.
   return (
-    <div className="flex flex-col gap-2 p-4 mb-4 rounded-lg border border-zinc-200 dark:border-zinc-800">
+    <div
+      className="flex flex-col gap-2 p-4 mb-4 rounded-lg border border-zinc-200 dark:border-zinc-800"
+      onKeyDown={returnKeyHandler({ submit: () => { if (!sending) void submit(); } })}
+    >
       <input
         ref={toRef} placeholder="Recipient address (ut1…)" aria-label="Recipient address"
-        className={`${FIELD} font-mono`}
+        className={`${FIELD} font-mono`} enterKeyHint="next"
         value={to} onChange={(e) => setTo(e.target.value)}
       />
       <input
-        placeholder="Amount" aria-label="Amount" inputMode="numeric" className={FIELD}
+        placeholder="Amount" aria-label="Amount" inputMode="numeric" enterKeyHint="send" className={FIELD}
         value={amount} onChange={(e) => setAmount(e.target.value)}
       />
       <Button size="flushBold" disabled={sending} onClick={submit}>Send</Button>

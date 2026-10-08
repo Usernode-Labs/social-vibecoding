@@ -122,6 +122,7 @@ test('the shots agent launches Playwright through the content-free timing observ
       ['browser_member', 'member.json'],
       ['browser_admin', 'read_only_admin.json'],
       ['browser_full_admin', 'full_admin.json'],
+      ['browser_guest', 'guest.json'],
     ]) {
       const args = config.mcpServers[server].args;
       assert.equal(config.mcpServers[server].command, 'node');
@@ -140,12 +141,69 @@ test('the shots agent launches Playwright through the content-free timing observ
   assert.match(claudeRunner, /SHOTS_HOSTED_ORIGINS_FILE/);
 });
 
+test('every shots browser, the guest\'s included, is denied the tools that run code or touch files', () => {
+  const claudeRunner = read('run-cc.sh');
+  const flags = /elif \[ "\$MODE" = "shots" \]; then[\s\S]*?PERMISSION_FLAGS="([^"]*)"/.exec(claudeRunner)?.[1];
+  assert.ok(flags, 'the shots permission flags are found');
+  const denied = new Set(flags.split(/\s+/));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-denied-tools-'));
+  try {
+    const servers = Object.keys(writeConfig(dir).config.mcpServers).filter((name) => name.startsWith('browser_'));
+    assert.deepEqual(servers.sort(), ['browser_admin', 'browser_full_admin', 'browser_guest', 'browser_member']);
+    for (const server of servers) {
+      for (const tool of ['browser_evaluate', 'browser_run_code', 'browser_file_upload', 'browser_install']) {
+        assert.ok(denied.has(`mcp__${server}__${tool}`), `${server} is denied ${tool}`);
+      }
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the guest browser is never signed in, and its optional token never outlives the bootstrap', () => {
+  const claudeRunner = read('run-cc.sh');
+  const bootstrap = read('shots-browser-bootstrap.js');
+  // The bootstrap exchanges the three fixture tokens and writes the guest an
+  // empty state; it never reads the guest token.
+  assert.equal(require('../worker/shots-browser-bootstrap.js').SIGNED_OUT_STATE, '{"cookies":[],"origins":[]}\n');
+  assert.match(bootstrap, /path\.join\(outputDir, 'guest\.json'\)/);
+  assert.doesNotMatch(bootstrap, /SHOTS_GUEST_TOKEN/);
+  assert.equal(require('../worker/shots-browser-bootstrap.js')
+    .failureEvent(new Error('x'), { persona: 'guest', stage: 'storage_state' }).persona, 'guest');
+  // Optional for the runner, its own proxy listener, and unset with the others.
+  assert.match(claudeRunner, /: "\$\{SHOTS_GUEST_TOKEN:=\}"/);
+  assert.match(claudeRunner, /"guest":17895/);
+  assert.match(claudeRunner,
+    /unset SHOTS_MEMBER_TOKEN SHOTS_ADMIN_TOKEN SHOTS_FULL_ADMIN_TOKEN SHOTS_GUEST_TOKEN\n/);
+});
+
+test('a shots turn carries a guest token only when the platform minted one', () => {
+  const worker = require('../src/services/worker');
+  const shots = (extra = {}) => worker.buildTurnSecretEnv({
+    mode: 'shots', agentBackend: 'claude_code', anthropicProxyJwt: 'p', shotsJwt: 'e',
+    shotsMemberToken: 'm', shotsAdminToken: 'a', shotsFullAdminToken: 'f', ...extra,
+  });
+  assert.equal('SHOTS_GUEST_TOKEN' in shots(), false, 'no guest token, no variable');
+  assert.equal('SHOTS_GUEST_TOKEN' in shots({ shotsGuestToken: null }), false);
+  assert.equal(shots({ shotsGuestToken: 'g' }).SHOTS_GUEST_TOKEN, 'g');
+  assert.throws(() => shots({ shotsGuestToken: '' }), /shotsGuestToken required/,
+    'an empty value is a bug upstream, not a token');
+  // Never on any other turn.
+  const build = worker.buildTurnSecretEnv({
+    mode: 'build', agentBackend: 'claude_code', workerSessionJwt: 'w', issuesReadJwt: 'i',
+    anthropicProxyJwt: 'p', shotsGuestToken: 'g',
+  });
+  assert.equal('SHOTS_GUEST_TOKEN' in build, false);
+  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'worker.js'), 'utf8');
+  assert.match(source, /shotsGuestToken: shotsAuthTokens\?\.guest \?\? null,/);
+});
+
 test('the browsers reach the public internet only through the shots proxy, and the catalog is still checked', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-egress-config-'));
   try {
     for (const assets of [undefined, '0', '1']) {
       const { config } = writeConfig(dir, { SHOTS_PLATFORM_ASSETS: assets });
-      for (const server of ['browser_member', 'browser_admin', 'browser_full_admin']) {
+      for (const server of ['browser_member', 'browser_admin', 'browser_full_admin', 'browser_guest']) {
         const args = config.mcpServers[server].args;
         assert.ok(!args.some((arg) => /allowed-origins|blocked-origins|tailwindcss/.test(arg)), server);
         assert.match(args[args.indexOf('--proxy-server') + 1], /^http:\/\/127\.0\.0\.1:\d+$/, server);
@@ -176,7 +234,7 @@ test('the config writer gives each persona its own shots directory and records c
       SHOTS_JWT: 'secret-shots-jwt', SHOTS_MEMBER_TOKEN: 'secret-member-token',
     });
     assert.deepEqual(Object.keys(config.mcpServers).sort(),
-      ['browser_admin', 'browser_full_admin', 'browser_member', 'shots']);
+      ['browser_admin', 'browser_full_admin', 'browser_guest', 'browser_member', 'shots']);
     // The bridge is named "shots" (Claude sees mcp__shots__*) and its
     // credentials come from the environment, never from this file.
     assert.deepEqual(config.mcpServers.shots, { command: 'node', args: ['/usr/local/bin/shots-mcp.js'] });
@@ -186,6 +244,7 @@ test('the config writer gives each persona its own shots directory and records c
 
     for (const [server, persona] of [
       ['browser_member', 'member'], ['browser_admin', 'admin'], ['browser_full_admin', 'full_admin'],
+      ['browser_guest', 'guest'],
     ]) {
       const args = config.mcpServers[server].args;
       assert.equal(args.filter((arg) => arg === '--output-dir').length, 1);
@@ -195,7 +254,7 @@ test('the config writer gives each persona its own shots directory and records c
     }
 
     const clips = writeConfig(dir, { SHOTS_RECORD_CLIPS: '1' }).config;
-    for (const server of ['browser_member', 'browser_admin', 'browser_full_admin']) {
+    for (const server of ['browser_member', 'browser_admin', 'browser_full_admin', 'browser_guest']) {
       assert.equal(clips.mcpServers[server].args.filter((arg) => arg === '--save-video=1280x800').length, 1);
       assert.equal(clips.mcpServers[server].args.filter((arg) => arg.startsWith('--save-video')).length, 1);
     }
@@ -210,7 +269,7 @@ test('the config writer gives each persona its own shots directory and records c
       .some((arg) => arg.startsWith('--save-video')), false, 'a size alone records nothing');
     for (const value of ['0', 'true', 'yes', '']) {
       const off = writeConfig(dir, { SHOTS_RECORD_CLIPS: value }).config;
-      for (const server of ['browser_member', 'browser_admin', 'browser_full_admin']) {
+      for (const server of ['browser_member', 'browser_admin', 'browser_full_admin', 'browser_guest']) {
         assert.equal(off.mcpServers[server].args.some((arg) => arg.startsWith('--save-video')), false,
           `SHOTS_RECORD_CLIPS=${JSON.stringify(value)} records nothing`);
       }
@@ -232,7 +291,7 @@ test('the Claude runner gives the shots bridge its directory; the Codex runner h
   // Every shots turn takes shots now; nothing depends on a mode flag.
   assert.match(claudeRunner, /export SHOTS_DIR="\$SHOTS_TMP\/shots"/);
   assert.match(claudeRunner,
-    /mkdir -p "\$SHOTS_DIR\/member" "\$SHOTS_DIR\/admin" "\$SHOTS_DIR\/full_admin"/);
+    /mkdir -p "\$SHOTS_DIR\/member" "\$SHOTS_DIR\/admin" "\$SHOTS_DIR\/full_admin" "\$SHOTS_DIR\/guest"/);
   assert.doesNotMatch(claudeRunner, /EVIDENCE_MODE/);
   assert.doesNotMatch(claudeRunner, /EVIDENCE_COMPLETION_REMINDER/);
   assert.doesNotMatch(claudeRunner, RETIRED_TOOLS);
@@ -296,7 +355,7 @@ function bridgeFixture(t, { declaredChanges } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-bridge-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const shotsDir = path.join(dir, 'shots');
-  for (const persona of ['member', 'admin', 'full_admin']) fs.mkdirSync(path.join(shotsDir, persona), { recursive: true });
+  for (const persona of ['member', 'admin', 'full_admin', 'guest']) fs.mkdirSync(path.join(shotsDir, persona), { recursive: true });
   const hostedFile = path.join(dir, 'hosted-origins.json');
   fs.writeFileSync(hostedFile, JSON.stringify({
     version: 2, baseOrigin: 'http://base.example.invalid', headOrigin: 'http://head.example.invalid',
@@ -547,6 +606,29 @@ test('save_clip publishes the newest recording and retires every older one', asy
   fs.symlinkSync(path.join(bridge.dir, 'elsewhere.webm'), path.join(member, 'linked.webm'));
   assert.equal((await clip('saved-toast', 'after')).value.code, 'clip_not_found');
   assert.equal(uploads(bridge).length, 3);
+});
+
+test('the guest browser\'s shots and clips are read from its own directory', async (t) => {
+  const bridge = bridgeFixture(t, { declaredChanges: [
+    { id: 'signed-out-landing', persona: 'guest', intent: { animation: 'motion' } },
+  ] });
+  const guest = path.join(bridge.shotsDir, 'guest');
+  fs.writeFileSync(path.join(guest, 'landing-desktop-after.png'), 'guest still');
+  stamp(bridge, 'guest', 'landing-desktop-after.png', `${HEAD}/`);
+  const saved = await bridge.call('save_shot', { shots: [{
+    change: 'signed-out-landing', screen: 'desktop', side: 'after', file: 'landing-desktop-after.png',
+  }] });
+  assert.equal(saved.isError, false);
+  assert.equal(Buffer.from(uploads(bridge).at(-1).body).toString(), 'guest still');
+
+  const clipFile = path.join(guest, 'landing.webm');
+  fs.writeFileSync(clipFile, 'guest clip');
+  const when = new Date(Date.now() - 1000);
+  fs.utimesSync(clipFile, when, when);
+  boundary.recordSession(guest, [`${BASE}/`]);
+  const clip = await bridge.call('save_clip', { change: 'signed-out-landing', screen: 'desktop', side: 'before' });
+  assert.equal(clip.isError, false);
+  assert.equal(Buffer.from(uploads(bridge).at(-1).body).toString(), 'guest clip');
 });
 
 test('save_clip publishes a recording only when its whole session stayed on its side\'s address', async (t) => {

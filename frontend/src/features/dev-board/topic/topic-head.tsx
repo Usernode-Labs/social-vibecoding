@@ -33,14 +33,16 @@ import { createPortal } from 'react-dom';
 import type { FormEvent, KeyboardEvent, ReactNode, SyntheticEvent } from 'react';
 
 import { Html } from '../../../lib/html';
+import { FRESH, watch } from '../../../lib/live-reads';
 import { useStoreState } from '../../../lib/use-store-state';
 import { Button } from '@/components/ui/button';
-import { ChevronRightIcon, PencilSquareIcon, PlusIcon, SearchIcon, XIcon } from '@/components/ui/icons';
+import { CheckIcon, ChevronRightIcon, PencilSquareIcon, PlusIcon, SearchIcon, XIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { ActionBand, ActionButton, Badge, DevCard, StatusPill, TitleContent, VoteButton, isVoteSpec } from '../card/dev-card';
 import type { DevCardModel } from '../card/model';
 import { swatchFor } from '../../group-chat/swatch';
+import { useInlineImageViewer } from '../../image-viewer/image-viewer';
 import { topicHeadStore } from './topic-store';
 import { ChangeConversation } from './conversation';
 import { TopicBack } from './topic-back';
@@ -52,6 +54,7 @@ import type {
   NoteTone,
   RosterView,
   IssueLink,
+  IssueClosedBand,
   IssueProposalRef,
   TextRun,
   TopicBody,
@@ -134,8 +137,9 @@ export function NoteBoxView({ box }: { box: NoteBox }): ReactNode {
  * than wrapping — a check's name can run to a paragraph), the path for a
  * pass, and the tags. A check that FAILED, or passed only after a retry,
  * opens its reason from the line's right end ("Why it failed"), where the
- * selector string and the console errors sit until somebody asks: that
- * detail is for whoever fixes the check, not for a voter reading the row.
+ * selector string, the unit suite's per-test excerpts and the console
+ * errors sit until somebody asks: that detail is for whoever fixes the
+ * check, not for a voter reading the row.
  */
 function CheckRowView({ r }: { r: CheckRow }): ReactNode {
   const glyphCls = `dev-ledger-check-glyph ${r.pass ? 'text-emerald-700 dark:text-emerald-400' : (r.advisory ? 'text-zinc-500 dark:text-zinc-400' : 'text-red-700 dark:text-red-400')} font-medium`;
@@ -174,6 +178,20 @@ function CheckRowView({ r }: { r: CheckRow }): ReactNode {
         <div className="dev-ledger-why-body">
           {r.reason || 'failed'}
           {r.path ? <span className="dev-ledger-why-path">{` · on ${r.path}`}</span> : null}
+          {/* #3978: the unit-suite row's failing tests, each with the
+              assertion text the run captured. The fold is the collapse —
+              these open with "Why it failed" like the console errors below. */}
+          {r.details && r.details.length ? (
+            <ul className="dev-ledger-why-details">
+              {r.details.map((d, i) => (
+                <li key={i}>
+                  <span className="dev-ledger-why-test">{d.test}</span>
+                  {d.file ? <span className="dev-ledger-why-file">{` · in ${d.file}`}</span> : null}
+                  {d.excerpt ? <span className="dev-ledger-why-excerpt">{d.excerpt}</span> : null}
+                </li>
+              ))}
+            </ul>
+          ) : null}
           {r.errors && r.errors.length ? (
             <ul className="dev-ledger-why-errors">
               {r.errors.map((e, i) => (
@@ -181,6 +199,16 @@ function CheckRowView({ r }: { r: CheckRow }): ReactNode {
                   <span className="opacity-70">{`[${e.kind}] `}</span>
                   {e.message}
                   {e.source ? <span className="opacity-60">{` (${e.source})`}</span> : null}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {r.details && r.details.length ? (
+            <ul className="dev-ledger-why-details mt-1 space-y-1">
+              {r.details.map((d, i) => (
+                <li key={i}>
+                  <div className="font-medium">{d.file ? `${d.file} · ${d.test}` : d.test}</div>
+                  <pre className="dev-ledger-why-excerpt mt-0.5 max-h-60 overflow-auto whitespace-pre-wrap break-words rounded bg-zinc-500/10 p-2 font-mono text-[0.7rem]">{d.excerpt}</pre>
                 </li>
               ))}
             </ul>
@@ -526,6 +554,30 @@ export function ProposalBody({ b }: { b: NonNullable<TopicBody['proposalBody']> 
   );
 }
 
+/**
+ * The rest of a change's summary, one tap down under its lead
+ * (`AppView._summaryParts`): on a change Homeroom bot built, its spec's
+ * Design brief, which was written for the build, not for the people
+ * deciding on it. The open flag is AppView's, like ProposalBody's, so a
+ * repaint does not shut it.
+ */
+function SummaryMore({ m }: { m: NonNullable<TopicBody['summaryMore']> }): ReactNode {
+  return (
+    <details
+      className="dev-topic-details dev-topic-hero-more"
+      data-topic-part="summary-more"
+      open={m.open}
+      onToggle={(e) => {
+        if (m.id != null) call('_setSummaryMoreOpen', m.id, e.currentTarget.open);
+      }}
+    >
+      <summary className="dev-topic-details-summary">How it’s built</summary>
+      {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
+      <Html className="dev-issue-body dev-topic-details-body" html={m.html} />
+    </details>
+  );
+}
+
 function Transcript({ t }: { t: TranscriptSection }): ReactNode {
   return (
     <div className="st-section" data-transcript-section={t.id}>
@@ -563,21 +615,34 @@ function withPendingVote(av: any, row: any) {
   return row;
 }
 
-export async function readChangeDetail(item: any, owner: boolean, signal: AbortSignal) {
+/** The path a change page reads its row from, review or not. */
+export function changeDetailPath(item: any): string {
+  const av = (window as any).AppView;
+  const review = ['promoted', 'merging', 'merged'].includes(item.status) && av?.appData?.slug;
+  return review ? `/api/apps/${av.appData.slug}/proposals/${item.id}` : `/api/sessions/${item.id}/details`;
+}
+
+/**
+ * `fresh` is a re-read after a gap (#4177, lib/live-reads.ts): it skips the
+ * service worker's saved copy, and re-reads the vote roster for every viewer,
+ * because whatever moved the row while this page was not hearing about it
+ * may have moved the votes too.
+ */
+export async function readChangeDetail(item: any, owner: boolean, signal: AbortSignal, { fresh = false } = {}) {
   const id = item.id;
   const av = (window as any).AppView;
   const review = ['promoted', 'merging', 'merged'].includes(item.status) && av?.appData?.slug;
-  const url = review ? `/api/apps/${av.appData.slug}/proposals/${id}` : `/api/sessions/${id}/details`;
+  const url = changeDetailPath(item);
   // The short form: passing checks are counted, and their fold reads the
   // names when opened (AppView._loadCheckNames, _readTopicRow).
   const demo = av?._demoQS?.() ? '&demo=1' : '';
-  const response = await fetch(`${url}?results=failing${demo}`, { signal });
+  const response = await fetch(`${url}?results=failing${demo}`, fresh ? { ...FRESH, signal } : { signal });
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error || 'Could not refresh this change.');
   const session = review ? payload.proposal : payload.session;
   if (review && !signal.aborted) {
-    if (owner) av._invalidateVoteRoster(id);
-    await av._loadVoteRoster(id);
+    if (owner || fresh) av._invalidateVoteRoster(id);
+    await av._loadVoteRoster(id, { fresh });
   }
   return session;
 }
@@ -702,6 +767,71 @@ function AddressedBy({ r }: { r: IssueProposalRef }): ReactNode {
   );
 }
 
+/**
+ * #4244 — a closed request's ONE status band, at the top of its card:
+ * "✓ Closed · Oct 5 · by #10 <title> ›". It replaced a separate "Closed by"
+ * box above the card plus a grey "Closed" badge on it, which said the same
+ * thing twice in two places. Emerald when a merged change closed it, zinc
+ * when a close vote or an admin did. The change is an inline pill drawn like
+ * the change page's "Addresses" line (`.dev-topic-issue`), and it keeps
+ * `data-addressed-by`, the hook the old box's row carried.
+ */
+function ClosedBand({ b }: { b: IssueClosedBand }): ReactNode {
+  const r = b.ref;
+  return (
+    <div className="dev-issue-closed-band" data-tone={b.tone} data-topic-part="closed-band">
+      <CheckIcon className="dev-issue-closed-band-glyph" aria-hidden="true" />
+      <span className="dev-issue-closed-band-k">Closed</span>
+      {b.when ? <>
+        <span className="dev-issue-closed-band-dot" aria-hidden="true">·</span>
+        <span title={b.whenTitle || undefined}>{b.when}</span>
+      </> : null}
+      {r ? <>
+        <span className="dev-issue-closed-band-dot" aria-hidden="true">·</span>
+        <span>by</span>
+        <a
+          href={r.href}
+          className="dev-ws-chip dev-ws-chip-info dev-topic-issue"
+          data-addressed-by={r.sessionId}
+          aria-label={`Closed by ${r.label}: ${r.title}`}
+          onClick={(event) => {
+            if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+            event.preventDefault(); call('openTopic', 'proposal', r.sessionId);
+          }}
+        ><b>{r.label}</b><span>{r.title}</span><ChevronRightIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /></a>
+      </> : b.how ? <>
+        <span className="dev-issue-closed-band-dot" aria-hidden="true">·</span>
+        <span>{b.how}</span>
+      </> : null}
+    </div>
+  );
+}
+
+/**
+ * On a change's page: the change it went live inside
+ * (services/included-changes.js). The same box, row and chip as
+ * `AddressedBy`, read from the other end again: that names the change that
+ * closed an issue, this the change that carried this one live.
+ */
+function IncludedIn({ r }: { r: IssueProposalRef }): ReactNode {
+  return (
+    <aside className="dev-change-issues" aria-label="The change this one went live in" data-topic-part="included-in">
+      <h4 className="dev-topic-h">{r.heading}</h4>
+      <div className="mt-2">
+        <a
+          href={r.href}
+          className={REF_ROW}
+          data-included-in={r.sessionId}
+          onClick={(event) => {
+            if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+            event.preventDefault(); call('openTopic', 'proposal', r.sessionId);
+          }}
+        ><IssueIdentity label={r.label} title={r.title} /><RefChevron /></a>
+      </div>
+    </aside>
+  );
+}
+
 function IssueAssociations({
   proposalId,
   issues,
@@ -734,7 +864,7 @@ function IssueAssociations({
   const changed = selectedSignature !== signature;
   const optionsByNumber = new Map([...issueOptions, ...issues].map((issue) => [issue.n, issue]));
   const selectedIssues = selected.map((n) => optionsByNumber.get(n) || {
-    n, title: `Issue #${n}`, href: `#${n}`,
+    n, title: `Request #${n}`, href: `#${n}`,
   });
   const suggestions = filterIssueOptions(query, issueOptions, selected);
   const exact = parseExactIssueNumber(query);
@@ -758,7 +888,7 @@ function IssueAssociations({
   const addIssue = (issue: number) => {
     if (selected.includes(issue)) return;
     if (selected.length >= MAX_LINKED_ISSUES) {
-      setError(`A proposal can link at most ${MAX_LINKED_ISSUES} issues.`);
+      setError(`A change can link at most ${MAX_LINKED_ISSUES} requests.`);
       return;
     }
     setSelected((current) => normalizeLinkedIssues([...current, issue]));
@@ -795,7 +925,7 @@ function IssueAssociations({
         body: JSON.stringify({ addIssues, removeIssues }),
       });
       const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.message || body.error || 'Could not update issues.');
+      if (!response.ok) throw new Error(body.message || body.error || 'Couldn\'t update the requests.');
       const saved = Array.isArray(body.linkedIssues) ? body.linkedIssues.map(Number) : selected;
       onSaved(saved);
       setSelected(normalizeLinkedIssues(saved));
@@ -812,7 +942,7 @@ function IssueAssociations({
   }
 
   return (
-    <aside className="dev-topic-hero-issues" aria-label="Issues this change addresses">
+    <aside className="dev-topic-hero-issues" aria-label="Requests this change addresses">
       {!editing ? (
         <div className="dev-topic-hero-issues-line">
           {/* One line under the summary: "Addresses", then each issue as a
@@ -832,7 +962,7 @@ function IssueAssociations({
                 event.preventDefault(); call('openTopic', 'issue', issue.n);
               }}
             ><b>{`#${issue.n}`}</b><span>{issue.title}</span></a>
-          )) : <span className="dev-topic-note">No issues linked yet.</span>}
+          )) : <span className="dev-topic-note">No requests linked yet.</span>}
           {editable ? <Button
             type="button"
             variant="unstyled"
@@ -844,7 +974,7 @@ function IssueAssociations({
           >
             {issues.length ? <PencilSquareIcon className="h-4 w-4" aria-hidden="true" />
               : <PlusIcon className="h-4 w-4" aria-hidden="true" />}
-            {issues.length ? 'Edit issues' : 'Add issue'}
+            {issues.length ? 'Edit requests' : 'Add request'}
           </Button> : null}
         </div>
       ) : null}
@@ -864,11 +994,11 @@ function IssueAssociations({
                 onClick={() => removeIssue(issue.n)}
               ><XIcon className="h-4 w-4" aria-hidden="true" /></button>
             </div>
-          ))}</div> : <p className="rounded-xl bg-zinc-100/80 px-3 py-2 text-sm text-zinc-500 dark:bg-zinc-800/80 dark:text-zinc-400">No issues selected.</p>}
+          ))}</div> : <p className="rounded-xl bg-zinc-100/80 px-3 py-2 text-sm text-zinc-500 dark:bg-zinc-800/80 dark:text-zinc-400">No requests selected.</p>}
         </div>
         <div>
           <label htmlFor={`linked-issues-${proposalId}`} className="block text-xs font-medium text-zinc-700 dark:text-zinc-300">
-            Add another issue
+            Add another request
           </label>
           <div className="relative mt-1.5">
             <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />
@@ -883,7 +1013,7 @@ function IssueAssociations({
               autoFocus
             />
           </div>
-          {query.trim() ? <div className="mt-2 overflow-hidden rounded-xl bg-zinc-100 dark:bg-zinc-800" aria-label="Matching issues">
+          {query.trim() ? <div className="mt-2 overflow-hidden rounded-xl bg-zinc-100 dark:bg-zinc-800" aria-label="Matching requests">
             {suggestions.map((issue) => (
               <button
                 key={issue.n}
@@ -896,17 +1026,17 @@ function IssueAssociations({
             {exactOption ? <button
               type="button"
               className="flex min-h-11 w-full items-center gap-3 px-3 py-2 text-left hover:bg-zinc-200 dark:hover:bg-zinc-700"
-              aria-label={`Add issue #${exactOption.n}`}
+              aria-label={`Add request #${exactOption.n}`}
               onClick={() => addIssue(exactOption.n)}
             ><IssueIdentity label={`#${exactOption.n}`} title={exactOption.title} /><PlusIcon className="h-4 w-4 shrink-0 text-violet-600 dark:text-violet-300" aria-hidden="true" /></button> : null}
-            {!suggestions.length && !exactOption ? <p className="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400">No matching open issues. Enter an exact issue number to add it.</p> : null}
+            {!suggestions.length && !exactOption ? <p className="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400">No matching open requests. Enter a request number to add it.</p> : null}
           </div> : null}
-          <p className="mt-1.5 text-xs text-zinc-500 dark:text-zinc-400">Searches open issues in this app. Exact issue numbers can always be added.</p>
+          <p className="mt-1.5 text-xs text-zinc-500 dark:text-zinc-400">Searches open requests in this project. You can always add one by its number.</p>
         </div>
         {error ? <p role="alert" className="text-xs text-red-700 dark:text-red-400">{error}</p> : null}
         <div className="flex justify-end gap-2">
           <Button type="button" variant="pillNeutral" size="xsText" ink="neutral" onClick={cancelEditor} disabled={saving}>Cancel</Button>
-          <Button type="submit" variant="pillAccent" size="xsText" disabledStyle="dim" disabled={saving || !changed}>{saving ? 'Saving…' : 'Save issues'}</Button>
+          <Button type="submit" variant="pillAccent" size="xsText" disabledStyle="dim" disabled={saving || !changed}>{saving ? 'Saving…' : 'Save requests'}</Button>
         </div>
       </form> : null}
       {!editing && notice ? <p role="status" className="dev-topic-note">{notice}</p> : null}
@@ -994,26 +1124,28 @@ function ChangeHero({ id, card, body, linkedIssues, onIssuesSaved }: {
   const vote = yesSpec && noSpec ? <VoteButton yes={yesSpec} no={noSpec} /> : null;
   const pills = vote ? all.filter((a) => a !== yesSpec && a !== noSpec) : all;
   const pill = card.pill && card.pill.state && card.pill.state.label ? card.pill.state : null;
+  const hasIssues = !!((body.issues && body.issues.length) || body.canEditIssues) && !!id;
   // The tags: priority, assignee, category, and the linkage. The state
   // chips — checks, behind main, the shots — stay off: the steps say it.
+  // A request the Addresses line under the summary already names, by its
+  // number AND its title, is not a "Closes #1" tag up here as well: that
+  // tag said the same thing in a pull request's words (first-session
+  // run-through, 4 Oct 2026).
+  const named = new Set(hasIssues ? (body.issues || []).map((issue) => Number(issue.n)) : []);
+  const unnamed = (b: any) => !(b && b.n != null && named.has(Number(b.n)));
   const badges = (card.badges || []).filter(Boolean);
   const chips = [
     ...badges.filter((b) => b.t === 'attr'),
-    ...(card.linked || []),
-    ...badges.filter((b) => b.t === 'issueChip'),
+    ...(card.linked || []).filter(unnamed),
+    ...badges.filter((b) => b.t === 'issueChip' && unnamed(b)),
   ];
-  const hasIssues = !!((body.issues && body.issues.length) || body.canEditIssues) && !!id;
   return (
     <section className="dev-topic-sheet dev-topic-hero" data-topic-sheet="hero" data-ws-tint={h.tint}>
       <div className="dev-topic-hero-top">
+        {/* B10b: what the page is and where it stands. The pull request it
+            names is in Details. */}
         <span className="dev-ws-eyebrow dev-topic-hero-eyebrow">
-          {h.ref ? (
-            <>
-              {`${h.kind} · `}
-              {h.ref.href ? <a href={h.ref.href} target="_blank" rel="noopener">{h.ref.s}</a> : <span>{h.ref.s}</span>}
-              {h.status ? <span>{` · ${h.status}`}</span> : null}
-            </>
-          ) : (h.status ? `${h.kind} · ${h.status}` : h.kind)}
+          {h.status ? `${h.kind} · ${h.status}` : h.kind}
         </span>
         {h.age ? <span className="dev-ws-item-of" title={h.age.title}>{h.age.s}</span> : null}
       </div>
@@ -1054,11 +1186,20 @@ function ChangeHero({ id, card, body, linkedIssues, onIssuesSaved }: {
         ) : null}
         <ActionBand actions={pills} menuKey={card.rail.menuKey || ''} preview={card.actionPreview || card.rail.preview || null} dense={false} />
       </div>
+      {/* #3826: the pill's lock explains itself only in a hover title, which
+          a phone never shows. While the other member's Yes is missing, say
+          it; once it is in, the line goes. */}
+      {pill && pill.awaitsOtherYes
+        ? <p className="dev-topic-note" data-topic-part="needs-other-yes">Needs a Yes from another member before it can go live.</p>
+        : null}
       {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
       <Html className="dev-topic-hero-summary dev-topic-about-body" data-topic-part="summary" html={body.summaryHtml || ''} />
+      {body.summaryMore ? <SummaryMore m={body.summaryMore} /> : null}
       {body.summaryStale && body.summaryHtml
         ? <p className="dev-topic-note" role="note">This summary may describe an earlier revision.</p>
         : null}
+      {body.tested && id ? <TestedLine id={id} t={body.tested} /> : null}
+      {body.includedIn ? <IncludedIn r={body.includedIn} /> : null}
       {hasIssues ? (
         <IssueAssociations
           proposalId={Number(id)}
@@ -1072,6 +1213,27 @@ function ChangeHero({ id, card, body, linkedIssues, onIssuesSaved }: {
       <BeforeAfter body={body} />
       {body.note ? <div className="dev-topic-note">{body.note}</div> : null}
     </section>
+  );
+}
+
+/** B10b: the Tested line's mark, in the steps' own glyphs. */
+const TESTED_MARK: Record<string, string> = {
+  passed: '✓', failed: '✕', skipped: '·', broken: '!',
+};
+
+/**
+ * B10b: one line for what testing found, where the steps list and its checks
+ * used to be. A tap opens Details at the Checks part.
+ */
+function TestedLine({ id, t }: { id: number; t: NonNullable<TopicBody['tested']> }): ReactNode {
+  const open = () => (window as any).AppView?.openTechnicalDetails(id, 'checks');
+  return (
+    <button type="button" className="dev-topic-tested" data-tested={t.state} onClick={open}>
+      <span className={`dev-topic-tested-mark dev-topic-tested-mark-${t.state}`} aria-hidden="true">
+        {t.state === 'running' ? <Spinner /> : (TESTED_MARK[t.state] || '·')}
+      </span>
+      <span>{t.text}</span>
+    </button>
   );
 }
 
@@ -1311,16 +1473,72 @@ function StepsSheet({ s, help }: { s: StepsView; help: boolean }): ReactNode {
 }
 
 /**
- * Technical details — the pull request's description, or the spec a change
- * under way is built from — as a sheet over the page, opened from the ⋯
- * menu's row (`AppView.openTechnicalDetails`, the same event shape the Build
- * sheet listens for). Portalled to the body like the vote picker: a
- * `position: fixed` box inside a frosted sheet would be contained by it.
+ * B10b: what a builder reviews, one tap down from the page: the pull request
+ * and its GitHub link, the steps with their checks (the sheet that sat under
+ * the hero, whole: every id, data-note and control is as it was), and the
+ * description, or the spec a change under way is built from.
  */
-function DetailsSheet({ id, html }: { id: number; html: string }): ReactNode {
-  const [open, setOpen] = useState(false);
+export function DetailsBody({ prRef, steps, help, html }: {
+  prRef: HeroView['ref'];
+  steps: StepsView | null | undefined;
+  help: boolean;
+  html: string;
+}): ReactNode {
+  return (
+    <>
+      {prRef ? (
+        <p className="dev-details-pr" data-details-part="pr">
+          <span>{prRef.s}</span>
+          {prRef.href ? <a href={prRef.href} target="_blank" rel="noopener">Open on GitHub</a> : null}
+        </p>
+      ) : null}
+      {steps ? <StepsSheet s={steps} help={help} /> : null}
+      {html ? (
+        <section className="dev-details-part" data-details-part="description">
+          <h5 className="dev-details-sub">Description</h5>
+          {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
+          <Html className="dev-issue-body dev-topic-details-body" html={html} />
+        </section>
+      ) : null}
+    </>
+  );
+}
+
+// B10b: `?details=1` opens the first change page's Details as it loads, so a
+// declared check can read what moved there. Once: a later page opens shut.
+let detailsFromUrl = typeof window !== 'undefined'
+  && /(?:^|[?&])details=1(?:&|$)/.test(String(window.location?.search || ''));
+
+/**
+ * Details as a sheet over the page, opened from the ⋯ menu's row or the
+ * Tested line (`AppView.openTechnicalDetails`, with the part to open at).
+ * Portalled to the body like the vote picker: a `position: fixed` box inside
+ * a frosted sheet would be contained by it. It stays mounted, hidden while
+ * shut, so the steps it carries are on the page for whoever reads them by
+ * selector.
+ */
+function DetailsSheet({ id, prRef, steps, help, html }: {
+  id: number;
+  prRef: HeroView['ref'];
+  steps: StepsView | null | undefined;
+  help: boolean;
+  html: string;
+}): ReactNode {
+  const [open, setOpen] = useState(() => {
+    if (!detailsFromUrl) return false;
+    detailsFromUrl = false;
+    return true;
+  });
+  const [part, setPart] = useState<string | null>(null);
+  const card = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const onOpen = (event: Event) => { if (Number((event as CustomEvent).detail) === id) setOpen(true); };
+    const onOpen = (event: Event) => {
+      const detail = (event as CustomEvent).detail;
+      const target = detail && typeof detail === 'object' ? Number(detail.id) : Number(detail);
+      if (target !== id) return;
+      setPart(detail && typeof detail === 'object' && detail.part ? String(detail.part) : null);
+      setOpen(true);
+    };
     window.addEventListener('change-details-open', onOpen);
     return () => window.removeEventListener('change-details-open', onOpen);
   }, [id]);
@@ -1330,18 +1548,23 @@ function DetailsSheet({ id, html }: { id: number; html: string }): ReactNode {
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [open]);
-  if (!open || typeof document === 'undefined') return null;
+  useEffect(() => {
+    if (!open || !card.current) return;
+    if (!part) { card.current.scrollTop = 0; return; }
+    const at = card.current.querySelector(`[data-note="${part}"]`) as HTMLElement | null;
+    if (at && typeof at.scrollIntoView === 'function') at.scrollIntoView({ block: 'start' });
+  }, [open, part]);
+  if (typeof document === 'undefined') return null;
   return createPortal(
-    <div className="dev-details-scrim" data-change-details={id} onClick={(event) => { if (event.target === event.currentTarget) setOpen(false); }}>
-      <div className="dev-details-card" role="dialog" aria-modal="true" aria-label="Technical details">
+    <div className="dev-details-scrim" hidden={!open} data-change-details={id} onClick={(event) => { if (event.target === event.currentTarget) setOpen(false); }}>
+      <div ref={card} className="dev-details-card" role="dialog" aria-modal="true" aria-label="Details">
         <div className="dev-details-head">
-          <h4 className="dev-topic-h">Technical details</h4>
+          <h4 className="dev-topic-h">Details</h4>
           <button type="button" className="dev-details-close" aria-label="Close" onClick={() => setOpen(false)}>
             <XIcon className="w-4 h-4" aria-hidden="true" />
           </button>
         </div>
-        {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
-        <Html className="dev-issue-body dev-topic-details-body" html={html} />
+        <DetailsBody prRef={prRef} steps={steps} help={help} html={html} />
       </div>
     </div>,
     document.body,
@@ -1372,6 +1595,9 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
   const [loaded, setLoaded] = useState<any>(null);
   const [error, setError] = useState('');
   const [revision, setRevision] = useState(0);
+  // The next read is a live re-read (#4177): fresh, roster included. Held
+  // until a read actually runs, because a hidden page defers it.
+  const freshNext = useRef(false);
   const id = item?.id;
   // THE PAGE RE-READS ITS ROW WHEN SOMETHING HAPPENS TO IT, not on a timer.
   // It polled every ten seconds for as long as it was open, because the
@@ -1383,12 +1609,17 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
   //   - with `{ id, row }`: adopt a row the Workshop just read for this page;
   //   - with `{ id, patch }`: merge a live patch (a checks tick), which would
   //     otherwise be painted over by this page's older read;
-  //   - with 'all': the socket reconnected (App.resyncCurrentView);
+  //   - a live re-read (#4177, lib/live-reads.ts): the socket reconnected, the
+  //     tab came back after a while, or the service worker corrected this
+  //     page's own read, which it may have answered from an older copy;
   //   - the page coming back into view after a read was skipped for it.
   useEffect(() => {
     if (!id || !active) return;
     const abort = new AbortController();
     let skipped = false;
+    // A fresh read still on the wire when this effect is torn down (a
+    // revision bump aborts it): the next effect's read inherits `fresh`.
+    let freshInFlight = false;
     async function load() {
       // These portals can remain mounted while another screen is open, and a
       // hidden tab reads nothing; either reads when it is seen again.
@@ -1397,16 +1628,20 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
         return;
       }
       skipped = false;
+      const fresh = freshNext.current;
+      freshNext.current = false;
+      freshInFlight = fresh;
       try {
-        const session = await readChangeDetail(item, owner, abort.signal);
+        const session = await readChangeDetail(item, owner, abort.signal, { fresh });
         if (!abort.signal.aborted) { setLoaded(session); setError(''); }
       } catch (err) {
         if (!abort.signal.aborted) setError((err as Error).message);
+      } finally {
+        if (!abort.signal.aborted) freshInFlight = false;
       }
     }
     const refresh = (event: Event) => {
       const detail = (event as CustomEvent).detail;
-      if (detail === 'all') { setRevision((n) => n + 1); return; }
       if (detail && typeof detail === 'object') {
         if (Number(detail.id) !== Number(id)) return;
         if (detail.row) { setLoaded(detail.row); setError(''); return; }
@@ -1418,6 +1653,12 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
       if (Number(detail) === Number(id)) setRevision((n) => n + 1);
     };
     const seen = () => { if (skipped && document.visibilityState !== 'hidden') void load(); };
+    // Its own read and the roster it reads with it (readChangeDetail).
+    const paths = new Set([changeDetailPath(item), `/api/sessions/${id}/votes`]);
+    const unwatch = watch(() => {
+      freshNext.current = true;
+      setRevision((n) => n + 1);
+    }, { reads: (url) => paths.has(url.pathname) });
     window.addEventListener('change-detail-refresh', refresh);
     document.addEventListener('visibilitychange', seen);
     const shown = typeof ResizeObserver === 'function' && root.current ? new ResizeObserver(seen) : null;
@@ -1425,6 +1666,8 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
     void load();
     return () => {
       abort.abort();
+      if (freshInFlight) freshNext.current = true;
+      unwatch();
       window.removeEventListener('change-detail-refresh', refresh);
       document.removeEventListener('visibilitychange', seen);
       shown?.disconnect();
@@ -1454,7 +1697,6 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
       {changePage ? (
         <>
           <ChangeHero id={id ? Number(id) : null} card={card} body={body} linkedIssues={linkedIssues} onIssuesSaved={applyLinkedIssues} />
-          {body.steps ? <StepsSheet s={body.steps} help={!!(body.details && body.details.help)} /> : null}
           {/* #2605: a change's page carries NO build surface — not the Build
               sheet, and not the published chat's disclosure that used to sit
               beside it. Both are the dev session page's now, behind the
@@ -1463,7 +1705,15 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
           {/* The GitHub thread's host (issue-comments.tsx mounts into it):
               a body that carries one gets it whatever page it is on. */}
           {body.comments ? <div id="dev-issue-comments" className="dev-topic-sheet dev-topic-comments"></div> : null}
-          {body.proposalBody && id ? <DetailsSheet id={Number(id)} html={body.proposalBody.html} /> : null}
+          {id ? (
+            <DetailsSheet
+              id={Number(id)}
+              prRef={body.hero?.ref || null}
+              steps={body.steps}
+              help={!!(body.details && body.details.help)}
+              html={body.proposalBody?.html || ''}
+            />
+          ) : null}
           {id && active && av?._canEditDescription(session) ? <DescriptionEditor key={id} id={Number(id)} onSaved={(data) => {
             const patch = { pr_summary_md: data.description, pr_summary_input_version: data.version,
               pr_summary_source: 'author', pr_summary_stale: data.stale, pr_body: data.prBody ?? session?.pr_body };
@@ -1475,7 +1725,9 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
         <>
           <div className="dev-topic-sheet dev-topic-card" data-topic-sheet="card">
             {/* #2431: an ISSUE's page names the change on it. A CHANGE's page
-                names its issues under the summary (ChangeHero). */}
+                names its issues under the summary (ChangeHero). #4244: a
+                CLOSED issue says so once, in the band at the card's top. */}
+            {body.closedBand ? <ClosedBand b={body.closedBand} /> : null}
             {body.addressedBy ? <AddressedBy r={body.addressedBy} /> : null}
             <DevCard model={card} />
           </div>
@@ -1517,7 +1769,7 @@ function IssueBody(
     const av = typeof window !== 'undefined' ? (window as any).AppView : null;
     const slug = av?.appData?.slug;
     if (!slug) {
-      setError('This issue is not available right now.');
+      setError('This request is not available right now.');
       return;
     }
     setSaving(true);
@@ -1529,7 +1781,7 @@ function IssueBody(
         body: JSON.stringify({ body: draft }),
       });
       const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.error || 'Failed to update the issue body.');
+      if (!response.ok) throw new Error(result.error || 'Couldn’t save the request.');
       const savedBody = typeof result.body === 'string' ? result.body : draft;
       const rendered = typeof av?._cacheIssueBody === 'function'
         ? av._cacheIssueBody(editor.issue, savedBody)
@@ -1539,7 +1791,7 @@ function IssueBody(
       setEditing(false);
       if (typeof av?._renderTopicHead === 'function') av._renderTopicHead();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update the issue body.');
+      setError(err instanceof Error ? err.message : 'Couldn’t save the request.');
     } finally {
       setSaving(false);
     }
@@ -1548,13 +1800,13 @@ function IssueBody(
   return (
     <>
       <div className="flex items-center justify-between gap-2">
-        <h4 id="dev-issue-body-heading" className="dev-topic-h">About this issue</h4>
+        <h4 id="dev-issue-body-heading" className="dev-topic-h">About this request</h4>
         {editor.canEdit && !editing ? (
           <button
             type="button"
             className="shrink-0 text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-200 transition-colors dark:text-zinc-400"
-            title="Edit this issue's body (you created it)"
-            aria-label="Edit issue body"
+            title="Edit this request (you asked for it)"
+            aria-label="Edit request"
             data-issue-body-edit={editor.issue}
             onClick={() => { setError(''); setEditing(true); }}
           >
@@ -1628,10 +1880,15 @@ export function TopicBodySections({ body }: { body: TopicBody }): ReactNode {
   // sheet open, so it is resolved to null before the test below.
   const roster = body.roster && body.roster.phase !== 'hidden' ? body.roster : null;
   const hasAbout = !!(summaryHtml || issueHtml || issueEditor?.canEdit || tiles || body.proposalBody || body.note || roster);
+  // #3908: a screenshot in the request's words opens in the app's viewer,
+  // over this page, instead of following its file link out of it. The
+  // pictures are inside sanitised markdown, so the sheet takes the tap.
+  const images = useInlineImageViewer();
   return (
     <>
+      {images.viewer}
       {hasAbout ? (
-        <section className="dev-topic-sheet dev-topic-about" data-topic-sheet="about">
+        <section className="dev-topic-sheet dev-topic-about" data-topic-sheet="about" {...images.scope}>
           {!issueEditor ? <h4 className="dev-topic-h">{body.aboutTitle || 'About'}</h4> : null}
           {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
           {summaryHtml ? (

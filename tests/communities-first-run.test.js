@@ -253,7 +253,7 @@ test('the card counts steps and points, says what finishing unlocks, and closes 
   assert.equal(card.nextStepId(kept), 'tour');
   assert.deepEqual(kept.steps.map((s) => card.stepView(s, kept).detail), [
     'See how Homeroom works.',
-    'Find people to build with. Homeroom and projects only you can see don’t count.',
+    'Find people to build with. Homeroom and Just-you projects don’t count.',
     'Join a community first.', 'Join a community first.', 'Join a community first.',
   ]);
   // Never a lock once Join is ticked, in every fixture where it is.
@@ -292,9 +292,9 @@ test('every step not done has a button, a verb and an arrow, about the default a
   // The Join row says what does not count while it is to do (D1): its own
   // task, then the note.
   assert.deepEqual(view(step('join', { href: '#apps' }), here),
-    ['Its own task. Homeroom and projects only you can see don’t count.', 'Join', 'Find a community',
+    ['Its own task. Homeroom and Just-you projects don’t count.', 'Join', 'Find a community',
       'Find a community', true, { to: 'hash', href: '#apps' }]);
-  assert.equal(card.joinDetail(''), 'Homeroom and projects only you can see don’t count.');
+  assert.equal(card.joinDetail(''), 'Homeroom and Just-you projects don’t count.');
   assert.deepEqual(view(step('join', { href: '#apps', done: true }), here), ['Its own task.', null],
     'done, it is the task alone');
   assert.deepEqual(view(step('try'), here),
@@ -311,7 +311,7 @@ test('every step not done has a button, a verb and an arrow, about the default a
     ['Nothing in City garden yet; 2 changes are waiting in Night owls.', 'Vote', 'Vote in Night owls',
       'Vote in Night owls', true, { to: 'needs', slug: 'night-owls' }]);
   assert.deepEqual(view(step('vote'), model({ kind: 'workshop', app: garden, count: 0 })),
-    ['Nothing is up for a vote yet. See what people are building.', 'Look', 'See what City garden is building',
+    ['Nothing is waiting for approval yet. See what people are building.', 'Look', 'See what City garden is building',
       'See what City garden is building', true, { to: 'workshop', slug: 'city-garden' }]);
   // THE ONE GATE (first-session test, 2026-10-03): the three are locked
   // while Join is to do, the server's `needs_join`, whether or not there is
@@ -510,8 +510,10 @@ test('the join screen is re-offered once a snapshot boot confirms the session', 
   const join = reconcile.indexOf('window.CommunitiesFirstRun?.maybePrompt?.()');
   assert.ok(terms > 0 && join > terms, 'right after the terms ask, which it then waits for');
   assert.ok(reconcile.indexOf('App.user = user;') < join, 'with the confirmed user, not the snapshot');
-  // The gate still skips the unverified boot itself.
-  assert.match(GATE, /if \(window\.App && window\.App\._sessionFromSnapshot\) \{\s*\n\s*CommunitiesFirstRun\._resolve\(\);\s*\n\s*return;/);
+  // The gate still asks nothing of the unverified boot itself; the one thing
+  // it does there is draw an owed make screen from the snapshot, recording
+  // nothing (tests/first-session-persists.test.js).
+  assert.match(GATE, /if \(window\.App && window\.App\._sessionFromSnapshot\) \{\s*\n\s*CommunitiesFirstRun\._showFromSnapshot\(\);\s*\n\s*CommunitiesFirstRun\._resolve\(\);\s*\n\s*return;/);
   // It waits for a terms ask in flight or on screen, capped.
   assert.match(GATE, /for \(let i = 0; terms && \(terms\._inFlight \|\| terms\._presented\) && i < 2400; i \+= 1\) \{/);
   // The tour looks again once the screen is answered, which on this path is

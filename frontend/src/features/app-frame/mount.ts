@@ -34,6 +34,7 @@ import { appFrameStore } from './app-frame-store.js';
 import { publishAppTone } from './app-tone.js';
 import { AppStatus, type AppStatusView } from './app-status';
 import { appStatusStore } from './app-status-store.js';
+import { starterStore } from './starter-store.js';
 
 // `beginLaunch` does `frame.mount(…)` and then immediately `frame.frame()`, to
 // assign `src` and arm the reveal ladder in the same tick as the tap. Without a
@@ -74,6 +75,17 @@ export const appStatusBridge = {
   },
 };
 
+/**
+ * #15: whose starter is framed while its first version is on its way, for
+ * the bar over it (./starter-bar.tsx). AppView._publishStarter sets it on
+ * every App tab render; '' is none.
+ */
+export const appStarterBridge = {
+  set(slug: string | null | undefined): void {
+    starterStore.set({ slug: slug || '' });
+  },
+};
+
 export { appFrameBridge };
 
 if (typeof window !== 'undefined') {
@@ -82,6 +94,14 @@ if (typeof window !== 'undefined') {
   bridge.appActivity = appActivity;
   bridge.appFrame = appFrameBridge;
   bridge.appStatus = appStatusBridge;
+  bridge.appStarter = appStarterBridge;
+
+  // The phone wallet relay in the shared bridge (public/usernode-bridge.js)
+  // forwards a frame's calls only when this names the frame as one of the
+  // shell's production apps. A page without it relays nothing, so this is the
+  // one place that decides. See `appForSource` in ./app-frame-bridge.js.
+  (window as unknown as { __usernodeAppFrameFor?: (source: unknown) => unknown })
+    .__usernodeAppFrameFor = (source: unknown) => appFrameBridge.appForSource(source);
 
   // #1945: the head's theme module rewrites the theme-color meta from the
   // shell's own mode on every theme change (Theme.set, an OS flip, another

@@ -219,10 +219,10 @@ test('Q20: form controls the audit found unnamed have names', () => {
   assert.match(read('frontend/src/features/messages/message-row.tsx'),
     /<textarea ref=\{editRef\} aria-label="Edit message"/, 'the message edit box');
   assert.match(read('frontend/src/features/dev-board/card/dev-card.tsx'),
-    /id=\{`dev-\$\{kind\}-title-input`\}\n\s*aria-label=\{session \? 'Proposal title' : 'Issue title'\}/,
+    /id=\{`dev-\$\{kind\}-title-input`\}\n\s*aria-label=\{session \? 'Proposal title' : 'Request title'\}/,
     'the card title editor, named by kind');
   const topicHead = read('frontend/src/features/dev-board/topic/topic-head.tsx');
-  assert.match(topicHead, /<h4 id="dev-issue-body-heading" className="dev-topic-h">About this issue<\/h4>/);
+  assert.match(topicHead, /<h4 id="dev-issue-body-heading" className="dev-topic-h">About this request<\/h4>/);
   assert.match(topicHead, /id="dev-issue-body-input"\n\s*aria-labelledby="dev-issue-body-heading"/,
     'the issue body editor is named after its heading');
   const wallet = read('frontend/src/features/header/wallet-sheet-body.tsx');
@@ -242,8 +242,9 @@ test('Q20: the kit modal shell takes its name from the dialog\'s heading', () =>
   const fn = modal.slice(modal.indexOf('function nameKitShell('));
   assert.match(fn, /querySelector\('h1, h2, h3'\)/);
   assert.match(fn, /if \(heading\.id\) shell\.setAttribute\('aria-labelledby', heading\.id\);/);
-  const create = read('frontend/src/features/dialogs/create-app.tsx');
-  assert.match(create, /<h2 id="create-title"/, 'Create app\'s heading has the id the shell points at');
+  // (Create app's heading was the example here; that dialog is retired.)
+  const secrets = read('frontend/src/features/dialogs/app-secrets.tsx');
+  assert.match(secrets, /<h2 id="app-secrets-title"/, 'App secrets\' heading has the id the shell points at');
 });
 
 test('Q20: the app frame is titled with the app\'s name, and keeps it when kept alive', async () => {

@@ -21,12 +21,13 @@
   ]);
   const SCREENS = new Set([
     'shell_boot', 'app_detail', 'app_discussion', 'feedback_dialog',
-    'report_dialog', 'change_workspace', 'preview', ...NAV_SCREENS,
+    'report_dialog', 'change_workspace', 'preview', 'ping_ask', ...NAV_SCREENS,
   ]);
   const VIAS = new Set(['own', 'nudged', 'handed', 'address', 'back', 'returned']);
   const ACTIONS = new Set([
     'shell_boot', 'app_detail_load', 'app_discussion_load',
     'feedback_submit', 'content_report_submit', 'change_create', 'preview_open',
+    'push_permission',
   ]);
   const OUTCOMES = new Set(['success', 'failure', 'cancelled']);
   const ERRORS = new Set([

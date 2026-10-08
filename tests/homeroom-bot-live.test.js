@@ -134,6 +134,29 @@ test('it is live only on a listed app, with the mode on, and never on a staging 
     'a staging copy starts from production\'s settings and must never post on real issues');
 });
 
+test('with the everyone audience it is live on every app but a paused one and the platform\'s own', (t) => {
+  const everyone = { mode: 'shadow', audience: 'everyone', liveApps: [], pausedApps: ['quiet'], platformSlugs: ['usernode-2d5619'] };
+  assert.equal(live.isLiveFor(everyone, APP), true, 'no list needed');
+  assert.equal(live.isLiveFor(everyone, { slug: 'anything-else' }), true);
+  assert.equal(live.isLiveFor(everyone, { slug: 'quiet' }), false, 'paused stays paused');
+  assert.equal(live.isLiveFor(everyone, { slug: 'usernode-2d5619' }), false, 'the platform\'s own project has its own switch');
+  assert.equal(live.isLiveFor({ ...everyone, livePlatform: true }, { slug: 'usernode-2d5619' }), true);
+  assert.equal(live.isLiveFor({ ...everyone, mode: 'off' }, APP), false, 'off means off for everyone too');
+  assert.deepEqual(live.liveScope(everyone), { all: true, slugs: [], except: ['quiet', 'usernode-2d5619'] });
+  // The list audience reads as it always did, paused apps and all.
+  const list = { mode: 'shadow', liveApps: ['a', 'b'], firstVersionApps: ['b', 'c'], pausedApps: ['a'] };
+  assert.deepEqual(live.liveScope(list), { all: false, slugs: ['a', 'b', 'c'], except: [] });
+  assert.equal(live.scopeIsEmpty(live.liveScope({ mode: 'shadow', liveApps: [] })), true);
+  assert.equal(live.scopeIsEmpty(live.liveScope(everyone)), false);
+  // Whether the bot is on is said apart: appsScope reads the same apps while it is off.
+  assert.deepEqual(live.appsScope({ ...everyone, mode: 'off' }), live.liveScope(everyone));
+  const prior = process.env.USERNODE_ENV;
+  t.after(() => { if (prior === undefined) delete process.env.USERNODE_ENV; else process.env.USERNODE_ENV = prior; });
+  process.env.USERNODE_ENV = 'staging';
+  assert.equal(live.isLiveFor(everyone, APP), false, 'never on a staging copy');
+  assert.equal(live.scopeIsEmpty(live.liveScope(everyone)), true);
+});
+
 test('the live list is a validated setting that ships empty', () => {
   assert.deepEqual(bot.parseSettings([]).liveApps, []);
   assert.deepEqual(bot.parseSettings([{ key: bot.KEY_LIVE_APPS, value: '["rss-reader-4113da", 3]' }]).liveApps, ['rss-reader-4113da']);
@@ -320,10 +343,17 @@ test('the answers tag whoever filed the issue and took part; the notice and a he
   assert.ok(!live.tagsPoster('held_proposals_per_app'));
 });
 
-test('what it says: the question with its default, notes that never close, a linked proposal', () => {
+test('what it says: the question, notes that never close, a linked proposal', () => {
   const q = live.questionText({ question: 'Which feed should it refresh?', questionDefault: 'All of them' });
   assert.match(q, /Which feed should it refresh\?/);
-  assert.match(q, /If nobody answers, it would go with: All of them/);
+  // B6 (E5): nothing applies a default to an unanswered question, so nothing says one would.
+  assert.ok(!/If nobody answers/.test(q));
+  // B6: and two questions are asked at once, numbered.
+  const two = live.questionText({
+    question: 'What time?',
+    plan: { bullets: [], questions: [{ question: 'What time?', answers: ['9 AM', '8 AM'] }, { question: 'How?', answers: ['In the app', 'Phone alert'] }] },
+  });
+  assert.match(two, /^Homeroom bot has two questions before it can build this:\n\n1\. What time\?\n2\. How\?\n\n/);
   assert.match(q, /Reply here \(or on the GitHub issue\) and it will look again\./);
   assert.match(live.personText({ reason: 'It changes who can see feeds.' }), /a person needs to decide this one: It changes who can see feeds\./);
   const empty = live.emptyText({ reason: 'The body is a placeholder.' });
@@ -547,6 +577,9 @@ test('a ready request is built in a session of its own and proposed', async () =
     ok: true, sessionId: 5001, prNumber: 42, branchName: 'homeroom_bot/s5001', sha: 'a'.repeat(40), commits: 1,
     costUsd: 0.05,
     specNote: 'no spec (the spec turn returned nothing); the build worked from the plan',
+    // What each stage cost, on its model (services/stage-costs.js): a spec
+    // turn whose cost is unknown has no line.
+    stageCosts: { build: { usd: 0.05, model: 'z-ai/glm-5.3-flash' } },
   }, 'this harness writes no spec, and the result says so');
 
   const insert = h.calls.queries.find((q) => /INSERT INTO chat_sessions/.test(q.sql));
@@ -740,7 +773,8 @@ test('each verdict says its own thing; a verdict held by a cap says only that it
 
   live.buildAndPropose = async () => ({ ok: false, sessionId: 5002, error: 'the build produced no change to propose', costUsd: 0 });
   assert.equal(await build(h, { verdict: 'ready', buildNote: 'x' }), 'build_failed');
-  assert.match(h.posts.at(-1).text, /tried to build this but couldn't finish: the build produced no change to propose/);
+  assert.equal(h.posts.at(-1).text, 'Homeroom bot couldn\'t finish building this: it ended up with no changes to show. '
+    + 'Reply here (or on the GitHub issue) and it will try again.');
 });
 
 
@@ -845,7 +879,7 @@ test('a backlog pass holds silently, and still speaks when it has something to s
 test('a "Triage this app again" item is triaged without the "looking" post, and held quietly', () => {
   assert.equal(bot.APP_AGAIN_REASON, 'app_again');
   assert.match(BOT_SRC, /SELECT \$1, q\.n, 0, 'app_again', \$4/, 'retriageApp queues with that reason');
-  assert.match(BOT_SRC, /const looked = item\.reason === RESTART_REASON \|\| item\.reason === APP_AGAIN_REASON \? null : await live\.post\(/);
+  assert.match(BOT_SRC, /const looked = item\.reason === RESTART_REASON \|\| item\.reason === APP_AGAIN_REASON\n\s+\|\| item\.reason === RETRY_FAILED_REASON \|\| item\.reason === READ_AGAIN_REASON \? null : await live\.post\(/);
   assert.match(BOT_SRC, /quietHold: item\.reason === APP_AGAIN_REASON,/);
   // The refresh keeps a priority-0 row's reason, so a comment before the
   // row runs does not turn it back into a "looking" one mid-pass.

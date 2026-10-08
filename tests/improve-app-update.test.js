@@ -107,7 +107,7 @@ test("another app's build is that app's news: the button is left alone", () => {
 // ── WP2: the frame that is running the build before this one ──────────
 
 test('a build landing lets the app in view\'s kept frame go, and offers no reload on top', () => {
-  // The app's Workshop is where "✓ Deployed" is watched. Its frame is parked
+  // The app's Workshop is where "✓ Live" is watched. Its frame is parked
   // or kept behind it, and "Open app" used to bring that old build back,
   // because eviction skipped the app in view. Now it is let go, and the next
   // open loads the new build, so a reload offer would load it twice more.

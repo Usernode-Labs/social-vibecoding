@@ -97,7 +97,9 @@ test('the new repository\'s dapp.json carries a non-default rule, and only then'
   assert.deepEqual(readGovernance(dapp({ approverPolicy: 'invited', approvalsRequired: 3 })),
     { approvers: 'invited', approvals: 3 });
   const creator = fs.readFileSync(path.join(__dirname, '../src/services/app-creator.js'), 'utf8');
-  assert.equal((creator.match(/\{ governance: governanceOf\(appRow\), description: descriptionOf\(appRow\), template: templateOf\(appRow\) \}/g) || []).length, 2,
+  // The GitHub path also passes the first session's sketch, and its tagline
+  // when the row has no line (tests/app-sketch.test.js).
+  assert.equal((creator.match(/\{ governance: governanceOf\(appRow\), description: descriptionOf\(appRow\)(?: \|\| appSketch\.taglineOf\(sketch\))?, template: templateOf\(appRow\)(?:, sketch)? \}/g) || []).length, 2,
     'both template paths (GitHub and local) pass the row\'s rule, its line and its starter');
 });
 

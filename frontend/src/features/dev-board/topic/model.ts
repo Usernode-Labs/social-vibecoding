@@ -110,7 +110,19 @@ export interface CheckRow {
    */
   keepReason?: boolean;
   reason?: string | null;
+  /**
+   * The repo unit suite row's per-test excerpts (request #3978): the file,
+   * the test name and the captured error text — assertion message,
+   * expected/actual, the first stack lines. Empty on every other row; a
+   * declared check's reason is its diagnosis.
+   */
+  details?: { file: string | null; test: string; excerpt: string }[];
   errors?: { kind: string; message: string; source?: string | null }[];
+  /**
+   * The repo unit suite only (#3978): per failing test, its file, its name
+   * and a bounded, redacted excerpt of the error the runner printed.
+   */
+  details?: { file?: string | null; test: string; excerpt: string }[];
 }
 
 export interface ChecksVerdict {
@@ -349,6 +361,22 @@ export interface IssueProposalRef {
 }
 
 /**
+ * #4244 — a CLOSED request's one status band, at the top of its card
+ * (`_issueClosedBandView`). `merged` when a merged change closed it (`ref` is
+ * that change, drawn as the band's pill); `settled` when a close vote or an
+ * admin did (`how` says which, when the server knows).
+ */
+export interface IssueClosedBand {
+  tone: 'merged' | 'settled';
+  /** Short stamp: "Oct 5", or "3d ago" inside a week. */
+  when: string | null;
+  whenTitle: string | null;
+  /** "by vote" / "by an admin"; null on a merged close (the pill says it). */
+  how: string | null;
+  ref: IssueProposalRef | null;
+}
+
+/**
  * The change page's hero (topic-head.tsx `ChangeHero`): the words of the
  * Workshop's Needs-you item, for one change. The card's meta line carried
  * the same facts as one ellipsising row — "PR#2473 · snait · 5h ago · In
@@ -359,11 +387,11 @@ export interface IssueProposalRef {
  * them.
  */
 export interface HeroView {
-  /** The eyebrow's first word — "Proposal", or "Change" before review. */
+  /** The eyebrow's first word, "Change" (B10b). */
   kind: string;
-  /** "PR#2473", linking to GitHub when the change has a pull request. */
+  /** "PR#2473", linking to GitHub when the change has a pull request. Drawn in Details (B10b). */
   ref: { s: string; href: string | null } | null;
-  /** "In review", "Merged", "Private change", "Visible to the group". */
+  /** "Waiting for approval", "Merged", "Not shared yet", "Visible to the group". */
   status: string;
   /** "5h ago", with the full stamp as its title. */
   age: { s: string; title?: string } | null;
@@ -465,8 +493,16 @@ export interface StepsView {
 export interface TopicBody {
   changeId?: number;
   issues?: IssueLink[];
-  /** #2431 — on an ISSUE's page, the change that closed it or is on it. */
+  /** #2431 — on an ISSUE's page, the change on it (an open issue's). */
   addressedBy?: IssueProposalRef | null;
+  /** #4244 — on a CLOSED issue's page, the band that says so, and by what. */
+  closedBand?: IssueClosedBand | null;
+  /**
+   * On a CHANGE's page, the change it went live inside: an open change a
+   * merged one was built on is marked merged as included in it
+   * (services/included-changes.js, `AppView._includedInView`).
+   */
+  includedIn?: IssueProposalRef | null;
   /** Open issues already loaded for this app; the picker filters them locally. */
   issueOptions?: IssueLink[];
   /** The proposal owner/full platform admin may change issue associations. */
@@ -536,6 +572,14 @@ export interface TopicBody {
   /** The previous summary was retained for provenance but no longer describes this revision. */
   summaryStale?: boolean;
   /**
+   * The rest of the summary, folded under `summaryHtml` as "How it’s built":
+   * on a change Homeroom bot built, everything from its spec's Design
+   * heading on (`AppView._summaryParts`). Null when the summary is shown
+   * whole. The open flag lives in app-view.js (`_summaryMoreOpen`), as
+   * `proposalBody`'s does, so a repaint does not shut it.
+   */
+  summaryMore?: { id: number | null; open: boolean; html: string } | null;
+  /**
    * #1370's "Full proposal details" disclosure — the complete GitHub PR
    * description, deliberately quieter than the generated summary above it.
    *
@@ -546,9 +590,11 @@ export interface TopicBody {
    */
   proposalBody?: { id: number | null; open: boolean; html: string } | null;
   details?: ProposalDetails | null;
-  /** A change page's hero, and the steps under it. Set with `changeId`. */
+  /** A change page's hero, and its steps (drawn in Details, B10b). Set with `changeId`. */
   hero?: HeroView | null;
   steps?: StepsView | null;
+  /** B10b: the hero's one Tested line, from the latest checks run (`AppView._testedLine`). */
+  tested?: { state: 'passed' | 'running' | 'failed' | 'skipped' | 'broken'; text: string } | null;
   /** The one-line explainer under a session or governance card. */
   note?: string | null;
   /**

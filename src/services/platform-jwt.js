@@ -15,9 +15,13 @@
 //   ─────────────  ─────   ────────────────────────  ─────────────────────  ──────────────
 //   app identity   RS256   IFRAME_JWT_PRIVATE_KEY    usernode:app:<appId>   iframe
 //                          (verify: …_PUBLIC_KEY)
+//   app guest      ES256   derived from EDGE_JWT_SECRET  usernode:app:<appId>:guest  guest
+//                          (verify: guestPublicKeyPem(), injected into apps as
+//                          USERNODE_GUEST_JWT_PUBLIC_KEY)
 //   worker         HS256   WORKER_JWT_SECRET         usernode:worker        worker:session
 //   edge grant     HS256   EDGE_JWT_SECRET           usernode:edge          edge:grant
 //   edge cookie    HS256   EDGE_JWT_SECRET           usernode:edge          edge:cookie
+//   edge anon      HS256   EDGE_JWT_SECRET           usernode:edge          edge:anon
 //
 // App identity is asymmetric on purpose: containers receive only the
 // public key, so they can verify a user token but cannot produce one.
@@ -43,6 +47,12 @@ const AUD_WORKER = 'usernode:worker';
 const AUD_EDGE = 'usernode:edge';
 
 const PUR_IFRAME = 'iframe';
+// A visitor with no Homeroom account at a public app's own address (P15,
+// services/edge-gate.js). Its own audience and purpose, so no verifier
+// written for a person's token accepts it: today's apps pin
+// `usernode:app:<id>` (and the scaffold `pur: 'iframe'`), and an app that
+// welcomes guests verifies this audience on purpose.
+const PUR_GUEST = 'guest';
 const PUR_WORKER = 'worker:session';
 // Narrow, purpose-bound worker capabilities (review #2 / #6): the
 // general worker:session token is reserved for build/sync mutations. Agent
@@ -58,6 +68,10 @@ const PUR_PROD_DEBUG = 'worker:prod-debug';
 const PUR_SHOTS = 'worker:shots';
 const PUR_EDGE_GRANT = 'edge:grant';
 const PUR_EDGE_COOKIE = 'edge:cookie';
+// "This browser has no Homeroom session": the apex authorize hop's answer
+// for a visitor it could not sign in, so the app host stops asking for a
+// while (services/edge-gate.js). Host-bound, one minute, grants nothing.
+const PUR_EDGE_ANON = 'edge:anon';
 
 // Shell iframe tokens live an hour and are refreshed by the shell at 45
 // min (public/js/app-view.js). Capture tokens only need to outlive one
@@ -71,7 +85,11 @@ const WORKER_TTL = '24h';
 // caused the Kubernetes journal watcher to detach immediately while the
 // coding agent kept running in the worker Pod.
 const WORKER_TTL_S = 24 * 60 * 60;
-const EDGE_GRANT_TTL_S = 120;
+// The sign-in code is one redirect hop, single-use (its `jti` is redeemed
+// once, services/edge-gate.js) and bound to one host, one app, one user and
+// one platform session. A minute is plenty for the hop.
+const EDGE_GRANT_TTL_S = 60;
+const EDGE_ANON_TTL_S = 60;
 const EDGE_COOKIE_TTL_S = 12 * 60 * 60;
 
 // Audience for an app-scoped identity token. Keyed on `apps.id` — the
@@ -198,6 +216,89 @@ function signAppIdentityToken({ appId, user, ttl }) {
       expiresIn: ttl || IFRAME_TTL,
     }
   );
+}
+
+// ── App guest ─────────────────────────────────────────────────────────
+//
+// `{ guest: true }` and nothing else: no id, no username, nothing that could
+// be mistaken for, or used as, a person.
+//
+// A KEY AND AN ALGORITHM OF ITS OWN, and that is the safety property. The
+// ~40 pre-cutover scaffolds still in production verify with
+// `jwt.verify(token, pem)` and no options (tests/scaffold-token-compat
+// .test.js): no audience, no purpose, and jsonwebtoken's default for an RSA
+// key admits every RS* and PS* algorithm. Anything the identity key signs
+// would therefore be accepted there as `req.user`, with no id. So a guest
+// token is ES256, signed by an elliptic-curve key that key-separation
+// derives from EDGE_JWT_SECRET (HKDF, its own label): an RSA verifier refuses
+// ES256 outright ("invalid algorithm"), the platform's verifiers pin RS256,
+// and only an app that verifies guests on purpose, with the public half it
+// is given as USERNODE_GUEST_JWT_PUBLIC_KEY (app-identity-env.js), accepts
+// it. Derived rather than stored so every platform replica signs with the
+// same key and no new secret has to be deployed; rotating EDGE_JWT_SECRET
+// rotates it (apps pick the new public half up on their next deploy, and
+// until then treat guests as anonymous: fails closed).
+const GUEST_KEY_INFO = 'usernode app guest signing key v1';
+let _guestKeys = null;
+
+function guestKeyPair() {
+  const secret = edgeSecret();
+  const fingerprint = crypto.createHash('sha256').update(secret).digest('hex');
+  if (_guestKeys && _guestKeys.fingerprint === fingerprint) return _guestKeys;
+  const d = Buffer.from(crypto.hkdfSync('sha256', Buffer.from(secret), Buffer.from(ISSUER), Buffer.from(GUEST_KEY_INFO), 32));
+  const ecdh = crypto.createECDH('prime256v1');
+  ecdh.setPrivateKey(d);
+  const point = ecdh.getPublicKey();
+  const privateKey = crypto.createPrivateKey({
+    key: {
+      kty: 'EC', crv: 'P-256',
+      d: d.toString('base64url'),
+      x: point.subarray(1, 33).toString('base64url'),
+      y: point.subarray(33, 65).toString('base64url'),
+    },
+    format: 'jwk',
+  });
+  _guestKeys = {
+    fingerprint,
+    privatePem: privateKey.export({ type: 'pkcs8', format: 'pem' }),
+    publicPem: crypto.createPublicKey(privateKey).export({ type: 'spki', format: 'pem' }),
+  };
+  return _guestKeys;
+}
+
+// The public half apps verify guest tokens with, or null where the edge
+// secret is not set (a staging clone): no guests there.
+function guestPublicKeyPem() {
+  try { return guestKeyPair().publicPem; } catch { return null; }
+}
+
+function appGuestAudience(appId) {
+  return `${appAudience(appId)}:guest`;
+}
+
+function signGuestToken({ appId, ttl }) {
+  return jwt.sign(
+    { guest: true, pur: PUR_GUEST },
+    guestKeyPair().privatePem,
+    {
+      algorithm: 'ES256',
+      issuer: ISSUER,
+      audience: appGuestAudience(appId),
+      expiresIn: ttl || IFRAME_TTL,
+    }
+  );
+}
+
+function verifyGuestToken(token, { appId }) {
+  const claims = verifyWith(token, guestKeyPair().publicPem, {
+    algorithm: 'ES256',
+    audience: appGuestAudience(appId),
+    purpose: PUR_GUEST,
+  });
+  if (claims.guest !== true || claims.id !== undefined || claims.username !== undefined) {
+    throw new Error('invalid guest token');
+  }
+  return claims;
 }
 
 function verifyAppIdentityToken(token, { appId }) {
@@ -337,14 +438,23 @@ function verifyProdDebugToken(token) {
 
 // ── Private-app edge gate ─────────────────────────────────────────────
 //
-// Both edge purposes share EDGE_JWT_SECRET; the `pur` check is what
-// keeps a 120s grant from being replayed as a 12h access cookie.
-function signEdgeGrant({ uid, appId, host }) {
-  return jwt.sign({ uid, appId, host, pur: PUR_EDGE_GRANT }, edgeSecret(), {
+// The edge purposes share EDGE_JWT_SECRET; the `pur` check is what keeps a
+// one-minute code from being replayed as a 12h access cookie.
+//
+// `sid` names the platform session the code was minted from (a SHA-256 of
+// its token, never the token): the cookie it becomes is only good while
+// that session is, so signing out of Homeroom signs out of every app host.
+// `jti` is what makes the code single-use: the gate records it the first
+// time it is redeemed and refuses it after that.
+function signEdgeGrant({ uid, appId, host, sid = null, jti = null }) {
+  const payload = { uid, appId, host, pur: PUR_EDGE_GRANT };
+  if (sid) payload.sid = sid;
+  return jwt.sign(payload, edgeSecret(), {
     algorithm: 'HS256',
     issuer: ISSUER,
     audience: AUD_EDGE,
     expiresIn: EDGE_GRANT_TTL_S,
+    jwtid: jti || crypto.randomBytes(16).toString('hex'),
   });
 }
 
@@ -356,8 +466,10 @@ function verifyEdgeGrant(token) {
   });
 }
 
-function signEdgeCookie({ uid, appId, host }) {
-  return jwt.sign({ uid, appId, host, pur: PUR_EDGE_COOKIE }, edgeSecret(), {
+function signEdgeCookie({ uid, appId, host, sid = null }) {
+  const payload = { uid, appId, host, pur: PUR_EDGE_COOKIE };
+  if (sid) payload.sid = sid;
+  return jwt.sign(payload, edgeSecret(), {
     algorithm: 'HS256',
     issuer: ISSUER,
     audience: AUD_EDGE,
@@ -370,6 +482,23 @@ function verifyEdgeCookie(token) {
     algorithm: 'HS256',
     audience: AUD_EDGE,
     purpose: PUR_EDGE_COOKIE,
+  });
+}
+
+function signEdgeAnon({ host }) {
+  return jwt.sign({ host, pur: PUR_EDGE_ANON }, edgeSecret(), {
+    algorithm: 'HS256',
+    issuer: ISSUER,
+    audience: AUD_EDGE,
+    expiresIn: EDGE_ANON_TTL_S,
+  });
+}
+
+function verifyEdgeAnon(token) {
+  return verifyWith(token, edgeSecret(), {
+    algorithm: 'HS256',
+    audience: AUD_EDGE,
+    purpose: PUR_EDGE_ANON,
   });
 }
 
@@ -522,6 +651,7 @@ module.exports = {
   AUD_WORKER,
   AUD_EDGE,
   PUR_IFRAME,
+  PUR_GUEST,
   PUR_WORKER,
   PUR_WORKER_PUSH,
   PUR_ISSUES_READ,
@@ -530,15 +660,21 @@ module.exports = {
   PUR_SHOTS,
   PUR_EDGE_GRANT,
   PUR_EDGE_COOKIE,
+  PUR_EDGE_ANON,
   IFRAME_TTL,
   CAPTURE_TTL,
   WORKER_TTL,
   WORKER_TTL_S,
   EDGE_GRANT_TTL_S,
   EDGE_COOKIE_TTL_S,
+  EDGE_ANON_TTL_S,
   appAudience,
+  appGuestAudience,
   signAppIdentityToken,
   verifyAppIdentityToken,
+  signGuestToken,
+  verifyGuestToken,
+  guestPublicKeyPem,
   signWorkerToken,
   verifyWorkerToken,
   signWorkerPurpose,
@@ -557,6 +693,8 @@ module.exports = {
   verifyEdgeGrant,
   signEdgeCookie,
   verifyEdgeCookie,
+  signEdgeAnon,
+  verifyEdgeAnon,
   orNull,
   assertIframeKeyPair,
   generateStagingIframeKeyPair,

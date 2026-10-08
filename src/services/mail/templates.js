@@ -14,6 +14,7 @@
 'use strict';
 
 const { PRODUCTION_ORIGIN } = require('../cli-auth-constants');
+const tracking = require('./tracking');
 
 // Minimal HTML escaping — these bodies interpolate an email address, a
 // six-digit code and platform-built URLs, never free user text, but
@@ -313,9 +314,9 @@ function waitlistCode(payload) {
 const RELEASE_CODE_NOTE = 'Opening the link emails you a 6-digit code to sign in with. '
   + 'The code expires in 10 minutes, and you can ask for a new one at any time.';
 
-const RELEASE_HEADLINE = 'AI app-building, now multiplayer.';
+const RELEASE_HEADLINE = 'Make and share small apps with friends and groups.';
 const RELEASE_CAN_DO = [
-  'Vibecode apps solo or with a friend.',
+  'Make an app for you, your friends or your group.',
   'Use and improve apps with others.',
   'Suggest, preview, and vote on changes.',
   'Complete a few early challenges along the way.',
@@ -404,7 +405,7 @@ function waitlistReleased(payload) {
 
   return {
     subject: "You're in. Welcome to Homeroom",
-    preheader: "AI app-building, now multiplayer. Here's how to get started.",
+    preheader: "Make and share small apps with friends and groups. Here's how to get started.",
     text,
     html,
   };
@@ -494,6 +495,68 @@ function projectInvite(payload) {
   };
 }
 
+// WP-E: activity mail, the stand-in for a push somebody's phone cannot take
+// (services/activity-mail.js). Unlike every kind above, the recipient did not
+// ask for this one by doing something just now, so each says why it came,
+// carries a one-click unsubscribe (RFC 8058: `List-Unsubscribe` with
+// `List-Unsubscribe-Post`), and offers the same link in its words.
+function activityFrame({ subject, lead, url, label, unsubscribeUrl }) {
+  const off = unsubscribeUrl
+    ? `To stop these emails: ${unsubscribeUrl}`
+    : '';
+  return {
+    why: 'You are receiving this because there was news on Homeroom for you and no phone '
+      + 'to send it to. Turn these emails off with the link above.',
+    preheader: lead,
+    subject,
+    text: `${lead}\n\n${label}: ${url}${off ? `\n\n${off}` : ''}`,
+    html: (
+      p(esc(lead))
+      + button(url, label)
+      + (unsubscribeUrl ? p(`<a href="${esc(unsubscribeUrl)}" style="color:${NEUTRAL_SECONDARY_INK}">Stop these emails</a>`) : '')
+    ),
+    headers: unsubscribeUrl ? {
+      'List-Unsubscribe': `<${unsubscribeUrl}>`,
+      'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+    } : null,
+  };
+}
+
+// Something somebody asked Homeroom bot for is ready to try.
+function buildReady(payload) {
+  const app = String(payload.appName || 'Your project').slice(0, 80);
+  // Built, but its before & after shots showed part of it failing.
+  if (payload.notWorking) {
+    return activityFrame({
+      subject: `${app} is built, but not everything works yet`,
+      lead: `Homeroom bot built what you asked for in ${app}, but not everything works yet. Open it to see what.`,
+      url: payload.url || PRODUCTION_ORIGIN,
+      label: 'Open it',
+      unsubscribeUrl: payload.unsubscribeUrl || null,
+    });
+  }
+  return activityFrame({
+    subject: `${app} is ready to try`,
+    lead: `Homeroom bot built what you asked for in ${app}, and it's ready to try.`,
+    url: payload.url || PRODUCTION_ORIGIN,
+    label: 'Open it',
+    unsubscribeUrl: payload.unsubscribeUrl || null,
+  });
+}
+
+// The people an invite link brought: "@sam joined Run Club through your invite."
+function inviteActivity(payload) {
+  const app = String(payload.appName || 'your project').slice(0, 80);
+  const line = String(payload.line || `Someone joined ${app} through your invite.`).slice(0, 200);
+  return activityFrame({
+    subject: line.replace(/\.$/, ''),
+    lead: line,
+    url: payload.url || PRODUCTION_ORIGIN,
+    label: `Open ${app}`,
+    unsubscribeUrl: payload.unsubscribeUrl || null,
+  });
+}
+
 /**
  * Every template returns a FRAGMENT; the frame is applied here, once (#1555).
  *
@@ -518,6 +581,8 @@ const TEMPLATES = {
   password_reset: passwordReset,
   admin_test: adminTest,
   project_invite: projectInvite,
+  build_ready: buildReady,
+  invite_activity: inviteActivity,
 };
 
 function buildMessage(kind, payload = {}) {
@@ -525,8 +590,14 @@ function buildMessage(kind, payload = {}) {
     ? TEMPLATES[kind]
     : null;
   if (!template) throw new Error(`unknown mail kind: ${kind}`);
-  const { why, preheader, ...message } = template(payload);
-  return { ...message, html: HTML_SHELL(message.html, why, preheader) };
+  const { why, preheader, headers, ...message } = template(tracking.attributedPayload(kind, payload));
+  return tracking.decorate(kind, {
+    ...message,
+    html: HTML_SHELL(message.html, why, preheader),
+    // Extra mail headers a kind needs (activity mail's List-Unsubscribe);
+    // a transport adds them as given.
+    ...(headers ? { headers } : {}),
+  }, payload);
 }
 
 // Every kind this module can render, for the admin console and for tests

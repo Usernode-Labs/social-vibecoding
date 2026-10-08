@@ -8,6 +8,8 @@ import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals
 import { UserFieldRow, userHandle } from './admin-user-field';
 import { BenchmarkArea, loadBenchSummary } from './admin-homeroom-bench';
 import type { Best, BenchModel } from './admin-homeroom-bench';
+import { RolloutHealth } from './admin-homeroom-bot-health';
+import type { ChatFailure, Incidents, RolloutHealthData } from './admin-homeroom-bot-health';
 
 // Homeroom bot (#admin/homeroom-bot) — #2684, and laid out again in #3710.
 //
@@ -37,7 +39,7 @@ import type { Best, BenchModel } from './admin-homeroom-bench';
 //              Save button per field, and nothing said which.
 //   Benchmark  admin-homeroom-bench.tsx, with places of its own below this
 //              tab's address (/benchmark/runs, /benchmark/runs/<id>,
-//              /benchmark/suites[/<id>]), which it writes while it is the tab
+//              /benchmark/suites[/<id>], /benchmark/studio), which it writes while it is the tab
 //              on screen. Its "Use for <stage>" fills in the model here and
 //              switches to Settings; Save is still pressed by a person. It
 //              reads the model each stage runs on now from this section's
@@ -81,6 +83,18 @@ interface Settings {
   liveAtOnce: number;
   perPerson: number;
   dmChat: boolean;
+  // Whether reading a request again continues the conversation that read it
+  // last, rather than starting from the repository again.
+  continueReads?: boolean;
+  // Who has the bot: the people on dmUsers (and their projects), or everyone
+  // with platform access (every project but a paused one and, unless
+  // livePlatform, the platform's own). audienceSince is when it was switched
+  // to everyone: older requests nobody has touched since are left alone.
+  audience?: 'list' | 'everyone';
+  audienceSince?: string | null;
+  livePlatform?: boolean;
+  // The most proposals the bot keeps up for a vote at once; 0 is automatic.
+  proposalCeiling?: number;
 }
 
 // #3624 stage 2: one piece of work running now.
@@ -99,6 +113,7 @@ interface DmChat {
   failed: number;
   people: number;
   costUsd: number;
+  recentFailures?: ChatFailure[];
 }
 
 // #3654: the stages that each run on a model of their own. `followup` is
@@ -279,6 +294,8 @@ interface Payload {
   builtFor?: BuiltFor[];
   workingNow?: Working[];
   dmChat?: DmChat;
+  health?: RolloutHealthData;
+  incidents?: Incidents | null;
 }
 
 // Somebody who asked the bot to stop tagging them on one issue.
@@ -691,6 +708,7 @@ function buildLaneLine(b: BuildLane | undefined): string {
   let line = `${parts.join(', ')}.`;
   if (b.fault) line += ` Backing off after a platform fault until ${when(b.fault.retryAt)}: ${b.fault.error}.`;
   else if (b.lane?.paused === 'budget') line += ' Waiting on the weekly cap.';
+  else if (b.lane?.paused === 'github') line += ' Waiting for GitHub\'s hourly limit to reset.';
   return line;
 }
 
@@ -1033,11 +1051,15 @@ interface Form {
   userCap: string;
   dmUsers: string[];
   dmChat: boolean;
+  continueReads: boolean;
   shadowBuilds: boolean;
   shadowBuildPlatform: boolean;
   buildConcurrency: string;
   liveAtOnce: string;
   perPerson: string;
+  audience: 'list' | 'everyone';
+  livePlatform: boolean;
+  proposalCeiling: string;
   concurrency: string;
   turnMinutes: string;
   turnTokens: string;
@@ -1054,11 +1076,15 @@ const FIELD_LABEL: Record<FormKey, string> = {
   userCap: 'the budget per person',
   dmUsers: 'people in DMs',
   dmChat: 'reading DMs',
+  continueReads: 'continuing its last read',
   shadowBuilds: 'shadow builds',
   shadowBuildPlatform: 'shadow builds of the platform',
   buildConcurrency: 'shadow builds at once',
   liveAtOnce: 'live requests at once',
   perPerson: 'per person at once',
+  audience: 'who has it',
+  livePlatform: 'the platform\'s own project',
+  proposalCeiling: 'proposals at once',
   concurrency: 'shadow apps at once',
   turnMinutes: 'minutes per issue',
   turnTokens: 'the token warning',
@@ -1079,11 +1105,15 @@ export function savedForm(p: Pick<Payload, 'settings' | 'bot'>): Form {
     userCap: ((s.userWeeklyCents ?? 5000) / 100).toFixed(2),
     dmUsers: s.dmUsers || [],
     dmChat: s.dmChat !== false,
+    continueReads: s.continueReads !== false,
     shadowBuilds: !!s.shadowBuilds,
     shadowBuildPlatform: !!s.shadowBuildPlatform,
     buildConcurrency: String(s.buildConcurrency ?? 2),
     liveAtOnce: String(s.liveAtOnce ?? 6),
     perPerson: String(s.perPerson ?? 2),
+    audience: s.audience === 'everyone' ? 'everyone' : 'list',
+    livePlatform: !!s.livePlatform,
+    proposalCeiling: String(s.proposalCeiling ?? 0),
     concurrency: String(s.concurrency ?? 1),
     turnMinutes: String(Math.round((s.turnSeconds ?? 1200) / 60)),
     turnTokens: String(Math.round((s.turnInputTokens ?? 10_000_000) / 1_000_000)),
@@ -1129,7 +1159,8 @@ export function buildPatch(form: Form, saved: Form, dirty: FormKey[]): { patch: 
     else if (key === 'liveApps') patch.liveApps = [...new Set(form.liveApps.filter(Boolean))];
     else if (key === 'pausedApps') patch.pausedApps = [...new Set(form.pausedApps.filter(Boolean))];
     else if (key === 'dmUsers') patch.dmUsers = form.dmUsers;
-    else if (key === 'dmChat' || key === 'shadowBuilds' || key === 'shadowBuildPlatform') patch[key] = form[key];
+    else if (key === 'dmChat' || key === 'continueReads' || key === 'shadowBuilds' || key === 'shadowBuildPlatform' || key === 'livePlatform') patch[key] = form[key];
+    else if (key === 'audience') patch.audience = form.audience;
     else if (key === 'models') {
       const changed: Record<string, string> = {};
       for (const m of MODEL_STAGES) {
@@ -1144,6 +1175,7 @@ export function buildPatch(form: Form, saved: Form, dirty: FormKey[]): { patch: 
     else if (key === 'buildConcurrency') patch.buildConcurrency = whole(key, 1, 4, 'Shadow builds at once');
     else if (key === 'liveAtOnce') patch.liveAtOnce = whole(key, 1, 16, 'Live requests at once');
     else if (key === 'perPerson') patch.perPerson = whole(key, 1, 4, 'Per person at once');
+    else if (key === 'proposalCeiling') patch.proposalCeiling = whole(key, 0, 1000, 'Proposals up for a vote at once');
     else if (key === 'concurrency') patch.concurrency = whole(key, 1, 4, 'Shadow apps at once');
     else if (key === 'turnMinutes') {
       const n = whole(key, 1, 180, 'Minutes per issue');
@@ -1187,6 +1219,7 @@ export function health(settings: Settings | undefined, loop: LastPass | null | u
   if (!loop) return { tone: 'warn', text: 'No pass since the platform started' };
   if (loop.paused === 'budget') return { tone: 'warn', text: 'Paused: the weekly budget is spent' };
   if (loop.paused === 'infra') return { tone: 'bad', text: `Platform fault${retryAt(loop) ? `, trying again at ${retryAt(loop)}` : ''}` };
+  if (loop.paused === 'github') return { tone: 'warn', text: `Waiting for GitHub's hourly limit${retryAt(loop) ? `, trying again at ${retryAt(loop)}` : ''}` };
   if (loop.refusals?.length) return { tone: 'warn', text: `${loop.refusals.length} app${loop.refusals.length === 1 ? '' : 's'} backing off` };
   return { tone: 'ok', text: `Working, last pass ${when(loop.at)}` };
 }
@@ -1506,6 +1539,8 @@ function HomeroomBotSection() {
                   payload.loop.paused === 'budget' ? '; paused on the weekly cap'
                     : payload.loop.paused === 'infra' ? `; paused on a platform fault (${payload.loop.detail || 'see the logs'})${
                       retryAt(payload.loop) ? `, trying again at ${retryAt(payload.loop)}` : ''}`
+                      : payload.loop.paused === 'github' ? `; waiting for GitHub's hourly limit to reset${
+                        retryAt(payload.loop) ? `, trying again at ${retryAt(payload.loop)}` : ''}`
                       : payload.loop.paused === 'mode_off' ? '; stopped because the mode was switched off'
                         : payload.loop.busy ? '; another instance held the loop' : ''}.`
                 : 'No pass has run since the platform started.'}
@@ -1525,6 +1560,8 @@ function HomeroomBotSection() {
             </p>
           </details>
         </div>
+
+        <RolloutHealth health={payload?.health} failures={payload?.dmChat?.recentFailures} incidents={payload?.incidents} />
 
         <div className={`${AdminUI.card} p-4`}>
           <div className="grid gap-6 md:grid-cols-2">
@@ -1813,7 +1850,9 @@ function HomeroomBotSection() {
                   <p className={`${AdminUI.muted} mt-1`}>
                     {form.mode === 'off'
                       ? 'Off: nothing runs, on any app.'
-                      : 'On: live on the apps set to Live below, shadow everywhere else.'}
+                      : form.audience === 'everyone'
+                        ? 'On: live on every app but the paused ones (see Who has it).'
+                        : 'On: live on the apps set to Live below, shadow everywhere else.'}
                   </p>
                 </div>
                 <div>
@@ -1845,13 +1884,59 @@ function HomeroomBotSection() {
               </div>
             </div>
 
+            <div className={`${AdminUI.card} p-4`} id="admin-homeroom-bot-audience-card">
+              <div className={AdminUI.cardHeader}>
+                <h3 className={AdminUI.cardTitle}>Who has it</h3>
+                <span className={AdminUI.cardDescription} id="admin-homeroom-bot-audience-state">
+                  {saved.audience === 'everyone'
+                    ? `Everyone with platform access${settings?.audienceSince ? `, since ${when(settings.audienceSince)}` : ''}.`
+                    : 'The people on the list below, and the projects they made.'}
+                </span>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <label className={AdminUI.label} htmlFor="admin-homeroom-bot-audience">The bot works for</label>
+                  <select
+                    id="admin-homeroom-bot-audience"
+                    className={`${AdminUI.select} mt-1`}
+                    value={form.audience}
+                    disabled={!canWrite}
+                    onChange={(e) => setField('audience', e.target.value as Form['audience'])}
+                  >
+                    <option value="list">People on the list</option>
+                    <option value="everyone">Everyone</option>
+                  </select>
+                </div>
+                {form.audience === 'everyone' ? (
+                  <label className="flex items-center gap-2 text-sm md:mt-6" htmlFor="admin-homeroom-bot-live-platform">
+                    <input
+                      id="admin-homeroom-bot-live-platform" type="checkbox"
+                      className="h-4 w-4 rounded border-zinc-600 bg-zinc-800 text-violet-700 focus:ring-violet-500 dark:text-violet-400"
+                      checked={form.livePlatform}
+                      disabled={!canWrite}
+                      onChange={(e) => setField('livePlatform', e.target.checked)}
+                    />
+                    <span>Build on the platform&apos;s own project too</span>
+                  </label>
+                ) : null}
+              </div>
+              <p className={`${AdminUI.muted} mt-3`} id="admin-homeroom-bot-audience-note">
+                Everyone: every person with platform access has the bot in Messages, and it acts for real on every project
+                except paused ones{form.livePlatform ? '' : ' and the platform\'s own'}. A request older than the switch is
+                left alone until something new happens on it, or until somebody asks the bot to build it. The live list and
+                the DM list below stop mattering until it is switched back.
+              </p>
+            </div>
+
             <div className={`${AdminUI.card} p-4`}>
               <div className={AdminUI.cardHeader}>
                 <h3 className={AdminUI.cardTitle} id="admin-homeroom-bot-live-apps-label">Where it works</h3>
                 <span className={AdminUI.cardDescription} id="admin-homeroom-bot-live-apps-state">
-                  {liveNow.length ? `Live on ${liveNow.map(appName).join(', ')}` : 'Live on no app'}
+                  {saved.audience === 'everyone' ? 'Live on every app but the paused ones (Who has it decides)' : null}
+                  {saved.audience !== 'everyone' && liveNow.length ? `Live on ${liveNow.map(appName).join(', ')}` : null}
+                  {saved.audience !== 'everyone' && !liveNow.length ? 'Live on no app' : null}
                   {form.pausedApps.length ? `; paused on ${form.pausedApps.map(appName).join(', ')}` : ''}
-                  {'; shadow on every other app'}
+                  {saved.audience === 'everyone' ? '' : '; shadow on every other app'}
                   {form.mode === 'off' ? ', once the bot is turned on' : ''}
                   .
                 </span>
@@ -1900,15 +1985,23 @@ function HomeroomBotSection() {
             </div>
 
             <div className={`${AdminUI.card} p-4`} id="admin-homeroom-bot-dm">
-              <DmPeople
-                key={`dm-${formRound}`}
-                saved={saved.dmUsers}
-                spend={payload?.dmUsers || []}
-                mode={settings?.mode}
-                userWeeklyCents={settings?.userWeeklyCents}
-                canWrite={canWrite}
-                onChange={(names) => setField('dmUsers', names)}
-              />
+              {/* With everyone, there is no list to keep: everybody is on it. */}
+              {saved.audience === 'everyone' ? (
+                <div className={AdminUI.cardHeader}>
+                  <h3 className={AdminUI.cardTitle}>People in DMs</h3>
+                  <span className={AdminUI.cardDescription}>Everyone with platform access.</span>
+                </div>
+              ) : (
+                <DmPeople
+                  key={`dm-${formRound}`}
+                  saved={saved.dmUsers}
+                  spend={payload?.dmUsers || []}
+                  mode={settings?.mode}
+                  userWeeklyCents={settings?.userWeeklyCents}
+                  canWrite={canWrite}
+                  onChange={(names) => setField('dmUsers', names)}
+                />
+              )}
               <label className="flex items-center gap-2 mt-3 text-sm" htmlFor="admin-homeroom-bot-dm-chat">
                 <input
                   id="admin-homeroom-bot-dm-chat" type="checkbox"
@@ -1988,6 +2081,8 @@ function HomeroomBotSection() {
                   value={form.liveAtOnce} min={1} max={16} canWrite={canWrite} onChange={(v) => setField('liveAtOnce', v)} />
                 <NumberField id="admin-homeroom-bot-per-person" label="Per person at once"
                   value={form.perPerson} min={1} max={4} canWrite={canWrite} onChange={(v) => setField('perPerson', v)} />
+                <NumberField id="admin-homeroom-bot-proposal-ceiling" label="Proposals up for a vote at once (0: automatic)"
+                  value={form.proposalCeiling} min={0} max={1000} canWrite={canWrite} onChange={(v) => setField('proposalCeiling', v)} />
                 <NumberField id="admin-homeroom-bot-concurrency" label="Shadow apps at once"
                   value={form.concurrency} min={1} max={4} canWrite={canWrite} onChange={(v) => setField('concurrency', v)} />
                 <NumberField id="admin-homeroom-bot-turn-minutes" label="Minutes one issue may take"
@@ -2008,6 +2103,21 @@ function HomeroomBotSection() {
                 people. It takes one request per app at a time and shares the slots between people in turns. Shadow triage
                 runs in slots of its own, so it never holds up live work. Each slot uses a worker from the same pool as
                 people&apos;s own coding sessions.
+              </p>
+              <label className="flex items-center gap-2 mt-4 text-sm" htmlFor="admin-homeroom-bot-continue-reads">
+                <input
+                  id="admin-homeroom-bot-continue-reads" type="checkbox"
+                  className="h-4 w-4 rounded border-zinc-600 bg-zinc-800 text-violet-700 focus:ring-violet-500 dark:text-violet-400"
+                  checked={form.continueReads}
+                  disabled={!canWrite}
+                  onChange={(e) => setField('continueReads', e.target.checked)}
+                />
+                <span>Reading a request again continues its last read</span>
+              </label>
+              <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-continue-reads-note">
+                When somebody adds to a request, the bot picks up the conversation it read the request in, with what changed,
+                instead of reading the app&apos;s code from the start. It reads afresh when that conversation is gone (a new
+                worker), after three continued reads in a row, or a day after the last one.
               </p>
             </details>
 

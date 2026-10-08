@@ -138,3 +138,31 @@ test('a click that reaches no anchor is ignored', () => {
   listeners.find((l) => l.capture).fn(e);
   assert.equal(e.prevented, 0);
 });
+
+test('a screenshot in a request\'s words is left to the app\'s image viewer (#3908)', () => {
+  // The surface around the picture (`[data-image-viewer-scope]`,
+  // features/image-viewer) opens it in the viewer after this capture
+  // listener. Sending a GitHub-hosted screenshot to the system browser here
+  // would cancel that; a picture link outside a scope still goes out.
+  const calls = [];
+  const { listeners } = load({
+    usernode: { isNative: true, openExternal: (url) => { calls.push(url); return Promise.resolve(true); } },
+  });
+  const fn = listeners.find((l) => l.capture).fn;
+  const picture = (scoped) => ({
+    href: 'https://github.com/user-attachments/assets/example',
+    matches: (selector) => {
+      assert.equal(selector, '[data-image-viewer-scope] a.dc-inline-img-link');
+      return scoped;
+    },
+  });
+  const inScope = clickEvent(picture(true));
+  fn(inScope);
+  assert.equal(inScope.prevented, 0, 'the viewer takes this tap');
+  assert.deepEqual(calls, []);
+
+  const outside = clickEvent(picture(false));
+  fn(outside);
+  assert.equal(outside.prevented, 1, 'no viewer there: out through the bridge as before');
+  assert.deepEqual(calls, ['https://github.com/user-attachments/assets/example']);
+});

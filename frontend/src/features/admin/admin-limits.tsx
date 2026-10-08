@@ -5,9 +5,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 
-// Limits (#admin/limits) — the server's app limit, the platform's LLM budget
-// dials, and the Anthropic credit balance the remaining-credit figure is
-// derived from.
+// Limits (#admin/limits): the server's app limit, GitHub's hourly request
+// budget (read-only), the platform's LLM budget dials, and the Anthropic
+// credit balance the remaining-credit figure is derived from.
 //
 // PERMISSIONS: visible to any admin; every field and every Save button is
 // gated on AdminConsole.canWrite() (canAdminWrite). The server enforces the
@@ -191,6 +191,127 @@ function AppLimitCard({ canWrite }: { canWrite: boolean }) {
   );
 }
 
+// GitHub's hourly REST budget per credential (services/github-budget.js),
+// read-only: what GitHub reported on the last response with each one. Its
+// own card under the app limit because it is the other server-wide ceiling
+// an admin is told about (the GitHub platform-limit alert opens this
+// section), though nothing here can raise it: GitHub sets it.
+//
+// The bar fills as the hour's requests are used: amber from the alert line
+// (a fifth left), red once background work is held (under the reserve the
+// server reports, 15%). A preview has no GitHub token and is answered with
+// labelled sample figures (routes/admin.js).
+const GITHUB_BAR_TONE = {
+  ok: 'bg-violet-500',
+  low: 'bg-amber-500',
+  held: 'bg-red-500',
+} as const;
+
+interface GithubBudgetRow {
+  credential: string;
+  kind: 'pat' | 'installation' | 'anonymous';
+  owner: string | null;
+  resource: string;
+  limit: number;
+  remaining: number;
+  used: number;
+  resetInSeconds: number;
+  expired: boolean;
+  held: boolean;
+}
+
+interface GithubBudgetPayload {
+  reservePercent: number;
+  credentials: GithubBudgetRow[];
+  configured?: { botToken: boolean; app: boolean };
+  demo?: boolean;
+}
+
+function githubCredentialLabel(row: GithubBudgetRow): string {
+  if (row.kind === 'pat') return 'Bot token';
+  if (row.kind === 'installation') return row.owner ? `GitHub App (${row.owner})` : 'GitHub App';
+  return 'Reads without a token';
+}
+
+function githubResetLine(row: GithubBudgetRow): string {
+  if (row.expired) return 'The hour has reset since the last request, so the whole budget is available.';
+  const left = `${row.remaining.toLocaleString('en-US')} left`;
+  const minutes = Math.max(1, Math.ceil(row.resetInSeconds / 60));
+  const reset = minutes === 1 ? 'resets in about a minute' : `resets in about ${minutes} minutes`;
+  return `${left}, ${reset}.${row.held ? ' Background work is waiting for the reset.' : ''}`;
+}
+
+function GithubBudgetCard() {
+  const console_ = () => (window as any).AdminConsole;
+  const [data, setData] = useState<GithubBudgetPayload | null>(null);
+  const [failed, setFailed] = useState(false);
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; }, []);
+
+  useEffect(() => {
+    (async () => {
+      const { data: next } = await console_().fetchJson('/api/admin/github-budget');
+      if (!alive.current) return;
+      if (next && typeof next === 'object' && Array.isArray(next.credentials)) setData(next);
+      else setFailed(true);
+    })();
+  }, []);
+
+  const rows = data ? data.credentials.filter((r) => r.resource === 'core') : [];
+  const reserve = data ? data.reservePercent : 15;
+  let empty = '';
+  if (data && !rows.length) {
+    empty = data.configured && !data.configured.botToken && !data.configured.app
+      ? 'GitHub is not configured on this server.'
+      : 'No GitHub response since this server started. The figures appear after its next request.';
+  }
+
+  return (
+    <div id="admin-github-budget" className={`${AdminUI.card} p-4 mt-4`}>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className={AdminUI.cardTitle}>GitHub requests</h2>
+        {data && data.demo ? <span className={AdminUI.badge.outline}>Sample figures</span> : null}
+      </div>
+      <p className={`${AdminUI.muted} mb-3`}>
+        GitHub allows each of Homeroom's credentials a number of requests an hour, and these are
+        the figures it sent with the last response on each one. Background work, such as checking
+        apps for new commits, waits when less than {reserve}% is left, so what people start keeps
+        the rest. Full admins are notified when a fifth is left and again when it runs out.
+      </p>
+      {!data && !failed ? <p className={AdminUI.loading}>Loading…</p> : null}
+      {failed ? <p className="text-xs text-red-400">Couldn’t load the GitHub figures.</p> : null}
+      {empty ? <p id="admin-github-budget-empty" className={AdminUI.muted}>{empty}</p> : null}
+      {rows.length ? (
+        <ul id="admin-github-budget-rows" className="space-y-3">
+          {rows.map((row) => {
+            const pct = row.limit > 0 ? Math.min(100, Math.round((row.used / row.limit) * 100)) : 0;
+            const tone = row.held ? 'held' : (row.remaining <= row.limit * 0.2 && !row.expired ? 'low' : 'ok');
+            return (
+              <li key={row.credential} data-credential={row.credential}>
+                <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
+                  <span className="font-medium text-zinc-900 dark:text-zinc-100">{githubCredentialLabel(row)}</span>
+                  <span className="font-mono text-zinc-700 dark:text-zinc-300">
+                    {(row.expired ? 0 : row.used).toLocaleString('en-US')} of {row.limit.toLocaleString('en-US')} used
+                  </span>
+                </div>
+                <div className="h-1.5 mt-1 rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden">
+                  <div className={`h-full ${GITHUB_BAR_TONE[tone]}`} style={{ width: `${row.expired ? 0 : pct}%` }} />
+                </div>
+                <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">{githubResetLine(row)}</p>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+      {data && data.demo ? (
+        <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-3">
+          This preview has no GitHub token, so these are sample figures.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function LimitsSection() {
   const console_ = () => (window as any).AdminConsole;
   const canWrite = !!console_()?.canWrite();
@@ -206,6 +327,10 @@ function LimitsSection() {
   // cap" (nothing stored), and saving a blank clears a stored value.
   const [weeklySocial, setWeeklySocial] = useState('');
   const [weeklyZk, setWeeklyZk] = useState('');
+  const [weeklyPhone, setWeeklyPhone] = useState('');
+  // The verified-identity rule: on since `ruleSince`, or off (null).
+  const [ruleSince, setRuleSince] = useState<string | null>(null);
+  const [ruleOn, setRuleOn] = useState(false);
   const [global, setGlobal] = useState('');
   const [system, setSystem] = useState('');
   const [limitsStatus, setLimitsStatus] = useState<Status | null>(null);
@@ -228,6 +353,10 @@ function LimitsSection() {
       ? '' : console_().centsToDollars(data.user_weekly_limit_social_cents));
     setWeeklyZk(data.user_weekly_limit_zk_cents == null
       ? '' : console_().centsToDollars(data.user_weekly_limit_zk_cents));
+    setWeeklyPhone(data.user_weekly_limit_phone_cents == null
+      ? '' : console_().centsToDollars(data.user_weekly_limit_phone_cents));
+    setRuleSince(data.identity_rule_since || null);
+    setRuleOn(!!data.identity_rule_since);
     setGlobal(console_().centsToDollars(data.global_daily_limit_cents));
     setSystem(console_().centsToDollars(data.system_tokens_daily_limit_cents));
   }, []);
@@ -267,7 +396,7 @@ function LimitsSection() {
 
   const saveLimits = async () => {
     setLimitsStatus(null);
-    const body: Record<string, number | null> = {};
+    const body: Record<string, number | null | boolean> = {};
     try {
       const w = console_().parseDollarsToCents('Weekly cap, unverified', weekly.trim());
       const g = console_().parseDollarsToCents('Global', global.trim());
@@ -276,9 +405,13 @@ function LimitsSection() {
       // value so that tier inherits the unverified cap again.
       const ws = console_().parseDollarsToCents('Weekly cap, GitHub and X', weeklySocial.trim());
       const wz = console_().parseDollarsToCents('Weekly cap, zkPassport', weeklyZk.trim());
+      const wp = console_().parseDollarsToCents('Weekly cap, phone', weeklyPhone.trim());
       if (w !== null) body.weekly = w;
       body.weeklySocial = ws;
       body.weeklyZk = wz;
+      body.weeklyPhone = wp;
+      // Sent only when it changes: switching on records the time once.
+      if (ruleOn !== !!ruleSince) body.identityRule = ruleOn;
       if (g !== null) body.global = g;
       if (s !== null) body.system = s;
     } catch (err: any) {
@@ -339,6 +472,8 @@ function LimitsSection() {
     <>
       <AppLimitCard canWrite={canWrite} />
 
+      <GithubBudgetCard />
+
       <div className={`${AdminUI.card} p-4 mt-4`}>
         <div className="flex items-center justify-between mb-3">
           <h2 className={AdminUI.cardTitle}>LLM Spend Limits</h2>
@@ -356,10 +491,13 @@ function LimitsSection() {
             (the base weekly cap), now read as the unverified tier's, and a
             declared check selects on it. The two others inherit it while
             blank. */}
-        <div id="admin-limit-tiers" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-3">
+        <div id="admin-limit-tiers" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
           <MoneyField id="admin-limit-weekly" label="Default per-user weekly cap (no verified identity)" placeholder="50.00"
             title="The account's only AI limit, for accounts with no verified identity, and the value the other two tiers inherit while blank. It covers every kind of spend the platform funds. Set it to 0 and the account has no allowance at all."
             value={weekly} onChange={setWeekly} disabled={dis} />
+          <MoneyField id="admin-limit-weekly-phone" label="Weekly cap: phone verified" placeholder="same as unverified"
+            title="For accounts with a verified phone number, and, while the verified-identity rule is on, accounts let in before it was switched on. Blank inherits the unverified cap."
+            value={weeklyPhone} onChange={setWeeklyPhone} disabled={dis} />
           <MoneyField id="admin-limit-weekly-social" label="Weekly cap: GitHub and X verified" placeholder="same as unverified"
             title="For accounts that have verified both a GitHub and an X account. Blank inherits the unverified cap."
             value={weeklySocial} onChange={setWeeklySocial} disabled={dis} />
@@ -367,14 +505,24 @@ function LimitsSection() {
             title="For accounts that have completed a zkPassport-verified challenge. Blank inherits the unverified cap."
             value={weeklyZk} onChange={setWeeklyZk} disabled={dis} />
         </div>
+        {/* The verified-identity rule (schema.sql identity_rule_since):
+            saved with the caps, and on records the time once. */}
+        <label htmlFor="admin-identity-rule" data-admin-identity-rule="" className="flex items-start gap-2 mb-3 text-sm text-zinc-700 dark:text-zinc-300">
+          <input id="admin-identity-rule" type="checkbox" className="mt-1 accent-violet-600" checked={ruleOn} disabled={dis}
+            onChange={(e) => setRuleOn(e.target.checked)} />
+          <span>
+            <span className="font-medium">Verified identity rule</span>
+            {`: a vote on a public app counts only from an account with a verified phone, GitHub and X, or zkPassport, and accounts without one get the unverified cap. Accounts let in before it was switched on are exempt and get the phone cap. Off, every vote counts and nobody is exempt, so earlier members without one get the unverified cap too. ${ruleSince ? `On since ${new Date(ruleSince).toLocaleString()}.` : 'Off.'}`}
+          </span>
+        </label>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
             An account has ONE AI limit and it is weekly: the same pool covers work run on
             the platform's own Claude key and work run on the account's included OpenRouter
             key. Per-user overrides live in the Users section; these are the platform
             defaults. The weekly cap follows the account's identity tier: the default
-            applies to accounts with no verified identity, and the GitHub-and-X and
-            zkPassport tiers use the default while left blank. A cap set to 0 means the
+            applies to accounts with no verified identity, and the phone, GitHub-and-X
+            and zkPassport tiers use the default while left blank. A cap set to 0 means the
             account has no AI allowance at all. The two daily caps above are the platform's
             own safety limits, not a per-user one.
           </p>
@@ -446,5 +594,6 @@ const AdminLimits = {
 // evaluates this module in Node, where there is no window.
 if (typeof window !== 'undefined') (window as any).AdminLimits = AdminLimits;
 
-// AppLimitCard is exported for tests/app-limit.test.js, which renders it.
-export { AdminLimits, AppLimitCard };
+// AppLimitCard is exported for tests/app-limit.test.js, which renders it,
+// and GithubBudgetCard for tests/github-budget.test.js.
+export { AdminLimits, AppLimitCard, GithubBudgetCard };

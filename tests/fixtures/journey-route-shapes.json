@@ -197,5 +197,82 @@
   },
   "leftOut": {
     "people": []
+  },
+  "creation": {
+    "examples": [],
+    "finished": "boolean",
+    "recordedFrom": {
+      "change_live": "object",
+      "preview": "object",
+      "running": "object"
+    },
+    "steps": [
+      {
+        "key": "string",
+        "medianSeconds": "object",
+        "of": "number",
+        "reached": "number",
+        "targetSeconds": "object",
+        "withinTarget": "object"
+      }
+    ],
+    "targets": {
+      "change_live": "number",
+      "first_version": "number",
+      "running": "number"
+    },
+    "week": "string",
+    "weeks": [
+      {
+        "steps": "object",
+        "week": "string"
+      }
+    ]
+  },
+  "pairs": {
+    "count": "number",
+    "days": "number",
+    "examples": [],
+    "finished": "boolean",
+    "of": "number",
+    "open": "number",
+    "trend": [
+      {
+        "count": "number",
+        "of": "number",
+        "week": "string"
+      }
+    ],
+    "week": "string"
+  },
+  "firstSession": {
+    "examples": [],
+    "finished": "boolean",
+    "join": {
+      "aha": "number",
+      "people": "number",
+      "steps": []
+    },
+    "make": {
+      "aha": "number",
+      "notRecorded": {
+        "reason": "string",
+        "recorded": "boolean"
+      },
+      "people": "number",
+      "steps": []
+    },
+    "opens": {
+      "reason": "string",
+      "recorded": "boolean"
+    },
+    "recordedFrom": {
+      "make": "object",
+      "opens": "object",
+      "reward": "object",
+      "signedIn": "object"
+    },
+    "sessionMinutes": "number",
+    "week": "string"
   }
 }

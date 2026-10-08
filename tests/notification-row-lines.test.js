@@ -111,7 +111,7 @@ async function lines(n) {
 
 test('the kind is its own line, and the subject is the whole of the next', async () => {
   const l = await lines({ kind: 'pr_proposed', prTitle: 'Tighten the header spacing', prNumber: 42 });
-  assert.equal(l.label, 'New proposal');
+  assert.equal(l.label, 'New change');
   assert.equal(l.subject, 'Tighten the header spacing');
   // Nothing punctuates a line that no longer runs into another one.
   assert.ok(!l.label.endsWith(':'), 'the label lost the colon that joined them');
@@ -133,10 +133,10 @@ test('every kind names itself the same way for every row of that kind', async ()
     [{ kind: 'stale_pr', sourceUsername: null, prTitle: 'Add a dark mode toggle' },
       'Needs votes', 'Add a dark mode toggle'],
     [{ kind: 'check_failed', sourceUsername: null, prTitle: 'Rework the board' },
-      'Checks blocked', 'Rework the board'],
+      'Testing couldn\'t run', 'Rework the board'],
     [{ kind: 'kudos', prTitle: 'Fix the bell badge' }, 'Kudos', 'Fix the bell badge'],
     [{ kind: 'auto_solve_done', sourceUsername: null, headlessIssueNumber: 91, detail: 'question' },
-      'Proposal has a question', 'issue #91'],
+      'Change has a question', 'request #91'],
     [{ kind: 'spec_shared', sessionTitle: 'Notifications overhaul' }, 'Spec shared', 'Notifications overhaul'],
     [{ kind: 'mention', messageContent: 'can you take a look at the board?' },
       'Mentioned you', 'can you take a look at the board?'],
@@ -315,6 +315,20 @@ test('platform limit rows say which cap, how full, and what happens next', async
   assert.equal(sessionsFull.label, 'Session limit reached');
   assert.match(sessionsFull.subject, /MAX_GLOBAL_SESSIONS/);
 
+  // GitHub's hourly budget, the bot token's and the App's.
+  const github = await lines({ kind: 'platform_limit', detail: 'github_warn:4000:5000',
+    appName: null, sourceUsername: null });
+  assert.equal(github.label, 'GitHub requests running low');
+  assert.match(github.subject, /^4000 of 5000 GitHub requests used this hour\. +Background work waits so people's work keeps the rest\.$/);
+  const githubFull = await lines({ kind: 'platform_limit', detail: 'github_full:5000:5000',
+    appName: null, sourceUsername: null });
+  assert.equal(githubFull.label, 'GitHub requests used up');
+  assert.match(githubFull.subject, /Work that needs GitHub fails until the hour resets\.$/);
+  const githubApp = await lines({ kind: 'platform_limit', detail: 'github_app_full:12500:12500',
+    appName: null, sourceUsername: null });
+  assert.equal(githubApp.label, 'GitHub App requests used up');
+  assert.match(githubApp.subject, /^12500 of 12500 GitHub App requests used this hour\./);
+
   // A token this build cannot read still says what kind of alert it is.
   const odd = await lines({ kind: 'platform_limit', detail: 'disk_warn:1:2',
     appName: null, sourceUsername: null });
@@ -387,4 +401,54 @@ test('a push test has clear account-level copy without inventing a completed ses
   assert.equal(row.label, 'Homeroom test alert');
   assert.equal(row.appLine, '');
   assert.match(row.segments[0].v, /You requested a push notification test/);
+});
+
+// #3227: a kudos arrived with nothing saying what kudos are. The row keeps
+// its three lines (kind, the change, who) and adds a note that says it: a
+// thank-you, that it stays, where it counts, and the weekly allowance read
+// from the same budget the leaderboard's subtitle reads. Its one button opens
+// the Kudos leaderboard; the row itself still opens the change.
+test('a kudos row says what kudos are and offers the leaderboard', async () => {
+  const view = (await load())({ ...ROW, kind: 'kudos', prTitle: 'Fix the bell badge' });
+  assert.equal(view.label, 'Kudos');
+  assert.equal(view.by, 'ada');
+  assert.match(view.note, /^A thank-you from another member\./);
+  assert.match(view.note, /don't expire/);
+  assert.match(view.note, /Kudos leaderboard/);
+  assert.match(view.note, /Everyone has 20 a week to give\.$/, 'the server default when no budget is loaded');
+  assert.deepEqual(view.actions, [{ key: 'kudos_board', label: 'Leaderboard' }]);
+
+  globalThis.window.Kudos = { Budget: { state: { limit: 30 } } };
+  try {
+    const raised = (await load())({ ...ROW, kind: 'kudos', prTitle: 'Fix the bell badge' });
+    assert.match(raised.note, /Everyone has 30 a week to give\./, 'a raised allowance is quoted, not a stale 20');
+  } finally {
+    delete globalThis.window.Kudos;
+  }
+
+  // No other kind grows a note.
+  assert.equal((await load())({ ...ROW, kind: 'pr_proposed', prTitle: 'x' }).note, undefined);
+
+  // The sheet draws the note under the subject, wrapping rather than
+  // truncating: a cut-off explanation explains nothing.
+  assert.match(SHEET, /\{view\.note \? \(\s*<span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0\.5">/);
+});
+
+test('the kudos row button opens the Kudos leaderboard', async () => {
+  await load();
+  const N = globalThis.window.Notifications;
+  const saved = { items: N.items, dismiss: N._dismissSheetForNav, location: globalThis.window.location };
+  let dismissed = 0;
+  N.items = [{ ...ROW, id: 77, kind: 'kudos', prTitle: 'Fix the bell badge', sessionId: 5 }];
+  N._dismissSheetForNav = () => { dismissed += 1; };
+  globalThis.window.location = { hash: '' };
+  try {
+    assert.equal(await N._onRowAction(77, 'kudos_board'), true);
+    assert.equal(globalThis.window.location.hash, '#leaderboard/prs');
+    assert.equal(dismissed, 1, 'the sheet closes before the screen changes');
+  } finally {
+    N.items = saved.items;
+    N._dismissSheetForNav = saved.dismiss;
+    globalThis.window.location = saved.location;
+  }
 });

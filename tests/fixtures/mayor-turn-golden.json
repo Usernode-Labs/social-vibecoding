@@ -40,8 +40,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "13da491698d02401",
-          "length": 184826
+          "sha": "8d6cfea5333a690d",
+          "length": 199997
         },
         "tools": [
           "dispatch_claude_code",
@@ -133,8 +133,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "47c30a88e45d0df9",
-          "length": 183199
+          "sha": "b784a18a2e5b8283",
+          "length": 198370
         },
         "tools": [
           "dispatch_claude_code",
@@ -168,8 +168,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "47c30a88e45d0df9",
-          "length": 183199
+          "sha": "b784a18a2e5b8283",
+          "length": 198370
         },
         "tools": [
           "dispatch_claude_code",
@@ -290,8 +290,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "47c30a88e45d0df9",
-          "length": 183199
+          "sha": "b784a18a2e5b8283",
+          "length": 198370
         },
         "tools": [
           "dispatch_claude_code",
@@ -375,8 +375,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "47c30a88e45d0df9",
-          "length": 183199
+          "sha": "b784a18a2e5b8283",
+          "length": 198370
         },
         "tools": [
           "dispatch_claude_code",
@@ -457,8 +457,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "47c30a88e45d0df9",
-          "length": 183199
+          "sha": "b784a18a2e5b8283",
+          "length": 198370
         },
         "tools": [
           "dispatch_claude_code",
@@ -544,8 +544,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "47c30a88e45d0df9",
-          "length": 183199
+          "sha": "b784a18a2e5b8283",
+          "length": 198370
         },
         "tools": [
           "dispatch_claude_code",
@@ -637,8 +637,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "47c30a88e45d0df9",
-          "length": 183199
+          "sha": "b784a18a2e5b8283",
+          "length": 198370
         },
         "tools": [
           "dispatch_claude_code",
@@ -716,8 +716,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "47c30a88e45d0df9",
-          "length": 183199
+          "sha": "b784a18a2e5b8283",
+          "length": 198370
         },
         "tools": [
           "dispatch_claude_code",
@@ -792,8 +792,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "47c30a88e45d0df9",
-          "length": 183199
+          "sha": "b784a18a2e5b8283",
+          "length": 198370
         },
         "tools": [
           "dispatch_claude_code",
@@ -929,15 +929,15 @@
       "UPDATE chat_sessions SET linked_issues = $1 WHERE id = $2 :: [[34],4242]",
       "SELECT a.self_hosted, u.is_admin, cs.user_id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id WHERE cs.id = $1 :: [4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Scouting the repo for context (Opus)...\",{\"json\":{\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\"}}]",
-      "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
+      "SELECT spec_md, spec_html FROM chat_sessions WHERE id = $1 :: [4242]",
       "SELECT kind, name, description, content FROM user_agent_files WHERE user_id = $1 ORDER BY kind, name :: [7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Scout reading the codebase...\",{\"json\":{\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\"}}]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', 'Claude Code progress', $2) RETURNING id :: [4242,{\"json\":{\"progressLog\":[],\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\"}}]",
       "UPDATE chat_sessions SET cc_session_id = $1 WHERE id = $2 :: [\"cc-scout-1\",4242]",
       "BEGIN :: []",
       "INSERT INTO turn_effects (turn_id, effect_key, session_id, state) VALUES ($1, $2, $3, 'pending') ON CONFLICT (turn_id, effect_key) DO NOTHING RETURNING state :: [\"turn-scout-1\",\"scout_spec_publication\",4242]",
-      "UPDATE chat_sessions SET spec_md = $1 WHERE id = $2 :: [\"# Dark mode toggle\\n\\n## Summary\\nA sun/moon button in the toolbar switches themes. The choice is saved on each device.\\n\\n## Questions\\nNone.\",4242]",
-      "INSERT INTO chat_session_specs (session_id, version, content) VALUES ($1, COALESCE((SELECT MAX(version) FROM chat_sessio… <sha:09f0f828789940cb len:181> :: [4242,\"# Dark mode toggle\\n\\n## Summary\\nA sun/moon button in the toolbar switches themes. The choice is saved on each device.\\n\\n## Questions\\nNone.\"]",
+      "UPDATE chat_sessions SET spec_md = $1, spec_html = $3 WHERE id = $2 :: [\"# Dark mode toggle\\n\\n## Summary\\nA sun/moon button in the toolbar switches themes. The choice is saved on each device.\\n\\n## Questions\\nNone.\",4242,null]",
+      "INSERT INTO chat_session_specs (session_id, version, content, content_html) VALUES ($1, COALESCE((SELECT MAX(version) FR… <sha:4de9573f1e58a271 len:199> :: [4242,\"# Dark mode toggle\\n\\n## Summary\\nA sun/moon button in the toolbar switches themes. The choice is saved on each device.\\n\\n## Questions\\nNone.\",null]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Scout drafted a 7-line spec from the codebase.\",{\"json\":{\"specPreview\":\"# Dark mode toggle\\n\\n## Summary\\nA sun/moon button in the toolbar switches themes. The choice is saved on each device.\\n\\n## Questions\\nNone.\",\"specLines\":7,\"scoutOutput\":\"# Dark mode toggle\\n\\n## Summary\\nA sun/moon button in the toolbar switches themes. The choice is saved on each device.\\n\\n## Questions\\nNone.\",\"scoutConversationSpecExact\":true,\"specVersion\":1,\"durationMs\":\"<num>\",\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\"}}]",
       "UPDATE turn_effects SET state = 'completed', result = $3::jsonb, completed_at = NOW(), updated_at = NOW() WHERE turn_id = $1 AND effect_key = $2 :: [\"turn-scout-1\",\"scout_spec_publication\",{\"json\":{\"scoutText\":\"Scout drafted a 7-line spec from the codebase.\",\"metadata\":{\"specPreview\":\"# Dark mode toggle\\n\\n## Summary\\nA sun/moon button in the toolbar switches themes. The choice is saved on each device.\\n\\n## Questions\\nNone.\",\"specLines\":7,\"scoutOutput\":\"# Dark mode toggle\\n\\n## Summary\\nA sun/moon button in the toolbar switches themes. The choice is saved on each device.\\n\\n## Questions\\nNone.\",\"scoutConversationSpecExact\":true,\"specVersion\":1,\"durationMs\":\"<num>\",\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\"},\"lineCount\":7,\"specVersion\":1,\"hadSpec\":false}}]",
       "COMMIT :: []",
@@ -967,8 +967,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "47c30a88e45d0df9",
-          "length": 183199
+          "sha": "b784a18a2e5b8283",
+          "length": 198370
         },
         "tools": [
           "dispatch_claude_code",
@@ -1002,8 +1002,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "a99345df5fb33c1f",
-          "length": 183561
+          "sha": "1a4cd82c9203a18f",
+          "length": 198732
         },
         "tools": [
           "suggest_replies"
@@ -1064,7 +1064,7 @@
       "{\"fn\":\"ensureWorkerImage\"}",
       "{\"fn\":\"ensureWorker\",\"id\":4242}",
       "{\"fn\":\"syncUserAgentFiles\"}",
-      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"scout\",\"model\":\"claude-opus-5-5\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"c8d203828d5e2dfd\",\"length\":6067},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_scout\"}",
+      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"scout\",\"model\":\"claude-opus-5-5\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"bbc3ddcfb4924dfe\",\"length\":6141},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_scout\"}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"wrapUpPosted\":true},\"opts\":{\"turnId\":\"turn-scout-1\"}}",
       "{\"fn\":\"finishTurn\",\"id\":4242,\"opts\":{\"turnId\":\"turn-scout-1\"}}"
     ],
@@ -1192,8 +1192,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "a99345df5fb33c1f",
-          "length": 183561
+          "sha": "1a4cd82c9203a18f",
+          "length": 198732
         },
         "tools": [
           "dispatch_claude_code",
@@ -1235,8 +1235,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "5f0d048ec01d1058",
-          "length": 184295
+          "sha": "4b02534feda490df",
+          "length": 199466
         },
         "tools": [
           "suggest_replies"
@@ -1303,7 +1303,7 @@
       "{\"fn\":\"ensureWorkerImage\"}",
       "{\"fn\":\"ensureWorker\",\"id\":4242}",
       "{\"fn\":\"syncUserAgentFiles\"}",
-      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"claude-opus-5-5\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":\"cc-scout-1\",\"prompt\":{\"sha\":\"388c07144599bc3d\",\"length\":11764},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
+      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"claude-opus-5-5\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":\"cc-scout-1\",\"prompt\":{\"sha\":\"1d202a186aba23e5\",\"length\":12026},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"prNumber\":42,\"prOpenedEventRecorded\":true},\"opts\":{\"turnId\":\"turn-build-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"stagingUrl\":\"https://whiteboard-pr42.staging.test\"},\"opts\":{\"turnId\":\"turn-build-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"completionRowPosted\":true},\"opts\":{\"turnId\":\"turn-build-1\"}}",
@@ -1430,8 +1430,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "a99345df5fb33c1f",
-          "length": 183561
+          "sha": "1a4cd82c9203a18f",
+          "length": 198732
         },
         "tools": [
           "dispatch_claude_code",
@@ -1465,8 +1465,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "a99345df5fb33c1f",
-          "length": 183561
+          "sha": "1a4cd82c9203a18f",
+          "length": 198732
         },
         "tools": [
           "suggest_replies"
@@ -1535,7 +1535,7 @@
       "{\"fn\":\"ensureWorkerImage\"}",
       "{\"fn\":\"ensureWorker\",\"id\":4242}",
       "{\"fn\":\"syncUserAgentFiles\"}",
-      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"claude-opus-5-5\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"388c07144599bc3d\",\"length\":11764},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
+      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"claude-opus-5-5\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"1d202a186aba23e5\",\"length\":12026},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"completionRowPosted\":true},\"opts\":{\"turnId\":\"turn-build-2\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"wrapUpPosted\":true},\"opts\":{\"turnId\":\"turn-build-2\"}}",
       "{\"fn\":\"finishTurn\",\"id\":4242,\"opts\":{\"turnId\":\"turn-build-2\"}}"
@@ -1622,8 +1622,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "a99345df5fb33c1f",
-          "length": 183561
+          "sha": "1a4cd82c9203a18f",
+          "length": 198732
         },
         "tools": [
           "dispatch_claude_code",
@@ -1664,7 +1664,7 @@
       "{\"fn\":\"ensureWorkerImage\"}",
       "{\"fn\":\"ensureWorker\",\"id\":4242}",
       "{\"fn\":\"syncUserAgentFiles\"}",
-      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"claude-opus-5-5\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"388c07144599bc3d\",\"length\":11764},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
+      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"claude-opus-5-5\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"1d202a186aba23e5\",\"length\":12026},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
       "{\"fn\":\"finishTurn\",\"id\":4242,\"opts\":{\"turnId\":\"turn-build-3\"}}"
     ],
     "calls": [
@@ -1723,8 +1723,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "b6fd16913877994b",
-          "length": 183261
+          "sha": "05237da67c3e073f",
+          "length": 198432
         },
         "tools": [
           "suggest_answers",
@@ -1802,8 +1802,8 @@
         "model": "openai/gpt-5.3-codex",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "47c30a88e45d0df9",
-          "length": 183199
+          "sha": "b784a18a2e5b8283",
+          "length": 198370
         },
         "tools": [
           "dispatch_claude_code",
@@ -1933,8 +1933,8 @@
         "model": "openai/gpt-5.3-codex",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "47c30a88e45d0df9",
-          "length": 183199
+          "sha": "b784a18a2e5b8283",
+          "length": 198370
         },
         "tools": [
           "dispatch_claude_code",
@@ -1964,7 +1964,7 @@
       "{\"fn\":\"ensureWorkerImage\"}",
       "{\"fn\":\"ensureWorker\",\"id\":4242}",
       "{\"fn\":\"syncUserAgentFiles\"}",
-      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"openai/gpt-5.3-codex\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"880b1829a3b1b138\",\"length\":191476},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
+      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"openai/gpt-5.3-codex\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"a60c4ae9fd811f16\",\"length\":206904},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"prNumber\":42,\"prOpenedEventRecorded\":true},\"opts\":{\"turnId\":\"turn-or-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"stagingUrl\":\"https://whiteboard-pr42.staging.test\"},\"opts\":{\"turnId\":\"turn-or-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"completionRowPosted\":true},\"opts\":{\"turnId\":\"turn-or-1\"}}",
@@ -2080,7 +2080,7 @@
       "{\"fn\":\"ensureWorkerImage\"}",
       "{\"fn\":\"ensureWorker\",\"id\":4242}",
       "{\"fn\":\"syncUserAgentFiles\"}",
-      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"openai/gpt-5.3-codex\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"880b1829a3b1b138\",\"length\":191476},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
+      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"openai/gpt-5.3-codex\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"a60c4ae9fd811f16\",\"length\":206904},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"prNumber\":42,\"prOpenedEventRecorded\":true},\"opts\":{\"turnId\":\"turn-or-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"stagingUrl\":\"https://whiteboard-pr42.staging.test\"},\"opts\":{\"turnId\":\"turn-or-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"completionRowPosted\":true},\"opts\":{\"turnId\":\"turn-or-1\"}}",
@@ -2193,7 +2193,7 @@
       "{\"fn\":\"ensureWorkerImage\"}",
       "{\"fn\":\"ensureWorker\",\"id\":4242}",
       "{\"fn\":\"syncUserAgentFiles\"}",
-      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"openai/gpt-5.3-codex\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"2898a53341720f7b\",\"length\":11951},\"systemPrompt\":{\"sha\":\"2dc38c78b791b8a7\",\"length\":170847},\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
+      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"openai/gpt-5.3-codex\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"3170931d0d18cc7f\",\"length\":12213},\"systemPrompt\":{\"sha\":\"e080c887ecaffc9d\",\"length\":186275},\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"prNumber\":42,\"prOpenedEventRecorded\":true},\"opts\":{\"turnId\":\"turn-or-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"stagingUrl\":\"https://whiteboard-pr42.staging.test\"},\"opts\":{\"turnId\":\"turn-or-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"completionRowPosted\":true},\"opts\":{\"turnId\":\"turn-or-1\"}}",

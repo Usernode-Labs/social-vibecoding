@@ -868,97 +868,73 @@ function WaitlistAnalyticsPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-// ── Invites: the switch for invite links skipping the waitlist ──────────
+// ── Invites: retired ─────────────────────────────────────────────────────
 //
-// services/community-invites.js, "the invite tree". Somebody admitted here
-// (or granted access directly) gets `root_skips` invites: anyone new who
-// follows one of their invite links gets in at once instead of waiting.
-// Nobody else has any: not the people they let in (invites do not chain),
-// not accounts that already had access. The switch is a platform setting,
-// on unless turned off here; the body is split out so a test can render it.
-
-type InviteTree = {
-  enabled: boolean;
-  root_skips: number;
-  roots: number;
-  through_links: number;
-  updated_at?: string | null;
-  updated_by?: string | null;
-};
+// The switch for invite links skipping the waitlist ("the invite tree")
+// lived here. Private membership replaced it: anyone new an invite link
+// brings in joins its community straight away as a private member, and is
+// admitted from this queue like anybody else (services/community-invites.js).
 
 function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`;
 }
 
-function InviteTreeBody({ tree, write, onToggle }: {
-  tree: InviteTree;
-  write: boolean;
-  onToggle: (next: boolean) => void;
-}) {
-  const help = `Everyone you admit gets ${plural(tree.root_skips, 'invite', 'invites')}: `
-    + 'anyone new who follows one of their invite links gets in straight away. The people they '
-    + 'invite get none, and neither do accounts that already had access. Switched off, anyone new '
-    + 'who follows a link waits here until admitted.';
-  const usage = `${plural(tree.roots, 'person', 'people')} admitted can invite; `
-    + `${plural(tree.through_links, 'person', 'people')} got in through an invite so far.`;
-  return (
-    <>
-      {write ? (
-        <CheckField
-          id="admin-topo-wl-invites-enabled"
-          label="Invite links skip the waitlist"
-          help={help}
-          checked={tree.enabled}
-          onChange={onToggle}
-        />
-      ) : (
-        <p className="text-xs text-zinc-600 dark:text-zinc-400">
-          <span className="font-medium">
-            {tree.enabled ? 'Invite links skip the waitlist.' : 'Invite links do not skip the waitlist.'}
-          </span>
-          {` ${help}`}
-        </p>
-      )}
-      <p id="admin-topo-wl-invites-usage" className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
-        {usage}
-        {tree.updated_at
-          ? ` Last switched ${fmt(tree.updated_at)}${tree.updated_by ? ` by ${tree.updated_by}` : ''}.`
-          : ''}
-      </p>
-    </>
-  );
-}
+// ── The story landing: what a signed-out visitor is asked to do ─────────
+//
+// On (the default), the landing tells the first-session story and asks them
+// to get started: an account is made on the spot (services/first-session.js).
+// Off, it points at the waitlist ("Join the waitlist"). It belongs beside the
+// invite setting because it is the same valve.
 
-function InviteTreePanel() {
-  const [tree, setTree] = useState<InviteTree | null>(null);
+type StoryLanding = { enabled: boolean; updated_at?: string | null; updated_by?: string | null };
+
+function StoryLandingPanel() {
+  const [story, setStory] = useState<StoryLanding | null>(null);
   const [error, setError] = useState<{ status: number; message: string | null } | null>(null);
   const saving = useRef(false);
 
   const load = useCallback(async () => {
     setError(null);
-    const { status, ok, data } = await fetchJson('/api/v4/admin/invite-tree');
+    const { status, ok, data } = await fetchJson('/api/v4/admin/story-landing');
     if (!ok || !data?.success) { setError({ status, message: data?.error || null }); return; }
-    setTree(data.data);
+    setStory(data.data);
   }, []);
   useEffect(() => { load(); }, [load]);
 
   const toggle = useCallback(async (next: boolean) => {
     if (!canWrite() || saving.current) return;
     saving.current = true;
-    const { ok, data } = await send('PUT', '/api/v4/admin/invite-tree', { enabled: next });
+    const { ok, data } = await send('PUT', '/api/v4/admin/story-landing', { enabled: next });
     saving.current = false;
-    if (!ok || !data?.success) { topo()._alert(data?.error || 'Could not save the invite setting.'); return; }
-    setTree(data.data);
+    if (!ok || !data?.success) { topo()._alert(data?.error || 'Could not save the landing setting.'); return; }
+    setStory(data.data);
   }, []);
 
+  const help = 'Signed-out visitors see what Homeroom is and "Get started", which makes an account '
+    + 'and asks them what to make. Off, they are sent to the waitlist instead. Anyone new still '
+    + 'waits here until admitted unless they already have access.';
   return (
-    <div id="admin-topo-wl-invites">
-      <Panel title="Invites">
+    <div id="admin-topo-wl-story">
+      <Panel title="Landing">
         {error ? (
-          <ErrorState title="Couldn't load the invite setting" status={error.status} message={error.message} onRetry={load} />
+          <ErrorState title="Couldn't load the landing setting" status={error.status} message={error.message} onRetry={load} />
         ) : null}
-        {!error && !tree ? <Skeleton rows={2} /> : null}
-        {!error && tree ? <InviteTreeBody tree={tree} write={canWrite()} onToggle={toggle} /> : null}
+        {!error && !story ? <Skeleton rows={1} /> : null}
+        {!error && story ? (
+          canWrite() ? (
+            <CheckField id="admin-topo-wl-story-enabled" label="Signed-out landing asks people to get started" help={help} checked={story.enabled} onChange={toggle} />
+          ) : (
+            <p className="text-xs text-zinc-600 dark:text-zinc-400">
+              <span className="font-medium">{story.enabled ? 'The landing asks people to get started.' : 'The landing points at the waitlist.'}</span>
+              {` ${help}`}
+            </p>
+          )
+        ) : null}
+        {story?.updated_at ? (
+          <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+            {`Last switched ${fmt(story.updated_at)}${story.updated_by ? ` by ${story.updated_by}` : ''}.`}
+          </p>
+        ) : null}
       </Panel>
     </div>
   );
@@ -1535,7 +1511,7 @@ function WaitlistScreen() {
               <BatchAdmitPanel onClose={() => setShowBatch(false)} onAdmitted={onBatchAdmitted} />
             ) : null}
             {showAnalytics ? <WaitlistAnalyticsPanel onClose={() => setShowAnalytics(false)} /> : null}
-            <InviteTreePanel />
+            <StoryLandingPanel />
           </>
         )}
         exportCsv={write
@@ -1620,14 +1596,11 @@ function WaitlistScreen() {
 // on `status: 'pending'`, whose server filter is `released_at IS NULL`, so an
 // admitted row is never in the table a check at `/#admin/waitlist` sees.
 //
-// InviteTreeBody is exported for tests/community-invites.test.js, which
-// renders the switch's copy for both kinds of admin.
-//
 // The batch-admit copy helpers and waitlistEmpty are exported for
 // tests/topochain-admin-waitlist-batch.test.js: a lookup's answer only exists
 // after a POST, so no static render or declared check reaches the sentences
 // an admin reads about each pasted address.
 export {
-  InviteTreeBody, SurveyAnswers, WaitlistScreen, WAITLIST_COLUMNS,
+  SurveyAnswers, WaitlistScreen, WAITLIST_COLUMNS,
   BatchAdmitPanel, admitOutcomeLine, resolutionSummary, resolvedDetail, waitlistEmpty,
 };

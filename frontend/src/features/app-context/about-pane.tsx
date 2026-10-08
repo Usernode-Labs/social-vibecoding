@@ -14,7 +14,9 @@
  *      (./about-model.ts says why it is assembled rather than fixed).
  *   4. WHO BUILDS IT. Contributors, each with what they have merged, each
  *      opening that person's page.
- *   5. MORE. Share, Add to home screen, View on GitHub, Fork this app.
+ *   5. MORE. Share, Add to home screen, Code (public on GitHub), Remix
+ *      (a fork, to the code; "Remix" to people). A remix also says what
+ *      it was remixed from, under its description.
  *
  * ── It is still a PANE, not a sheet ────────────────────────────────────
  *
@@ -33,8 +35,11 @@
  *
  * ── The product's own truths, kept ─────────────────────────────────────
  *
- *   - `#improve-row-github` is the design's "Source code": View on GitHub,
- *     only where there is a repository, opening away from the shell.
+ *   - `#improve-row-github` is the design's "Source code": a row reading
+ *     Code, with "Public on GitHub" muted at its end, only where there is a
+ *     repository, opening away from the shell. It says public because every
+ *     repository is (services/github.js createRepo; an import must be public
+ *     already), whoever the project lets open it.
  *   - `#improve-row-share` keeps its id and, for an app, its gate and its
  *     dialog: Share hands somebody the app's live address, so it appears
  *     whenever the app HAS one (`canShare` — running, with a URL), from its
@@ -55,7 +60,7 @@
  * ── A viewer who is not served the platform's row ──────────────────────
  *
  * About Homeroom still opens for them (./platform-target.js): who it is, the
- * three figures, how it is built, Share and View on GitHub. The contributor
+ * three figures, how it is built, Share and its Code row. The contributor
  * list is the platform row's, which the API does not serve them, so it is not
  * drawn rather than drawn as an error.
  */
@@ -137,18 +142,44 @@ function Icon({ children }: { children: ReactNode }): ReactNode {
 }
 
 /** A MORE row that does something (a button), dismissing the menu first when asked. */
-function ActionRow({ id, icon, label, onClick }: {
+function ActionRow({ id, icon, label, sub = null, onClick }: {
   id: string;
   icon: ReactNode;
   label: string;
+  /** A second, quieter line under the label (Remix's "Make your own copy"). */
+  sub?: string | null;
   onClick: () => void;
 }): ReactNode {
   return (
-    <button id={id} type="button" className={ROW} onClick={onClick}>
+    <button id={id} type="button" className={sub ? `${ROW} py-2` : ROW} onClick={onClick}>
       <Icon>{icon}</Icon>
-      <span className="flex-1 min-w-0 truncate font-medium">{label}</span>
+      {sub ? (
+        <span className="flex-1 min-w-0">
+          <span className="block truncate font-medium">{label}</span>
+          <span className="block truncate text-[0.8125rem] text-zinc-500 dark:text-zinc-400">{sub}</span>
+        </span>
+      ) : (
+        <span className="flex-1 min-w-0 truncate font-medium">{label}</span>
+      )}
     </button>
   );
+}
+
+/**
+ * Where a remix came from: the resolved `forked_from` the app row carries
+ * (attachForkLineage in src/routes/apps.js: `{ slug, name, linkable }`, or
+ * null for an app that is not a copy and for one in demo mode). A deleted
+ * original resolves to "<deleted>" and is text, not a link. Pure; the line
+ * it feeds is pinned by tests/app-about-pane.test.js.
+ */
+function lineageOf(row: AppRow | null | undefined): { name: string; href: string | null } | null {
+  const ref = row ? row.forked_from : null;
+  if (!ref || typeof ref !== 'object') return null;
+  const name = typeof ref.name === 'string' && ref.name ? ref.name : '<deleted>';
+  const href = ref.linkable && typeof ref.slug === 'string' && ref.slug
+    ? `#app/${encodeURIComponent(ref.slug)}`
+    : null;
+  return { name, href };
 }
 
 /**
@@ -229,7 +260,7 @@ export function ContributorsFold({ people, total, showAll, onToggle }: {
             >
               <Avatar who={c.who} size="sm" />
               <span className="flex-1 min-w-0 truncate font-medium">{`@${c.who}`}</span>
-              <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{`${c.merged} merged`}</span>
+              <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{`${c.merged} live`}</span>
             </a>
           ))}
         </div>
@@ -321,6 +352,7 @@ export function AboutPane({ label }: { label: string }): ReactNode {
     && typeof window !== 'undefined' && !isStandalone() && !isNativeApp();
   const showHomeScreen = platform ? platformA2hs : !!homeScreenItem;
   const showFork = isApp && !!forkItem;
+  const lineage = isApp ? lineageOf(row) : null;
 
   // The platform's rules are its row's, which a cold tab may still be loading
   // (./about-data.ts asks Home for the list): no sentence until they are here,
@@ -380,6 +412,26 @@ export function AboutPane({ label }: { label: string }): ReactNode {
               {`/app/${slug}`}
             </p>
           ) : null)}
+          {/* A remix says what it was remixed from, under its description:
+              the line Discover's page draws under its version, in the same
+              amber, opening the original the way a contributor row opens a
+              person (the sheet closes first). */}
+          {isApp && lineage ? (
+            <p id="app-about-lineage" className="mt-0.5 text-xs text-amber-600 dark:text-amber-400 truncate">
+              {lineage.href ? (
+                <a
+                  href={lineage.href}
+                  className="hover:underline"
+                  title={`Remixed from ${lineage.name}: open the original`}
+                  onClick={() => { void AppContext.dismissForNav(); }}
+                >
+                  {`\u2442 Remixed from ${lineage.name}`}
+                </a>
+              ) : (
+                <span title="The original app no longer exists">{`\u2442 Remixed from ${lineage.name}`}</span>
+              )}
+            </p>
+          ) : null}
           {stack.length || pill ? (
             <div id="app-about-pills" className="mt-2 flex flex-wrap items-center gap-2">
               {stack.length ? (
@@ -390,7 +442,7 @@ export function AboutPane({ label }: { label: string }): ReactNode {
               {pill ? (
                 <span
                   id="app-about-version"
-                  title={[shortSha ? `Version ${shortSha}` : null, updated?.title ? `deployed ${updated.title}` : null]
+                  title={[shortSha ? `Version ${shortSha}` : null, updated?.title ? `live since ${updated.title}` : null]
                     .filter(Boolean).join(', ') || undefined}
                   className="inline-flex items-center rounded-full bg-zinc-100 dark:bg-zinc-800 px-2 py-0.5 text-xs font-medium text-zinc-500 dark:text-zinc-400 whitespace-nowrap"
                 >
@@ -439,7 +491,7 @@ export function AboutPane({ label }: { label: string }): ReactNode {
             data-added={String(yours)}
             disabled={yours}
             // The design's proportions: "✓ Added" is a compact state; "Add to
-            // Shortcuts" is sized to its words beside Open — a phone's sheet
+            // My apps" is sized to its words beside Open — a phone's sheet
             // has not room for both at half width without truncating it —
             // and takes the whole row when Open is gone.
             className={`inline-flex ${!yours && running ? 'flex-1 basis-0' : 'shrink-0'} min-w-0 items-center justify-center gap-1.5 h-10 px-4 rounded-full text-sm font-semibold whitespace-nowrap `
@@ -464,7 +516,7 @@ export function AboutPane({ label }: { label: string }): ReactNode {
                 <CheckIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
                 <span className="truncate">Added</span>
               </>
-            ) : <span className="truncate">Add to Shortcuts</span>}
+            ) : <span className="truncate">Add to My apps</span>}
           </button>
         </div>
       ) : null}
@@ -573,14 +625,16 @@ export function AboutPane({ label }: { label: string }): ReactNode {
               onClick={() => { void AppContext.dismissForNav(); }}
             >
               <Icon><GitHubIcon /></Icon>
-              <span className="flex-1 min-w-0 truncate font-medium">View on GitHub</span>
+              <span className="flex-1 min-w-0 truncate font-medium">Code</span>
+              <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">Public on GitHub</span>
             </a>
           ) : null}
           {showFork && forkItem ? (
             <ActionRow
               id="app-about-fork"
               icon={<Glyph d={GLYPHS.fork} />}
-              label="Fork this app"
+              label="Remix"
+              sub="Make your own copy"
               onClick={() => afterDismiss(() => forkItem.run())}
             />
           ) : null}

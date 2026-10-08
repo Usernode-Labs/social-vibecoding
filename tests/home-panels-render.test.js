@@ -538,8 +538,12 @@ test('challengesView: the finished fill sits last under one Done header, with no
   assert.equal(view.expandable, true, 'the fifth card is behind the toggle');
 });
 
+// The Getting started card is on Home (App.user.showGettingStarted): only
+// then does a closed gate with a count draw the one locked card.
+const WITH_CARD = { id: 1, isAdmin: false, showGettingStarted: true };
+
 test('challengesView: while setup gates the season, its finished card moves under Done', () => {
-  const { HP } = makeHomePanels({ slots: [] });
+  const { HP } = makeHomePanels({ slots: [], user: WITH_CARD });
   const done = { done: true, current: null, target: null };
   // With nothing hidden to count (the season holds First challenges only),
   // a closed gate still draws them, in their groups.
@@ -1432,10 +1436,10 @@ test('locked setup: one dashed placeholder alone, in place of the First challeng
     onboarding: onboarding({ hidden_count: 6, hidden_names: ['Make your first proposal', 'Invite a friend'] }),
     challenges: [challenge({ id: 1, label: 'ONBOARDING' }), challenge({ id: 2, label: 'ONBOARDING' })],
   });
-  const { HP } = makeHomePanels({ slots: [] });
+  const { HP } = makeHomePanels({ slots: [], user: WITH_CARD });
   assert.equal(HP.challengesView(locked).lockedCount, 6);
 
-  const { html } = renderWith({ registry: [], hidden: [], panels: [locked] });
+  const { html } = renderWith({ registry: [], hidden: [], panels: [locked] }, { user: WITH_CARD });
   // No cards, no season progress over it, no footer under it.
   assert.doesNotMatch(html, /home-panel-footer/);
   assert.doesNotMatch(html, /home-panel-season/, 'the card above counts the list');
@@ -1453,7 +1457,7 @@ test('locked setup: one dashed placeholder alone, in place of the First challeng
   const one = renderWith({
     registry: [], hidden: [],
     panels: [panel({ onboarding: onboarding({ hidden_count: 1 }) })],
-  }).html;
+  }, { user: WITH_CARD }).html;
   assert.match(one, />1 challenge unlocks after Getting started</);
   assert.match(one, />Finish Getting started on Home to see them</, 'no names: what to do');
 
@@ -1463,7 +1467,7 @@ test('locked setup: one dashed placeholder alone, in place of the First challeng
   for (const hidden of [undefined, 0, 'wat']) {
     const p = panel({ onboarding: onboarding({ hidden_count: hidden }) });
     assert.equal(HP.challengesView(p).lockedCount, 0, `hidden_count ${hidden}`);
-    const out = renderWith({ registry: [], hidden: [], panels: [p] }).html;
+    const out = renderWith({ registry: [], hidden: [], panels: [p] }, { user: WITH_CARD }).html;
     assert.doesNotMatch(out, /home-challenge-locked/, `hidden_count ${hidden}: no placeholder`);
     const note = out.indexOf('Finish Getting started to unlock the rest of the season.');
     assert.ok(note > out.lastIndexOf('home-challenge-card'), `hidden_count ${hidden}: the note follows the cards`);
@@ -1479,7 +1483,7 @@ test('locked setup: one dashed placeholder alone, in place of the First challeng
   const open = panel({ onboarding: onboarding({ unlocked: true, hidden_count: 6 }) });
   assert.equal(HP.challengesView(open).lockedCount, 0);
   assert.equal(HP.challengesView(open).onboardingNote, null, 'nothing to say once unlocked');
-  const unlocked = renderWith({ registry: [], hidden: [], panels: [open] }).html;
+  const unlocked = renderWith({ registry: [], hidden: [], panels: [open] }, { user: WITH_CARD }).html;
   assert.doesNotMatch(unlocked, /home-challenge-locked|unlock after Getting started/);
   assert.doesNotMatch(unlocked, /are unlocked|unlock the rest/, 'no unlock note');
 });
@@ -1571,6 +1575,57 @@ test('render: stale hidden metadata cannot suppress fixed sections (#1801)', () 
       panels.length ? /Report a reproducible bug/ : /No challenges are running right now/);
     assert.doesNotMatch(out.html, /data-create-enabled/, 'no create block among the panels');
   }
+});
+
+// ── A new account sees Challenges (2026-10-05) ────────────────────
+//
+// #3847 hid this block for an account's first seven days (`firstWeek` on
+// GET /api/auth/me). Evan reversed it after his own first session: a
+// brand-new account expected Challenges on Home, with its Getting started
+// challenges. An account its first session brought in has no Getting started
+// card (first-session.js leaves communities_onboarded_at unset), so the
+// block draws those challenges itself rather than a locked card pointing at
+// a list that is not there.
+
+const NEW_ACCOUNT_DATA = () => ({
+  registry: [{ key: 'challenges', title: 'Challenges' }, { key: 'discover', title: 'Discover' }],
+  hidden: [],
+  panels: [panel({
+    total: 2,
+    onboarding: { total: 2, completed: 1, unlocked: false, event_id: 1, hidden_count: 6, hidden_names: ['Make your first proposal'] },
+    challenges: [
+      challenge({ id: 1, goal: 'Join a community', label: 'ONBOARDING', display_order: 0, progress: { done: true, current: null, target: null } }),
+      challenge({ id: 2, goal: 'Try an app', label: 'ONBOARDING', display_order: 1 }),
+    ],
+  })],
+});
+
+test('a brand-new account sees Challenges, whatever its age, with its Getting started challenges', () => {
+  for (const user of [{ id: 7, isAdmin: false, firstWeek: true }, { id: 7, isAdmin: false }, { id: 7, showGettingStarted: false }]) {
+    const out = renderWith(NEW_ACCOUNT_DATA(), { user });
+    const host = out.host('challenges');
+    assert.ok(!host._classes.has('hidden'), `shown for ${JSON.stringify(user)}`);
+    assert.match(host.innerHTML, /home-challenge-card[\s\S]*Try an app/, 'the First challenges, drawn in the block');
+    assert.match(host.innerHTML, /Join a community/, 'done ones under Done');
+    assert.doesNotMatch(host.innerHTML, /home-challenge-locked/, 'no card pointing at a list that is not on Home');
+    assert.match(host.innerHTML, />Finish Getting started to unlock the rest of the season\.</);
+  }
+  // With the Getting started card on Home, the block is its one locked card,
+  // as before: the card lists the First challenges.
+  const withCard = renderWith(NEW_ACCOUNT_DATA(), { user: { id: 7, showGettingStarted: true } });
+  assert.match(withCard.host('challenges').innerHTML, /home-challenge-locked/);
+  assert.doesNotMatch(withCard.host('challenges').innerHTML, /home-challenge-card/);
+});
+
+test('nothing about an account\'s age hides the block, and /api/auth/me says nothing about it', () => {
+  assert.doesNotMatch(PANELS_RAW, /inFirstWeek|firstWeek ===/);
+  assert.match(PANELS_RAW, /challenges: viewFor\('challenges', HomePanels\.challengesView\),/);
+  assert.match(PANELS_RAW, /const locked = HomePanels\.gettingStartedOnHome\(\) \? HomePanels\.lockedOnboarding\(panel\) : null;/);
+  assert.match(PANELS_RAW, /gettingStartedOnHome\(\) \{\s+return !!\(typeof window !== 'undefined' && window\.App && App\.user && App\.user\.showGettingStarted === true\);/);
+  const auth = read('src/routes/auth.js');
+  assert.doesNotMatch(auth, /first_week|firstWeek/);
+  // A boot paints from the snapshot; the verified user repaints, once loaded.
+  assert.match(PANELS_RAW, /document\.addEventListener\('sv:session', \(\) => \{\s+if \(HomePanels\._data\) HomePanels\.render\(\);\s+\}\);/);
 });
 
 // ── Container shape: one bordered block PER SECTION ───────────────
@@ -2432,6 +2487,18 @@ test('Discover draws no chrome of its own; its control is in the section heading
   // ...and in the empty branch too — it is THE discovery path.
   const empty = renderDiscover({ featuredApps: () => [], popularApps: () => [] });
   assert.match(empty, /home-area-label[\s\S]*?id="home-browse-btn"/);
+});
+
+// #4184: the home section's heading is "Discover Communities". Only the
+// heading: the tab bar's "Discover", the link beside it and the panel
+// registry's title keep their words.
+test('the Discover section is headed Discover Communities; the tab and the link keep theirs', () => {
+  const heading = renderDiscover().match(/<h2 class="home-area-label[\s\S]*?<\/h2>/)[0];
+  assert.match(heading, /<span class="min-w-0 flex-1 truncate[^"]*">Discover Communities<\/span>/,
+    'the label truncates rather than wraps at 320px, beside the link');
+  assert.match(heading, />Browse all apps<\/span>/);
+  const bar = fs.readFileSync(path.join(__dirname, '../frontend/src/features/nav/tab-bar.tsx'), 'utf8');
+  assert.match(bar, /key: 'discover' as const, label: 'Discover', href: '#apps'/);
 });
 
 test('Discover’s degenerate states: cards, or the note — never both', () => {

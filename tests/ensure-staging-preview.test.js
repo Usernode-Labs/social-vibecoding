@@ -675,3 +675,56 @@ test('#1993 token remains on the preview origin with a hostile testing path', as
   await h.AppView.swapToStaging('https://live.example', { path: '/\\attacker.example/path' }, { verified: true, jump: true });
   assert.equal(h.dom.els['staging-iframe'].src, 'https://live.example/?token=private-token&un-theme=light');
 });
+
+// ── The preview bar's title (first-session run, 4 October 2026) ─────────
+//
+// Try it on the Homeroom bot's ready card opened a group's preview whose bar
+// read "‹ Back to session" beside the raw staging address
+// ("https://flat-4b-chores-e98ecd--s62…"). The card hands over only the
+// app's slug, so the name has to come from the ensure answer.
+
+const PREVIEW_URL = 'https://flat-4b-chores-e98ecd--s62.onhomeroom.com';
+
+test('a preview opened from a slug alone is titled with the app name the server sends', async () => {
+  const { AppView, dom } = authHarness(async (url) => {
+    if (url.includes('/iframe-token')) return tokenResponse('t');
+    return {
+      ok: true,
+      json: async () => ({ status: 'ready', verified: true, url: PREVIEW_URL, appName: 'Flat 4B Chores' }),
+    };
+  });
+  AppView.appData = null;
+  await AppView.ensureStaging(62, null, null, { readOnly: false, app: { slug: 'flat-4b-chores-e98ecd' } });
+  const title = dom.els['staging-url-label'].textContent;
+  assert.equal(title, 'Flat 4B Chores · Preview');
+  assert.doesNotMatch(title, /https?:|onhomeroom|--s\d/, 'never the staging address');
+  assert.equal(dom.els['staging-iframe'].src.startsWith(PREVIEW_URL), true, 'the preview still opens');
+});
+
+test('without a server name the title falls back to the open app, then to plain Preview', async () => {
+  const { AppView, dom } = makeAppView(okJson({ status: 'ready' }), { stubSwap: false });
+  AppView.appData = { slug: 'usernode-2d5619', self_hosted: true, name: 'Homeroom' };
+  await AppView.swapToStaging('https://live.example', null, { verified: true });
+  assert.equal(dom.els['staging-url-label'].textContent, 'Homeroom · Preview');
+
+  // A caller's record for a DIFFERENT app never borrows the open app's name.
+  assert.equal(AppView._stagingTitle({ slug: 'someone-else' }), 'Preview');
+  assert.equal(AppView._stagingTitle({ slug: 'x', name: '  Chores  ' }), 'Chores · Preview');
+  assert.equal(AppView._stagingTitle(null, 'Flat 4B Chores'), 'Flat 4B Chores · Preview');
+  assert.equal(AppView._stagingTitle(null, '   '), 'Preview');
+  assert.equal(AppView._stagingTitle(null), 'Preview');
+});
+
+test('the preview bar says Back, not Back to session, and its title is not set in a URL face', () => {
+  const overlay = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'staging', 'staging-overlay.tsx'), 'utf8');
+  const back = overlay.match(/<button\s+id="staging-back"[\s\S]*?<\/button>/);
+  assert.ok(back, '#staging-back keeps its id');
+  assert.match(back[0], /<ChevronLeftIcon className="w-4 h-4" \/>\s*Back\s*<\/button>/);
+  assert.doesNotMatch(back[0], /Back to session/);
+  const label = overlay.match(/<span id="staging-url-label" className="([^"]*)"/);
+  assert.ok(label, '#staging-url-label keeps its id');
+  assert.doesNotMatch(label[1], /font-mono/, 'a name, not an address');
+  // Nothing hands the bar a raw address any more.
+  assert.doesNotMatch(SRC, /setUrlLabel\((?:resolved|'https?:)/);
+});

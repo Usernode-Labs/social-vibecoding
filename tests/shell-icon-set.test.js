@@ -194,12 +194,27 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
   // count glyphs are the same pair the app's own Workshop tab uses, which is
   // the point: the number on a row and the pane it counts wear one mark.
   const expected = [
-    // ── The create dialog's rework took four paths OUT of this list ──
+    // ── The create dialog is retired ───────────────────────────────────
+    //
+    // Its "A private community" row drew LockIcon in the static document;
+    // the lock still draws behind state (the signed-out landing, the hub's
+    // ⋯ menu, a community's card), so it is on this list again.
+    'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z',
+    // ── The create dialog's rework took four paths OUT of this list, ──
+    // ── and the make screen's More options put them back ─────────────
     //
     // "What are you making?" became rows like "Who is it for?", each with
     // its glyph, and the dialog prerenders every step: AppWindowIcon (two
-    // paths) on App, NewspaperIcon on Document and PlayIcon on Video are now
-    // in the static document.
+    // paths) on App, NewspaperIcon on Document and PlayIcon on Video were in
+    // the static document. The step went when the dialog became the make
+    // screen's More options (tests/create-front-door.test.js), which asks
+    // what you are making itself; AppWindowIcon and PlayIcon still draw
+    // behind state (the board, an agent chat, the Needs-you rail), and
+    // NewspaperIcon nowhere.
+    'M4 6a1 1 0 011-1h14a1 1 0 011 1v12a1 1 0 01-1 1H5a1 1 0 01-1-1V6z',
+    'M4 9.5h16',
+    'M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z',
+    'M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 010 1.972l-11.54 6.347a1.125 1.125 0 01-1.667-.986V5.653z',
     // ── #2718 moved paths across this line, in both directions ───────
     //
     // OUT OF IT, because the navigation change draws them unconditionally:
@@ -232,6 +247,9 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // the create dialog's first step (who it is for) draws them on its
     // "A group" and "A community" rows, and the dialog prerenders every step.
     'M12 20h9',
+    // DownloadIcon (#4055): the image viewer's Download and a message's
+    // "Download image", both drawn only after a tap.
+    'M12 3v12m0 0l-4-4m4 4l4-4M5 13v7h14v-7',
     'M12 3v12m0-12l-4 4m4-4l4 4M5 13v7h14v-7',
     'M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z',
     'M12 3v8.25m0 0l-3-3m3 3l3-3',
@@ -264,7 +282,8 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M2.25 13.5h3.86a2.25 2.25 0 012.012 1.244l.256.512a2.25 2.25 0 002.013 1.244h3.218a2.25 2.25 0 002.013-1.244l.256-.512a2.25 2.25 0 012.013-1.244h3.859',
     'M21 12a2.25 2.25 0 00-2.25-2.25H15a3 3 0 11-6 0H5.25A2.25 2.25 0 003 12m18 0v6a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 18v-6m18 0V9M3 12V9m18 0a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 9m18 0V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v3',
     'M21.4 11.6l-8.5 8.5a6 6 0 01-8.5-8.5l9-9a4 4 0 015.7 5.7l-9 9a2 2 0 01-2.8-2.8l8.4-8.4',
-    'M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48',
+    // PaperclipIcon left this list with #4127: Send feedback's attachment
+    // row draws it on the paperclip button in the prerendered dialog.
     'M22 2 11 13',
     'M22 2 15 22l-4-9-9-4z',
     'M3 6h18',
@@ -358,6 +377,14 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // renders once one is open.
     'M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7',
     'M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7',
+    // CONTINUE WITH APPLE / GOOGLE: the Apple mark and the four parts of
+    // Google's G, on the sign-in sheet's first step, which renders only once
+    // the sheet is opened and an admin has set the provider up.
+    'M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701',
+    'M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z',
+    'M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z',
+    'M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z',
+    'M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z',
   ];
   assert.deepEqual(absent.sort(), expected.sort());
 });

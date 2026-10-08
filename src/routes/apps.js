@@ -23,11 +23,13 @@ const { appCreateLimiter, appAllowanceRequestLimiter, issueCreateLimiter, github
 const events = require('../services/events');
 const appOpenings = require('../services/app-openings');
 const appAccess = require('../services/app-access');
+const edgeGate = require('../services/edge-gate');
 const appAdmins = require('../services/app-admins');
 const approverInvites = require('../services/approver-invites');
 const contributors = require('../services/contributors');
 const discoveryCuration = require('../services/discovery-curation');
 const communities = require('../services/communities');
+const usernames = require('../services/usernames');
 const challengeScorer = require('../services/topochain/challenge-scorer');
 const governance = require('../services/governance');
 const activeUsers = require('../services/active-users');
@@ -42,6 +44,14 @@ const appActivity = require('../services/app-activity');
 // (see that route below) — a sanity bound, not a product limit.
 const MAX_INITIAL_APPROVERS = 20;
 
+// The doors a project is made through from the platform's own screens, as
+// POST /api/apps's `from`: the first session's "What do you want to make?"
+// and the Create button's, which opens the same screen and the New project
+// dialog as its More options (frontend/src/features/first-session/make.tsx).
+// Both land on the made screen, so both get the idea's sketch; only the
+// first answers the join screen, and only it counts in the admin Journey.
+const MAKE_ORIGINS = new Set(['first-session', 'create']);
+
 // Validate a (collabVisibility, viewVisibility) pair against the
 // invariants (see schema.sql): both must be public|private, and
 // collab-public implies view-public. Returns an error string or null.
@@ -50,24 +60,25 @@ const MAX_INITIAL_APPROVERS = 20;
 const validateVisibilityCombo = createOptions.visibilityComboError;
 
 // A source must have finished the durable parts of provisioning before a
-// fork can take a database/repository snapshot. `awaiting_secrets` is safe:
-// its DB and repo are complete and only private deploy input is missing.
+// fork can take a repository snapshot. `awaiting_secrets` is safe: its repo
+// is complete and only private deploy input is missing. People see a fork
+// as a "remix", so these messages say so.
 // Keeping this as a shared message builder lets both initial fork and Retry
 // reject the known race before creating another async failure row.
 function forkSourceReadinessError(sourceApp) {
-  if (!sourceApp) return 'The source app for this fork no longer exists.';
-  if (sourceApp.self_hosted) return 'The platform app cannot be forked.';
+  if (!sourceApp) return 'The app this copy came from no longer exists.';
+  if (sourceApp.self_hosted) return 'Homeroom itself cannot be remixed.';
   if (sourceApp.status === 'creating') {
-    return 'This app is still being set up. Try forking it again once it is ready.';
+    return 'This app is still being set up. Try remixing it again once it is ready.';
   }
   if (sourceApp.status === 'error') {
-    return 'This app cannot be forked until its setup error is fixed.';
+    return 'This app cannot be remixed until its setup error is fixed.';
   }
   if (!['running', 'awaiting_secrets'].includes(sourceApp.status)) {
-    return 'This app is not ready to fork yet.';
+    return 'This app is not ready to remix yet.';
   }
   if (!sourceApp.repo_url) {
-    return 'This app is not ready to fork yet because its repository is still being prepared.';
+    return 'This app is not ready to remix yet because its code is still being set up.';
   }
   return null;
 }
@@ -240,6 +251,47 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
 // Catalog samples are stored rows; all app APIs use the same identity.
 const stagingApps = require('../services/staging-apps');
+
+/**
+ * The first version Homeroom bot is building, as a project's hub says it
+ * (GET /api/apps/:slug/community `first_version`): the same state the App
+ * tab and the made screen read (homeroom-bot-dm.js firstVersionState, the
+ * steps of homeroom-bot-progress.js FIRST_VERSION_STEPS), cut to what the
+ * hub draws. Pure.
+ *
+ *   step, of, step_name  "Step 4 of 7: Build it", the step's name exactly
+ *                        as firstVersionState names it for this viewer, so
+ *                        the hub says what the App tab and the made screen
+ *                        say
+ *   ready                built and up for approval: ready to try
+ *   mine                 whose description it is: the viewer's
+ *   creator              whose description it is, by username
+ *   waits_on             'plan' (its plan waits for their Build it) or
+ *                        'question' (it asked them something), for the
+ *                        person whose description it is and nobody else
+ *   conversation_id      their DM with the bot, for theirs alone
+ *   session_id           the change, once it is ready to try
+ *
+ * No build time. Evan, 5 Oct 2026: no average build time for a first
+ * version, which plans first and waits on its maker's answer.
+ */
+function hubFirstVersion(state, viewerId) {
+  if (!state) return null;
+  const mine = viewerId != null && Number(state.userId) === Number(viewerId);
+  const ready = !!state.ready;
+  const sessionId = ready && state.approval ? Number(state.approval.sessionId) : null;
+  return {
+    step: Number.isInteger(state.step) ? state.step : null,
+    of: Number.isInteger(state.of) ? state.of : null,
+    step_name: state.stepName || null,
+    ready,
+    mine,
+    creator: state.creator || null,
+    waits_on: mine && !ready ? (state.plan ? 'plan' : state.question ? 'question' : null) : null,
+    conversation_id: mine ? (Number(state.conversationId) || null) : null,
+    session_id: Number.isInteger(sessionId) && sessionId > 0 ? sessionId : null,
+  };
+}
 
 // SELF-HOSTING.md sub-step 2k: helper for the import-flow guards.
 // Compares a parsed {owner, repo} against config.platformRepoUrl,
@@ -633,12 +685,13 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
             -- merged_at was added by a later ALTER TABLE and is NULL on
             -- every row merged before it existed, so COALESCE to
             -- created_at rather than dropping that history on the floor.
-            COUNT(*) FILTER (WHERE status = 'merged') AS merged_prs,
+            -- Counted once live (live_at): a merge still going live is not yet.
+            COUNT(*) FILTER (WHERE status = 'merged' AND live_at IS NOT NULL) AS merged_prs,
             COUNT(*) FILTER (
-              WHERE status = 'merged'
+              WHERE status = 'merged' AND live_at IS NOT NULL
                 AND COALESCE(merged_at, created_at) > NOW() - INTERVAL '30 days'
             ) AS merged_prs_recent,
-            MAX(COALESCE(merged_at, created_at)) FILTER (WHERE status = 'merged')
+            MAX(COALESCE(merged_at, created_at)) FILTER (WHERE status = 'merged' AND live_at IS NOT NULL)
               AS last_merged_at
           FROM chat_sessions
           GROUP BY app_id
@@ -1172,8 +1225,33 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           ...(rule ? { approverPolicy: rule.approverPolicy, approvalsRequired: rule.approvalsRequired } : {}),
           ...(description ? { described: true } : {}),
           ...(template !== appTemplates.DEFAULT_TEMPLATE ? { template } : {}),
+          // Which door it came through: the first session's "What do you
+          // want to make?" (the admin Journey's first session, journey.js
+          // firstSession, counts only these) or the Create button's, which
+          // opens the same screen and its More options (MAKE_ORIGINS).
+          ...(MAKE_ORIGINS.has(req.body.from) ? { from: req.body.from } : {}),
         },
       });
+
+      // The card of the idea, and with it the project's icon
+      // (services/app-sketch.js): started BEFORE creation, which waits a
+      // little for it so the repository's first commit can carry it. Only
+      // from "What do you want to make?" or its More options (MAKE_ORIGINS:
+      // the first session's door and the Create button's, both of which
+      // land on the made screen that draws it), only with a description to
+      // make it from, and never a reason the create fails. A connector's
+      // create sends no `from`, so it costs no sketch. `timeZone` is the
+      // maker's device's, so the card's "today" is theirs (an unknown or
+      // invalid zone reads as UTC there).
+      if (MAKE_ORIGINS.has(req.body.from) && !repoUrlNormalized
+          && require('../services/homeroom-bot-dm').normalizeBrief(req.body.brief)) {
+        await require('../services/app-sketch').startSketch(pool, {
+          app: appRow, user: req.user, brief: req.body.brief,
+          timeZone: typeof req.body.timeZone === 'string' ? req.body.timeZone.slice(0, 64) : null,
+          // Just me, from More options: nobody to share it with.
+          solo: options.audience === 'solo',
+        }).catch((err) => log.warn('apps', 'Sketch not started', { appId: appRow.id, err: err.message }));
+      }
 
       // Kick off async creation — don't await. If it throws, flip to error.
       createApp(config, appRow).catch(async (err) => {
@@ -1219,6 +1297,15 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         }
       }
 
+      // Made from the first session's "What do you want to make?"
+      // (frontend/src/features/first-session): making something answers it,
+      // and the join screen it stood in for, so neither is asked again
+      // (services/first-session.js). Until this, every boot asks it.
+      if (req.body.from === 'first-session') {
+        await require('../services/first-session').answerJoinScreenByMaking(pool, req.user.id)
+          .catch((err) => log.warn('apps', 'Join screen not answered', { userId: req.user.id, err: err.message }));
+      }
+
       res.status(201).json({ app: appAccess.stripAppSecrets(appRow), invited, ...(homeroomBot ? { homeroomBot } : {}) });
       platformLimits.nudge(pool, config, 'apps');
     } catch (err) {
@@ -1231,10 +1318,12 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
   });
 
   // Fork an existing app into a brand-new, independent app owned by the
-  // forker. Mirrors POST /api/apps: same quota/cap gate, same slug
-  // derivation, same insert-CTE (app row + creator membership) — plus a
-  // reference-only `forked_from` and an async forkApp() worker that
-  // clones the source's repo, public DB data, and non-private secrets.
+  // forker (people see this as "Remix"). Mirrors POST /api/apps: same
+  // quota/cap gate, same slug derivation, same insert-CTE (app row +
+  // creator membership) — plus a reference-only `forked_from` and an async
+  // forkApp() worker that copies the source's code into a new repository
+  // and gives the copy an EMPTY database of its own. Nobody's data, keys,
+  // chat or members come with it.
   router.post('/api/apps/:slug/fork', drainGuard, appCreateLimiter, async (req, res) => {
     const { name } = req.body;
     if (!name?.trim()) {
@@ -1281,13 +1370,26 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       if (!slug) return res.status(400).json({ error: 'Invalid app name' });
 
       // Reference-only lineage: appId + slug, NEVER the name (resolved
-      // live at serialize time). Inherit the source's visibility.
-      const forkedFrom = JSON.stringify({ appId: sourceApp.id, slug: sourceApp.slug });
+      // live at serialize time), and when the copy was made. The worker adds
+      // `sourceSha` (the source commit it actually cloned) and `forkBaseSha`
+      // (the copy's own first commit) once the repository is copied, so
+      // what the copy changed later can be told apart from what it copied.
+      //
+      // A copy always starts as Just you (private to build, private to
+      // view), whatever the source's audience: what the remixer made is
+      // theirs until they invite people or open it up. The worker strips
+      // the copied dapp.json's `visibility` block so the first deploy does
+      // not put the source's audience back.
+      const forkedFrom = JSON.stringify({
+        appId: sourceApp.id,
+        slug: sourceApp.slug,
+        forkedAt: new Date().toISOString(),
+      });
       const { rows } = await pool.query(
         `WITH new_app AS (
            INSERT INTO apps (name, slug, created_by, status,
                              collab_visibility, view_visibility, forked_from)
-           VALUES ($1, $2, $3, 'creating', $4, $5, $6::jsonb)
+           VALUES ($1, $2, $3, 'creating', 'private', 'private', $4::jsonb)
            RETURNING *
          ), membership AS (
            INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
@@ -1295,7 +1397,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
            ON CONFLICT (app_id, user_id) DO NOTHING
          )
          SELECT * FROM new_app`,
-        [name.trim(), slug, req.user.id, sourceApp.collab_visibility, sourceApp.view_visibility, forkedFrom]
+        [name.trim(), slug, req.user.id, forkedFrom]
       );
       const appRow = rows[0];
       log.info('apps', 'App fork (pending)', { appId: appRow.id, slug, sourceSlug: sourceApp.slug });
@@ -1440,7 +1542,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       let firstVersion = null;
       if (!appRow.self_hosted && !stagingSample) {
         try {
-          const state = await require('../services/homeroom-bot-dm').firstVersionState(pool, appRow.id);
+          const botDm = require('../services/homeroom-bot-dm');
+          const state = await botDm.firstVersionState(pool, appRow.id, { viewerId: req.user?.id ?? null });
           if (state) {
             const mine = req.user?.id != null && Number(state.userId) === Number(req.user.id);
             firstVersion = {
@@ -1453,6 +1556,16 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
               ready: !!state.ready,
               question: mine && !!state.question,
               conversationId: mine ? state.conversationId : null,
+              // B6: the plan it waits on, for its creator to build from here.
+              ...(mine && state.plan ? { plan: state.plan } : {}),
+              // Ready to try: the change, and who it waits on, as this
+              // viewer reads it (firstVersionApproval).
+              ...(state.ready && state.approval ? { approval: state.approval } : {}),
+              // No "usually about N minutes" (WP-E used to send the
+              // ordinary request's typical build here): a first version
+              // plans first and waits on its creator's answer, and took 50
+              // minutes in the 5 October run-through against a promise of
+              // 10. The made screen says those steps instead (buildNote).
             };
           }
         } catch (err) {
@@ -1536,6 +1649,34 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       res.json({ ...info, deployProgress: appDeployStatus.read(req.params.slug) });
     } catch (err) {
       log.error('apps', 'Failed to get app version', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // The first session's card (services/app-sketch.js), which the made
+  // screen polls until it is ready and then draws itself: its emoji, tagline
+  // and points, text only. Anyone who may view the app may see it; a project
+  // without one answers { status: 'none' }, and so does a sketch from before
+  // the card (a page of a screen, no longer shown).
+  router.get('/api/apps/:slug/sketch', async (req, res) => {
+    try {
+      const appSketch = require('../services/app-sketch');
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS);
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      const row = await appSketch.readSketch(pool, app.id);
+      let status = appSketch.sketchStatus(row);
+      const card = status === 'ready' ? appSketch.cardOf(row.design) : null;
+      if (status === 'ready' && !card) status = 'none';
+      res.set('Cache-Control', 'no-store');
+      res.json({ status, ...(card ? { card, committed: !!row.committed_at } : {}) });
+      // The admin Journey's first session: the first thing of theirs its
+      // maker is shown, the moment the made screen has it to draw
+      // (journey-events.js; once per project, makers only).
+      if (card && req.user?.id) {
+        void require('../services/journey-events').noteFirstArtefactShown(pool, { appId: app.id, userId: req.user.id });
+      }
+    } catch (err) {
+      log.error('apps', 'Failed to read sketch', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -2072,7 +2213,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       const alreadyPending = await pendingSecrets.findLiveByKey(pool, app.id, key);
       if (alreadyPending) {
         return res.status(409).json({
-          error: `${key} is already up for vote`,
+          error: `${key} is already waiting for approval`,
           sessionId: alreadyPending.sessionId,
           prNumber: alreadyPending.prNumber,
           prUrl: alreadyPending.prUrl,
@@ -2493,7 +2634,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       const existing = await renamePr.findVisibilityPr(pool, app.id);
       if (existing) {
         return res.status(409).json({
-          error: 'A visibility change is already up for vote',
+          error: 'A visibility change is already waiting for approval',
           sessionId: existing.id,
           prNumber: existing.pr_number,
           prUrl: existing.pr_url,
@@ -2740,7 +2881,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       const existing = await renamePr.findAdminsPr(pool, app.id);
       if (existing) {
         return res.status(409).json({
-          error: 'An app-admins change is already up for vote',
+          error: 'A change to the app\'s admins is already waiting for approval',
           sessionId: existing.id,
           prNumber: existing.pr_number,
           prUrl: existing.pr_url,
@@ -2839,7 +2980,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       const existing = await renamePr.findGovernancePr(pool, app.id);
       if (existing) {
         return res.status(409).json({
-          error: 'A governance change is already up for vote',
+          error: 'A change to who runs this app is already waiting for approval',
           sessionId: existing.id,
           prNumber: existing.pr_number,
           prUrl: existing.pr_url,
@@ -2886,41 +3027,21 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
-  // ── Edge-gate authorize hop (view-private apps) ─────────────────────
+  // ── App-host authorize hop ─────────────────────────────────────────
   //
-  // Platform session cookies are host-only (deliberately — child apps
-  // run user-authored code and must never see the platform credential),
-  // so a direct visit to a view-private app's subdomain carries no
-  // session for the edge gate (/__caddy/access in routes/internal.js)
-  // to read. The gate bounces bare browser GETs here, to the apex,
-  // where the session cookie IS present and authMiddleware has already
-  // resolved req.user (or redirected to /login.html). We re-run the
-  // standard view-level access check and, when allowed, send the
-  // browser back to the app host with a 120s single-purpose grant the
-  // gate exchanges for a per-host scoped access cookie. Non-members get
-  // the same existence-hiding 404 every other surface returns.
+  // Platform session cookies are host-only (deliberately: child apps run
+  // user-authored code and must never see the platform credential), so a
+  // visit to an app's own address carries no session for the app-host gate
+  // to read. The gate sends the browser here, to the apex, where the
+  // session IS present: a signed-in person who may view the app goes back
+  // with a single-use sign-in code bound to the host, the app, them and this
+  // session; anyone else goes where an unsigned visitor always went.
+  // services/edge-gate.js (handleAuthorize) has the details; middleware/auth.js
+  // lets this one path through without a session so it can answer for a
+  // signed-out visitor too.
   router.get('/__access/authorize', async (req, res) => {
     try {
-      const parsed = appAccess.parseAppHost(req.query.host);
-      if (!parsed) return res.status(404).send('Not found');
-      const rawNext = typeof req.query.next === 'string' ? req.query.next : '/';
-      const next = rawNext.startsWith('/') && !rawNext.startsWith('//') ? rawNext : '/';
-
-      const app = await appAccess.getAppForUser(
-        pool, parsed.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
-      );
-      if (!app) return res.status(404).send('Not found');
-
-      const grant = appAccess.mintAccessGrant({
-        uid: req.user.id,
-        appId: app.id,
-        host: parsed.host,
-      });
-      return res.redirect(
-        302,
-        `https://${parsed.host}/__usernode_access`
-          + `?grant=${encodeURIComponent(grant)}&next=${encodeURIComponent(next)}`
-      );
+      return await edgeGate.handleAuthorize(pool, req, res);
     } catch (err) {
       log.error('apps', 'Edge authorize failed', { host: req.query.host, message: err.message });
       return res.status(500).send('Internal server error');
@@ -3124,13 +3245,13 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         sourceApp = await findForkSource(pool, appRow);
         if (!sourceApp && !appRow.repo_url) {
           return res.status(409).json({
-            error: 'The source app for this fork no longer exists, so the fork cannot be retried.',
+            error: 'The app this copy came from no longer exists, so the copy cannot be retried.',
           });
         }
         if (sourceApp && !appRow.repo_url) {
           if (!(await appAccess.checkAppAccess(pool, sourceApp, req.user, 'view'))) {
             return res.status(403).json({
-              error: 'You no longer have access to the source app for this fork.',
+              error: 'You no longer have access to the app this copy came from.',
             });
           }
           const readinessError = forkSourceReadinessError(sourceApp);
@@ -3309,12 +3430,53 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       const required = gov.approvalsRequired != null
         ? gov.approvalsRequired
         : activeUsers.requiredVotes(electorate.active, 0);
+      // WHAT IT IS. dapp.json's one line when it has one. A project made
+      // from "What should it do?" without a one-liner (the first session's
+      // own words, not an example's) has none until somebody writes one, so
+      // its hub opened on nothing but "Just you" (first-session run-through,
+      // 5 Oct 2026). Its card's tagline stands in (#4235; app-sketch.js
+      // saves it as the description once the card is ready, so this covers
+      // projects made before that): a model-written line about what the app
+      // is for. Without a card, its description's first sentence, cut the
+      // way the create dialog's suggestion is when no model answers
+      // (homeroom-bot-dm.js firstSentence). It is the project's first
+      // request, so nobody who can see the project is shown more than that.
+      const botDm = require('../services/homeroom-bot-dm');
+      let description = typeof app.description === 'string' && app.description.trim()
+        ? app.description.replace(/\s+/g, ' ').trim() : null;
+      if (!description && !app.self_hosted) {
+        const { rows: sketchRows } = await pool.query(
+          `SELECT design FROM app_sketches WHERE app_id = $1 AND status = 'ready'`,
+          [app.id]
+        );
+        description = require('../services/app-sketch').taglineOf(sketchRows[0]) || null;
+      }
+      if (!description && !app.self_hosted) {
+        const { rows: briefRows } = await pool.query(
+          'SELECT brief FROM homeroom_bot_first_versions WHERE app_id = $1',
+          [app.id]
+        );
+        if (briefRows[0]?.brief) description = botDm.firstSentence(briefRows[0].brief, createOptions.DESCRIPTION_MAX) || null;
+      }
+      // WHERE ITS FIRST VERSION STANDS, while Homeroom bot builds it from
+      // that description: the App tab's state (GET /api/apps/:slug
+      // `first_version`), for the hub to say beside who it is for.
+      // Best-effort: a read that fails is no state, never a failed hub.
+      let firstVersion = null;
+      if (!app.self_hosted) {
+        try {
+          const state = await botDm.firstVersionState(pool, app.id, { viewerId: req.user?.id ?? null });
+          firstVersion = hubFirstVersion(state, req.user?.id ?? null);
+        } catch (err) {
+          log.warn('apps', 'Could not read the first version for the hub', { slug: app.slug, message: err.message });
+        }
+      }
       res.json({
         slug: app.slug,
         name: app.name,
-        // dapp.json's one line about what the app is, for the page's hero.
-        description: typeof app.description === 'string' && app.description.trim()
-          ? app.description.replace(/\s+/g, ' ').trim() : null,
+        // What the app is, for the page's hero (above).
+        description,
+        first_version: firstVersion,
         ...membership,
         members,
         channel,
@@ -3361,6 +3523,11 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         return res.status(404).json({ error: 'App not found' });
       }
       if (joined) {
+        // A public community never shows a provisional handle: pick a
+        // username first (usernames.js USERNAME_REQUIRED).
+        if (app.view_visibility === 'public' && await usernames.isProvisional(pool, req.user.id)) {
+          return res.status(409).json(usernames.USERNAME_REQUIRED);
+        }
         await communities.join(pool, app, req.user.id);
         // "Find people to build with" counts the join now, not on the
         // rule's next pass (#3564; challengeScorer.scoreOnJoin). Never
@@ -3585,7 +3752,7 @@ module.exports = {
   // one resolver, so it is pinned there rather than through a route.
   attachForkLineage,
   appRoutes, sweepStuckCreatingApps, accessFlags, canDeleteApp, compactGlobalChatApp,
-  deleteBlockReason, isCoreApp,
+  deleteBlockReason, isCoreApp, hubFirstVersion,
   // #2524: the activity guard and its two bounds, so the contract is
   // unit-testable without standing up the whole app router.
   activitySeconds, ACTIVITY_MAX_PER_POST, ACTIVITY_MAX_PER_DAY,

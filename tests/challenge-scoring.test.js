@@ -493,11 +493,53 @@ test('a skipped rule reports the reason instead of failing silently', async () =
   assert.equal(pool.inserted.length, 0);
 });
 
-test('the leaderboard is not rebuilt while its last snapshot is fresh', async () => {
-  const pool = scriptedPool();
-  const fresh = await scorer.maybeAggregate(pool, { hours: 6, now: NOW + HOUR });
-  assert.equal(fresh, null, 'each rebuild ages out older history — do not do it every tick');
-});
+// The standings: a new snapshot (a chart point) every six hours, and the
+// latest one rewritten in place whenever the ledger is newer (#3650: a member
+// saw the challenge's points long before the leaderboard's).
+function standingsPool({ at, fresh, newer }) {
+  const seen = [];
+  return {
+    seen,
+    async query(sql, params) {
+      seen.push({ sql, params });
+      if (sql === scorer.LAST_AGGREGATE_SQL) return { rows: at ? [{ at: new Date(at), fresh: fresh ? new Date(fresh) : null }] : [] };
+      if (sql === scorer.LEDGER_NEWER_SQL) return { rows: [{ newer: newer(params[0]) }] };
+      throw new Error(`unexpected query: ${sql.slice(0, 60)}`);
+    },
+  };
+}
+function withBuilder(fn) {
+  const builder = require('../src/services/topochain/snapshot-builder');
+  const real = builder.buildSnapshots;
+  const calls = [];
+  builder.buildSnapshots = async (pool, opts = {}) => { calls.push(opts); return { events: [{}] }; };
+  return fn(calls).finally(() => { builder.buildSnapshots = real; });
+}
+
+test('the standings are left alone while nothing in the ledger is newer than them', () => withBuilder(async (calls) => {
+  const pool = standingsPool({ at: NOW, fresh: NOW + 10 * MIN, newer: () => false });
+  assert.equal(await scorer.maybeAggregate(pool, { hours: 6, now: NOW + HOUR }), null);
+  assert.equal(calls.length, 0);
+  assert.equal(pool.seen[1].params[0].getTime(), NOW + 10 * MIN,
+    'compared with when the snapshot was last WRITTEN, or a refresh would repeat on every check');
+}));
+
+test('a newer credit refreshes the latest snapshot in place, not a new chart point', () => withBuilder(async (calls) => {
+  const pool = standingsPool({ at: NOW, fresh: NOW, newer: () => true });
+  const result = await scorer.maybeAggregate(pool, { hours: 6, now: NOW + 2 * HOUR });
+  assert.deepEqual(result, { events: 1, refreshed: true });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].now.getTime(), NOW, 'rebuilt AT the latest snapshot_at: the builder upserts, so the history keeps its points');
+}));
+
+test('a snapshot older than the cadence gets a new one, as before', () => withBuilder(async (calls) => {
+  const pool = standingsPool({ at: NOW - 7 * HOUR, fresh: NOW - 7 * HOUR, newer: () => true });
+  assert.deepEqual(await scorer.maybeAggregate(pool, { hours: 6, now: NOW }), { events: 1 });
+  assert.equal(calls[0].now, undefined, 'stamped now: a new point on the chart');
+  const none = standingsPool({ at: null, newer: () => false });
+  assert.deepEqual(await scorer.maybeAggregate(none, { hours: 6, now: NOW }), { events: 1 }, 'and with no snapshot at all');
+  assert.equal(await scorer.maybeAggregate(none, { hours: 0, now: NOW }), null, 'hours 0 leaves it to the admin button');
+}));
 
 // ─── Dates ─────────────────────────────────────────────────────────────
 
@@ -1017,9 +1059,14 @@ test('the rubric, the model and the input limits printed are the ones the grader
   assert.ok(sent.user.includes('t'.repeat(grader.GRADE_TITLE_CHARS)) && !sent.user.includes('t'.repeat(grader.GRADE_TITLE_CHARS + 1)));
   assert.ok(step.text.includes('first 200 characters') && step.text.includes('first 2,000'));
 
-  // The transport's fallback names the same model, for a caller that passes none.
+  // The transport's default names the same model, for a caller that passes
+  // none, and its fallback is the one the panel names beside it.
+  const llm = require('../src/services/llm');
   const llmSource = require('fs').readFileSync(require('path').join(__dirname, '..', 'src/services/llm.js'), 'utf8');
-  assert.match(llmSource, new RegExp(`gradeChallengeUnit\\(\\{[^)]*model = '${grader.GRADE_MODEL}'`));
+  assert.match(llmSource, /gradeChallengeUnit\(\{[^)]*model = HELPER_MODEL/);
+  assert.equal(llm.HELPER_MODEL, grader.GRADE_MODEL);
+  assert.equal(llm.HELPER_FALLBACK_MODEL, grader.GRADE_FALLBACK_MODEL);
+  assert.ok(step.text.includes(`${grader.GRADE_FALLBACK_MODEL} when it does not answer in time`));
 });
 
 test('a measure that calls no model says so, and only feedback has a junk filter', () => {
@@ -1174,6 +1221,40 @@ test('the challenge list reads every card\'s cadence in one query, and none with
   assert.equal((await scorer.loadCadence(pool, 10, rows, { defaultMinutes: 0, now: NOW })).size, 0);
   assert.equal((await scorer.loadCadence(pool, 10, [], { defaultMinutes: 10, now: NOW })).size, 0);
   assert.equal(calls.length, 0, 'the schedule off, or nothing listed: Postgres is not asked');
+});
+
+// #3253, #3248: the page says what a rule counts — that a proposal counts
+// once it is put to the vote, and that a counted measure stops at its target —
+// so the read names the measure and, for a counted one, that target. Unlike
+// the cadence it does not wait for a first run.
+test('countedByOf names the scoring rule\'s measure, and the cap a counted measure stops at', () => {
+  const at = { now: NOW, defaultMinutes: 10 };
+  assert.deepEqual(rules.countedByOf([rule({ measure: 'PROPOSAL_SENT' })], challengeRow(), at),
+    { measure: 'PROPOSAL_SENT', target: null }, 'one is enough: no cap to state');
+  assert.deepEqual(rules.countedByOf([rule({ measure: 'PROPOSAL_ACCEPTED', target: 2 })], challengeRow(), at),
+    { measure: 'PROPOSAL_ACCEPTED', target: 2 }, 'the rule\'s own target is where crediting stops');
+  assert.deepEqual(rules.countedByOf([rule({ measure: 'PROPOSAL_SENT', lastScoredAt: null })], challengeRow(), at),
+    { measure: 'PROPOSAL_SENT', target: null }, 'known before the first run');
+  assert.equal(rules.countedByOf([], challengeRow(), at), null);
+  assert.equal(rules.countedByOf([rule({ enabled: false })], challengeRow(), at), null, 'rule switched off');
+  assert.equal(rules.countedByOf([rule()], challengeRow({ completed: true }), at), null, 'challenge closed');
+  assert.equal(rules.countedByOf([rule()], challengeRow(), { now: NOW, defaultMinutes: 0 }), null, 'schedule off');
+  assert.deepEqual(rules.countedByOf([rule({ enabled: false }), rule({ id: 2, measure: 'PROPOSAL_SENT' })], challengeRow(), at),
+    { measure: 'PROPOSAL_SENT', target: null }, 'the first rule that scores it');
+});
+
+test('the list read returns the measure beside the cadence, from one query', async () => {
+  const ruleRows = [
+    { id: 1, measure: 'PROPOSAL_ACCEPTED', target: 2, points: null, challenge_id: 74, challenge_template_id: null,
+      interval_minutes: 15, last_scored_at: null,
+      event_starts_at: new Date(NOW - 10 * DAY), event_ends_at: new Date(NOW + 10 * DAY) },
+  ];
+  let calls = 0;
+  const pool = { query: async () => { calls += 1; return { rows: ruleRows }; } };
+  const out = await scorer.loadRuleFacts(pool, 10, [challengeRow({ id: 74 })], { defaultMinutes: 10, now: NOW });
+  assert.equal(calls, 1);
+  assert.equal(out.cadence.size, 0, 'never run: no cadence line yet');
+  assert.deepEqual(out.countedBy.get(74), { measure: 'PROPOSAL_ACCEPTED', target: 2 });
 });
 
 test('the cadence read is scoped the way the scorer\'s own is', () => {
@@ -1343,4 +1424,126 @@ test('every door a person joins a community through counts the join before it an
     assert.match(src, /require\('\.\.\/services\/topochain\/challenge-scorer'\)/, file);
     assert.match(src, pattern, `${file} counts the join on the spot`);
   }
+});
+
+// ─── Weekly challenges: the cap starts again every Monday 00:00 UTC ──────
+//
+// "Up to 2 count each week" used to be up to 2 per challenge ROW, and Season
+// 2 runs each weekly challenge as one row for the whole season, so the
+// pre-season week's credits capped people for the rest of it.
+
+test('a week starts on Monday 00:00 UTC', () => {
+  const at = (s) => rules.weekStartMs(Date.parse(s));
+  assert.equal(at('2026-10-05T00:00:00Z'), Date.parse('2026-10-05T00:00:00Z'), 'Monday midnight starts its own week');
+  assert.equal(at('2026-10-04T23:59:59Z'), Date.parse('2026-09-28T00:00:00Z'), 'Sunday night is the week before');
+  assert.equal(at('2026-10-07T13:00:00Z'), Date.parse('2026-10-05T00:00:00Z'));
+  assert.equal(rules.isWeekly({ t_category: 'WEEKLY' }), true);
+  assert.equal(rules.isWeekly({ category: ' weekly ' }), true);
+  assert.equal(rules.isWeekly({ t_category: 'PERSISTENT' }), false);
+});
+
+test('a weekly challenge is scored this week, and last week only while its grace lasts', () => {
+  const window = { startMs: Date.parse('2026-09-22T22:00:00Z'), endMs: Date.parse('2026-12-31T22:59:00Z'), open: true };
+  const wed = rules.weeklyWindows(window, { now: Date.parse('2026-10-07T12:00:00Z') });
+  assert.deepEqual(wed.map((w) => [iso(w.startMs), iso(w.endMs)]),
+    [['2026-10-05T00:00:00.000Z', '2026-10-11T23:59:59.999Z']], 'midweek: this week alone');
+  const mon = rules.weeklyWindows(window, { now: Date.parse('2026-10-05T03:00:00Z') });
+  assert.deepEqual(mon.map((w) => iso(w.startMs)), ['2026-09-28T00:00:00.000Z', '2026-10-05T00:00:00.000Z'],
+    'early Monday: last week too, so a Sunday-night action is still paid');
+  // Clipped to the challenge: a start of 5 Oct means last week is never scored.
+  const fromMonday = rules.weeklyWindows({ ...window, startMs: Date.parse('2026-10-05T00:00:00Z') }, { now: Date.parse('2026-10-05T03:00:00Z') });
+  assert.deepEqual(fromMonday.map((w) => iso(w.startMs)), ['2026-10-05T00:00:00.000Z']);
+});
+
+const weeklyRow = (extra = {}) => challengeRow({
+  measure: 'PROPOSAL_ACCEPTED', metric_target: 2, t_metric_target: 2, reward: 'Up to 1,000 pts',
+  t_reward: 'Up to 1,000 pts', t_category: 'WEEKLY',
+  schedule_start: '2026-09-22T22:00:00Z', schedule_end: '2026-12-31T22:59:00Z', ...extra,
+});
+const credits = (entries) => {
+  const map = new Map();
+  for (const [userId, key, at] of entries) {
+    const state = map.get(userId) || { keys: new Set(), count: 0, weeks: new Map() };
+    state.keys.add(key);
+    state.count += 1;
+    const week = rules.weekStartMs(Date.parse(at));
+    state.weeks.set(week, (state.weeks.get(week) || 0) + 1);
+    map.set(userId, state);
+  }
+  return map;
+};
+
+test('the weekly cap counts only the candidate’s own week', () => {
+  const now = Date.parse('2026-10-07T12:00:00Z');
+  // Two accepted last week: capped then, free again now.
+  const held = credits([[17, 'merged:1', '2026-09-30T10:00:00Z'], [17, 'merged:2', '2026-10-01T10:00:00Z']]);
+  const plan = rules.planCredits(rule({ measure: 'PROPOSAL_ACCEPTED' }), weeklyRow(), {
+    candidates: [
+      candidate(17, 'merged:3', '2026-10-05T09:00:00Z'),
+      candidate(17, 'merged:4', '2026-10-06T09:00:00Z'),
+      candidate(17, 'merged:5', '2026-10-07T09:00:00Z'),
+    ],
+    credited: held, now,
+  });
+  assert.deepEqual(plan.map((c) => c.sourceKey), ['merged:3', 'merged:4'], 'two this week, the third waits for Monday');
+  assert.ok(plan.every((c) => c.points === 500 && c.completion === false));
+
+  // The same credits on a challenge that is not weekly still cap it for good.
+  const persistent = rules.planCredits(rule({ measure: 'PROPOSAL_ACCEPTED' }), weeklyRow({ t_category: 'PERSISTENT' }), {
+    candidates: [candidate(17, 'merged:3', '2026-10-05T09:00:00Z')], credited: held, now,
+  });
+  assert.equal(persistent.length, 0);
+});
+
+test('a one-off measure on a weekly challenge pays every week, and never as THE completion', () => {
+  const row = weeklyRow({ measure: 'USE_APPS_MINUTES', metric_target: null, t_metric_target: null, reward: '1,000 pts', t_reward: '1,000 pts' });
+  const r = rule({ measure: 'USE_APPS_MINUTES', target: 10 });
+  const now = Date.parse('2026-10-07T12:00:00Z');
+  const held = credits([[7, 'window:2026-09-28', '2026-10-02T12:00:00Z']]);
+  const plan = rules.planCredits(r, row, { candidates: [candidate(7, 'window:2026-10-05', '2026-10-06T12:00:00Z')], credited: held, now });
+  assert.equal(plan.length, 1, 'a new week, a new 1,000 pts');
+  assert.equal(plan[0].completion, false, 'one completion per person per challenge is a database rule; a weekly one must not take it');
+  const again = rules.planCredits(r, row, {
+    candidates: [candidate(7, 'window:2026-10-05', '2026-10-06T12:00:00Z')],
+    credited: credits([[7, 'window:2026-10-05', '2026-10-06T12:00:00Z']]), now,
+  });
+  assert.equal(again.length, 0, 'once a week');
+});
+
+test('the scorer loads a weekly challenge a week at a time, and counts what is held per week', async () => {
+  const seen = [];
+  const pool = { async query(sql, params) { seen.push(params); return { rows: [{ user_id: 7, seconds: 900, last_date: '2026-10-06' }] }; } };
+  const [c] = await scorer.loadCandidates(pool, 'USE_APPS_MINUTES',
+    { startMs: Date.parse('2026-10-05T00:00:00Z'), endMs: Date.parse('2026-10-11T23:59:59.999Z') }, { target: 10 });
+  assert.equal(c.sourceKey, 'window:2026-10-05', 'each week’s unit has a key of its own');
+  assert.equal(seen[0][0], '2026-10-05T00:00:00.000Z');
+  assert.match(scorer.CREDITED_SQL, /activity_at/, 'the cap reads when each credit was earned');
+  const credited = await scorer.loadCredited({
+    async query() {
+      return { rows: [
+        { user_id: 17, source_key: 'merged:1', activity_at: new Date('2026-09-30T10:00:00Z') },
+        { user_id: 17, source_key: 'merged:2', activity_at: new Date('2026-10-06T10:00:00Z') },
+      ] };
+    },
+  }, 81);
+  const state = credited.get(17);
+  assert.equal(state.count, 2);
+  assert.equal(state.weeks.get(Date.parse('2026-09-28T00:00:00Z')), 1);
+  assert.equal(state.weeks.get(Date.parse('2026-10-05T00:00:00Z')), 1);
+});
+
+test('progress on a weekly challenge counts this week’s credits only, on every list', () => {
+  const onboarding = require('../src/services/topochain/challenge-onboarding');
+  const panels = require('../src/routes/home-panels');
+  const sql = onboarding.COUNTS_THIS_WEEK_SQL.replace(/\s+/g, ' ');
+  assert.match(sql, /UPPER\(TRIM\(COALESCE\(ct\.category, ''\)\)\) <> 'WEEKLY'/, 'any other challenge counts every credit');
+  assert.match(sql, /ua\.activity_at >= date_trunc\('week', NOW\(\) AT TIME ZONE 'UTC'\) AT TIME ZONE 'UTC'/,
+    'a weekly one from Monday 00:00 UTC, the week the scorer caps by');
+  assert.ok(panels.MY_COUNT_SQL.includes(onboarding.COUNTS_THIS_WEEK_SQL), 'Home and the profile');
+  const fs = require('fs');
+  const path = require('path');
+  const pub = fs.readFileSync(path.join(__dirname, '..', 'src/routes/topochain/public.js'), 'utf8');
+  assert.match(pub, /AND \$\{COUNTS_THIS_WEEK_SQL\}/, 'the Challenges tab’s list');
+  const mobile = fs.readFileSync(path.join(__dirname, '..', 'src/routes/topochain/mobile.js'), 'utf8');
+  assert.match(mobile, /isWeekly\(\{ category: item\.category \}\)/, 'and the phone app’s, in JS');
 });

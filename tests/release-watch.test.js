@@ -74,15 +74,30 @@ const HEAD = {
   subject: 'Do not fail a proposal for a check that has no page (#2589)\n\nbody',
 };
 
-function actions(run) {
+// `queue` is the release workflow's finished runs on main as GitHub lists
+// them (listWorkflowRuns), or an Error that read throws; `queueReads`
+// records each read. Without it the client cannot list them at all.
+function actions(run, queue = null, queueReads = []) {
   return {
-    rest: { actions: { listWorkflowRunsForRepo: async ({ head_sha }) => ({
-      data: { workflow_runs: run && head_sha === MERGED ? [
-        { id: 1, name: 'Deploy', path: '.github/workflows/deploy.yml', status: 'completed', conclusion: 'success', html_url: 'https://github.com/x/y/actions/runs/1' },
-        { id: 35461203746, name: 'Build Kubernetes images', path: releaseWatch.WORKFLOW_PATH, html_url: RUN_URL, ...run },
-      ] : [] },
-    }) } },
+    rest: { actions: {
+      listWorkflowRunsForRepo: async ({ head_sha }) => ({
+        data: { workflow_runs: run && head_sha === MERGED ? [
+          { id: 1, name: 'Deploy', path: '.github/workflows/deploy.yml', status: 'completed', conclusion: 'success', html_url: 'https://github.com/x/y/actions/runs/1' },
+          { id: 35461203746, name: 'Build Kubernetes images', path: releaseWatch.WORKFLOW_PATH, html_url: RUN_URL, ...run },
+        ] : [] },
+      }),
+      ...(queue ? { listWorkflowRuns: async (params) => {
+        queueReads.push(params);
+        if (queue instanceof Error) throw queue;
+        return { data: { workflow_runs: queue } };
+      } } : {}),
+    } },
   };
+}
+
+// A finished run of the release workflow, as listWorkflowRuns returns it.
+function finished(at) {
+  return { status: 'completed', conclusion: 'success', updated_at: new Date(at).toISOString() };
 }
 
 function reset() {
@@ -109,6 +124,42 @@ test('classify: a red workflow is a stall at once; anything else only past the g
   assert.equal(releaseWatch.classify({ ageMs: grace, run: { status: 'queued', conclusion: null }, grace }), 'workflow_running');
   assert.equal(releaseWatch.classify({ ageMs: grace, run: { status: 'completed', conclusion: 'success' }, grace }), 'rollout_missing');
   assert.equal(releaseWatch.classify({ ageMs: grace, run: null, grace }), 'unknown');
+});
+
+test('classify: a release waiting behind a moving queue, or rolling out, is not late yet', () => {
+  const grace = 10 * MIN;
+  // #3860, 5 Oct 2026: the last of ten merges in two minutes. Its run waits
+  // for the nine ahead of it, and one of them finished two minutes ago.
+  for (const status of ['pending', 'queued', 'waiting', 'in_progress']) {
+    assert.equal(releaseWatch.classify({ ageMs: 16 * MIN, run: { status, conclusion: null }, idleMs: 2 * MIN, grace }), null, status);
+  }
+  // A run at main's tip waits out the release gap in its release job
+  // (7 Oct 2026: four rollouts in sixteen minutes), so the queue can be still
+  // for the grace and that gap with nothing stuck.
+  const gap = releaseWatch.RELEASE_MIN_GAP_MS;
+  for (const status of ['pending', 'in_progress']) {
+    assert.equal(releaseWatch.classify({ ageMs: 16 * MIN, run: { status, conclusion: null }, idleMs: grace, grace }), null, status);
+    assert.equal(releaseWatch.classify({ ageMs: 16 * MIN, run: { status, conclusion: null }, idleMs: grace + gap - 1, grace }), null, status);
+  }
+  // Still for longer than that: nothing is moving it.
+  assert.equal(releaseWatch.classify({ ageMs: 16 * MIN, run: { status: 'pending', conclusion: null }, idleMs: grace + gap, grace }), 'workflow_running');
+  assert.equal(releaseWatch.classify({ ageMs: 40 * MIN, run: { status: 'in_progress', conclusion: null }, idleMs: 25 * MIN, grace }), 'workflow_running');
+  // A run that finished a minute ago, for a merge half an hour old: Argo CD
+  // is rolling it out. That grace runs from the run, not from the merge.
+  assert.equal(releaseWatch.classify({ ageMs: 30 * MIN, run: { status: 'completed', conclusion: 'success' }, doneAgoMs: MIN, grace }), null);
+  assert.equal(releaseWatch.classify({ ageMs: 30 * MIN, run: { status: 'completed', conclusion: 'success' }, doneAgoMs: grace, grace }), 'rollout_missing');
+  // Neither clock softens a red run, nor hurries a merge inside its grace.
+  assert.equal(releaseWatch.classify({ ageMs: 30 * MIN, run: { status: 'completed', conclusion: 'failure' }, doneAgoMs: MIN, grace }), 'workflow_failed');
+  assert.equal(releaseWatch.classify({ ageMs: 3 * MIN, run: { status: 'pending', conclusion: null }, idleMs: 30 * MIN, grace }), null);
+});
+
+test('the release gap allowed for is the one the release workflow waits', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const YAML = require('yaml');
+  const workflow = YAML.parse(fs.readFileSync(path.join(__dirname, '..', releaseWatch.WORKFLOW_PATH), 'utf8'));
+  const step = workflow.jobs.release.steps.find((s) => s.name === 'Check branch tip before publishing');
+  assert.equal(releaseWatch.RELEASE_MIN_GAP_MS, Number(step.env.RELEASE_MIN_GAP_MINUTES) * MIN);
 });
 
 test('the PR comes off the squash subject, and only from its first line', () => {
@@ -178,6 +229,92 @@ test('past the grace, the workflow\'s own state names the stall', async () => {
     assert.equal(posted.length, 0, kind);
     assert.equal(notified.length, 1, kind);
   }
+});
+
+test('several merges in one burst: the newest waits its turn and is not called stuck', async () => {
+  // #3860 was the last of ten merges in two minutes (5 Oct 2026). The
+  // workflow runs them one at a time, so sixteen minutes on its run is still
+  // waiting while the runs ahead of it finish, one two minutes ago.
+  reset();
+  const pool = makePool();
+  const reads = [];
+  const now = T0 + 16 * MIN;
+  const queue = [finished(now - 2 * MIN), finished(now - 5 * MIN)];
+  const result = await releaseWatch.observe({}, pool, selfApp(), HEAD, {
+    now, octokit: actions({ status: 'pending', conclusion: null }, queue, reads),
+  });
+  assert.equal(result.status, 'release_pending');
+  assert.equal(result.idleMs, 2 * MIN);
+  assert.equal(written(pool).length, 0, 'no record, so no row reads "Stuck going live"');
+  assert.equal(notified.length, 0);
+  assert.deepEqual(reads, [{
+    owner: 'Usernode-Labs', repo: 'social-vibecoding', workflow_id: 'build-kubernetes-images.yml',
+    branch: 'main', status: 'completed', per_page: 5,
+  }], 'one read of the release queue on main, the newest finished runs');
+
+  // Its own run starts once the one ahead finishes, and runs: still moving.
+  const running = await releaseWatch.observe({}, pool, selfApp(), HEAD, {
+    now: now + 3 * MIN, octokit: actions({ status: 'in_progress', conclusion: null }, [finished(now + MIN)]),
+  });
+  assert.equal(running.status, 'release_pending');
+
+  // Its run is the tip and waits out the release gap: eleven minutes since
+  // the queue last moved is still the wait, not a stall.
+  const waiting = await releaseWatch.observe({}, pool, selfApp(), HEAD, {
+    now: now + 13 * MIN, octokit: actions({ status: 'in_progress', conclusion: null }, [finished(now + 2 * MIN)]),
+  });
+  assert.equal(waiting.status, 'release_pending');
+  assert.equal(written(pool).length, 0);
+
+  // The queue stands still past the grace and the gap: that is stuck, and
+  // said once.
+  const stuck = await releaseWatch.observe({}, pool, selfApp(), HEAD, {
+    now: now + 23 * MIN, octokit: actions({ status: 'in_progress', conclusion: null }, [finished(now + 2 * MIN)]),
+  });
+  assert.equal(stuck.status, 'release_stalled');
+  assert.equal(stuck.kind, 'workflow_running');
+  assert.equal(written(pool).length, 1);
+  assert.equal(notified.length, 1);
+});
+
+test('a release read only within its own grace: no queue read for a merge still on time', async () => {
+  reset();
+  const reads = [];
+  const result = await releaseWatch.observe({}, makePool(), selfApp(), HEAD, {
+    now: T0 + 4 * MIN, octokit: actions({ status: 'pending', conclusion: null }, [], reads),
+  });
+  assert.equal(result.status, 'release_pending');
+  assert.equal(reads.length, 0, 'the second read is spent only on a run late by the merge\'s clock');
+});
+
+test('a queue that cannot be read falls back to the merge\'s clock', async () => {
+  for (const queue of [new Error('Resource not accessible by integration'), []]) {
+    reset();
+    const pool = makePool();
+    const result = await releaseWatch.observe({}, pool, selfApp(), HEAD, {
+      now: T0 + 12 * MIN, octokit: actions({ status: 'pending', conclusion: null }, queue),
+    });
+    assert.equal(result.status, 'release_stalled', String(queue));
+    assert.equal(result.kind, 'workflow_running');
+    assert.equal(result.record.kind, 'workflow_running');
+    assert.equal(logged.some(([level, , msg]) => level === 'debug' && /Could not read the release workflow queue/.test(msg)),
+      queue instanceof Error, 'a refused read is logged, never thrown');
+  }
+});
+
+test('a run that finished moments ago gives the rollout its own grace', async () => {
+  // The burst's release finished a minute ago, twenty-five minutes after the
+  // merge: Argo CD is rolling it out, not missing it.
+  reset();
+  const pool = makePool();
+  const now = T0 + 25 * MIN;
+  const run = { status: 'completed', conclusion: 'success', updated_at: new Date(now - MIN).toISOString() };
+  const rolling = await releaseWatch.observe({}, pool, selfApp(), HEAD, { now, octokit: actions(run) });
+  assert.equal(rolling.status, 'release_pending');
+  assert.equal(written(pool).length, 0);
+  const missing = await releaseWatch.observe({}, pool, selfApp(), HEAD, { now: now + 10 * MIN, octokit: actions(run) });
+  assert.equal(missing.status, 'release_stalled');
+  assert.equal(missing.kind, 'rollout_missing');
 });
 
 test('a token that cannot list Actions is not an error; the stall reads unknown once late', async () => {
@@ -326,15 +463,65 @@ test('describe: the API block, resolved against the build that is answering', ()
   assert.equal(releaseWatch.describe({ release_stall: { ...record, runUrl: null } }, RUNNING).runUrl, null);
 });
 
+// A pool that answers the apps column with `record` and the merge-order
+// question (carriedBy) with `carried`; anything else is a test failure.
+function stallPool(record, carried) {
+  const queries = [];
+  return {
+    queries,
+    query: async (sql, params) => {
+      queries.push({ sql: String(sql), params });
+      if (/SELECT release_stall FROM apps WHERE id = \$1/.test(sql)) {
+        assert.deepEqual(params, [10]);
+        return { rows: [{ release_stall: record }] };
+      }
+      if (/FROM chat_sessions recorded\s+JOIN chat_sessions serving/.test(sql)) {
+        if (carried instanceof Error) throw carried;
+        return { rows: carried ? [{ '?column?': 1 }] : [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    },
+  };
+}
+
 test('readStall reads the one column and never throws', async () => {
-  const pool = { query: async (sql, params) => {
-    assert.match(sql, /SELECT release_stall FROM apps WHERE id = \$1/);
-    assert.deepEqual(params, [10]);
-    return { rows: [{ release_stall: { sha: MERGED, kind: 'unknown' } }] };
-  } };
+  const pool = stallPool({ sha: MERGED, kind: 'unknown' }, false);
   assert.equal((await releaseWatch.readStall(pool, 10, RUNNING)).stalled, true);
   assert.equal((await releaseWatch.readStall(pool, 10, MERGED)).stalled, false, 'resolved against the answering build');
   const broken = { query: async () => { throw new Error('connection refused'); } };
   assert.equal((await releaseWatch.readStall(broken, 10)).stalled, false);
   assert.equal((await releaseWatch.readStall(null, 10)).stalled, false);
+});
+
+test('readStall: a later release that carried the recorded commit resolves it', async () => {
+  // Several merges, one release: the record names a commit that never ran by
+  // itself, and the build answering is a later merge with it inside.
+  const carried = stallPool({ sha: MERGED, kind: 'workflow_running' }, true);
+  assert.equal((await releaseWatch.readStall(carried, 10, RUNNING)).stalled, false);
+  const order = carried.queries.find((q) => /FROM chat_sessions recorded/.test(q.sql));
+  assert.deepEqual(order.params, [10, MERGED, RUNNING]);
+  // An older build, or one the merge order cannot place: still stalled.
+  assert.equal((await releaseWatch.readStall(stallPool({ sha: MERGED, kind: 'workflow_running' }, false), 10, RUNNING)).stalled, true);
+  assert.equal((await releaseWatch.readStall(stallPool({ sha: MERGED, kind: 'workflow_running' }, new Error('timeout')), 10, RUNNING)).stalled, true,
+    'a failed read is no evidence the release landed');
+});
+
+test('carriedBy orders the two merges; the same commit needs no read', async () => {
+  const none = { query: async () => { throw new Error('no read expected'); } };
+  assert.equal(await releaseWatch.carriedBy(none, 10, MERGED, MERGED.toUpperCase()), true);
+  assert.equal(await releaseWatch.carriedBy(none, 10, MERGED, null), false);
+  assert.equal(await releaseWatch.carriedBy(none, 10, null, RUNNING), false);
+  assert.equal(await releaseWatch.carriedBy(null, 10, MERGED, RUNNING), false);
+
+  const pool = stallPool(null, true);
+  assert.equal(await releaseWatch.carriedBy(pool, 10, MERGED, RUNNING), true);
+  const [q] = pool.queries;
+  // Both are merged changes of the app; the recorded one merged no later
+  // than the running one, in the Done column's own order.
+  assert.match(q.sql, /recorded\.app_id = \$1/);
+  assert.match(q.sql, /recorded\.status = 'merged' AND serving\.status = 'merged'/);
+  assert.match(q.sql, /LOWER\(recorded\.merge_commit_sha\) = LOWER\(\$2\)/);
+  assert.match(q.sql, /LOWER\(serving\.merge_commit_sha\) = LOWER\(\$3\)/);
+  assert.match(q.sql, /\(COALESCE\(recorded\.merged_at, recorded\.created_at\), recorded\.id\)\s+<= \(COALESCE\(serving\.merged_at, serving\.created_at\), serving\.id\)/);
+  assert.equal(await releaseWatch.carriedBy(stallPool(null, false), 10, MERGED, RUNNING), false);
 });

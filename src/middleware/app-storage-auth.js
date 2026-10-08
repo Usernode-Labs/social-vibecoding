@@ -94,6 +94,10 @@ function appStorageAuth(pool, config) {
     try {
       claims = platformJwt.verifyAppIdentityToken(userToken, { appId: app.id });
     } catch (err) {
+      // A guest (P15) has no account to store anything under.
+      if (platformJwt.orNull(() => platformJwt.verifyGuestToken(userToken, { appId: app.id }))) {
+        return res.status(401).json({ ok: false, code: 'account_required', message: 'Make an account to continue.' });
+      }
       return res.status(401).json({ ok: false, code: 'bad_user_token', message: err.message });
     }
     // Belt-and-braces on the identity shape (see app-llm-auth.js).

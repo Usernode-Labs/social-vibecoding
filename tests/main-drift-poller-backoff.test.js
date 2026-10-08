@@ -36,21 +36,24 @@ stub(ids.pool, { getPool: () => pool });
 
 let remoteSha = null;
 let fetchError = null;
+const readClient = {
+  rest: {
+    repos: {
+      getBranch: async () => {
+        if (fetchError) throw fetchError;
+        return { data: { commit: { sha: remoteSha } } };
+      },
+    },
+  },
+};
 stub(ids.github, {
   parseGithubUrl: (url) => {
     const m = /github\.com\/([^/]+)\/([^/.]+)/.exec(String(url || ''));
     return m ? { owner: m[1], repo: m[2] } : null;
   },
-  getOctokit: async () => ({
-    rest: {
-      repos: {
-        getBranch: async () => {
-          if (fetchError) throw fetchError;
-          return { data: { commit: { sha: remoteSha } } };
-        },
-      },
-    },
-  }),
+  getOctokit: async () => readClient,
+  // main's tip is a read (services/github.js getReadOctokit).
+  getReadOctokit: async () => readClient,
   isEnabled: () => true,
 });
 

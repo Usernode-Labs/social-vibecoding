@@ -362,13 +362,27 @@ const Notifications = {
     if (!notif) return;
     // Dedup on id — a reconnect might replay the same notification that
     // /api/notifications already returned.
+    //
+    // A row can also come back GROWN: a small group's discussion row folds
+    // the next message into itself (src/services/group-channel-notify.js),
+    // and an invite's moments fold the same way. It was already unread, so
+    // it is not a second unread notification, and when it is newer than it
+    // was it moves to the top, where the feed's newest-first order puts it.
     const existing = Notifications.items.findIndex((n) => n.id === notif.id);
+    const wasUnread = existing >= 0 && !Notifications.items[existing].readAt;
     if (existing >= 0) {
-      Notifications.items[existing] = notif;
+      const before = Date.parse(Notifications.items[existing].createdAt) || 0;
+      const after = Date.parse(notif.createdAt) || 0;
+      if (after > before) {
+        Notifications.items.splice(existing, 1);
+        Notifications.items.unshift(notif);
+      } else {
+        Notifications.items[existing] = notif;
+      }
     } else {
       Notifications.items.unshift(notif);
     }
-    if (!notif.readAt) Notifications.unread += 1;
+    if (!notif.readAt && !wasUnread) Notifications.unread += 1;
     // #161: a completion arriving while the user is away from the
     // browser tab sets the dedicated tab-title marker (the replacement
     // for the old streaming-driven "✅ Done"). If they're actively
@@ -747,6 +761,13 @@ const Notifications = {
     if ((key === 'friend_accept' || key === 'friend_decline') && item.kind === 'friend_request') {
       return Notifications._answerFriendRequest(item, key === 'friend_accept');
     }
+    // #3227: the kudos row's button opens the Kudos leaderboard, where the
+    // change it thanks is ranked; the row itself still opens the change.
+    if (key === 'kudos_board' && item.kind === 'kudos') {
+      Notifications._dismissSheetForNav();
+      window.location.hash = '#leaderboard/prs';
+      return true;
+    }
     const sessionId = Number(item.sessionId);
     if (key === 'still_yes' && Number.isFinite(sessionId) && sessionId > 0
         && window.AppView && typeof AppView.castVote === 'function') {
@@ -886,10 +907,11 @@ const Notifications = {
     // Admin → Limits (services/app-limit.js), which works on every deploy;
     // the session cap opens Health & status, whose capacity meter shows the
     // load behind it (MAX_GLOBAL_SESSIONS itself is deploy configuration).
+    // GitHub's budget opens Limits too, where its GitHub requests card is.
     if (item.kind === 'platform_limit') {
       Notifications._dismissSheetForNav();
       const limit = parsePlatformLimitDetail(item.detail);
-      const section = limit?.limit === 'apps' ? 'limits' : 'status';
+      const section = limit?.limit === 'sessions' ? 'status' : 'limits';
       if (typeof App !== 'undefined' && App.navigateToAdminConsole) {
         App.navigateToAdminConsole(section);
       } else {
@@ -981,6 +1003,28 @@ const Notifications = {
       }
       return;
     }
+    // #1374's daily digest of what waits for your approval. With one change
+    // the row names it (services/vote-digest.js puts its app and session on
+    // the row), and it opens that change with the other proposal kinds
+    // below. With several there is no app: it opens the Communities
+    // screen's Needs you, which lists every vote owed across your projects.
+    // It used to open nothing at all, so a tap (or a push) left you on
+    // whatever screen was showing (4 October).
+    // 5 October (Page Turners): a "ready to try" whose change went live says
+    // Live, and opens the app it is live in: there is nothing left to try or
+    // approve on the change page.
+    if (item.kind === 'change_ready' && item.sessionStatus === 'merged' && item.appSlug) {
+      Notifications._dismissSheetForNav();
+      if (typeof App !== 'undefined' && App.openAppTab) return App.openAppTab(item.appSlug, 'app');
+      window.location.hash = `#app/${encodeURIComponent(item.appSlug)}`;
+      return;
+    }
+    if (item.kind === 'vote_digest' && !item.appSlug) {
+      Notifications._dismissSheetForNav();
+      window.UsernodeReact?.workshop?.setTab?.('needs');
+      window.location.hash = '#communities';
+      return;
+    }
     if (item.appSlug) {
       // Every path below navigates (the topic sub-branch returns after
       // routing; an invalid topic ref falls through to the chat/proposals
@@ -1043,20 +1087,22 @@ const Notifications = {
       // card is.
       // #1374 adds three more that are ABOUT A PROPOSAL: it merged, somebody
       // voted on it, and the daily digest of what is waiting on you. The
-      // digest carries no sessionId, so it lands on the board — which is
-      // right, since its subject is "these several proposals" rather than
-      // one of them.
+      // digest reaches here only when it names its one change; a digest of
+      // several has no app and opens Needs you (above).
       // #1688: the re-confirm ask names one proposal and opens it; the
       // weekly card is a chat message, so its row opens the chat it is in.
+      // B7: "ready to try" opens the change, its preview one tap away.
       const proposalKinds = new Set([
         'pr_proposed', 'stale_pr', 'kudos', 'check_failed',
-        'pr_merged', 'proposal_vote', 'vote_digest', 'revision_recheck',
+        'pr_merged', 'proposal_vote', 'vote_digest', 'revision_recheck', 'change_ready',
       ]);
       const toProposals = proposalKinds.has(item.kind);
       // A new issue opens THAT ISSUE. `detail` is its number (the producer
       // has no issue column), and this row fell through to the app's general
       // chat, a screen that says nothing about the issue it announces.
-      const issueNumber = item.kind === 'issue_opened' && /^\d+$/.test(String(item.detail || ''))
+      // #3952: so does a mention in one, where the words that named you are.
+      const issueNumber = (item.kind === 'issue_opened' || item.kind === 'issue_mention')
+        && /^\d+$/.test(String(item.detail || ''))
         ? Number(item.detail) : null;
       if (!toProposals && !issueNumber) {
         // Everything else is about a message in the app's general chat — a
@@ -1371,6 +1417,12 @@ const Notifications = {
     Notifications._renderInvites();
   },
 
+  // An accept that has just brought them into the project answers with
+  // `welcome` (src/routes/collaborators.js): it opens "You're in" and its
+  // tour (features/first-session), the welcome an invite link ends on
+  // (App._followInvite), which ends in the group's chat with the inviter's
+  // note waiting and the reply chips under it. Without one, or once that
+  // welcome has been shown for this project, the chat opens as before.
   async _acceptInvite(appId, slug, kind) {
     const base = kind === 'approver' ? '/api/approver-invites' : '/api/invites';
     try {
@@ -1395,11 +1447,24 @@ const Notifications = {
         // presented over the screen this opens (#1329). The people you just
         // joined are in the app's discussion, which is a thread of Messages.
         Notifications._dismissSheetForNav();
+        if (kind !== 'approver' && Notifications._welcome(data.welcome, target)) return;
         Notifications._openAppDiscussion(target);
       }
     } catch (err) {
       console.warn('[notifications] acceptInvite failed', err);
     }
+  },
+
+  // "You're in" for an accepted invite, through the bridge the invite link
+  // uses (window.UsernodeReact.firstSession.welcome). True when it shows.
+  _welcome(welcome, slug) {
+    const fs = window.UsernodeReact && window.UsernodeReact.firstSession;
+    if (!welcome || typeof welcome !== 'object' || !fs || typeof fs.welcome !== 'function') return false;
+    const shown = fs.welcome({ ...welcome, slug: welcome.slug || slug, name: welcome.name || slug });
+    // The tour opens on Home, where the challenge this join counted is read
+    // from a minute's cache (as after an invite link, App._followInvite).
+    if (shown) window.HomePanels?.ensureLoaded?.({ force: true });
+    return !!shown;
   },
 
   async _declineInvite(appId, kind) {
@@ -1592,6 +1657,13 @@ const CONVERSATION_NOTIF_KINDS = new Set([
   'conversation_reaction',
   // #2387: a reply in a thread the viewer started or replied in.
   'conversation_thread_reply',
+  // WP-E: the Homeroom bot's message at one of its build moments
+  // (src/services/notifications.js); its own kinds only so the push
+  // category can be its own. It opens the bot's chat like any message.
+  'build_ready',
+  'build_needs_you',
+  'build_stopped',
+  'build_live',
 ]);
 
 // #2387: where a conversation row opens. A thread alert opens its thread; a
@@ -1619,7 +1691,7 @@ function conversationNotificationHref(n) {
 const FRIEND_NOTIF_KINDS = new Set(['friend_request', 'friend_accept']);
 
 // services/platform-limit-alerts.js detailToken(): "<limit>_<level>:<used>:<cap>".
-const PLATFORM_LIMIT_DETAIL_RE = /^(apps|sessions)_(warn|full):(\d{1,7}):(\d{1,7})$/;
+const PLATFORM_LIMIT_DETAIL_RE = /^(apps|sessions|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/;
 
 function parsePlatformLimitDetail(detail) {
   const m = PLATFORM_LIMIT_DETAIL_RE.exec(String(detail || ''));
@@ -1712,16 +1784,28 @@ function savedView(s) {
 // their own accept/decline endpoints. The descriptor carries the endpoint
 // discriminator (`kind`) as well as the copy, because the component's
 // buttons and its swipe tray both need it.
+//
+// A collaborator invite into a private project is an invitation to JOIN it
+// (`joins`, src/services/notifications.js listPendingInvites): being invited
+// in is how anybody joins a group. It reads the way an invite link's page
+// does, with the inviter's note and how many are in it. "Invited you to
+// build" is left for a project anyone can use but only its invited people
+// build. First-session run-through, 5 October 2026: a group's invite by
+// username said "invited you to build", with no note and no headcount.
 function inviteView(inv) {
   const isApprover = inv.kind === 'approver';
+  const count = Number(inv.memberCount) || 0;
   return {
     appId: inv.appId,
     slug: inv.appSlug || '',
     kind: isApprover ? 'approver' : 'collab',
     icon: isApprover ? '🗳️' : '✉️',
     who: inv.invitedBy ? `@${inv.invitedBy}` : 'Someone',
-    verb: isApprover ? 'invited you to be an approver on' : 'invited you to collaborate on',
+    verb: isApprover ? 'asked you to help approve changes to'
+      : inv.joins ? 'invited you to join' : 'invited you to build',
     appName: inv.appName || inv.appSlug || 'an app',
+    note: !isApprover && inv.note ? String(inv.note) : '',
+    members: !isApprover && count ? `${count} ${count === 1 ? 'person is' : 'people are'} in it` : '',
     ...stampFields(inv.createdAt),
   };
 }
@@ -1735,18 +1819,18 @@ function inviteView(inv) {
 function completionAlertInfo(n) {
   const appName = n.appName || 'your app';
   if (n.kind === 'auto_solve_done') {
-    const issue = n.headlessIssueNumber ? `issue #${n.headlessIssueNumber}` : 'an issue';
+    const issue = n.headlessIssueNumber ? `request #${n.headlessIssueNumber}` : 'a request';
     let title;
     let body;
     if (n.detail === 'failed') {
-      title = 'Proposal failed';
-      body = `Proposal for ${issue} in ${appName} failed. You can retry`;
+      title = 'Change failed';
+      body = `The change for ${issue} in ${appName} failed. You can retry`;
     } else if (n.detail === 'question') {
-      title = 'Proposal has a question';
-      body = `Proposal for ${issue} in ${appName} is waiting for your input`;
+      title = 'Change has a question';
+      body = `The change for ${issue} in ${appName} is waiting for your input`;
     } else {
-      title = 'Proposal ready';
-      body = `Proposal for ${issue} in ${appName} is ready`;
+      title = 'Change ready to try';
+      body = `The change for ${issue} in ${appName} is ready`;
     }
     return {
       kind: n.kind,
@@ -1790,8 +1874,8 @@ function completionAlertInfo(n) {
     appSlug: n.appSlug || null,
     sessionId: n.sessionId || null,
     headlessIssueNumber: null,
-    title: 'Dev session finished',
-    body: `Your dev session in ${appName} finished: ${label}`,
+    title: 'Agent session finished',
+    body: `Your agent session in ${appName} finished: ${label}`,
   };
 }
 
@@ -1820,12 +1904,15 @@ function collapseConversationRuns(items) {
   for (const n of items) {
     const prev = runs[runs.length - 1];
     const id = n && n.conversationId != null ? Number(n.conversationId) : null;
+    // B4: the bot's moments are each their own news ("I have a question",
+    // then "is live"), so none of them folds into a run or takes one in.
+    const moment = !!(n && /^hrbot:[a-z_]{1,20}:/.test(String(n.detail || '')));
     if (prev && id !== null && prev.conversationId === id
-        && prev.read === !!n.readAt) {
+        && prev.read === !!n.readAt && !moment && !prev.moment) {
       prev.count += 1;
       continue;
     }
-    runs.push({ item: n, conversationId: id, read: !!(n && n.readAt), count: 1 });
+    runs.push({ item: n, conversationId: id, read: !!(n && n.readAt), count: 1, moment });
   }
   return runs;
 }
@@ -1916,6 +2003,51 @@ const AGENT_NOTIF_KINDS = new Set([
 // session — has no actor and no `by` either.
 // The two lines of a row's own copy. Spread into the view — `...headline(…)`
 // — rather than assigned to one field, because it fills two.
+// B4: the Homeroom bot's four moments, and its answer to what somebody just
+// wrote to it, as notifications.detail carries them ("hrbot:<moment>:<app>").
+// The same words as the push (services/mobile-push-policy.js botMomentCopy;
+// tests/homeroom-bot-notify.test.js holds the two together), under the bot's
+// name instead of "Replied" over "@homeroom_bot".
+const BOT_DETAIL_RE = /^hrbot:([a-z_]{1,20}):(.*)$/;
+function plainMarkdown(value) {
+  return String(value || '')
+    .replace(/!?\[([^\]\n]*)\]\([^)\s]*\)/g, '$1')
+    .replace(/(\*\*|__|~~)(?=\S)([\s\S]*?\S)\1/g, '$2')
+    .replace(/`+([^`\n]*)`+/g, '$1')
+    .replace(/^[ \t]{0,3}(?:#{1,6}[ \t]+|>[ \t]?)/gm, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+function botMomentLine(detail, message) {
+  const m = BOT_DETAIL_RE.exec(typeof detail === 'string' ? detail : '');
+  if (!m) return null;
+  const app = m[2].replace(/\s+/g, ' ').trim();
+  const words = {
+    question: app ? `${app}: I have a question` : 'I have a question',
+    ready: app ? `${app} is ready to try` : 'Your change is ready to try',
+    ready_group: app ? `Your change to ${app} is ready to try` : 'Your change is ready to try',
+    ready_broken: app ? `${app} is built, but not everything works yet` : 'Your change is built, but not everything works yet',
+    stopped: app ? `${app}: your change stopped. I said why in our chat` : 'Your change stopped. I said why in our chat',
+    // 5 Oct 2026: what the DM it opens ends with (homeroom-bot-dm.js dmText
+    // 'build_failed'), whose why is there. A reply starts it again; "A person
+    // can pick it up" was a dead end for the person it was for.
+    stopped_build: app ? `${app}: I couldn't finish building it. Reply and I'll try again` : 'I couldn\'t finish building it. Reply and I\'ll try again',
+    stopped_blocked: app ? `${app}: I can't build it as written. Tell me more` : 'I can\'t build it as written. Tell me more',
+    stopped_person: app ? `${app}: this needs a person to decide` : 'This needs a person to decide',
+    stopped_empty: app ? `${app}: I couldn't find anything to build. Tell me more` : 'I couldn\'t find anything to build. Tell me more',
+    stopped_first: app ? `${app}: I couldn't start building it. You can still post a request` : 'I couldn\'t start building it',
+    stopped_preview: app ? `${app}: the preview didn't start. I'm trying again` : 'The preview didn\'t start. I\'m trying again',
+    stopped_look: app ? `${app}: it's built, but it needs a look before you can try it` : 'It\'s built, but it needs a look before you can try it',
+    held: app ? `${app}: I'll start it on Monday` : 'I\'ve paused until Monday',
+    live: app ? `Your change to ${app} is live` : 'Your change is live',
+    live_first: app ? `${app} is live` : 'Your project is live',
+    live_soon: app ? `Your change to ${app} is going live` : 'Your change is going live',
+    live_first_soon: app ? `${app} is going live` : 'Your project is going live',
+    reply: plainMarkdown(message).slice(0, 140),
+  }[m[1]];
+  return words || null;
+}
+
 function headline(label, subject) {
   return {
     label,
@@ -2009,6 +2141,11 @@ function rowView(n) {
       conversation_reply: headline('Replied', conversation),
       conversation_thread_reply: headline('Replied in thread', conversation),
       conversation_reaction: headline('Reacted', conversation),
+      // WP-E: a build moment without its detail (botMomentLine words the rest).
+      build_ready: headline('Homeroom bot', 'Your change is ready to try'),
+      build_needs_you: headline('Homeroom bot', 'I have a question'),
+      build_stopped: headline('Homeroom bot', 'Your change stopped. I said why in our chat'),
+      build_live: headline('Homeroom bot', 'Your change is live'),
     }[n.kind];
     const icons = {
       conversation_invite: '✉️',
@@ -2017,7 +2154,28 @@ function rowView(n) {
       conversation_reply: '↩️',
       conversation_thread_reply: '🧵',
       conversation_reaction: n.detail || '❤️',
+      build_ready: '💬',
+      build_needs_you: '💬',
+      build_stopped: '💬',
+      build_live: '💬',
     };
+    // B4: one of the bot's moments says what happened, in its own words,
+    // from "Homeroom bot". The name leads, so the meta line drops the
+    // "by @homeroom_bot" that would say it twice.
+    const bot = n.kind === 'conversation_reaction' ? null : botMomentLine(n.detail, n.messageContent);
+    if (bot) {
+      return {
+        ...base,
+        wrap: true,
+        icon: icons[n.kind],
+        by: null,
+        conversation: true,
+        conversationId: n.conversationId != null ? Number(n.conversationId) : null,
+        appLine: 'Messages',
+        botMoment: true,
+        ...headline('Homeroom bot', bot),
+      };
+    }
     return {
       ...base,
       wrap: true,
@@ -2136,8 +2294,27 @@ function rowView(n) {
       return { ...base, appLine: 'Admin', wrap: true, icon: '\u26A0\uFE0F',
         ...headline('Platform limit', 'the server is nearing one of its limits') };
     }
-    const noun = limit.limit === 'apps' ? 'apps' : 'coding sessions';
     const full = limit.level === 'full';
+    // GitHub's hourly budget (services/github-budget.js): the bot token's,
+    // or the GitHub App's. The card under Admin → Limits has the figures.
+    if (limit.limit === 'github' || limit.limit === 'github_app') {
+      const app = limit.limit === 'github_app';
+      const noun = app ? 'GitHub App requests' : 'GitHub requests';
+      return {
+        ...base,
+        appLine: 'Admin',
+        wrap: true,
+        icon: full ? '\u{1F6A8}' : '\u26A0\uFE0F',
+        label: full ? `${noun} used up` : `${noun} running low`,
+        segments: [
+          { t: 'strong', v: `${limit.used} of ${limit.cap} ${noun} used this hour.` },
+          { t: 'text', v: app ? ' It resets within the hour.'
+            : (full ? ' Work that needs GitHub fails until the hour resets.'
+              : ' Background work waits so people\'s work keeps the rest.') },
+        ],
+      };
+    }
+    const noun = limit.limit === 'apps' ? 'apps' : 'coding sessions';
     const consequence = limit.limit === 'apps'
       ? (full ? ' New apps are refused until the app limit is raised in Admin \u2192 Limits or an app is removed.'
         : ' Raise the app limit in Admin \u2192 Limits before new apps are refused.')
@@ -2158,14 +2335,23 @@ function rowView(n) {
     };
   }
 
-  const prLabel = n.prTitle || (n.prNumber ? `PR #${n.prNumber}` : null);
+  const prLabel = n.prTitle || null;
 
+  // #3227: a first kudos arrived with nothing saying what it was. The note
+  // under the subject says it in one breath: a thank-you, that it stays,
+  // and where it counts. The weekly allowance is read from the budget the
+  // Kudos badge already fetched (the leaderboard subtitle does the same, so
+  // the two never quote different numbers); the button opens the board.
   if (n.kind === 'kudos') {
+    const limit = (typeof window !== 'undefined' && window.Kudos?.Budget?.state?.limit) || 20;
     return {
       ...base,
       icon: '\u{1F44F}',
       by: n.sourceUsername || null,
-      ...headline('Kudos', prLabel || 'your PR'),
+      ...headline('Kudos', prLabel || 'your change'),
+      note: `A thank-you from another member. Kudos you get don't expire; `
+        + `they count on the Kudos leaderboard. Everyone has ${limit} a week to give.`,
+      actions: [{ key: 'kudos_board', label: 'Leaderboard' }],
     };
   }
 
@@ -2186,7 +2372,7 @@ function rowView(n) {
     return {
       ...base,
       icon: '⏳',
-      ...headline('Needs votes', prLabel || n.sessionTitle || 'your PR'),
+      ...headline('Needs votes', prLabel || n.sessionTitle || 'your change'),
     };
   }
 
@@ -2196,7 +2382,7 @@ function rowView(n) {
     return {
       ...base,
       icon: '⚠️',
-      ...headline('Checks blocked', prLabel || n.sessionTitle || 'your proposal'),
+      ...headline('Testing couldn\'t run', prLabel || n.sessionTitle || 'your change'),
     };
   }
 
@@ -2209,7 +2395,32 @@ function rowView(n) {
       ...base,
       icon: '\u{1F5F3}️',
       by: n.sourceUsername || null,
-      ...headline('New proposal', prLabel || 'a PR'),
+      ...headline('New change', prLabel || 'a change'),
+    };
+  }
+
+  // B7: a change Homeroom bot built for somebody is ready to try, and it
+  // needs this reader's Yes. Who asked for it is the row's `by`.
+  // 5 October (Page Turners): once it is decided the row stops asking. It
+  // says what became of it, read live off the change (`sessionStatus`,
+  // services/notifications.js): Live (a tap opens the app), Going live, or
+  // Closed. A live one was put back unread for whoever had not said yes.
+  if (n.kind === 'change_ready') {
+    const subject = prLabel || n.sessionTitle || 'a change';
+    if (n.sessionStatus === 'merged') {
+      return { ...base, icon: '\u{1F389}', by: n.sourceUsername || null, ...headline('Live', subject) };
+    }
+    if (n.sessionStatus === 'merging') {
+      return { ...base, icon: '\u{1F680}', by: n.sourceUsername || null, ...headline('Going live', subject) };
+    }
+    if (n.sessionStatus === 'archived') {
+      return { ...base, icon: '\u{1F5C2}\uFE0F', by: n.sourceUsername || null, ...headline('Closed', subject) };
+    }
+    return {
+      ...base,
+      icon: '\u{1F440}',
+      by: n.sourceUsername || null,
+      ...headline('Ready to try', subject),
     };
   }
 
@@ -2224,8 +2435,8 @@ function rowView(n) {
   // the change those are the same event with very different meanings.
   if (n.kind === 'pr_merged') {
     const head = headline(
-      n.detail === 'forced' ? 'Merged by an admin' : 'Merged',
-      prLabel || n.sessionTitle || 'your proposal',
+      n.detail === 'forced' ? 'Made live by an admin' : 'Live',
+      prLabel || n.sessionTitle || 'your change',
     );
     // #1688: on a merge the vote carried, `detail` names who backed and
     // shaped it. An admin override's marker is not a sentence to show.
@@ -2244,7 +2455,7 @@ function rowView(n) {
   if (n.kind === 'proposal_vote') {
     const head = headline(
       n.detail === 'no' ? 'Voted no' : 'Voted yes',
-      prLabel || n.sessionTitle || 'your proposal',
+      prLabel || n.sessionTitle || 'your change',
     );
     // #1688: the voter's own line rides after the subject, quoted — the
     // proposer's first sight of an objection is the sentence, not the thumb.
@@ -2269,7 +2480,7 @@ function rowView(n) {
       ...base,
       by: n.sourceUsername || null,
       icon: '\u{1F501}',
-      ...headline('Still good?', prLabel || n.sessionTitle || 'a proposal you backed'),
+      ...headline('Still good?', prLabel || n.sessionTitle || 'a change you backed'),
       actions: n.readAt ? [] : [{ key: 'still_yes', label: 'Still yes', primary: true }],
     };
   }
@@ -2285,7 +2496,7 @@ function rowView(n) {
       ? 'Nothing landed this week'
       : `${merged} ${merged === 1 ? 'change' : 'changes'} went live`;
     const waiting = open
-      ? `${open} ${open === 1 ? 'proposal is' : 'proposals are'} waiting for eyes`
+      ? `${open} ${open === 1 ? 'change is' : 'changes are'} waiting for approval`
       : '';
     return {
       ...base,
@@ -2303,7 +2514,18 @@ function rowView(n) {
       ...base,
       by: n.sourceUsername || null,
       icon: '\u{1F4DD}',
-      ...headline('New issue', n.detail ? `#${n.detail}` : 'filed'),
+      ...headline('New request', n.detail ? `#${n.detail}` : 'filed'),
+    };
+  }
+
+  // #3952: somebody named you with @ in a request they filed. Said the way a
+  // chat mention is, with the request in place of the message: its number,
+  // since `detail` carries nothing else.
+  if (n.kind === 'issue_mention') {
+    return {
+      ...base,
+      by: n.sourceUsername || null,
+      ...headline('Mentioned you', /^\d+$/.test(String(n.detail || '')) ? `request #${n.detail}` : 'a request'),
     };
   }
 
@@ -2346,8 +2568,8 @@ function rowView(n) {
     // release_stalled: the platform's own app, a merged commit that has not
     // become the running release (services/release-watch.js).
     const APP_HEALTH_COPY = {
-      deploy_failed: 'a deploy failed',
-      release_stalled: 'a merged change has not gone live',
+      deploy_failed: 'an update did not go live',
+      release_stalled: 'an approved change has not gone live yet',
     };
     return {
       ...base,
@@ -2360,14 +2582,23 @@ function rowView(n) {
   // The daily digest, and the counterweight to `new_proposals` defaulting
   // off. `detail` is the COUNT, so the subject is a plural-aware phrase
   // rather than a bare number nobody can parse without the label.
+  // 5 October (Page Turners): it counts what STILL waits (`digestWaiting`,
+  // read live, services/notifications.js), so a change that went live since
+  // stops being one of them; and when nothing does, the row says so rather
+  // than "0 changes". Without the live count (an older server), the count it
+  // was sent with.
   if (n.kind === 'vote_digest') {
-    const count = Number(n.detail) || 0;
+    const count = Number.isFinite(Number(n.digestWaiting)) && n.digestWaiting != null
+      ? Number(n.digestWaiting) : (Number(n.detail) || 0);
+    if (count === 0) {
+      return { ...base, icon: '\u{1F5F3}\uFE0F', ...headline('Nothing is waiting for your approval now', null) };
+    }
     return {
       ...base,
       icon: '\u{1F5F3}\uFE0F',
       ...headline(
-        'Waiting on your vote',
-        count === 1 ? '1 proposal' : `${count} proposals`,
+        'Waiting for your approval',
+        count === 1 ? '1 change' : `${count} changes`,
       ),
     };
   }
@@ -2445,15 +2676,15 @@ function rowView(n) {
   // label says so.
   if (n.kind === 'auto_solve_done') {
     const failed = n.detail === 'failed';
-    const label = failed ? 'Proposal failed'
-      : (n.detail === 'question' ? 'Proposal has a question' : 'Proposal ready');
+    const label = failed ? 'Change failed'
+      : (n.detail === 'question' ? 'Change has a question' : 'Change ready to try');
     return {
       ...base,
       wrap: true,
       icon: failed ? '⚠️' : '\u{1F916}',
       ...headline(
         label,
-        n.headlessIssueNumber ? `issue #${n.headlessIssueNumber}` : 'an issue',
+        n.headlessIssueNumber ? `request #${n.headlessIssueNumber}` : 'a request',
       ),
     };
   }
@@ -2474,19 +2705,85 @@ function rowView(n) {
     };
   }
 
+  // A person's message in a small private group's discussion
+  // (src/services/group-channel-notify.js). One row per discussion: the
+  // messages that arrive before you read it fold in, `detail` counting them
+  // and the newest one its message and author. Headed by the person and the
+  // project, as a group chat's banner is, over what they said; the meta line
+  // names the surface (Discussion), as a conversation row's names Messages,
+  // so the project's name is not said twice.
+  // 5 October (Page Turners): a message Homeroom bot filed as a request
+  // (`requestNumber`, read live, services/notifications.js) is somebody
+  // asking for a change, as a joiner's first message says (below). Several
+  // messages folded into one row stay messages.
+  if (n.kind === 'channel_message') {
+    const count = /^\d{1,6}$/.test(String(n.detail || '')) ? Number(n.detail) : 1;
+    const place = n.appName || 'the discussion';
+    const snippet = (n.messageContent || '').slice(0, 140);
+    const author = n.sourceUsername ? `@${n.sourceUsername}` : 'Someone';
+    const asked = count === 1 && n.requestNumber != null;
+    return {
+      ...base,
+      wrap: true,
+      icon: asked ? '\u{1F4A1}' : '💬',
+      by: null,
+      appLine: 'Discussion',
+      ...(count > 1
+        ? headline(`${count} new messages in ${place}`, snippet ? `${author}: ${snippet}` : author)
+        : headline(asked ? `${author} asked for a change in ${place}` : `${author} in ${place}`, snippet || null)),
+    };
+  }
+
+  // WP-E: what an invite link brought back to its maker
+  // (src/services/invite-activity.js). A day's moments of one kind fold into
+  // one row, `detail` counting them, the newest person its `by`. An open is
+  // never anybody's name.
+  if (n.kind === 'invite_opened' || n.kind === 'member_joined' || n.kind === 'first_message') {
+    const count = /^\d{1,6}$/.test(String(n.detail || '')) ? Number(n.detail) : 1;
+    const more = count > 1 ? `, with ${count - 1} ${count === 2 ? 'other' : 'others'}` : '';
+    if (n.kind === 'invite_opened') {
+      return {
+        ...base,
+        wrap: true,
+        icon: '\u{1F517}',
+        by: null,
+        ...headline(count > 1 ? `${count} people opened your invite` : 'Someone opened your invite', null),
+      };
+    }
+    // 5 October (Page Turners): a first message is often what they want from
+    // the app, and when Homeroom bot filed it as a request (`requestNumber`,
+    // read live: it is filed seconds, or a "Suggest it", after the message
+    // rang) it is called that. Several people's hellos folded into one row
+    // stay hellos.
+    const asked = n.kind === 'first_message' && count === 1 && n.requestNumber != null;
+    return {
+      ...base,
+      wrap: true,
+      icon: asked ? '\u{1F4A1}' : '\u{1F44B}',
+      by: n.sourceUsername || null,
+      ...(n.kind === 'member_joined'
+        ? headline(`Joined through your invite${more}`, null)
+        : headline(asked ? 'Asked for a change' : `Said hi${more}`, (n.messageContent || '').slice(0, 140))),
+    };
+  }
+
   // Collab-invite history rows (the actionable Accept/Decline buttons live
   // ONLY in the pinned Invites section, driven by pendingInvites — once
   // resolved this is just a plain history row). The app's name is the meta
-  // line's job, so the label is the whole headline.
+  // line's job, so the label is the whole headline. An invite into a private
+  // project is to join it (`detail: 'join'`, src/services/collab-invites.js).
+  // 5 October (Page Turners): an invite by username accepted is somebody
+  // joining through your invite, in the words a link's join uses
+  // (member_joined above), not a second phrase for the same thing.
   if (n.kind === 'collab_invite' || n.kind === 'collab_invite_accepted'
     || n.kind === 'approver_invite' || n.kind === 'approver_invite_accepted') {
     const label = n.kind === 'collab_invite'
-      ? 'Invited you to collaborate'
+      ? (n.detail === 'join' ? 'Invited you to join' : 'Invited you to build with them')
       : n.kind === 'collab_invite_accepted'
-        ? 'Accepted your collaborator invite'
+        ? 'Joined through your invite'
         : n.kind === 'approver_invite'
-          ? 'Invited you to be an approver'
-          : 'Accepted your approver invite';
+          ? 'Asked you to help approve changes'
+          : 'Can approve changes now';
     return {
       ...base,
       mb: false,
@@ -2539,6 +2836,8 @@ function stampFields(ts) {
 // is what keeps ./notifications-list.tsx presentational, and it is what let the
 // list be lifted wholesale into the hamburger without this module noticing.
 Notifications._rowView = rowView;
+// B4: the sheet's rows, folded, for tests (a bot moment never folds).
+Notifications._screenViews = screenViews;
 
 // Published exactly where the classic <script> published it: at module
 // evaluation, which for the React entry is still before DOMContentLoaded. The

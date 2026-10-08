@@ -302,6 +302,43 @@ async function retire(pool, { userId, confirmation }, { actorId, config = {} } =
   };
 }
 
+// "You're in" (frontend/src/features/first-session) tells an account that a
+// link's own sign-up just made what Homeroom is, and an account that was
+// already there only where it is. A real account is new when it was made
+// within the hour before it joined (community-invites.js standing,
+// collab-invites.js welcomeFor). A test account is made ahead of time by an
+// admin, so its created_at says nothing about when its first run began, and
+// the first-session run-through of 5 October 2026 met the welcome for an
+// account that was already there. Its first run begins at its first sign-in,
+// the way a real one begins at its sign-up: the oldest of its sessions on
+// record, which is the only record a sign-in leaves (list() reads the newest
+// the same way). Only a test account is read here, so nothing about a real
+// account changes.
+const FIRST_RUN_SQL = `
+  SELECT MIN(s.created_at) >= $2::timestamptz - INTERVAL '1 hour' AS first_run
+    FROM users u
+    JOIN sessions s ON s.user_id = u.id
+   WHERE u.id = $1 AND u.test_account_created_at IS NOT NULL`;
+
+/**
+ * Whether `userId` is a test account on its first run at `at` (default now):
+ * signed in for the first time within the hour before it. False for every
+ * real account, for a test account first signed in earlier, and for a read
+ * that fails. Never throws: it only decides which welcome is shown.
+ */
+async function onFirstRun(db, userId, at = new Date()) {
+  const id = Number(userId);
+  const when = at instanceof Date ? at : new Date(at);
+  if (!Number.isSafeInteger(id) || id <= 0 || Number.isNaN(when.getTime())) return false;
+  try {
+    const { rows } = await db.query(FIRST_RUN_SQL, [id, when.toISOString()]);
+    return rows[0]?.first_run === true;
+  } catch (err) {
+    log.warn('test-accounts', 'Could not read whether a test account is on its first run', { userId: id, err: err.message });
+    return false;
+  }
+}
+
 async function isOnBotDmList(pool, username) {
   const { rows } = await pool.query(
     "SELECT value FROM platform_settings WHERE key = 'homeroom_bot_dm_users'"
@@ -314,13 +351,160 @@ async function isOnBotDmList(pool, username) {
   }
 }
 
+// ── One-time phone sign-ins ─────────────────────────────────────────────
+//
+// The invite's Join sheet signs a newcomer up with a phone, so a first run
+// through it needs a number that signs in. On a local stack PHONE_TEST_CODE
+// does that (services/firebase-phone-auth.js, TEST NUMBERS); it is refused in
+// production. Here a full admin mints ONE sign-in instead, in any
+// environment: a fictional test number and a random six-digit code that
+// works once, within PHONE_SIGN_IN_TTL_MS and PHONE_SIGN_IN_TRIES. Nothing
+// standing lives on the server to leak or guess; the code is returned once
+// and only its bcrypt hash is kept. The account the code makes is a test
+// account (firebase-phone-auth.js markTestAccount), counted against
+// MAX_LIVE from the moment the code is minted.
+
+const PHONE_SIGN_IN_TTL_MS = 30 * 60 * 1000;
+const PHONE_SIGN_IN_TRIES = 5;
+// Numbers are picked from +1 415 555 0100–0199 when the admin names none.
+const PHONE_AREA = '415';
+const PHONE_CODE_COST = 10;
+
+function testNumbersFor(area = PHONE_AREA) {
+  const out = [];
+  for (let n = 0; n < 100; n++) out.push(`+1${area}55501${String(n).padStart(2, '0')}`);
+  return out;
+}
+
+/**
+ * Mint one sign-in as full admin `actorId`. `phoneNumber` is optional: a
+ * test number to use (one a live test account holds signs in to that
+ * account), or a free one is picked. Returns { phoneNumber, code, expiresAt,
+ * signsInTo } where signsInTo is the username the number already belongs to,
+ * or null for a brand-new account. The code is in nothing else.
+ */
+async function mintPhoneSignIn(pool, { phoneNumber, actorId, config = {} } = {}) {
+  if (!Number.isSafeInteger(actorId) || actorId <= 0) fail(403, 'forbidden', 'A full administrator is required.');
+  const phoneAuth = require('./firebase-phone-auth');
+  if (!phoneAuth.offered(config)) {
+    fail(409, 'phone_sign_in_off', 'Phone sign-in is not set up on this server, so a test number has nothing to sign in to.');
+  }
+  let wanted = null;
+  if (phoneNumber != null && String(phoneNumber).trim() !== '') {
+    wanted = phoneAuth.normalizePhone(String(phoneNumber));
+    if (!phoneAuth.isTestNumber(wanted)) {
+      fail(400, 'not_test_number', 'Use a test number: +1, any area code, then 555 0100 to 0199. Or leave it out for a free one.', { field: 'phoneNumber' });
+    }
+  }
+  const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+  // Hashed before the transaction: bcrypt must not run while locks are held.
+  const hash = await bcrypt.hash(code, PHONE_CODE_COST);
+
+  const minted = await withTransaction(pool, async (client) => {
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [CAP_LOCK_KEY]);
+    let signsInTo = null;
+    let number = wanted;
+    if (number) {
+      const { rows: [holder] } = await client.query(
+        `SELECT u.username, u.test_account_created_at IS NOT NULL AS test_account
+           FROM user_phone_identities i JOIN users u ON u.id = i.user_id
+          WHERE i.phone_e164 = $1`,
+        [number]
+      );
+      if (holder && !holder.test_account) {
+        fail(409, 'number_in_use', 'That number belongs to an account that is not a test account, so it cannot be signed in to here.');
+      }
+      signsInTo = holder ? holder.username : null;
+      // One live code per number: a new one replaces the last.
+      await client.query(
+        `UPDATE test_phone_sign_ins SET expires_at = NOW()
+          WHERE phone_e164 = $1 AND used_at IS NULL AND expires_at > NOW()`,
+        [number]
+      );
+    } else {
+      const { rows: taken } = await client.query(
+        `SELECT phone_e164 FROM user_phone_identities WHERE phone_e164 = ANY($1::varchar[])
+          UNION
+         SELECT phone_e164 FROM test_phone_sign_ins
+          WHERE phone_e164 = ANY($1::varchar[]) AND used_at IS NULL AND expires_at > NOW()`,
+        [testNumbersFor()]
+      );
+      const held = new Set(taken.map((r) => r.phone_e164));
+      const free = testNumbersFor().filter((n) => !held.has(n));
+      if (!free.length) {
+        fail(409, 'no_free_number', 'Every +1 415 555 01xx number is in use. Retire a test account, or name another area code\'s 555 01xx number.');
+      }
+      number = free[crypto.randomInt(0, free.length)];
+    }
+    if (!signsInTo) {
+      // A new account will count against the cap, so a live code does too.
+      const { rows: [{ n }] } = await client.query(
+        `SELECT (SELECT COUNT(*) FROM users
+                  WHERE test_account_created_at IS NOT NULL AND anonymised_at IS NULL)
+              + (SELECT COUNT(*) FROM test_phone_sign_ins
+                  WHERE used_at IS NULL AND expires_at > NOW()) AS n`
+      );
+      if (Number(n) >= MAX_LIVE) {
+        fail(429, 'at_capacity', `There are already ${n} live test accounts and unused sign-ins, the most allowed at once. `
+          + 'Retire one you have finished with (list_test_accounts shows them), then try again.', { live: Number(n), max: MAX_LIVE });
+      }
+    }
+    const { rows: [row] } = await client.query(
+      `INSERT INTO test_phone_sign_ins (phone_e164, code_hash, created_by, expires_at)
+       VALUES ($1, $2, $3, NOW() + make_interval(secs => $4))
+       RETURNING id, expires_at`,
+      [number, hash, actorId, PHONE_SIGN_IN_TTL_MS / 1000]
+    );
+    return { id: row.id, phoneNumber: number, expiresAt: row.expires_at, signsInTo };
+  });
+
+  log.info('test-accounts', 'Test phone sign-in minted', {
+    id: minted.id, by: actorId, phone: `…${minted.phoneNumber.slice(-4)}`, existing: !!minted.signsInTo,
+  });
+  return {
+    phoneNumber: minted.phoneNumber,
+    code,
+    expiresAt: new Date(minted.expiresAt).toISOString(),
+    signsInTo: minted.signsInTo,
+  };
+}
+
+/**
+ * Spend the live code for `phoneNumber` if `code` is it. Every try counts,
+ * right or wrong, and a code is gone after PHONE_SIGN_IN_TRIES. Returns
+ * { id, createdBy } for the sign-in it spent, or null.
+ */
+async function redeemPhoneSignIn(pool, phoneNumber, code) {
+  if (typeof phoneNumber !== 'string' || !/^[0-9]{6}$/.test(String(code || ''))) return null;
+  const { rows } = await pool.query(
+    `UPDATE test_phone_sign_ins SET attempts = attempts + 1
+      WHERE phone_e164 = $1 AND used_at IS NULL AND expires_at > NOW() AND attempts < $2
+      RETURNING id, code_hash, created_by`,
+    [phoneNumber, PHONE_SIGN_IN_TRIES]
+  );
+  for (const row of rows) {
+    if (!(await bcrypt.compare(String(code), row.code_hash))) continue;
+    const { rows: spent } = await pool.query(
+      'UPDATE test_phone_sign_ins SET used_at = NOW() WHERE id = $1 AND used_at IS NULL RETURNING id',
+      [row.id]
+    );
+    if (spent.length) return { id: Number(row.id), createdBy: row.created_by == null ? null : Number(row.created_by) };
+  }
+  return null;
+}
+
 module.exports = {
   MAX_LIVE,
   NOTE_MAX,
   RETIRE_CONFIRMATION,
+  PHONE_SIGN_IN_TTL_MS,
+  PHONE_SIGN_IN_TRIES,
   TestAccountError,
   create,
   list,
   retire,
   generatePassword,
+  onFirstRun,
+  mintPhoneSignIn,
+  redeemPhoneSignIn,
 };

@@ -30,6 +30,9 @@
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
+const firstSession = require('../services/first-session');
+const signInProviders = require('../services/sign-in-providers');
+const phoneAuth = require('../services/firebase-phone-auth');
 const { clientIp } = require('../services/client-ip');
 const {
   waitlistJoinLimiter,
@@ -178,11 +181,50 @@ function publicApiRoutes(config) {
   // lives in this closure and that service deliberately takes none. The
   // spread makes a fresh object: publicOptions() returns REFERENCES to
   // the module's option constants, which must never be mutated.
-  router.get('/api/public/waitlist/options', (_req, res) => {
+  //
+  // `story_landing` is the first session's switch (services/first-session.js):
+  // true, the landing tells the story and asks people to get started rather
+  // than pointing at the waitlist. On unless an admin switched it off, and on
+  // when it cannot be read.
+  //
+  // `sign_in_providers` is which of Apple and Google the sign-in sheet
+  // offers beside the email code (services/sign-in-providers.js): only those
+  // an admin has set up and switched on, Apple first; none when unreadable.
+  //
+  // `terms_link` is the current published terms' own address, for the
+  // sign-in screens' "By continuing, you agree to Homeroom's terms"
+  // (frontend/src/features/auth/sign-in-sheet.tsx and login.tsx). "Current"
+  // is the terms gate's rule (routes/topochain/mobile.js): the latest
+  // published version. null when none is published, it has no link, or the
+  // read fails; the notice then names the terms without a link.
+  async function currentTermsLink() {
+    try {
+      const { rows } = await pool.query(
+        `SELECT terms_link FROM terms_versions
+          WHERE published_at IS NOT NULL
+          ORDER BY published_at DESC, id DESC LIMIT 1`
+      );
+      return (rows[0] && rows[0].terms_link) || null;
+    } catch (err) {
+      log.warn('public-api', 'Current terms link read failed', { err: err.message });
+      return null;
+    }
+  }
+  router.get('/api/public/waitlist/options', async (_req, res) => {
     res.json({
       ...questions.publicOptions(),
       waitlist_url: waitlistUrl(config),
       marketing_url: siteUrl(config),
+      story_landing: await firstSession.storyLandingEnabled(pool),
+      sign_in_providers: await signInProviders.offeredProviders(pool, config),
+      // Phone-number sign-in (services/firebase-phone-auth.js): offered
+      // only when its four Firebase values are set and the flag is on.
+      // Sync on purpose — the gate reads config, not the database.
+      phone_sign_in: phoneAuth.offered(config),
+      terms_link: await currentTermsLink(),
+      // The same, from the Homeroom app's own sheets (the bridge's
+      // signInWithProvider), once the app's client IDs are saved.
+      native_sign_in_providers: await signInProviders.offeredNativeProviders(pool, config),
     });
   });
 

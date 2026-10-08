@@ -220,6 +220,9 @@ export interface OpenRouterModel {
   /** The catalog's published prices, for the cost of a typical change. */
   inputPricePerMillion?: number | null;
   outputPricePerMillion?: number | null;
+  /** What a prompt-cache read and write cost, where the catalog lists them. */
+  cacheReadPricePerMillion?: number | null;
+  cacheWritePricePerMillion?: number | null;
   supportsReasoning?: boolean;
   isRecommended?: boolean;
   isDefaultFavorite?: boolean;
@@ -246,10 +249,12 @@ export interface ModelCatalog {
 /**
  * The platform's per-model notes and estimates (#2570): an estimate for each
  * curated model, and the token profile of a typical change, which prices any
- * other model from its catalog prices.
+ * other model from its catalog prices. `inputTokens` is every prompt token;
+ * `cachedInputTokens` and `cacheWriteInputTokens` are the parts of it read
+ * from and written to the prompt cache, absent from an older server.
  */
 export interface ModelNotes {
-  typicalChange: { inputTokens: number; outputTokens: number } | null;
+  typicalChange: { inputTokens: number; outputTokens: number; cachedInputTokens?: number; cacheWriteInputTokens?: number } | null;
   models: Record<string, { note?: string | null; estimateCents?: number | null }>;
 }
 
@@ -380,14 +385,26 @@ export async function loadModelCatalog(
       codexAvailable?: unknown;
       defaultReasoningEffort?: unknown;
     } | null,
-    { typicalChange?: { inputTokens?: unknown; outputTokens?: unknown } | null; models?: unknown } | null,
+    {
+      typicalChange?: { inputTokens?: unknown; outputTokens?: unknown; cachedInputTokens?: unknown; cacheWriteInputTokens?: unknown } | null;
+      models?: unknown;
+    } | null,
   ];
   if (notes && notes.models && typeof notes.models === 'object') {
     const profile = notes.typicalChange;
     const input = Number(profile?.inputTokens);
     const output = Number(profile?.outputTokens);
+    const cached = Number(profile?.cachedInputTokens);
+    const written = Number(profile?.cacheWriteInputTokens);
     catalog.notes = {
-      typicalChange: Number.isFinite(input) && Number.isFinite(output) ? { inputTokens: input, outputTokens: output } : null,
+      typicalChange: Number.isFinite(input) && Number.isFinite(output)
+        ? {
+          inputTokens: input,
+          outputTokens: output,
+          ...(Number.isFinite(cached) ? { cachedInputTokens: cached } : {}),
+          ...(Number.isFinite(written) ? { cacheWriteInputTokens: written } : {}),
+        }
+        : null,
       models: notes.models as ModelNotes['models'],
     };
   }
@@ -508,9 +525,16 @@ export async function handoffStatus(slug: string, change: { id: number; kind: 's
   );
 }
 
-export async function listSessions(): Promise<AgentSession[]> {
-  const body = await json<{ sessions: AgentSession[] }>(await request('/api/agent-sessions'), 'Could not load agent sessions.');
-  return body.sessions || [];
+/**
+ * The viewer's open sessions, and `started`: whether they have ever had one,
+ * archived ones included (the Homeroom menu's Agent chats shows only then).
+ * A server from before `started` existed answers without it, and a session
+ * in the list says it as well.
+ */
+export async function listSessions(): Promise<{ sessions: AgentSession[]; started: boolean }> {
+  const body = await json<{ sessions: AgentSession[]; started?: boolean }>(await request('/api/agent-sessions'), 'Could not load agent sessions.');
+  const sessions = body.sessions || [];
+  return { sessions, started: body.started === true || sessions.length > 0 };
 }
 
 export async function getSession(id: number): Promise<{ session: AgentSession; turn: AgentTurnState | null }> {
@@ -602,13 +626,19 @@ export interface SpecVersion {
 /**
  * A change's spec, from the change's own routes (the conversation's owner
  * owns its changes): the latest text and its saved versions, newest first.
+ * `html` is the latest version's HTML document when it was written as one
+ * (#3699); `spec` is then its markdown copy.
  */
-export async function getSpec(changeId: number): Promise<{ spec: string; versions: SpecVersion[] }> {
-  const body = await json<{ spec?: string; versions?: SpecVersion[] }>(
+export async function getSpec(changeId: number): Promise<{ spec: string; html: string | null; versions: SpecVersion[] }> {
+  const body = await json<{ spec?: string; html?: string | null; versions?: SpecVersion[] }>(
     await request(`/api/sessions/${changeId}/spec`),
     'Could not load the spec.',
   );
-  return { spec: typeof body.spec === 'string' ? body.spec : '', versions: Array.isArray(body.versions) ? body.versions : [] };
+  return {
+    spec: typeof body.spec === 'string' ? body.spec : '',
+    html: typeof body.html === 'string' && body.html ? body.html : null,
+    versions: Array.isArray(body.versions) ? body.versions : [],
+  };
 }
 
 /**
@@ -639,12 +669,21 @@ export async function ensureChangeStaging(changeId: number): Promise<{ status: s
   return json(await request(`/api/sessions/${changeId}/ensure-staging`, { method: 'POST' }), 'Could not rebuild the preview.');
 }
 
-export async function getSpecVersion(changeId: number, version: number): Promise<string> {
-  const body = await json<{ spec?: { content?: string } }>(
+/** One saved version of a change's spec: its text, and its HTML document when it has one (#3699). */
+export async function getSpecVersionDoc(changeId: number, version: number): Promise<{ text: string; html: string | null }> {
+  const body = await json<{ spec?: { content?: string; content_html?: string | null } }>(
     await request(`/api/sessions/${changeId}/specs/${version}`),
     'Could not load that version of the spec.',
   );
-  return body.spec && typeof body.spec.content === 'string' ? body.spec.content : '';
+  const spec = body.spec || {};
+  return {
+    text: typeof spec.content === 'string' ? spec.content : '',
+    html: typeof spec.content_html === 'string' && spec.content_html ? spec.content_html : null,
+  };
+}
+
+export async function getSpecVersion(changeId: number, version: number): Promise<string> {
+  return (await getSpecVersionDoc(changeId, version)).text;
 }
 
 export async function getChange(changeId: number): Promise<ChangeDetail | null> {
@@ -728,13 +767,13 @@ export async function sendTurn(
     signal,
   });
   if (!response.ok) {
-    await json(response, 'The Mayor could not take that message.');
+    await json(response, 'The agent could not take that message.');
     return { duplicate: false };
   }
   // The stream is the answer; JSON is the exception: the server already had
   // this message (a retry after a dropped connection).
   if (/application\/json/.test(response.headers?.get?.('Content-Type') || '')) {
-    const body = await json<{ duplicate?: boolean; messageId?: number }>(response, 'The Mayor could not take that message.');
+    const body = await json<{ duplicate?: boolean; messageId?: number }>(response, 'The agent could not take that message.');
     return { duplicate: !!body.duplicate, messageId: body.messageId ?? null };
   }
   await readEventStream(response, onEvent);

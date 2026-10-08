@@ -365,7 +365,7 @@ test('the Getting started buttons: default app, where Vote goes, and the Worksho
       assert.equal(c.vote, null);
       assert.deepEqual(rows(c), [
         ['tour', 'See how Homeroom works.', 'Start'],
-        ['join', 'Find people to build with. Homeroom and projects only you can see don’t count.', 'Join'],
+        ['join', 'Find people to build with. Homeroom and Just-you projects don’t count.', 'Join'],
         ['try', ...LOCK], ['vote', ...LOCK], ['suggest', ...LOCK],
       ]);
 
@@ -374,7 +374,7 @@ test('the Getting started buttons: default app, where Vote goes, and the Worksho
       const owed = await owedByCommunity(pool, plant.id, { showSelfHosted: true });
       assert.deepEqual(owed.map((w) => [w.slug, w.waiting, w.paying]), [['plant-pal', 1, 0]]);
 
-      // They vote on it anyway, and ask for a change from inside it.
+      // They vote on it anyway, and suggest an improvement from inside it.
       await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, 'yes')`, [firstVersion, plant.id]);
       await scorer.scoreOnVote(pool, config);
       await ask(plantPal, plant.id);
@@ -426,7 +426,7 @@ test('the Getting started buttons: default app, where Vote goes, and the Worksho
         'not "1 change is waiting in Plant Pal"');
       assert.deepEqual(rows(c).slice(2), [
         ['try', 'Spend 10 seconds in City garden.', 'Try'],
-        ['vote', 'Nothing is up for a vote yet. See what people are building.', 'Look'],
+        ['vote', 'Nothing is waiting for approval yet. See what people are building.', 'Look'],
         ['suggest', 'Tell City garden’s builders what would make it better.', 'Suggest'],
       ]);
       // So the Look is the step, and the waiting build does not refuse it.

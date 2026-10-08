@@ -727,6 +727,52 @@ test('a base commit that is not a clean 40-hex id never reaches a work order', a
   }
 });
 
+test('a base read GitHub refused for the hourly budget says so, and when it resets', async () => {
+  // 2026-10-04: the bot token's 5,000 requests an hour ran out, and every
+  // new proposal answered "Try again shortly" for the rest of the hour.
+  const limited = Object.assign(new Error('API rate limit exceeded for user ID 276401300.'), {
+    status: 403,
+    response: {
+      status: 403,
+      headers: {
+        'x-ratelimit-remaining': '0',
+        'x-ratelimit-reset': String(Math.floor(Date.now() / 1000) + 17 * 60 - 5),
+      },
+    },
+  });
+  const queries = [];
+  const pool = fakePool([['INSERT INTO external_agent_tasks', [{ id: 41 }]]], queries);
+  const result = await withFetch(FORK_READY, [], () => svc.prepareWork(
+    {
+      pool,
+      config: {},
+      gh: baseGh({ getBranchSha: async () => { throw limited; } }),
+      githubLink: linkedAs('someuser'),
+      limits: okLimits,
+    },
+    { user: { id: 3 }, app: APP, brief: 'x', origin: 'https://usernode.example' }
+  ));
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'platform_unavailable');
+  assert.equal(result.retryable, true);
+  assert.equal(result.message,
+    "Homeroom could not read the app's current code. GitHub's hourly limit for Homeroom is used up. It resets in about 17 minutes.");
+  assert.ok(!/\u2014/.test(result.message));
+
+  // Any other failure keeps the old answer.
+  const other = await withFetch(FORK_READY, [], () => svc.prepareWork(
+    {
+      pool: fakePool([['INSERT INTO external_agent_tasks', [{ id: 42 }]]], []),
+      config: {},
+      gh: baseGh({ getBranchSha: async () => { throw Object.assign(new Error('Bad gateway'), { status: 502 }); } }),
+      githubLink: linkedAs('someuser'),
+      limits: okLimits,
+    },
+    { user: { id: 3 }, app: APP, brief: 'x', origin: 'https://usernode.example' }
+  ));
+  assert.equal(other.message, "Homeroom could not read the app's current code. Try again shortly.");
+});
+
 test('prepare_work refuses before touching GitHub when the account is not linked', async () => {
   const queries = [];
   let fetched = false;
@@ -2847,7 +2893,7 @@ test('the work order says to install dependencies before running anything', () =
 // says what to run BEFORE it — the suites that read the changed files, with
 // the base commit it already names filled into the command — and when the
 // whole suite is still the right call. Without this an agent runs all
-// 13,000+ tests before every push, minutes at a time.
+// 19,000+ tests before every push, minutes at a time.
 test('the work order scopes the local test run to the files the change touched', () => {
   const block = orderFor('ready');
   assert.match(block, /run the tests that cover the files you changed, not the\nwhole suite/);

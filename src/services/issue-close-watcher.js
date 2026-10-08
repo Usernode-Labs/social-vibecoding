@@ -151,25 +151,32 @@ function bustAndBroadcast({ owner, repo, appSlug, appId, closed }) {
 // service's siblings, never this file, so there's no cycle). `pool` is
 // optional: without one (older call sites, unit tests) this is a silent
 // no-op and the watcher behaves exactly as before. Fired-and-forgotten —
-// a failure must never affect the poll loop.
-function resolveSupersededProposals({ pool, appId, appSlug, prNumber, numbers }) {
-  if (!pool || !appId || !Array.isArray(numbers) || !numbers.length) return;
+// a failure must never affect the poll loop. Resolves when it is done (the
+// watch awaits it before it returns, so a durable caller that saw it return
+// knows the proposals were told). `strict` rejects on a failure instead
+// (the merge-followups workflow machine retries its work on it).
+function resolveSupersededProposals({ pool, appId, appSlug, prNumber, numbers, strict = false }) {
+  if (!pool || !appId || !Array.isArray(numbers) || !numbers.length) return Promise.resolve();
   try {
     const { resolveSupersededCloseProposals } = require('../routes/issues');
-    resolveSupersededCloseProposals(pool, {
+    return resolveSupersededCloseProposals(pool, {
       appId,
       appSlug,
       numbers,
       cause: { kind: 'pr-merge', prNumber },
+      strict,
     }).catch((err) => {
+      if (strict) throw err;
       log.warn('issue-close-watcher', 'Superseded close-proposal resolve failed', {
         pr: prNumber, err: err.message,
       });
     });
   } catch (err) {
+    if (strict) return Promise.reject(err);
     log.warn('issue-close-watcher', 'Superseded close-proposal resolve setup failed', {
       pr: prNumber, err: err.message,
     });
+    return Promise.resolve();
   }
 }
 
@@ -182,24 +189,27 @@ function resolveSupersededProposals({ pool, appId, appSlug, prNumber, numbers })
 // #1 still read open after PR #2 closed it). Only numbers GitHub reported
 // closed, or that the watcher closed itself, land here. Same contract as
 // resolveSupersededProposals: a no-op without a pool, fired-and-forgotten,
-// and a failure never touches the poll loop.
-function closeTwinRows({ pool, appId, prNumber, numbers }) {
-  if (!pool || !appId || !Array.isArray(numbers) || !numbers.length) return;
+// and a failure never touches the poll loop. `strict` as there.
+function closeTwinRows({ pool, appId, prNumber, numbers, strict = false }) {
+  if (!pool || !appId || !Array.isArray(numbers) || !numbers.length) return Promise.resolve();
   try {
-    Promise.resolve(pool.query(
+    return Promise.resolve(pool.query(
       `UPDATE issues SET status = 'closed'
         WHERE app_id = $1 AND kind = 'general' AND status = 'open'
           AND github_issue_number = ANY($2::int[])`,
       [appId, numbers]
-    )).catch((err) => {
+    )).then(() => {}, (err) => {
+      if (strict) throw err;
       log.warn('issue-close-watcher', 'Closing request twin rows failed', {
         pr: prNumber, issues: numbers, err: err.message,
       });
     });
   } catch (err) {
+    if (strict) return Promise.reject(err);
     log.warn('issue-close-watcher', 'Closing request twin rows failed', {
       pr: prNumber, issues: numbers, err: err.message,
     });
+    return Promise.resolve();
   }
 }
 
@@ -251,7 +261,10 @@ async function closeLinkedIssues({ owner, repo, prNumber, pr, linkedIssues, stil
 // per-bucket outcome (useful for tests); unexpected throws are absorbed by
 // the caller's .catch(). `pool` (optional) enables auto-resolving open
 // close-issue proposals for observed closes — see resolveSupersededProposals.
-async function watchIssuesClosedAfterMerge({ owner, repo, prNumber, linkedIssues, appSlug, appId, pool }) {
+// `strict` (the merge-followups workflow machine): a failure to close the
+// twin rows or the superseded proposals fails the watch, after its polls,
+// so the durable work retries it; otherwise they are logged and dropped.
+async function watchIssuesClosedAfterMerge({ owner, repo, prNumber, linkedIssues, appSlug, appId, pool, strict = false }) {
   const empty = { closed: [], skipped: [], stillOpen: [] };
   if (!github.isEnabled() || !owner || !repo || !prNumber) return empty;
 
@@ -279,6 +292,12 @@ async function watchIssuesClosedAfterMerge({ owner, repo, prNumber, linkedIssues
 
   const closed = [];
   const skipped = [];
+  // The proposal and twin-row updates it starts, awaited before it returns.
+  // A strict failure is held (never an unhandled rejection mid-poll) and
+  // thrown once they have all settled.
+  const settling = [];
+  const failures = [];
+  const settle = (p) => settling.push(p.catch((err) => { failures.push(err); }));
   let pending = numbers;
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS && pending.length; attempt++) {
@@ -294,7 +313,7 @@ async function watchIssuesClosedAfterMerge({ owner, repo, prNumber, linkedIssues
     if (newlyClosed.length) {
       closed.push(...newlyClosed);
       bustAndBroadcast({ owner, repo, appSlug, appId, closed: newlyClosed });
-      closeTwinRows({ pool, appId, prNumber, numbers: newlyClosed });
+      settle(closeTwinRows({ pool, appId, prNumber, numbers: newlyClosed, strict }));
     }
     if (newlySkipped.length) skipped.push(...newlySkipped);
     // Retire close-issue proposals for closed AND skipped numbers: a
@@ -302,10 +321,10 @@ async function watchIssuesClosedAfterMerge({ owner, repo, prNumber, linkedIssues
     // and a skipped-because-PR number can never match a close proposal
     // (proposals only target numbers verified open at creation).
     if (newlyClosed.length || newlySkipped.length) {
-      resolveSupersededProposals({
+      settle(resolveSupersededProposals({
         pool, appId, appSlug, prNumber,
-        numbers: [...newlyClosed, ...newlySkipped],
-      });
+        numbers: [...newlyClosed, ...newlySkipped], strict,
+      }));
     }
     pending = stillPending;
     if (pending.length && attempt < MAX_ATTEMPTS) {
@@ -332,8 +351,8 @@ async function watchIssuesClosedAfterMerge({ owner, repo, prNumber, linkedIssues
     if (selfClosed.length) {
       closed.push(...selfClosed);
       bustAndBroadcast({ owner, repo, appSlug, appId, closed: selfClosed });
-      resolveSupersededProposals({ pool, appId, appSlug, prNumber, numbers: selfClosed });
-      closeTwinRows({ pool, appId, prNumber, numbers: selfClosed });
+      settle(resolveSupersededProposals({ pool, appId, appSlug, prNumber, numbers: selfClosed, strict }));
+      settle(closeTwinRows({ pool, appId, prNumber, numbers: selfClosed, strict }));
       pending = pending.filter((n) => !selfClosed.includes(n));
     }
   }
@@ -349,6 +368,8 @@ async function watchIssuesClosedAfterMerge({ owner, repo, prNumber, linkedIssues
       });
     }
   }
+  await Promise.all(settling);
+  if (failures.length) throw failures[0];
   log.info('issue-close-watcher', 'Post-merge close watch done', {
     repo: `${owner}/${repo}`, pr: prNumber, closed, skipped, stillOpen: pending,
   });
@@ -356,4 +377,10 @@ async function watchIssuesClosedAfterMerge({ owner, repo, prNumber, linkedIssues
   return { closed, skipped, stillOpen: pending };
 }
 
-module.exports = { watchIssuesClosedAfterMerge, resolveIssueNumbers, mergedIntoDefaultBranch };
+module.exports = {
+  watchIssuesClosedAfterMerge, resolveIssueNumbers, mergedIntoDefaultBranch,
+  // What an observed close does, for a close made elsewhere: a change that
+  // went live inside another one closes its requests itself
+  // (services/included-changes.js), and they then read closed the same way.
+  bustAndBroadcast, resolveSupersededProposals, closeTwinRows,
+};

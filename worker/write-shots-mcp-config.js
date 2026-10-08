@@ -31,7 +31,7 @@ const recordClips = process.env.SHOTS_RECORD_CLIPS === '1';
 // desktop size is mostly grey); 1280x800 when the platform names none.
 const clipSize = /^[1-9][0-9]{2,3}x[1-9][0-9]{2,3}$/.test(process.env.SHOTS_CLIP_SIZE || '')
   ? process.env.SHOTS_CLIP_SIZE : '1280x800';
-for (const persona of ['member', 'admin', 'full_admin']) {
+for (const persona of ['member', 'admin', 'full_admin', 'guest']) {
   fs.mkdirSync(path.join(shotsDir, persona), { recursive: true, mode: 0o700 });
 }
 // Each persona's browser reaches its own proxy listener, which is how the
@@ -75,6 +75,8 @@ const config = {
     browser_member: { command: 'node', args: browserArgs('member'), env: browserEnv },
     browser_admin: { command: 'node', args: browserArgs('read_only_admin'), env: browserEnv },
     browser_full_admin: { command: 'node', args: browserArgs('full_admin'), env: browserEnv },
+    // Not signed in: its storage state is empty (shots-browser-bootstrap.js).
+    browser_guest: { command: 'node', args: browserArgs('guest'), env: browserEnv },
   },
 };
 fs.writeFileSync(output, `${JSON.stringify(config)}\n`, { mode: 0o600 });

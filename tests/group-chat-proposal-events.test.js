@@ -95,7 +95,7 @@ test('a submission is a message from its proposer: their avatar, name and stamp 
   // Name and stamp on the header line, where a person's message puts them.
   assert.match(html, /<span class="truncate text-\[1\.0625rem\] font-bold text-zinc-900 dark:text-zinc-100"><span data-event-sender="">evan<\/span><\/span><span class="shrink-0 text-\[0\.9375rem\] text-zinc-500 dark:text-zinc-500"><span class="gc-msg-time" title="Sep 16, 2026, 09:05 AM">09:05 AM<\/span><\/span>/);
   // One box: the bare glyph, one line of text, the door's chevron.
-  assert.match(html, /<a class="gc-event-box" href="\/app\/recipe-app\/dev\/proposals\/5" title="Open this proposal"><span class="w-7 h-7 rounded-lg dev-card-icon bg-sky-500\/15 [^"]*">[\s\S]*?<\/span><span class="gc-event-text">Proposed PR #12 for a vote: Custom tier colors<\/span><svg class="w-4 h-4 text-zinc-500 dark:text-zinc-500 shrink-0"/);
+  assert.match(html, /<a class="gc-event-box" href="\/app\/recipe-app\/dev\/proposals\/5" title="Open this change"><span class="w-7 h-7 rounded-lg dev-card-icon bg-sky-500\/15 [^"]*">[\s\S]*?<\/span><span class="gc-event-text">Asked for approval: Custom tier colors<\/span><svg class="w-4 h-4 text-zinc-500 dark:text-zinc-500 shrink-0"/);
   // Nothing else: no controls host, no bookmark, no react button, no reactions.
   assert.doesNotMatch(html, /data-vote-controls|gc-msg-save|gc-react-add|gc-reactions|gc-msg-system|gc-msg[" ]/);
 });
@@ -107,12 +107,12 @@ test('a merge is a message from the app, its box saying how the change landed, w
   assert.match(html, /data-event="merged" data-session-id="" data-pr-number="12">/);
   assert.doesNotMatch(html, /data-open/, 'a merge is never open');
   assert.match(html, /<span data-event-sender="">Recipe App<\/span>/);
-  assert.match(html, /<div class="gc-event-box"><span class="w-7 h-7 rounded-lg dev-card-icon [^"]*">[\s\S]*?d="M5 13l4 4L19 7"[\s\S]*?<\/span><span class="gc-event-text">PR #12 went live with 2\/3 votes: Custom tier colors<\/span><\/div>/);
+  assert.match(html, /<div class="gc-event-box"><span class="w-7 h-7 rounded-lg dev-card-icon [^"]*">[\s\S]*?d="M5 13l4 4L19 7"[\s\S]*?<\/span><span class="gc-event-text">Custom tier colors went live with 2\/3 votes<\/span><\/div>/);
   assert.doesNotMatch(html, /<a |href=|<svg class="w-4 h-4 text-zinc-500/, 'a plain box, with no chevron promising a destination');
 
-  assert.equal(eventText(merged({ event: { ...merged().event, force: true, actor: 'dfk', sender: 'dfk', votes: '0/2' } })), 'Force-merged PR #12 with 0/2 votes: Custom tier colors');
-  assert.equal(eventText(merged({ event: { ...merged().event, title: '', votes: '' } })), 'PR #12 went live');
-  assert.equal(eventText(submitted('open', { event: { ...submitted().event, title: '' } })), 'Proposed PR #12 for a vote');
+  assert.equal(eventText(merged({ event: { ...merged().event, force: true, actor: 'dfk', sender: 'dfk', votes: '0/2' } })), 'An admin made “Custom tier colors” live (0/2 votes)');
+  assert.equal(eventText(merged({ event: { ...merged().event, title: '', votes: '' } })), 'A change went live');
+  assert.equal(eventText(submitted('open', { event: { ...submitted().event, title: '' } })), 'Asked for approval on a change');
   const settled = renderComponent(EVENT, 'EventRow', { msg: submitted('settled') });
   assert.doesNotMatch(settled, /data-open/, 'a submission whose vote is over is no longer marked open');
   assert.match(renderComponent(EVENT, 'EventRow', { msg: submitted('unknown') }), /data-open="1"/, 'and one whose phase is not known yet still is');
@@ -501,7 +501,7 @@ test('the quiet fixture app has a channel nobody has spoken in and one open vote
   // is a div, not a door: the proposal is the page.
   assert.match(visual.expectSelector, /^\[data-change-discussion\] \.gc-event\[data-event="submitted"\]\[data-here\]\[data-msg-id="900118"\]:has\(div\.gc-event-box > \.dev-card-icon \+ \.gc-event-text\) span:has\(> \[data-event-sender\]\) \+ span > \.gc-msg-time\[title\]$/);
   assert.ok(visual.expectSelector.length <= 256, 'app-manifest.js truncates a longer selector, silently breaking it');
-  assert.equal(visual.expectText, 'Proposed this change for a vote');
+  assert.equal(visual.expectText, 'Asked for approval', 'B10d: the words every screen uses');
   const sender = checks.find((t) => t.expectText === 'staging-demo-quiet-builder');
   assert.ok(sender && /\[data-msg-id="900118"\] \[data-event-sender\]/.test(sender.expectSelector));
   // The channel, in the project and in Messages: the quiet card and nothing
@@ -580,4 +580,24 @@ test('the Discussion reads who voted on an earlier version from the roster the p
   const av = read('public/js/app-view.js');
   assert.match(av, /earlierVoters: \[\.\.\.earlierYes, \.\.\.earlierNo\],/);
   assert.match(av, /before !== \(view\.earlierVoters \|\| \[\]\)\.join\('\\n'\)\)\s*\{\s*GroupChat\.renderThread\(\);/);
+});
+
+// ── #4238: Homeroom bot's first-version line ──────────────────────────
+
+test('#4238: the bot\'s first-version message draws its Open button, and leaves the quiet card', () => {
+  const openApp = { label: 'Open Page Turners', target: '#app/page-turners/app' };
+  const bot = human('I\'ve made the first version of Page Turners! Let me know if you need anything else.');
+  const messages = [{ ...bot, username: 'homeroom_bot', openApp }];
+  const html = renderRows({ messages, lead: quietLead }, 'main');
+  assert.match(html, /data-gc-open-app=""[^>]*>Open Page Turners<\/button>/);
+  assert.match(html, /gc-quiet/, 'the bot is not a person speaking: the card still asks people in');
+  assert.doesNotMatch(renderRows({ messages: [human('hi')], lead: quietLead }, 'main'), /data-gc-open-app/, 'no button on a person\'s message');
+
+  const gc = loadGroupChat();
+  const action = { id: 'open_app', label: 'Open Page Turners', style: 'primary', type: 'open', target: '#app/page-turners/app' };
+  const row = { id: 30, msg_type: 'message', username: 'homeroom_bot', content: 'I\'ve made the first version of Page Turners!' };
+  assert.deepEqual(JSON.parse(JSON.stringify(gc._messageView({ ...row, metadata: { kind: 'first_version', actions: [action] } }).openApp)), openApp);
+  assert.equal(gc._messageView({ ...row, metadata: { actions: [action] } }).openApp, null, 'only the first-version line');
+  assert.equal(gc._messageView({ ...row, metadata: { kind: 'first_version', actions: [{ ...action, target: 'https://elsewhere.test' }] } }).openApp, null, 'only a way into the platform');
+  assert.equal(gc._messageView({ ...row, thread_type: 'issue', thread_ref: 4, metadata: { kind: 'first_version', actions: [action] } }).openApp, null, 'the channel only');
 });

@@ -220,6 +220,7 @@ function buildTurnSecretEnv({
   mode, agentBackend, agentHarness = null, workerSessionJwt, workerPushJwt, issuesReadJwt,
   anthropicProxyJwt, anthropicApiKey, prodDebugJwt, openrouterApiKey,
   shotsJwt, shotsMemberToken, shotsAdminToken, shotsFullAdminToken,
+  shotsGuestToken = null,
   homeroomMcpToken = null,
 }) {
   const {
@@ -291,6 +292,11 @@ function buildTurnSecretEnv({
     env.SHOTS_MEMBER_TOKEN = requireNonEmptySecret(shotsMemberToken, 'shotsMemberToken');
     env.SHOTS_ADMIN_TOKEN = requireNonEmptySecret(shotsAdminToken, 'shotsAdminToken');
     env.SHOTS_FULL_ADMIN_TOKEN = requireNonEmptySecret(shotsFullAdminToken, 'shotsFullAdminToken');
+    // Optional: the guest browser is not signed in, and carries a guest
+    // token only for a view-public child app (shots-identities.js).
+    if (shotsGuestToken != null) {
+      env.SHOTS_GUEST_TOKEN = requireNonEmptySecret(shotsGuestToken, 'shotsGuestToken');
+    }
   }
   if (homeroomMcpToken && HOMEROOM_READ_MODES.has(mode)) env.HOMEROOM_MCP_TOKEN = homeroomMcpToken;
   return env;
@@ -325,8 +331,13 @@ async function mintHomeroomReadGrant(sessionId, mode) {
     if (!rows.length) return null;
     // A benchmark trial replays a request as it stood at a past commit, and
     // these tools read the platform as it is now (later discussion, later
-    // proposals): they would hand it the answer.
-    if (require('./bench/runner').isBenchSession(rows[0])) return null;
+    // proposals): they would hand it the answer. The one exception is a trial
+    // in the App bench studio's own host app (services/bench/studio.js): a
+    // private project with no history of its own, where these reads are what
+    // a new app's first version is given (its conventions above all) and can
+    // hand it nothing later.
+    if (require('./bench/runner').isBenchSession(rows[0])
+        && !(await require('./bench/studio').isHostApp(pool, rows[0].app_id))) return null;
     const grant = await require('./mcp-oauth').issueDelegatedAccess(pool, {
       userId: rows[0].user_id,
       kind: 'worker_read',
@@ -540,7 +551,8 @@ function shotsDiagnosticTool(name) {
   if (!SHOTS_DIAGNOSTIC_TOOLS.has(tool)) return { tool: 'other' };
   const server = parts.includes('browser_member') ? 'member'
     : parts.includes('browser_full_admin') ? 'full_admin'
-      : parts.includes('browser_admin') ? 'admin' : null;
+      : parts.includes('browser_admin') ? 'admin'
+        : parts.includes('browser_guest') ? 'guest' : null;
   return { tool, ...(server ? { persona: server } : {}) };
 }
 
@@ -692,12 +704,165 @@ function noteFileChange(state, path) {
   addObservedValue(state.telemetryFileChanges, path);
 }
 
+// ── Where a coding turn's time went (2026-10-07) ────────────────────────
+// A first-version build on 7 Oct 2026 (session 6937) took 27.9 minutes over
+// 226 model requests, 94 browser calls, 70 commands and 38 edits, and its
+// metrics held only those totals: nothing said how the minutes split between
+// the model, the browser, the shell and the edits, or when the app was first
+// booted. The OpenRouter request listener stamps each request's start and
+// end with atMs, ms since it started (worker/*-openrouter-request.js). That
+// is the turn's own clock. A restarted platform reads the journal again, so
+// the moment it reads a line says nothing about when the line was written.
+//
+// From those stamps:
+//   - model time is the time at least one request was open;
+//   - a gap runs from a request ending with none left open to the next one
+//     starting. The agent was running the tools the last reply asked for, so
+//     the gap is split evenly between the kinds of tool first seen since the
+//     request before it started (a tool_use line can land on either side of
+//     its own request's end line), and goes to `other` when none was;
+//   - a milestone is when the reply that asked for the tool finished.
+// A listener that sends no atMs (an older worker image) records none of it:
+// the fields stay null, which the ledger leaves out rather than calling 0.
+const CODING_TOOL_KIND_FIELDS = Object.freeze({
+  browser: 'browserToolMs', shell: 'shellToolMs', edit: 'editToolMs',
+  read: 'readToolMs', other: 'otherToolMs',
+});
+const CODING_TOOL_KINDS = Object.keys(CODING_TOOL_KIND_FIELDS);
+const CODING_CLOCK_MAX_MS = 86_400_000;
+const APP_BOOT_COMMAND = /usernode-run-inloop/;
+
+function codingToolKind(name) {
+  const n = typeof name === 'string' ? name : '';
+  // An MCP tool is mcp__<server>__<tool>, and Playwright's are browser_*.
+  const bare = n.startsWith('mcp__') ? n.slice(n.lastIndexOf('__') + 2) : n;
+  if (/playwright/i.test(n) || /^browser_/i.test(bare)) return 'browser';
+  if (['Bash', 'BashOutput', 'KillShell', 'KillBash'].includes(n)) return 'shell';
+  if (['Write', 'Edit', 'MultiEdit', 'NotebookEdit'].includes(n)) return 'edit';
+  if (['Read', 'Glob', 'Grep', 'LS', 'NotebookRead'].includes(n)) return 'read';
+  return 'other';
+}
+
+function codexToolKind(event) {
+  if (event.kind === 'command_started' || event.kind === 'command_completed') return 'shell';
+  if (event.kind === 'file_changed') return 'edit';
+  if (event.kind === 'file_read' || event.kind === 'file_read_completed') return 'read';
+  return codingToolKind(event.toolName);
+}
+
+function stampCodingMilestone(state, field, at) {
+  const prior = state[field];
+  if (field === 'lastBrowserCallMs') state[field] = prior == null ? at : Math.max(prior, at);
+  else state[field] = prior == null ? at : Math.min(prior, at);
+}
+
+function attributeCodingGap(state, clock, gapMs) {
+  const kinds = CODING_TOOL_KINDS.filter((kind) => clock.kinds.has(kind));
+  if (!kinds.length) kinds.push('other');
+  // Whole milliseconds, the remainder to the first kinds, so the kinds
+  // always sum to exactly the gaps.
+  const share = Math.floor(gapMs / kinds.length);
+  let remainder = gapMs - share * kinds.length;
+  for (const kind of kinds) {
+    state[CODING_TOOL_KIND_FIELDS[kind]] += share + (remainder > 0 ? 1 : 0);
+    remainder -= 1;
+  }
+}
+
+// One provider_request_start or provider_request_end, with its atMs.
+function noteCodingRequestClock(state, kind, ordinal, atMs) {
+  if (state.telemetryDiagnosticsEnabled !== true) return;
+  if (!Number.isSafeInteger(atMs) || atMs < 0 || atMs > CODING_CLOCK_MAX_MS) return;
+  const starting = kind === 'provider_request_start';
+  let clock = state.codingClock;
+  if (!clock) {
+    clock = state.codingClock = {
+      seen: new Set(), offsetMs: 0, latestMs: 0, maxOrdinal: 0, open: new Set(),
+      busySinceMs: null, idleSinceMs: null, lastEndMs: null, kinds: new Set(), awaiting: [],
+    };
+    state.modelRequestMs = 0;
+    for (const field of Object.values(CODING_TOOL_KIND_FIELDS)) state[field] = 0;
+  }
+  // Keyed by ordinal AND stamp: the same line read twice is one request,
+  // while a second listener's request 1 (below) is a different line.
+  const key = `${starting ? 'start' : 'end'}:${ordinal}:${atMs}`;
+  if (clock.seen.has(key)) return;
+  if (starting) {
+    // Ordinals only climb within one listener. A repeated one is a new
+    // listener: run-cc.sh starts Claude Code a second time when a resume
+    // fails, and that one counts again from request 1 and from 0 ms. Its
+    // clock is placed after the last stamp the first one sent, a floor
+    // since the time between the two goes unseen, and no gap spans them.
+    if (ordinal <= clock.maxOrdinal) {
+      if (clock.open.size) state.modelRequestMs += Math.max(0, clock.latestMs - clock.busySinceMs);
+      clock.offsetMs = clock.latestMs;
+      clock.maxOrdinal = 0;
+      clock.open.clear();
+      clock.busySinceMs = null;
+      clock.idleSinceMs = null;
+      clock.lastEndMs = null;
+      clock.kinds.clear();
+      clock.awaiting = [];
+    }
+    clock.seen.add(key);
+    clock.maxOrdinal = Math.max(clock.maxOrdinal, ordinal);
+    const at = clock.offsetMs + atMs;
+    clock.latestMs = Math.max(clock.latestMs, at);
+    if (!clock.open.size) {
+      if (clock.idleSinceMs != null) attributeCodingGap(state, clock, Math.max(0, at - clock.idleSinceMs));
+      clock.idleSinceMs = null;
+      clock.kinds.clear();
+      clock.busySinceMs = at;
+    }
+    clock.open.add(ordinal);
+    return;
+  }
+  // An end whose start was never seen, or that already ended, adds nothing.
+  if (!clock.open.has(ordinal)) return;
+  clock.seen.add(key);
+  clock.open.delete(ordinal);
+  const at = clock.offsetMs + atMs;
+  clock.latestMs = Math.max(clock.latestMs, at);
+  clock.lastEndMs = at;
+  for (const field of clock.awaiting) stampCodingMilestone(state, field, at);
+  clock.awaiting = [];
+  if (!clock.open.size) {
+    state.modelRequestMs += Math.max(0, at - clock.busySinceMs);
+    clock.busySinceMs = null;
+    clock.idleSinceMs = at;
+  }
+}
+
+// A tool the agent called, once per call (the callers' item-id dedupe).
+// Only a client-side tool runs between requests; a server tool's time is
+// inside its request already.
+function noteCodingToolClock(state, kind, { bootsApp = false } = {}) {
+  const clock = state.codingClock;
+  if (!clock) return;
+  clock.kinds.add(kind);
+  const milestones = [];
+  if (kind === 'edit') milestones.push('firstFileChangeMs');
+  if (kind === 'browser') milestones.push('firstBrowserCallMs', 'lastBrowserCallMs');
+  if (bootsApp) milestones.push('firstAppBootMs');
+  // Seen while a reply is still streaming: it is that reply's, and is
+  // stamped when that reply ends. Otherwise the last reply asked for it.
+  if (clock.open.size) clock.awaiting.push(...milestones);
+  else if (clock.lastEndMs != null) {
+    for (const field of milestones) stampCodingMilestone(state, field, clock.lastEndMs);
+  }
+}
+
 function noteClaudeToolCall(state, block) {
   const itemKey = block && block.id ? `claude:${block.id}` : null;
   if (itemKey && state.telemetryStartedItemIds.has(itemKey)) return false;
   if (itemKey) state.telemetryStartedItemIds.add(itemKey);
   const name = typeof block?.name === 'string' ? block.name : String(block?.type || 'tool');
   const input = block && block.input && typeof block.input === 'object' ? block.input : {};
+  if (block?.type === 'tool_use') {
+    noteCodingToolClock(state, codingToolKind(name), {
+      bootsApp: name === 'Bash' && APP_BOOT_COMMAND.test(String(input.command || '')),
+    });
+  }
   state.toolCallCount += 1;
   noteToolName(state, name);
   if (block?.type === 'server_tool_use' || block?.type === 'mcp_tool_use') {
@@ -726,6 +891,10 @@ function noteCodexToolStart(state, event) {
   if (key && state.telemetryStartedItemIds.has(key)) return false;
   if (key) state.telemetryStartedItemIds.add(key);
   noteFirstAgentOutput(state);
+  noteCodingToolClock(state, codexToolKind(event), {
+    bootsApp: event.kind === 'command_started'
+      && APP_BOOT_COMMAND.test(String(event.command || event.text || '')),
+  });
   state.toolCallCount += 1;
   state.responseToolCallCount += 1;
   noteToolName(state, event.toolName || event.kind);
@@ -765,18 +934,79 @@ function isClaudeOnOpenRouter(state) {
 // to Anthropic Claude Code sessions. Idempotent; a no-op for other turns.
 //
 // It also fills the per-turn usage sum a Codex turn gets from its relay
-// (`relayUsage`, #3038), from the usage each model call reported as it
-// streamed. Claude Code reports a run's usage only on its result event, so a
-// turn stopped before that (the Homeroom bot's wall clock) had none at all
-// and was priced at nothing; this is what it can be priced from instead.
+// (`relayUsage`, #3038). Claude Code reports a run's usage only on its result
+// event, so a turn stopped before that (the Homeroom bot's wall clock) had
+// none at all and was priced at nothing; this is what it can be priced from
+// instead. First choice, the counts each finished model request's reply
+// closed on, as the request listener read them (observeCodingProviderResult):
+// exact for every request but the one the stop cut off. Otherwise what Claude
+// Code's own events said as they streamed, which through OpenRouter is
+// nearly nothing: its message_start reports no input, and the counts arrive
+// only on the closing message_delta (a 40-minute GLM build on 2026-10-06 was
+// priced at 0 input tokens and $0 that way).
 function finalizeHarnessResult(state) {
   if (!isClaudeOnOpenRouter(state)) return state;
   const claudeSessionId = state.sessionId || state.initSessionId || null;
   if (claudeSessionId) state.agentThreadId = claudeSessionId;
   state.sessionId = null;
   state.initSessionId = null;
-  if (!state.relayUsage) state.relayUsage = liveAgentSpend.usageTotals(state.liveSpend);
+  if (!state.relayUsage) {
+    state.relayUsage = state.providerUsage?.requests > 0
+      ? { ...state.providerUsage, source: 'requests' }
+      : liveAgentSpend.usageTotals(state.liveSpend);
+  }
   return state;
+}
+
+// One finished model request's token counts, as the Claude Code request
+// listener reports them in Anthropic's split, added to the turn's sum in the
+// relay's shape: input counts cache reads and writes, as OpenRouter bills it.
+// Counts only, each bounded.
+function noteCodingProviderUsage(usage, state) {
+  if (!usage || typeof usage !== 'object') return;
+  const count = (n) => (Number.isSafeInteger(n) && n >= 0 && n <= 100_000_000 ? n : 0);
+  const input = count(usage.inputTokens);
+  const output = count(usage.outputTokens);
+  const cacheRead = count(usage.cacheReadInputTokens);
+  const cacheWrite = count(usage.cacheWriteInputTokens);
+  if (!input && !output && !cacheRead && !cacheWrite) return;
+  const sum = state.providerUsage || (state.providerUsage = {
+    requests: 0, inputTokens: 0, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 0,
+  });
+  sum.requests += 1;
+  sum.inputTokens += input + cacheRead + cacheWrite;
+  sum.cachedInputTokens += cacheRead;
+  sum.cacheWriteInputTokens += cacheWrite;
+  sum.outputTokens += output;
+}
+
+// What one model request did with its images, as the same listener counts
+// them (applyTurnPolicy): sent to the model, moved out of a tool result for
+// a non-Anthropic model, or left out for a text-only one. Summed for the
+// turn's telemetry_metrics. A request carries the whole conversation, so a
+// screenshot counts once for every request that carries it. Counts only.
+function noteCodingProviderImages(images, state) {
+  if (!images || typeof images !== 'object') return;
+  const count = (n) => (Number.isSafeInteger(n) && n >= 0 && n <= 100_000 ? n : 0);
+  state.imageSentCount = (state.imageSentCount || 0) + count(images.sent);
+  state.imageMovedCount = (state.imageMovedCount || 0) + count(images.moved);
+  state.imageOmittedCount = (state.imageOmittedCount || 0) + count(images.omitted);
+}
+
+// The text blocks a Claude turn wrote since its last tool call, oldest
+// first: its final answer, when that answer came in more than one message.
+// Claude Code continues an answer cut at the output-token limit in a new
+// message, and its result (lastResultText) is the last message alone
+// (agent-result-text.js finalAnswerText). Bounded, oldest dropped first.
+const MAX_ANSWER_PARTS = 16;
+const MAX_ANSWER_CHARS = 1500000;
+
+function noteAnswerPart(state, text) {
+  const parts = Array.isArray(state.answerParts) ? state.answerParts : [];
+  parts.push(text);
+  let total = parts.reduce((sum, p) => sum + p.length, 0);
+  while (parts.length > 1 && (parts.length > MAX_ANSWER_PARTS || total > MAX_ANSWER_CHARS)) total -= parts.shift().length;
+  state.answerParts = parts;
 }
 
 function applyStreamEvent(event, onProgress, state) {
@@ -840,6 +1070,7 @@ function applyStreamEvent(event, onProgress, state) {
       browserMemberToolCount: mcpToolCount(systemEvent.tools, 'browser_member'),
       browserAdminToolCount: mcpToolCount(systemEvent.tools, 'browser_admin'),
       browserFullAdminToolCount: mcpToolCount(systemEvent.tools, 'browser_full_admin'),
+      browserGuestToolCount: mcpToolCount(systemEvent.tools, 'browser_guest'),
     });
   }
   if (event.type === 'assistant' && event.message?.content) {
@@ -860,6 +1091,7 @@ function applyStreamEvent(event, onProgress, state) {
         }
         if (block.text) {
           state.lastResultText = block.text;
+          noteAnswerPart(state, block.text);
           onProgress(block.text.substring(0, 300));
         }
       } else if (block.type === 'thinking') {
@@ -879,9 +1111,11 @@ function applyStreamEvent(event, onProgress, state) {
       } else if (block.type === 'redacted_thinking') {
         if (observeDiagnostics) state.responseRedactedThinkingBlockCount += 1;
       } else if (block.type === 'server_tool_use' || block.type === 'mcp_tool_use') {
+        state.answerParts = [];
         if (observeDiagnostics) noteClaudeToolCall(state, block);
         observeShotsTool(state, { phase: 'start', id: block.id, name: block.name, input: block.input });
       } else if (block.type === 'tool_use') {
+        state.answerParts = [];
         if (observeDiagnostics) noteClaudeToolCall(state, block);
         observeShotsTool(state, { phase: 'start', id: block.id, name: block.name, input: block.input });
         const input = block.input || {};
@@ -898,6 +1132,10 @@ function applyStreamEvent(event, onProgress, state) {
           label = `Editing ${input.file_path}`;
         } else if (block.name === 'Bash' && input.command) {
           label = `$ ${input.command.substring(0, 150)}`;
+        } else if (block.name === 'Skill' && typeof (input.skill || input.command) === 'string') {
+          // Which skill, so a turn's record says what it reached for (the App
+          // bench studio counts them: services/bench/progress.js).
+          label = `Using skill ${String(input.skill || input.command).substring(0, 80)}`;
         } else {
           label = `Using ${block.name}`;
         }
@@ -1009,6 +1247,49 @@ const CODING_PROVIDER_OUTCOMES = new Set(['ok', 'http_error', 'cancelled', 'netw
 function codingProviderCount(value, maximum) {
   return Number.isSafeInteger(value) && value >= 0 && value <= maximum ? value : null;
 }
+// What one model request came to, as the Claude Code listener reports it
+// (worker/claude-openrouter-request.js, provider_request_result): kept as
+// the turn's routed provider for its ledger row, and, when it failed, said
+// on the progress line and logged with the ids that find it in OpenRouter's
+// own log. Nothing here is the request's content: the listener sends a
+// status, ids, a provider name and an error's type and clipped message.
+const SAFE_PROVIDER_ID = /^[a-zA-Z0-9._:-]{1,160}$/;
+const SAFE_PROVIDER_NAME = /^[a-zA-Z0-9 ._:/()-]{1,80}$/;
+const SAFE_PROVIDER_ERROR_TYPE = /^[a-z0-9_.-]{1,64}$/i;
+function observeCodingProviderResult(event, ordinal, onProgress, state) {
+  const pick = (value, re) => (typeof value === 'string' && re.test(value) ? value : null);
+  const status = Number.isSafeInteger(event.httpStatus) && event.httpStatus >= 100 && event.httpStatus <= 599
+    ? event.httpStatus : null;
+  const providerName = pick(event.providerName, SAFE_PROVIDER_NAME);
+  const errorType = pick(event.errorType, SAFE_PROVIDER_ERROR_TYPE);
+  const errorMessage = typeof event.errorMessage === 'string'
+    ? event.errorMessage.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 300) || null
+    : null;
+  if (providerName) state.routedProvider = providerName;
+  noteCodingProviderUsage(event.usage, state);
+  noteCodingProviderImages(event.images, state);
+  const failed = (status != null && status >= 400) || !!errorType || !!errorMessage;
+  if (!failed) return;
+  state.providerRequestFailures = (state.providerRequestFailures || 0) + 1;
+  const detail = {
+    sessionId: state.hostSessionId || null,
+    requestOrdinal: ordinal,
+    httpStatus: status,
+    providerName,
+    requestId: pick(event.requestId, SAFE_PROVIDER_ID),
+    generationId: pick(event.generationId, SAFE_PROVIDER_ID),
+    errorType,
+    errorMessage,
+  };
+  log.warn('worker', 'Coding provider request failed', detail);
+  // OpenRouter's envelope carries the status again as its code: said once.
+  const what = [status != null ? `HTTP ${status}` : null, errorType !== String(status) ? errorType : null]
+    .filter(Boolean).join(' ');
+  const said = errorMessage ? `: ${errorMessage.slice(0, 160)}` : '';
+  const via = providerName ? ` (via ${providerName})` : '';
+  onProgress(`OpenRouter request #${ordinal} failed${what ? ` with ${what}` : ''}${said}${via}`);
+}
+
 function observeCodingProviderTiming(event, onProgress, state) {
   if (event?.kind === 'codex_output_idle') {
     const durationMs = event.durationMs;
@@ -1033,7 +1314,14 @@ function observeCodingProviderTiming(event, onProgress, state) {
   }
   const ordinal = event?.requestOrdinal;
   if (!Number.isSafeInteger(ordinal) || ordinal < 1 || ordinal > 1_000_000) return;
+  if (event.kind === 'provider_request_start' || event.kind === 'provider_request_end') {
+    noteCodingRequestClock(state, event.kind, ordinal, event.atMs);
+  }
   const requests = state.codingProviderRequests || (state.codingProviderRequests = new Map());
+  if (event.kind === 'provider_request_result') {
+    observeCodingProviderResult(event, ordinal, onProgress, state);
+    return;
+  }
   if (event.kind === 'provider_request_start') {
     const request = { lastReportedMs: null, lastReportedStage: null, contextReported: false };
     requests.set(ordinal, request);
@@ -1306,6 +1594,7 @@ function newWatchState() {
     // host-owned and never parsed from untrusted runner output.
     turnId: null,
     lastResultText: '',
+    answerParts: [],
     costUsd: 0,
     liveSpend: liveAgentSpend.createTracker(),
     liveSpendEnabled: false,
@@ -1398,6 +1687,25 @@ function newWatchState() {
     subagentCallCount: 0,
     webToolCallCount: 0,
     toolSearchCount: 0,
+    // Claude Code over OpenRouter only (noteCodingProviderImages); unknown
+    // stays null for every other turn.
+    imageSentCount: null,
+    imageMovedCount: null,
+    imageOmittedCount: null,
+    // Where an OpenRouter turn's time went, read off its request listener's
+    // own clock (noteCodingRequestClock). All null when the listener sent
+    // no clock: an Anthropic turn, or a worker image from before atMs.
+    codingClock: null,
+    modelRequestMs: null,
+    browserToolMs: null,
+    shellToolMs: null,
+    editToolMs: null,
+    readToolMs: null,
+    otherToolMs: null,
+    firstFileChangeMs: null,
+    firstAppBootMs: null,
+    firstBrowserCallMs: null,
+    lastBrowserCallMs: null,
     requestMode: null,
     requestMessageCount: null,
     requestUserMessageCount: null,
@@ -2354,6 +2662,18 @@ async function _bootstrapWarmContainer(sessionId, {
   // catches that case before we waste a container slot. Imports that
   // pre-date the public-only enforcement are caught here as well.
   const privacy = await github.checkRepoPublic(repoOwner, repoName);
+  if (!privacy.ok && privacy.code === 'rate_limited') {
+    // GitHub refused the check because Homeroom's hourly budget is used up.
+    // This message reaches people as it is (a dev chat's turn error, a
+    // before/after shots card), so it says that in plain words and when the
+    // budget resets, rather than "Cannot bootstrap worker ... API rate limit
+    // exceeded for user ID ...".
+    const err = new Error(
+      `Homeroom could not start working on ${repoOwner}/${repoName}. ${privacy.message} Nothing was changed.`
+    );
+    err.code = 'github_rate_limited';
+    throw err;
+  }
   if (!privacy.ok) {
     throw new Error(
       `Cannot bootstrap worker for ${repoOwner}/${repoName}: ${privacy.message}`
@@ -3082,6 +3402,7 @@ async function execInWorker(sessionId, {
       shotsMemberToken: shotsAuthTokens?.member,
       shotsAdminToken: shotsAuthTokens?.read_only_admin,
       shotsFullAdminToken: shotsAuthTokens?.full_admin,
+      shotsGuestToken: shotsAuthTokens?.guest ?? null,
       homeroomMcpToken: homeroomGrant ? homeroomGrant.token : null,
     });
   } catch (err) {

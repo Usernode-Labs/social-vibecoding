@@ -16,7 +16,7 @@
  * mark, targeting the platform's own self-hosted row for as long as Home is up
  * (`Home.publishImproveTarget`, #1367). So steps 3 to 5 are one interaction
  * rather than three descriptions (step 1, what a community is, and step 2,
- * Shortcuts, only describe what they point at):
+ * My apps, only describe what they point at):
  *
  *   * step 3 spotlights the MARK that opens that menu, asking the viewer to
  *     press it. The click is NOT intercepted: the tour subscribes to

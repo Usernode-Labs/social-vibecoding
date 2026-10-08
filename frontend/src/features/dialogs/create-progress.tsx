@@ -118,7 +118,7 @@ function headline(
   if (outcome === 'live') return `${appName} is live`;
   if (outcome === 'needs-secrets') return 'Almost there';
   if (outcome === 'failed') return `Couldn’t finish ${appName}`;
-  if (mode === 'fork') return `Forking ${appName}`;
+  if (mode === 'fork') return `Remixing ${appName}`;
   return mode === 'import' ? `Importing ${appName}` : `Creating ${appName}`;
 }
 
@@ -168,6 +168,9 @@ function statusLine(
   return 'This usually takes under a minute. You can close this and keep going. We’ll finish in the background and your app will appear in your apps.';
 }
 
+/** The last next step on a project that is Just you: the one vote is yours. */
+const SOLO_APPROVE = 'You approve it, and it goes live.';
+
 /** The three things to do next, once there is an app to do them to. */
 const NEXT_STEPS = [
   'Open your app and try what it shipped with.',
@@ -183,7 +186,8 @@ const NEXT_STEPS = [
  * description decides the first two lines, and who the project is for the
  * last: on a Just me project the one vote is the creator's
  * (services/active-users.js counts its one member, so one Yes merges). A
- * fork keeps the three lines it had. Exported and pure for
+ * fork (a "remix") always starts as Just you (POST /api/apps/:slug/fork), so
+ * its last line is the Just me one. Exported and pure for
  * tests/create-progress-view.test.js.
  */
 export function nextSteps({ builder = null, audience = null, mode = 'new' }: {
@@ -191,8 +195,8 @@ export function nextSteps({ builder = null, audience = null, mode = 'new' }: {
   audience?: Audience | null;
   mode?: 'new' | 'import' | 'fork';
 } = {}): readonly string[] {
-  if (mode === 'fork') return NEXT_STEPS;
-  const approve = audience === 'solo' ? 'You approve it, and it goes live.'
+  if (mode === 'fork') return [NEXT_STEPS[0], NEXT_STEPS[1], SOLO_APPROVE];
+  const approve = audience === 'solo' ? SOLO_APPROVE
     : audience ? 'Members vote it in, and it goes live.' : NEXT_STEPS[2];
   if (builder === 'bot') {
     return [

@@ -20,6 +20,9 @@ const BUILD_RE = /^(?:[0-9a-f]{7,40}|dev)$/;
 const JOURNEY_SCREENS = Object.freeze(new Set([
   'shell_boot', 'app_detail', 'app_discussion', 'feedback_dialog',
   'report_dialog', 'change_workspace', 'preview',
+  // The first-session plan: "Get a ping when it's ready?" in the Homeroom
+  // app (NativeChrome.askForPing), the ask its push_permission answers.
+  'ping_ask',
 ]));
 // Navigation (#3369): one code per screen root the shell reveals, so a
 // person's path can be read in the order they took it. `app` is the running
@@ -45,6 +48,10 @@ const SCHEMA_VERSIONS = Object.freeze(new Set([1, 2]));
 const ACTIONS = Object.freeze(new Set([
   'shell_boot', 'app_detail_load', 'app_discussion_load',
   'feedback_submit', 'content_report_submit', 'change_create', 'preview_open',
+  // The answer to the ping ask: success is allowed, failure (access_denied)
+  // is the phone's permission refused, cancelled is "Not now". A guardrail
+  // of the first-session plan: how often pushes are denied.
+  'push_permission',
 ]));
 const KINDS = Object.freeze(new Set([
   'screen_visit', 'action_attempt', 'action_outcome', 'repeated_action',

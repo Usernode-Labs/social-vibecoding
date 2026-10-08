@@ -149,16 +149,16 @@ test('each kind renders its own title and body from send-time context', () => {
       'Your work is getting noticed'],
     ['collab_invite', CONTEXT,
       '@alice wants to build MyPage with you',
-      'Join as a collaborator. Accept or decline in the app'],
+      'Join them to build it. Accept or decline in the app'],
     ['collab_invite_accepted', CONTEXT,
       '@alice is in! · MyPage',
       'Your invite was accepted. You can start building together'],
     ['approver_invite', CONTEXT,
-      '@alice asked you to be an approver · MyPage',
-      "You'd review and vote on proposals. Accept in the app"],
+      '@alice asked you to help approve changes · MyPage',
+      "You'd try changes and vote on them. Accept in the app"],
     ['approver_invite_accepted', CONTEXT,
-      '@alice is now an approver · MyPage',
-      'They can review and vote on proposals from now on'],
+      '@alice can approve changes now · MyPage',
+      'They can try changes and vote on them from now on'],
     ['spec_shared', { ...CONTEXT, detail: '3' },
       '@alice shared "Fix login redirect loop" with you · MyPage',
       'Spec v3. Take a look and leave feedback'],
@@ -174,21 +174,28 @@ test('each kind renders its own title and body from send-time context', () => {
       '@alice would love your eyes on this'],
     ['proposal_vote', CONTEXT,
       '@alice voted yes on "Fix login redirect loop" · MyPage',
-      'Open the proposal to review their vote'],
+      'Open the change to see their vote'],
     ['pr_merged', CONTEXT,
-      '"Fix login redirect loop" merged · MyPage',
+      '"Fix login redirect loop" is live · MyPage',
       'The vote carried. Your change is live'],
     ['issue_opened', { ...CONTEXT, detail: '2273' },
-      '@alice filed issue #2273 · MyPage',
-      'Open the issue to see what needs attention'],
+      '@alice filed request #2273 · MyPage',
+      'Open the request to see what needs attention'],
+    // #3952: named with @ in a request somebody filed.
+    ['issue_mention', { ...CONTEXT, detail: '3952' },
+      '@alice mentioned you in request #3952 · MyPage',
+      'Open the request to see what they wrote'],
     ['vote_digest', { ...CONTEXT, detail: '3' },
-      '3 proposals are waiting for your vote',
-      'Open Dev to review them'],
+      '3 changes are waiting for your approval',
+      'See them under Needs you in Communities'],
+    ['vote_digest', { ...CONTEXT, detail: '1' },
+      '1 change is waiting for your approval',
+      'Open it to try it and approve it'],
     ['check_failed', CONTEXT,
-      'Checks failed on "Fix login redirect loop" · MyPage',
-      'Needs a fix before it can merge'],
+      'Testing found a problem with "Fix login redirect loop" · MyPage',
+      'It needs a fix before it can go live'],
     ['stale_pr', CONTEXT,
-      '"Fix login redirect loop" is waiting for eyes · MyPage',
+      '"Fix login redirect loop" is waiting for approval · MyPage',
       'Share the preview or ask a friend to try it'],
   ];
   for (const [kind, context, title, body] of cases) {
@@ -321,11 +328,11 @@ test('missing context degrades to the generic notification, never a throw', () =
   // actor, app or proposal label, so they never regress to generic activity.
   assert.deepEqual(
     buildMessage({ ...INPUT, kind: 'pr_merged', context: {} }).notification,
-    { title: 'Your proposal merged', body: 'The vote carried. Your change is live' }
+    { title: 'Your change is live', body: 'The vote carried. Your change is live' }
   );
   assert.deepEqual(
     buildMessage({ ...INPUT, kind: 'vote_digest', context: {} }).notification,
-    { title: 'Proposals are waiting for your vote', body: 'Open Dev to review them' }
+    { title: 'Changes are waiting for your approval', body: 'See them under Needs you in Communities' }
   );
 });
 
@@ -431,6 +438,20 @@ test('platform limit alerts name the cap, how full it is, and the lever', () => 
   });
   assert.equal(copy('sessions_full:75:75').title, 'Session limit reached');
   assert.match(copy('sessions_full:75:75').body, /MAX_GLOBAL_SESSIONS/);
+  // GitHub's hourly budget (services/github-budget.js).
+  assert.deepEqual(copy('github_warn:4000:5000'), {
+    title: 'GitHub requests running low',
+    body: "4000 of 5000 GitHub requests used this hour. Background work waits so people's work keeps the rest",
+  });
+  assert.deepEqual(copy('github_full:5000:5000'), {
+    title: 'GitHub requests used up',
+    body: "All 5000 of this hour's GitHub requests are used. Proposals and shots that need GitHub fail until the hour resets",
+  });
+  assert.equal(copy('github_app_warn:10000:12500').title, 'GitHub App requests running low');
+  assert.equal(copy('github_app_full:12500:12500').title, 'GitHub App requests used up');
+  for (const d of ['github_warn:4000:5000', 'github_full:5000:5000', 'github_app_full:12500:12500']) {
+    assert.ok(!/\u2014/.test(JSON.stringify(copy(d))), d);
+  }
   // An unreadable token still says what kind of alert it is.
   assert.equal(copy('disk_warn:1:2').title, 'Platform limit');
   assert.equal(copy(undefined).title, 'Platform limit');

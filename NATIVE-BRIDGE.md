@@ -261,6 +261,48 @@ iOS applies `aps.badge` and Android launchers read
 exists for the live half — updating and clearing the badge while the
 user is inside the app.
 
+### Native sign-in (additive; `signInWithProvider`)
+
+#### `signInWithProvider({ provider, nonce })` → `{ idToken }`
+
+Privileged top-frame action. Inside the app the sign-in sheet's Continue
+with Apple and Continue with Google cannot use the providers' web pages
+(Google refuses an embedded web view outright), so the page asks the app
+for its own sheet and sends the ID token it returns to the server:
+
+1. The page calls `POST /api/auth/oauth/:provider/native/start` and gets
+   `{ state, nonce }` (a single-use state bound to this web view by an
+   HttpOnly cookie).
+2. The page calls `signInWithProvider({ provider, nonce })`. The app shows
+   the provider's native sheet with that nonce: **Apple gets the nonce's
+   SHA-256 (lowercase hex)**, as Apple's documentation asks; Google gets it
+   as given where the SDK takes one.
+3. The page sends `{ state, idToken }` to
+   `POST /api/auth/oauth/:provider/native`, which verifies the token
+   (signature, issuer, an audience among the app's client IDs saved in
+   Admin → Sign-in providers, the nonce, used once) and signs in, or asks
+   for a username, exactly as the web sign-in does.
+
+Producer requirements for a build that advertises the capability:
+
+- **Advertise `signInWithApple` and/or `signInWithGoogle`** for the
+  providers this build can actually sign in with (Apple: iOS with the
+  Sign in with Apple entitlement; Google: a build configured with its
+  client IDs). The page offers a provider only when both the server lists it
+  (`native_sign_in_providers` in `/api/public/waitlist/options`) and the
+  build advertises it.
+- **Resolve `{ idToken }`** (the provider's JWT, untouched). Nothing else is
+  needed; the server reads the address and subject from the token.
+- **Reject with `errorInfo.code: "cancelled"`** when the person closes the
+  sheet, so the page says nothing; any other failure is a plain English
+  sentence (code `failed` or omitted).
+- **Do not hold the lifecycle queue**: this waits on the person, so it is
+  not a lifecycle method, and it neither establishes nor ends a native
+  session. The page's ordinary session mint follows the server's answer.
+
+Builds without the capability lose nothing: the sheet offers the email code
+inside the app, as before.
+
 ### Native history gestures (additive; `setBackNavigationEnabled`)
 
 `setBackNavigationEnabled({ enabled: boolean })` enables WebKit's native
@@ -698,6 +740,28 @@ This is a privileged trusted-top-frame action. Child dapps cannot request a
 capture of surrounding app chrome. Callers must feature-detect the capability;
 older app builds continue to use the feedback dialog's Photos/file fallback.
 
+#### `saveImage({ base64, contentType, filename })` → `true`
+
+Additive capability: `saveImage`. Saves a picture SV already holds to the
+phone: the photo library on iOS (add-only Photos permission), Pictures (or
+Downloads) on Android. SV calls it from the chat image viewer's Download and
+the message sheet's "Download image" (`features/image-viewer/save-image.ts`).
+The picture is a chat attachment served only with the session cookie, so the
+system browser (`openExternal`) cannot fetch it; SV fetches it in the page
+and hands over the bytes.
+
+- `contentType` must start with `image/`; `filename` is the attachment's
+  name with an extension, for platforms that keep one.
+- SV sends at most about 15 MB of image data; above that it uses the Web
+  Share sheet instead.
+- Privileged trusted-top-frame action, like `captureScreenshot`: an embedded
+  dapp cannot write into somebody's photos.
+- Resolve `true` once saved. Reject when the person refuses the permission
+  or the save fails; SV says "Couldn’t download this image."
+- Until a build advertises the capability, SV uses `navigator.share` with
+  files where the webview provides it, and otherwise hides its download
+  controls rather than showing one that does nothing.
+
 ### Settings (v3 — app-settings-to-web migration)
 
 All v3 methods are trusted-SV-origin gated like `openNativeScreen`. They
@@ -871,6 +935,14 @@ web revocation must still succeed before invoking native logout.
 Remote revocation is best effort on the offline path; this does not revoke a
 server-side session while the server is unreachable or queue a later retry.
 
+Social does not wait on native indefinitely (#3915). Once web revocation has
+succeeded it leaves for its public landing page 8 seconds after invoking
+`logout()` even if native has not answered, and 5 seconds after an answer that
+did not replace the document. Native must therefore keep cleanup independent of
+the old document once admitted, and still replace whatever document is showing
+when it finishes. On the offline path, where web revocation failed, Social waits
+for native's answer instead, because only native can delete the live cookie.
+
 ## Trust model
 
 - The native transaction confirm sheet remains the sole native chrome over
@@ -891,9 +963,31 @@ server-side session while the server is unreachable or queue a later retry.
   state.
   `onPageStarted`/`onPageFinished` are intentionally not authority or listener
   readiness signals because their ordering differs across WebView platforms.
+- The parent bridge relays only for the production app frames the SV shell
+  owns. The shell publishes `window.__usernodeAppFrameFor(source)`
+  (`frontend/src/features/app-frame/mount.ts`), which names such a frame as
+  `{ slug, name, origin, mounted }` and answers null for anything else; the
+  relay also requires the message's origin to equal that `origin`. A staging
+  preview, the landing viewer, a page nested inside an app, an app frame
+  navigated to another site, and any top frame that is not the shell get no
+  `discover-ack` and no reply, so they behave as in a desktop browser. An ack
+  binds the frame to its app. A request from an owned frame that never
+  connected, or from an app kept alive while hidden, gets an error reply and
+  is not forwarded.
+- Every relayed request carries `relayApp: { slug, name }` at the top level of
+  the native payload, beside `args` and never inside it (`args` is checked
+  field by field). Native may read it to name the app on the confirm sheet
+  ("<App> wants to send"). Relayed ids still start with `relay-`.
+- Relayed `signMessage` is refused by the web bridge with "Signing from inside
+  apps isn't available yet": the signing sheet names Homeroom, not the app
+  asking. Signing from the trusted top frame is unchanged.
 - The parent bridge refuses both capability bootstraps and privileged relays
   from child frames. Non-privileged dapp reads and transaction methods keep
   their existing relay behavior only while the current realm claim is live.
+- These checks are the web half. Android's WebView injects the `Usernode`
+  channel into child frames too, so a child can post to native directly;
+  session-bound methods still fail there because the realm claim and the
+  privileged capability live only in the top frame's closure.
 - Loopback origins are not privileged by default. Flutter development builds
   can opt in with `--dart-define=ENABLE_LOCAL_PRIVILEGED_BRIDGE=true`; the
   switch is additionally gated by Flutter debug mode and cannot enable

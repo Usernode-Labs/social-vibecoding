@@ -259,8 +259,13 @@ pgTest('the closed kind policy and account preferences gate enqueue at insert ti
   // (an app-chat reply-thread reply, direct_interactions). 33 → 34 with
   // #3181's session_stalled, beside session_done in developer_sessions.
   // 34 → 35 with platform_limit (server-wide cap alerts for full admins,
-  // app_alerts).
-  assert.equal(policy.length, 35, 'the seed carries the reviewed closed set');
+  // app_alerts). 35 → 36 with B7's change_ready (proposal_alerts). 36 → 43
+  // with WP-E's four build moments (builds) and three invite kinds
+  // (invite_activity), seeded and reaped the same way. 43 → 44 with
+  // channel_message (a small private group's discussion, under messages).
+  // 44 → 45 with #3952's issue_mention (named with @ in a request, under
+  // direct_interactions beside mention).
+  assert.equal(policy.length, 45, 'the seed carries the reviewed closed set');
   for (const { kind, default_enabled: enabled } of policy) {
     const row = await notify(client, { userId: alice, kind });
     assert.equal((await deliveriesFor(client, row.id)).length, enabled ? 1 : 0,

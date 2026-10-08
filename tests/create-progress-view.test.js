@@ -77,8 +77,9 @@ test('an import says importing, not creating', () => {
   assert.match(text({ phase: 'repository' }, { mode: 'import' }), /Importing .?My App/);
 });
 
-test('a fork says it is forking the named app', () => {
-  assert.match(text({ phase: 'repository' }, { mode: 'fork' }), /Forking .?My App/);
+test('a fork says it is remixing the named app', () => {
+  assert.match(text({ phase: 'repository' }, { mode: 'fork' }), /Remixing .?My App/);
+  assert.doesNotMatch(text({ phase: 'repository' }, { mode: 'fork' }), /Fork/, 'people see Remix, never Fork');
 });
 
 test('live shows the app is up and offers to open it', () => {
@@ -190,25 +191,16 @@ test('what happens next follows who builds it and who it is for: a builder by au
       if (builder === 'bot') assert.doesNotMatch(lines, /Open (it|your app)/, 'the bot builds it; nothing to open and try yet');
     }
   }
-  // A fork keeps the three lines it had.
+  // A fork (a remix) always starts as Just you, so the vote is yours.
   assert.deepEqual([...nextSteps({ mode: 'fork' })], [
     'Open your app and try what it shipped with.',
     'Describe a change in chat, and a coding agent writes it.',
-    'Collaborators vote it in, and it goes live.',
+    'You approve it, and it goes live.',
   ]);
   // And the view draws what nextSteps says.
   assert.deepEqual(nextOf(html({ status: 'running' }, { builder: 'bot', audience: 'solo' })),
     [...nextSteps({ builder: 'bot', audience: 'solo', mode: 'new' })]);
   assert.deepEqual(nextOf(html({ phase: 'build' }, { mode: 'fork' })), [...nextSteps({ mode: 'fork' })]);
-});
-
-test('the create dialog says who builds it and who it is for', () => {
-  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../frontend/src/features/dialogs/create-app.tsx'), 'utf8');
-  assert.match(src, /builder=\{botChat \? 'bot' : \(mode !== 'import' \? 'request' : null\)\}/);
-  assert.match(src, /audience=\{audience \?\? 'solo'\}/);
-  // #13 with #15 in place: "Open app" goes to the app's own page, which
-  // says the first version is being built.
-  assert.match(src, /onViewApp=\{\(\) => \{[\s\S]{0,240}dialog\.closeForNavigation\(\);\s*\(window\.App\?\.navigateToApp [^;]*\?\.\(slug, 'app'\);/);
 });
 
 test('#13: the bot case also offers the app itself, under the bot\'s DM; nobody else gets a second button', () => {

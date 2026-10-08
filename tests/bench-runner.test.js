@@ -157,6 +157,19 @@ test('a triage trial: the real prompt from the snapshot, at its base commit, on 
   assert.deepEqual(side, [], 'nothing posted, commented, DMed or proposed');
 });
 
+test('a first version\'s triage trial is told the project\'s people the original look was told', async (t) => {
+  spySideEffects(t);
+  const members = {
+    people: [{ username: 'jordan_t1004', name: 'Jordan', creator: true, invited: false }, { username: 'sam_t1004', name: null, creator: false, invited: true }],
+    more: 0, emailInvites: 0,
+  };
+  const h = harness({ text: '```json\n{"verdict":"empty","reason":"x"}\n```' });
+  const snap = snapshot('triage', { firstVersion: true, members });
+  await runner.runStage(ctx(h, 'triage', { snapshot: snap }));
+  assert.equal(h.calls.prompts[0], bot.triagePromptFor({ seed: snap.texts.seed, issueNumber: 12, firstVersion: true, members }));
+  assert.match(h.calls.prompts[0], /==== WHO IS IN THIS PROJECT ====[\s\S]*- Jordan \(@jordan_t1004\), who made the project\n- @sam_t1004, invited and not joined yet/);
+});
+
 test('how a triage turn ended: unparseable is the model\'s, a wall clock a timeout, a platform fault infra', async (t) => {
   spySideEffects(t);
   assert.equal((await runner.runStage(ctx(harness({ text: 'no block' }), 'triage'))).status, 'model_fail');

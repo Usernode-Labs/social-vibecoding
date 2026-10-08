@@ -55,10 +55,10 @@ import { openReport } from '../dialogs/report';
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { ChatMessageRow, groupsWithPrevious } from '@/components/ui/chat';
+import { ChatMessageRow, NewMessagesDivider, groupsWithPrevious } from '@/components/ui/chat';
 import { Avatar, ReactionPill } from '@/components/ui/feed';
 import {
-  BookmarkIcon, BookmarkSolidIcon, CopyIcon, DraftTrashIcon, EnvelopeIcon, FlagIcon, LinkIcon, NoSymbolIcon,
+  BookmarkIcon, BookmarkSolidIcon, ChatIcon, CopyIcon, DownloadIcon, DraftTrashIcon, EnvelopeIcon, FlagIcon, LinkIcon, NoSymbolIcon,
   PencilSquareIcon, ReplyArrowIcon, ThreadIcon,
 } from '@/components/ui/icons';
 
@@ -66,12 +66,16 @@ import { confirmAction } from '../../lib/confirm';
 import { timeOfDay } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { PostedViaChip } from './posted-via-chip';
+import { BotRequestCardView, BotStatusChip } from './bot-request';
 import { ImageViewer, openInViewer } from '../image-viewer/image-viewer';
+import { downloadLabel, downloadableImages, saveImages, useCanSaveImage } from '../image-viewer/save-image';
 import { EventRow } from './proposal-event';
 import { QuietCard } from './quiet-card';
 import { swatchFor } from './swatch';
 import { LinkEmbeds } from '../messages/link-cards';
+import { openAppTarget } from '../messages/bot-shared';
 import { setUserBlocked } from '../messages/store';
+import { firstUnreadId, transcriptRow } from '../messages/unread-anchor';
 import { MessageActionBar, MessageMenu, placementFor, type MenuItem } from '../message-actions/action-bar';
 import { MessageActionSheet, useLongPress } from '../message-actions/action-sheet';
 import { absoluteLink, copyToClipboard, toast } from '../message-actions/clipboard';
@@ -306,9 +310,20 @@ export function Attachments({ items }: { items: Attachment[] }) {
  * the border width), so the affordance had quietly gone missing.
  */
 export function Reactions({ msg }: { msg: TranscriptMessage }) {
-  if (!msg.reactions.length) return <div className="gc-reactions" id={`gc-react-${msg.id ?? ''}`} />;
+  if (!msg.reactions.length && !msg.botRequest) return <div className="gc-reactions" id={`gc-react-${msg.id ?? ''}`} />;
   return (
     <div className="gc-reactions" id={`gc-react-${msg.id ?? ''}`}>
+      {/* B9: a request asked of Homeroom bot here, first and in its own colour (./bot-request.tsx). */}
+      {msg.botRequest ? (
+        <BotStatusChip
+          chip={msg.botRequest}
+          mine={msg.mine}
+          onTry={(sessionId) => controller()?.tryBotChange?.(sessionId)}
+          onProgress={() => (msg.botRequest?.status === 'fixing' && msg.botRequest.sessionId
+            ? controller()?.openBotChange?.(msg.botRequest.sessionId)
+            : controller()?.openBotChat?.())}
+        />
+      ) : null}
       {msg.reactions.map((r) => (
         <ReactionPill
           key={r.emoji}
@@ -622,11 +637,18 @@ export function messageMenuItems(
   const id = msg.id;
   if (!id) return [];
   const items: MenuItem[] = [];
+  // B9: hand one of your own messages to Homeroom bot, in your words.
+  if (surface === 'main' && msg.canAskBot) {
+    items.push({ key: 'ask-bot', label: 'Make this a request', icon: ChatIcon, onSelect: () => { void chat?.makeBotRequest?.(id); } });
+  }
   if (surface === 'main' && msg.canThread) {
     items.push({ key: 'thread', label: msg.thread ? 'View thread' : 'Reply in thread', icon: ThreadIcon, onSelect: () => chat?.openReplyThread?.(id) });
   }
   if (msg.showEdit) items.push({ key: 'edit', label: 'Edit message', icon: PencilSquareIcon, onSelect: () => chat?._startEdit?.(id) });
   if (msg.text) items.push({ key: 'copy', label: 'Copy text', icon: CopyIcon, onSelect: () => { void copyToClipboard(msg.text || '', 'Message text copied'); } });
+  // #4055: its pictures onto the device, whoever posted them.
+  const pictures = downloadableImages((msg.attachments || []).filter((att) => att.kind === 'image').map((att) => ({ src: att.url, name: att.name })));
+  if (pictures.length) items.push({ key: 'download', label: downloadLabel(pictures.length), icon: DownloadIcon, onSelect: () => { void saveImages(pictures); } });
   const link = chat?.messageAddress?.(id);
   if (link) items.push({ key: 'link', label: 'Copy link to message', icon: LinkIcon, onSelect: () => { void copyToClipboard(absoluteLink(link), 'Link copied'); } });
   if (!msg.mine && surface === 'main') {
@@ -693,6 +715,10 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
   const recents = useRecentReactions();
   const chat = controller();
   const live = !msg.deleted && !!msg.id;
+  // #4055: in the app, whether its build can save a picture is known only
+  // once asked; asking re-renders the row so the menu's Download line can
+  // appear. Nothing is asked for a row without a picture.
+  useCanSaveImage((msg.attachments || []).find((att) => att.kind === 'image')?.url || '');
   const longPress = useLongPress(() => setSheet(true), { disabled: !live });
   const reportMessage = () => msg.id && openReport({ targetType: 'app_message', target: msg.id, label: `Message from @${msg.username}`, userId: msg.senderId });
   const reacted = (emoji: string) => msg.reactions.some((r) => r.emoji === emoji && r.mine);
@@ -762,10 +788,38 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
               data-pr-number={msg.voteRef.prNumber}
             />
           ) : null}
+          {/* #4238: Homeroom bot's first-version line opens the app. */}
+          {msg.openApp ? (
+            <Button
+              type="button"
+              data-gc-open-app=""
+              onClick={() => openAppTarget(msg.openApp?.target)}
+              variant="pillAccent"
+              size="sm"
+              className="mt-2 font-semibold"
+            >
+              {msg.openApp.label}
+            </Button>
+          ) : null}
           {grouped && msg.editedTitle ? (
             <span className="gc-msg-edited" title={msg.editedTitle}>edited</span>
           ) : null}
           <Reactions msg={msg} />
+          {/* B9: the card under your own message that asked Homeroom bot, yours alone. */}
+          {msg.mine && msg.botCard ? (
+            <BotRequestCardView
+              card={msg.botCard}
+              actions={{
+                onProgress: () => chat?.openBotChat?.(),
+                onRequest: (n) => chat?.openBotRequest?.(n),
+                onFile: () => chat?.makeBotRequest?.(msg.id),
+                onDismiss: () => chat?.dismissBotRequest?.(msg.id),
+                onOpenChat: () => chat?.openBotChat?.(),
+                onTry: (sessionId) => chat?.tryBotChange?.(sessionId),
+                onChange: (sessionId) => chat?.openBotChange?.(sessionId),
+              }}
+            />
+          ) : null}
         </>
       )}
       {msg.thread && surface === 'main' && msg.id ? (
@@ -966,9 +1020,19 @@ export function TranscriptRows({ view, source }: {
   // every render would redraw its memo()'d row every time.
   const folded = useMemo(() => foldRepeats(view.messages), [view.messages]);
   const rows = folded.filter((m) => !main || drawnInGeneralChat(m));
-  const quiet = (main || chat) && view.lead.quiet && !view.messages.some((m) => m.kind === 'message')
+  const quiet = (main || chat) && view.lead.quiet && !view.messages.some((m) => m.kind === 'message' && !m.openApp)
     ? view.lead.quiet
     : null;
+  // The general chat's "New" line: above the first message after where
+  // reading stood when the channel opened (`lead.unread`), or above the
+  // first row drawn after it when that message is not drawn itself. The
+  // pane opens with it near the top (mount.ts openAtUnreadLine).
+  const unread = main ? view.lead.unread : null;
+  const lineAt = useMemo(
+    () => (unread ? firstUnreadId(view.messages.map(transcriptRow), unread.lastReadId) : null),
+    [unread, view.messages],
+  );
+  let lineDrawn = lineAt === null;
   const drawn: ReactNode[] = [];
   // The row the next one groups under; a thread-activity card resets it, so
   // the message after a card always carries its own name.
@@ -978,6 +1042,10 @@ export function TranscriptRows({ view, source }: {
     // where it landed — one card for a run of replies to one thread with
     // nothing else said between them. A deleted reply leaves the run.
     const replyOf = main ? rows[i].replyOf : null;
+    if (!lineDrawn && rows[i].id != null && (rows[i].id as number) >= (lineAt as number)) {
+      lineDrawn = true;
+      drawn.push(<NewMessagesDivider key="unread-line" />);
+    }
     if (replyOf) {
       const run = [rows[i]];
       while (i + 1 < rows.length && rows[i + 1].replyOf?.rootId === replyOf.rootId) {

@@ -83,9 +83,10 @@ test('each first-run sheet and the tour report themselves as steps, and hand bac
   const tour = read('frontend/src/features/home/tour/index.tsx');
   assert.match(username, /if \(!\(opts && opts\.demo\)\) window\.UITelemetry\?\.navigate\?\.\('username_sheet'\);/);
   assert.match(join, /if \(!\(opts && opts\.demo\)\) window\.UITelemetry\?\.navigate\?\.\('join_sheet'\);/);
-  assert.match(terms, /window\.UITelemetry\?\.navigate\?\.\('terms_sheet'\);/);
+  // The terms are accepted by continuing now (terms-first-run.js): no sheet, so no step.
+  assert.doesNotMatch(terms, /'terms_sheet'/);
   assert.match(tour, /if \(!isTourShot\(\)\) \(window as any\)\.UITelemetry\?\.navigate\?\.\('tour'\);/);
-  for (const [label, src] of [['username', username], ['join', join], ['terms', terms], ['tour', tour]]) {
+  for (const [label, src] of [['username', username], ['join', join], ['tour', tour]]) {
     assert.match(src, /App\?\._renotifyNavigation\?\.\(\)/, `${label}: closing it re-reports the screen under it`);
   }
   assert.match(tour, /onClick=\{\(\) => finish\('skip'\)\}/, 'Skip is told apart from Next on the last step');

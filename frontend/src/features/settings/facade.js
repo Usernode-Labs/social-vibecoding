@@ -65,6 +65,7 @@ const state = {
   aiProgressEstimate: false,
   sessionBridgeEnabled: false,
   homeroomBotDm: false,
+  homeroomBotForEveryone: false,
   locale: null,
   devFlowPreference: null,
   externalFlowsAvailable: false,
@@ -249,6 +250,7 @@ const Facade = {
       state.aiProgressEstimate = !!u.aiProgressEstimate;
       state.sessionBridgeEnabled = !!u.sessionBridgeEnabled;
       state.homeroomBotDm = !!u.homeroomBotDm;
+      state.homeroomBotForEveryone = !!u.homeroomBotForEveryone;
       state.locale = u.locale || null;
       state.devFlowPreference = u.devFlowPreference || null;
       state.externalFlowsAvailable = !!u.externalFlowsAvailable;

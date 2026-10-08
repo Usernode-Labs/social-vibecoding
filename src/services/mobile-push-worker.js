@@ -13,6 +13,11 @@ const CONVERSATION_NOTIFICATION_KINDS = new Set([
   'conversation_reply',
   'conversation_reaction',
   'conversation_thread_reply',
+  // WP-E: the Homeroom bot's build moments (services/notifications.js).
+  'build_ready',
+  'build_needs_you',
+  'build_stopped',
+  'build_live',
 ]);
 
 const DEFAULTS = Object.freeze({
@@ -250,6 +255,7 @@ class MobilePushWorker {
               c.title AS conversation_title,
               c.status AS conversation_status,
               su.username AS source_username,
+              su.is_synthetic AS source_is_synthetic,
               cm.content AS message_content,
               conversation_message.content AS conversation_message_content,
               conversation_member.status AS conversation_member_status,
@@ -500,6 +506,7 @@ class MobilePushWorker {
           appSelfHosted: row.app_self_hosted === true,
           conversationTitle: row.conversation_title,
           sourceUsername: row.source_username,
+          sourceIsSynthetic: row.source_is_synthetic === true,
           messageContent: row.conversation_message_content ?? row.message_content,
           sessionTitle: row.session_title,
           prTitle: row.pr_title,

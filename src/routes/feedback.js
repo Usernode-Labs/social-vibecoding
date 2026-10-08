@@ -7,10 +7,11 @@ const limits = require('../services/limits');
 const github = require('../services/github');
 const { announceIssueCreated, findAppByRepo } = require('../services/issue-announce');
 const appAccess = require('../services/app-access');
+const communities = require('../services/communities');
 const { placeBounty } = require('../services/bounties');
 const { getPool } = require('../db/pool');
-const { sniffImageType } = require('../services/attachments');
-const { feedbackTitleLimiter, feedbackSubmitLimiter, issueScreenshotLimiter } = require('../middleware/rate-limits');
+const { sniffImageType, sniffVideoType } = require('../services/attachments');
+const { feedbackTitleLimiter, feedbackSubmitLimiter, issueScreenshotLimiter, feedbackVideoLimiter } = require('../middleware/rate-limits');
 const challengeScorer = require('../services/topochain/challenge-scorer');
 // #11 (WP3): the platform issue and its receipt, shared with the Homeroom
 // bot's report_problem, which files through the service rather than here.
@@ -102,6 +103,56 @@ function buildScreenshotsEmbed(ids, domain) {
   if (ids.length === 1) return buildScreenshotEmbed(ids[0], domain);
   const lines = ids.map((id, i) => `![Screenshot ${i + 1}](https://${domain}/issue-images/${id})`);
   return `\n\n**Screenshots:**\n${lines.join('\n')}`;
+}
+
+// #3940: feedback-modal video attachments. Same shape as the screenshots
+// above, with three differences the medium forces: the cap is 50 MB
+// (a screen recording has no reasonable smaller ceiling), the types are
+// sniffed to MP4/WebM/MOV by magic bytes, and the issue-body embed is a
+// plain markdown LINK, not an image — GitHub renders external <video> as
+// an anchor anyway, and the in-app topic view turns the link into an
+// inline player (DevChat.renderMarkdown). One clip per issue; the client
+// picks at most one and the server accepts exactly one.
+const MAX_VIDEO_BYTES = 50 * 1024 * 1024;
+const VIDEO_ID_RE = SCREENSHOT_ID_RE;
+
+// Pure (exported for tests): validate an uploaded clip's bytes. Returns
+// { ok: true, contentType } or { ok: false, error }.
+function validateVideoUpload(data) {
+  if (!Buffer.isBuffer(data) || data.length === 0) {
+    return { ok: false, error: 'Empty upload' };
+  }
+  if (data.length > MAX_VIDEO_BYTES) {
+    return {
+      ok: false,
+      error: `Video too large (max ${Math.round(MAX_VIDEO_BYTES / 1024 / 1024)} MB)`,
+    };
+  }
+  const contentType = sniffVideoType(data);
+  if (!contentType) {
+    return { ok: false, error: 'Video must be an MP4, WebM or MOV clip' };
+  }
+  return { ok: true, contentType };
+}
+
+// Pure (exported for tests): the exact markdown suffix appended to the
+// issue body for an attached clip. Empty when there is none, like the
+// screenshots' suffix.
+function buildVideoEmbed(id, domain) {
+  if (!id) return '';
+  return `\n\n**Video:**\n[Video recording](https://${domain}/issue-videos/${id})`;
+}
+
+// Pure (exported for tests): the clip id a POST /api/feedback body asks to
+// attach — a single id, or none. Returns { ok: true, id: string|null }
+// or { ok: false, error }.
+function parseVideoId(body) {
+  const id = (body || {}).videoId;
+  if (id === undefined || id === null || id === '') return { ok: true, id: null };
+  if (typeof id !== 'string' || !VIDEO_ID_RE.test(id)) {
+    return { ok: false, error: 'Invalid videoId' };
+  }
+  return { ok: true, id };
 }
 
 // #685: app-provided state snapshots ("Include app state" checkbox).
@@ -471,6 +522,35 @@ function feedbackRoutes(config) {
     }
   );
 
+  // #3940: video upload for the feedback modal. Same flow as the
+  // screenshot route above: raw bytes in, 32-hex id out, row linked by
+  // /api/feedback at filing time, orphans swept after 24h. The limit must
+  // exceed the 50 MB clip cap so an over-cap upload gets the friendly 400
+  // from validateVideoUpload, not a parser 413.
+  router.post(
+    '/api/feedback/video',
+    feedbackVideoLimiter,
+    express.raw({ type: 'application/octet-stream', limit: '55mb' }),
+    async (req, res) => {
+      try {
+        const data = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+        const verdict = validateVideoUpload(data);
+        if (!verdict.ok) return res.status(400).json({ error: verdict.error });
+
+        const id = crypto.randomBytes(16).toString('hex');
+        await pool.query(
+          `INSERT INTO issue_videos (id, user_id, content_type, size_bytes, data)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [id, req.user.id, verdict.contentType, data.length, data]
+        );
+        return res.json({ id });
+      } catch (err) {
+        log.error('feedback', 'Video upload failed', { message: err.message });
+        return res.status(500).json({ error: 'Upload failed' });
+      }
+    }
+  );
+
   // #2520: the submission route files a real GitHub issue and may spend a
   // Haiku call naming it, so it carries a limiter like both of its
   // siblings above (feedbackTitleLimiter, issueScreenshotLimiter). 10 per
@@ -522,6 +602,27 @@ function feedbackRoutes(config) {
         }
       } catch (err) {
         log.error('feedback', 'Screenshot lookup failed', { message: err.message });
+        return res.status(500).json({ error: 'Internal server error' });
+      }
+    }
+
+    // #3940: optional attached video. One clip, same ownership conditions
+    // as the screenshots above, verified before any GitHub call.
+    const parsedVideo = parseVideoId(req.body);
+    if (!parsedVideo.ok) return res.status(400).json({ error: parsedVideo.error });
+    const videoId = parsedVideo.id;
+    if (videoId) {
+      try {
+        const { rows } = await pool.query(
+          `SELECT id FROM issue_videos
+            WHERE id = $1::varchar AND user_id = $2 AND issue_number IS NULL`,
+          [videoId, req.user?.id]
+        );
+        if (!rows.length) {
+          return res.status(400).json({ error: 'Unknown or already-used video' });
+        }
+      } catch (err) {
+        log.error('feedback', 'Video lookup failed', { message: err.message });
         return res.status(500).json({ error: 'Internal server error' });
       }
     }
@@ -608,6 +709,16 @@ function feedbackRoutes(config) {
       if (!appRow) {
         return res.status(404).json({ error: 'App not found' });
       }
+      // B8: a request on a project is filed by its members, as every other
+      // way of filing one is (communities.js). A non-member is asked to join
+      // first (lib/join-required.ts), and nothing is filed until they do.
+      try {
+        const join = await communities.appNeedsJoin(pool, appSlug, req.user);
+        if (join) return res.status(403).json(join);
+      } catch (err) {
+        log.error('feedback', 'Membership check failed', { message: err.message });
+        return res.status(500).json({ error: 'Internal server error' });
+      }
       const [, owner, repo] = (appRow.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
       if (!owner || !repo) {
         return res.status(409).json({ error: 'This app has no repository yet. Try platform feedback instead' });
@@ -686,6 +797,10 @@ function feedbackRoutes(config) {
       // topic view, and the coding agents can all fetch. Appended after
       // the description-length validation, so it never eats user budget.
       const screenshotSuffix = buildScreenshotsEmbed(screenshotIds, require('../services/caddy').USERNODE_DOMAIN);
+      // #3940: the clip's embed link, after the screenshots (the body's
+      // reading order: what happened, then the stills, then the moving
+      // picture).
+      const videoSuffix = buildVideoEmbed(videoId, require('../services/caddy').USERNODE_DOMAIN);
       // #1054: one header line for an offline-queued message, empty for a
       // live submit (whose filing time IS its writing time).
       const queuedLine = queuedAt ? `**Saved offline:** ${queuedAt}\n` : '';
@@ -708,6 +823,20 @@ function feedbackRoutes(config) {
           log.warn('feedback', 'Screenshot link failed', { screenshotIds, message: err.message });
         }
       };
+      // #3940: same stamping for the clip row.
+      const linkVideo = async (owner, repo, issueNumber) => {
+        if (!videoId) return;
+        try {
+          await pool.query(
+            `UPDATE issue_videos
+                SET issue_owner = $2, issue_repo = $3, issue_number = $4
+              WHERE id = $1::varchar AND user_id = $5 AND issue_number IS NULL`,
+            [videoId, owner, repo, issueNumber, req.user?.id]
+          );
+        } catch (err) {
+          log.warn('feedback', 'Video link failed', { videoId, message: err.message });
+        }
+      };
 
       // App-targeted feedback files into the app's own repo, which the
       // bot reaches through the GitHub App installation (same path as
@@ -722,7 +851,7 @@ function feedbackRoutes(config) {
         // #1054: the "written while offline" line sits with the other header
         // lines, above the description — it is context for reading the report,
         // not part of it.
-        const body = `**Source:** ${source}\n**App:** ${appContext.name} (${appContext.slug})\n${queuedLine}\n${description.trim()}${screenshotSuffix}${pageStateSuffix}`;
+        const body = `**Source:** ${source}\n**App:** ${appContext.name} (${appContext.slug})\n${queuedLine}\n${description.trim()}${screenshotSuffix}${videoSuffix}${pageStateSuffix}`;
         let issue;
         try {
           issue = await github.createIssue(issueOwner, issueRepo, { title, body });
@@ -739,7 +868,13 @@ function feedbackRoutes(config) {
         }
         await queueTitleHeal(issueOwner, issueRepo, issue.number);
         await linkScreenshot(issueOwner, issueRepo, issue.number);
+        await linkVideo(issueOwner, issueRepo, issue.number);
         await announceIssueCreated(pool, issueOwner, issueRepo, issue, appContext);
+        // #3952: the people the report names with @. Never rejects.
+        require('../services/notifications').notifyIssueMentions?.(pool, {
+          appId: appContext.id, issueNumber: issue.number, authorId: req.user?.id,
+          text: `${title}\n\n${description}`,
+        });
         // #964: the pledge goes last — after the issue exists and after the
         // announce — and can only ever add a `bounty` field to the response.
         // The filed issue is never at risk from it.
@@ -762,10 +897,26 @@ function feedbackRoutes(config) {
         const firstFeedback = await firstFeedbackMoment(pool, {
           user: req.user, app: appContext, owner: issueOwner, repo: issueRepo, issueNumber: issue.number,
         });
+        // B8: Homeroom bot takes it from here where it builds, and the
+        // confirmation says so (dialogs/feedback-controller.js).
+        const homeroomBot = await require('../services/homeroom-bot-dm').noteRequestFiled(pool, {
+          app: appContext, user: req.user, issueNumber: issue.number, title, askedText: description.trim(),
+        });
+        // Its confirmation's small "Build it yourself" link, for somebody who
+        // could start a change here (the first-request moment's canFix rule).
+        if (homeroomBot?.botWillBuild) {
+          let canFix = false;
+          try {
+            const fixApp = await appAccess.getAppForUser(pool, appContext.slug, req.user, 'view', appAccess.ACCESS_COLUMNS);
+            canFix = !!fixApp && await appAccess.checkAppAccess(pool, fixApp, req.user, 'collab');
+          } catch { canFix = false; }
+          Object.assign(homeroomBot, { canFix, appSlug: appContext.slug, issueNumber: issue.number });
+        }
         return res.json({
           url: issue.html_url, title, titleFallback,
           ...(bounty ? { bounty } : {}),
           ...(firstFeedback ? { firstFeedback } : {}),
+          ...(homeroomBot ? { homeroomBot } : {}),
         });
       }
 
@@ -776,7 +927,7 @@ function feedbackRoutes(config) {
         owner: issueOwner,
         repo: issueRepo,
         title,
-        body: `**Source:** ${source}\n${queuedLine}\n${description.trim()}${screenshotSuffix}`,
+        body: `**Source:** ${source}\n${queuedLine}\n${description.trim()}${screenshotSuffix}${videoSuffix}`,
         pat,
       });
       // The underlying status is in the client-facing error (the hint), so
@@ -787,11 +938,17 @@ function feedbackRoutes(config) {
       const issue = created.issue;
       await queueTitleHeal(issueOwner, issueRepo, issue.number);
       await linkScreenshot(issueOwner, issueRepo, issue.number);
+      await linkVideo(issueOwner, issueRepo, issue.number);
       // Platform feedback: the platform repo is itself an app on
       // self-hosted instances, so its Open Issues panel should refresh
       // too. announceIssueCreated resolves the app row by repo (no-op
       // when none matches).
       await announceIssueCreated(pool, issueOwner, issueRepo, issue, null);
+      // #3952: as in the app branch, on the platform's own project.
+      require('../services/notifications').notifyIssueMentions?.(pool, {
+        owner: issueOwner, repo: issueRepo, issueNumber: issue.number, authorId: req.user?.id,
+        text: `${title}\n\n${description}`,
+      });
       // #964: same placement as the app branch. `app: null` sends
       // attachBounty to findAppByRepo, which resolves the platform repo to
       // the self-hosted platform app — the same row announceIssueCreated
@@ -863,6 +1020,12 @@ module.exports = {
   parseScreenshotIds,
   buildScreenshotsEmbed,
   MAX_SCREENSHOTS_PER_ISSUE,
+  // #3940: video attachments — tests/feedback-video.test.js.
+  validateVideoUpload,
+  buildVideoEmbed,
+  parseVideoId,
+  MAX_VIDEO_BYTES,
+  VIDEO_ID_RE,
   // #685: pure helpers exported for tests/feedback-page-state.test.js.
   buildPageStateEmbed,
   MAX_PAGE_STATE_CHARS,

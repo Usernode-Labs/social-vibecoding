@@ -48,6 +48,13 @@ function run(overrides = {}) {
   };
 }
 
+test('a declared persona survives serialization, the guest included; anything else reads as a member', () => {
+  const claim = run().claims[0];
+  const persona = (value) => view.cleanClaims([{ ...claim, persona: value }])[0].persona;
+  assert.deepEqual(['member', 'read_only_admin', 'full_admin', 'guest', 'owner'].map(persona),
+    ['member', 'read_only_admin', 'full_admin', 'guest', 'member']);
+});
+
 test('verified shots exposes only authenticated artifact metadata for the exact head', () => {
   const result = view.serialize(run(), session(), 'demo-app', HEAD);
   assert.equal(result.state, 'verified');

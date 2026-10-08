@@ -115,6 +115,21 @@ function mask(val) {
   return val.slice(0, 4) + '...' + val.slice(-4);
 }
 
+// PHONE_TEST_CODE (services/firebase-phone-auth.js, "TEST NUMBERS"): the six
+// digits the fictional +1 … 555 01xx numbers sign in with, for walking a
+// newcomer's first run on a local stack. '' when unset, malformed, or in
+// production, where it would let anybody verify a number they do not hold.
+// `refused` says why it is off, for the boot line.
+function phoneTestCodeFrom(env) {
+  const raw = typeof env.PHONE_TEST_CODE === 'string' ? env.PHONE_TEST_CODE.trim() : '';
+  if (!raw) return { code: '', refused: null };
+  if (env.NODE_ENV === 'production' || env.USERNODE_ENV === 'production') {
+    return { code: '', refused: 'production' };
+  }
+  if (!/^[0-9]{6}$/.test(raw)) return { code: '', refused: 'not six digits' };
+  return { code: raw, refused: null };
+}
+
 function canonicalCliOrigin(value, { allowLoopbackHttp = false } = {}) {
   if (typeof value !== 'string' || !value) return null;
   try {
@@ -598,6 +613,12 @@ function load() {
       appTlsSecretName: process.env.APP_TLS_SECRET_NAME || 'social-apps-wildcard-tls',
       appDomain: process.env.USERNODE_APPS_DOMAIN || process.env.USERNODE_DOMAIN || 'apps.example.invalid',
       platformDomain: process.env.USERNODE_DOMAIN || 'apps.example.invalid',
+      // The app-host gate (#3657; services/kubernetes.js, scripts/app-gate.js):
+      // `on` routes every app and preview through a platform-owned check,
+      // `off` (the default) routes them straight to their own Services. Turn
+      // it on only once the app namespace's network policy lets the gate's
+      // pods reach app pods and the platform.
+      appGate: (process.env.APP_GATE || 'off').trim().toLowerCase() === 'on' ? 'on' : 'off',
       workerImage: process.env.KUBERNETES_WORKER_IMAGE || '',
       captureImage: process.env.KUBERNETES_CAPTURE_IMAGE || '',
       workerStorageClass: process.env.WORKER_STORAGE_CLASS || '',
@@ -717,6 +738,26 @@ function load() {
     // knob so it can't be silently disabled along with the stale-PR sweeper.
     // Default 60s; set to 0 to disable (the hourly catch-all still runs).
     governanceApplyTickMs: parseInt(process.env.GOVERNANCE_APPLY_TICK_MS || String(60 * 1000), 10),
+    // Workflow foundation (src/workflow/): with WF_GOVERNANCE_ENABLED on,
+    // the governance-proposal machine decides governance proposals and the
+    // ticker above and the sweeper's Pass 0b leave them alone. Off by default.
+    wfGovernanceEnabled: ['1', 'true'].includes(process.env.WF_GOVERNANCE_ENABLED),
+    // With WF_MERGE_FOLLOWUPS_ENABLED on, a merge hands what follows it
+    // (delivery, preview teardown, included changes, closing requests, the
+    // announcements) to the merge-followups machine, and a change reads
+    // live only once production runs it. Off by default.
+    wfMergeFollowupsEnabled: ['1', 'true'].includes(process.env.WF_MERGE_FOLLOWUPS_ENABLED),
+    // Its own pool, so pipeline slots and the outcome listener never take
+    // request connections, and how many slots each process runs. A staging
+    // preview shares one Postgres server with the fleet: one slot, and a
+    // pool of two (the outcome listener and one working connection).
+    wfPoolMax: parseInt(process.env.WF_POOL_MAX || (IS_STAGING() ? '2' : '6'), 10),
+    wfSlots: parseInt(process.env.WF_SLOTS || (IS_STAGING() ? '1' : '4'), 10),
+    // What a write to a machine-owned column outside the pipeline does:
+    // 'raise' everywhere but production, where it is logged to
+    // wf_ownership_violations until no legacy writer is left.
+    wfOwnershipMode: process.env.WF_OWNERSHIP_MODE
+      || ((process.env.NODE_ENV === 'production' && !IS_STAGING()) ? 'log' : 'raise'),
     // Demand-driven global-cap eviction. When a new session is needed but
     // the platform is at maxGlobalSessions, we pause the globally least-
     // recently-active session that has been idle longer than this grace
@@ -759,6 +800,16 @@ function load() {
     ).replace(/\/$/, ''),
     selfAppSlug: SELF_APP_SLUG,
     selfAppDbName: SELF_APP_DB_NAME,
+    // #3699: apps whose spec author (an agent chat's or dev chat's scout, and
+    // the Homeroom bot) is asked for an HTML spec (before/after screens,
+    // diagrams) instead of markdown. Every app by default; comma-separated
+    // slugs to narrow it, `none` to turn it off. See src/services/spec-html.js.
+    htmlSpecApps: (() => {
+      const raw = process.env.HTML_SPEC_APPS;
+      if (raw == null || raw.trim() === '') return ['*'];
+      if (raw.trim().toLowerCase() === 'none') return [];
+      return raw.split(',').map((s) => s.trim()).filter(Boolean);
+    })(),
     // The platform's own DNS name on the shared docker network. Child
     // apps run as `usernode-app-<slug>`, but the platform itself runs as
     // the blue-green pair usernode-blue/-green, BOTH carrying the
@@ -812,6 +863,15 @@ function load() {
     mobilePushEnvironment: process.env.PUSH_ENV || '',
     firebaseProjectId: process.env.FIREBASE_PROJECT_ID || '',
     firebaseServiceAccountJsonB64: process.env.FIREBASE_SERVICE_ACCOUNT_JSON_B64 || '',
+    // Firebase Phone Auth (services/firebase-phone-auth.js) reuses the
+    // push project's service account above and needs that project's own
+    // Identity Toolkit WEB API key for the two REST legs. OPTIONAL and
+    // default-off: unset (or false) leaves every /api/auth/phone/*
+    // endpoint answering 404 not_offered, exactly as before this existed.
+    firebasePhoneAuthEnabled: process.env.FIREBASE_PHONE_AUTH_ENABLED === 'true',
+    firebaseWebApiKey: process.env.FIREBASE_WEB_API_KEY || '',
+    // Test numbers (phoneTestCodeFrom above). Never set in production.
+    phoneTestCode: phoneTestCodeFrom(process.env).code,
     // Platform outbound mail (login codes, waitlist confirmations,
     // waitlist release notices). src/services/mail/select.js picks the
     // transport once, here, from platform_env: Gmail API, a generic HTTP
@@ -944,6 +1004,13 @@ function load() {
   console.log(`  MOBILE_PUSH=${config.mobilePushEnabled ? 'enabled' : 'disabled'} PUSH_ENV=${config.mobilePushEnvironment || '(not set)'}`);
   console.log(`  FIREBASE_PROJECT_ID=${config.firebaseProjectId || '(not set)'}`);
   console.log(`  FIREBASE_SERVICE_ACCOUNT=${config.firebaseServiceAccountJsonB64 ? '(set)' : '(not set)'}`);
+  console.log(`  FIREBASE_PHONE_AUTH=${config.firebasePhoneAuthEnabled ? 'enabled' : 'disabled'}${config.firebaseWebApiKey ? '' : ' (no web API key — phone endpoints answer 404 not_offered)'}`);
+  const phoneTest = phoneTestCodeFrom(process.env);
+  if (phoneTest.code) {
+    console.log('  PHONE_TEST_CODE=(set) — +1 … 555 0100–0199 sign in with it as test accounts; no text is sent');
+  } else if (phoneTest.refused) {
+    console.error(`  PHONE_TEST_CODE=(refused: ${phoneTest.refused}) — test numbers are off`);
+  }
   console.log(`  PLATFORM_MAIL=${config.mailTransport
     ? `${config.mailProvider}${config.mailStagingLogOnly ? ' (staging — rendered to the log, never delivered)' : ''} from=${config.mailFrom}`
     : '(no provider configured — OTP login codes and waitlist confirmations are NOT delivered)'}`);
@@ -1003,4 +1070,5 @@ module.exports = {
   canonicalOpenRouterApiBase,
   canonicalNativeSessionV2Network,
   isLoopbackOrigin,
+  phoneTestCodeFrom,
 };

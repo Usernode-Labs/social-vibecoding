@@ -38,6 +38,16 @@
  * markup; the shipped markup has no `value` attribute, and a credential field
  * has no reason to re-render the screen per keystroke.
  *
+ * ── Return walks each step's fields (#3907) ───────────────────────────
+ *
+ * The iOS app no longer shows the keyboard's up/down chevrons, so Return is
+ * the way from one field to the next: each form and step carries
+ * `returnKeyHandler` (lib/return-to-next.ts) on its container and an
+ * `enterKeyHint` on every field ("next" until the last, which says what it
+ * does). The password form and the reset view are real forms and submit
+ * themselves from their last field; the code steps and the recovery views
+ * are not, and their last field runs the step's own button.
+ *
  * ── One documented behaviour difference ───────────────────────────────
  *
  * The wallet block's visibility is derived (`view === 'base' && walletUi`)
@@ -58,10 +68,12 @@ import { PasswordInput } from '@/components/ui/password-input';
 import { Wordmark } from '@/components/ui/wordmark';
 
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
+import { returnKeyHandler } from '../../lib/return-to-next';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { AuthBackButton, backToLanding } from './back-button';
 import { NativeLoginDetailsLink } from './native-login-details';
 import { SessionConfirmationNotice, useSessionConfirmation } from './session-confirmation';
+import { TermsNotice } from './waitlist-shared';
 import {
   AUTH_SCREEN_IDS,
   blockedOffline,
@@ -73,7 +85,9 @@ import {
   legacy,
   NativeLoginPreparationError,
   type NativeLoginFailureDetails,
+  passwordSignIn,
   sessionMintFailureMessage,
+  takeReleaseLink,
   useAuthScreensPatch,
   USERNAME_PUBLIC_NOTE,
   USERNAME_RULE,
@@ -289,7 +303,9 @@ const QUIET_BUTTON_WAITING =
 
 type AutoSendRecord = { email: string; sentAt: number };
 
-function readAutoSend(): AutoSendRecord | null {
+// Shared with the sign-in sheet (./sign-in-sheet.tsx), which opens the same
+// link over the story: one record per tab, whichever of the two sent it.
+export function readAutoSend(): AutoSendRecord | null {
   try {
     const raw = sessionStorage.getItem(AUTO_SEND_KEY);
     if (!raw) return null;
@@ -304,7 +320,7 @@ function readAutoSend(): AutoSendRecord | null {
   }
 }
 
-function writeAutoSend(email: string) {
+export function writeAutoSend(email: string) {
   try {
     sessionStorage.setItem(AUTO_SEND_KEY, JSON.stringify({ email, sentAt: Date.now() }));
   } catch {
@@ -332,10 +348,16 @@ function currentShot(): string | null {
  * `more_token` is already an unguessable capability delivered to that address,
  * and `/api/public/waitlist/more/:token` already resolves it and already
  * returns the email, so nothing new is minted or exposed.
+ *
+ * AuthScreens.enter() takes the mail's query off the address as it lands,
+ * so the token is usually the one it kept (takeReleaseLink): this screen
+ * only gets it when the story is switched off and the landing hands the
+ * link on (./landing.tsx). The query is still read first, for a `?t=` that
+ * arrives some other way.
  */
 function inviteTokenFromQuery(): string | null {
   try {
-    const t = new URLSearchParams(location.search).get('t');
+    const t = new URLSearchParams(location.search).get('t') || takeReleaseLink()?.token || null;
     return t && /^[A-Za-z0-9_-]{8,128}$/.test(t) ? t : null;
   } catch {
     return null;
@@ -346,7 +368,7 @@ function inviteTokenFromQuery(): string | null {
  * Resolve an invite token to its address. Null on anything unexpected: a
  * prefill is a convenience, and the screen is perfectly usable without it.
  */
-async function inviteEmailFromToken(token: string): Promise<string | null> {
+export async function inviteEmailFromToken(token: string): Promise<string | null> {
   try {
     const res = await fetch(`/api/public/waitlist/more/${encodeURIComponent(token)}`);
     if (!res.ok) return null;
@@ -763,25 +785,14 @@ export function LoginScreen() {
     setLoginError(null);
     setLoginDetails(null);
     if (blockedOffline(setLoginError)) return;
-    try {
-      const res = await fetchSessionMint('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username: username.current?.value.trim() || '',
-          password: password.current?.value || '',
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setLoginError(data.error || 'Login failed');
-        return;
-      }
-      await finishLogin();
-    } catch (error) {
-      setLoginError(sessionMintFailureMessage(error));
-      setLoginDetails(error instanceof NativeLoginPreparationError ? error.details : null);
+    // The same exchange the sign-in sheet's password step sends (shared.ts).
+    const result = await passwordSignIn(username.current?.value.trim() || '', password.current?.value || '');
+    if (!result.ok) {
+      setLoginError(result.error);
+      setLoginDetails(result.details);
+      return;
     }
+    await finishLogin();
   }, [clearConfirmation, finishLogin]);
 
   // ── Email-code sign-in (the #signup route) ───────────────────────────
@@ -1488,6 +1499,7 @@ export function LoginScreen() {
             id="login-form"
             className={hiddenLast(!base, 'mt-2.5 flex flex-col gap-4')}
             onSubmit={onLoginSubmit}
+            onKeyDown={returnKeyHandler()}
           >
             <div
               id="login-reset-success"
@@ -1524,6 +1536,7 @@ export function LoginScreen() {
                 type="text"
                 required={true}
                 autoComplete="username"
+                enterKeyHint="next"
                 {...HANDLE_FIELD}
                 {...AUTHFIELD}
               />
@@ -1541,6 +1554,7 @@ export function LoginScreen() {
                 name="password"
                 required={true}
                 autoComplete="current-password"
+                enterKeyHint="go"
                 {...AUTHFIELD}
               />
             </div>
@@ -1552,6 +1566,7 @@ export function LoginScreen() {
             <Button type="submit" data-offline-disabled="" {...SOLID}>
               Sign in
             </Button>
+            <TermsNotice verb="signing in" />
           </form>
           {/*
               The rest of board 2's action group: `gap: 10px` under the 16 the
@@ -1614,7 +1629,11 @@ export function LoginScreen() {
                 nothing saying which it belonged to. A plain column, with each
                 seam carrying its own board figure, is what says it.
             */}
-            <div id="otp-step-email" className={hiddenFirst(otpStep !== 'email', 'flex flex-col')}>
+            <div
+              id="otp-step-email"
+              className={hiddenFirst(otpStep !== 'email', 'flex flex-col')}
+              onKeyDown={returnKeyHandler({ submit: () => { if (!cooldownLeft) void otpRequestCode(); } })}
+            >
               <p className={STEP_P}>
                 We'll email you a 6-digit code to sign in. New here? You'll get
                 an account and a place on the waitlist.
@@ -1637,6 +1656,7 @@ export function LoginScreen() {
                     id="otp-email"
                     type="email"
                     autoComplete="email"
+                    enterKeyHint="send"
                     {...AUTHFIELD}
                     placeholder="you@example.com"
                   />
@@ -1659,7 +1679,11 @@ export function LoginScreen() {
                 {cooldownLeft ? `Email me a code in ${cooldownLeft}s` : 'Email me a code'}
               </Button>
             </div>
-            <div id="otp-step-code" className={hiddenFirst(otpStep !== 'code', 'flex flex-col')}>
+            <div
+              id="otp-step-code"
+              className={hiddenFirst(otpStep !== 'code', 'flex flex-col')}
+              onKeyDown={returnKeyHandler({ submit: () => { void onOtpVerify(); } })}
+            >
               <p className={STEP_P}>
                 {'Enter the 6-digit code we sent to '}
                 <span id="otp-email-echo" className="font-medium text-zinc-700 dark:text-zinc-300">
@@ -1686,6 +1710,7 @@ export function LoginScreen() {
                     inputMode="numeric"
                     autoComplete="one-time-code"
                     maxLength={6}
+                    enterKeyHint="go"
                     {...AUTHFIELD}
                     className={CODE_FIELD}
                     placeholder="123456"
@@ -1723,7 +1748,11 @@ export function LoginScreen() {
                 </button>
               </div>
             </div>
-            <div id="otp-step-password" className={hiddenFirst(otpStep !== 'password', 'space-y-3')}>
+            <div
+              id="otp-step-password"
+              className={hiddenFirst(otpStep !== 'password', 'space-y-3')}
+              onKeyDown={returnKeyHandler({ submit: () => { void onOtpSetPassword(); } })}
+            >
               <p className="text-sm text-zinc-500 dark:text-zinc-400">
                 {otpSignup?.created
                   ? OTP_PASSWORD_INTRO_NEW
@@ -1759,6 +1788,7 @@ export function LoginScreen() {
                     type="text"
                     autoComplete="username"
                     maxLength={32}
+                    enterKeyHint="next"
                     {...HANDLE_FIELD}
                     aria-describedby="otp-username-public otp-username-hint"
                     aria-invalid={otpUsernameError ? true : undefined}
@@ -1782,6 +1812,7 @@ export function LoginScreen() {
                   ref={otpNewPassword}
                   id="otp-new-password"
                   autoComplete="new-password"
+                  enterKeyHint="next"
                   {...FIELD}
                   placeholder="at least 8 characters"
                 />
@@ -1794,6 +1825,7 @@ export function LoginScreen() {
                   ref={otpConfirmPassword}
                   id="otp-confirm-password"
                   autoComplete="new-password"
+                  enterKeyHint="go"
                   {...FIELD}
                   placeholder="re-enter password"
                 />
@@ -1856,6 +1888,7 @@ export function LoginScreen() {
             <div
               id="recovery-wallet"
               className={hiddenFirst(!(view === 'recovery' && recoveryPath === 'wallet'), 'space-y-3')}
+              onKeyDown={returnKeyHandler({ submit: () => { void onWalletReset(); } })}
             >
               <p className="text-sm text-zinc-500 dark:text-zinc-400">
                 Your wallet is linked to this account. Approve a signature request, then choose a new password.
@@ -1868,6 +1901,7 @@ export function LoginScreen() {
                   ref={recoveryNewPassword}
                   id="recovery-new-password"
                   autoComplete="new-password"
+                  enterKeyHint="next"
                   {...FIELD}
                   placeholder="at least 8 characters"
                 />
@@ -1880,6 +1914,7 @@ export function LoginScreen() {
                   ref={recoveryConfirmPassword}
                   id="recovery-confirm-password"
                   autoComplete="new-password"
+                  enterKeyHint="go"
                   {...FIELD}
                   placeholder="re-enter new password"
                 />
@@ -1903,6 +1938,7 @@ export function LoginScreen() {
               <div
                 id="recovery-email"
                 className={hiddenFirst(!(view === 'recovery' && recoveryPath === 'email'), 'space-y-3')}
+                onKeyDown={returnKeyHandler({ submit: () => { if (busy !== 'btn-email-reset') void onEmailReset(); } })}
               >
                 {/*
                     The instruction line steps aside while the sent
@@ -1920,6 +1956,7 @@ export function LoginScreen() {
                     id="recovery-email-input"
                     type="email"
                     autoComplete="email"
+                    enterKeyHint="send"
                     {...FIELD}
                     placeholder="you@example.com"
                   />
@@ -2013,6 +2050,7 @@ export function LoginScreen() {
                 e.preventDefault();
                 void onResetConfirm();
               }}
+              onKeyDown={returnKeyHandler()}
             >
               <h2 className="text-lg font-bold text-center">Choose a new password</h2>
               <div>
@@ -2021,6 +2059,7 @@ export function LoginScreen() {
                   ref={resetNewPassword}
                   id="reset-new-password"
                   autoComplete="new-password"
+                  enterKeyHint="next"
                   {...FIELD}
                   placeholder="at least 8 characters"
                 />
@@ -2031,6 +2070,7 @@ export function LoginScreen() {
                   ref={resetConfirmPassword}
                   id="reset-confirm-password"
                   autoComplete="new-password"
+                  enterKeyHint="go"
                   {...FIELD}
                   placeholder="re-enter new password"
                 />

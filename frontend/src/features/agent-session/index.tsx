@@ -29,11 +29,13 @@ import {
 } from '@/components/ui/icons';
 
 import { useInnerHtml } from '../../lib/html';
+import { renderSpecHtml, useSpecFrames, type SpecHtmlDoc } from '../../lib/spec-html';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import type { AiBudgetState } from '../header/ai-budget';
 import { aiBudgetStore } from '../header/ai-budget-store.js';
 import { Attached } from '../dev-chat/transcript';
+import { DropOverlay, useFileDrag } from '../attachments/file-drag';
 import { PendingStrip } from '../attachments/pending-strip';
 import { nowStore, type TranscriptRow } from '../dev-chat/transcript-store';
 import type { AgentChange, AgentSession, SavedDraft } from './api';
@@ -141,6 +143,7 @@ import { readUnsent, writeUnsent } from './unsent';
 import { draftRequest, draftSeed, type DraftRequest } from './request-seed';
 import { CreditsCard, HandoffPanel } from './handoff';
 import { UserMessage } from './user-message';
+import { JumpToLatest } from '../messages/jump-to-latest';
 
 // Agent sessions (#2779, docs/agent-sessions.md "UI surfaces"): one
 // conversation with the Mayor that works on any app. Drawn on two surfaces,
@@ -331,9 +334,9 @@ function SessionBar({ session, about, embedded, action }: {
   // The row is `min-w-0`, so whatever it holds it cannot widen the panel
   // (#3016). The Messages pane's title is a line of its own above it rather
   // than a sibling the pills wrap around.
-  const focusTitle = 'The app this conversation is about when a request does not name one. The Mayor moves it when you ask.';
+  const focusTitle = 'The app this conversation is about when a request does not name one. The agent moves it when you ask.';
   const changeText = active
-    ? `${changeStatusLabel(active.status, building)}${active.prNumber ? ` · PR #${active.prNumber}` : ''}`
+    ? changeStatusLabel(active.status, building)
     : 'No change yet';
   return (
     <div className="border-b border-zinc-200 px-4 py-2 dark:border-zinc-800" data-agent-session-bar>
@@ -372,7 +375,6 @@ function SessionBar({ session, about, embedded, action }: {
         >
           <span className="min-w-0 truncate">
             {active ? changeStatusLabel(active.status, building) : 'No change yet'}
-            {active?.prNumber ? <span className="[@container(max-width:24rem)]:hidden">{` · PR #${active.prNumber}`}</span> : null}
           </span>
         </span>
         <button
@@ -464,11 +466,11 @@ function JoinToRetry({ card, join }: { card: CardView; join: { slug: string; nam
   return (
     <div className="mt-3 flex flex-col gap-2" data-agent-session-join={join.slug}>
       <p className="text-sm text-zinc-700 dark:text-zinc-300">
-        Only members of {join.name} can do this. Join it, and the Mayor will try again.
+        Only members of {join.name} can do this. Join it, and the agent will try again.
       </p>
       {state === 'joined' ? (
         <p className="inline-flex items-center gap-1.5 text-sm font-semibold text-zinc-600 dark:text-zinc-300" data-agent-session-joined="">
-          <CheckIcon className="h-4 w-4 shrink-0" aria-hidden="true" /> Joined. Asked the Mayor to try again.
+          <CheckIcon className="h-4 w-4 shrink-0" aria-hidden="true" /> Joined. Asked the agent to try again.
         </p>
       ) : (
         <div className="flex flex-wrap items-center gap-2">
@@ -540,7 +542,7 @@ function Card({ card, live = false }: { card: CardView; live?: boolean }) {
           </Button>
         </div>
       ) : null}
-      {live ? <p className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">Waiting for the Mayor to finish…</p> : null}
+      {live ? <p className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">Waiting for the agent to finish…</p> : null}
       {card.status === 'running' ? (
         <p className="mt-3 inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300"><SpinnerArcIcon className="h-4 w-4 animate-spin" aria-hidden="true" /> Running…</p>
       ) : null}
@@ -579,7 +581,7 @@ const Item = memo(function Item({ item, sessionId = null }: { item: TranscriptIt
       return (
         <article data-agent-session-mayor>
           <p className="mb-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400">
-            Mayor
+            Agent
             {item.cost ? (
               <span className="font-normal text-zinc-500 dark:text-zinc-400" data-agent-session-reply-cost>{` · ${item.cost}`}</span>
             ) : null}
@@ -743,7 +745,7 @@ export function PreviewCardView({ item, change, wide, action, busy }: {
   busy: boolean;
 }) {
   const prNumber = item.prNumber || change?.prNumber || null;
-  const heading = `${item.failed ? 'Staging build failed' : 'Staging deployed'}${prNumber ? ` · PR #${prNumber}` : ''}`;
+  const heading = item.failed ? 'The preview failed to build' : 'Preview ready';
   if (item.superseded) {
     return (
       <section className="rounded-2xl border border-zinc-200 px-3 py-2 dark:border-zinc-800" data-agent-session-preview="superseded">
@@ -767,7 +769,7 @@ export function PreviewCardView({ item, change, wide, action, busy }: {
         <p className={`text-sm font-medium ${item.failed ? 'text-red-700 dark:text-red-300' : 'text-zinc-800 dark:text-zinc-100'}`}>{heading}</p>
         {inVote || merged ? (
           <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-700 dark:bg-violet-950/60 dark:text-violet-300" data-agent-session-preview-status>
-            {merged ? 'Merged' : 'In vote'}
+            {merged ? 'Live' : 'Waiting for approval'}
           </span>
         ) : null}
         {checks ? (
@@ -812,7 +814,7 @@ export function PreviewCardView({ item, change, wide, action, busy }: {
         ) : null}
         {changeHref ? (
           <a className={CARD_BUTTON} href={changeHref} data-agent-session-preview-change>
-            {inVote || merged ? 'View proposal' : 'Open draft proposal'}
+            {inVote || merged ? 'View change' : 'Open draft change'}
           </a>
         ) : null}
         {proposable && item.changeId != null ? (
@@ -1019,9 +1021,44 @@ export function SpecBody({ text, tab, split, onTab }: {
   );
 }
 
+/** A piece of an HTML spec (#3699), already made safe; its screens are frames scaled to fit. */
+function SpecHtmlPart({ html, tagged = false }: { html: string; tagged?: boolean }) {
+  const inner = useInnerHtml(html);
+  const ref = useRef<HTMLDivElement>(null);
+  useSpecFrames(ref, html);
+  const tag = tagged ? { 'data-agent-session-spec-text': '' } : {};
+  return <div ref={ref} className="dc-msg-content text-[15px] leading-relaxed text-zinc-900 dark:text-zinc-100" {...tag} dangerouslySetInnerHTML={inner} />;
+}
+
+/** An HTML spec, in the same frame as SpecBody: the title above two tabs, or the whole document. */
+export function SpecHtmlBody({ doc, tab, onTab }: {
+  doc: SpecHtmlDoc;
+  tab: SpecTab;
+  onTab: (tab: SpecTab) => void;
+}) {
+  if (!doc.split) return <SpecHtmlPart html={doc.html} tagged />;
+  const half = tab === 'tech' ? doc.techHtml : doc.userHtml;
+  return (
+    <>
+      {doc.preambleHtml ? <div className="dc-spec-viewer-preamble"><SpecHtmlPart html={doc.preambleHtml} /></div> : null}
+      <div className="dc-spec-viewer-tabs" role="tablist" aria-label="Spec sections">
+        <SpecTabButton tab="user" active={tab} label="User-facing" onTab={onTab} />
+        <SpecTabButton tab="tech" active={tab} label="Technical" onTab={onTab} />
+      </div>
+      <div role="tabpanel" data-agent-session-spec-half={tab}>
+        {half ? <SpecHtmlPart html={half} tagged /> : <p className="dc-spec-tab-empty">Nothing in this section.</p>}
+      </div>
+    </>
+  );
+}
+
 function SpecContent({ sheet }: { sheet: SpecSheetState }) {
   const session = useAgentSessionSelector((s) => s.session);
   const split = useMemo(() => (sheet.text ? splitSpec(sheet.text) : null), [sheet.text]);
+  const htmlDoc = useMemo(
+    () => (sheet.html ? renderSpecHtml(sheet.html, { key: `as-${sheet.changeId}-${sheet.version ?? 'latest'}` }) : null),
+    [sheet.html, sheet.changeId, sheet.version],
+  );
   const change = [session?.activeChange, ...(session?.changes || [])]
     .find((c) => c && c.id === sheet.changeId) || null;
   return (
@@ -1054,7 +1091,8 @@ function SpecContent({ sheet }: { sheet: SpecSheetState }) {
         ) : null}
         {sheet.phase === 'error' ? <p role="alert" className="text-sm text-red-700 dark:text-red-300">{sheet.error}</p> : null}
         {sheet.phase === 'ready' && !sheet.text ? <p className="text-sm text-zinc-500 dark:text-zinc-400">This change has no spec yet.</p> : null}
-        {sheet.phase === 'ready' && sheet.text ? <SpecBody text={sheet.text} tab={sheet.tab} split={split} onTab={setSpecTab} /> : null}
+        {sheet.phase === 'ready' && sheet.text && htmlDoc ? <SpecHtmlBody doc={htmlDoc} tab={sheet.tab} onTab={setSpecTab} /> : null}
+        {sheet.phase === 'ready' && sheet.text && !htmlDoc ? <SpecBody text={sheet.text} tab={sheet.tab} split={split} onTab={setSpecTab} /> : null}
       </div>
     </>
   );
@@ -1283,7 +1321,7 @@ function OutboxRows() {
                   type="button"
                   className={`${action} text-violet-700 dark:text-violet-300`}
                   disabled={busy}
-                  title={busy ? 'The Mayor is still working. You can send this when it finishes' : 'Send this again'}
+                  title={busy ? 'The agent is still working. You can send this when it finishes' : 'Send this again'}
                   data-agent-session-outbox-retry
                   onClick={() => retryOutbox(item.clientId)}
                 >
@@ -1353,7 +1391,7 @@ function LiveTurn({ runShown }: { runShown: boolean }) {
     <>
       {said || working ? (
         <article data-agent-session-live>
-          <p className="mb-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400">Mayor</p>
+          <p className="mb-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400">Agent</p>
           {turn.streamText ? <MayorText text={turn.streamText} /> : null}
           {cards.map((card) => <Card key={card.id} card={card} live />)}
           {working ? (
@@ -1363,7 +1401,7 @@ function LiveTurn({ runShown }: { runShown: boolean }) {
               aria-live="polite"
             >
               <TypingDots />
-              {status ? <span className="min-w-0 truncate">{status}</span> : <span className="sr-only">The Mayor is thinking</span>}
+              {status ? <span className="min-w-0 truncate">{status}</span> : <span className="sr-only">The agent is thinking</span>}
               {turn.phase === 'cc' ? <span className="shrink-0 tabular-nums text-xs">{Math.floor(seconds / 60)}m {seconds % 60}s</span> : null}
             </div>
           ) : null}
@@ -1454,7 +1492,7 @@ function EmptyState({ about, request }: { about: About; request: DraftRequest | 
         ) : null}
         <p className="mt-2 max-w-sm text-sm text-zinc-600 dark:text-zinc-300">
           {app ? <>On <strong>{app}</strong>. </> : null}
-          Send the message below to start. The Mayor reads the request, plans the change with you, and puts it up for a vote when you say so.
+          Send the message below to start. The agent reads the request, plans the change with you, and asks the group for approval when you say so.
         </p>
       </section>
     );
@@ -1467,7 +1505,7 @@ function EmptyState({ about, request }: { about: About; request: DraftRequest | 
       <h3 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">New agent session</h3>
       <p className="mt-1 max-w-sm text-sm text-zinc-600 dark:text-zinc-300">
         {app ? <>Started from <strong>{app}</strong>. </> : null}
-        Start a change on any app. The Mayor plans it, builds it, and puts it up for a vote when you say so.
+        Start a change on any app. The agent plans it, builds it, and asks the group for approval when you say so.
       </p>
     </section>
   );
@@ -1481,7 +1519,7 @@ function starters(about: About, request: DraftRequest | null) {
   if (request) return [];
   const app = about?.focusApp?.name || null;
   const context = (about?.focusContext || {}) as { proposalId?: number };
-  const first = context.proposalId ? ['Tell me about this proposal'] : [];
+  const first = context.proposalId ? ['Tell me about this change'] : [];
   return [
     ...first,
     app ? `What's open on ${app}?` : 'What could I work on?',
@@ -1579,7 +1617,7 @@ function useCredit(): CreditView | null {
   return mounted ? creditView(figures) : null;
 }
 
-const BUSY_PLACEHOLDER = 'The Mayor is working. Type your next message and save it for later.';
+const BUSY_PLACEHOLDER = 'The agent is working. Type your next message and save it for later.';
 const SAVE_TITLE = 'Save this as a draft (Enter). It stays here until you send it';
 
 /**
@@ -1607,7 +1645,7 @@ export function SavedDrafts({ drafts, busy, onSend, onEdit }: {
         <span className="font-semibold uppercase tracking-wide">{`Saved drafts (${drafts.length})`}</span>
         <span>· on all your devices</span>
         {busy
-          ? <span className="ml-auto">sending unlocks when the Mayor finishes</span>
+          ? <span className="ml-auto">sending unlocks when the agent finishes</span>
           : <span className="ml-auto font-semibold text-violet-700 dark:text-violet-300" data-agent-session-drafts-ready>Ready to send</span>}
       </p>
       <ul className="flex flex-col gap-1">
@@ -1622,9 +1660,10 @@ export function SavedDrafts({ drafts, busy, onSend, onEdit }: {
               type="button"
               className={`${button} hover:text-emerald-700 dark:hover:text-emerald-400`}
               aria-label="Send this draft"
-              title={busy ? 'The Mayor is still working. You can send this when it finishes' : 'Send this draft now'}
+              title={busy ? 'The agent is still working. You can send this when it finishes' : 'Send this draft now'}
               disabled={busy}
               data-agent-session-draft-send
+              onMouseDown={(event) => event.preventDefault()}
               onClick={() => onSend(draft)}
             >
               <DraftSendIcon width={16} height={16} aria-hidden="true" />
@@ -1851,7 +1890,7 @@ function Composer({ id }: { id: string }) {
   }
 
   // Pasted or dropped files join the tray (a pasted screenshot gets a name).
-  const takeFiles = (list: FileList | null | undefined) => {
+  const takeFiles = (list: FileList | File[] | null | undefined) => {
     const picked = Array.from(list || []);
     if (!picked.length) return false;
     addAttachments(picked.map((file, index) => (
@@ -1873,12 +1912,14 @@ function Composer({ id }: { id: string }) {
     input.current?.focus();
   };
 
+  const drop = useFileDrag({ disabled: archived, onFiles: (dropped) => { takeFiles(dropped); } });
+
   const kind = saving ? 'save' : running ? 'stop' : 'send';
   return (
     // `platform-safe-bar` on the outer box: its padding clears the tab bar
     // (a phone keeps it up on this screen) and the home-indicator strip, so
     // the bordered field above it never sits under either.
-    <div className="platform-safe-bar shrink-0 px-3 pt-1">
+    <div className="platform-safe-bar shrink-0 px-3 pt-1" {...drop.handlers}>
     {archived ? (
       <p className="mb-2 flex flex-wrap items-center gap-2 rounded-2xl bg-zinc-100 px-3 py-2 text-sm text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200" data-agent-session-archived>
         <span className="min-w-0 flex-1">This session is archived. Unarchive it to keep going.</span>
@@ -1890,13 +1931,11 @@ function Composer({ id }: { id: string }) {
     <form
       className="agent-session-composer flex flex-col gap-2 rounded-[1.75rem] border border-zinc-200 bg-white px-3 pb-2.5 pt-3 shadow-sm dark:border-zinc-700 dark:bg-zinc-800"
       onSubmit={submit}
-      onDragOver={(event) => { if (event.dataTransfer?.types?.includes('Files')) event.preventDefault(); }}
-      onDrop={(event) => {
-        if (archived || !event.dataTransfer?.files?.length) return;
-        event.preventDefault();
-        takeFiles(event.dataTransfer.files);
-      }}
     >
+      {/* #4065: the drop zone, over the card while a file is held anywhere
+          on the bar around it (the drop is the bar's, a little wider than
+          the card, so a near miss still attaches). */}
+      {drop.dragging ? <DropOverlay /> : null}
       {files.length ? (
         <PendingStrip
           id={`${id}-attachments`}
@@ -1917,7 +1956,7 @@ function Composer({ id }: { id: string }) {
         // the Mayor works, Enter and the button keep this as a draft. It is
         // not sent, and nothing sends it on its own.
         <p className="px-2 text-[13px] text-zinc-600 dark:text-zinc-300" data-agent-session-save-note>
-          The Mayor is still working, so this will be <span className="font-semibold">saved as a draft, not sent</span>. Send it from your drafts when it finishes.
+          The agent is still working, so this will be <span className="font-semibold">saved as a draft, not sent</span>. Send it from your drafts when it finishes.
         </p>
       ) : null}
       <textarea
@@ -1928,7 +1967,7 @@ function Composer({ id }: { id: string }) {
         value={value}
         disabled={archived || snapshot.phase === 'loading'}
         placeholder={placeholder}
-        aria-label="Message the Mayor"
+        aria-label="Message the agent"
         className="agent-session-composer-input max-h-36 min-h-[2.5rem] w-full resize-none bg-transparent px-2 py-1.5 text-base text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100 dark:placeholder:text-zinc-400"
         onChange={(event) => update(event.target.value)}
         onPaste={(event) => {
@@ -1993,16 +2032,21 @@ function Composer({ id }: { id: string }) {
             back the moment the draft is saved or the field is cleared, and
             the model sheet says the same figures meanwhile. */}
         {credit && kind !== 'save' ? <CreditPill credit={credit} onOpen={() => openSheet('homeroom')} /> : <div className="min-w-0 flex-1" />}
+        {/* Every button in Send's place keeps the field focused through the
+            press. A blur drops the keyboard, the tab bar and the Resume strip
+            come back (lib/keyboard-open.ts), the composer falls by the
+            keyboard's height, and the click lands on nothing. */}
         {kind === 'save' ? (
           <>
           <Button type="button" variant="pillDanger" ink="dangerTint" size="icon" className="inline-flex h-10 w-10 shrink-0 items-center justify-center" aria-label="Stop" title="Stop"
-            disabled={snapshot.turnPhase === 'mayor2'} onClick={() => { void stopAgentTurn(); }}>
+            disabled={snapshot.turnPhase === 'mayor2'} onMouseDown={(event) => event.preventDefault()} onClick={() => { void stopAgentTurn(); }}>
             <span className="h-3.5 w-3.5 rounded-sm bg-current" aria-hidden="true" />
           </Button>
           <Button
             key="save"
             type="submit"
             data-agent-session-send="save"
+            onMouseDown={(event) => event.preventDefault()}
             variant="unstyled"
             ink="solid"
             // Words, not a round button in Send's place: a green circle read
@@ -2020,6 +2064,7 @@ function Composer({ id }: { id: string }) {
             key="send"
             type={running ? 'button' : 'submit'}
             data-agent-session-send={kind}
+            onMouseDown={(event) => event.preventDefault()}
             variant={running ? 'pillDanger' : 'pillAccent'}
             disabledStyle="dim"
             size="icon"
@@ -2129,7 +2174,7 @@ export function ChangesDrawer({ session }: { session: AgentSession }) {
             </div>
           </div>
         ) : (
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">No active change. Ask the Mayor to start one.</p>
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">No active change. Ask the agent to start one.</p>
         )}
         {others.length ? (
           <>
@@ -2321,6 +2366,9 @@ export function AgentSessionPanel({ embedded = false, headerAction = null }: { e
             <p role="alert" className="rounded-2xl bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">{snapshot.error}</p>
           ) : null}
         </div>
+        {/* The way down when the reader is up the transcript, within the
+            same 80px FollowOutput keeps them following at. */}
+        <JumpToLatest scroller={scroll} slack={80} />
         <Replies replies={empty ? starters(about, request) : replies} />
         <Composer id={composerId(embedded ? 'messages' : 'screen')} />
         {snapshot.drawerOpen && snapshot.session ? <ChangesDrawer session={snapshot.session} /> : null}

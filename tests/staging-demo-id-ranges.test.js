@@ -31,6 +31,7 @@ function mockIds(file, name, call) {
   const rows = vm.runInNewContext(`${fn}; ${call}`, {
     Date, Math, Number, String, JSON, Array, Object,
     connectionExhaustionMessage: () => 'fixture',
+    ROLLOUT_RETRY_DETAIL: 'fixture',
   });
   return rows.map((row) => Number(row.id));
 }
@@ -89,16 +90,20 @@ test('the shots demo states keep a block of ids nothing else uses', () => {
 test('the shots demo states build on staging seeds that still exist', () => {
   // The challenge states join the topochain fixture season and event and
   // credit its one open challenge; the friend request comes from a #general
-  // demo account. A seed that moves these leaves the states out of every
-  // run, so move them here too.
+  // demo account; the member's remix was copied from the fork-lineage
+  // fixture's public source app. A seed that moves these leaves the states
+  // out of every run, so move them here too.
   const migrate = read('src/db/migrate.js');
   assert.match(migrate, /const SEASON_ID = 900500;/);
   assert.match(migrate, /const EVENT_SEASON_ID = 900501;/);
   assert.match(migrate, /\(900507, \$2, 900502, 'Share the season announcement',[\s\S]{0,200}?TRUE, 3, FALSE, FALSE/,
     'challenge 900507 is enabled and open');
   assert.match(migrate, /'staging-demo-general-lin'/);
+  assert.match(migrate, /SELECT 'Staging demo forkable app', 'staging-demo-forkable', 'running', 'public', id/,
+    'the remix\'s original is a running public app');
   const states = read('src/services/shots-demo-states.js');
   assert.match(states, /const FIXTURE_SEASON_ID = 900500;/);
   assert.match(states, /const FIXTURE_EVENT_ID = 900501;/);
   assert.match(states, /const FIXTURE_EVENT_CHALLENGE_ID = 900507;/);
+  assert.match(states, /const FIXTURE_FORK_SOURCE_SLUG = 'staging-demo-forkable';/);
 });

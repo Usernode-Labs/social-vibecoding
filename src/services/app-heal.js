@@ -149,6 +149,7 @@ async function provisionMissingRepo(config, pool, app) {
 
   const botUsername = await github.getBotUsername();
   let repoUrl;
+  let lineage = null;
   if (app.forked_from) {
     const { copyRepoTree, findForkSource } = require('./app-forker');
     const sourceApp = await findForkSource(pool, app);
@@ -165,6 +166,9 @@ async function provisionMissingRepo(config, pool, app) {
         tempDir,
       });
       repoUrl = copied.repoUrl;
+      // The commits this copy was cut from and starts at, recorded as the
+      // fork worker records them (app-forker forkApp).
+      lineage = { sourceSha: copied.sourceSha || null, forkBaseSha: copied.mainSha || null };
     } finally {
       await docker.execFileAsync('rm', ['-rf', tempDir]).catch(() => {});
     }
@@ -183,7 +187,15 @@ async function provisionMissingRepo(config, pool, app) {
     repoUrl = repo.html_url;
 
     const dbUrl = dbManager.connectionUrl(dbManager.appDbName(app.slug), app.db_password);
-    const files = getTemplateFiles(app.name, app.slug, dbUrl);
+    // The app's own emoji icon, when that is what it has (apps.icon_emoji,
+    // and no icon image): the healed repo's starter screen shows the app's
+    // thumbnail rather than a bare letter, and dapp.json's icon block keeps
+    // the emoji through the first deploy's reconcile (#4047). An image icon
+    // cannot be carried by the template, so it is left alone — heal has
+    // never written one, and the template must not claim an emoji over it.
+    const files = getTemplateFiles(app.name, app.slug, dbUrl, null, {
+      iconEmoji: app.icon_emoji && !app.icon_image_id ? app.icon_emoji : null,
+    });
     await github.pushFiles(botUsername, app.slug, files, {
       message: `Initialize ${app.name} from Homeroom template (repo heal)`,
     });
@@ -194,6 +206,13 @@ async function provisionMissingRepo(config, pool, app) {
   // container heal paths take over from here on the next tick.
   await pool.query('UPDATE apps SET repo_url = $1 WHERE id = $2', [repoUrl, app.id]);
   app.repo_url = repoUrl;
+  if (lineage) {
+    await pool.query(
+      `UPDATE apps SET forked_from = forked_from || $1::jsonb
+        WHERE id = $2 AND jsonb_typeof(forked_from) = 'object'`,
+      [JSON.stringify(lineage), app.id]
+    );
+  }
   log.info('app-heal', app.forked_from
     ? 'Fork repository restored from source app'
     : 'GitHub repo provisioned for repo-less app', {
@@ -234,8 +253,14 @@ async function provisionMissingRepo(config, pool, app) {
 //   respawned       — existing image re-run succeeded
 //   restarted       — hung-but-running container docker-restarted (probe path)
 //   repo_provisioned — missing GitHub repo created + prod converged
+//   github_budget   : a sweep found a missing repo while GitHub's hourly
+//                     budget is nearly used up; created on a later tick
 //   heal_failed     — the attempt threw; cooldown stamped
-async function checkAndHealOne(config, pool, app, { probeRunning = false } = {}) {
+//
+// `background: true` is the sweep's own call (poll below): only then is the
+// GitHub-heavy repo provisioning held for the budget. A person landing on a
+// down app (requestHeal) is never held.
+async function checkAndHealOne(config, pool, app, { probeRunning = false, background = false } = {}) {
   if (app.self_hosted) return { status: 'skipped', slug: app.slug };
   const runtimeRef = applicationRuntime.productionRef(config, app);
   config = { ...config, appRuntime: runtimeRef.runtimeKind };
@@ -255,6 +280,12 @@ async function checkAndHealOne(config, pool, app, { probeRunning = false } = {})
     if (!app.repo_url && github.isEnabled()) {
       if (Date.now() - (healAttempts.get(app.slug) || 0) < cooldownMs(config)) {
         return { status: 'cooldown', slug: app.slug };
+      }
+      // Creating and filling a repository is half a dozen GitHub writes;
+      // services/github-budget.js says whether background work may spend
+      // them now.
+      if (background && !require('./github-budget').budgetAllows('background')) {
+        return { status: 'github_budget', slug: app.slug };
       }
       healAttempts.set(app.slug, Date.now());
       inFlight.add(app.slug);
@@ -406,7 +437,7 @@ async function poll(config) {
   for (const app of rows) {
     if (attempts >= MAX_HEALS_PER_TICK) break;
     try {
-      const result = await checkAndHealOne(config, pool, app);
+      const result = await checkAndHealOne(config, pool, app, { background: true });
       if (['started', 'rebuilt', 'respawned', 'repo_provisioned', 'heal_failed'].includes(result.status)) {
         attempts++;
       }

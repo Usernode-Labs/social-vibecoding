@@ -1,7 +1,8 @@
-import { useMemo, type MouseEvent } from 'react';
+import { useMemo, useState, type MouseEvent } from 'react';
 
 import { messageStamp } from '../../lib/timestamp';
 import { decorateRefs } from './channels';
+import { findRequestCard, RefCards, revealCard } from './ref-cards';
 import type { ConversationUser, SharedObjectCard } from './types';
 
 const NO_CHANNELS: ReadonlySet<string> = new Set();
@@ -60,11 +61,29 @@ export function MessageMarkdown({ content, channels, appSlug }: { content: strin
   // `{ __html }` tore down and rebuilt every message body on every render of
   // its row, even with identical text (board-frame.tsx documents the same).
   const inner = useMemo(() => ({ __html: html }), [html]);
+  // #4241: the requests this message's chips opened in place (./ref-cards.tsx).
+  const [opened, setOpened] = useState<readonly number[]>([]);
   const openRef = (event: MouseEvent<HTMLDivElement>) => {
-    const href = (event.target as Element | null)?.closest?.('a.gc-ref[href]')?.getAttribute('href');
-    if (href) recordObjectOrigin(event, href);
+    const chip = (event.target as Element | null)?.closest?.('a.gc-ref[href]');
+    const href = chip?.getAttribute('href');
+    if (!chip || !href) return;
+    const n = Number(chip.getAttribute('data-ref-number'));
+    // A modified click (a new tab) is the browser's, as NavLink.isNativeClick says.
+    const native = event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
+    if (appSlug && chip.matches('.gc-ref-issue') && Number.isInteger(n) && n > 0 && !native) {
+      // A chip goes to its request's card nearby, else opens one under the
+      // message, and folds that away on a second tap.
+      event.preventDefault();
+      if (opened.includes(n)) { setOpened((list) => list.filter((x) => x !== n)); return; }
+      const card = findRequestCard(chip, appSlug, n);
+      if (card) revealCard(card);
+      else setOpened((list) => (list.includes(n) ? list : [...list, n]));
+      return;
+    }
+    recordObjectOrigin(event, href);
   };
-  return <div className="messages-markdown gc-msg-content" onClick={appSlug ? openRef : undefined} dangerouslySetInnerHTML={inner} />;
+  const body = <div className="messages-markdown gc-msg-content" onClick={appSlug ? openRef : undefined} dangerouslySetInnerHTML={inner} />;
+  return appSlug && opened.length ? <>{body}<RefCards appSlug={appSlug} numbers={opened} /></> : body;
 }
 
 /**
@@ -95,6 +114,20 @@ export function swatchFor(name: string): string {
  * roster, which is what the dialogs show. A square wears the person's swatch
  * with white initials; a circle keeps the accent tint the dialogs had.
  */
+/**
+ * B5: how a sender or a peer is named. The Homeroom bot by its name ("Homeroom
+ * bot"), never its handle; a person by their @handle; nobody (a deleted
+ * account, the platform's own system line) by the word it carries.
+ */
+export function senderName(user?: Pick<ConversationUser, 'id' | 'username' | 'bot' | 'displayName'> | null): string {
+  if (!user) return '';
+  if (user.bot && user.displayName) return user.displayName;
+  return user.id ? `@${user.username}` : user.username;
+}
+
+/** B5: the bot's face, the Homeroom mark tile the header's menu button wears. */
+const BOT_AVATAR = '/brand/homeroom-mark.png';
+
 export function UserAvatar({ user, title, size = 'md', shape = 'circle' }: {
   user?: ConversationUser | null;
   title?: string;
@@ -105,6 +138,9 @@ export function UserAvatar({ user, title, size = 'md', shape = 'circle' }: {
   const sizeClass = size === 'sm' ? 'w-7 h-7 text-[10px]' : size === 'lg' ? 'w-11 h-11 text-sm' : 'w-9 h-9 text-xs';
   const square = shape === 'square';
   const radius = square ? (size === 'sm' ? 'rounded-lg' : 'rounded-xl') : 'rounded-full';
+  if (user?.bot) {
+    return <img src={BOT_AVATAR} alt="" className={`${sizeClass} ${radius} object-cover shrink-0`} data-bot-avatar="" />;
+  }
   if (user?.avatarUrl) {
     return <img src={user.avatarUrl} alt="" className={`${sizeClass} ${radius} object-cover bg-zinc-100 dark:bg-zinc-800 shrink-0`} />;
   }
@@ -123,10 +159,35 @@ export function UserAvatar({ user, title, size = 'md', shape = 'circle' }: {
 }
 
 const OBJECT_LABELS: Record<SharedObjectCard['type'], string> = {
-  app: 'App', issue: 'Issue', proposal: 'Code proposal', governance: 'Governance proposal', spec: 'Spec version',
+  // B4: a code proposal is a change, as the bot and the rest of the shell say.
+  app: 'App', issue: 'Request', proposal: 'Change', governance: 'Governance proposal', spec: 'Spec version',
   // #3660: the two pages a pasted Homeroom link can name that are not items.
   hub: 'Community hub', discussion: 'Discussion',
 };
+
+/**
+ * The composer's chip for an item waiting to be sent, read the way the card
+ * it becomes reads: what it is, its title, its project and where it is
+ * ("Change · Show whose turn each chore is · Flat 4B Chores · waiting for
+ * approval"). `card` is the server's reading of it for this viewer
+ * (api.resolveLinkCards, the same hydration a sent card gets); until it
+ * comes, or when it cannot, the title the page that staged it knew. Never the
+ * project's short name, and never "Proposal" and an id.
+ */
+export function pendingObjectLabel(
+  object: { type: SharedObjectCard['type']; title?: string | null; issueNumber?: number; proposalId?: number; version?: number },
+  card?: SharedObjectCard | null,
+): string {
+  const kind = OBJECT_LABELS[object.type] || 'Item';
+  if (card && card.available && card.title) {
+    const project = card.subtitle && card.subtitle !== card.title ? card.subtitle : null;
+    const state = object.type === 'app' ? null : card.state;
+    return [kind, card.title, project, state].filter(Boolean).join(' · ');
+  }
+  const number = object.type === 'issue' ? object.issueNumber : object.type === 'governance' ? object.proposalId : null;
+  const named = object.title || (number ? `#${number}` : (object.type === 'spec' && object.version ? `v${object.version}` : null));
+  return [kind, named].filter(Boolean).join(' · ');
+}
 
 // The glyph tile a card leads with: the app's diamond for an app and its
 // community, the `#` a channel is named with for a discussion, the section
@@ -166,6 +227,16 @@ export function recordObjectOrigin(event: MouseEvent<Element>, href: string, inb
   else if (/\/dev\/(?:issues|proposals|governance)\//.test(href)) w.Improve?.enterTopicFrom?.(origin);
 }
 
+/**
+ * #4212: what a card says it is. A request names its number ("Request #51"),
+ * as the bot's words and its activity card's link do, so "RecipeBot #51" in
+ * the text is plainly the card under it.
+ */
+export function objectEyebrow(object: Pick<SharedObjectCard, 'type' | 'issueNumber'>): string {
+  if (object.type === 'issue' && object.issueNumber) return `Request #${object.issueNumber}`;
+  return OBJECT_LABELS[object.type];
+}
+
 export function ObjectCard({ object, compact = false, inboxOnly = false }: {
   object: SharedObjectCard;
   compact?: boolean;
@@ -184,7 +255,7 @@ export function ObjectCard({ object, compact = false, inboxOnly = false }: {
     <>
       <span className="messages-object-icon">{objectGlyph(object.type)}</span>
       <div className="min-w-0 flex-1">
-        <div className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400 font-semibold">{OBJECT_LABELS[object.type]}</div>
+        <div className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400 font-semibold">{objectEyebrow(object)}</div>
         <div className="text-base font-semibold text-zinc-900 dark:text-zinc-100 truncate">{object.title || 'Untitled'}</div>
         {!compact && (object.subtitle || object.state || object.author) ? (
           <div className="text-sm text-zinc-500 dark:text-zinc-400 truncate">

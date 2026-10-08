@@ -140,6 +140,10 @@ async function filePlatformReport(pool, config, {
     if (!created.ok) return { ok: false, error: 'github', hint: created.hint };
     const issue = created.issue;
     await require('./issue-announce').announceIssueCreated(pool, owner, repo, issue, null);
+    // #3952: the people the report names with @. Never rejects.
+    require('./notifications').notifyIssueMentions?.(pool, {
+      owner, repo, issueNumber: issue.number, authorId: user.id, text: `${title}\n\n${body}`,
+    });
     await recordFeedbackReport(pool, {
       user, app: null, owner, repo, issueNumber: issue.number, title, description, source,
     });

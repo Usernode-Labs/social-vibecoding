@@ -262,21 +262,21 @@ test('review sort still works with unavailable storage and when signed out', () 
   assert.equal(a._reviewSort(), 'newest');
 });
 
-test('only In review renders one sort button naming the current mode and the next action', () => {
+test('only Waiting for approval renders one sort button naming the current mode and the next action', () => {
   const a = reviewBoard();
   let html = kanbanHtml(a);
-  const control = h => h.match(/<button[^>]*aria-label="Sort In review:[\s\S]*?<\/button>/g) || [];
+  const control = h => h.match(/<button[^>]*aria-label="Sort Waiting for approval:[\s\S]*?<\/button>/g) || [];
   assert.equal(control(html).length, 1);
-  assert.match(control(html)[0], /aria-label="Sort In review: Newest\. Switch to Vote priority\."/);
+  assert.match(control(html)[0], /aria-label="Sort Waiting for approval: Newest\. Switch to Vote priority\."/);
   assert.match(control(html)[0], /title="Most recently submitted for review first\. Click to switch to Vote priority\."/);
   assert.match(control(html)[0], /Newest<\/button>/);
   assert.doesNotMatch(control(html)[0], /aria-pressed|aria-haspopup/);
-  assert.ok(html.indexOf('id="dev-kanban-col-inreview"') < html.indexOf('aria-label="Sort In review:'));
+  assert.ok(html.indexOf('id="dev-kanban-col-inreview"') < html.indexOf('aria-label="Sort Waiting for approval:'));
   assert.doesNotMatch(html, /Most recently submitted for review first\.<\/p>/);
   a._setReviewSort('priority');
   html = kanbanHtml(a);
   assert.equal(control(html).length, 1);
-  assert.match(control(html)[0], /aria-label="Sort In review: Vote priority\. Switch to Newest\."/);
+  assert.match(control(html)[0], /aria-label="Sort Waiting for approval: Vote priority\. Switch to Newest\."/);
   assert.match(control(html)[0], /Vote priority<\/button>/);
   assert.doesNotMatch(html, /Unvoted first, then fewest qualifying votes still needed\.<\/p>/);
   const dialog = renderComponent('frontend/src/features/dialogs/board-filters.tsx', 'BoardFiltersDialog', {});
@@ -822,7 +822,7 @@ test('priority / category are a VISIBLE no-op on session cards', () => {
   // A dev session carries no such metadata, so hiding it would be silently
   // wrong — it stays, and the column SAYS why the filter didn't apply.
   assert.match(html, /Dark mode work/, 'the session survives an inapplicable filter');
-  assert.match(html, /Regular dev sessions don&#x27;t carry priority, category or assignee/);
+  assert.match(html, /Agent sessions don&#x27;t carry priority, category or assignee/);
   assert.match(html, /not filtered by priority/);
 
   // The predicate itself keeps the attribute filters as an explicit no-op.
@@ -989,7 +989,7 @@ test('a repaint republishes the whole strip: count and chips track the filters',
     [
       { key: 'q', label: 'Search: ripple' },
       { key: 'priority', label: 'High priority' },
-      { key: 'assignee', label: 'Unassigned' },
+      { key: 'assignee', label: 'Nobody yet' },
       { key: 'needsVote', label: 'Waiting on you' },
     ],
   );

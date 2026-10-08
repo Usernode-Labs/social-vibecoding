@@ -110,6 +110,35 @@
   // at the Settings screen forever, land them on the landing page.
   const NATIVE_LOGOUT_SAFETY_MS = 5000;
 
+  // #3915: the net above was armed only once native ANSWERED, so a phone
+  // whose app never answered (or answered late) sat on an unchanged Settings
+  // screen until the bridge gave up twelve seconds later, and on iOS a person
+  // force-quit it first. Once the SERVER has revoked the session this second
+  // net is armed the moment the native call is issued, so the page leaves
+  // within this bound whatever the app does. It is safe to leave early:
+  //
+  //   - Nothing can sign back in. /api/auth/logout deleted the web session
+  //     and, in the same transaction, revoked the native credential tied to
+  //     it (src/routes/auth.js), and its response cleared the cookie.
+  //   - Native cleanup does not need this document once it has started: the
+  //     app holds its lifecycle queue until it has deleted the WebView's
+  //     cookies, storage and cache, then replaces the WebView itself, so a
+  //     landing page that arrived first is simply replaced again.
+  //   - Native gets a fair chance first. Its whole teardown normally takes a
+  //     second or two; eight is several times that. If the app has not even
+  //     admitted the call by then, its credential is already revoked server
+  //     side, and the app retires it the first time the server refuses it.
+  //
+  // The offline path (remote revocation FAILED) never arms it: there only
+  // native can delete the live cookie, so leaving before native confirms
+  // would boot the signed-in shell again.
+  const NATIVE_LOGOUT_ISSUED_SAFETY_MS = 8000;
+
+  // What the button says, at rest (the markup's own words, restored after a
+  // failure) and while a sign-out is running (#3915).
+  const SIGN_OUT_LABEL = 'Sign out';
+  const SIGNING_OUT_LABEL = 'Signing out…';
+
   // How long the sign-out POST may take before it is abandoned. Two budgets,
   // because the two paths fail differently (#2078):
   //
@@ -142,7 +171,7 @@
     // otherwise 'platform' | 'claude-code' | 'codex'. `externalFlowsAvailable`
     // says whether this deployment can offer the Claude Code / Codex
     // hand-off at all — the server decides, we only render what it reports.
-    state: { hasApiKey: false, demoKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false, sessionBridgeEnabled: false, homeroomBotDm: false, locale: null, devFlowPreference: null, externalFlowsAvailable: false },
+    state: { hasApiKey: false, demoKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false, sessionBridgeEnabled: false, homeroomBotDm: false, homeroomBotForEveryone: false, locale: null, devFlowPreference: null, externalFlowsAvailable: false },
     _walletPollTimer: null,
     _alertsTestTimer: null,
     _walletExpiresAt: null,
@@ -359,7 +388,7 @@
       cli: 'terminal token credentials revoke local agent opencode claude code',
       'agent-files': 'instructions skills agents md claude md prompt files',
       'global-chat': 'model cap chat',
-      experimental: 'beta labs progress estimate session bridge local agent homeroom bot dm messages',
+      experimental: 'beta labs progress estimate session bridge local agent homeroom bot dm messages keyboard shortcut suggest improvement',
       theme: 'dark light mode appearance sidebar',
       'dev-console': 'bug icon logs errors debug developer',
       language: 'locale translate',
@@ -594,6 +623,17 @@
         botDmToggle.addEventListener('change', (e) => this._saveHomeroomBotDm(e.target.checked));
       }
 
+      // #4289: Press C to suggest an improvement. Kept on this device, not
+      // the account (features/improve/suggest-shortcut.ts), so there is no
+      // request to fail: the change is the save.
+      const shortcutToggle = document.getElementById('suggest-shortcut-enabled');
+      if (shortcutToggle) {
+        shortcutToggle.addEventListener('change', (e) => {
+          const pref = typeof window !== 'undefined' ? window.UsernodeReact?.suggestShortcut : null;
+          pref?.setEnabled(e.target.checked);
+        });
+      }
+
       // Platform-level language preference (issue #757). Server-side
       // per-user BCP-47 tag (default unset = "Auto"); apps read it via
       // the iframe JWT claim and usernode.getUserLocale(). Fires the
@@ -640,7 +680,7 @@
             const pushStatus = result.queued
               ? 'Phone push queued. Background or close the mobile app to check for a notification.'
               : result.reason === 'preference_disabled'
-                ? 'Phone push was not queued. Enable Developer sessions under Mobile push categories and try again.'
+                ? 'Phone push was not queued. Enable Agent sessions under Mobile push categories and try again.'
                 : 'Phone push was not queued. Sign in on your phone and enable Activity notifications and notification permission. Push delivery must also be available on the server.';
             let remaining = Math.ceil(result.delayMs / 1000);
             const render = () => {
@@ -731,6 +771,7 @@
         this.state.aiProgressEstimate = !!j.user?.aiProgressEstimate;
         this.state.sessionBridgeEnabled = !!j.user?.sessionBridgeEnabled;
         this.state.homeroomBotDm = !!j.user?.homeroomBotDm;
+        this.state.homeroomBotForEveryone = !!j.user?.homeroomBotForEveryone;
         this.state.locale = j.user?.locale || null;
         this.state.devFlowPreference = j.user?.devFlowPreference || null;
         this.state.externalFlowsAvailable = !!j.user?.externalFlowsAvailable;
@@ -1539,8 +1580,15 @@
       if (bridgeStatus) { bridgeStatus.classList.add('hidden'); bridgeStatus.textContent = ''; }
       const botDm = document.getElementById('homeroom-bot-dm-enabled');
       if (botDm) botDm.checked = !!this.state.homeroomBotDm;
+      // With the bot on for everyone there is no list to join or leave: its
+      // whole block (the switch, its note and its status line) goes.
+      const botDmBlock = botDm ? botDm.closest('.border-t') : null;
+      if (botDmBlock) botDmBlock.classList.toggle('hidden', !!this.state.homeroomBotForEveryone);
       const botDmStatus = document.getElementById('homeroom-bot-dm-status');
       if (botDmStatus) { botDmStatus.classList.add('hidden'); botDmStatus.textContent = ''; }
+      const shortcut = document.getElementById('suggest-shortcut-enabled');
+      const shortcutPref = typeof window !== 'undefined' ? window.UsernodeReact?.suggestShortcut : null;
+      if (shortcut) shortcut.checked = !!shortcutPref?.enabled();
       this._renderLocalAgentsSection();
     },
 
@@ -3804,10 +3852,13 @@
 
     async logout({ accountDeleted = false } = {}) {
       const btn = document.getElementById('settings-logout');
-      if (btn) btn.disabled = true;
+      // #3915: say so the moment it starts. A disabled button that still
+      // looked and read exactly like "Sign out" is what made the phone look
+      // frozen while the app shut down.
+      if (btn) { btn.disabled = true; btn.textContent = SIGNING_OUT_LABEL; }
 
       const fail = (error) => {
-        if (btn) btn.disabled = false;
+        if (btn) { btn.disabled = false; btn.textContent = SIGN_OUT_LABEL; }
         if (window.PlatformUI && PlatformUI.toast) {
           PlatformUI.toast(
             'Could not sign out. Check your connection and try again.',
@@ -3921,19 +3972,33 @@
       // This must remain the final call on the native path: successful native
       // logout replaces the WebView, so the old document normally runs no
       // continuation work at all. The ONE relaxation (#1524) is navigation to
-      // the landing page, on both outcomes below. It cannot re-admit anyone:
+      // the landing page: on both outcomes below, and (#3915) on a bounded
+      // timer armed as the call is issued. It cannot re-admit anyone:
       // App.user is gone, so NativeChrome._webParticipantId() is null and
       // establishCurrentSession() returns without asking the bridge for
       // anything. Nothing else may be added here.
       if (preflight.nativeTerminal) {
+        // Whichever exit comes first wins; a later one finds it done.
+        let left = false;
+        const leave = () => {
+          if (left) return;
+          left = true;
+          window.location.replace(LANDING_URL);
+        };
+        const armLeave = (ms) => {
+          const timer = setTimeout(leave, ms);
+          if (timer && typeof timer.unref === 'function') timer.unref();
+        };
+        // #3915: counted from the call being issued, not answered (no timer
+        // can fire before the terminal call on the next line has been made).
+        // See NATIVE_LOGOUT_ISSUED_SAFETY_MS for why this is safe only once
+        // the server has revoked the session.
+        if (webRevoked) armLeave(NATIVE_LOGOUT_ISSUED_SAFETY_MS);
         return NativeChrome.commitNativeLogout().then((result) => {
           // The WebView should already be gone. If it is not, land this
           // document on the public landing page rather than leave a
           // signed-out user on the Settings screen.
-          const timer = setTimeout(() => {
-            window.location.replace(LANDING_URL);
-          }, NATIVE_LOGOUT_SAFETY_MS);
-          if (timer && typeof timer.unref === 'function') timer.unref();
+          armLeave(NATIVE_LOGOUT_SAFETY_MS);
           return result;
         }, (error) => {
           // If neither boundary completed, do not reload a possibly live
@@ -3947,6 +4012,7 @@
             window.sessionStorage?.setItem?.(LOGOUT_NOTICE_KEY, NATIVE_SHUTDOWN_NOTICE);
           } catch (_) {}
           console.warn('[settings] local native shutdown failed:', error);
+          left = true;
           window.location.replace(LANDING_URL);
           return false;
         });
@@ -4493,6 +4559,9 @@
         : `New instruction file from "${filename}"`;
       nameInput.value = this._slugifyAgentFileName(filename);
       descWrap.classList.toggle('hidden', kind !== 'skill');
+      // Return in the name goes on to the description when there is one and
+      // saves when there is not (#3907); the key says which.
+      nameInput.enterKeyHint = kind === 'skill' ? 'next' : 'done';
       descInput.value = '';
       form.classList.remove('hidden');
       this._setAgentFilesStatus('', 'clear');

@@ -119,6 +119,40 @@ async function findStuckCheckSessions({
   return { rows: rows.filter(isStuckCheckRecoveryScope) };
 }
 
+// #237: how many 'error' verdicts in a row the error lane above re-runs on
+// its own. storeChecks bumps consecutive_check_failures on every 'error'
+// (and schedules check_next_retry_at, 2m → 4m → … → 30m); past this count
+// the row is left 'error' until a new commit or a person re-runs it.
+// Read here rather than in server.js so the checks settlement can ask the
+// same question the reconcile answers. Tunable via CHECK_MAX_AUTO_RETRIES.
+const DEFAULT_CHECK_MAX_AUTO_RETRIES = 6;
+
+function checkMaxAutoRetries() {
+  const configured = Number.parseInt(
+    process.env.CHECK_MAX_AUTO_RETRIES || String(DEFAULT_CHECK_MAX_AUTO_RETRIES),
+    10
+  );
+  return Number.isFinite(configured) ? configured : DEFAULT_CHECK_MAX_AUTO_RETRIES;
+}
+
+// What a check run that overlapped a platform rollout and came back red
+// records instead of 'failing' (visuals.settleCaptureRun). It lands in
+// check_error_detail, which the card, the merge gate and the connector all
+// show, so it is user-facing copy: plain words, no em dashes. The surfaces
+// that word this state differently from other errors compare against it.
+const ROLLOUT_RETRY_DETAIL = 'Checks ran while Homeroom was updating, so they will run again.';
+
+// Would the error lane re-run an 'error' verdict written on this row now?
+// The row must be one findStuckCheckSessions picks up (its scope, and a
+// branch to build), and the streak, once storeChecks bumps it, must still
+// be under the cap. A red verdict is only ever re-labelled as a retry when
+// this says yes, so it never reads "will run again" when nothing will.
+function errorVerdictWillRetry(row, { maxAutoRetries = checkMaxAutoRetries() } = {}) {
+  if (!row || !row.branch_name || !isStuckCheckRecoveryScope(row)) return false;
+  const streak = Number(row.consecutive_check_failures) || 0;
+  return streak + 1 < maxAutoRetries;
+}
+
 // Does a session need its staging preview (re)built?
 //
 // THREE failure shapes leave a card without a working preview:
@@ -677,6 +711,8 @@ async function recordChecksSkipped({
     log.warn('staging-recovery', 'skipped-verdict notify failed', { sessionId: session.id, err: err.message });
   }
   visuals.maybeAutoMergeAfterChecks(config, pool, session, 'skipped');
+  // B4: skipped checks make a bot's change ready to try, as passing ones do.
+  visuals.noteBotChecksAfterChecks?.(pool, session, 'skipped');
 }
 
 // #237: record a staging build/boot failure as a terminal proposal-checks
@@ -746,6 +782,17 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
     detail,
   });
 
+  // A promoted proposal behind main can fail to start for main's sake, not
+  // its own: previews boot against production's database, which runs main's
+  // schema (#4186 against #4172). When it merges cleanly the platform syncs
+  // it, once per head, in the background; either way the plan says what the
+  // note below tells the author. Checked on every retry, before the streak
+  // gate, so a failure first measured while the mirror was down still gets
+  // its sync.
+  const catchUp = infrastructure ? null : await require('./boot-failure-sync').afterBootFailure({
+    config, pool, session, commitHash, err,
+  }).catch(() => null);
+
   const alreadyNotified = row && row.check_error_notified_at;
   if (!row || alreadyNotified) return;
 
@@ -764,6 +811,11 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
   // person who can act on it is the platform owner, who gets the escalation
   // the 'error' state already carries. The stamp above still runs, so the
   // backoff retries stay quiet either way.
+  // B4: a change the Homeroom bot built for somebody is not ready to try
+  // while its preview will not start, and its requester hears that, once per
+  // failure streak, rather than nothing (they hear "ready" only when it is).
+  require('./homeroom-bot-dm').noteChangeStopped(pool, session.id, { why: 'preview' }).catch(() => null);
+
   if (infrastructure) {
     log.warn('staging-recovery', 'Boot failure is infrastructure — author not nudged', {
       sessionId: session.id, detail,
@@ -785,7 +837,10 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
   // Still exactly one post per failure streak, either way: setChecksPending
   // clears check_error_notified_at when a new commit arrives, so a fresh
   // build failure always narrates, and quiet backoff retries never do.
-  const body = `⚠️ Staging preview failed to start, so automated checks can't run and this proposal can't merge yet. Reason: ${detail}`;
+  const aboutMain = require('./boot-failure-sync').explain(catchUp);
+  const body = catchUp && catchUp.sync
+    ? `⚠️ Staging preview failed to start. ${aboutMain} Reason: ${detail}`
+    : `⚠️ Staging preview failed to start, so automated checks can't run and this proposal can't merge yet.${aboutMain ? ` ${aboutMain}` : ''} Reason: ${detail}`;
   try {
     if (session.source === 'imported') {
       const { sendSystemMessage } = require('./ws');
@@ -875,6 +930,10 @@ module.exports = {
   checkRunOverdue,
   isStuckCheckRecoveryScope,
   findStuckCheckSessions,
+  DEFAULT_CHECK_MAX_AUTO_RETRIES,
+  checkMaxAutoRetries,
+  ROLLOUT_RETRY_DETAIL,
+  errorVerdictWillRetry,
   stagingNeedsRebuild,
   previewIsOfAnotherCommit,
   recheckHeadSha,

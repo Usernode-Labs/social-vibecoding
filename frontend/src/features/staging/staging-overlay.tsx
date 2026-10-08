@@ -53,6 +53,22 @@ export function previewBannerText(solo: boolean): string {
     : "Preview of this change. Members can try it before they vote. Anything you add here stays in the preview and won't carry over.";
 }
 
+/**
+ * The line that says which moment the preview shows. A change that only
+ * shows at certain times (a Thursday-evening reminder) declares a moment, and
+ * the preview opens at it (src/services/preview-clock.js). On 5 October 2026
+ * a group was asked to approve such a banner on a Monday, when it could not
+ * show; this line says why today's date is not the one on screen.
+ */
+export function previewClockText(label: string, asNow: boolean): string {
+  return asNow ? 'Showing it as it is now.' : `Showing it as on ${label}.`;
+}
+
+/** The button beside it: the other of the two moments. */
+export function previewClockToggleText(label: string, asNow: boolean): string {
+  return asNow ? `See it as on ${label}` : 'See it as now';
+}
+
 export function StagingOverlay(): ReactNode {
   const state = useStoreState(stagingStore);
   const overlayRef = useRef<HTMLDivElement | null>(null);
@@ -63,6 +79,7 @@ export function StagingOverlay(): ReactNode {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const retryRef = useRef<HTMLButtonElement | null>(null);
   const spinnerRef = useRef<HTMLDivElement | null>(null);
+  const clockRef = useRef<HTMLDivElement | null>(null);
 
   // Publish the element the bridge mutates. Registered once — this component
   // never unmounts, and the ref never points at a different node.
@@ -73,6 +90,7 @@ export function StagingOverlay(): ReactNode {
 
   useHiddenClass(retryRef, !state.loaderRetry);
   useHiddenClass(spinnerRef, state.loaderRetry);
+  useHiddenClass(clockRef, !state.clockLabel);
   useHiddenClass(overlayRef, !state.open);
   useClassToggle(overlayRef, 'staging-overlay-docked', state.mode === 'docked');
 
@@ -176,7 +194,7 @@ export function StagingOverlay(): ReactNode {
           onClick={() => stagingHandlers.onBack?.()}
         >
           <ChevronLeftIcon className="w-4 h-4" />
-          Back to session
+          Back
         </button>
         <span className="flex-1">
         </span>
@@ -210,7 +228,14 @@ export function StagingOverlay(): ReactNode {
         >
           {state.fsBtnText}
         </button>
-        <span id="staging-url-label" className="text-xs text-zinc-400 font-mono truncate">
+        {/*
+            The preview's title, "Flat 4B Chores · Preview", set by
+            AppView.swapToStaging (_stagingTitle). The id is the old name: it
+            showed the raw staging address, which told a newcomer arriving
+            from the bot's ready card nothing (first-session run, 4 October
+            2026).
+        */}
+        <span id="staging-url-label" className="text-xs text-zinc-400 truncate">
           {state.urlLabel}
         </span>
         {/*
@@ -235,7 +260,7 @@ export function StagingOverlay(): ReactNode {
         </button>
         {/*
             #771: close button for the docked side panel. CSS shows it only
-            in docked mode (where "Back to session" is hidden — closing the
+            in docked mode (where "Back" is hidden: closing the
             panel IS going back to the session, which never left).
         */}
         <button
@@ -258,6 +283,30 @@ export function StagingOverlay(): ReactNode {
       */}
       <div className="px-4 py-1.5 bg-violet-500/10 border-b border-violet-500/20 text-xs text-zinc-400 shrink-0">
         {previewBannerText(state.solo)}
+      </div>
+      {/*
+          Which moment this preview shows, when its change declared one
+          (AppView.swapToStaging, through stagingBridge.setClock). Rendered
+          always and hidden through a ref like the loader, so the iframe's
+          place among its siblings never changes; with no moment it ships
+          hidden and empty, which is what the prerendered page carries. The
+          button reloads the preview at the other moment (app-view.js
+          re-points the iframe; this row never touches it).
+      */}
+      <div
+        ref={clockRef}
+        className="hidden flex items-center gap-3 px-4 py-1.5 border-b border-zinc-800 text-xs text-zinc-300 shrink-0"
+      >
+        <span className="flex-1 min-w-0">
+          {state.clockLabel ? previewClockText(state.clockLabel, state.clockAsNow) : ''}
+        </span>
+        <button
+          type="button"
+          className="text-xs font-medium px-2.5 py-1 rounded bg-violet-500/15 text-violet-300 hover:bg-violet-500/25 shrink-0"
+          onClick={() => stagingHandlers.onClockToggle?.()}
+        >
+          {previewClockToggleText(state.clockLabel, state.clockAsNow)}
+        </button>
       </div>
       <div className="relative flex-1">
         {/*

@@ -4,6 +4,9 @@ const { adminMiddleware } = require('../middleware/admin');
 const log = require('../services/logger');
 const analyticsDemo = require('../services/analytics-demo');
 const analyticsFunnels = require('../services/analytics-funnels');
+// #3970: who a change is credited to: its author, or for a Homeroom bot
+// build the person who asked for it. The same rule as the Journey page.
+const changePerson = require('../services/change-person');
 // #892: read-only access to the estimator's COMMITTED run-length priors so
 // the estimator card can show them beside the live numbers and say when a
 // refresh is due. This is a plain module-constant read — it does NOT call
@@ -32,13 +35,34 @@ const llm = require('../services/llm');
 // Admin-exclusion predicate (dashboard checkbox #1). When `includeAdmins`
 // is false (the default) every analytics query drops rows attributed to
 // an admin account (users.is_admin = TRUE — view-only admins included).
-// `col` is the user-id column to test in the calling query. Returns a
-// fragment that begins with the given keyword (AND by default) so it can
-// be spliced into an existing WHERE clause or stand alone.
-function adminFilter(col, includeAdmins, keyword = 'AND') {
-  if (includeAdmins) return '';
-  return `${keyword} ${col} NOT IN (SELECT id FROM users WHERE is_admin)`;
+// Test accounts (services/test-accounts.js) and synthetic accounts
+// (users.is_synthetic: the Homeroom bot) are dropped whatever the box says:
+// they are nobody's real use, and with the box on they would land in the
+// non-admin column. The bot's own work is not lost by this: a change it
+// built is credited to the person who asked for it (CHANGE_PERSON_SQL), and
+// that person's messages to it count as their activity. That half keeps a
+// row with no user (a NULL `col`), as the query did before it. `col` is the
+// user-id column to test in the calling query. Returns a fragment that
+// begins with the given keyword (AND by default) so it can be spliced into
+// an existing WHERE clause or stand alone.
+//
+// Spend totals pass `keepSynthetic`: the bot's LLM spend is recorded on its
+// own account, and dropping it would understate what the platform spent.
+function adminFilter(col, includeAdmins, keyword = 'AND', { keepSynthetic = false } = {}) {
+  const notPeople = keepSynthetic
+    ? 'test_account_created_at IS NOT NULL'
+    : 'test_account_created_at IS NOT NULL OR is_synthetic';
+  const tests = `(${col} IS NULL OR ${col} NOT IN (SELECT id FROM users WHERE ${notPeople}))`;
+  if (includeAdmins) return `${keyword} ${tests}`;
+  return `${keyword} ${col} NOT IN (SELECT id FROM users WHERE is_admin) AND ${tests}`;
 }
+
+// A dev session joined to the person it is credited to, as `cp.user_id`:
+// splice after `FROM chat_sessions cs`. A Homeroom bot build counts for the
+// person who asked for it, falling back to whoever filed the request, so
+// changes, merges and builders are counted for people rather than for the
+// bot account (#3970).
+const CHANGE_PERSON_JOIN = `CROSS JOIN LATERAL (SELECT ${changePerson.CHANGE_PERSON_SQL} AS user_id) cp`;
 
 // ── Staging mock data (#860) ─────────────────────────────────────────────
 //
@@ -96,7 +120,12 @@ const UTC_TODAY_SQL = "(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date";
 // best-effort events preserve captured actions after a later edit or
 // retraction. A favorite counts only from the explicit user-toggle event,
 // never from app_favorites state that non-user workflows also populate.
-// Actions removed before their event existed cannot be rebuilt.
+// Actions removed before their event existed cannot be rebuilt. Filing a
+// request (issues.created_by) counts too (#3970): people increasingly ask
+// the Homeroom bot for changes instead of opening a dev session, and their
+// messages to it already count through the Messages arm. The bot's own
+// rows (its build sessions, the requests it files) drop out with every
+// other synthetic account in adminFilter.
 //
 // Built per request so the same admin-exclusion predicate (users.is_admin,
 // which includes full and view-only admins) is present in every UNION arm.
@@ -110,6 +139,7 @@ function activityDaysSql(includeAdmins) {
   const prVotes = adminFilter('pv.user_id', includeAdmins);
   const issueVotes = adminFilter('iv.user_id', includeAdmins);
   const kudos = adminFilter('pk.giver_user_id', includeAdmins);
+  const filed = adminFilter('ri.created_by', includeAdmins);
   const durable = adminFilter('e.user_id', includeAdmins);
   return `
   SELECT aa.user_id, aa.date AS day
@@ -150,6 +180,10 @@ function activityDaysSql(includeAdmins) {
   SELECT pk.giver_user_id, (pk.created_at AT TIME ZONE 'UTC')::date AS day
     FROM pr_kudos pk
    WHERE pk.giver_user_id IS NOT NULL ${kudos}
+  UNION
+  SELECT ri.created_by, (ri.created_at AT TIME ZONE 'UTC')::date AS day
+    FROM issues ri
+   WHERE ri.created_by IS NOT NULL ${filed}
   UNION
   SELECT e.user_id, (e.created_at AT TIME ZONE 'UTC')::date AS day
     FROM events e
@@ -197,13 +231,15 @@ function dashboardRoutes(config) {
         //                   merged (status='merged') can exceed it: sessions
         //                   merged outside the promote flow (self-app/direct/
         //                   admin merges, pre-promoted_at rows) never recorded one.
+        //                   Each change counts under the person it is
+        //                   credited to (a bot build: whoever asked for it).
         pool.query(
           `SELECT
-             COUNT(*) FILTER (WHERE status IN ('promoted','merging'))::int AS promoted,
-             COUNT(*) FILTER (WHERE promoted_at IS NOT NULL)::int          AS promoted_all_time,
-             COUNT(*) FILTER (WHERE status = 'merged')::int                AS merged
-           FROM chat_sessions
-           WHERE TRUE ${adminFilter('user_id', includeAdmins)}`
+             COUNT(*) FILTER (WHERE cs.status IN ('promoted','merging'))::int AS promoted,
+             COUNT(*) FILTER (WHERE cs.promoted_at IS NOT NULL)::int          AS promoted_all_time,
+             COUNT(*) FILTER (WHERE cs.status = 'merged')::int                AS merged
+           FROM chat_sessions cs ${CHANGE_PERSON_JOIN}
+           WHERE TRUE ${adminFilter('cp.user_id', includeAdmins)}`
         ),
         pool.query(
           `WITH activity AS (${activityDaysSql(includeAdmins)})
@@ -219,7 +255,7 @@ function dashboardRoutes(config) {
                FILTER (WHERE date >= date_trunc('week', CURRENT_DATE)::date), 0)::float AS week_cents
            FROM llm_usage
            WHERE date >= date_trunc('week', CURRENT_DATE)::date
-             ${adminFilter('user_id', includeAdmins)}`
+             ${adminFilter('user_id', includeAdmins, 'AND', { keepSynthetic: true })}`
         ),
         pool.query(
           `SELECT COUNT(*)::int AS total FROM pr_kudos
@@ -282,6 +318,8 @@ function dashboardRoutes(config) {
   // generate_series spine guarantees a continuous x-axis (no gaps for
   // quiet weeks). Merges use merged_at (exact going forward) and fall
   // back to promoted_at for pre-migration rows that never recorded one.
+  // Promoted and merged changes count under the person each is credited to
+  // (CHANGE_PERSON_JOIN), so a Homeroom bot build is its requester's.
   router.get('/api/admin/analytics/growth', async (req, res) => {
     const includeAdmins = wantsAdmins(req);
     try {
@@ -314,17 +352,19 @@ function dashboardRoutes(config) {
            SELECT date_trunc('week', cs.promoted_at)::date AS wk,
                   COUNT(*) FILTER (WHERE NOT COALESCE(pu.is_admin, FALSE))::int AS n,
                   COUNT(*) FILTER (WHERE COALESCE(pu.is_admin, FALSE))::int     AS n_admin
-           FROM chat_sessions cs LEFT JOIN users pu ON pu.id = cs.user_id
+           FROM chat_sessions cs ${CHANGE_PERSON_JOIN}
+           LEFT JOIN users pu ON pu.id = cp.user_id
            WHERE cs.promoted_at IS NOT NULL
-             ${adminFilter('cs.user_id', includeAdmins)} GROUP BY 1
+             ${adminFilter('cp.user_id', includeAdmins)} GROUP BY 1
          ),
          mg AS (
            SELECT date_trunc('week', COALESCE(cs.merged_at, cs.promoted_at, cs.created_at))::date AS wk,
                   COUNT(*) FILTER (WHERE NOT COALESCE(mu.is_admin, FALSE))::int AS n,
                   COUNT(*) FILTER (WHERE COALESCE(mu.is_admin, FALSE))::int     AS n_admin
-           FROM chat_sessions cs LEFT JOIN users mu ON mu.id = cs.user_id
+           FROM chat_sessions cs ${CHANGE_PERSON_JOIN}
+           LEFT JOIN users mu ON mu.id = cp.user_id
            WHERE cs.status = 'merged'
-             ${adminFilter('cs.user_id', includeAdmins)} GROUP BY 1
+             ${adminFilter('cp.user_id', includeAdmins)} GROUP BY 1
          )
          SELECT to_char(s.wk, 'YYYY-MM-DD') AS wk,
                 COALESCE(u.n, 0)  AS new_users,
@@ -436,7 +476,8 @@ function dashboardRoutes(config) {
   // "General user" = anyone counted active that day, using the same human-
   // action surface as retention/overview (activityDaysSql: project use;
   // human project, private/group/channel, change, Mayor, and Global Chat
-  // messages; proposal/request votes; proposal kudos; explicit favorites).
+  // messages, including messages to the Homeroom bot; filed requests;
+  // proposal/request votes; proposal kudos; explicit favorites).
   // There is no login/sign-in event, so these recorded actions are the best
   // available historical proxy for "signed in". Old idle-inclusive heartbeat
   // rows and actions removed before durable emission remain known limits;
@@ -502,18 +543,32 @@ function dashboardRoutes(config) {
   // to CURRENT_DATE - 116, so 120 days fully backs every window.
   router.get('/api/admin/analytics/power-users', async (req, res) => {
     const includeAdmins = wantsAdmins(req);
+    // A proposal the Homeroom bot promoted is recorded under the bot (its
+    // author and the account that promoted it), so the "proposal made" is
+    // credited to the person the change is for (#3970): `cs` joins only when
+    // a change's own author promoted it, and CHANGE_PERSON_JOIN maps a bot
+    // build to its requester (for a person's own change, to themselves).
+    // With no session joined, cp.user_id is NULL and the event's actor stands.
     const rollupCte = `
       rollup AS (
-        SELECT e.user_id,
-               e.created_at::date AS day,
-               COUNT(*) FILTER (WHERE e.event_type = 'dapp_active_day') AS dapp_ct,
-               COUNT(*) FILTER (WHERE e.event_type IN ('kudos_given','pr_vote_cast','pr_promoted')) AS dev_ct
-        FROM events e
-        WHERE e.user_id IS NOT NULL
-          AND e.created_at >= CURRENT_DATE - 120
-          AND e.event_type IN ('dapp_active_day','kudos_given','pr_vote_cast','pr_promoted')
-          ${adminFilter('e.user_id', includeAdmins)}
-        GROUP BY e.user_id, e.created_at::date
+        SELECT ev.user_id,
+               ev.day,
+               COUNT(*) FILTER (WHERE ev.event_type = 'dapp_active_day') AS dapp_ct,
+               COUNT(*) FILTER (WHERE ev.event_type IN ('kudos_given','pr_vote_cast','pr_promoted')) AS dev_ct
+        FROM (
+          SELECT COALESCE(cp.user_id, e.user_id) AS user_id,
+                 e.created_at::date AS day,
+                 e.event_type
+          FROM events e
+          LEFT JOIN chat_sessions cs
+            ON e.event_type = 'pr_promoted' AND cs.id = e.session_id AND cs.user_id = e.user_id
+          ${CHANGE_PERSON_JOIN}
+          WHERE e.user_id IS NOT NULL
+            AND e.created_at >= CURRENT_DATE - 120
+            AND e.event_type IN ('dapp_active_day','kudos_given','pr_vote_cast','pr_promoted')
+        ) ev
+        WHERE TRUE ${adminFilter('ev.user_id', includeAdmins)}
+        GROUP BY ev.user_id, ev.day
       )`;
     try {
       // Power-user WAU: per day d, distinct users who were a power user
@@ -590,7 +645,9 @@ function dashboardRoutes(config) {
   // The 30 most prolific builders, by lifetime count of dev sessions
   // (chat_sessions rows) they started. Session-level, so a user who
   // started many sessions ranks high regardless of outcome. Rendered as
-  // a descending left-to-right bar chart on the dashboard.
+  // a descending left-to-right bar chart on the dashboard. A session the
+  // Homeroom bot built for someone is theirs (CHANGE_PERSON_JOIN), so the
+  // people asking the bot for changes rank here, and the bot does not.
   router.get('/api/admin/analytics/top-users', async (req, res) => {
     const includeAdmins = wantsAdmins(req);
     try {
@@ -604,8 +661,8 @@ function dashboardRoutes(config) {
                 COUNT(*) FILTER (WHERE EXISTS (
                           SELECT 1 FROM pr_votes pv WHERE pv.session_id = cs.id))::int AS received_vote,
                 COUNT(*) FILTER (WHERE cs.status = 'merged')::int AS merged
-           FROM users u
-           JOIN chat_sessions cs ON cs.user_id = u.id
+           FROM chat_sessions cs ${CHANGE_PERSON_JOIN}
+           JOIN users u ON u.id = cp.user_id
           WHERE TRUE ${adminFilter('u.id', includeAdmins)}
           GROUP BY u.id, u.username
           ORDER BY sessions DESC, u.username
@@ -736,7 +793,7 @@ function dashboardRoutes(config) {
            FROM llm_usage lu
            LEFT JOIN users u ON u.id = lu.user_id
            WHERE lu.date >= CURRENT_DATE - 29
-             ${adminFilter('lu.user_id', includeAdmins)}
+             ${adminFilter('lu.user_id', includeAdmins, 'AND', { keepSynthetic: true })}
            GROUP BY lu.date
          ),
          -- #361: system-token spend (merge-conflict / sync resolution).
@@ -776,6 +833,8 @@ function dashboardRoutes(config) {
   // Lifetime LLM spend per user, split platform-key vs user-key, for the
   // 30 biggest spenders. Ordered by total here; the client re-sorts by
   // the selected toggle mode so the bars stay descending in every mode.
+  // Spend stays on the account it was recorded against, so the Homeroom
+  // bot's own builds still show as its bar here (keepSynthetic).
   router.get('/api/admin/analytics/spend-by-builder', async (req, res) => {
     const includeAdmins = wantsAdmins(req);
     try {
@@ -786,7 +845,7 @@ function dashboardRoutes(config) {
                 COALESCE(SUM(lu.byok_cost_cents), 0)::float  AS user_key_cents
            FROM users u
            JOIN llm_usage lu ON lu.user_id = u.id
-          WHERE TRUE ${adminFilter('u.id', includeAdmins)}
+          WHERE TRUE ${adminFilter('u.id', includeAdmins, 'AND', { keepSynthetic: true })}
           GROUP BY u.id, u.username
           ORDER BY (SUM(lu.total_cost_cents) + SUM(lu.byok_cost_cents)) DESC, u.username
           LIMIT 30`

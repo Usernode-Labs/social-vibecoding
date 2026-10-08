@@ -238,7 +238,7 @@ test('proposal, foreign, plain collaborator', () => {
   // Explore is a ⋯ row again (#1787 round four): a door to a side conversation
   // about the proposal rather than one of the things you do to it, and the
   // widest pill on the card when it rode the face.
-  assert.ok(labels.some((l) => /Explore in dev chat/.test(l)), 'offered from ⋯');
+  assert.ok(labels.some((l) => /Explore in a coding agent/.test(l)), 'offered from ⋯');
   assert.ok(!proposalCardHtml(AppView, PR()).includes('gc-explore-chat-btn'),
     '…and nowhere on the face');
   // Kudos went the other way (#1688): the slot is the band's one pill —
@@ -276,7 +276,7 @@ test('proposal, author: Open session + Withdraw, and no Explore', () => {
   const labels = menuLabels(AppView, proposalCardHtml(AppView, PR({ user_id: ME })));
   assert.ok(labels.some((l) => /Open session/.test(l)));
   assert.ok(labels.some((l) => /^Withdraw$/.test(l)));
-  assert.ok(!labels.some((l) => /Explore in dev chat/.test(l)));
+  assert.ok(!labels.some((l) => /Explore in a coding agent/.test(l)));
 });
 
 test('proposal, author, imported PR: no Open session (there is no in-app session)', () => {
@@ -373,6 +373,10 @@ test('merged proposal: Undo, and never twice over a revert', () => {
   assert.ok(!menuLabels(AppView, mergedCardHtml(AppView, 
     merged({ revert_session_id: 9, revert_pr_number: 900 }), 3))
     .some((l) => /^Undo$/.test(l)));
+  // A change that went live inside another one has no merge of its own to
+  // undo (services/included-changes.js; the server refuses it too).
+  assert.ok(!menuLabels(AppView, mergedCardHtml(AppView, merged({ included_in_session_id: 6288 }), 3))
+    .some((l) => /^Undo$/.test(l)));
 });
 
 test('merged proposal: completed-task attributes stay editable for collaborators', () => {
@@ -401,9 +405,9 @@ test('merged proposal: completed-task attributes stay editable for collaborators
   const detailModel = AppView._proposalCardModel(PR({ status: 'merged', chat_count: 0 }), { noNav: true });
   const detail = cardHtml(detailModel);
   assert.match(detail, /Set priority/);
-  assert.match(detail, /Unassigned/);
+  assert.doesNotMatch(detail, /Unassigned/, 'B10c: who is on it shows only when somebody is');
   assert.match(detail, /Set category/);
-  assert.equal((detail.match(/data-attr-chip/g) || []).length, 3);
+  assert.equal((detail.match(/data-attr-chip/g) || []).length, 2);
 });
 
 test('merged proposal: completed-task attributes remain read-only without collaboration access', () => {
@@ -429,7 +433,7 @@ test('issue: the full demoted set, and Open on GitHub last', () => {
   assert.equal(labels[0], 'Pledge kudos');
   assert.ok(labels.some((l) => /Pledge kudos/.test(l)));
   // The claim toggle is PROMOTED to the action band, so it left the menu.
-  assert.ok(!labels.some((l) => /Claim this issue/.test(l)), 'promoted onto the face');
+  assert.ok(!labels.some((l) => /I'll work on this/.test(l)), 'promoted onto the face');
   assert.ok(hasAction(AppView._issueCardModel(ISSUE()), 'markIssueInProgress'),
     'and is wired on the face instead');
   assert.ok(labels.some((l) => /Propose to close/.test(l)));
@@ -443,7 +447,7 @@ test('issue: a disabled row still EXPLAINS itself rather than vanishing', () => 
   const closed = menuItems(AppView, issueCardHtml(AppView, ISSUE()))
     .find((i) => /Close proposed/.test(i.label));
   assert.ok(closed.disabled);
-  assert.match(closed.title, /up for vote/);
+  assert.match(closed.title, /waiting for approval/);
   assert.ok(!closed.act, 'a disabled row carries no handler');
 
   // Weekly kudos allowance spent.
@@ -788,8 +792,8 @@ test('the ✨ that used to live inside the Explore label is now its icon', () =>
   // the merged board is where the ⋯ row still lives.
   const item = menuItems(AppView, mergedCardHtml(AppView, 
     PR({ status: 'merged', chat_count: 0 }), 3))
-    .find((i) => /Explore in dev chat/.test(i.label));
-  assert.equal(item.label, 'Explore in dev chat', 'no glyph baked into the label');
+    .find((i) => /Explore in a coding agent/.test(i.label));
+  assert.equal(item.label, 'Explore in a coding agent', 'no glyph baked into the label');
   assert.equal(AppView._menuIconGlyph(item), AppView.MENU_ICONS.explore);
 });
 

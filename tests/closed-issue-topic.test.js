@@ -159,7 +159,9 @@ test('a closed issue page offers no claim, kudos, close or start-work actions', 
       assert.ok(!menuLabels.includes(label), `no "${label}" menu row (noNav=${noNav})`);
     }
     assert.ok(menuLabels.includes('Share to…'), 'sharing it still works');
-    assert.deepEqual([...card.badges.map((b) => b.label)], ['Closed'], 'says Closed, and nothing to vote on');
+    // #4244: on its own page (noNav) the status band above the card says
+    // Closed, so the card does not; a list row still does.
+    assert.deepEqual([...card.badges.map((b) => b.label)], noNav ? [] : ['Closed'], 'says Closed once, and nothing to vote on');
     assert.equal(card.title.edit, undefined, 'no title edit on a closed issue');
   }
 
@@ -175,7 +177,7 @@ test('a closed issue page offers no claim, kudos, close or start-work actions', 
   const openKeys = AppView._detailActionsView('issue', open).pills.map((p) => p.key);
   for (const key of ['claim', 'bounty', 'close']) assert.ok(openKeys.includes(key), `open issue keeps ${key}`);
   const openCard = AppView._issueCardModel(open, { noNav: true });
-  assert.ok(openCard.actions.some((a) => a.label === 'Start work'), 'open issue keeps Start work');
+  assert.ok(openCard.actions.some((a) => a.label === 'Build it yourself'), 'open issue keeps Build it yourself (B8)');
   assert.ok(!openCard.badges.some((b) => b.label === 'Closed'));
 });
 

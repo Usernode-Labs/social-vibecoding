@@ -577,6 +577,12 @@ async function finalizeArchivedSession({
   // paths above: the activity tray of whoever asked for it reads again.
   // Never throws, and finds nobody for anybody else's session.
   await require('./homeroom-bot-dm').noteProposalChanged(pool, sessionId);
+  // 5 October (Page Turners): a closed change asks nobody anything: its
+  // "ready to try" rows, vote nudges and digests are settled
+  // (notifications.settleDecidedChange). Best-effort like the rest.
+  await require('./notifications').settleDecidedChange(pool, sessionId).catch((err) => {
+    log.warn('session-lifecycle', 'Settling the bell for a closed change failed', { sessionId, err: err.message });
+  });
   // Issues this session's dispatches declared lose their contribution to
   // the derived "In progress" chip the moment the row leaves the live
   // statuses — tell open Dev panels to refetch. This one hook covers every
@@ -719,18 +725,22 @@ async function purgeArchivedCc({ pool, sessionId }) {
 //   sessionId - numeric session id
 //   username  - optional; the branch's owner segment. Defaults to the
 //               session owner's stored username.
+//   label     - optional; words for what the session is about (#3229), the
+//               first turn's deterministic title. Defaults to the session's
+//               stored title, so a titled session (the bot's builds, a
+//               dispatch backstop) is still named after its change.
 //
 // Returns { branchName, created }. Throws with `code` set when the session
 // is gone ('no_session') or GitHub refused the ref ('branch_create_failed',
 // carrying a userMessage safe to show in chat).
-async function ensureSessionBranch({ pool, sessionId, username = null }) {
+async function ensureSessionBranch({ pool, sessionId, username = null, label = null }) {
   const client = await pool.connect();
   let open = false;
   try {
     await client.query('BEGIN');
     open = true;
     const { rows } = await client.query(
-      `SELECT cs.id, cs.branch_name, cs.user_id, u.username, a.repo_url
+      `SELECT cs.id, cs.branch_name, cs.user_id, cs.session_title, u.username, a.repo_url
          FROM chat_sessions cs
          JOIN apps a ON a.id = cs.app_id
          LEFT JOIN users u ON u.id = cs.user_id
@@ -752,7 +762,9 @@ async function ensureSessionBranch({ pool, sessionId, username = null }) {
       return { branchName: row.branch_name, created: false };
     }
 
-    const branchName = branchNames.devBranchName(username || row.username || `u${row.user_id}`);
+    const branchName = branchNames.devBranchName(
+      username || row.username || `u${row.user_id}`, Date.now(), label || row.session_title || null,
+    );
     const [owner, repo] = ownerRepo(row.repo_url);
     if (github.isEnabled() && owner && repo) {
       try {

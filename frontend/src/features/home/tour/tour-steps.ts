@@ -114,8 +114,8 @@ export interface TourStep {
  * ── #3567: a fifth stop, first: what a community is ─────────────────────
  *
  * The join screen asks which communities to join and never says what one
- * does, and the four stops above take it for granted: Shortcuts names a
- * private community's mark, Ask for a change posts a request "the members"
+ * does, and the four stops above take it for granted: My apps names a
+ * private community's mark, Suggest an improvement posts a request "the members"
  * vote on. So the tour opens on the idea everything after it rests on:
  * communities build projects together, by proposing changes and voting them
  * in. It names the three audiences the way the screen does (AGENTS.md,
@@ -137,11 +137,11 @@ export const TOUR_STEPS: readonly TourStep[] = [
     targets: ['#platform-tab-workshop'],
   },
   {
-    // The Shortcuts section, heading and grid together, so the card never
+    // The My apps section, heading and grid together, so the card never
     // sits on the heading the step is about. `#app-list` is the fallback
     // for a section that has not rendered its box yet.
     id: 'apps',
-    title: 'Shortcuts',
+    title: 'My apps',
     body: 'The apps you keep close. A small mark says where each one lives: people for a private community, a lock for one that is just yours. The last tile starts a new project.',
     targets: ['#home-apps-section', '#app-list'],
   },
@@ -163,14 +163,24 @@ export const TOUR_STEPS: readonly TourStep[] = [
     advanceOn: 'menu-open',
   },
   {
-    // The menu's one button, Ask for a change, in its well
+    // The menu's one button, Suggest an improvement, in its well
     // (`#improve-quick-actions`, ../../improve/actions.tsx). It was Give
     // feedback and New change side by side, and people found both
-    // confusing; the step says what the button does and where making the
-    // change yourself went (Start a new change, under Agent sessions).
+    // confusing; the step says what the button does. B8: the request goes
+    // to Homeroom bot, which builds it (or, where it does not build, it
+    // goes to the group). #4225: and it says so against what people expect
+    // of a feedback button elsewhere, honestly: the bot starts on it, or
+    // brings it to the group, never "it builds it" as a promise.
+    //
+    // NO "BUILD IT YOURSELF" SENTENCE (first-session run-through, 5 Oct
+    // 2026). It said "To build it yourself with a coding agent, tap Build it
+    // yourself", the menu's row under its button; that row, with the whole
+    // Agent chats section, shows only once the viewer has had an agent
+    // session, so the person this tour is for would look for a row they do
+    // not have. The hub's ⋯ and a request's own page still offer it.
     id: 'menu-actions',
-    title: 'Ask for a change',
-    body: 'Post a request the members can see, vote on and pick up. To make a change yourself, use Start a new change under Agent sessions.',
+    title: 'Suggest an improvement',
+    body: 'Say what should change. It doesn\'t vanish into a feedback box: Homeroom bot starts building it for you, or brings it to the group as a request, and you can follow along.',
     targets: ['#improve-quick-actions', '#improve-row-feedback'],
     needsPanel: true,
   },

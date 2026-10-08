@@ -78,8 +78,9 @@ test('picking a community goes to its hub, and All communities to the list', () 
     'a community opens on its hub');
   assert.match(fn, /void app\?\.navigateToApp\?\.\(slug, 'dev'\);/);
   assert.ok(!fn.includes('startSession') && !fn.includes('giveFeedback'), 'nothing is started from the switcher');
-  // Join or start a community is Discover.
+  // Join a community is Discover; #3543: Start a community is the new-project dialog.
   assert.match(SWITCHER, /data-switcher-join=""\s*onClick=\{\(\) => \{ closeSwitcher\(\); window\.location\.hash = '#apps'; \}\}/);
+  assert.match(SWITCHER, /data-switcher-start=""\s*onClick=\{\(\) => \{ closeSwitcher\(\); \(window as any\)\.App\?\.showCreateModal\?\.\(\); \}\}/);
 });
 
 test('the switcher says which community you are on, who each is for, and what it waits on you for', () => {
@@ -112,7 +113,10 @@ test('the switcher says which community you are on, who each is for, and what it
   assert.match(all, />Private · 1 member<\/span>/);
   assert.match(all, />Just you<\/span>/);
   assert.equal((all.match(/data-switcher-waiting/g) || []).length, 2, 'a zero says nothing');
-  assert.ok(all.indexOf('data-switcher-join') > all.indexOf('data-switcher-community="notes"'), 'Join or start a community last');
+  assert.ok(all.indexOf('data-switcher-join') > all.indexOf('data-switcher-community="notes"'), 'Join, then Start, last');
+  assert.ok(all.indexOf('data-switcher-start') > all.indexOf('data-switcher-join'));
+  assert.match(all, />Join a community</);
+  assert.match(all, />Start a community</);
   const one = render('garden');
   assert.match(one, /data-switcher-community="garden" aria-current="true"/, 'the tab\'s community is ticked');
   assert.doesNotMatch(one, /data-switcher-community="all" aria-current/);

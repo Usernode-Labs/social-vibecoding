@@ -23,7 +23,9 @@ const {
 } = require('../middleware/rate-limits');
 const genesisAccounts = require('../services/genesis-accounts');
 const waitlist = require('../services/waitlist');
+const firstSession = require('../services/first-session');
 const communityInvites = require('../services/community-invites');
+const phoneAuth = require('../services/firebase-phone-auth');
 const challengeScorer = require('../services/topochain/challenge-scorer');
 const events = require('../services/events');
 const { validatePassword } = require('../services/password-policy');
@@ -121,6 +123,21 @@ const SESSION_MINT_PATHS = [
   '/api/auth/wallet-reset-verify',
   '/api/auth/wallet-register',
   '/api/auth/wallet-link-login',
+  // The username step after an Apple or Google sign-in made the account
+  // (routes/sign-in-providers.js). Its callback mints a session too, by GET,
+  // and makes the same check itself.
+  '/api/auth/oauth/finish',
+  // The same sign-in inside the Homeroom app, with the ID token its own
+  // sheet returned.
+  '/api/auth/oauth/:provider/native',
+  // Phone sign-in and sign-up (routes/phone-auth.js). Verifying the code
+  // (or an ID token a client SDK earned) signs an established account
+  // straight in, so it mints a session; /request only texts a code, like
+  // /api/auth/otp/request, and stays outside so a signed-in person can
+  // still be walked through a phone verification elsewhere. The username
+  // step spends the continuation by minting the real session.
+  '/api/auth/phone/verify',
+  '/api/auth/phone/finish',
 ];
 
 function createSessionCookie(res, token, expiresAt) {
@@ -320,8 +337,10 @@ function authRoutes(config) {
       // An invite link this visitor opened before signing in is NOT followed
       // here: an existing account is asked first, by the shell, which comes
       // back to the link as a remembered deep link (App._followInvite). The
-      // carried copy is dropped, so nothing follows it later without asking.
-      communityInvites.clearInviteCookie(res);
+      // carried copy is dropped, so nothing follows it later without asking,
+      // and the admin Journey counts this as a sign-in the link brought
+      // (dropCarried, never throws).
+      await communityInvites.dropCarried(pool, req, res, user.id);
 
       res.json({
         // Echo the account's real username, not the raw identifier — the
@@ -362,15 +381,24 @@ function authRoutes(config) {
       // An invite link this visitor opened first is followed as the account
       // the code just CREATED (services/community-invites.js): signing up
       // from the link is the consent, and the new account's community is
-      // queued for the day it is let in. An account that already existed is
+      // queued for the day it is let in. An account that already existed
+      // follows it only when this sign-in IS the Join its page asked for
+      // (`followInvite`, sent by the sheet "Made for you" opens: the person
+      // just pressed "Join …" on the link's own page). Anywhere else it is
       // asked by the shell instead, like a password sign-in, so the carried
-      // copy is only dropped. Never throws.
-      const invite = verified.created
-        ? await communityInvites.redeemCarried(pool, req, res, verified.userId)
-        : (communityInvites.clearInviteCookie(res), null);
-      // A link whose maker's skip let this person straight in has joined
-      // them already: the challenge for it counts now, not on the rule's
-      // next pass (#3564). A queued one waits for release, and the schedule.
+      // copy is only dropped (and counted as a sign-in it brought). Never
+      // throws.
+      const consented = verified.created || req.body?.followInvite === true;
+      const invite = consented
+        ? await communityInvites.redeemCarried(pool, req, res, verified.userId, {
+          requirePhone: phoneAuth.offered(config),
+        })
+        : await communityInvites.dropCarried(pool, req, res, verified.userId);
+      // A link that joined this person (a private member's, or anybody's
+      // with access) counts for its challenge now, not on the rule's next
+      // pass (#3564). A queued one waits for release, and the schedule.
+      // While phone sign-in is offered, an email account new to the platform
+      // stays queued: a private member signs up with a phone.
       if (invite && invite.status === 'joined') await challengeScorer.scoreOnJoin(pool, config);
       if (verified.next === 'signed-in') {
         // The account already has a password, so there is nothing to set up.
@@ -421,12 +449,19 @@ function authRoutes(config) {
       // press accepted it; the person now types their own into an empty
       // field, and set-password refuses to finish without it. A shell cached
       // from before reads the missing field as null — an empty field.
+      //
+      // A link that just let them in (as a private member, or on its maker's
+      // skip) answers `waitlisted`: there is no queue in front of them now.
+      // The verifier read it before the link was followed.
+      const waitlistedNow = invite && invite.status === 'joined'
+        ? false
+        : (typeof verified.waitlisted === 'boolean' ? verified.waitlisted : null);
       return res.json({
         ok: true,
         next: 'set-password',
         created: !!verified.created,
         needsUsername: !!verified.needsUsernameChoice,
-        waitlisted: typeof verified.waitlisted === 'boolean' ? verified.waitlisted : null,
+        waitlisted: waitlistedNow,
         ...(invite ? { invite } : {}),
       });
     } catch (error) {
@@ -589,7 +624,7 @@ function authRoutes(config) {
       // waitlist release — so it carries platform access with it
       // (onboarding flow alignment). Without this, every invited user
       // would land in the waiting room, a regression on the invite flow.
-      // Not a release by hand, so no invite-tree skips come with it.
+      // Not a release by hand, so no generation 0 comes with it.
       await waitlist.grantPlatformAccess(pool, userId);
 
       // #2568: the included OpenRouter key, created with the account.
@@ -701,6 +736,10 @@ function authRoutes(config) {
     // people in, not strand every signed-in member behind a blocking step
     // the client cannot dismiss.
     let needsUsernameChoice = false;
+    // A handle made from an invite phone sign-up's name, for private groups
+    // only: the shell asks for a username before anything public
+    // (frontend/src/features/auth/username-first-run.js askForPublic).
+    let usernameProvisional = false;
     // Communities, stage 5 (src/services/onboarding.js): the join screen a
     // new account answers after its username and the terms, and the
     // Getting started card that follows it, for an account made since that
@@ -714,16 +753,37 @@ function authRoutes(config) {
     // direction here is the one it had before the server kept it: the
     // browser's answer alone.
     let tourDone = false;
+    // The first session's question in place of the join screen: an account
+    // still due the join screen is asked "What do you want to make?"
+    // instead whenever the story landing is on, however it signed in (the
+    // story's own sheet, a password, a code, a provider), and on every boot
+    // until it answers (services/first-session.js). Not for an account that
+    // is already somewhere, a project of its own or a community besides
+    // Homeroom: that one is asked the join screen. Only read for an account
+    // that is due it; FALSE when the whole lookup fails, which leaves the
+    // join screen as it was.
+    let storyFirstSession = false;
+    // The verified-identity rule (schema.sql identity_needed): a member it
+    // holds to it, let in after it was switched on with no phone, GitHub and
+    // X, or zkPassport. `identityNeeded` draws Home's "Verify your account"
+    // card; `phoneAsk` asks them once, as the first first-run step on a
+    // phone (frontend/src/features/auth/phone-first-run.tsx), while phone
+    // sign-in is offered. Unreadable means neither.
+    let identityNeeded = false;
+    let phoneAsk = false;
     try {
       const { rows } = await pool.query(
         `SELECT u.anthropic_key_enc, u.anthropic_key_last4, u.usernode_pubkey,
                 u.display_name, u.bio, u.dev_flow_preference,
                 u.needs_username_choice,
                 u.needs_communities_choice,
+                (u.username_provisional_since IS NOT NULL) AS username_provisional,
                 (u.communities_onboarded_at IS NOT NULL
                   AND u.getting_started_closed_at IS NULL
                   AND u.getting_started_gate) AS show_getting_started,
                 (u.tour_done_at IS NOT NULL) AS tour_done,
+                identity_needed(u.id) AS identity_needed,
+                (u.phone_ask_answered_at IS NOT NULL) AS phone_ask_answered,
                 EXISTS (
                   SELECT 1 FROM credentials.user_ai_credentials credential
                    WHERE credential.user_id = u.id
@@ -750,9 +810,14 @@ function authRoutes(config) {
         ? rows[0].dev_flow_preference
         : null;
       needsUsernameChoice = rows[0]?.needs_username_choice === true;
+      usernameProvisional = rows[0]?.username_provisional === true;
       needsCommunitiesChoice = rows[0]?.needs_communities_choice === true;
       showGettingStarted = rows[0]?.show_getting_started === true;
       tourDone = rows[0]?.tour_done === true;
+      // A member let in (not a private member, who waits for that).
+      identityNeeded = rows[0]?.identity_needed === true && !!req.user.hasPlatformAccess;
+      phoneAsk = identityNeeded && rows[0]?.phone_ask_answered !== true && phoneAuth.offered(config);
+      if (needsCommunitiesChoice) storyFirstSession = await firstSession.asksWhatToMake(pool, req.user.id);
       const verifiedLinks = await socialIdentity.verifiedProfileLinks(pool, req.user.id);
       profile = shapeProfile(rows[0], verifiedLinks);
     } catch {}
@@ -772,11 +837,17 @@ function authRoutes(config) {
     // path of every tab; null is a perfectly good answer (the button hides).
     const platformApp = await getPlatformApp(pool);
     // #3624: whether this person builds through the Homeroom bot's DM (an
-    // admin's list, one person at a time). The create dialog asks for a
-    // longer description when it is true. Unreadable means false.
+    // admin's list, one person at a time, or everyone with platform access
+    // once the bot's audience says so). The create dialog asks for a longer
+    // description when it is true. `homeroomBotForEveryone` hides the
+    // Experimental opt-in, which has nothing to switch then. Unreadable
+    // means false.
     let homeroomBotDm = false;
+    let homeroomBotForEveryone = false;
     try {
-      homeroomBotDm = await require('../services/homeroom-bot-dm').isEnabledFor(pool, req.user);
+      const settings = await require('../services/homeroom-bot').readSettings(pool);
+      homeroomBotDm = !req.user.isSynthetic && require('../services/homeroom-bot-dm').hasBot(settings, req.user);
+      homeroomBotForEveryone = settings.audience === 'everyone';
     } catch {}
     res.json({
       user: {
@@ -795,6 +866,7 @@ function authRoutes(config) {
         canAdminWrite: !!req.user.canAdminWrite,
         role: !req.user.isAdmin ? 'user' : (req.user.adminReadonly ? 'view_admin' : 'admin'),
         homeroomBotDm,
+        homeroomBotForEveryone,
         // Derived per-user app-creation affordance. Kept for the home-screen
         // treatment; the numbers below explain that state in the create
         // dialog. A null used/remaining value means the count query was not
@@ -827,8 +899,14 @@ function authRoutes(config) {
         // Platform-access gate (onboarding flow alignment). FALSE means
         // the account is waiting to be released off the platform
         // waitlist — the waiting room polls this to know when to let
-        // the user through.
-        hasPlatformAccess: !!req.user.hasPlatformAccess || !!req.user.isAdmin,
+        // the user through. It answers "may use the platform", so a
+        // private member says TRUE here too, and `privateMember` says
+        // what is different for them (middleware/auth.js isPrivateMember):
+        // they join by an invite link before they are let in, and do not
+        // make apps of their own until they are.
+        hasPlatformAccess: !!req.user.hasPlatformAccess || !!req.user.isAdmin || !!req.user.privateMember,
+        privateMember: !!req.user.privateMember,
+        usernameProvisional,
         // First-run username gate (#2563). TRUE means this account has
         // never picked the handle other members see — email sign-up gave
         // it a generated one and recorded that the person still has to
@@ -846,9 +924,19 @@ function authRoutes(config) {
         // screen after the username and terms steps
         // (frontend/src/features/auth/communities-first-run.js).
         needsCommunitiesChoice,
+        // TRUE when the join screen above is to be the first session's
+        // "What do you want to make?" instead (the story landing is on, and
+        // the account has no project or community yet). Only ever TRUE
+        // alongside needsCommunitiesChoice, and stays TRUE until that
+        // question is answered, so a reload asks it again.
+        storyFirstSession,
         // The Getting started card on Home: shown to an account that came
         // through the join screen, until it is closed.
         showGettingStarted,
+        // The verified-identity rule holds this member to it (see above):
+        // Home's card, and, once, the first-run phone step.
+        identityNeeded,
+        phoneAsk,
         // The welcome tour was finished or skipped on this account, on any
         // device (POST /api/me/tour-done; cleared by Reset first run). The
         // tour counts it done when this OR the browser's own flag says so
@@ -982,9 +1070,12 @@ function authRoutes(config) {
     try {
       const { default: Anthropic } = await import('@anthropic-ai/sdk');
       const test = new Anthropic({ apiKey: clean });
+      // Thinking off: Haiku 5.5 thinks by default and the thinking counts
+      // against max_tokens, so one token would end inside it.
       await test.messages.create({
-        model: 'claude-haiku-4-5',
+        model: 'claude-haiku-5-5',
         max_tokens: 1,
+        thinking: { type: 'disabled' },
         messages: [{ role: 'user', content: 'ping' }],
       });
     } catch (err) {
@@ -1128,6 +1219,12 @@ function authRoutes(config) {
       return res.status(400).json({ error: 'enabled must be a boolean' });
     }
     try {
+      // With the `everyone` audience there is no list to be on: everybody
+      // has the bot, and the switch is hidden (homeroomBotForEveryone).
+      const settings = await require('../services/homeroom-bot').readSettings(pool);
+      if (settings.audience === 'everyone') {
+        return res.status(409).json({ error: 'Homeroom bot is on for everyone now, so there is nothing to switch.' });
+      }
       const out = await require('../services/homeroom-bot')
         .setDmMember(pool, req.user.username, enabled, req.user.id);
       if (!out.ok) {
@@ -1789,7 +1886,7 @@ function authRoutes(config) {
 
       // Genesis-ledger registration is invite-equivalent (the genesis
       // allowlist IS the invite) — grant platform access directly, without
-      // the invite-tree skips a release by hand carries.
+      // the generation 0 a release by hand records.
       await waitlist.grantPlatformAccess(pool, userId);
 
       // #2568: the included OpenRouter key, created with the account.
@@ -1899,4 +1996,6 @@ function authRoutes(config) {
   return router;
 }
 
-module.exports = { authRoutes, DEV_FLOWS };
+// Apple and Google sign-in (routes/sign-in-providers.js) mints the same
+// session, with the same cookie, and answers with the same role fields.
+module.exports = { authRoutes, DEV_FLOWS, createSession, createSessionCookie, roleFields };

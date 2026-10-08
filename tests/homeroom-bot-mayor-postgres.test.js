@@ -254,18 +254,19 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.ok(by.get('seed-swap#3').since, 'and since when');
     assert.equal(by.get('seed-swap#3').botBuildsHere, true);
     assert.equal(by.get('seed-swap#4').status, 'step 1 of 6: waiting for an answer to the question asked');
-    assert.equal(by.get('note-board#5').status, 'step 5 of 6: its proposal is up for the group\'s vote');
+    assert.equal(by.get('note-board#5').status, 'step 5 of 6: it\'s waiting for approval');
     assert.equal(by.get('note-board#5').proposal.proposal, proposal.id);
     assert.equal(by.get('note-board#5').proposal.yesVotes, 0);
     assert.equal(by.get('note-board#5').proposal.checks, 'passed');
     assert.equal(by.get('note-board#5').proposal.link, `https://app.test/#app/note-board/dev/proposals/${proposal.id}`);
     // #3771: what it waits for, in words: here nothing is ahead of it.
-    assert.equal(by.get('note-board#6').status, 'step 1 of 6: next in line to be read');
+    assert.equal(by.get('note-board#6').status, 'step 1 of 6: next in line for a free builder');
     assert.ok(!by.has('sam-shop#9'), 'never somebody else\'s request');
     assert.deepEqual(work.workingOnNow.map((w) => `${w.project}#${w.number}`), ['seed-swap#3'],
       'only what the bot is doing this minute, not what waits on her, the group or the queue');
     // #3772: said only when asked, or when little is left.
-    assert.deepEqual(work.allowance, { usedThisWeek: '$0.10', weeklyAllowance: '$50.00', left: '$49.90', low: false });
+    // A share of her week's building time, never an amount of money.
+    assert.deepEqual(work.buildingTime, { usedThisWeek: '0%', low: false, usedUp: false, resets: 'Monday' });
     assert.equal(work.botIsOn, true);
 
     // #3685: the pipeline as it runs. A request leaves the queue once it has
@@ -416,7 +417,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.equal((await read(sent)).content, 'I could not open that picture.');
   });
 
-  await t.test('"what are you working on?" gets an answer from my_work, with its cards, and costs her allowance', async () => {
+  await t.test('"what are you working on?" gets an answer from my_work, with its cards, and costs no building time', async () => {
     const seen = [];
     const chat = scripted([
       [['my_work']],
@@ -454,9 +455,9 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       'SELECT rounds, tools, input_tokens, output_tokens, cost_usd::float8 AS cost, error FROM homeroom_bot_dm_turns ORDER BY id DESC LIMIT 1',
     );
     assert.deepEqual(row, { rounds: 2, tools: ['my_work', 'reply'], input_tokens: 2000, output_tokens: 200, cost: 0.0042, error: null });
-    assert.equal(await dm.weeklySpentCents(pool, ada.id), before + 0, 'under a cent rounds away');
+    assert.equal(await dm.weeklySpentCents(pool, ada.id), before);
     await pool.query('UPDATE homeroom_bot_dm_turns SET cost_usd = 1.25 WHERE id = (SELECT MAX(id) FROM homeroom_bot_dm_turns)');
-    assert.equal(await dm.weeklySpentCents(pool, ada.id), before + 125, 'a DM turn counts in her week');
+    assert.equal(await dm.weeklySpentCents(pool, ada.id), before, 'chatting is not building time: her week is untouched');
   });
 
   await t.test('an answer in her own words is passed on: posted on the request, and the request goes first', async () => {
@@ -528,7 +529,14 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
 
     const again = await say('File it', { reply_to_id: offered.messageId });
     const second = await mayor.decideOffer(pool, CONFIG, { bot, user: ada, settings, message: again, deps: {} });
-    assert.equal((await read(second)).content, 'I already filed that as request #41.');
+    // #4097: led by the request's line, which Messages draws as the card it carries.
+    const already = await read(second);
+    assert.equal(already.content, '**Note board** · request #41: Add a search box\n\nI already filed that.');
+    assert.equal(already.metadata.homeroomBot.issueNumber, 41);
+    const { rows: alreadyCards } = await pool.query(
+      'SELECT object_type, object_ref FROM conversation_message_objects WHERE message_id = $1', [second.messageId],
+    );
+    assert.deepEqual(alreadyCards.map((c) => [c.object_type, Number(c.object_ref)]), [['github_issue', 41]]);
     assert.equal(created.length, 1, 'filed once');
 
     const other = await say('something unrelated', { reply_to_id: offered.messageId });
@@ -560,6 +568,67 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const msg = await read(sent);
     assert.equal(msg.metadata.homeroomBot.kind, 'chat', 'an ordinary answer, no File it');
   });
+
+  // B3's taps leave what they did behind for the tests below as they found it:
+  // no request of hers more in progress, no turns more this hour.
+  const { rows: [{ id: tapTurnsBefore }] } = await pool.query('SELECT COALESCE(MAX(id), 0) AS id FROM homeroom_bot_dm_turns');
+  let tapFiled = null;
+  await t.test('B3: a tap on File it decides the offer once, for the person it was offered to', async () => {
+    const offered = await turn('could note board sort by colour?', scripted([
+      [['offer_request', { project: 'note-board', title: 'Sort by colour', details: 'Group notes by their colour.' }]],
+      [['reply', { text: 'Want me to file this?' }]],
+    ]));
+    const meta = (await read(offered)).metadata.homeroomBot;
+    assert.deepEqual(meta.actions, [
+      { id: 'yes', label: 'File it', style: 'primary', type: 'server' },
+      { id: 'no', label: 'Not now', style: 'secondary', type: 'server' },
+    ], 'the buttons travel with the message');
+    const { rows: [action] } = await pool.query('SELECT id FROM homeroom_bot_dm_actions WHERE message_id = $1', [offered.messageId]);
+    assert.equal(meta.actionId, Number(action.id), 'and name what a tap decides');
+
+    const before = created.length;
+    const foreign = await mayor.decideOfferTap(pool, CONFIG, { user: sam, actionId: action.id, choice: 'yes', deps: { bot } });
+    assert.deepEqual(foreign, { ok: false, status: 404, error: 'No such choice' }, 'only the person it was offered to');
+    assert.equal((await mayor.decideOfferTap(pool, CONFIG, { user: ada, actionId: action.id, choice: 'maybe', deps: { bot } })).status, 400);
+
+    const tapped = await mayor.decideOfferTap(pool, CONFIG, { user: ada, actionId: action.id, choice: 'yes', deps: { bot } });
+    assert.deepEqual(tapped, { ok: true, choice: 'yes', label: 'File it' });
+    assert.equal(created.length, before + 1, 'filed');
+    const after = (await read(offered)).metadata.homeroomBot;
+    assert.deepEqual([after.status, after.answer, after.chosen], ['answered', 'File it', 'yes']);
+
+    const again = await mayor.decideOfferTap(pool, CONFIG, { user: ada, actionId: action.id, choice: 'yes', deps: { bot } });
+    assert.equal(again.status, 409, 'a second tap, here or on another device, does nothing');
+    assert.equal(created.length, before + 1, 'filed once');
+    const { rows: [filed] } = await pool.query('SELECT issue_number FROM homeroom_bot_dm_actions WHERE id = $1', [action.id]);
+    tapFiled = Number(filed.issue_number);
+  });
+
+  await t.test('B3: a tap on Not now sends nothing, and the buttons give way to the choice', async () => {
+    const offered = await turn('add a print button to note board', scripted([
+      [['offer_request', { project: 'note-board', title: 'Print notes', details: 'Print the board.' }]],
+      [['reply', { text: 'File it?' }]],
+    ]));
+    const { rows: [action] } = await pool.query('SELECT id FROM homeroom_bot_dm_actions WHERE message_id = $1', [offered.messageId]);
+    const { rows: [{ n: messagesBefore }] } = await pool.query(
+      'SELECT COUNT(*)::int AS n FROM conversation_messages WHERE conversation_id = $1', [opened.conversationId],
+    );
+    const tapped = await mayor.decideOfferTap(pool, CONFIG, { user: ada, actionId: action.id, choice: 'no', deps: { bot } });
+    assert.deepEqual(tapped, { ok: true, choice: 'no', label: 'Not now' });
+    const { rows: [{ n: messagesAfter }] } = await pool.query(
+      'SELECT COUNT(*)::int AS n FROM conversation_messages WHERE conversation_id = $1', [opened.conversationId],
+    );
+    assert.equal(messagesAfter, messagesBefore, 'the line under the buttons says it; no reply is sent');
+    const { rows: [decided] } = await pool.query('SELECT status FROM homeroom_bot_dm_actions WHERE id = $1', [action.id]);
+    assert.equal(decided.status, 'declined');
+    const after = (await read(offered)).metadata.homeroomBot;
+    assert.deepEqual([after.status, after.answer, after.chosen], ['answered', 'Not now', 'no']);
+  });
+  await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE id > $1', [tapTurnsBefore]);
+  if (tapFiled) {
+    await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = $2', [notes.id, tapFiled]);
+    await pool.query('DELETE FROM homeroom_bot_requesters WHERE app_id = $1 AND issue_number = $2', [notes.id, tapFiled]);
+  }
 
   await t.test('#3707: each answer quotes the message it answers, and a request she started here is quoted by its news', async () => {
     const run = (message, steps) => mayor.runDmTurn(pool, CONFIG, {
@@ -620,8 +689,9 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       [notes.id, n, built.id],
     );
     // #7 (WP3): "live now" once the app answered its health check on what
-    // the merge deployed, with the app's own card to open it, then the
-    // proposal's, and the app's address as its link.
+    // the merge deployed, with a button that opens the app (5 October: its
+    // own, which no card the bot cannot attach takes with it), the
+    // proposal's card, and the app's address as its link.
     const probed = [];
     const healthy = {
       applicationRuntime: {
@@ -632,26 +702,32 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     };
     const live = await dm.noteProposalMerged(pool, { id: built.id }, { config: {}, sha: 'a'.repeat(40), deps: healthy });
     const liveMessage = await read(live);
-    assert.equal(liveMessage.content, `**Note board** · request #${n}: Tags\n\nIt was approved and is live now. Open Note board below to try it.`);
+    // B7: a change to a project is "your change".
+    assert.equal(liveMessage.content, `**Note board** · request #${n}: Tags\n\nYour change is live now. Open Note board below to try it.`);
     assert.deepEqual(probed, ['app-note-board']);
     assert.equal(liveMessage.reply.id, ask.id);
     assert.equal(liveMessage.metadata.homeroomBot.link, '#app/note-board');
     const { rows: liveCards } = await pool.query(
       'SELECT object_type, object_ref FROM conversation_message_objects WHERE message_id = $1 ORDER BY position', [live.messageId],
     );
-    assert.deepEqual(liveCards.map((o) => `${o.object_type}:${o.object_ref}`), [`app:${notes.id}`, `code_proposal:${built.id}`],
-      'the app first, to open it, then its proposal');
+    assert.deepEqual(liveCards.map((o) => `${o.object_type}:${o.object_ref}`), [`code_proposal:${built.id}`],
+      'its proposal; the app opens from the button');
+    assert.deepEqual(liveMessage.metadata.homeroomBot.actions, [
+      { id: 'open_app', label: 'Open Note board', style: 'primary', type: 'open', target: '#app/note-board/app' },
+    ]);
 
     // A request filed anywhere else started nowhere here; one whose start
     // she deleted is still told, without the quote.
     const elsewhere = await dm.relayIssuePost({ pool, app: seeds, issueNumber: 3, kind: 'spec', postId: 37072, bot, dm: { building: true } });
     assert.equal((await read(elsewhere)).reply, null);
     await conversations.deleteMessage(pool, ada, opened.conversationId, ask.id);
+    // B4: "it's built" is said once it is ready to try.
+    await pool.query(`UPDATE chat_sessions SET status = 'promoted', check_state = 'passing' WHERE id = $1`, [built.id]);
     const proposed = await dm.relayIssuePost({
       pool, app: notes, issueNumber: n, kind: 'proposal', postId: 37073, bot,
       dm: { link: 'https://app.onhomeroom.com/#app/note-board/dev/proposals/1', sessionId: built.id },
     });
-    assert.match((await read(proposed)).content, /It's built/);
+    assert.match((await read(proposed)).content, /It's ready to try/);
     assert.equal((await read(proposed)).reply, null);
   });
 
@@ -709,7 +785,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       [proposal.id],
     );
     const running = (await read()).rightNow.find((e) => e.project === 'note-board' && e.number === 5);
-    assert.equal(running.doing, 'its proposal is up, and its checks are running: 120 of 338 done, 0 failed so far');
+    assert.equal(running.doing, 'it\'s waiting for approval, and its tests are running: 120 of 338 done, 0 failed so far');
     assert.equal(running.step, 4);
     await pool.query(
       `UPDATE chat_sessions SET check_state = 'failing', check_phase = NULL, checks_progress = NULL,
@@ -718,7 +794,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     );
     const failing = (await read()).rightNow.find((e) => e.project === 'note-board' && e.number === 5);
     assert.equal(failing.stage, 'checks_failed');
-    assert.equal(failing.doing, 'its proposal is up, and its checks failed (1 check did not pass)');
+    assert.equal(failing.doing, 'it\'s waiting for approval, and its tests failed (1 test did not pass)');
     // Merged: no longer in progress, and among what finished lately.
     await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW() WHERE id = $1`, [proposal.id]);
     const merged = await read();
@@ -816,12 +892,15 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.notEqual(msg.content, mayor.BROKEN_TEXT);
     assert.match(msg.content, /^I couldn't put a full answer together just now\. Here is where things stand, from my records:\n\n/);
     assert.match(msg.content, /\n- Ear trainer, its first version: step 1 of 7, setting up the project: part 2 of 4, making its code repository, for 2 minutes so far\./);
-    assert.match(msg.content, /\n- Seed swap request #3 \(Sort by date\): step 3 of 6, building it, for (under a minute|\d+ minutes?) so far\./);
+    // #4097: it lists as much as it has cards for, and says how many more.
+    const listed = msg.content.split('\n').filter((line) => line.startsWith('- ') && !/^- and \d+ more\.$/.test(line));
+    assert.equal(listed.length, mayor.MAX_CARDS);
+    assert.match(msg.content, /\n- and \d+ more\.$/);
     assert.ok(!/Sam/.test(msg.content), 'only hers');
     const { rows: objects } = await pool.query(
       'SELECT object_type FROM conversation_message_objects WHERE message_id = $1 ORDER BY position', [sent.messageId],
     );
-    assert.ok(objects.length > 0, 'with cards for what it names');
+    assert.ok(objects.length > 0 && objects.length <= listed.length, 'with cards for what it names, and no more');
     const { rows: [row] } = await pool.query('SELECT error FROM homeroom_bot_dm_turns ORDER BY id DESC LIMIT 1');
     assert.equal(row.error, 'invalid_request', 'the failure is still recorded');
 
@@ -1197,7 +1276,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const said = progress.rightNow.find((e) => e.project === 'note-board' && e.number === 5);
     assert.equal(said.stage, 'followup_queued');
     assert.equal(progressSvc.inFlight(said), true);
-    assert.match(said.doing, /^waiting in the queue \(number \d+\) to follow up on the newest replies on its proposal$/);
+    assert.match(said.doing, /^waiting for a free builder to follow up on the newest replies on the change$/);
     const work = await tray.workFor(pool, { user: ada, settings });
     const shown = work.now.find((job) => job.appSlug === 'note-board' && job.issueNumber === 5);
     assert.ok(shown, 'the tray lists it under Now');
@@ -1205,7 +1284,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.equal(shown.href, `#app/note-board/dev/proposals/${proposal.id}`);
     const words = await mayor.myWork(pool, { userId: ada.id, settings });
     assert.match(words.requests.find((r) => r.project === 'note-board' && r.number === 5).status,
-      /^step 5 of 6: waiting in the queue \(number \d+\) to follow up on the newest replies on its proposal$/,
+      /^step 5 of 6: waiting for a free builder to follow up on the newest replies on the change$/,
       'and the bot\'s list of her work says the same');
     // Running it: both say so.
     await pool.query('UPDATE homeroom_bot_queue SET started_at = NOW() WHERE app_id = $1 AND issue_number = 5', [notes.id]);
@@ -1285,16 +1364,23 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       bot, user: ada, settings, deps: {}, userText: 'drop the pins', cards: [], ...extra,
     }, { proposal: proposal.id, change: 'Drop the pins.', ...args });
 
-    // Her week's allowance is spent: the follow-up would be paid from it.
+    // Her week's building time is spent: the follow-up would be paid from it.
     const spent = await ask({ settings: { ...settings, userWeeklyCents: 1 } });
     assert.equal(spent.ok, false);
-    assert.match(spent.error, /^Their weekly allowance for your work \(\$0\.01\) is used up, so you cannot change it this week\. Nothing was sent or queued\./);
-    // Somebody else asking spends the requester's allowance, which is spent.
+    assert.match(spent.error, /^Their building time for this week is used up, so you cannot change it this week\. Nothing was sent or queued\./);
+    assert.doesNotMatch(spent.error, /\$/, 'no amount of money');
+    // Somebody else asking pays from their own week: refused only when theirs is spent too.
     await pool.query('INSERT INTO community_members (community_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [notes.community_id, sam.id]);
+    const { rows: [samRun] } = await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, cost_usd, charged, payer_user_id)
+       VALUES ($1, 99, 'live', 'ready', 0.05, TRUE, $2) RETURNING id`,
+      [notes.id, sam.id],
+    );
     const forHer = await mayor.reviseProposal(pool, {
       bot, user: { ...sam, isAdmin: false }, settings: { ...settings, userWeeklyCents: 1 }, deps: {}, userText: 'drop the pins', cards: [],
     }, { proposal: proposal.id, change: 'Drop the pins.' });
-    assert.match(forHer.error, /^The weekly allowance this request is paid from is used up/);
+    assert.match(forHer.error, /^Their building time for this week is used up/);
+    await pool.query('DELETE FROM homeroom_bot_runs WHERE id = $1', [samRun.id]);
     await pool.query('DELETE FROM community_members WHERE community_id = $1 AND user_id = $2', [notes.community_id, sam.id]);
 
     // It has already revised this proposal as many times as it may.
@@ -1463,7 +1549,39 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 6', [notes.id]);
   });
 
-  await t.test('a request filed from "Ask for a change" is a request: the bot can post on it, start it and name it', async () => {
+  await t.test('B2: whoever asks pays: a member can start her held request on his own building time', async () => {
+    await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 6', [notes.id]);
+    // Ada's week is used up, and her request waits for Monday.
+    const tight = { ...settings, userWeeklyCents: 1 };
+    const { rows: [adaRun] } = await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, cost_usd, charged, payer_user_id)
+       VALUES ($1, 98, 'live', 'ready', 0.05, TRUE, $2) RETURNING id`,
+      [notes.id, ada.id],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason, held_until)
+       VALUES ($1, 6, 1, 'new', NOW() + INTERVAL '2 days')`,
+      [notes.id],
+    );
+    const ctx = (who, extra = {}) => ({ bot, user: who, settings: tight, config: CONFIG, deps: { domain: 'app.test' }, cards: [], appIds: new Set(), ...extra });
+    const hers = await mayor.startRequest(pool, ctx(ada), { project: 'note-board', number: 6 });
+    assert.equal(hers.ok, false);
+    assert.match(hers.error, /^Their building time for this week is used up/);
+    assert.doesNotMatch(hers.error, /\$/);
+    // Sam, a member with time left, asks for it: it starts, and it is his.
+    await pool.query('INSERT INTO community_members (community_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [notes.community_id, sam.id]);
+    const his = await mayor.startRequest(pool, ctx({ ...sam, isAdmin: false }), { project: 'note-board', number: 6 });
+    assert.equal(his.ok, true, his.error);
+    const { rows: [q] } = await pool.query(
+      'SELECT payer_user_id, held_until, reason FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 6', [notes.id],
+    );
+    assert.deepEqual(q, { payer_user_id: sam.id, held_until: null, reason: 'dm_start' });
+    await pool.query('DELETE FROM community_members WHERE community_id = $1 AND user_id = $2', [notes.community_id, sam.id]);
+    await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 6', [notes.id]);
+    await pool.query('DELETE FROM homeroom_bot_runs WHERE id = $1', [adaRun.id]);
+  });
+
+  await t.test('a request filed from "Suggest an improvement" is a request: the bot can post on it, start it and name it', async () => {
     // Filed through POST /api/feedback: a feedback report beside the GitHub
     // issue and no `issues` twin (by design), and the bot has not looked at
     // it yet, so no requester, queue row or run either.
@@ -1799,5 +1917,60 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       [['reply', { text: 'Good question. I\'ll look into it.' }]],
     ]));
     assert.equal((await read(stubborn)).content, 'I can\'t look into that myself from here.');
+  });
+
+  await t.test('#4097: Filed on a project the bot does not build on leads with the request\'s line, its card said once', async () => {
+    await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE user_id = $1', [ada.id]);
+    const offered = await turn('can you let me pin notes on note board?', scripted([
+      [['offer_request', { project: 'note-board', title: 'Pin notes', details: 'Keep a note at the top of the board.' }]],
+      [['reply', { text: 'Want me to file this?' }]],
+    ]));
+    const tap = await say('File it', { reply_to_id: offered.messageId });
+    const ack = await mayor.decideOffer(pool, CONFIG, {
+      bot, user: ada, settings, message: tap, deps: { liveSvc: { isLiveFor: () => false } },
+    });
+    const msg = await read(ack);
+    const n = msg.metadata.homeroomBot.issueNumber;
+    assert.equal(msg.metadata.homeroomBot.kind, 'filed');
+    assert.equal(msg.content, `**Note board** · request #${n}: Pin notes\n\nFiled. I don't build on Note board yet, so it waits in its requests for the group.`,
+      'the line Messages draws as the card it carries, never "Filed: **Note board** request #N" over the same card');
+    const { rows: cards } = await pool.query(
+      'SELECT object_type, object_ref FROM conversation_message_objects WHERE message_id = $1', [ack.messageId],
+    );
+    assert.deepEqual(cards.map((c) => [c.object_type, Number(c.object_ref)]), [['github_issue', n]]);
+  });
+
+  await t.test('#4097: a reply that names a request its tools showed carries its card, and its #N opens that project\'s requests', async () => {
+    await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE user_id = $1', [ada.id]);
+    const sent = await turn('where is the search box at?', scripted([
+      [['request_detail', { project: 'note-board', number: 41 }]],
+      [['reply', { text: 'Note board #41 is waiting its turn.' }]],
+    ]));
+    const msg = await read(sent);
+    assert.equal(msg.content, 'Note board #41 is waiting its turn.');
+    assert.equal(msg.metadata.homeroomBot.appSlug, 'note-board', 'every request it names is on Note board');
+    const { rows: cards } = await pool.query(
+      'SELECT object_type, object_ref FROM conversation_message_objects WHERE message_id = $1', [sent.messageId],
+    );
+    assert.deepEqual(cards.map((c) => [c.object_type, Number(c.object_ref)]), [['github_issue', 41]],
+      'the model listed no card; the words named one');
+  });
+
+  await t.test('#4097 follow-up: a reply offers what she might say next as buttons, short, each once', async () => {
+    await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE user_id = $1', [ada.id]);
+    const sent = await turn('anything new?', scripted([
+      [['reply', {
+        text: 'Nothing new since this morning.',
+        suggestions: ['How long will the search box take?', 'how long will the search box take?', 'x'.repeat(61), 'Show my requests'],
+      }]],
+    ]));
+    const meta = (await read(sent)).metadata.homeroomBot;
+    assert.equal(meta.kind, 'chat');
+    assert.equal(meta.status, 'open');
+    assert.deepEqual(meta.actions.map((a) => [a.label, a.type]), [['How long will the search box take?', 'prompt'], ['Show my requests', 'prompt']],
+      'a repeat and one too long for a button are left out');
+    const quiet = await turn('ok thanks', scripted([[['reply', { text: 'Any time.' }]]]));
+    assert.equal((await read(quiet)).metadata.homeroomBot.actions, undefined, 'none offered, none drawn');
+    assert.equal((await read(sent)).metadata.homeroomBot.status, 'closed', 'the earlier ones went when it answered again');
   });
 });

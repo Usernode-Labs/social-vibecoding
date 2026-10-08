@@ -20,24 +20,13 @@ const { Router } = require('express');
 const { getPool } = require('../../../db/pool');
 const log = require('../../../services/logger');
 const waitlist = require('../../../services/waitlist');
-const communityInvites = require('../../../services/community-invites');
+const firstSession = require('../../../services/first-session');
 const { signalsFor } = require('../../../services/waitlist-signals');
 const { sendWaitlistReleaseMail } = require('../../../services/topochain/mailer');
 const { loadMobileAppUrls } = require('../../../services/mobile-store-links');
 const { adminWriteGate } = require('./auth');
 const { toIntId } = require('./util');
 const { ok, fail, iso, paginate, meta, csvField } = require('../helpers');
-
-function formatInviteTree(p) {
-  return {
-    enabled: p.enabled,
-    root_skips: p.rootSkips,
-    roots: p.roots,
-    through_links: p.throughLinks,
-    updated_at: iso(p.updatedAt),
-    updated_by: p.updatedBy,
-  };
-}
 
 function formatSignup(row) {
   return {
@@ -719,28 +708,29 @@ function waitlistAdminRoutes(config) {
     }
   });
 
-  // ── GET / PUT /api/v4/admin/invite-tree ──────────────────────────────
-  // Whether invite links let people new to Homeroom skip the waitlist. On
-  // unless switched off here; a save applies on every server within the
-  // setting's short cache, with no deploy.
-  router.get('/api/v4/admin/invite-tree', async (req, res) => {
+  // ── GET / PUT /api/v4/admin/story-landing ────────────────────────────
+  // Whether the signed-out landing tells the first-session story and asks
+  // people to get started, instead of pointing at the waitlist
+  // (services/first-session.js). On unless switched off here.
+  const formatStory = (s) => ({ enabled: s.enabled, updated_at: iso(s.updatedAt), updated_by: s.updatedBy });
+  router.get('/api/v4/admin/story-landing', async (req, res) => {
     try {
-      return ok(res, { data: formatInviteTree(await communityInvites.adminPayload(pool)) });
+      return ok(res, { data: formatStory(await firstSession.readStorySetting(pool)) });
     } catch (err) {
-      log.error('topochain-admin', 'GET /admin/invite-tree failed', { message: err.message });
+      log.error('topochain-admin', 'GET /admin/story-landing failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');
     }
   });
 
-  router.put('/api/v4/admin/invite-tree', adminWriteGate, async (req, res) => {
+  router.put('/api/v4/admin/story-landing', adminWriteGate, async (req, res) => {
     const enabled = req.body?.enabled;
     if (typeof enabled !== 'boolean') return fail(res, 422, 'Provide enabled: true or false.');
     try {
-      await communityInvites.setTreeEnabled(pool, { enabled, actorId: req.user?.id ?? null });
-      log.info('topochain-admin', 'Invite tree switched', { enabled, adminId: req.user?.id });
-      return ok(res, { data: formatInviteTree(await communityInvites.adminPayload(pool)) });
+      await firstSession.setStoryLanding(pool, { enabled, actorId: req.user?.id ?? null });
+      log.info('topochain-admin', 'Story landing switched', { enabled, adminId: req.user?.id });
+      return ok(res, { data: formatStory(await firstSession.readStorySetting(pool)) });
     } catch (err) {
-      log.error('topochain-admin', 'PUT /admin/invite-tree failed', { message: err.message });
+      log.error('topochain-admin', 'PUT /admin/story-landing failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');
     }
   });

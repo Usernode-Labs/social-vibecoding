@@ -84,43 +84,49 @@ test('a project page is four tabs, Hub, Discussion, Needs you and Workshop, with
   assert.match(LANDER, /<PageBack\s+label="Workshop"\s+title=\{pageTitle\(tab\)\}\s+onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}/);
   assert.match(LANDER, /\{band\}\s*\{pageBar\}/);
   // The hub's order, as agreed: the hero (who is here, what it is, what you
-  // can do, the fortnight), what landed since your last visit, Needs you (a
-  // quiet line when no vote is owed, #3408), the discussion's last two
-  // messages (or Share it, for Just you), and your work. One column at every
-  // width. Start a new change ended it until #852's review moved it into the
-  // hero's ⋯ (tests/improve-action-deduplication.test.js).
+  // can do, the fortnight), the first version while Homeroom bot builds it
+  // (tests/hub-just-you.test.js), what landed since your last visit, Needs
+  // you (a quiet line when no vote is owed, #3408), the discussion's last
+  // two messages (or Share it, for Just you), and your work. One column at
+  // every width. Start a new change ended it until #852's review moved it
+  // into the hero's ⋯ (tests/improve-action-deduplication.test.js).
   const hub = LANDER.slice(LANDER.indexOf("{tab === 'status' ? ("), LANDER.indexOf("{tab === 'discussion' ? ("));
-  const order = ['<CommunityCard', '<SinceSummaryCard', '<NeedsCard', '<ChannelCard', '<ShareItCard', '<YourWorkCard'].map((x) => hub.indexOf(x));
-  assert.ok(order.every((n) => n >= 0), `all six on the hub: ${JSON.stringify(order)}`);
-  assert.deepEqual([...order].sort((a, b) => a - b), order, 'hero, summary, Needs you, discussion, Share it, your work');
+  const order = ['<CommunityCard', '<FirstVersionCard', '<SinceSummaryCard', '<NeedsCard', '<ChannelCard', '<ShareItCard', '<YourWorkCard'].map((x) => hub.indexOf(x));
+  assert.ok(order.every((n) => n >= 0), `all seven on the hub: ${JSON.stringify(order)}`);
+  assert.deepEqual([...order].sort((a, b) => a - b), order, 'hero, first version, summary, Needs you, discussion, Share it, your work');
   assert.doesNotMatch(hub, /data-ws-start-change/, 'no Start a new change at its foot');
-  assert.match(hub, /\{owesVote\(v\.queue\)\s*\? <NeedsCard [^\n]*\n\s*: <NothingToVote queue=\{v\.queue\} onOpen=\{\(\) => openTab\('needs'\)\} \/>\}/,
-    'Needs you only while a vote is owed; one quiet line in its place otherwise (#3408)');
+  assert.match(hub, /\{owesVote\(v\.queue\)\s*\? <NeedsCard [^\n]*\n\s*: <NothingToVote queue=\{v\.queue\} onOpen=\{\(\) => openTab\('needs'\)\} alone=\{alone\} \/>\}/,
+    'Needs you only while a vote is owed; one quiet line in its place otherwise (#3408), and none on a project nobody else is in');
   assert.match(hub, /<SinceSummaryCard slug=\{slug\} since=\{v\.since \? v\.since\.baseline : 0\} onMore=\{\(\) => openTab\('workshop'\)\} \/>/,
     'the summary card\'s Week by week is the Workshop tab');
   assert.match(hub, /<ChannelCard slug=\{slug\} name=\{app\.name \|\| slug\} data=\{community\} compact onOpen=\{\(\) => openTab\('discussion'\)\} \/>/,
     'the discussion is a preview whose Open is the Discussion tab');
-  assert.match(hub, /\{v\.mine && \(v\.mine\.rows\.length \|\| v\.mine\.viewer\) \? \(\s*<YourWorkCard/,
-    'your work for any signed-in viewer, with work or without (#3489)');
+  assert.match(hub, /\{v\.mine && \(v\.mine\.rows\.length \|\| \(v\.mine\.viewer && workEmpty\)\) \? \(\s*<YourWorkCard/,
+    'your work for any signed-in viewer, with work or without (#3489), unless a project nobody else is in has nothing to say there');
   assert.doesNotMatch(hub, /<WorkshopDoor|dev-ws-hub-side|data-ws-since=""/, 'no Workshop door, no second column, and the since list is the Workshop\'s');
   assert.doesNotMatch(read('public/css/app.css'), /dev-ws-hub-side/);
   // Discussion is the channel whole.
   assert.match(LANDER, /\{tab === 'discussion' \? \(\s*<ProjectDiscussion slug=\{slug\}/);
-  // The Workshop tab: the approval rules, your work (its first three, #852
-  // review), All items with See all, then the since list by week.
+  // The Workshop tab, in the owner's order (5 Oct 2026): All items with See
+  // all, the approval rules, your work (its first three, #852 review), then
+  // the since list by week.
   const ws = LANDER.slice(LANDER.indexOf("{tab === 'workshop' ? ("), LANDER.indexOf("{tab === 'needs' ? ("));
   const w = (x) => ws.indexOf(x);
-  assert.ok(w('data-ws-mine=""') < w('data-ws-dashboard=""') && w('data-ws-dashboard=""') < w('data-ws-since=""'),
-    'your work, All items, then what changed');
+  const wsOrder = ['data-ws-dashboard=""', '<ApprovalRules', '<WorkshopNotices', 'data-ws-mine=""', 'data-ws-since=""'].map(w);
+  assert.ok(wsOrder.every((n) => n >= 0), `every section is on the tab: ${JSON.stringify(wsOrder)}`);
+  assert.deepEqual([...wsOrder].sort((a, b) => a - b), wsOrder,
+    'All items, the approval rules, the notices panel under them, your work, then what changed');
   assert.match(ws, /v\.mine\.rows\.slice\(0, mineAll \? undefined : WORKSHOP_WORK_FIRST\)/, 'your work shows its first rows');
   assert.equal(loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx').WORKSHOP_WORK_FIRST, 3);
   assert.match(ws, /data-ws-mine-more=""[\s\S]{0,160}onClick=\{\(\) => setMineAll\(!mineAll\)\}/, 'and the rest behind Show N more');
   assert.match(ws, /<span className="dev-ws-head-title">All items<\/span>\s*<button[\s\S]*?data-ws-all-open=""\s*onClick=\{\(\) => openTab\('all'\)\}/);
-  // The approval rules are the Workshop page's head (#3528): the page's foot
-  // for a round (#3487), and not the head of All items, where they sat before.
-  assert.ok(w('<ApprovalRules') >= 0 && w('<ApprovalRules') < w('<WorkshopNotices') && w('<ApprovalRules') < w('data-ws-mine=""'),
-    'the approval rules open the Workshop page');
-  assert.match(ws, /<>\s*\{\/\*[\s\S]*?\*\/\}\s*\{slug \? <ApprovalRules slug=\{slug\} \/> : null\}/, 'as its first section');
+  // All items is the Workshop page's head now, its first section; the
+  // approval rules come straight after it. They were the head (#3528), the
+  // page's foot for a round (#3487), and the head of All items before that.
+  assert.match(ws, /^\{tab === 'workshop' \? \(\n\s*<>\n\s*\{\/\*(?:(?!\*\/)[\s\S])*\*\/\}\n\s*\{v\.dashboard \? \(\s*<section\s+className="dev-ws-strip"\s+data-ws-dashboard=""/,
+    'All items opens the Workshop page');
+  assert.match(ws, /<\/section>\n\s*\) : null\}\n\n\s*\{\/\*(?:(?!\*\/)[\s\S])*\*\/\}\n\s*\{slug \? <ApprovalRules slug=\{slug\} \/> : null\}/,
+    'and the approval rules follow it, with nothing between');
   assert.equal(ws.split('<ApprovalRules').length - 1, 1, 'and only there');
   const all = LANDER.slice(LANDER.indexOf("{tab === 'all' ? ("));
   assert.ok(!all.slice(0, all.indexOf('data-ws-pane=""')).includes('<ApprovalRules'), 'and All items no longer leads with them');
@@ -219,7 +225,9 @@ test('an open channel lights Communities and hangs off its hub; Messages lists p
   assert.match(screen, /const channelOpen = !!snap\.route\.appSlug\s*\|\| \(!!snap\.route\.conversationId && snap\.active\?\.id === snap\.route\.conversationId && snap\.active\?\.kind === 'channel'\);/);
   const inbox = read('frontend/src/features/messages/inbox.ts');
   assert.match(inbox, /if \(item\.kind === 'channel'\) continue;/);
-  assert.match(inbox, /return chats\.sort\(byClock\);/);
+  assert.match(inbox, /chats\.sort\(byClock\);/);
+  // B5: the Homeroom bot's DM first, the rest in the order things happened.
+  assert.match(inbox, /if \(at > 0\) chats\.unshift\(\.\.\.chats\.splice\(at, 1\)\);\n\s+return chats;/);
 });
 
 test('#general needs the Homeroom community to post in; Homeroom\'s old channel takes no post', () => {
@@ -313,7 +321,7 @@ test('a pull to refresh moves only the page under the tabs (pull-to-refresh unde
   const CSS = read('public/css/app.css');
   const APP_VIEW = read('public/js/app-view.js');
   // The project page opts into the kit's two options, and no other pull does.
-  assert.match(APP_VIEW, /PlatformUI\.pullToRefresh\(devScroll, \(\) => AppView\._loadDevFeed\(\), \{\s*pullProperty: '--dev-ptr-pull',\s*topEl: \(\) => devScroll\.querySelector\('\.dev-ws > \.dev-ws-band'\),\s*\}\);/,
+  assert.match(APP_VIEW, /PlatformUI\.pullToRefresh\(devScroll, \(\) => AppView\._loadDevFeed\(\), \{\s*pullProperty: '--dev-ptr-pull',\s*topEl: \(\) => \{\s*const band = devScroll\.querySelector\('\.dev-ws > \.dev-ws-band'\);\s*devScroll\.classList\.toggle\('dev-ws-has-band', !!band\);\s*return band;\s*\},\s*\}\);/,
     'the scroller carries the pull as a property, and the spinner hangs from the band');
   assert.equal((APP_VIEW.match(/pullProperty:/g) || []).length, 1);
   assert.doesNotMatch(read('public/js/app.js'), /pullProperty/, 'Home, Discover and Standings keep the kit\'s own pull');
@@ -321,7 +329,13 @@ test('a pull to refresh moves only the page under the tabs (pull-to-refresh unde
   // still loading) everything in the scroller. No fallback in the var(), so
   // at rest the declaration is invalid at computed-value time and leaves
   // `transform: none`: no stacking context or containing block until a pull.
-  assert.match(CSS, /\n#dev-forum-scroll \.dev-ws > \.dev-ws-band ~ \*,\n#dev-forum-scroll:not\(:has\(\.dev-ws-band\)\) > \* \{\n  transform: translateY\(var\(--dev-ptr-pull\)\);\n\}/);
+  // "No band" is a class the scroller carries (`dev-ws-has-band`, absent),
+  // not `:not(:has(.dev-ws-band))`: asked as `:has()` on the scroller, the
+  // answer could change with any node added to the board, and the browser
+  // re-applied the stylesheet to all of it each time. The pull reads the band
+  // again as it starts (the `topEl` above), so the class is right when used.
+  assert.match(CSS, /\n#dev-forum-scroll \.dev-ws > \.dev-ws-band ~ \*,\n#dev-forum-scroll:not\(\.dev-ws-has-band\) > \* \{\n  transform: translateY\(var\(--dev-ptr-pull\)\);\n\}/);
+  assert.doesNotMatch(CSS, /#dev-forum-scroll:not\(:has\(\.dev-ws-band\)\)\s*>\s*\*\s*\{/);
   assert.doesNotMatch(CSS, /var\(--dev-ptr-pull,/, 'no fallback: a 0px one would transform the tab body at rest');
   // #3514's paint for the gap under the header, and the hook that sized it,
   // are gone with the gap: a pull no longer opens one there.

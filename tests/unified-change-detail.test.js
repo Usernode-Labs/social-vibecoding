@@ -99,15 +99,15 @@ test('the Review row says what submitting now means, one sentence per condition 
     failing: [{}, /checks are failing\. You can submit it now; it can merge only after a fix passes them/, 'warn'],
     error: [{ check_state: 'error' }, /checks could not run\. You can submit it now; it can merge only once they run and pass/, 'warn'],
     uploaded: [{ proposal_state: 'uploaded', check_state: null }, /uploaded but has not been submitted for checks yet/, 'mute'],
-    draft: [{ proposal_state: 'draft', check_state: null }, /no committed changes to submit yet/, 'mute'],
+    draft: [{ proposal_state: 'draft', check_state: null }, /no committed changes to submit yet/, 'mute', 'empty'],
     running: [{ proposal_state: 'checking', check_state: 'pending' }, /Its checks keep running, and it can merge only once they pass/, 'ok'],
     idle: [{ proposal_state: 'deploying', check_state: 'passing', staging_url: null }, /preview was closed while idle; submitting rebuilds it and runs the checks again/, 'ok'],
     ready: [{ proposal_state: 'ready', check_state: 'passing' }, /^Ready to submit for review\.$/, 'ok'],
   };
   const notes = [];
-  for (const [name, [patch, note, tone]] of Object.entries(cases)) {
+  for (const [name, [patch, note, tone, kind = 'ready']] of Object.entries(cases)) {
     const st = state(patch);
-    assert.equal(st.kind, 'ready', name);
+    assert.equal(st.kind, kind, name);
     assert.match(st.note, note, name);
     assert.equal(st.tone, tone, name);
     assert.equal(reviewRow(patch).text.join(''), st.note, `${name}: the Review row carries it`);
@@ -129,7 +129,7 @@ test('an ordinary session submits whatever its checks say (#2074, #3173)', () =>
     'ready', 'and a build in flight is the same kind of not-yet');
 });
 
-test('a change with nothing committed says so, and the server refuses it (#2379, #3173)', () => {
+test('a change with nothing committed says so, and cannot be submitted (#2379, #3173, #3776)', async () => {
   const av = context();
   const blank = { ...failing, source: null, proposal_state: undefined,
     pr_number: null, staging_url: null, check_state: null, test_results: [] };
@@ -137,12 +137,22 @@ test('a change with nothing committed says so, and the server refuses it (#2379,
   const noChanges = /no committed changes to submit yet/;
 
   // A brand-new session: no pull request, no preview, no check ever started.
-  // The button stays enabled (#3173); the note says what the server's 409
-  // will say, so the refusal is not a surprise.
-  assert.equal(state({}).kind, 'ready');
+  // There is nothing to review, so the button is disabled (#3776) beside the
+  // step that says "Nothing committed yet"; its tooltip and the Review row
+  // carry the same sentence the server's 409 would.
+  assert.equal(state({}).kind, 'empty');
+  assert.equal(state({}).short, 'Nothing committed yet');
   assert.match(state({}).note, noChanges);
-  assert.equal(av._topicViewFor('session', blank).card.actions
-    .find((a) => a.key === 'propose-change').disabled, false, 'the button is not disabled');
+  const view = av._topicViewFor('session', blank);
+  const button = view.card.actions.find((a) => a.key === 'propose-change');
+  assert.equal(button.disabled, true, 'the button is disabled');
+  assert.equal(button.label, 'Submit for review');
+  assert.match(button.title, noChanges);
+  assert.match(row(view, 'review').text.join(''), noChanges);
+  assert.equal(row(view, 'review').tone, 'mute');
+  // runChangeAction refuses it too, so no stale render can submit it.
+  await av.runChangeAction(blank.id, 'promote', blank);
+  assert.equal(av._changeActions.has(Number(blank.id)), false);
   // The checks ran and found the branch level with main.
   assert.match(state({ check_state: 'skipped', check_error_detail: 'branch has no commits beyond main, so there is nothing to test' }).note, noChanges);
 
@@ -150,12 +160,18 @@ test('a change with nothing committed says so, and the server refuses it (#2379,
   for (const patch of [{ check_state: 'pending' }, { pr_number: 12 }, { staging_url: 'https://preview.example' },
     { check_state: 'skipped', check_error_detail: 'GitHub is not configured' }]) {
     assert.doesNotMatch(state(patch).note, noChanges, JSON.stringify(patch));
+    assert.equal(state(patch).kind, 'ready', JSON.stringify(patch));
   }
   // Managed handoffs read the server's revision state; imported PRs have
   // their own contract.
   assert.match(state({ source: 'cli_handoff', proposal_state: 'draft' }).note, noChanges);
+  assert.equal(state({ source: 'cli_handoff', proposal_state: 'draft' }).kind, 'empty');
   assert.match(state({ source: 'cli_handoff', proposal_state: 'uploaded' }).note, /uploaded but has not been submitted/);
+  assert.equal(state({ source: 'cli_handoff', proposal_state: 'uploaded' }).kind, 'ready');
+  // A managed change with commits but no pull request yet is submittable.
+  assert.equal(state({ source: 'cli_handoff', proposal_state: 'ready', check_state: 'passing', staging_url: 'https://p' }).kind, 'ready');
   assert.doesNotMatch(state({ source: 'imported' }).note, noChanges);
+  assert.equal(state({ source: 'imported' }).kind, 'ready');
 });
 
 test('before review the author reads the spec under About this change (#2371)', () => {
@@ -165,7 +181,7 @@ test('before review the author reads the spec under About this change (#2371)', 
   const own = av._topicViewFor('session', draft);
   assert.ok(own.body.proposalBody, 'the spec stands in for the technical details');
   assert.match(own.body.proposalBody.html, /Authenticate previews/);
-  assert.match(own.body.summaryHtml, /spec this change is built from is under Technical details/);
+  assert.match(own.body.summaryHtml, /spec this change is built from is under Details/);
 
   // A real PR body wins, and a summary is never replaced.
   const withBody = av._topicViewFor('session', { ...draft, pr_body: 'The PR body', pr_summary_md: 'Previews wait for sign-in.' });
@@ -262,19 +278,27 @@ test('the Main row reads the integration record when that is the measurement the
   assert.equal(c.filesComplete, true);
 });
 
-test('private changes retain sharing controls and do not pretend to have a public discussion', () => {
+test('unshared changes retain sharing controls and do not pretend to have a discussion', () => {
   const av = context();
   const v = av._topicViewFor('session', failing);
   assert.ok(av._cardMenuItems(v.card.rail.menuKey).some((a) => a.label === 'Make visible'));
-  assert.match(v.body.discussion, /workspace stays private/);
+  // Not shared hides the workspace here, never the code: every repository
+  // is public on GitHub, so the line says so rather than "stays private".
+  assert.equal(v.body.discussion, 'Make this change visible to the group to start a discussion. '
+    + 'Only you can see the agent workspace here unless you share it. Its code is on public GitHub.');
+  assert.doesNotMatch(v.body.discussion, /private/);
+  assert.ok(v.card.meta.some((m) => m.t === 'text' && m.s === 'Not shared yet'), 'the card says Not shared yet');
 });
 
 test('actual shared component renders the entire card and escapes the issue title', () => {
   const av = context();
   av._ghIssues[0].title = '<script>issue</script>';
-  const { ChangeDetail } = loadTsx('frontend/src/features/dev-board/topic/topic-head.tsx');
+  const { ChangeDetail, DetailsBody } = loadTsx('frontend/src/features/dev-board/topic/topic-head.tsx');
   const v = av._topicViewFor('session', failing);
-  const html = renderToHtml(createElement(ChangeDetail, { ...v, item: failing, conversation: true }));
+  // B10b: the steps are in Details, a body-mounted sheet the page keeps; it
+  // is drawn here after the page, as the document holds it.
+  const html = renderToHtml(createElement(ChangeDetail, { ...v, item: failing, conversation: true }))
+    + renderToHtml(createElement(DetailsBody, { prRef: v.body.hero.ref, steps: v.body.steps, help: false, html: '' }));
   // The Needs-you page: the summary, the issues line, the steps sheet (with
   // the failing check's reason behind its door), and the Discussion. The
   // Build is a pill that LEAVES this page (#2605), not a sheet on it.
@@ -282,7 +306,7 @@ test('actual shared component renders the entire card and escapes the issue titl
   assert.ok(!html.includes('Where it stands'), 'a draft draws the same short steps as a proposal');
   assert.ok(html.includes('&lt;script&gt;issue&lt;/script&gt;'));
   assert.ok(!html.includes('<script>issue</script>'));
-  assert.match(html, />Edit issues</, 'the owner can manage associations after creation');
+  assert.match(html, />Edit requests</, 'the owner can manage associations after creation');
   // The issue is a chip on the "Addresses" line, in the Needs-you chip's
   // accent tint: the number bold, the title after it, the issue's own page
   // behind it.
@@ -610,7 +634,8 @@ test('full card has one submission, one preview, contextual recovery and an inde
   assert.equal(v.card.rail.preview, null);
   assert.equal(row(v, 'review').actions, undefined);
   const menu = av._cardMenuItems(v.card.rail.menuKey);
-  assert.equal(menu.filter((a) => /GitHub/.test(a.label)).length, 1);
+  assert.equal(menu.filter((a) => /GitHub/.test(a.label)).length, 0, 'B10b: GitHub is in Details');
+  assert.ok(menu.some((a) => a.label === 'Details'));
   assert.ok(menu.some((a) => a.label === 'Make visible'));
   assert.ok(!menu.some((a) => ['View checks', 'Re-run checks', 'Open session'].includes(a.label)));
   assert.ok(compactMenu.some((a) => a.label === 'View checks'));
@@ -684,15 +709,15 @@ test('an unlinked owner gets the empty editor affordance while a reader sees no 
   const v = av._topicViewFor('session', item);
   const { ChangeDetail } = loadTsx('frontend/src/features/dev-board/topic/topic-head.tsx');
   const html = renderToHtml(createElement(ChangeDetail, { ...v, item, conversation: true }));
-  assert.match(html, /No issues linked yet/);
-  assert.match(html, />Add issue</);
+  assert.match(html, /No requests linked yet/);
+  assert.match(html, />Add request</);
 
   const reader = context({ id: 99 });
   const readView = reader._topicViewFor('session', item);
   const readHtml = renderToHtml(createElement(ChangeDetail, {
     ...readView, item, conversation: true,
   }));
-  assert.doesNotMatch(readHtml, /No issues linked yet|Issues this change addresses|Edit issues/);
+  assert.doesNotMatch(readHtml, /No requests linked yet|Requests this change addresses|Edit requests/);
 });
 
 test('imported underway PR archive is owner-only and works from compact and full cards', async () => {

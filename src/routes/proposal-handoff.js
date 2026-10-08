@@ -6,6 +6,7 @@ const { getPool } = require('../db/pool');
 const appAccess = require('../services/app-access');
 const communities = require('../services/communities');
 const github = require('../services/github');
+const githubBudget = require('../services/github-budget');
 const staging = require('../services/staging');
 const stagingRecovery = require('../services/staging-recovery');
 const visuals = require('../services/visuals');
@@ -1239,7 +1240,7 @@ function proposalHandoffRoutes(config) {
         log.warn('proposal-handoff', 'GitHub branch creation failed', {
           app: app.slug, ...github.describeGithubError(err),
         });
-        return res.status(503).json({ error: 'github_unavailable' });
+        return res.status(503).json(githubBudget.githubUnavailableBody(err));
       }
 
       let created;
@@ -1467,7 +1468,7 @@ function proposalHandoffRoutes(config) {
               requestId: detail.requestId,
               message: detail.message,
             });
-            return res.status(503).json({ error: 'github_unavailable' });
+            return res.status(503).json(githubBudget.githubUnavailableBody(err));
           }
           // The exact local/platform pair is already durable. This can be a
           // retry before submission or long after its staging checks passed.
@@ -1668,7 +1669,7 @@ function proposalHandoffRoutes(config) {
               log.warn('proposal-handoff', 'Promoted managed revision head read failed', {
                 sessionId: session.id, ...github.describeGithubError(err),
               });
-              return res.status(503).json({ error: 'github_unavailable' });
+              return res.status(503).json(githubBudget.githubUnavailableBody(err));
             }
             if (String(remoteHead).toLowerCase() !== input.headSha) {
               return res.status(409).json({
@@ -1690,7 +1691,7 @@ function proposalHandoffRoutes(config) {
             }
             const spec = input.spec || session.spec_md;
             if (input.spec) {
-              await pool.query(`UPDATE chat_sessions SET spec_md = $1 WHERE id = $2`, [input.spec, session.id]);
+              await pool.query(`UPDATE chat_sessions SET spec_md = $1, spec_html = NULL WHERE id = $2`, [input.spec, session.id]);
             }
             await snapshotSpec(pool, session.id, spec, input.headSha);
             const adopted = await pool.query(
@@ -1782,7 +1783,7 @@ function proposalHandoffRoutes(config) {
             log.warn('proposal-handoff', 'GitHub commit adoption failed', {
               sessionId: session.id, ...github.describeGithubError(err),
             });
-            return res.status(503).json({ error: 'github_unavailable' });
+            return res.status(503).json(githubBudget.githubUnavailableBody(err));
           }
 
           await insertHistory(pool, session.id, input.history);
@@ -1798,7 +1799,7 @@ function proposalHandoffRoutes(config) {
           }
           const spec = input.spec || session.spec_md;
           if (input.spec) {
-            await pool.query(`UPDATE chat_sessions SET spec_md = $1 WHERE id = $2`, [input.spec, session.id]);
+            await pool.query(`UPDATE chat_sessions SET spec_md = $1, spec_html = NULL WHERE id = $2`, [input.spec, session.id]);
           }
           await snapshotSpec(pool, session.id, spec, input.headSha);
           const adopted = await pool.query(
@@ -1959,7 +1960,7 @@ function proposalHandoffRoutes(config) {
         log.warn('proposal-handoff', 'Could not verify branch before promotion', {
           sessionId: session.id, ...github.describeGithubError(err),
         });
-        return res.status(503).json({ error: 'github_unavailable' });
+        return res.status(503).json(githubBudget.githubUnavailableBody(err));
       }
       const checkedHead = currentCheckedHead(session);
       if (String(remoteHead).toLowerCase() !== checkedHead) {

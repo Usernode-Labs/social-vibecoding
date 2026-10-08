@@ -167,3 +167,29 @@ test('thread scope is echoed on the broadcast for a thread-scoped edit', async (
   await handleMessage(pool, client, { type: 'edit', messageId: 42, content: 'threaded edit' });
   assert.ok(pool.update(), 'UPDATE ran for a thread-scoped message');
 });
+
+// Edits over the socket are counted before they reach this handler
+// (admitSocketFrame, tests/ws-rate-limit.test.js): they share the 60-a-minute
+// write budget with chat and delete, and one over it is answered to the
+// editor as `rate_limited` instead of running the UPDATE.
+test('an edit over the shared write budget is refused before the handler runs', async () => {
+  const { admitSocketFrame, handleMessage } = loadWs();
+  const pool = makeEditPool(ownMessageRow);
+  const sent = [];
+  const client = { user: { id: 5, username: 'alice' }, appId: 7, ws: { readyState: 1, send: (raw) => sent.push(JSON.parse(raw)) } };
+  const now = 1_000_000;
+  for (let i = 0; i < 59; i++) assert.equal(admitSocketFrame(client, { type: 'chat', content: `m${i}` }, now), true);
+  const lastInBudget = { type: 'edit', messageId: 42, content: 'within budget' };
+  assert.equal(admitSocketFrame(client, lastInBudget, now), true);
+  await handleMessage(pool, client, lastInBudget);
+  assert.ok(pool.update(), 'the 60th write is an edit that runs');
+
+  const over = { type: 'edit', messageId: 42, content: 'too fast' };
+  assert.equal(admitSocketFrame(client, over, now + 15_000), false, 'the 61st is refused');
+  assert.deepEqual(sent, [{
+    type: 'rate_limited',
+    retryAfterSeconds: 45,
+    error: "You're sending messages too fast. Try again in 45 seconds.",
+    retry: over,
+  }]);
+});

@@ -16,6 +16,9 @@
 //     endpoint returns a percentage.
 
 const { NAV_SCREENS } = require('./ui-telemetry');
+const changePerson = require('./change-person');
+const { loadOnboarding } = require('./topochain/challenge-onboarding');
+const { fetchCurrentSeason } = require('../routes/home-panels');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WEEK_MS = 7 * DAY_MS;
@@ -46,17 +49,54 @@ const LOST_CUTOFFS = Object.freeze({
 const FEW_MOVES = 10;
 
 // Real people (#3369 rulings): not an admin (view-only admins included), not
-// a bot, not restricted by moderation, not deleted, not a platform service
-// account (the reserved name prefixes nobody else may take), and not on the
-// admin-edited left-out list. Every query that names people uses this, with
-// $3 = the reserved prefixes as LIKE patterns and $4 = the left-out ids.
-const RESERVED_PATTERNS = Object.freeze(['usernode%', 'staging%']);
+// a bot, not a test account (services/test-accounts.js; its own flag, so it
+// stays out whether or not it is on the left-out list), not restricted by
+// moderation, not deleted, not a platform service account (the reserved name
+// prefixes nobody else may take), not on the admin-edited left-out list, and
+// not at a team address (below). Every query that names people uses this,
+// with $3 = the reserved prefixes as LIKE patterns and $4 = the left-out ids.
+const RESERVED_PATTERNS = Object.freeze(['usernode%', 'staging%', 'homeroom%']);
+
+// A team address: one on the team's own domains, or a +tag variant of an
+// admin's or a left-out account's address (snaitmouloud+wl0929@gmail.com is
+// the admin snaitmouloud@gmail.com testing). It is what keeps an admitted
+// waitlist test signup that never made an account out of the first mile,
+// where the left-out list (account ids) cannot reach, and it keeps out the
+// account that signup becomes. Spelled out as constants rather than built by
+// a function so scripts/check-sql.js can still validate every query that
+// uses it; the subquery is uncorrelated, so Postgres reads the team's
+// addresses once per query rather than once per row.
+const TEAM_DOMAINS = Object.freeze(['onhomeroom.com', 'usernodelabs.org', 'usernodelabs.com']);
+const TEAM_DOMAINS_SQL = `'onhomeroom.com', 'usernodelabs.org', 'usernodelabs.com'`;
+const TEAM_ADDRESSES_SQL = `SELECT LOWER(regexp_replace(t.email, '\\+[^@]*@', '@')) FROM users t
+       WHERE t.email IS NOT NULL AND (t.is_admin OR t.id = ANY($4::int[]))`;
+
 const REAL_PERSON_SQL = `u.is_admin IS NOT TRUE
   AND u.is_synthetic IS NOT TRUE
+  AND u.test_account_created_at IS NULL
   AND u.participation_restricted_at IS NULL
   AND u.anonymised_at IS NULL
   AND NOT (LOWER(u.username) LIKE ANY($3::text[]))
-  AND NOT (u.id = ANY($4::int[]))`;
+  AND NOT (u.id = ANY($4::int[]))
+  AND NOT (u.email IS NOT NULL AND (LOWER(split_part(u.email, '@', 2)) IN (${TEAM_DOMAINS_SQL})
+    OR LOWER(regexp_replace(u.email, '\\+[^@]*@', '@')) IN (${TEAM_ADDRESSES_SQL})))`;
+
+// The same rule for the people who said yes to a change, joined as `uy`
+// wherever a query reads a change's votes.
+const REAL_VOTER_SQL = `uy.is_admin IS NOT TRUE
+  AND uy.is_synthetic IS NOT TRUE
+  AND uy.test_account_created_at IS NULL
+  AND uy.participation_restricted_at IS NULL
+  AND uy.anonymised_at IS NULL
+  AND NOT (LOWER(uy.username) LIKE ANY($3::text[]))
+  AND NOT (uy.id = ANY($4::int[]))
+  AND NOT (uy.email IS NOT NULL AND (LOWER(split_part(uy.email, '@', 2)) IN (${TEAM_DOMAINS_SQL})
+    OR LOWER(regexp_replace(uy.email, '\\+[^@]*@', '@')) IN (${TEAM_ADDRESSES_SQL})))`;
+
+// Who a change is credited to (its author, or the person a Homeroom bot
+// build was for). Shared with the admin analytics dashboard and funnels:
+// see services/change-person.js.
+const CHANGE_PERSON_SQL = changePerson.CHANGE_PERSON_SQL;
 
 function notRecorded(reason) {
   return { recorded: false, reason };
@@ -305,9 +345,11 @@ const ADMITTED_CTE = `admitted AS (
      ORDER BY COALESCE('u' || w.linked_user_id::text, 'w' || w.id::text), w.released_at, w.id
   )`;
 
-const NEWCOMER_OR_NO_ACCOUNT = `(u.id IS NULL OR (
+const NEWCOMER_OR_NO_ACCOUNT = `(NOT (a.email IS NOT NULL AND (LOWER(split_part(a.email, '@', 2)) IN (${TEAM_DOMAINS_SQL})
+      OR LOWER(regexp_replace(a.email, '\\+[^@]*@', '@')) IN (${TEAM_ADDRESSES_SQL})))
+    AND (u.id IS NULL OR (
       (u.platform_access_granted_at IS NULL OR u.platform_access_granted_at >= a.released_at)
-      AND ${REAL_PERSON_SQL}))`;
+      AND ${REAL_PERSON_SQL})))`;
 
 const COHORTS_SQL = `WITH ${ADMITTED_CTE}
   SELECT to_char((a.released_at AT TIME ZONE 'UTC')::date, 'YYYY-MM-DD') AS day,
@@ -335,7 +377,7 @@ const PERSON_FACTS = `
     u.id AS user_id, u.username, u.created_at AS account_at, u.password_set,
     u.has_platform_access, u.platform_access_granted_at AS access_at,
     u.needs_username_choice, u.needs_communities_choice, u.communities_onboarded_at,
-    u.tour_done_at, u.getting_started_seen,
+    u.tour_done_at, u.getting_started_seen, u.getting_started_gate,
     LEAST(
       (SELECT MIN(cm.joined_at) FROM conversation_members cm
          JOIN conversations c ON c.id = cm.conversation_id
@@ -459,9 +501,19 @@ function firstMileSteps(row, now = new Date()) {
       : { done: false, stuck: row.username_shown_at ? 'Username sheet shown, not answered' : 'Username not chosen' },
     join: row.communities_onboarded_at
       ? { done: true, at: t(row.communities_onboarded_at), note: seen.join_answer || null }
+      // Not asked: an invite link, or the first session answered it in its
+      // place (join_answer 'invite'; 'story' or 'sign_in', how that
+      // question reached them; 'made' for a project made with no start
+      // recorded), or the account predates the screen. The first session's
+      // own answer, Make it or Look around first, is first_session_answer.
       : (hasAccount && row.needs_communities_choice === false
-        ? { done: true, at: null, note: 'not asked', weak: true }
-        : { done: false, stuck: row.join_shown_at ? 'Join screen shown, not answered' : 'Join screen not answered' }),
+        ? { done: true, at: null, note: seen.join_answer ? `not asked: ${seen.join_answer}` : 'not asked', weak: true }
+        // The first session's question stays owed until it is answered
+        // (services/first-session.js), so this is where somebody sits who
+        // was asked what to make and has not said.
+        : { done: false,
+          stuck: seen.first_session ? 'Asked what to make, not answered'
+            : row.join_shown_at ? 'Join screen shown, not answered' : 'Join screen not answered' }),
     first_act: row.first_act_at ? { done: true, at: t(row.first_act_at), note: row.first_act_kind }
       : { done: false, stuck: 'Inside, no act yet' },
   };
@@ -547,13 +599,52 @@ async function cohorts(pool, { now = new Date(), leftOutIds = [] } = {}) {
   };
 }
 
+// Whether the Getting started card was ever drawn for this person: the rule
+// onboarding.js cardShows() spells, without its "not closed yet", since a
+// card that was closed was shown.
+function cardWasShown(row) {
+  return row.user_id != null && row.getting_started_gate === true && row.communities_onboarded_at != null;
+}
+
+/**
+ * The first mile's last column, "onboard": how far the person got through
+ * Getting started, the tour and then the season's First challenges, the list
+ * the card on Home draws (services/onboarding.js). `null` without an
+ * account; `shown: false` when the card was never drawn for them (an account
+ * from before the card, or the join screen not answered yet). `complete` is
+ * the card's own "You're all set", which an earlier read can have granted
+ * with fewer ticks than today's list has. Read with `record: false`: an
+ * admin looking never opens anybody's gate.
+ */
+async function onboardFor(pool, row, seasonId) {
+  if (row.user_id == null) return null;
+  if (!cardWasShown(row)) return { shown: false, done: null, total: null, complete: false };
+  const state = seasonId != null
+    ? await loadOnboarding(pool, Number(row.user_id), { seasonId, record: false })
+    : null;
+  if (!state) {
+    const tourDone = row.tour_done_at != null;
+    return { shown: true, done: tourDone ? 1 : 0, total: 1, complete: tourDone };
+  }
+  return {
+    shown: true,
+    done: (state.tourDone ? 1 : 0) + state.summary.completed,
+    total: 1 + state.summary.total,
+    complete: state.finished,
+  };
+}
+
 /** One cohort's first mile: `day` is an admit day, or 'other_way'. */
 async function firstMile(pool, { day, now = new Date(), leftOutIds = [] } = {}) {
   const params = realPersonParams(leftOutIds);
   const result = day === 'other_way'
     ? await pool.query(FIRST_MILE_OTHER_WAY_SQL, [NEWCOMER_DAYS, now, ...params])
     : await pool.query(FIRST_MILE_ADMITTED_SQL, [day, now, ...params]);
-  const people = result.rows.map((row) => firstMilePerson(row, now));
+  const season = result.rows.some(cardWasShown) ? await fetchCurrentSeason(pool) : null;
+  const people = await Promise.all(result.rows.map(async (row) => ({
+    ...firstMilePerson(row, now),
+    onboard: await onboardFor(pool, row, season ? season.id : null),
+  })));
   return {
     cohort: day,
     people,
@@ -640,24 +731,28 @@ const STAGES_SQL = `WITH real AS (
      WHERE i.created_at >= $1::timestamptz AND i.created_at < $2::timestamptz AND i.created_by IS NOT NULL
     UNION SELECT pvx.user_id, 'vote' FROM pr_votes pvx WHERE pvx.created_at >= $1::timestamptz AND pvx.created_at < $2::timestamptz
     UNION SELECT ivx.user_id, 'vote' FROM issue_votes ivx WHERE ivx.created_at >= $1::timestamptz AND ivx.created_at < $2::timestamptz
-    UNION SELECT cs.user_id, 'change' FROM chat_sessions cs
+    UNION SELECT ${CHANGE_PERSON_SQL}, 'change' FROM chat_sessions cs
      WHERE cs.created_at >= $1::timestamptz AND cs.created_at < $2::timestamptz AND ${OWN_CHANGE}
   ), belong AS (
-    SELECT pvx.user_id FROM pr_votes pvx JOIN chat_sessions cs ON cs.id = pvx.session_id JOIN real ra ON ra.id = cs.user_id
-     WHERE pvx.created_at >= $1::timestamptz AND pvx.created_at < $2::timestamptz AND pvx.user_id <> cs.user_id
+    SELECT pvx.user_id FROM pr_votes pvx JOIN chat_sessions cs ON cs.id = pvx.session_id
+      JOIN real ra ON ra.id = ${CHANGE_PERSON_SQL}
+     WHERE pvx.created_at >= $1::timestamptz AND pvx.created_at < $2::timestamptz AND pvx.user_id <> ra.id
        AND COALESCE(cs.branch_name, '') NOT LIKE 'rename/%'
-    UNION SELECT k.giver_user_id FROM pr_kudos k JOIN chat_sessions cs ON cs.id = k.session_id JOIN real ra ON ra.id = cs.user_id
-     WHERE k.created_at >= $1::timestamptz AND k.created_at < $2::timestamptz AND k.giver_user_id <> cs.user_id
+    UNION SELECT k.giver_user_id FROM pr_kudos k JOIN chat_sessions cs ON cs.id = k.session_id
+      JOIN real ra ON ra.id = ${CHANGE_PERSON_SQL}
+     WHERE k.created_at >= $1::timestamptz AND k.created_at < $2::timestamptz AND k.giver_user_id <> ra.id
     UNION SELECT cmx.user_id FROM chat_messages cmx JOIN chat_sessions cs ON cmx.thread_type = 'session' AND cmx.thread_ref = cs.id
-      JOIN real ra ON ra.id = cs.user_id
+      JOIN real ra ON ra.id = ${CHANGE_PERSON_SQL}
      WHERE cmx.created_at >= $1::timestamptz AND cmx.created_at < $2::timestamptz AND cmx.msg_type = 'message'
-       AND cmx.user_id <> cs.user_id
+       AND cmx.user_id <> ra.id
   ), used AS (
-    SELECT cs.user_id FROM chat_sessions cs
-     WHERE cs.status = 'merged' AND cs.merged_at >= $1::timestamptz AND cs.merged_at < $2::timestamptz
-       AND EXISTS (SELECT 1 FROM pr_votes pvx JOIN real ry ON ry.id = pvx.user_id
-                    WHERE pvx.session_id = cs.id AND pvx.vote = 'yes' AND pvx.user_id <> cs.user_id
-                      AND pvx.approval_epoch = cs.approval_epoch)
+    SELECT p.user_id FROM (
+      SELECT cs.id, cs.approval_epoch, ${CHANGE_PERSON_SQL} AS user_id FROM chat_sessions cs
+       WHERE cs.status = 'merged' AND cs.merged_at >= $1::timestamptz AND cs.merged_at < $2::timestamptz
+    ) p
+     WHERE EXISTS (SELECT 1 FROM pr_votes pvx JOIN real ry ON ry.id = pvx.user_id
+                    WHERE pvx.session_id = p.id AND pvx.vote = 'yes' AND pvx.user_id <> p.user_id
+                      AND pvx.approval_epoch = p.approval_epoch)
   ), invited AS (
     SELECT inv.admitted_by AS user_id FROM users inv JOIN real ri ON ri.id = inv.id
      WHERE inv.admitted_by IS NOT NULL AND inv.id IN (SELECT user_id FROM arrive)
@@ -741,52 +836,44 @@ async function stages(pool, { week, now = new Date(), leftOutIds = [], memberIds
 
 // ── Active groups ──────────────────────────────────────────────────────
 //
-// Every change that went live, with its project, its real author and the
-// real people other than the author who said yes to the revision that
+// Every change that went live, with its project, the real person it is
+// credited to (CHANGE_PERSON_SQL: its author, or the person a bot build was
+// for) and the real people other than them who said yes to the revision that
 // merged. Merged changes number in the low thousands in total, so the weeks
 // are bucketed here rather than in SQL. $1 is unused padding kept for the
 // shared parameter layout: the end of the window, $2 now, $3/$4 real people.
 const LIVE_CHANGES_SQL = `SELECT cs.id, cs.app_id, ap.slug, ap.name, ap.self_hosted,
-         cs.merged_at, cs.user_id AS author_id, u.username AS author,
+         cs.merged_at, u.id AS author_id, u.username AS author,
          ARRAY(SELECT pvx.user_id FROM pr_votes pvx JOIN users uy ON uy.id = pvx.user_id
-                WHERE pvx.session_id = cs.id AND pvx.vote = 'yes' AND pvx.user_id <> cs.user_id
+                WHERE pvx.session_id = cs.id AND pvx.vote = 'yes' AND pvx.user_id <> u.id
                   AND pvx.approval_epoch = cs.approval_epoch
-                  AND uy.is_admin IS NOT TRUE AND uy.is_synthetic IS NOT TRUE
-                  AND uy.participation_restricted_at IS NULL AND uy.anonymised_at IS NULL
-                  AND NOT (LOWER(uy.username) LIKE ANY($3::text[]))
-                  AND NOT (uy.id = ANY($4::int[]))
+                  AND ${REAL_VOTER_SQL}
                 ORDER BY pvx.user_id) AS yes_ids,
          ARRAY(SELECT uy.username FROM pr_votes pvx JOIN users uy ON uy.id = pvx.user_id
-                WHERE pvx.session_id = cs.id AND pvx.vote = 'yes' AND pvx.user_id <> cs.user_id
+                WHERE pvx.session_id = cs.id AND pvx.vote = 'yes' AND pvx.user_id <> u.id
                   AND pvx.approval_epoch = cs.approval_epoch
-                  AND uy.is_admin IS NOT TRUE AND uy.is_synthetic IS NOT TRUE
-                  AND uy.participation_restricted_at IS NULL AND uy.anonymised_at IS NULL
-                  AND NOT (LOWER(uy.username) LIKE ANY($3::text[]))
-                  AND NOT (uy.id = ANY($4::int[]))
+                  AND ${REAL_VOTER_SQL}
                 ORDER BY pvx.user_id) AS yes_names
     FROM chat_sessions cs
     JOIN apps ap ON ap.id = cs.app_id
-    JOIN users u ON u.id = cs.user_id
+    JOIN users u ON u.id = ${CHANGE_PERSON_SQL}
    WHERE cs.status = 'merged' AND cs.merged_at IS NOT NULL
      AND cs.merged_at < $1::timestamptz AND cs.merged_at <= $2::timestamptz
      AND ${REAL_PERSON_SQL}`;
 
 // Changes put to the group and still waiting, with no yes yet from another
 // real person: the other half of "groups one short".
-const WAITING_SQL = `SELECT cs.id, ap.slug, ap.name, cs.user_id AS author_id, u.username AS author, cs.promoted_at
+const WAITING_SQL = `SELECT cs.id, ap.slug, ap.name, u.id AS author_id, u.username AS author, cs.promoted_at
     FROM chat_sessions cs
     JOIN apps ap ON ap.id = cs.app_id
-    JOIN users u ON u.id = cs.user_id
+    JOIN users u ON u.id = ${CHANGE_PERSON_SQL}
    WHERE cs.status IN ('promoted', 'merging') AND COALESCE(ap.self_hosted, FALSE) = FALSE
      AND cs.promoted_at IS NOT NULL AND cs.promoted_at < $1::timestamptz AND cs.promoted_at <= $2::timestamptz
      AND ${REAL_PERSON_SQL}
      AND NOT EXISTS (SELECT 1 FROM pr_votes pvx JOIN users uy ON uy.id = pvx.user_id
-                      WHERE pvx.session_id = cs.id AND pvx.vote = 'yes' AND pvx.user_id <> cs.user_id
+                      WHERE pvx.session_id = cs.id AND pvx.vote = 'yes' AND pvx.user_id <> u.id
                         AND pvx.approval_epoch = cs.approval_epoch
-                        AND uy.is_admin IS NOT TRUE AND uy.is_synthetic IS NOT TRUE
-                        AND uy.participation_restricted_at IS NULL AND uy.anonymised_at IS NULL
-                        AND NOT (LOWER(uy.username) LIKE ANY($3::text[]))
-                        AND NOT (uy.id = ANY($4::int[])))
+                        AND ${REAL_VOTER_SQL})
    ORDER BY cs.promoted_at`;
 
 // How many weeks of active-group counts come back with each week, oldest
@@ -977,7 +1064,7 @@ const CHANGE_LOOP_SQL = `WITH reported AS (
     LEFT JOIN users ru ON ru.id = t.reporter
     LEFT JOIN LATERAL (
       SELECT MIN(cs.created_at) AS sketch_at, MIN(cs.promoted_at) AS decide_at,
-             MIN(cs.merged_at) FILTER (WHERE cs.status = 'merged') AS live_at,
+             MIN(cs.live_at) FILTER (WHERE cs.status = 'merged') AS live_at,
              (SELECT hu.username FROM chat_sessions h JOIN users hu ON hu.id = h.user_id
                WHERE h.app_id = t.app_id
                  AND (t.number = ANY(h.linked_issues) OR h.created_from_issue_number = t.number)
@@ -1308,22 +1395,20 @@ const LOCKSTEP_CUTOFFS = Object.freeze({
 // $1 week start, $2 week end, $3/$4 real people, $5 lockstep seconds,
 // $6 lockstep minimum votes, $7 lockstep minimum share.
 const TRUST_SQL = `WITH live AS (
-    SELECT cs.id, cs.user_id, ap.slug, ap.name AS project, au.username AS author, au.is_admin AS author_is_admin,
+    SELECT cs.id, au.id AS user_id, ap.slug, ap.name AS project, au.username AS author, au.is_admin AS author_is_admin,
            EXISTS (SELECT 1 FROM pr_votes pvx JOIN users uy ON uy.id = pvx.user_id
-                    WHERE pvx.session_id = cs.id AND pvx.vote = 'yes' AND pvx.user_id <> cs.user_id
+                    WHERE pvx.session_id = cs.id AND pvx.vote = 'yes' AND pvx.user_id <> au.id
                       AND pvx.approval_epoch = cs.approval_epoch
-                      AND uy.is_admin IS NOT TRUE AND uy.is_synthetic IS NOT TRUE
-                      AND uy.participation_restricted_at IS NULL AND uy.anonymised_at IS NULL
-                      AND NOT (LOWER(uy.username) LIKE ANY($3::text[]))
-                      AND NOT (uy.id = ANY($4::int[]))) AS group_yes,
+                      AND ${REAL_VOTER_SQL}) AS group_yes,
            EXISTS (SELECT 1 FROM events e WHERE e.event_type = 'pr_merged' AND e.session_id = cs.id
                      AND e.created_at >= $1::timestamptz - INTERVAL '1 day'
                      AND COALESCE((e.metadata->>'forced')::boolean, FALSE)) AS forced
       FROM chat_sessions cs
       JOIN apps ap ON ap.id = cs.app_id
-      JOIN users au ON au.id = cs.user_id
+      JOIN users au ON au.id = ${CHANGE_PERSON_SQL}
      WHERE cs.status = 'merged' AND cs.merged_at >= $1::timestamptz AND cs.merged_at < $2::timestamptz
-       AND au.is_synthetic IS NOT TRUE AND NOT (LOWER(au.username) LIKE ANY($3::text[]))
+       AND au.is_synthetic IS NOT TRUE AND au.test_account_created_at IS NULL
+       AND NOT (LOWER(au.username) LIKE ANY($3::text[]))
   ), yes AS (
     SELECT pvx.user_id, pvx.session_id, pvx.created_at FROM pr_votes pvx JOIN users u ON u.id = pvx.user_id
      WHERE pvx.vote = 'yes' AND pvx.created_at >= $1::timestamptz AND pvx.created_at < $2::timestamptz
@@ -1372,6 +1457,613 @@ async function trustChecks(pool, { week, leftOutIds = [] } = {}) {
   };
 }
 
+// ── Creation path ──────────────────────────────────────────────────────
+//
+// What happens after somebody creates a project, step by step, each timed
+// from the moment they created it:
+//
+//   Created                 the project's row (apps.created_at)
+//   Running                 its first successful run (apps.first_running_at)
+//   First version ready     the Homeroom bot's first version of it, built
+//                           from what they described, is up as a proposal
+//                           (homeroom_bot_first_versions, the run that turned
+//                           into that proposal, and the proposal's own row)
+//   Preview opened          they opened a preview of a change to it
+//                           (a `preview_opened` event with them as viewer)
+//   Requested change live   a change they asked for went live on it
+//                           (a `change_live` event naming them)
+//
+// against three targets: the first version ready within two minutes, their
+// own project running within five, and a change they asked for live within
+// ten. Preview opened has none: it waits on them opening it, not on the
+// platform.
+//
+// People, not projects: a person counts once for a step when any project
+// they created in the window reached it, with the shortest time any of
+// those took. Three of the steps are read from events that only exist from
+// the day they were first written (services/journey-events.js), so each
+// step is counted over the projects created since its first record, says
+// how many that is (`of`), and is "not recorded" when no project in the
+// window is that recent. Never a zero for something nobody recorded.
+
+const CREATION_STEPS = Object.freeze(['created', 'running', 'first_version', 'preview', 'change_live']);
+const CREATION_TARGETS = Object.freeze({ running: 300, first_version: 120, change_live: 600 });
+// The steps whose record started with its own event; the rest are read
+// from rows the platform has always kept.
+const CREATION_EVENT_STEPS = Object.freeze({ running: 'app_running', preview: 'preview_opened', change_live: 'change_live' });
+const CREATION_EXAMPLES = 6;
+
+// Projects created by real people in [$1, $2), with the moment each step
+// was reached. $3/$4 are the real-person parameters.
+const CREATION_PATH_SQL = `WITH made AS (
+    SELECT ap.id, ap.slug, ap.name, ap.created_at, ap.created_by AS user_id, u.username, ap.first_running_at
+      FROM apps ap
+      JOIN users u ON u.id = ap.created_by
+     WHERE ap.self_hosted IS NOT TRUE
+       AND ap.created_at >= $1::timestamptz AND ap.created_at < $2::timestamptz
+       AND ${REAL_PERSON_SQL}
+  ), opened AS (
+    SELECT e.app_id, e.user_id, MIN(e.created_at) AS at
+      FROM events e
+     WHERE e.event_type = 'preview_opened' AND e.app_id IN (SELECT m.id FROM made m)
+     GROUP BY e.app_id, e.user_id
+  ), live AS (
+    SELECT e.app_id, e.created_at, e.metadata->'requesterIds' AS requester_ids
+      FROM events e
+     WHERE e.event_type = 'change_live' AND e.app_id IN (SELECT m.id FROM made m)
+  )
+  SELECT m.id AS app_id, m.slug, m.name, m.created_at, m.user_id, m.username,
+         m.first_running_at AS running_at,
+         (SELECT MIN(COALESCE(cs.promoted_at, cs.created_at))
+            FROM homeroom_bot_first_versions f
+            JOIN homeroom_bot_runs r ON r.app_id = f.app_id AND r.issue_number = f.issue_number
+            JOIN chat_sessions cs ON cs.id = r.proposal_session_id
+           WHERE f.app_id = m.id) AS first_version_at,
+         (SELECT o.at FROM opened o WHERE o.app_id = m.id AND o.user_id = m.user_id) AS preview_at,
+         (SELECT MIN(l.created_at) FROM live l
+           WHERE l.app_id = m.id AND l.requester_ids @> to_jsonb(m.user_id)) AS change_live_at
+    FROM made m
+   ORDER BY m.created_at, m.id`;
+
+// When each event-read step was first recorded at all.
+const CREATION_RECORDED_SQL = `SELECT
+    (SELECT MIN(e.created_at) FROM events e WHERE e.event_type = 'app_running') AS running,
+    (SELECT MIN(e.created_at) FROM events e WHERE e.event_type = 'preview_opened') AS preview,
+    (SELECT MIN(e.created_at) FROM events e WHERE e.event_type = 'change_live') AS change_live`;
+
+function median(values) {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
+}
+
+/** One project's path: per step, whether it can be counted and the seconds it took. */
+function creationProject(row, recordedFrom) {
+  const created = new Date(row.created_at).getTime();
+  const at = {
+    created: row.created_at, running: row.running_at, first_version: row.first_version_at,
+    preview: row.preview_at, change_live: row.change_live_at,
+  };
+  const steps = {};
+  for (const key of CREATION_STEPS) {
+    const reachedAt = at[key] ? new Date(at[key]).getTime() : null;
+    // A record is always a fact. Its absence only says "not reached" for a
+    // project created after the step was first recorded at all.
+    const since = CREATION_EVENT_STEPS[key] ? recordedFrom[key] : null;
+    const counted = !CREATION_EVENT_STEPS[key] || reachedAt != null
+      || (since != null && created >= new Date(since).getTime());
+    steps[key] = {
+      counted,
+      seconds: reachedAt != null ? Math.max(0, Math.round((reachedAt - created) / 1000)) : null,
+    };
+  }
+  return {
+    appId: Number(row.app_id), slug: row.slug, project: row.name,
+    userId: Number(row.user_id), name: row.username, createdAt: row.created_at, steps,
+  };
+}
+
+/** Per step, over projects: people reached, out of whom, median and within target. */
+function creationSteps(projects) {
+  const byPerson = new Map();
+  for (const p of projects) {
+    if (!byPerson.has(p.userId)) byPerson.set(p.userId, []);
+    byPerson.get(p.userId).push(p);
+  }
+  return CREATION_STEPS.map((key) => {
+    let of = 0;
+    const times = [];
+    for (const list of byPerson.values()) {
+      const counted = list.filter((p) => p.steps[key].counted);
+      if (!counted.length) continue;
+      of += 1;
+      const reached = counted.map((p) => p.steps[key].seconds).filter((s) => s != null);
+      if (reached.length) times.push(Math.min(...reached));
+    }
+    const target = CREATION_TARGETS[key] ?? null;
+    const recorded = of > 0 || !byPerson.size;
+    return {
+      key,
+      reached: recorded ? (key === 'created' ? of : times.length)
+        : notRecorded('Not recorded for projects created before this step was first recorded.'),
+      of,
+      medianSeconds: key === 'created' ? null : median(times),
+      targetSeconds: target,
+      withinTarget: target == null ? null : times.filter((s) => s <= target).length,
+    };
+  });
+}
+
+/**
+ * The creation path for `week` (a week, or all time), with the eight weeks
+ * ending at it (all time: at the last finished week), and the newest
+ * projects in the window as examples. `memberIds` narrows to the people of
+ * one admit cohort.
+ */
+async function creationPath(pool, { week, now = new Date(), leftOutIds = [], memberIds = null } = {}) {
+  const anchor = week.all ? parseWeek(undefined, now) : week;
+  const trendStart = new Date(anchor.start.getTime() - (TREND_WEEKS - 1) * WEEK_MS);
+  const from = new Date(Math.min(week.start.getTime(), trendStart.getTime()));
+  const to = new Date(Math.max(week.end.getTime(), anchor.end.getTime()));
+  const [{ rows }, { rows: rec }] = await Promise.all([
+    pool.query(CREATION_PATH_SQL, [from, to, ...realPersonParams(leftOutIds)]),
+    pool.query(CREATION_RECORDED_SQL),
+  ]);
+  const r = rec[0] || {};
+  const recordedFrom = { running: r.running || null, preview: r.preview || null, change_live: r.change_live || null };
+  const projects = rows
+    .filter((row) => !memberIds || memberIds.has(Number(row.user_id)))
+    .map((row) => creationProject(row, recordedFrom));
+  const inSpan = (p, span) => {
+    const t = new Date(p.createdAt).getTime();
+    return t >= span.start.getTime() && t < span.end.getTime();
+  };
+  const inWeek = projects.filter((p) => inSpan(p, week));
+  const weeks = [];
+  for (let k = TREND_WEEKS - 1; k >= 0; k -= 1) {
+    const start = new Date(anchor.start.getTime() - k * WEEK_MS);
+    const span = { start, end: new Date(start.getTime() + WEEK_MS) };
+    weeks.push({
+      week: isoDay(start),
+      steps: creationSteps(projects.filter((p) => inSpan(p, span)))
+        .map((s) => ({ key: s.key, reached: s.reached, medianSeconds: s.medianSeconds })),
+    });
+  }
+  const iso = (v) => (v ? new Date(v).toISOString() : null);
+  return {
+    week: week.label,
+    finished: week.finished,
+    steps: creationSteps(inWeek),
+    targets: CREATION_TARGETS,
+    recordedFrom: { running: iso(recordedFrom.running), preview: iso(recordedFrom.preview), change_live: iso(recordedFrom.change_live) },
+    weeks,
+    examples: [...inWeek].reverse().slice(0, CREATION_EXAMPLES).map((p) => ({
+      userId: p.userId, name: p.name, slug: p.slug, project: p.project, createdAt: iso(p.createdAt),
+      steps: CREATION_STEPS.filter((key) => key !== 'created')
+        .map((key) => ({ key, recorded: p.steps[key].counted, seconds: p.steps[key].seconds })),
+    })),
+  };
+}
+
+// ── First session ──────────────────────────────────────────────────────
+//
+// The first-session plan's measures, per person, for the week their first
+// session started:
+//
+//   make  somebody made a project from the first session's question
+//         (app_created with metadata.from = 'first-session'). The clock
+//         starts at Make it. First reward: their sketch shown to them
+//         (first_artefact_shown), target two minutes. The in-session aha:
+//         they sent an invite within the hour.
+//   join  somebody joined a project through an invite link (the first
+//         redemption that let them in). The clock starts at the join, the
+//         reward being the project they were invited to, shown at once. The
+//         in-session aha: they wrote in its chat or filed a request within
+//         the hour.
+//
+// Beside them, the invite funnel (#4176), for the same window: how many
+// people opened an invite link (invite_opened, signed in or out, never a
+// name), how many reached Homeroom signed in through one (invite_signed_in),
+// and how many joined through one (community_invite_redemptions). Signed in
+// is everyone who got there, in its two ways (#4272): signed up or in from
+// the link, which is what the link converted, or already signed in when
+// they opened it (the event's `how`, journey-events.noteInviteSignedIn).
+// Counts only: the page works out what dropped off between them. Four of
+// these are events first written with this reading; before each was first
+// recorded it is "not recorded", never a zero.
+
+// Written into the reading as minutes and seconds; the SQL takes no window.
+const FIRST_SESSION_MINUTES = 60;
+const FIRST_REWARD_TARGET = 120;
+const FIRST_SESSION_EXAMPLES = 6;
+
+// Each person's first session that started in [$1, $2). $3/$4 are the
+// real-person parameters. One row per person and path.
+const FIRST_SESSION_SQL = `WITH real AS (
+    SELECT u.id FROM users u WHERE ${REAL_PERSON_SQL}
+  ), made AS (
+    SELECT DISTINCT ON (e.user_id) e.user_id, e.app_id, e.created_at AS intent_at
+      FROM events e
+     WHERE e.event_type = 'app_created' AND e.metadata->>'from' = 'first-session'
+       AND e.created_at >= $1::timestamptz AND e.created_at < $2::timestamptz
+       AND e.user_id IN (SELECT r.id FROM real r)
+     ORDER BY e.user_id, e.created_at, e.id
+  ), joined AS (
+    SELECT DISTINCT ON (x.user_id) x.user_id, ci.app_id, COALESCE(x.applied_at, x.created_at) AS intent_at
+      FROM community_invite_redemptions x
+      JOIN community_invites ci ON ci.id = x.invite_id
+     WHERE x.status = 'joined'
+       AND COALESCE(x.applied_at, x.created_at) >= $1::timestamptz
+       AND COALESCE(x.applied_at, x.created_at) < $2::timestamptz
+       AND x.user_id IN (SELECT r.id FROM real r)
+     ORDER BY x.user_id, COALESCE(x.applied_at, x.created_at), x.id
+  )
+  SELECT 'make' AS path, m.user_id, u.username, m.app_id, ap.slug, ap.name, m.intent_at,
+         (SELECT MIN(e.created_at) FROM events e
+           WHERE e.event_type = 'first_artefact_shown' AND e.app_id = m.app_id) AS reward_at,
+         (SELECT MIN(ci.created_at) FROM community_invites ci
+           WHERE ci.app_id = m.app_id AND ci.created_by = m.user_id) AS invited_at,
+         ap.first_running_at AS running_at,
+         NULL::timestamptz AS said_at,
+         NULL::timestamptz AS suggested_at
+    FROM made m
+    JOIN users u ON u.id = m.user_id
+    JOIN apps ap ON ap.id = m.app_id
+  UNION ALL
+  SELECT 'join' AS path, j.user_id, u.username, j.app_id, ap.slug, ap.name, j.intent_at,
+         NULL::timestamptz AS reward_at,
+         NULL::timestamptz AS invited_at,
+         NULL::timestamptz AS running_at,
+         (SELECT MIN(cm.created_at) FROM chat_messages cm
+           WHERE cm.app_id = j.app_id AND cm.user_id = j.user_id AND cm.msg_type = 'message'
+             AND cm.created_at >= j.intent_at) AS said_at,
+         (SELECT MIN(i.created_at) FROM issues i
+           WHERE i.app_id = j.app_id AND i.created_by = j.user_id
+             AND i.created_at >= j.intent_at) AS suggested_at
+    FROM joined j
+    JOIN users u ON u.id = j.user_id
+    JOIN apps ap ON ap.id = j.app_id
+   ORDER BY intent_at, user_id`;
+
+// When each first-session event was first recorded at all.
+const FIRST_SESSION_RECORDED_SQL = `SELECT
+    (SELECT MIN(e.created_at) FROM events e
+      WHERE e.event_type = 'app_created' AND e.metadata->>'from' = 'first-session') AS make,
+    (SELECT MIN(e.created_at) FROM events e WHERE e.event_type = 'first_artefact_shown') AS reward,
+    (SELECT MIN(e.created_at) FROM events e WHERE e.event_type = 'invite_opened') AS opens,
+    (SELECT MIN(e.created_at) FROM events e WHERE e.event_type = 'invite_signed_in') AS signed_in`;
+
+// The invite funnel in [$1, $2), counted from the first sign-in through an
+// invite when that is later: before it the middle step was not recorded,
+// and the three would not compare. A person counts once a step: an open
+// once per maker and project, a sign-in and a join once per link. An open
+// signed out has no name, so opens are counted whoever opened them,
+// leaving out only the signed-in opens of people who are not real; the
+// other two steps are real people's. A sign-in is counted in all, and in
+// its two ways: signed up or in from the link, or already signed in when
+// they opened it. $3/$4 are the real-person parameters.
+const INVITE_FUNNEL_SQL = `WITH real AS (
+    SELECT u.id FROM users u WHERE ${REAL_PERSON_SQL}
+  ), win AS (
+    SELECT s.since, GREATEST($1::timestamptz, s.since) AS from_at
+      FROM (SELECT MIN(e.created_at) AS since FROM events e WHERE e.event_type = 'invite_signed_in') s
+  )
+  SELECT w.since,
+         (SELECT COUNT(*)::int FROM events e
+           WHERE e.event_type = 'invite_opened'
+             AND e.created_at >= w.from_at AND e.created_at < $2::timestamptz
+             AND (e.user_id IS NULL OR e.user_id IN (SELECT r.id FROM real r))) AS opened,
+         s.signed_in, s.signed_in_by_invite, s.signed_in_already,
+         (SELECT COUNT(*)::int FROM community_invite_redemptions x
+           WHERE x.status = 'joined'
+             AND COALESCE(x.applied_at, x.created_at) >= w.from_at
+             AND COALESCE(x.applied_at, x.created_at) < $2::timestamptz
+             AND x.user_id IN (SELECT r.id FROM real r)) AS joined
+    FROM win w
+    CROSS JOIN LATERAL (
+      SELECT COUNT(*)::int AS signed_in,
+             (COUNT(*) FILTER (WHERE e.metadata->>'how' IN ('signed_up', 'signed_in')))::int AS signed_in_by_invite,
+             (COUNT(*) FILTER (WHERE e.metadata->>'how' = 'was_signed_in'))::int AS signed_in_already
+        FROM events e
+       WHERE e.event_type = 'invite_signed_in'
+         AND e.created_at >= w.from_at AND e.created_at < $2::timestamptz
+         AND e.user_id IN (SELECT r.id FROM real r)
+    ) s`;
+
+/**
+ * Pure: the invite funnel for `week`, from a row of INVITE_FUNNEL_SQL:
+ * `{ from, opened, signedIn, signedInByInvite, signedInAlready, joined }`,
+ * `from` being when its counts start. `signedIn` is everyone who reached
+ * Homeroom signed in through a link; `signedInByInvite` signed up or in from
+ * it (the step's conversion), `signedInAlready` was signed in when they
+ * opened it. Not recorded before the first sign-in through an invite was,
+ * nor for one admit cohort (`cohort`): an open signed out names nobody, so
+ * it is in no cohort, and the funnel is everyone's or nothing.
+ */
+function inviteFunnelReading(row, { week, cohort = false } = {}) {
+  if (cohort) return notRecorded('An invite opened signed out names nobody, so the funnel is counted for everyone only.');
+  const since = row && row.since ? new Date(row.since) : null;
+  if (!since || since.getTime() >= new Date(week.end).getTime()) {
+    return notRecorded('Not recorded before sign-ins through an invite were counted.');
+  }
+  return {
+    from: new Date(Math.max(new Date(week.start).getTime(), since.getTime())).toISOString(),
+    opened: Number(row.opened || 0),
+    signedIn: Number(row.signed_in || 0),
+    signedInByInvite: Number(row.signed_in_by_invite || 0),
+    signedInAlready: Number(row.signed_in_already || 0),
+    joined: Number(row.joined || 0),
+  };
+}
+
+function secondsBetween(fromIso, toIso) {
+  if (!fromIso || !toIso) return null;
+  return Math.max(0, Math.round((new Date(toIso).getTime() - new Date(fromIso).getTime()) / 1000));
+}
+
+/** One first-session row, as the seconds from its start to each step. */
+function firstSessionPerson(row) {
+  const intent = row.intent_at;
+  const out = {
+    path: row.path, userId: Number(row.user_id), name: row.username,
+    slug: row.slug, project: row.name, startedAt: intent ? new Date(intent).toISOString() : null,
+  };
+  if (row.path === 'make') {
+    out.steps = {
+      reward: secondsBetween(intent, row.reward_at),
+      invited: secondsBetween(intent, row.invited_at),
+      running: secondsBetween(intent, row.running_at),
+    };
+  } else {
+    out.steps = {
+      said: secondsBetween(intent, row.said_at),
+      suggested: secondsBetween(intent, row.suggested_at),
+    };
+  }
+  return out;
+}
+
+/** Per step: people who reached it, in the first session, and the median. */
+function firstSessionStep(people, key, { target = null } = {}) {
+  const times = people.map((p) => p.steps[key]).filter((s) => s != null);
+  const session = FIRST_SESSION_MINUTES * 60;
+  return {
+    key,
+    reached: times.length,
+    inSession: times.filter((s) => s <= session).length,
+    medianSeconds: median(times),
+    targetSeconds: target,
+    withinTarget: target == null ? null : times.filter((s) => s <= target).length,
+  };
+}
+
+/**
+ * Pure: the reading, from rows of FIRST_SESSION_SQL, the invite funnel
+ * (`opens`, inviteFunnelReading) and FIRST_SESSION_RECORDED_SQL's dates.
+ */
+function firstSessionReading(rows, opens, { week, recordedFrom = {} } = {}) {
+  const people = rows.map(firstSessionPerson);
+  const make = people.filter((p) => p.path === 'make');
+  const join = people.filter((p) => p.path === 'join');
+  const ahaJoin = join.filter((p) => [p.steps.said, p.steps.suggested]
+    .some((s) => s != null && s <= FIRST_SESSION_MINUTES * 60)).length;
+  const iso = (v) => (v ? new Date(v).toISOString() : null);
+  const recorded = (since, reason) => (since ? null : notRecorded(reason));
+  return {
+    week: week.label,
+    finished: week.finished,
+    sessionMinutes: FIRST_SESSION_MINUTES,
+    make: {
+      people: make.length,
+      notRecorded: recorded(recordedFrom.make, 'Not recorded before projects made from the first session were marked.'),
+      steps: [
+        firstSessionStep(make, 'reward', { target: FIRST_REWARD_TARGET }),
+        firstSessionStep(make, 'invited'),
+        firstSessionStep(make, 'running'),
+      ],
+      aha: make.filter((p) => p.steps.invited != null && p.steps.invited <= FIRST_SESSION_MINUTES * 60).length,
+    },
+    join: {
+      people: join.length,
+      steps: [firstSessionStep(join, 'said'), firstSessionStep(join, 'suggested')],
+      aha: ahaJoin,
+    },
+    opens: opens || notRecorded('Not recorded before sign-ins through an invite were counted.'),
+    recordedFrom: {
+      make: iso(recordedFrom.make), reward: iso(recordedFrom.reward),
+      opens: iso(recordedFrom.opens), signedIn: iso(recordedFrom.signedIn),
+    },
+    examples: [...people].reverse().slice(0, FIRST_SESSION_EXAMPLES),
+  };
+}
+
+/**
+ * The first session for `week` (or all time); `memberIds` narrows to one
+ * cohort, where the invite funnel is not counted (inviteFunnelReading).
+ */
+async function firstSession(pool, { week, leftOutIds = [], memberIds = null } = {}) {
+  const [{ rows }, { rows: [rec] }, { rows: [funnel] }] = await Promise.all([
+    pool.query(FIRST_SESSION_SQL, [week.start, week.end, ...realPersonParams(leftOutIds)]),
+    pool.query(FIRST_SESSION_RECORDED_SQL),
+    memberIds ? { rows: [] } : pool.query(INVITE_FUNNEL_SQL, [week.start, week.end, ...realPersonParams(leftOutIds)]),
+  ]);
+  const mine = rows.filter((row) => !memberIds || memberIds.has(Number(row.user_id)));
+  const r = rec || {};
+  return firstSessionReading(mine, inviteFunnelReading(funnel, { week, cohort: !!memberIds }), {
+    week,
+    recordedFrom: { make: r.make || null, reward: r.reward || null, opens: r.opens || null, signedIn: r.signed_in || null },
+  });
+}
+
+// ── Pairs ──────────────────────────────────────────────────────────────
+//
+// The "aha": a project where two real people were both active within 7 days
+// of the second one joining. A project counts in the week its second real
+// member joined (the creator is its first), out of every project that got a
+// second member that week.
+//
+// The pair is whoever let the second member in through an invite link
+// (community_invites and community_invite_redemptions), when that is how
+// they came and the link's maker is a member; otherwise the first two
+// members. Members are the creator, the project's collaborators and the
+// people in its community (a Join, a pin, a collaborator's row), leaving out
+// the one-time backfill rows, whose times are the backfill's, not a join.
+// Active is anything they did on the project: used it (app_activity, by
+// day), wrote in its chat, voted on one of its changes or requests, or wrote
+// to an agent working on it. Homeroom's own project is left out: everybody
+// is in it.
+
+// Written into PAIRS_SQL as INTERVAL '7 days'; the two must agree.
+const PAIR_DAYS = 7;
+const PAIR_EXAMPLES = 6;
+
+// Projects whose second real member joined in [$1, $2), with their pair and
+// when each of the two was first active in the 7 days from that join.
+// $3/$4 are the real-person parameters.
+const PAIRS_SQL = `WITH real AS (
+    SELECT u.id FROM users u WHERE ${REAL_PERSON_SQL}
+  ), joined AS (
+    SELECT ap.id AS app_id, ap.created_by AS user_id, ap.created_at AS at
+      FROM apps ap
+     WHERE ap.self_hosted IS NOT TRUE AND ap.created_by IS NOT NULL
+    UNION ALL
+    SELECT ap.id, cmb.user_id, cmb.joined_at
+      FROM community_members cmb
+      JOIN apps ap ON ap.community_id = cmb.community_id
+     WHERE ap.self_hosted IS NOT TRUE AND cmb.source IN ('creator', 'collaborator', 'favorite', 'joined')
+    UNION ALL
+    SELECT ac.app_id, ac.user_id, COALESCE(ac.accepted_at, ac.created_at)
+      FROM app_collaborators ac
+      JOIN apps ap ON ap.id = ac.app_id
+     WHERE ap.self_hosted IS NOT TRUE AND ac.status = 'member'
+  ), members AS (
+    SELECT j.app_id, j.user_id, MIN(j.at) AS joined_at,
+           ROW_NUMBER() OVER (PARTITION BY j.app_id ORDER BY MIN(j.at), j.user_id) AS n
+      FROM joined j
+      JOIN real r ON r.id = j.user_id
+     WHERE j.at IS NOT NULL
+     GROUP BY j.app_id, j.user_id
+  ), paired AS (
+    SELECT m2.app_id, m2.user_id AS second_id, m2.joined_at AS second_at,
+           COALESCE(inv.host_id, m1.user_id) AS host_id, inv.host_id IS NOT NULL AS via_invite
+      FROM members m2
+      JOIN members m1 ON m1.app_id = m2.app_id AND m1.n = 1
+      LEFT JOIN LATERAL (
+        SELECT ci.created_by AS host_id
+          FROM community_invite_redemptions cr
+          JOIN community_invites ci ON ci.id = cr.invite_id
+          JOIN members mh ON mh.app_id = ci.app_id AND mh.user_id = ci.created_by
+         WHERE ci.app_id = m2.app_id AND cr.user_id = m2.user_id AND cr.status = 'joined'
+           AND ci.created_by <> m2.user_id
+         ORDER BY cr.created_at, cr.id
+         LIMIT 1
+      ) inv ON TRUE
+     WHERE m2.n = 2 AND m2.joined_at >= $1::timestamptz AND m2.joined_at < $2::timestamptz
+  ), active AS (
+    SELECT p.app_id, aa.user_id, (MIN(aa.date)::timestamp AT TIME ZONE 'UTC') AS at
+      FROM paired p
+      JOIN app_activity aa ON aa.app_id = p.app_id AND aa.user_id IN (p.host_id, p.second_id)
+     WHERE aa.date >= (p.second_at AT TIME ZONE 'UTC')::date
+       AND aa.date < ((p.second_at + INTERVAL '7 days') AT TIME ZONE 'UTC')::date
+     GROUP BY p.app_id, aa.user_id
+    UNION ALL
+    SELECT p.app_id, cmx.user_id, MIN(cmx.created_at)
+      FROM paired p
+      JOIN chat_messages cmx ON cmx.app_id = p.app_id AND cmx.user_id IN (p.host_id, p.second_id)
+     WHERE cmx.msg_type = 'message' AND cmx.deleted_at IS NULL
+       AND cmx.created_at >= p.second_at AND cmx.created_at < p.second_at + INTERVAL '7 days'
+     GROUP BY p.app_id, cmx.user_id
+    UNION ALL
+    SELECT p.app_id, pvx.user_id, MIN(pvx.created_at)
+      FROM paired p
+      JOIN chat_sessions csx ON csx.app_id = p.app_id
+      JOIN pr_votes pvx ON pvx.session_id = csx.id AND pvx.user_id IN (p.host_id, p.second_id)
+     WHERE pvx.created_at >= p.second_at AND pvx.created_at < p.second_at + INTERVAL '7 days'
+     GROUP BY p.app_id, pvx.user_id
+    UNION ALL
+    SELECT p.app_id, ivx.user_id, MIN(ivx.created_at)
+      FROM paired p
+      JOIN issues ix ON ix.app_id = p.app_id
+      JOIN issue_votes ivx ON ivx.issue_id = ix.id AND ivx.user_id IN (p.host_id, p.second_id)
+     WHERE ivx.created_at >= p.second_at AND ivx.created_at < p.second_at + INTERVAL '7 days'
+     GROUP BY p.app_id, ivx.user_id
+    UNION ALL
+    SELECT p.app_id, csx.user_id, MIN(smx.created_at)
+      FROM paired p
+      JOIN chat_sessions csx ON csx.app_id = p.app_id AND csx.user_id IN (p.host_id, p.second_id)
+      JOIN chat_session_messages smx ON smx.session_id = csx.id
+     WHERE smx.role = 'user'
+       AND smx.created_at >= p.second_at AND smx.created_at < p.second_at + INTERVAL '7 days'
+     GROUP BY p.app_id, csx.user_id
+  )
+  SELECT p.app_id, ap.slug, ap.name, p.second_at, p.via_invite,
+         p.host_id, hu.username AS host, p.second_id, su.username AS second,
+         (SELECT MIN(a.at) FROM active a WHERE a.app_id = p.app_id AND a.user_id = p.host_id) AS host_active_at,
+         (SELECT MIN(a.at) FROM active a WHERE a.app_id = p.app_id AND a.user_id = p.second_id) AS second_active_at
+    FROM paired p
+    JOIN apps ap ON ap.id = p.app_id
+    JOIN users hu ON hu.id = p.host_id
+    JOIN users su ON su.id = p.second_id
+   ORDER BY p.second_at DESC, p.app_id`;
+
+/** One project's pair, read: both active (when), still inside its 7 days, or not. */
+function pairReading(row, now = new Date()) {
+  const second = new Date(row.second_at).getTime();
+  const both = row.host_active_at && row.second_active_at;
+  const bothAt = both
+    ? Math.max(second, new Date(row.host_active_at).getTime(), new Date(row.second_active_at).getTime()) : null;
+  return {
+    slug: row.slug,
+    name: row.name,
+    pair: [{ userId: Number(row.host_id), name: row.host }, { userId: Number(row.second_id), name: row.second }],
+    via: row.via_invite ? 'invite' : 'members',
+    secondJoinedAt: new Date(second).toISOString(),
+    bothActive: !!both,
+    hoursToBoth: bothAt == null ? null : Math.round((bothAt - second) / 3600000),
+    open: !both && new Date(now).getTime() < second + PAIR_DAYS * DAY_MS,
+  };
+}
+
+/**
+ * Pairs for `week` (a week, or all time): how many projects had the aha,
+ * out of those that got a second member, how many are still inside their
+ * 7 days, the eight weeks ending at it (all time: at the last finished
+ * week), and the newest projects as examples. `memberIds` narrows to pairs
+ * with someone from one admit cohort in them.
+ */
+async function pairs(pool, { week, now = new Date(), leftOutIds = [], memberIds = null } = {}) {
+  const anchor = week.all ? parseWeek(undefined, now) : week;
+  const trendStart = new Date(anchor.start.getTime() - (TREND_WEEKS - 1) * WEEK_MS);
+  const from = new Date(Math.min(week.start.getTime(), trendStart.getTime()));
+  const to = new Date(Math.max(week.end.getTime(), anchor.end.getTime()));
+  const { rows } = await pool.query(PAIRS_SQL, [from, to, ...realPersonParams(leftOutIds)]);
+  const read = rows
+    .filter((row) => !memberIds || memberIds.has(Number(row.host_id)) || memberIds.has(Number(row.second_id)))
+    .map((row) => pairReading(row, now));
+  const inSpan = (p, span) => {
+    const t = new Date(p.secondJoinedAt).getTime();
+    return t >= span.start.getTime() && t < span.end.getTime();
+  };
+  const inWeek = read.filter((p) => inSpan(p, week));
+  const trend = [];
+  for (let k = TREND_WEEKS - 1; k >= 0; k -= 1) {
+    const start = new Date(anchor.start.getTime() - k * WEEK_MS);
+    const list = read.filter((p) => inSpan(p, { start, end: new Date(start.getTime() + WEEK_MS) }));
+    trend.push({ week: isoDay(start), count: list.filter((p) => p.bothActive).length, of: list.length });
+  }
+  return {
+    week: week.label,
+    finished: week.finished,
+    days: PAIR_DAYS,
+    count: inWeek.filter((p) => p.bothActive).length,
+    of: inWeek.length,
+    open: inWeek.filter((p) => p.open).length,
+    trend,
+    examples: inWeek.slice(0, PAIR_EXAMPLES),
+  };
+}
+
 // ── Summary ────────────────────────────────────────────────────────────
 //
 // What the page leads with, in one request: active groups for the last
@@ -1415,6 +2107,17 @@ async function summary(pool, { week, now = new Date(), leftOutIds = [], memberId
 module.exports = {
   COHORTS_SQL,
   CHANGE_LOOP_SQL,
+  CREATION_PATH_SQL,
+  CREATION_RECORDED_SQL,
+  CREATION_STEPS,
+  CREATION_TARGETS,
+  FIRST_SESSION_SQL,
+  FIRST_SESSION_RECORDED_SQL,
+  INVITE_FUNNEL_SQL,
+  FIRST_SESSION_MINUTES,
+  FIRST_REWARD_TARGET,
+  PAIRS_SQL,
+  PAIR_DAYS,
   COVERAGE_SQL,
   DROPPED_SQL,
   INVITE_LOOP_SQL,
@@ -1443,12 +2146,22 @@ module.exports = {
   LOST_CUTOFFS,
   NEWCOMER_DAYS,
   REAL_PERSON_SQL,
+  REAL_VOTER_SQL,
+  CHANGE_PERSON_SQL,
   RESERVED_PATTERNS,
+  TEAM_DOMAINS,
+  TEAM_DOMAINS_SQL,
+  TEAM_ADDRESSES_SQL,
   VISIT_GAP_MS,
   WEEK_MS,
   activeGroups,
   allTime,
   changeLoop,
+  creationPath,
+  creationProject,
+  creationSteps,
+  pairReading,
+  pairs,
   cohorts,
   coverage,
   groupsForWeek,
@@ -1456,6 +2169,9 @@ module.exports = {
   newcomerNextSteps,
   nextStepCounts,
   firstMile,
+  firstSession,
+  firstSessionReading,
+  inviteFunnelReading,
   firstMileCounts,
   firstMileSteps,
   groupLifecycle,

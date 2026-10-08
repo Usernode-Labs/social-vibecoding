@@ -122,6 +122,7 @@ write_active() {
 (platform_gate) {
 	forward_auth usernode-${color}:3000 {
 		uri /__caddy/access
+		copy_headers X-Usernode-Identity
 		lb_try_duration 30s
 		lb_try_interval 250ms
 		transport http {

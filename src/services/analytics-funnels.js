@@ -6,6 +6,11 @@
 // missing dapp receipt abandonment. Historical opening backfills are excluded:
 // observed app opens carry source=app_tab, while live PR opens carry prNumber.
 
+// A dev session is credited to its author, or for a Homeroom bot build to the
+// person who asked for it (#3970), the same rule as the dashboard and Journey.
+// Read as a property so scripts/check-sql.js still resolves the SQL below.
+const changePerson = require('./change-person');
+
 const OBSERVATION_WINDOW_DAYS = 30;
 const COHORT_DAYS = Object.freeze({
   '1d': 1,
@@ -32,6 +37,8 @@ WITH coverage AS (
    WHERE u.created_at <= $1::timestamptz
      AND ($2::timestamptz IS NULL OR u.created_at >= $2::timestamptz)
      AND ($4::boolean OR NOT u.is_admin)
+     AND u.test_account_created_at IS NULL
+     AND NOT u.is_synthetic
 ), journeys AS (
   SELECT b.*, opened.opened_at, returned.returned_at,
          engaged.engaged_at, creator.creator_at,
@@ -256,7 +263,7 @@ WITH coverage AS (
      AND metadata ? 'prNumber'
      AND created_at <= $1::timestamptz
 ), cohort_sessions AS (
-  SELECT cs.id AS session_id, cs.user_id, u.is_admin,
+  SELECT cs.id AS session_id, cp.user_id, u.is_admin,
          cs.created_at AS entered_at,
          cs.created_at + ($3::int * INTERVAL '1 day') AS deadline,
          cs.pr_number, cs.status, cs.promoted_at AS recorded_promoted_at,
@@ -274,11 +281,17 @@ WITH coverage AS (
               WHERE me.session_id = cs.id AND me.event_type = 'pr_merged'
            )) AS has_merge_state
     FROM chat_sessions cs
-    JOIN users u ON u.id = cs.user_id
+    -- A bot build is its requester's session: the person, not the bot
+    -- account, is the builder here (a build with no known requester is
+    -- nobody's and drops out, like the bot account itself).
+    CROSS JOIN LATERAL (SELECT ${changePerson.CHANGE_PERSON_SQL} AS user_id) cp
+    JOIN users u ON u.id = cp.user_id
     CROSS JOIN coverage c
    WHERE cs.created_at <= $1::timestamptz
      AND ($2::timestamptz IS NULL OR cs.created_at >= $2::timestamptz)
      AND ($4::boolean OR NOT u.is_admin)
+     AND u.test_account_created_at IS NULL
+     AND NOT u.is_synthetic
 ), opened AS (
   SELECT b.*, op.opened_recorded_at,
          promo_any.promoted_independent_at,

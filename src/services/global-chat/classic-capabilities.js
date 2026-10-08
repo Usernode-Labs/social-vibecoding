@@ -2,6 +2,7 @@
 
 const inventory = require('./classic-inventory.generated.json');
 const { routeParameters, sanitizeForModel, sensitiveKey } = require('./classic-api-client');
+const classicSessions = require('../classic-sessions');
 
 const MAX_BODY_JSON_BYTES = 1024 * 1024;
 const QUERY_SCHEMA = Object.freeze({
@@ -274,7 +275,7 @@ function developmentTaskSchema(kind) {
         }
         : {
           type: 'string', minLength: 1, maxLength: 24, pattern: '^[1-9][0-9]*$',
-          description: 'Exact numeric development-session id from context.activeObject when it is a session, the user, or an authoritative session result.',
+          description: 'Exact numeric development-session id from context.activeObject when it is a session, the user, or an authoritative session result. Only a session that can still be continued; an older session that reports classic_read_only cannot.',
         },
       task: {
         type: 'string', minLength: 1, maxLength: DEVELOPMENT_TASK_MAX_CHARS,
@@ -431,6 +432,13 @@ function developmentStartDefinition(route) {
   };
 }
 
+// #4268: an older (classic) session is read-only since #3976, so a turn
+// handed to one could only end in POST /chat's `classic_session_read_only`
+// 409. The handler reads the same verdict the session's own screen reads
+// (`classic_read_only` on GET /api/sessions/:id) and answers with that
+// refusal itself, without handing the browser a turn. The sessions that do
+// still continue in their dev chat, a CLI hand-off and a request's planning
+// record, are handed off as before.
 function developmentTurnDefinition(route) {
   const detailRoute = inventory.routes.find((item) => (
     item.status === 'mapped' && item.method === 'GET' && item.path === DEVELOPMENT_DETAIL_PATH
@@ -440,7 +448,7 @@ function developmentTurnDefinition(route) {
     id: route.capabilityId,
     domain: 'development',
     title: 'Continue development work',
-    summary: 'Send an exact task to an existing owned development session. The session keeps its pinned Development AI model and reasoning effort; the Global Chat model never substitutes itself.',
+    summary: 'Send an exact task to an existing owned development session that can still be continued, such as a CLI hand-off. Older sessions are read-only; start new work instead. The session keeps its pinned Development AI model and reasoning effort; the Global Chat model never substitutes itself.',
     keywords: ['code', 'continue', 'develop', 'development', 'fix', 'implement', 'repository', 'session'],
     discoveryPriority: 40,
     inputSchema: developmentTaskSchema('continue'),
@@ -459,6 +467,12 @@ function developmentTurnDefinition(route) {
       });
       const session = detail.authoritativeResult?.session;
       const classicPath = exactSessionPath(session, session?.app_slug, input.sessionId);
+      if (detail?.ok !== false && session?.classic_read_only === true) {
+        return {
+          ...normalizeExecutionResult({ ok: false, status: 409, data: classicSessions.refusal() }),
+          classicPath,
+        };
+      }
       return handoffResult(detail, { session, task: input.task.trim(), classicPath });
     },
     tests: ['tests/global-chat-classic-capabilities.test.js'],

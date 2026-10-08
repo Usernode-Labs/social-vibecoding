@@ -112,9 +112,11 @@ test('filterToCollaborators short-circuits without an app or candidates', async 
 
 // ── Invite creators ─────────────────────────────────────────────────────
 
+// A collab invite carries its `detail` ('join' for an invite to join a
+// private project, src/services/collab-invites.js) as a fourth value.
 const INVITE_CREATORS = [
   ['collab_invite', notifications.createCollabInviteNotification,
-    { appId: 10, recipientId: 7, inviterId: 3 }, [7, 10, 3]],
+    { appId: 10, recipientId: 7, inviterId: 3 }, [7, 10, 3, null]],
   ['collab_invite_accepted', notifications.createCollabInviteAcceptedNotification,
     { appId: 10, recipientId: 3, accepterId: 7 }, [3, 10, 7]],
   ['approver_invite', notifications.createApproverInviteNotification,
@@ -130,7 +132,8 @@ test('each invite creator inserts its reviewed push-eligible kind for the right 
     const rows = await creator(pool, input);
     assert.equal(pool.state.inserts.length, 1, kind);
     const insert = pool.state.inserts[0];
-    assert.match(insert.sql, new RegExp(`VALUES \\(\\$1, \\$2, \\$3, '${kind}'\\)`));
+    const values = kind === 'collab_invite' ? `'${kind}', \\$4` : `'${kind}'`;
+    assert.match(insert.sql, new RegExp(`VALUES \\(\\$1, \\$2, \\$3, ${values}\\)`));
     assert.deepEqual(insert.params, params, kind);
     assert.equal(rows.length, 1, `${kind} returns the row for hydrateAndPush`);
   }
@@ -149,7 +152,13 @@ test('invite creators are no-ops without a recipient or app', async () => {
 test('a missing inviter degrades to a system notification, not a failure', async () => {
   const pool = fakePool({});
   await notifications.createCollabInviteNotification(pool, { appId: 10, recipientId: 7 });
-  assert.deepEqual(pool.state.inserts[0].params, [7, 10, null]);
+  assert.deepEqual(pool.state.inserts[0].params, [7, 10, null, null]);
+});
+
+test('an invite to join a private project says so in its detail', async () => {
+  const pool = fakePool({});
+  await notifications.createCollabInviteNotification(pool, { appId: 10, recipientId: 7, inviterId: 3, detail: 'join' });
+  assert.deepEqual(pool.state.inserts[0].params, [7, 10, 3, 'join']);
 });
 
 // ── managed OpenRouter review ──────────────────────────────────────────

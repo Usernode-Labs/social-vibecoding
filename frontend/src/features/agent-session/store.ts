@@ -34,6 +34,7 @@ import { useRef, useSyncExternalStore } from 'react';
 
 import { hasPlatformViewer, whenPlatformViewer } from '../../lib/platform-viewer';
 import * as api from './api';
+import { refusalSummary } from '../attachments/refusal-summary';
 import { acceptFiles, pickedKind, type PendingFile } from './attachments';
 import type {
   AgentAction,
@@ -102,6 +103,8 @@ export interface SpecSheetState {
   version: number | null;
   versions: number[];
   text: string;
+  /** The version's HTML document when it was written as one (#3699); `text` is then its markdown copy. */
+  html: string | null;
   phase: 'loading' | 'ready' | 'error';
   error: string;
   /**
@@ -160,6 +163,13 @@ export interface AgentSessionState {
   deciding: string | null;
   sessions: AgentSession[];
   sessionsLoaded: boolean;
+  /**
+   * The viewer has had an agent session, archived ones included: they have
+   * built something themselves. The Homeroom menu's Agent chats section is
+   * shown only then (useAgentChatsShown). Set by the list's read and by the
+   * first message of a new one, and never cleared in this document.
+   */
+  sessionsStarted: boolean;
   /** The picker's options, read once per page. */
   catalog: ModelCatalog | null;
   /** A pick on its way to the server. */
@@ -230,6 +240,7 @@ export const INITIAL_STATE: AgentSessionState = {
   deciding: null,
   sessions: [],
   sessionsLoaded: false,
+  sessionsStarted: false,
   catalog: null,
   choosing: false,
   returnedText: null,
@@ -382,6 +393,22 @@ export function useAgentSessions(): AgentSession[] {
   return useAgentSessionSelector((current) => current.sessions);
 }
 
+/**
+ * Whether the Homeroom menu shows its Agent chats section (Build it yourself
+ * and your sessions): once the viewer has had an agent session, from any
+ * door (the hub's ⋯, a request's Build it yourself, Messages' new chat, the
+ * filed request's link). A first-time user's menu stays short (first-session
+ * run-through, 5 Oct 2026). A listed session counts at once, so the section
+ * is there from the moment the first one is created.
+ */
+export function agentChatsShown(current: Pick<AgentSessionState, 'sessionsStarted' | 'sessions'>): boolean {
+  return current.sessionsStarted || current.sessions.length > 0;
+}
+
+export function useAgentChatsShown(): boolean {
+  return useAgentSessionSelector(agentChatsShown);
+}
+
 export function getAgentSessionState() {
   return state;
 }
@@ -443,7 +470,7 @@ function inFlight(): Set<string> {
 }
 
 const NOT_SENT_TEXT = 'Could not reach Homeroom, so this was not sent.';
-const BUSY_REFUSED_TEXT = 'The Mayor was still answering, so this was not sent.';
+const BUSY_REFUSED_TEXT = 'The agent was still answering, so this was not sent.';
 const STRANDED_TEXT = 'This was not sent.';
 
 /**
@@ -795,7 +822,7 @@ export function handleEvent(id: number, event: AgentTurnEvent) {
       break;
     case 'error':
       if (!fromChange) {
-        publish({ error: typeof event.error === 'string' ? event.error : 'The Mayor could not finish this turn.' });
+        publish({ error: typeof event.error === 'string' ? event.error : 'The agent could not finish this turn.' });
         void requestSync(id);
       }
       break;
@@ -1074,7 +1101,11 @@ async function createFromDraft(draft: AgentDraft): Promise<number | null> {
   try {
     const session = await api.createSession(draft.hint, draft.agent);
     telemetry?.outcome?.(attemptId, 'success');
-    publish((current) => ({ sessions: [session, ...current.sessions.filter((s) => s.id !== session.id)] }));
+    // `sessionsStarted`: the Homeroom menu's Agent chats is theirs from now.
+    publish((current) => ({
+      sessions: [session, ...current.sessions.filter((s) => s.id !== session.id)],
+      sessionsStarted: true,
+    }));
     // Still on screen: this is the conversation now. Left meanwhile: it
     // still gets its message, it just is not what the screen shows.
     if (state.open && state.draft === draft) {
@@ -1150,8 +1181,8 @@ async function uploadPending(id: number, key: string): Promise<boolean> {
 /** Put picked, pasted or dropped files in the tray; the first refusal is said once. */
 export function addAttachments(files: Array<{ name: string; size: number; type?: string } & Blob>) {
   if (state.session?.status === 'archived') return;
-  const { accepted, error } = acceptFiles(state.attachments.length, files);
-  if (error) toast(error);
+  const { accepted, error, refusedCount } = acceptFiles(state.attachments.length, files);
+  if (error) toast(refusalSummary(error, refusedCount - 1));
   if (!accepted.length) return;
   const id = state.id;
   const added: PendingFile[] = accepted.map((file) => {
@@ -1330,7 +1361,7 @@ export async function sendAgentMessage(text: string, { retryOf = null }: { retry
           } else if ((error as { body?: { busy?: boolean } }).body?.busy) {
             fail(BUSY_REFUSED_TEXT);
           } else {
-            fail(errorText(error, 'The Mayor could not take this, so it was not sent.'));
+            fail(errorText(error, 'The agent could not take this, so it was not sent.'));
           }
         }
       } else if (!taken) {
@@ -1600,7 +1631,7 @@ export async function renameCurrentSession() {
 async function confirmArchive(): Promise<boolean> {
   return !!(await window.PlatformUI?.confirm?.({
     title: 'Archive this session?',
-    message: 'It leaves your lists and its change is paused. A change up for a vote keeps its vote, and you can unarchive the session at any time.',
+    message: 'It leaves your lists and its change is paused. A change waiting for approval keeps its approvals, and you can unarchive the session at any time.',
     confirmLabel: 'Archive',
   }));
 }
@@ -1836,16 +1867,18 @@ export async function openSpec(changeId: number, version: number | null = null) 
   publish({
     drawerOpen: false,
     paneTab: 'spec',
-    specSheet: { changeId, version, versions: same ? same.versions : [], text: '', phase: 'loading', error: '', tab },
+    specSheet: { changeId, version, versions: same ? same.versions : [], text: '', html: null, phase: 'loading', error: '', tab },
   });
   try {
-    const { spec, versions } = await api.getSpec(changeId);
+    const { spec, html: latestHtml, versions } = await api.getSpec(changeId);
     const numbers = versions.map((v) => Number(v.version)).filter((v) => Number.isInteger(v) && v > 0);
     const newest = numbers.length ? Math.max(...numbers) : null;
-    const text = version != null && version !== newest ? await api.getSpecVersion(changeId, version) : spec;
+    const { text, html } = version != null && version !== newest
+      ? await api.getSpecVersionDoc(changeId, version)
+      : { text: spec, html: latestHtml };
     if (ticket !== specRequest) return;
     publish((current) => ({
-      specSheet: { changeId, version: version ?? newest, versions: numbers, text, phase: 'ready', error: '', tab: current.specSheet?.tab ?? tab },
+      specSheet: { changeId, version: version ?? newest, versions: numbers, text, html, phase: 'ready', error: '', tab: current.specSheet?.tab ?? tab },
     }));
   } catch (error) {
     if (ticket !== specRequest) return;
@@ -2188,9 +2221,9 @@ export async function loadAgentSessions() {
   }
   const read = ++listRead;
   try {
-    const sessions = await api.listSessions();
+    const { sessions, started } = await api.listSessions();
     if (read !== listRead) return;
-    publish({ sessions, sessionsLoaded: true });
+    publish((current) => ({ sessions, sessionsLoaded: true, sessionsStarted: current.sessionsStarted || started }));
   } catch {
     if (read !== listRead) return;
     publish({ sessionsLoaded: true });

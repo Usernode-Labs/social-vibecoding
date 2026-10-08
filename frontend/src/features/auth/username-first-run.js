@@ -55,6 +55,18 @@
 // gate does not apply, so the terms ask is not delayed for the accounts
 // that never see this screen.
 //
+// ── A provisional handle, asked for at the first public place ──────────
+//
+// An invite's phone sign-up gives a name, not a username, and gets a
+// PROVISIONAL handle made from that name for the private group that invited
+// it (`App.user.usernameProvisional`, users.username_provisional_since).
+// Nothing public may show it, so the first time the person goes somewhere
+// public (a public app or community: App.navigateToApp, or a join the server
+// refuses with username_required) `askForPublic()` asks for a username: the
+// same field, the same POST, but a sheet they may close ("Not now"), since
+// staying in their private group needs nothing. It resolves to whether they
+// now hold a chosen handle.
+//
 // Classic IIFE like ../settings/terms-first-run.js, imported from
 // ../../main.tsx so it rides the shell bundle rather than the prerender —
 // no new public/js/** script, so SHELL_ASSETS, the script-order test and
@@ -122,6 +134,45 @@
       }
     },
 
+    // Before somewhere public, for a provisional handle: true when the
+    // account holds a username it chose (now, or already), false when the
+    // person closed the ask. Never asks twice at once.
+    askForPublic() {
+      const user = window.App && window.App.user;
+      if (!user || user.usernameProvisional !== true) return Promise.resolve(true);
+      if (UsernameFirstRun._publicAsk) return UsernameFirstRun._publicAsk;
+      UsernameFirstRun._publicAsk = new Promise((resolve) => {
+        const presented = UsernameFirstRun._present({
+          forPublic: true,
+          onResult: (chosen) => {
+            UsernameFirstRun._publicAsk = null;
+            resolve(chosen);
+          },
+        });
+        // No kit to ask with: let the server's refusal stand.
+        if (presented === false) {
+          UsernameFirstRun._publicAsk = null;
+          resolve(false);
+        }
+      });
+      return UsernameFirstRun._publicAsk;
+    },
+
+    // A write somewhere public (joining a public community, following its
+    // invite) that the server may refuse with username_required: run it,
+    // and on that refusal ask (askForPublic) and run it once more. Returns
+    // the last Response, so a "Not now" leaves the caller its refusal.
+    async publicRetry(attempt) {
+      const res = await attempt();
+      if (res.status !== 409) return res;
+      const body = await res.clone().json().catch(() => ({}));
+      if (body.code !== 'username_required') return res;
+      // The server's word: this account's handle is provisional.
+      if (window.App && window.App.user) window.App.user.usernameProvisional = true;
+      if (!(await UsernameFirstRun.askForPublic())) return res;
+      return attempt();
+    },
+
     // Every skip is silent — a console.error on any route fails proposal
     // checks — and leaves the flag set, so the next load asks again.
     async maybePrompt() {
@@ -171,8 +222,15 @@
     },
 
     _present(opts) {
-      if (UsernameFirstRun._presented) return;
+      if (UsernameFirstRun._presented) return false;
       UsernameFirstRun._presented = true;
+      const forPublic = !!(opts && opts.forPublic);
+      let reported = false;
+      const report = (chosen) => {
+        if (reported || !forPublic) return;
+        reported = true;
+        opts.onResult?.(chosen);
+      };
       // A step of the newcomer's path (#3369); never the screenshot state.
       if (!(opts && opts.demo)) window.UITelemetry?.navigate?.('username_sheet');
 
@@ -185,7 +243,8 @@
 
       const panel = el('div', 'px-4 pb-5');
       panel.setAttribute('data-choose-username', '');
-      panel.appendChild(el('div', 'text-lg font-bold py-3', 'Choose your username'));
+      panel.appendChild(el('div', 'text-lg font-bold py-3',
+        forPublic ? 'Pick a username' : 'Choose your username'));
       // The same vocabulary the profile sheet uses for this field
       // (features/profile/profile-edit-sheet.tsx): "your @handle is your
       // sign-in name and your public page address". No promise about
@@ -195,8 +254,11 @@
       // so this line no longer says it a second time.
       panel.appendChild(el('p',
         'text-sm text-zinc-600 dark:text-zinc-400 mb-3',
-        'This is your @handle: your sign-in name and your public page ' +
-        'address. Letters, numbers and underscores, 3 to 32 characters.'));
+        forPublic
+          ? 'Public apps show this, not your name. Letters, numbers and ' +
+            'underscores, 3 to 32 characters.'
+          : 'This is your @handle: your sign-in name and your public page ' +
+            'address. Letters, numbers and underscores, 3 to 32 characters.'));
 
       const label = el('label',
         'block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1',
@@ -244,13 +306,26 @@
       // NO Close, NO Cancel and no third button: the step cannot be
       // skipped, and an exit that recorded nothing would put the person
       // back in front of other members under a handle they never picked.
+      // Before a public place it can (`forPublic`): "Not now" keeps them
+      // where they are, in their private group, under the handle it knows.
+      let notNow = null;
+      if (forPublic) {
+        notNow = el('button',
+          'w-full rounded-lg px-4 py-2 mt-2 text-sm font-medium text-zinc-600 dark:text-zinc-300',
+          'Not now');
+        notNow.type = 'button';
+        notNow.setAttribute('data-choose-username-not-now', '');
+        panel.appendChild(notNow);
+      }
 
       let sheet = null;
+      let closing = false;
       const dismiss = () => {
-        UsernameFirstRun._answered = true;
+        closing = true;
+        if (!forPublic) UsernameFirstRun._answered = true;
         if (sheet && sheet.dismiss) sheet.dismiss();
         UsernameFirstRun._presented = false;
-        UsernameFirstRun._resolve();
+        if (!forPublic) UsernameFirstRun._resolve();
         window.App?._renotifyNavigation?.();
       };
 
@@ -278,7 +353,7 @@
           if (!res.ok) {
             // Somebody already got through on another tab — the gate is
             // done, so close rather than pinning an error nobody can fix.
-            if (body.alreadyChosen) { dismiss(); return; }
+            if (body.alreadyChosen) { dismiss(); report(true); return; }
             setError(body.error || 'Could not save that username.');
             save.disabled = false;
             input.disabled = false;
@@ -292,10 +367,12 @@
           if (window.App && window.App.user) {
             window.App.user.username = body.username;
             window.App.user.needsUsernameChoice = false;
+            window.App.user.usernameProvisional = false;
             try { window.App.saveSessionSnapshot?.(window.App.user); } catch (_) {}
             try { window.App.resyncCurrentView?.(); } catch (_) {}
           }
           dismiss();
+          report(true);
           if (window.PlatformUI) PlatformUI.toast(`You are @${body.username}.`);
         } catch (err) {
           console.warn('[username-first-run] choose failed:', err);
@@ -306,30 +383,39 @@
       };
 
       save.addEventListener('click', submit);
+      if (notNow) notNow.addEventListener('click', () => { dismiss(); report(false); });
       input.addEventListener('input', () => setError(''));
       input.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') { e.preventDefault(); submit(); }
       });
 
+      // Closed from outside (a backdrop tap or Escape, the public ask
+      // only): the same as "Not now".
+      const onDismiss = () => {
+        if (closing) return;
+        UsernameFirstRun._presented = false;
+        report(false);
+      };
       if (window.PlatformUI && typeof PlatformUI.modal === 'function') {
-        sheet = PlatformUI.modal({ contentEl: panel, dismissible: false });
+        sheet = PlatformUI.modal({ contentEl: panel, dismissible: forPublic, onDismiss });
       }
       if (!sheet && window.PlatformUI && typeof PlatformUI.sheet === 'function') {
         // The kit's modal is unavailable (an old native shell). A sheet is
         // still an overlay the person answers; it is dismissible, and the
         // flag survives a dismissal, so the next load asks again.
-        sheet = PlatformUI.sheet({ contentEl: panel });
+        sheet = PlatformUI.sheet({ contentEl: panel, onDismiss });
       }
       if (!sheet) {
         // No kit at all — the local container serves none of the hosted
         // assets (see the platform rules). Nothing to present, and the
         // account keeps its flag for a load that has one.
         UsernameFirstRun._presented = false;
-        UsernameFirstRun._resolve();
-        return;
+        if (!forPublic) UsernameFirstRun._resolve();
+        return false;
       }
       UsernameFirstRun._sheet = sheet;
       try { input.focus(); } catch (_) {}
+      return true;
     },
 
     init() {

@@ -25,13 +25,13 @@ const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 const ROOT = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 
-function context(user = { id: 42, username: 'Builder' }) {
+function context(user = { id: 42, username: 'Builder' }, globals = {}) {
   const c = { console, App: { user, currentApp: 'example', currentTab: 'dev', _appUrl: (slug, tab, ref) => `#app/${slug}/${tab}/issues/${ref?.id}` },
     relTime: () => 'just now',
     document: { getElementById: () => null, querySelector: () => null, addEventListener() {} },
     localStorage: { getItem: () => null }, addEventListener() {},
     setTimeout, clearTimeout, setInterval, clearInterval,
-    location: { search: '', hash: '' }, URLSearchParams };
+    location: { search: '', hash: '' }, URLSearchParams, ...globals };
   c.window = c;
   vm.createContext(c);
   for (const p of ['public/js/merge-status.js', 'public/js/app-view.js']) {
@@ -67,45 +67,230 @@ const PR = {
 };
 
 const plain = (o) => JSON.parse(JSON.stringify(o));
+// B10b: the steps, the pull request and the description are Details, a
+// sheet the page keeps mounted in the body (DetailsSheet portals, so a
+// server render of the page has none of it). `page` is the page, `details`
+// the sheet's contents, and `html` both, in the order the document holds
+// them.
 const render = (av, item, kind = 'proposal') => {
-  const { ChangeDetail } = loadTsx('frontend/src/features/dev-board/topic/topic-head.tsx');
+  const { ChangeDetail, DetailsBody } = loadTsx('frontend/src/features/dev-board/topic/topic-head.tsx');
   const v = av._topicViewFor(kind, item);
-  return { v, html: renderToHtml(createElement(ChangeDetail, { card: v.card, body: v.body, item, conversation: true })) };
+  const page = renderToHtml(createElement(ChangeDetail, { card: v.card, body: v.body, item, conversation: true }));
+  const details = renderToHtml(createElement(DetailsBody, {
+    prRef: v.body.hero ? v.body.hero.ref : null, steps: v.body.steps,
+    help: !!(v.body.details && v.body.details.help), html: v.body.proposalBody ? v.body.proposalBody.html : '',
+  }));
+  return { v, page, details, html: page + details };
 };
 
-test('the page is the hero, the steps sheet and the Discussion, in that order, and nothing the old shape had', () => {
+test('the page is the hero and the Discussion, the steps are in Details, and nothing the old shape had', () => {
   const av = context();
-  const { html } = render(av, PR);
-  const at = (s) => { const i = html.indexOf(s); assert.ok(i >= 0, s); return i; };
-  assert.ok(at('class="dev-topic-sheet dev-topic-hero"') < at('class="dev-topic-sheet dev-topic-steps"'));
-  assert.ok(at('dev-topic-steps') < at('data-change-conversation="4090"'));
+  const { html, page, details } = render(av, PR);
+  const at = (s) => { const i = page.indexOf(s); assert.ok(i >= 0, s); return i; };
+  assert.ok(at('class="dev-topic-sheet dev-topic-hero"') < at('data-change-conversation="4090"'));
+  // B10b: the steps moved one tap down, whole.
+  assert.ok(!page.includes('dev-topic-steps'), 'no steps sheet on the page');
+  assert.ok(details.includes('class="dev-topic-sheet dev-topic-steps"'));
   for (const gone of ['dev-topic-card"', 'dev-topic-about"', 'dev-topic-ledger', 'dev-topic-more', 'About this change',
     'What changes for you', 'Where it stands', 'More about this change', 'Testing instructions', 'dev-topic-fold']) {
     assert.ok(!html.includes(gone), `${gone} is not on the page`);
   }
 });
 
-test('the hero: the eyebrow with the pull request and its state, the age, the title, the by-line, the tags as chips', () => {
+test('the hero: the eyebrow with its state, the age, the title, the by-line, the tags as chips', () => {
   const av = context();
-  const { v, html } = render(av, PR);
+  const { v, html, page, details } = render(av, PR);
   const hero = plain(v.body.hero);
   assert.deepEqual(hero, {
-    kind: 'Proposal', ref: { s: 'PR#12', href: 'https://github.com/example/app/pull/12' }, status: 'In review',
+    kind: 'Change', ref: { s: 'PR#12', href: 'https://github.com/example/app/pull/12' }, status: 'Waiting for approval',
     age: hero.age, author: 'maya', verb: 'proposed', provenance: null, tint: 'b',
   });
   assert.ok(v.body.hero.age && v.body.hero.age.s, 'the age is the card meta line’s own part');
-  assert.match(html, /<span class="dev-ws-eyebrow dev-topic-hero-eyebrow">Proposal · <a href="https:\/\/github\.com\/example\/app\/pull\/12" target="_blank" rel="noopener">PR#12<\/a><span> · In review<\/span><\/span><span class="dev-ws-item-of"[^>]*>/);
+  // B10b: "Change · Waiting for approval"; the pull request is Details'.
+  assert.match(page, /<span class="dev-ws-eyebrow dev-topic-hero-eyebrow">Change · Waiting for approval<\/span><span class="dev-ws-item-of"[^>]*>/);
+  assert.ok(!page.includes('PR#12') && !page.includes('github.com/example/app/pull/12'), 'no pull request on the page');
+  assert.match(details, /^<p class="dev-details-pr" data-details-part="pr"><span>PR#12<\/span><a href="https:\/\/github\.com\/example\/app\/pull\/12" target="_blank" rel="noopener">Open on GitHub<\/a><\/p>/);
   assert.match(html, /<h2 class="dev-ws-item-title dev-topic-hero-title">Authenticate previews<\/h2>/);
   assert.match(html, /<p class="dev-ws-item-by dev-topic-hero-by"><span class="dev-ws-item-avatar" style="background:#[0-9a-f]{6}" aria-hidden="true">M<\/span><span><b>maya<\/b><span> · proposed /);
-  // The chips are the card's own tag specs (their tints ride along), and
-  // the linkage; the state tags stay off the hero, the steps say it.
+  // The chips are the card's own tag specs (their tints ride along); the
+  // state tags stay off the hero, the steps say it. The linkage is the
+  // Addresses line under the summary, by number and title, so it is not a
+  // "Closes #1993" tag up here as well (first-session run-through, 4 Oct
+  // 2026).
   const chips = html.slice(html.indexOf('dev-topic-hero-chips'), html.indexOf('dev-topic-hero-actions'));
   assert.match(chips, /data-attr-chip="" data-attr-field="priority"/);
-  assert.match(chips, /data-issue-chip="1993"[^>]*>Closes #1993</);
+  assert.doesNotMatch(chips, /data-issue-chip|Closes #/);
+  assert.match(page, /<span class="dev-topic-hero-issues-k">Addresses<\/span><a href="[^"]*\/dev\/issues\/1993" class="dev-ws-chip dev-ws-chip-info dev-topic-issue" data-issue-ref="1993"><b>#1993<\/b><span>Wait for authentication before opening previews<\/span><\/a>/);
+  // A linked request the line does not name keeps its tag.
+  const unlisted = av._topicViewFor('proposal', PR);
+  unlisted.card.linked = [...unlisted.card.linked, { ...unlisted.card.linked[0], key: 'issue:7', n: 7 }];
+  const { ChangeDetail } = loadTsx('frontend/src/features/dev-board/topic/topic-head.tsx');
+  const both = renderToHtml(createElement(ChangeDetail, { card: unlisted.card, body: unlisted.body, item: PR }));
+  const bothChips = both.slice(both.indexOf('dev-topic-hero-chips'), both.indexOf('dev-topic-hero-actions'));
+  assert.match(bothChips, /data-issue-chip="7"[^>]*>Closes #7</);
+  assert.doesNotMatch(bothChips, /data-issue-chip="1993"/);
   assert.doesNotMatch(chips, /data-status-tag/);
   assert.doesNotMatch(html, /data-status-tag/, 'no state tag anywhere on the page');
   // The summary is a paragraph, not a fold.
   assert.match(html, /<div class="dev-topic-hero-summary dev-topic-about-body" data-topic-part="summary">[\s\S]{0,120}Previews wait for sign-in\./);
+});
+
+// First-session run-through, 4 Oct 2026: a merged change's page read
+// "CHANGE · MERGED" over a filled green "✓ Merged". A newcomer's word is
+// live. #3848 also drew the pill grey, as a quiet done state; #3873 brought
+// the green back for Live, so the pill is the green "✓ Live".
+test('a merged change reads Live in the eyebrow and the pill, and the pill is green', () => {
+  const av = context();
+  const merged = { ...PR, status: 'merged', merged_at: '2026-09-19T12:00:00Z', mergeRequirements: undefined };
+  const { v, page } = render(av, merged);
+  assert.equal(v.body.hero.status, 'Live');
+  assert.match(page, /<span class="dev-ws-eyebrow dev-topic-hero-eyebrow">Change · Live<\/span>/);
+  const hero = page.slice(page.indexOf('data-topic-sheet="hero"'));
+  assert.match(hero, /class="gc-vote-count gc-vote-count-ok dev-status-pill[^"]*"[^>]*><span class="gc-vote-count-label">✓ Live<\/span>/);
+  assert.doesNotMatch(hero, /gc-vote-count-neutral/, 'not the grey of #3848');
+  assert.doesNotMatch(page, /Merged/);
+  // While the rollout is pending or failed the eyebrow does not claim it.
+  assert.equal(av._topicHeroView('proposal', { ...merged, deployment_kind: 'child', deployment_state: 'pending' }).status, 'Going live');
+  assert.equal(av._topicHeroView('proposal', { ...merged, deployment_kind: 'child', deployment_state: 'failed' }).status, 'Not live yet');
+  assert.equal(av._topicHeroView('proposal', { ...PR, status: 'merging' }).status, 'Going live');
+});
+
+// Flat 4B Chores, 5 Oct 2026: the first version (PR 3) was up for a vote
+// when the bot built a fix on its branch (PR 8), and PR 8 merged with PR 3's
+// commit in it. PR 3 is marked merged as included in PR 8
+// (services/included-changes.js), and its page says where it went live: the
+// eyebrow and the steps' headline name the change, the hero links to it, and
+// nothing asks for a vote or offers to undo a merge it never had.
+test('a change that went live inside another one says so and links to it', () => {
+  const av = context();
+  const included = {
+    ...PR, status: 'merged', merged_at: '2026-10-05T12:00:00Z', mergeRequirements: undefined,
+    merge_commit_sha: 'c'.repeat(40), included_in_session_id: 6288,
+    included_in_pr_number: 8, included_in_pr_title: 'Fix mark as done in Jordan’s first version',
+  };
+  const { v, page, details } = render(av, included);
+  assert.equal(v.body.hero.status, 'Live, included in #8');
+  assert.match(page, /<span class="dev-ws-eyebrow dev-topic-hero-eyebrow">Change · Live, included in #8<\/span>/);
+  assert.equal(v.body.steps.headline, 'Live, included in #8');
+  assert.match(details, /Live, included in #8/);
+  assert.deepEqual(plain(v.body.includedIn), {
+    heading: 'Went live as part of', state: 'merged', sessionId: 6288, label: '#8',
+    title: 'Fix mark as done in Jordan’s first version', href: '#app/example/dev/proposals/6288',
+  });
+  const box = page.slice(page.indexOf('data-topic-part="included-in"'));
+  assert.ok(page.includes('aria-label="The change this one went live in"'));
+  assert.match(box, /<h4 class="dev-topic-h">Went live as part of<\/h4>/);
+  assert.match(box, /href="#app\/example\/dev\/proposals\/6288"[^>]*data-included-in="6288"/);
+  assert.match(box, />#8<\/span><span[^>]*>Fix mark as done in Jordan’s first version<\/span>/);
+  // No vote, and the rollout words still lead.
+  assert.doesNotMatch(page, /data-vote-choice|Waiting for approval/);
+  assert.equal(av._topicHeroView('proposal', { ...included, deployment_kind: 'child', deployment_state: 'pending' }).status,
+    'Going live, included in #8');
+  // A change that merged on its own says nothing of the kind.
+  const own = render(av, { ...included, included_in_session_id: null, included_in_pr_number: null, included_in_pr_title: null });
+  assert.equal(own.v.body.hero.status, 'Live');
+  assert.equal(own.v.body.includedIn, null);
+  assert.ok(!own.page.includes('data-included-in'));
+  // A carrying change without a pull request number is still named.
+  assert.equal(av._topicHeroView('proposal', { ...included, included_in_pr_number: null }).status,
+    'Live, included in another change');
+});
+
+// First-session run-through, 4 Oct 2026. An invited flatmate tapped "Ready
+// to try" and read, top to bottom: "homeroom_bot · proposed 35m ago", a
+// "Closes #1" tag, "Thank homeroom_bot", and then the first version's spec:
+// its Design brief, with the accent as RGB triples, the kit's class names
+// and "Exact words: ...". The summary it came from is the spec's
+// user-facing half (homeroom-bot-live.js specUserFacing), credit line last.
+const LEAD = 'Everyone in the flat sees this week’s chores and who is on each one.';
+const BRIEF = [
+  '### Design',
+  '- Accent: sage green (light 95 118 83, dark 168 201 138).',
+  '- Kit: btn-primary, btn-secondary, card, skeleton, state-empty, state-error.',
+  '- Exact words: "This week", "Done".',
+].join('\n');
+const BOT_PR = {
+  ...PR, id: 5101, user_id: 99, username: 'homeroom_bot', pr_number: 2,
+  pr_title: 'Share the flat’s chores and who is on each',
+  pr_summary_md: `${LEAD}\n\n${BRIEF}\n\nAsked for by @maya`,
+  pr_body: `${LEAD}\n\n${BRIEF}\n\nAsked for by @maya\n\nCloses #1`,
+  linked_issues: [1],
+};
+const KUDOS = { Kudos: { _ensureCache: () => ({}), renderButton: () => '' } };
+
+test('a change Homeroom bot built: the plain lead first, its Design brief one tap down, and no developer chrome', () => {
+  const av = context({ id: 42, username: 'Builder' }, KUDOS);
+  av._ghIssues = [{ number: 1, title: 'First version of Flat 4B Chores' }];
+  const { v, page, details } = render(av, BOT_PR);
+  const hero = page.slice(page.indexOf('data-topic-sheet="hero"'), page.indexOf('data-change-conversation'));
+
+  // The summary is the lead and the credit; the brief is folded under it, shut.
+  const summary = hero.slice(hero.indexOf('data-topic-part="summary"'), hero.indexOf('data-topic-part="summary-more"'));
+  assert.ok(summary.includes(LEAD) && summary.includes('Asked for by @maya'));
+  assert.doesNotMatch(summary, /Design|sage green|btn-primary|Exact words/);
+  assert.match(hero, /<details class="dev-topic-details dev-topic-hero-more" data-topic-part="summary-more"><summary class="dev-topic-details-summary">How it’s built<\/summary><div class="dev-issue-body dev-topic-details-body">[\s\S]*### Design[\s\S]*btn-primary[\s\S]*<\/div><\/details>/);
+  assert.ok(hero.indexOf('data-topic-part="summary"') < hero.indexOf('data-topic-part="summary-more"'));
+  assert.ok(hero.indexOf('data-topic-part="summary-more"') < hero.indexOf('dev-topic-tested'), 'right under the lead');
+  assert.doesNotMatch(v.body.summaryMore.html, /Asked for by/, 'the credit is the change’s, not the brief’s');
+  // The open flag is AppView's, so a repaint keeps it open.
+  av._setSummaryMoreOpen(5101, true);
+  assert.equal(av._topicViewFor('proposal', BOT_PR).body.summaryMore.open, true);
+  av._setSummaryMoreOpen(5101, false);
+  assert.equal(av._topicViewFor('proposal', BOT_PR).body.summaryMore.open, false);
+  // The whole description is still in Details, as on every change.
+  assert.match(details, /data-details-part="description"[\s\S]*btn-primary[\s\S]*Closes #1/);
+
+  // The by-line names the bot as it is named everywhere else, and says it made it.
+  assert.equal(v.body.hero.author, 'Homeroom bot');
+  assert.equal(v.body.hero.verb, 'made');
+  assert.match(hero, /<b>Homeroom bot<\/b><span> · made /);
+  assert.doesNotMatch(hero, /homeroom_bot|proposed/);
+
+  // The request is named once, in words, under the summary: no "Closes #1" tag.
+  const chips = hero.slice(hero.indexOf('dev-topic-hero-chips'), hero.indexOf('dev-topic-hero-actions'));
+  assert.doesNotMatch(chips, /data-issue-chip|Closes #/);
+  assert.match(hero, /<span class="dev-topic-hero-issues-k">Addresses<\/span><a [^>]*data-issue-ref="1"><b>#1<\/b><span>First version of Flat 4B Chores<\/span><\/a>/);
+
+  // No kudos: they would thank the bot's account. Not on the band, not in ⋯.
+  assert.doesNotMatch(hero, /data-kudos-host/);
+  assert.ok(!av._cardMenuItems(v.card.rail.menuKey).some((a) => a.icon === 'kudos'));
+  assert.ok(!av._proposalCardModel(BOT_PR, {}).actions.some((a) => a.kudos != null), 'nor on its board card');
+  assert.ok(!av._proposalMenuItems(BOT_PR, { noNav: false }).some((a) => a.icon === 'kudos'), 'nor in the card’s ⋯');
+  // Asking the bot for changes still leads the band.
+  assert.ok(v.card.actions.some((a) => a.key === 'ask-bot'));
+
+  // A person's change keeps its kudos slot and its by-line.
+  const { v: theirs, page: theirsPage } = render(av, PR);
+  assert.match(theirsPage, /data-kudos-host="4090"/);
+  assert.equal(theirs.body.hero.verb, 'proposed');
+  assert.equal(theirs.body.summaryMore, null);
+});
+
+test('the lead is the stored summary’s own words: shown whole when there is nothing to fold, and never for a person’s change', () => {
+  const av = context();
+  const parts = (item) => plain(av._summaryParts(item));
+  // A description the build wrote itself has no brief: shown whole.
+  assert.deepEqual(parts({ ...BOT_PR, pr_summary_md: `${LEAD}\n\nAsked for by @maya` }),
+    { lead: `${LEAD}\n\nAsked for by @maya`, more: '' });
+  // A summary that opens with the brief has no lead to show: shown whole, as before.
+  assert.deepEqual(parts({ ...BOT_PR, pr_summary_md: BRIEF }), { lead: BRIEF, more: '' });
+  // A heading inside a code fence is not one.
+  const fenced = `${LEAD}\n\n\`\`\`\n### Design\n\`\`\``;
+  assert.deepEqual(parts({ ...BOT_PR, pr_summary_md: fenced }), { lead: fenced, more: '' });
+  // The credit stays with the lead when a later update follows it.
+  assert.deepEqual(parts({ ...BOT_PR, pr_summary_md: `${LEAD}\n\n${BRIEF}\n\nAsked for by @maya\n\n**Latest update:** Tidied the list.` }),
+    { lead: `${LEAD}\n\nAsked for by @maya`, more: `${BRIEF}\n\n**Latest update:** Tidied the list.` });
+  // Other subsections a person will see stay in the lead, up to the brief.
+  assert.deepEqual(parts({ ...BOT_PR, pr_summary_md: `${LEAD}\n\n### Screens\nA row each.\n\n${BRIEF}` }),
+    { lead: `${LEAD}\n\n### Screens\nA row each.`, more: BRIEF });
+  // A person's (or their agent's) summary is theirs, headings and all.
+  const mine = `${LEAD}\n\n${BRIEF}`;
+  assert.deepEqual(parts({ ...PR, pr_summary_md: mine }), { lead: mine, more: '' });
+  assert.equal(av._topicViewFor('proposal', { ...PR, pr_summary_md: mine }).body.summaryMore, null);
+  // An underway session the bot is building reads the same way.
+  const building = av._topicViewFor('session', { ...BOT_PR, status: 'active', shared_at: '2026-10-04T12:00:00Z' });
+  assert.ok(building.body.summaryMore && /btn-primary/.test(building.body.summaryMore.html));
+  assert.equal(building.body.hero.verb, 'started');
 });
 
 test('the proposal hero keeps the last summary visible with a quiet freshness note', () => {
@@ -121,7 +306,7 @@ test('a stale flag without any saved summary points to the current description',
   const av = context();
   const { html } = render(av, { ...PR, pr_summary_md: null, pr_summary_stale: true });
   const hero = html.slice(html.indexOf('data-topic-sheet="hero"'), html.indexOf('data-topic-sheet="steps"'));
-  assert.match(hero, /The current description is under Technical details\./);
+  assert.match(hero, /The current description is under Details\./);
   assert.doesNotMatch(hero, /This summary may describe an earlier revision\./);
 });
 
@@ -141,32 +326,52 @@ test('the hero draws the card’s two rows: the status pill with Vote at its end
   assert.match(band, /data-card-menu="detail:proposal:4090"[^>]*>[\s\S]*<\/button><\/div><\/div>$/, 'the ⋯ closes the band');
 });
 
-test('the ⋯ menu carries Technical details as a row of its own, which opens the sheet', () => {
+test('the ⋯ menu carries Details as a row of its own, which opens the sheet', () => {
   const av = context();
-  const { v, html } = render(av, PR);
+  const { v, page, details } = render(av, PR);
   const menu = av._cardMenuItems(v.card.rail.menuKey);
-  assert.equal(menu[0].label, 'Technical details');
+  assert.equal(menu[0].label, 'Details');
   assert.equal(menu[0].icon, 'details');
   assert.ok(av.MENU_ICONS.details, 'the glyph resolves');
-  assert.ok(menu.some((a) => a.label === 'Open on GitHub'));
-  // Closed until asked: the sheet renders nothing on the page itself.
-  assert.ok(!html.includes('technical prose'));
-  assert.ok(!html.includes('dev-details-card'));
+  assert.ok(!menu.some((a) => a.label === 'Open on GitHub'), 'B10b: GitHub is in Details');
+  // The sheet is body-mounted: the page itself renders none of it.
+  assert.ok(!page.includes('technical prose'));
+  assert.ok(!page.includes('dev-details-card'));
+  assert.match(details, /<section class="dev-details-part" data-details-part="description"><h5 class="dev-details-sub">Description<\/h5><div class="dev-issue-body dev-topic-details-body">[\s\S]*technical prose/);
   const src = read('public/js/app-view.js');
-  assert.match(src, /openTechnicalDetails\(id\) \{\n\s+window\.dispatchEvent\(new CustomEvent\('change-details-open', \{ detail: Number\(id\) \}\)\);/);
+  assert.match(src, /openTechnicalDetails\(id, part = null\) \{\n\s+window\.dispatchEvent\(new CustomEvent\('change-details-open', \{ detail: part \? \{ id: Number\(id\), part \} : Number\(id\) \}\)\);/);
   const tsx = read('frontend/src/features/dev-board/topic/topic-head.tsx');
   assert.match(tsx, /window\.addEventListener\('change-details-open', onOpen\)/);
-  assert.match(tsx, /createPortal\(\n\s+<div className="dev-details-scrim"/, 'body-mounted: a frosted sheet would contain a fixed box');
-  // No row without a technical half to open.
+  assert.match(tsx, /createPortal\(\n\s+<div className="dev-details-scrim" hidden=\{!open\}/, 'body-mounted: a frosted sheet would contain a fixed box; mounted while shut');
+  assert.ok(tsx.includes('/(?:^|[?&])details=1(?:&|$)/'), '?details=1 opens it as the page loads');
+  // A change with nothing written about it still has its steps there.
   const bare = av._topicViewFor('proposal', { ...PR, pr_body: null, pr_summary_md: null, spec_md: null });
-  assert.ok(!av._cardMenuItems(bare.card.rail.menuKey).some((a) => a.label === 'Technical details'));
+  assert.equal(av._cardMenuItems(bare.card.rail.menuKey)[0].label, 'Details');
+});
+
+test('B10b: the Tested line says what testing found, and opens Details at the Checks part', () => {
+  const av = context();
+  const said = (check_state) => av._testedLine({ ...PR, check_state });
+  assert.deepEqual(plain(said('passing')), { state: 'passed', text: 'Tested · All checks passed' });
+  assert.deepEqual(plain(said('pending')), { state: 'running', text: 'Testing it…' });
+  assert.deepEqual(plain(said('failing')), { state: 'failed', text: 'Testing found a problem' });
+  assert.deepEqual(plain(said('skipped')), { state: 'skipped', text: 'Not tested' });
+  assert.deepEqual(plain(said('error')), { state: 'broken', text: 'Testing couldn’t finish' });
+  assert.equal(said(null), null, 'nothing before the first run');
+  const { page } = render(av, PR);
+  assert.match(page, /<button type="button" class="dev-topic-tested" data-tested="passed"><span class="dev-topic-tested-mark dev-topic-tested-mark-passed" aria-hidden="true">✓<\/span><span>Tested · All checks passed<\/span><\/button>/);
+  // Under the summary, before the issue it addresses.
+  assert.ok(page.indexOf('data-topic-part="summary"') < page.indexOf('dev-topic-tested'));
+  const tsx = read('frontend/src/features/dev-board/topic/topic-head.tsx');
+  assert.ok(tsx.includes("AppView?.openTechnicalDetails(id, 'checks')"));
+  assert.ok(tsx.includes('querySelector(`[data-note="${part}"]`)'), 'and scrolls to that part');
 });
 
 test('the steps sheet is the strip expanded: its headline and count, one short step per gate in the gate’s order', () => {
   const av = context();
   const { v, html } = render(av, PR);
   const s = plain(v.body.steps);
-  assert.equal(s.headline, 'Waiting on your vote');
+  assert.equal(s.headline, 'Waiting for your approval');
   assert.equal(s.detail, null, 'no detail on the page: the current step says it');
   assert.equal(s.simple, true);
   assert.deepEqual([s.done, s.total], [3, 5]);
@@ -185,7 +390,7 @@ test('the steps sheet is the strip expanded: its headline and count, one short s
   }
   assert.equal(s.rows[0].votes, 'Loading votes…', 'the Votes step names who voted, once the roster answers');
   assert.equal(s.rows[0].help, true);
-  assert.match(html, /<div class="dev-steps-head"><span class="dev-steps-headline">Waiting on your vote<\/span><span class="dev-steps-count">3\/5<\/span><\/div>/);
+  assert.match(html, /<div class="dev-steps-head"><span class="dev-steps-headline">Waiting for your approval<\/span><span class="dev-steps-count">3\/5<\/span><\/div>/);
   assert.match(html, /<li class="dev-step dev-step-waiting" data-note="votes" data-req-gate="approvals" data-req-state="waiting"><span class="dev-step-mark dev-step-mark-waiting" aria-hidden="true">!<\/span><span class="dev-step-main"><span class="dev-step-label">Votes<\/span><span class="dev-ledger-review-line"><span class="dev-ledger-roster dev-step-line">Loading votes…<\/span><span class="dev-ledger-help voting-help-hint"><button type="button" class="voting-help-btn un-touch-target" data-voting-help=""/);
   assert.doesNotMatch(html, /dev-step-actor|dev-step-vote-bar|dev-step-vote-tally|dev-ledger-text/, 'none of the old step furniture');
   // Checks opens onto its run; a finished run starts closed.
@@ -221,7 +426,7 @@ test('a step the recording did not reach takes what the columns already know', (
   const state = (k) => spec.gates.find((g) => g.key === k).state;
   assert.equal(state('integration'), 'done');
   assert.equal(state('checks'), 'active', 'a live run is not "not reached"');
-  assert.equal(spec.headline, 'Waiting on your vote', 'the current step is still the vote');
+  assert.equal(spec.headline, 'Waiting for your approval', 'the current step is still the vote');
 });
 
 // #3234: the threshold counts active members live, so it can move while the
@@ -250,7 +455,7 @@ test('a failing check opens its step onto the run, with each failure’s door; t
   };
   const { v, html } = render(av, item);
   const s = plain(v.body.steps);
-  assert.equal(s.headline, 'Waiting on your vote', 'the strip names the first outstanding step: the vote comes before the sync');
+  assert.equal(s.headline, 'Waiting for your approval', 'the strip names the first outstanding step: the vote comes before the sync');
   const sync = s.rows.find((r) => r.gate === 'integration');
   assert.equal(sync.key, 'mergeability', 'the ledger row’s key is the data-note, so the declared checks still find it');
   assert.equal(sync.state, 'active');
@@ -295,6 +500,30 @@ test('a run in progress opens its step by itself: the build as its steps, then t
   assert.equal(plain(render(av, moot).v.body.steps).rows.find((r) => r.gate === 'checks').run, null);
 });
 
+test('a run that overlapped a platform update says it will run again, and opens onto its reason', () => {
+  const av = context();
+  const reason = 'Checks ran while Homeroom was updating, so they will run again.';
+  const item = {
+    ...PR, check_state: 'error', check_error_detail: reason, test_results: [],
+    mergeRequirements: { gates: gates({ checks: { state: 'active', detail: { note: 'they ran while Homeroom was updating and will run again' } } }), evaluated: true, provisional: false },
+  };
+  const { v, html } = render(av, item);
+  const checks = plain(v.body.steps).rows.find((r) => r.gate === 'checks');
+  assert.equal(checks.state, 'active');
+  assert.equal(checks.line, 'Will run again', 'nothing is running yet, so the line does not say Running');
+  assert.equal(checks.run.live, false);
+  assert.equal(checks.run.open, true, 'the reason is read without a tap');
+  assert.equal(checks.run.note, reason);
+  assert.match(html, /aria-expanded="true" aria-controls="dev-step-run-checks"/);
+  assert.match(html, /<p class="dev-step-run-note">Checks ran while Homeroom was updating, so they will run again\.<\/p>/);
+  assert.equal(checks.actions.length, 0, 'no re-run button: the run goes again on its own');
+  // The page's Tested line says the same, with the in-progress mark.
+  assert.deepEqual(plain(v.body.tested), { state: 'running', text: 'Testing will run again' });
+  // Any other error, which blocks on the author, still reads as broken.
+  const blocked = { ...item, mergeRequirements: { ...item.mergeRequirements, gates: gates({ checks: { state: 'blocked' } }) } };
+  assert.deepEqual(plain(av._testedLine(blocked)), { state: 'broken', text: 'Testing couldn’t finish' });
+});
+
 // #2588 retired the tail this test used to end on. The sheet's rows are the
 // merge gates and the states of the change — a failed preview, console
 // errors — and nothing else: the provenance notes that used to draw after
@@ -334,9 +563,9 @@ test('before review the page is the same shape: the change’s own status in the
   const { v, html } = render(av, mine, 'session');
   assert.equal(v.body.hero.kind, 'Change');
   assert.equal(v.body.hero.ref, null);
-  assert.equal(v.body.hero.status, 'Private change');
+  assert.equal(v.body.hero.status, 'Not shared yet');
   assert.equal(v.body.hero.verb, 'started');
-  assert.match(html, /<span class="dev-ws-eyebrow dev-topic-hero-eyebrow">Change · Private change<\/span>/);
+  assert.match(html, /<span class="dev-ws-eyebrow dev-topic-hero-eyebrow">Change · Not shared yet<\/span>/);
   // The draft's own step, then the gates it will meet once it is up for a
   // vote, drawn the way a proposal's are: one short line each, and no
   // ledger sentences under "Where it stands".
@@ -356,7 +585,7 @@ test('before review the page is the same shape: the change’s own status in the
   assert.equal((html.match(/>Submit for review</g) || []).length, 1);
   assert.match(html, />Continue building</);
   // The spec stands in for the technical half, behind the ⋯ row.
-  assert.ok(av._cardMenuItems(v.card.rail.menuKey).some((a) => a.label === 'Technical details'));
+  assert.ok(av._cardMenuItems(v.card.rail.menuKey).some((a) => a.label === 'Details'));
 });
 
 test('a draft’s steps: who is waiting, what the checks are doing, and Sync with main only for the owner of a conflicting draft', () => {
@@ -418,6 +647,63 @@ test('the picture: verified shots keeps its card, a run under way is one line wi
   const verified = render(av, { ...PR, shots: { state: 'verified', claims: [claim], artifacts: [], baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40) } }).html;
   assert.match(verified, /<div class="dev-topic-visuals" data-visuals-scope="1"><div class="usn-visuals-body">/);
   assert.ok(!verified.includes('dev-topic-hero-shots'));
+});
+
+test('the capture tiles are checked on a live proposal page, against the staging captures they are seeded with (#4269)', () => {
+  // #3976 retired the three checks that read the tiles (the routes past the
+  // first behind a disclosure, the phone outline, the empty tile) with the
+  // classic chat's Changes-ready card on 990412. The tiles still render for
+  // everyone on a proposal's page, in the hero, so ONE check reads all three
+  // there, on the promoted staging proposal whose captures cover each state:
+  // 900001 on staging-demo-app (migrate.js seedStagingDemoAppCard, then
+  // seedStagingVisuals).
+  const migrate = read('src/db/migrate.js');
+  assert.match(migrate, /\(900001, 'Staging demo app', 'staging-demo-app', 'running', 'public', 900001\)/);
+  assert.match(migrate, /\(900001, 900001, 900001, 'staging-demo\/promoted-pr', 900001,\s+'Staging demo PR[^']*', 'promoted', NOW\(\)\)/);
+  assert.ok(migrate.indexOf('await seedStagingDemoAppCard(pool);') < migrate.indexOf('await seedStagingVisuals(pool);'),
+    'the captures are written after the proposal they hang off');
+  const start = migrate.indexOf('async function seedStagingVisuals(pool)');
+  const seed = migrate.slice(start, migrate.indexOf('\n}\n', start));
+  assert.match(seed, /const DEMO_SESSION_ID = 900001;/);
+  const deep = /const SELF_APP_DEEP_PATH = '([^']+)'/.exec(seed)[1];
+  // The rows as /promoted aggregates them, shaped by the route's own helper.
+  const agg = {};
+  for (const [, ch, rest] of seed.matchAll(/\{ id: '(\w)'\.repeat\(32\), ([^}]*)\}/g)) {
+    const field = (name) => {
+      const m = new RegExp(`${name}: (?:'([^']*)'|(\\w+))`).exec(rest);
+      return m ? (m[1] ?? m[2]) : undefined;
+    };
+    const p = field('path');
+    agg[`${field('kind')}_${field('idx')}_${field('media')}`] = {
+      id: ch.repeat(32), path: p === 'SELF_APP_DEEP_PATH' ? deep : p,
+      viewport: field('viewport') || null, commit: null, fellBack: field('fellBack') === 'true',
+    };
+  }
+  const shaped = require('../src/services/visuals').shapeAgg(agg, null);
+  const groups = shaped.captures;
+  assert.ok(groups.length > 1, 'more than one route, so the rest sit behind the disclosure');
+  assert.ok(groups.slice(1).some((g) => g.viewport === 'mobile'), 'a phone capture past the first route');
+  assert.ok(groups.some((g) => !g.before && g.after), 'a route with no production version');
+
+  const av = context();
+  const { html } = render(av, { ...PR, id: 900001, shots: null, visuals: shaped });
+  const hero = html.indexOf('data-topic-sheet="hero"');
+  const scope = html.indexOf('<div class="dev-topic-visuals" data-visuals-scope="1"><div class="usn-visuals-body">');
+  assert.ok(hero >= 0 && scope > hero && scope < html.indexOf('data-change-conversation='), 'the tiles are in the hero');
+  const more = html.indexOf(`<details class="usn-visual-more"><summary class="usn-visual-more-summary">All ${groups.length} screens</summary>`, scope);
+  assert.ok(more > scope, 'the routes past the first sit behind "All N screens"');
+  assert.match(html.slice(more), /class="usn-visual-media usn-visual-phone"/, 'the phone capture is drawn in its outline');
+  assert.match(html.slice(scope), /class="usn-visual-empty" aria-hidden="true"/, 'the missing side is an empty tile');
+
+  const DAPP = JSON.parse(read('dapp.json'));
+  const check = DAPP.tests.find((t) => t.path === '/#app/staging-demo-app/dev/proposals/900001');
+  assert.ok(check, 'the proposal page is a declared check');
+  assert.equal(check.expectSelector,
+    '#dev-topic-thread [data-topic-sheet="hero"] [data-visuals-scope]:has(.usn-visual-more .usn-visual-phone):has(.usn-visual-empty)'
+    + ' .usn-visual-more > .usn-visual-more-summary');
+  assert.equal(check.expectText, `All ${groups.length} screens`, 'the count the seeded captures make');
+  assert.ok(!DAPP.tests.some((t) => /#dc-pr-card[^"]*\.usn-visual/.test(t.expectSelector || '')),
+    'nothing reads them on the classic card any more');
 });
 
 test('an issue page keeps the card and the sections under it', () => {
@@ -621,4 +907,28 @@ test('every state reads in the before & after words', () => {
   // A verified run's strip label is the card's badge.
   assert.equal(av._shotsView({ state: 'verified', claims: [CLAIM] }).label, 'Shots ready');
   assert.doesNotMatch(JSON.stringify(at), /visual change preview|visual preview/i);
+});
+
+// #3826: a change that needs a Yes from another member said so only in the
+// lock glyph's hover title, which a phone never shows. The hero says it in
+// words under the status row while that Yes is missing, and says nothing
+// once it is in or when the rule does not apply.
+test('the hero says when a change still needs a Yes from another member', () => {
+  const av = context();
+  const flagged = {
+    ...PR, requires_explicit_approval: true, explicit_approval_reason: 'governance',
+    needs_other_member_yes: true, other_member_yes_count: 0,
+  };
+  const line = /<p class="dev-topic-note" data-topic-part="needs-other-yes">Needs a Yes from another member before it can go live\.<\/p>/;
+  const { page } = render(av, flagged);
+  assert.match(page, line);
+  assert.ok(page.indexOf('dev-topic-hero-actions') < page.indexOf('needs-other-yes'), 'under the status row');
+  assert.ok(page.indexOf('needs-other-yes') < page.indexOf('data-topic-part="summary"'), 'above the summary');
+  // Satisfied: nothing.
+  assert.doesNotMatch(render(av, { ...flagged, other_member_yes_count: 1 }).page, /needs-other-yes/);
+  // A one-member project, or an unflagged change: nothing.
+  assert.doesNotMatch(render(av, { ...flagged, needs_other_member_yes: false }).page, /needs-other-yes/);
+  assert.doesNotMatch(render(av, PR).page, /needs-other-yes/);
+  // Settled: nothing.
+  assert.doesNotMatch(render(av, { ...flagged, status: 'closed' }).page, /needs-other-yes/);
 });

@@ -56,6 +56,10 @@ const DENIED_TABLES = new Set([
   'mobile_otp_codes',   // hashed one-time email signup/claim codes
   'waitlist_verification_codes', // one-time waitlist email codes, same treatment as mobile_otp_codes
   'web_signup_sessions', // hashed, single-use first-password continuations
+  'sign_in_providers',  // Apple/Google client secrets and private keys (AES blobs, still deny)
+  'oauth_sign_in_states', // Apple/Google round trips: state, binder, nonce, PKCE verifier
+  'oauth_signup_sessions', // hashed, single-use username-step continuations
+  'native_sign_in_tokens', // hashes of spent native Apple/Google ID tokens
   'mobile_auth_tokens', // protocol-2 native bearer hashes
   'native_session_web_incarnations', // protocol-2 web-session security lineage
   'native_session_attempts', // protocol-2 subject/network binding
@@ -102,6 +106,7 @@ const DENIED_TABLES = new Set([
   'mcp_tokens',               // hosted-connector bearer hashes and hints
   'mcp_delegations',          // which of the platform's own agents holds a grant for whom (#2779)
   'mcp_auth_audit_events',    // security audit trail for connector credentials
+  'external_agent_upload_tokens', // one-time work-order patch upload credential hashes (#4264)
   'user_social_identities',   // private provider ownership proofs
   'social_identity_oauth_states', // social-link state hashes + PKCE verifiers
   'social_identity_pending_replacements', // short-lived verified account replacements
@@ -142,6 +147,15 @@ const DENIED_COLUMNS = {
     'input_hash',
     'normalized_input',
   ],
+  phone_sign_in_tokens: [
+    // SHA-256 digest of a spent Firebase ID token (replay detection) —
+    // derived from auth material, so it is denied rather than reviewed.
+    'token_hash',
+  ],
+  test_phone_sign_ins: [
+    // bcrypt hash of a live one-time sign-in code for a test number.
+    'code_hash',
+  ],
   agent_session_actions: [
     // The sealed exact input of a pending write and its fingerprint (#2779).
     'input_hash',
@@ -150,6 +164,15 @@ const DENIED_COLUMNS = {
   onchain_accounts: [
     'secret_key',        // topochain: on-chain account private key (SPEC §6)
     'registration_code', // topochain: single-use account claim code (SPEC §6)
+  ],
+  // A person's own words to the Homeroom bot, often from their DM with it,
+  // tagged staging:private in schema.sql: never read while debugging.
+  homeroom_bot_requesters: [
+    'asked_text', // what they asked for, in their words
+  ],
+  homeroom_bot_runs: [
+    'plan_change', // what a creator asked the bot's plan changed with; never posted anywhere
+    'review', // a first version's review: issues quoting a private project's screens (review_rounds and review_stop stay readable)
   ],
   waitlist_signups: [
     'ip',         // submitter IP — same treatment as users.waitlist_ip

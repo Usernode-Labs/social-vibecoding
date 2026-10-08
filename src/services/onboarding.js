@@ -218,6 +218,12 @@ function parseJoin(raw) {
  * `acceptInvite(appId)` is injected: the invite path lives with the
  * collaborator routes (services/collab-invites.js) and needs the caller.
  *
+ * Every community joined here ends up pinned to Home, whichever branch
+ * joins it: communities.join pins Homeroom and an open community, and the
+ * accepted invite pins its project inside acceptInvite, as an invite link
+ * does. The pin is how the vote digest and a proposal's notification find
+ * a member, so an invite accepted here must not be the one join without it.
+ *
  * `{ skip: true }` is "Skip for now": the answer is recorded and nothing is
  * joined or left.
  *
@@ -261,6 +267,7 @@ async function answerJoin(pool, user, body, { showSelfHosted = false, acceptInvi
       await communities.join(pool, app, user.id);
       joined.push(app.slug);
     } else if (listed && listed.invited_by && typeof acceptInvite === 'function') {
+      // The same accept as the notification's, Home pin included.
       const result = await acceptInvite(app);
       if (result && result.ok) joined.push(app.slug);
     } else if (app.status === 'running' && app.view_visibility === 'public') {
@@ -419,7 +426,7 @@ const TOUR_STEP = Object.freeze({
  *   COMMUNITY_JOINED   `join`     Discover, where communities are joined
  *   TRY_APPS           `try`      the default app, opened
  *   VOTE_CAST          `vote`     voteTarget: a Needs you, or the Workshop
- *   FEEDBACK_SENT      `suggest`  the "Ask for a change" dialog, for the
+ *   FEEDBACK_SENT      `suggest`  the "Suggest an improvement" dialog, for the
  *   USEFUL_FEEDBACK               default app (the measure "Suggest an
  *                                 improvement" is scored by until an admin
  *                                 rebinds it to FEEDBACK_SENT)

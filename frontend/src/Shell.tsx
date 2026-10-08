@@ -43,7 +43,7 @@
 // 3. CONVERSION IS LIKE-FOR-LIKE. Component boundaries, props and state are
 //    free; rendered output is not. Same ids, same class strings, same `hidden`
 //    semantics, same data-*/aria-* attributes — public/js/** looks these up by
-//    getElementById and dapp.json's 315 declared tests select against these
+//    getElementById and dapp.json's declared checks select against these
 //    exact structures. tests/baselines/shell-markup.json is the frozen
 //    inventory; deliberate changes are recorded in the RETIRED_*/ADDED_* maps
 //    in tests/shell-id-inventory.test.js and tests/shell-script-order.test.js,
@@ -77,6 +77,8 @@ import { MoreScreen } from './features/auth/more';
 import { DevConsolePanel } from './features/dev-console';
 import { HomeScreen } from './features/home';
 import { OnboardingTour } from './features/home/tour';
+import { FirstSession } from './features/first-session';
+import { InvitePreview } from './features/invite-preview';
 import { ImproveIsland } from './features/improve';
 import { AppContextIsland } from './features/app-context';
 import { LeaderboardScreen } from './features/leaderboard';
@@ -560,6 +562,21 @@ export function Shell() {
           settled and Home is on screen. See features/home/tour/index.tsx.
       */}
       <Island name="OnboardingTour"><OnboardingTour /></Island>
+      {/*
+          "You're in" and the first-session tour after an invite
+          (features/first-session). Renders nothing until
+          App._followInvite opens it, so it adds nothing to the
+          prerendered document.
+      */}
+      <Island name="FirstSession"><FirstSession /></Island>
+      {/*
+          A private community's invite preview (#3700,
+          features/invite-preview): its page as a live link shows it to
+          somebody not in it yet, drawn from the link alone. Renders nothing
+          until App._followInvite opens it, so it adds nothing to the
+          prerendered document.
+      */}
+      <Island name="InvitePreview"><InvitePreview /></Island>
       {/*
           #1085 chunk H, step 3: the Dev board's runtime-injected regions.
           Renders NO DOM of its own — it is the anchor that lets

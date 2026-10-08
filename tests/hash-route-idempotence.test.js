@@ -259,15 +259,19 @@ test('the dev board card-menu shot is re-asserted, not stopped at the first open
     'and done() takes the listeners back off');
 });
 
-test('the venue-sheet and session-options cohorts are sibling fragments of one document', () => {
+test('a dev chat ?shot= cohort is sibling fragments of one document', () => {
+  // This read the ?shot=venue-sheet cohort until #3976 retired it with the
+  // classic dev chat's venue sheet (classic sessions are read-only). The
+  // spec viewer's is the dev chat cohort left with that shape, and it rides
+  // the same per-fragment latch.
   const paths = (manifest.tests || []).map((t) => t.path);
-  const venue = paths.filter((p) => p.startsWith('/?demo=1&shot=venue-sheet#'));
-  assert.ok(venue.length >= 4,
-    `several checks share the ?shot=venue-sheet document (${venue.length})`);
+  const spec = paths.filter((p) => p.startsWith('/?shot=spec-viewer#'));
+  assert.ok(spec.length >= 2,
+    `several checks share the ?shot=spec-viewer document (${spec.length})`);
   // Same search, several fragments — exactly the shape the runner reaches by
   // writing location.hash, and the shape the old boolean latch broke: the
-  // first session's sheet opened and none of the others did.
-  const frags = new Set(venue.map((p) => p.slice(p.indexOf('#'))));
+  // first session's panel opened and none of the others did.
+  const frags = new Set(spec.map((p) => p.slice(p.indexOf('#'))));
   assert.ok(frags.size > 1,
     `they address several sessions from that one document (${frags.size})`);
 });

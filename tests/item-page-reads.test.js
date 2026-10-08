@@ -231,7 +231,8 @@ test('the item reads ask for the short form; an underway change reads /details',
     '/api/sessions/42/details',
   ]);
   const head = read('frontend/src/features/dev-board/topic/topic-head.tsx');
-  assert.match(head, /await fetch\(`\$\{url\}\?results=failing\$\{demo\}`, \{ signal \}\);/,
+  // A live re-read (#4177) adds `cache: 'no-cache'` to the same request.
+  assert.match(head, /await fetch\(`\$\{url\}\?results=failing\$\{demo\}`, fresh \? \{ \.\.\.FRESH, signal \} : \{ signal \}\);/,
     'the change page\'s own read (readChangeDetail) asks for the short form too');
   assert.match(read('public/js/app-view.js'), /passCount: v\.passCount, passesFor: v\.passesFor,/,
     'the ledger\'s checks row carries it');

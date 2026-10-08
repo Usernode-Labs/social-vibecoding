@@ -61,9 +61,14 @@ test('each Agent sessions row says the app it is on and where it stands, under i
     conversation({ id: 2, lastActivityAt: '2026-09-24T11:00:00Z', focusApp: { slug: 'run', name: 'Run Club' }, activeChange: { appSlug: 'run', status: 'promoted', title: 'y' } }),
     conversation({ id: 3, lastActivityAt: '2026-09-24T10:00:00Z', focusApp: null, activeChange: { appSlug: null, status: 'active', title: 'z' } }),
   ]);
-  assert.deepEqual(rows.map((r) => r.sub), ['Run Club · in progress', 'Run Club · in vote', 'In progress'],
+  assert.deepEqual(rows.map((r) => r.sub), ['Run Club · in progress', 'Run Club · waiting for approval', 'In progress'],
     'the change\'s app, else the one it started from; alone, where it stands');
   assert.equal(model.agentSub('Notes', 'Agent session'), 'Notes · agent session');
+  // A change that went live says so in the newcomer's word, not "merged".
+  const [live] = model.continueRows([conversation({
+    activeChange: { appSlug: 'run', appName: 'Run Club', status: 'merged', title: 'x' },
+  })]).rows;
+  assert.equal(live.sub, 'Run Club · live');
 });
 
 test('the mark\'s Continue rows: every app\'s sessions, the five newest, and whether there are more', () => {
@@ -150,19 +155,30 @@ test('#3071: a menu row writes its address before the menu closes, so closing ca
   assert.match(sheet, /setMessagesFilter\('agents'\);\s*followThenDismiss\(e, '#messages'\);/, 'and "Show more"');
 });
 
-test('the mark\'s menu: the app\'s own rows first, then Agent sessions, the sessions after mount only, with "Show more" when there are more', () => {
+test('the mark\'s menu: the app\'s own rows first, then Agent chats, after mount only, with "Show more" when there are more', () => {
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
   assert.match(sheet, /const continuing = mounted && view === 'menu'\s*\? continueRows\(agentSessions \|\| \[\]\)\s*: \{ rows: \[\], more: false \};/,
     'never in the prerender (the hydrating render matches it), and not keyed on the app');
   assert.match(sheet, /if \(open && window\.App\?\.user\) void loadAgentSessions\(\);/,
     'for any signed-in viewer: the flag never hides a conversation that exists');
-  const at = (id) => sheet.indexOf(`id="${id}"`);
-  assert.ok(at('app-menu-row-workshop') < at('app-menu-row-about')
-    && at('app-menu-row-about') < at('app-menu-sessions')
-    && at('app-menu-sessions') < at('improve-row-new-session')
-    && at('improve-row-new-session') < at('app-menu-continue'),
-    'Go to community and About are the app\'s section; Agent sessions follow, led by Start a new change');
-  assert.match(sheet, /<div className=\{SECTION\}>Agent sessions<\/div>/, 'it was "Continue"');
+  // The section, after mount too, and only for somebody who has had an agent
+  // session (first-session run-through, 5 Oct 2026; tests/agent-chats-menu.test.js).
+  assert.match(sheet, /const showAgentChats = mounted && agentChats;/);
+  const menu = sheet.slice(sheet.indexOf('export function AppsSwitcherSheet('));
+  const at = (needle) => menu.indexOf(needle);
+  assert.ok(at('id="app-menu-row-workshop"') < at('id="app-menu-row-about"')
+    && at('id="app-menu-row-about"') < at('{showAgentChats ? <AgentChats readOnly={!!readOnly} continuing={continuing} /> : null}'),
+    'Go to community and About are the app\'s section; Agent chats follow');
+  const section = sheet.slice(sheet.indexOf('export function AgentChats('), sheet.indexOf('export function AppsSwitcherSheet('));
+  const inSection = (id) => section.indexOf(`id="${id}"`);
+  assert.ok(inSection('app-menu-sessions') < inSection('improve-row-new-session')
+    && inSection('improve-row-new-session') < inSection('app-menu-continue'),
+    'led by Build it yourself, then the sessions');
+  // "Agent chats" again (5 Oct 2026). It was "Continue", then "Agent
+  // sessions", then "More", a plain word for a newcomer, who no longer sees
+  // the section at all.
+  assert.match(section, /<div className=\{SECTION\}>Agent chats<\/div>/, 'it was "Continue", then "Agent sessions", then "More"');
+  assert.doesNotMatch(sheet, /<div className=\{SECTION\}>(?:More|Agent sessions)<\/div>/);
   assert.doesNotMatch(sheet, />Continue</);
   // Each session says what app it is on and where it stands, under its title.
   assert.match(sheet, /label=\{row\.title\}\s+sub=\{row\.sub\}/);
@@ -251,18 +267,27 @@ test('new work at the cap pauses the user\'s least recently used session instead
   assert.match(read('src/services/connector-limits.js'), /lifecycle\.freeUserSlot\(\{ pool, userId: user\.id \}\)/);
 });
 
-test('a message to a paused session resumes it, with every rule the resume route keeps', () => {
+test('a message to a paused session is refused, and never resumes it first (#3976)', () => {
+  // It used to resume the session and then run the turn (#2779 follow-up).
+  // Every paused row the chat route can load is now refused: an agent
+  // session's change names its conversation, and a classic session is
+  // read-only. Neither is resumed first, because a resume spends a slot and
+  // may pause another of the user's sessions for a message that is refused.
   const sessions = read('src/routes/sessions.js');
   const chat = sessions.slice(sessions.indexOf("router.post('/api/sessions/:id/chat'"));
-  const resumeAt = chat.indexOf('await resumePausedSession({');
-  assert.ok(resumeAt > 0 && resumeAt < chat.indexOf("error: 'Active session not found'"),
-    'resumed before the session is looked for again, never refused as not found');
-  assert.match(chat.slice(0, resumeAt), /status = 'paused'\s+AND is_headless = FALSE AND source IS DISTINCT FROM 'imported'/);
-  assert.match(chat.slice(0, resumeAt), /pausedRows\[0\]\.agent_session_id != null\) \{\s+return res\.status\(409\)/,
-    'a change an agent session owns is refused before anything is resumed');
+  const chatBody = chat.slice(0, chat.indexOf('\n  router.', 1));
+  assert.doesNotMatch(chatBody, /resumePausedSession\(/, 'a message resumes nothing');
+  const notFound = chat.indexOf("error: 'Active session not found'");
+  assert.match(chat.slice(0, notFound), /status = 'paused'\s+AND is_headless = FALSE AND source IS DISTINCT FROM 'imported'/);
+  assert.match(chat.slice(0, notFound), /pausedRows\[0\]\.agent_session_id != null\) \{\s+return res\.status\(409\)/,
+    'a change an agent session owns is refused, naming its conversation');
+  assert.match(chat.slice(0, notFound),
+    /pausedRows\.length && classicSessions\.isClassicSession\(pausedRows\[0\]\)\) \{\s+return res\.status\(409\)\.json\(classicSessions\.refusal\(\)\)/,
+    'a classic one is refused as read-only');
+  // The resume route and sync-main keep the one implementation.
   const route = sessions.slice(sessions.indexOf("router.post('/api/sessions/:id/resume'"));
   assert.match(route.slice(0, 600), /await resumePausedSession\(\{ pool, config, user: req\.user, sessionId \}\)/,
-    'one implementation for the route and the chat');
+    'one implementation for the route and sync-main');
   const syncMain = sessions.slice(sessions.indexOf("router.post('/api/sessions/:id/sync-main'"));
   assert.match(syncMain.slice(0, 2000), /session\.status === 'paused'[\s\S]{0,200}resumePausedSession/);
   assert.equal(typeof require('../src/routes/sessions').resumePausedSession, 'function');

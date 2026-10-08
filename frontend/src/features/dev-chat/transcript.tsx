@@ -570,7 +570,7 @@ function PrCard({ r, embedded = false, historical = false }: { r: Extract<Transc
               className="dc-pr-btn dc-pr-btn-promote"
               disabled={r.propose.kind !== 'ready'}
               aria-busy={r.propose.kind === 'pending' ? 'true' : undefined}
-              title={r.propose.kind === 'ready' ? r.propose.note : undefined}
+              title={r.propose.kind === 'ready' || r.propose.kind === 'empty' ? r.propose.note : undefined}
               onClick={r.propose.kind === 'ready' ? () => controller()?.promotePR?.() : undefined}
             >
               {r.propose.kind === 'pending'
@@ -664,7 +664,7 @@ function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
           data-persist-id={r.reasoning.details.persistId}
           open={reasoning.open} onToggle={reasoning.onToggle}
         >
-          <summary className="dc-cc-log-toggle">Mayor reasoning (raw)</summary>
+          <summary className="dc-cc-log-toggle">Agent reasoning (raw)</summary>
           <pre className="dc-cc-log-content">{r.reasoning.raw}</pre>
         </details>
       ) : null}

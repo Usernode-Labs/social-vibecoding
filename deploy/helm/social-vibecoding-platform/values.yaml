@@ -23,6 +23,14 @@ platform:
   # kill switch; legacy default-root screenshots stay suppressed. This was
   # visualEvidenceV2Enabled before the rename; that key is no longer read.
   shotsEnabled: true
+  # The workflow governance-proposal machine decides governance proposals
+  # (docs/workflows.md). A rolling change is safe in both directions; see
+  # docs/kubernetes-operations.md.
+  workflowGovernanceEnabled: false
+  # The workflow merge-followups machine runs what follows a merge
+  # (docs/workflows.md). A rolling change is safe in both directions; see
+  # docs/kubernetes-operations.md.
+  workflowMergeFollowupsEnabled: false
   replicas: 1
   image:
     repository: ghcr.io/replace-me/social-vibecoding-platform
@@ -105,13 +113,22 @@ config:
   domain: social-vibecoding.example.invalid
   # Empty retains the historical <slug>.<domain> layout.
   appsDomain: ""
+  # The app-host gate (scripts/app-gate.js): "on" routes every app and preview
+  # Ingress through a platform-owned check (members-only private apps, and
+  # signing people in at an app's own address); "off" routes them straight to
+  # their own Services. Before "on", the app namespace's policy (foundation)
+  # must allow pods labelled app.kubernetes.io/name=usernode-app-gate to reach
+  # app pods on 3000 and the platform Service, and allow ingress-controller
+  # traffic to the gate. "off" again, plus an Argo sync, is the fallback.
+  appGate: "off"
+  # "off" stops signing people in at an app's own address (no hop to the
+  # platform for a sign-in, no identity added to app requests); the gate
+  # itself, and members-only private apps, are unaffected.
+  appHostSignin: "on"
   # Optional waitlist OAuth callback origin. Empty uses the application's canonical origin.
   waitlistOauthOrigin: ""
-  # Waitlist skips by invite-tree generation (INVITE_TREE_BUDGETS): people let
-  # off the waitlist by hand get the first number; the default "10" gives the
-  # people they let in none (no chaining). Whether invite links skip the
-  # waitlist at all is an admin setting (Admin → Waitlist), not a value here.
-  inviteTreeBudgets: "10"
+  # Firebase phone authentication flag; enable in the cluster's plaintext values.
+  firebasePhoneAuthEnabled: false
   platformRepository: https://github.com/replace-me/social-vibecoding
   nodeRpcUrl: http://replace-me.invalid:3000
   # Explorer host[:port] without a scheme. Public hosts use HTTPS; private
@@ -176,11 +193,15 @@ secrets:
   gmailOauthClientId: ""
   gmailOauthClientSecret: ""
   gmailOauthRefreshToken: ""
+  # Optional engagement tracking with the existing sender. Supply through SOPS.
+  platformMailTrackingSecret: ""
   # Optional mobile push settings. Supply all four through encrypted external values.
   mobilePushEnabled: false
   pushEnv: ""
   firebaseProjectId: ""
   firebaseServiceAccountJsonB64: ""
+  # Optional Firebase web API key, supplied through encrypted external values.
+  firebaseWebApiKey: ""
 
 ingress:
   enabled: true

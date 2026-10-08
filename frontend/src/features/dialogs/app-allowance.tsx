@@ -153,7 +153,7 @@ export function AppAllowance({ id, surface = 'inset', quiet = false }: {
       {quota && !serverFull ? <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
         {quota.limit === null ? 'Admin accounts can create apps without a slot limit.'
           : quota.remaining == null ? 'Current usage is unavailable.'
-          : `${quota.remaining} ${quota.remaining === 1 ? 'slot' : 'slots'} available. Creating, importing and forking share this allowance.`}
+          : `${quota.remaining} ${quota.remaining === 1 ? 'slot' : 'slots'} available. Creating, importing and remixing share this allowance.`}
         {spent ? ' Request more slots to create another app.' : ''}
       </p> : null}
       {/*

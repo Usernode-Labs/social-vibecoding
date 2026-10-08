@@ -39,7 +39,11 @@ const COPY = 'frontend/src/features/apps/no-apps-yet.ts';
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
-const SENTENCE = 'No apps added yet. Find apps to add in the Discover section.';
+// It named only Discover until the first-session run-through of 5 October
+// 2026: a brand-new account read it with the New project tile right after it.
+// #4184 renamed the section's heading to "Discover Communities", and the
+// sentence names it by what it says.
+const SENTENCE = 'No apps added yet. Make one with New project, or find one in the Discover Communities section.';
 
 // ── rendering AppGrid at an arbitrary state ───────────────────────────
 //
@@ -65,6 +69,21 @@ test('the note is the exact sentence, from the shared constant', () => {
   assert.match(html, /data-home-apps-empty=""/);
   assert.ok(html.includes(SENTENCE), `the note renders the sentence: ${html}`);
   assert.match(html, /col-span-full/, 'it spans the four columns of the canvas');
+});
+
+test('it names the tile that follows it by the tile\'s own label, and the section below', () => {
+  // The New project tile is drawn for every account, straight after the note
+  // in an empty launcher (home.js: "Present for EVERY account"), so the
+  // sentence can always point at it; it must say what the tile says.
+  const { CREATE_TILE_LABEL } = loadTsx('frontend/src/features/home/create-tile.tsx');
+  assert.equal(CREATE_TILE_LABEL, 'New project');
+  assert.ok(SENTENCE.includes(`Make one with ${CREATE_TILE_LABEL},`), SENTENCE);
+  assert.match(SENTENCE, /find one in the Discover Communities section\.$/);
+  // ...and that is the heading the section below actually draws (#4184).
+  assert.match(read('frontend/src/features/home/panels/sections.tsx'), /label="Discover Communities"/);
+  assert.ok(!/—/.test(SENTENCE), 'no em dash in the copy');
+  const home = read('frontend/src/features/home/home.js');
+  assert.match(home, /Present for EVERY account: `canCreate` decides its treatment, never\s+\/\/ its presence/);
 });
 
 test('the launcher says it with a constant, and nothing hand-types it', () => {
@@ -139,6 +158,8 @@ test('a search that matched nothing keeps its own answer', () => {
   const html = renderGrid({ ready: true, view: 'search', emptyQuery: 'zzz' });
   assert.ok(!html.includes(SENTENCE), 'the search line names the query instead');
   assert.match(html, /No apps match/);
+  // ...and points at the section below by its heading (#4184).
+  assert.match(html, /try <span[^>]*>Discover Communities<\/span> below\./);
 });
 
 // ── 3. Home.render() reaches that state for an account with no apps ───

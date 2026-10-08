@@ -59,7 +59,7 @@ const DESIGN_SELF_CHECK_TOKEN = '{{DESIGN_SELF_CHECK}}';
 // self-check walks both: a colour picked in one look and never seen in the
 // other is how an app shipped pale violet labels on a white card.
 const DESIGN_BOTH_LOOKS = 'in the light and the dark look (add `?un-theme=light`, then `?un-theme=dark`, to the URL; just the one look when the app\'s `CLAUDE.md` declares a single fixed look)';
-const DESIGN_CHECKLIST = 'confirm: one primary action; headings make sense on their own; no new colours or fonts; text and controls readable in each look; nothing boxed in a card that could be plain layout; the same words as the rest of the app. Fix what fails and check again, within the in-loop browser\'s time budget.';
+const DESIGN_CHECKLIST = 'confirm: one primary action where the screen\'s job is an action (a screen for reading or browsing may have none); headings make sense on their own; no new colours or fonts; text and controls readable in each look; nothing boxed in a card that could be plain layout; the same words as the rest of the app. Fix what fails and check again, within the in-loop browser\'s time budget.';
 const DESIGN_SELF_CHECK = Object.freeze({
   images: `Checking your work: when the in-loop browser is available, take screenshots (\`browser_take_screenshot\`) of each changed screen at a phone width (\`browser_resize\` to 390x844) and a desktop width, ${DESIGN_BOTH_LOOKS}, including its empty and error states, and ${DESIGN_CHECKLIST}`,
   text: `Checking your work: you read text, not images. When the in-loop browser is available, check the running app with its accessibility snapshot (\`browser_snapshot\`) rather than screenshots. Walk each changed screen at a phone width (\`browser_resize\` to 390x844) and a desktop width, ${DESIGN_BOTH_LOOKS}, including its empty and error states, and ${DESIGN_CHECKLIST}`,
@@ -97,7 +97,7 @@ function runtimeReadsImages(runtimeContext) {
 // The same decisions, made once at spec time so the build inherits them
 // instead of improvising: every scout writes them into the spec as a
 // plain-language "### Design" subsection a non-developer can review.
-const SPEC_DESIGN_BRIEF = `DESIGN BRIEF: when the change adds or alters something a person sees, end the "User-facing changes" half (before any "### Questions") with a short "### Design" subsection in plain language: the screen's one job, its one primary action, which existing screen of this app it should look and behave like, and the exact word it uses for each thing on it, matching the words the app already uses. Prefer the app's existing components and styling to anything new, and say so when nothing existing fits. The build follows this subsection, so decide here rather than leaving it to the build. Omit it for changes nobody sees.`;
+const SPEC_DESIGN_BRIEF = `DESIGN BRIEF: when the change adds or alters something a person sees, end the "User-facing changes" half (before any "### Questions") with a short "### Design" subsection in plain language: the screen's one job, its one primary action if that job is an action (a screen for reading or browsing may have none), which existing screen of this app it should look and behave like, and the exact word it uses for each thing on it, matching the words the app already uses. Prefer the app's existing components and styling to anything new, and say so when nothing existing fits. The build follows this subsection, so decide here rather than leaving it to the build. Omit it for changes nobody sees.`;
 
 // #3737: a project's FIRST version (#3624) has no screen of its own to look
 // like. The starter's is placeholder, and its zinc and violet are the
@@ -106,7 +106,89 @@ const SPEC_DESIGN_BRIEF = `DESIGN BRIEF: when the change adds or alters somethin
 // look instead, and its build records it in the app's CLAUDE.md for every
 // later change to follow (homeroom-bot-live.js buildPrompt). Every other
 // spec keeps the brief above.
-const FIRST_VERSION_SPEC_DESIGN_BRIEF = `DESIGN BRIEF (FIRST VERSION): the app has no screen of its own yet (the starter template's is placeholder), so there is no existing screen for it to look like. In the "User-facing changes" half, before "### Assumptions", write a short "### Design" subsection in plain language that decides this app's own look: the main screen's one job and its one primary action; an accent colour plus the neutrals around it, chosen for this app and working in both the light and the dark look (not the starter's default palette, unless you choose it on purpose and say why); ONE signature element drawn from the app's subject, something a generic app would not have (for example a staff or a keyboard for an ear trainer, a proofing timeline for a bread app); a rough sketch of the main screen's layout at phone width, a few plain lines from top to bottom; and the exact word it uses for each thing on it. Use the platform's native UI kit for the parts it has. If the app keeps one fixed look (such as a game drawn as its own scene), say so here. The build follows this subsection and records it in the app's CLAUDE.md, so decide here rather than leaving it to the build.`;
+//
+// 7 Oct 2026: and decides its finish, so the build does not invent it: what
+// each repeated row or card shows and how prominently, which control each
+// setting uses, how dense the main screen is, and what the populated demo
+// shows. In App bench run 9 the GLM builds' populated screens looked empty
+// (a ranking app's own list was six empty rows: only other people's votes
+// were seeded) or hid their actions (a "view only" demo), where the builds
+// that seeded the viewer's own state looked lived in. The brief's examples
+// were two of the bench's own starter briefs, so they are gone: an example
+// here is copied, and an example from the benchmark leaks into it.
+// And its colours are no longer "an accent plus neutrals": the colours a
+// subject already has were being avoided as clichés, where the designs
+// people preferred used them and kept the action colour quiet (App bench
+// runs 7 and 9).
+// Later on 7 Oct 2026 ("V1", from running this spec prompt on Opus and
+// rendering the drawn screens, which came out closer to what Opus makes
+// building an app alone): a screen for reading or browsing keeps its
+// actions quiet, the signature element is part of a visual language drawn
+// from the subject, and the demo says "Staging demo" once, not on every row
+// (all nine test drawings cluttered each row with it).
+const FIRST_VERSION_SPEC_DESIGN_BRIEF = `DESIGN BRIEF (FIRST VERSION): the app has no screen of its own yet (the starter template's is placeholder), so there is no existing screen for it to look like, and the triage only sketched one. In the "User-facing changes" half, before "### Assumptions", write a "### Design" subsection in plain language that decides this app's own look and its finish, so the build does not have to invent either: the main screen's one job, and what a person does most on it: when that is an action (adding, logging, calculating), its one primary action; when it is reading, browsing or comparing, say so, keep the actions quiet and give the content the room (a screen for reading needs no big filled button); its colours, chosen for this app and each a kit token with a light and a dark value: the neutrals, one action colour for the primary action (ink is fine when the subject's own colours carry the screen), and any set of colours the subject itself uses, the ones people already read in its world (a map's water and parks, team colours, card suits, traffic-light statuses), which fit the subject rather than being a cliché to avoid (not the starter's default palette, unless you choose it on purpose and say why); a visual language drawn from the app's subject: its signature element (something a generic app would not have) and the consistent details that carry the subject through the whole screen, such as a small drawn icon for each kind of thing, the subject's own colours and materials, or a typeface that suits it; a sketch of the main screen's layout at phone width, a few plain lines from top to bottom, and how dense it is there (how many rows or cards show before the first scroll, and how much room is around them); for each repeated row or card, what it shows and in what order and prominence (its main text, its secondary text, and its small details such as a time, a count or a status); which control each setting or input uses (a text field, a stepper, a slider, a switch, a segmented control, a list to pick from) and what it starts at; what the populated demo shows, the staging preview opened with ?demo=1, which is how this first version is first seen: the viewer's own data and not only other people's (their own items, choices, progress or saved things, whatever this app keeps for a person), varied and realistic rows filling about a screen and a half at phone width, and every control the real populated screen has (a view-only demo that hides actions is not a populated screen), labelled "Staging demo" once, plainly and visibly, in a banner or a line at the top of the screen or in the name of the list or collection its rows belong to, rather than on each row, with the rows themselves still obviously made up (no real people and no real private data); and the exact word it uses for each thing on it. Use the platform's native UI kit for the parts it has. If the app keeps one fixed look (such as a game drawn as its own scene), say so here. The build follows this subsection and records it in the app's CLAUDE.md, so decide here rather than leaving it to the build. The "Technical implementation" half says how the demo is made: on staging and with ?demo=1 only, idempotent, either added to those responses or written once for the viewing account on its first ?demo=1 request (the platform conventions' "Staging mock data" has the rules, including keeping it out of anything the app's own logic reads). If the repository has \`design/sketch.json\`, it is the featured card its creator was shown while the app was made: an emoji (already the app's icon), a tagline and a few points that sum up the idea. Read them as context for what the app is for, never as a design: the card shows no screen, so this subsection still decides the look.`;
+
+// 7 Oct 2026 (with the brief above): an HTML spec of a first version DRAWS
+// its finished screens, and the build takes them as its visual target
+// (homeroom-bot-live.js FIRST_VERSION_DESIGN_LINES). Words carry structure,
+// which a build copies faithfully, but not craft: icons, proportions,
+// weight, the rhythm of the spacing. The format's screens were made for
+// close-ups of a change, before and after; a first version has no before,
+// so these rules replace those for it. Drawn at the fidelity the build
+// writes, never as artwork, and within a budget (spec-html.js
+// SCREEN_CHAR_BUDGET, measured at capture, never enforced by cutting): the
+// point is a better home screen for a little more spec, not a painting.
+const SCREEN_BUDGET_WORDS = (20000).toLocaleString('en-US');
+const FIRST_VERSION_SCREENS_BRIEF = `FIRST VERSION SCREENS: for this spec these rules replace the format's before/after rules above. Open the "user" section with a screens figure that draws UP TO TWO screens of the finished first version, in full, as faithful mocks: the build takes them as its visual target. The first is normally the main screen, populated with the demo data your Design subsection describes; the second, if you draw one, is whatever best shows the app at work, such as an item opened or the main screen in the middle of its key interaction. Draw each at phone width (data-size="phone") with data-height set to the screen's real scroll length, at most 2400, and no data-focus, so the whole screen shows. A first version has no "before" worth drawing: wrap each screen's whole tree in one <div data-side="after" data-change="N">, N being that screen's item in the figure's <ol data-changes> (one item per screen, saying in plain words what it shows), and mark nothing else, so the before side stays empty rather than showing the starter's placeholder. Draw the light look; the Design subsection gives the dark look's values for the same tokens. In each screen's <style> block, define the colours as CSS custom properties named after the design kit's tokens and written as the kit writes them, "R G B" values used as rgb(var(--accent)): --ground, --surface, --raised, --fg, --muted, --line, --accent and --on-accent, plus any new token the Design subsection defines, so the build can map them one to one. Use the kit's component class names (btn-primary, btn-secondary, field, list, list-row, card, section-label) where the kit has the part.
+Draw at the app's REAL fidelity: the HTML and CSS the build should write, not artwork. Every element must be something the build can reproduce with the kit's tokens, its components and plain CSS. An icon or illustration is an inline <svg> inside the screen, so the build can lift it: no emoji as icons, and no images. Icons are line icons: a 24 by 24 viewBox, one stroke width, at most about 8 shapes each, and no gradients, filters, masks, patterns or text turned into paths. A consistent set of them is welcome: one for each kind of thing, the app's own mark, its actions. A larger illustration is fine where it carries the subject, each kept to about 30 shapes. Each screen, its <style> included, stays within about ${SCREEN_BUDGET_WORDS} characters: a screen that needs more is drawn in too much detail. Draw repeated rows with identical structure. Spend the effort where a careful designer would: hierarchy, density, spacing, type and the subject's own details; leave out decoration that carries no meaning.`;
+
+// #3699: the spec as a small HTML document that leads with pictures: before/
+// after screens on the User-facing tab, diagrams and tables on the Technical
+// tab. Given to the scout and the Homeroom bot instead of the markdown format
+// lines, for apps in config.htmlSpecApps (every app by default). Two versions,
+// because the screens of the platform's own app draw with its real stylesheet
+// and every other app's draw with the native UI kit and their own <style>
+// blocks (spec-html.js, stampSpecStyles). The dialect, and why the screens are drawn rather than
+// captured, are in src/services/spec-html.js; the browser half is
+// frontend/src/lib/spec-html.ts. The server keeps a markdown copy of every
+// HTML spec for the readers that want text.
+function specHtmlContract(platformStyles = true) {
+  return `HTML SPEC FORMAT: write the spec as ONE small HTML document, not markdown. The spec viewer shows it with the same two tabs, and it should lead with pictures: before/after screens on the User-facing tab, diagrams and tables on the Technical tab. Use exactly this shape:
+
+<article data-spec>
+  <h1>Short title</h1>
+  <p>Optional one or two sentence summary.</p>
+  <section data-spec-tab="user">…</section>
+  <section data-spec-tab="tech">…</section>
+</article>
+
+The "user" section is the User-facing half and the "tech" section is the Technical half; everything said about those halves applies to these sections. Inside them use plain elements only: h3, h4, p, ul, ol, li, strong, em, code, pre, a (https links only), table/thead/tbody/tr/th/td, blockquote, hr, figure, figcaption. No script, no style attribute, no ids, no images by URL. A class is kept only if it starts with "spec-". Wherever these instructions name a "### X" subsection (Questions, Design, Considerations, Deferred work, Assumptions), write it as <h3>X</h3> inside the matching section.
+
+BEFORE/AFTER SCREENS: when the change is visible, OPEN the "user" section with a screens figure (leave it out only for a change nobody sees):
+
+<figure data-screens>
+  <ol data-changes>
+    <li data-change="1" data-steps="Dev board → Up for vote → open a proposal">In plain words, what a person sees change</li>
+  </ol>
+  <template data-screen data-size="desktop" data-focus="840 60 440 300">…one markup tree of the screen…</template>
+  <template data-screen data-size="phone" data-focus="0 120 390 320">…</template>
+  <figcaption>Optional line shown under the screens</figcaption>
+</figure>
+
+- One to three changes, numbered; up to six screens. data-size "desktop" is 1280×800 and "phone" is 390×844; data-height makes a screen taller (up to 2400).
+${platformStyles
+    ? "- Draw each screen as real HTML using the app's OWN element structure and class names, copied from the components you read: it renders with the app's real stylesheet, so a faithful copy looks like the app."
+    : "- Draw each screen as real HTML using the app's own element structure and class names, copied from the components you read. It renders with the platform's native UI kit stylesheet only (native.css, which every app shares), not with this app's own stylesheet or Tailwind, so put the styles each screen needs in a <style> block inside its template, copied from the app's CSS (for Tailwind utility classes, write the equivalent CSS rules), and the screen looks like the app."} Draw the screen as it is today, and mark what differs in the same tree: data-side="before" on parts only today's app shows, data-side="after" on parts only the change shows, and data-change="N" on each changed part (its numbered outline goes there). Unchanged parts appear once and show on both sides. A screen that does not exist yet (a first version, a new page) shows what is there today, or an empty state, on the before side, and the new screen is data-side="after".
+- data-focus="x y w h", in the screen's pixels, frames the close-up the viewer opens on: the part that changes plus enough around it to recognise the place. Draw only as much of the screen as that close-up and its surroundings need. data-persona says who is signed in (member, guest, read_only_admin, full_admin); member is the default.
+- Screens render in a sandboxed frame with scripts off and no network: no script, no external images or fonts.${platformStyles
+    ? " A class the app's stylesheet does not already define will not exist there, so style anything new with a <style> block inside the template or a style attribute."
+    : ''}
+
+DIAGRAMS AND TABLES: open the "tech" section with whatever explains the change fastest, such as a <figure> holding an inline <svg viewBox="…" role="img"> that has a <title>, and keep files touched, data model and tests as tables. SVG may use svg, g, path, rect, circle, ellipse, line, polyline, polygon, text, tspan, title and desc with presentation attributes (no ids, markers, gradients or style). Draw with these classes so it reads in light and dark mode: spec-box, spec-box-changed, spec-box-new (dashed, for new code), spec-line, spec-arrow (a small polygon arrowhead), spec-muted, spec-accent, spec-good, spec-bad. Text takes the theme's colour.`;
+}
+
+// The platform's own app: its screens draw with the shell's stylesheets.
+const SPEC_HTML_CONTRACT = specHtmlContract(true);
 
 // The offline excerpt carried inside a connector work order.
 //
@@ -405,6 +487,9 @@ module.exports = {
   runtimeReadsImages,
   SPEC_DESIGN_BRIEF,
   FIRST_VERSION_SPEC_DESIGN_BRIEF,
+  FIRST_VERSION_SCREENS_BRIEF,
+  SPEC_HTML_CONTRACT,
+  specHtmlContract,
   getLaunchpadInstructions,
   SPEC_HANDOFF_MAX_CHARS,
   getWorkOrderEssentials,

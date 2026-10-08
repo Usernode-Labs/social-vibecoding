@@ -131,7 +131,7 @@ test('the inbox rows are memo()\'d and the list filters on the deferred query', 
 test('the topic head draws its markup blocks through Html, which keeps the { __html } object', () => {
   const src = read('frontend/src/features/dev-board/topic/topic-head.tsx');
   assert.doesNotMatch(src, /dangerouslySetInnerHTML=\{\{/, 'no inline wrapper left');
-  assert.equal((src.match(/<Html /g) || []).length, 9, 'the nine blocks: summaries, bodies, details, testing and both tile hosts');
+  assert.equal((src.match(/<Html /g) || []).length, 10, 'the ten blocks: summaries, the summary’s folded rest, bodies, details, testing and both tile hosts');
   assert.match(src, /<Html className="usn-visuals-body" html=\{tiles\.tilesHtml\} \/>/);
 
   const lib = read('frontend/src/lib/html.tsx');

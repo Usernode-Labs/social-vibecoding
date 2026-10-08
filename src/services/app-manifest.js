@@ -288,6 +288,27 @@ const MANIFEST_FILENAME = 'dapp.json';
 // by ~231s, so neither the deadline nor RUN_TIMEOUT_MS moves. The step buys
 // 29 slots over the 831 declared here.
 //
+// 860 → 870 (#3699): main stood at 840 exactly, the 20-slot floor; the HTML
+// spec viewer declares one check on its own route, a new staging session
+// (#app/usernode-2d5619/dev/sessions/900831), which no existing check shares.
+// The nearest, 900830's shared-spec check, is a fixture whose version history
+// the boot-time draft backfill also writes, so an HTML version could not join
+// it without changing what that check proves. Same arithmetic: 870 checks at
+// ~3.9s over the pool of 16 is ~212s of ideal work, and the unchanged 650s
+// TESTS_DEADLINE_MS still clears the 2x margin by ~226s, so neither the
+// deadline nor RUN_TIMEOUT_MS moves. The step buys 29 slots over the 841
+// declared here.
+//
+// 870 → 880 (#3826): the member floor's words on the card. The mock row
+// whose votes are all in and whose floor is unmet has a route of its own
+// (the proposal page for 9000095), and no existing check shares it — the
+// #788 family's checks sit on rows below threshold or floor-met — so there
+// was nothing to fold it into, and the manifest stood at 840, exactly the
+// floor. Same arithmetic: 880 checks at ~3.9s over the pool of 16 is ~215s
+// of ideal work, and the unchanged 650s TESTS_DEADLINE_MS still clears the
+// 2x margin by ~220s, so neither the deadline nor RUN_TIMEOUT_MS moves.
+// The step buys 36 slots over the 844 declared here.
+//
 // THE RULE AT THE FLOOR, stated once because three guards enforce it and on
 // #4868 they gave opposite advice. Fold first: a check that can share a
 // route with an existing one joins that check's expectSelector with :has()
@@ -299,7 +320,7 @@ const MANIFEST_FILENAME = 'dapp.json';
 // feature is not held behind a second vote because main already sat at the
 // floor. Never delete a check to make room. tests/lib/check-cap.js puts
 // the same words in the failing guards' messages.
-const MAX_DECLARED_TESTS = 860;
+const MAX_DECLARED_TESTS = 880;
 
 // The pre-pool cap, kept for exactly one purpose: services/check-history.js
 // bootstraps an app with no recorded history by marking its first
@@ -456,6 +477,9 @@ const RESERVED_KEYS = new Set([
   // accept identities minted for a different app.
   'USERNODE_JWT_PUBLIC_KEY',
   'USERNODE_APP_ID',
+  // The public half guest tokens are verified against (P15): shadowing it
+  // would let a manifest point the container at a key of its choosing.
+  'USERNODE_GUEST_JWT_PUBLIC_KEY',
   // Retired alias of USERNODE_JWT_PUBLIC_KEY (holds the same public PEM),
   // still injected so pre-cutover scaffolds verify unchanged. The
   // RESERVATION OUTLIVES THE INJECTION: even after app-identity-env.js
@@ -629,6 +653,63 @@ function readPlatformEnv(parsed) {
     });
   }
   return out;
+}
+
+// Normalize the top-level `secrets` array: the child dapp's container env.
+// Lenient like every reader here: an entry with an invalid key, a reserved
+// key, a key also declared in `platform_env`, or a duplicate key is dropped
+// with a log.warn, and an absent/invalid block resolves to [].
+//
+// A key declared in BOTH blocks is a mistake with a dangerous failure mode:
+// `secrets` values are handed to a dapp container, platform_env values are
+// not. Rather than guess, platform_env wins and the `secrets` entry is
+// dropped, so the containment guarantee (a platform variable never leaks
+// into a dapp's env) holds by construction rather than by review.
+//
+// `opts.platformEnv` is readPlatformEnv(parsed) when the caller already has
+// it; `opts.filePath` only labels the warnings.
+function readSecrets(parsed, opts = {}) {
+  const platformEnv = Array.isArray(opts.platformEnv) ? opts.platformEnv : readPlatformEnv(parsed);
+  const platformEnvKeys = new Set(platformEnv.map((e) => e.key));
+  const filePath = opts.filePath;
+
+  const secretsIn = Array.isArray(parsed?.secrets) ? parsed.secrets : [];
+  const seen = new Set();
+  const secrets = [];
+
+  for (const s of secretsIn) {
+    if (!s || typeof s !== 'object') continue;
+    const key = typeof s.key === 'string' ? s.key.trim() : '';
+    if (!KEY_RE.test(key)) {
+      log.warn('app-manifest', 'Skipping invalid key', { filePath, key: s.key });
+      continue;
+    }
+    if (RESERVED_KEYS.has(key) || RESERVED_KEY_PREFIXES.some((p) => key.startsWith(p))) {
+      log.warn('app-manifest', 'Skipping reserved key', { filePath, key });
+      continue;
+    }
+    if (platformEnvKeys.has(key)) {
+      log.warn('app-manifest', 'Skipping secrets key also declared in platform_env', { filePath, key });
+      continue;
+    }
+    if (seen.has(key)) {
+      log.warn('app-manifest', 'Skipping duplicate key', { filePath, key });
+      continue;
+    }
+    seen.add(key);
+    secrets.push({
+      key,
+      description: typeof s.description === 'string' ? s.description : '',
+      required: !!s.required,
+      // `private` is the canonical field; `sensitive` is accepted as
+      // a backward-compatible alias. Either present (and truthy) flips
+      // the entry to private. Internally we expose only `.private`.
+      private: !!s.private || !!s.sensitive,
+      default: typeof s.default === 'string' ? s.default : null,
+      staging_default: typeof s.staging_default === 'string' ? s.staging_default : null,
+    });
+  }
+  return secrets;
 }
 
 // Bounds for the optional top-level `name` field (see readName). Matches
@@ -1106,50 +1187,7 @@ function read(cloneDir) {
   }
 
   const platformEnv = readPlatformEnv(parsed);
-  const platformEnvKeys = new Set(platformEnv.map((e) => e.key));
-
-  const secretsIn = Array.isArray(parsed?.secrets) ? parsed.secrets : [];
-  const seen = new Set();
-  const secrets = [];
-
-  for (const s of secretsIn) {
-    if (!s || typeof s !== 'object') continue;
-    const key = typeof s.key === 'string' ? s.key.trim() : '';
-    if (!KEY_RE.test(key)) {
-      log.warn('app-manifest', 'Skipping invalid key', { filePath, key: s.key });
-      continue;
-    }
-    if (RESERVED_KEYS.has(key) || RESERVED_KEY_PREFIXES.some((p) => key.startsWith(p))) {
-      log.warn('app-manifest', 'Skipping reserved key', { filePath, key });
-      continue;
-    }
-    // A key declared in BOTH blocks is a mistake with a dangerous failure
-    // mode: `secrets` values are handed to a dapp container, platform_env
-    // values are not. Rather than guess, platform_env wins and the
-    // `secrets` entry is dropped — the containment guarantee (a
-    // platform variable never leaks into a dapp's env) holds by
-    // construction rather than by review.
-    if (platformEnvKeys.has(key)) {
-      log.warn('app-manifest', 'Skipping secrets key also declared in platform_env', { filePath, key });
-      continue;
-    }
-    if (seen.has(key)) {
-      log.warn('app-manifest', 'Skipping duplicate key', { filePath, key });
-      continue;
-    }
-    seen.add(key);
-    secrets.push({
-      key,
-      description: typeof s.description === 'string' ? s.description : '',
-      required: !!s.required,
-      // `private` is the canonical field; `sensitive` is accepted as
-      // a backward-compatible alias. Either present (and truthy) flips
-      // the entry to private. Internally we expose only `.private`.
-      private: !!s.private || !!s.sensitive,
-      default: typeof s.default === 'string' ? s.default : null,
-      staging_default: typeof s.staging_default === 'string' ? s.staging_default : null,
-    });
-  }
+  const secrets = readSecrets(parsed, { platformEnv, filePath });
 
   return {
     name: readName(parsed),
@@ -1926,9 +1964,11 @@ module.exports = {
   readTestsWithMeta,
   checkKey,
   readIcon,
+  loadIconImage,
   normalizeIconColor,
   readAdmins,
   readPlatformEnv,
+  readSecrets,
   reconcilePlatformEnv,
   PLATFORM_ENV_UNWRITABLE,
   MAX_PLATFORM_ENV,

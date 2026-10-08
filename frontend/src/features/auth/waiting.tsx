@@ -7,6 +7,15 @@
  * granted, boots the full shell in place — the same reload-free handover login
  * uses, so a released user never has to know to refresh.
  *
+ * ── A group waiting for them, and a phone ─────────────────────────────
+ *
+ * An invite link this account followed queues its group (the list under
+ * "When you're let in"). An invite lets in, as a private member, only an
+ * account with a verified phone, so when the server offers phone sign-in
+ * the screen offers the phone too (./add-phone.tsx): adding it joins the
+ * queued groups now, and the check below lets them in to the first one's
+ * app.
+ *
  * ── The poll is not a mount effect ────────────────────────────────────
  *
  * It starts from `_waitingOnShow()` and stops from `_stopWaitingPoll()`, both
@@ -23,8 +32,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
+import { AddPhoneCard, type JoinedGroup } from './add-phone';
 import { inviteTokenFrom } from './invite-card';
 import { AUTH_SCREEN_IDS, fx, legacy, useAuthScreensPatch } from './shared';
+import { waitlistOptions } from './waitlist-shared';
 
 /** How often to re-check for release. */
 const POLL_MS = 30000;
@@ -50,6 +61,9 @@ export function WaitingScreen() {
   // let in (src/services/community-invites.js). Empty until loaded, and
   // for most people forever.
   const [queued, setQueued] = useState<Array<{ name: string; inviter: string | null }>>([]);
+  // Phone sign-in is set up (the waitlist options' phone_sign_in): a queued
+  // group can be joined now by adding a phone (./add-phone.tsx).
+  const [phoneOffered, setPhoneOffered] = useState(false);
 
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -86,6 +100,10 @@ export function WaitingScreen() {
         const targetUrl = typeof host?.deepLinkUrl === 'function'
           ? host.deepLinkUrl(target) : '/' + target;
         history.replaceState(null, '', targetUrl);
+        // Let in on a build that is behind the live one: move to it before
+        // the signed-in shell starts, so the first-run screens are the live
+        // build's (App._moveToLiveShell). Never resolves once it reloads.
+        await w.App?._moveToLiveShell?.('signed-in');
         fx(() => {
           (host?.hideAll as undefined | (() => void))?.();
           w.App?.enterAuthed?.(user);
@@ -123,7 +141,11 @@ export function WaitingScreen() {
           credentials: 'same-origin',
         });
       }
-      const res = await fetch('/api/invite-links/queued', { credentials: 'same-origin' });
+      const [res, options] = await Promise.all([
+        fetch('/api/invite-links/queued', { credentials: 'same-origin' }),
+        waitlistOptions(),
+      ]);
+      setPhoneOffered(options?.phone_sign_in === true);
       if (!res.ok) return;
       const body = await res.json();
       setQueued(Array.isArray(body?.queued) ? body.queued : []);
@@ -131,6 +153,16 @@ export function WaitingScreen() {
       /* the waiting room works without it */
     }
   }, []);
+
+  // A phone added from here joined its queued groups as a private member,
+  // which /api/auth/me reports as access: check now, and land in the first
+  // group's app, the way its invite's Join lands a newcomer (deepLinkUrl
+  // takes an app path).
+  const onJoined = useCallback((joined: JoinedGroup[]) => {
+    const host = legacy().AuthScreens as { _pendingHash?: string } | undefined;
+    if (host && joined[0]?.slug) host._pendingHash = `/app/${joined[0].slug}`;
+    void check();
+  }, [check]);
 
   const waitingOnShow = useCallback(() => {
     setWho(legacy().App?.user?.username || '');
@@ -222,6 +254,9 @@ export function WaitingScreen() {
               </ul>
             </div>
           ) : null}
+          {phoneOffered && queued.length ? (
+            <AddPhoneCard groups={queued.map((q) => q.name)} onJoined={onJoined} />
+          ) : null}
           {/*
               QA 2026-09-24 Q12: this used to open with a violet "Use apps
               while you wait" pill to `#landing`. The landing stopped listing
@@ -230,7 +265,8 @@ export function WaitingScreen() {
               pill, "Your queue status", back to this screen: the promise led
               in a circle. Nothing a waiting-room account can reach lists apps
               today, so the pill is gone rather than pointed at something that
-              does not exist. Log out is the one action left.
+              does not exist. Sign out is the one action left ("Sign out",
+              as Settings says it, beside every "Sign in").
           */}
           <div className="mt-6 space-y-3">
             <button
@@ -238,7 +274,7 @@ export function WaitingScreen() {
               className="flex h-11 w-full items-center justify-center rounded-full bg-white text-[16px] font-semibold text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 transition-colors"
               onClick={onLogout}
             >
-              Log out
+              Sign out
             </button>
           </div>
         </div>

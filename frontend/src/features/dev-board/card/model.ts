@@ -72,6 +72,10 @@ export interface StatusPillState {
   majority: number;
   advisory: number;
   lock: boolean;
+  /** Why the lock is there, in the reason's own words (AppView._lockTitle). */
+  lockTitle?: string;
+  /** The lock applies and no member but the author has said Yes yet (#3826). */
+  awaitsOtherYes?: boolean;
   dot?: boolean;
   spinner?: boolean;
   countdown?: number;
@@ -151,6 +155,14 @@ export interface ActionSpec {
    * group".
    */
   solo?: boolean;
+  /**
+   * B7: on the Yes spec of a change, the project is just the viewer's and
+   * their Yes is the one it needs: there is nobody to vote with, so the
+   * button reads "Approve" and its picker's sides "Approve" / "Don't
+   * approve". It opens the same picker a group's vote does (#3977; it was
+   * one tap, with "Don't approve" only in ⋯).
+   */
+  approve?: boolean;
   /**
    * On the Yes spec: the viewer is a test account and a real person made this
    * app, so their vote is recorded and shown but not counted. The picker says
@@ -453,7 +465,12 @@ export interface DevWorkshopView {
   queue: (ListRow & {
     kind: 'vote' | 'claim';
     ask: string;
-    yes: { label: string; act: { fn: string; args: unknown[] } | null } | null;
+    /**
+     * `approve` (#3977): a change on a project that is just yours whose Yes
+     * is the one it needs (ActionSpec.approve, B7): the item reads Approve
+     * and Don't approve instead of a vote.
+     */
+    yes: { label: string; act: { fn: string; args: unknown[] } | null; approve?: boolean } | null;
     no: { label: string; act: { fn: string; args: unknown[] } | null } | null;
     /** The caption's facts, lifted off the card's meta line. */
     who?: string | null;
@@ -538,6 +555,11 @@ export interface DevWorkshopView {
   mine: {
     /** A signed-in viewer, who can have work (a guest has none to have none of). */
     viewer?: boolean;
+    /**
+     * Homeroom bot builds requests here for this viewer (AppView._botDoor),
+     * so the empty strip points at asking for a change.
+     */
+    bot?: boolean;
     count: number;
     shown: number;
     rows: ListRow[];

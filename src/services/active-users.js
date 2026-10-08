@@ -42,12 +42,28 @@
 //      left, so its union-of-all-apps activity below is narrowed only by
 //      people who chose to leave.
 //
+//   4. A RECENT INVITE — `acceptedInviteRecently()`: on an app that is not
+//      self-hosted, a person who accepted an invite to build it in the last
+//      10 days (`app_collaborators.status = 'member'` and `accepted_at` in
+//      the window) counts as a voter even before they have used the app.
+//      Accepting is the moment they said they are in, and a two-person
+//      project whose invitee had not yet spent a minute in the app used to
+//      count one voter, so its creator's own Yes merged at once. Every way
+//      in stamps `accepted_at`: an @username or email invite through
+//      collab-invites.acceptInvite, and a link through
+//      apply_community_invite() in schema.sql. Concept #1 is untouched: an
+//      invite is not "has tested the app".
+//
 // The vote-facing helpers (`getActiveUserStats`, `listActiveUserIds`,
-// `isUserActive`) return the INTERSECTION (activity ∩ eligibility ∩
-// membership): the majority denominator must only count users who can
-// actually vote, or a threshold becomes unreachable (non-voting viewers —
-// and, since communities, people who never joined — inflating
+// `isUserActive`) return the INTERSECTION ((activity ∪ recent invite) ∩
+// eligibility ∩ membership): the majority denominator must only count users
+// who can actually vote, or a threshold becomes unreachable (non-voting
+// viewers — and, since communities, people who never joined — inflating
 // floor(active/2)+1). Display/"tested" surfaces use concept #1 alone.
+//
+// A Private community (communities.audienceSql 'invited') is also floored
+// at two once two people who can vote are in it, so a pair stays a pair
+// after the invite's 10 days run out. See INVITED_FLOOR_SQL.
 //
 // Pragmatic-vs-strict note: a fully strict "lifecycle" reading of the
 // rule would say a 10-day absence un-qualifies the user, requiring
@@ -66,7 +82,10 @@
 // count the *union* across every app: anyone who's qualified on any
 // app and visited any app within the window. This matches the user's
 // mental model — "everyone using the platform is a user of the
-// platform" — and unblocks self-app voting/governance.
+// platform" — and unblocks self-app voting/governance. Neither the
+// recent-invite rule (#4) nor the Private community floor applies to a
+// self-hosted app: its membership is every account with platform access,
+// not a list of people somebody invited.
 
 // ---------------------------------------------------------------------------
 // Dynamic merge gates (see SPEC: "Visibility window + dynamic threshold").
@@ -338,19 +357,77 @@ async function getAppMeta(pool, appId) {
     'SELECT self_hosted, collab_visibility FROM apps WHERE id = $1',
     [appId]
   );
+  return appMetaFromRow(rows[0]);
+}
+
+// What the vote denominator needs from an apps row (self_hosted,
+// collab_visibility), for a caller that has the row already.
+function appMetaFromRow(row) {
   return {
-    selfHosted: !!rows[0]?.self_hosted,
-    collabPrivate: rows[0]?.collab_visibility === 'private',
+    selfHosted: !!row?.self_hosted,
+    collabPrivate: row?.collab_visibility === 'private',
   };
 }
+
+// Everyone who could be in a non-self-hosted app's electorate, before the
+// eligibility, membership and test-account filters: concept #1 (used the
+// app for a minute on some day, and visited in the last 10 days) or
+// concept #4 (accepted an invite in the last 10 days). $1 is the app id.
+// A derived table, so the vote-facing queries below keep their alias `a`.
+const RECENT_PEOPLE_SQL = `(
+             SELECT x.user_id FROM app_activity x
+              WHERE x.app_id = $1
+                AND x.date >= CURRENT_DATE - 10
+                AND EXISTS (
+                  SELECT 1 FROM app_activity b
+                  WHERE b.app_id = $1
+                    AND b.user_id = x.user_id
+                    AND b.seconds_spent >= 60
+                )
+             UNION
+             SELECT c.user_id FROM app_collaborators c
+              WHERE c.app_id = $1 AND c.status = 'member'
+                AND c.accepted_at >= CURRENT_DATE - 10
+           )`;
+
+// The Private community floor, as a scalar subquery over $1 (the app id).
+// A community whose audience is 'invited' (a private project with more than
+// its creator) counts at least min(people who can vote in it, 2), so two
+// people stay two after the invite's 10 days run out and neither can merge
+// a change alone. Only people whose vote would count are in that number:
+// members who are also building members (a private project is always
+// collab-private) and pass counts_toward_outcome, so a test account cannot
+// raise the bar on a real person's project. Anything else, and every
+// self-hosted app, floors at 1. The audience test is communities.js
+// audienceSql written out, because a constant is what scripts/check-sql.js
+// can check against the schema: not view-public, and more than one member
+// or a pending invite.
+const INVITED_FLOOR_SQL = `SELECT CASE
+                  WHEN NOT ap.self_hosted
+                   AND ap.view_visibility IS DISTINCT FROM 'public'
+                   AND ((SELECT COUNT(*) FROM community_members o WHERE o.community_id = ap.community_id) > 1
+                        OR EXISTS (SELECT 1 FROM app_collaborators ic
+                                    WHERE ic.app_id = ap.id AND ic.status = 'invited'))
+                  THEN LEAST(2, (
+                    SELECT COUNT(*) FROM community_members m
+                      JOIN app_collaborators c
+                        ON c.app_id = ap.id AND c.user_id = m.user_id AND c.status = 'member'
+                     WHERE m.community_id = ap.community_id
+                       AND counts_toward_outcome(m.user_id, ap.id)
+                  ))
+                  ELSE 1
+                END
+           FROM apps ap WHERE ap.id = $1`;
 
 // The vote denominator. A test account (services/test-accounts.js) is left
 // out of it on an app a real person made, by the same predicate that leaves
 // its vote out of the tally (counts_toward_outcome, schema.sql): an admin who
 // can mint accounts must not be able to raise a real app's threshold with
 // them. On an app a test account made, test accounts count like anybody.
-async function getActiveUserStats(pool, appId) {
-  const { selfHosted, collabPrivate } = await getAppMeta(pool, appId);
+// `meta` ({ selfHosted, collabPrivate }) skips reading the app row again
+// when the caller already has it (the workflow governance machine's facts).
+async function getActiveUserStats(pool, appId, meta = null) {
+  const { selfHosted, collabPrivate } = meta || await getAppMeta(pool, appId);
 
   const { rows } = selfHosted
     ? await pool.query(
@@ -374,17 +451,10 @@ async function getActiveUserStats(pool, appId) {
         [appId]
       )
     : await pool.query(
-        `SELECT COUNT(DISTINCT a.user_id) AS cnt
-           FROM app_activity a
-           WHERE a.app_id = $1
-             AND a.date >= CURRENT_DATE - 10
-             AND EXISTS (
-               SELECT 1 FROM app_activity b
-               WHERE b.app_id = $1
-                 AND b.user_id = a.user_id
-                 AND b.seconds_spent >= 60
-             )
-             AND (NOT $2::boolean OR EXISTS (
+        `SELECT COUNT(DISTINCT a.user_id) AS cnt,
+                (${INVITED_FLOOR_SQL}) AS invited_floor
+           FROM ${RECENT_PEOPLE_SQL} a
+           WHERE (NOT $2::boolean OR EXISTS (
                SELECT 1 FROM app_collaborators c
                WHERE c.app_id = $1 AND c.user_id = a.user_id AND c.status = 'member'
              ))
@@ -403,8 +473,10 @@ async function getActiveUserStats(pool, appId) {
   // 0/0; this is a vote-correctness floor, not a real-count guarantee.
   // The dashboard tile passes the same value through; on a brand-new
   // app that means the tile reads "1 active" until the first real
-  // qualifier shows up. Acceptable for now.
-  const active = Math.max(parseInt(rows[0].cnt, 10) || 0, 1);
+  // qualifier shows up. Acceptable for now. A Private community floors
+  // higher (`invited_floor`, see INVITED_FLOOR_SQL); the self-hosted query has no
+  // such column.
+  const active = Math.max(parseInt(rows[0].cnt, 10) || 0, parseInt(rows[0].invited_floor, 10) || 0, 1);
   const majority = Math.floor(active / 2) + 1;
   return { active, majority };
 }
@@ -464,8 +536,27 @@ async function isCollabEligible(pool, appId, userId) {
   return rows.length > 0;
 }
 
+// Concept #4 — A RECENT INVITE: did this user accept an invite to build this
+// app in the last 10 days? Never on a self-hosted app (see header). Reads one
+// boolean column, so an answer the pool cannot give is a no.
+async function acceptedInviteRecently(pool, appId, userId) {
+  if (!userId) return false;
+  const { rows } = await pool.query(
+    `SELECT EXISTS (
+       SELECT 1 FROM app_collaborators c
+         JOIN apps ap ON ap.id = c.app_id
+        WHERE c.app_id = $1 AND c.user_id = $2 AND c.status = 'member'
+          AND c.accepted_at >= CURRENT_DATE - 10
+          AND NOT ap.self_hosted
+     ) AS accepted_recently`,
+    [appId, userId]
+  );
+  return rows?.[0]?.accepted_recently === true;
+}
+
 // Whether a specific user is currently counted in the active (voter) set:
-// activity ∩ collab-eligibility, matching getActiveUserStats. Used by the
+// (activity ∪ recent invite) ∩ collab-eligibility ∩ membership, matching
+// getActiveUserStats. Used by the
 // dashboard's "are you counted as a user?" indicator and any callers that need
 // a per-viewer answer rather than a count. Eligibility is checked first so a
 // non-member on a collab-private app short-circuits before the heavier
@@ -474,7 +565,8 @@ async function isUserActive(pool, appId, userId) {
   if (!userId) return false;
   if (!(await isCollabEligible(pool, appId, userId))) return false;
   if (!(await isCommunityMember(pool, appId, userId))) return false;
-  return hasQualifyingActivity(pool, appId, userId);
+  if (await hasQualifyingActivity(pool, appId, userId)) return true;
+  return acceptedInviteRecently(pool, appId, userId);
 }
 
 // Concept #3 — MEMBERSHIP (communities): is this user in the community the
@@ -498,12 +590,13 @@ async function isCommunityMember(pool, appId, userId) {
 
 // The full set of user ids currently counted as active for an app,
 // using the same definition as getActiveUserStats (so "who gets the
-// vote-request ping" matches "whose votes count"). The one deliberate
-// difference: a test account active on a real app is still listed here, so
-// it is pinged like a newcomer would be, though its vote will not count
-// (counts_toward_outcome in getActiveUserStats above). Returns a bare
-// array of ids. self_hosted apps fan out across every app's activity,
-// mirroring getActiveUserStats's union semantics.
+// vote-request ping" matches "whose votes count"). That includes its test
+// account rule: a test account is left out on an app a real person made
+// (counts_toward_outcome), so the vote pings, the weekly digest and every
+// other list read from here go to real people only, and on an app a test
+// account made it is listed like anybody. Returns a bare array of ids.
+// self_hosted apps fan out across every app's activity, mirroring
+// getActiveUserStats's union semantics.
 async function listActiveUserIds(pool, appId) {
   const { selfHosted, collabPrivate } = await getAppMeta(pool, appId);
 
@@ -517,6 +610,7 @@ async function listActiveUserIds(pool, appId) {
                WHERE b.user_id = a.user_id
                  AND b.seconds_spent >= 60
              )
+             AND counts_toward_outcome(a.user_id, $1)
              AND EXISTS (
                SELECT 1 FROM apps ap
                 WHERE ap.id = $1
@@ -529,19 +623,12 @@ async function listActiveUserIds(pool, appId) {
       )
     : await pool.query(
         `SELECT DISTINCT a.user_id AS id
-           FROM app_activity a
-           WHERE a.app_id = $1
-             AND a.date >= CURRENT_DATE - 10
-             AND EXISTS (
-               SELECT 1 FROM app_activity b
-               WHERE b.app_id = $1
-                 AND b.user_id = a.user_id
-                 AND b.seconds_spent >= 60
-             )
-             AND (NOT $2::boolean OR EXISTS (
+           FROM ${RECENT_PEOPLE_SQL} a
+           WHERE (NOT $2::boolean OR EXISTS (
                SELECT 1 FROM app_collaborators c
                WHERE c.app_id = $1 AND c.user_id = a.user_id AND c.status = 'member'
              ))
+             AND counts_toward_outcome(a.user_id, $1)
              AND EXISTS (
                SELECT 1 FROM apps ap
                 WHERE ap.id = $1
@@ -557,9 +644,11 @@ async function listActiveUserIds(pool, appId) {
 
 module.exports = {
   getActiveUserStats,
+  appMetaFromRow,
   isUserActive,
   listActiveUserIds,
   hasQualifyingActivity,
+  acceptedInviteRecently,
   isCollabEligible,
   isCommunityMember,
   requiredVotes,

@@ -19,8 +19,8 @@
  *
  * ── Keyed by thread, loaded on sight ───────────────────────────────────
  *
- * State lives in ./feed-thread-store.ts, keyed `${type}:${ref}` rather than by
- * row — see that file for why. Loading waits for the row to come into view,
+ * State lives in ./feed-thread-store.ts, keyed `${slug}/${type}:${ref}`
+ * rather than by row — see that file for why. Loading waits for the row to come into view,
  * the same rule (and roughly the same 200px margin) the GitHub preview's
  * IntersectionObserver uses: a 20-row feed would otherwise open 20 requests on
  * paint to fill three lines each.
@@ -234,6 +234,10 @@ export function FeedReplyComposer({
         disabled={posting || !draft.trim()}
         title="Send reply"
         aria-label="Send reply"
+        // The field keeps focus through the press, so the keyboard and the
+        // composer stay where the tap landed (lib/keyboard-open.ts). The
+        // press still closes the suggestion lists, as the blur did.
+        onMouseDown={(event) => { event.preventDefault(); mention.close(); refs.close(); }}
       >
         {posting ? '…' : <ArrowUpIcon aria-hidden="true" />}
       </Button>
@@ -268,7 +272,7 @@ export function FeedThread({
   refId: number;
   canPost: boolean;
 }): ReactNode {
-  const key = threadKey(type, refId);
+  const key = threadKey(slug, type, refId);
   const all = useStoreState(feedThreadStore);
   const state = all[key] || readThread(key);
   const hostRef = useRef<HTMLDivElement>(null);

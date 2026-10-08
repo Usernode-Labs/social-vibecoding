@@ -301,7 +301,12 @@ test('test accounts against the full PostgreSQL schema', { timeout: 180000 }, as
     }
     assert.equal((await activeUsers.getActiveUserStats(pool, realApp)).active, 2, 'the tester is not in the denominator');
     assert.equal((await activeUsers.getActiveUserStats(pool, testApp)).active, 3, 'on a test-made app it is');
-    assert.ok((await activeUsers.listActiveUserIds(pool, realApp)).includes(tester.userId), 'still pinged like a newcomer');
+    assert.equal((await activeUsers.listActiveUserIds(pool, realApp)).includes(tester.userId), false,
+      'nor asked for a vote or sent the digest: the list matches the denominator');
+    assert.deepEqual((await activeUsers.listActiveUserIds(pool, realApp)).sort((x, y) => x - y),
+      [person.id, other.id].sort((x, y) => x - y));
+    assert.ok((await activeUsers.listActiveUserIds(pool, testApp)).includes(tester.userId),
+      'on a test-made app it is asked like anybody');
 
     const proposal = async (appId) => (await pool.query(
       "INSERT INTO chat_sessions (app_id, user_id, status) VALUES ($1, $2, 'promoted') RETURNING id", [appId, person.id]
@@ -316,8 +321,12 @@ test('test accounts against the full PostgreSQL schema', { timeout: 180000 }, as
     assert.deepEqual(await governance.qualifiedCounts(pool, 'pr', testSession, null), { yes: 2, no: 0 });
     assert.deepEqual(await governance.qualifiedCounts(pool, 'pr', realSession, [person.id, tester.userId]), { yes: 1, no: 0 });
     const batch = await governance.qualifiedCountsBatch(pool, 'pr', [realSession, testSession], [person.id, tester.userId]);
-    assert.deepEqual(batch.get(realSession), { yes: 1, no: 0 });
-    assert.deepEqual(batch.get(testSession), { yes: 2, no: 0 });
+    // otherYes is the member floor's count (a Yes from someone other than the
+    // author): the test account's uncounted Yes is not one on a real app.
+    assert.deepEqual(batch.get(realSession), { yes: 1, no: 0, otherYes: 0 });
+    assert.deepEqual(batch.get(testSession), { yes: 2, no: 0, otherYes: 1 });
+    assert.deepEqual(await governance.qualifiedCounts(pool, 'pr', realSession, null, { authorId: person.id }),
+      { yes: 1, no: 0, otherYes: 0 });
     // The vote is still the voter's own: recorded, current, and shown.
     const { rows: [shown] } = await pool.query(
       `SELECT COUNT(*) FILTER (WHERE ${currentVotePredicateSql('pv', 'cs')})::int AS current,
@@ -344,8 +353,10 @@ test('test accounts against the full PostgreSQL schema', { timeout: 180000 }, as
     assert.deepEqual(await governance.qualifiedCounts(pool, 'issue', realIssue, null), { yes: 1, no: 0 });
     assert.deepEqual(await governance.qualifiedCounts(pool, 'issue', testIssue, null), { yes: 2, no: 0 });
     const issueBatch = await governance.qualifiedCountsBatch(pool, 'issue', [realIssue, testIssue], [person.id, tester.userId]);
-    assert.deepEqual(issueBatch.get(realIssue), { yes: 1, no: 0 });
-    assert.deepEqual(issueBatch.get(testIssue), { yes: 2, no: 0 });
+    assert.deepEqual(issueBatch.get(realIssue), { yes: 1, no: 0, otherYes: 0 });
+    assert.deepEqual(issueBatch.get(testIssue), { yes: 2, no: 0, otherYes: 1 });
+    assert.deepEqual(await governance.qualifiedCounts(pool, 'issue', testIssue, null, { authorId: person.id }),
+      { yes: 2, no: 0, otherYes: 1 });
   });
 
   await t.test('the live cap and the per-admin limiter refuse', async () => {

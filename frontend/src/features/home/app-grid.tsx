@@ -286,8 +286,8 @@ function AppCardTile({ app, style, yours, live }: {
         {app.forkName ? (
           <span
             className="fork-tag absolute -bottom-1 -left-1 w-5 h-5 flex items-center justify-center rounded-full bg-amber-500 text-white text-xs font-bold shadow-sm"
-            title={`Forked from ${app.forkName}`}
-            aria-label={`Forked from ${app.forkName}`}
+            title={`Remixed from ${app.forkName}`}
+            aria-label={`Remixed from ${app.forkName}`}
           >
             ⑂
           </span>
@@ -361,7 +361,8 @@ function AppCardTile({ app, style, yours, live }: {
  * replace either: a failed load is `AppsLoadError` with a Retry, and a search
  * that matched nothing names the query. Both mean "something went wrong or is
  * being hidden"; this one means "there is genuinely nothing here yet", which is
- * why it points at Discover rather than offering an action of its own.
+ * why it offers no action of its own: it names the New project tile that
+ * follows it and the Discover Communities section below.
  *
  * `col-span-full` because the item has no placement of its own — every tile on
  * this canvas is placed at an explicit cell and this note is not a tile, so it
@@ -472,7 +473,7 @@ export function AppGrid() {
       {state.emptyQuery !== null ? (
         <div className="col-span-full py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">
           {`No apps match “${state.emptyQuery}”. Clear the search and try `}
-          <span className="text-violet-700 dark:text-violet-400">Discover</span>
+          <span className="text-violet-700 dark:text-violet-400">Discover Communities</span>
           {' below.'}
         </div>
       ) : null}

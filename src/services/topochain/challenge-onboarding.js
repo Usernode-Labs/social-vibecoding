@@ -42,6 +42,14 @@ const NEWEST_EVENT_BLOCKS_SQL = `(SELECT ls.event_total_produced_blocks FROM lea
               WHERE ls.user_id = $1 AND ls.season_event_id = c.season_event_id
               ORDER BY ls.snapshot_at DESC, ls.id DESC LIMIT 1)`;
 
+// Which of the viewer's credits count toward a challenge's progress, as a
+// condition on `ua` (the ledger row) and `ct` (the challenge's template). A
+// WEEKLY challenge counts this week's credits only, from Monday 00:00 UTC,
+// the week the scorer caps by (challenge-rules.weekStartMs), so its progress
+// starts again every Monday. Every other challenge counts all of them.
+const COUNTS_THIS_WEEK_SQL = `(UPPER(TRIM(COALESCE(ct.category, ''))) <> 'WEEKLY'
+                OR ua.activity_at >= date_trunc('week', NOW() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')`;
+
 // Match the home panel's existing ledger-based progress rule. Numeric
 // challenges require the target number of credits, not merely some points.
 function resolveProgress({ metricKind, metricTarget, activityCount, blocks, completionRecorded = false }) {
@@ -159,7 +167,9 @@ async function recordUnlocked(pool, userId) {
 // bound to it, which is how the card knows what a step's button does) and
 // the viewer's gate facts,
 // so the card, the gate and every list are one query and one answer.
-async function loadOnboarding(pool, userId, { seasonId, eventId } = {}) {
+// `record: false` is a read with no side effect, for a reader that is not
+// the viewer (Admin › Journey's onboard column): it never records the unlock.
+async function loadOnboarding(pool, userId, { seasonId, eventId, record = true } = {}) {
   const scope = seasonId != null ? 'se.season_id = $2'
     : 'se.season_id = (SELECT season_id FROM season_events WHERE id = $2)';
   const { rows } = await pool.query(
@@ -215,7 +225,7 @@ async function loadOnboarding(pool, userId, { seasonId, eventId } = {}) {
     [userId ?? null, seasonId ?? eventId]
   );
   const state = buildOnboarding(rows);
-  if (state && state.opened && userId != null) await recordUnlocked(pool, userId);
+  if (record && state && state.opened && userId != null) await recordUnlocked(pool, userId);
   return state;
 }
 
@@ -254,7 +264,7 @@ function challengeCategory(id, category, onboarding) {
 }
 
 module.exports = {
-  ONBOARDING_LIMIT, NEWEST_EVENT_BLOCKS_SQL, resolveProgress, buildOnboarding,
+  ONBOARDING_LIMIT, NEWEST_EVENT_BLOCKS_SQL, COUNTS_THIS_WEEK_SQL, resolveProgress, buildOnboarding,
   loadOnboarding, loadEventBlocks, visibleChallenges, challengeCategory,
   isLocked, gateSummary,
 };

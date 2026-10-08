@@ -1,3 +1,5 @@
+import type { UnreadMark } from './unread-anchor';
+
 /**
  * `channel` is a room every user is in (#2783) — today only #general. It has
  * no roster (just a count), no owner and no invitations.
@@ -12,6 +14,8 @@ export interface ConversationUser {
   avatarUrl?: string | null;
   /** A platform account (the Homeroom bot), not a person (#3624). */
   bot?: boolean;
+  /** B5: a platform account's name, shown in place of its handle ("Homeroom bot"). */
+  displayName?: string;
 }
 
 /**
@@ -34,6 +38,125 @@ export interface HomeroomBotMeta {
   status?: 'open' | 'answered' | 'closed';
   answer?: string;
   link?: string;
+  // B3: the decision a message's `server` buttons settle
+  // (homeroom_bot_dm_actions.id), the buttons themselves, and which one was
+  // chosen. An activity card's start and its live state ride along too.
+  actionId?: number;
+  actions?: HomeroomBotAction[];
+  chosen?: string;
+  startedAt?: string;
+  live?: boolean;
+  /** B4: an activity card's request, in the words its person asked for it. */
+  askedText?: string;
+  /** #3870: a ready card's change, by its own title (its proposal's). */
+  changeTitle?: string;
+  /** B5: the bot's hello, which leads the card it introduces. */
+  hello?: string;
+  /**
+   * B6: a first version's plan (kind `plan`): its bullets and up to two
+   * choices, each with its suggested answer first. Built by Build it
+   * (`actionId`); `choices` are the answers it went with.
+   */
+  plan?: HomeroomBotPlan;
+  /** B6: a question post that asks two at once, and the words above them. */
+  questions?: HomeroomBotPlanQuestion[];
+  lead?: string;
+  /** B6: why a plan's buttons went: a newer plan, a week with no tap, or a reply asking for changes. */
+  replaced?: boolean;
+  stopped?: boolean;
+  changing?: boolean;
+  choices?: string[];
+  /**
+   * B7: a change ready to try (kind `proposal`), drawn as its card: whether
+   * others are in its project, whether the person's Yes would be the last
+   * one needed, and who else it waits on. `sessionId` and `epoch` are the
+   * change and the version the card was sent for; `updated` when a newer
+   * version's card replaced it.
+   */
+  ready?: HomeroomBotReady;
+  sessionId?: number;
+  epoch?: number;
+  updated?: boolean;
+  /**
+   * B6: an activity card Build it moved under its plan: the card that
+   * follows the request now. This one is no longer drawn.
+   */
+  movedTo?: number;
+  /** B7: once its person approved it, what happens next (services/homeroom-bot-dm.js goesLiveAfterYes). */
+  goesLive?: HomeroomBotGoesLive;
+}
+
+export interface HomeroomBotReady {
+  group: boolean;
+  last: boolean;
+  waitingOn: string[];
+  more: number;
+  /**
+   * How many more approvals it needed when the card was sent (0 when it had
+   * them), and how many it needs in all (homeroom-bot-dm.js approvalState).
+   * With fewer needed than the people listed, the card says how many and
+   * that any of them will do (./approval-words.ts). Absent on older cards.
+   */
+  missing?: number;
+  needed?: number;
+  /**
+   * What does not work yet: the declared changes its before & after shots
+   * showed failing, after the bot's own fix round (homeroom-bot-dm.js
+   * noteChangeReady). The card then says so instead of "ready to try".
+   */
+  broken?: string[];
+}
+
+/**
+ * B7: what happens next to a change its person approved. `soon`: nothing
+ * more is needed, it goes live in a minute or two. Otherwise it needs
+ * `missing` more Yes votes (0 when only its clock runs), from `waitingOn`
+ * (up to three names) and `more` others, and `at` is when it goes live
+ * anyway if nobody objects, when a clock runs on it.
+ */
+export interface HomeroomBotGoesLive {
+  soon: boolean;
+  at: string | null;
+  missing: number;
+  waitingOn: string[];
+  more: number;
+}
+
+/** B6: one of a plan's choices, or one of two questions: the suggested answer first. */
+export interface HomeroomBotPlanQuestion {
+  question: string;
+  answers: string[];
+}
+
+export interface HomeroomBotPlan {
+  bullets: string[];
+  questions: HomeroomBotPlanQuestion[];
+}
+
+/**
+ * B3: one of a bot message's buttons. `server` is decided by the action
+ * endpoint, once (store.tapBotAction); `open` goes to an in-app address
+ * (`target`, always `#app/…`); `prompt` sends its label as the person's own
+ * message. At most three, at most one `primary`.
+ */
+export interface HomeroomBotAction {
+  id: string;
+  label: string;
+  style: 'primary' | 'secondary';
+  /**
+   * B7: `preview` opens a change's preview, `vote` casts the person's own Yes, `reply` quotes the card.
+   * #4231: `invite` opens the invite sheet for the message's project (`appSlug`), in place.
+   */
+  type: 'server' | 'open' | 'prompt' | 'preview' | 'vote' | 'reply' | 'invite';
+  target?: string;
+  sessionId?: number;
+  epoch?: number;
+  /**
+   * #4097 follow-up: a `prompt` sent replying to the message it sits on, so it
+   * is about what that message is about ("Try again" under a build that did
+   * not finish). Any other prompt is sent on its own.
+   */
+  quote?: boolean;
 }
 
 /**
@@ -66,6 +189,10 @@ export interface HomeroomBotJob {
   key: string;
   appSlug: string | null;
   appName: string;
+  /** #4201: the app's own icon, `/app-icons/<id>`, else null. */
+  iconUrl: string | null;
+  /** #4201: the app's emoji icon, for an app with no image; else null. */
+  iconEmoji: string | null;
   issueNumber: number | null;
   title: string | null;
   firstVersion: boolean;
@@ -112,12 +239,23 @@ export interface HomeroomBotWork {
  */
 export type HomeroomBotActivityOutcome =
   | 'question' | 'proposed' | 'live' | 'closed' | 'blocked' | 'build_failed'
-  | 'person' | 'empty' | 'failed' | 'held' | 'stopped' | 'answer' | 'revise';
+  | 'person' | 'empty' | 'failed' | 'held' | 'stopped' | 'answer' | 'revise'
+  // #4242 / #4227: built and being checked before it is offered, built and
+  // needing a person to look, and merged but not live yet.
+  | 'checking' | 'needs_look' | 'going_live';
 
 export interface HomeroomBotActivity {
   messageId: number;
   state: 'working' | 'done';
   startedAt: string | null;
+  /**
+   * When the work the card's time counts began (services/homeroom-bot-
+   * activity.js workClock): the work, never the wait before it. Null while
+   * nothing has begun, when its time is that wait.
+   */
+  workedFrom: string | null;
+  /** What it waited for before the work began, from `startedAt`, when that wait is worth saying. */
+  waitedFor?: 'first_version' | 'turn';
   links: { request: string | null; proposal: string | null };
   step: number | null;
   of: number | null;
@@ -125,6 +263,37 @@ export interface HomeroomBotActivity {
   doing: string | null;
   outcome: HomeroomBotActivityOutcome | null;
   endedAt: string | null;
+  /** How long the step it is at usually takes, in minutes, when it takes a while. */
+  typicalMinutes?: { from: number; to: number };
+}
+
+/**
+ * A ready card's change as it stands now, read with the activity cards
+ * (services/homeroom-bot-dm.js readyStates): `live` (with the button that
+ * opens the app), `going_live`, `closed` without going live, or `open`, up
+ * for approval, with who it still waits on and, once the reader's Yes is
+ * in, what happens next. The card was sent with what was true then.
+ */
+export interface HomeroomBotReadyNow {
+  messageId: number;
+  state: 'open' | 'going_live' | 'live' | 'closed';
+  actions: HomeroomBotAction[];
+  approval?: {
+    missing: number;
+    needed: number;
+    last: boolean;
+    /** The reader's own Yes is in. */
+    approved: boolean;
+    waitingOn: string[];
+    more: number;
+  };
+  goesLive?: HomeroomBotGoesLive;
+}
+
+/** One read of the bot DM's cards: its activity cards and its ready cards. */
+export interface HomeroomBotActivityRead {
+  cards: HomeroomBotActivity[];
+  ready: HomeroomBotReadyNow[];
 }
 
 export interface ConversationMember extends ConversationUser {
@@ -160,6 +329,15 @@ export interface SharedObjectReference {
   sessionId?: number;
   proposalId?: number;
   version?: number;
+}
+
+/**
+ * An item staged on the composer: its reference, and the title the page that
+ * staged it knew, shown on the chip until the server's reading of it comes.
+ * The title is never sent: the server reads the live one.
+ */
+export interface StagedObject extends SharedObjectReference {
+  title?: string | null;
 }
 
 /**
@@ -265,6 +443,13 @@ export interface ConversationSummary {
   latestSummary?: string;
   lastActivityAt: string;
   unreadCount: number;
+  /**
+   * The viewer's read cursor, as the server keeps it: the newest message
+   * they have read, 0 when they have read none. Where the conversation opens
+   * and where its "New" line goes (./unread-anchor.ts). Absent for an
+   * invitation, whose unread state is hidden, and from an older server.
+   */
+  lastReadMessageId?: number | null;
   /**
    * QA 2026-09-24 Q2: the viewer asked for this direct conversation and the
    * other person has not accepted yet. One opening message is allowed; after
@@ -436,8 +621,22 @@ export interface MessagesSnapshot {
   nextAfter: number | null;
   /** #2387: the list pane folded away on a desktop — single-panel mode. */
   listCollapsed: boolean;
+  /**
+   * #4229: the strip is wider than a phone but too narrow for an open
+   * conversation to keep a readable measure beside the list, so the list
+   * steps aside while one is open and the bar's back arrow returns to it.
+   */
+  listCrowded: boolean;
   /** #2967: the channels outside Your apps shown, under "Show more". */
   showMoreChannels: boolean;
+  /**
+   * Where reading had stopped in the open conversation when it was opened,
+   * taken from the server before the open reads it, and kept until the
+   * conversation closes: it opens at the first message after it, and the
+   * "New" line stays there while it is open (./unread-anchor.ts). Null when
+   * nothing was unread. Optional so a fixture without it reads as null.
+   */
+  unreadMark?: UnreadMark | null;
 }
 
 export interface ReplyThreadState {

@@ -924,8 +924,8 @@ test('metaLine: the line answers the question the active sort asked (#1383)', ()
   assert.equal(recommended, '4 users · Updated 1h ago', 'the default line is unchanged');
   assert.equal(Browse.metaLine(a, 'users'), recommended, 'so is the users line');
 
-  assert.equal(Browse.metaLine(a, 'active'), '4 users · 3 merged in 30d · Updated 1h ago');
-  assert.equal(Browse.metaLine(a, 'merged'), '4 users · 12 changes merged · Updated 1h ago');
+  assert.equal(Browse.metaLine(a, 'active'), '4 users · 3 live in 30d · Updated 1h ago');
+  assert.equal(Browse.metaLine(a, 'merged'), '4 users · 12 changes live · Updated 1h ago');
   assert.equal(Browse.metaLine(a, 'new'), '4 users · Created 3h ago',
     'sorting by age shows the age it sorted on, not the deploy');
 });
@@ -935,7 +935,7 @@ test('metaLine: a zero aggregate is dropped, not rendered as "0"', () => {
   const quiet = app({ active_users: 2, merged_prs: 0, merged_prs_recent: 0 });
   assert.equal(Browse.metaLine(quiet, 'active'), '2 users');
   assert.equal(Browse.metaLine(quiet, 'merged'), '2 users');
-  assert.match(Browse.metaLine(app({ merged_prs: 1 }), 'merged'), /1 change merged/,
+  assert.match(Browse.metaLine(app({ merged_prs: 1 }), 'merged'), /1 change live/,
     'and the one that is there is pluralised');
 });
 
@@ -944,7 +944,7 @@ test('metaLine: the rows carry the line the store says they were sorted with', (
   Browse._apps = [app({ slug: 'one', active_users: 2, merged_prs: 7 })];
   Browse.setSort('merged');
   assert.equal(state.sort, 'merged');
-  assert.match(rowFor(state, 'one').meta, /7 changes merged/,
+  assert.match(rowFor(state, 'one').meta, /7 changes live/,
     'the meta line and the data-sort anchor can never disagree');
 });
 
@@ -1002,12 +1002,12 @@ test('detailActionsFor: filters favorite + add-to-homescreen + app-details', () 
   // tested) permission gates inside menuItemsFor.
   Home.menuItemsFor = () => ([
     { key: 'app-details', label: 'App details', run: () => {} },
-    { key: 'favorite', label: 'Add to Shortcuts', run: () => {} },
+    { key: 'favorite', label: 'Add to My apps', run: () => {} },
     { key: 'add-to-homescreen', label: 'Add to Homeroom widget', run: () => {} },
     { key: 'retry', label: 'Retry', run: () => {} },
     { key: 'build-log', label: 'View build log', run: () => {} },
     { key: 'check-updates', label: 'Check for updates', keepOpen: true, run: () => {} },
-    { key: 'fork', label: 'Fork this app', run: () => {} },
+    { key: 'fork', label: 'Remix', run: () => {} },
     { key: 'lock', label: 'Lock app', run: () => {} },
     { key: 'delete', label: 'Delete app', danger: true, run: () => {} },
   ]);
@@ -1038,8 +1038,8 @@ test('detailActionsFor: derives from Home.menuItemsFor, never re-derived', () =>
 test('the detail page describes Open, Add/Remove and the action rows', () => {
   const { Browse, Home, state } = makeBrowse();
   Home.menuItemsFor = () => ([
-    { key: 'favorite', label: 'Add to Shortcuts', run: () => {} },
-    { key: 'fork', label: 'Fork this app', run: () => {} },
+    { key: 'favorite', label: 'Add to My apps', run: () => {} },
+    { key: 'fork', label: 'Remix', run: () => {} },
     { key: 'delete', label: 'Delete app', danger: true, run: () => {} },
   ]);
   Browse._apps = [app({ slug: 'detail-me', name: 'Detail Me', status: 'running' })];
@@ -1050,8 +1050,8 @@ test('the detail page describes Open, Add/Remove and the action rows', () => {
   assert.equal(d.slug, 'detail-me');
   assert.equal(d.canOpen, true, 'Open is the primary action');
   assert.equal(d.openLabel, 'Open');
-  assert.equal(d.favLabel, 'Add to Shortcuts');
-  assert.deepEqual(d.actions.map((a) => a.label), ['Fork this app', 'Delete app'],
+  assert.equal(d.favLabel, 'Add to My apps');
+  assert.deepEqual(d.actions.map((a) => a.label), ['Remix', 'Delete app'],
     'favorite is NOT duplicated as an action row');
   assert.equal(d.actions[1].danger, true, 'the danger row is flagged');
   assert.deepEqual(d.actions.map((a) => a.index), [0, 1],
@@ -1118,11 +1118,11 @@ test("shareUrlFor: the app's public link, behind the same gate as the menu's Sha
 
 test('the page describes a Share row only when there is a link to share', () => {
   const { Browse, Home, state } = makeBrowse();
-  Home.menuItemsFor = () => [{ key: 'fork', label: 'Fork this app', run: () => {} }];
+  Home.menuItemsFor = () => [{ key: 'fork', label: 'Remix', run: () => {} }];
   Browse._apps = [app({ slug: 'live', url: 'https://live.apps.example' }), app({ slug: 'down', status: 'error', url: null })];
   Browse.showDetail('live');
   assert.equal(state.detail.canShare, true);
-  assert.deepEqual(state.detail.actions.map((a) => a.label), ['Fork this app'],
+  assert.deepEqual(state.detail.actions.map((a) => a.label), ['Remix'],
     'Share is its own row, not one of the home card menu\'s items');
   assert.equal(JSON.stringify(state.detail).includes('live.apps.example'), true, 'the app record rides along');
   Browse.showDetail('down');
@@ -2005,12 +2005,12 @@ test('the detail page mounts the contributors card BELOW the action rows', async
   const { Browse, Home, state } = makeBrowse({
     contributors: [contrib({ username: 'alice' })],
   });
-  Home.menuItemsFor = () => ([{ key: 'fork', label: 'Fork this app', run: () => {} }]);
+  Home.menuItemsFor = () => ([{ key: 'fork', label: 'Remix', run: () => {} }]);
   Browse._apps = [app({ slug: 'detail-me', name: 'Detail Me' })];
   Browse.showDetail('detail-me');
   assert.match(state.detail.contributors.note, /Loading contributors/,
     'first paint is the loading card');
-  assert.deepEqual(state.detail.actions.map((a) => a.label), ['Fork this app'],
+  assert.deepEqual(state.detail.actions.map((a) => a.label), ['Remix'],
     'the rest of the page is untouched');
   await flush(); await flush();
   assert.equal(state.detail.contributors.rows[0].who, 'alice');

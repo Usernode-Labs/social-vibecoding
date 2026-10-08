@@ -142,3 +142,51 @@ test('a Codex turn prints its start marker once', () => {
   assert.deepEqual(progress, ['[agent]']);
   assert.equal(state.agentThreadId, 'thr-1');
 });
+
+// G (2026-10-05): what a Claude Code request came to, from its listener.
+test('a failed request is said on the progress line, logged with its ids, and its provider kept for the ledger', () => {
+  const log = require('../src/services/logger');
+  const warned = [];
+  const realWarn = log.warn;
+  log.warn = (component, message, detail) => { warned.push({ component, message, detail }); };
+  try {
+    const state = worker.newWatchState();
+    state.agentBackend = 'codex_openrouter';
+    state.hostSessionId = 6208;
+    const progress = [];
+    const send = event => worker.parseLine(
+      `__USERNODE_CODING_PROVIDER__ ${JSON.stringify(event)}`,
+      text => progress.push(text), state,
+    );
+    send({ kind: 'provider_request_result', requestOrdinal: 1, httpStatus: 200, outcome: 'ok',
+      requestId: 'req-1', generationId: 'gen-1', providerName: 'DeepInfra' });
+    assert.deepEqual(progress, [], 'a request that worked says nothing');
+    assert.equal(state.routedProvider, 'DeepInfra');
+    send({ kind: 'provider_request_result', requestOrdinal: 2, httpStatus: 400, outcome: 'http_error',
+      requestId: 'req-400', providerName: 'Z.AI', errorType: '400',
+      errorMessage: 'messages[6]: tool messages must include a non-empty string tool_call_id',
+      prompt: 'never copied' });
+    assert.deepEqual(progress, [
+      'OpenRouter request #2 failed with HTTP 400: messages[6]: tool messages must include a non-empty string tool_call_id (via Z.AI)',
+    ]);
+    assert.equal(state.routedProvider, 'Z.AI');
+    assert.equal(state.providerRequestFailures, 1);
+    assert.equal(warned.length, 1);
+    assert.equal(warned[0].message, 'Coding provider request failed');
+    assert.deepEqual(warned[0].detail, {
+      sessionId: 6208, requestOrdinal: 2, httpStatus: 400, providerName: 'Z.AI',
+      requestId: 'req-400', generationId: null, errorType: '400',
+      errorMessage: 'messages[6]: tool messages must include a non-empty string tool_call_id',
+    });
+    assert.ok(!JSON.stringify(warned).includes('never copied'));
+    // Untrusted shapes are dropped, not copied.
+    send({ kind: 'provider_request_result', requestOrdinal: 3, httpStatus: 503,
+      providerName: 'bad<script>', requestId: 'x'.repeat(500), errorType: 'has space' });
+    assert.equal(warned.at(-1).detail.providerName, null);
+    assert.equal(warned.at(-1).detail.requestId, null);
+    assert.equal(warned.at(-1).detail.errorType, null);
+    assert.equal(state.routedProvider, 'Z.AI', 'an unsafe name never replaces the kept one');
+  } finally {
+    log.warn = realWarn;
+  }
+});

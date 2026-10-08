@@ -104,6 +104,13 @@ interface LegacyWindow {
     // stale-session recovery in fetchSessionMint.
     _dropCachedSession?(): void;
     restoreFromHash?(): void;
+    // A sign-in has begun here, so a stale build is no longer swapped in
+    // under the signed-out screens (see noteSignInBegun below).
+    noteSignInBegun?(): void;
+    // Onto the live build before the signed-in shell starts, when this
+    // page is behind it. Resolves false when it stays; never once it
+    // reloads (public/js/app.js).
+    _moveToLiveShell?(moment: 'signed-in' | 'signed-out'): Promise<boolean>;
   };
   Settings?: { logout?(): void };
   NativeChrome?: {
@@ -124,9 +131,18 @@ interface LegacyWindow {
     resolvedTheme?(): 'light' | 'dark';
   };
   AuthScreens?: Record<string, unknown>;
+  // The join step (./communities-first-run.js), asked whether an account
+  // that has just signed in goes straight on to its first session.
+  CommunitiesFirstRun?: { firstSessionNow?(user: unknown): boolean };
   // The native bridge (usernode-native). Absent in a regular browser, which is
   // the NORMAL state for the wallet fast path — see LoginScreen's walletDetect.
-  usernode?: { isNative?: boolean; getBridgeDiagnostics?(): unknown };
+  usernode?: {
+    isNative?: boolean;
+    getBridgeDiagnostics?(): unknown;
+    getBridgeInfo?(): Promise<{ capabilities?: unknown } | null>;
+    // The app's own Apple or Google sheet (NATIVE-BRIDGE.md, Native sign-in).
+    signInWithProvider?(options: { provider: string; nonce: string }): Promise<{ idToken?: unknown } | null>;
+  };
   getNodeAddress?(): Promise<string | null>;
   signMessage?(message: string): Promise<{ publicKey: string; signature: string }>;
 }
@@ -207,7 +223,12 @@ export function blockedOffline(setError?: (msg: string) => void): boolean {
   } catch {
     offline = false;
   }
-  if (!offline) return false;
+  if (!offline) {
+    // Every exchange on these screens runs this guard before it sends, so
+    // this is where the shell hears that a sign-in has begun.
+    noteSignInBegun();
+    return false;
+  }
   if (setError) setError("You're offline. Signing in needs a connection.");
   try {
     legacy().Offline?.nudge();
@@ -215,6 +236,22 @@ export function blockedOffline(setError?: (msg: string) => void): boolean {
     /* ignore */
   }
   return true;
+}
+
+/**
+ * A sign-in has begun on this page: a credential exchange is about to go out,
+ * or a provider's trip came back to finish one. From here the shell stops
+ * offering to swap a stale build in under the signed-out screens
+ * (App.noteSignInBegun in public/js/app.js): a request in flight is never cut
+ * off, and the sign-in moves to the live build once it has succeeded
+ * (AuthScreens.finishLogin), before the signed-in shell starts.
+ */
+export function noteSignInBegun(): void {
+  try {
+    legacy().App?.noteSignInBegun?.();
+  } catch {
+    /* no shell to tell: nothing on this page would swap the build */
+  }
 }
 
 /** Does a (possibly waiting-room) session exist right now? */
@@ -432,6 +469,7 @@ export async function fetchSessionMint(
   init?: RequestInit,
 ): Promise<Response> {
   const w = legacy();
+  noteSignInBegun();
   await prepareNativeMint(w);
   const res = await fetch(input, init);
   if (res.status !== 409) return res;
@@ -466,6 +504,89 @@ export async function finishLogin(): Promise<LoginCompletionFailure | null> {
     (() => Promise<LoginCompletionFailure | null>);
   if (!fn) return { stage: 'open-session', status: null, code: 'client-error' };
   return fn();
+}
+
+/** What a password sign-in came to: in, or what to say and (in the app) the bridge's report. */
+export type PasswordSignIn =
+  | { ok: true }
+  | { ok: false; error: string; details: NativeLoginFailureDetails | null };
+
+/**
+ * The password exchange, `POST /api/auth/login` with a username or an email
+ * and the password: the sign-in screen's form (./login.tsx) and the sign-in
+ * sheet's password step (./sign-in-sheet.tsx) both send it through here, so
+ * they cannot disagree about the route, the session-mint boundary or what a
+ * refusal says. The caller checks `blockedOffline` first and calls
+ * finishLogin after, as it does for every other exchange.
+ */
+export async function passwordSignIn(username: string, password: string): Promise<PasswordSignIn> {
+  try {
+    const res = await fetchSessionMint('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) return { ok: false, error: data.error || 'Login failed', details: null };
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      error: sessionMintFailureMessage(error),
+      details: error instanceof NativeLoginPreparationError ? error.details : null,
+    };
+  }
+}
+
+/**
+ * What a waitlist "you're in" mail's link asked for. The mail links to
+ * `/?signup=1&t=<token>` for a new account and `/?login=1` for one that
+ * exists (src/services/mail/index.js); AuthScreens.enter() reads either off
+ * the query, keeps it here and puts the address back to `/`, so the story
+ * (./landing.tsx) opens with the sign-in sheet over it at this step.
+ */
+export interface ReleaseLink {
+  route: 'signup' | 'login';
+  /** The waitlist row's more_token, which names the address to sign up with. */
+  token: string | null;
+}
+
+const RELEASE_TOKEN_RE = /^[A-Za-z0-9_-]{8,128}$/;
+
+/** The release link, once: whoever shows it takes it. */
+export function takeReleaseLink(): ReleaseLink | null {
+  const host = legacy().AuthScreens;
+  const link = host?._releaseLink as Partial<ReleaseLink> | null | undefined;
+  if (!host || !link) return null;
+  host._releaseLink = null;
+  if (link.route !== 'signup' && link.route !== 'login') return null;
+  const token = typeof link.token === 'string' && RELEASE_TOKEN_RE.test(link.token) ? link.token : null;
+  return { route: link.route, token };
+}
+
+/** Hand the link on, for the sign-in screen to take when the story is switched off. */
+export function keepReleaseLink(link: ReleaseLink): void {
+  const host = legacy().AuthScreens;
+  if (host) host._releaseLink = link;
+}
+
+/**
+ * Does signing in with the session that now exists lead straight to its
+ * first session, "What do you want to make?" (../first-session)? Asked of
+ * /api/auth/me the way AuthScreens.finishLogin will ask it, and answered by
+ * the join step that opens it (./communities-first-run.js), so the two
+ * cannot disagree. False on anything unexpected: the sign-in then finishes
+ * as it always has.
+ */
+export async function firstSessionNext(): Promise<boolean> {
+  try {
+    const res = await fetch('/api/auth/me', { credentials: 'same-origin', cache: 'no-store' });
+    if (!res.ok) return false;
+    const data = await res.json();
+    return legacy().CommunitiesFirstRun?.firstSessionNow?.(data?.user) === true;
+  } catch {
+    return false;
+  }
 }
 
 /**

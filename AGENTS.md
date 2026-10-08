@@ -70,7 +70,10 @@ before editing it.
   and the platform-managed commit upload. This path needs no personal GitHub
   link and no `prepare_work`. That tool prepares an external fork contribution
   and requires GitHub identity for that different workflow; do not call it
-  merely to discover a native proposal's base.
+  merely to discover a native proposal's base. When only the hosted Homeroom
+  connector is connected, that connector path is the one to take: do not set
+  up the CLI to reach `proposal_start` (see `usernode-api`, which keeps the
+  connector first for every Homeroom call).
 - **Establish the base commit before the first edit.** Use an already supplied
   work order or guided hand-off's `Base commit:` when present. For a new native
   proposal, use the exact canonical revision resolved through Homeroom as
@@ -133,7 +136,7 @@ selects a skill.
 - **The platform runs everything on every submission.** `npm run lint:sql`,
   the full unit suite (`npm test`) and every declared `dapp.json` check run
   against the submitted commit in a clean container, and they gate the merge.
-  A local run of all 13,000+ tests duplicates that, minutes at a time, and
+  A local run of all 19,000+ tests duplicates that, minutes at a time, and
   one hung test once held such a run open for an hour with no failure in it.
   The local run's job is narrower: to know, before you submit, whether the
   files you touched still satisfy the suites that read them.
@@ -150,6 +153,10 @@ selects a skill.
   whole-tree guards that name no file (icons, inks, em dashes, the Global
   Chat route inventory, …). A guard opts in with a
   `// test:changed: always (…)` line; mark a new one only if it is fast.
+  A suite that reaches a file only through a chain of modules declares it
+  with a `// test:changed: when <path> (…)` line, and a change to that file
+  or anything under that directory selects it: the Mayor turn golden
+  declares `src/prompts/`, because the prompts it pins are built from there.
 - **Run `npm test` only when shared code moved and the mapping cannot see
   who depends on it** — a `public/js/**` module other modules reach through
   a global (the mapping runs the suites that name the module, not those of
@@ -224,8 +231,10 @@ is no replay plan to write and nothing to verify locally.
   (`lib/community-color.ts`: dapp.json's `icon.color`, else read off the
   icon) and has four tabs, **Hub** (who is here and who it is for, the
   actions, a 14-day trend, since your last visit, votes owed, the chat's
-  last lines, your work), **Chat**, **Needs you** and **All items**; the
-  **Workshop** page opens from the hub's since card. The Communities
+  last lines, your work), **Discussion**, **Needs you** and **Workshop**
+  (`features/dev-board/workshop/project-band.tsx`). **All items** is a page
+  under the Workshop (its "See all"), with a way back, and the Workshop tab
+  stays lit while it is up. The Communities
   screen's Needs you is one feed of every decision owed across your projects
   (`GET /api/workshop/needs-feed`). A project's channel lives on its page,
   not in Messages, and #general is the Homeroom community's channel;
@@ -256,15 +265,21 @@ is no replay plan to write and nothing to verify locally.
   should render a separate "community" layer for it. The table is bare on
   purpose; a name and an audience move onto it when a community can own
   more than one project.
-- **A project is created FOR someone.** The create dialog asks who it is for
-  first (Just me, A private community, A public community) and
-  `POST /api/apps` takes `audience`, a private community's `invitees` and
-  the approval rule as dapp.json's own `governance` block
-  (`src/services/create-options.js`). The rule is written
-  into the new repository's dapp.json by the template, so it is votable later
-  like any other line there; an import's own dapp.json decides instead. Every
-  project uses an app slot whatever its audience: each one is a real
-  container and database.
+- **A project is created FOR someone, and on screen that is a private
+  community.** Create opens "What do you want to make?"
+  (`frontend/src/features/first-session/make.tsx`, the first session's own
+  screen), which asks what it should do and what to call it, or imports a
+  GitHub repo in place (`import-repo.tsx`), and makes a private community
+  with nobody invited yet; inviting comes next, on its made screen. The
+  create dialog that asked who it is for and who approves is retired: those
+  are the project's own levers afterwards (Invite, "Make it public", Members
+  & approvals). `POST /api/apps` still takes `audience`, a private
+  community's `invitees` and the approval rule as dapp.json's own
+  `governance` block (`src/services/create-options.js`) for any other
+  caller; the rule is written into the new repository's dapp.json by the
+  template, so it is votable later like any other line there, and an
+  import's own dapp.json decides instead. Every project uses an app slot
+  whatever its audience: each one is a real container and database.
 - **Membership gates taking part, not reading.** Starting a change,
   proposing, filing a request, voting (on proposals and requests) and posting
   in an app's chat answer 403 `join_required` to a non-member
@@ -337,8 +352,13 @@ is no replay plan to write and nothing to verify locally.
   original order (`app.js` must stay last), and **converted markup is
   like-for-like** — same ids, class strings, `hidden` semantics and `data-*`
   attributes as the hand-written shell, because `public/js/**` looks those up
-  by `getElementById` and `dapp.json`'s 338 declared tests select on deep
-  chains of them. The structural baseline is
+  by `getElementById` and `dapp.json`'s 800+ declared checks (its `tests`
+  array; count it rather than trusting this line) select on deep chains of
+  them. Their ceiling is `MAX_DECLARED_TESTS` in
+  `src/services/app-manifest.js` (860), and the manifest keeps 20 slots
+  clear of it (`tests/lib/check-cap.js`). In October 2026 it stood exactly
+  at that floor, 840 of 860: fold a new check into an existing one first,
+  as the guards' message in `check-cap.js` says. The structural baseline is
   `tests/baselines/shell-markup.json` (ids, `data-*` names, script order,
   stylesheet order), enforced by `tests/shell-id-inventory.test.js`,
   `tests/dapp-selectors-resolve.test.js` and
@@ -357,7 +377,7 @@ is no replay plan to write and nothing to verify locally.
   and screen visibility must be published through
   `frontend/src/lib/visibility-store.ts` rather than by toggling `.hidden` from
   outside React.
-- **The nine dialogs present themselves through
+- **The shell's dialogs present themselves through
   `frontend/src/lib/static-modal.ts` — nothing outside React lifts their
   cards.** That seam used to be `PlatformUI.adoptStaticModal`, which watched
   each root in `STATIC_MODAL_IDS` and, when `hidden` came off, lifted the card
@@ -365,7 +385,8 @@ is no replay plan to write and nothing to verify locally.
   kit's `presentModal` shell. Two owners wrote to those nodes, so the dialogs
   had to stay markup-only. #1078 chunk I moved the lift inside React
   (`useStaticModal`, driven by `features/dialogs/use-dialog.ts`) and retired the
-  `public/js/**` copy, which is what made all nine stateful. **Drive a dialog
+  `public/js/**` copy, which is what made them all stateful (the create
+  dialog, the first of the nine, has since been retired). **Drive a dialog
   only through `useDialog`** — it owns `hidden`, the kit hand-off, the
   backdrop-dismiss rule and the ghost-click guard, and it publishes the
   controller on `window.UsernodeReact.dialogs.<name>` for the legacy callers.
@@ -398,9 +419,12 @@ between them is about the SURFACE each is drawn for, not about styling.
 - **The admin console** — the `AdminUI` registry in
   `frontend/src/features/admin/admin-console.js`. A frozen object of class
   *recipes* (`AdminUI.card`, `AdminUI.btn.primary`, `AdminUI.cardTitle`, …). It
-  is published on `window.AdminUI` as well as exported, because the section
-  modules (`admin-analytics.js`, `admin-mail.js`, `admin-topochain.js`, …) read
-  it as a bare identifier at call time.
+  is exported, and every module that draws with it imports it
+  (`import { AdminUI } from './admin-console.js'`; `admin-analytics.tsx` and
+  `admin-mail.tsx` among them). `admin-console.js` still publishes it on
+  `window.AdminUI` too, a leftover from when the sections were classic
+  scripts that read it as a bare identifier; nothing in `frontend/src` or
+  `public/js` reads the global now, so a new module imports it.
 
 The console used to be a genuinely separate design system — the topochain
 admin's `gray`/`indigo`, deliberately not the shell's `zinc`/`violet`. The

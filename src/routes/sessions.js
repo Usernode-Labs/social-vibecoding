@@ -12,6 +12,7 @@ const webFetch = require('../services/web-fetch');
 const prMetadata = require('../services/pr-metadata');
 const sessionTitles = require('../services/session-title');
 const testingNotes = require('../services/testing-notes');
+const previewClock = require('../services/preview-clock');
 const proposalDescription = require('../services/proposal-description');
 const proposalDescriptionEdit = require('../services/proposal-description-edit');
 const platformIssueBlock = require('../services/platform-issue-block');
@@ -19,6 +20,7 @@ const buildContract = require('../services/build-contract');
 const staging = require('../services/staging');
 const topicAttrs = require('../services/topic-attributes');
 const agentSessions = require('../services/agent-sessions');
+const classicSessions = require('../services/classic-sessions');
 const { claimIssueForUser } = require('../services/issue-claims');
 const { appIdentityEnv } = require('../services/app-identity-env');
 const visuals = require('../services/visuals');
@@ -47,7 +49,9 @@ const {
   getDesignGuidance,
   runtimeReadsImages,
   SPEC_DESIGN_BRIEF,
+  specHtmlContract,
 } = require('../services/prompts');
+const specHtml = require('../services/spec-html');
 const {
   IN_LOOP_BROWSER_GUIDANCE,
   HOSTED_CLAUDE_IN_LOOP_BROWSER_GUIDANCE,
@@ -56,6 +60,7 @@ const models = require('../services/models');
 const limits = require('../services/limits');
 const { effectiveSessionCaps } = require('../services/session-caps');
 const events = require('../services/events');
+const journeyEvents = require('../services/journey-events');
 const modelFallback = require('../services/model-fallback');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
@@ -206,7 +211,6 @@ const issueAnnounce = require('../services/issue-announce');
 // Mayor's in-process draft_issue_report tool below.
 const issueDraft = require('../services/issue-draft');
 const {
-  reviewedHeadForSession,
   visualHeadForSession,
   countedVotePredicateSql,
 } = require('../services/pr-vote-revision');
@@ -498,9 +502,13 @@ const MANUAL_SESSION_TITLE_MAX = 256;
 // Mayor creates each change through POST /api/apps/:slug/sessions on a
 // delegated grant; nothing else may create one any more (not a browser, a
 // shell cached before the switch, a CLI token, nor Global Chat's loopback),
-// and forking a chat into a new classic session is retired with them.
-// Sessions that already exist keep working exactly as they did: only the
-// creation routes read this.
+// and forking a chat into a new classic session is retired with them. Only
+// the creation routes read this.
+//
+// #3976: the sessions that already exist are read-only. Their chat takes no
+// new message and nothing continues their work; reading them and everything
+// about the proposal they became stays open. See services/classic-sessions.js
+// for the line between the two.
 const CLASSIC_SESSIONS_RETIRED = 'New work starts in an agent session now. '
   + 'Start one from Messages or New change.';
 
@@ -1041,6 +1049,16 @@ async function loadSessionSpec(pool, sessionId) {
   return (rows[0] && rows[0].spec_md) || '';
 }
 
+// #3699: the latest spec as both its text (spec_md, a markdown copy when the
+// spec was written as HTML) and its HTML document, or null for a markdown spec.
+async function loadSessionSpecDoc(pool, sessionId) {
+  const { rows } = await pool.query(
+    'SELECT spec_md, spec_html FROM chat_sessions WHERE id = $1',
+    [sessionId]
+  );
+  return { md: (rows[0] && rows[0].spec_md) || '', html: (rows[0] && rows[0].spec_html) || null };
+}
+
 // ── Failing proposal checks → next-turn context ──────────────────────────
 //
 // The coding agent never sees its own proposal-check verdicts: checks run
@@ -1114,6 +1132,14 @@ function summarizeFailingChecks(checkState, testResults, max = FAILING_CHECKS_MA
       consoleError: Array.isArray(r.consoleErrors) && r.consoleErrors[0]
         ? String(r.consoleErrors[0].message || '').slice(0, 200)
         : null,
+      // #3978: the unit-suite row's first failing-test excerpt — the
+      // assertion message and expected/actual, which the grouped reason
+      // above deliberately does not carry. One test, tightly clipped; the
+      // rest is what a re-run of the named files prints.
+      excerpt: unitSuiteRow.isUnitSuiteRow(r)
+        && Array.isArray(r.failureDetails) && r.failureDetails[0] && r.failureDetails[0].excerpt
+        ? String(r.failureDetails[0].excerpt).replace(/\s+/g, ' ').slice(0, 400)
+        : null,
     })),
   };
 }
@@ -1126,7 +1152,10 @@ function buildFailingChecksBlock(checkState, testResults) {
   const blocking = { length: summary.blocking };
   const lines = summary.rows.map((r) => {
     const firstConsole = r.consoleError ? ` · first console error: ${r.consoleError}` : '';
-    return `- [${r.advisory ? 'advisory' : 'BLOCKING'}] "${r.name}"${r.path ? ` (path: ${r.path})` : ''} — ${r.reason}${firstConsole}`;
+    const line = `- [${r.advisory ? 'advisory' : 'BLOCKING'}] "${r.name}"${r.path ? ` (path: ${r.path})` : ''} — ${r.reason}${firstConsole}`;
+    // The unit-suite row also carries its first failing test's error (#3978):
+    // what the failure actually asserted, flattened onto one indented line.
+    return r.excerpt ? `${line}\n  first failing test's error: ${r.excerpt}` : line;
   });
   const more = failing.length > FAILING_CHECKS_MAX
     ? `\n(+${failing.length - FAILING_CHECKS_MAX} more failing)` : '';
@@ -1286,6 +1315,15 @@ async function buildSessionDiscussionBlock(pool, session) {
 // tests can keep requiring it from this module.
 const { stripSpecWrapperFence } = require('../services/spec-format');
 
+// #3699: what a spec author's final message is stored as. A markdown spec is
+// its fence-stripped text, as it always was. An HTML spec is stored as its
+// markdown copy (`text`), which is what every reader of spec text gets and so
+// what `ccText` means at each capture site, beside the document (`html`).
+function captureSpecOutput(raw) {
+  const { markdown, html } = specHtml.normalizeSpecOutput(stripSpecWrapperFence(String(raw || '').trim()));
+  return { text: String(markdown || '').trim(), html: html || null };
+}
+
 // #1204: spot an agent run that died on the wire and reported it as its
 // FINAL message ("API Error: Connection lost mid-response…") instead of in
 // its exit code. A scout's final message IS the spec, so without this the
@@ -1304,13 +1342,15 @@ const { agentApiFailure, describeAgentApiFailure } = require('../services/agent-
 // it uses MAX(version)+1. Ordinary callers remain best-effort; durable scout
 // publication passes required:true so the version and its receipt/card roll
 // back together instead of committing a partially replayable outcome.
-async function snapshotSessionSpec(pool, sessionId, content, { required = false } = {}) {
+async function snapshotSessionSpec(pool, sessionId, content, { required = false, html = null } = {}) {
   try {
+    // #3699: content_html is the version's HTML document when it was written
+    // as one; content is then its markdown copy.
     const { rows } = await pool.query(
-      `INSERT INTO chat_session_specs (session_id, version, content)
-       VALUES ($1, COALESCE((SELECT MAX(version) FROM chat_session_specs WHERE session_id = $1), 0) + 1, $2)
+      `INSERT INTO chat_session_specs (session_id, version, content, content_html)
+       VALUES ($1, COALESCE((SELECT MAX(version) FROM chat_session_specs WHERE session_id = $1), 0) + 1, $2, $3)
        RETURNING version`,
-      [sessionId, content]
+      [sessionId, content, html || null]
     );
     return rows[0].version;
   } catch (err) {
@@ -1330,6 +1370,9 @@ async function persistScoutPublication({
   sessionId,
   turnId = null,
   content,
+  // #3699: the spec's HTML document when it was written as one; `content` is
+  // then its markdown copy (captureSpecOutput).
+  contentHtml = null,
   conversationContent = null,
   hadSpec = false,
   durationMs = null,
@@ -1349,16 +1392,33 @@ async function persistScoutPublication({
   const scoutText = localAgentLabel
     ? `${baseScoutText} Drafted on ${localAgentLabel}, so no Homeroom credits were used.`
     : baseScoutText;
+  let html = typeof contentHtml === 'string' && contentHtml.trim() ? contentHtml.trim() : null;
+  if (html) {
+    // #3699: which stylesheet the screens draw with depends on the app
+    // (spec-html.js, stampSpecStyles); an app that cannot be read gets the
+    // native kit alone, the choice that never borrows the shell's styles.
+    let app = null;
+    try {
+      const { rows } = await pool.query(
+        'SELECT a.slug, a.self_hosted FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1',
+        [sessionId],
+      );
+      app = rows[0] || null;
+    } catch (err) {
+      log.warn('sessions', 'Could not read the app of an HTML spec', { sessionId, err: err.message });
+    }
+    html = specHtml.stampSpecStyles(html, specHtml.specStylesFor(app));
+  }
   const persist = async (client, { requiredSnapshot }) => {
     await client.query(
-      'UPDATE chat_sessions SET spec_md = $1 WHERE id = $2',
-      [ccText, sessionId],
+      'UPDATE chat_sessions SET spec_md = $1, spec_html = $3 WHERE id = $2',
+      [ccText, sessionId, html],
     );
     const specVersion = await snapshotSessionSpec(
       client,
       sessionId,
       ccText,
-      { required: requiredSnapshot },
+      { required: requiredSnapshot, html },
     );
     const metadata = {
       specPreview: buildSpecPreview(ccText),
@@ -1369,6 +1429,7 @@ async function persistScoutPublication({
         ? { scoutConversationSpecExact: true }
         : {}),
       specVersion,
+      ...(html ? { specFormat: 'html' } : {}),
       ...(durationMs != null ? { durationMs } : {}),
       ...(quickReplies ? { quickReplies } : {}),
       ...(recovered ? { recovered: true } : {}),
@@ -3229,7 +3290,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // defer to — the route's whole job is to start one unattended turn
       // immediately, and that turn may push. Deferring would only move the
       // same mint a few lines down the same request.
-      const branchName = branchNames.devBranchName(`auto-issue-${issueNumber}`);
+      const branchName = branchNames.devBranchName(`auto-issue-${issueNumber}`, Date.now(), issue && issue.title);
       try {
         await github.createBranch(repoOwner, repoName, branchName);
       } catch (err) {
@@ -3407,7 +3468,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // `fromBranch` argument below. Defer it and the first turn would
       // branch off main instead, silently discarding the work the clone
       // was created to continue.
-      const branchName = branchNames.devBranchName(req.user.username);
+      const branchName = branchNames.devBranchName(req.user.username, Date.now(), src.session_title);
       const [, repoOwner, repoName] = (src.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
       let inheritedCodeBranch = false;
       if (github.isEnabled() && repoOwner && repoName) {
@@ -3442,12 +3503,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // default backend/model atomically (no insert-then-patch).
       const { rows } = await pool.query(
         `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, spec_md, linked_issues, testing_md, testing_path, testing_paths, cloned_from_session_id, session_title,
-            agent_backend, agent_provider, agent_model, agent_reasoning_effort)
-         VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            agent_backend, agent_provider, agent_model, agent_reasoning_effort, spec_html)
+         VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
          RETURNING *`,
         [src.app_id, req.user.id, branchName, src.spec_md || '', src.linked_issues, src.testing_md, src.testing_path,
          src.testing_paths != null ? JSON.stringify(src.testing_paths) : null, src.id, cloneTitle,
-         pref.backend, pref.provider, pref.model, pref.reasoningEffort]
+         pref.backend, pref.provider, pref.model, pref.reasoningEffort, src.spec_html || null]
       );
       const session = rows[0];
       await topicAttrs.selfAssignProposal(pool, src.app_id, session.id, req.user);
@@ -3474,8 +3535,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       );
       // Carry the spec version history too, so the spec viewer shows v1…vN.
       await pool.query(
-        `INSERT INTO chat_session_specs (session_id, version, content, built_at, commit_sha, pr_number)
-         SELECT $1, version, content, built_at, commit_sha, pr_number
+        `INSERT INTO chat_session_specs (session_id, version, content, content_html, built_at, commit_sha, pr_number)
+         SELECT $1, version, content, content_html, built_at, commit_sha, pr_number
          FROM chat_session_specs WHERE session_id = $2`,
         [session.id, src.id]
       ).catch((err) => log.warn('sessions', 'Spec history copy failed (continuing)', { err: err.message }));
@@ -3705,6 +3766,15 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                 (SELECT COUNT(*)::int FROM pr_votes pv
                   WHERE pv.session_id = cs.id AND pv.vote = 'no'
                     AND ${countedVotePredicateSql('pv', 'cs')}) AS no_count,
+                -- The member floor (services/governance.js applyNoTimerMerge):
+                -- Yes votes from someone other than the author, read only for
+                -- a proposal flagged for explicit approval.
+                CASE WHEN cs.requires_explicit_approval THEN
+                  (SELECT COUNT(*)::int FROM pr_votes pv
+                    WHERE pv.session_id = cs.id AND pv.vote = 'yes'
+                      AND pv.user_id IS DISTINCT FROM cs.user_id
+                      AND ${countedVotePredicateSql('pv', 'cs')})
+                END AS other_yes_count,
                 -- #1258: the upstream commit this proposal's branch started
                 -- from. It is not a column on the session — it lives on the
                 -- job that produced the branch — and a coding agent that
@@ -3772,14 +3842,24 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           const governanceSvc = require('../services/governance');
           const gov = await governanceSvc.getGovernance(pool, rows[0].app_id);
           const electorate = await governanceSvc.getElectorate(pool, rows[0].app_id, gov);
+          // #788: a flagged proposal has no merge clock and waits for a Yes
+          // from someone other than its author, so the header pill says
+          // that rather than "merging shortly".
+          const flagged = !!rows[0].requires_explicit_approval;
           const q = electorate.approverIds
             ? await governanceSvc.qualifiedCounts(
               pool, 'pr', rows[0].id, electorate.approverIds,
-              reviewedHeadForSession(rows[0])
+              flagged ? { authorId: rows[0].user_id ?? null } : undefined
             )
-            : { yes: rows[0].yes_count, no: rows[0].no_count };
+            : { yes: rows[0].yes_count, no: rows[0].no_count, otherYes: rows[0].other_yes_count };
           const gate = governanceSvc.computeGate(
-            gov, electorate.active, q.yes, q.no, rows[0].promoted_at || rows[0].created_at
+            gov, electorate.active, q.yes, q.no, rows[0].promoted_at || rows[0].created_at, null,
+            {
+              explicitApproval: flagged,
+              otherYes: q.otherYes,
+              memberCount: flagged
+                ? await governanceSvc.communityMemberCount(pool, rows[0].app_id) : undefined,
+            }
           );
           rows[0].votes_required = gate.required;
           rows[0].merge_window_ends_at = gate.windowEndsAt;
@@ -3787,7 +3867,15 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           rows[0].approvals_required = gate.approvalsRequired;
           rows[0].qualified_yes_count = gate.qualifiedYes;
           rows[0].qualified_no_count = gate.qualifiedNo;
+          Object.assign(rows[0], governanceSvc.explicitApprovalRowFields(rows[0], gate));
         } catch { /* pill falls back to the raw tallies */ }
+        // B10a: a project that is just you reads "Waiting for your approval"
+        // where a group's reads "Waiting for approval" (MergeStatus.lifecycle).
+        try {
+          const membership = await communities.getMembership(pool, { id: rows[0].app_id }, req.user.id);
+          rows[0].app_audience = membership ? membership.audience : null;
+        } catch { /* the pill keeps the group's words */ }
+        delete rows[0].other_yes_count;
       }
 
       // A GET on this route is NOT by itself evidence that the user opened
@@ -3858,6 +3946,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // live path delivers the same shape via the visuals_ready event).
       // Best-effort — a visuals hiccup must not break opening the session.
       const session = rows[0];
+      // #3976: the dev chat reads this to put its composer away and say why.
+      // Decided here, beside the routes that refuse, so the screen and the
+      // server cannot disagree about which sessions take no new message.
+      session.classic_read_only = classicSessions.isClassicSession(session);
       // #1650: a managed local handoff cannot be proposed merely because it
       // is active. Its exact submitted head must have live staging and a
       // terminal passing verdict, and the in-memory build/check/capture gates
@@ -4168,6 +4260,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       await issueAnnounce.announceIssueCreated(pool, owner, repo, issue, isAppTarget
         ? { id: row.app_id, slug: row.app_slug, name: row.app_name }
         : null);
+      // #3952: the people the confirmed draft names with @. Never rejects.
+      notifications.notifyIssueMentions?.(pool, {
+        ...(isAppTarget ? { appId: row.app_id } : { owner, repo }),
+        issueNumber: issue.number, authorId: req.user.id,
+        text: `${draft.title || ''}\n\n${draft.body || ''}`,
+      });
 
       log.info('sessions', 'Issue filed after user confirm', {
         sessionId, msgId, number: issue.number, user: req.user.username,
@@ -4277,6 +4375,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const { backend, model, reasoningEffort } = req.body || {};
       if (!Number.isFinite(sessionId)) {
         return res.status(400).json({ error: 'Bad session id' });
+      }
+      // #3976: a classic session's coding agent and model are what its next
+      // turn would run on, and it has no next turn. Ahead of the resolvers,
+      // which can call out over the network and provision a key.
+      if (classicSessions.isClassicSession(
+        await classicSessions.loadOwned(pool, sessionId, req.user.id),
+      )) {
+        return res.status(409).json(classicSessions.refusal());
       }
 
       // ── Phase 1: validate network-dependent inputs BEFORE locking ──
@@ -4394,6 +4500,13 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const sessionId = parseInt(req.params.id, 10);
       if (!Number.isFinite(sessionId)) {
         return res.status(400).json({ error: 'Bad session id' });
+      }
+      // #3976: a classic session is not built anywhere next, so there is no
+      // venue left to choose for it.
+      if (classicSessions.isClassicSession(
+        await classicSessions.loadOwned(pool, sessionId, req.user.id),
+      )) {
+        return res.status(409).json(classicSessions.refusal());
       }
       const venue = typeof (req.body || {}).venue === 'string' ? req.body.venue : null;
       // Clearing is legitimate: it returns the session to "nobody has
@@ -4867,13 +4980,18 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     async (req, res) => {
       try {
         const { rows: sessionRows } = await pool.query(
-          `SELECT cs.id FROM chat_sessions cs
+          `SELECT cs.id, cs.agent_session_id, cs.is_headless, cs.source FROM chat_sessions cs
            WHERE cs.id = $1 AND cs.user_id = $2
              AND cs.status IN ('active', 'promoted')
              AND cs.is_headless = FALSE`,
           [req.params.id, req.user.id]
         );
         if (!sessionRows.length) return res.status(404).json({ error: 'Active session not found' });
+        // #3976: a file is uploaded to go with a message, and a classic
+        // session takes no new message.
+        if (classicSessions.isClassicSession(sessionRows[0])) {
+          return res.status(409).json(classicSessions.refusal());
+        }
         const sessionId = sessionRows[0].id;
 
         const filename = String(req.query.filename || '').trim();
@@ -4997,32 +5115,26 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
            AND cs.source IS DISTINCT FROM 'imported'`,
         [req.params.id, req.user.id]
       );
-      let { rows: sessionRows } = await loadChatSession();
+      const { rows: sessionRows } = await loadChatSession();
       if (!sessionRows.length) {
-        // A message to a paused session resumes it (#2779 follow-up): paused
-        // is bookkeeping, never something the user is asked to undo first.
-        // The resume keeps every rule the resume route has (the caps, and
-        // pausing the user's least recently used session to make room).
+        // A paused session is refused for what it is, never resumed first: a
+        // resume spends a slot and may pause another of the user's sessions.
+        // (A message to a paused classic session used to resume it, #2779
+        // follow-up; since #3976 a classic session takes no message at all.)
         const { rows: pausedRows } = await pool.query(
-          `SELECT id, agent_session_id FROM chat_sessions
+          `SELECT id, agent_session_id, is_headless, source FROM chat_sessions
             WHERE id = $1 AND user_id = $2 AND status = 'paused'
               AND is_headless = FALSE AND source IS DISTINCT FROM 'imported'`,
           [req.params.id, req.user.id]
         );
-        // Refused below anyway, so it is never resumed first: a resume
-        // spends a slot and may pause another of the user's sessions.
         if (pausedRows.length && pausedRows[0].agent_session_id != null) {
           return res.status(409).json({
             error: 'This change belongs to an agent session. Continue it there.',
             agentSessionId: pausedRows[0].agent_session_id,
           });
         }
-        if (pausedRows.length) {
-          const resumed = await resumePausedSession({
-            pool, config, user: req.user, sessionId: Number(pausedRows[0].id),
-          });
-          if (!resumed.ok) return res.status(resumed.status).json({ error: resumed.error });
-          ({ rows: sessionRows } = await loadChatSession());
+        if (pausedRows.length && classicSessions.isClassicSession(pausedRows[0])) {
+          return res.status(409).json(classicSessions.refusal());
         }
       }
       if (!sessionRows.length) {
@@ -5056,6 +5168,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           sessionId: session.id, clientMessageId, viewer: req.user,
         });
         if (delivery.received) return chatDelivery.answerDuplicate(res, delivery);
+      }
+      // #3976: every other row this route loads is a classic session, and a
+      // classic session is read-only: new work starts in an agent session.
+      // After the duplicate lookup, so a retry of a message stored before
+      // this landed still learns it was received. The turn below is kept
+      // for now; deleting the classic dev chat is a later change.
+      if (classicSessions.isClassicSession(session)) {
+        return res.status(409).json(classicSessions.refusal());
       }
       const isOpenRouterSession = registry.resolveBackend(session.agent_backend) === 'codex_openrouter';
 
@@ -5147,8 +5267,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // this handler is already holding.
       if (!String(session.branch_name || '').trim()) {
         try {
+          // #3229: the branch is named after the change, from the same
+          // LLM-free title the session's first name comes from.
           const ensured = await sessionLifecycle.ensureSessionBranch({
             pool, sessionId: session.id, username: req.user.username,
+            label: session.session_title || sessionTitles.deterministicTitle(message || ''),
           });
           session.branch_name = ensured.branchName;
         } catch (err) {
@@ -5279,12 +5402,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   router.get('/api/sessions/:id/spec', async (req, res) => {
     try {
       const { rows: sessionRows } = await pool.query(
-        `SELECT cs.id, cs.user_id, cs.spec_md
+        `SELECT cs.id, cs.user_id, cs.spec_md, cs.spec_html
          FROM chat_sessions cs
          WHERE cs.id = $1`,
         [req.params.id]
       );
 
+      // #3699: `html` is the latest version's HTML document when it was
+      // written as one; `spec` is then its markdown copy.
       if (sessionRows.length && sessionRows[0].user_id === req.user.id) {
         const { rows: versions } = await pool.query(
           `SELECT version, built_at, commit_sha, pr_number, shared_to_group_at,
@@ -5296,6 +5421,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         );
         return res.json({
           spec: sessionRows[0].spec_md || '',
+          html: sessionRows[0].spec_html || null,
           versions,
         });
       }
@@ -5306,7 +5432,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         // query, then is stripped from the metadata rows.
         const { rows } = await pool.query(
           `SELECT version, built_at, commit_sha, pr_number, shared_to_group_at,
-                  LENGTH(content) AS char_count, content
+                  LENGTH(content) AS char_count, content, content_html
            FROM chat_session_specs s
            WHERE s.session_id = $1
              AND ${specVersionSharedVisibilitySql('s', '$2')}
@@ -5316,7 +5442,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         if (rows.length) {
           return res.json({
             spec: rows[0].content || '',
-            versions: rows.map(({ content, ...meta }) => meta),
+            html: rows[0].content_html || null,
+            versions: rows.map(({ content, content_html: _html, ...meta }) => meta),
           });
         }
       }
@@ -5371,7 +5498,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     }
     try {
       const { rows } = await pool.query(
-        `SELECT s.version, s.content, s.built_at, s.commit_sha, s.pr_number, s.shared_to_group_at
+        `SELECT s.version, s.content, s.content_html, s.built_at, s.commit_sha, s.pr_number, s.shared_to_group_at
          FROM chat_session_specs s
          JOIN chat_sessions cs ON cs.id = s.session_id
          WHERE s.session_id = $1
@@ -5596,25 +5723,22 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // once and cached, so the 3s status poll costs nothing.
   //
   // #1378: the set became a Map because `stoppable` is now part of the
-  // payload and the fixtures have to be able to show BOTH answers. A seeded
-  // fixture has no in-memory stop handle and no durable active_turn, so it
-  // would compute stoppable:false for all of them — regressing the two
-  // estimator fixtures to the "Finishing up…" spinner and breaking the
-  // checks that assert their cohort note. The '-unstoppable' fixture is the
-  // one that deliberately keeps the false answer.
+  // payload. A seeded fixture has no in-memory stop handle and no durable
+  // active_turn, so it would compute stoppable:false — regressing the
+  // estimator fixtures to the "Finishing up…" spinner — so each one declares
+  // itself stoppable. (A '-unstoppable' fixture kept the false answer until
+  // #4268 removed it: its screen was the composer's, which a read-only
+  // classic session no longer draws.)
   let stagingCohortFixtureIds = null;
   async function stagingCohortFixtureSessions() {
     if (process.env.USERNODE_ENV !== 'staging') return null;
     if (stagingCohortFixtureIds) return stagingCohortFixtureIds;
     try {
       const { rows } = await pool.query(
-        `SELECT id, branch_name FROM chat_sessions
+        `SELECT id FROM chat_sessions
           WHERE branch_name LIKE 'staging-fixture/cc-cohort-%'`
       );
-      stagingCohortFixtureIds = new Map(rows.map((r) => [
-        r.id,
-        { stoppable: !String(r.branch_name || '').endsWith('-unstoppable') },
-      ]));
+      stagingCohortFixtureIds = new Map(rows.map((r) => [r.id, { stoppable: true }]));
     } catch {
       stagingCohortFixtureIds = new Map();
     }
@@ -6196,6 +6320,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     return {
       status: 'ready', url: session.staging_url, verified: true,
       checksRunning: session.check_state === 'pending',
+      // The preview bar's title ("Flat 4B Chores · Preview"). A caller that
+      // opens a preview from a slug alone (the bot's ready card, an agent
+      // session) has no name to show; this answer does.
+      appName: session.app_name || null,
+      // A change that only shows at certain times declares the moment to see
+      // it at (services/preview-clock.js). Try it opens the preview there and
+      // the bar says so. Absent when nothing is declared.
+      ...previewClock.previewAnswer(session),
     };
   }
 
@@ -6213,6 +6345,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         return res.json({ status: 'unavailable', reason: 'demo' });
       }
       const result = await inspectPreview(session);
+      // The admin Journey's creation path: a preview answered as ready is
+      // a preview opened, once per viewer per change. Never awaited.
+      if (result.status === 'ready') journeyEvents.notePreviewOpened(pool, { sessionId: session.id, viewerId: req.user.id });
       return res.json(result.status === 'missing'
         ? { status: 'unavailable', reason: 'missing' }
         : result);
@@ -6260,6 +6395,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // reason to churn the app or its database, but it is a reason not to
       // navigate the reviewer to stale/current/error content.
       const inspected = await inspectPreview(session, { repairDockerAlias: true });
+      // As in preview-status: a ready answer is a preview opened. A rebuild
+      // is not, until the client asks again once it is up.
+      if (inspected.status === 'ready') journeyEvents.notePreviewOpened(pool, { sessionId: session.id, viewerId: req.user.id });
       if (inspected.status !== 'missing') return res.json(inspected);
 
       // Dedup concurrent clicks: at most one rebuild per session in flight.
@@ -6555,13 +6693,18 @@ function buildHeadlessSeed(issueNumber, issue, comments, botUsername, threadMess
     createdAt: c.createdAt || '',
   }));
 
-  seed += `\n\n${threadContext.buildIssueDiscussionBlock({
-    issueNumber,
-    githubComments: clippedGithub,
-    threadMessages: thread,
-    botUsername,
-    truncated: list.length > kept.length,
-  })}`;
+  // Inside the same UNTRUSTED DATA warning a person's own session reads its
+  // discussion under (buildDiscussionPromptBlock): anyone can comment, on
+  // GitHub too, and the Homeroom bot builds from this seed.
+  seed += threadContext.buildDiscussionPromptBlock({
+    issueBlock: threadContext.buildIssueDiscussionBlock({
+      issueNumber,
+      githubComments: clippedGithub,
+      threadMessages: thread,
+      botUsername,
+      truncated: list.length > kept.length,
+    }),
+  });
   return seed;
 }
 
@@ -8640,7 +8783,8 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
     // headless success paths (spec persist / testing notes), never PR or
     // staging (the headless contract).
     if (recoveryActiveTurn.mode === 'scout') {
-      const ccText = stripSpecWrapperFence((result.lastResultText || '').trim());
+      const capturedSpec = captureSpecOutput(result.lastResultText);
+      const ccText = capturedSpec.text;
       // #1204: the replayed journal can end on a transport-failure notice
       // just like a live turn does. There is no re-dispatch on this path
       // (the run is being finalized after a platform restart, not driven),
@@ -8653,6 +8797,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
           sessionId: session.id,
           turnId: recoveryActiveTurn.turnId || null,
           content: ccText,
+          contentHtml: capturedSpec.html,
           conversationContent: result.lastResultText || '',
           hadSpec: !!(session.spec_md || '').trim(),
           agentBackend: recoveryActiveTurn.backend || session.agent_backend || 'claude_code',
@@ -9257,15 +9402,24 @@ async function runScoutTool({
   // preserving accepted content. This replaced the Mayor's old
   // in-process write_spec/edit_spec tools (#111) — Claude Code does a
   // much better job at spec drafting and revision than the Mayor did.
-  const existingSpec = (await loadSessionSpec(pool, session.id)).trim();
+  // #3699: apps in config.htmlSpecApps get an HTML spec (before/after
+  // screens, diagrams). A revision of an HTML spec revises the document
+  // itself; a markdown spec on such an app is rewritten as one.
+  const htmlSpec = specHtml.htmlSpecsEnabledFor(config, session.app_slug);
+  const platformStyles = specHtml.specStylesFor({ slug: session.app_slug, self_hosted: session.app_self_hosted }) === 'platform';
+  const existingDoc = await loadSessionSpecDoc(pool, session.id);
+  const existingSpec = existingDoc.md.trim();
+  const existingShown = htmlSpec && existingDoc.html ? existingDoc.html.trim() : existingSpec;
   const revisionBlock = existingSpec
     ? `
 
-This session ALREADY HAS a spec doc, shown verbatim below. Your task is a REVISION of it, not a from-scratch rewrite: apply the requested changes, keep everything else intact (the user may have already reviewed and accepted the rest), and re-verify against the repo only where the change requires it. Your final message must be the COMPLETE revised spec document — it replaces the doc wholesale. If the existing spec does not follow the two-section structure mandated below ("## User-facing changes" / "## Technical implementation"), reorganize it into those two sections as part of this revision while preserving its content.
+This session ALREADY HAS a spec doc, shown verbatim below. Your task is a REVISION of it, not a from-scratch rewrite: apply the requested changes, keep everything else intact (the user may have already reviewed and accepted the rest), and re-verify against the repo only where the change requires it. Your final message must be the COMPLETE revised spec document — it replaces the doc wholesale. ${htmlSpec
+      ? 'If the existing spec is markdown, or does not follow the HTML structure mandated below, rewrite it as that HTML document as part of this revision while preserving its content.'
+      : 'If the existing spec does not follow the two-section structure mandated below ("## User-facing changes" / "## Technical implementation"), reorganize it into those two sections as part of this revision while preserving its content.'}
 
 ==== CURRENT SPEC DOC (revise this) ====
 
-${existingSpec}
+${existingShown}
 
 ==== END CURRENT SPEC DOC ====`
     : '';
@@ -9327,20 +9481,20 @@ ${scoutPlanModeLine}${personalFilesNote}${revisionBlock}
 ${issueHelperNote}${runLocally ? '' : `\n${HOMEROOM_READ_NOTE}\n`}${prodDebug ? `
 ${debugAccess.promptBlock()}
 ` : ''}
-Your job is to investigate this repo and produce a MARKDOWN SPEC for the change. The spec should be:
-- A complete, self-contained markdown document the user can review on its own.
+Your job is to investigate this repo and produce ${htmlSpec ? 'an HTML SPEC' : 'a MARKDOWN SPEC'} for the change. The spec should be:
+- A complete, self-contained ${htmlSpec ? 'HTML document (the format is described below)' : 'markdown document'} the user can review on its own.
 - Grounded in real file evidence — reference actual file paths and current behaviour, not guesses.
-- Structured as TWO halves under these exact H2 headings, in this order: "## User-facing changes" then "## Technical implementation". The spec viewer renders the two halves as tabs, so content outside them is undesirable — keep everything except the title and an optional 1-2 sentence summary inside one of the two halves. "User-facing changes" must be readable by a non-developer: describe what the user will see and do differently (screens, behaviour, before/after) — no file paths, no schema, no code. "Technical implementation" holds everything else: affected files, data model, edge cases, tests, considerations, deferred work. All other headings must be ### or deeper — no other ## headings anywhere in the document.
+- ${htmlSpec ? 'Structured as TWO halves, the "user" and "tech" sections described below, in that order, standing for' : 'Structured as TWO halves under these exact H2 headings, in this order:'} "## User-facing changes" then "## Technical implementation". The spec viewer renders the two halves as tabs, so content outside them is undesirable — keep everything except the title and an optional 1-2 sentence summary inside one of the two halves. "User-facing changes" must be readable by a non-developer: describe what the user will see and do differently (screens, behaviour, before/after) — no file paths, no schema, no code. "Technical implementation" holds everything else: affected files, data model, edge cases, tests, considerations, deferred work. All other headings must be ### or deeper — no other ## headings anywhere in the document.
 - Specific enough that a coding agent could implement it without re-doing your investigation, but NOT a literal diff or code block.
 - If the planned change introduces data-dependent UI (lists, threads, leaderboards, anything that renders rows), the "Technical implementation" half should name the staging seed data the build will need (per the "Staging mock data" platform convention), so seeding is planned rather than improvised at build time.${scoutDesignBrief}
 
-The spec is rendered as markdown in a viewer that follows standard CommonMark fencing. If you include a fenced code block that ITSELF contains a triple-backtick fence (common when quoting markdown examples or the platform's \`\`\`filepath:...\`\`\` output convention), wrap the OUTER block in a four-backtick fence (\`\`\`\`) — a longer fence can safely contain shorter ones. Otherwise the inner \`\`\` closes the block early and the rest of the spec renders broken. When in doubt, prefer fewer/inline code samples over deeply nested fences.
+${htmlSpec ? specHtmlContract(platformStyles) : `The spec is rendered as markdown in a viewer that follows standard CommonMark fencing. If you include a fenced code block that ITSELF contains a triple-backtick fence (common when quoting markdown examples or the platform's \`\`\`filepath:...\`\`\` output convention), wrap the OUTER block in a four-backtick fence (\`\`\`\`) — a longer fence can safely contain shorter ones. Otherwise the inner \`\`\` closes the block early and the rest of the spec renders broken. When in doubt, prefer fewer/inline code samples over deeply nested fences.`}
 
 Do NOT pad the spec with open questions. Only include a "### Questions" subsection — placed at the END of the "User-facing changes" half, since questions are for the (possibly non-technical) requester — for things that genuinely BLOCK implementation: decisions the coding agent cannot reasonably make on its own and that would change what gets built. Make a sensible default choice wherever you can and state it, rather than asking. Non-blocking items — things worth noting but not required to answer before building — belong in the "Technical implementation" half under "### Considerations" (trade-offs, assumptions, things to keep in mind) or "### Deferred work" (out-of-scope or follow-up items), NOT as questions. When there are no blockers, OMIT the "### Questions" subsection entirely — do NOT write "### Questions\nNone" or an empty section.
 
-Your final assistant message must be ONLY the markdown spec — no preamble, no "I'll investigate...", no "Here's the spec:". The host captures that final message verbatim and stores it as the session's spec doc.
+Your final assistant message must be ONLY the ${htmlSpec ? 'HTML spec, starting with <article data-spec>' : 'markdown spec'} — no preamble, no "I'll investigate...", no "Here's the spec:". The host captures that final message verbatim and stores it as the session's spec doc.
 
-CRITICAL: Output the spec as RAW markdown. Do NOT wrap your whole response in a code fence — no leading \`\`\`markdown line and no trailing \`\`\`. A whole-document fence makes the spec render as one big code block instead of formatted markdown. Fences are only for actual code/quoted snippets INSIDE the spec.${headless ? `
+${htmlSpec ? 'CRITICAL: Output the spec as RAW HTML. Do NOT wrap your whole response in a code fence: the first characters of your message are <article data-spec> and the last are </article>.' : `CRITICAL: Output the spec as RAW markdown. Do NOT wrap your whole response in a code fence — no leading \`\`\`markdown line and no trailing \`\`\`. A whole-document fence makes the spec render as one big code block instead of formatted markdown. Fences are only for actual code/quoted snippets INSIDE the spec.`}${headless ? `
 
 HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue — no human is available to answer questions during the run. If the Mayor's instructions list ambiguities or unresolved points, resolve them from the code BEFORE considering them open: read the relevant files, state what the code shows, and choose a sensible default where one exists. Any "### Questions" section you do write (at the end of the "User-facing changes" half) will be relayed verbatim to the issue reporter as a GitHub comment, so it must contain ONLY questions a codebase cannot answer (product intent, preferences, reproduction details), each self-contained, numbered, and carrying your suggested default.` : ''}`;
 
@@ -9765,7 +9919,8 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
       return stoppedResult();
     }
 
-    const ccText = stripSpecWrapperFence((result.lastResultText || '').trim());
+    const capturedSpec = captureSpecOutput(result.lastResultText);
+    const ccText = capturedSpec.text;
     // #1204: after the retry above, is the final message STILL a transport
     // failure notice rather than a spec?
     const apiFailure = agentApiFailure(ccText);
@@ -9816,6 +9971,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
         sessionId: session.id,
         turnId: durableTurnId,
         content: ccText,
+        contentHtml: capturedSpec.html,
         conversationContent: result.lastResultText || '',
         hadSpec: !!existingSpec,
         durationMs: Date.now() - turnStartedMs,
@@ -10039,6 +10195,9 @@ async function runCodexAttemptLoop({
         ? { ...result, agentHarness: runtimeContext.agentHarness }
         : result),
       usageScope: agentTurn.usageScopeForHarness(runtimeContext.agentHarness),
+      // The upstream provider OpenRouter named for the turn's requests, when
+      // the Claude Code listener saw one (worker.js observeCodingProviderResult).
+      routedProvider: result?.routedProvider || null,
       telemetryComponent: result?.providerDispatched === true
         ? (telemetryComponent
           || (mode === 'scout' ? 'coding_agent_scout' : 'coding_agent_build'))
@@ -10988,6 +11147,10 @@ path: /another/changed/view
     change" button.
   - Keep the steps short, numbered when practical, and understandable to a
     non-technical tester.
+  - If the change only shows at certain times, add one
+    "<!-- usernode:preview-at 2026-10-08T19:00 Europe/London -->" line: a
+    moment when it shows with the preview's data, in the app's time zone
+    ("Time-dependent features" in the system instructions).
   - The block must be LAST in your final message. Skip it entirely for changes
     with nothing user-visible to test.`;
 
@@ -13379,4 +13542,4 @@ const MAYOR_TURN_DEPS = Object.freeze({
   switchSessionAgent,
 });
 
-module.exports = { requestSessionStop, MAYOR_TURN_DEPS, canViewSession, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, OPENROUTER_PLATFORM_ISSUE_GUIDANCE, DISPATCHED_TURN_INSTRUCTIONS, DEV_CHAT_SUMMARY_RULE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+module.exports = { requestSessionStop, MAYOR_TURN_DEPS, canViewSession, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, captureSpecOutput, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, OPENROUTER_PLATFORM_ISSUE_GUIDANCE, DISPATCHED_TURN_INSTRUCTIONS, DEV_CHAT_SUMMARY_RULE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };

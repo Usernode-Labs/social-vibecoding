@@ -1,4 +1,4 @@
-import type { HomeroomBotJob } from './types';
+import type { HomeroomBotActivityOutcome, HomeroomBotJob } from './types';
 
 /*
  * What the Homeroom bot's activity tray (./bot-work.tsx) and its activity
@@ -9,6 +9,13 @@ import type { HomeroomBotJob } from './types';
 
 /** public/js/app.js dispatches this on `homeroom_bot_work_changed` and on a socket reconnect. */
 export const WORK_CHANGED_EVENT = 'homeroom-bot-work-changed';
+
+/**
+ * #4227: the endings that are still moving, drawn with the working card's
+ * spinner (./bot-activity.tsx) and read again like work that is going: a
+ * change being checked before it is offered, and one going live.
+ */
+export const SPINNING_OUTCOMES: ReadonlySet<HomeroomBotActivityOutcome> = new Set(['checking', 'going_live']);
 
 type Named = Pick<HomeroomBotJob, 'appName' | 'issueNumber' | 'title' | 'firstVersion'>;
 
@@ -22,4 +29,58 @@ export function jobName(job: Named): string {
 export function jobTitle(job: Named): string {
   const name = jobName(job);
   return !job.firstVersion && job.title ? `${name}: ${job.title}` : name;
+}
+
+/**
+ * The project an in-app address opens on its App tab (`#app/<slug>/app`, as
+ * services/homeroom-bot-dm.js openAppAction writes it), or null for any
+ * other address.
+ */
+export function appTabSlug(target: string | null | undefined): string | null {
+  const match = /^#app\/([^/?#]+)\/app$/.exec(String(target || ''));
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1]) || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * #4231: the project whose community page an in-app address opens
+ * (`#app/<slug>/workshop`, as services/homeroom-bot-dm.js firstLiveActions
+ * writes it), or null for any other address.
+ */
+export function hubSlug(target: string | null | undefined): string | null {
+  const match = /^#app\/([^/?#]+)\/workshop$/.exec(String(target || ''));
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1]) || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A bot button's way into the platform (`open`, always `#app/…`). A
+ * project's App tab opens the way the rest of the shell opens a project's
+ * app: App.openAppTab, as an app's icon and its about pane do, which also
+ * works when that address is already the one in the bar. A community page
+ * is a door that says where it goes, so it lands on the hub, not the tab the
+ * page was last left on (AppView._landOnHub, as channel-hub.ts does). Any
+ * other address, or no router, goes to the address.
+ */
+export function openAppTarget(target: string | null | undefined): void {
+  if (typeof window === 'undefined' || !target || !target.startsWith('#app/')) return;
+  const slug = appTabSlug(target);
+  if (slug && typeof window.App?.openAppTab === 'function') {
+    window.App.openAppTab(slug, 'app');
+    return;
+  }
+  const hub = hubSlug(target);
+  if (hub) {
+    const view = (window as unknown as { AppView?: { _landOnHub?: (slug: string) => void } }).AppView;
+    try { view?._landOnHub?.(hub); } catch { /* the page opens where it opens */ }
+  }
+  window.location.hash = target;
 }

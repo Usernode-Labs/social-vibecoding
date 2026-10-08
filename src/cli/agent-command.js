@@ -159,6 +159,11 @@ function describeError(response) {
     parent_tree_mismatch: 'The parent commit on the branch does not match the local parent; nothing was pushed.',
     github_unavailable: 'GitHub is not reachable from the platform right now.',
   };
+  // The platform says why when GitHub refused because its hourly budget is
+  // used up (services/github-budget.js), with when it resets.
+  if (code === 'github_unavailable' && typeof response?.data?.message === 'string' && response.data.message) {
+    return response.data.message;
+  }
   return map[code] || code || `HTTP ${response?.status}`;
 }
 

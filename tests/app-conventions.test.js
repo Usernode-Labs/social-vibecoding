@@ -111,6 +111,68 @@ test('conventions doc carries the user-directory section (#1195)', () => {
   assert.match(doc, /ambiguous.*true/);
 });
 
+// A 4 October 2026 first-session run: a group's chore rota showed "Staging
+// demo Maya" and the check runner's handle in its preview, because an app
+// had no member list to ask for. The section tells the next app to ask for
+// it, and why it must not fake it in staging.
+test('conventions doc tells apps where "everyone in the group" comes from', () => {
+  const doc = getAppConventions();
+  assert.match(doc, /^## Members: who is in this project$/m);
+  const section = doc.slice(doc.indexOf('## Members: who is in this project'));
+  const body = section.slice(0, section.indexOf('\n## ', 1));
+  assert.match(body, /\$\{PLATFORM_API_BASE\}\/members/);
+  assert.match(body, /previews included/);
+  assert.match(body, /\*\*real\*\* members/);
+  assert.match(body, /not_a_member/);
+  assert.match(body, /Never "whoever has opened the app"/);
+  assert.match(body, /Never a staging fixture of fake people for this/);
+  assert.match(body, /req\.query\.demo === '1'/);
+  // The always-read rules point at it, and the user-token-only exception
+  // names it beside /users/*.
+  assert.match(doc, /"Everyone in the group" is `GET \/members`/);
+  assert.match(doc, /endpoints and `\/members` \(see "Members"\)/);
+});
+
+// On 5 October 2026 a group was asked to approve a Thursday-evening bins
+// reminder nobody could see: Try it opened on a Monday and the shots could
+// not show it. The section tells a builder to read "now" through the
+// platform, say when the change shows, and declare the moment to see it at
+// (services/preview-clock.js parses the declaration).
+test('conventions doc has a "Time-dependent features" section with the preview clock contract', () => {
+  const doc = getAppConventions();
+  assert.match(doc, /^## Time-dependent features$/m);
+  const section = doc.slice(doc.indexOf('## Time-dependent features'));
+  const body = section.slice(0, section.indexOf('\n## ', 1));
+  assert.match(body, /`usernode\.now\(\)`/);
+  assert.match(body, /`req\.now`/);
+  assert.match(body, /req\.headers\['x-usernode-now'\] \|\| req\.query\['un-now'\]/);
+  // The snippet is the scaffold's own helper, so an older app adds exactly
+  // what a new one ships with.
+  const { getTemplateFiles } = require('../src/services/template');
+  const server = getTemplateFiles('Bins', 'bins-1a2b3c', 'postgres://x').find((f) => f.path === 'server.js').content;
+  const helper = server.slice(server.indexOf('const IS_STAGING'), server.indexOf('\n}\n', server.indexOf('function requestNow')) + 2);
+  assert.ok(helper.length > 100 && body.replace(/\n {5}/g, '\n').includes(helper), 'the doc carries the scaffold helper verbatim');
+  assert.match(body, /IS_STAGING \?/, 'the server reads it only on staging');
+  assert.match(body, /\*\*Production ignores it entirely\.\*\*/);
+  assert.match(body, /\*\*Say when it shows\*\*/);
+  assert.match(body, /<!-- usernode:preview-at 2026-10-08T19:00 Europe\/London -->/);
+  assert.match(body, /Showing it as on Thursday 8 Oct, 7 pm/);
+  assert.match(body, /`testingSteps`/);
+  assert.match(body, /\?un-now=2026-10-08T18:00:00Z/);
+  assert.doesNotMatch(body, /—/, 'no em dashes');
+  // The declaration the doc teaches is the one the platform parses.
+  const clock = require('../src/services/preview-clock');
+  assert.equal(clock.declaredMoment(body).label, 'Thursday 8 Oct, 7 pm');
+  // And the hosted build turn's TESTING block guidance points at it. (The
+  // local and Codex backends keep their reviewed inline block byte for byte,
+  // tests/prompt-file-transport.test.js; they read this section in the
+  // conventions they are given.)
+  const { buildCodingAgentBuildGuidance } = require('../src/routes/sessions');
+  const hosted = buildCodingAgentBuildGuidance({ authoritativeSystemContext: true }).testingGuidance;
+  assert.match(hosted, /<!-- usernode:preview-at 2026-10-08T19:00 Europe\/London -->/);
+  assert.match(hosted, /"Time-dependent features" in the system instructions/);
+});
+
 test('the server-side directory section covers staging previews (#1213)', () => {
   const doc = getAppConventions();
   // Retitled from "(production)" — previews can reach the directory now.
@@ -226,4 +288,33 @@ test('the excerpt and the full Tailwind section agree about the CDN (#1215)', ()
   // And neither claims a check rejects the CDN, because none does.
   assert.doesNotMatch(excerpt, /rejected by/i);
   assert.match(tailwind, /No proposal check rejects a `cdn\.tailwindcss\.com` tag/);
+});
+
+test('a first version\'s populated demo: the viewer\'s own data, a screen and a half, labelled once, every control; nothing else changes (7 Oct 2026)', () => {
+  const doc = getAppConventions();
+  const mock = doc.slice(doc.indexOf('## Staging mock data'), doc.indexOf('### Seeded data must not fabricate a signal your logic reads'));
+  // The general rule names the carve-out that wins over it, as "Small" does.
+  assert.match(mock, /- \*\*Obviously fake\.\*\* Give seeded rows a consistent "Staging demo …"\n  prefix so they can't be mistaken for real user content\. \(A first\n  version's `\?demo=1` demo is labelled once instead: see "A first\n  version's populated demo" below\.\)/);
+  assert.match(mock, /- \*\*Small\.\*\* A handful of rows — just enough for the testing steps\.\n  \(A project's first version is the one exception: see "A first\n  version's populated demo" below\.\)/);
+  const demo = mock.slice(mock.indexOf("### A first version's populated demo"));
+  assert.ok(demo.length > 500, 'the carve-out is there, inside "Staging mock data"');
+  const flat = demo.replace(/\s+/g, ' ');
+  assert.match(flat, /For that build only, and on `\?demo=1` only, four seed rules change\. Every later change keeps the rules above\./);
+  assert.match(flat, /\*\*Enough to look lived in\.\*\* Varied, realistic rows filling about a screen and a half of the main screen at phone width \(390×844\), not a handful\. - \*\*Labelled once/);
+  // Labelled once, at the top or in the list's name, not on every row; the rows stay made up.
+  assert.match(flat, /\*\*Labelled once, not on every row\.\*\* The screen says "Staging demo" once, plainly and visibly: a banner or a line at the top of the screen, or the name of the list or collection the rows belong to\. Each row needs no label of its own \(a "Staging demo" pill or prefix on every row only clutters the screen\), and this replaces the "Staging demo …" prefix above for these rows\. The rows themselves stay obviously made up: no real people and no real private data\./);
+  assert.doesNotMatch(flat, /Each still reads "Staging demo/);
+  assert.match(flat, /\*\*The viewer's own data too\.\*\*/);
+  assert.match(flat, /Either add the viewer's demo rows to the `\?demo=1` responses without storing them, or write them for the viewing account on its first `\?demo=1` request, once \(fixed ids, `ON CONFLICT DO NOTHING`/);
+  assert.match(flat, /the rows land only in staging's own database: that is not cloning production rows, so "Never reference real users" still holds\. Other people in the demo are still fake identities\./);
+  assert.match(flat, /\*\*Every control the real screen has\.\*\* .* A "view only" demo that hides them is not a populated screen\./);
+  // What does not move: staging only, ?demo=1 only, the plain route's test, and the signal rule.
+  assert.match(flat, /nothing is written outside staging, nothing is written by a route without `\?demo=1` \(the page passes `demo=1` on to its own API calls\), boot-time seeding stays with fake identities, and the plain route keeps its test of the production-shaped answer\./);
+  assert.match(flat, /The viewer's demo rows must never be what makes a check of the form "has this user done X" pass/);
+  assert.doesNotMatch(demo, /—/);
+  // The rule it bends says so, and so does the offline excerpt.
+  const signal = doc.slice(doc.indexOf('### Seeded data must not fabricate a signal your logic reads'), doc.indexOf('### Make the changed screen URL-reachable'));
+  assert.match(signal, /\(A first version's `\?demo=1` demo\n  may give the viewer rows of their own, within the limits of "A first\n  version's populated demo" above; nothing else may\.\)/);
+  const excerpt = doc.slice(doc.indexOf('<!-- work-order:begin -->'), doc.indexOf('<!-- work-order:end -->'));
+  assert.match(excerpt, /A project's first version is the one\n   exception, on `\?demo=1` only: see "A first version's populated demo"\./);
 });

@@ -186,6 +186,26 @@ export interface WaitlistOptions {
    *  of what this is. Built server-side from config.marketingBaseUrl, like
    *  waitlist_url above, so no client hardcodes the host. */
   marketing_url?: string;
+  /** The first session's switch (src/services/first-session.js): the landing
+   *  tells the story and asks people to get started, instead of pointing at
+   *  the waitlist. Only false keeps the waitlist landing; absent (the options
+   *  not loaded yet, or an older server) is the story, the default. */
+  story_landing?: boolean;
+  /** Which of Apple and Google the sign-in sheet offers beside the email
+   *  code (src/services/sign-in-providers.js): those an admin set up and
+   *  switched on. Absent or empty, the email code only. */
+  sign_in_providers?: string[];
+  /** The current published terms' own address (src/routes/public-api.js),
+   *  for the sign-in screens' "By continuing, you agree to Homeroom's
+   *  terms". Absent or null, the notice names the terms without a link. */
+  terms_link?: string | null;
+  /** The same, from the Homeroom app's own sheets: those whose app client
+   *  IDs are saved too. The app offers one only when its build can. */
+  native_sign_in_providers?: string[];
+  /** Phone sign-in is set up (src/services/firebase-phone-auth.js offered):
+   *  an invite's Join asks for a phone number first. Absent or false, the
+   *  other ways only. */
+  phone_sign_in?: boolean;
 }
 
 let optionsPromise: Promise<WaitlistOptions | null> | null = null;
@@ -370,5 +390,27 @@ export function useSurveyAnswered(token: string | null): boolean {
     }, []),
     () => !!token && answeredTokens.has(token),
     () => false,
+  );
+}
+
+/**
+ * "By continuing, you agree to Homeroom's terms." under the sign-in screens'
+ * main button (./sign-in-sheet.tsx, ./login.tsx). Continuing past it is the
+ * acceptance the first-run terms gate records
+ * (../settings/terms-first-run.js), so nothing asks again after sign-in.
+ * The link arrives with the options; until then, and when there is none,
+ * the line names the terms without one, which is also what the prerender
+ * draws.
+ */
+export function TermsNotice({ verb = 'continuing', className = '' }: { verb?: string; className?: string }) {
+  const link = useWaitlistOptions()?.terms_link || null;
+  return (
+    <p className={`text-center text-[13px] text-zinc-500 dark:text-zinc-400 ${className}`}>
+      {`By ${verb}, you agree to Homeroom's `}
+      {link ? (
+        <a href={link} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-zinc-700 dark:hover:text-zinc-200">terms</a>
+      ) : 'terms'}
+      .
+    </p>
   );
 }

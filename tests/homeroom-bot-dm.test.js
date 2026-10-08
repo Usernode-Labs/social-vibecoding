@@ -111,6 +111,21 @@ test('the bot talks in a DM only to people on the list', () => {
   assert.equal(dm.isDmUser({ mode: 'shadow', dmUsers: [] }, 'evan'), false);
 });
 
+test('hasBot: the list is the gate, until everyone with platform access has the bot', () => {
+  const list = { mode: 'shadow', dmUsers: ['evan'] };
+  const evan = { username: 'Evan', hasPlatformAccess: true };
+  const ada = { username: 'ada', hasPlatformAccess: true };
+  assert.equal(dm.hasBot(list, evan), true);
+  assert.equal(dm.hasBot(list, ada), false, 'not on the list');
+  const everyone = { mode: 'shadow', audience: 'everyone', dmUsers: [] };
+  assert.equal(dm.hasBot(everyone, ada), true, 'an empty list silences nobody');
+  assert.equal(dm.hasBot(everyone, { username: 'waiting', hasPlatformAccess: false }), false, 'still on the waitlist');
+  assert.equal(dm.hasBot(everyone, { username: 'boss', hasPlatformAccess: false, isAdmin: true }), true, 'an admin always has access');
+  assert.equal(dm.hasBot(everyone, { username: 'homeroom_bot', hasPlatformAccess: true, isSynthetic: true }), false);
+  assert.equal(dm.hasBot(everyone, null), false);
+  assert.equal(dm.hasBot(null, ada), false);
+});
+
 test('a first version gets the longer build clocks', () => {
   const app = { repo_url: 'https://github.com/usernode-bot/x' };
   const plain = bot.buildBudgets(app, {}, 60_000);
@@ -145,8 +160,52 @@ test('every kind the DM carries reads plainly, names the request, and has no em 
   }
   assert.equal(dm.dmText('looking', {}, context), null, 'not every post is DM news');
   assert.match(dm.dmText('spec', {}, { ...context, firstVersion: true }), /^\*\*Seed swap\*\*, its first version\n\nI'm building the first version now/);
-  assert.match(dm.dmText('proposal', KINDS.proposal, context), /try the preview and vote on it: https:/);
+  assert.match(dm.dmText('proposal', KINDS.proposal, context), /See the preview, and approve it when you're happy with it: https:/);
+  // B4: plain words in every kind: the change, never a proposal, a vote or its number.
+  for (const [kind, payload] of Object.entries(KINDS)) {
+    for (const group of [false, true]) {
+      const words = dm.dmText(kind, payload, { ...context, group }).replace(/https?:\S+/g, '');
+      assert.doesNotMatch(words, /proposal|vote|merged|PR #/i, kind);
+    }
+  }
   for (const text of [dm.HELP_TEXT, dm.NOT_ENABLED_TEXT, dm.mirroredText('x', { question: true })]) {
+    assert.doesNotMatch(text, DASH);
+  }
+});
+
+test('a build that did not finish says why in plain words, and that a reply here starts it again', () => {
+  // 5 Oct 2026, Page Turners #3: "I tried to build this but couldn't finish
+  // (the build ran past its time limit (finished after a restart)). A person
+  // can pick it up from here." The requester was the person.
+  const context = { appName: 'Page Turners', issueNumber: 3, issueTitle: 'Display location and host information for meetings', firstVersion: false };
+  assert.equal(
+    dm.dmText('build_failed', { reason: 'the build ran past its time limit (finished after a restart)' }, context),
+    '**Page Turners** · request #3: Display location and host information for meetings\n\n'
+      + 'I couldn\'t finish building this: it took longer than I\'m allowed. Reply here and I\'ll try again.',
+  );
+  const said = (reason, extra = {}) => dm.dmText('build_failed', { reason }, { ...context, ...extra }).split('\n\n')[1];
+  assert.equal(said('the build ran past its time limit; last activity: npm test'),
+    'I couldn\'t finish building this: it took longer than I\'m allowed. Reply here and I\'ll try again.');
+  assert.equal(said('the platform restarted in the middle of each of its last 3 tries at building this'),
+    'I couldn\'t finish building this: Homeroom restarted while I was working on it, 3 times in a row. Reply here and I\'ll try again.');
+  assert.equal(said('the platform restarted while it was building, and the build was lost'),
+    'I couldn\'t finish building this: Homeroom restarted while I was working on it. Reply here and I\'ll try again.');
+  assert.equal(said('the build produced no change to propose (finished after a restart)'),
+    'I couldn\'t finish building this: I ended up with no changes to show you. Reply here and I\'ll try again.');
+  assert.equal(said('the change was built but could not be proposed: checks unavailable'),
+    'I built this, but I couldn\'t put it up for approval. Reply here and I\'ll try again.');
+  assert.equal(said('the build could not start (worker pool exhausted)'),
+    'I couldn\'t get started on building this. Reply here and I\'ll try again.');
+  assert.equal(said('the build turn failed (exit 1)'),
+    'I couldn\'t finish building this: something went wrong while I was working on it. Reply here and I\'ll try again.');
+  assert.equal(said(''),
+    'I couldn\'t finish building this: something went wrong while I was working on it. Reply here and I\'ll try again.');
+  assert.equal(said('the build ran past its time limit', { firstVersion: true }),
+    'I couldn\'t finish building the first version: it took longer than I\'m allowed. Reply here and I\'ll try again.');
+  for (const reason of ['the build ran past its time limit (finished after a restart)', 'the build turn failed (exit 1)',
+    'the change was built but could not be proposed: x', 'the platform restarted in the middle of each of its last 3 tries at building this']) {
+    const text = said(reason);
+    assert.doesNotMatch(text, /\(|time limit|finished after|exit 1|pick it up/, 'the run\'s own words are never quoted');
     assert.doesNotMatch(text, DASH);
   }
 });
@@ -154,19 +213,23 @@ test('every kind the DM carries reads plainly, names the request, and has no em 
 test('#20 (WP3): beside the proposal\'s card the news points at the card; the address is written out only without one', () => {
   const context = { appName: 'Seed swap', issueNumber: 7, issueTitle: 'Sort by date', firstVersion: false };
   const withCard = { ...KINDS.proposal, sessionId: 9 };
+  // B4: on a project of theirs alone they approve it; with others, it goes live once it's approved.
   assert.equal(dm.dmText('proposal', withCard, context),
-    '**Seed swap** · request #7: Sort by date\n\nIt\'s built. Open the proposal below to try the preview and vote on it.\n\n'
-      + 'It goes live once it is approved.');
+    '**Seed swap** · request #7: Sort by date\n\nIt\'s ready to try. Open the change below to see the preview, '
+      + 'and approve it when you\'re happy with it.');
+  assert.equal(dm.dmText('proposal', withCard, { ...context, group: true }),
+    '**Seed swap** · request #7: Sort by date\n\nIt\'s ready to try. Open the change below to see the preview. '
+      + 'It goes live once it\'s approved.');
   assert.deepEqual(dm.cardsFor('proposal', withCard, { id: 3 }, 7), [{ type: 'proposal', appId: 3, sessionId: 9 }],
     'the card it points at is the one that goes under it');
   const revised = dm.dmText('followup_revise', { ...KINDS.followup_revise, sessionId: 9 }, context);
-  assert.match(revised, /I changed the proposal after the latest replies: Made it darker\.\n\nTake another look at it below\.$/);
+  assert.match(revised, /I updated your change after the latest replies: Made it darker\.\n\nTake another look at it below\.$/);
   for (const text of [dm.dmText('proposal', withCard, context), revised]) {
     assert.doesNotMatch(text, /https?:|onhomeroom/, 'no raw address beside the card, in the DM or its push');
     assert.doesNotMatch(text, DASH);
   }
   // No card (no session to name): the address is the way to it.
-  assert.match(dm.dmText('proposal', KINDS.proposal, context), /vote on it: https:\/\/app\.onhomeroom\.com\/#app\/x\/dev\/proposals\/9/);
+  assert.match(dm.dmText('proposal', KINDS.proposal, context), /happy with it: https:\/\/app\.onhomeroom\.com\/#app\/x\/dev\/proposals\/9/);
   assert.match(dm.dmText('followup_revise', KINDS.followup_revise, context), /Take another look: https:/);
 });
 
@@ -194,17 +257,25 @@ test('#20 (WP3): a message whose card cannot go says what it says without it', a
 test('#7 (WP3): "live now" only once the app answered on the merge it deployed, and the platform\'s own app says a few minutes', async () => {
   const line = '**Plant Pal** · request #3: Watering reminders';
   assert.equal(dm.mergedText({ line, appName: 'Plant Pal', live: true }),
-    `${line}\n\nIt was approved and is live now. Open Plant Pal below to try it.`);
+    `${line}\n\nIt's live now. Open Plant Pal below to try it.`);
   assert.equal(dm.mergedText({ line, appName: 'Plant Pal', live: false }),
-    `${line}\n\nIt was approved and merged, and it'll be live in a few minutes. Open Plant Pal below to try it then.`);
+    `${line}\n\nIt's going live now and will be ready in a few minutes. Open Plant Pal below to try it then.`);
   assert.equal(dm.mergedText({ line, appName: 'Homeroom', live: false, platform: true }),
-    `${line}\n\nIt was approved and merged, and it'll be live in a few minutes.`);
-  assert.equal(dm.mergedText({ line, appName: 'Plant Pal', live: true, card: false }), `${line}\n\nIt was approved and is live now.`);
+    `${line}\n\nIt's going live now and will be ready in a few minutes.`);
+  assert.equal(dm.mergedText({ line, appName: 'Plant Pal', live: true, card: false }), `${line}\n\nIt's live now.`);
+  // B7: a change to a project is "your change"; a first version is the project itself.
+  assert.equal(dm.mergedText({ line, appName: 'Plant Pal', live: true, change: true }),
+    `${line}\n\nYour change is live now. Open Plant Pal below to try it.`);
+  assert.equal(dm.mergedText({ line, appName: 'Plant Pal', live: false, change: true, card: false }),
+    `${line}\n\nYour change is going live now and will be ready in a few minutes.`);
   for (const live of [true, false]) assert.doesNotMatch(dm.mergedText({ line, appName: 'Plant Pal', live }), DASH);
-  // The app first, to open it, then the proposal; the platform's own, its proposal alone.
-  assert.deepEqual(dm.cardsFor('merged', { sessionId: 9, appCard: true }, { id: 3 }, 7),
-    [{ type: 'app', appId: 3 }, { type: 'proposal', appId: 3, sessionId: 9 }]);
+  // 5 October: the app opens from the message's own button, which no card
+  // the bot cannot attach takes with it; the proposal is its card.
+  assert.deepEqual(dm.cardsFor('merged', { sessionId: 9, appCard: true }, { id: 3 }, 7), [{ type: 'proposal', appId: 3, sessionId: 9 }]);
   assert.deepEqual(dm.cardsFor('merged', { sessionId: 9 }, { id: 3 }, 7), [{ type: 'proposal', appId: 3, sessionId: 9 }]);
+  assert.deepEqual(dm.openAppAction({ slug: 'page-turners', appName: 'Page Turners' }),
+    { id: 'open_app', label: 'Open Page Turners', style: 'primary', type: 'open', target: '#app/page-turners/app' });
+  assert.equal(dm.openAppAction({ slug: '', appName: 'X' }), null);
 
   // Its health, read a few times a few seconds apart, on the build the merge deployed.
   const probes = [];
@@ -365,23 +436,67 @@ test('a request whose requester spent the week\'s allowance is held, said once, 
   });
   assert.deepEqual(out, { ran: false, reason: 'user_allowance' });
   assert.equal(held.length, 1);
-  assert.ok(queries.some((q) => /DELETE FROM homeroom_bot_queue/.test(q.s) && q.p[0] === 31));
+  // Held, not dropped: the row keeps its place and waits for Monday.
+  const hold = queries.find((q) => /SET started_at = NULL, held_until = \$2 WHERE id = \$1/.test(q.s));
+  assert.ok(hold && hold.p[0] === 31, 'the row is held');
+  const reset = new Date(hold.p[1]);
+  assert.equal(reset.getUTCDay(), 1, 'until the week resets on Monday');
+  assert.equal(reset.getUTCHours(), 0);
+  assert.ok(!queries.some((q) => /DELETE FROM homeroom_bot_queue/.test(q.s)), 'never dropped');
   assert.ok(!queries.some((q) => /INSERT INTO homeroom_bot_runs/.test(q.s)), 'no run, nothing spent');
+
+  // A look the bot queued for itself (a restart's) is free: nobody's week holds it.
+  queries.length = 0;
+  held.length = 0;
+  const free = await bot.runTriage(pool, {}, {
+    bot: { id: 2 }, app: { id: 1, slug: 'seed-swap', repo_url: 'https://github.com/o/r' },
+    item: { id: 32, issue_number: 7, reason: 'restart' }, mode: 'shadow',
+    settings: { mode: 'shadow', liveApps: ['seed-swap'], userWeeklyCents: 100 }, deps,
+  }).catch(() => null);
+  assert.notDeepEqual(free, { ran: false, reason: 'user_allowance' });
+  assert.equal(held.length, 0);
 });
 
-// ── The create dialog and the DM screen ──────────────────────────────────
+test('billing: whoever asked pays, and what the bot caused itself is charged to nobody', () => {
+  assert.deepEqual(bot.billingOf({ reason: 'new' }, 'live'), { charged: true, payerUserId: null }, 'the requester, by default');
+  assert.deepEqual(bot.billingOf({ reason: 'dm_start', payer_user_id: 12 }, 'live'), { charged: true, payerUserId: 12 });
+  for (const reason of ['restart', 'checks_failing', 'budget_retry']) {
+    assert.equal(bot.billingOf({ reason }, 'live').charged, false, reason);
+  }
+  assert.equal(bot.billingOf({ reason: 'new' }, 'shadow').charged, false, 'a shadow run is never charged');
+});
 
-test('the create dialog sends the longer description, never with an import', () => {
-  const { createBody, BRIEF_MIN, BRIEF_MAX } = loadTsx('frontend/src/features/dialogs/create-app.tsx', {
-    stubs: { '../messages/store': { open() {} } },
+test('the held message names no amount, and offers the group when there is one', () => {
+  // #4097: led by the request's line, which Messages draws as its card, as
+  // the rest of the request's news is; the words then say "it".
+  const solo = dm.overAllowanceText({
+    line: dm.requestLine({ appName: 'Plant Pal', issueNumber: 4, issueTitle: 'Sunday watering reminder' }), appName: 'Plant Pal',
   });
+  assert.equal(solo, '**Plant Pal** · request #4: Sunday watering reminder\n\nYou\'ve used this week\'s building time. I\'ll start it on Monday.');
+  const group = dm.overAllowanceText({
+    line: dm.requestLine({ appName: 'Supper Club', issueNumber: 9, issueTitle: 'Sunday host reminder' }), appName: 'Supper Club', group: true,
+  });
+  assert.equal(group, '**Supper Club** · request #9: Sunday host reminder\n\nYou\'ve used this week\'s building time. I\'ll start it on Monday, or someone else in Supper Club can ask me for it.');
+  assert.equal(dm.overAllowanceText({ appName: 'Plant Pal' }), 'You\'ve used this week\'s building time. I\'ll start it on Monday.', 'no line, the words alone');
+  assert.doesNotMatch(solo + group, /\$/);
+});
+
+// ── The make screen and the DM screen ────────────────────────────────────
+
+test('the make screen sends the longer description, never with an import', () => {
+  // The create dialog that sent it is retired; Create opens the make screen
+  // (frontend/src/features/first-session/make.tsx), which asks it of everyone.
+  const { BRIEF_MIN, BRIEF_MAX, missingAnswer } = loadTsx('frontend/src/features/first-session/make.tsx');
   assert.equal(BRIEF_MIN, dm.MIN_BRIEF_CHARS, 'the client and server agree on the minimum');
   assert.equal(BRIEF_MAX, dm.MAX_BRIEF_CHARS, 'and on the maximum');
-  const base = { name: 'Chore wheel', mode: 'new', audience: 'solo', approvers: null, approvals: null };
-  assert.equal(createBody({ ...base, brief: '  A fair chore rota for the house.  ' }).brief, 'A fair chore rota for the house.');
-  assert.equal(createBody({ ...base, brief: 'short' }).brief, undefined);
-  assert.equal(createBody({ ...base, mode: 'import', repoUrl: 'https://github.com/o/r', brief: 'A fair chore rota for the house.' }).brief, undefined);
-  assert.equal(createBody(base).brief, undefined);
+  assert.equal(missingAnswer('short', 'Chore wheel'), 'brief', 'under the minimum is asked for again, not sent');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/first-session/make.tsx'), 'utf8');
+  assert.match(src, /maxLength=\{BRIEF_MAX\}/, 'the field stops at the maximum');
+  assert.match(src, /audience: 'invited',\s+brief: brief\.trim\(\),/);
+  // The import sends its repository, and no description to build from.
+  const imp = src.slice(src.indexOf('const importRepo = useCallback('), src.indexOf('const formClass ='));
+  assert.match(imp, /postCreateApp\(\{ name: repoName, audience: 'invited', repoUrl, from: entry \}\)/);
+  assert.doesNotMatch(imp, /brief/);
 });
 
 test('the short description is suggested for everyone making a project, and every description is filed', () => {
@@ -435,7 +550,7 @@ test('a question in the DM draws its answers, the default marked, and says an an
   const answered = { ...message, metadata: { homeroomBot: { ...message.metadata.homeroomBot, status: 'answered', answer: 'Oldest first' } } };
   const after = renderToHtml(createElement(BotQuestion, { message: answered, conversationId: 3 }));
   assert.doesNotMatch(after, /Something else/, 'no buttons once answered');
-  assert.match(after, /You answered: Oldest first/);
+  assert.match(after, /<dt class="messages-bot-choice-label">You answered<\/dt><dd><span class="messages-bot-chosen">Oldest first<\/span><\/dd>/, '#4197: the answer as a chip, not a button');
 
   const person = { ...message, sender: { id: 4, username: 'ada' } };
   assert.equal(renderToHtml(createElement(BotQuestion, { message: person, conversationId: 3 })), '', 'only the bot\'s own');
@@ -469,6 +584,82 @@ test('a question in the DM draws its answers, the default marked, and says an an
   assert.match(renderToHtml(createElement(BotQuestion, { message: chose, conversationId: 3 })), /You chose: File it/);
 });
 
+test('B3: an offer\'s buttons are real: drawn from its actions, pressed once, then one quiet line', async () => {
+  const taps = [];
+  const { BotQuestion, MIRRORED_KINDS, mirrorsReplies } = loadTsx('frontend/src/features/messages/bot-question.tsx', {
+    stubs: { './store': { answerBotQuestion() {}, scopeKey: () => 'k', setReply() {}, async tapBotAction(m, a) { taps.push(a.id); } } },
+  });
+  const offer = {
+    id: 5, conversationId: 3, content: 'Here is the request I\'d file.', createdAt: 'now', reactions: [], attachments: [], objects: [],
+    sender: { id: 2, username: 'homeroom_bot', bot: true },
+    metadata: { homeroomBot: {
+      kind: 'confirm', appName: 'Plant Pal', question: 'File this as a request on Plant Pal?', status: 'open', actionId: 41,
+      answers: ['File it', 'Not now'],
+      actions: [
+        { id: 'yes', label: 'File it', style: 'primary', type: 'server' },
+        { id: 'no', label: 'Not now', style: 'secondary', type: 'server' },
+      ],
+    } },
+  };
+  const html = renderToHtml(createElement(BotQuestion, { message: offer, conversationId: 3 }));
+  // The same look and the same structure the declared check reads.
+  assert.match(html, /aria-label="File this as a request on Plant Pal\?"/);
+  assert.match(html, /<button type="button" class="messages-bot-primary" data-bot-answer="default"><span>File it<\/span><\/button><button type="button" class="messages-bot-secondary" data-bot-answer="other"><span>Not now<\/span><\/button><\/div>/);
+  assert.doesNotMatch(html, /Something else|public discussion/);
+  // Decided, here or on another device: the buttons go, one line stays.
+  const chose = { ...offer, metadata: { homeroomBot: { ...offer.metadata.homeroomBot, status: 'answered', answer: 'File it', chosen: 'yes' } } };
+  const after = renderToHtml(createElement(BotQuestion, { message: chose, conversationId: 3 }));
+  assert.doesNotMatch(after, /<button/);
+  assert.match(after, /<p class="messages-bot-answered">You chose File it<\/p>/);
+
+  // A reply is public only for a question, or news that asks for a reply;
+  // never for an activity card or a ready message, whatever older messages say.
+  assert.equal(mirrorsReplies({ kind: 'question', mirrors: true }), true);
+  assert.equal(mirrorsReplies({ kind: 'blocked', mirrors: true }), true);
+  assert.equal(mirrorsReplies({ kind: 'activity', mirrors: true }), false);
+  assert.equal(mirrorsReplies({ kind: 'proposal', mirrors: true }), false);
+  assert.equal(mirrorsReplies({ kind: 'question' }), false);
+  assert.deepEqual([...MIRRORED_KINDS].sort(), [...dm.MIRRORED_KINDS].sort(), 'the reply bar and the server agree');
+});
+
+test('B3: the client keeps a bot message\'s buttons, at most three and one primary, and never a link out', () => {
+  const { normalizeBotMeta } = loadTsx('frontend/src/features/messages/api.ts');
+  const meta = normalizeBotMeta({ homeroomBot: {
+    kind: 'confirm', actionId: 41, chosen: 'yes', startedAt: '2026-10-04T10:00:00Z', live: true,
+    actions: [
+      { id: 'yes', label: 'File it', style: 'primary', type: 'server' },
+      { id: 'also', label: 'Second primary', style: 'primary', type: 'server' },
+      { id: 'web', label: 'Elsewhere', style: 'secondary', type: 'open', target: 'https://example.com' },
+      { id: 'mystery', label: 'Unknown', style: 'secondary', type: 'teleport' },
+      { id: 'try', label: 'Try it', style: 'secondary', type: 'open', target: '#app/plant-pal' },
+      { id: 'more', label: 'One too many', style: 'secondary', type: 'prompt' },
+    ],
+  } }).homeroomBot;
+  assert.equal(meta.actionId, 41);
+  assert.equal(meta.chosen, 'yes');
+  assert.equal(meta.startedAt, '2026-10-04T10:00:00Z');
+  assert.equal(meta.live, true);
+  assert.deepEqual(meta.actions, [
+    { id: 'yes', label: 'File it', style: 'primary', type: 'server' },
+    { id: 'also', label: 'Second primary', style: 'secondary', type: 'server' },
+    { id: 'try', label: 'Try it', style: 'secondary', type: 'open', target: '#app/plant-pal' },
+  ]);
+});
+
+test('B3: a tap is decided by its own browser-only route, never by the label sent as a message', () => {
+  const routes = read('src/routes/conversations.js');
+  assert.match(routes, /router\.post\('\/api\/conversations\/homeroom-bot\/actions\/:actionId', conversationMessageLimiter, sameOriginBrowserOnly,/);
+  const policy = read('src/services/cli-api-policy.js');
+  assert.doesNotMatch(policy, /homeroom-bot\/actions/, 'no connector or agent presses a person\'s buttons');
+  const store = read('frontend/src/features/messages/store.ts');
+  const tap = store.slice(store.indexOf('export async function tapBotAction'), store.indexOf('function idempotencyKey'));
+  assert.match(tap, /await api\.decideBotAction\(actionId, action\.id\)/);
+  assert.doesNotMatch(tap, /content: action\.id/);
+  // The demo's offer carries the same buttons a live one does.
+  const fixtures = read('src/services/staging-messages.js');
+  assert.match(fixtures, /actions: \[\s+\{ id: 'yes', label: 'File it', style: 'primary', type: 'server' \},\s+\{ id: 'no', label: 'Not now', style: 'secondary', type: 'server' \},\s+\]/);
+});
+
 test('the Messages client keeps the bot\'s mark and its question, which it builds field by field', () => {
   // The first staging run showed the question as plain text: this
   // normalizer dropped both fields before the screen ever saw them.
@@ -494,7 +685,9 @@ test('the Messages client keeps the bot\'s mark and its question, which it build
 
 test('the DM screen draws the bot\'s question and badge, and the reply bar names where a reply goes', () => {
   const row = read('frontend/src/features/messages/message-row.tsx');
-  assert.match(row, /message\.sender\.bot && message\.metadata\?\.homeroomBot\?\.question \? <BotQuestion/);
+  // B6: two questions at once draw their own card (./bot-plan.tsx) instead.
+  // B7: nor does a change's ready card (./bot-ready.tsx), whose buttons are its own.
+  assert.match(row, /message\.sender\.bot && \(message\.metadata\?\.homeroomBot\?\.question \|\| message\.metadata\?\.homeroomBot\?\.actions\?\.length\)\s*&& !isTwoQuestions\(message\) && !isReadyMessage\(message\)\s*\? <BotQuestion/);
   assert.match(row, /messages-bot-badge/);
   const composer = read('frontend/src/features/messages/composer.tsx');
   assert.match(composer, /Your reply is posted on \$\{requestPlace\(reply\.metadata\.homeroomBot\)\}’s public discussion\./);
@@ -649,7 +842,18 @@ test('#3772: "needs a person" says what to do about it, and a card already showi
   assert.match(dm.dmText('followup_person', { reason: 'x' }, ctx), /so I've left it for the group: x$/);
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot-dm.js'), 'utf8');
   assert.match(src, /const CARD_SAYS = new Set\(\['spec'\]\);/);
-  assert.match(src, /objects: cardsFor\(kind, dm, app, issueNumber\)\.filter\(\(c\) => !\(shown && c\.type === 'issue'\)\),/);
+  assert.match(src, /objects: dm\.card \? \[\] : cardsFor\(kind, dm, app, issueNumber\)\.filter\(\(c\) => !\(shown && c\.type === 'issue'\)\),/);
+});
+
+test('#4239: a request about Homeroom itself says so, and offers the move instead of Go ahead', () => {
+  const ctx = { appName: 'Ear Trainer', issueNumber: 13, issueTitle: 'Header colour' };
+  const text = dm.dmText('person', { reason: 'The header is drawn by Homeroom.', platform: true }, ctx);
+  assert.match(text, /This is about Homeroom itself rather than Ear Trainer, so no change to Ear Trainer can do it, and I haven't built anything: The header is drawn by Homeroom\./);
+  assert.match(text, /I can move it to Homeroom's own board, where the people who work on Homeroom look\. Tap below to choose\.$/);
+  assert.doesNotMatch(text, /\u2014/);
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot-dm.js'), 'utf8');
+  assert.match(src, /\.\.\.\(STUCK_ACTIONS\[kind\] && !\(kind === 'person' && dm\.platform\) \?/);
+  assert.match(src, /if \(kind === 'person' && dm\.platform\) \{\n    await require\('\.\/homeroom-bot-move'\)\.offerMove\(/);
 });
 
 test('"typing" goes out before the answer starts, bounded', () => {

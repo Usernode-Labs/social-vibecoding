@@ -53,6 +53,67 @@ function cleanText(value) {
   return value.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+// B4: a chat message's markdown, read as the words it shows. A push is
+// plain text, and "**Plant Pal** · request #4" spent half its body on
+// asterisks. Links keep their words, code its text, a heading or a quote its
+// line. Returns '' for anything that is not a string.
+function plainMarkdown(value) {
+  if (typeof value !== 'string') return '';
+  return value
+    .replace(/!?\[([^\]\n]*)\]\([^)\s]*\)/g, '$1')
+    .replace(/(\*\*|__|~~)(?=\S)([\s\S]*?\S)\1/g, '$2')
+    .replace(/`+([^`\n]*)`+/g, '$1')
+    .replace(/^[ \t]{0,3}(?:#{1,6}[ \t]+|>[ \t]?)/gm, '');
+}
+
+// B4: the Homeroom bot's four moments, and its answer to what somebody just
+// wrote to it, as notifications.detail carries them ("hrbot:<moment>:<app>",
+// services/homeroom-bot-dm.js notificationDetail). Said in a few words, from
+// "Homeroom bot", instead of "@homeroom_bot replied to you" over the start of
+// its message. The bell words the same moments the same way
+// (frontend/src/features/notifications/notifications.js botMomentLine), and
+// tests/homeroom-bot-notify.test.js holds the two together.
+const BOT_DETAIL_RE = /^hrbot:([a-z_]{1,20}):(.*)$/;
+function botMomentCopy(detail, message) {
+  const m = BOT_DETAIL_RE.exec(typeof detail === 'string' ? detail : '');
+  if (!m) return null;
+  const app = cleanText(m[2]);
+  const words = {
+    question: app ? `${app}: I have a question` : 'I have a question',
+    ready: app ? `${app} is ready to try` : 'Your change is ready to try',
+    ready_group: app ? `Your change to ${app} is ready to try` : 'Your change is ready to try',
+    ready_broken: app ? `${app} is built, but not everything works yet` : 'Your change is built, but not everything works yet',
+    stopped: app ? `${app}: your change stopped. I said why in our chat` : 'Your change stopped. I said why in our chat',
+    // 5 Oct 2026: what the DM it opens ends with (homeroom-bot-dm.js dmText
+    // 'build_failed'), whose why is there. A reply starts it again; "A person
+    // can pick it up" was a dead end for the person it was for.
+    stopped_build: app ? `${app}: I couldn't finish building it. Reply and I'll try again` : 'I couldn\'t finish building it. Reply and I\'ll try again',
+    stopped_blocked: app ? `${app}: I can't build it as written. Tell me more` : 'I can\'t build it as written. Tell me more',
+    stopped_person: app ? `${app}: this needs a person to decide` : 'This needs a person to decide',
+    stopped_empty: app ? `${app}: I couldn't find anything to build. Tell me more` : 'I couldn\'t find anything to build. Tell me more',
+    stopped_first: app ? `${app}: I couldn't start building it. You can still post a request` : 'I couldn\'t start building it',
+    stopped_preview: app ? `${app}: the preview didn't start. I'm trying again` : 'The preview didn\'t start. I\'m trying again',
+    stopped_look: app ? `${app}: it's built, but it needs a look before you can try it` : 'It\'s built, but it needs a look before you can try it',
+    held: app ? `${app}: I'll start it on Monday` : 'I\'ve paused until Monday',
+    live: app ? `Your change to ${app} is live` : 'Your change is live',
+    live_first: app ? `${app} is live` : 'Your project is live',
+    live_soon: app ? `Your change to ${app} is going live` : 'Your change is going live',
+    live_first_soon: app ? `${app} is going live` : 'Your project is going live',
+    reply: message,
+  }[m[1]];
+  return words ? { title: 'Homeroom bot', body: words } : null;
+}
+
+// WP-E: the bot's build moments as their own kinds ("Your builds"). Worded
+// by the moment the detail names, like its messages above; these are what a
+// row without one says.
+const BUILD_FALLBACK = Object.freeze({
+  build_ready: 'Your change is ready to try',
+  build_needs_you: 'I have a question',
+  build_stopped: 'Your change stopped. I said why in our chat',
+  build_live: 'Your change is live',
+});
+
 function truncate(value, max) {
   if (value.length <= max) return value;
   return `${value.slice(0, max - 1).trimEnd()}…`;
@@ -81,7 +142,7 @@ function minutesSince(value, now) {
 // services/platform-limit-alerts.js detailToken(): "<limit>_<level>:<used>:<cap>".
 // Parsed here rather than required from there: that module reaches the
 // database helpers, and copy assembly stays dependency-free.
-const PLATFORM_LIMIT_DETAIL_RE = /^(apps|sessions)_(warn|full):(\d{1,7}):(\d{1,7})$/;
+const PLATFORM_LIMIT_DETAIL_RE = /^(apps|sessions|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/;
 
 function platformLimitCopy(detail) {
   const m = PLATFORM_LIMIT_DETAIL_RE.exec(detail);
@@ -92,6 +153,22 @@ function platformLimitCopy(detail) {
     };
   }
   const [, limit, level, used, cap] = m;
+  // GitHub's hourly budget (services/github-budget.js): the bot token's,
+  // which nearly every GitHub call spends, or the GitHub App's.
+  if (limit === 'github') {
+    return level === 'full'
+      ? { title: 'GitHub requests used up',
+        body: `All ${cap} of this hour's GitHub requests are used. Proposals and shots that need GitHub fail until the hour resets` }
+      : { title: 'GitHub requests running low',
+        body: `${used} of ${cap} GitHub requests used this hour. Background work waits so people's work keeps the rest` };
+  }
+  if (limit === 'github_app') {
+    return level === 'full'
+      ? { title: 'GitHub App requests used up',
+        body: `All ${cap} of this hour's GitHub App requests are used. It resets within the hour` }
+      : { title: 'GitHub App requests running low',
+        body: `${used} of ${cap} GitHub App requests used this hour` };
+  }
   if (limit === 'apps') {
     return level === 'full'
       ? { title: 'App limit reached',
@@ -112,8 +189,18 @@ function buildCopy(kind, context, now) {
   const app = cleanText(context.appName);
   const conversation = cleanText(context.conversationTitle);
   const actor = cleanText(context.sourceUsername);
-  const message = cleanText(context.messageContent);
+  const message = cleanText(plainMarkdown(context.messageContent));
   const detail = cleanText(context.detail);
+  // B4: only the platform's own account (the Homeroom bot) words a message
+  // by its moment; anybody else's message is theirs, as written.
+  if (context.sourceIsSynthetic === true
+    && (kind === 'conversation_message' || kind === 'conversation_reply' || kind === 'conversation_mention')) {
+    const bot = botMomentCopy(detail, message);
+    if (bot) return bot;
+  }
+  if (Object.prototype.hasOwnProperty.call(BUILD_FALLBACK, kind)) {
+    return botMomentCopy(detail, message) || { title: 'Homeroom bot', body: BUILD_FALLBACK[kind] };
+  }
   // #971 preference order, same as the in-app dropdown renderers — except
   // that a machine-generated branch name is worse than no label at all.
   const branch = cleanText(context.branchName);
@@ -178,6 +265,14 @@ function buildCopy(kind, context, now) {
           ? `@${actor} mentioned you in ${quotedTitle}` : `@${actor} mentioned you`),
         body: message,
       };
+    // #3952: named with @ in a request somebody filed. `detail` is its number.
+    case 'issue_mention': {
+      const issue = /^\d+$/.test(detail) ? ` #${detail}` : '';
+      return actor && {
+        title: withApp(`@${actor} mentioned you in request${issue}`),
+        body: 'Open the request to see what they wrote',
+      };
+    }
     case 'reply':
       return actor && {
         title: withApp(quotedTitle
@@ -191,6 +286,24 @@ function buildCopy(kind, context, now) {
         title: withApp(`@${actor} replied in a thread`),
         body: message,
       };
+    // A person's message in a small private group's discussion
+    // (services/group-channel-notify.js). Only a fresh row rings, so this is
+    // nearly always the one message; `detail` counts the messages folded in
+    // since, should the row have grown before the push went out.
+    case 'channel_message': {
+      const count = /^\d{1,6}$/.test(detail) ? Number(detail) : 1;
+      const where = app ? truncate(app, TITLE_EMBED_MAX) : '';
+      if (count > 1) {
+        return {
+          title: where ? `${count} new messages in ${where}` : `${count} new messages`,
+          body: actor && message ? `@${actor}: ${message}` : message,
+        };
+      }
+      return actor && {
+        title: where ? `@${actor} in ${where}` : `@${actor} wrote in the discussion`,
+        body: message,
+      };
+    }
     case 'reaction':
       return actor && {
         title: withApp(detail
@@ -204,12 +317,40 @@ function buildCopy(kind, context, now) {
           ? `@${actor} gave you kudos for ${quotedTitle}` : `@${actor} gave you kudos`),
         body: 'Your work is getting noticed',
       };
+    // WP-E: what an invite link brought back to its maker
+    // (services/invite-activity.js). A push is only ever the day's first of
+    // each; the bell counts the rest. An open is never anybody's name.
+    case 'invite_opened':
+      return {
+        title: app ? `Someone opened your invite to ${app}` : 'Someone opened your invite',
+        body: 'You hear when they join',
+      };
+    case 'member_joined':
+      return actor && {
+        title: app ? `@${actor} joined ${app}` : `@${actor} joined`,
+        body: 'They came in through your invite. Say hello',
+      };
+    case 'first_message':
+      return actor && {
+        title: app ? `@${actor} said hi in ${app}` : `@${actor} said hi`,
+        body: message,
+      };
+    // An invite into a private project is to join it (detail 'join',
+    // services/collab-invites.js); the rest are to build one.
     case 'collab_invite':
+      if (detail === 'join') {
+        return {
+          title: actor
+            ? (app ? `@${actor} invited you to join ${app}` : `@${actor} invited you to join them`)
+            : withApp('You have an invite to join'),
+          body: 'Accept or decline in the app',
+        };
+      }
       return {
         title: actor
           ? (app ? `@${actor} wants to build ${app} with you` : `@${actor} wants to build with you`)
           : withApp('You have a collaboration invite'),
-        body: 'Join as a collaborator. Accept or decline in the app',
+        body: 'Join them to build it. Accept or decline in the app',
       };
     case 'collab_invite_accepted':
       return actor && {
@@ -218,13 +359,13 @@ function buildCopy(kind, context, now) {
       };
     case 'approver_invite':
       return {
-        title: withApp(actor ? `@${actor} asked you to be an approver` : 'You have an approver invite'),
-        body: "You'd review and vote on proposals. Accept in the app",
+        title: withApp(actor ? `@${actor} asked you to help approve changes` : 'You were asked to help approve changes'),
+        body: "You'd try changes and vote on them. Accept in the app",
       };
     case 'approver_invite_accepted':
       return actor && {
-        title: withApp(`@${actor} is now an approver`),
-        body: 'They can review and vote on proposals from now on',
+        title: withApp(`@${actor} can approve changes now`),
+        body: 'They can try changes and vote on them from now on',
       };
     case 'spec_shared':
       return {
@@ -268,6 +409,12 @@ function buildCopy(kind, context, now) {
         body: AUTO_SOLVE_BODIES[detail] || '',
       };
     }
+    // B7: "Ben's change to Supper Club is ready to try", with its title under it.
+    case 'change_ready':
+      return {
+        title: `${actor ? `@${actor}'s change` : 'A change'}${app ? ` to ${app}` : ''} is ready to try`,
+        body: label ? truncate(label, TITLE_EMBED_MAX) : 'Try it, and approve it if you\'re happy with it',
+      };
     case 'pr_proposed':
       return actor && {
         title: withApp(quotedTitle ? `@${actor} proposed ${quotedTitle}` : `@${actor} proposed a change`),
@@ -287,10 +434,10 @@ function buildCopy(kind, context, now) {
       return {
         title: withApp(quotedTitle
           ? `@${actor} voted ${direction} on ${quotedTitle}`
-          : `@${actor} voted ${direction} on your proposal`),
+          : `@${actor} voted ${direction} on your change`),
         body: voteReason
           ? `“${truncate(voteReason, VOTE_REASON_EMBED_MAX)}”`
-          : 'Open the proposal to review their vote',
+          : 'Open the change to see their vote',
       };
     }
     case 'pr_merged': {
@@ -306,9 +453,13 @@ function buildCopy(kind, context, now) {
         ? 'Your change will be live in a few minutes'
         : 'Your change is live';
       return {
-        title: withApp(quotedTitle ? `${quotedTitle} merged` : 'Your proposal merged'),
+        // B10d: live, in the words every screen uses; the platform's own
+        // change is approved now and live in a few minutes.
+        title: withApp(context.appSelfHosted === true
+          ? (quotedTitle ? `${quotedTitle} was approved` : 'Your change was approved')
+          : (quotedTitle ? `${quotedTitle} is live` : 'Your change is live')),
         body: detail === 'forced'
-          ? `An admin merged it. ${outcome}`
+          ? `${context.appSelfHosted === true ? 'An admin approved it.' : 'An admin made it live.'} ${outcome}`
           : detail
             ? `The vote carried. ${truncate(detail, 120)}`
             : `The vote carried. ${outcome}`,
@@ -319,7 +470,7 @@ function buildCopy(kind, context, now) {
     // the app carries the one tap that keeps it.
     case 'revision_recheck':
       return {
-        title: withApp(quotedTitle ? `Still good? ${quotedTitle} changed` : 'Still good? A proposal you backed changed'),
+        title: withApp(quotedTitle ? `Still good? ${quotedTitle} was updated` : 'Still good? A change you backed was updated'),
         body: actor
           ? `@${actor} pushed an update after your feedback. One tap keeps your yes`
           : 'A new version was pushed after your feedback. One tap keeps your yes',
@@ -335,7 +486,7 @@ function buildCopy(kind, context, now) {
         : `${merged} ${merged === 1 ? 'change' : 'changes'} went live.`;
       const waiting = open === 0
         ? ''
-        : ` ${open === 1 ? 'One proposal is' : `${open} proposals are`} waiting for eyes`;
+        : ` ${open === 1 ? 'One change is' : `${open} changes are`} waiting for approval`;
       return {
         title: app ? `This week on ${app}` : 'This week',
         body: `${shipped}${waiting}`.trim(),
@@ -344,29 +495,31 @@ function buildCopy(kind, context, now) {
     case 'issue_opened': {
       const issue = /^\d+$/.test(detail) ? ` #${detail}` : '';
       return {
-        title: withApp(actor ? `@${actor} filed issue${issue}` : `New issue${issue}`),
-        body: 'Open the issue to see what needs attention',
+        title: withApp(actor ? `@${actor} filed request${issue}` : `New request${issue}`),
+        body: 'Open the request to see what needs attention',
       };
     }
     case 'vote_digest': {
       const count = /^\d+$/.test(detail) ? Math.max(0, Number(detail)) : 0;
+      // Where a tap goes (notifications.js): one change opens that change,
+      // several the Communities screen's Needs you, which lists them.
       return {
         title: count
-          ? `${count} ${count === 1 ? 'proposal is' : 'proposals are'} waiting for your vote`
-          : 'Proposals are waiting for your vote',
-        body: 'Open Dev to review them',
+          ? `${count} ${count === 1 ? 'change is' : 'changes are'} waiting for your approval`
+          : 'Changes are waiting for your approval',
+        body: count === 1 ? 'Open it to try it and approve it' : 'See them under Needs you in Communities',
       };
     }
     case 'check_failed':
       return {
-        title: withApp(quotedTitle ? `Checks failed on ${quotedTitle}` : 'Proposal checks failed'),
-        body: 'Needs a fix before it can merge',
+        title: withApp(quotedTitle ? `Testing found a problem with ${quotedTitle}` : 'Testing found a problem with your change'),
+        body: 'It needs a fix before it can go live',
       };
     case 'stale_pr': {
       const days = daysSince(context.promotedAt, now);
       return {
         title: withApp(quotedTitle
-          ? `${quotedTitle} is waiting for eyes` : 'Your proposal needs attention'),
+          ? `${quotedTitle} is waiting for approval` : 'Your change needs attention'),
         body: days >= 1
           ? `Nobody has weighed in for ${days} ${days === 1 ? 'day' : 'days'}. Share the preview or ask a friend to try it`
           : 'Share the preview or ask a friend to try it',
@@ -381,7 +534,7 @@ function buildCopy(kind, context, now) {
           : 'Your agent submitted work'),
         body: context.detail === 'shared'
           ? 'It is visible in the in-progress area (no vote yet)'
-          : 'It is up for the group\'s vote, and its checks are running',
+          : 'It is waiting for approval, and it is being tested',
       };
     // #1405 path B, and the copy is load-bearing.
     //
@@ -427,8 +580,8 @@ function buildCopy(kind, context, now) {
       // (the image workflow, Argo CD, the rollout) has not delivered it.
       if (detail === 'release_stalled') {
         return {
-          title: withApp('Merged but not released'),
-          body: 'A merged change is not running yet. Open the board to see where the release stopped',
+          title: withApp('Approved but not live yet'),
+          body: 'An approved change is not live yet. Open the board to see where it stopped',
         };
       }
       return {
@@ -540,6 +693,9 @@ function buildBadgeMessage({ token, unreadCount, now = new Date() }) {
 
 module.exports = {
   ALLOWED_KINDS,
+  botMomentCopy,
+  buildNotificationCopy,
+  plainMarkdown,
   MAX_TTL_MS,
   RECIPIENT_CONTEXT,
   PUSH_ENV_RE,

@@ -416,7 +416,7 @@ async function hydrateMessages(db, user, rows) {
         id: row.sender_id || 0,
         username: system ? 'Homeroom' : (row.sender_username || 'Deleted user'),
         avatarUrl: row.sender_avatar_id ? `/avatars/${row.sender_avatar_id}` : null,
-        ...(row.sender_is_synthetic && !system ? { bot: true } : {}),
+        ...(row.sender_is_synthetic && !system ? { bot: true, ...botName(row.sender_display_name) } : {}),
       },
       ...(system ? { system: true } : {}),
       ...(metadata ? { metadata } : {}),
@@ -430,6 +430,7 @@ async function hydrateMessages(db, user, rows) {
           id: row.reply_sender_id || 0,
           username: row.reply_sender_username || 'Deleted user',
           avatarUrl: row.reply_sender_avatar_id ? `/avatars/${row.reply_sender_avatar_id}` : null,
+          ...(row.reply_sender_is_synthetic ? { bot: true, ...botName(row.reply_sender_display_name) } : {}),
         },
         content: row.reply_deleted_at ? '' : (row.reply_content || ''),
         deleted: !!row.reply_deleted_at,
@@ -453,13 +454,26 @@ async function hydrateMessages(db, user, rows) {
   });
 }
 
+/**
+ * B5: a platform account's name as people see it (the Homeroom bot's
+ * "Homeroom bot"), sent beside its username for the client to show in its
+ * place. A person's display name is not sent here: Messages names people by
+ * their handle.
+ */
+function botName(displayName) {
+  const name = typeof displayName === 'string' ? displayName.trim() : '';
+  return name ? { displayName: name.slice(0, 80) } : {};
+}
+
 const MESSAGE_SELECT = `
   SELECT m.id, m.conversation_id, m.sender_id, m.content, m.created_at, m.edited_at,
          m.deleted_at, m.moderation_hidden_at, m.thread_root_id, m.msg_type, m.metadata,
          su.username AS sender_username, sua.id AS sender_avatar_id, su.is_synthetic AS sender_is_synthetic,
+         su.display_name AS sender_display_name,
          rm.id AS reply_id, rm.sender_id AS reply_sender_id, rm.content AS reply_content,
          rm.deleted_at AS reply_deleted_at,
          ru.username AS reply_sender_username, rua.id AS reply_sender_avatar_id,
+         ru.is_synthetic AS reply_sender_is_synthetic, ru.display_name AS reply_sender_display_name,
          tr.content AS thread_root_content, tr.deleted_at AS thread_root_deleted_at,
          tru.username AS thread_root_sender_username
     FROM conversation_messages m
@@ -745,6 +759,7 @@ async function conversationRow(db, user, conversationId) {
             inviter_avatar.id AS requester_avatar_id,
             peer.user_id AS peer_id, peer.status AS peer_status, peer_user.username AS peer_username,
             peer_avatar.id AS peer_avatar_id,
+            peer_user.is_synthetic AS peer_is_synthetic, peer_user.display_name AS peer_display_name,
             -- #3692: a direct conversation with the Homeroom bot's own
             -- account, which carries the bot's activity tray.
             (peer_user.is_synthetic IS TRUE AND peer_user.username = 'homeroom_bot') AS peer_is_homeroom_bot,
@@ -817,8 +832,15 @@ async function serializeConversation(db, user, row, { includeMembers = true } = 
     ? await getMessage(db, user, row.id, row.latest_message_id)
     : null;
   let unread = 0;
+  // The viewer's read cursor, beside the count it is the cursor of: the
+  // client opens a conversation at the first message after it and draws its
+  // "New" line there (frontend/src/features/messages/unread-anchor.ts). 0 is
+  // a member who has read nothing, which countUnread reads the same way; null
+  // is "not yours to know", hidden until acceptance like the count itself.
+  let lastReadMessageId = null;
   if (row.membership_status === 'member' && !row.deleted_peer) {
     unread = await countUnread(db, row.id, user.id, row.last_read_message_id);
+    lastReadMessageId = Number(row.last_read_message_id) || 0;
   }
   // An invitation is a consent envelope, not conversation access. The
   // requester identity is shown so the recipient can decide; roster, peer,
@@ -828,13 +850,17 @@ async function serializeConversation(db, user, row, { includeMembers = true } = 
     id: row.peer_id,
     username: row.peer_username,
     avatarUrl: row.peer_avatar_id ? `/avatars/${row.peer_avatar_id}` : null,
+    ...(row.peer_is_synthetic ? { bot: true, ...botName(row.peer_display_name) } : {}),
   } : null;
   const requester = row.invited_by ? {
     id: row.invited_by,
     username: row.requester_username,
     avatarUrl: row.requester_avatar_id ? `/avatars/${row.requester_avatar_id}` : null,
   } : null;
-  const title = row.kind === 'direct' ? (peer?.username || (row.deleted_peer ? 'Deleted user' : 'Direct message')) : row.title;
+  // B5: the bot's DM is titled by its name, not its handle.
+  const title = row.kind === 'direct'
+    ? ((peer?.bot && peer.displayName) || peer?.username || (row.deleted_peer ? 'Deleted user' : 'Direct message'))
+    : row.title;
   // QA 2026-09-24 Q2: the requester's side of a direct request the other
   // person has not accepted yet. They may send the one opening message and
   // nothing more (sendMessage answers `awaiting_acceptance` after that), so
@@ -863,6 +889,7 @@ async function serializeConversation(db, user, row, { includeMembers = true } = 
     // posting. Invitations still use their own update timestamp.
     lastActivityAt: accepted ? (latest?.createdAt || row.created_at) : (row.updated_at || row.created_at),
     unreadCount: unread,
+    lastReadMessageId,
     awaitingAcceptance,
     canSend: row.membership_status === 'member' && row.status === 'active'
       && !(awaitingAcceptance && row.has_messages),
@@ -1446,7 +1473,17 @@ function mentionsUsername(content, username) {
   return pattern.test(content);
 }
 
-async function sendMessage(pool, user, conversationId, input, { metadata = null } = {}) {
+// B4: `notify: false` stores a message that counts as unread but rings no
+// bell and sends no push (the Homeroom bot's progress, which is not news on
+// its own). `notificationDetail` rides on each notification it does make, as
+// notifications.detail, for the push and the bell to word it by.
+// WP-E: `notificationKind` names the kind of every notification a DIRECT
+// message makes, in place of the message kinds (the Homeroom bot's build
+// moments, homeroom-bot-dm.js BUILD_KINDS); it must be one of
+// notifications.CONVERSATION_NOTIFICATION_KINDS. A group or channel ignores it.
+async function sendMessage(pool, user, conversationId, input, {
+  metadata = null, notify = true, notificationDetail = null, notificationKind = null,
+} = {}) {
   const attachmentIds = normalizeAttachmentIds(input.attachment_ids ?? input.attachmentIds);
   const refsRaw = input.objects ?? (input.object ? [input.object] : []);
   if (!Array.isArray(refsRaw) || refsRaw.length > MAX_OBJECTS || !attachmentIds) return null;
@@ -1620,9 +1657,11 @@ async function sendMessage(pool, user, conversationId, input, { metadata = null 
     }
     const notifications = [];
     for (const member of members.rows) {
+      if (!notify) break;
       const mentioned = mentionsUsername(content, member.username);
       let kind = 'conversation_message';
-      if (membership.kind === 'channel') {
+      if (membership.kind === 'direct' && notificationKind) kind = notificationKind;
+      else if (membership.kind === 'channel') {
         // A channel is everybody (#2783): anything but an @mention there
         // rings bells nobody asked for (#3188). An ordinary message, a reply
         // to yours and a thread you are in stay silent; a reply or thread
@@ -1638,7 +1677,7 @@ async function sendMessage(pool, user, conversationId, input, { metadata = null 
       }
       notifications.push(await insertNotification(db, {
         userId: member.user_id, conversationId, messageId,
-        sourceUserId: user.id, kind,
+        sourceUserId: user.id, kind, detail: notificationDetail,
       }));
     }
     return { messageId, memberIds: [user.id, ...members.rows.map((row) => row.user_id)], notifications, duplicate: false };
@@ -2096,7 +2135,8 @@ async function setBlock(pool, userId, targetId, blocked) {
         WHERE user_id = $1 AND source_user_id = $2
           AND (kind IN ('conversation_invite', 'conversation_message',
                         'conversation_mention', 'conversation_reply', 'conversation_reaction',
-                        'conversation_thread_reply')
+                        'conversation_thread_reply',
+                        'build_ready', 'build_needs_you', 'build_stopped', 'build_live')
                OR chat_message_id IS NOT NULL)`,
       [userId, targetId]
     );

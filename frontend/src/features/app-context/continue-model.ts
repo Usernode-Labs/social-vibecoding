@@ -1,7 +1,9 @@
-// The rows under "Agent sessions" in the Homeroom menu (#2779 follow-up; it
-// was "Continue" until the UI overhaul): your agent
-// sessions, so going back to one is a tap from anywhere. Pure, so tests can
-// read the rules without a browser.
+// The rows under "Agent chats" in the Homeroom menu (#2779 follow-up; it was
+// "Continue" until the UI overhaul, then "Agent sessions", then "More"): your
+// agent sessions, so going back to one is a tap from anywhere. Pure, so tests
+// can read the rules without a browser. The section itself shows only once
+// the viewer has had an agent session (../agent-session/store.ts
+// agentChatsShown, first-session run-through, 5 Oct 2026).
 //
 // The rules:
 //   - every app's, not only the one the menu is open on, and on Home too: a
@@ -84,8 +86,9 @@ export function agentSub(app: string | null, detail: string): string {
 function agentDetail(session: ContinueAgentSession): string {
   const change = session.activeChange;
   if (!change) return 'Agent session';
-  if (change.status === 'promoted') return 'In vote';
-  if (change.status === 'merged') return 'Merged';
+  if (change.status === 'promoted') return 'Waiting for approval';
+  if (change.status === 'merging') return 'Going live';
+  if (change.status === 'merged') return 'Live';
   return 'In progress';
 }
 

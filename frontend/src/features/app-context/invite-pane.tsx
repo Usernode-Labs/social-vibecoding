@@ -10,7 +10,8 @@
  *      another. Copy, and Share where the device has a share sheet.
  *   2. WHAT IT DOES, in one sentence: who can use it, for how long, for how
  *      many people, and — what a new person meets — that somebody new to
- *      Homeroom joins the waitlist first and this project when let in.
+ *      Homeroom joins straight away, as a private member, and goes straight
+ *      into this project (services/community-invites.js redeem).
  *   3. CHANGE. How long and for how many, within the server's limits; a new
  *      link is made with them. The old one keeps working until turned off.
  *   4. YOUR LINKS. Every live one, with Turn off. Someone who manages the
@@ -22,60 +23,71 @@
  * inviting is where this menu goes rather than something opened over it
  * (./about-pane.tsx). The header row's back arrow is the way back.
  *
+ * ── It opens at its own height, once ─────────────────────────────────
+ *
+ * The sheet goes up at the height it first renders at, so the pane's first
+ * render is as tall as it will be. `AppContext.openInvite()` reads the state
+ * before presenting (./invite-data.ts) and the pane starts from that answer;
+ * when the read is slow, it starts from InviteSkeleton, the loaded pane's own
+ * rows in grey. It never starts from a one-line note that grows: that was a
+ * short sheet that rose a second time, with the dim fading in twice.
+ *
  * Nothing here is in the prerender: `view` is 'menu' there, so the pane only
- * ever renders on the client, and its data loads in an effect.
+ * ever renders on the client, and its data loads in an effect (or arrived
+ * before it mounted).
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { CopyIcon, ShareIcon } from '@/components/ui/icons';
-import { Input } from '@/components/ui/input';
+import { Input, inputVariants } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
+import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 
+import {
+  forgetPreparedInvite,
+  inviteApi,
+  inviteLinksUrl,
+  prepareInvite,
+  preparedInvite,
+  readInviteState,
+  type InviteLink,
+  type InviteOutcome,
+  type InviteState,
+} from './invite-data';
 import { daysUntil } from './invite-model';
 
-export type InviteLink = {
-  id: number;
-  token: string;
-  path: string;
-  maxUses: number;
-  uses: number;
-  expiresAt: string;
-  createdBy: string | null;
-  mine: boolean;
-};
-
-export type InviteState = {
-  links: InviteLink[];
-  manages: boolean;
-  canCreate: boolean;
-  grant: 'member' | 'collaborator';
-  defaults: { days: number; maxUses: number };
-  limits: { minDays: number; maxDays: number; minUses: number; maxUses: number };
-  skipsLeft: number | null;
-};
+export type { InviteLink, InviteState } from './invite-data';
 
 const ROW = 'flex items-center gap-3 px-5 min-h-[44px] text-sm w-full text-left '
   + 'text-zinc-700 dark:text-zinc-200';
 const SECTION = 'px-5 pt-4 pb-1 text-[0.7rem] font-semibold uppercase tracking-wide '
   + 'text-zinc-400 dark:text-zinc-500';
 const NOTE = 'px-5 py-2 text-sm text-zinc-500 dark:text-zinc-400';
+const TITLE = 'text-[0.9375rem] font-semibold text-zinc-900 dark:text-zinc-100';
+// The small lines under the link: what it does, who is new, the joining rule.
+const SMALL = 'text-[0.8125rem] leading-snug';
+const CHANGE_ROW = 'w-full px-5 min-h-[40px] text-left text-sm font-medium';
 const PRIMARY = 'inline-flex flex-1 basis-0 min-w-0 items-center justify-center gap-1.5 h-10 px-4 '
   + 'rounded-full text-sm font-semibold bg-violet-600 hover:bg-violet-500 text-white transition-colors';
 const SECONDARY = 'inline-flex flex-1 basis-0 min-w-0 items-center justify-center gap-1.5 h-10 px-4 '
   + 'rounded-full text-sm font-semibold bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-800 '
   + 'dark:hover:bg-zinc-700 text-zinc-900 dark:text-zinc-100 transition-colors';
 
-const DAY_CHOICES = [1, 7, 30];
-const USE_CHOICES = [1, 5, 10, 25, 50, 100];
+// 0 asks for no limit (WP-D): no end date, or any number of people.
+const NO_LIMIT = 0;
+const DAY_CHOICES = [1, 7, 30, NO_LIMIT];
+const USE_CHOICES = [1, 5, 10, 25, 50, 100, NO_LIMIT];
 
 /** The sentence under the link. */
 export function linkSentence(link: Pick<InviteLink, 'expiresAt' | 'maxUses' | 'uses'>, grant: string, now = Date.now()): string {
-  const days = daysUntil(link.expiresAt, now);
-  const when = days <= 1 ? 'It expires within a day' : `It expires in ${days} days`;
   const who = grant === 'collaborator'
     ? 'Anyone with this link can join and build with you.'
     : 'Anyone with this link can join.';
+  if (link.expiresAt == null && link.maxUses == null) return `${who} It works until you turn it off.`;
+  const days = link.expiresAt == null ? null : daysUntil(link.expiresAt, now);
+  const when = days == null ? 'It has no end date' : days <= 1 ? 'It expires within a day' : `It expires in ${days} days`;
+  if (link.maxUses == null) return `${who} ${when}.`;
   // Before anyone has used it, the number it was made for; after, what is
   // left of it.
   const count = link.uses ? Math.max(0, link.maxUses - link.uses) : link.maxUses;
@@ -85,58 +97,149 @@ export function linkSentence(link: Pick<InviteLink, 'expiresAt' | 'maxUses' | 'u
 
 /** "3 of 25 used · 5 days left", for a row of Your links. */
 export function linkDetail(link: Pick<InviteLink, 'expiresAt' | 'maxUses' | 'uses'>, now = Date.now()): string {
+  const used = link.maxUses == null ? `${link.uses} joined` : `${link.uses} of ${link.maxUses} used`;
+  if (link.expiresAt == null) return `${used} · no end date`;
   const days = daysUntil(link.expiresAt, now);
-  return `${link.uses} of ${link.maxUses} used · ${days <= 1 ? 'under a day left' : `${days} days left`}`;
+  return `${used} · ${days <= 1 ? 'under a day left' : `${days} days left`}`;
 }
 
-/** The line about people new to Homeroom. */
-export function newcomerLine(skipsLeft: number | null): string {
-  if (skipsLeft && skipsLeft > 0) {
-    return `You can let ${skipsLeft} ${skipsLeft === 1 ? 'person' : 'people'} new to Homeroom skip the waitlist.`;
-  }
-  return 'Someone new to Homeroom joins the waitlist first, and this project when they are let in.';
+/**
+ * The line about people new to Homeroom: they join straight away, as private
+ * members (services/community-invites.js redeem). It used to count the skips
+ * past the waitlist a link could hand out, which private membership replaced.
+ */
+export function newcomerLine(): string {
+  return 'Someone new to Homeroom joins straight away and goes right into this project.';
 }
 
 function absolute(path: string): string {
   try { return new URL(path, window.location.origin).toString(); } catch { return path; }
 }
 
-async function api(url: string, init?: RequestInit): Promise<any> {
-  const res = await fetch(url, { credentials: 'same-origin', ...init });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body?.error || 'Something went wrong. Try again.');
-  return body;
+/**
+ * One line of text that has not arrived: as tall as the line it stands for
+ * (the zero-width space takes its height from the type around it), with a
+ * bar across it.
+ */
+function SkeletonLine({ className, shape = 'muted' }: { className: string; shape?: 'line' | 'muted' }): ReactNode {
+  return (
+    <span className="flex items-center">
+      {'\u200b'}
+      <Skeleton shape={shape} className={className} />
+    </span>
+  );
+}
+
+/**
+ * The pane before its link has come: the loaded pane's own rows, in grey, so
+ * the sheet that goes up around it is already the height it stays. Only when
+ * the read outlasts the opener's wait (AppContext.openInvite); otherwise the
+ * pane's first render is the loaded one.
+ *
+ * Each row keeps the container, padding and type of the row it stands for,
+ * so its height comes from the same classes rather than a copied number: the
+ * link field is the Input's own box, the buttons are h-10 like Copy and
+ * Share, the lines are the small paragraphs' lines. What it cannot know is
+ * how many links there are and how long each sentence runs, so it draws the
+ * common case: one link of their own, two lines each for what the link does,
+ * who is new, and the joining rule.
+ */
+export function InviteSkeleton({ label, canShare }: { label: string; canShare: boolean }): ReactNode {
+  return (
+    <div id="app-invite-pane" className="pb-2" data-invite-loading="">
+      <div className="px-5 pt-1">
+        <div className={TITLE}>{`Invite people to ${label}`}</div>
+      </div>
+      {/* The pulse is opacity alone, on the compositor, and still under
+          reduced motion. */}
+      <SkeletonGroup label="Making your link" className="motion-reduce:animate-none">
+        <div className="px-5 pt-3">
+          <div className={inputVariants()}>
+            <SkeletonLine shape="line" className="w-3/4" />
+          </div>
+        </div>
+        <div className={`px-5 pt-2 ${SMALL}`}>
+          <SkeletonLine className="w-full" />
+          <SkeletonLine className="w-1/2" />
+        </div>
+        <div className="flex items-stretch gap-2 px-5 pt-3">
+          <Skeleton shape="block" className="h-10 flex-1 basis-0 rounded-full" />
+          {canShare ? <Skeleton shape="block" className="h-10 flex-1 basis-0 rounded-full" /> : null}
+        </div>
+        <div className={`px-5 pt-3 ${SMALL}`}>
+          <SkeletonLine className="w-full" />
+          <SkeletonLine className="w-2/5" />
+        </div>
+        <div className={`px-5 pt-2 ${SMALL}`}>
+          <SkeletonLine className="w-full" />
+          <SkeletonLine className="w-3/5" />
+        </div>
+        <div className={`flex items-center ${CHANGE_ROW}`}>
+          <Skeleton className="w-1/2" />
+        </div>
+        <div className={SECTION}>
+          <SkeletonLine shape="line" className="w-16" />
+        </div>
+        <div className={ROW}>
+          <Skeleton className="w-2/5" />
+          <Skeleton className="ml-auto w-12" />
+        </div>
+      </SkeletonGroup>
+    </div>
+  );
 }
 
 export function InvitePane({ slug, label }: { slug: string | null; label: string }) {
-  const [state, setState] = useState<InviteState | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // What AppContext.openInvite() read before the sheet went up, when it came
+  // in time: the pane's first render is then the loaded one.
+  const [prepared] = useState<InviteOutcome | null>(() => (slug ? preparedInvite(slug) : null));
+  const fromOpener = useRef(prepared != null);
+  const [state, setState] = useState<InviteState | null>(prepared?.state ?? null);
+  const [error, setError] = useState<string | null>(prepared?.error ?? null);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const [changing, setChanging] = useState(false);
-  const [days, setDays] = useState(7);
-  const [uses, setUses] = useState(25);
+  const [days, setDays] = useState(prepared?.state?.defaults.days ?? 7);
+  const [uses, setUses] = useState(prepared?.state?.defaults.maxUses ?? 25);
 
-  const base = slug ? `/api/apps/${encodeURIComponent(slug)}/invite-links` : null;
+  const base = slug ? inviteLinksUrl(slug) : null;
 
-  const load = useCallback(async (makeIfNone: boolean) => {
-    if (!base) return;
+  const apply = useCallback((next: InviteState) => {
+    setState(next);
+    setDays(next.defaults.days);
+    setUses(next.defaults.maxUses);
+  }, []);
+
+  // After a change of theirs (a new link, one turned off): read it again.
+  const load = useCallback(async () => {
+    if (!slug) return;
     setError(null);
     try {
-      let next: InviteState = await api(base);
-      if (makeIfNone && next.canCreate && !next.links.some((l) => l.mine)) {
-        await api(base, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-        next = await api(base);
-      }
-      setState(next);
-      setDays(next.defaults.days);
-      setUses(next.defaults.maxUses);
+      apply(await readInviteState(slug, false));
     } catch (err) {
       setError((err as Error).message);
     }
-  }, [base]);
+  }, [slug, apply]);
 
-  useEffect(() => { void load(true); }, [load]);
+  // Opening: the opener's read, taken whole when it came in time, else joined
+  // where it is (it may be making their first link, so it is never started
+  // twice). Reached without the opener, this starts it.
+  useEffect(() => {
+    if (!slug) return undefined;
+    if (fromOpener.current) {
+      fromOpener.current = false;
+      forgetPreparedInvite();
+      return undefined;
+    }
+    let live = true;
+    void prepareInvite(slug).then((outcome) => {
+      if (!live) return;
+      forgetPreparedInvite();
+      if (outcome.state) apply(outcome.state);
+      else setError(outcome.error);
+    });
+    return () => { live = false; };
+  }, [slug, apply]);
 
   const current = state?.links.find((l) => l.mine) || null;
   const url = current ? absolute(current.path) : '';
@@ -160,13 +263,13 @@ export function InvitePane({ slug, label }: { slug: string | null; label: string
     setBusy(true);
     setError(null);
     try {
-      await api(base, {
+      await inviteApi(base, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ days, maxUses: uses }),
       });
       setChanging(false);
-      await load(false);
+      await load();
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -177,8 +280,8 @@ export function InvitePane({ slug, label }: { slug: string | null; label: string
     setBusy(true);
     setError(null);
     try {
-      await api(`/api/invite-links/${link.id}`, { method: 'DELETE' });
-      await load(false);
+      await inviteApi(`/api/invite-links/${link.id}`, { method: 'DELETE' });
+      await load();
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -186,14 +289,17 @@ export function InvitePane({ slug, label }: { slug: string | null; label: string
     }
   };
 
+  const canShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
+
   if (!slug) return <div id="app-invite-pane"><p className={NOTE}>Open a project to invite people to it.</p></div>;
-  if (!state) {
+  if (!state && error) {
     return (
       <div id="app-invite-pane">
-        <p className={NOTE}>{error || 'Making your link…'}</p>
+        <p className={NOTE}>{error}</p>
       </div>
     );
   }
+  if (!state) return <InviteSkeleton label={label} canShare={canShare} />;
   if (!state.canCreate) {
     return (
       <div id="app-invite-pane">
@@ -205,12 +311,10 @@ export function InvitePane({ slug, label }: { slug: string | null; label: string
       </div>
     );
   }
-  const canShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
-
   return (
     <div id="app-invite-pane" className="pb-2">
       <div className="px-5 pt-1">
-        <div className="text-[0.9375rem] font-semibold text-zinc-900 dark:text-zinc-100">
+        <div className={TITLE}>
           {`Invite people to ${label}`}
         </div>
       </div>
@@ -225,7 +329,7 @@ export function InvitePane({ slug, label }: { slug: string | null; label: string
               onFocus={(e) => e.currentTarget.select()}
             />
           </div>
-          <p id="app-invite-sentence" className="px-5 pt-2 text-[0.8125rem] leading-snug text-zinc-600 dark:text-zinc-300">
+          <p id="app-invite-sentence" className={`px-5 pt-2 ${SMALL} text-zinc-600 dark:text-zinc-300`}>
             {linkSentence(current, state.grant)}
           </p>
           <div className="flex items-stretch gap-2 px-5 pt-3">
@@ -242,9 +346,14 @@ export function InvitePane({ slug, label }: { slug: string | null; label: string
           </div>
         </>
       ) : null}
-      <p className="px-5 pt-3 text-[0.8125rem] leading-snug text-zinc-500 dark:text-zinc-400">
-        {newcomerLine(state.skipsLeft)}
+      <p className={`px-5 pt-3 ${SMALL} text-zinc-500 dark:text-zinc-400`}>
+        {newcomerLine()}
       </p>
+      {state.joiningRule ? (
+        <p data-invite-rule="" className={`px-5 pt-2 ${SMALL} text-zinc-500 dark:text-zinc-400`}>
+          {state.joiningRule}
+        </p>
+      ) : null}
       {error ? <p role="alert" className="px-5 pt-2 text-sm text-red-600 dark:text-red-400">{error}</p> : null}
 
       {changing ? (
@@ -252,16 +361,16 @@ export function InvitePane({ slug, label }: { slug: string | null; label: string
           <label className="block text-sm text-zinc-700 dark:text-zinc-200">
             <span className="block pb-1">Expires after</span>
             <Select value={String(days)} onChange={(e) => setDays(Number(e.target.value))}>
-              {DAY_CHOICES.filter((d) => d >= state.limits.minDays && d <= state.limits.maxDays).map((d) => (
-                <option key={d} value={d}>{d === 1 ? '1 day' : `${d} days`}</option>
+              {DAY_CHOICES.filter((d) => d === NO_LIMIT || (d >= state.limits.minDays && d <= state.limits.maxDays)).map((d) => (
+                <option key={d} value={d}>{d === NO_LIMIT ? 'Until you turn it off' : d === 1 ? '1 day' : `${d} days`}</option>
               ))}
             </Select>
           </label>
           <label className="block text-sm text-zinc-700 dark:text-zinc-200">
             <span className="block pb-1">Works for</span>
             <Select value={String(uses)} onChange={(e) => setUses(Number(e.target.value))}>
-              {USE_CHOICES.filter((n) => n >= state.limits.minUses && n <= state.limits.maxUses).map((n) => (
-                <option key={n} value={n}>{n === 1 ? '1 person' : `${n} people`}</option>
+              {USE_CHOICES.filter((n) => n === NO_LIMIT || (n >= state.limits.minUses && n <= state.limits.maxUses)).map((n) => (
+                <option key={n} value={n}>{n === NO_LIMIT ? 'Anyone with the link' : n === 1 ? '1 person' : `${n} people`}</option>
               ))}
             </Select>
           </label>
@@ -276,7 +385,7 @@ export function InvitePane({ slug, label }: { slug: string | null; label: string
         <button
           id="app-invite-change-open"
           type="button"
-          className="w-full px-5 min-h-[40px] text-left text-sm font-medium text-violet-700 dark:text-violet-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
+          className={`${CHANGE_ROW} text-violet-700 dark:text-violet-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors`}
           onClick={() => setChanging(true)}
         >
           Change how long or how many

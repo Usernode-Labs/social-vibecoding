@@ -365,7 +365,7 @@ const Browse = {
     { key: 'recommended', label: 'Recommended' },
     { key: 'users', label: 'Most users' },
     { key: 'active', label: 'Most active' },
-    { key: 'merged', label: 'Most changes merged' },
+    { key: 'merged', label: 'Most changes live' },
     { key: 'new', label: 'Newest' },
   ],
 
@@ -688,10 +688,10 @@ const Browse = {
     bits.push(`${users} user${users === 1 ? '' : 's'}`);
     if (sort === 'active') {
       const recent = parseInt(app.merged_prs_recent || 0, 10) || 0;
-      if (recent > 0) bits.push(`${recent} merged in 30d`);
+      if (recent > 0) bits.push(`${recent} live in 30d`);
     } else if (sort === 'merged') {
       const merged = parseInt(app.merged_prs || 0, 10) || 0;
-      if (merged > 0) bits.push(`${merged} change${merged === 1 ? '' : 's'} merged`);
+      if (merged > 0) bits.push(`${merged} change${merged === 1 ? '' : 's'} live`);
     }
     if (sort === 'new') {
       const created = formatRelativeTime(app.created_at);
@@ -1101,7 +1101,7 @@ const Browse = {
           includePrContext: false,
         })
       : '';
-    // Fork lineage — "⑂ Forked from <name>", under the version chip.
+    // Fork lineage — "⑂ Remixed from <name>", under the version chip.
     //
     // This was the hamburger drawer's last footer row, painted by
     // AppView.renderForkBadge() into a slot by id and revealed through
@@ -1163,7 +1163,7 @@ const Browse = {
             : app.status === 'error' ? 'Not running'
             : (app.status || 'Unavailable')),
         isAdded,
-        favLabel: isAdded ? 'Remove from Shortcuts' : 'Add to Shortcuts',
+        favLabel: isAdded ? 'Remove from My apps' : 'Add to My apps',
         // The Share row (shareDetailApp). A flag, not the URL: the click
         // resolves the link from the app record it is handed, the same one
         // Open and Add act on, rather than from a string frozen at paint.
@@ -1172,6 +1172,9 @@ const Browse = {
           index: i,
           label: a.label,
           title: a.title || null,
+          // The line under the label, for an item that has one (Remix's
+          // "Make your own copy"); absent for every other row.
+          ...(a.sub ? { sub: a.sub } : {}),
           danger: !!a.danger,
           disabled: !!a.disabled,
         })),

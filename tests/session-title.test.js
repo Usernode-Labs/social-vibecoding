@@ -1158,3 +1158,78 @@ test('a deterministic PR title for a bot build never carries "Build issue N:" (#
     restore();
   }
 });
+
+// #3183: sessions driven by a templated work order were named after the
+// template — "implement this change in the app: TITLE: Add Calm mode: slower
+// sheep…" — on the payer-free path (titleFromFirstMessage) and in the PR
+// title deterministicPrMetadataDraft derives from the same trim.
+const WORK_ORDER = 'Please implement this change in the app: TITLE: Add Calm mode: slower sheep, '
+  + 'softer colors, same rounds. DETAIL: A Calm mode toggle in the Grown-ups panel that slows '
+  + "the flock's movement and softens the meadow's colors, without changing flock sizes, seeds "
+  + 'or round numbering. Persist it like the other settings. Must keep canvas, DOM fallback and '
+  + 'a11y list working. When done, build/check it. Do NOT promote/put to vote yet; just reply '
+  + 'DONE + summary when the code is ready.';
+
+test('a work order is named after its TITLE, not its instruction (#3183)', () => {
+  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
+  try {
+    assert.equal(subject.deterministicTitle(WORK_ORDER),
+      'Add Calm mode: slower sheep, softer colors, same rounds');
+    assert.equal(subject.deterministicTitle(
+      'Please implement this change in the app: TITLE: Add mid-round save and resume. DETAIL: '
+        + 'If a child leaves in the middle of a round, save the board.',
+    ), 'Add mid-round save and resume');
+    // A TITLE on its own line, with markdown emphasis, and no DETAIL field.
+    assert.equal(subject.deterministicTitle(
+      'Implement the following change:\n**TITLE:** Show quota changes as a sentence\n'
+        + 'The app_quota_changed row should read as a sentence.',
+    ), 'Show quota changes as a sentence');
+    assert.deepEqual(subject.parseTitledRequest('TITLE: Fix the login redirect\nDETAIL: it loops'),
+      { title: 'Fix the login redirect', body: 'it loops' });
+    // Prose that mentions a title is not a work order.
+    assert.equal(subject.parseTitledRequest('Change the page title: it should say Homeroom'), null);
+    assert.equal(subject.parseTitledRequest('make the leaderboard paginate'), null);
+    assert.equal(subject.deterministicTitle('Change the page title: it should say Homeroom'),
+      'Change the page title: it should say Homeroom');
+  } finally {
+    restore();
+  }
+});
+
+test('the instruction to make a change is dropped even from a message that fits (#3183)', () => {
+  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
+  try {
+    assert.equal(subject.deterministicTitle('Please implement this change in the app: Add dark mode'),
+      'Add dark mode');
+    assert.equal(subject.deterministicTitle('Implement the following change:\n\nThe leaderboard should paginate'),
+      'The leaderboard should paginate');
+    assert.equal(subject.deterministicTitle(
+      'Hey, could you build this feature for the game — a wolf that hides in the flock',
+    ), 'a wolf that hides in the flock');
+    const long = subject.deterministicTitle('Please apply this fix to the project: the avatar upload '
+      + 'rejects anything over four megabytes with an unhelpful five hundred error page');
+    assert.match(long, /^the avatar upload rejects/);
+    assert.doesNotMatch(long, /apply this fix|project/);
+    // Without a colon, dash or line break it is a request, not boilerplate.
+    assert.match(subject.deterministicTitle('Make this change permanent across all pages of the '
+      + 'app and the admin area too please'), /^Make this change permanent/);
+    // A greeting a person typed is still theirs when it fits.
+    assert.equal(subject.deterministicTitle('please fix the login redirect'),
+      'please fix the login redirect');
+  } finally {
+    restore();
+  }
+});
+
+test('the model is handed a work order\'s title and detail, not its template (#3183)', () => {
+  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
+  try {
+    const prepared = subject.titleInputsFromRequests([WORK_ORDER]);
+    assert.equal(prepared.issueTitle, null);
+    assert.match(prepared.requests[0],
+      /^Add Calm mode: slower sheep, softer colors, same rounds\n\nA Calm mode toggle/);
+    assert.doesNotMatch(prepared.requests[0], /implement this change|TITLE:|DETAIL:/);
+  } finally {
+    restore();
+  }
+});

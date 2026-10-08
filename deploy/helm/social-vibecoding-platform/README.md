@@ -59,7 +59,10 @@ lookup tag for subsequent releases with the same inputs; previously published
 charts retain their original digests. Registry retention must preserve images
 referenced by releases for rollback. A manual run on `main` publishes a normal
 stable release for Argo CD, including a new platform build and the selected
-component refreshes.
+component refreshes. A manual run never waits for the release gap: a push
+to `main` waits until the previous release is `RELEASE_MIN_GAP_MINUTES`
+old. So a manual run is also how to release an urgent fix without waiting;
+see "Ownership and releases" in `docs/kubernetes-operations.md`.
 
 `main` publishes stable `0.1.x` chart versions tracked by Argo CD. The
 `feat/k8s` branch publishes `0.0.x-feat-k8s` candidates that can be pulled and
@@ -95,6 +98,25 @@ Release the updated chart and sync the encrypted values through Argo CD. The
 Deployment's existing secrets checksum triggers a rollout when these values
 change. After rollout, check the admin mail status and verify delivery to a
 mailbox you control.
+
+For open, click and unsubscribe attribution with the existing Gmail sender,
+set `secrets.platformMailTrackingSecret` through SOPS. Generate a stable random
+value with `openssl rand -hex 32` and keep it out of plaintext values files,
+command arguments and logs. The chart maps it to `PLATFORM_MAIL_TRACKING_SECRET`
+in the same platform Secret. With `secrets.create: false`, add that environment
+key to `secrets.existingSecret` and roll out the platform after changing it.
+An empty value leaves tracking disabled; rotating it invalidates old signed
+links. No Resend credentials or provider change is needed for Gmail engagement
+tracking; Gmail does not supply delivery, bounce or complaint callbacks.
+
+The infra values can use a separate SOPS-encrypted overlay containing only this
+new field, encrypted to the same cluster recipients and listed after the existing
+secret overlays in Argo's `valueFiles`. Release this chart before merging those
+infra values. After rollout, verify delivery with the admin test-send control,
+then send an actual tracked notification (for example a project invite) to a
+mailbox you control and open/click it. Diagnostic sends are not engagement tracked.
+Review Email engagement in Admin → Email delivery; image proxies and prefetching
+make open counts approximate.
 
 For immediate imported proposal head updates, set `secrets.githubWebhookSecret`
 in the same SOPS-encrypted values file. It maps to `GITHUB_WEBHOOK_SECRET` in
@@ -176,22 +198,10 @@ origin including the scheme, with no path or trailing slash; the application
 appends `/waitlist/connect/<provider>/callback`. When overriding it, register
 the resulting callback URLs with the OAuth providers.
 
-Invite links let people skip the waitlist unless an admin switches that off
-in Admin → Waitlist; the switch is a platform setting, not a chart value. How
-many skips each generation gets is `config.inviteTreeBudgets`, which maps to
-`INVITE_TREE_BUDGETS` in the platform Deployment:
-
-```yaml
-config:
-  inviteTreeBudgets: "10"
-```
-
-Only accounts an admin let off the waitlist by hand (Admit, or a direct access
-grant) have skips: the first number each. Accounts that already had access,
-activation codes, genesis wallets and anyone a link let in get none. The
-default `"10"` stops there, so invites do not chain; a later number would give
-the next generation that many. Explicit `env` entries win over `envFrom`, so
-set this here rather than in the platform Secret.
+Invite links no longer let anybody skip the waitlist: someone new who follows
+one joins its community straight away as a private member, and is let in from
+the waitlist like anybody else. The `INVITE_TREE_BUDGETS` setting is gone;
+remove `config.inviteTreeBudgets` from overrides that set it.
 
 For OpenRouter managed keys, set `secrets.openrouterManagementApiKey` in the
 same SOPS-encrypted values file. With `secrets.create: true`, it maps to
@@ -225,6 +235,34 @@ With `secrets.create: false`, provide the same environment-variable keys in
 `secrets.existingSecret` instead. Publish the updated chart and sync the
 encrypted values through Argo CD; the existing secrets checksum triggers a
 rollout when chart-managed values change.
+
+To supply a Firebase web API key, add this optional field to the same
+SOPS-encrypted values file's existing `secrets` block:
+
+```yaml
+secrets:
+  firebaseWebApiKey: "<Firebase web API key>"
+```
+
+With `secrets.create: true`, it maps to `FIREBASE_WEB_API_KEY` in the platform
+Secret and reaches the process through the Deployment's `envFrom`. The field
+defaults to an empty string. With `secrets.create: false`, supply
+`FIREBASE_WEB_API_KEY` in `secrets.existingSecret` instead. The existing
+secrets checksum rolls out changes to the chart-managed value. This makes the
+key available in the environment; application code must read it to use it.
+The current Firebase Admin push provider uses the service account above.
+
+Set the non-secret phone authentication flag in the infra repository's
+plaintext `platform.yaml`:
+
+```yaml
+config:
+  firebasePhoneAuthEnabled: true
+```
+
+This maps to `FIREBASE_PHONE_AUTH_ENABLED` in the platform Deployment and
+defaults to `false` in the reusable chart. Application support for this flag
+is required for it to enable phone authentication.
 
 `config.domain` is the canonical platform hostname (`USERNODE_DOMAIN`).
 `config.appsDomain` optionally sets a separate suffix for generated apps and

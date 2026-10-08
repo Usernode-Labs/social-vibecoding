@@ -639,15 +639,13 @@ test('the instructions start collapsed, and the copy action does not need them o
   assert.doesNotMatch(copy, /data-flow-order|dc-flow-order|querySelector/,
     'never read back out of the DOM');
 
-  // dapp.json's check on the disclosure: on the summary of a closed details,
-  // not on the body text.
+  // dapp.json's check on the disclosure loaded a classic session
+  // (/dev/sessions/990404). #3976 made classic sessions read-only and put
+  // this walkthrough away there, so the check was retired with it; an agent
+  // session's hand-off draws its own steps in React (agent-session/handoff).
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '../dapp.json'), 'utf8'));
-  const checks = manifest.tests.filter((t) => /dc-flow-order/.test(t.expectSelector || ''));
-  assert.equal(checks.length, 1, 'one declared check pins the disclosure');
-  assert.match(checks[0].expectSelector, /details\.dc-flow-order:not\(\[open\]\) > summary/,
-    'it selects the summary of a collapsed disclosure');
-  assert.equal(checks[0].expectText, 'Instructions',
-    'and asserts the text that is visible with the body collapsed');
+  assert.ok(!manifest.tests.some((t) => /dc-flow-order/.test(t.expectSelector || '')),
+    'no declared check drives the classic walkthrough');
 });
 
 // ── "Link GitHub" goes to GitHub (#2679, #2680) ────────────────────────

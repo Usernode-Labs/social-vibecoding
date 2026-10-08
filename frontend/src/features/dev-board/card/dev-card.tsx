@@ -158,7 +158,7 @@ export function CardIcon({ spec }: { spec: CardIconSpec }): ReactNode {
   const glyph = spec.small ? 'w-4 h-4' : 'w-5 h-5';
   return (
     <span
-      className={`${box} rounded-lg dev-card-icon ${spec.tint} flex items-center justify-center shrink-0${spec.pulse ? ' animate-pulse' : ''}`}
+      className={`${box} rounded-lg dev-card-icon ${spec.tint} flex items-center justify-center shrink-0${spec.pulse ? ' motion-safe:animate-pulse' : ''}`}
       title={spec.title}
     >
       <Glyph className={glyph} d={spec.path} aria-hidden="true" />
@@ -244,7 +244,7 @@ export function StatusPill({ s, inline }: { s: StatusPillState; inline?: boolean
           <span
             className="gc-vote-count-lock"
             aria-hidden="true"
-            title="This changes who can administer the app, so it won’t merge on a timer: it needs real Yes votes to reach the app’s normal threshold."
+            title={s.lockTitle || 'This change needs a Yes from another member. It won’t merge on a timer: it needs real Yes votes to reach the app’s normal threshold.'}
           >{'\u{1F512}'}</span>
         ) : null}
       </span>
@@ -468,6 +468,15 @@ export const BADGE_MAX = 4;
  * a box inside one usable. The action sheet + prompt-card path survives
  * only as the fallback where no sheet can be presented (the kit missing),
  * and desktop is untouched.
+ *
+ * On a project that is just the viewer's, where their Yes is the one the
+ * change needs (B7, `ActionSpec.approve`), the face reads "Approve ▾" and
+ * the picker's two sides read "Approve" / "Don't approve". It is still this
+ * button and this picker, in the same places (#3977): B7 made it one tap,
+ * which meant a solo project's change was approved by a different gesture
+ * from every group's, and its No hid in ⋯. "Don't approve" sends the same
+ * No with the same line a group's does; on a change Homeroom bot built, that
+ * line goes on to the bot (routes/votes.js), whoever's No it is.
  */
 /**
  * How many POSITIONAL arguments sit before the options bag, per vote call.
@@ -502,11 +511,15 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
   const mine: 'yes' | 'no' | null = /\bgc-vote-active\b/.test(yes.cls || '')
     ? 'yes'
     : (/\bgc-vote-active\b/.test(no.cls || '') ? 'no' : null);
+  // B7, #3977: a change on a project that is just the viewer's, whose Yes is
+  // the one it needs. Nobody to vote with, so it is worded as approving it,
+  // but the gesture is a group's: this button opens the same picker.
+  const approve = !!yes.approve && yes.act?.fn === 'castVote';
   // #1688: the viewer's Yes was on an EARLIER version of the proposal. The
   // face asks "Still yes?", the switch reads "Still yes" / "Not this time",
   // and a Yes sent without a line keeps the earlier one — the server carries
-  // it onto this version.
-  const prior: 'yes' | 'no' | null = !mine && (yes.prior === 'yes' || yes.prior === 'no') ? yes.prior : null;
+  // it onto this version. An approval asks again in its own words.
+  const prior: 'yes' | 'no' | null = !mine && !approve && (yes.prior === 'yes' || yes.prior === 'no') ? yes.prior : null;
   // "Yes (2/3)" → "2/3": the tally rides in the spec's label already.
   const tally = (a: ActionSpec) => {
     const m = /\(([^)]*)\)\s*$/.exec(a.label || '');
@@ -583,9 +596,14 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
       if (openSheet(pu)) return;
       if (typeof pu.actionSheet === 'function') {
         pu.actionSheet({
+          // An approval's rows carry no tally, and its Approve asks for no
+          // line (the prompt's "for the group" is nobody); Don't approve
+          // asks for its line as any No does.
           actions: [
-            { label: `✓  ${prior === 'yes' ? 'Still yes' : 'Yes'}${tally(yes) ? ` (${tally(yes)})` : ''}`, handler: () => pickTouch(yes) },
-            { label: `✕  ${prior === 'yes' ? 'Not this time' : 'No'}${tally(no) ? ` (${tally(no)})` : ''}`, handler: () => pickTouch(no) },
+            approve
+              ? { label: '✓  Approve', handler: () => send(yes, null) }
+              : { label: `✓  ${prior === 'yes' ? 'Still yes' : 'Yes'}${tally(yes) ? ` (${tally(yes)})` : ''}`, handler: () => pickTouch(yes) },
+            { label: approve ? '✕  Don’t approve' : `✕  ${prior === 'yes' ? 'Not this time' : 'No'}${tally(no) ? ` (${tally(no)})` : ''}`, handler: () => pickTouch(no) },
           ],
         });
         return;
@@ -624,15 +642,25 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
     const h = popRef.current?.scrollHeight;
     if (h && h !== measuredH) setMeasuredH(h);
   }, [open, side, measuredH]);
-  const face = mine === 'yes' ? 'Yes' : (mine === 'no' ? 'No' : (prior === 'yes' ? 'Still yes?' : 'Vote'));
+  const face = approve
+    ? (mine === 'yes' ? 'Approved' : (mine === 'no' ? 'Not approved' : 'Approve'))
+    : (mine === 'yes' ? 'Yes' : (mine === 'no' ? 'No' : (prior === 'yes' ? 'Still yes?' : 'Vote')));
+  // B7: an approval is where it ends. The Yes makes the change live, so the
+  // "Approved" face has nothing left to pick and goes inert, as it always
+  // has. A "Not approved" opens the picker on its line, to change either.
+  const approved = approve && mine === 'yes';
   // A governance apply in flight disables the pair; the one button goes
   // inert with them, wearing the spec's own explanation.
   const disabled = !!(yes.disabled || no.disabled);
-  const title = disabled && yes.title ? yes.title : mine
-    ? `You voted ${face}. Press to change your vote.`
-    : prior === 'yes'
-      ? `You said yes to an earlier version. One tap carries it onto this one.`
-      : `Cast your vote · Yes ${tally(yes)} · No ${tally(no)}`;
+  const title = disabled && yes.title ? yes.title : approve
+    ? (approved
+      ? 'You approved it.'
+      : (mine === 'no' ? 'You didn’t approve it. Press to change that.' : 'Approve it, and it goes live.'))
+    : mine
+      ? `You voted ${face}. Press to change your vote.`
+      : prior === 'yes'
+        ? `You said yes to an earlier version. One tap carries it onto this one.`
+        : `Cast your vote · Yes ${tally(yes)} · No ${tally(no)}`;
   // The popover's frame: the switch, the box and the buttons (no box on a
   // governance vote). Placed from the button's rect each render by
   // lib/anchor-popover.ts — the helper the Homeroom menu shares — exactly as
@@ -678,6 +706,7 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
       tally={tally}
       withLine={isVote}
       solo={!!yes.solo}
+      approve={approve}
       onSide={setSide}
       onLine={setLine}
       onBoxKey={onBoxKey}
@@ -685,12 +714,14 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
       onSend={submit}
     />
   );
+  // The picker's header, which names both of its homes.
+  const heading = approve ? 'Your approval' : 'Your vote';
   const popover = open && pos ? createPortal(
     <div
       ref={popRef}
       className="dev-vote-pop"
       role="dialog"
-      aria-label="Your vote"
+      aria-label={heading}
       data-side={side}
       style={{ top: `${pos.top}px`, left: `${pos.left}px`, maxHeight: popMaxH ? `${popMaxH}px` : undefined, overflowY: popMaxH ? 'auto' : undefined }}
       onClick={(ev) => ev.stopPropagation()}
@@ -700,28 +731,33 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
     document.body,
   ) : null;
   const sheet = sheetEl ? createPortal(
-    <div className="dev-vote-sheet" role="dialog" aria-label="Your vote" data-vote-sheet="" data-side={side}>
+    <div className="dev-vote-sheet" role="dialog" aria-label={heading} data-vote-sheet="" data-side={side}>
       {picker}
     </div>,
     sheetEl,
   ) : null;
+  // `data-vote-btn` names the face: a group's open / prior-yes / yes / no,
+  // an approval's approve / approved / not-approved.
+  const faceKey = approve
+    ? (approved ? 'approved' : (mine === 'no' ? 'not-approved' : 'approve'))
+    : (mine || (prior === 'yes' ? 'prior-yes' : 'open'));
   return (
     <>
       <button
         ref={btnRef}
         type="button"
-        className={`dev-vote-btn${mine ? ` dev-vote-btn-${mine}` : (prior === 'yes' ? ' dev-vote-btn-prior' : '')}`}
-        data-vote-btn={mine || (prior === 'yes' ? 'prior-yes' : 'open')}
+        className={`dev-vote-btn${approve ? ' dev-vote-btn-approve' : ''}${mine ? ` dev-vote-btn-${mine}` : (prior === 'yes' ? ' dev-vote-btn-prior' : '')}`}
+        data-vote-btn={faceKey}
         aria-haspopup="dialog"
         aria-expanded={open || !!sheetEl ? 'true' : undefined}
         title={title}
-        disabled={disabled}
+        disabled={disabled || approved}
         onClick={toggle}
       >
         {mine === 'yes' ? <CheckIcon aria-hidden="true" /> : null}
         {mine === 'no' ? <XIcon aria-hidden="true" /> : null}
         {face}
-        <ChevronDownIcon className="dev-vote-caret" aria-hidden="true" />
+        {approved ? null : <ChevronDownIcon className="dev-vote-caret" aria-hidden="true" />}
       </button>
       {popover}
       {sheet}
@@ -740,11 +776,14 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
  * `withLine` is false on a governance vote, which carries no line. `solo` is
  * a project that is just the viewer's: there is no group to address, so the
  * Yes side's optional line asks for a note instead. The No side is the same
- * either way, its line included. Exported for the tests that render it
- * directly; the state lives in `VoteButton`.
+ * either way, its line included. `approve` (#3977) is a solo change whose
+ * Yes is the one it needs: the header is "Your approval", the halves and the
+ * button read "Approve" / "Don't approve", and neither half carries a tally.
+ * Exported for the tests that render it directly; the state lives in
+ * `VoteButton`.
  */
 export function VotePicker({
-  yes, no, prior, uncounted = false, side, line, reasonId, boxRef, tally, withLine, solo, onSide, onLine, onBoxKey, onCancel, onSend,
+  yes, no, prior, uncounted = false, side, line, reasonId, boxRef, tally, withLine, solo, approve = false, onSide, onLine, onBoxKey, onCancel, onSend,
 }: {
   yes: ActionSpec;
   no: ActionSpec;
@@ -758,6 +797,8 @@ export function VotePicker({
   tally: (a: ActionSpec) => string;
   withLine: boolean;
   solo?: boolean;
+  /** B7, #3977: the Yes is the viewer's approval (`ActionSpec.approve`). */
+  approve?: boolean;
   onSide: (side: 'yes' | 'no') => void;
   onLine: (line: string) => void;
   onBoxKey: (ev: globalThis.KeyboardEvent | { key: string; shiftKey: boolean; preventDefault: () => void }) => void;
@@ -768,9 +809,14 @@ export function VotePicker({
   const yesOn = side === 'yes';
   // The header over the switch is also the switch's accessible name.
   const headId = `${reasonId}-head`;
+  // #3977: an approval's two sides are its own words, with no tally (it is
+  // one person's to give) and no "Still yes": nobody is asked to vote.
+  const yesWord = approve ? 'Approve' : (prior === 'yes' ? 'Still yes' : 'Yes');
+  const noWord = approve ? 'Don’t approve' : (prior === 'yes' ? 'Not this time' : 'No');
+  const sendWord = approve ? (yesOn ? yesWord : noWord) : (yesOn ? 'Vote yes' : 'Vote no');
   return (
     <>
-      <div className="dev-vote-switch-label" id={headId}>Your vote</div>
+      <div className="dev-vote-switch-label" id={headId}>{approve ? 'Your approval' : 'Your vote'}</div>
       {uncounted ? (
         <p className="dev-vote-uncounted" data-vote-uncounted="">Test account: this vote won’t count.</p>
       ) : null}
@@ -779,25 +825,25 @@ export function VotePicker({
           type="button"
           className="dev-vote-switch-opt dev-vote-switch-yes"
           aria-pressed={yesOn}
-          title={yes.title}
+          title={approve ? undefined : yes.title}
           data-act={yes.act?.fn}
           onClick={() => onSide('yes')}
         >
           <CheckIcon aria-hidden="true" />
-          {prior === 'yes' ? 'Still yes' : 'Yes'}
-          <span className="dev-vote-n">{tally(yes)}</span>
+          {yesWord}
+          {approve ? null : <span className="dev-vote-n">{tally(yes)}</span>}
         </button>
         <button
           type="button"
           className="dev-vote-switch-opt dev-vote-switch-no"
           aria-pressed={!yesOn}
-          title={no.title}
+          title={approve ? undefined : no.title}
           data-act={no.act?.fn}
           onClick={() => onSide('no')}
         >
           <XIcon aria-hidden="true" />
-          {prior === 'yes' ? 'Not this time' : 'No'}
-          <span className="dev-vote-n">{tally(no)}</span>
+          {noWord}
+          {approve ? null : <span className="dev-vote-n">{tally(no)}</span>}
         </button>
       </div>
       {withLine ? (
@@ -826,9 +872,12 @@ export function VotePicker({
           type="button"
           className={`dev-vote-reason-send dev-vote-reason-send-${side}`}
           disabled={withLine && !yesOn && !trimmed}
+          // The line keeps focus through the press, so the sheet does not
+          // move under the tap as the keyboard goes (lib/keyboard-open.ts).
+          onMouseDown={(event) => event.preventDefault()}
           onClick={onSend}
         >
-          {yesOn ? 'Vote yes' : 'Vote no'}
+          {sendWord}
         </button>
       </div>
     </>
@@ -868,7 +917,7 @@ export function ActionButton({ a, fold, hidden }: { a: ActionSpec; fold?: number
         onClick={(e) => call({ fn: 'exploreProposalInDevChat', args: [a.explore!] }, e.currentTarget)}
       >
         <span aria-hidden="true">{'✨'}</span>
-        {' Explore in dev chat'}
+        {' Explore in a coding agent'}
       </button>
     );
   }
@@ -966,7 +1015,7 @@ export function TitleContent({ t }: { t: TitleSpec }): ReactNode {
       <div className="flex flex-wrap items-center gap-2">
         <Input
           id={`dev-${kind}-title-input`}
-          aria-label={session ? 'Proposal title' : 'Issue title'}
+          aria-label={session ? 'Proposal title' : 'Request title'}
           type="text"
           maxLength={session ? 256 : 200}
           defaultValue={t.editing.initial}
@@ -998,7 +1047,7 @@ export function TitleContent({ t }: { t: TitleSpec }): ReactNode {
           <button
             type="button"
             className="align-middle text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-200 transition-colors dark:text-zinc-400"
-            title={editSession ? 'Edit this proposal title' : "Edit this issue's title (you created it)"}
+            title={editSession ? 'Edit this proposal title' : "Edit this request's title (you asked for it)"}
             aria-label="Edit title"
             onClick={() => call({
               fn: editSession ? 'beginSessionTitleEdit' : 'beginIssueTitleEdit',
@@ -1405,10 +1454,10 @@ export function DevCard(
 /**
  * The card's left edge: the bar's tone, and the card's TYPE where it has no
  * bar. 4px at a third strength (app.css `[data-edge]`), so a column reads as
- * a stack of tinted spines — blue while a vote is open, violet while merging,
- * amber behind main, red on a conflict, green once merged, grey while paused
- * — and an open issue, which has no state, wears its type's amber so the
- * Issues column is not the one bare column.
+ * a stack of tinted spines — blue while a vote is open, violet while going
+ * live, amber behind main, red on a conflict, green once live (#3873), grey
+ * while paused — and an open issue, which has no state, wears its type's
+ * amber so the Issues column is not the one bare column.
  */
 export function edgeFor(m: DevCardModel): string {
   const s = m.pill?.state;
