@@ -434,16 +434,20 @@ test('a link answers the join screen for the person it brings in', () => {
   assert.doesNotMatch(invites, /communities_onboarded_at = NOW\(\)/);
 });
 
-test("You're in tells a new account what Homeroom is, and an existing one only where it is", () => {
+test("You're in says that you joined, and shows the community: its app and its people (#4052)", () => {
   const src = read(`${DIR}/index.tsx`);
-  assert.match(src, /'On Homeroom, communities make apps together\.'/);
-  assert.match(src, /`Someone makes an app for their group\. \$\{maker\} \$\{made\} this one\.`/);
-  // Nothing is made yet while its first version is on its way.
-  assert.match(src, /const made = info\.building \? 'is making' : 'made';/);
-  assert.match(src, /`\$\{maker \? `\$\{maker\} \$\{made\} it for the group\.` : 'It is the group\\'s own app\.'\} Have a look, then say hi\.`/);
-  assert.match(read('public/js/app.js'), /building: !!standing\.building,/);
-  assert.match(src, /existing \? `Welcome to \$\{info\.name\}\.`/);
+  // The welcome, what the community makes, who is in it, and the button.
+  // The story was told once, on the invite page; the tour teaches the rest.
+  assert.match(src, /<h1 id="first-session-title"[^>]*>\s+\{`Welcome to \$\{info\.name\}`\}/);
+  assert.doesNotMatch(src, /Welcome, \$\{who\}|You joined/);
   assert.match(src, /\{`Go to \$\{info\.name\}`\}/);
+  const youreIn = src.slice(src.indexOf('export function YoureIn('), src.indexOf('export type Mode ='));
+  assert.ok(youreIn.length > 200, 'YoureIn is found');
+  assert.doesNotMatch(youreIn, /How it works|group|Have a look|On Homeroom|You're in, |JoinedPicture|!`|!'/);
+  // The Homeroom logo bar, like every first-run screen (owner, 7 October).
+  assert.match(src, /<Wordmark className="h-6 w-auto text-\[color:var\(--brand-ink\)\]" \/>/);
+  // Its first version still on its way is still handed to the tour.
+  assert.match(read('public/js/app.js'), /building: !!standing\.building,/);
 });
 
 // ── First-session run-through, 5 October 2026 ──────────────────────────
@@ -486,56 +490,50 @@ test('"You\'re in" reads where the first version stands, and hands it to the tou
   assert.match(src, /setMode\(\{ kind: 'tour', info: \{ \.\.\.mode\.info, firstVersion \}, path: 'invited' \}\);/);
 });
 
-test('"You\'re in" fills its middle with the project, as its invite showed it', () => {
-  const { JoinedPicture, joinPicture } = loadTsx(`${DIR}/joined-picture.tsx`);
-  const { createElement } = require('./lib/render-tsx');
-  const { renderToHtml } = require('./lib/render-tsx');
-  const draw = (props) => renderToHtml(createElement(JoinedPicture, { slug: 'page-turners', name: 'Page Turners', tile: '📚', ...props }));
-  // A project still without a picture of its own shows the thumbnail of its
-  // idea (./sketch-card.tsx), drawn from its words: nothing is fetched, so a
-  // link this join used up does not matter. #4053: no build line, since this
-  // screen is not told the step; compact (smaller art) for a new account.
-  const CARD = { emoji: '📚', tagline: 'Our little book club', points: ['Pick the next book', 'See who is hosting'] };
-  const picture = joinPicture({ kind: 'sketch', url: null, darkUrl: null, card: CARD });
-  assert.deepEqual(picture, { kind: 'sketch', card: CARD });
-  const sketch = draw({ picture, building: true });
-  assert.match(sketch, /data-first-session-picture="sketch"/);
-  assert.match(sketch, /data-featured-card="ready"/);
-  assert.match(sketch, />Our little book club<\/p>/);
-  assert.doesNotMatch(sketch, /Pick the next book|Being made|data-build-line|<iframe|sketch\.html/, 'a thumbnail: no points, no pill, no line');
-  const compact = draw({ picture, building: false, compact: true });
-  assert.match(compact, /h-\[88px\]/, 'smaller art');
-  assert.match(compact, />Our little book club<\/p>/);
-  assert.doesNotMatch(compact, /Pick the next book|data-featured-card-stage|repeating-linear-gradient/);
-  assert.equal(joinPicture({ kind: 'sketch', card: null }), null, 'a sketch without a card is nothing');
-  // The Discover card's image, light and dark.
-  const art = draw({ picture: joinPicture({ kind: 'illustration', url: '/app-illustrations/1', darkUrl: '/app-illustrations/2' }) });
-  assert.match(art, /<img src="\/app-illustrations\/1" alt="Page Turners"[^>]*dark:hidden/);
-  assert.match(art, /<img src="\/app-illustrations\/2" alt="Page Turners"[^>]*hidden dark:block/);
-  // No picture: the invite page's own fallback, the tile and its one line.
-  const line = draw({ picture: null, description: 'A book club that meets monthly' });
-  assert.match(line, /data-first-session-picture="tile"/);
-  assert.match(line, />A book club that meets monthly<\/p>/);
-  assert.equal(draw({ picture: null, description: null }), '', 'nothing at all leaves the space as it was');
-  // Only same-origin paths of a kind it knows.
-  assert.equal(joinPicture({ kind: 'shot', url: 'https://evil.test/x' }), null);
-  assert.equal(joinPicture({ kind: 'sketch', url: '/api/apps/x/sketch.html' }), null, 'a framed page is no longer drawn');
-  assert.equal(joinPicture({ kind: 'video', url: '/x' }), null);
-  assert.equal(joinPicture(null), null);
+test('"You\'re in" reads who is in the community itself, and the picture is no longer handed over', () => {
   const src = read(`${DIR}/index.tsx`);
-  assert.match(src, /<JoinedPicture slug=\{info\.slug\} name=\{info\.name\} picture=\{joinPicture\(info\.picture\)\} description=\{info\.description\} tile=\{tile\} building=\{!!info\.building\} compact=\{!existing\} \/>\s+<div className="grow" \/>/);
-  // Both ways in hand it over: the link's standing, and an accepted invite.
+  // The hub's own read, in an effect, unless a screenshot state brought them:
+  // every member (owner, 7 October), how many, and what the app is.
+  assert.match(src, /if \(info\.shot \|\| info\.people\) return undefined;/);
+  assert.match(src, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(info\.slug\)\}\/community\?members=all`, \{ credentials: 'same-origin' \}\)/);
+  assert.match(src, /setMembers\(body \? membersOf\(body\.members\) : \[\]\);/);
+  assert.match(src, /setCount\(Number\(body\.member_count\) \|\| null\);\s+setDescription\(/);
+  assert.match(read('src/routes/apps.js'), /communities\.listMembers\(pool, app\.id, req\.query\.members === 'all' \? 200 : 8\)/);
+  // While that is read, the list's place breathes; a read that fails shows no list.
+  assert.match(src, /<SkeletonGroup label="Loading who is in it"/);
+  assert.match(src, /\.catch\(\(\) => \{ if \(live\) setMembers\(\[\]\); \}\);/);
+  // The inviter's row comes first: both ways in hand over their username.
+  assert.match(read('public/js/app.js'), /inviter: standing\.inviter \|\| null,\s+inviterName: standing\.inviterName \|\| standing\.inviter \|\| null,/);
+  assert.match(read('src/services/collab-invites.js'), /inviter: row\.inviter \|\| null,\s+inviterName: row\.inviter_display_name/);
+  assert.equal(fs.existsSync(path.join(ROOT, DIR, 'joined-picture.tsx')), false, 'the picture under the welcome is gone');
+  // Neither way in hands over a picture or a description any more.
   const app = read('public/js/app.js');
-  assert.match(app, /description: project\.description \|\| null,\s+picture: project\.picture \|\| null,/);
+  assert.doesNotMatch(app, /description: project\.description \|\| null,\s+picture: project\.picture \|\| null,/);
   const collab = read('src/services/collab-invites.js');
-  assert.match(collab, /picture: communityInvites\.memberPicture\(row\.slug, picture\),/);
-  const invites = require('../src/services/community-invites');
-  assert.deepEqual(invites.memberPicture('page-turners', { kind: 'sketch', card: CARD }),
-    { kind: 'sketch', url: null, darkUrl: null, card: CARD });
-  assert.deepEqual(invites.memberPicture('x', { kind: 'illustration', id: 'a', darkId: null }),
-    { kind: 'illustration', url: '/app-illustrations/a', darkUrl: null });
-  assert.equal(invites.memberPicture('x', { kind: 'shot', artifactId: 'z' }), null, 'a shot is served only through a live link');
-  assert.equal(invites.memberPicture('x', null), null);
+  assert.doesNotMatch(collab, /memberPicture|pictureFor/);
+  assert.equal(require('../src/services/community-invites').memberPicture, undefined);
+});
+
+test('the people row: up to five faces, then +N, each in the colour the shell gives that name', () => {
+  const { PeopleRow, peopleOf, moreThan, PEOPLE_FACES } = loadTsx(`${DIR}/people-faces.tsx`);
+  const { swatchFor } = loadTsx('frontend/src/features/messages/format.tsx');
+  assert.equal(PEOPLE_FACES, 5);
+  const names = ['maya', 'priya', 'sam', 'jordan', 'ada', 'lee', 'kim'];
+  assert.deepEqual(peopleOf(names.map((username) => ({ username, id: 1 }))).map((p) => p.username), names.slice(0, 5));
+  assert.deepEqual(peopleOf([{ username: ' ' }, null, 'x', { username: 'ok' }]), [{ username: 'ok' }]);
+  assert.deepEqual(peopleOf(null), []);
+  assert.equal(moreThan(5, 8), 3);
+  assert.equal(moreThan(2, 2), 0);
+  assert.equal(moreThan(2, null), 0);
+  const many = renderToHtml(createElement(PeopleRow, { people: peopleOf(names.map((username) => ({ username }))), count: 8, size: 'lg' }));
+  assert.equal((many.match(/h-10 w-10/g) || []).length, 6, 'five faces and the +N');
+  assert.match(many, /data-people-more=""[^>]*>\+3</);
+  assert.match(many, /class="sr-only">8 people</);
+  assert.match(many, new RegExp(`background:${swatchFor('maya')}">M<`));
+  const two = renderToHtml(createElement(PeopleRow, { people: [{ username: 'maya' }, { username: 'priya' }], count: 2, size: 'lg' }));
+  assert.doesNotMatch(two, /data-people-more/);
+  assert.match(two, /class="sr-only">2 people</);
+  assert.equal(renderToHtml(createElement(PeopleRow, { people: [] })), '', 'no faces, nothing');
 });
 
 // ── No Home between the invite's sheet and "You're in" ─────────────────
@@ -663,7 +661,9 @@ test('the island draws the held frame at once, and only the frame goes when the 
   const { renderToHtml, createElement } = require('./lib/render-tsx');
   const html = renderToHtml(createElement(WelcomeHeld));
   assert.match(html, /data-first-session-welcome="held"/);
-  assert.match(html, /class="fixed inset-0 z-\[9000\] flex flex-col overflow-y-auto/);
+  assert.match(html, /class="fixed inset-0 z-\[9000\] flex flex-col text-zinc-900/);
+  assert.match(html, /data-first-session-scroll="" class="min-h-0 flex-1 overflow-y-auto"/);
+  assert.doesNotMatch(html, /data-first-session-foot/, 'the held frame has no button');
   assert.match(html, /background:var\(--home-wallpaper, #f4f2e4\)/);
   assert.match(html, /role="status">Opening your invite</);
 });
@@ -794,36 +794,85 @@ test('welcome() hands the held frame to a private member\'s app, and the follow\
   assert.doesNotMatch(welcome.slice(0, nav), /kind: 'none'/);
 });
 
-test('"You\'re in", drawn: the project under the welcome, and "is making" while it is built', () => {
+test('"You\'re in", drawn: the welcome, the app, everyone in it, and the button fixed at the foot', () => {
   const saved = global.window;
   // addEventListener: the island imports lib/back-stack.ts (the Create
   // door's back press, tests/create-front-door.test.js), which listens for
   // popstate on whatever window it finds when it loads.
   global.window = { App: { user: { username: 'priya', displayName: 'Priya' } }, addEventListener() {} };
   try {
-    const { YoureIn } = loadTsx(`${DIR}/index.tsx`);
-    const { renderToHtml, createElement } = require('./lib/render-tsx');
+    const { YoureIn, membersOf, rosterOrder, inviterOf, peopleCount } = loadTsx(`${DIR}/index.tsx`);
     const info = {
-      slug: 'page-turners', name: 'Page Turners', iconEmoji: '📚', inviterName: 'Alex', inviterMadeIt: true,
-      building: true, picture: { kind: 'sketch', url: null, darkUrl: null, card: { emoji: '📚', tagline: 'Our little book club', points: ['Pick the next book', 'See who is hosting'] } },
+      slug: 'page-turners', name: 'Page Turners', iconEmoji: '📚', inviter: 'alex', inviterName: 'Alex', inviterMadeIt: true, building: true,
+      description: 'What we read next',
+      people: [{ username: 'sam', name: 'Sam' }, { username: 'priya', name: null }, { username: 'alex', name: 'Alex' }], memberCount: 3,
     };
-    const existing = renderToHtml(createElement(YoureIn, { info: { ...info, newAccount: false }, onGo() {} }));
-    assert.match(existing, />Alex is making it for the group\. Have a look, then say hi\.</);
-    // The sketch sits between the welcome and the button, and the spacer after it.
-    const sketch = existing.indexOf('data-first-session-picture="sketch"');
-    assert.ok(sketch > existing.indexOf('Have a look, then say hi.') && sketch < existing.indexOf('Go to Page Turners'));
-    assert.match(existing, /data-featured-card="ready"/);
-    assert.match(existing, /h-\[132px\]/, 'the whole thumbnail, with room for it');
-    const fresh = renderToHtml(createElement(YoureIn, { info: { ...info, newAccount: true }, onGo() {} }));
-    assert.match(fresh, />Someone makes an app for their group\. Alex is making this one\.</);
-    assert.ok(fresh.indexOf('data-first-session-picture="sketch"') > fresh.indexOf('How it works'));
-    assert.match(fresh, /h-\[88px\]/, 'compact under "How it works": smaller art');
-    const made = renderToHtml(createElement(YoureIn, { info: { ...info, building: false, picture: null, description: 'A book club' }, onGo() {} }));
-    assert.match(made, />Alex made it for the group\./);
-    assert.match(made, /data-first-session-picture="tile"[\s\S]*>A book club</);
+    for (const newAccount of [true, false]) {
+      const html = renderToHtml(createElement(YoureIn, { info: { ...info, newAccount }, onGo() {} }));
+      assert.match(html, />Welcome to Page Turners</);
+      assert.doesNotMatch(html, /Welcome, Priya|You joined/);
+      assert.match(html, />Go to Page Turners</);
+      // Top to bottom: the welcome, the title, the app's thumbnail, how many,
+      // the inviter's row first, then the rest, and the button in the foot.
+      const order = [
+        'Welcome to Page Turners', 'data-featured-card="ready"', 'What we read next', '>3 people<',
+        'data-first-session-member="alex"', 'data-first-session-member="sam"', 'data-first-session-member="priya"',
+        'data-first-session-foot', 'Go to Page Turners',
+      ].map((t) => html.indexOf(t));
+      assert.ok(order.every((i) => i >= 0), JSON.stringify(order));
+      assert.deepEqual([...order].sort((x, y) => x - y), order);
+      // Each row: a face, the name, and who they are to you, 15 over 13.
+      assert.match(html, /data-first-session-member="alex"[\s\S]*?>A<\/span>[\s\S]*?text-\[0\.9375rem\][^>]*>Alex<\/div>[\s\S]*?text-\[0\.8125rem\][^>]*>Invited you</);
+      assert.match(html, /data-first-session-member="priya"[\s\S]*?>priya<\/div>[\s\S]*?>You</);
+      assert.match(html, /data-first-session-member="sam"[\s\S]*?>Sam<\/div>[\s\S]*?>@sam</);
+      assert.doesNotMatch(html, /How it works|group|data-build-line|first-session-picture|data-people-row|!/);
+    }
+    // With no signed-in name, the heading is the same: "Welcome to <name>".
+    global.window = { App: { user: null } };
+    assert.match(renderToHtml(createElement(YoureIn, { info, onGo() {} })), />Welcome to Page Turners</);
+    // The read's members, cleaned, every one of them.
+    assert.deepEqual(membersOf([{ username: 'a', display_name: 'Ann' }, { username: ' ' }, null, { username: 'a' }, { username: 'b' }]),
+      [{ username: 'a', name: 'Ann' }, { username: 'b', name: null }]);
+    assert.equal(membersOf(Array.from({ length: 12 }, (_, i) => ({ username: `u${i}` }))).length, 12, 'no cap at five');
+    // The inviter by username, else by the name they were shown under.
+    const list = membersOf([{ username: 'maker' }, { username: 'new' }, { username: 'alex', display_name: 'Alex' }]);
+    assert.equal(inviterOf(list, 'alex', 'Alex'), 'alex');
+    assert.equal(inviterOf(list, null, 'Alex'), 'alex');
+    assert.equal(inviterOf(list, 'gone', 'Gone'), null);
+    assert.deepEqual(rosterOrder(list, 'alex').map((m) => m.username), ['alex', 'maker', 'new']);
+    assert.deepEqual(rosterOrder(list, null).map((m) => m.username), ['maker', 'new', 'alex']);
+    assert.deepEqual([peopleCount(1), peopleCount(8)], ['1 person', '8 people']);
+    // The list scrolls; the button does not.
+    const src = read(`${DIR}/index.tsx`);
+    assert.match(src, /<div data-first-session-foot="" className="mx-auto w-full max-w-sm shrink-0 /);
+    assert.match(src, /<GroupedList className="mx-0">/);
   } finally {
     global.window = saved;
   }
+});
+
+test('"You\'re in"\'s screenshot states: made-up data, no request, and Go to only closes them', () => {
+  const { youreInShot, shotWelcome } = loadTsx(`${DIR}/index.tsx`);
+  const saved = global.location;
+  try {
+    for (const [search, shot] of [['?shot=youre-in', 'youre-in'], ['?shot=youre-in-many', 'youre-in-many'], ['?shot=invite-page', null], ['', null]]) {
+      global.location = { pathname: '/', search };
+      assert.equal(youreInShot(), shot, search);
+    }
+  } finally {
+    if (saved === undefined) delete global.location; else global.location = saved;
+  }
+  const two = shotWelcome('youre-in', 'priya');
+  assert.equal(two.shot, true);
+  assert.deepEqual(two.people.map((p) => p.username), ['maya', 'priya']);
+  assert.equal(two.memberCount, 2);
+  assert.equal(two.inviter, 'maya');
+  const many = shotWelcome('youre-in-many', 'priya');
+  assert.equal(many.people.length, 8, 'everyone, more than fits above the button');
+  assert.equal(many.memberCount, 8);
+  const src = read(`${DIR}/index.tsx`);
+  assert.match(src, /if \(mode\.info\.shot\) \{ setMode\(\{ kind: 'none' \}\); return; \}/);
+  assert.match(src, /if \(info\.shot\) return undefined;\s+let live = true;\s+fetch\(madeAppUrl/);
 });
 
 // ── The three tours (#4044, #4045, #4072) ──────────────────────────────
