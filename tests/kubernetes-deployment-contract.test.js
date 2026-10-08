@@ -423,11 +423,11 @@ test('Kubernetes status inventory does not invoke Docker helpers', async () => {
   assert.deepEqual(await status.getStats({ appRuntime: 'kubernetes' }), {});
 });
 
-test('the workflow worker runs the platform image and environment, off by default, with no Service', () => {
+test('the workflow worker runs the platform image and environment, on by default, with no Service', () => {
   const worker = read('deploy/helm/social-vibecoding-platform/templates/workflow.yaml');
   const platform = read('deploy/helm/social-vibecoding-platform/templates/platform.yaml');
   const values = read('deploy/helm/social-vibecoding-platform/values.yaml');
-  assert.match(values, /workflow:\n  worker:\n    enabled: false/);
+  assert.match(values, /workflow:\n  worker:\n    enabled: true/);
   assert.match(worker, /^\{\{- if and \.Values\.enabled \.Values\.platform\.enabled \.Values\.workflow\.worker\.enabled \}\}/);
   assert.match(worker, /app\.kubernetes\.io\/component: workflow/);
   assert.doesNotMatch(worker, /component: platform/, 'never selected by the platform Service or PDB');

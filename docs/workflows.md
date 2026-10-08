@@ -450,7 +450,7 @@ no slots (`startWorkflow(config, { loops: true, worker: true })`), and serves on
 | `WF_SLOTS` | 4 (1 on a staging preview) | the default | Pipeline slots in each process. |
 | `WF_POOL_MAX` | 6 (2 on a staging preview) | the default | Connections in the runtime's own pool, the outcome listener's included. Keep it above `WF_SLOTS`. |
 | `WF_OWNERSHIP_MODE` | `log` in production, `raise` elsewhere | the default | What a write to an owned column from outside the machine does. |
-| `WF_LOOPS` | `leader` | the chart: `worker` on the web Pods when `workflow.worker.enabled` | Where the loops run: the leader web Pod, or the workflow worker. |
+| `WF_LOOPS` | `leader` | the chart: `worker` on the web Pods while `workflow.worker.enabled` (on by default) | Where the loops run: the leader web Pod, or the workflow worker. |
 
 **Where the variables are set.**
 - **The Helm chart.** A Kubernetes Pod gets only the variables the chart lists, so a
