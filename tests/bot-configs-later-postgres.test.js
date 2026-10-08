@@ -331,6 +331,10 @@ test('the later changes\' configurations against the full PostgreSQL schema', { 
     const side = out.versions.find((v) => v.id === laterGlm.id).stats;
     assert.deepEqual([side.builds, side.built], [3, 2]);
     assert.ok(Math.abs(side.buildRate - 2 / 3) < 1e-9);
+    // One build failed and the two that built have no capture: nothing was
+    // measured booting, so no boot rate. Counting the failed build as "didn't
+    // boot" once showed 0% for configurations whose builds all booted.
+    assert.equal(side.bootRate, null, 'a failed build is not a boot that failed, and an unmeasured one is unknown');
     assert.equal(side.proposals, undefined, 'only the current version\'s builds are proposed');
     assert.deepEqual([side.vsCurrent.wins, side.vsCurrent.losses, side.vsCurrent.n, side.vsCurrent.didntBuild], [1, 1, 2, 1], 'one pick each way, one left out');
     assert.ok(side.vsCurrent.low >= 0 && side.vsCurrent.high <= 1);
