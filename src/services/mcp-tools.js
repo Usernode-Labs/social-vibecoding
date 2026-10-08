@@ -254,6 +254,21 @@ const MAX_CONVENTIONS_CHARS = 32 * 1024;
 
 const { neutralizeEnvelope } = require('./untrusted-envelope');
 
+// #4345. A positive integer id that also takes its digits as text. A client
+// whose copy of the tool list predates a field has no type for it and sends
+// the value as a string ("1"), which a bare z.number() refuses although the id
+// is exact. The advertised schema is the inner integer (the SDK lists a
+// preprocess by its input), so a client that knows the field still sends a
+// number; anything but plain digits is refused as before.
+const DIGITS_ID_RE = /^\s*[1-9]\d{0,15}\s*$/;
+function positiveIntId() {
+  const { z } = require('zod'); // loaded where registerTools loads it, not at require time
+  return z.preprocess(
+    (value) => (typeof value === 'string' && DIGITS_ID_RE.test(value) ? Number(value) : value),
+    z.number().int().positive()
+  );
+}
+
 function clip(value, max) {
   const text = String(value == null ? '' : value);
   if (text.length <= max) return text;
@@ -4878,7 +4893,9 @@ function registerTools(server, ctx) {
         .describe('The name of the fork you pushed to, if you forked under a name other than the app repository’s. The owner is always the user’s linked GitHub account and is never taken from here.'),
       patch: z.string().optional()
         .describe('The change as a patch, the default way to submit new work — the output of `git format-patch <baseSha>..HEAD --stdout`, or a plain `git diff`. Homeroom applies it at the task’s recorded base commit, commits it in the app’s own repository and opens the pull request, so you need no GitHub write access at all. Requires taskId. With an UPDATE task’s taskId (prepare_work with proposalId) the base is that proposal’s current commit instead, and the patch advances THAT proposal exactly as a branch update does; it is refused with `branch_moved` when the proposal is no longer at the task’s base commit (or at `expectedHeadSha`, when you pass the commit you rebased onto). After an update lands, the task’s base is its new head, so the next patch is made from there. Roughly 250 KB max; push a branch for anything larger, or when you already push to your fork. Patch or branch is your decision: never ask the user to choose.'),
-      patchUploadId: z.number().int().positive().optional()
+      // #4345: added after many clients cached the tool list, so it takes its
+      // digits as a string too.
+      patchUploadId: positiveIntId().optional()
         .describe('Instead of `patch`: the `uploadId` printed by the upload command in your work order, which sends `git format-patch` output straight to Homeroom so a large patch is never retyped into this call (#4264). Requires a new-work taskId: an update’s patch is sent inline. Homeroom applies the uploaded bytes exactly as it applies `patch`: same base commit, same pull request. Uploads may be up to 1 MB. Refused if that upload was made for another task, or was replaced by a newer upload (submit the newest uploadId). The upload command needs a sandbox that can reach Homeroom; if yours cannot, send `patch` inline.'),
       source: z.enum(['work_order', 'assistant']).optional()
         .describe('Set to "work_order" when you are the coding agent submitting your own finished work, "assistant" when a human relayed it to you. Advisory only.'),
