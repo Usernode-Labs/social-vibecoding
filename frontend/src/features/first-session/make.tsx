@@ -110,7 +110,7 @@ import { AppAllowance, useAppAllowance } from '../dialogs/app-allowance';
 import { deviceTimeZone, postCreateApp } from '../dialogs/post-create-app';
 import { descriptionOf, firstChoice, OWN, readyMadeOf, sentence, suggestedName, TEMPLATES, type Template } from './examples';
 import { ImportForm, type RepoManifest } from './import-repo';
-import { TierChart } from './tier-chart';
+import { ExampleMark } from './marks';
 
 export { deviceTimeZone };
 
@@ -513,7 +513,7 @@ export function MakeScreen({
                   onClick={() => pickTemplate(t)}
                   className={`${TILE} ${on ? TILE_ON : TILE_OFF}`}
                 >
-                  <span className="app-icon-tile flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-2xl" aria-hidden="true">{t.chart ? <TierChart /> : t.emoji}</span>
+                  <span className="app-icon-tile flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-2xl" aria-hidden="true"><ExampleMark mark={t.mark} /></span>
                   <span className="text-[15px] font-[650] leading-tight">{t.short}</span>
                 </button>
               );
