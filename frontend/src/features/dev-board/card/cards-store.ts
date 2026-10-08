@@ -61,3 +61,23 @@ export const cardNowStore = createStore<{ now: number }>({ now: 0 });
  * the endpoint itself 503s when AI is truly off.
  */
 export const aiEnabledStore = createStore<{ enabled: boolean }>({ enabled: true });
+
+/**
+ * #3984: votes on their way, by `<fn>:<id>` (`castVote:12`,
+ * `castIssueVote:5`), with the side sent. castVote and castIssueVote set it
+ * once the vote is committed to (the line is in hand) and clear it when the
+ * server answers, through the bridge's `publishVoteSending`, whichever
+ * surface the vote came from. A card's Vote button reads "Sending…" and
+ * takes no press while its vote is here.
+ */
+export const voteSendingStore = createStore<Record<string, 'yes' | 'no'>>({});
+
+export function publishVoteSending(key: string, side: 'yes' | 'no' | null): void {
+  voteSendingStore.set((cur: Record<string, 'yes' | 'no'>) => {
+    if (side) return cur[key] === side ? cur : { ...cur, [key]: side };
+    if (!(key in cur)) return cur;
+    const next = { ...cur };
+    delete next[key];
+    return next;
+  });
+}

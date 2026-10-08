@@ -203,14 +203,37 @@ const EVENT_TYPES = Object.freeze({
   //                         'was_signed_in' }; the first two are the
   //                         sign-ins the link brought, the last somebody
   //                         already signed in (#4272)
+  //   first_session_looked_around
+  //                         the first session's question, "What do you want
+  //                         to make?", answered with "Look around first"
+  //                         (#4039): the other outcome beside a project made
+  //                         from it (app_created with from 'first-session').
+  //                         Written once, with the answer itself
+  //                         (services/first-session.js answerJoinScreen).
+  //                         metadata: { via } (how the question reached
+  //                         them: 'story' or 'sign_in')
   FIRST_ARTEFACT_SHOWN: 'first_artefact_shown',
   INVITE_OPENED: 'invite_opened',
   INVITE_SIGNED_IN: 'invite_signed_in',
+  FIRST_SESSION_LOOKED_AROUND: 'first_session_looked_around',
   // Something on the platform that should not happen, kept for admins
   // (services/platform-incidents.js, #4210). metadata: { kind, ... } where
   // kind names the incident ('build_interrupted': a bot build a restart or
   // a lost worker cut short; { runId, issueNumber, why, outcome }).
   PLATFORM_INCIDENT: 'platform_incident',
+  // The Homeroom bot's build turns that quit early, and their nudges
+  // (homeroom-bot-live.js recordNoChange), so a weekly query can read the
+  // early-quit rate per OpenRouter provider and how often a nudge saves the
+  // build. Both carry the turn's facts: { lane, runId, trialId,
+  // issueNumber, turn ('build' | 'nudge'), ended, provider, providers,
+  // model, harness, requests, toolCalls, fileEdits, outputTokens, seconds,
+  // recovered }. Never what the agent said: that is kept on its run.
+  //   bot_build_no_change  a build turn that ended cleanly and pushed
+  //                        nothing new; the build's own adds { nudged,
+  //                        notNudged }
+  //   bot_build_nudged     a nudge, once it ended; adds { committed }
+  BOT_BUILD_NO_CHANGE: 'bot_build_no_change',
+  BOT_BUILD_NUDGED: 'bot_build_nudged',
 });
 
 // Record a single analytics event. Fire-and-forget — returns a promise

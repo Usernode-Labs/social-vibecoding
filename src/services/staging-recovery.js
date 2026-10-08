@@ -34,6 +34,11 @@ function checkRunOverdue(session, { now = Date.now(), staleMs = checksStaleMs() 
   // (services/check-admission.js): no run is overdue because none was
   // started, and re-driving one would only defer it again.
   if (session?.check_phase === 'deferred') return false;
+  // Nor is a run waiting for a checks slot (services/checks-queue.js): it
+  // starts when one frees, and the harvest re-drives it in its place if its
+  // process dies. findStuckCheckSessions below is the backstop for one whose
+  // place in line was lost.
+  if (session?.check_phase === 'queued') return false;
   if (!(session?.checks_commit_sha || session?.handoff_head_sha)) return false;
   const checkedAt = session?.checks_checked_at == null
     ? NaN
@@ -83,6 +88,11 @@ async function markInterruptedBuilds(pool, sessionIds) {
 // One query shared by boot reconciliation and the live sweeper. Keeping the
 // scope here prevents the two recovery paths from drifting back to the old
 // promoted-only rule that stranded pre-vote CLI handoffs after a restart.
+//
+// A run waiting for a checks slot is not stuck, however long it has waited:
+// its row in the checks queue (services/checks-queue.js) is the queue's and,
+// if its process died, the harvest's. Only a 'queued' session with no row
+// left in line is overdue, by the same clock as any other.
 async function findStuckCheckSessions({
   pool,
   staleMs = checksStaleMs(),
@@ -104,6 +114,9 @@ async function findStuckCheckSessions({
         AND (cs.check_state IS NULL
              OR (cs.check_state = 'pending'
                  AND cs.check_phase IS DISTINCT FROM 'deferred'
+                 AND (cs.check_phase IS DISTINCT FROM 'queued'
+                      OR NOT EXISTS (SELECT 1 FROM check_runs cr
+                                      WHERE cr.session_id = cs.id AND cr.admitted_at IS NULL))
                  AND (cs.checks_checked_at IS NULL
                       OR cs.checks_checked_at < NOW() - make_interval(secs => $1::double precision / 1000.0)))
              OR (cs.check_state = 'error'
@@ -123,8 +136,7 @@ async function findStuckCheckSessions({
 // its own. storeChecks bumps consecutive_check_failures on every 'error'
 // (and schedules check_next_retry_at, 2m → 4m → … → 30m); past this count
 // the row is left 'error' until a new commit or a person re-runs it.
-// Read here rather than in server.js so the checks settlement can ask the
-// same question the reconcile answers. Tunable via CHECK_MAX_AUTO_RETRIES.
+// Tunable via CHECK_MAX_AUTO_RETRIES.
 const DEFAULT_CHECK_MAX_AUTO_RETRIES = 6;
 
 function checkMaxAutoRetries() {
@@ -135,23 +147,18 @@ function checkMaxAutoRetries() {
   return Number.isFinite(configured) ? configured : DEFAULT_CHECK_MAX_AUTO_RETRIES;
 }
 
-// What a check run that overlapped a platform rollout and came back red
-// records instead of 'failing' (visuals.settleCaptureRun). It lands in
-// check_error_detail, which the card, the merge gate and the connector all
-// show, so it is user-facing copy: plain words, no em dashes. The surfaces
-// that word this state differently from other errors compare against it.
+// What a red run that overlapped a platform rollout used to record instead
+// of 'failing' (#3828). Nothing writes it any more: red runs followed load,
+// not rollouts (701 runs from 5 Oct 2026, red at 9% under 10 cores of check
+// Jobs and 24 to 29% above, a rollout adding little at equal load), so the
+// relabel excused real failures and the checks queue (services/checks-
+// queue.js) addresses the load. A run that crossed a restart is judged on its
+// own results now. The rows already stored with it were given a retry by
+// storeChecks and are run again by the error lane, so the surfaces that word
+// them as "will run again" (the card, the merge gate, the connector) still
+// read them that way until they settle. It is user-facing copy: plain words,
+// no em dashes.
 const ROLLOUT_RETRY_DETAIL = 'Checks ran while Homeroom was updating, so they will run again.';
-
-// Would the error lane re-run an 'error' verdict written on this row now?
-// The row must be one findStuckCheckSessions picks up (its scope, and a
-// branch to build), and the streak, once storeChecks bumps it, must still
-// be under the cap. A red verdict is only ever re-labelled as a retry when
-// this says yes, so it never reads "will run again" when nothing will.
-function errorVerdictWillRetry(row, { maxAutoRetries = checkMaxAutoRetries() } = {}) {
-  if (!row || !row.branch_name || !isStuckCheckRecoveryScope(row)) return false;
-  const streak = Number(row.consecutive_check_failures) || 0;
-  return streak + 1 < maxAutoRetries;
-}
 
 // Does a session need its staging preview (re)built?
 //
@@ -889,7 +896,11 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
 // paths are fire-and-forget at the capture layer and never throw for the
 // no-op cases (no repo / no bot token → rebuildSessionStaging returns
 // 'skipped'); a genuine build failure propagates to the caller.
-async function recheckSessionChecks({ config, pool, session, reason }) {
+//
+// `queuedSince` is the place in the checks queue an interrupted run had
+// (check-harvest's re-drive): the direct re-run asks for its slot as of then.
+// A rebuild is a new run and queues anew once its preview is up.
+async function recheckSessionChecks({ config, pool, session, reason, queuedSince = null }) {
   const replaceRun = REPLACING_RECHECK_REASONS.has(reason);
   // A run of this commit still on the cluster, running or finished but not
   // yet read, is the run a recheck asks for: the harvest collects it
@@ -941,6 +952,7 @@ async function recheckSessionChecks({ config, pool, session, reason }) {
     // the run even when the row already reads passing.
     force: FORCED_RECHECK_REASONS.has(reason),
     replaceRun,
+    ...(queuedSince ? { queuedSince } : {}),
   })
     .catch((err) => log.warn('staging-recovery', 'Direct checks re-run failed (non-fatal)', {
       sessionId: session.id, reason, err: err.message,
@@ -958,7 +970,6 @@ module.exports = {
   DEFAULT_CHECK_MAX_AUTO_RETRIES,
   checkMaxAutoRetries,
   ROLLOUT_RETRY_DETAIL,
-  errorVerdictWillRetry,
   stagingNeedsRebuild,
   previewIsOfAnotherCommit,
   recheckHeadSha,

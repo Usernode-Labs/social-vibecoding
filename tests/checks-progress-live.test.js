@@ -841,6 +841,12 @@ test('#2170: every ?demo=1 mock with a verdict carries the kept shape; a run in 
     } else if (row.id === 9000028) {
       assert.equal(row.checks_progress.build.step, 'prepare_checks', 'the live fifth-step row is left alone');
       assert.equal('checksMs' in row.checks_progress, false);
+    } else if (row.id === 9000054) {
+      // Waiting for a checks slot (services/checks-queue.js): the preview is
+      // built and the run says its place in line; no check has run, so no cost.
+      assert.equal(row.checks_progress.build.step, 'done');
+      assert.equal(row.checks_progress.queue.ahead, 2);
+      assert.equal('checksMs' in row.checks_progress, false);
     } else {
       assert.equal(row.checks_progress, undefined, `${row.id}: a run in flight (or none) carries no cost`);
     }

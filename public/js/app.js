@@ -625,10 +625,6 @@ const App = {
     // (features/settings/terms-first-run.js), so it has to be re-offered
     // once there is a verified one.
     try { window.TermsFirstRun?.maybePrompt?.(); } catch (e) { /* ignore */ }
-    // The phone step, the same: it skips a snapshot boot, waits for the
-    // terms, and the join screen below waits for it
-    // (frontend/src/features/auth/phone-first-run.tsx).
-    try { window.PhoneFirstRun?.maybePrompt?.(); } catch (e) { /* ignore */ }
     // And the communities join screen, which skips an unverified session for
     // the same reason. Without this, a browser that has signed in before
     // (every boot there starts from the snapshot) never showed it: that is
@@ -680,6 +676,9 @@ const App = {
     if (nativeBoundary) await nativeBoundary;
     // The boot reader sees signed-out only after native authority is closed.
     App._publishBootSession({ signedOut: true });
+    // Signed out, the language follows this device (frontend/src/lib/i18n).
+    // Not awaited: the sign-in screens never wait for a language pack.
+    void globalThis.PlatformI18n?.applySessionLanguage?.(null);
     // #2902: the apps kept loaded were the signed-out viewer's.
     if (typeof AppView !== 'undefined') AppView.evictAllAppFrames?.();
     // THE SIDE PANEL'S DOCUMENT HAS NO SESSION: the cookie it shares with the
@@ -2569,7 +2568,9 @@ const App = {
     }
     if (Leaderboard.section === 'challenges') {
       if (!window.TopochainChallenges) return Promise.resolve();
-      return TopochainChallenges.loadChallenges();
+      // A pull or a correction wants the current numbers, read in place
+      // rather than from the worker's saved copy (#3985).
+      return TopochainChallenges.loadChallenges({ fresh: true });
     }
     Leaderboard._cache.clear();
     return Leaderboard._load();
@@ -4040,8 +4041,14 @@ const App = {
   _wirePullToRefresh() {
     const home = document.getElementById('home-screen');
     if (home) {
+      // The Challenges block keeps its read for a minute (HomePanels.TTL_MS),
+      // which a pull must not be answered from (#3985): it reads again,
+      // fresh, and Home.load() joins that read.
       PlatformUI.pullToRefresh(home,
-        () => App._refreshOrReload(() => Home.load()));
+        () => App._refreshOrReload(() => Promise.all([
+          window.HomePanels?.ensureLoaded?.({ force: true, fresh: true }),
+          Home.load(),
+        ])));
     }
     // The #apps browse screen (home-screen split). Its own scroller and
     // its own fetch, so it must not be routed through Home.load().
@@ -4421,10 +4428,7 @@ const App = {
           name: project.name || slug,
           iconEmoji: project.iconEmoji || null,
           iconUrl: project.iconUrl || null,
-          // The picture the invite page showed, and its one line, to fill
-          // "You're in" with the project rather than empty space.
-          description: project.description || null,
-          picture: project.picture || null,
+          inviter: standing.inviter || null,
           inviterName: standing.inviterName || standing.inviter || null,
           inviterMadeIt: !!standing.inviterMadeIt,
           building: !!standing.building,
@@ -4496,10 +4500,7 @@ const App = {
           title: `Join ${name}?`,
           message: from
             + (standing.note ? ` “${standing.note}”` : '')
-            + (count ? ` ${count} ${count === 1 ? 'person is' : 'people are'} in it.` : '')
-            // WP-E: the link's maker hears when somebody joins through it.
-            + (standing.inviterName || standing.inviter
-              ? ` ${standing.inviterName || `@${standing.inviter}`} will see that you joined.` : ''),
+            + (count ? ` ${count} ${count === 1 ? 'person is' : 'people are'} in it.` : ''),
           confirmLabel: 'Join',
           cancelLabel: 'Not now',
         }) : true;
@@ -8140,6 +8141,7 @@ const App = {
     if (App.embeddedPanel && window.UsernodeReact?.sidePanelEmbed?.forward?.('')) return;
     App.setChromeless(false);
     const leavingSlug = App.currentApp;
+    const returning = !App._isScreenVisible('home-screen');
     // Iframe caveat (spec): View Transitions snapshot the outgoing
     // page, and a live app iframe in that snapshot can flash on iOS
     // Safari. The kit 'zoom-out' transform-animates the LIVE view (no
@@ -8220,6 +8222,11 @@ const App = {
       },
     });
     App.updateHash();
+    // Coming back to Home from somewhere else (an app, the Challenges tab)
+    // reads its Challenges block again past its minute (#3985): what the
+    // viewer just did there is what the block counts. Home.load() joins
+    // that read. Only once there is a block; the first load brings it.
+    if (returning && window.HomePanels?._data) HomePanels.ensureLoaded({ force: true });
     Home.load();
   },
 

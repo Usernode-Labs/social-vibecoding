@@ -1576,9 +1576,10 @@ async function decidePlanTap(pool, { user, action, choice, answers = [], deps = 
     status: 'answered', chosen: 'build', answer: BUILD_IT, choices: went.chosen.map((c) => c.answer),
   }, { ws: deps.ws || null, conversationId: card.conversation_id, userId: user.id }).catch(() => {});
   // The build's progress shows under the plan, where they tapped: the
-  // request's card moves here (homeroom-bot-activity.js cardUnderPlan).
+  // request's card moves here (homeroom-bot-activity.js cardUnderPlan), as
+  // the bot's thanks for answering (#4392).
   try {
-    const { rows: [app] } = await pool.query('SELECT id, slug, name FROM apps WHERE id = $1', [went.appId]);
+    const { rows: [app] } = await pool.query('SELECT id, slug, name, icon_emoji FROM apps WHERE id = $1', [went.appId]);
     const requester = await requesterOf(pool, went.appId, went.issueNumber);
     const bot = deps.bot || await botAccount(pool);
     if (app && requester && Number(requester.userId) === Number(user.id) && bot) {
@@ -1620,7 +1621,16 @@ async function changePlan(pool, { bot, user, target, message, deps = {} }) {
     );
     if (action?.status === 'open') {
       const went = await decidePlanTap(pool, { user, action, choice: 'build', answers: [], deps });
-      if (went.ok) return reply(`Building ${name} now, with what I suggested. I'll message you here when it's ready to try.`);
+      // #4392: the thanks Build it sent under the plan is the answer, said
+      // once; said as words alone only when that card could not be sent.
+      if (went.ok) {
+        const activity = require('./homeroom-bot-activity');
+        const thanks = await activity.requestCard(pool, { userId: user.id, appId: app.id, issueNumber });
+        if (thanks && thanks.messageId > Number(target.message_id)) {
+          return { conversationId: thanks.conversationId, messageId: thanks.messageId, duplicate: true };
+        }
+        return reply(activity.thanksText(name));
+      }
     }
   }
   // Built already, or being built: a change then is a change to it, once it is ready to try.

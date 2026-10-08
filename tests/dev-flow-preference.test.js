@@ -241,18 +241,14 @@ test('the ⋯ menu leads with its asks and names its settings group', () => {
   const frame = read('frontend/src/features/dev-board/actions-row.tsx');
   assert.doesNotMatch(frame, /label="Add to the board"/);
   assert.ok(frame.indexOf('data-plus="issue"') < frame.indexOf('data-plus="import-pr"')
-    && frame.indexOf('data-plus="import-pr"') < frame.indexOf('groupKey="settings"'));
-  assert.match(frame, /label="Settings &amp; rules"[\s\S]{0,80}groupKey="settings"[\s\S]{0,40}divider/);
-  // A heading must not be a <button>: _wirePlusMenu collects
-  // `button[data-plus]` for the touch action sheet, and a heading that
-  // matched would arrive there as a tappable row that does nothing.
-  const fnStart = frame.indexOf('function PlusMenuHeading(');
-  assert.ok(fnStart !== -1, 'the PlusMenuHeading primitive must exist');
-  // Slice from the RETURN, not the signature: the destructured props' type
-  // annotation closes with a `}` in column 0, which is not the function's end.
-  const fn = frame.slice(fnStart, frame.indexOf('\n}\n', frame.indexOf('return (', fnStart)));
-  assert.match(fn, /<div\s+data-plus-group=/, 'headings render as a div');
-  assert.ok(!fn.includes('data-plus="'), 'a heading carries no data-plus');
+    && frame.indexOf('data-plus="import-pr"') < frame.indexOf('data-plus="settings"'));
+  // #4045: one "Settings & rules" row now, which opens the settings on top.
+  assert.match(frame, /data-plus="settings"\s+group="settings"[\s\S]{0,120}title="Settings &amp; rules"[\s\S]{0,240}dividerCls=\{PLUS_ROW_DIVIDER_CLS\}/);
+  // The menu has no heading any more (#4045): "Settings & rules" is a real
+  // row, a PlusRow, which a tap acts on, so it is a button carrying both
+  // data-plus and its group's marker.
+  assert.doesNotMatch(frame, /function PlusMenuHeading\(/);
+  assert.match(frame, /data-plus=\{action\}\s+data-plus-group=\{group\}/);
   // The touch sheet renders them too, since it has no heading primitive.
   assert.match(appView, /button\[data-plus\], \[data-plus-group\]/,
     'the action sheet walks headings and rows together, in DOM order');

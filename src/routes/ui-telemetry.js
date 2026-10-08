@@ -33,7 +33,9 @@ function uiTelemetryRoutes(config, { pool = getPool(config) } = {}) {
       return res.status(500).json({ error: 'Internal server error' });
     }
     try {
-      const result = await telemetry.insertBatch(pool, req.user.id, batch);
+      const result = await telemetry.insertBatch(pool, req.user.id, batch, {
+        language: telemetry.browserLanguage(req.get('accept-language')),
+      });
       return res.status(result.duplicate ? 200 : 202).json({
         ok: true,
         accepted: result.accepted,
@@ -42,6 +44,20 @@ function uiTelemetryRoutes(config, { pool = getPool(config) } = {}) {
     } catch (err) {
       log.error('ui-telemetry', 'Batch insert failed', { message: err.message });
       return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Which languages people's browsers ask for, for choosing the languages
+  // Homeroom ships (#3659). Read here until it has a place in the console.
+  router.get('/api/admin/analytics/browser-languages', adminMiddleware, async (req, res) => {
+    try {
+      res.json(await telemetry.browserLanguages(pool, {
+        days: telemetry.daysWindow(req.query.days),
+        includeAdmins: req.query.includeAdmins === 'true',
+      }));
+    } catch (err) {
+      log.error('ui-telemetry', 'Browser language count failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
     }
   });
 

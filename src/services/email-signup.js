@@ -334,6 +334,11 @@ async function verifyCode(pool, rawEmail, rawCode, { createSession } = {}) {
   if (result.created) {
     await waitlist.linkUserByEmail(pool, { userId: result.userId, email });
   }
+  // #4083: an account the code proved and nothing let in has a waitlist
+  // spot of its own, so an admin can find it there and let it in.
+  if (result.next === 'set-password') {
+    await waitlist.ensureAccountSignup(pool, { userId: result.userId });
+  }
   // The code proved this mailbox, on a new account or an unconfirmed one:
   // any project invites waiting on the address become this account's.
   // Best-effort, and it never throws.

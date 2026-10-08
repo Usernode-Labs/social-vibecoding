@@ -251,7 +251,8 @@ test('the general chat pane is mounted, not assigned', () => {
   // element at all.
   assert.match(fn[1], /unmountTranscript\(previousList\)/);
   assert.ok(fn[1].indexOf('unmountTranscript') < fn[1].indexOf('mountGeneralChat'));
-  // The banner's localStorage write stays in the module: a component that
-  // stamped it would fire again on every re-render.
-  assert.match(fn[1], /localStorage\.setItem\('usernode_seen_gc_intro', '1'\)/);
+  // No first-arrival banner any more (the owner, 6 October 2026): the
+  // Discussion tab says what it is.
+  assert.doesNotMatch(fn[1], /usernode_seen_gc_intro|introAppName/);
+  assert.doesNotMatch(read('frontend/src/features/group-chat/general-chat.tsx'), /talks and votes on proposed changes|introAppName/);
 });

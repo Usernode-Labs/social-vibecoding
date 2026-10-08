@@ -173,6 +173,7 @@ const DENIED_COLUMNS = {
   homeroom_bot_runs: [
     'plan_change', // what a creator asked the bot's plan changed with; never posted anywhere
     'review', // a first version's review: issues quoting a private project's screens (review_rounds and review_stop stay readable)
+    'build_no_change', // a build agent's last message when it changed nothing: can quote a private project's code
   ],
   waitlist_signups: [
     'ip',         // submitter IP — same treatment as users.waitlist_ip
