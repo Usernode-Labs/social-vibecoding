@@ -6526,14 +6526,20 @@ async function checkAndMerge(config, pool, session, options = {}) {
       // 'error' the stuck-checks reconcile runs again (visuals.js
       // settleCaptureRun). Its preview started fine and nobody has to act.
       const rolloutRetry = errorDetail === require('../services/staging-recovery').ROLLOUT_RETRY_DETAIL;
+      // An 'error' because the repo unit suite could not run: its preview
+      // started fine, so the sentence must not blame it.
+      const unitNotRun = checkState === 'error'
+        && !!require('../services/unit-suite-row').notRunError({ ...checkRows[0], check_state: checkState });
       const reason = checkState === 'failing'
         ? `has ${failingCount || 'failing'} test${failingCount === 1 ? '' : 's'} failing`
         : checkState === 'error'
           ? (rolloutRetry
             ? 'ran its tests while Homeroom was updating, so they will run again on their own'
-            : errorDetail
-              ? `couldn't run its tests, because its staging preview failed to start (${errorDetail})`
-              : "couldn't run its tests")
+            : unitNotRun
+              ? `couldn't run its unit suite, so its checks have no verdict yet (${errorDetail})`
+              : errorDetail
+                ? `couldn't run its tests, because its staging preview failed to start (${errorDetail})`
+                : "couldn't run its tests")
           : 'is still running its tests';
       const blockMsg = `${label} reached the vote threshold but ${reason}. Merge is blocked until checks pass. The proposal's tests re-run automatically when its owner pushes a fix.`;
       // Said once. This gate runs on every vote and every check re-run, and
@@ -6567,11 +6573,13 @@ async function checkAndMerge(config, pool, session, options = {}) {
             ? `${failingCount || 'some'} failing. They re-run on the next push`
             : rolloutRetry
               ? 'they ran while Homeroom was updating and will run again'
-              : checkState === 'error'
-                ? 'the staging preview could not start, so the tests could not run'
-                : checksDeferred
-                  ? 'waited for the head to merge cleanly; running now'
-                  : 'still running',
+              : unitNotRun
+                ? 'the unit suite could not run, so there is no verdict yet'
+                : checkState === 'error'
+                  ? 'the staging preview could not start, so the tests could not run'
+                  : checksDeferred
+                    ? 'waited for the head to merge cleanly; running now'
+                    : 'still running',
         });
       gateSave();
       dend('blocked', 'Blocked: votes reached, but checks must pass first.');

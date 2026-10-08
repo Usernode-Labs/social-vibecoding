@@ -139,10 +139,10 @@ test('Create\'s screens own the back press, as the dialog did, and hand it back 
 });
 
 test('the make screen from Create: New project, a close, a small "Import from a GitHub repo", no More options and no "Look around first"', () => {
-  const create = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { entry: 'create', onMade() {}, onClose() {} });
+  const create = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', entry: 'create', onMade() {}, onClose() {} });
   assert.match(create, /data-make-entry="create"/);
   assert.match(create, />New project</);
-  assert.doesNotMatch(create, /Hi\b/);
+  assert.doesNotMatch(create, /Hi Jordan!/);
   assert.match(create, /<button type="button" data-make-close="" aria-label="Close"/);
   assert.match(create, /<button type="button" data-make-import-link="" class="text-\[13px\] [^"]*">Import from a GitHub repo<\/button>/, 'small, under Make it');
   assert.ok(create.indexOf('data-make-import-link') > create.indexOf('>Make it</button>'));
@@ -150,21 +150,25 @@ test('the make screen from Create: New project, a close, a small "Import from a 
   for (const words of ['What do you want to make?', 'What should it do?', 'What should we call it?', '>Make it</button>']) {
     assert.ok(create.includes(words), words);
   }
-  assert.match(create, /data-first-session-example="run"/);
+  assert.match(create, /data-first-session-example="tier"/);
 
-  const first = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { onMade() {}, onLookAround() {} });
+  const first = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', onMade() {}, onLookAround() {} });
   assert.match(first, /data-make-entry="first-session"/);
-  assert.doesNotMatch(first, /New project/);
-  assert.doesNotMatch(first, />Hi\b/, 'no greeting without a name to greet');
+  assert.match(first, />Hi Jordan!</);
   assert.match(first, /Look around first/);
   assert.doesNotMatch(first, /data-make-close|data-make-import-link|Import from a GitHub repo/, 'the first session does not offer an import');
 
   const make = loadTsx(`${DIR}/make.tsx`);
-  assert.equal(make.makeEyebrow('create'), 'New project');
-  assert.equal(make.makeEyebrow('first-session'), null, 'no name, no greeting');
-  assert.equal(make.makeEyebrow('first-session', ' Maya '), 'Hi Maya', 'the first session greets by name');
-  assert.equal(make.makeEyebrow('create', 'Maya'), 'New project', 'Create is not a greeting');
+  assert.equal(make.makeEyebrow('create', 'Jordan'), 'New project');
+  assert.equal(make.makeEyebrow('first-session', ''), 'You\'re in!');
   for (const line of [make.IMPORT_TITLE, make.IMPORT_LINE]) assert.doesNotMatch(line, /—/);
+  // Evan, 8 Oct 2026: no line under the question. The starting points come
+  // straight after it, from either door.
+  assert.equal(make.makeLine, undefined);
+  for (const html of [create, first]) {
+    assert.doesNotMatch(html, /Describe it for your group/);
+    assert.match(html, /What do you want to make\?<\/h1><\/div><p[^>]*>Start from an idea<\/p>/);
+  }
 
   const src = read(`${DIR}/make.tsx`);
   assert.match(src, /onClick=\{\(\) => setMode\('import'\)\}/);
@@ -177,7 +181,7 @@ test('the make screen from Create: New project, a close, a small "Import from a 
 });
 
 test('the import form: the repo and Check, then the name, Import it, and a way back', () => {
-  const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { entry: 'create', startImport: true, onMade() {}, onClose() {} });
+  const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', entry: 'create', startImport: true, onMade() {}, onClose() {} });
   assert.match(html, /<form data-make-import="" class="mx-auto flex w-full max-w-sm grow flex-col px-4 /, 'in the make form\'s own frame');
   assert.match(html, /<h1 id="first-session-make-title"[^>]*>Import a GitHub repo<\/h1>/);
   assert.match(html, /Bring an app that already exists\. Your group builds on it from here\./);

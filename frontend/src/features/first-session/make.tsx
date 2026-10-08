@@ -1,38 +1,17 @@
 /**
- * "What do you want to make?" (it was "Start your community" from 6 to 8 Oct
- * 2026, and "together" read as you and the AI): the first thing an account
- * made from the signed-out story is asked (../auth/story.tsx sets the
- * session's `usernode:first-session:make` flag in its sheet; ./index.tsx opens
- * this once the shell has signed them in).
+ * "What do you want to make?": the first thing an account made from the
+ * signed-out story is asked (../auth/story.tsx sets the session's
+ * `usernode:first-session:make` flag in its sheet; ./index.tsx opens this
+ * once the shell has signed them in).
  *
  * Two questions, the New project dialog's own (create-app.tsx), cut down:
- * what it should do, then what to call it — the name is the community's and
- * the project's, since a community and its one project share a name. "Make
- * it" creates a private community through the same POST /api/apps the
- * dialog uses (audience 'invited', no invitees yet: inviting comes next),
- * with `from: 'first-session'`, and Homeroom bot builds the first version
- * from the description. The Create app wizard stays as it is, behind the
- * Create button.
- *
- * WHAT IT OPENS WITH (#4038, #4040; canvas C2-make and C2b-make-waitlist,
- * 8 Oct 2026). A small caps "Hi <name>" over the title, the same label the
- * signed-out story wears ("Welcome to Homeroom"), and no other greeting
- * (owner, 8 Oct 2026; a line of its own under the title was cut on 7 Oct).
- *   - A small caps "Examples" over four tiles that look like buttons: the
- *     three examples (./examples.ts) and "Your own idea". The first example
- *     is chosen when the screen opens, both fields filled with its words, so
- *     the screen shows what an answer looks like and "Make it" works at once.
- *     Another example swaps its words in; "Your own idea" empties both fields
- *     and puts the caret in "What should it do?".
- *   - When they told us on the waitlist what their group's app should do
- *     (`waitlistIdea` on GET /api/auth/me, services/first-session.js), the
- *     fourth tile is "Your idea" instead, chosen when the screen opens, with
- *     that answer in "What should it do?" and the name left to them. No
- *     example is chosen then. One quiet line under the fields says where the
- *     words came from, for as long as they are the ones in the field. An
- *     example swaps its words in, and "Your idea" puts the waitlist words
- *     back. There is no "Your own idea" beside it: the field is theirs to
- *     clear.
+ * what it should do, then what to call it — the name is the group's and
+ * the project's, since a community and its one project share a name. The
+ * starting points (./examples.ts) fill both in. "Make it" creates a
+ * private community through the same POST /api/apps the dialog uses
+ * (../dialogs/post-create-app.ts; audience 'invited', no invitees yet:
+ * inviting comes next), and Homeroom bot builds the first version from the
+ * description.
  *
  * ONE FRONT DOOR. It is also what the Create button opens, for everyone and
  * every time (App.showCreateModal, `entry` 'create'), so a second project
@@ -72,11 +51,10 @@
  *     under it scrolls, so nothing passes under the status bar. The bar
  *     holds the whole mark below the inset (on a notched phone the mark
  *     used to hang 12px out of its box, and the page would have scrolled
- *     past it). The keyboard surface is attached to the scroller
- *     (lib/keyboard-surface.ts): a tap on a field is focused without the
- *     browser's pan, and the field is revealed once, between the bar and
- *     the keys. (Owner, 7 Oct 2026: the bar stays, as on the story and the
- *     invite page.)
+ *     past it). The kit's keyboard avoidance is attached to the scroller
+ *     with the bar as its top (lib/composer-keyboard.ts), as every chat
+ *     column has it: a tap on a field is focused without the browser's pan,
+ *     and the field is revealed once, between the bar and the keys.
  *   - The two answers are one sequence: the description's Return says
  *     "next" and goes on to the name (Shift+Return is a new line), and the
  *     name's Return makes it. In the app the keyboard's own next chevron
@@ -102,24 +80,37 @@
  * only movement. In the app, whose web view ends at the keys, the band is the
  * whole screen and only the reveal does anything.
  *
- * An example is a starting point, not a choice that sticks: typing words of
- * their own into "What should it do?" lets go of the example (its tile is no
- * longer marked, and Make it no longer sends its description), and the name
- * it filled in stays theirs to keep or change.
+ * STARTING POINTS (Evan, 8 Oct 2026): four tiles, two by two. A tier list,
+ * a game and an organizer are sentences with a blank (./examples.ts); the
+ * fourth, Your own idea, is the plain description box, which is also what
+ * the screen opens on. A tap on the tier list or the organizer picks its
+ * first choice, so one tap is a whole description; the chips under the
+ * sentence change the blank, and Your own… puts a field for their words in
+ * it. The game is always finished in their own words, in a box under the
+ * sentence: the fun of a game is in what you build, so it starts on Your
+ * own and each starter ("a board game where") still waits for the rest.
+ * The name follows the choice ("Hiking Tier List") until they type one.
+ *
+ * A template is a starting point, not a choice that sticks: "Write it
+ * yourself" turns the sentence into the plain box, and words of their own
+ * there let go of the template (Your own idea is marked instead, and Make
+ * it no longer sends the template's description). The name stays theirs to
+ * keep or change.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { type KeyboardEvent as ReactKeyboardEvent, useCallback, useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { DraftEditIcon } from '@/components/ui/icons';
-import { XIcon } from '@/components/ui/icons';
+import { Chip } from '@/components/ui/chip';
+import { PencilSquareIcon, XIcon } from '@/components/ui/icons';
 import { Wordmark } from '@/components/ui/wordmark';
 
 import { useKeyboardSurface } from '../../lib/keyboard-surface';
 import { AppAllowance, useAppAllowance } from '../dialogs/app-allowance';
 import { deviceTimeZone, postCreateApp } from '../dialogs/post-create-app';
-import { EXAMPLES, type Example } from './examples';
+import { descriptionOf, firstChoice, OWN, sentence, suggestedName, TEMPLATES, type Template } from './examples';
 import { ImportForm, type RepoManifest } from './import-repo';
+import { TierChart } from './tier-chart';
 
 export { deviceTimeZone };
 
@@ -138,7 +129,8 @@ export type Made = {
   name: string;
   emoji: string | null;
   description: string | null;
-  example: Example | null;
+  /** The template it was made from, while its sentence was still the template's. */
+  example: Template | null;
   conversationId: number | null;
   /** Imported from a GitHub repo (./import-repo.tsx): nothing is built from a description. */
   imported?: boolean;
@@ -150,17 +142,24 @@ const INPUT = 'w-full border-0 bg-transparent px-0 py-1 text-[17px] text-zinc-90
 // Where the bar and the form start, and where they settle (see the header).
 const ARRIVING = 'translate-y-6 opacity-0 transition-[transform,opacity] duration-300 ease-out motion-reduce:transition-none';
 const ARRIVED = 'translate-y-0 opacity-100 transition-[transform,opacity] duration-300 ease-out motion-reduce:transition-none';
+const HINT = 'pb-1 text-xs text-zinc-500 dark:text-zinc-400';
 const NEEDED = 'pb-1 text-xs text-red-700 dark:text-red-400';
-// The tiles are buttons and look it: a white face lifted off the
-// wallpaper by a soft shadow, with a hairline, or the accent's ring when chosen.
-const LIFT = 'bg-white transition-transform active:scale-[0.98] motion-reduce:transition-none dark:bg-zinc-900';
-const RING_OFF = 'shadow-[0_1px_3px_rgba(0,0,0,0.1),inset_0_0_0_1px_var(--app-sheet-line)]';
-const RING_ON = 'shadow-[0_1px_3px_rgba(0,0,0,0.1),inset_0_0_0_2px_var(--accent)]';
-const TILE = `flex min-h-16 items-center gap-2.5 rounded-2xl px-3 py-2 text-left ${LIFT}`;
-const TILE_FACE = 'flex h-10 w-10 shrink-0 items-center justify-center rounded-[11px]';
-const TILE_LABEL = 'min-w-0 flex-1 text-[15px] font-semibold leading-[19px]';
+// What stands in a template's blank, and the field for their own words there.
+const BLANK = 'rounded-md bg-violet-50 px-1 py-px font-semibold text-violet-700 [box-decoration-break:clone] dark:bg-violet-950 dark:text-violet-300';
+const BLANK_FIELD = 'mx-0.5 inline-block w-[9.5em] max-w-full rounded-md border-0 bg-violet-50 px-1.5 align-baseline text-[17px] font-semibold leading-[26px] text-violet-700 placeholder-zinc-500 shadow-[inset_0_-2px_0_var(--accent)] focus:outline-none dark:bg-violet-950 dark:text-violet-300';
+// The game's box for the rest of the sentence: a field, plainly, ringed in
+// the accent while it is empty so it is the next thing to do.
+const WORDS_BOX = 'mt-1.5 block w-full resize-none rounded-xl border-0 bg-white px-3 py-2.5 text-[17px] leading-[22px] text-zinc-900 placeholder-zinc-500 focus:shadow-[inset_0_0_0_2px_var(--accent),0_0_0_4px_rgba(10,110,224,0.15)] focus:outline-none dark:bg-zinc-900 dark:text-zinc-100';
+const WORDS_EMPTY = 'shadow-[inset_0_0_0_2px_var(--accent),0_0_0_4px_rgba(10,110,224,0.15)]';
+const WORDS_FILLED = 'shadow-[inset_0_0_0_1px_var(--app-sheet-line)]';
+const TILE = 'relative flex items-center gap-2.5 rounded-2xl bg-white px-3 py-2.5 text-left dark:bg-zinc-900';
+const TILE_ON = 'shadow-[inset_0_0_0_2px_var(--accent)]';
+const TILE_OFF = 'shadow-[inset_0_0_0_1px_var(--app-sheet-line)]';
 
-export type Missing = 'brief' | 'name' | null;
+/** The tile that is the plain description box. */
+export const OWN_IDEA = 'idea';
+
+export type Missing = 'blank' | 'brief' | 'name' | null;
 
 /** The first answer "Make it" still needs, in the screen's order; null when both are there. */
 export function missingAnswer(brief: string, name: string): Missing {
@@ -169,39 +168,23 @@ export function missingAnswer(brief: string, name: string): Missing {
   return null;
 }
 
-/** What a field says when "Make it" found it missing. */
-export function neededLine(missing: Missing, brief: string): string | null {
+/**
+ * What a field says when "Make it" found it missing. `blank` is a
+ * template's: their own words in its blank, or, for the game, the rest of
+ * its sentence (`finishing`).
+ */
+export function neededLine(missing: Missing, brief: string, finishing = false): string | null {
+  if (missing === 'blank') return finishing ? 'Finish the sentence first.' : 'Fill in the blank first.';
   if (missing === 'brief') return brief.trim() ? 'Say a little more about what it should do.' : 'Say what it should do first.';
   if (missing === 'name') return 'Give it a name to make it. You can change it later.';
   return null;
 }
 
-/**
- * What the screen opens with: their waitlist answer with no name and no
- * example chosen, or else the first example, chosen and filled in.
- */
-export function openingAnswers(idea: string | null | undefined): { brief: string; name: string; picked: Example | null } {
-  const said = typeof idea === 'string' ? idea.trim() : '';
-  if (said) return { brief: said, name: '', picked: null };
-  const first = EXAMPLES[0];
-  return { brief: first.brief, name: first.name, picked: first };
-}
-
-/**
- * The small caps label over the title. From Create: what this is. On the
- * first session: a greeting by name (none when the name is not known yet).
- */
-export function makeEyebrow(entry: MakeEntry, who: string | null | undefined = null): string | null {
+/** Over the question: hello on the first session, what this is from Create. */
+export function makeEyebrow(entry: MakeEntry, who: string): string {
   if (entry === 'create') return 'New project';
-  const name = typeof who === 'string' ? who.trim() : '';
-  return name ? `Hi ${name}` : null;
+  return who ? `Hi ${who}!` : 'You\'re in!';
 }
-
-/** The screen's question. */
-export const MAKE_TITLE = 'What do you want to make?';
-
-/** Under the fields, when the waitlist answer is what they hold. */
-export const WAITLIST_NOTE = 'Filled in from your waitlist answer.';
 
 /**
  * Under Make it, quietly: what is public once it is made (#4174). Every
@@ -227,14 +210,9 @@ export const MAKE_ROOT = 'platform-kb-surface fixed inset-0 z-[9000] flex flex-c
 export const MAKE_ROOT_UNDER_HEADER = 'platform-kb-surface platform-under-header fixed inset-x-0 bottom-0 z-[9000] flex flex-col text-zinc-900 dark:text-zinc-100';
 
 export function MakeScreen({
-  idea = null, who = null, demo = false, onMade, onLookAround, entry = 'first-session', onClose, startImport = false, underHeader = false,
+  who, onMade, onLookAround, entry = 'first-session', onClose, startImport = false, underHeader = false,
 }: {
-  /** What they told us on the waitlist the app should do, or null. */
-  idea?: string | null;
-  /** Their name, for the greeting over the title (first session only). */
-  who?: string | null;
-  /** A screenshot state (./index.tsx makeShot): "Make it" makes nothing. */
-  demo?: boolean;
+  who: string;
   onMade: (made: Made) => void;
   /** The first session's "Look around first". */
   onLookAround?: () => void;
@@ -253,15 +231,19 @@ export function MakeScreen({
   const { blocked: quotaBlocks } = useAppAllowance();
   // Make it, or (from Create only) Import it.
   const [mode, setMode] = useState<'make' | 'import'>(fromCreate && startImport ? 'import' : 'make');
-  // Decided once, when the screen opens: what they type later is theirs.
-  const [opening] = useState(() => openingAnswers(idea));
-  const fromWaitlist = !opening.picked;
-  const [brief, setBrief] = useState(opening.brief);
-  const [name, setName] = useState(opening.name);
-  const [picked, setPicked] = useState<Example | null>(opening.picked);
-  // The fourth tile is the chosen one: "Your own idea" once pressed, or,
-  // with a waitlist answer, "Your idea" from the start.
-  const [own, setOwn] = useState(fromWaitlist);
+  const [brief, setBrief] = useState('');
+  const [name, setName] = useState('');
+  // The tile picked: a template, Your own idea, or nothing yet.
+  const [picked, setPicked] = useState<Template | typeof OWN_IDEA | null>(null);
+  // The template's choice, and their own words: in its blank, or the rest
+  // of the game's sentence.
+  const [choice, setChoice] = useState('');
+  const [words, setWords] = useState('');
+  // "Write it yourself": the sentence it put in the plain box. The template
+  // stays picked until they change those words.
+  const [written, setWritten] = useState<string | null>(null);
+  // A name they typed: from then on a choice no longer suggests one.
+  const [nameTyped, setNameTyped] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // The answer a press of "Make it" found missing, said under its field
@@ -274,6 +256,9 @@ export function MakeScreen({
   const makingRef = useRef(false);
   const briefRef = useRef<HTMLTextAreaElement>(null);
   const nameRef = useRef<HTMLInputElement>(null);
+  // Their own words in a template: the field in its blank, or the game's box.
+  const wordsFieldRef = useRef<HTMLInputElement>(null);
+  const wordsBoxRef = useRef<HTMLTextAreaElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   // The caret for a hardware keyboard; on a phone the first tap raises the
   // keys (without iOS's pan: lib/keyboard-surface.ts takes that tap).
@@ -296,60 +281,94 @@ export function MakeScreen({
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const pick = useCallback((e: Example) => {
-    setPicked(e);
-    setOwn(false);
-    setBrief(e.brief);
-    setName(e.name);
-    setError(null);
-    setMissing(null);
-  }, []);
+  const template = picked && picked !== OWN_IDEA ? picked : null;
+  // The sentence is drawn until it is written out as plain text.
+  const templated = !!template && written === null;
+  const said = template ? sentence(template, choice, words) : null;
+  // What Make it sends as the description: the sentence, or the plain box.
+  const text = templated && said ? said.text : brief;
+  // After the tap that drew it, the field for their words (or the plain box).
+  const focusSoon = (field: () => HTMLElement | null) => {
+    setTimeout(() => field()?.focus({ preventScroll: true }), 0);
+  };
+  const wordsField = () => wordsBoxRef.current || wordsFieldRef.current;
 
-  // Empty fields for words of their own, with the caret where they begin
-  // (inside the press, so a phone raises its keys).
-  const startOwn = useCallback(() => {
-    setPicked(null);
-    setOwn(true);
-    setBrief('');
-    setName('');
+  const pickTemplate = useCallback((t: Template) => {
+    if (picked === t && written === null) return;
+    const first = firstChoice(t);
+    setPicked(t);
+    setChoice(first);
+    setWords('');
+    setWritten(null);
+    if (!nameTyped) setName(suggestedName(t, first, ''));
     setError(null);
     setMissing(null);
-    briefRef.current?.focus({ preventScroll: true });
-  }, []);
+    if (first === OWN) focusSoon(wordsField);
+  }, [picked, written, nameTyped]);
 
-  // "Your idea": their waitlist words back, and the name as the screen
-  // opened it (theirs to give).
-  const restoreIdea = useCallback(() => {
-    setPicked(null);
-    setOwn(true);
-    setBrief(opening.brief);
-    setName(opening.name);
+  const pickIdea = useCallback(() => {
+    if (picked === OWN_IDEA) return;
+    setPicked(OWN_IDEA);
+    setWritten(null);
+    if (!nameTyped) setName('');
     setError(null);
     setMissing(null);
-  }, [opening]);
+    focusSoon(() => briefRef.current);
+  }, [picked, nameTyped]);
+
+  const pickChoice = useCallback((key: string) => {
+    if (!template) return;
+    setChoice(key);
+    if (!nameTyped) setName(suggestedName(template, key, words));
+    setError(null);
+    setMissing(null);
+    if (key === OWN || template.finish) focusSoon(wordsField);
+  }, [template, nameTyped, words]);
+
+  const changeWords = (next: string) => {
+    setWords(next);
+    if (template && !nameTyped) setName(suggestedName(template, choice, next));
+    setError(null);
+    setMissing(null);
+  };
+
+  const writeOut = useCallback(() => {
+    if (!said) return;
+    setWritten(said.text);
+    setBrief(said.text);
+    setMissing(null);
+    focusSoon(() => briefRef.current);
+  }, [said]);
+
+  const toName = (e: ReactKeyboardEvent<HTMLElement>) => {
+    // Return goes on to the name, as the key says; Shift+Return is a new line.
+    if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return;
+    e.preventDefault();
+    nameRef.current?.focus({ preventScroll: true });
+  };
 
   const make = useCallback(async () => {
     if (busy || makingRef.current) return;
-    const gap = missingAnswer(brief, name);
+    const gap: Missing = templated && said?.blank ? 'blank' : missingAnswer(text, name);
     if (gap) {
       setMissing(gap);
-      (gap === 'brief' ? briefRef.current : nameRef.current)?.focus({ preventScroll: true });
+      (gap === 'name' ? nameRef.current : templated ? wordsField() : briefRef.current)?.focus({ preventScroll: true });
       return;
     }
-    if (demo) return;
     makingRef.current = true;
     setBusy(true);
     setError(null);
-    // The example's one-line description only while the brief is still the
-    // example's own; a brief they rewrote is theirs to describe later.
-    const example = picked && brief.trim() === picked.brief ? picked : null;
+    // The template's description, emoji and invite note while its sentence
+    // is still the template's: words of their own in the plain box let go
+    // of it (`picked` is Your own idea then), and are theirs to describe later.
+    const example = template;
     const timeZone = deviceTimeZone();
     try {
       const reply = await postCreateApp({
         name: name.trim(),
         audience: 'invited',
-        brief: brief.trim(),
-        ...(example ? { description: example.description } : {}),
+        brief: text.trim(),
+        ...(example ? { description: descriptionOf(example, choice) } : {}),
         from: entry,
         // So the sketch's "today" is the maker's (services/app-sketch.js).
         ...(timeZone ? { timeZone } : {}),
@@ -365,7 +384,7 @@ export function MakeScreen({
         slug: data.app.slug,
         name: data.app.name || name.trim(),
         emoji: example ? example.emoji : null,
-        description: example ? example.description : null,
+        description: example ? descriptionOf(example, choice) : null,
         example,
         conversationId: Number(data.homeroomBot?.conversationId) || null,
       });
@@ -373,59 +392,13 @@ export function MakeScreen({
       makingRef.current = false;
       setBusy(false);
     }
-  }, [busy, demo, picked, brief, name, entry, onMade]);
-  const needed = neededLine(missing, brief);
-  const eyebrow = makeEyebrow(entry, who);
-
-  const fields = (
-    <div className="mt-3.5 overflow-hidden rounded-2xl bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
-      <div className={FIELD}>
-        <label htmlFor="first-session-brief" className={LABEL}>What should it do?</label>
-        <textarea
-          ref={briefRef}
-          id="first-session-brief"
-          rows={3}
-          maxLength={BRIEF_MAX}
-          value={brief}
-          enterKeyHint="next"
-          aria-describedby={missing === 'brief' ? 'first-session-brief-needed' : undefined}
-          onChange={(e) => {
-            const next = e.target.value;
-            setBrief(next);
-            // Their own words let go of the example.
-            if (picked && next !== picked.brief) setPicked(null);
-            setError(null);
-            setMissing(null);
-          }}
-          onKeyDown={(e) => {
-            // Return goes on to the name, as the key says; Shift+Return is a new line.
-            if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return;
-            e.preventDefault();
-            nameRef.current?.focus({ preventScroll: true });
-          }}
-          placeholder="For example, a sign-up sheet for our book club"
-          className={`${INPUT} resize-none leading-[22px]`}
-        />
-        {missing === 'brief' ? <p id="first-session-brief-needed" role="alert" className={NEEDED}>{needed}</p> : null}
-      </div>
-      <div className={FIELD}>
-        <label htmlFor="first-session-name" className={LABEL}>What should we call it?</label>
-        <input
-          ref={nameRef}
-          id="first-session-name"
-          type="text"
-          autoComplete="off"
-          enterKeyHint="go"
-          value={name}
-          aria-describedby={missing === 'name' ? 'first-session-name-needed' : undefined}
-          onChange={(e) => { setName(e.target.value); setError(null); setMissing(null); }}
-          placeholder="For example, Sunday Run Club"
-          className={INPUT}
-        />
-        {missing === 'name' ? <p id="first-session-name-needed" role="alert" className={NEEDED}>{needed}</p> : null}
-      </div>
-    </div>
-  );
+  }, [busy, templated, said, text, name, template, choice, entry, onMade]);
+  const needed = neededLine(missing, text, !!template?.finish);
+  // The chips under the sentence: Your own… last, or first for the game.
+  const ownChip = { key: OWN, label: 'Your own…' };
+  const chips = !template ? [] : template.finish ? [ownChip, ...template.choices] : [...template.choices, ownChip];
+  // The game's box shows an example of the rest: the starter's, or its own.
+  const boxExample = template ? (choice !== OWN && template.choices.find((c) => c.key === choice)?.example) || template.own.example : '';
 
   // The import, through the same request: a private community, as Make it
   // makes, from the repo; what it says about itself is its description.
@@ -465,7 +438,7 @@ export function MakeScreen({
           From Create, ✕ at its leading edge closes the screen. Under the
           platform header the header is the top of the screen: this bar is
           only the ✕, with no mark of its own and no inset to clear. */}
-      <div data-first-session-make-top="" className={underHeader ? `relative h-12 shrink-0 ${motion}` : `relative flex h-[max(52px,calc(env(safe-area-inset-top)+32px))] shrink-0 items-center justify-center pt-[env(safe-area-inset-top)] ${motion}`}>
+      <div className={underHeader ? `relative h-12 shrink-0 ${motion}` : `relative flex h-[max(52px,calc(env(safe-area-inset-top)+32px))] shrink-0 items-center justify-center pt-[env(safe-area-inset-top)] ${motion}`}>
         {onClose ? (
           <button
             type="button"
@@ -487,7 +460,7 @@ export function MakeScreen({
             className={formClass}
             header={(
               <div className="text-center">
-                <p className="mt-4 text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">{makeEyebrow('create')}</p>
+                <p className="mt-4 text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">{makeEyebrow(entry, who)}</p>
                 <h1 id="first-session-make-title" className="mt-2.5 text-balance text-[30px] font-extrabold leading-[34px]">{IMPORT_TITLE}</h1>
                 <p className="mt-2.5 text-pretty text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400">{IMPORT_LINE}</p>
               </div>
@@ -503,42 +476,174 @@ export function MakeScreen({
           onSubmit={(e) => { e.preventDefault(); void make(); }}
         >
           <div className="text-center">
-            {eyebrow ? <p data-make-eyebrow="" className="mt-4 text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">{eyebrow}</p> : null}
-            <h1 id="first-session-make-title" className={`${eyebrow ? 'mt-2.5' : 'mt-4'} text-balance text-[30px] font-extrabold leading-[34px]`}>{MAKE_TITLE}</h1>
+            <p className="mt-4 text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">
+              {makeEyebrow(entry, who)}
+            </p>
+            <h1 id="first-session-make-title" className="mt-2.5 text-balance text-[30px] font-extrabold leading-[34px]">What do you want to make?</h1>
           </div>
-          <p id="first-session-make-examples" className="mt-6 px-1 text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">Examples</p>
-          <div className="mt-2 grid grid-cols-2 gap-2" role="group" aria-labelledby="first-session-make-examples">
-            {EXAMPLES.map((e) => {
-              const on = picked?.key === e.key;
+          <p className="mt-6 pb-2 text-[13px] text-zinc-500 dark:text-zinc-400">Start from an idea</p>
+          <div className="grid grid-cols-2 gap-2" role="group" aria-label="Ideas">
+            {TEMPLATES.map((t) => {
+              const on = picked === t;
               return (
                 <button
-                  key={e.key}
+                  key={t.key}
                   type="button"
                   aria-pressed={on}
-                  data-first-session-example={e.key}
-                  onClick={() => pick(e)}
-                  className={`${TILE} ${on ? RING_ON : RING_OFF}`}
+                  data-first-session-example={t.key}
+                  onClick={() => pickTemplate(t)}
+                  className={`${TILE} ${on ? TILE_ON : TILE_OFF}`}
                 >
-                  <span className={`app-icon-tile ${TILE_FACE} text-[22px]`} aria-hidden="true">{e.emoji}</span>
-                  <span className={TILE_LABEL}>{e.short}</span>
+                  <span className="app-icon-tile flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-2xl" aria-hidden="true">{t.chart ? <TierChart /> : t.emoji}</span>
+                  <span className="text-[15px] font-[650] leading-tight">{t.short}</span>
                 </button>
               );
             })}
             <button
               type="button"
-              aria-pressed={own}
-              data-first-session-own=""
-              onClick={fromWaitlist ? restoreIdea : startOwn}
-              className={`${TILE} ${own ? RING_ON : RING_OFF}`}
+              aria-pressed={picked === OWN_IDEA}
+              data-first-session-example={OWN_IDEA}
+              onClick={pickIdea}
+              className={`${TILE} ${picked === OWN_IDEA ? TILE_ON : TILE_OFF}`}
             >
-              <span className={`${TILE_FACE} bg-violet-50 text-violet-700 dark:bg-violet-500/10 dark:text-violet-300`} aria-hidden="true">
-                <DraftEditIcon className="h-5 w-5" />
-              </span>
-              <span className={TILE_LABEL}>{fromWaitlist ? 'Your idea' : 'Your own idea'}</span>
+              <span className="app-icon-tile flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-2xl" aria-hidden="true">💡</span>
+              <span className="text-[15px] font-[650] leading-tight">Your own idea</span>
             </button>
           </div>
-          {fields}
-          {fromWaitlist && own ? <p data-make-waitlist-note="" className="mt-2 px-1 text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400">{WAITLIST_NOTE}</p> : null}
+          <div className="mt-4 overflow-hidden rounded-2xl bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
+            <div className={FIELD}>
+              {templated && template && said ? (
+                <>
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className={LABEL}>What should it do?</span>
+                    {template.finish ? null : (
+                      <button
+                        type="button"
+                        data-make-write-out=""
+                        onClick={writeOut}
+                        className="shrink-0 text-[13px] font-medium text-violet-700 hover:underline dark:text-violet-400"
+                      >
+                        Write it yourself
+                      </button>
+                    )}
+                  </div>
+                  <p data-make-sentence={template.key} className="pt-1 text-[17px] leading-7 text-zinc-900 dark:text-zinc-100">
+                    {said.head}
+                    {template.finish
+                      ? (said.fill ? <><span className={BLANK}>{said.fill}</span>{' …'}</> : null)
+                      : choice === OWN
+                        ? (
+                          <input
+                            ref={wordsFieldRef}
+                            id="make-words"
+                            type="text"
+                            autoComplete="off"
+                            enterKeyHint="next"
+                            maxLength={60}
+                            value={words}
+                            aria-label="Your own words"
+                            onChange={(e) => changeWords(e.target.value)}
+                            onKeyDown={toName}
+                            placeholder={template.own.example}
+                            className={BLANK_FIELD}
+                          />
+                        )
+                        : <span className={BLANK}>{said.fill}</span>}
+                    {said.tail}
+                  </p>
+                  {template.finish ? (
+                    <>
+                      <label htmlFor="make-words" className="mt-3 flex items-center gap-1.5 text-[13px] font-semibold text-violet-700 dark:text-violet-400">
+                        <PencilSquareIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                        Finish it in your own words
+                      </label>
+                      <textarea
+                        ref={wordsBoxRef}
+                        id="make-words"
+                        rows={2}
+                        // Room for the sentence around it, under the server's ceiling.
+                        maxLength={BRIEF_MAX - 200}
+                        value={words}
+                        enterKeyHint="next"
+                        aria-describedby={missing === 'blank' ? 'first-session-brief-needed' : undefined}
+                        onChange={(e) => changeWords(e.target.value)}
+                        onKeyDown={toName}
+                        placeholder={`For example, ${boxExample}`}
+                        className={`${WORDS_BOX} ${words.trim() ? WORDS_FILLED : WORDS_EMPTY}`}
+                      />
+                    </>
+                  ) : null}
+                  <div className="mb-1 mt-3 flex flex-wrap gap-1.5" role="group" aria-label="Choices">
+                    {chips.map((c) => (
+                      <Chip
+                        key={c.key}
+                        size="bar"
+                        selected={choice === c.key}
+                        data-make-choice={c.key}
+                        onClick={() => pickChoice(c.key)}
+                        className={choice === c.key ? 'px-3' : `px-3 ${TILE_OFF}`}
+                      >
+                        {c.label}
+                      </Chip>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <label htmlFor="first-session-brief" className={LABEL}>What should it do?</label>
+                  <textarea
+                    ref={briefRef}
+                    id="first-session-brief"
+                    rows={3}
+                    maxLength={BRIEF_MAX}
+                    value={brief}
+                    enterKeyHint="next"
+                    aria-describedby={missing === 'brief' ? 'first-session-brief-needed' : undefined}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      setBrief(next);
+                      // Words of their own: the idea is theirs now. Your own
+                      // idea is marked, and a template lets go.
+                      if (picked !== OWN_IDEA && next !== written) {
+                        setPicked(OWN_IDEA);
+                        setWritten(null);
+                      }
+                      setError(null);
+                      setMissing(null);
+                    }}
+                    onKeyDown={toName}
+                    placeholder="A map of our favorite swimming spots…"
+                    className={`${INPUT} resize-none leading-[22px]`}
+                  />
+                </>
+              )}
+              {missing === 'brief' || missing === 'blank' ? <p id="first-session-brief-needed" role="alert" className={NEEDED}>{needed}</p> : null}
+            </div>
+            <div className={FIELD}>
+              <label htmlFor="first-session-name" className={LABEL}>What should we call it?</label>
+              <input
+                ref={nameRef}
+                id="first-session-name"
+                type="text"
+                autoComplete="off"
+                enterKeyHint="go"
+                value={name}
+                aria-describedby="first-session-name-hint"
+                onChange={(e) => {
+                  setName(e.target.value);
+                  // A name of their own stays; an emptied one follows the choice again.
+                  setNameTyped(e.target.value.trim() !== '');
+                  setError(null);
+                  setMissing(null);
+                }}
+                placeholder="For example, Hiking Tier List"
+                className={INPUT}
+              />
+              {missing === 'name'
+                ? <p id="first-session-name-hint" role="alert" className={NEEDED}>{needed}</p>
+                : <p id="first-session-name-hint" className={HINT}>It's your group's name too. You can change it later.</p>}
+            </div>
+          </div>
           {allowance}
           {error ? <p role="alert" className="mt-3 text-[14px] text-red-700 dark:text-red-400">{error}</p> : null}
           <div className="grow" />

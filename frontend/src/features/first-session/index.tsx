@@ -103,6 +103,7 @@ type Legacy = {
   App?: {
     user?: {
       id?: number; username?: string; displayName?: string | null; needsCommunitiesChoice?: boolean; privateMember?: boolean;
+      homeroomBotDm?: boolean;
       waitlistIdea?: string | null;
     } | null;
     _privateHomeVisited?: () => boolean;
@@ -779,12 +780,6 @@ function viewerName(): string {
   return user?.displayName || user?.username || '';
 }
 
-/** What they told us on the waitlist the app should do (GET /api/auth/me), or null. */
-function waitlistIdea(): string | null {
-  const idea = legacy().App?.user?.waitlistIdea;
-  return typeof idea === 'string' && idea.trim() ? idea.trim() : null;
-}
-
 /**
  * "What do you want to make?" from the Create button, over nothing else, or
  * open on importing a GitHub repo (`startImport`, #create/import). Answers
@@ -1024,9 +1019,7 @@ export function FirstSession() {
     const { shot } = mode;
     return (
       <MakeScreen
-        idea={shot ? shot.idea : waitlistIdea()}
         who={viewerName()}
-        demo={!!shot}
         // POST /api/apps answered the question as it made the project.
         onMade={(made) => { noteAnswered(); setMode({ kind: 'made', made }); }}
         onLookAround={() => {

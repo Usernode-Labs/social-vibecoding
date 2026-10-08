@@ -503,10 +503,25 @@ test('outcomeFromLog shapes the unit-suite row from a finished Job\'s output', a
   assert.equal(failed.row.advisory, true, 'not yet graduated: advisory');
   assert.ok(failed.row.failureReason, 'a failing Job carries a reason');
 
-  const timedOut = await unitSuite.outcomeFromLog({ pool, appId: 9, sessionId: 42, succeeded: false, stdout: '', timedOut: true, graduated: true });
+  // Killed at its deadline before printing a line: the pod never got to
+  // the suite (a full cluster keeps it pending), so it never ran.
+  const timedOut = await unitSuite.outcomeFromLog({ pool, appId: 9, sessionId: 42, succeeded: false, stdout: '', stderr: 'DeadlineExceeded', timedOut: true, graduated: true });
   assert.equal(timedOut.row.status, 'fail');
   assert.equal(timedOut.row.advisory, false);
-  assert.match(timedOut.row.failureReason, /exceeded .* killed|timed out/i, 'the same wording the live runner uses for a killed suite');
+  assert.equal(timedOut.row.couldNotRun, true);
+  assert.equal(timedOut.row.failureReason,
+    'The unit suite stopped before any test ran: its job ran out of time without printing anything. | DeadlineExceeded');
+  assert.equal(timedOut.history, null, 'it observed nothing, so it records nothing');
+
+  // Killed at its deadline while the tests ran: still the suite's verdict,
+  // worded as the live runner words a killed suite.
+  const slow = await unitSuite.outcomeFromLog({
+    pool, appId: 9, sessionId: 42, succeeded: false, timedOut: true, graduated: true,
+    stdout: `${unitSuite.SETUP_DONE_SENTINEL}\nok 1 - a\n`, stderr: 'DeadlineExceeded',
+  });
+  assert.equal(slow.row.couldNotRun, undefined);
+  assert.match(slow.row.failureReason, /^Suite run exceeded \d+s and was killed\./);
+  assert.equal(slow.history.passed, false);
 });
 
 // ── kubernetes: finding and reading the Jobs ────────────────────────────
@@ -810,6 +825,67 @@ test('runOnCluster: nothing to read, or nothing read in time, still starts over'
   // Outside the Kubernetes capture runtime there is no cluster to ask.
   const pool = runsPool([{ run_id: 'r1', owner: 'p' }]);
   assert.equal(await harvest.runOnCluster({ captureRuntime: 'docker' }, pool, session, opts), null);
+  assert.equal(pool.calls.length, 0);
+});
+
+test('runOnCluster asks about the commit it is given, the session\'s pin by default', async (t) => {
+  stub(t, kubernetes, { findCheckJobs: async () => ({ capture: { name: 'c', state: 'running', finishedAt: null }, unitSuite: null }) });
+  const pool = runsPool([{ run_id: 'r1', owner: 'p' }]);
+  await harvest.runOnCluster(config, pool, { id: 42, checks_commit_sha: 'abc123' }, { commitSha: 'def456', staleMs: TEN_MIN, now: AT_2159 });
+  await harvest.runOnCluster(config, pool, { id: 42, checks_commit_sha: 'abc123' }, { staleMs: TEN_MIN, now: AT_2159 });
+  assert.deepEqual(pool.calls.map((c) => c.params), [[42, 'def456'], [42, 'abc123']]);
+});
+
+// ── A path about to start a run asks first ──────────────────────────────
+
+test('runToCollect: a run of the commit the session still waits on is left to collect, whoever asks', async (t) => {
+  let reads = 0;
+  stub(t, kubernetes, {
+    findCheckJobs: async (_cfg, { previewRunId }) => {
+      reads += 1;
+      return { capture: { name: `sv-capture-s42-${previewRunId}`, state: 'running', finishedAt: null }, unitSuite: null };
+    },
+  });
+  const ask = (session, commitSha, manifests = [{ run_id: 'r1', owner: 'dead-pod:7' }]) => {
+    const pool = makePool({
+      session,
+      answer: (sql) => (/FROM check_runs\s+WHERE session_id = \$1 AND commit_sha/.test(sql)
+        ? { rows: manifests.map((r) => ({ ...r })), rowCount: manifests.length } : null),
+    });
+    return harvest.runToCollect(config, pool, 42, commitSha).then((run) => ({ run, pool }));
+  };
+
+  // Pending on the commit, its capture still running: leave it.
+  const { run, pool } = await ask(sessionRow(), 'abc123');
+  assert.deepEqual(run, { runId: 'r1', owner: 'dead-pod:7', capture: 'running', unitSuite: 'none' });
+  assert.match(pool.calls[0].sql, /FROM chat_sessions cs JOIN apps a/, 'the session is read now, not trusted from the caller');
+  assert.deepEqual(pool.calls[1].params, [42, 'abc123']);
+  // No commit named: the session's own pin.
+  assert.equal((await ask(sessionRow(), null)).run.runId, 'r1');
+
+  // A verdict already stored, a head that moved on, a deferred head, a closed
+  // session: the run is not one the row is waiting on, so nothing is asked
+  // of the cluster and a fresh run may start.
+  reads = 0;
+  for (const session of [
+    sessionRow({ check_state: 'failing' }),
+    sessionRow({ checks_commit_sha: 'def456' }),
+    sessionRow({ check_phase: 'deferred' }),
+    sessionRow({ status: 'merged' }),
+    null,
+  ]) {
+    assert.equal((await ask(session, 'abc123')).run, null, JSON.stringify(session && session.check_state));
+  }
+  assert.equal(reads, 0);
+  // Nothing of that commit on the cluster.
+  assert.equal((await ask(sessionRow(), 'abc123', [])).run, null);
+});
+
+test('runToCollect never throws and is a no-op off Kubernetes', async () => {
+  const broken = { calls: [], async query(sql) { this.calls.push(sql); throw new Error('db down'); } };
+  assert.equal(await harvest.runToCollect(config, broken, 42, 'abc123'), null);
+  const pool = makePool({ session: sessionRow() });
+  assert.equal(await harvest.runToCollect({ captureRuntime: 'docker' }, pool, 42, 'abc123'), null);
   assert.equal(pool.calls.length, 0);
 });
 

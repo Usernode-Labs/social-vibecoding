@@ -190,6 +190,58 @@ test('classify (#4265): a suite that counted failures is failing, even when its 
   assert.equal(mainWatch.classify(fail(unitSuite.failureDetail('npm error code E404', 'BackoffLimitExceeded: Error'))).state, 'error');
 });
 
+test('classify: a suite that never ran is an error, whatever its reason now says', async (t) => {
+  // The rows unit-suite.js writes when the suite never reached `npm test`
+  // (notRunOutcome): their reason no longer starts "Suite setup failed", so
+  // the row's own mark is what keeps them from pausing merges.
+  const empty = await unitSuite.outcomeFromLog({ pool: null, appId: 12, sessionId: 'main-12', succeeded: false, stdout: '', stderr: 'BackoffLimitExceeded: Error', graduated: true });
+  assert.equal(empty.row.couldNotRun, true);
+  assert.doesNotMatch(empty.row.failureReason, /^Suite setup failed/);
+  assert.equal(mainWatch.classify(empty).state, 'error');
+
+  const github = require('../src/services/github');
+  const kubernetes = require('../src/services/kubernetes');
+  const history = require('../src/services/check-history');
+  t.mock.method(github, 'isEnabled', () => true);
+  t.mock.method(github, 'getFileContent', async () => '{"scripts":{"test":"node --test"}}');
+  t.mock.method(github, 'getCloneUrl', async () => 'https://example.test/repo');
+  t.mock.method(history, 'loadGraduated', async () => new Set());
+  t.mock.method(kubernetes, 'runUnitSuiteJob', async () => {
+    throw Object.assign(new Error('jobs.batch "sv-unit-suite-smain-12-x" is forbidden: exceeded quota: social-workers, requested: count/jobs.batch=1'),
+      { code: 403, checkJobNotCreated: true });
+  });
+  const refused = await unitSuite.maybeRunUnitSuite({
+    config: { workerRuntime: 'kubernetes' }, pool: null, appId: 12, sessionId: 'main-12',
+    repoOwner: 'org', repoName: 'demo', ref: SHA,
+  });
+  assert.match(refused.row.failureReason, /^The unit suite could not start: the cluster's job quota was full\. \| /);
+  assert.equal(mainWatch.classify(refused).state, 'error', 'a refused Job says nothing about main');
+  // An install that failed on main's own package files is that commit's
+  // failing row, but main-watch has never paused merges for a suite that
+  // could not get going, and still does not.
+  const lockfile = await unitSuite.outcomeFromLog({
+    pool: null, appId: 12, sessionId: 'main-12', succeeded: false, graduated: true, stderr: 'BackoffLimitExceeded: Error',
+    stdout: [`${unitSuite.ROOT_SENTINEL}=/tmp/w`, unitSuite.CLONED_SENTINEL, 'npm error code ETARGET'].join('\n'),
+  });
+  assert.equal(lockfile.row.setupFailed, true);
+  assert.equal(mainWatch.classify(lockfile).state, 'error');
+  // A red suite is still red.
+  assert.equal(mainWatch.classify(fail(TAP_RED)).state, 'failing');
+});
+
+test('afterMerge: a suite that never ran records error, is not re-run to confirm, and pauses nothing', async () => {
+  const notRun = await unitSuite.outcomeFromLog({ pool: null, appId: 12, sessionId: 'main-12', succeeded: false, stdout: '', stderr: 'BackoffLimitExceeded: Error', graduated: true });
+  const pool = fakePool();
+  const suite = stubSuite(async () => notRun);
+  try {
+    const out = await run(pool);
+    assert.equal(out.state, 'error');
+    assert.equal(suite.calls.length, 1, 'only a red is asked again');
+    assert.deepEqual(pool.writes().map(([state, , clear, set]) => [state, clear, set]), [['error', false, false]]);
+    assert.match(out.detail.failureReason, /^The unit suite stopped before any test ran: /);
+  } finally { suite.restore(); }
+});
+
 // ── afterMerge ───────────────────────────────────────────────────────────
 
 test('afterMerge: a green run records passing, clears the pause column, and tells nobody', async () => {

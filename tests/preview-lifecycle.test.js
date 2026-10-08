@@ -36,10 +36,11 @@ test('preview lifecycle across independent owners', { skip: !url }, async t => {
     const previewSchema = schemaSql.match(/CREATE TABLE IF NOT EXISTS preview_operations \([\s\S]*?\n\);/);
     assert.ok(previewSchema, 'preview_operations must exist in the schema');
     await db.query(previewSchema[0]);
-    const make = (checks = async () => {}) => {
+    const make = (checks = async () => {}, harvest = null) => {
       const guard = createGuard({ retryMs: 5 });
       return createLifecycle({ poolFor: () => db, lock: guard.withResourceUse,
-        checks: () => ({ cancelPreviewChecks: checks }), pollMs: 5 });
+        checks: () => ({ cancelPreviewChecks: checks }), pollMs: 5,
+        ...(harvest ? { harvest: () => harvest } : {}) });
     };
     const reset = async (id, sha = 'old') => {
       await db.query('INSERT INTO chat_sessions VALUES ($1, $2, $3, $3, NULL)', [id, 'active', sha]);
@@ -126,6 +127,56 @@ test('preview lifecycle across independent owners', { skip: !url }, async t => {
         { error: repair.cancelled() }), false);
       assert.equal((await db.query('SELECT state FROM preview_operations WHERE session_id = 13')).rows[0].state,
         'completed');
+    });
+
+    // A capture asked for again while the harvest collects a run of the same
+    // revision (its owner died with the Jobs on the cluster) leaves that run
+    // alone: its Jobs are spared, the row still names it, and the harvest's
+    // ownership check still passes. Only other commits' Jobs are cancelled.
+    const HARVESTED = '22222222-2222-4222-8222-222222222222';
+    const harvestHook = (asked) => ({
+      runToCollect: async (_config, _pool, sessionId, revision) => {
+        asked.push([sessionId, revision]);
+        return { runId: HARVESTED, owner: 'old-pod:1:exited', capture: 'running', unitSuite: 'succeeded' };
+      },
+      runsOfCommit: async () => new Set([HARVESTED]),
+    });
+    const recordCancels = (cancels) => async (_config, _sessionId, runId, opts) => {
+      cancels.push({ runId: runId ?? null, spared: [HARVESTED, 'other-commit-run'].filter(id => opts?.spare?.(id)) });
+    };
+
+    await t.test('a capture leaves a run of its revision to the harvest and cancels only other commits\' Jobs', async () => {
+      const session = await reset(16);
+      await db.query(`INSERT INTO preview_operations
+        (session_id, desired_revision, run_id, revision, phase, state)
+        VALUES (16, 'old', $1, 'old', 'capture', 'running')`, [HARVESTED]);
+      const asked = []; const cancels = [];
+      const owner = make(recordCancels(cancels), harvestHook(asked));
+      let started = false;
+      await assert.rejects(owner.run(config, session, 'old', 'capture', async () => { started = true; }),
+        { code: 'PREVIEW_SUPERSEDED' });
+      assert.equal(started, false, 'nothing is started over');
+      assert.deepEqual(asked, [[16, 'old']], 'asked under the lock, for this revision');
+      assert.deepEqual(cancels, [{ runId: null, spared: [HARVESTED] }],
+        'one cancel-all that spares the harvested run and nothing else');
+      assert.deepEqual((await db.query('SELECT run_id, state FROM preview_operations WHERE session_id = 16')).rows,
+        [{ run_id: HARVESTED, state: 'running' }], 'the row still names the run being collected');
+      const adopted = await owner.adopt(config, { sessionId: 16, runId: HARVESTED, revision: 'old' });
+      assert.ok(adopted, 'the harvest can still adopt it');
+      try { await adopted.check(); } finally { adopted.release(); }
+    });
+
+    await t.test('a forced capture and a build still cancel every Job of the session', async () => {
+      const session = await reset(17);
+      await db.query(`INSERT INTO preview_operations
+        (session_id, desired_revision, run_id, revision, phase, state)
+        VALUES (17, 'old', $1, 'old', 'capture', 'running')`, [HARVESTED]);
+      const asked = []; const cancels = [];
+      const owner = make(recordCancels(cancels), harvestHook(asked));
+      assert.equal(await owner.run(config, session, 'old', 'capture', async () => 'fresh', { force: true }), 'fresh');
+      assert.equal(await owner.run(config, session, 'old', 'build', async () => 'built'), 'built');
+      assert.deepEqual(asked, [], 'neither asks: a forced run wants a fresh verdict, a build replaces the preview');
+      assert.ok(cancels.length >= 2 && cancels.every(c => c.runId === null && c.spared.length === 0), JSON.stringify(cancels));
     });
 
     await t.test('cancellation fences a queued revision before its owner starts', async () => {
