@@ -134,7 +134,7 @@ const OTP_PASSWORD_INTRO_HANDLE = 'Code verified. Choose a username and a passwo
 // signed in to the waitlist, not to the platform. The waitlist's own words
 // (#4073): a spot, a few at a time.
 const OTP_WAITLIST_NOTE =
-  'New accounts get a spot on the waitlist. We let people in a few at a time.';
+  "New accounts get a spot on the waitlist. We're letting people in a few at a time.";
 
 /** Which reset path the recovery view offers. */
 type RecoveryPath = 'wallet' | 'email';

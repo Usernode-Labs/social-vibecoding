@@ -1121,7 +1121,7 @@ export function WaitlistScreen() {
           they build.
           </li>
           <li>
-            We let people in a few at a time. The public apps are open to everyone now.
+            We&rsquo;re letting people in a few at a time. The public apps are open to everyone now.
           </li>
         </ul>
         <p className={hiddenLast(joined, 'mt-3 text-sm font-medium text-zinc-700 dark:text-zinc-200')}>
@@ -1584,7 +1584,7 @@ export function WaitlistScreen() {
                 ? (status?.has_account
                   ? 'Your account already has access. Sign in any time.'
                   : 'Access is open for you. Create your account with this address and you\u2019re straight in.')
-                : 'We let people in a few at a time. We\u2019ll email you when yours comes up.'}
+                : 'We\u2019re letting people in a few at a time. We\u2019ll email you when yours comes up.'}
             </p>
             {/*
                 The same three-state vocabulary the stage-2 screen shows, from
