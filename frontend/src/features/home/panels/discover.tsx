@@ -37,7 +37,7 @@
  * ── The tiles keep Home's wiring ─────────────────────────────────────
  *
  * `Home._wireDiscoveryCards(lane)` binds tap-to-open, the modified-click
- * anchor and the +/✓ badge. It selects on `.app-card`, `.card-add-btn` and
+ * anchor and the Add/Added button. It selects on `.app-card`, `.card-add-btn` and
  * `.card-menu-btn`, so the CARD keeps those class names however it is drawn;
  * it attaches listeners and writes no markup, which is what keeps one owner
  * for the subtree. Per LANE, not per block: a lane whose cards were never
@@ -113,11 +113,12 @@ function CardArt({ icon }: { icon: IconView }) {
  * the CSS that sized it is retired with the grid, and a class that says
  * "tile" on a 152px card is a name the next reader has to disbelieve.
  *
- * The blurb and the contributor line are both CONDITIONAL. Most apps declare
- * no description (there is no such column on `apps` — it comes off the
- * manifest snapshot, see HomePanels.appBlurb), and a card with nothing to say
- * says nothing rather than padding itself with filler. The name and the art
- * are the floor.
+ * The contributor line is CONDITIONAL; the blurb line is not (#4020). Many
+ * apps declare no description (there is no such column on `apps` — it comes
+ * off the manifest snapshot, see HomePanels.appBlurb), and a card that said
+ * nothing there read as a name and a count with no hint of what the app is.
+ * It now says plainly that there is no description yet, rather than
+ * inventing one. The name and the art are still the floor.
  */
 function IllustrationArt({ tile }: { tile: DiscoverTileView }) {
   const [failed, setFailed] = useState(false);
@@ -183,13 +184,22 @@ export function DiscoverCard({ tile, preview = false, previewTheme }: { tile: Di
     >
       <div className="home-discover-art relative">
         <IllustrationArt key={`${tile.illustration?.url}:${tile.illustration?.darkUrl}`} tile={tile} />
+        {/*
+            A WORD, not a bare glyph (#4020). The corner badge was a 24px ⊕
+            whose meaning lived only in its tooltip, and a tooltip does nothing
+            on a phone: a new reader could not tell add from install from save.
+            "Add" says it on every screen; the tooltip and the aria-label still
+            name the destination (My apps). Added is grey with a check, not a
+            filled green pill: the settled state is not the loudest thing on
+            the card (AGENTS.md, one accent).
+        */}
         <button
           type="button"
           disabled={preview}
           tabIndex={preview ? -1 : undefined}
-          className={`card-add-btn absolute top-1.5 right-1.5 w-6 h-6 flex items-center justify-center rounded-full border shadow-sm transition-colors un-touch-target ${
+          className={`card-add-btn absolute top-1.5 right-1.5 h-6 pl-1.5 pr-2 gap-1 flex items-center justify-center rounded-full border shadow-sm text-[12px] font-semibold leading-none transition-colors un-touch-target ${
             added
-              ? 'bg-emerald-500 border-emerald-500 text-white'
+              ? 'bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-600 text-zinc-600 dark:text-zinc-300'
               : 'bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-600 text-violet-700 dark:text-violet-400 hover:border-violet-400'
           }`}
           data-slug={tile.slug}
@@ -199,8 +209,9 @@ export function DiscoverCard({ tile, preview = false, previewTheme }: { tile: Di
           aria-pressed={added}
         >
           {added
-            ? <CheckIcon className="w-3.5 h-3.5" strokeWidth="3" aria-hidden="true" />
-            : <PlusWideIcon className="w-3.5 h-3.5" strokeWidth="3" aria-hidden="true" />}
+            ? <CheckIcon className="w-3 h-3" strokeWidth="3" aria-hidden="true" />
+            : <PlusWideIcon className="w-3 h-3" strokeWidth="3" aria-hidden="true" />}
+          <span>{added ? 'Added' : 'Add'}</span>
         </button>
       </div>
       <div className="flex flex-col gap-0.5 px-2.5 pt-2 pb-2.5">
@@ -214,11 +225,13 @@ export function DiscoverCard({ tile, preview = false, previewTheme }: { tile: Di
         <span className="home-discover-name truncate whitespace-nowrap text-[15px] font-semibold leading-tight text-zinc-900 dark:text-zinc-100">
           {tile.name}
         </span>
-        {tile.blurb ? (
-          <span className="home-discover-blurb text-[12px] leading-snug text-zinc-600 dark:text-zinc-400">
-            {tile.blurb}
-          </span>
-        ) : null}
+        {/* With no description, the line says so in words (#4020): a name
+            and "4 contributors" alone left a new reader guessing what the
+            app is for. Same slot, same ink, so a card with a
+            description and one without line up in the rail. */}
+        <span className="home-discover-blurb text-[12px] leading-snug text-zinc-600 dark:text-zinc-400">
+          {tile.blurb || 'No description yet'}
+        </span>
         {/* zinc-600, the blurb's ink (QA 2026-09-24 Q20): zinc-500 is under
             4.5:1 on two of the five pastel tints (4.39 and 4.36). */}
         {tile.contributors ? (
