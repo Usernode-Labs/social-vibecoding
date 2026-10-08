@@ -264,6 +264,15 @@
       });
     }
 
+    // 1a — merged, its deploy still to come: live_at is null until production
+    // runs it (the merge-followups workflow machine). A row without the
+    // field (undefined) reads as it always did.
+    if (status === 'merged' && p.live_at === null) {
+      return descriptor('going_live', 'Going live\u2026', 'amber', true, {
+        votes: votes,
+        title: 'This change is merged. Production is being updated to run it.',
+      });
+    }
     // 1 — terminal: merged.
     if (status === 'merged') {
       return descriptor('merged', 'Merged', 'violet', false, { glyph: '✓', votes: votes });

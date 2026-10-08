@@ -187,6 +187,16 @@ function makeHarness({ offline = false, uploadPlan = null, prepareFile = null, f
       await input.fire('change');
       await flush();
     },
+    // #4065: a drag from the desktop onto the form.
+    async drop(...files) {
+      let prevented = 0;
+      const dataTransfer = { types: ['Files'], files, dropEffect: 'none' };
+      const event = { dataTransfer, preventDefault: () => { prevented += 1; } };
+      await el('feedback-form').fire('dragover', event);
+      await el('feedback-form').fire('drop', event);
+      await flush();
+      return { prevented, dropEffect: dataTransfer.dropEffect };
+    },
     type(text) {
       el('feedback-text').value = text;
       el('feedback-text').fire('input');
@@ -365,4 +375,77 @@ test('closing mid multi-pick stops attaching (and uploading) the rest', async ()
   assert.equal(h.list().length, 0);
   h.open();
   assert.equal(h.list().length, 0, 'the next open starts empty');
+});
+
+test('#4065: images dropped on the form attach like picked ones, and the browser does not open them', async () => {
+  const h = makeHarness();
+  h.open();
+  const dropped = await h.drop(
+    { name: 'shot.png', size: 10, type: 'image/png' },
+    { name: 'notes.txt', size: 10, type: 'text/plain' },
+  );
+  assert.equal(dropped.prevented, 2, 'dragover and drop both claimed, so the page never navigates to the file');
+  assert.equal(dropped.dropEffect, 'copy');
+  assert.deepEqual(h.list().map((item) => h.thumbImg(item).src), ['blob:shot.png'], 'only the image is attached');
+  assert.equal(h.uploads().length, 1);
+
+  await h.drop(
+    { name: 'a.png', size: 10, type: 'image/png' },
+    { name: 'b.png', size: 10, type: 'image/png' },
+    { name: 'c.png', size: 10, type: 'image/png' },
+  );
+  assert.equal(h.list().length, 3, 'the same room limit as the picker');
+  assert.match(h.el('feedback-status').textContent, /up to 3 images/i);
+
+  await h.drop({ name: 'd.png', size: 10, type: 'image/png' });
+  assert.equal(h.list().length, 3, 'a full row takes no more');
+  assert.equal(h.uploads().length, 3);
+});
+
+test('#4065: a drop with nothing usable says what the form takes', async () => {
+  const h = makeHarness();
+  h.open();
+  const dropped = await h.drop({ name: 'notes.txt', size: 10, type: 'text/plain' });
+  assert.equal(dropped.prevented, 2);
+  assert.equal(h.list().length, 0);
+  assert.match(h.el('feedback-status').textContent, /image or a video/i);
+});
+
+test('#4127: Photo and Video sit behind one paperclip whose popover a choice closes', async () => {
+  const h = makeHarness();
+  h.open();
+  const attach = h.el('feedback-attach-btn');
+  const menu = h.el('feedback-attach-menu');
+  const photo = h.el('feedback-screenshot-picker-btn');
+  const video = h.el('feedback-video-btn');
+  assert.equal(attach.classList.contains('hidden'), false, 'the paperclip is on the row');
+  assert.equal(attach.disabled, false);
+  assert.equal(menu.classList.contains('hidden'), true, 'its popover starts closed');
+  assert.equal(photo.classList.contains('hidden'), false);
+  assert.equal(video.classList.contains('hidden'), false);
+  assert.equal(video.querySelector('[data-video-label]') !== null, true);
+
+  await attach.click();
+  assert.equal(menu.classList.contains('hidden'), false, 'pressing the paperclip opens it');
+  assert.equal(attach.getAttribute('aria-expanded'), 'true');
+  await attach.click();
+  assert.equal(menu.classList.contains('hidden'), true, 'pressing it again closes it');
+
+  await attach.click();
+  await photo.click();
+  assert.equal(menu.classList.contains('hidden'), true, 'choosing Photo closes it');
+  assert.equal(attach.getAttribute('aria-expanded'), 'false');
+
+  await attach.click();
+  await video.click();
+  assert.equal(menu.classList.contains('hidden'), true, 'choosing Video closes it');
+
+  // Full of images: the Photo row steps aside, the paperclip stays for Video.
+  await h.pick('a.png', 'b.png', 'c.png');
+  assert.equal(photo.classList.contains('hidden'), true);
+  assert.equal(attach.classList.contains('hidden'), false);
+
+  await attach.click();
+  h.close();
+  assert.equal(menu.classList.contains('hidden'), true, 'closing the dialog closes the popover');
 });

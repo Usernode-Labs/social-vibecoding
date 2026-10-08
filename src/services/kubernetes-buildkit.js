@@ -61,9 +61,12 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const stream = require('stream');
-const k8s = require('@kubernetes/client-node');
 const log = require('./logger');
 const { parseDockerBuildLine } = require('./docker');
+
+// Loaded on first use, as in kubernetes.js: most processes that load this
+// file never patch a Job.
+const kubernetesClient = () => require('@kubernetes/client-node');
 
 const ENGINE = 'buildkit';
 const MANAGED_BY = 'social-vibecoding-runtime';
@@ -451,6 +454,10 @@ async function createBuild(config, { app, revision, environment, sessionId, sour
     // Left by an earlier attempt of this exact name; a fresh token replaces it.
     await core.replaceNamespacedSecret({ name: inputSecretName, namespace, body: secretBody }).catch(() => {});
   }
+  // No Job of ours will own the Secret when the create is refused or never
+  // gets a turn, so its clone credential goes before the build fails.
+  const deleteInputSecret = () => runtime.deleteIfPresent(core, 'deleteNamespacedSecret', inputSecretName, namespace)
+    .catch((err) => log.warn('kubernetes', 'BuildKit input Secret cleanup failed', { name: inputSecretName, err: err.message }));
   const createDeadline = Date.now() + 60000;
   while (true) {
     try {
@@ -458,7 +465,7 @@ async function createBuild(config, { app, revision, environment, sessionId, sour
       break;
     } catch (err) {
       if (!isConflict(err)) {
-        await runtime.deleteIfPresent(core, 'deleteNamespacedSecret', inputSecretName, namespace).catch(() => {});
+        await deleteInputSecret();
         if (isLaneMissing(err)) markUnavailable(err, `cannot create Jobs in ${namespace} (${err.message})`);
         err.buildFailed = true;
         err.buildLog = runtime.boundedText(err.message);
@@ -478,7 +485,10 @@ async function createBuild(config, { app, revision, environment, sessionId, sour
           break;
         }
       }
-      if (Date.now() >= createDeadline) throw new Error(`Timed out waiting to recreate BuildKit Job ${name}`);
+      if (Date.now() >= createDeadline) {
+        await deleteInputSecret();
+        throw new Error(`Timed out waiting to recreate BuildKit Job ${name}`);
+      }
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
   }
@@ -497,6 +507,7 @@ async function createBuild(config, { app, revision, environment, sessionId, sour
     const digest = await waitForJob(cfg, runtime, clients, name, { onProgress });
     const imageRef = `${repository}@${digest}`;
     try {
+      const k8s = kubernetesClient();
       await batch.patchNamespacedJob(
         { name, namespace, body: { metadata: { annotations: { [DIGEST_ANNOTATION]: digest } } } },
         k8s.setHeaderOptions('Content-Type', k8s.PatchStrategy.MergePatch)

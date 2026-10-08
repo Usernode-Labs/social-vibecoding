@@ -23,6 +23,14 @@
  * It answers false when it will not show, and the caller lands them where
  * it always did.
  *
+ * The same island is the platform's one front door for a new project: the
+ * Create button (App.showCreateModal, public/js/app.js) opens
+ * "What do you want to make?" through `create()`, with `entry` 'create'
+ * (`create({ import: true })`, from #create/import, opens it on importing a
+ * GitHub repo). From there it ends on the project's hub rather than on the
+ * first session's tour, and it answers nothing the first session asks
+ * (noteAnswered).
+ *
  * A sign-in from the invite's own page (Join, then the sheet) is followed in
  * the tick the signed-in shell starts, and the link's standing, which says
  * whether to welcome them, is a request away: Home showed for that long
@@ -49,8 +57,11 @@ import { Button } from '@/components/ui/button';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { Wordmark } from '@/components/ui/wordmark';
 
+import { pushDismissible, type Release } from '../../lib/back-stack';
+import { invalidateAppAllowance } from '../dialogs/app-allowance-store.js';
+import { cardPosition } from './card-placement';
 import { joinPicture, JoinedPicture } from './joined-picture';
-import { type Made, MakeScreen } from './make';
+import { type Made, type MakeEntry, MakeScreen } from './make';
 import { MadeScreen, madeAppOf, madeAppUrl } from './made';
 import { type FirstVersionStage, invitedSteps, makerSteps, privateSteps, type TourScreen, type TourStep } from './tour-steps';
 
@@ -92,12 +103,14 @@ type Legacy = {
   App?: {
     user?: {
       id?: number; username?: string; displayName?: string | null; needsCommunitiesChoice?: boolean; privateMember?: boolean;
+      homeroomBotDm?: boolean;
     } | null;
     _privateHomeVisited?: () => boolean;
     _notePrivateHome?: () => void;
     saveSessionSnapshot?: (user: unknown) => void;
     navigateHome?: (opts?: unknown) => void;
     navigateToApp?: (slug: string, tab: string) => unknown;
+    _isScreenVisible?: (id: string) => boolean;
     openDiscussionInHub?: (slug: string) => void;
     _WORKSHOP_VIEW_KEY?: string;
     _workshopViewPath?: (url: string) => string | null;
@@ -106,6 +119,15 @@ type Legacy = {
   AppView?: {
     _landOnHub?: (slug: string) => void;
   };
+  // ../auth/phone-first-run.tsx: on a phone, its step comes before this one.
+  PhoneFirstRun?: {
+    comesFirst?: (user: unknown) => boolean;
+    settled: () => Promise<void>;
+  };
+  Home?: { load?: () => void };
+  // ../auth/username-first-run.js: set while it asks a provisional handle for a username.
+  UsernameFirstRun?: { _publicAsk?: Promise<boolean> | null };
+  Secrets?: { open?: (slug: string) => void };
   UsernodeReact?: Record<string, unknown>;
 };
 const legacy = (): Legacy => window as unknown as Legacy;
@@ -130,6 +152,41 @@ export function enterScreen(screen: TourScreen, slug: string, conversationId?: n
   else if (screen === 'hub') { AppView?._landOnHub?.(slug); App.navigateToApp?.(slug, 'dev'); }
   else if (screen === 'discussion') App.openDiscussionInHub?.(slug);
   else if (screen === 'bot' && conversationId) window.location.hash = `#messages/${conversationId}`;
+}
+
+/** The longest the held frame waits on a private member's app (appDrawn). */
+export const APP_DRAWN_MAX_MS = 10_000;
+
+/**
+ * Resolves once the app a private member is sent to (`going`, what
+ * App.navigateToApp returned) is the screen, or that navigation has ended
+ * somewhere else, or it has stopped to ask for a username: whichever comes
+ * first, and within APP_DRAWN_MAX_MS. "You're in"'s held frame stays up
+ * until then (#4215). For a provisional handle (a private group's phone
+ * Join) the navigation reads the app's audience before it reveals anything
+ * (App._navigateAfterUsername); by the time it does, Home has drawn the
+ * project's tile under the frame, and the app grows out of it (the
+ * navigation's zoom) with Home still up until the zoom ends. Taking the
+ * frame down at the hand-off showed Home for that whole time.
+ */
+export function appDrawn(going: unknown, host: Legacy = legacy(), now: () => number = Date.now): Promise<void> {
+  const app = host.App;
+  const appUp = () => !!app?._isScreenVisible?.('app-view');
+  const drawn = () => (appUp() && !app?._isScreenVisible?.('home-screen')) || !!host.UsernameFirstRun?._publicAsk;
+  const pending = going as Promise<unknown> | null | undefined;
+  if (drawn() || !pending || typeof pending.then !== 'function') return Promise.resolve();
+  const until = now() + APP_DRAWN_MAX_MS;
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = () => { settled = true; };
+    pending.then(done, done);
+    const check = () => {
+      // Settled with no app up: it went somewhere else ("Not now", refused).
+      if (drawn() || (settled && !appUp()) || now() > until) resolve();
+      else requestAnimationFrame(check);
+    };
+    requestAnimationFrame(check);
+  });
 }
 
 /**
@@ -342,20 +399,15 @@ function boxKey(b: Box | null | undefined): string {
   return b ? `${Math.round(b.left)},${Math.round(b.top)},${Math.round(b.width)},${Math.round(b.height)}` : '';
 }
 
-/** The coach card's position for a target box, as inline style. */
+/** The coach card's position for a target box, as inline style (./card-placement.ts). */
 export function cardPlacement(box: Box | null, step: TourStep, viewport: { width: number; height: number }): React.CSSProperties {
-  const H = viewport.height;
   const tabs = document.getElementById('platform-tabs');
-  const tabsTop = tabs && tabs.getBoundingClientRect().height ? tabs.getBoundingClientRect().top : H;
-  if (!box) return { bottom: H - tabsTop + 16 };
-  if (step.place && typeof step.place === 'object') {
-    const above = document.querySelector(step.place.above);
-    if (above) return { bottom: H - above.getBoundingClientRect().top + 12 };
-  }
-  if (step.place === 'bottom') return { bottom: H - tabsTop + 16 };
-  if (box.height > H * 0.45) return { bottom: Math.max(16, H - (box.top + box.height) + 20) };
-  if (box.top + box.height / 2 > H / 2) return { bottom: H - box.top + PAD + 12 };
-  return { top: box.top + box.height + PAD + 12 };
+  const above = step.place && typeof step.place === 'object' ? document.querySelector(step.place.above) : null;
+  return cardPosition(box, step.place, viewport, {
+    bar: tabs ? tabs.getBoundingClientRect() : null,
+    aboveTop: above ? above.getBoundingClientRect().top : null,
+    pad: PAD,
+  });
 }
 
 /** The tour over the live shell (see the header); exported so a test can draw its card. */
@@ -629,10 +681,12 @@ export function YoureIn({ info, onGo }: { info: FirstSessionInfo; onGo: (firstVe
 
 export type Mode =
   | { kind: 'none' }
-  | { kind: 'held' }
+  // `app`: handed to a private member's app (welcome), and down once it is drawn.
+  | { kind: 'held'; app?: string }
   | { kind: 'welcome'; info: FirstSessionInfo }
-  | { kind: 'make' }
-  | { kind: 'made'; made: Made }
+  // `entry` 'create' is the Create button's (see the header); none is the first session's.
+  | { kind: 'make'; entry?: MakeEntry; startImport?: boolean }
+  | { kind: 'made'; made: Made; entry?: MakeEntry }
   | { kind: 'tour'; info: FirstSessionInfo; path: 'invited' | 'maker' | 'private' };
 
 // Set by the signed-out story's sheet for an account it just made
@@ -701,6 +755,55 @@ function viewerName(): string {
   return user?.displayName || user?.username || '';
 }
 
+/**
+ * Whether Homeroom bot builds this viewer's first version (make.tsx
+ * makeLine). Only a `homeroomBotDm` the server said false turns it off: a
+ * session snapshot from before the field still reads as the bot, which is
+ * what the make screen always said.
+ */
+export function viewerBotBuilds(user: { homeroomBotDm?: boolean } | null | undefined): boolean {
+  return user?.homeroomBotDm !== false;
+}
+
+/**
+ * "What do you want to make?" from the Create button, over nothing else, or
+ * open on importing a GitHub repo (`startImport`, #create/import). Answers
+ * whether it opened: something already holding the screen keeps it.
+ */
+export function openCreate(setMode: Dispatch<SetStateAction<Mode>>, startImport = false): boolean {
+  let opened = false;
+  flushSync(() => setMode((prev) => {
+    if (prev.kind !== 'none') return prev;
+    opened = true;
+    return startImport ? { kind: 'make', entry: 'create', startImport: true } : { kind: 'make', entry: 'create' };
+  }));
+  if (opened) void invalidateAppAllowance();
+  return opened;
+}
+
+/**
+ * Whether the platform header is on screen, for the Create door's screens
+ * to sit below it (#4195). Not inside an app, where the header gives way to
+ * the chromeless pill, nor in the side panel: there they take the whole
+ * screen as before, rather than leave a band where no header is.
+ */
+export function platformHeaderShown(doc: Pick<Document, 'getElementById'> | null = typeof document === 'undefined' ? null : document): boolean {
+  const header = doc?.getElementById('platform-header');
+  return !!header && header.getClientRects().length > 0;
+}
+
+/**
+ * Whether a press in the page leaves the Create door: a control in the
+ * platform header (back, the bell, the workshop chip, the sidebar, the
+ * mark's menu), now that the header shows above the door's screens.
+ */
+export function leavesDoor(target: EventTarget | null): boolean {
+  const el = target as { closest?: (sel: string) => Element | null } | null;
+  if (!el || typeof el.closest !== 'function') return false;
+  const control = el.closest('a, button, [role="button"]');
+  return !!control && !!control.closest('#platform-header');
+}
+
 export function FirstSession() {
   const [mode, setMode] = useState<Mode>({ kind: 'none' });
 
@@ -712,6 +815,13 @@ export function FirstSession() {
       let flagged = false;
       try { flagged = sessionStorage.getItem(MAKE_FLAG) === '1'; } catch { /* no make screen */ }
       if (!flagged) return;
+      // On a phone, the verified-identity rule's phone step comes first
+      // (../auth/phone-first-run.tsx): the make screen opens once it is done.
+      const phone = legacy().PhoneFirstRun;
+      if (now && phone?.comesFirst?.(legacy().App?.user)) {
+        void phone.settled().then(() => check(false));
+        return;
+      }
       try { sessionStorage.removeItem(MAKE_FLAG); } catch { /* shown once anyway */ }
       openMake(setMode, now);
     };
@@ -733,10 +843,14 @@ export function FirstSession() {
         // A PRIVATE MEMBER lands inside the app the link was for, full
         // screen, instead of "You're in" and the hub: Homeroom is what the
         // mark menu's "Go to Homeroom" opens, and its tour (goHome) runs
-        // then. A frame held for the welcome goes.
+        // then. A frame held for the welcome goes once the app is on
+        // screen, not before (appDrawn): never Home in between.
         if (legacy().App?.user?.privateMember) {
-          setMode((prev) => (prev.kind === 'held' ? { kind: 'none' } : prev));
-          enterScreen('app', info.slug);
+          // The follow's own ending (endHold) leaves a frame handed on.
+          const { slug } = info;
+          setMode((prev) => (prev.kind === 'held' ? { kind: 'held', app: slug } : prev));
+          const going = legacy().App?.navigateToApp?.(slug, 'app');
+          void appDrawn(going).then(() => setMode((prev) => (prev.kind === 'held' && prev.app === slug ? { kind: 'none' } : prev)));
           return true;
         }
         setMode({ kind: 'welcome', info });
@@ -771,9 +885,10 @@ export function FirstSession() {
         return held;
       },
       // The follow ended some other way (the hub, a confirm, a toast): the
-      // frame goes, and only the frame.
+      // frame goes, and only the frame. A frame welcome() handed to the app
+      // stays until the app is drawn.
       endHold(): void {
-        setMode((prev) => (prev.kind === 'held' ? { kind: 'none' } : prev));
+        setMode((prev) => (prev.kind === 'held' && !prev.app ? { kind: 'none' } : prev));
       },
       // "What do you want to make?" for an account that is due the join
       // screen and did not come through the story's sheet, and for any
@@ -790,7 +905,13 @@ export function FirstSession() {
       // device, say). Only that screen: once Make it has made something,
       // what follows it stays.
       dismissMake(): void {
-        setMode((prev) => (prev.kind === 'make' ? { kind: 'none' } : prev));
+        setMode((prev) => (prev.kind === 'make' && prev.entry !== 'create' ? { kind: 'none' } : prev));
+      },
+      // The Create button (App.showCreateModal): the one front door for a
+      // new project, for every signed-in viewer; `import` opens it on
+      // importing a GitHub repo.
+      create(opts?: { import?: boolean }): boolean {
+        return openCreate(setMode, !!opts?.import);
       },
     };
     w.UsernodeReact.firstSession = api;
@@ -798,6 +919,53 @@ export function FirstSession() {
   }, []);
 
   const end = useCallback(() => setMode({ kind: 'none' }), []);
+
+  // The Create door's screens own the device's back press, as the New
+  // project dialog they replaced did (lib/back-stack.ts): back closes them,
+  // from the make screen or the made one (the claim is kept across Make it).
+  // Left any other way, the claim is handed back first (leaveDoor): as a
+  // navigating one when the way out goes somewhere (the hub, the chat, a
+  // dialog that claims its own), so its queued traversal cannot undo that.
+  const createDoor = (mode.kind === 'make' || mode.kind === 'made') && mode.entry === 'create';
+  const doorBack = useRef<Release | null>(null);
+  useEffect(() => {
+    if (!createDoor) return undefined;
+    const release = pushDismissible(() => {
+      doorBack.current = null;
+      setMode((prev) => ((prev.kind === 'make' || prev.kind === 'made') && prev.entry === 'create' ? { kind: 'none' } : prev));
+      return true;
+    });
+    doorBack.current = release;
+    return () => {
+      if (doorBack.current !== release) return;
+      doorBack.current = null;
+      release();
+    };
+  }, [createDoor]);
+  const leaveDoor = useCallback((navigating: boolean) => {
+    const release = doorBack.current;
+    doorBack.current = null;
+    release?.(navigating ? { navigating: true } : undefined);
+    setMode({ kind: 'none' });
+  }, []);
+  // From Create the door's screens sit below the platform header when it
+  // shows (#4195), read once as the door opens and kept from make to made.
+  const underHeader = useMemo(() => createDoor && platformHeaderShown(), [createDoor]);
+  // Going somewhere else leaves the door, as its own ways out do: a route
+  // change (the hash), and any press on the header's controls, whose sheets
+  // and menus open below the door's screens otherwise. The press goes on to
+  // its control; the door only gets out of the way.
+  useEffect(() => {
+    if (!createDoor) return undefined;
+    const onRoute = () => leaveDoor(true);
+    const onPress = (e: Event) => { if (leavesDoor(e.target)) leaveDoor(true); };
+    window.addEventListener('hashchange', onRoute);
+    document.addEventListener('click', onPress, true);
+    return () => {
+      window.removeEventListener('hashchange', onRoute);
+      document.removeEventListener('click', onPress, true);
+    };
+  }, [createDoor, leaveDoor]);
   const steps = useMemo(() => {
     if (mode.kind !== 'tour') return [];
     const project = {
@@ -807,10 +975,31 @@ export function FirstSession() {
     return mode.path === 'maker' ? makerSteps(project) : invitedSteps(project);
   }, [mode]);
 
+  if (mode.kind === 'make' && mode.entry === 'create') {
+    return (
+      <MakeScreen
+        who={viewerName()}
+        entry="create"
+        startImport={!!mode.startImport}
+        underHeader={underHeader}
+        botBuilds={viewerBotBuilds(legacy().App?.user)}
+        // Nothing is answered: the tile behind is refreshed, so the new
+        // project is in the grid when the made screen goes, and the
+        // allowance is read again.
+        onMade={(made) => {
+          legacy().Home?.load?.();
+          void invalidateAppAllowance();
+          setMode({ kind: 'made', made, entry: 'create' });
+        }}
+        onClose={() => leaveDoor(false)}
+      />
+    );
+  }
   if (mode.kind === 'make') {
     return (
       <MakeScreen
         who={viewerName()}
+        botBuilds={viewerBotBuilds(legacy().App?.user)}
         // POST /api/apps answered the question as it made the project.
         onMade={(made) => { noteAnswered(); setMode({ kind: 'made', made }); }}
         onLookAround={() => {
@@ -824,14 +1013,25 @@ export function FirstSession() {
   }
   if (mode.kind === 'made') {
     const { made } = mode;
+    const fromCreate = mode.entry === 'create';
     return (
       <MadeScreen
         made={made}
         me={viewerName()}
+        entry={mode.entry}
+        underHeader={fromCreate && underHeader}
         onContinue={() => {
           const info = { slug: made.slug, name: made.name, iconEmoji: made.emoji, conversationId: made.conversationId };
           markSeen(made.slug);
           rememberCommunity(made.slug);
+          // From Create: the project's own hub, where its first change is
+          // started, as the New project dialog's Open project went. The
+          // tour is the first session's.
+          if (fromCreate) {
+            leaveDoor(true);
+            enterScreen('hub', made.slug);
+            return;
+          }
           enterScreen('home', made.slug);
           setMode({ kind: 'tour', info, path: 'maker' });
         }}
@@ -841,7 +1041,14 @@ export function FirstSession() {
           markSeen(made.slug);
           rememberCommunity(made.slug);
           setMode({ kind: 'none' });
+          if (fromCreate) leaveDoor(true);
           enterScreen('bot', made.slug, conversationId);
+        }}
+        // A setup waiting on its secrets: the project's secrets dialog,
+        // with this screen out of its way.
+        onSetSecrets={() => {
+          leaveDoor(true);
+          legacy().Secrets?.open?.(made.slug);
         }}
       />
     );

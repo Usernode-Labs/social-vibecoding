@@ -210,7 +210,9 @@ function RecentRow({ item, live, resume = false }: { item: RecentItem; live: boo
       {item.activity
         ? <AgentActivityIcon activity={item.activity} className="platform-recent-glyph" />
         : app ? <AppTile app={app} /> : <Glyph className="platform-recent-glyph" aria-hidden="true" />}
-      <span className="platform-recent-label">{item.label}</span>
+      {/* #4024: the rail cuts a long label short ("Add a profile phot…"),
+          so hovering it shows the whole label. */}
+      <span className="platform-recent-label" title={item.label}>{item.label}</span>
       {/* #3618: the action the row stands for, on a running app you left. */}
       {resume ? <span className="platform-recent-resume" aria-hidden="true">Resume</span> : null}
       {/* #2902: still loaded — resuming it shows it exactly as it was left. */}

@@ -31,6 +31,21 @@ const HOP_HEADERS = new Set([
   'te', 'trailer', 'transfer-encoding', 'upgrade', 'host', 'content-length',
 ]);
 
+// Which of a model's hosts OpenRouter tries first (provider routing). Left
+// to itself it balances by price, and its prompt-cache stickiness then keeps
+// a turn on whichever host the turn's first request landed on. A GLM build on
+// 2026-10-06 landed on a host averaging 44 s a request, against 7 s on the
+// host that served the same build again, and ran out its 40 minutes before
+// it ever opened the in-loop browser. These preferences only reorder: a host
+// whose time to first token is over 15 s at p90, or whose median output is
+// under 30 tokens a second, over OpenRouter's last few minutes, is tried after
+// the hosts that meet them, never excluded, and price still decides among
+// the rest. Kept in step with the other OpenRouter listener (tests pin it).
+const PROVIDER_PREFERENCES = Object.freeze({
+  preferred_max_latency: Object.freeze({ p90: 15 }),
+  preferred_min_throughput: Object.freeze({ p50: 30 }),
+});
+
 async function readBounded(stream, limit) {
   const chunks = [];
   let bytes = 0;
@@ -182,6 +197,11 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
   const upstreamBase = base.href.replace(/\/+$/, '');
   const active = new Set();
   let requestOrdinal = 0;
+  // Each request's start and end also carry atMs, ms since this listener
+  // (and so the turn's Codex process) started: the journal is read again
+  // after a platform restart, so only the turn's own clock says when a
+  // request ran (worker.js noteCodingRequestClock).
+  const listenerStartedAt = performance.now();
   const server = http.createServer(async (req, res) => {
     if (req.method !== 'POST' || req.url !== '/responses') {
       replyError(res, 404, 'Unsupported OpenRouter adapter route');
@@ -221,6 +241,10 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
         return;
       }
       body.max_output_tokens = Math.min(maxOutputTokens, incomingCap ?? maxOutputTokens);
+      // Prefer hosts that answer promptly; any preference Codex sent is kept.
+      const askedProvider = body.provider && typeof body.provider === 'object' && !Array.isArray(body.provider)
+        ? body.provider : {};
+      body.provider = { ...PROVIDER_PREFERENCES, ...askedProvider };
       const serializedBody = JSON.stringify(body);
       const payloadBytes = Buffer.byteLength(serializedBody);
       const inputBytes = body.input == null ? 0 : Buffer.byteLength(JSON.stringify(body.input));
@@ -240,6 +264,7 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
         timing = { ordinal, startedAt, stage: 'await_headers', status: null,
           responseBytes: 0, chunks: 0, outcome: 'ok' };
         emitTiming({ kind: 'provider_request_start', requestOrdinal: ordinal,
+          atMs: Math.max(0, Math.round(startedAt - listenerStartedAt)),
           payloadBytes, inputBytes, instructionBytes, inputItems, previousResponseLinked,
           maxOutputTokens: body.max_output_tokens });
         timing.interval = setInterval(() => emitTiming({
@@ -342,10 +367,12 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
     } finally {
       if (timing) {
         clearInterval(timing.interval);
+        const endedAt = performance.now();
         emitTiming({ kind: 'provider_request_end', requestOrdinal: timing.ordinal,
+          atMs: Math.max(0, Math.round(endedAt - listenerStartedAt)),
           outcome: timing.outcome, stage: timing.stage,
           ...(timing.status != null ? { httpStatus: timing.status } : {}),
-          durationMs: Math.max(0, Math.round(performance.now() - timing.startedAt)),
+          durationMs: Math.max(0, Math.round(endedAt - timing.startedAt)),
           responseBytes: Math.min(timing.responseBytes, 10_000_000),
           chunkCount: Math.min(timing.chunks, 1000),
         });
@@ -445,4 +472,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { startRequestAdapter, runCodex };
+module.exports = { startRequestAdapter, runCodex, PROVIDER_PREFERENCES };

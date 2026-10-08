@@ -158,6 +158,7 @@ issue, a build — and the platform merges none of it without a group vote:
 | `submit_work` | Opens or advances a proposal, for the group to vote on |
 | `create_request` | Files on the app's board and as a GitHub issue |
 | `prepare_work` | Claims the request on the app's board; mints a work order |
+| `close_work_order` | Puts away one of the user's own unsubmitted work orders, freeing its slot; touches no branch, proposal or vote |
 | `start_platform_build` | Spends the user's daily Homeroom credits |
 | `submit_platform_build` | Puts that build to a group vote |
 | `recheck_change` | Re-runs a proposal's checks on the commit it already has; no code or vote moves |
@@ -213,12 +214,13 @@ the setup hint, out of the shipped allow rules, prompted like any other write.
 
 First-time-user testing needs a genuinely new account each run, and "Reset
 first run" on an old one keeps its memberships, votes and history. A full
-platform admin's connector (and nobody else's) gets three tools for that, over
+platform admin's connector (and nobody else's) gets four tools for that, over
 `routes/test-accounts.js` and `services/test-accounts.js`:
 
 | Tool | What it actually does |
 |---|---|
 | `create_test_account` | Makes a new account flagged as a test account and returns its username and a one-time password, with the sign-in steps. Inputs, all optional: `username` (omitted: a placeholder and the real "choose your username" step), `platformAccess` (default `true`; `false` leaves it in the waiting room), `homeroomBotDm`, `welcomeDm` (both default `false`), `note` (≤ 200 characters) |
+| `create_test_phone_sign_in` | A one-time phone sign-in for the flows that ask for a phone (an invite's Join sheet): a fictional test number (`+1 415 555 01xx` unless `phoneNumber` names another `+1 … 555 0100–0199` number) and a random six-digit code that works once, within 30 minutes and five tries, in any environment. No text is sent. The account it makes is a test account; naming a live test account's number signs in to it again |
 | `list_test_accounts` | The live ones: id, username, who made it and when, last active, note, and the apps it made with their status. Read-only |
 | `retire_test_account` | With `confirm: "RETIRE"`: takes down every app the account made (the same teardown as deleting the app), then deletes the account. Refuses an account that is not a test account, and stops without deleting it if an app cannot be taken down |
 
@@ -228,6 +230,14 @@ through the same form) against local, staging and production alike. A device
 that is already signed in must sign out first. No endpoint mints a sign-in
 link or token: that would be a new credential type with a larger blast radius
 than a random password on a flagged account.
+
+The invite's Join sheet signs a newcomer up with a phone, which a password
+cannot stand in for, so `create_test_phone_sign_in` mints the one other
+credential: a code for one fictional number (`+1 … 555 0100–0199`, reserved
+for fiction, so no person holds it). It is random, works once within 30
+minutes and five tries, is kept only as a bcrypt hash, and adds its number only
+to a test account. A local stack can instead set `PHONE_TEST_CODE`, one fixed
+code for every test number, which production refuses.
 
 A test account is a real account, so it is fenced from real outcomes rather
 than trusted not to use them:
@@ -243,8 +253,9 @@ than trusted not to use them:
 - **People.** No welcome DM unless `welcomeDm` is set. What it posts in a
   shared space is still seen by everyone there.
 - **Wallets.** A native sign-in never assigns it a season wallet.
-- **Scale.** At most 25 live at once (refused as `at_capacity`); 10 creates and
-  10 retires an hour per admin.
+- **Scale.** At most 25 live at once, unused phone sign-ins included (refused
+  as `at_capacity`); 10 creates, 10 phone sign-ins and 10 retires an hour per
+  admin.
 
 The password is in the tool result, so it lands in the client's transcript.
 That is accepted for a throwaway account that can do nothing a full admin
@@ -252,7 +263,8 @@ cannot, is flagged, and is fenced as above; the platform keeps only its hash
 and logs it nowhere. The routes sit at `/api/test-accounts` (a connector can
 reach neither `/api/admin` nor `/api/auth`), each gated `requireAdminWrite,
 testAccountLimiter, sameOriginBrowserOnly`, and no path has a `password`
-segment. `create_test_account` and `retire_test_account` are acting tools;
+segment. `create_test_account`, `create_test_phone_sign_in` and
+`retire_test_account` are acting tools;
 `list_test_accounts` is a `list_` read.
 
 ### Admin only: the App bench studio, the benchmark, the bot and recent shots

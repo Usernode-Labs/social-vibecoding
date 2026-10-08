@@ -180,11 +180,8 @@ test('dapp.json gets the card\'s icon at the first commit, or in the late commit
   assert.deepEqual(JSON.parse(file(files, 'dapp.json')), { icon: { emoji: '🏃' }, secrets: [] });
   const plain = getTemplateFiles('Run Club', 'run-club-abc', 'postgres://x');
   assert.deepEqual(JSON.parse(file(plain, 'dapp.json')), { secrets: [] }, 'no card, no icon');
-  // A starter's own icon comes first.
-  const appTemplates = require('../src/services/app-templates');
-  const other = appTemplates.TEMPLATE_IDS.find((k) => k !== appTemplates.DEFAULT_TEMPLATE);
-  const starter = getTemplateFiles('Run Club', 'run-club-abc', 'postgres://x', null, { template: other, sketch: ROW });
-  assert.deepEqual(JSON.parse(file(starter, 'dapp.json')).icon, { emoji: appTemplates.get(other).icon });
+  // (A starter's own icon came first; the starters were deleted with the
+  // create dialog, so Empty and the card are all there is.)
   // The late commit's dapp.json: the icon added beside the description, or nothing.
   assert.deepEqual(JSON.parse(sketch.manifestWithIcon(JSON.stringify({ description: 'Runs', secrets: [] }), '🏃')),
     { description: 'Runs', icon: { emoji: '🏃' }, secrets: [] });
@@ -192,6 +189,13 @@ test('dapp.json gets the card\'s icon at the first commit, or in the late commit
   assert.equal(sketch.manifestWithIcon(JSON.stringify({ icon: { image: 'brand/icon.png' }, secrets: [] }), '🏃'), null, 'one set stays');
   assert.equal(sketch.manifestWithIcon('not json', '🏃'), null);
   assert.equal(sketch.manifestWithIcon('{"secrets":[]}', 'nope'), null);
+  // ...and the tagline as its description when it has none (#4235); a line
+  // of its own always wins.
+  assert.deepEqual(JSON.parse(sketch.manifestWithCard('{"secrets":[]}', { emoji: '🏃', tagline: 'Runs, together' })),
+    { description: 'Runs, together', icon: { emoji: '🏃' }, secrets: [] });
+  assert.deepEqual(JSON.parse(sketch.manifestWithCard(JSON.stringify({ icon: { emoji: '🎲' }, secrets: [] }), { emoji: '🏃', tagline: 'Runs, together' })),
+    { description: 'Runs, together', icon: { emoji: '🎲' }, secrets: [] });
+  assert.equal(sketch.manifestWithCard(JSON.stringify({ description: 'Ours', icon: { emoji: '🎲' } }), { emoji: '🏃', tagline: 'Runs, together' }), null);
 });
 
 // ── 3. Always a card ─────────────────────────────────────────────────────
@@ -305,7 +309,7 @@ test('without a model the card is made on the spot, ready, with its icon', () =>
   assert.ok(pool.queries.some((q) => /UPDATE apps SET icon_emoji/.test(q.sql) && q.params[1] === '🎬'));
 }));
 
-test('a late card is committed on its own, with dapp.json\'s icon when it has none', () => held(async () => {
+test('a late card is committed on its own, with dapp.json\'s icon and description when it has none', () => held(async () => {
   const pushes = [];
   const marks = [];
   const pool = {
@@ -321,18 +325,18 @@ test('a late card is committed on its own, with dapp.json\'s icon when it has no
   };
   assert.equal(await sketch.commitWhenReady(pool, { appId: 31, name: 'Run Club', owner: 'usernode-bot', repo: 'run-club' }, { github }), true);
   assert.deepEqual(pushes[0].files.map((f) => f.path), ['design/sketch.json', 'dapp.json']);
-  assert.deepEqual(JSON.parse(pushes[0].files[1].content), { icon: { emoji: '🏃' }, secrets: [] });
+  assert.deepEqual(JSON.parse(pushes[0].files[1].content), { description: 'Weekly miles for the whole club', icon: { emoji: '🏃' }, secrets: [] });
   assert.equal(pushes[0].opts.message, 'Add the card Run Club was made with');
   assert.deepEqual(marks, [31]);
-  // A dapp.json with an icon of its own keeps it.
-  github.getFileContent = async () => JSON.stringify({ icon: { emoji: '🎲' }, secrets: [] });
+  // A dapp.json with an icon and a description of its own keeps them.
+  github.getFileContent = async () => JSON.stringify({ description: 'Ours', icon: { emoji: '🎲' }, secrets: [] });
   await sketch.commitWhenReady(pool, { appId: 32, name: 'Run Club', owner: 'o', repo: 'r' }, { github });
   assert.deepEqual(pushes[1].files.map((f) => f.path), ['design/sketch.json']);
 }));
 
 // ── 4. Not a screen ──────────────────────────────────────────────────────
 
-test('the first commit carries the card as design/sketch.json, and changes no screen, colour or design note', () => {
+test('the first commit carries the card as design/sketch.json, and changes nothing on the screen but its icon', () => {
   const plain = getTemplateFiles('Run Club', 'run-club-abc', 'postgres://x');
   const files = getTemplateFiles('Run Club', 'run-club-abc', 'postgres://x', null, { sketch: ROW });
   const file = (list, p) => list.find((f) => f.path === p)?.content;
@@ -345,8 +349,18 @@ test('the first commit carries the card as design/sketch.json, and changes no sc
   assert.equal(record.createdAt, '2026-10-05T10:00:00.000Z');
   assert.match(record.note, /It is a picture of the idea, not a design: it shows no screen and sets no layout, words or colours\./);
   assert.match(record.note, /where the two differ, the description wins/);
-  // Everything but dapp.json's icon and the card's file is the starter's.
-  const others = (list) => list.filter((f) => f.path !== 'dapp.json' && !f.path.startsWith('design/'));
+  // Everything but dapp.json's icon, the card's file and the starter tile's
+  // face is the starter's. The face is the icon change: the card's emoji
+  // replaces the app's initial.
+  const TILE = /<div class="flex h-20 w-20 items-center justify-center rounded-2xl border border-line bg-ground text-title">([\s\S]*?)<\/div>/;
+  const tile = (html) => TILE.exec(html)[1];
+  assert.equal(tile(file(files, 'public/index.html')), '🏃', 'the card\'s emoji is the tile face');
+  assert.equal(tile(file(plain, 'public/index.html')), '<span class="text-muted">R</span>', 'the app initial without a card');
+  const others = (list) => list
+    .filter((f) => f.path !== 'dapp.json' && !f.path.startsWith('design/'))
+    .map((f) => (f.path === 'public/index.html'
+      ? { ...f, content: f.content.replace(TILE, '<div class="tile">TILE</div>') }
+      : f));
   assert.deepEqual(others(files), others(plain));
   // A row from before the card (a screen mock) adds nothing.
   const legacy = getTemplateFiles('Run Club', 'run-club-abc', 'postgres://x', null,
@@ -453,10 +467,14 @@ test('creation waits a little for the card, the route starts it with the maker\'
   const creator = read('src/services/app-creator.js');
   assert.match(creator, /const sketch = await appSketch\.whenReady\(pool, appId\)\.catch\(\(\) => null\);/);
   assert.match(creator, /template: templateOf\(appRow\), sketch \}\);/);
+  // The first dapp.json's description: the creator's line, else the card's tagline (#4235).
+  assert.match(creator, /description: descriptionOf\(appRow\) \|\| appSketch\.taglineOf\(sketch\), template/);
   assert.match(creator, /appSketch\.commitWhenReady\(pool, \{ appId, name, owner: botUsername, repo: slug \}\);/);
   assert.equal(sketch.SKETCH_WAIT_MS, 30 * 1000);
   const routes = read('src/routes/apps.js');
-  assert.match(routes, /if \(req\.body\.from === 'first-session' && !repoUrlNormalized\s+&& require\('\.\.\/services\/homeroom-bot-dm'\)\.normalizeBrief\(req\.body\.brief\)\) \{\s+await require\('\.\.\/services\/app-sketch'\)\.startSketch\(pool, \{/);
+  // Both doors that land on the made screen: the first session's and the
+  // Create button's (MAKE_ORIGINS; tests/create-front-door.test.js).
+  assert.match(routes, /if \(MAKE_ORIGINS\.has\(req\.body\.from\) && !repoUrlNormalized\s+&& require\('\.\.\/services\/homeroom-bot-dm'\)\.normalizeBrief\(req\.body\.brief\)\) \{\s+await require\('\.\.\/services\/app-sketch'\)\.startSketch\(pool, \{/);
   assert.match(routes, /app: appRow, user: req\.user, brief: req\.body\.brief,\s+timeZone: typeof req\.body\.timeZone === 'string' \? req\.body\.timeZone\.slice\(0, 64\) : null,/);
   assert.doesNotMatch(routes, /sketch\.html/, 'no framed page: the card is drawn by the made screen');
   const make = read('frontend/src/features/first-session/make.tsx');

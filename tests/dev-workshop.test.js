@@ -3234,12 +3234,81 @@ test('?group=stage is a deep link to the pane, and a tap retires it', () => {
   assert.equal(junk._getWorkshopGroup(), 'category');
 });
 
+test('what app.css reads off the page\'s hosts is a class, never a :has() that looks inside them', () => {
+  // Three facts decide how the hosts are laid out: the board is up, the Needs
+  // tab is up, there is a band. app.css used to ask for each with a `:has()`
+  // on the host, on rules that go on to pick what is INSIDE it. Asked that
+  // way the answer can change with any node added anywhere under the host,
+  // so the browser re-applied the stylesheet to everything the rule could
+  // reach after every such write. Measured on this repository's own board
+  // with every card open (October 2026): 43 passes over about 9,000 elements
+  // in one load, 2.9 of the 3.1 seconds the page spent on style.
+  const rules = CSS.replace(/\/\*[\s\S]*?\*\//g, '');
+  for (const gone of [
+    '#dev-workshop:has(.dev-ws-board)',
+    '#dev-workshop:has(.dev-ws[data-ws-tab="needs"])',
+    '#dev-forum-scroll:not(:has(.dev-ws-band))',
+  ]) {
+    assert.ok(!rules.includes(gone), `${gone} is a class on the host now`);
+  }
+  // The general form of the same mistake, on the three nodes that hold the
+  // board. `:has(> …)` is fine and stays: it only ever looks at children, so
+  // a comment written into a card cannot change its answer.
+  assert.doesNotMatch(rules, /#dev-(?:forum-scroll|body|workshop)(?::not\()?:has\(\s*[^>\s]/,
+    'a :has() on a board host starts with the child combinator, or is a class instead');
+
+  // The Workshop says so itself, on nodes it does not render: classList in a
+  // layout effect, so the classes are right before the frame is shown.
+  const cls = (name) => {
+    const m = WORKSHOP.match(new RegExp(`const ${name} = '([a-z-]+)';`));
+    assert.ok(m, `workshop.tsx names ${name}`);
+    return m[1];
+  };
+  const board = cls('HOST_HAS_BOARD');
+  const needs = cls('HOST_ON_NEEDS');
+  const band = cls('SCROLLER_HAS_BAND');
+  assert.match(WORKSHOP, /const workshop = el\.closest\('#dev-workshop'\);\s*if \(workshop\) \{\s*workshop\.classList\.toggle\(HOST_HAS_BOARD, board\);\s*workshop\.classList\.toggle\(HOST_ON_NEEDS, needs\);\s*\}/);
+  assert.match(WORKSHOP, /const scroller = el\.closest\('#dev-forum-scroll'\);\s*if \(scroller\) scroller\.classList\.toggle\(SCROLLER_HAS_BAND, band\);/);
+  // AS EARLY AS THE COMMIT ALLOWS. Putting a class on a host is one pass over
+  // everything under it. A layout effect on the Workshop runs after the layout
+  // effects of the cards the same commit mounted, and their first measurement
+  // has already drawn the board; the class then drew it a second time (9,000
+  // elements, 72ms, measured). An insertion effect runs before every layout
+  // effect of the commit, so the first pass already has the class. The root
+  // is not attached on the very first mount, which the layout effect covers.
+  assert.match(WORKSHOP, /import \{[^}]*\buseInsertionEffect\b[^}]*\} from 'react';/);
+  assert.match(WORKSHOP, /useInsertionEffect\(\(\) => \{\s*syncWorkshopHosts\(hostRef\.current, band, board, needs\);\s*\}, \[hostRef, band, board, needs\]\);\s*useLayoutEffect\(\(\) => \{\s*syncWorkshopHosts\(hostRef\.current, band, board, needs\);\s*\}, \[hostRef, band, board, needs\]\);/);
+  // ...and takes them off on the way out, in an effect of its own so that a
+  // tab change does not remove and re-add them.
+  assert.match(WORKSHOP, /return \(\) => \{\s*if \(workshop\) workshop\.classList\.remove\(HOST_HAS_BOARD, HOST_ON_NEEDS\);\s*if \(scroller\) scroller\.classList\.remove\(SCROLLER_HAS_BAND\);\s*\};\s*\}, \[hostRef\]\);/);
+  // What each one means. The skeleton has no band, no board and no tab; the
+  // board is the All items page read by stage and nothing else draws one.
+  assert.match(WORKSHOP, /useWorkshopHostState\(\s*hostRef,\s*!v\.loading,\s*!v\.loading && tab === 'all' && group === 'stage',\s*!v\.loading && tab === 'needs',\s*\);/);
+  assert.match(WORKSHOP, /\{group === 'stage' \? \(\s*<div className="dev-ws-board"/, 'the pane the class stands for');
+
+  // The stylesheet reads exactly those three, with the weight the `:has()`
+  // forms had (a `:has()` weighs what its argument weighs). The one
+  // exception is the column's release on Needs, which now weighs what the
+  // board's release always has; `#dev-workshop { max-width: 760px }` is the
+  // only rule either has to beat.
+  assert.equal(board, 'dev-ws-has-board');
+  assert.equal(needs, 'dev-ws-on-needs');
+  assert.equal(band, 'dev-ws-has-band');
+  assert.match(rules, /#dev-workshop\.dev-ws-on-needs \{ max-width: none; \}/);
+  assert.match(rules, /#dev-workshop\.dev-ws-on-needs > \.dev-ws\[data-ws-tab="needs"\] > :not\(\.dev-ws-tabbody\) \{/);
+  assert.match(rules, /#dev-forum-scroll:not\(\.dev-ws-has-band\) > \* \{/);
+  // The scroller outlives a body that is replaced without unmounting the
+  // Workshop, so the pull asks again as it starts (tests/community-hub.test.js
+  // pins the call); the class it writes is the one the Workshop writes.
+  assert.match(APP_VIEW_SRC, /devScroll\.classList\.toggle\('dev-ws-has-band', !!band\);/);
+});
+
 test('the stage pane runs edge to edge, and not by a 100vw full-bleed', () => {
   // #dev-workshop is a 760px reading column, which is right for one-line
   // rows and wrong for four side-by-side columns: bounded there the board is
   // a horizontal scroller before it is a board.
   assert.match(CSS, /#dev-workshop \{ max-width: 760px/, 'the column bound exists');
-  assert.match(CSS, /#dev-workshop:has\(\.dev-ws-board\) \{ max-width: none; \}/,
+  assert.match(CSS, /#dev-workshop\.dev-ws-has-board \{ max-width: none; \}/,
     'and comes off when the board is up');
   // ...and goes back on to every OTHER child, so only the working PANE widens
   // — the toolbar, the tabs and the board travel together now, so the pane is
@@ -3255,15 +3324,15 @@ test('the stage pane runs edge to edge, and not by a 100vw full-bleed', () => {
   // brings it back — the first for the rail and anything else that stays a
   // direct child, the second for the pane inside the body.
   assert.match(CSS,
-    /#dev-workshop:has\(\.dev-ws-board\) > \.dev-ws > :not\(\.dev-ws-tabbody\),/);
+    /#dev-workshop\.dev-ws-has-board > \.dev-ws > :not\(\.dev-ws-tabbody\),/);
   assert.match(CSS,
-    /#dev-workshop:has\(\.dev-ws-board\) > \.dev-ws > \.dev-ws-tabbody > :not\(\.dev-ws-pane\) \{[^}]*max-width: 760px/);
+    /#dev-workshop\.dev-ws-has-board > \.dev-ws > \.dev-ws-tabbody > :not\(\.dev-ws-pane\) \{[^}]*max-width: 760px/);
   // Widening it must not DISSOLVE it. An earlier cut stripped the pane's sheet,
   // radius and padding on By stage, on the argument that a card face is a
   // frame drawn around the whole window; what that produced was the pane
   // vanishing and the sticky head's fill left behind as a bare rectangle over
   // the controls alone, with the board below belonging to no pane at all.
-  const stageRules = CSS.slice(CSS.indexOf('#dev-workshop:has(.dev-ws-board) { max-width: none; }'),
+  const stageRules = CSS.slice(CSS.indexOf('#dev-workshop.dev-ws-has-board { max-width: none; }'),
     CSS.indexOf('.dev-ws-sort {'));
   assert.ok(!/\.dev-ws-pane \{[^}]*(border-radius: 0|background: none|padding: 0)/.test(stageRules),
     'the pane keeps its card face at every width');
@@ -3840,7 +3909,7 @@ test('the pane head pins, and the pane does not clip what must escape it', () =>
   // grouping strip included (#852: it hung off the pane as an "ear" once, and
   // that surface was the one exemption).
   assert.match(CSS,
-    /#dev-workshop:has\(\.dev-ws-board\) \.dev-ws-pane-head > \* \{[\s\S]*?max-width: calc\(760px - 20px\)/);
+    /#dev-workshop\.dev-ws-has-board \.dev-ws-pane-head > \* \{[\s\S]*?max-width: calc\(760px - 20px\)/);
   assert.ok(!/dev-ws-ear/.test(CSS), 'no rule styles an ear any more');
 });
 
@@ -4740,8 +4809,10 @@ test('the feed answers on the Vote sheet and moves by swipe, arrows or keys', ()
   assert.ok(!/data-ws-tint=\{index % 2/.test(WORKSHOP), 'and never from the index of the moment');
   assert.match(WORKSHOP, /el\.style\.scrollBehavior = 'auto';\s*el\.scrollTop = idx \* el\.clientHeight;\s*el\.style\.scrollBehavior = '';/,
     'a position correction is instant, whatever the scroller\'s own behaviour');
-  assert.match(WORKSHOP, /Voted \$\{voted\} · \$\{wide \? 'press ↓ or scroll' : 'swipe up'\} for the next/,
+  assert.match(WORKSHOP, /\$\{answeredWords\(row, voted\)\} · \$\{wide \? 'press ↓ or scroll' : 'swipe up'\} for the next/,
     'and the eyebrow becomes the confirmation');
+  // "Voted yes", or on a Just-you change "Approved" / "Not approved" (#3977).
+  assert.match(WORKSHOP, /if \(!approves\(row\)\) return `Voted \$\{voted\}`;\s*return voted === 'yes' \? 'Approved' : 'Not approved';/);
   // THE ARROWS: icon buttons with a NAME, since a chevron alone has none,
   // disabled at the ends rather than wrapping. Hidden on a phone, where the
   // swipe is the move; on a wide window they do what the wheel does.
@@ -5402,13 +5473,38 @@ test('the Needs-you card is marked voted only once the server has the vote (QA 2
   assert.match(body, /pinsRef\.current\.delete\(key\)/, 'a cancelled or failed vote drops the pin this press added');
   assert.match(body, /\{ onSend \}/, 'the rail says "Sending…" from the moment the vote is committed');
   assert.match(body, /if \(sendingRef\.current\.has\(key\)\) return;/, 'one vote per card in flight');
-  assert.match(WORKSHOP, /sending\[row\.key\] \? 'Sending…' : 'Vote'/);
+  assert.match(WORKSHOP, /sending\[row\.key\] \? 'Sending…' : \(approves\(row\) \? 'Approve' : 'Vote'\)/);
   // castVote's side of the contract.
   const view = read('public/js/app-view.js');
   const cast = view.slice(view.indexOf('  async castVote(sessionId, vote'));
   const castBody = cast.slice(0, cast.indexOf('\n  },\n'));
   assert.match(castBody, /if \(reason === false\) \{\s*AppView\._voteInFlight\.delete\(key\);\s*return false;/);
   assert.match(castBody, /return true;/);
+});
+
+test('#3977: on a project that is just yours, the Needs-you item reads Approve and Don\'t approve', () => {
+  // B7's approval (`_cardVoteButtonSpecs` marks the Yes `approve`) rides on
+  // the queue row, and the item says it in the card's words: the rail
+  // button, the swipe's two stamps and, once answered, the confirmation.
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView.appData = { ...AppView.appData, audience: 'solo' };
+  const row = AppView._workshopView().queue.find((r) => r.kind === 'vote');
+  assert.equal(row.yes.approve, true);
+  assert.ok(!('approve' in row.no));
+  const html = workshopHtml(AppView, 'needs');
+  assert.match(html, /<span class="dev-ws-rail-lab">Approve<\/span>/);
+  assert.match(html, /<span class="dev-ws-swipe-hint dev-ws-swipe-yes" aria-hidden="true">Approve<\/span>/);
+  assert.match(html, /<span class="dev-ws-swipe-hint dev-ws-swipe-no" aria-hidden="true">Don’t approve<\/span>/);
+  assert.match(WORKSHOP, /<p className="dev-ws-keys-hint" aria-hidden="true">\{approves\(row\) \? 'Y approve · N don’t approve · Enter send · Esc close' : 'Y yes · N no · Enter vote · Esc close'\}<\/p>/);
+  assert.match(WORKSHOP, /approve=\{approves\(row\)\}/, 'and the sheet\'s form is the card\'s picker, as an approval');
+  // A group's row is a vote, word for word.
+  const group = makeAppView();
+  seed(group);
+  assert.ok(!('approve' in group._workshopView().queue.find((r) => r.kind === 'vote').yes));
+  const groupHtml = workshopHtml(group, 'needs');
+  assert.match(groupHtml, /<span class="dev-ws-rail-lab">Vote<\/span>/);
+  assert.match(groupHtml, /dev-ws-swipe-yes" aria-hidden="true">Yes<\/span>/);
 });
 
 test('#3052: on a phone a card the viewer can vote on takes the swipe; an issue or a pairless row does not', () => {
@@ -5459,6 +5555,47 @@ test('the strip insets re-measure on every render, or a grouping switch leaves t
     'and the properties are cleared where the strip does not stick, not left stale');
   assert.match(body, /ro\.observe\(bar\);/);
   assert.match(body, /ro\.observe\(pane\);/);
+});
+
+test('what the strip measures is published in one go: every read, then every write', () => {
+  // A custom property INHERITS. One that changes on `.dev-ws` or on
+  // #dev-workshop makes the browser re-apply the stylesheet to everything
+  // under it at the next layout question: measured on the board with every
+  // card open, any such change is about 77ms, used or not.
+  //
+  // The strip's three properties and the header's foot were published by two
+  // hooks, each asking a question right after the other's write, so a page's
+  // first frame paid for the board three times after the pass that drew it.
+  // `useStripInsets` now reads the foot with its own two boxes and writes all
+  // four together; `usePinnedStrip` still publishes the foot on every scroll
+  // frame, and on the first one finds the value it was about to write.
+  const hook = WORKSHOP.slice(WORKSHOP.indexOf('function useStripInsets('));
+  const body = hook.slice(0, hook.indexOf('\n}\n'));
+  assert.match(body,
+    /const foot = headerFoot\(host\);\s*const n = bar\.getBoundingClientRect\(\);\s*const p = pane\.getBoundingClientRect\(\);\s*const cssHost = offsetHost\(host\);\s*if \(foot == null\) cssHost\.style\.removeProperty\(HEAD_FOOT_PROP\);\s*else cssHost\.style\.setProperty\(HEAD_FOOT_PROP, `\$\{Math\.round\(foot\)\}px`\);\s*if \(!n\.width \|\| !p\.width\) return;\s*host\.style\.setProperty\('--dev-ws-head-top'/,
+    'the foot is read before anything is written, and written with the strip\'s own three');
+  // Nothing is read back after the first write.
+  const writes = body.slice(body.indexOf('cssHost.style.removeProperty(HEAD_FOOT_PROP)'), body.indexOf('measure();'));
+  assert.doesNotMatch(writes, /getBoundingClientRect|getComputedStyle|offset(?:Top|Left|Width|Height)\b|client(?:Width|Height)\b/);
+  // The foot's other publisher is unchanged (tests/project-page-opens-at-head.test.js).
+  const pinned = WORKSHOP.slice(WORKSHOP.indexOf('function usePinnedStrip('));
+  assert.match(pinned.slice(0, pinned.indexOf('\n}\n')), /const foot = headerFoot\(host\);/);
+});
+
+test('the board\'s in-flight marks hold still for a reader who asked for less motion', () => {
+  // The arc beside "Checks running…", the ring on a vote that is open, and
+  // the chip on an issue whose proposal is being drafted. They run for as
+  // long as the state lasts, a vote for days, and a board carries dozens (71
+  // on this repository's own with every card open, 68 of them scrolled out of
+  // view). The header's cog already rests under this setting; these did not.
+  //
+  // It is also what lets a browser that draws without a GPU, like the one the
+  // declared checks run in, ask for a still page: there, one running
+  // animation of any size costs about a fifth of a core per open window.
+  const rules = CSS.replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.match(rules, /\.dc-status-spinner-arc \{[^}]*animation: dc-spin 0\.8s linear infinite;[^}]*\}\s*@media \(prefers-reduced-motion: reduce\) \{\s*\.dc-status-spinner-arc \{ animation: none; \}\s*\}/);
+  assert.match(rules, /\.gc-vote-count-dot-ping \{[^}]*animation: ping 1s[^}]*\}\s*@media \(prefers-reduced-motion: reduce\) \{\s*\.gc-vote-count-dot-ping \{ animation: none; \}\s*\}/);
+  assert.match(read('frontend/src/features/dev-board/card/dev-card.tsx'), /spec\.pulse \? ' motion-safe:animate-pulse' : ''/);
 });
 
 test('the Workshop keeps no swatch of its own — it imports the one the threads use', () => {
@@ -5520,4 +5657,19 @@ test('a refetch keeps every theme where it was; only a chip press re-sorts', () 
   assert.deepEqual(orderThemesStable(held, [theme('a', 9)], 'people').map((t) => t.id), ['a']);
   assert.deepEqual(orderThemesStable({ key: 'activity', ids: ['b', 'a'] },
     [theme('a', 9), theme('b', 3)], 'people').map((t) => t.id), ['a', 'b']);
+});
+
+test('#4031: the end card keeps its ring when the last vote takes the open count to zero', () => {
+  const { endRingTotal } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
+  // One open change, voted on here: the server's count is 0 by the time the
+  // end card shows. The ring was dropped, the centred card jumped 65px under
+  // the reader, and iOS left the old button painted below the new one.
+  assert.equal(endRingTotal(0, 1, 0), 1, 'a full 1/1 ring, not none');
+  // The live count still wins whenever it is larger: three open, none voted.
+  assert.equal(endRingTotal(3, 0, 3), 3);
+  // Two voted here, one still waiting, server already down to one.
+  assert.equal(endRingTotal(1, 2, 1), 3);
+  // Nothing to vote on and nothing voted: still no ring.
+  assert.equal(endRingTotal(0, 0, 0), 0);
+  assert.match(WORKSHOP, /<DoneItem\s+total=\{endRingTotal\(total, votedHere, leftVotes\)\}/, 'the feed draws the end card with it');
 });

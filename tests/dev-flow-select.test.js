@@ -89,39 +89,31 @@ test('FLOWS is the allowlist plus the venue name, and nothing else', () => {
     'and the gating that fed it went with it');
 });
 
-test('the flow ids match the server allowlist exactly', () => {
-  // Three places have to agree: this list, DEV_FLOWS in src/routes/auth.js
-  // (which validates POST /api/me/dev-flow) and the CHECK constraint on
-  // users.dev_flow_preference. A fourth flow that lands in one only would
-  // either be unsaveable or be rejected by Postgres.
-  const declared = AUTH_SRC.match(/const DEV_FLOWS = \[([^\]]+)\]/);
-  assert.ok(declared, 'src/routes/auth.js declares DEV_FLOWS');
-  const serverFlows = declared[1].match(/'([^']+)'/g).map((s) => s.replace(/'/g, ''));
-  assert.deepEqual(
-    serverFlows,
-    DevFlowSelect.FLOWS.map((f) => f.id),
-    'DEV_FLOWS and DevFlowSelect.FLOWS must list the same flows'
-  );
-
+test('the flow ids match the column the old builds wrote', () => {
+  // POST /api/me/dev-flow and its DEV_FLOWS allowlist left with the setting
+  // (#4311), but users.dev_flow_preference stays for rollback safety, and
+  // its CHECK still names the flows this list does.
   const schema = fs.readFileSync(path.join(__dirname, '../src/db/schema.sql'), 'utf8');
   const check = schema.match(/dev_flow_preference IN \(([^)]+)\)/);
   assert.ok(check, 'schema.sql constrains users.dev_flow_preference');
   const dbFlows = check[1].match(/'([^']+)'/g).map((s) => s.replace(/'/g, ''));
-  assert.deepEqual(dbFlows.sort(), serverFlows.slice().sort(),
-    'the CHECK constraint must accept exactly the flows the route accepts');
+  assert.deepEqual(dbFlows.sort(), DevFlowSelect.FLOWS.map((f) => f.id).sort(),
+    'the CHECK constraint accepts exactly the flows DevFlowSelect lists');
+  assert.doesNotMatch(AUTH_SRC, /DEV_FLOWS|\/api\/me\/dev-flow/,
+    'and the route that wrote it is gone');
 });
 
-test('picking a venue persists it, with no second question about it', () => {
+test('picking a venue answers it for this session only, with no second question', () => {
   // The picker asked twice: once for the flow, once for "remember my
-  // choice — don't ask again", unticked by default. So the common path
-  // answered the same question in every new session. Opening the venue
-  // sheet is already the deliberate act, so the save rides along with it.
+  // choice". The sheet then saved the pick as an account-wide default, which
+  // nothing read after #1353; #4311 removed that save. The session's own
+  // build_venue is what makes the chat a launchpad.
   const devChat = fs.readFileSync(
     path.join(__dirname, '../frontend/src/features/dev-chat/dev-chat.js'), 'utf8'
   );
-  assert.match(devChat, /_saveDevFlowPreference\(pick\.flow\)/,
-    'a flow picked in the sheet becomes the saved default');
-  assert.match(devChat, /'\/api\/me\/dev-flow'/, 'through the route that owns the column');
+  assert.doesNotMatch(devChat, /_saveDevFlowPreference|'\/api\/me\/dev-flow'/,
+    'no account-wide default is written');
+  assert.match(devChat, /_persistBuildVenue\(pick\.venue\)/, 'the session records the venue');
   assert.ok(!devChat.includes('data-flow-remember'),
     'and there is no "remember my choice" tick left to forget');
 });
@@ -639,15 +631,13 @@ test('the instructions start collapsed, and the copy action does not need them o
   assert.doesNotMatch(copy, /data-flow-order|dc-flow-order|querySelector/,
     'never read back out of the DOM');
 
-  // dapp.json's check on the disclosure: on the summary of a closed details,
-  // not on the body text.
+  // dapp.json's check on the disclosure loaded a classic session
+  // (/dev/sessions/990404). #3976 made classic sessions read-only and put
+  // this walkthrough away there, so the check was retired with it; an agent
+  // session's hand-off draws its own steps in React (agent-session/handoff).
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '../dapp.json'), 'utf8'));
-  const checks = manifest.tests.filter((t) => /dc-flow-order/.test(t.expectSelector || ''));
-  assert.equal(checks.length, 1, 'one declared check pins the disclosure');
-  assert.match(checks[0].expectSelector, /details\.dc-flow-order:not\(\[open\]\) > summary/,
-    'it selects the summary of a collapsed disclosure');
-  assert.equal(checks[0].expectText, 'Instructions',
-    'and asserts the text that is visible with the body collapsed');
+  assert.ok(!manifest.tests.some((t) => /dc-flow-order/.test(t.expectSelector || '')),
+    'no declared check drives the classic walkthrough');
 });
 
 // ── "Link GitHub" goes to GitHub (#2679, #2680) ────────────────────────

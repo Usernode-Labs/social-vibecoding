@@ -17,12 +17,13 @@
  *   own store) and dapp.json's one-line description when it has one.
  *
  *   WHO IT IS FOR. The audience, in the words people see (Public community,
- *   Private community, Just you) as a chip, and for a public or a private
- *   community WHO IS HERE: faces, the member count, and a line of this
- *   week's activity with the last fourteen days as a small bar chart (#3268;
- *   it was the hub's Members & activity card, fourth down the page). The
- *   chart names a day when it is pointed at, or dragged across with a
- *   finger (Spark, below), so it needs no caption of its own.
+ *   Private community, Just you), and for a public or a private community
+ *   WHO IS HERE AND HOW LIVELY IT HAS BEEN, as one block under what it is:
+ *   faces, the member count over a line of this week's activity, and the
+ *   last fourteen days as a small bar chart across from both (#3268; it was
+ *   the hub's Members & activity card, fourth down the page). The chart
+ *   names a day when it is pointed at, or dragged across with a finger
+ *   (Spark, below), so it needs no caption of its own.
  *
  *   JOIN, JOINED, INVITE, ⋯. Membership sits across from the name, because
  *   it is a fact about you and this project, the way a profile's Follow
@@ -185,10 +186,18 @@ function whoApproves(required: number, of: number, one: string, many: string): s
  * 2 yes votes (2 active members), or unopposed after a wait" was the
  * sentence a newcomer met here.
  */
-export function approvalLine(approval: CommunityPayload['approval'] | null | undefined): string {
+export function approvalLine(
+  approval: CommunityPayload['approval'] | null | undefined,
+  viewer?: Pick<CommunityPayload, 'audience' | 'is_member'> | null,
+): string {
   if (!approval) return '';
   const required = Math.max(1, Number(approval.required) || 1);
   const electorate = Math.max(1, Number(approval.electorate) || 1);
+  // A Just you project's one approver is the person reading it (#4246).
+  if (viewer?.audience === 'solo' && viewer.is_member
+    && Number(approval.electorate) === 1 && Number(approval.required) === 1) {
+    return 'A change goes live when you approve it.';
+  }
   const fixed = approval.approvals_required != null;
   const quiet = !fixed && required > 1;
   if (approval.policy === 'invited') {
@@ -308,30 +317,43 @@ export function HeroPeople({ members, count, audience, audienceLabel, children }
   audienceLabel?: string;
   children?: ReactNode;
 }) {
-  const faces = (members || []).slice(0, HERO_FACES);
-  const solo = audience === 'solo';
   return (
     <div className="dev-ws-hero-people" data-ws-members="">
-      {faces.length ? (
-        <span className="dev-ws-hero-faces" aria-hidden="true">
-          {faces.map((m) => (
-            <span key={m.id} className="dev-ws-hero-face" style={{ background: swatchFor(m.username) }} title={`@${m.username}`}>
-              {(m.username || '?').charAt(0).toUpperCase()}
-            </span>
-          ))}
-        </span>
-      ) : null}
-      <span className="dev-ws-hero-count" data-ws-members-cell="members">
-        {audienceLabel ? (
-          <span className="dev-ws-hero-audience" data-ws-community-audience="">
-            {audience ? <AudienceGlyph audience={audience} /> : null}
-            <b>{audienceLabel}</b>
-          </span>
-        ) : null}
-        {solo ? null : `${audienceLabel ? ' · ' : ''}${plural(count, 'member', 'members')}`}
-      </span>
+      <HeroFaces members={members} />
+      <HeroCount count={count} audience={audience} audienceLabel={audienceLabel} />
       {children}
     </div>
+  );
+}
+
+/** Up to HERO_FACES faces, overlapping; nothing for nobody. */
+function HeroFaces({ members }: { members: CommunityPayload['members'] | null | undefined }) {
+  const faces = (members || []).slice(0, HERO_FACES);
+  if (!faces.length) return null;
+  return (
+    <span className="dev-ws-hero-faces" aria-hidden="true">
+      {faces.map((m) => (
+        <span key={m.id} className="dev-ws-hero-face" style={{ background: swatchFor(m.username) }} title={`@${m.username}`}>
+          {(m.username || '?').charAt(0).toUpperCase()}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/** "Public community · 23 members", the audience's glyph leading it. */
+function HeroCount({ count, audience, audienceLabel }: { count: number; audience?: Audience; audienceLabel?: string }) {
+  const solo = audience === 'solo';
+  return (
+    <span className="dev-ws-hero-count" data-ws-members-cell="members">
+      {audienceLabel ? (
+        <span className="dev-ws-hero-audience" data-ws-community-audience="">
+          {audience ? <AudienceGlyph audience={audience} /> : null}
+          <b>{audienceLabel}</b>
+        </span>
+      ) : null}
+      {solo ? null : `${audienceLabel ? ' · ' : ''}${plural(count, 'member', 'members')}`}
+    </span>
   );
 }
 
@@ -440,34 +462,51 @@ function Spark({ days, peak }: { days: Array<{ day: string; n: number }>; peak: 
 }
 
 /**
- * The hero's activity line (#3268): who was around this week and what
- * shipped this month, in words, with the last fourteen days as a small bar
- * chart at its end. A zero says nothing; a fortnight in which nobody did
- * anything is one quiet sentence instead of fourteen slivers.
+ * WHO IS HERE AND HOW LIVELY IT HAS BEEN, as one block (#3268 put both on
+ * the hero, as two rows with the actions between them): the faces, then
+ * "Public community · 23 members" over who was around this week and how
+ * many changes shipped this month, and the last fourteen days as a small
+ * bar chart across from both. On a phone the chart moves up across from the
+ * faces and the words take the full width under them (app.css): faces,
+ * words and chart in one row left the words a column a few words wide.
+ *
+ * "Changes shipped", not "shipped": a bare number shipped said nothing
+ * about what it counted. The separator is a no-break space and a dot, so a
+ * line too long for a narrow phone breaks after the dot, never before it.
+ * A zero says nothing; a fortnight in which nobody did anything is one
+ * quiet line instead of fourteen slivers.
  */
-export function HeroActivity({ activity }: { activity: CommunityPayload['activity'] | null | undefined }) {
+export function HeroPulse({ members, count, audience, audienceLabel, activity }: {
+  members: CommunityPayload['members'] | null | undefined;
+  count: number;
+  audience?: Audience;
+  audienceLabel?: string;
+  activity: CommunityPayload['activity'] | null | undefined;
+}) {
   const days = activity?.daily || [];
   const active = Number(activity?.active_week) || 0;
   const shipped = Number(activity?.shipped_month) || 0;
   const peak = Math.max(0, ...days.map((d) => Number(d.n) || 0));
-  if (!active && !shipped && !peak) {
-    return (
-      <p className="dev-ws-hero-line" data-ws-members-trend="" data-ws-trend-empty="">
-        Nobody has been around in the last 14 days.
-      </p>
-    );
-  }
+  const quiet = !active && !shipped && !peak;
   return (
-    <div className="dev-ws-hero-activity" data-ws-members-stats="">
-      <span className="dev-ws-hero-activity-words">
-        <span className="dev-ws-hero-activity-line">
-          {active ? <span data-ws-members-cell="active"><b>{active}</b> active this week</span> : null}
-          {active && shipped ? ' · ' : null}
-          {shipped ? <span data-ws-members-cell="shipped"><b>{shipped}</b> shipped this month</span> : null}
-          {!active && !shipped ? 'Quiet this week' : null}
-        </span>
+    <div className="dev-ws-hero-pulse" data-ws-members="">
+      <HeroFaces members={members} />
+      <span className="dev-ws-hero-pulse-words">
+        <HeroCount count={count} audience={audience} audienceLabel={audienceLabel} />
+        {quiet ? (
+          <span className="dev-ws-hero-activity-line" data-ws-members-trend="" data-ws-trend-empty="">
+            Nobody has been around in the last 14 days.
+          </span>
+        ) : (
+          <span className="dev-ws-hero-activity-line" data-ws-members-stats="">
+            {active ? <span data-ws-members-cell="active"><b>{active}</b> active this week</span> : null}
+            {active && shipped ? '\u00a0· ' : null}
+            {shipped ? <span data-ws-members-cell="shipped"><b>{shipped}</b> changes shipped this month</span> : null}
+            {!active && !shipped ? 'Quiet this week' : null}
+          </span>
+        )}
       </span>
-      {days.length >= 2 ? <Spark days={days} peak={peak} /> : null}
+      {!quiet && days.length >= 2 ? <Spark days={days} peak={peak} /> : null}
     </div>
   );
 }
@@ -868,8 +907,8 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedBy
     </div>
   ) : null;
   // WHO INVITED THEM, AND JOIN, first in the hero: visible without scrolling
-  // on a phone, above everything the page shows them to decide by (who is
-  // here, what it is, Open app, the fortnight, and below the hero what is
+  // on a phone, above everything the page shows them to decide by (what it
+  // is, who is here and the fortnight, Open app, and below the hero what is
   // being decided).
   const inviteHead = invited && offer ? (
     <InviteCard
@@ -937,17 +976,25 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedBy
       style={asking ? { position: 'relative', zIndex: 5 } : undefined}
     >
       {inviteHead}
-      {/* WHO IS HERE, AND WHO IT IS FOR: the faces, then "Public community ·
-          23 members". The tile and the name are the coloured header's. */}
-      <HeroPeople
-        members={solo ? [] : data.members}
-        count={Number(data.member_count) || 0}
-        audience={data.audience}
-        audienceLabel={data.audience_label}
-      />
+      {/* WHAT IT IS first, under the coloured header's tile and name. */}
       {data.description ? (
         <p className="dev-ws-hero-desc" data-ws-community-description="">{data.description}</p>
       ) : null}
+      {/* WHO IS HERE, WHO IT IS FOR AND HOW LIVELY IT HAS BEEN, one block:
+          the faces, "Public community · 23 members" over this week in words,
+          and the fortnight's chart across from both. Just you is the label
+          alone: nobody to show and nothing to count. */}
+      {solo ? (
+        <HeroPeople members={[]} count={Number(data.member_count) || 0} audience={data.audience} audienceLabel={data.audience_label} />
+      ) : (
+        <HeroPulse
+          members={data.members}
+          count={Number(data.member_count) || 0}
+          audience={data.audience}
+          audienceLabel={data.audience_label}
+          activity={data.activity}
+        />
+      )}
       {/* WHAT YOU CAN DO HERE, one row: Open app in the community's colour,
           Invite, "Make it public" (a private community only: a public one's
           "Make it private" is a row of the ⋯), the ⋯, and across from them
@@ -978,7 +1025,6 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedBy
       </div>
       {membership ? <span className="dev-ws-hero-member">{membership}</span> : null}
       </div>
-      {solo ? null : <HeroActivity activity={data.activity} />}
       {data.audience_change ? (
         <a
           className="dev-ws-hero-line dev-ws-hero-pending"
@@ -1066,7 +1112,7 @@ export function ApprovalRules({ slug }: { slug: string }) {
       <div className="dev-ws-head">
         <span className="dev-ws-head-title">Approval rules</span>
       </div>
-      <p className="dev-ws-rules-line" data-ws-community-rule="">{approvalLine(data.approval)}</p>
+      <p className="dev-ws-rules-line" data-ws-community-rule="">{approvalLine(data.approval, data)}</p>
     </section>
   );
 }

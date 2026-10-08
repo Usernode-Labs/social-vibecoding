@@ -31,7 +31,14 @@ const { ok, fail, iso, paginate, meta, csvField } = require('../helpers');
 function formatSignup(row) {
   return {
     id: Number(row.id),
-    email: row.email,
+    email: row.email ?? null,
+    // A phone row (#4223): joined from Home's card with a verified phone and
+    // no email. It is shown by its account, with at most the number's last
+    // four digits, and it cannot be admitted until Homeroom can send texts
+    // (`needs_sms`, services/waitlist.js).
+    phone_only: row.email == null,
+    phone_last4: row.email == null && row.phone_last4 ? String(row.phone_last4) : null,
+    needs_sms: row.email == null && !row.released_at && !waitlist.phoneReleaseReady(),
     submitted_at: iso(row.submitted_at),
     released_at: iso(row.released_at),
     // NULL after a join means the address never followed the confirm link
@@ -287,6 +294,12 @@ function waitlistAdminRoutes(config) {
   // release. `mobile` is the store-listing lookup, done once by the caller
   // so a batch does not repeat it per row.
   async function sendReleaseMail(released, mobile) {
+    // A phone row has no address: its "you're in" goes by text, the SMS hook
+    // (#4096, services/waitlist.js sendReleaseText).
+    if (!released.email) {
+      await waitlist.sendReleaseText(pool, released);
+      return;
+    }
     await sendWaitlistReleaseMail(config, released.email, {
       mobile,
       hasAccount: released.linked_user_id != null,
@@ -358,11 +371,13 @@ function waitlistAdminRoutes(config) {
                   AS invited_count,
                 p.email AS invited_by_email,
                 u.username AS linked_username, u.has_platform_access,
+                CASE WHEN w.email IS NULL THEN RIGHT(ph.phone_e164, 4) END AS phone_last4,
                 m.status AS invite_mail_status, m.created_at AS invite_mail_at,
                 m.error AS invite_mail_error
            FROM waitlist_signups w
            LEFT JOIN users u ON u.id = w.linked_user_id
            LEFT JOIN waitlist_signups p ON p.id = w.invited_by
+           LEFT JOIN user_phone_identities ph ON ph.user_id = w.linked_user_id
            LEFT JOIN LATERAL (
              SELECT d.status, d.created_at, d.error
                FROM mail_deliveries d
@@ -500,7 +515,13 @@ function waitlistAdminRoutes(config) {
     try {
       const id = toIntId(req.params.id);
       if (!id) return fail(res, 404, 'Waitlist entry not found.');
-      const released = await waitlist.releaseWaitlistSignup(pool, id);
+      let released;
+      try {
+        released = await waitlist.releaseWaitlistSignup(pool, id);
+      } catch (err) {
+        if (err instanceof waitlist.WaitlistReleaseError) return fail(res, err.status, err.message);
+        throw err;
+      }
       if (!released) return fail(res, 404, 'Waitlist entry not found.');
       log.info('topochain-admin', 'Waitlist entry released', {
         signupId: id, linkedUserId: released.linked_user_id, adminId: req.user?.id,
@@ -591,7 +612,8 @@ function waitlistAdminRoutes(config) {
   //
   // One row failing does not abandon the rest: the rows before it are
   // already admitted, and stopping there would leave them admitted but
-  // unmailed.
+  // unmailed. A phone row (no email) is held until Homeroom can send texts
+  // (#4096): it is skipped and counted in `needs_sms`, not failed.
   router.post('/api/v4/admin/waitlist/bulk-release', adminWriteGate, async (req, res) => {
     try {
       const raw = Array.isArray(req.body?.ids) ? req.body.ids : [];
@@ -605,6 +627,7 @@ function waitlistAdminRoutes(config) {
       const already = [];
       const missing = [];
       const failed = [];
+      const needsSms = [];
       for (const id of ids) {
         try {
           const released = await waitlist.releaseWaitlistSignup(pool, id);
@@ -612,6 +635,10 @@ function waitlistAdminRoutes(config) {
           else if (released.newly_released) fresh.push(released);
           else already.push(id);
         } catch (err) {
+          if (err instanceof waitlist.WaitlistReleaseError && err.code === 'needs_sms') {
+            needsSms.push(id);
+            continue;
+          }
           log.error('topochain-admin', 'bulk release: one entry failed', { signupId: id, message: err.message });
           failed.push(id);
         }
@@ -626,6 +653,7 @@ function waitlistAdminRoutes(config) {
         signupIds: fresh.map((r) => Number(r.id)),
         alreadyAdmitted: already.length,
         missing: missing.length,
+        needsSms: needsSms.length,
         failed: failed.length,
         adminId: req.user?.id,
       });
@@ -634,6 +662,7 @@ function waitlistAdminRoutes(config) {
           admitted: fresh.map((r) => Number(r.id)),
           already_admitted: already,
           not_found: missing,
+          needs_sms: needsSms,
           failed,
         },
       });

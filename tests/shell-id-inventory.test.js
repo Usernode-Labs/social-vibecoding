@@ -58,6 +58,28 @@ const withInteriors = `${after}\n${lazyInteriorsHtml()}`;
 
 // Ids a conversion chunk deliberately removed, each with the reason.
 const RETIRED_IDS = {
+  // ── The create-project dialog is retired ───────────────────────────
+  // Create opens "What do you want to make?" (features/first-session/
+  // make.tsx), the screen the first session asks with, for everyone. It
+  // imports a GitHub repo in place (import-repo.tsx), and every new project
+  // ends on its made screen. Who a project is for and who approves are its
+  // own levers afterwards (Invite, "Make it public", Members & approvals),
+  // and the starter templates are gone. The ids the dialog ADDED since the
+  // baseline (its step indicator, Next, the invite and approval steps, the
+  // brief and the one-line description) left ADDED_IDS with it.
+  'create-modal': 'The create-project dialog\'s root, one of the nine static dialogs. Create opens the make screen instead (App.showCreateModal → window.UsernodeReact.firstSession.create()); #create is its route and #create/import its import form.',
+  'create-card': 'The dialog\'s card, which carried every answer as data-* for app.css. The make screen has two questions and no steps to unfold.',
+  'create-title': 'The dialog\'s "New project" / "Import a project" title. The make screen says "New project" over "What do you want to make?", or "Import a GitHub repo".',
+  'create-form': 'The dialog\'s form. The make screen\'s two forms (make.tsx, import-repo.tsx) render only once it is opened, so they are not in the prerendered shell.',
+  'create-import-block': 'The repo URL and Check under "Import a GitHub repo". They are the make screen\'s import form now (#make-import-url, [data-make-import-check]), opened by its small "Import from a GitHub repo" or #create/import.',
+  'import-url': 'The repo URL field. #make-import-url in the import form.',
+  'import-check': 'The Check pill. [data-make-import-check] in the import form; GET /api/github/verify-access as before.',
+  'import-status': 'The check\'s status row. #make-import-status in the import form, which also says what is missing on a press of Import it.',
+  'create-name-block': 'The name (and "What should it do?") card. The make screen asks the same two, and the import form asks the name.',
+  'app-name': 'The project name field. #first-session-name on the make screen, #make-import-name on the import form.',
+  'create-error': 'The dialog\'s error line. Each form says its own (role="alert"), and POST /api/apps\'s answer is read by dialogs/post-create-app.ts for both.',
+  'create-cancel': 'Cancel. The make screen has ✕ ([data-make-close]), Escape and the device back press.',
+  'create-submit': 'Create / Import. Make it, or Import it, never pale for a missing answer.',
   // ── Communities, stage 3: the create dialog asks who it is for ─────
   'create-visibility-block': 'The create dialog\'s last step, two rails for who can build and who can see. The dialog now opens on who a project is FOR (Just me, A group, A community: #create-card[data-audience]), and each answer implies both columns (services/create-options.js); "public to use, invite-only building" stays in the project\'s settings. The approval rule a group or a community picks takes the last step instead (#create-approve-block).',
   'create-vis-hint': 'The rails\' "Apps everyone can build are always public to view" hint. With no rails there is no invalid combination left to explain.',
@@ -314,15 +336,32 @@ const RETIRED_IDS = {
   'feedback-screenshot-img': 'The single attachment preview <img>. Each attached image is now an item the controller appends to #feedback-screenshot-preview, with its own preview and an alt text numbered by position.',
   'feedback-screenshot-state': 'The single attachment\'s status line ("Uploading…", "Saved with your feedback…"). Each thumbnail item carries its own status span now, so an upload failing on one image is reported beside that image.',
   'feedback-screenshot-remove': 'The single ✕ that dropped the only attachment. Each thumbnail has its own 48px remove button, labelled "Remove image N", so one picture can go without the others.',
+  // ── #4311: the Settings choice of where changes get built is gone ────
+  // #1191 made these three markup in Settings → Connectors & CLI (they had
+  // been injected at runtime), so they were declared in ADDED_IDS; the
+  // frozen baseline never recorded them. Nothing acted on the saved value
+  // after #4268 (agent sessions pick where work runs in their own Build-with
+  // sheet), so the row, its save route and its /api/auth/me field went
+  // together. users.dev_flow_preference stays in the schema so a rollback
+  // still reads it.
+  'dev-flow-pref-section': '#4311: the "Where changes get built" part of Settings → Connectors & CLI. Nothing chose a venue from its value any more.',
+  'settings-dev-flow': '#4311: that part\'s dropdown, which saved users.dev_flow_preference through POST /api/me/dev-flow (removed).',
+  'settings-dev-flow-status': '#4311: the dropdown\'s save/error line.',
 };
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── #4127: one paperclip for Photo and Video in Send feedback ─────────
+  'feedback-attach-btn': '#4127: the paperclip in Send feedback\'s attachment row. It opens #feedback-attach-menu, which holds the Photo (#feedback-screenshot-picker-btn) and Video (#feedback-video-btn) rows that were two buttons of their own, so the row fits on one line. dapp.json\'s feedback check selects on it.',
+  'feedback-attach-menu': '#4127: the paperclip\'s popover, in the vote popover\'s frame. Opened and closed by ./feedback-controller (outside click, Escape, a choice).',
   'report-modal': '#2721 shared reporting dialog',
   // ── B8: Suggest an improvement answered by Homeroom bot ─────────────────
-  'feedback-sent-line': 'B8: the line under the filed-request confirmation\'s heading, worded by the controller: "Find it on your profile…", or "Homeroom bot is on it, usually about 8 minutes."',
+  'feedback-sent-line': 'B8: the line under the filed-request confirmation\'s heading, worded by the controller: "Your idea is on the board now. Find it on your profile…", or, where Homeroom bot builds it, "Homeroom bot is building it now, usually about 8 minutes…" (#3971).',
   'feedback-sent-chat': 'B8: Open chat, the confirmation\'s main button when Homeroom bot builds the request: the chat where its card is.',
   'feedback-sent-fix': 'B8: the confirmation\'s small "Build it yourself with a coding agent" link, for somebody who could start a change there.',
+  // ── #3971: a first request Homeroom bot builds is a first request ───────
+  'feedback-sent-first': '#3971: "Your first request!" inside the bot\'s confirmation. B8 skipped the first-request moment whenever the bot built the request; it comes back here, beside Open chat rather than in place of it. Hidden unless the post was the person\'s first request and the bot builds it.',
+  'feedback-sent-first-line': '#3971: that block\'s "You just helped shape <app>." line, named by the controller after the app the request was filed to.',
   // #3230: the spend card's reset line, rewritten by Settings._refreshSpend()
   // in the viewer's own clock (it prerenders the server's UTC boundary).
   'settings-spend-reset': '#3230 spend card reset line, localized at reveal',
@@ -441,14 +480,6 @@ const ADDED_IDS = {
   'reg-password-hint': 'The same line under the password field: "At least 8 characters", the rule Change password already enforced and registration now does too, or the server\'s refusal when it is `field: "password"`.',
   // ── #3575: the person chooses the handle, and is told it is public ──
   'reg-username-public': '#3575: "Your username will be public to other users on Homeroom." directly under the register form\'s username field, ahead of #reg-username-hint. Its own element rather than a clause of the hint, because the hint is swapped whole for the server\'s refusal and this sentence has to stay beside the field while the person fixes the name. The input names both lines through aria-describedby. The email sign-up\'s set-password step and the first-run gate say the same sentence beside their fields.',
-  // ── #1911: the create-app dialog unfolds in steps ─────────────────
-  'create-step-indicator': 'The "Step N of M" line under the create dialog\'s title. The dialog used to show every choice on one page; its steps unfold in one card now (since communities, stage 3: who it is for, what and how to start, the details, and for a group or a community made new who approves), and this names how far it has unfolded and how far these answers go.',
-  'create-next': 'The create dialog\'s Next pill, which unfolds the next step. The details step runs the guards the old single page ran at submit, one step earlier. Hidden once the last step for the answers so far is showing (app.css keys it off #create-card[data-final]), when Create takes its place, and on the two question steps, where pressing a row moves on by itself (request #3160).',
-  // ── Communities, stage 3: who it is for, and who approves ─────────
-  'create-invite-block': 'The create dialog\'s "Invite people" card, under the collapsed "A group" row: a group names its people when it is created, and they are invited when it is (POST /api/apps `invitees`). Shown only for a group, by app.css off #create-card[data-audience].',
-  'create-invitees': 'The usernames a group is created with, comma separated, in an uncontrolled input so the prerender carries no value.',
-  'create-approve-block': 'The create dialog\'s last step for a group or a community made new: Members vote, or People I pick (starting with the creator), with "at least N yes votes" as its follow-up. Written into the new repository\'s dapp.json (POST /api/apps `governance`).',
-  'create-approvals-n': 'The "Yes votes needed" number under People I pick → At least a number (1 to 50).',
   // ── Communities, stage 5: the first run ─────────────────────────────
   'home-getting-started': 'Home\'s Getting started card: the welcome tour and the season\'s First challenges for a new account that came through "What communities do you want to join?", ticked off from their credits (GET /api/me/getting-started; the one list, 2026-10-01). Ships empty and hidden; a React island (features/home/getting-started.tsx).',
   // ── #1374: per-app notification settings ─────────────────────────
@@ -688,6 +719,10 @@ const ADDED_IDS = {
   // per-user opt-ins in Settings → Experimental.
   'homeroom-bot-dm-enabled': 'Opt-in switch that puts this account on the Homeroom bot\'s DM list (#3624).',
   'homeroom-bot-dm-status': 'Save/error line for the Homeroom bot switch, e.g. when the list is full (#3624).',
+  // #4289 — the experimental C shortcut for Suggest an improvement, beside
+  // the other opt-ins in Settings → Experimental. Kept on the device
+  // (features/improve/suggest-shortcut.ts), so it has no save/error line.
+  'suggest-shortcut-enabled': 'Opt-in switch for pressing C to open Suggest an improvement on a computer (#4289).',
   // Username changes — Settings -> Username, the change-your-@handle form. It sits in
   // Settings rather than the profile edit sheet because the endpoint requires
   // the current password, which is the same reason Change password is here.
@@ -704,17 +739,6 @@ const ADDED_IDS = {
   // (#1412's #improve-version-dot came and went: the Streamlined Concept
   // returned the version cue to the hamburger under its original
   // #header-menu-deploy-dot id — see the note in RETIRED_IDS.)
-  // ── #1191: the build-flow preference stops being injected ────────
-  // These three were BUILT AT RUNTIME by Settings._renderDevFlowSection,
-  // which created the block and inserted it into the Connections pane on
-  // every render. The reason was this very baseline: the shell's body used to
-  // be a hand-written document, so a new settings control had nowhere to go.
-  // The pane is a component now, so the block is markup and its ids are a
-  // deliberate line here — which is also what stops a legacy module writing
-  // into a subtree React owns.
-  'dev-flow-pref-section': 'The "Preferred build flow" block in Settings → Connections (#1049) — the escape hatch for the dev-chat picker\'s "remember my option" checkbox.',
-  'settings-dev-flow': 'The build-flow dropdown itself. Settings binds its change and gates the two hand-off options on whether the deployment has external flows.',
-  'settings-dev-flow-status': 'Save/error line for the build-flow dropdown.',
   'cli-setup-guide': 'Always-visible local-agent setup in Settings → CLI access (#1609). It is static section markup so capability detection and credential-list state cannot blank the instructions.',
   'native-app-version-slot': 'Mobile app version/build rendered through the native bridge (#1101).',
   'feedback-queue-dot': 'Header dot for feedback saved offline and still waiting to send (#1054). It has changed parents twice without changing id or writer — off the retired #feedback-btn onto #improve-btn, and off that onto the Homeroom mark when #2718 retired it — because it belongs on whichever control is the way to this dialog from the header. Bottom-left, opposite the working dot.',
@@ -981,9 +1005,6 @@ const ADDED_IDS = {
   // ── The prototype's Challenges page: a History segment ──────────────
   'leaderboard-history-root': 'The Leaderboard screen\'s fourth pane, the History tab (#leaderboard/seasons): the seasons that have ended, who won each, each event\'s winner and where the viewer finished — the navigation prototype\'s History segment. Ships EMPTY and hidden like the two other non-default pane roots, and Leaderboard._applySection toggles its `hidden` on a constant className; features/leaderboard/history-pane.tsx is the only writer below it.',
   'side-panel-divider': '#2886: the divider between the running app and the panel, as a handle on the panel\'s left edge — a vertical `separator` that drags (or takes the arrow keys, Home and End) to share the window differently, keeping at least 320px of panel and 480px of app, remembers the chosen width on this device, and resets to the default on a double-click. Ships with no value: the width is read in an effect, never in the first render.',
-  // ── The create dialog asks what the project is ──────────────────────
-  'app-description': 'The create dialog\'s "What is it?" line, on its own "Short description" step after the name (the `about` step), required there and suggested from "What should it do?" on arrival. A project made new sends it as `description`, which the template writes into the new repository\'s dapp.json — the line the join screen, Discover and the project\'s page show. An import skips the step (app.css folds it away): its own dapp.json describes it.',
-  'app-brief': 'The create dialog\'s "What should it do?", under Project name in #create-name-block. It was rendered only after a real open, for somebody the Homeroom bot builds for (#3624), so the prerender never carried it; it is asked of everyone making a project now, and required, so it ships in the shell like the name. A controlled textarea whose empty value prerenders as no text. POST /api/apps files it as the project\'s first request once the project runs. Folded away for an import (app.css).',
   // The channels moved out of Messages onto their communities' hubs, so the
   // Channels filter (#2783, added above as messages-filter-channels) is gone
   // with the section it narrowed to; it was never in the baseline.
@@ -997,7 +1018,7 @@ const ADDED_IDS = {
   // picker is a native surface, so the input never renders); the preview
   // row's one item is built by feedback-controller.js, like the screenshot
   // thumbnails, so it carries no id of its own.
-  'feedback-video-btn': '#3940: the Add video button (label becomes Replace video once a clip is attached). dapp.json\'s feedback check selects on it.',
+  'feedback-video-btn': '#3940: the Video row of the paperclip popover (#4127; label becomes Replace video once a clip is attached). dapp.json\'s feedback check selects on it.',
   'feedback-video-input': '#3940: the hidden video file input behind the button (MP4, WebM and MOV).',
   'feedback-video-preview': '#3940: the clip preview row (first-frame thumbnail, progress bar, status, remove), empty and hidden until a clip is chosen.',
 };

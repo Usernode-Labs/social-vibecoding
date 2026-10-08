@@ -99,6 +99,9 @@ import './features/app-frame/mount';
 // must exist before DOMContentLoaded (the earliest App.init() can navigate) —
 // module scope here, not first render of the header island.
 import './features/header/mount';
+// Publishes window.UsernodeReact.verifyIdentity: the sheet a public vote the
+// verified-identity rule refused opens (public/js/app-view.js castVote).
+import './features/auth/verify-identity';
 // The platform tab bar's bridge: publishes window.UsernodeReact.nav. Same
 // window as the header's — App._syncPlatformTabs() runs inside
 // PlatformUI.transition's reveal callback on every screen swap, the earliest
@@ -139,6 +142,19 @@ import './lib/transition-ground';
 // Publishes window.ResetTime: allowance resets worded in the viewer's own
 // clock, for the classic scripts that cannot import it (#3230).
 import './lib/reset-time';
+// #4177: the one place that re-reads what is on screen after a gap
+// (window.UsernodeReact.liveReads). Before DOMContentLoaded, because the
+// group chat registers with it the first time a channel connects.
+import './lib/live-reads';
+// #4065: the drop-zone tracker for the classic chat scripts
+// (window.UsernodeReact.fileDrag), and the floor under every drop zone: a
+// file dropped where nothing takes it no longer opens in place of the app.
+import './features/attachments/file-drag';
+import './lib/file-drop-guard';
+// #4289: the C key opens Suggest an improvement, behind Settings, Experimental's
+// switch (off by default). Two listeners on the document, the shell's own keys
+// and the bridge's message from inside an app, and no markup of its own.
+import './features/improve/suggest-shortcut';
 // #1084 chunk G: the retired public/js/dev-chat.js, moved into the bundle
 // verbatim. Imported HERE rather than from a Shell island for the same reason
 // as the dev board above — #dc-view is written into an empty #app-content at
@@ -156,6 +172,10 @@ import './features/dev-chat/dev-chat.js';
 // route, not only on one screen's first reveal. Its listener is guarded, so
 // an anonymous document costs it nothing.
 import './features/auth/username-first-run.js';
+// The verified-identity rule's "Add your phone number", the first step on a
+// phone after the username and the terms, before the communities step below
+// (which waits on it), imported here for the same two reasons.
+import './features/auth/phone-first-run';
 // Communities, stage 5: "What communities do you want to join?", the step
 // after the username and the terms, imported here for the same two reasons.
 import './features/auth/communities-first-run.js';

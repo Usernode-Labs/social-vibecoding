@@ -263,16 +263,14 @@
       "steps": []
     },
     "opens": {
-      "joined": "number",
-      "opened": {
-        "reason": "string",
-        "recorded": "boolean"
-      }
+      "reason": "string",
+      "recorded": "boolean"
     },
     "recordedFrom": {
       "make": "object",
       "opens": "object",
-      "reward": "object"
+      "reward": "object",
+      "signedIn": "object"
     },
     "sessionMinutes": "number",
     "week": "string"

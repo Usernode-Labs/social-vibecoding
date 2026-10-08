@@ -48,7 +48,7 @@ const community = (over = {}) => ({
 const days = (counts) => counts.map((n, i) => ({ day: `2026-09-${String(10 + i).padStart(2, '0')}`, n }));
 
 test('#3268: the hero carries who is here and the fortnight, and who it is for rides the count (#852)', () => {
-  const { HeroPeople, HeroActivity, HERO_FACES, sparkTip } = loadTsx(CARD);
+  const { HeroPeople, HeroPulse, HERO_FACES, sparkTip } = loadTsx(CARD);
   const members = ['ada', 'lin', 'kai', 'mia', 'sam', 'zoe', 'raj'].map((u, i) => ({ id: i + 1, username: u }));
   const people = renderToHtml(createElement(HeroPeople, { members, count: 19 },
     createElement('span', { className: 'dev-ws-hero-actions' }, 'Invite')));
@@ -57,9 +57,21 @@ test('#3268: the hero carries who is here and the fortnight, and who it is for r
   assert.match(people, /<span class="dev-ws-hero-count" data-ws-members-cell="members">19 members<\/span><span class="dev-ws-hero-actions">Invite<\/span>/,
     'the count, then the actions at the far end of the same row');
 
+  // WHO IS HERE AND HOW LIVELY, ONE BLOCK: the faces, the count over this
+  // week in words, and the chart across from both. "Changes shipped" says
+  // what the number counts; the no-break space keeps the dot off the start
+  // of a wrapped line.
   const counts = [0, 1, 2, 0, 0, 3, 4, 0, 1, 0, 0, 2, 0, 4];
-  const html = renderToHtml(createElement(HeroActivity, { activity: { active_week: 4, shipped_month: 3, daily: days(counts) } }));
-  assert.match(html, /<span data-ws-members-cell="active"><b>4<\/b> active this week<\/span> · <span data-ws-members-cell="shipped"><b>3<\/b> shipped this month<\/span>/);
+  const pulse = (activity, over = {}) => renderToHtml(createElement(HeroPulse, {
+    members, count: 19, audience: 'open', audienceLabel: 'Public community', activity, ...over,
+  }));
+  const html = pulse({ active_week: 4, shipped_month: 3, daily: days(counts) });
+  assert.match(html, /^<div class="dev-ws-hero-pulse" data-ws-members=""><span class="dev-ws-hero-faces" aria-hidden="true">/, 'the faces lead the block');
+  assert.equal([...html.matchAll(/class="dev-ws-hero-face"/g)].length, 5);
+  assert.match(html, /<span class="dev-ws-hero-pulse-words"><span class="dev-ws-hero-count" data-ws-members-cell="members">[\s\S]*?<b>Public community<\/b><\/span> · 19 members<\/span><span class="dev-ws-hero-activity-line" data-ws-members-stats="">/,
+    'who it is for and the count, over the activity line');
+  assert.match(html, /<span data-ws-members-cell="active"><b>4<\/b> active this week<\/span>\u00a0· <span data-ws-members-cell="shipped"><b>3<\/b> changes shipped this month<\/span><\/span><\/span><span class="dev-ws-hero-spark-wrap">/,
+    'then the chart, across from both lines');
   // No caption under the line and no native tooltip on a bar: the chart's
   // own tip carries both, and it is not drawn until a bar is pointed at.
   assert.doesNotMatch(html, /Who took part, last 14 days/);
@@ -79,11 +91,14 @@ test('#3268: the hero carries who is here and the fortnight, and who it is for r
   assert.match(CSS, /\.dev-ws-hero-spark-tip \{\s*position: absolute; right: 0; bottom: calc\(100% \+ 8px\);/, 'against the chart\'s right edge, so it never leaves the screen');
 
   // A shared tip, not a second way to lose the numbers.
-  const quiet = renderToHtml(createElement(HeroActivity, { activity: { active_week: 0, shipped_month: 0, daily: days(Array(14).fill(0)) } }));
+  const quiet = pulse({ active_week: 0, shipped_month: 0, daily: days(Array(14).fill(0)) });
   assert.match(quiet, /data-ws-members-trend="" data-ws-trend-empty="">Nobody has been around in the last 14 days\./);
-  const shippedOnly = renderToHtml(createElement(HeroActivity, { activity: { active_week: 0, shipped_month: 2, daily: days(counts) } }));
+  assert.doesNotMatch(quiet, /dev-ws-hero-spark/, 'no chart of fourteen slivers');
+  assert.match(quiet, /19 members/, 'who is here still says so');
+  const shippedOnly = pulse({ active_week: 0, shipped_month: 2, daily: days(counts) });
   assert.doesNotMatch(shippedOnly, /active this week/);
-  assert.match(shippedOnly, /<b>2<\/b> shipped this month/);
+  assert.doesNotMatch(shippedOnly, /\u00a0· /, 'no separator for one cell');
+  assert.match(shippedOnly, /<b>2<\/b> changes shipped this month/);
 
   // WHO IT IS FOR rides the count: "Public community · 19 members", its
   // glyph leading, and Just you is the label alone (#852: the label was a
@@ -94,19 +109,21 @@ test('#3268: the hero carries who is here and the fortnight, and who it is for r
   assert.match(alone, /<b>Just you<\/b><\/span><\/span>/);
   assert.doesNotMatch(alone, /\d+ members?/, 'Just you counts nobody');
 
-  // Who is here first, then what it is, then one row of what you can do,
-  // then the fortnight (not for Just you, who has nobody to count).
+  // What it is first, then who is here and how lively it has been, then one
+  // row of what you can do. Just you is the label alone: nobody to show and
+  // no fortnight to count.
   const src = CARD_SRC;
-  assert.match(src, /<HeroPeople\s+members=\{solo \? \[\] : data\.members\}\s+count=\{Number\(data\.member_count\) \|\| 0\}\s+audience=\{data\.audience\}\s+audienceLabel=\{data\.audience_label\}\s+\/>/);
-  assert.ok(src.indexOf('<HeroPeople\n') < src.indexOf('data-ws-community-description=""'), 'who is here, then what it is');
-  assert.match(src, /\{solo \? null : <HeroActivity activity=\{data\.activity\} \/>\}/);
+  const hero = src.slice(src.indexOf('export function CommunityCard('), src.indexOf('export function ApprovalRules('));
+  assert.match(hero, /\{solo \? \(\s*<HeroPeople members=\{\[\]\} count=\{Number\(data\.member_count\) \|\| 0\} audience=\{data\.audience\} audienceLabel=\{data\.audience_label\} \/>\s*\) : \(\s*<HeroPulse\s+members=\{data\.members\}\s+count=\{Number\(data\.member_count\) \|\| 0\}\s+audience=\{data\.audience\}\s+audienceLabel=\{data\.audience_label\}\s+activity=\{data\.activity\}\s+\/>\s*\)\}/);
+  assert.ok(hero.indexOf('data-ws-community-description=""') < hero.indexOf('<HeroPulse'), 'what it is, then who is here');
+  assert.ok(hero.indexOf('<HeroPulse') < hero.lastIndexOf('<div className="dev-ws-hero-row">'), 'then what you can do');
+  assert.doesNotMatch(src, /HeroActivity/, 'the activity is the pulse\'s second line, not a row of its own');
   // Open app, Invite, Make it public and the ⋯ lead the row; Join or Joined
   // is across from them at its far end.
   assert.match(src, /<div className="dev-ws-hero-row">\s*<div className="dev-ws-hero-actions">\s*\{openApp\}[\s\S]*?data-ws-community-invite=""[\s\S]*?<MakePublic[\s\S]*?\{menu\}\s*<\/div>\s*\{membership \? <span className="dev-ws-hero-member">\{membership\}<\/span> : null\}/);
   // How a change gets in is the Workshop page's Approval rules card now.
-  const hero = src.slice(src.indexOf('export function CommunityCard('), src.indexOf('export function ApprovalRules('));
   assert.doesNotMatch(hero, /data-ws-community-rule/);
-  assert.match(src, /export function ApprovalRules\([\s\S]*?data-ws-approval-rules=""[\s\S]*?data-ws-community-rule="">\{approvalLine\(data\.approval\)\}/);
+  assert.match(src, /export function ApprovalRules\([\s\S]*?data-ws-approval-rules=""[\s\S]*?data-ws-community-rule="">\{approvalLine\(data\.approval, data\)\}/);
   assert.doesNotMatch(read(HUB), /export function MembersCard/, 'the hub has no Members & activity card any more');
 });
 
@@ -125,6 +142,12 @@ test('#3276: the hero\'s rows wrap instead of running past a phone\'s edge', () 
   assert.match(rule('.dev-ws-hero-member'), /margin-left: auto; flex: none;/);
   // The Join popup hangs from the right of its button, which ends the row.
   assert.match(CSS, /\.dev-ws-hero \.dev-ws-hero-member \.dev-ws-join-pop \{ left: auto; right: -6px; \}/);
+  // The pulse: faces, words, chart in one row on a wide window; under 768px
+  // the chart moves up across from the faces and the words take the width.
+  assert.match(CSS, /\.dev-ws-hero-pulse \{\s*display: grid; grid-template-columns: auto minmax\(0, 1fr\) auto;\s*grid-template-areas: "faces words chart";/);
+  assert.match(CSS, /@media \(max-width: 767\.98px\) \{\s*\.dev-ws-hero-pulse \{\s*grid-template-columns: minmax\(0, 1fr\) auto;\s*grid-template-areas: "faces chart" "words words";/);
+  assert.match(rule('.dev-ws-hero-pulse-words'), /grid-area: words; min-width: 0;/);
+  assert.match(CSS, /\.dev-ws-hero-activity-line > \[data-ws-members-cell\] \{ white-space: nowrap; \}/, 'a narrow phone breaks the line at its separator');
 });
 
 test('Needs you counts the votes you owe, not the requests nobody has claimed', () => {

@@ -198,8 +198,9 @@ test('the small size, for a row: the tile on its colour, the name, and the line 
 
 test('the made screen draws the thumbnail with its line, its emoji is the screen\'s icon, and nothing is framed', () => {
   const made = read(`${DIR}/made.tsx`);
-  assert.match(made, /import \{ SketchCard, useSketch \} from '\.\/sketch-card';/);
-  assert.match(made, /<SketchCard made=\{made\} sketch=\{sketch\} line=\{line\} note=\{note\} \/>/);
+  assert.match(made, /import \{ SketchCard, showsCard, useSketch \} from '\.\/sketch-card';/);
+  assert.match(made, /\{card \? \(\n\s+<SketchCard made=\{made\} sketch=\{sketch\} line=\{line\} note=\{note\} />/);
+  assert.match(made, /const tile = sketch\.card\?\.emoji \|\| made\.emoji \|\| made\.name\.slice\(0, 1\);/);
   assert.match(made, /made=\{sketch\.card \? \{ \.\.\.made, emoji: sketch\.card\.emoji \} : made\}/, 'the invite sheet shows it too');
   assert.doesNotMatch(made, /<iframe|sketch\.html|sketchCaption|status-dot|Step \$\{/);
   // Rendered with nothing read yet: the card being sketched, Homeroom bot planning it.

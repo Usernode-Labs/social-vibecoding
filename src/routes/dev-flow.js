@@ -96,6 +96,10 @@ const STATUS_BY_CODE = {
   // matches import_failed, its exact twin on the other destination.
   already_shared: 409,
   share_failed: 502,
+  // #4266: closeWorkOrder's answer for a work order closed before. Only the
+  // connector's close_work_order emits it today; mapped like already_submitted,
+  // its sibling, so no service code answers a bare 400 here.
+  already_closed: 409,
 };
 
 // Same-origin guard for the two writes, copied in spirit from

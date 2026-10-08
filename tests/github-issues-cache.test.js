@@ -690,6 +690,19 @@ test('fetchIssueComments follows Link pages oldest-first and caps at the page ce
   }
 });
 
+test('fetchIssueComments asks GitHub for the comments since a time, when given one', async () => {
+  const origFetch = global.fetch;
+  try {
+    const calls = stubCommentPages([{ body: [fakeComment(1)], next: null }]);
+    await github.fetchIssueComments('O', 'r', 9, { since: '2026-10-07T09:50:00.000Z' });
+    assert.match(calls[0], /\/issues\/9\/comments\?per_page=100&since=2026-10-07T09%3A50%3A00\.000Z$/);
+    await github.fetchIssueComments('O', 'r', 9);
+    assert.doesNotMatch(calls[1], /since=/);
+  } finally {
+    global.fetch = origFetch;
+  }
+});
+
 test('fetchIssueComments returns a short thread without truncation', async () => {
   const origFetch = global.fetch;
   try {

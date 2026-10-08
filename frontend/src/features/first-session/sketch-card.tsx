@@ -67,6 +67,11 @@ export function sketchCardOf(value: unknown): FeaturedCardData | null {
   };
 }
 
+/** Whether the made screen draws the card: on its way, or here. */
+export function showsCard(state: SketchState): boolean {
+  return state === 'loading' || state === 'pending' || state === 'ready';
+}
+
 /** Whether the sketch is still on its way: the card stands, being sketched. */
 export function sketching(state: SketchState): boolean {
   return state === 'loading' || state === 'pending';

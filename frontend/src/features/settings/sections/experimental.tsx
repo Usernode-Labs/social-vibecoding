@@ -29,6 +29,12 @@ import { LocalAgentsList } from '../local-agents-list';
  * POST /api/me/homeroom-bot-dm and paints the switch from /api/auth/me's
  * `homeroomBotDm`; a full list answers 409 and the switch goes back off.
  *
+ * #4289 Press C to suggest an improvement (default OFF) is the one switch
+ * here kept on the DEVICE, not the account: a keyboard shortcut belongs to
+ * the keyboard in front of you. ../../improve/suggest-shortcut.ts owns it
+ * (localStorage) and publishes window.UsernodeReact.suggestShortcut, which
+ * settings.js paints and saves the switch through.
+ *
  * #907 Local coding agent lives in the same pane (not the CLI section) because
  * it is a preview of the same feature the dev chat's "Run on" selector
  * exposes, and because a lease is NOT a credential: revoking a CLI token is a
@@ -68,6 +74,14 @@ export function ExperimentalSection() {
             Create a project and describe what it should do, and Homeroom bot builds the first version. On the projects it works on, it asks you its questions about your requests in Messages, with answers you can tap, and tells you when something is building, ready to vote on, and live. Your answers are still posted on the request, where everyone can see them. You can also write to it to ask what it's working on. The platform pays for its work for you, up to a weekly limit. Turning this off stops it, including on projects it built for you.
           </p>
           <StatusLine id="homeroom-bot-dm-status" size="xs" />
+        </div>
+        <div className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
+          <SwitchRow id="suggest-shortcut-enabled">
+            Press C to suggest an improvement
+          </SwitchRow>
+          <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
+            On a computer, pressing C opens Suggest an improvement. It does nothing while you're typing or have text selected, or when the screen or app you're in uses C for something of its own. Saved on this device only.
+          </p>
         </div>
       </div>
       <div id="settings-local-agents-section" className="hidden mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">

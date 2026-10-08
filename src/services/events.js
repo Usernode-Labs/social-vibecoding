@@ -107,6 +107,13 @@ const EVENT_TYPES = Object.freeze({
   // the provider accepted it. No backfill — the button didn't exist
   // before this shipped.
   MAIL_TEST_SENT: 'mail_test_sent',
+  // An admin sent a diagnostic text from Admin → SMS delivery
+  // (src/routes/admin.js POST /api/admin/sms/test). Metadata carries
+  // { status, providerCode, phoneLast4 } — the last four digits only,
+  // never the whole number, the code or a credential. Emitted for every
+  // outcome Firebase gave, including `refused` and `unreachable`. No
+  // backfill — the button didn't exist before this shipped.
+  SMS_TEST_SENT: 'sms_test_sent',
   // An admin ran the bulk container rollover (src/services/app-rollover.js
   // via POST /api/admin/rollover): every running child-app container
   // recreated with freshly assembled env. Metadata carries the tally
@@ -181,10 +188,29 @@ const EVENT_TYPES = Object.freeze({
   //   invite_opened         a live invite link opened, once per person
   //                         (an account, else a browser) and maker and
   //                         project (services/invite-activity.js); user_id
-  //                         is the visitor when signed in. metadata:
-  //                         { inviteId, signedIn }
+  //                         is the visitor when signed in. Recorded signed
+  //                         out too, though only a signed-in open tells the
+  //                         maker (#4176). metadata: { inviteId, signedIn }
+  //   invite_signed_in      the invite funnel's middle step: somebody signed
+  //                         up or in from a live invite link (the sign-in
+  //                         carried it: communityInvites.redeemCarried, or
+  //                         dropCarried when it does not follow it), or
+  //                         opened one already signed in, before joining.
+  //                         Once per person per link (the unique index in
+  //                         schema.sql), written by
+  //                         journey-events.noteInviteSignedIn. metadata:
+  //                         { inviteId, how: 'signed_up' | 'signed_in' |
+  //                         'was_signed_in' }; the first two are the
+  //                         sign-ins the link brought, the last somebody
+  //                         already signed in (#4272)
   FIRST_ARTEFACT_SHOWN: 'first_artefact_shown',
   INVITE_OPENED: 'invite_opened',
+  INVITE_SIGNED_IN: 'invite_signed_in',
+  // Something on the platform that should not happen, kept for admins
+  // (services/platform-incidents.js, #4210). metadata: { kind, ... } where
+  // kind names the incident ('build_interrupted': a bot build a restart or
+  // a lost worker cut short; { runId, issueNumber, why, outcome }).
+  PLATFORM_INCIDENT: 'platform_incident',
 });
 
 // Record a single analytics event. Fire-and-forget — returns a promise

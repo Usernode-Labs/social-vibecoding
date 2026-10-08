@@ -134,7 +134,9 @@ test('the browser an open came from: a random HttpOnly cookie, kept only as its 
 test('opens are counted from the page\'s own reads, once per person, never from the unfurled HTML', () => {
   const routes = read('src/routes/community-invites.js');
   assert.match(routes, /if \(preview\.live\) countOpen\(req, res, req\.params\.token\);/);
-  assert.match(routes, /if \(standing\.live && !standing\.mine\) countOpen\(req, res, req\.params\.token, req\.user\.id\);/);
+  // The signed-in read is also the invite funnel's "signed in" step for the
+  // admin Journey (journey-events.noteInviteSignedIn, once per person per link).
+  assert.match(routes, /if \(standing\.live && !standing\.mine\) \{\s*countOpen\(req, res, req\.params\.token, req\.user\.id\);\s*void journeyEvents\.noteInviteSignedIn\(pool, \{ token: req\.params\.token, userId: req\.user\.id \}\);\s*\}/);
   // Every read is handed to the service with the browser it came from; the
   // service decides whether it is somebody new (invite-activity-postgres).
   assert.match(routes, /const browser = inviteActivity\.ensureBrowser\(req, res\);\s*void inviteActivity\.noteOpened\(pool, \{ token, viewerId, browser, seenBefore \}\);/);

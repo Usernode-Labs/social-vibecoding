@@ -83,7 +83,17 @@ const DevChat = {
   // whose whole history the reader asked for with "Show older".
   sessionsOlder: 0,
   _sessionsAllFor: null,
-  currentSession: null,
+  // The open session. An accessor (#4318) so that every assignment — here,
+  // in app-view.js, or in a test — also tells the events socket which
+  // session's live stream this tab needs (App.setDevChatSession).
+  _currentSession: null,
+  get currentSession() { return this._currentSession; },
+  set currentSession(session) {
+    this._currentSession = session;
+    try {
+      window.App?.setDevChatSession?.(session && session.id != null ? session.id : null);
+    } catch { /* the socket layer is best-effort; the owner still hears it */ }
+  },
   messages: [],
   isStreaming: false,
   selectedModel: loadStoredModel() || 'claude-opus-5-5',
@@ -345,10 +355,28 @@ const DevChat = {
     if (cents == null && notes?.typicalChange && catalogModel) {
       const input = Number(catalogModel.inputPricePerMillion);
       const output = Number(catalogModel.outputPricePerMillion);
-      if (Number.isFinite(input) && Number.isFinite(output)) {
-        const dollars = (Number(notes.typicalChange.inputTokens) / 1_000_000) * input
-          + (Number(notes.typicalChange.outputTokens) / 1_000_000) * output;
-        cents = Math.round(dollars * 100 * 100) / 100;
+      if (catalogModel.inputPricePerMillion != null && catalogModel.outputPricePerMillion != null
+        && Number.isFinite(input) && Number.isFinite(output)) {
+        // The server's arithmetic (services/model-costs.js tokenCostUsd):
+        // inputTokens is every prompt token, and its cache-read and
+        // cache-write parts are priced at the model's cache rates where the
+        // catalog lists them, at its prompt rate where it does not.
+        const profile = notes.typicalChange;
+        const rate = (value) => {
+          const n = value == null ? NaN : Number(value);
+          return Number.isFinite(n) && n >= 0 ? n : null;
+        };
+        const readRate = rate(catalogModel.cacheReadPricePerMillion);
+        const writeRate = rate(catalogModel.cacheWritePricePerMillion);
+        const tokens = Math.max(Number(profile.inputTokens) || 0, 0);
+        const part = (n, room) => Math.min(Math.max(Number(n) || 0, 0), Math.max(room, 0));
+        const reads = readRate == null ? 0 : part(profile.cachedInputTokens, tokens);
+        const writes = writeRate == null ? 0 : part(profile.cacheWriteInputTokens, tokens - reads);
+        let perMillion = (tokens - reads - writes) * input
+          + Math.max(Number(profile.outputTokens) || 0, 0) * output;
+        if (reads > 0) perMillion += reads * readRate;
+        if (writes > 0) perMillion += writes * writeRate;
+        cents = Math.round((perMillion / 1_000_000) * 100 * 100) / 100;
       }
     }
     // Under a cent is "<$0.01" rather than "$0.00": a model that costs
@@ -503,8 +531,6 @@ const DevChat = {
       DevChat._defaultModel,
       !!DevChat._modelPickerChanging,
       DevChat._stagedPickFor(s),
-      s ? !!s.pending : false,
-      s && s.pending_agent_choice ? s.pending_agent_choice.backend : undefined,
       s ? s.agent_backend : undefined,
       s ? s.agent_model : undefined,
     ];
@@ -531,18 +557,7 @@ const DevChat = {
     // A stale saved id is not an option. The server recommendation is GLM by
     // default, so this is also the first-use fallback the user asked for.
     const preferredId = byId.has(savedId) ? savedId : recommendedId;
-    const pendingChoice = DevChat.currentSession?.pending
-      ? DevChat.currentSession.pending_agent_choice
-      : null;
-    // An unsent change has no server row, so _agentBackend() deliberately
-    // falls back to Claude. That fallback is not the provider the first send
-    // will use: with no explicit pending choice, POST /sessions resolves the
-    // saved server default. Reflect that same default in the picker while
-    // keeping pending_agent_choice null, so merely opening the screen still
-    // performs no write and sends no explicit backend override.
-    const selectedBackend = DevChat.currentSession?.pending
-      ? (pendingChoice?.backend || data?.defaultBackend || 'claude_code')
-      : DevChat._agentBackend(DevChat.currentSession);
+    const selectedBackend = DevChat._agentBackend(DevChat.currentSession);
     const openRouterSelected = selectedBackend === 'codex_openrouter';
     const currentOpenRouterId = openRouterSelected
       ? String(DevChat.currentSession?.agent_model || '').trim()
@@ -660,17 +675,17 @@ const DevChat = {
 
   _stagedPickFor(session) {
     const staged = DevChat._stagedPick;
-    if (!staged || !session || session.pending) return null;
+    if (!staged || !session) return null;
     return Number(staged.sessionId) === Number(session.id) ? staged : null;
   },
 
   _isMidTurn() {
-    return !!(DevChat.isStreaming && DevChat.currentSession && !DevChat.currentSession.pending);
+    return !!(DevChat.isStreaming && DevChat.currentSession);
   },
 
   _stageMidTurnPick(value, choice, { shownBefore = null } = {}) {
     const session = DevChat.currentSession;
-    if (!session || session.pending) return;
+    if (!session) return;
     const previous = DevChat._stagedPickFor(session);
     const original = previous
       ? previous.original
@@ -760,23 +775,7 @@ const DevChat = {
           : null, { shownBefore });
         return;
       }
-      // An unsent change has no session id yet. Its explicit provider choice
-      // must be staged on the placeholder and carried into POST /sessions,
-      // not sent to reset-agent-context with a null id. This branch also
-      // matters when the saved server default is OpenRouter: choosing an
-      // Anthropic model here has to override that default on first send.
-      if (DevChat.isPendingSession()) {
-        DevChat._modelPickerChanging = true;
-        DevChat._publishComposer();
-        try {
-          await DevChat._switchCurrentCodingAgent({
-            backend: 'claude_code', model: null, reasoningEffort: null,
-          });
-        } finally {
-          DevChat._modelPickerChanging = false;
-          DevChat._publishComposer();
-        }
-      } else if (DevChat._isOpenRouterSession()) {
+      if (DevChat._isOpenRouterSession()) {
         DevChat._modelPickerChanging = true;
         DevChat._publishComposer();
         try {
@@ -1046,6 +1045,8 @@ const DevChat = {
   // input to it now meets.
   _launchpadVenue() {
     if (!window.Launchpad) return null;
+    // #3976: a read-only session is handed to no venue; its strip says so.
+    if (DevChat._classicReadOnlyView(DevChat.currentSession)) return null;
     const venue = DevChat._currentVenueId();
     return Launchpad.isLaunchpad(venue) ? venue : null;
   },
@@ -1855,7 +1856,7 @@ const DevChat = {
     if (!session) return 'cancelled';
     // #2812: the catalog dialog may be opened mid-turn (the picker stays
     // enabled); an explicit switch still may not POST over a running turn.
-    if (DevChat.isStreaming && explicit && !session.pending) return 'busy';
+    if (DevChat.isStreaming && explicit) return 'busy';
     const current = {
       backend: DevChat._agentBackend(session),
       model: session.agent_model || null,
@@ -1866,10 +1867,7 @@ const DevChat = {
       current,
       fixedBackend,
     });
-    const stillCurrent = session.pending
-      ? DevChat.currentSession === session
-      : DevChat.currentSession?.id === session.id;
-    if (!choice || !stillCurrent) return 'cancelled';
+    if (!choice || DevChat.currentSession?.id !== session.id) return 'cancelled';
 
     // #2812: a catalog pick made while a turn runs (or one that outlived
     // the turn it was opened in the other way round) is staged for the
@@ -1880,30 +1878,6 @@ const DevChat = {
         : `${ANTHROPIC_MODEL_PREFIX}${DevChat.selectedModel}`;
       DevChat._stageMidTurnPick(value, choice);
       return 'staged';
-    }
-
-    // /sessions/new is a client-only placeholder by design (#2241), so there
-    // is no row reset-agent-context could update. Keep the explicit choice on
-    // that placeholder instead. `_materializePendingSession` sends it with
-    // the first real POST /sessions, preserving the no-write-before-send
-    // contract while still making the grouped model picker functional.
-    if (session.pending) {
-      const pendingChoice = choice.backend === 'codex_openrouter'
-        ? {
-          backend: 'codex_openrouter',
-          model: choice.model || null,
-          reasoningEffort: choice.reasoningEffort || null,
-        }
-        : { backend: 'claude_code', model: null, reasoningEffort: null };
-      session.pending_agent_choice = pendingChoice;
-      // Reuse the ordinary session-derived picker logic so the closed control
-      // immediately reflects what will be created, without a full chat render
-      // that could disturb the uncontrolled message textarea.
-      session.agent_backend = pendingChoice.backend;
-      session.agent_model = pendingChoice.model;
-      session.agent_reasoning_effort = pendingChoice.reasoningEffort;
-      DevChat._publishComposer();
-      return 'applied';
     }
 
     const same = choice.backend === current.backend
@@ -3025,20 +2999,6 @@ const DevChat = {
     return !!(typeof App !== 'undefined' && App.user && App.user.sessionBridgeEnabled);
   },
 
-  // Best-effort: a failed save must not block the venue the user just chose.
-  // Settings → Claude & ChatGPT connectors is the other door to this value.
-  async _saveDevFlowPreference(flow) {
-    try {
-      const res = await fetch('/api/me/dev-flow', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({ flow }),
-      });
-      if (res.ok && typeof App !== 'undefined' && App.user) App.user.devFlowPreference = flow;
-    } catch { /* ignore */ }
-  },
-
   // "Use Claude Code" / "Use Codex" from an out-of-credits card or banner.
   // Same walkthrough the picker opens, in the session the user was refused
   // in — the work they were describing is right there in the transcript.
@@ -3074,12 +3034,11 @@ const DevChat = {
   // rendering the Claude/Codex launchpad.
   //
   // `dismissed` is the lever rather than a cleared `mode`, because
-  // _devFlowTarget checks it FIRST and so short-circuits all three ways a
-  // launchpad comes back: this in-memory wizard, the session's stored
-  // venue, and a saved dev_flow_preference on an untouched session. Only
-  // the first is being cleared here — the other two are still true, and
-  // without `dismissed` the very next paint would answer "wizard" from one
-  // of them and put the launchpad straight back.
+  // _devFlowTarget checks it FIRST and so short-circuits both ways a
+  // launchpad comes back: this in-memory wizard and the session's stored
+  // venue. Only the first is being cleared here — the other is still true,
+  // and without `dismissed` the very next paint would answer "wizard" from
+  // it and put the launchpad straight back.
   //
   // It is per-tab and per-session by construction: _resetDevFlow() rebuilds
   // this object when the session changes, and picking a web venue again
@@ -3219,16 +3178,11 @@ const DevChat = {
     const base = DevChat._sessionOptionsState();
     const user = (typeof App !== 'undefined' && App.user) || {};
     return {
-      // #2607: an unsent change is build-venues.js's OWN 'start' case — "a
-      // session with nothing in it yet, where every answer is still open" —
-      // and it is the one that reads correctly there. 'switch' answers each
-      // row with what it keeps ("this chat, this branch and this proposal"),
-      // and an unsent change has no branch and no proposal to keep. The rows
-      // themselves are identical in both modes; only the sentence under them
-      // changes. The two web hand-offs say "Start new work with" either way,
-      // because `webTargetKind` reads the placeholder's missing branch and
-      // answers 'new'.
-      mode: DevChat.isPendingSession() ? 'start' : 'switch',
+      // Every session this sheet opens on is a real row (#4268: the unsent
+      // placeholder that read as build-venues.js's 'start' case is gone), so
+      // each row answers with what it keeps: "this chat, this branch and
+      // this proposal".
+      mode: 'switch',
       current: DevChat._currentVenueId(),
       // Same three deployment capabilities the "…" menu reads, plus the two
       // this list needs on top: whether the OpenRouter backend is offerable
@@ -3279,7 +3233,7 @@ const DevChat = {
     BuildVenues.open({
       anchorEl: anchorEl || document.getElementById('dc-venue-select') || undefined,
       state,
-      onPick: async (row) => {
+      onPick: (row) => {
         if (!row || row.current) return;
         // #1348: the sheet answers coarsely now. `row.venue` is the venue a
         // choice resolves to, or null for the one the SERVER resolves.
@@ -3299,26 +3253,6 @@ const DevChat = {
           DevChat._persistBuildVenue(null);
           // …and the in-memory walkthrough, which outranks the column.
           DevChat._devFlowReturnToChat();
-          // #2607: on an unsent change this row creates NOTHING. There is no
-          // row for /build-venue or reset-agent-context to update (both are
-          // no-ops against a null id, the first by its own guard and the
-          // second by the return below), and there is nothing for them to
-          // do either: which in-chat agent the change is created with is
-          // already staged on the placeholder as `pending_agent_choice`, by
-          // the composer's model picker, exactly as it was before this row
-          // existed. Left null, POST /sessions resolves the saved default —
-          // which is the same resolution the no-backend reset-agent-context
-          // asks for on a real row, deferred to creation. So the pick's
-          // whole job here is to undo a hand-off: clear the venue, clear the
-          // walkthrough, and put the composer back.
-          if (DevChat.isPendingSession()) {
-            // The repaint the branch below explains, and nothing after it:
-            // `renderChatView` republishes the header strip too, so the
-            // dropdown restates the in-chat venue on the same paint that
-            // brings the composer back.
-            DevChat.renderChatView();
-            return;
-          }
           // Repaint NOW rather than leaving it to the switch below: that
           // one repaints only after its round trip, and only if the round
           // trip succeeds. The choice has already been made locally, so the
@@ -3336,14 +3270,6 @@ const DevChat = {
         }
         const pick = BuildVenues.preselect(row.venue);
         if (!pick) return;
-        // #2607: the other three answers all need a session row to act on —
-        // the lease is set up against a session id, the web hand-off and the
-        // import both RECORD themselves on `chat_sessions.build_venue`. On an
-        // unsent change there is no row yet, so one is created here, exactly
-        // as the first send would create it, and everything below then runs
-        // against a real session unchanged. A refused creation has already
-        // said why; the dropdown stays on the venue it was showing.
-        if (!(await DevChat._materializePendingSessionForVenue())) return;
         if (pick.kind === 'lease') {
           if (!window.SessionOptions) return;
           DevChat._optionsCard = SessionOptions.openInstructions({
@@ -3353,13 +3279,10 @@ const DevChat = {
           return;
         }
         if (pick.kind === 'flow') {
-          // Answering the venue question ALSO answers it for next time —
-          // that is what "asked once" means. The picker card used to make
-          // this a second decision ("remember this choice"); the sheet is
-          // the deliberate act, so the save rides along with it.
-          DevChat._saveDevFlowPreference(pick.flow);
-          // #1281: and it answers it for THIS session, which is what turns
-          // the chat into a launchpad and keeps it one across a reload.
+          // #1281: picking a web hand-off answers it for THIS session,
+          // which is what turns the chat into a launchpad and keeps it one
+          // across a reload. Nothing is saved for next time (#4311): the
+          // account-wide preference it used to write had no reader left.
           if (DevChat.currentSession) DevChat.currentSession.build_venue = pick.venue;
           DevChat._persistBuildVenue(pick.venue);
           DevChat._devFlowFromCredits(pick.flow, DevChat._webHandoffTargetId());
@@ -3704,6 +3627,8 @@ const DevChat = {
   // Only the walkthrough renders in the transcript now — see _devFlowTarget
   // for what left and why.
   _devFlowHtml() {
+    // #3976: handing a read-only session's work to a web agent continues it.
+    if (DevChat._classicReadOnlyView(DevChat.currentSession)) return '';
     const target = DevChat._devFlowTarget();
     if (!target) return '';
     const flow = DevChat._devFlow;
@@ -3880,16 +3805,13 @@ const DevChat = {
     // #1281: the vendor toggle at the top of the launchpad. Switching is
     // cheap and loses nothing — an external task is minted per vendor when
     // the work order is prepared, and the status read re-derives every step
-    // for whichever one is now selected. The saved default moves with it,
-    // for the same reason picking a venue in the sheet moves it: the toggle
-    // IS the deliberate act.
+    // for whichever one is now selected.
     if (action === 'vendor-claude-code' || action === 'vendor-codex') {
       const next = action === 'vendor-codex' ? 'codex' : 'claude-code';
       if (flow.agent === next) return;
       flow.agent = next;
       flow.mode = 'wizard';
       flow.status = null;
-      DevChat._saveDevFlowPreference(next);
       const venue = next === 'codex' ? 'web-codex' : 'web-claude-code';
       if (DevChat.currentSession) DevChat.currentSession.build_venue = venue;
       DevChat._persistBuildVenue(venue);
@@ -4264,256 +4186,15 @@ const DevChat = {
     }
   },
 
-  // #287: an optional issueNumber links the new session back to the issue
-  // row's start-work button (created_from_issue_number) so the row can
-  // swap "Create proposal" → "Create new proposal". Omitted on the generic
-  // "+ New chat" path, which sends no body and stores NULL.
-  // The venue question is NOT asked here.
-  //
-  // Creating a session used to open a blocking modal — "Where should this
-  // build?" — before a single word had been typed, and two more prompts
-  // stood behind it on other entry points. Asking then is asking at the
-  // worst possible moment: the user has an intention, not yet a preference,
-  // and the only honest answer to "which agent" before you know what the
-  // work is, is "whichever one you already told me". So the saved default
-  // is applied silently by the server (resolveDefaultAgentPreference) and
-  // the answer is STATED afterwards, on first paint, by the venue dropdown
-  // in the session header (#1348) — which is also what opens the sheet that
-  // changes it. One question, asked once, changeable any time.
-  //
-  // `agentChoice` survives for the callers that DID make an explicit pick
-  // (the venue sheet itself, and the out-of-credits card). No key is sent
-  // without one, which is what lets the server resolve the default.
-  async createSession(appSlug, issueNumber, agentChoice = null) {
-    try {
-      const hasIssue = Number.isInteger(issueNumber) && issueNumber > 0;
-      const choice = agentChoice || {};
-      const res = await fetch(`/api/apps/${appSlug}/sessions`, {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...(hasIssue ? { issueNumber } : {}),
-          // Omitted, not nulled: POST /sessions reads "no backend key" as
-          // "resolve my default", and a literal null would be a value.
-          ...(choice.backend ? {
-            backend: choice.backend,
-            model: choice.model || null,
-            reasoningEffort: choice.reasoningEffort || null,
-          } : {}),
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        PlatformUI.toast(data.error || 'Failed to create session');
-        return null;
-      }
-      // /api/auth/me was loaded before a first-use managed key existed.
-      // Keep venue gating in sync with the authoritative session response
-      // without waiting for a full page reload.
-      if (data.session?.agent_backend === 'codex_openrouter'
-          && typeof App !== 'undefined' && App.user) {
-        App.user.openrouterAvailable = true;
-      }
-      // The one thing the venue dropdown cannot work out on its own: WHY
-      // this session isn't in the venue the user's default named.
-      if (data.agentFallbackReason && window.BuildVenues) {
-        DevChat._venueFallbackReason = data.agentFallbackReason;
-      }
-      DevChat.sessions.unshift(data.session);
-      // Improve renders its own cross-app cache, not DevChat.sessions. Publish
-      // the successful server row now so the first open after creation cannot
-      // briefly claim that no changes are in progress (#1596).
-      try { window.Improve?.onSessionCreated?.(data.session, appSlug); } catch {}
-      return data.session;
-    } catch {
-      PlatformUI.toast('Network error');
-      return null;
-    }
-  },
-
-  // ── #2241: a change starts when you send, not when you click ────────
-  //
-  // "New change" used to POST /sessions on the click and land the user in
-  // the chat it had just created. #1350 had already taken the BRANCH out of
-  // that POST — no ref is minted until something actually needs one — and
-  // this takes the ROW out of the click for the same reason: most of the
-  // sessions that got created were never used. They still spent a slot from
-  // the per-user active cap, still queued against the global one, still
-  // showed up in the session list and in Improve's "changes in progress",
-  // and the only way to be rid of one was to archive it by hand.
-  //
-  // So the screen comes up against a PLACEHOLDER — a client-only object
-  // that looks enough like a session row for the chat to render — and
-  // `sendMessage` creates the real row on the first send (see
-  // `_materializePendingSession`). Nothing reaches the server until then:
-  // arriving, reading the composer and leaving again writes nothing.
-  //
-  // The placeholder deliberately carries NO `id` and NO `user_id`:
-  //
-  //   * every automatic per-session request in this module already guards
-  //     on the id (the activity heartbeat, the draft reconcile, the
-  //     auto-resume, the status polls), so a null one is silence rather
-  //     than a round of requests against `/api/sessions/null/*`;
-  //   * `_ownsSession` is therefore false, which is what empties the
-  //     strip's ⋯ menu — Pause / Archive / Free worker are all
-  //     owner-scoped calls against a row that does not exist yet.
-  //
-  // `_sessionHeaderView` states the rest of the difference. The venue
-  // dropdown is NOT part of it (#2607): choosing where a change is built is
-  // exactly the question an unsent one still has open, so the control paints
-  // there and `openVenueSheet` creates the row for the answers that need it.
-
-  // The route segment that stands for "a change that has not been sent
-  // yet": /app/<slug>/dev/sessions/new. It is where the ROUTER's session
-  // ref is allowed to be a word instead of an id (see App._normalizeTab,
-  // which holds the only other copy of this literal and is pinned against
-  // this one by tests/dev-new-change.test.js). Giving the screen a real URL
-  // is what lets the session route reach it at all: `switchTab` normalizes
-  // a session sub-tab with no ref straight back to the board.
+  // #2241 → #4268: /app/<slug>/dev/sessions/new was the classic change that
+  // had not been sent yet, drawn against a client-only placeholder session
+  // that the first send created on the server. Classic sessions are no
+  // longer created (#2779), so the placeholder, and the creation behind it,
+  // are gone. The address stays: the router turns it into an unsent agent
+  // session (App.openNewChangeAsAgentSession), so a bookmark still lands
+  // somewhere useful. App._normalizeTab holds the only other copy of this
+  // literal, pinned against this one by tests/dev-new-change.test.js.
   NEW_SESSION_REF: 'new',
-
-  // A creation is in flight. Send and attach both go through
-  // `_materializePendingSession`, and a double-tap on either must not
-  // create two sessions and then talk to the second one.
-  _pendingCreateInFlight: false,
-
-  /** True while the open screen is a change that has not been sent yet. */
-  isPendingSession() {
-    return !!(DevChat.currentSession && DevChat.currentSession.pending);
-  },
-
-  // Put the unsent-change placeholder in `currentSession`. The caller
-  // (AppView.renderDevChatTab) renders the chat view against it exactly as
-  // it would against a freshly-created empty session.
-  //
-  // No `issueNumber`: the issue row's own "Create proposal" still creates up
-  // front, because it stashes its kickoff message as the new session's DRAFT
-  // (#609) and a draft is keyed by session id. Nothing else links a change to
-  // an issue at creation time, so the placeholder has no issue to carry.
-  startPendingSession(appSlug) {
-    DevChat.currentSession = {
-      pending: true,
-      id: null,
-      app_slug: appSlug,
-      status: 'active',
-      created_from_issue_number: null,
-      branch_name: null,
-      pr_number: null,
-      session_title: null,
-      spec_md: '',
-      // Filled only after an explicit composer pick. Until then creation
-      // omits the backend keys and lets the server resolve the saved default.
-      pending_agent_choice: null,
-    };
-    DevChat.messages = [];
-    // A placeholder is a fresh start: never inherit the previous session's
-    // hand-off wizard, spec pane or fallback sentence. `_pickedHandoffVenue`
-    // reads `_devFlow`, so a stale one would swap this screen's composer for
-    // a launchpad pointed at a session that does not exist.
-    DevChat._devFlow = null;
-    DevChat._venueFallbackReason = null;
-    DevChat.specViewer.open = false;
-    DevChat.draftContent = '';
-    DevChat.pendingAttachments = [];
-    return DevChat.currentSession;
-  },
-
-  // Turn the placeholder into a real session. Returns true once
-  // `currentSession` is a server row (including when it already was), false
-  // when creation was refused — `createSession` has toasted the reason by
-  // then, so the caller just stands down and leaves the text in the box.
-  //
-  // Single-flight through `_pendingCreateInFlight`.
-  async _materializePendingSession() {
-    const pending = DevChat.currentSession;
-    if (!pending || !pending.pending) return !!pending;
-    if (DevChat._pendingCreateInFlight) return false;
-    DevChat._pendingCreateInFlight = true;
-    try {
-      const session = await DevChat.createSession(
-        pending.app_slug,
-        null,
-        pending.pending_agent_choice || null,
-      );
-      if (!session) return false;
-      // The viewer can leave the screen while the POST is in flight. The row
-      // exists either way (it is theirs, and the list will show it); it just
-      // must not be adopted as the open session on top of whatever they
-      // navigated to.
-      if (DevChat.currentSession !== pending) return false;
-      DevChat.currentSession = session;
-      // The placeholder had NO hand-off wizard — `startPendingSession` nulls
-      // `_devFlow` on purpose, because a stale one would paint a launchpad
-      // for a session that does not exist. Now one does, so it gets the
-      // per-session object every other session is given on the way in
-      // (`openSession` → `_resetDevFlow`). Without it the first thing to read
-      // `_devFlow` after a creation throws: `_devFlowFromCredits` and
-      // `_devFlowReturnToChat` both assign straight into it, and the venue
-      // sheet on the freshly created session is exactly what reaches them.
-      DevChat._resetDevFlow(session.id);
-      // From here the screen IS a session: it earns a URL of its own (in
-      // place of /dev/sessions/new, so Back does not return to an empty
-      // composer), the activity heartbeat, and the ⋯ menu of owner-scoped
-      // actions that had no row to act on. The venue dropdown is NOT in that
-      // list any more (#2607): it paints on the unsent screen too, and what
-      // changes here is only that the venue it names is the one the server
-      // resolved rather than the one the placeholder derived.
-      if (typeof App !== 'undefined' && App.updateHash) {
-        App.updateHash({ replace: true, ref: session.id });
-      }
-      DevChat._startHeartbeat();
-      DevChat._repaintSessionHeader();
-      DevChat.renderSessionList();
-      return true;
-    } finally {
-      DevChat._pendingCreateInFlight = false;
-    }
-  },
-
-  // #2607: create the row a venue pick needs, carrying the composer with it.
-  //
-  // The venue dropdown is on the unsent-change screen now, and three of its
-  // four answers cannot be given without a session: the lease is granted
-  // against a session id, and the web hand-off and the import both record
-  // themselves on that session's `build_venue` column. So the pick creates
-  // the row first — through `_materializePendingSession`, which is the
-  // FIRST SEND'S own path: same endpoint, same single-flight guard, the same
-  // `pending_agent_choice` (usually none, so the server resolves the saved
-  // default), the same URL replacement and the same session-list refresh.
-  // Picking a venue is simply the second thing that can bring a change into
-  // existence; it must not become a second way of doing it.
-  //
-  // Returns true when there is a real row to act on (including when there
-  // already was), false when creation was refused — `createSession` has
-  // already stated the server's own reason in the status line by then, so
-  // the caller stands down and leaves the dropdown on the venue it was
-  // showing, exactly as a refused first send leaves the screen unsent.
-  //
-  // THE TEXT IN THE BOX SURVIVES. The composer is uncontrolled and its
-  // stored draft is keyed by session id, which is null while the change is
-  // unsent — `_setDraft` drops those writes — so the next `renderChatView`
-  // would hand `_restoreDraft` a field whose session has changed and an
-  // empty draft under the new id, and it would clear what was typed. The
-  // text belongs to the CHANGE, not to the row that did not exist yet, so
-  // it is re-keyed onto the new id and the field is claimed for it before
-  // anything repaints.
-  async _materializePendingSessionForVenue() {
-    if (!DevChat.isPendingSession()) return true;
-    const input = document.getElementById('dc-input');
-    const typed = input ? String(input.value || '') : '';
-    if (!(await DevChat._materializePendingSession())) return false;
-    const id = DevChat.currentSession && DevChat.currentSession.id;
-    if (id && typed.trim()) {
-      DevChat._setDraft(id, typed);
-      // `_restoreDraft` compares this against the session it is rendering:
-      // claiming the field for the new id is what makes it leave the text
-      // alone instead of replacing it with the new row's empty draft.
-      DevChat._composerFieldSession = String(id);
-      DevChat._syncSaveDraftBtn();
-    }
-    return true;
-  },
 
   // Re-sync the open session's server-side status and, if it was auto-
   // paused while we held it open, resume it. This closes the stale-client
@@ -4546,6 +4227,8 @@ const DevChat = {
   async _resumeCurrentSessionIfPaused({ silent = false } = {}) {
     const s = DevChat.currentSession;
     if (!s || !s.id) return false;
+    // #3976: a read-only session is never resumed for a turn it cannot run.
+    if (DevChat._classicReadOnlyView(s)) return false;
     const sessionId = s.id;
     try {
       const res = await fetch(`/api/sessions/${sessionId}`);
@@ -4718,7 +4401,11 @@ const DevChat = {
       // on the platform's session cap — the refusal toasts a 429, which reads
       // as a console error on the route and fails the check for a reason that
       // has nothing to do with what it asserts.
-      if (session.status === 'paused' && DevChat._ownsSession(session) && !DevChat._isShotDeepLink()) {
+      // #3976: …and never a read-only one, which has no turn to resume for:
+      // its proposal is promoted straight from paused, and a resume would
+      // spend one of the owner's active slots on a session nobody can use.
+      if (session.status === 'paused' && DevChat._ownsSession(session) && !DevChat._isShotDeepLink()
+          && !DevChat._classicReadOnlyView(session)) {
         try {
           const rr = await fetch(`/api/sessions/${sessionId}/resume`, { method: 'POST', signal });
           if (rr.ok) {
@@ -4741,9 +4428,6 @@ const DevChat = {
       // `drafts` is null when the session payload's best-effort field
       // failed, which makes _reconcileDrafts fetch the list itself.
       DevChat._reconcileDrafts(session.id, drafts);
-      // #1960: `?shot=draft-delete` stages the reported failure on top of
-      // that list. No-op on every other URL and every other session.
-      DevChat._applyDraftDeleteShot(session.id);
       DevChat._startHeartbeat();
       // Drop any streaming title marker carried over from the previous
       // session. If THIS session is mid-run, the busy check below
@@ -5049,26 +4733,15 @@ const DevChat = {
 
   async sendMessage(message, attachments = []) {
     if (!DevChat.currentSession || DevChat.isStreaming) return;
+    // #3976: nothing on a read-only session's screen sends, and the server
+    // would refuse it; a stray caller stops here rather than paint a turn.
+    if (DevChat._classicReadOnlyView(DevChat.currentSession)) return;
     // #450: attachments-only sends are allowed; the server stores a
     // "(attached files)" stub caption, mirrored here for the optimistic
     // bubble. `attachments` entries come from pendingAttachments (already
     // uploaded — each carries a server id + objectUrl for image thumbs).
     const sentAttachments = (attachments || []).filter((a) => a && a.id);
     if (!message && !sentAttachments.length) return;
-    // #2241: THIS is the moment a change starts existing. The screen may be
-    // the unsent placeholder `startPendingSession` put up, in which case the
-    // row (and, on the turn it runs, the branch) is created now — after the
-    // "is there anything to send?" checks above, so an empty submit still
-    // creates nothing. A refusal (cap reached, capacity, no repo) has
-    // already been toasted by `createSession`; put the text back and stand
-    // down rather than arming a turn with nowhere to send it.
-    if (DevChat.isPendingSession()) {
-      const started = await DevChat._materializePendingSession();
-      if (!started) {
-        DevChat._restoreComposer(message, { onlyIfEmpty: true });
-        return;
-      }
-    }
     // #138: a send is a user gesture — unlock the AudioContext and lazily
     // request OS-notification permission now, so the completion chime /
     // notification can fire when this turn finishes (browsers only allow
@@ -7877,7 +7550,9 @@ const DevChat = {
     for (let i = DevChat.messages.length - 1; i >= 0; i--) {
       if (DevChat.messages[i].role !== 'system') { qaLastConvoIdx = i; break; }
     }
-    const qaInteractive = !!session && (session.status === 'active' || session.status === 'promoted');
+    // #3976: an answer is a message, and a read-only session takes none.
+    const qaInteractive = !!session && (session.status === 'active' || session.status === 'promoted')
+      && !DevChat._classicReadOnlyView(session);
 
     // The one row a live turn is writing into: the last assistant row while a
     // turn is in flight. Only it subscribes to `streamStore`, which is what
@@ -8255,7 +7930,8 @@ const DevChat = {
       // or a hand-off launchpad, which answer "what now?" themselves. It
       // stays until the first message lands, so it is persistent rather than
       // a toast.
-      empty: !!session && !rows.length && !DevChat.isStreaming && !devFlowHtml && !DevChat._launchpadVenue(),
+      empty: !!session && !rows.length && !DevChat.isStreaming && !devFlowHtml && !DevChat._launchpadVenue()
+        && !DevChat._classicReadOnlyView(session),
       activity: DevChat._activitySpec(),
       // #1889: whether a turn is in flight. The transcript keeps the latest
       // Changes card in its turn's slot while the run's tail is painting and
@@ -9837,16 +9513,10 @@ const DevChat = {
       localAgent: DevChat._localAgent,
     });
     if (!v) return null;
-    // #2607: on an unsent change nothing is being built yet, so the tooltip
-    // leads with the tense that is true. Everything after it is the same
-    // sentence, because the choice on offer is the same one.
-    const lead = session?.pending
-      ? 'This change will be built in ' + v.label + '. '
-      : 'Building in ' + v.label + '. ';
     return {
       id: v.id,
       label: v.label,
-      title: lead + v.blurb
+      title: 'Building in ' + v.label + '. ' + v.blurb
         + ' Pick a different venue: on Homeroom, on your computer, or handed to'
         + ' Claude Code or Codex on the web.',
       // Mid-turn the venue is not changeable: a running turn holds the
@@ -9865,42 +9535,6 @@ const DevChat = {
   _sessionHeaderView() {
     const session = DevChat.currentSession;
     const s = session || {};
-    // #2241: an unsent change has nothing for this strip to state but its
-    // own name. No PR (the "New change" caption is already the resting
-    // state of that slot), no lifecycle pill and no ⋯ menu — every row
-    // behind it is an owner-scoped call against a row that does not exist.
-    //
-    // #2607: the venue dropdown is the ONE exception, and it used to be
-    // excluded with them. The reasoning was that a venue is resolved by the
-    // server when the row is created (#1348), so before that the honest
-    // thing was to say nothing rather than guess — but saying nothing also
-    // took away the only control that CHOOSES. A new change is exactly where
-    // "where should this be built?" is still an open question, and the one
-    // screen that never offered it was the one screen it belonged on: the
-    // answer was reachable only by sending a first message into the venue
-    // you did not want and switching afterwards.
-    //
-    // So the dropdown paints here too, from the same `_headerVenue` spec the
-    // real row uses. What it STATES is a default, not a stored fact —
-    // `_currentVenueId()` derives it from the placeholder, so it names the
-    // in-chat venue this change would be created in — and picking from it
-    // is what `openVenueSheet` now handles for an unsent change: an in-chat
-    // pick stages the choice and creates nothing, and a pick that needs a
-    // row creates it first (see `_materializePendingSessionForVenue`).
-    if (s.pending) {
-      return {
-        sessionId: null,
-        busy: false,
-        title: 'New change',
-        branch: '',
-        pr: null,
-        prTitle: '',
-        newChangeTitle: '',
-        life: null,
-        venue: DevChat._headerVenue(session),
-        actions: [],
-      };
-    }
     return {
       sessionId: s.id || null,
       // Streamlined Concept: the strip's Building chip. `_composerBusy` is
@@ -9916,7 +9550,8 @@ const DevChat = {
         : '',
       newChangeTitle: 'This chat is one change → one pull request. A PR opens after the first build.',
       life: DevChat._headerLife(session),
-      venue: DevChat._headerVenue(session),
+      // #3976: where a read-only session is built is no longer a choice.
+      venue: DevChat._classicReadOnlyView(session) ? null : DevChat._headerVenue(session),
       // #1904: the strip's ⋯ menu — see _headerActions.
       actions: DevChat._headerActions(session),
     };
@@ -10191,12 +9826,19 @@ const DevChat = {
 
   _bannersView() {
     const session = DevChat.currentSession;
+    // #3976: a read-only session's strip already starts the next change, and
+    // credits matter only to a turn it will never run, so those three stand
+    // down. The sync banner stays: syncing a proposal with main is proposal
+    // upkeep, not new work.
+    const classicReadOnly = session ? DevChat._classicReadOnlyView(session) : null;
+    const live = !!session && !classicReadOnly;
     return {
       sync: session ? DevChat._syncBannerView(session) : null,
-      newChange: session ? DevChat._newChangeBannerView(session) : null,
-      credits: session ? DevChat._creditsBannerView() : null,
-      creditsLow: session ? DevChat._creditsLowBannerView() : null,
+      newChange: live ? DevChat._newChangeBannerView(session) : null,
+      credits: live ? DevChat._creditsBannerView() : null,
+      creditsLow: live ? DevChat._creditsLowBannerView() : null,
       agentSession: session ? DevChat._agentSessionBannerView(session) : null,
+      classicReadOnly,
     };
   },
 
@@ -10208,6 +9850,19 @@ const DevChat = {
     if (!session || !session.agent_session_id) return null;
     if (typeof App === 'undefined' || !App.user || Number(session.user_id) !== Number(App.user.id)) return null;
     return { href: `#messages/agent/${Number(session.agent_session_id)}` };
+  },
+
+  // #3976: a classic session is read-only. The server says which sessions
+  // are (`classic_read_only` on GET /api/sessions/:id, decided by
+  // services/classic-sessions.js) and refuses their new messages, so here it
+  // only decides what the screen offers: the transcript, its spec, its
+  // previews and its proposal stay; the composer, the quick replies, the
+  // questionnaire, the venue and the hand-off give way to a strip that says
+  // why and starts an agent session on the same app. Read by everyone, not
+  // only the owner: nobody can continue it.
+  _classicReadOnlyView(session) {
+    if (!session || session.classic_read_only !== true) return null;
+    return { canStart: !!DevChat._sessionAppSlug(session) };
   },
 
   // Start a sync, from the banner's button. Named, because the component
@@ -10421,10 +10076,12 @@ const DevChat = {
       // in the box while still not re-explaining a settled fact on the next
       // full render. See `renderChatView`.
       venueNoteHtml: DevChat._venueNoteForRender || '',
-      hidden: !!DevChat._launchpadVenue() || !!DevChat._agentSessionBannerView(DevChat.currentSession),
+      hidden: !!DevChat._launchpadVenue() || !!DevChat._agentSessionBannerView(DevChat.currentSession)
+        || !!DevChat._classicReadOnlyView(DevChat.currentSession),
       models: DevChat._modelPickerView(),
       drafts: DevChat._savedDraftsView(),
       attachError: DevChat._attachError,
+      dragging: DevChat._dragging && !DevChat._dropDisabled(),
       placeholder: DevChat._composerBusy
         ? DevChat._busyComposerPlaceholder()
         : DevChat.COMPOSER_PLACEHOLDER,
@@ -10555,12 +10212,7 @@ const DevChat = {
     return {
       kind: 'session',
       embedded: !!document.getElementById('dc-view')?.dataset?.changeWorkspace,
-      // #2241: an unsent change is not a card yet — there is no row for
-      // `_topicViewFor` to describe, so the embedded workspace's head has
-      // nothing to draw. (The placeholder only ever reaches the full-screen
-      // session route, where `embedded` is false anyway; this keeps the two
-      // from drifting apart if that changes.)
-      change: (!DevChat.currentSession.pending && window.AppView?._topicViewFor) ? {
+      change: window.AppView?._topicViewFor ? {
         item: DevChat.currentSession,
         ...AppView._topicViewFor(['active', 'paused'].includes(DevChat.currentSession.status) ? 'session' : 'proposal', DevChat.currentSession),
 
@@ -10575,7 +10227,8 @@ const DevChat = {
       // Is there anything left in the bottom bar to draw a border around?
       // The composer is hidden in a launchpad and the venue note is usually
       // absent, and an empty bordered strip reads as a broken composer.
-      barEmpty: !!DevChat._launchpadVenue() && !DevChat._venueNoteForRender,
+      barEmpty: (!!DevChat._launchpadVenue() || !!DevChat._classicReadOnlyView(DevChat.currentSession))
+        && !DevChat._venueNoteForRender,
       // Saved widths from a previous drag. CSS clamps to a min/max, so a
       // stale value can't make the chat unusably narrow.
       spec: { open: viewerOpen, width: DevChat._readSpecViewerWidth() || null },
@@ -10583,7 +10236,8 @@ const DevChat = {
       // to be wider).
       staging: { open: stagingOpen, width: DevChat._readStagingPanelWidth() || null },
       proposalHint: !!DevChat._proposalHint,
-      returnHint: DevChat._showReturnHint(),
+      // #3976: "come back to this chat" is advice for one that goes on.
+      returnHint: !DevChat._classicReadOnlyView(DevChat.currentSession) && DevChat._showReturnHint(),
     };
   },
 
@@ -10993,12 +10647,48 @@ const DevChat = {
       if (!el) continue;
       DevChat._bindOnce(el, 'dragover', (e) => { e.preventDefault(); });
       DevChat._bindOnce(el, 'drop', (e) => {
+        DevChat._dropTracker()?.reset();
         if (e.dataTransfer?.files?.length) {
           e.preventDefault();
           DevChat._addFiles(e.dataTransfer.files);
         }
       });
+      // #4065: the drop zone. Counted in and out by one tracker shared by the
+      // messages and the card; `dragging` goes into the composer model and
+      // composer.tsx draws the outline inside #dc-form.
+      DevChat._bindOnce(el, 'dragenter', (e) => DevChat._dropTracker()?.enter(e));
+      DevChat._bindOnce(el, 'dragleave', (e) => DevChat._dropTracker()?.leave(e));
     }
+  },
+
+  // The drop zone lights only where `_addFiles` would take the drop: a
+  // session on screen, no turn streaming, and the composer showing.
+  _dragging: false,
+  _dropTrackerRef: null,
+  _dropTracker() {
+    if (DevChat._dropTrackerRef) return DevChat._dropTrackerRef;
+    const api = typeof window !== 'undefined' && window.UsernodeReact && window.UsernodeReact.fileDrag;
+    if (!api || !api.createFileDragTracker) return null;
+    DevChat._dropTrackerRef = api.createFileDragTracker({
+      isDisabled: () => DevChat._dropDisabled(),
+      onChange: (dragging) => {
+        DevChat._dragging = !!dragging;
+        DevChat._publishComposer();
+      },
+    });
+    return DevChat._dropTrackerRef;
+  },
+  _dropDisabled() {
+    return !DevChat.currentSession || !!DevChat.isStreaming
+      || !!DevChat._launchpadVenue() || !!DevChat._agentSessionBannerView(DevChat.currentSession)
+      || !!DevChat._classicReadOnlyView(DevChat.currentSession);
+  },
+
+  // The line a drop or a pick shows when it left files out (#4065).
+  _refusalSummary(first, more) {
+    const api = typeof window !== 'undefined' && window.UsernodeReact && window.UsernodeReact.fileDrag;
+    if (api && api.refusalSummary) return api.refusalSummary(first, more);
+    return first;
   },
 
   // Mirror the server's four-way classifier (src/services/attachments.js
@@ -11039,27 +10729,27 @@ const DevChat = {
   async _addFiles(fileList) {
     if (!DevChat.currentSession || DevChat.isStreaming) return;
     DevChat._setAttachError(null);
-    // #2241: an upload is stored against a session row, so an unsent change
-    // has to become one first. This is the ONE thing other than the send
-    // itself that starts a change, and deliberately so: the upload happens
-    // the moment a file is picked (see the upload-before-send note above),
-    // so the alternative is holding the bytes in memory and a second,
-    // parallel upload path. Picking a file is already composing the
-    // message; merely opening the screen still writes nothing.
-    if (DevChat.isPendingSession()) {
-      const started = await DevChat._materializePendingSession();
-      if (!started) return; // createSession has said why
-    }
     const sid = DevChat.currentSession.id;
     const L = DevChat.ATTACH_LIMITS;
-    for (const file of Array.from(fileList)) {
+    // #4065: one line for every file left out — the first reason, and how
+    // many more went with it — not whichever came last.
+    let firstRefusal = null;
+    let refused = 0;
+    const refuse = (reason, count = 1) => {
+      firstRefusal = firstRefusal || reason;
+      refused += count;
+      DevChat._setAttachError(DevChat._refusalSummary(firstRefusal, refused - 1));
+    };
+    const files = Array.from(fileList);
+    for (let i = 0; i < files.length; i += 1) {
+      const file = files[i];
       if (DevChat.pendingAttachments.length >= L.maxPerMessage) {
-        DevChat._setAttachError(`Up to ${L.maxPerMessage} files per message.`);
+        refuse(`Up to ${L.maxPerMessage} files per message.`, files.length - i);
         break;
       }
       const classified = await DevChat._classifyFile(file);
       if (classified.error) {
-        DevChat._setAttachError(classified.error);
+        refuse(classified.error);
         continue;
       }
       const entry = {
@@ -11248,53 +10938,6 @@ const DevChat = {
       const shot = new URLSearchParams(location.search).get('shot');
       return shot === 'drafts' || shot === 'busy-drafts' || shot === 'draft-sent';
     } catch { return false; }
-  },
-
-  // Screenshot-state deep link `?shot=draft-delete` (#1960).
-  //
-  // "Deleting drafts is broken" turned out to be a RACE, and a race has no
-  // resting state a URL can be pointed at: the draft only came back when
-  // the trash landed while a reconcile's list was already in the air. So
-  // this link does not paint a state, it PERFORMS the report — it starts a
-  // reconcile, trashes a draft while that list is still in flight, then
-  // lets a settled resync run on top of it. What the check reads
-  // afterwards is the only thing that ever mattered to the user: is the
-  // draft still gone.
-  //
-  // Unlike every other `?shot=` link this one WRITES: a real DELETE,
-  // through the real route, against the real table. That is the point — a
-  // delete that only pretends to happen cannot catch a delete that comes
-  // back. It is fenced instead of env-gated, to one seeded staging session
-  // and one seeded draft id (seedStagingDraftDelete in src/db/migrate.js);
-  // neither exists in production, so the link is simply inert there. And
-  // because it names the id it removes rather than "the first row", a
-  // re-run finds it already gone and lands on exactly the same screen.
-  SHOT_DRAFT_DELETE_SESSION: 990414,
-  SHOT_DRAFT_DELETE_ID: 'dropthisdraft',
-
-  async _applyDraftDeleteShot(sessionId) {
-    try {
-      if (new URLSearchParams(location.search).get('shot') !== 'draft-delete') return;
-    } catch { return; }
-    if (Number(sessionId) !== DevChat.SHOT_DRAFT_DELETE_SESSION) return;
-    const victim = DevChat.SHOT_DRAFT_DELETE_ID;
-    const onThisSession = () => DevChat.currentSession
-      && Number(DevChat.currentSession.id) === Number(sessionId);
-
-    // The session payload's drafts field is best-effort, so the list may
-    // not be here yet. Settle it before staging anything.
-    if (!DevChat._getSavedDrafts(sessionId).some((d) => d.id === victim)) {
-      await DevChat._reconcileDrafts(sessionId, null);
-    }
-    if (!onThisSession()) return;
-
-    // A list fetched BEFORE the trash: the snapshot that used to undo it.
-    const inFlight = DevChat._reconcileDrafts(sessionId, null);
-    DevChat._deleteSavedDraft(victim);
-    await inFlight;
-    if (!onThisSession()) return;
-    // …and a resync after it, which is what retires the tombstone.
-    await DevChat.applyDraftsUpdate(sessionId);
   },
 
   // Any `?shot=` deep link, whichever one. Read by openSession to keep a

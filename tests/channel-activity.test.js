@@ -11,6 +11,11 @@
 //     name the proposal's own thread, so its story is not lost;
 //   - db/migrate.js clearAutomatedChannelLines removes the lines written
 //     before (the database half is in tests/communities-postgres.test.js).
+//
+// One exception, and only one (#4238): when a new project's first version
+// is made, Homeroom bot says so in its channel, once, as its own message
+// with an Open button (ws.sendFirstVersionMessage, called from
+// homeroom-bot-dm.js announceFirstVersion and nowhere else).
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -45,6 +50,53 @@ test('a platform line with no thread is written nowhere; one with a thread goes 
   assert.equal(pool.queries.length, 1);
   assert.match(pool.queries[0].sql, /INSERT INTO chat_messages \(app_id, content, msg_type, metadata, thread_type, thread_ref\)/);
   assert.deepEqual(pool.queries[0].params.slice(4), ['session', 12]);
+});
+
+test('#4238: the one channel line is the bot\'s first-version message, written once per project', async () => {
+  const ws = require('../src/services/ws');
+  const queries = [];
+  let written = false;
+  const pool = {
+    query: async (sql, params) => {
+      queries.push({ sql, params });
+      if (/^\s*INSERT INTO chat_messages/.test(sql)) {
+        if (written) return { rows: [] };
+        written = true;
+        return { rows: [{ id: 9, created_at: '2026-10-07T00:00:00Z' }] };
+      }
+      return { rows: [] };
+    },
+  };
+  const bot = { id: 42, username: 'homeroom_bot' };
+  const action = { id: 'open_app', label: 'Open Page Turners', style: 'primary', type: 'open', target: '#app/page-turners/app' };
+  const first = await ws.sendFirstVersionMessage(pool, 3, { user: bot, content: 'I\'ve made the first version of Page Turners!', metadata: { actions: [action] } });
+  assert.deepEqual(first, { id: 9, createdAt: '2026-10-07T00:00:00Z' });
+  const insert = queries.find((q) => /INSERT INTO chat_messages/.test(q.sql));
+  assert.match(insert.sql, /INSERT INTO chat_messages \(app_id, user_id, content, msg_type, metadata\)\s+SELECT \$1, \$2, \$3, 'message', \$4::jsonb\s+WHERE NOT EXISTS/);
+  assert.match(insert.sql, /thread_type IS NULL\s+AND metadata->>'kind' = 'first_version'/);
+  assert.deepEqual(insert.params.slice(0, 2), [3, 42]);
+  assert.deepEqual(JSON.parse(insert.params[3]), { actions: [action], kind: 'first_version' });
+  assert.equal(await ws.sendFirstVersionMessage(pool, 3, { user: bot, content: 'again' }), null, 'once per project');
+  assert.equal(await ws.sendFirstVersionMessage(pool, 3, { user: null, content: 'no author' }), null);
+
+  // Nothing else in the services writes a channel line, and nothing else calls this.
+  const services = fs.readdirSync(path.join(ROOT, 'src/services')).filter((f) => f.endsWith('.js'));
+  const channelInserts = [];
+  const callers = [];
+  for (const f of services) {
+    const src = read(`src/services/${f}`);
+    for (const m of src.matchAll(/INSERT INTO chat_messages \(([^)]*)\)/g)) {
+      if (!/thread_type/.test(m[1])) channelInserts.push(f);
+    }
+    if (f !== 'ws.js' && /sendFirstVersionMessage/.test(src)) callers.push(f);
+  }
+  assert.deepEqual(channelInserts, ['ws.js']);
+  const wsSrc = read('src/services/ws.js');
+  assert.equal((wsSrc.match(/INSERT INTO chat_messages \(app_id, user_id, content, msg_type, metadata\)\n/g) || []).length, 1);
+  assert.deepEqual(callers, ['homeroom-bot-dm.js']);
+  const dm = read('src/services/homeroom-bot-dm.js');
+  assert.equal((dm.match(/sendFirstVersionMessage\(/g) || []).length, 1);
+  assert.match(dm, /if \(requester\?\.firstVersion && !platform\) await announceFirstVersion\(pool, run, \{ live, deps \}\);/);
 });
 
 test('nothing routes a line into #general any more', () => {

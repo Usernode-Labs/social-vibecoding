@@ -664,29 +664,33 @@ test('browse list rows open in a new tab under a modifier', () => {
 
 // ── The declared checks ────────────────────────────────────────────────
 
+// The header's back control as an ANCHOR with a target: what a ⌘-click
+// needs. A hidden back control (`a#back-btn.hidden`) is not one of these.
+const BACK_ANCHOR = /a#back-btn[^ ,]*\[href="#[^"]+"\]/;
+
 test('dapp.json pins the anchors that a capture can actually see', () => {
   // A headless capture cannot synthesise a ⌘-click, so the checks assert
   // the anchors exist with the right target — which IS the contract.
+  const anchors = (dapp.tests || []).filter(
+    (t) => typeof t.expectSelector === 'string' && BACK_ANCHOR.test(t.expectSelector)
+  );
+  assert.ok(anchors.length >= 2,
+    'without checks a button-to-anchor regression ships silently');
   const checks = (dapp.tests || []).filter(
     (t) => typeof t.name === 'string' && t.name.includes('#1036')
   );
-  assert.ok(checks.length >= 2,
-    'without checks a button-to-anchor regression ships silently');
 
   const bySelector = (frag) => checks.find(
     (t) => typeof t.expectSelector === 'string' && t.expectSelector.includes(frag)
   );
 
-  // The session's back control is the header's own anchor now (Streamlined
-  // Concept — #dc-back retired), so its check pins a#back-btn. #2770 moved
-  // its address: a change is an agent conversation, a thread of Messages, so
-  // a cold session link goes up to #messages rather than to the Workshop.
-  const session = (dapp.tests || []).find(
-    (t) => typeof t.expectSelector === 'string'
-      && /a#back-btn[^"]*\[href="#messages"\]/.test(t.expectSelector)
-  );
-  assert.ok(session, 'the session back anchor needs its own check');
-  assert.match(session.path, /dev\/sessions\/\d+/, 'it must land on a session');
+  // The back control that climbs to Messages is the header's own anchor
+  // (Streamlined Concept — #dc-back retired). It was checked on a classic
+  // dev session (#2770) until #3976 made those read-only and retired their
+  // checks; the app discussion's old full-screen address climbs the same
+  // way (#2763), so that is the one checked now.
+  const messages = anchors.find((t) => /\[href="#messages"\]/.test(t.expectSelector));
+  assert.ok(messages, 'a back anchor up to Messages needs its own check');
 
   const home = bySelector('a#back-btn');
   assert.ok(home, 'the header home control needs a check');
@@ -703,7 +707,7 @@ test('dapp.json pins the anchors that a capture can actually see', () => {
 
   // Ungated, ordinary routes: an env-gated path starves the production
   // "before" shot forever (same rule as tests/drawer-nav-motion.test.js).
-  for (const t of checks) {
+  for (const t of [...checks, ...anchors]) {
     assert.ok(!/IS_STAGING|USERNODE_ENV/.test(t.path),
       `${t.name}: the path must not be env-gated`);
   }
@@ -715,7 +719,7 @@ test('the declared checks survive the manifest reader', () => {
   assert.equal(meta.ceilingDropped, 0,
     `dapp.json declares more than ${appManifest.MAX_DECLARED_TESTS} valid checks — `
     + 'checks past the ceiling never run');
-  const kept = meta.tests.filter((t) => /#1036/.test(t.name || ''));
+  const kept = meta.tests.filter((t) => BACK_ANCHOR.test(t.expectSelector || ''));
   assert.ok(kept.length >= 2,
     'a malformed entry is silently dropped, which gates nothing');
 });

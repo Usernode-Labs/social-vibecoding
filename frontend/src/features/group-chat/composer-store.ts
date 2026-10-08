@@ -49,6 +49,13 @@ export interface ComposerSlot {
    * messages are waiting to go out.
    */
   status: string;
+  /**
+   * #4065: a file is being dragged over this composer or its messages, so the
+   * card shows its drop zone. Published by the module's drag tracker
+   * (`GroupChat._wireDropZone`), which never sets it on a read-only thread.
+   * Optional so a slot built before it existed still reads as not dragging.
+   */
+  dragging?: boolean;
 }
 
 export type ComposerScope = 'general' | 'thread';

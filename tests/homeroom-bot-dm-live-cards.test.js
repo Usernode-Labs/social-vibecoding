@@ -138,6 +138,15 @@ test('the card says the work\'s time, and the wait apart, in words', () => {
     'not "took 1h 9m"');
   assert.match(draw({ ...built, waitedFor: 'turn' }), /took 24m, after waiting 46m for its turn</);
   assert.match(draw({ ...built, waitedFor: undefined }), /<span> · took 24m<\/span>/);
+  // #4242: built, and its ready card not out yet: being checked, with the spinner, never "waiting for approval".
+  const checking = { ...built, outcome: 'checking' };
+  assert.match(draw(checking), /Built it\. Checking it before you try it</);
+  assert.match(draw(checking), /data-progress-ring-spinning=""/);
+  assert.doesNotMatch(draw(checking), /Waiting for approval/);
+  // #4227: going live spins too; waiting for approval and a person's look do not.
+  assert.match(draw({ ...built, outcome: 'going_live' }), /data-progress-ring-spinning=""[\s\S]*Built it\. Going live now</);
+  assert.doesNotMatch(draw(built), /data-progress-ring-spinning/);
+  assert.match(draw({ ...built, outcome: 'needs_look' }), /Needs you[\s\S]*Built it, but it needs a look</);
   // Nothing begun yet: its time is the wait, under words that say it waits.
   const queued = { ...building, workedFrom: null, waitedFor: undefined, step: 2, doing: 'waiting for the first version to go live' };
   assert.match(draw(queued, new Date(at('11:40'))), /<span> · 30m so far<\/span>/);
@@ -171,7 +180,14 @@ test('the live news carries its own button to open the app, as the shell opens o
   const merged = read('src/services/homeroom-bot-dm.js');
   const fn = merged.slice(merged.indexOf('async function noteProposalMerged('), merged.indexOf('// ── A person writing to the bot'));
   assert.match(fn, /const open = platform \? null : openAppAction\(\{ slug: run\.slug, appName: context\.appName \}\);/);
-  assert.match(fn, /\.\.\.\(open \? \{ actions: \[open\] \} : \{\}\),/);
+  // #4231: a new project's first version also offers its community and inviting people.
+  assert.match(fn, /const actions = open \? \[open, \.\.\.\(context\.firstVersion \? firstLiveActions\(\{ slug: run\.slug \}\) : \[\]\)\] : \[\];/);
+  assert.match(fn, /\.\.\.\(actions\.length \? \{ actions \} : \{\}\),/);
+  assert.deepEqual(dm.firstLiveActions({ slug: 'page turners' }), [
+    { id: 'open_community', label: 'Open community', style: 'secondary', type: 'open', target: '#app/page%20turners/workshop' },
+    { id: 'invite_people', label: 'Invite people', style: 'secondary', type: 'invite' },
+  ]);
+  assert.deepEqual(dm.firstLiveActions({ slug: '' }), []);
   assert.doesNotMatch(fn, /withoutCards/, 'nothing it says depends on a card arriving');
 
   // The client: an `open` button on a project's App tab opens it with
@@ -195,6 +211,11 @@ test('the live news carries its own button to open the app, as the shell opens o
   globalThis.window = { location: { hash: '' } };
   openAppTarget('#app/page-turners/app');
   assert.equal(window.location.hash, '#app/page-turners/app', 'no router: the address');
+  // #4231: the community page is a door to its hub, so it lands on the hub.
+  const landed = [];
+  globalThis.window = { AppView: { _landOnHub: (slug) => landed.push(slug) }, location: { hash: '' } };
+  openAppTarget('#app/page-turners/workshop');
+  assert.deepEqual([landed, window.location.hash], [['page-turners'], '#app/page-turners/workshop']);
 
   const store = read('frontend/src/features/messages/store.ts');
   assert.match(store, /if \(action\.type === 'open'\) \{\n\s+openAppTarget\(action\.target\);\n\s+return;\n\s+\}/);
@@ -230,11 +251,15 @@ test('the card is drawn as its change stands now: live, going live, closed, or w
   assert.equal(readyCardState({ meta: META, stale: true }), 'stale');
 
   const draw = (props) => renderToHtml(createElement(ReadyCardView, { meta: META, state: 'open', actions: META.actions, ...props }));
-  // 12:14 on 5 October, read now: live, and the way in.
-  const live = draw({ meta: approvedMeta, state: 'live', actions: [OPEN], fresh: { messageId: 1, state: 'live', actions: [OPEN] } });
+  // 12:14 on 5 October, read now: live. #4228: no Open of its own, the
+  // news right under it carries the one.
+  const live = draw({ meta: approvedMeta, state: 'live', actions: [], fresh: { messageId: 1, state: 'live', actions: [] } });
   assert.match(live, /data-bot-ready="live"/);
   assert.match(live, />It’s live\.</);
-  assert.match(live, /class="messages-bot-primary" data-bot-ready-action="open_app"><span>Open Page Turners<\/span>/);
+  assert.doesNotMatch(live, /data-bot-ready-action|Open Page Turners/);
+  assert.doesNotMatch(live, /data-progress-ring-spinning/, 'live is done: its check');
+  // #4227: going live, and approved with only going live left, spin.
+  assert.match(draw({ state: 'going_live', actions: [] }), /data-progress-ring-spinning=""/);
   assert.doesNotMatch(live, /goes live when|Approve<|Try it</, 'no promise about a change already live, and nothing left to approve');
   assert.match(draw({ state: 'going_live', actions: [] }), />It’s approved and going live now\.</);
   assert.match(draw({ state: 'withdrawn', actions: [] }), />This change was closed without going live\.</);
@@ -251,17 +276,19 @@ test('the card is drawn as its change stands now: live, going live, closed, or w
   // Approved: what happens next as read now, over what the vote said then.
   const soon = { ...yesIn, goesLive: { soon: true, at: null, missing: 0, waitingOn: [], more: 0 } };
   assert.match(draw({ meta: approvedMeta, state: 'approved', actions: [], fresh: soon }), />You approved it\. It goes live in a minute or two\.</);
+  assert.match(draw({ meta: approvedMeta, state: 'approved', actions: [], fresh: soon }), /data-progress-ring-spinning=""/);
+  assert.doesNotMatch(draw({ meta: approvedMeta, state: 'approved', actions: [] }), /data-progress-ring-spinning/, 'still waiting on others: nothing under way');
   assert.match(draw({ meta: approvedMeta, state: 'approved', actions: [] }),
     />You approved it\. It goes live after one more approval from @priya_t1006 or @mo_t1006\.</, 'nothing read yet: as it was');
   for (const html of [live, draw({ state: 'going_live', actions: [] }), draw({ state: 'withdrawn', actions: [] })]) {
     assert.doesNotMatch(html, /propos|merg|vote|—/i);
   }
 
-  // The card reads its change from the DM's activity read, and opens the app from its button.
+  // The card reads its change from the DM's activity read; live, it has no buttons (#4228).
   const card = read(READY);
   assert.match(card, /const fresh = snap\.ready\.get\(message\.id\) \|\| null;/);
-  assert.match(card, /: state === 'live' \? \(fresh\?\.actions \|\| \[\]\)/);
-  assert.match(card, /if \(action\.type === 'open'\) \{\n\s+openAppTarget\(action\.target\);/);
+  assert.match(card, /: state === 'stale' \? all\.filter\([^\n]+\)\n\s+: \[\];/);
+  assert.doesNotMatch(card, /openAppTarget/);
 });
 
 test('the client keeps a ready card\'s state only as one it knows, and only the live card\'s Open button', () => {
@@ -419,10 +446,10 @@ test('Page Turners, read as it stands: the ready card after each Yes and after t
       assert.equal(await dm.noteVoted(pool, 999999), null, 'one indexed read for a change that is not the bot\'s');
     });
 
-    await t.test('merged: the card says it is live, and opens the app', async () => {
+    await t.test('merged: the card says it is live, with no button of its own (#4228)', async () => {
       await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = $2 WHERE id = $1`, [first.id, at('11:56')]);
       const [live] = await ready();
-      assert.deepEqual(live, { messageId: Number(sent.id), state: 'live', actions: [OPEN] });
+      assert.deepEqual(live, { messageId: Number(sent.id), state: 'live', actions: [] });
       const read = await activity.cardsFor(pool, { user: { id: alex.id }, deps: {} });
       assert.deepEqual(read.ready, [live], 'the DM\'s activity read carries it');
       // Being merged, and closed without going live.
@@ -431,10 +458,6 @@ test('Page Turners, read as it stands: the ready card after each Yes and after t
       await pool.query(`UPDATE chat_sessions SET status = 'closed' WHERE id = $1`, [first.id]);
       assert.equal((await ready())[0].state, 'closed');
       await pool.query(`UPDATE chat_sessions SET status = 'merged' WHERE id = $1`, [first.id]);
-      // The platform's own app has no app to open: live, without the button.
-      await pool.query('UPDATE apps SET self_hosted = TRUE WHERE id = $1', [app.id]);
-      assert.deepEqual((await ready())[0].actions, []);
-      await pool.query('UPDATE apps SET self_hosted = FALSE WHERE id = $1', [app.id]);
     });
 
     await t.test('only the reader\'s own cards, on a project they can still view', async () => {
@@ -493,6 +516,35 @@ test('Page Turners, read as it stands: the ready card after each Yes and after t
       await pool.query('UPDATE homeroom_bot_runs SET proposal_session_id = $2, build_ok = TRUE WHERE id = $1', [again.id, build.id]);
       const built = (await activity.cardsFor(pool, { user: { id: priya.id }, settings })).cards.find((c) => c.messageId === filed.messageId);
       assert.deepEqual([built.state, built.outcome, built.startedAt, built.workedFrom, built.endedAt, built.waitedFor],
-        ['done', 'proposed', at('11:10'), at('11:56'), at('12:20'), 'first_version']);
+        ['done', 'checking', at('11:10'), at('11:56'), at('12:20'), 'first_version'], '#4242: no ready card has gone out to her yet');
     });
   });
+
+// ── #4238: a new project's first version, said in its channel ──
+
+test('#4238: a first version is announced once in the project\'s channel, by the bot, with its Open button', async () => {
+  assert.equal(dm.firstVersionText({ appName: 'Page Turners', live: true }),
+    'I\'ve made the first version of Page Turners! Let me know if you need anything else.');
+  assert.equal(dm.firstVersionText({ appName: 'Page Turners', live: false }),
+    'I\'ve made the first version of Page Turners! It will be ready to open in a few minutes. Let me know if you need anything else.');
+  const sent = [];
+  const ws = { async sendFirstVersionMessage(_pool, appId, msg) { sent.push([appId, msg]); return { id: 1 }; } };
+  const bot = { id: 42, username: 'homeroom_bot' };
+  const run = { app_id: 7, slug: 'page-turners', name: 'Page Turners' };
+  assert.deepEqual(await dm.announceFirstVersion({}, run, { live: true, deps: { ws, bot } }), { id: 1 });
+  assert.deepEqual(sent, [[7, {
+    user: bot,
+    content: 'I\'ve made the first version of Page Turners! Let me know if you need anything else.',
+    metadata: { appSlug: 'page-turners', actions: [dm.openAppAction({ slug: 'page-turners', appName: 'Page Turners' })] },
+  }]]);
+  // It never stops the DM: a failure is logged and answered with null.
+  const broken = { async sendFirstVersionMessage() { throw new Error('db down'); } };
+  assert.equal(await dm.announceFirstVersion({}, run, { deps: { ws: broken, bot } }), null);
+
+  // Only a first version, and never the platform's own app.
+  const merged = read('src/services/homeroom-bot-dm.js');
+  const fn = merged.slice(merged.indexOf('async function noteProposalMerged('), merged.indexOf('// ── A person writing to the bot'));
+  assert.match(fn, /if \(requester\?\.firstVersion && !platform\) await announceFirstVersion\(pool, run, \{ live, deps \}\);/);
+  assert.ok(fn.indexOf('announceFirstVersion(') < fn.indexOf('if (!requester || !hasBot(settings, requester)) return null;'),
+    'said in the channel whether or not the maker gets the DM');
+});

@@ -70,7 +70,8 @@ Ordered by how badly an agent working offline gets each one wrong.
    preview, and never a signal your own logic reads ("has this user
    done X?"). Every check runs against staging, so seeding that
    fabricates the answer makes that code path untestable by the gate
-   and different for real users.
+   and different for real users. A project's first version is the one
+   exception, on `?demo=1` only: see "A first version's populated demo".
 4. **Tables are public by default; mark the sensitive ones private.**
    `COMMENT ON TABLE foo IS 'staging:private'` copies the schema to
    staging without the rows. Use it for auth material, direct messages,
@@ -547,8 +548,12 @@ Seed rules:
   re-run on each boot — use an existence check or
   `ON CONFLICT DO NOTHING`.
 - **Obviously fake.** Give seeded rows a consistent "Staging demo …"
-  prefix so they can't be mistaken for real user content.
+  prefix so they can't be mistaken for real user content. (A first
+  version's `?demo=1` demo is labelled once instead: see "A first
+  version's populated demo" below.)
 - **Small.** A handful of rows — just enough for the testing steps.
+  (A project's first version is the one exception: see "A first
+  version's populated demo" below.)
 - **Never reference real users.** Use fake usernames/IDs
   (e.g. `staging-demo-user`), never rows cloned from prod.
 - **Strictly a no-op outside staging.** The whole block is gated on
@@ -557,6 +562,50 @@ Seed rules:
 Tie-in with testing instructions: the testing steps you emit must
 reference the seeded entities by name ("Open the thread 'Staging demo
 thread' and …"), so a tester knows exactly what they should be seeing.
+
+### A first version's populated demo
+
+A project's **first version** (the build that replaces the starter's
+placeholder screen) is first seen as its staging preview opened with
+`?demo=1`, and that screen should show the app in use, from the
+viewer's own seat. For that build only, and on `?demo=1` only, four
+seed rules change. Every later change keeps the rules above.
+
+- **Enough to look lived in.** Varied, realistic rows filling about a
+  screen and a half of the main screen at phone width (390×844), not
+  a handful.
+- **Labelled once, not on every row.** The screen says "Staging demo"
+  once, plainly and visibly: a banner or a line at the top of the
+  screen, or the name of the list or collection the rows belong to.
+  Each row needs no label of its own (a "Staging demo" pill or prefix
+  on every row only clutters the screen), and this replaces the
+  "Staging demo …" prefix above for these rows. The rows themselves
+  stay obviously made up: no real people and no real private data.
+- **The viewer's own data too.** What the app keeps for a person
+  (their items, choices, progress, saved things) is shown as the
+  viewer's: a demo where only made-up people have done anything shows
+  the viewer an empty "mine". Either add the viewer's demo rows to the
+  `?demo=1` responses without storing them, or write them for the
+  viewing account on its first `?demo=1` request, once (fixed ids,
+  `ON CONFLICT DO NOTHING`, so a reload changes nothing and what the
+  viewer did to them stays). The viewing account is whoever opened the
+  preview, a reviewer or a test account, and the rows land only in
+  staging's own database: that is not cloning production rows, so
+  "Never reference real users" still holds. Other people in the demo
+  are still fake identities.
+- **Every control the real screen has.** The populated demo is the
+  app, not a read-only tour: the actions a person has on that screen
+  (add, edit, refresh, mark done, reorder, delete) are there and work
+  on the demo rows. A "view only" demo that hides them is not a
+  populated screen.
+
+What does not change: nothing is written outside staging, nothing is
+written by a route without `?demo=1` (the page passes `demo=1` on to
+its own API calls), boot-time seeding stays with fake identities, and
+the plain route keeps its test of the production-shaped answer. The
+viewer's demo rows must never be what makes a check of the form "has
+this user done X" pass (see the next section): keep such checks off
+demo rows, or add the rows to the responses rather than storing them.
 
 ### Seeded data must not fabricate a signal your logic reads
 
@@ -586,7 +635,9 @@ app's own logic. Three habits keep them apart:
   reference real users" seed rule above, and it is the one that bites
   hardest — the visitor is the account every code path checks against,
   so attributing seeded rows to them is handing the preview a
-  credential production won't have.
+  credential production won't have. (A first version's `?demo=1` demo
+  may give the viewer rows of their own, within the limits of "A first
+  version's populated demo" above; nothing else may.)
 - **Request-time seeding only behind `?demo=1`.** Never seed from a
   route the app serves normally. A `GET /api/lists` that writes demo
   rows as a side effect leaves no way to ask the app what production
@@ -2858,6 +2909,22 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   the kit owns the inset now. Apps may consume `var(--un-kb-inset,
   0px)` for their own fixed bottom bars. No-op on desktop or where
   `visualViewport` is absent.
+- **Tap outside a field closes the keyboard (automatic).** On a phone,
+  with a text field focused, a tap (one finger, no scroll or drag, not a
+  long press) on anything that is not a field or a control blurs the
+  field, so the keyboard goes down. iOS does not do this by itself, and
+  the Homeroom app has no Done button above its keys, so this is how
+  people put the keyboard away; Chrome on Android already behaved this
+  way. The tap is never prevented and still does whatever it did. Taps on
+  inputs, textareas, selects, editable regions, buttons, links, labels,
+  `summary`, iframes, ARIA widget roles (`button`, `option`, `listbox`,
+  `menuitem`, `tab`, `switch` and the like), `.un-pressable`, and the
+  list a field names in `aria-controls` keep the keyboard up. Mark
+  anything else that must keep it (a custom picker made of plain divs)
+  with `data-keep-keyboard`; it covers everything inside. An app that
+  closes the keyboard its own way turns this off with
+  `data-un-keyboard-dismiss="off"` on `<html>` or `<body>`. No-op on
+  desktop.
 - **Keyboard avoidance for fixed-shell content scrollers.**
   `unNative.attachKeyboardAvoidance(scrollEl, { topEl?, margin? = 8,
   fields? })` — the same keyboard physics for the APP's main content
@@ -3232,8 +3299,9 @@ feature):
 ## Starter-template notice — meant to be deleted
 
 Freshly scaffolded apps ship `public/index.html` as a template welcome
-screen — a "Starter template" hero and a "What's already working" card —
-wrapped in sentinel comments:
+screen — a "Starter template" hero with the app's thumbnail tile (the
+icon the app wears on Home) and the plain-English note on how the app is
+being built (ask Homeroom bot) — wrapped in sentinel comments:
 
 - opens with `<!-- usernode-starter-notice@1 … -->`
 - closes with `<!-- /usernode-starter-notice@1 -->`
@@ -3242,14 +3310,16 @@ Unlike the dev-console forwarder block above, this one is **meant to be
 deleted**: the whole screen is placeholder content, not product intent.
 When the user asks for their first real feature, replace the template
 screen rather than building alongside it — remove the sentinel block
-(both comments and everything between them), remove or repurpose the
-"Try the example" card and its demo endpoints (`/api/press`,
-`/api/leaderboard`, the `presses` table) as appropriate, and rewrite the
-scaffolded `README.md` to describe the actual app. Keep the dev-console
-forwarder `<script>` when rewriting the HTML, and the bridge `<script>`
-with the theme `<script>` right after it: the first real version keeps the
-template's light and dark looks and follows the viewer's Homeroom theme
-(see "New apps: a light and a dark look, following the platform").
+(both comments and everything between them), and rewrite the scaffolded
+`README.md` to describe the actual app. Apps created before October 2026
+still carry the older screen, which also had a "What's already working"
+list and a "Try the example" demo: remove that card and its demo
+endpoints (`/api/press`, `/api/leaderboard`, the `presses` table) there
+too. Keep the dev-console forwarder `<script>` when rewriting the HTML,
+and the bridge `<script>` with the theme `<script>` right after it: the
+first real version keeps the template's light and dark looks and follows
+the viewer's Homeroom theme (see "New apps: a light and a dark look,
+following the platform").
 
 ## Platform-level problems & missing capabilities: escalate, don't file workarounds
 

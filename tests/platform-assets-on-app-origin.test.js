@@ -1,3 +1,4 @@
+// test:changed: when src/prompts/app-conventions.md (the hosted-asset tags this suite pins, read through services/prompts.js; scripts/test-changed.js)
 'use strict';
 
 // The three centrally hosted assets, served from every app's OWN origin.

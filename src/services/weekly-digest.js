@@ -77,7 +77,7 @@ async function gather(pool, app, now) {
     `SELECT cs.id, cs.pr_number, cs.pr_title, cs.merged_at
        FROM chat_sessions cs
       WHERE cs.app_id = $1
-        AND cs.status = 'merged'
+        AND cs.status = 'merged' AND cs.live_at IS NOT NULL
         AND cs.merged_at >= $2
       ORDER BY cs.merged_at DESC, cs.id DESC`,
     [app.id, since.toISOString()]

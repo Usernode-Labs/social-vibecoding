@@ -92,6 +92,7 @@
     openNativeScreen: true,
     setBackNavigationEnabled: true,
     captureScreenshot: true,
+    saveImage: true,
     getSettingsState: true,
     setNodeSleepEnabled: true,
     setDebugMode: true,
@@ -5163,6 +5164,25 @@
     return callNativeChromeAction("captureScreenshot", {}, 15000);
   };
 
+  // saveImage({ base64, contentType, filename }) → true. Saves a picture the
+  // page already holds (a chat attachment it fetched with the session) to
+  // the phone: the photo library on iOS (add-only permission), Pictures on
+  // Android. Privileged and top-frame only, like captureScreenshot: an
+  // embedded dapp cannot write into somebody's photos. Feature-detect the
+  // `saveImage` capability; an old build times out and rejects.
+  window.usernode.saveImage = function (args) {
+    if (!args || typeof args.base64 !== "string" || !args.base64
+        || typeof args.contentType !== "string"
+        || args.contentType.indexOf("image/") !== 0) {
+      return Promise.reject(new Error("saveImage needs base64 image data"));
+    }
+    return callNativeChromeAction("saveImage", {
+      base64: args.base64,
+      contentType: args.contentType,
+      filename: typeof args.filename === "string" ? args.filename : "image",
+    }, 30000);
+  };
+
   // getSettingsState() → { buildInfo: { appVersion, buildNumber,
   //   nodeVersion, commitHash, branch }, nodeSleepEnabled, debugMode,
   //   facematchStrict, authStatus,
@@ -7318,6 +7338,81 @@
     } catch (_) { /* serviceWorker unavailable in this context */ }
   })();
   /* __USERNODE_OFFLINE_READY_END__ */
+
+  /* __USERNODE_SHORTCUTS_BEGIN__ */
+  // ── The platform's C shortcut, from inside an app (#4289) ─────────────
+  //
+  // While a person works in an app, this document has the keyboard: a key
+  // pressed here never reaches the shell around it. The shell's experimental
+  // C shortcut (Suggest an improvement, Settings > Experimental;
+  // frontend/src/features/improve/suggest-shortcut.ts) would then only work
+  // after a click on the shell's own chrome. So the bridge tells the shell
+  // about a C the app left alone, and the shell decides what to do with it.
+  //
+  // WATCH ONLY. The listener never calls preventDefault or stopPropagation
+  // and wraps nothing: the app's handling of every key is exactly what it
+  // was. Nothing is sent while the person is typing (an input, a textarea, a
+  // select, an editable element, read off the event's real target so a
+  // shadow root counts), has text selected, holds Ctrl, Cmd or Alt, holds the
+  // key down, is composing with an input method, or has the pointer locked
+  // (a game).
+  //
+  // AN APP KEEPS A KEY BY CALLING preventDefault, the standard way a page
+  // says it handled one. The check waits a task after the key, so every
+  // handler the app has registered (after this script, which loads in
+  // <head>) has run by then.
+  //
+  // Sent whatever the switch says: the shell owns the switch and every other
+  // condition (a computer, a signed-in viewer, its app frame holding focus),
+  // and one short message per unused C costs nothing.
+  (function () {
+    try {
+      if (!(window.parent && window.parent !== window)) return;
+    } catch (_) { return; }
+
+    var TEXT_ROLES = '[role="textbox"], [role="searchbox"], [role="combobox"]';
+
+    function typingIn(node) {
+      if (!node || typeof node.tagName !== "string") return false;
+      var tag = node.tagName.toUpperCase();
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+      if (node.isContentEditable) return true;
+      try {
+        return typeof node.closest === "function" && !!node.closest(TEXT_ROLES);
+      } catch (_) { return false; }
+    }
+
+    function textSelected() {
+      try {
+        var sel = window.getSelection ? window.getSelection() : null;
+        return !!sel && !sel.isCollapsed && String(sel) !== "";
+      } catch (_) { return false; }
+    }
+
+    window.addEventListener("keydown", function (e) {
+      if (!e || (e.key !== "c" && e.key !== "C")) return;
+      if (e.ctrlKey || e.metaKey || e.altKey || e.repeat || e.isComposing) return;
+      // The platform's own document, framed as the side panel: its shell
+      // handles its own keys. Read here, not above: the shell sets the flag
+      // in the script after this one.
+      if (window.__usernodePlatformShell) return;
+      var target = e.target;
+      try {
+        var path = typeof e.composedPath === "function" ? e.composedPath() : [];
+        if (path && path.length) target = path[0];
+      } catch (_) { /* keep the retargeted target */ }
+      if (typingIn(target) || typingIn(document.activeElement)) return;
+      if (textSelected()) return;
+      if (document.pointerLockElement) return;
+      setTimeout(function () {
+        if (e.defaultPrevented) return;
+        try {
+          window.parent.postMessage({ __usernode_shortcut: "suggest" }, "*");
+        } catch (_) { /* parent unreachable */ }
+      }, 0);
+    });
+  })();
+  /* __USERNODE_SHORTCUTS_END__ */
 
   /* __USERNODE_PLATFORM_LINK_START__ */
   // ── The Homeroom button (an app opened at its own address) ────────────

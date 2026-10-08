@@ -436,6 +436,12 @@ export const ArrowUpTrayIcon = stroked(
   'M12 3v12m0-12l-4 4m4-4l4 4M5 13v7h14v-7',
 );
 
+/** Download a file onto the device: the arrow into the tray (#4055). */
+export const DownloadIcon = stroked(
+  'DownloadIcon',
+  'M12 3v12m0 0l-4-4m4 4l4-4M5 13v7h14v-7',
+);
+
 export const SendIcon = stroked(
   'SendIcon',
   'M4 4l17 8-17 8 3-8-3-8zm3 8h14',

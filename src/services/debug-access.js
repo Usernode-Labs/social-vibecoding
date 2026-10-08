@@ -106,6 +106,7 @@ const DENIED_TABLES = new Set([
   'mcp_tokens',               // hosted-connector bearer hashes and hints
   'mcp_delegations',          // which of the platform's own agents holds a grant for whom (#2779)
   'mcp_auth_audit_events',    // security audit trail for connector credentials
+  'external_agent_upload_tokens', // one-time work-order patch upload credential hashes (#4264)
   'user_social_identities',   // private provider ownership proofs
   'social_identity_oauth_states', // social-link state hashes + PKCE verifiers
   'social_identity_pending_replacements', // short-lived verified account replacements
@@ -151,6 +152,10 @@ const DENIED_COLUMNS = {
     // derived from auth material, so it is denied rather than reviewed.
     'token_hash',
   ],
+  test_phone_sign_ins: [
+    // bcrypt hash of a live one-time sign-in code for a test number.
+    'code_hash',
+  ],
   agent_session_actions: [
     // The sealed exact input of a pending write and its fingerprint (#2779).
     'input_hash',
@@ -167,6 +172,7 @@ const DENIED_COLUMNS = {
   ],
   homeroom_bot_runs: [
     'plan_change', // what a creator asked the bot's plan changed with; never posted anywhere
+    'review', // a first version's review: issues quoting a private project's screens (review_rounds and review_stop stay readable)
   ],
   waitlist_signups: [
     'ip',         // submitter IP — same treatment as users.waitlist_ip
