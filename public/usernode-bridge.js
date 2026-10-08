@@ -7365,10 +7365,24 @@
   // Sent whatever the switch says: the shell owns the switch and every other
   // condition (a computer, a signed-in viewer, its app frame holding focus),
   // and one short message per unused C costs nothing.
+  //
+  // WHERE THE POINTER IS goes with it (x, y in this document's viewport), so
+  // the comment the shell opens is pinned where the person was pointing:
+  // while the pointer is over this frame, the shell around it sees no
+  // pointer events at all. Watched passively, like the key.
   (function () {
     try {
       if (!(window.parent && window.parent !== window)) return;
     } catch (_) { return; }
+
+    var pointer = null;
+    function notePointer(e) {
+      if (e && typeof e.clientX === "number" && typeof e.clientY === "number") {
+        pointer = { x: e.clientX, y: e.clientY };
+      }
+    }
+    window.addEventListener("pointermove", notePointer, { passive: true });
+    window.addEventListener("pointerdown", notePointer, { passive: true });
 
     var TEXT_ROLES = '[role="textbox"], [role="searchbox"], [role="combobox"]';
 
@@ -7404,15 +7418,189 @@
       if (typingIn(target) || typingIn(document.activeElement)) return;
       if (textSelected()) return;
       if (document.pointerLockElement) return;
+      var at = pointer;
       setTimeout(function () {
         if (e.defaultPrevented) return;
+        var message = { __usernode_shortcut: "suggest" };
+        if (at) { message.x = at.x; message.y = at.y; }
         try {
-          window.parent.postMessage({ __usernode_shortcut: "suggest" }, "*");
+          window.parent.postMessage(message, "*");
         } catch (_) { /* parent unreachable */ }
       }, 0);
     });
   })();
   /* __USERNODE_SHORTCUTS_END__ */
+
+  /* __USERNODE_SNAPSHOT_BEGIN__ */
+  // ── This app's picture, for a comment pinned on it (#4289 follow-up) ──
+  //
+  // The shell's experimental C comment attaches a screenshot of the page
+  // with the pin drawn on it, taken without the browser's screen-share
+  // prompt: the shell draws its own page into an image. It cannot draw this
+  // frame, which is another origin, so it asks, and the bridge draws THIS
+  // document (what is on screen now, at its scroll position) and hands the
+  // picture back. Nothing else ever asks; nothing here runs until it does.
+  //
+  // ONLY HOMEROOM MAY ASK. The picture is whatever this person sees in the
+  // app, so a page that frames the app and asks gets nothing back, not even
+  // a refusal. The asking frame must be this window's parent and its origin
+  // must be the platform's, as the platform's own platform.json (served on
+  // this origin, beside this file) names it. The reply is posted to that
+  // origin alone.
+  //
+  // THE DRAWING LIBRARY (SnapDOM, /usernode-bridge/v1/snapdom.js, pinned and
+  // recorded in public/vendor/README.md) is loaded on the first request, from
+  // this origin, and the app's own `window.snapdom`, if it has one, is put
+  // back as it was.
+  //
+  //   parent → { __usernode_snapshot: "render", id, scale, x?, y? }
+  //   frame  → { __usernode_snapshot: "picture", id, blob, width, height,
+  //              at, path }   or   { ..., id, error, at, path }
+  //
+  // `at` names the element under (x, y), for the request's text; `path` is
+  // location.pathname, never the query (the platform's token rides there).
+  (function () {
+    try {
+      if (!(window.parent && window.parent !== window)) return;
+    } catch (_) { return; }
+
+    var LIB_SRC = "/usernode-bridge/v1/snapdom.js";
+    var CONFIG_SRC = "/usernode-bridge/v1/platform.json";
+    var _origin = null;
+    var _lib = null;
+
+    // The platform's origin, or null. A failed read is retried next time.
+    function platformOrigin() {
+      if (_origin) return _origin;
+      var p = Promise.resolve().then(function () {
+        return window.fetch(CONFIG_SRC, { credentials: "omit", cache: "no-cache" });
+      }).then(function (res) {
+        return res && res.ok ? res.json() : null;
+      }).then(function (config) {
+        var u;
+        try { u = new URL(String((config && config.platform_origin) || "")); } catch (_) { return null; }
+        if (u.protocol !== "https:" || u.username || u.password) return null;
+        return u.protocol + "//" + u.host;
+      }, function () { return null; });
+      _origin = p;
+      p.then(function (o) { if (!o && _origin === p) _origin = null; });
+      return p;
+    }
+
+    function library() {
+      if (_lib) return _lib;
+      var p = new Promise(function (resolve, reject) {
+        var had = Object.prototype.hasOwnProperty.call(window, "snapdom");
+        var before = window.snapdom;
+        var s = document.createElement("script");
+        s.src = LIB_SRC;
+        s.async = true;
+        function done() { if (s.parentNode) s.parentNode.removeChild(s); }
+        s.onload = function () {
+          var lib = window.snapdom;
+          if (had) window.snapdom = before;
+          else { try { delete window.snapdom; } catch (_) { window.snapdom = undefined; } }
+          done();
+          if (typeof lib === "function") resolve(lib);
+          else reject(new Error("the drawing library did not load"));
+        };
+        s.onerror = function () { done(); reject(new Error("the drawing library did not load")); };
+        (document.head || document.documentElement).appendChild(s);
+      });
+      _lib = p;
+      p.catch(function () { if (_lib === p) _lib = null; });
+      return p;
+    }
+
+    // The element under a point, in a few words: tag, id, and its label or
+    // text, clamped. Null for the page itself.
+    function describe(x, y) {
+      if (typeof x !== "number" || typeof y !== "number" || !isFinite(x) || !isFinite(y)) return null;
+      var el = null;
+      try { el = document.elementFromPoint(x, y); } catch (_) { el = null; }
+      if (!el || el === document.documentElement || el === document.body) return null;
+      var label = "";
+      try {
+        label = el.getAttribute("aria-label") || el.getAttribute("title") || el.getAttribute("alt")
+          || el.innerText || el.textContent || "";
+      } catch (_) { label = ""; }
+      label = String(label).replace(/\s+/g, " ").trim();
+      if (label.length > 60) label = label.slice(0, 59).trim() + "…";
+      return {
+        tag: String(el.tagName || "").toLowerCase().slice(0, 40),
+        id: el.id ? String(el.id).slice(0, 80) : "",
+        text: label,
+      };
+    }
+
+    // The page's own ground, so a transparent document is not drawn on
+    // nothing.
+    function ground() {
+      var picks = [document.documentElement, document.body];
+      for (var i = 0; i < picks.length; i++) {
+        try {
+          var c = picks[i] && window.getComputedStyle(picks[i]).backgroundColor;
+          if (c && c !== "transparent" && !/rgba\([^)]*,\s*0\)$/.test(c)) return c;
+        } catch (_) { /* keep looking */ }
+      }
+      return "#ffffff";
+    }
+
+    function draw(snapdom, scale) {
+      var w = window.innerWidth;
+      var h = window.innerHeight;
+      // What is on screen: the visible rectangle in page coordinates, which
+      // keeps sticky and fixed chrome where the person sees it.
+      // `dpr: 1`: the shell's `scale` already is the screen's pixel ratio,
+      // which SnapDOM would otherwise multiply in again.
+      return snapdom(document.body, {
+        scale: scale,
+        dpr: 1,
+        clip: { x: window.scrollX, y: window.scrollY, width: w, height: h },
+        backgroundColor: ground(),
+        exclude: ["#__un-platform-link"],
+      }).then(function (result) {
+        return result.toCanvas();
+      }).then(function (canvas) {
+        return new Promise(function (resolve, reject) {
+          canvas.toBlob(function (blob) {
+            if (blob) resolve({ blob: blob, width: w, height: h });
+            else reject(new Error("the picture could not be encoded"));
+          }, "image/png");
+        });
+      });
+    }
+
+    window.addEventListener("message", function (e) {
+      if (e.source !== window.parent) return;
+      var data = e.data;
+      if (!data || data.__usernode_snapshot !== "render") return;
+      var id = data.id;
+      if (typeof id !== "string" || !id || id.length > 100) return;
+      var from = e.origin;
+      platformOrigin().then(function (allowed) {
+        if (!allowed || from !== allowed) return;
+        var scale = Math.min(2, Math.max(0.5, Number(data.scale) || 1));
+        var at = describe(data.x, data.y);
+        var path = String(location.pathname || "/").slice(0, 200);
+        function reply(fields) {
+          fields.__usernode_snapshot = "picture";
+          fields.id = id;
+          fields.at = at;
+          fields.path = path;
+          try { window.parent.postMessage(fields, allowed); } catch (_) { /* parent gone */ }
+        }
+        library().then(function (snapdom) {
+          return draw(snapdom, scale);
+        }).then(function (picture) {
+          reply(picture);
+        }, function (err) {
+          reply({ error: String((err && err.message) || err || "failed").slice(0, 200) });
+        });
+      });
+    });
+  })();
+  /* __USERNODE_SNAPSHOT_END__ */
 
   /* __USERNODE_PLATFORM_LINK_START__ */
   // ── The Homeroom button (an app opened at its own address) ────────────
