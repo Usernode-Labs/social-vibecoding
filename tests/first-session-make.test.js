@@ -169,6 +169,30 @@ test('"Make it" makes a private community through the dialog\'s own route', () =
   }
 });
 
+// #4174: every project's repository is public on GitHub, and its first
+// request is a public issue holding the description word for word. The make
+// screen says so, quietly, under Make it, from either door.
+test('under Make it, one quiet line says what you write and the code are public on GitHub', () => {
+  const make = loadTsx(`${DIR}/make.tsx`);
+  assert.equal(make.MAKE_PUBLIC_LINE, 'What you write here, and the app’s code, are public on GitHub.');
+  for (const props of [
+    { who: 'Jordan', onMade() {}, onLookAround() {} },
+    { who: 'Jordan', entry: 'create', onMade() {}, onClose() {} },
+  ]) {
+    const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', props);
+    const line = /<p data-make-public="" class="([^"]*)">([^<]*)<\/p>/.exec(html);
+    assert.ok(line, `the line is drawn (${props.entry || 'first-session'})`);
+    assert.equal(line[2], make.MAKE_PUBLIC_LINE);
+    // Fine print: small and muted, never a warning colour.
+    assert.match(line[1], /\btext-\[13px\]/);
+    assert.match(line[1], /\btext-zinc-500\b/);
+    assert.doesNotMatch(line[1], /red-|amber-|font-(semi)?bold/);
+    assert.ok(html.indexOf('data-make-public') > html.indexOf('>Make it</button>'), 'under Make it');
+    const next = props.entry === 'create' ? 'data-make-import-link' : 'Look around first';
+    assert.ok(html.indexOf('data-make-public') < html.indexOf(next), `above ${next}`);
+  }
+});
+
 // Production run, iOS app, 5 Oct 2026: the keyboard's next chevron did not
 // move from the description to the name; "Make it" looked disabled until a
 // name was typed, beside a placeholder that read like a name already given;
