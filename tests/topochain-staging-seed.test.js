@@ -678,12 +678,20 @@ test('blanket accepted consent for every remaining cloned user (issue #1297)', (
   // The web shell auto-prompts any signed-in user whose consent for the
   // current published version is null, so the seed must erase that state
   // for every cloned account or the sheet slides over every preview route
-  // the declared checks screenshot. Natural-key arbiter, not (id): the
+  // the declared checks screenshot. It targets whichever version is
+  // CURRENT (#4384): once production carries a version published after the
+  // fixture's, the clone's current one is that, and a hard-coded 900500
+  // would leave it unanswered. Natural-key arbiter, not (id): the
   // blanket rows ride the BIGSERIAL default.
-  const start = body.indexOf('SELECT u.id, 900500, \'accepted\'');
+  const start = body.indexOf('SELECT u.id, cv.id, \'accepted\'');
   assert.ok(start > 0, 'the blanket INSERT ... SELECT over users must exist');
-  const block = body.slice(body.lastIndexOf('INSERT INTO user_terms_consents', start), start + 400);
+  const block = body.slice(body.lastIndexOf('INSERT INTO user_terms_consents', start), start + 500);
   assert.match(block, /FROM users u/);
+  // The current-version rule, the same one termsCurrentHandler uses
+  // (src/routes/topochain/mobile.js) — and empty when nothing is published.
+  assert.match(block, /published_at IS NOT NULL/);
+  assert.match(block, /ORDER BY published_at DESC, id DESC LIMIT 1/);
+  assert.doesNotMatch(block, /900500/);
   assert.match(block, /ON CONFLICT \(user_id, terms_version_id\) DO NOTHING/);
 });
 

@@ -236,27 +236,26 @@ test('"Make it" makes a private community through the dialog\'s own route', () =
   }
 });
 
-// #4174: every project's repository is public on GitHub, and its first
-// request is a public issue holding the description word for word. The make
-// screen says so, quietly, under Make it, from either door.
-test('under Make it, one quiet line says what you write and the code are public on GitHub', () => {
+// #4384: the make screen no longer says, under Make it, that what you write
+// and the code are public on GitHub (#4174 added that line). The fact moved
+// into Homeroom's terms as a new version (services/terms-github-clause.js);
+// the other "public on GitHub" lines (import, visibility, fork, settings)
+// stay.
+test('nothing under Make it says what you write is public on GitHub', () => {
   const make = loadTsx(`${DIR}/make.tsx`);
-  assert.equal(make.MAKE_PUBLIC_LINE, 'What you write here, and the app’s code, are public on GitHub.');
+  assert.equal(make.MAKE_PUBLIC_LINE, undefined);
+  assert.doesNotMatch(read(`${DIR}/make.tsx`), /public on GitHub/);
   for (const props of [
     { who: 'Jordan', onMade() {}, onLookAround() {} },
     { who: 'Jordan', entry: 'create', onMade() {}, onClose() {} },
   ]) {
     const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', props);
-    const line = /<p data-make-public="" class="([^"]*)">([^<]*)<\/p>/.exec(html);
-    assert.ok(line, `the line is drawn (${props.entry || 'first-session'})`);
-    assert.equal(line[2], make.MAKE_PUBLIC_LINE);
-    // Fine print: small and muted, never a warning colour.
-    assert.match(line[1], /\btext-\[13px\]/);
-    assert.match(line[1], /\btext-zinc-500\b/);
-    assert.doesNotMatch(line[1], /red-|amber-|font-(semi)?bold/);
-    assert.ok(html.indexOf('data-make-public') > html.indexOf('>Make it</button>'), 'under Make it');
+    assert.ok(html.includes('>Make it</button>'), `the screen is drawn (${props.entry || 'first-session'})`);
+    assert.doesNotMatch(html, /data-make-public|public on GitHub/);
+    // The paragraph after Make it — the door the removed line sat between —
+    // still renders directly under it.
     const next = props.entry === 'create' ? 'data-make-import-link' : 'Look around first';
-    assert.ok(html.indexOf('data-make-public') < html.indexOf(next), `above ${next}`);
+    assert.ok(html.indexOf(next) > html.indexOf('>Make it</button>'), `${next} under Make it`);
   }
 });
 

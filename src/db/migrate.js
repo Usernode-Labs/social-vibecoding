@@ -45,6 +45,10 @@ async function migrate(config) {
   // The verified-identity rule's one-time production rollout: on, with $20
   // a week for new members who have not verified (services/identity-rollout.js).
   await require('../services/identity-rollout').applyIdentityRollout(pool);
+  // The terms' one-time GitHub clause (issue #4384): published as a new
+  // terms version, so people who accepted the earlier one are told the
+  // terms changed (services/terms-github-clause.js).
+  await require('../services/terms-github-clause').applyTermsGithubClause(pool);
   log.info('db', 'Schema up to date');
   finishPhase('schemaMs');
 
@@ -12514,7 +12518,12 @@ async function seedStagingTopochain(pool, config) {
     // published version is null (issue #1297,
     // frontend/src/features/settings/terms-first-run.js) — without this
     // blanket row the sheet would slide over EVERY staging preview route,
-    // including the ones the declared checks screenshot. The deliberate way
+    // including the ones the declared checks screenshot. It targets
+    // whichever version is CURRENT, not the fixture's: production's
+    // consents are truncated on clone, and once production carries a
+    // version published after the fixture's, the current one is that — a
+    // hard-coded 900500 would leave it unanswered. Empty when nothing is
+    // published at all (a fresh install seeds nothing). The deliberate way
     // to see the sheet in a preview is ?shot=terms-consent (public/js/
     // app.js). `user_terms_consents` is staging:private — truncated on
     // clone — so this collides with nothing real, and the natural-key
@@ -12522,8 +12531,11 @@ async function seedStagingTopochain(pool, config) {
     await pool.query(
       `INSERT INTO user_terms_consents
          (user_id, terms_version_id, status, responded_at, created_at, updated_at)
-       SELECT u.id, 900500, 'accepted', NOW() - INTERVAL '7 days', NOW(), NOW()
+       SELECT u.id, cv.id, 'accepted', NOW() - INTERVAL '7 days', NOW(), NOW()
          FROM users u
+         CROSS JOIN (SELECT id FROM terms_versions
+                      WHERE published_at IS NOT NULL
+                      ORDER BY published_at DESC, id DESC LIMIT 1) cv
        ON CONFLICT (user_id, terms_version_id) DO NOTHING`
     );
 
