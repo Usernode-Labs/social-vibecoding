@@ -348,9 +348,11 @@ test('the card says "Waiting for a checks slot (2 ahead)", offers no re-run, and
   assert.doesNotMatch(`${note.heading} ${text}`, /—/, 'user-facing copy carries no em dash');
 
   assert.equal(AppView._checksLine({ state: 'active' }, QUEUED, false), 'Waiting for a slot · 2 ahead');
-  assert.equal(AppView._testedLine(QUEUED).text, 'Waiting for a checks slot (2 ahead)');
-  assert.equal(AppView._testedLine({ ...QUEUED, checks_progress: null }).text, 'Waiting for a checks slot');
-  assert.equal(AppView._testedLine(QUEUED).state, 'running');
+  // #4452: the change page's Testing card says it, still moving.
+  assert.equal(AppView._changeTestingView(QUEUED).note.join(' '), 'Waiting for a checks slot (2 ahead)');
+  assert.equal(AppView._changeTestingView({ ...QUEUED, checks_progress: null }).note.join(' '), 'Waiting for a checks slot');
+  assert.equal(AppView._changeTestingView(QUEUED).figure, 'Waiting for a slot');
+  assert.equal(AppView._changeTestingView(QUEUED).done, false);
 });
 
 test('the status pill says the run is waiting, with its place, and keeps the running treatment', () => {
@@ -391,7 +393,7 @@ test('the ?demo=1 fixture serves a queued run, and a declared check reads its ca
 
 // The declared check on 9000054 reads the page's innerText, case-blind
 // (capture/capture.js), and Details is a sheet kept hidden until opened. So
-// the words have to be on the page itself: the hero's Tested line, the one
+// the words have to be on the page itself: the Testing card's line, the one
 // line about the checks a reader sees without opening anything. The mock's
 // own title must not carry them, or the check would pass on the title alone
 // (as "running the automated tests" does on 9000026's).
@@ -419,11 +421,11 @@ test('the proposal page itself says where a waiting run is in line, without open
   const AppView = makeAppView();
   AppView.appData = { slug: 'usernode-2d5619', can_collaborate: true };
   const v = AppView._topicViewFor('proposal', mock);
-  const page = renderToHtml(createElement(ChangeDetail, { card: v.card, body: v.body, item: mock, conversation: true }));
+  const page = renderToHtml(createElement(ChangeDetail, { card: v.card, body: v.body, item: mock }));
   const text = page.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').toLowerCase();
   assert.ok(text.includes(want), `the page says "${declared.expectText}"; it read: ${text.slice(0, 600)}`);
-  assert.match(page, /<button type="button" class="dev-topic-tested" data-tested="running">[\s\S]*?Waiting for a checks slot \(2 ahead\)/,
-    'on the hero\'s Tested line');
+  assert.match(page, /data-change-gate="testing" data-done="false"[\s\S]*?<p class="dev-change-gate-note">Waiting for a checks slot \(2 ahead\)<\/p>/,
+    'on the Testing card\'s line');
 });
 
 test('the Helm chart passes the cap through, documented beside CAPTURE_CPUS', () => {

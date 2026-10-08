@@ -112,7 +112,6 @@ export interface DevBoardBridge {
   mountKanban(host: Element | null): void;
   publishKanban(view: DevKanbanView): void;
   mountTopicHead(host: Element | null): void;
-  mountChangePage(host: Element | null): void;
   publishTopicHead(state: TopicHeadState): void;
   /** #4453: a request's stream, as `GroupChat.renderThread` publishes it — for its spec cards. */
   publishRequestThread(number: number, rows: TranscriptMessage[]): void;
@@ -321,11 +320,6 @@ export const devBoardBridge: DevBoardBridge = {
   // thread panel owns; the previous entry is swept as detached.
   mountTopicHead(host) {
     mountLegacyPortal(host, createElement(TopicHead));
-  },
-
-  mountChangePage(host) {
-    mountLegacyPortal(host, createElement('div', { className: 'dev-change-overview platform-safe-scroll h-full' },
-      createElement('div', { id: 'gc-thread-head' }, createElement(TopicHead, { conversation: true }))));
   },
 
   publishTopicHead(state) {

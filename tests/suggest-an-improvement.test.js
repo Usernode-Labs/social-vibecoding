@@ -96,6 +96,7 @@ test('a new app\'s starter page and README send its maker to Suggest an improvem
 test('Ask for changes on a built change is a different action, and keeps its words', () => {
   // It revises a change Homeroom bot already built (the viewer's chat with
   // the change attached), where Suggest an improvement files a new request.
-  assert.match(read('public/js/app-view.js'), /key: 'ask-bot', cls: 'gc-vote-btn', label: 'Ask for changes',/);
+  // #4455: a row of the change page's ⋯.
+  assert.match(read('public/js/app-view.js'), /label: 'Ask for changes', icon: 'generate',/);
   assert.match(read('src/services/homeroom-bot-dm.js'), /open it below and tap Ask for changes\./);
 });

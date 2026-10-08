@@ -901,7 +901,9 @@ const GroupChat = {
   // it always was: the general chat decides its own events, and a topic
   // thread keeps the centred lines.
   _messageView(msg, opts) {
-    const chat = !!(opts && opts.language === 'chat');
+    // #4455: a change's page (`language: 'change'`) reads its notices the
+    // same way: each is an event of this one change, drawn as a line.
+    const chat = !!(opts && (opts.language === 'chat' || opts.language === 'change'));
     const kindRaw = msg.msgType || msg.msg_type || 'message';
     const meta = msg.metadata || msg.meta || {};
     const isVote = kindRaw === 'vote';
@@ -1044,6 +1046,10 @@ const GroupChat = {
         ? (([sessionId, prNumber]) => ({ sessionId, prNumber }))(GroupChat._voteRef(msg))
         : null,
       specShare: isSpecShare ? GroupChat._specShareView(meta.specShare, msg) : null,
+      // #4455: a preview build notice ('started' / 'ready', pr-import-sync.js
+      // and staging-recovery.js), which a change's page draws as one line.
+      ...(kind === 'system' && (meta.stagingBuild === 'started' || meta.stagingBuild === 'ready')
+        ? { stagingBuild: meta.stagingBuild } : {}),
       // #4238: Homeroom bot's "I've made the first version" line in the
       // channel carries its Open button (ws.sendFirstVersionMessage). Only
       // that metadata, which a person's post cannot set.
@@ -1167,14 +1173,20 @@ const GroupChat = {
     if (!(GroupChat.appSlug === slug && liveWs)) {
       GroupChat.connect(slug);
     }
-    // `language: 'chat'` is the change page's Discussion (topic/
-    // conversation.tsx): bubbles, and every notice as a message. Every other
-    // thread keeps its flat rows and centred lines.
+    // `language: 'chat'` was the change page's Discussion (bubbles, and every
+    // notice as a message) until #4455 made that page a thread of its own
+    // (`'change'`, below). Every other thread keeps its flat rows and
+    // centred lines.
     // `language: 'request'` (#4453) is a request's page: Messages' reply
     // thread, with the request as its root post and its GitHub comments in
     // the same stream (`renderThread`).
-    const language = opts.language === 'chat' || opts.language === 'request' ? opts.language : 'flat';
-    GroupChat.activeThread = { type, ref: Number(ref), language };
+    // `language: 'change'` (#4455) is a change's page: the same thread, with
+    // the change as its root post and every notice a single line. `closed`
+    // is what a change nobody else can see yet says instead of a stream: its
+    // thread is not read at all (only its author can open the page).
+    const language = ['chat', 'request', 'change'].includes(opts.language) ? opts.language : 'flat';
+    const closed = language === 'change' && opts.closed ? String(opts.closed) : null;
+    GroupChat.activeThread = { type, ref: Number(ref), language, ...(closed ? { closed } : {}) };
 
     const threadKey = GroupChat.threadKey(type, ref);
     // A quote staged in the general composer must not ride along into a
@@ -1213,6 +1225,7 @@ const GroupChat = {
       placeholder: opts.placeholder || 'Reply in thread…',
       maxLength: GC_MAX_MESSAGE_LEN,
       request: fill && language === 'request',
+      change: fill && language === 'change',
     });
 
     // Kit polish: keyboard avoidance on the unified thread scroller
@@ -1312,6 +1325,7 @@ const GroupChat = {
     // pages BACKWARD (that's the "Load earlier" button's job). A cache a
     // gap left behind (#4177, `resyncLoaded`) catches up instead.
     const st = GroupChat._threadState(type, ref);
+    if (closed) return;
     if (!st.loaded) GroupChat.loadThreadHistory(type, ref);
     else if (st.stale && !st.read) void GroupChat._refreshLatest({ type, ref });
   },
@@ -1784,7 +1798,7 @@ const GroupChat = {
     const prevTop = scroll ? scroll.scrollTop : 0;
     const wasLoaded = el.dataset.loaded === '1';
 
-    const language = a.language === 'chat' || a.language === 'request' ? a.language : 'flat';
+    const language = ['chat', 'request', 'change'].includes(a.language) ? a.language : 'flat';
     const chat = language === 'chat';
     GroupChat._react()?.mountTranscript(el, 'thread');
     // #2387: a reply thread opens with the message it hangs off — from the
@@ -1819,12 +1833,14 @@ const GroupChat = {
         // In the chat language the quiet card says what an empty thread
         // means; the placeholder line is the flat thread's.
         // A request's page says it in its own "N replies" line instead.
-        placeholder: language === 'request' ? null : st.loaded
+        // A change's page (#4455) as well.
+        placeholder: language === 'request' || language === 'change' ? null : st.loaded
           ? (st.messages.length || chat ? null : 'No messages yet. Start the thread.')
           : (st.failed ? null : 'Loading…'),
         error: !st.loaded && st.failed ? 'Couldn’t load this thread.' : null,
         language,
         ...(language === 'request' ? { request: { loaded: !!st.loaded, githubMore } } : {}),
+        ...(language === 'change' ? { change: { loaded: !!(st.loaded || a.closed), closed: a.closed || null } } : {}),
         ...(chat && st.loaded ? {
           quiet: {
             variant: 'change',

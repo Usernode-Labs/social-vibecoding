@@ -784,6 +784,19 @@ function stagingMockProposals(viewer) {
       recheckable: true,
       test_results: [],
       checks_checked_at: hoursAgo(0.02),
+      // #4452: a run part way through its checks, so the change page's one
+      // testing bar (the build done, the checks about a third of the way)
+      // and its time left are reviewable via ?demo=1.
+      checks_progress: {
+        ran: 284, passed: 284, failed: 0, expected: 840,
+        unit: { phase: 'running', ran: 6900, passed: 6900, failed: 0, skipped: 0, expected: 19240, done: false },
+        build: {
+          step: 'done',
+          steps: [...mockBuildSteps(), { key: 'prepare_checks', ms: 3011 }],
+          totalMs: 19964,
+        },
+        updatedAt: hoursAgo(0.01),
+      },
     },
     // The fifth build step. The container is up (four steps done, 20s) but
     // the run is parked behind an earlier capture on the same proposal —
@@ -4961,6 +4974,9 @@ function voteRoutes(config) {
         proposal.shots = config.shots?.present
           ? await shotsView.getForSession(pool, proposal, req.params.slug)
           : null;
+        // #4452: how long testing usually takes here, for the change page's
+        // one testing bar and its time left (services/checks-estimate.js).
+        proposal.checks_estimate = await require('../services/checks-estimate').forApp(pool, gatedApp.id);
       }
 
       // #3669: the proposal page's own read must carry the same per-row
@@ -5046,6 +5062,9 @@ function voteRoutes(config) {
       }
 
       if (!proposal) return res.status(404).json({ error: 'Proposal not found' });
+      if (IS_STAGING && req.query.demo === '1' && proposal.checks_estimate == null) {
+        proposal = { ...proposal, checks_estimate: require('../services/checks-estimate').DEMO_ESTIMATE };
+      }
       // `?results=failing`: the proposal page's own read, which lists passing
       // checks only when their fold is opened (services/list-test-results.js).
       res.json({ proposal: listTestResults.forItem(req, proposal) });

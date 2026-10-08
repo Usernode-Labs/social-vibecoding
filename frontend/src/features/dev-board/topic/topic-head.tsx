@@ -41,14 +41,12 @@ import { Button } from '@/components/ui/button';
 import { CheckIcon, ChevronRightIcon, PencilSquareIcon, PlusIcon, SearchIcon, XIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { ActionBand, ActionButton, Badge, DevCard, StatusPill, TitleContent, VoteButton, isVoteSpec } from '../card/dev-card';
-import type { DevCardModel } from '../card/model';
-import { swatchFor } from '../../group-chat/swatch';
+import { ActionButton, DevCard, StatusPill } from '../card/dev-card';
 import { useInlineImageViewer } from '../../image-viewer/image-viewer';
 import { topicHeadStore } from './topic-store';
-import { ChangeConversation } from './conversation';
 import { TopicBack } from './topic-back';
 import { RequestHead } from './request-head';
+import { ChangeThreadHead } from './change-head';
 import { DescriptionEditor } from './description-editor';
 import { ISSUE_BODY_MAX } from '../../../lib/issue-body-limit';
 import type {
@@ -565,7 +563,7 @@ export function ProposalBody({ b }: { b: NonNullable<TopicBody['proposalBody']> 
  * deciding on it. The open flag is AppView's, like ProposalBody's, so a
  * repaint does not shut it.
  */
-function SummaryMore({ m }: { m: NonNullable<TopicBody['summaryMore']> }): ReactNode {
+export function SummaryMore({ m }: { m: NonNullable<TopicBody['summaryMore']> }): ReactNode {
   return (
     <details
       className="dev-topic-details dev-topic-hero-more"
@@ -603,7 +601,7 @@ function Transcript({ t }: { t: TranscriptSection }): ReactNode {
   );
 }
 
-export function TopicHead({ conversation = false }: { conversation?: boolean }): ReactNode {
+export function TopicHead(): ReactNode {
   const { card, body, item } = useStoreState(topicHeadStore);
   if (!card || !body) return null;
   // #4453: a request's page is a Messages reply thread with the request as
@@ -612,7 +610,7 @@ export function TopicHead({ conversation = false }: { conversation?: boolean }):
   // `back`: this IS the topic page, whose one back control is the chip at the
   // top of the pane (#2916, ./topic-back.tsx). Every kind of topic comes
   // through here, a change page and an issue/governance thread head alike.
-  return <ChangeDetail key={item?.id || 'topic'} card={card} body={body} item={item} conversation={conversation} back />;
+  return <ChangeDetail key={item?.id || 'topic'} card={card} body={body} item={item} back />;
 }
 
 /** Refresh from the endpoint that owns this lifecycle's metadata. */
@@ -820,7 +818,7 @@ function ClosedBand({ b }: { b: IssueClosedBand }): ReactNode {
  * `AddressedBy`, read from the other end again: that names the change that
  * closed an issue, this the change that carried this one live.
  */
-function IncludedIn({ r }: { r: IssueProposalRef }): ReactNode {
+export function IncludedIn({ r }: { r: IssueProposalRef }): ReactNode {
   return (
     <aside className="dev-change-issues" aria-label="The change this one went live in" data-topic-part="included-in">
       <h4 className="dev-topic-h">{r.heading}</h4>
@@ -839,13 +837,14 @@ function IncludedIn({ r }: { r: IssueProposalRef }): ReactNode {
   );
 }
 
-function IssueAssociations({
+export function IssueAssociations({
   proposalId,
   issues,
   issueOptions,
   linkedIssues,
   editable,
   onSaved,
+  thread,
 }: {
   proposalId: number;
   issues: IssueLink[];
@@ -853,6 +852,13 @@ function IssueAssociations({
   linkedIssues: number[];
   editable: boolean;
   onSaved: (issues: number[]) => void;
+  /**
+   * #4455: a change's page draws the line as one row under the summary:
+   * "Addresses", the first request, "+N more" (which opens the rest, one to a
+   * line), then the thanks. Editing is ⋯ "Edit requests", which asks for the
+   * editor by event, as "Edit description" does.
+   */
+  thread: { thanks: ReactNode };
 }): ReactNode {
   const normalized = normalizeLinkedIssues(linkedIssues);
   const signature = normalized.join(', ');
@@ -866,6 +872,7 @@ function IssueAssociations({
   useEffect(() => {
     if (!editing) setSelected(normalized);
   }, [signature, editing]);
+  const [more, setMore] = useState(false);
 
   const selectedSignature = normalizeLinkedIssues(selected).join(', ');
   const changed = selectedSignature !== signature;
@@ -892,6 +899,14 @@ function IssueAssociations({
     setError('');
     setEditing(false);
   };
+  useEffect(() => {
+    if (!editable) return undefined;
+    const open = (event: Event) => {
+      if (Number((event as CustomEvent).detail) === proposalId) openEditor();
+    };
+    window.addEventListener('change-issues-edit', open);
+    return () => window.removeEventListener('change-issues-edit', open);
+  }, [editable, proposalId, signature]);
   const addIssue = (issue: number) => {
     if (selected.includes(issue)) return;
     if (selected.length >= MAX_LINKED_ISSUES) {
@@ -948,44 +963,8 @@ function IssueAssociations({
     }
   }
 
-  return (
-    <aside className="dev-topic-hero-issues" aria-label="Requests this change addresses">
-      {!editing ? (
-        <div className="dev-topic-hero-issues-line">
-          {/* One line under the summary: "Addresses", then each issue as a
-              chip — the number bold, the title after it — in the Needs-you
-              chip's accent tint. The chip opens the issue's own page; the
-              owner's pencil sits at the line's end. */}
-          <span className="dev-topic-hero-issues-k">Addresses</span>
-          {issues.length ? issues.map((issue) => (
-            <a
-              key={issue.n}
-              href={issue.href}
-              className="dev-ws-chip dev-ws-chip-info dev-topic-issue"
-              data-issue-ref={issue.n}
-              onClick={(event) => {
-                if (!issue.href.startsWith('#') && !issue.href.startsWith('/app/')) return;
-                if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-                event.preventDefault(); call('openTopic', 'issue', issue.n);
-              }}
-            ><b>{`#${issue.n}`}</b><span>{issue.title}</span></a>
-          )) : <span className="dev-topic-note">No requests linked yet.</span>}
-          {editable ? <Button
-            type="button"
-            variant="unstyled"
-            size="inline"
-            ink="none"
-            className="dev-topic-hero-issues-edit inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium text-violet-700 hover:bg-violet-500/10 dark:text-violet-300"
-            aria-expanded="false"
-            onClick={openEditor}
-          >
-            {issues.length ? <PencilSquareIcon className="h-4 w-4" aria-hidden="true" />
-              : <PlusIcon className="h-4 w-4" aria-hidden="true" />}
-            {issues.length ? 'Edit requests' : 'Add request'}
-          </Button> : null}
-        </div>
-      ) : null}
-      {editing ? <form className="mt-3 space-y-3" data-linked-issues-editor="" onSubmit={save}>
+  const editorForm = () => (
+    <form className="mt-3 space-y-3" data-linked-issues-editor="" onSubmit={save}>
         <div>
           <div className="mb-1.5 flex items-center justify-between gap-3 text-xs font-medium text-zinc-600 dark:text-zinc-400">
             <span>{`Selected (${selected.length})`}</span>
@@ -1045,213 +1024,47 @@ function IssueAssociations({
           <Button type="button" variant="pillNeutral" size="xsText" ink="neutral" onClick={cancelEditor} disabled={saving}>Cancel</Button>
           <Button type="submit" variant="pillAccent" size="xsText" disabledStyle="dim" disabled={saving || !changed}>{saving ? 'Saving…' : 'Save requests'}</Button>
         </div>
-      </form> : null}
-      {!editing && notice ? <p role="status" className="dev-topic-note">{notice}</p> : null}
-    </aside>
+      </form>
   );
-}
-
-/** The shots run's state, as one strip: a failed or waived run explains itself. */
-function ShotsStrip({ e }: { e: NonNullable<TopicBody['shots']> }): ReactNode {
-  const red = e.state === 'failed' || e.state === 'stale' || e.state === 'cancelled';
-  return (
-    <div className="dev-topic-shots" data-shots-state={e.state}>
-      <span className={`dev-badge ${red ? 'bg-red-500/10 text-red-700 dark:text-red-400' : 'bg-zinc-500/10 text-zinc-600 dark:text-zinc-400'}`}>{e.label}</span>
-      <span className="dev-topic-shots-text">{e.sentence}</span>
-    </div>
+  const chip = (issue: IssueLink) => (
+    <a
+      key={issue.n}
+      href={issue.href}
+      className="dev-ws-chip dev-ws-chip-info dev-topic-issue"
+      data-issue-ref={issue.n}
+      onClick={(event) => {
+        if (!issue.href.startsWith('#') && !issue.href.startsWith('/app/')) return;
+        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault(); call('openTopic', 'issue', issue.n);
+      }}
+    ><b>{`#${issue.n}`}</b><span>{issue.title}</span></a>
   );
-}
-
-/**
- * The shots states that are a run still going: the picture is coming.
- * 'planned' is in this set only while it is FRESH — `shots.notStarted`
- * (AppView._shotsNotStarted) marks the run that has sat there past the
- * idle threshold, and that one is not going anywhere on its own.
- */
-const SHOTS_BUILDING = new Set(['planned', 'provisioning', 'exploring', 'replaying', 'reviewing']);
-
-/**
- * The before/after: the verified shots card (or the legacy capture
- * tiles) once the run has it; until then one quiet line with the shell's
- * own spinner — no panel and no state label, because "Taking the shots"
- * in a box read as a verdict. A run that failed, or was waived,
- * keeps its strip: that is a fact a voter weighs.
- *
- * #2601/#2558: a run that never started keeps the PANEL rather than the
- * strip, because it is the one pending state with something for the reader
- * to do — the panel carries the recorded reason and the retry control.
- */
-function BeforeAfter({ body }: { body: TopicBody }): ReactNode {
-  const tiles = body.actions && body.actions.visuals ? body.actions.visuals : null;
-  const ev = body.shots || null;
-  const notStarted = !!(ev && ev.notStarted);
-  if (tiles && (!ev || ev.verified || notStarted)) {
-    return (
-      <div className="dev-topic-visuals" data-visuals-scope="1">
-        {/* AppView.visualsTilesHtml's markup — four other surfaces still
-            call it, so it stays a string builder. */}
-        <Html className="usn-visuals-body" html={tiles.tilesHtml} />
-      </div>
-    );
-  }
-  if (!ev || ev.verified) return null;
-  // An interrupted run the recovery sweep is about to start again reads as
-  // under way too: the next thing that happens needs nobody.
-  if (!notStarted && (SHOTS_BUILDING.has(ev.state) || ev.retrying)) {
-    return (
-      <p className="dev-topic-hero-shots" data-shots-state={ev.state}>
-        <span className="dc-status-spinner-arc" aria-hidden="true"></span>
-        <span>{ev.retrying ? 'Trying the shots again' : 'Taking before & after shots'}</span>
-      </p>
-    );
-  }
-  return <ShotsStrip e={ev} />;
-}
-
-/**
- * The hero: the change as the Workshop's Needs-you item. The eyebrow (what
- * the page is, the pull request, where it stands) with the age at its
- * right; the title, with the author's pencil; who proposed it; the card's
- * tags as chips, in the card's own tints — what the change IS, never what
- * state it is in, because the steps under it say that; the action band
- * with Vote first; the plain-English summary; the issue it addresses; the
- * picture, or the line that says it is coming.
- */
-function ChangeHero({ id, card, body, linkedIssues, onIssuesSaved }: {
-  id: number | null;
-  card: DevCardModel;
-  body: TopicBody;
-  linkedIssues: number[];
-  onIssuesSaved: (issues: number[]) => void;
-}): ReactNode {
-  const h: HeroView = body.hero || { kind: 'Change', ref: null, status: '', age: null, author: null, verb: 'proposed', provenance: null, tint: 'a' };
-  const all = card.actions || [];
-  const yesSpec = all.find((a) => isVoteSpec(a, 'yes'));
-  const noSpec = all.find((a) => isVoteSpec(a, 'no'));
-  const vote = yesSpec && noSpec ? <VoteButton yes={yesSpec} no={noSpec} /> : null;
-  const pills = vote ? all.filter((a) => a !== yesSpec && a !== noSpec) : all;
-  const pill = card.pill && card.pill.state && card.pill.state.label ? card.pill.state : null;
-  const hasIssues = !!((body.issues && body.issues.length) || body.canEditIssues) && !!id;
-  // The tags: priority, assignee, category, and the linkage. The state
-  // chips — checks, behind main, the shots — stay off: the steps say it.
-  // A request the Addresses line under the summary already names, by its
-  // number AND its title, is not a "Closes #1" tag up here as well: that
-  // tag said the same thing in a pull request's words (first-session
-  // run-through, 4 Oct 2026).
-  const named = new Set(hasIssues ? (body.issues || []).map((issue) => Number(issue.n)) : []);
-  const unnamed = (b: any) => !(b && b.n != null && named.has(Number(b.n)));
-  const badges = (card.badges || []).filter(Boolean);
-  const chips = [
-    ...badges.filter((b) => b.t === 'attr'),
-    ...(card.linked || []).filter(unnamed),
-    ...badges.filter((b) => b.t === 'issueChip' && unnamed(b)),
-  ];
+  const [first, ...rest] = issues;
   return (
-    <section className="dev-topic-sheet dev-topic-hero" data-topic-sheet="hero" data-ws-tint={h.tint}>
-      <div className="dev-topic-hero-top">
-        {/* B10b: what the page is and where it stands. The pull request it
-            names rides the by-line below, and is in Details. */}
-        <span className="dev-ws-eyebrow dev-topic-hero-eyebrow">
-          {h.status ? `${h.kind} · ${h.status}` : h.kind}
-        </span>
-        {h.age ? <span className="dev-ws-item-of" title={h.age.title}>{h.age.s}</span> : null}
-      </div>
-      <h2 className="dev-ws-item-title dev-topic-hero-title"><TitleContent t={card.title} /></h2>
-      {h.author || h.age || h.ref ? (
-        <p className="dev-ws-item-by dev-topic-hero-by">
-          {h.author ? (
-            <span className="dev-ws-item-avatar" style={{ background: swatchFor(h.author) }} aria-hidden="true">
-              {h.author.slice(0, 1).toUpperCase()}
+    <aside className="dev-change-addresses" aria-label="Requests this change addresses">
+      {!editing && (first || thread.thanks) ? (
+        <div className="dev-change-chips" data-open={more ? 'true' : 'false'}>
+          {first ? <span className="dev-change-chips-lead">Addresses</span> : null}
+          {first ? (
+            <span className="dev-change-chips-first">
+              {chip(first)}
+              {rest.length ? (
+                <button
+                  type="button"
+                  className="dev-ws-chip dev-change-reqs-more"
+                  aria-expanded={more}
+                  onClick={() => setMore((v) => !v)}
+                >{more ? 'Show less' : `+${rest.length} more`}</button>
+              ) : null}
             </span>
           ) : null}
-          <span>
-            {h.author ? <b>{h.author}</b> : null}
-            {h.age ? <span>{`${h.author ? ' · ' : ''}${h.verb} ${h.age.s}`}</span> : null}
-            {h.provenance ? <span>{` · ${h.provenance}`}</span> : null}
-            {/* The change's number, as the card meta line's first fact reads
-                it (app-view.js `_proposalCardModel`): "PR#12", mono in the
-                accent, linking to GitHub when there is one. */}
-            {h.ref ? (
-              <span>
-                {` · `}
-                {h.ref.href
-                  ? <a href={h.ref.href} target="_blank" rel="noopener" className="font-mono text-violet-700 hover:underline dark:text-violet-400">{h.ref.s}</a>
-                  : <span className="font-mono text-violet-700 dark:text-violet-400">{h.ref.s}</span>}
-              </span>
-            ) : null}
-          </span>
-        </p>
-      ) : null}
-      {chips.length ? (
-        <div className="dev-ws-item-chips dev-topic-hero-chips">
-          {chips.map((b) => <Badge key={b.key} b={b} />)}
+          {thread.thanks}
+          {more && rest.length ? <span className="dev-change-chips-rest">{rest.map(chip)}</span> : null}
         </div>
       ) : null}
-      {/* The card's two rows, as the board card draws them: the status row —
-          the pill spanning, the Vote button at its right end — then the band
-          (card/dev-card.tsx ActionBand). The pill carries the vote's count,
-          so the Votes step below only names who voted. The rows wear the
-          card's class so the band's own rules — the one-line fold into ⋯,
-          the accent pills, Preview and the hamburger at the right — and the
-          pill's block form apply here as on the card; app.css takes the
-          card's box off it. */}
-      <div className="dev-card-topic dev-topic-hero-actions">
-        {pill || vote ? (
-          <div className="dev-card-badges dev-card-status dev-topic-hero-status">
-            {pill ? <StatusPill s={pill} /> : null}
-            {vote}
-          </div>
-        ) : null}
-        <ActionBand actions={pills} menuKey={card.rail.menuKey || ''} preview={card.actionPreview || card.rail.preview || null} dense={false} />
-      </div>
-      {/* #3826: the pill's lock explains itself only in a hover title, which
-          a phone never shows. While the other member's Yes is missing, say
-          it; once it is in, the line goes. */}
-      {pill && pill.awaitsOtherYes
-        ? <p className="dev-topic-note" data-topic-part="needs-other-yes">Needs a Yes from another member before it can go live.</p>
-        : null}
-      {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
-      <Html className="dev-topic-hero-summary dev-topic-about-body" data-topic-part="summary" html={body.summaryHtml || ''} />
-      {body.summaryMore ? <SummaryMore m={body.summaryMore} /> : null}
-      {body.summaryStale && body.summaryHtml
-        ? <p className="dev-topic-note" role="note">This summary may describe an earlier revision.</p>
-        : null}
-      {body.tested && id ? <TestedLine id={id} t={body.tested} /> : null}
-      {body.includedIn ? <IncludedIn r={body.includedIn} /> : null}
-      {hasIssues ? (
-        <IssueAssociations
-          proposalId={Number(id)}
-          issues={body.issues || []}
-          issueOptions={body.issueOptions || []}
-          linkedIssues={linkedIssues}
-          editable={body.canEditIssues === true}
-          onSaved={onIssuesSaved}
-        />
-      ) : null}
-      <BeforeAfter body={body} />
-      {body.note ? <div className="dev-topic-note">{body.note}</div> : null}
-    </section>
-  );
-}
-
-/** B10b: the Tested line's mark, in the steps' own glyphs. */
-const TESTED_MARK: Record<string, string> = {
-  passed: '✓', failed: '✕', skipped: '·', broken: '!',
-};
-
-/**
- * B10b: one line for what testing found, where the steps list and its checks
- * used to be. A tap opens Details at the Checks part.
- */
-function TestedLine({ id, t }: { id: number; t: NonNullable<TopicBody['tested']> }): ReactNode {
-  const open = () => (window as any).AppView?.openTechnicalDetails(id, 'checks');
-  return (
-    <button type="button" className="dev-topic-tested" data-tested={t.state} onClick={open}>
-      <span className={`dev-topic-tested-mark dev-topic-tested-mark-${t.state}`} aria-hidden="true">
-        {t.state === 'running' ? <Spinner /> : (TESTED_MARK[t.state] || '·')}
-      </span>
-      <span>{t.text}</span>
-    </button>
+      {editing ? editorForm() : null}
+      {!editing && notice ? <p role="status" className="dev-topic-note">{notice}</p> : null}
+    </aside>
   );
 }
 
@@ -1537,12 +1350,14 @@ let detailsFromUrl = typeof window !== 'undefined'
  * shut, so the steps it carries are on the page for whoever reads them by
  * selector.
  */
-function DetailsSheet({ id, prRef, steps, help, html }: {
+function DetailsSheet({ id, prRef, steps, help, html, shotsHtml = '' }: {
   id: number;
   prRef: HeroView['ref'];
   steps: StepsView | null | undefined;
   help: boolean;
   html: string;
+  /** #4455: Shot details, what the change page's Before and after card leaves out. */
+  shotsHtml?: string;
 }): ReactNode {
   const [open, setOpen] = useState(() => {
     if (!detailsFromUrl) return false;
@@ -1585,6 +1400,13 @@ function DetailsSheet({ id, prRef, steps, help, html }: {
           </button>
         </div>
         <DetailsBody prRef={prRef} steps={steps} help={help} html={html} />
+        {shotsHtml ? (
+          <section className="dev-details-part" data-details-part="shots" data-note="shots">
+            <h5 className="dev-details-sub">Shot details</h5>
+            {/* AppView.shotsHtml's `details` reading, escaped where it is built. */}
+            <Html className="dev-shot-details" html={shotsHtml} />
+          </section>
+        ) : null}
       </div>
     </div>,
     document.body,
@@ -1595,21 +1417,19 @@ function DetailsSheet({ id, prRef, steps, help, html }: {
  * Full public metadata is fetched separately from the lightweight board.
  * This endpoint cannot return private agent messages or credentials.
  *
- * A CHANGE (a session or a proposal, `body.changeId`) reads top to bottom
- * as the Workshop's Needs-you item: the hero (ChangeHero) — the title, the
- * tags, the actions, the summary, the issues, the picture — then the merge
- * steps (StepsSheet), then, on its own page, the Discussion
- * (./conversation.tsx); the technical half is a sheet the ⋯ menu opens
- * (DetailsSheet). The hero's Build pill LEAVES this page for the change's
- * dev session (#2605). An issue or a governance vote keeps the card and
+ * A CHANGE (a session or a proposal, `body.changeId`) is a Messages reply
+ * thread's root post (#4455, ./change-head.tsx): the change, where it
+ * stands as its Votes and Testing cards, its before and after; its replies
+ * are the thread's stream. The technical half is a sheet the ⋯ menu opens
+ * (DetailsSheet). An issue or a governance vote keeps the card and
  * `TopicBodySections`.
  *
  * `back` puts the topic page's "‹ Workshop" chip (./topic-back.tsx) first in
  * `.dev-topic`, above the hero or the card (#2916). Only `TopicHead` passes
  * it: the chip is the page's back control, not part of the card.
  */
-export function ChangeDetail({ card: initialCard, body: initialBody, item, owner = false, active = true, conversation = false, back = false }: {
-  card: any; body: TopicBody; item?: any; owner?: boolean; active?: boolean; conversation?: boolean; back?: boolean;
+export function ChangeDetail({ card: initialCard, body: initialBody, item, owner = false, active = true, back = false }: {
+  card: any; body: TopicBody; item?: any; owner?: boolean; active?: boolean; back?: boolean;
 }): ReactNode {
   const root = useRef<HTMLDivElement>(null);
   const [loaded, setLoaded] = useState<any>(null);
@@ -1711,17 +1531,18 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
   const changePage = !!body.changeId;
   const linkedIssues = Array.isArray(session?.linked_issues) ? session.linked_issues : [];
   return (
-    <div ref={root} className="dev-topic">
-      {back ? <TopicBack /> : null}
+    <div ref={root} className={changePage ? 'dev-change-head' : 'dev-topic'}>
+      {/* A change's back chip is portalled above its sheet (change-head.tsx). */}
+      {back && !changePage ? <TopicBack /> : null}
       {error ? <p role="alert" className="dev-topic-note">{error} <button className="gc-vote-btn" onClick={() => setRevision((n) => n + 1)}>Retry</button></p> : null}
       {changePage ? (
         <>
-          <ChangeHero id={id ? Number(id) : null} card={card} body={body} linkedIssues={linkedIssues} onIssuesSaved={applyLinkedIssues} />
-          {/* #2605: a change's page carries NO build surface — not the Build
-              sheet, and not the published chat's disclosure that used to sit
-              beside it. Both are the dev session page's now, behind the
-              hero's pill. */}
-          {conversation ? <ChangeConversation key={body.changeId} item={session} body={body} /> : null}
+          {/* #4455: the change as a Messages thread's root post, where it
+              stands, its shots; its replies are the thread's stream. #2605:
+              no build surface here: the ⋯'s Build door leaves for it. */}
+          {body.thread ? (
+            <ChangeThreadHead id={id ? Number(id) : null} card={card} body={body} v={body.thread} linkedIssues={linkedIssues} onIssuesSaved={applyLinkedIssues} />
+          ) : null}
           {id ? (
             <DetailsSheet
               id={Number(id)}
@@ -1729,6 +1550,7 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
               steps={body.steps}
               help={!!(body.details && body.details.help)}
               html={body.proposalBody?.html || ''}
+              shotsHtml={av && session?.shots ? av.shotsHtml(session.shots, { sessionId: Number(id), details: true }) : ''}
             />
           ) : null}
           {id && active && av?._canEditDescription(session) ? <DescriptionEditor key={id} id={Number(id)} onSaved={(data) => {
@@ -1742,7 +1564,7 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
         <>
           <div className="dev-topic-sheet dev-topic-card" data-topic-sheet="card">
             {/* #2431: an ISSUE's page names the change on it. A CHANGE's page
-                names its issues under the summary (ChangeHero). #4244: a
+                names its issues under the summary (change-head.tsx). #4244: a
                 CLOSED issue says so once, in the band at the card's top. */}
             {body.closedBand ? <ClosedBand b={body.closedBand} /> : null}
             {body.addressedBy ? <AddressedBy r={body.addressedBy} /> : null}
