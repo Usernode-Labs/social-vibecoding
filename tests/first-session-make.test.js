@@ -210,7 +210,9 @@ test('three templates, the same on the story and the make screen, each a whole s
   assert.equal(suggestedName(game, 'trivia', ''), 'Trivia Night');
   // The organizer: each choice says what it keeps.
   assert.deepEqual(organizer.choices.map((c) => [c.label, c.name]), [['Groceries', 'Grocery List'], ['Chores', 'Chore List'], ['Shared library', 'Lending Library'], ['Potlucks', 'Potluck Planner']]);
-  assert.equal(sentence(organizer, 'chores', '').text, 'An app to organize our chores: who\'s on what this week, and a nudge when it\'s your turn.');
+  // (What the ready-made chore list does: it sends no nudge.)
+  assert.equal(sentence(organizer, 'chores', '').text, 'An app to organize our chores: who\'s on what this week, and whose turn it is next.');
+  assert.equal(sentence(organizer, 'library', '').text, 'An app to organize our shared library: what we can borrow, who has it now, and who\'s asking for it next.');
   assert.equal(suggestedName(organizer, OWN, 'camping gear'), 'Camping Gear List');
   // The story says the same three, the tier list drawn as a tier list.
   const story = renderComponent('frontend/src/features/auth/story.tsx', 'Story', { primaryClass: 'pill', onStart() {}, onSignIn() {} });
@@ -224,7 +226,8 @@ test('"Make it" makes a private community through the dialog\'s own route', () =
   assert.match(make, /import \{ deviceTimeZone, postCreateApp \} from '\.\.\/dialogs\/post-create-app';/);
   assert.match(make, /const reply = await postCreateApp\(\{/);
   assert.doesNotMatch(make, /fetch\('\/api\/apps'/);
-  assert.match(make, /audience: 'invited',\s+brief: text\.trim\(\),/);
+  // A description for Homeroom bot to build from, or a ready-made app to make (below).
+  assert.match(make, /audience: 'invited',\s+\.\.\.\(ready \? \{ template: ready\.template \} : \{ brief: text\.trim\(\) \}\),/);
   // `from` is the door: 'first-session', or 'create' from the Create button.
   assert.match(make, /from: entry,/);
   assert.match(make, /export type MakeEntry = 'first-session' \| 'create';/);
@@ -234,6 +237,36 @@ test('"Make it" makes a private community through the dialog\'s own route', () =
   for (const words of ['What do you want to make?', 'What should it do?', 'What should we call it?', 'It\'s your group\'s name too. You can change it later.', 'Look around first']) {
     assert.ok(make.includes(words), words);
   }
+});
+
+// Evan, 8 Oct 2026: every choice that needs no typing makes one of
+// Homeroom's ready-made apps (services/app-templates.js), so there is no
+// first version to wait for. Your own words, and every game, still go to
+// Homeroom bot.
+test('a choice that needs no typing makes a ready-made app, with nothing for Homeroom bot to build', () => {
+  const { TEMPLATES, OWN, readyMadeOf } = loadTsx(`${DIR}/examples.ts`);
+  const appTemplates = require('../src/services/app-templates');
+  const [tier, game, organizer] = TEMPLATES;
+  const made = [...tier.choices, ...organizer.choices].map((c) => c.template);
+  assert.deepEqual(made, appTemplates.READY_IDS, 'every no-typing choice, and only those, is a ready-made app');
+  for (const c of game.choices) assert.equal(readyMadeOf(game, c.key), null, `${c.key}: a game is always built`);
+  assert.equal(readyMadeOf(tier, OWN), null, 'their own words are built');
+  assert.equal(readyMadeOf(organizer, OWN), null);
+  assert.deepEqual(readyMadeOf(tier, 'hikes'), { template: 'tier-list-hikes', emoji: '📊' });
+  // Its icon is the ready-made app's own, so the made screen and the tile agree.
+  for (const t of [tier, organizer]) {
+    for (const c of t.choices) assert.equal(readyMadeOf(t, c.key).emoji, appTemplates.get(c.template).icon, c.key);
+  }
+
+  const src = read(`${DIR}/make.tsx`);
+  // Only while the sentence is drawn as it is: written out, it is theirs to build.
+  assert.match(src, /const ready = templated && example \? readyMadeOf\(example, choice\) : null;/);
+  assert.match(src, /emoji: ready \? ready\.emoji : example \? example\.emoji : null,/);
+  assert.match(src, /\.\.\.\(ready \? \{ readyMade: true \} : \{\}\),/);
+  // The sentence says so, quietly, under its choices.
+  const make = loadTsx(`${DIR}/make.tsx`);
+  assert.equal(make.READY_LINE, 'Ready-made: nothing to build, so it is ready as soon as it is set up.');
+  assert.match(src, /\{readyMadeOf\(template, choice\) \? <p data-make-ready="" className=\{HINT\}>\{READY_LINE\}<\/p> : null\}/);
 });
 
 // #4384: the make screen no longer says, under Make it, that what you write

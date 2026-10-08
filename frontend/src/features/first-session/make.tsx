@@ -108,11 +108,17 @@ import { Wordmark } from '@/components/ui/wordmark';
 import { useKeyboardSurface } from '../../lib/keyboard-surface';
 import { AppAllowance, useAppAllowance } from '../dialogs/app-allowance';
 import { deviceTimeZone, postCreateApp } from '../dialogs/post-create-app';
-import { descriptionOf, firstChoice, OWN, sentence, suggestedName, TEMPLATES, type Template } from './examples';
+import { descriptionOf, firstChoice, OWN, readyMadeOf, sentence, suggestedName, TEMPLATES, type Template } from './examples';
 import { ImportForm, type RepoManifest } from './import-repo';
 import { TierChart } from './tier-chart';
 
 export { deviceTimeZone };
+
+/**
+ * Under the sentence when its choice is one of the ready-made apps
+ * (examples.ts `readyMadeOf`): Make it makes that app, with nothing to build.
+ */
+export const READY_LINE = 'Ready-made: nothing to build, so it is ready as soon as it is set up.';
 
 /** The server's floor and ceiling for a description (services/homeroom-bot-dm.js MIN_/MAX_BRIEF_CHARS). */
 export const BRIEF_MIN = 10;
@@ -134,6 +140,8 @@ export type Made = {
   conversationId: number | null;
   /** Imported from a GitHub repo (./import-repo.tsx): nothing is built from a description. */
   imported?: boolean;
+  /** One of Homeroom's ready-made apps (examples.ts `readyMadeOf`): nothing is built, it is ready once it runs. */
+  readyMade?: boolean;
 };
 
 const FIELD = 'px-4 pt-3 pb-2 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800';
@@ -368,12 +376,16 @@ export function MakeScreen({
     // is still the template's: words of their own in the plain box let go
     // of it (`picked` is Your own idea then), and are theirs to describe later.
     const example = template;
+    // A choice that needs no typing, its sentence as drawn, is one of the
+    // ready-made apps: it is made from that, with nothing for Homeroom bot
+    // to build, so no brief.
+    const ready = templated && example ? readyMadeOf(example, choice) : null;
     const timeZone = deviceTimeZone();
     try {
       const reply = await postCreateApp({
         name: name.trim(),
         audience: 'invited',
-        brief: text.trim(),
+        ...(ready ? { template: ready.template } : { brief: text.trim() }),
         ...(example ? { description: descriptionOf(example, choice) } : {}),
         from: entry,
         // So the sketch's "today" is the maker's (services/app-sketch.js).
@@ -389,10 +401,11 @@ export function MakeScreen({
       onMade({
         slug: data.app.slug,
         name: data.app.name || name.trim(),
-        emoji: example ? example.emoji : null,
+        emoji: ready ? ready.emoji : example ? example.emoji : null,
         description: example ? descriptionOf(example, choice) : null,
         example,
         conversationId: Number(data.homeroomBot?.conversationId) || null,
+        ...(ready ? { readyMade: true } : {}),
       });
     } finally {
       makingRef.current = false;
@@ -593,6 +606,7 @@ export function MakeScreen({
                       </Chip>
                     ))}
                   </div>
+                  {readyMadeOf(template, choice) ? <p data-make-ready="" className={HINT}>{READY_LINE}</p> : null}
                 </>
               ) : (
                 <>

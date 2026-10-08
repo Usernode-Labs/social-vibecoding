@@ -108,7 +108,7 @@ test('while the plan waits, the build\'s note says so instead of promising a mes
   assert.equal(buildNote(true, true), 'Homeroom bot is waiting for your go-ahead.');
   assert.equal(buildNote(false, true), 'You or anyone you invite can build it from there.');
   const src = read(`${DIR}/made.tsx`);
-  assert.match(src, /: buildNote\(botBuilds, !!plan, stalled, imported\);/);
+  assert.match(src, /: buildNote\(botBuilds, !!plan, stalled, imported, readyMade\);/);
   // Under the card of the idea (./sketch-card.tsx) only when it has something
   // to say, and always in the plain card without one. The sketch's caption
   // calling it the real app is gone.
