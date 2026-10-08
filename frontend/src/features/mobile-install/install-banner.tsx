@@ -3,6 +3,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { XIcon } from '@/components/ui/icons';
 import { useHiddenClass } from '../../lib/legacy-dom';
+import { useStoreState } from '../../lib/use-store-state';
+import { offeringGoToHomeroom } from '../app-context/about-data';
+import { navStore } from '../nav/nav-store.js';
 import { hasPlatformViewer, whenPlatformViewer } from '../../lib/platform-viewer';
 import { isEmbeddedPanel } from '../../lib/side-panel-mode';
 import {
@@ -93,6 +96,13 @@ export function MobileInstallBanner() {
   // swapping the strip's one line for a sentence it had to truncate, so the
   // strip itself never changes. Closing the sheet leaves the strip up.
   const [stepsOpen, setStepsOpen] = useState(false);
+  // #4399: not over the app a private member was invited into, while the
+  // mark menu still offers them "Go to Homeroom" (../app-context/about-data
+  // offeringGoToHomeroom). That menu's Go to Homeroom card carries the
+  // home-screen offer instead; once they have been Home, the strip behaves as
+  // it does for everyone. `tab` is read so the offer is recomputed when they
+  // get there, which is when the remembered visit changes.
+  const { privateMember, tab } = useStoreState(navStore);
 
   // The fetch is skipped entirely for anyone who cannot be offered anything —
   // a desktop visitor, the native app, an installed PWA, someone who already
@@ -129,6 +139,7 @@ export function MobileInstallBanner() {
   // than trusted from the effect above — the eligibility probe there is a
   // cheap "is this a phone", not the decision.
   useEffect(() => {
+    if (offeringGoToHomeroom(!!privateMember)) { setOffer(null); return; }
     const nav = window.navigator;
     setOffer(installOffer({
       ua: nav.userAgent || '',
@@ -139,7 +150,7 @@ export function MobileInstallBanner() {
       dismissed: dismissed || readDismissed(),
       urls,
     }));
-  }, [urls, dismissed, member]);
+  }, [urls, dismissed, member, privateMember, tab]);
 
   useHiddenClass(ref, !offer);
 
