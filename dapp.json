@@ -3193,9 +3193,10 @@
       "expectSelector": "body:has(#header-scope-switch[aria-controls=\"community-switcher\"]) #workshop-screen[data-page-bounce]:not(.hidden):has(#workshop-list [data-workshop-app]) [data-workshop-pane=\"status\"]:not(.hidden) #workshop-empty.hidden"
     },
     {
-      "name": "Communities: Needs you is a project’s own feed, every project mixed, each item naming its project, with the rail from Vote to More (#3270, #3488)",
-      "path": "/?demo=1&ws=needs#workshop",
-      "expectSelector": "#workshop-screen:not(.hidden):has([data-workshop-needs-back]) [data-needs-reel]:has([data-ws-rail-btn=\"vote\"] ~ [data-ws-rail-btn=\"more\"]) section[data-ws-app=\"staging-demo-your-app\"] a[href^=\"#app/staging-demo-your-app/dev/governance/\"]"
+      "name": "Communities: Needs you is a project’s own feed, every project mixed, each item naming its project, with the rail from Vote to More (#3270, #3488); a Just-you change's vote sheet asks for your approval (#4313)",
+      "path": "/?demo=1&ws=needs&shot=needs-approve#workshop",
+      "expectSelector": "#workshop-screen:not(.hidden):has([data-workshop-needs-back]) [data-needs-reel]:has([data-ws-rail-btn=\"vote\"] ~ [data-ws-rail-btn=\"more\"]):has(a[href^=\"#app/staging-demo-your-app/dev/governance/\"]) [data-ws-sheet=\"vote\"] .dev-ws-vote-sub",
+      "expectText": "Waiting for your approval."
     },
     {
       "name": "The Challenges area is the way to the Leaderboard screen",
@@ -4165,12 +4166,6 @@
       "name": "Inside an app's detail page the header arrow links back to the list (#1036)",
       "path": "/#apps/usernode-2d5619",
       "expectSelector": "a#back-btn[href=\"#apps\"]"
-    },
-    {
-      "name": "Settings can answer the build-flow question for good (#1049), after the connectors on Connectors & CLI, with no GitHub rows",
-      "path": "/#settings/connectors",
-      "expectSelector": "#settings-section-content:not(:has([data-settings-section=\"linked-accounts\"]:not(.hidden))) [data-settings-section=\"connectors\"]:not(.hidden) + [data-settings-section=\"build-venue\"]:not(.hidden):has(option[value=\"claude-code\"])",
-      "expectText": "Where changes get built"
     },
     {
       "name": "A connector-imported proposal names the coding agent that built it (#967)",

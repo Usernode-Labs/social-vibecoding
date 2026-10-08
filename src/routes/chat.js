@@ -14,6 +14,7 @@ const appChat = require('../services/app-chat');
 const groupChannelNotify = require('../services/group-channel-notify');
 const conversationsSvc = require('../services/conversations');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
+const { isDemoNeedsProposal } = require('./workshop-overview');
 const {
   appChatReadLimiter,
   attachmentUploadLimiter,
@@ -425,6 +426,11 @@ function chatRoutes(config) {
     // be present and valid to select a thread; a malformed pair is a 400
     // rather than silently falling back to general chat.
     const threadType = req.query.thread_type || null;
+    // #4313: a ?demo=1 Needs-you card's thread (a negative id, staging only)
+    // holds nobody's words; answer an empty page rather than refuse the ref.
+    if (threadType === 'session' && isDemoNeedsProposal(req.query.thread_ref)) {
+      return res.json({ messages: [], has_more_before: false, has_more_after: false });
+    }
     const threadRef = req.query.thread_ref != null ? parseThreadRef(req.query.thread_ref) : null;
     if (threadType || req.query.thread_ref != null) {
       if (!THREAD_TYPES.has(threadType) || threadRef == null) {

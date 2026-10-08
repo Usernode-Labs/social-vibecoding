@@ -78,7 +78,7 @@ const { reportAiRoutes } = require('./src/routes/report-ai');
 const { workshopAskRoutes } = require('./src/routes/workshop-ask');
 const { workshopThemesRoutes } = require('./src/routes/workshop-themes');
 const { sinceSummaryRoutes } = require('./src/routes/since-summary');
-const { workshopOverviewRoutes } = require('./src/routes/workshop-overview');
+const { workshopOverviewRoutes, demoNeedsVoteRoutes } = require('./src/routes/workshop-overview');
 const { appNoticesRoutes } = require('./src/routes/app-notices');
 const { messagesOverviewRoutes } = require('./src/routes/messages-overview');
 const { platformAboutRoutes } = require('./src/routes/platform-about');
@@ -641,6 +641,9 @@ app.use(proposalHandoffRoutes(config));
 app.use(agentSessionRoutes(config, {
   scheduleInteractiveRecovery: scheduleInteractiveTurnRecovery,
 }));
+// #4313: the ?demo=1 Needs-you cards' votes, answered before the session
+// routers' guard refuses their negative ids (staging only).
+app.use(demoNeedsVoteRoutes());
 app.use(sessionRoutes(config, {
   scheduleInteractiveRecovery: scheduleInteractiveTurnRecovery,
 }));

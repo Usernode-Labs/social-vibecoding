@@ -3068,9 +3068,11 @@ const App = {
     // is the mounted one, so calling both is free.
     if (window.AdminConsole?.isOpen?.()) AdminConsole.loadStagingReap?.();
     App.loadVersion();
-    // A change's page re-reads its row on events, not on a timer, so a
-    // dropped socket is its cue too (topic-head.tsx's ChangeDetail).
-    window.dispatchEvent(new CustomEvent('change-detail-refresh', { detail: 'all' }));
+    // #4177: everything that registered with live reads re-reads what it
+    // shows — a change's page (topic-head.tsx's ChangeDetail), its vote
+    // rosters, every loaded chat stream. The lines above are the screens not
+    // moved there yet; a screen that moves takes its line out of this list.
+    window.UsernodeReact?.liveReads?.resync?.('reconnect');
     if (App.currentApp && typeof AppView !== 'undefined' && AppView.appData) {
       // Re-fetch tab-specific state. We don't blow away the DOM —
       // these helpers update in place — so scroll positions, drafts,
@@ -4287,7 +4289,20 @@ const App = {
       // between the sheet and the welcome (Evan, 5 October 2026; the make
       // screen's hand-off, #3894, works the same way). The welcome fills it;
       // any other ending takes it down (_endWelcomeHold).
-      const fromLanding = App._inviteLandingToken === token;
+      //
+      // The landing's mark is kept in this tab's sessionStorage as well as
+      // here, because a sign-in does not always finish in the document that
+      // showed the landing: the move onto the live build reloads it after
+      // the code step (finishLogin, _moveToLiveShell 'signed-in'), and a
+      // provider's trip comes back to the link in a new one. With only the
+      // in-memory mark, that boot followed the link unheld and Home showed
+      // until the standing came back (#4215).
+      let landed = null;
+      try {
+        landed = sessionStorage.getItem(App.INVITE_LANDING_KEY);
+        sessionStorage.removeItem(App.INVITE_LANDING_KEY);
+      } catch (_) { /* the in-memory mark alone */ }
+      const fromLanding = App._inviteLandingToken === token || landed === token;
       App._inviteLandingToken = null;
       const island = window.UsernodeReact && window.UsernodeReact.firstSession;
       held = !!(fromLanding && island && typeof island.holdWelcome === 'function' && island.holdWelcome());
@@ -4454,6 +4469,10 @@ const App = {
     }
   },
 
+  // Where the landing marks the invite link it showed signed out, for a
+  // sign-in that finishes in another document (_followInvite).
+  INVITE_LANDING_KEY: 'usernode:invite-landing',
+
   // "You're in"'s held frame (above), down; a welcome that took its place stays.
   _endWelcomeHold() {
     const island = window.UsernodeReact && window.UsernodeReact.firstSession;
@@ -4604,6 +4623,7 @@ const App = {
         if (!App.user) {
           // A sign-in from here comes back to this link (_followInvite).
           App._inviteLandingToken = inviteToken;
+          try { sessionStorage.setItem(App.INVITE_LANDING_KEY, inviteToken); } catch (_) { /* this document only */ }
           AuthScreens.rememberDeepLink(location.pathname);
           AuthScreens.show('landing');
           return;

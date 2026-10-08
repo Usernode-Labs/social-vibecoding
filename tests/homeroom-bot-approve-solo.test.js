@@ -378,3 +378,96 @@ test('#4270: withVotesRequired asks only for the solo rows, once per project', a
     Object.assign(governance, real);
   }
 });
+
+// #4313: the Needs you vote sheet's line under its question. A group's row
+// counts the votes; a row that asks for your approval has nobody else to
+// count, so it says whose answer it waits on, and once you have answered,
+// the answer, in #4270's words.
+test('#4313: the vote sheet\'s line asks for your approval, and reads as answered', () => {
+  const reel = loadTsx('frontend/src/features/workshop/needs-reel.tsx');
+  const { VoteSub } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
+  const [solo, group] = reel.reelRows([
+    feedItem({ approve: true }),
+    feedItem({ id: 8, title: 'Sort', author: 'ada', yes: 1, app: { slug: 'garden', name: 'Garden', icon_url: null, icon_emoji: null } }),
+  ]);
+  const sub = (row, voted = null) => renderToHtml(createElement(VoteSub, { row, voted }));
+  assert.equal(sub(solo), '<p class="dev-ws-vote-sub">Waiting for your approval.</p>');
+  assert.equal(sub(solo, 'yes'), '<p class="dev-ws-vote-sub">Approved.</p>');
+  assert.equal(sub(solo, 'no'), '<p class="dev-ws-vote-sub">Not approved.</p>');
+  assert.doesNotMatch(sub(solo), /voted/);
+  // A group's row is counted, as before.
+  assert.equal(sub(group), '<p class="dev-ws-vote-sub">1 yes and 0 no so far.</p>');
+  assert.equal(sub({ ...group, tally: { yes: 0, no: 0 } }), '<p class="dev-ws-vote-sub">Nobody has voted yet.</p>');
+  // On a project's own Needs you the row has its card's pill: the wait is
+  // the eyebrow's already, so it is not said twice; any other word follows.
+  const pilled = (state) => ({ ...solo, card: { ...solo.card, pill: { state } } });
+  assert.equal(sub(pilled({ key: 'needs_vote', label: 'Waiting for your approval', yes: 0, majority: 1 })),
+    '<p class="dev-ws-vote-sub">Waiting for your approval.</p>');
+  assert.equal(sub(pilled({ key: 'checks', label: 'Checks failing', yes: 0, majority: 1 })),
+    '<p class="dev-ws-vote-sub">Waiting for your approval. Checks failing.</p>');
+});
+
+// #4313: the ?demo=1 feed carries one Just-you card so the wording can be
+// seen in a preview, and the page's follow-up requests for it are answered.
+test('#4313: the demo feed has one Just-you card, and its follow-ups are answered', () => {
+  const route = require('../src/routes/workshop-overview');
+  const solo = route.DEMO_NEEDS_FEED.filter((it) => it.approve);
+  assert.equal(solo.length, 1, 'one Just-you card');
+  const [card] = solo;
+  assert.equal(card.kind, 'proposal');
+  assert.ok(card.id < 0, 'a demo id, never a real proposal');
+  assert.equal(card.author, null, 'it names nobody');
+  assert.match(card.title, /^\[Demo\] /, 'obviously fake');
+  assert.deepEqual([card.yes, card.no], [0, 0]);
+  const [row] = reel().reelRows([card]);
+  assert.equal(row.yes.approve, true, 'the reel asks for approval');
+  // Answered by the demo path only on staging (the module reads the flag at load).
+  assert.equal(route.isDemoNeedsProposal(card.id), false, 'not outside staging');
+  const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+  assert.match(read('server.js'), /app\.use\(demoNeedsVoteRoutes\(\)\);\napp\.use\(sessionRoutes\(/,
+    'the vote is answered ahead of the session guard that refuses a negative id');
+  assert.match(read('src/routes/chat.js'), /threadType === 'session' && isDemoNeedsProposal\(req\.query\.thread_ref\)/);
+  assert.match(read('src/routes/workshop-ask.js'), /isDemoNeedsProposal\(req\.query\.ref\)\) return res\.json\(\{ messages: \[\] \}\)/);
+  assert.match(read('src/routes/votes.js'), /\|\| stagingDemoNeedsProposal\(id, req\.params\.slug\)/);
+  // The declared check opens the feed on it, with its vote sheet up.
+  const check = require('../dapp.json').tests.find((t) => /shot=needs-approve/.test(t.path));
+  assert.ok(check, 'a declared check rides ?shot=needs-approve');
+  assert.match(check.expectSelector, /\[data-ws-sheet="vote"\] \.dev-ws-vote-sub$/);
+  assert.equal(check.expectText, 'Waiting for your approval.');
+  assert.ok(check.expectSelector.length < 256);
+  function reel() { return loadTsx('frontend/src/features/workshop/needs-reel.tsx'); }
+});
+
+test('#4313: on staging the demo card\'s vote, voters and page read are answered', async () => {
+  const prev = process.env.USERNODE_ENV;
+  process.env.USERNODE_ENV = 'staging';
+  const ids = [require.resolve('../src/routes/workshop-overview')];
+  const saved = ids.map((id) => require.cache[id]);
+  ids.forEach((id) => { delete require.cache[id]; });
+  try {
+    const route = require('../src/routes/workshop-overview');
+    const card = route.DEMO_NEEDS_FEED.find((it) => it.approve);
+    assert.equal(route.isDemoNeedsProposal(card.id), true);
+    assert.equal(route.isDemoNeedsProposal(String(card.id)), true, 'as a route param');
+    assert.equal(route.isDemoNeedsProposal(-999), false, 'only the feed\'s own ids');
+    assert.equal(route.isDemoNeedsProposal(42), false);
+    const router = route.demoNeedsVoteRoutes();
+    const call = (method, url, id, body) => new Promise((resolve) => {
+      const res = {
+        statusCode: 200,
+        status(c) { this.statusCode = c; return this; },
+        json(b) { resolve({ status: this.statusCode, body: b }); },
+      };
+      router.handle({ method, url, params: { id }, body, user: { id: 1 }, query: {} }, res, () => resolve({ next: true }));
+    });
+    assert.deepEqual(await call('POST', `/api/sessions/${card.id}/vote`, String(card.id), { vote: 'yes' }),
+      { status: 200, body: { ok: true, demo: true, vote: 'yes' } });
+    assert.equal((await call('POST', `/api/sessions/${card.id}/vote`, String(card.id), { vote: 'maybe' })).status, 400);
+    assert.deepEqual((await call('GET', `/api/sessions/${card.id}/votes`, String(card.id))).body,
+      { yes: [], no: [], reasons: [], earlier: { yes: [], no: [] } });
+    assert.deepEqual(await call('POST', '/api/sessions/42/vote', '42', { vote: 'yes' }), { next: true }, 'a real id passes through');
+  } finally {
+    ids.forEach((id, i) => { if (saved[i]) require.cache[id] = saved[i]; else delete require.cache[id]; });
+    if (prev === undefined) delete process.env.USERNODE_ENV; else process.env.USERNODE_ENV = prev;
+  }
+});

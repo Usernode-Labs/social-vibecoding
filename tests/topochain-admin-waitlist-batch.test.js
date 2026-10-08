@@ -249,6 +249,7 @@ function fakeRelease({ failOn = [] } = {}) {
     if (failOn.includes(id)) throw new Error('boom');
     const row = signupRows.find((r) => r.id === id);
     if (!row) return null;
+    if (row.email == null) throw new waitlistService.WaitlistReleaseError('needs_sms', 'Needs SMS (#4096).');
     const newly = row.released_at == null;
     row.released_at = row.released_at || new Date();
     return { id, email: row.email, released_at: row.released_at, linked_user_id: null, more_token: `t${id}`, newly_released: newly };
@@ -261,7 +262,7 @@ test('bulk-release admits each id, mails only the newly admitted, and reports ev
   const res = await call('POST', '/api/v4/admin/waitlist/bulk-release', { ids: [1, '2', 3, 404, 1, 'x'] });
   assert.equal(res.status, 200);
   assert.deepEqual(calls, [1, 2, 3, 404], 'deduped, unparseable ids dropped, order kept');
-  assert.deepEqual(res.body.data, { admitted: [1, 2], already_admitted: [3], not_found: [404], failed: [] });
+  assert.deepEqual(res.body.data, { admitted: [1, 2], already_admitted: [3], not_found: [404], needs_sms: [], failed: [] });
   assert.deepEqual(mailed.map((m) => [m.kind, m.to]).sort(), [
     ['waitlist_released', 'unconfirmed@example.invalid'],
     ['waitlist_released', 'waiting@example.invalid'],
@@ -282,6 +283,23 @@ test('one row failing does not strand the rows already admitted unmailed', async
   assert.deepEqual(res.body.data.failed, [2]);
   assert.deepEqual(res.body.data.admitted, [1]);
   assert.deepEqual(mailed.map((m) => m.to), ['waiting@example.invalid']);
+});
+
+// #4223: a phone row (no email) waits on outbound SMS (#4096). A batch
+// skips it and says so rather than failing it or the rows around it, and
+// the one-row Admit answers with the reason.
+test('a phone row is held for SMS: a batch skips it, the one-row Admit refuses it', async () => {
+  signupRows.push({ id: 7, email: null, released_at: null, confirmed_at: new Date(), linked_username: 'phoney', has_platform_access: false });
+  fakeRelease();
+  const res = await call('POST', '/api/v4/admin/waitlist/bulk-release', { ids: [7, 1] });
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body.data.needs_sms, [7]);
+  assert.deepEqual(res.body.data.failed, []);
+  assert.deepEqual(res.body.data.admitted, [1]);
+  assert.deepEqual(mailed.map((m) => m.to), ['waiting@example.invalid']);
+  const one = await call('POST', '/api/v4/admin/waitlist/7/release');
+  assert.equal(one.status, 409);
+  assert.match(one.body.error, /#4096/);
 });
 
 test('bulk-release refuses no ids and more than one batch', async () => {
