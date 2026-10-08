@@ -1,10 +1,12 @@
-// The workflow runtime inside the platform process: created at boot when a
+// The workflow runtime inside a platform process: created at boot when a
 // workflow flag is on, with its own small pool so pipeline slots and the
-// outcome listener never take request connections. Every process appends,
-// waits and runs pipeline slots (so a Pod that is not the leader, during a
-// rollout, still decides its own votes at once); timers, services and the
-// boot backfill run on the leader, and on a staging preview (which never
-// stands for election) so a preview with the flag on still decides.
+// outcome listener never take request connections. Every web process
+// appends, waits and runs pipeline slots (so a Pod that is not the leader,
+// during a rollout, still decides its own votes at once). Timers, services
+// and the boot backfill (the loops) run on the leader, on a staging preview
+// (which never stands for election, so a preview with the flag on still
+// decides), or in the workflow worker (workflow-worker.js), which runs the
+// loops and no slots.
 
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
@@ -27,6 +29,8 @@ let machine: ReturnType<typeof governanceProposal> | null = null;
 let merges: ReturnType<typeof mergeFollowups> | null = null;
 let mergesAdmitted = false;
 let log: Logger | null = null;
+// False in the workflow worker: its results are applied by the web Pods.
+let slotsHere = true;
 
 // What the ownership triggers read, synced on every boot, flag or not:
 // - ownership_mode: 'raise' (tests, staging, local) or 'log' (production,
@@ -84,11 +88,16 @@ async function recordBooted(pool: Pool): Promise<void> {
       WHERE a.self_hosted = TRUE`, [sha]);
 }
 
-export async function startWorkflow(config: any, opts: { loops: boolean }): Promise<void> {
+// `worker`: this is the workflow worker. It runs the loops and no pipeline
+// slots, and records no booted build: it serves none, and a worker that
+// rolls out ahead of the web Pods would otherwise call a release live early.
+export async function startWorkflow(config: any, opts: { loops: boolean; worker?: boolean }): Promise<void> {
   log = legacy('services/logger');
   const appPool = legacy('db/pool').getPool(config);
   await syncSettings(appPool, config);
-  await recordBooted(appPool).catch((err) => log!.warn('workflow', 'Could not record the booted build', { message: err.message }));
+  if (!opts.worker) {
+    await recordBooted(appPool).catch((err) => log!.warn('workflow', 'Could not record the booted build', { message: err.message }));
+  }
   if (runtime) return;
   const withMerges = !!config.wfMergeFollowupsEnabled || await mergesUnfinished(appPool).catch(() => false);
   if (!config.wfGovernanceEnabled && !withMerges) return;
@@ -117,8 +126,9 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   const started = createRuntime({
     pool: kernelPool!, machines, services, slots: config.wfSlots, log: log!,
   });
+  slotsHere = !opts.worker;
   try {
-    await started.start({ slots: true });
+    await started.start({ slots: slotsHere });
   } catch (err) {
     // Half started is not started: the routes must keep using the legacy paths.
     await started.stop().catch(() => {});
@@ -131,15 +141,15 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   }
   runtime = started;
   log!.info('workflow', 'Workflow runtime started', { machines: machines.map((m) => m.name) });
-  if (merges) await releaseBooted(appPool).catch((err) => log!.warn('workflow', 'Could not report the running release', { message: err.message }));
+  if (merges && !opts.worker) await releaseBooted(appPool).catch((err) => log!.warn('workflow', 'Could not report the running release', { message: err.message }));
   if (opts.loops) await startWorkflowLoops();
 }
 
-// The leader's part: timers and services, then enrolling every open
-// governance row the machine does not hold yet.
+// The loops: timers and services, then enrolling every open governance row
+// the machine does not hold yet.
 export async function startWorkflowLoops(): Promise<void> {
   if (!runtime) return;
-  await runtime.start({ loops: true });
+  await runtime.start({ loops: true, slots: slotsHere });
   if (!machine) return;
   const { rows } = await kernelPool!.query(
     `SELECT i.id, i.app_id FROM issues i
@@ -156,6 +166,7 @@ export async function stopWorkflow(): Promise<void> {
   machine = null;
   merges = null;
   mergesAdmitted = false;
+  slotsHere = true;
   await r?.stop();
   await kernelPool?.end();
   kernelPool = null;

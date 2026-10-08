@@ -23,7 +23,10 @@ test('a recovered turn that deploys fresh staging starts the checks against it',
 });
 
 test('the Workshop board-change hook arms its reconcile outside any preview run', () => {
-  assert.match(SERVER_SRC,
+  // Registered in every platform process, the workflow worker too.
+  const BOOTSTRAP_SRC = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'process-bootstrap.js'), 'utf8');
+  assert.match(SERVER_SRC, /require\('\.\/src\/services\/process-bootstrap'\)\.registerHooks\(config\)/);
+  assert.match(BOOTSTRAP_SRC,
     /ws\.onBoardChange\(\(info\) => previewLifecycle\.detach\(\(\) => workshopThemes\.noteBoardChange\(getPool\(config\), info\)\)\)/);
 });
 

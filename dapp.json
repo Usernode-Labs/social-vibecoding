@@ -275,6 +275,11 @@
       "description": "Connections in the workflow runtime's own database pool, kept apart from request traffic. Unset: 6, or 2 on a staging preview. Keep it above WF_SLOTS. Only read while a workflow flag is on."
     },
     {
+      "key": "WF_LOOPS",
+      "group": "Proposals & retention",
+      "description": "Where the workflow runtime runs its work items and timers. leader: the platform process that holds the leader lock. worker: the separate workflow worker Deployment, which the Helm chart sets on the platform Pods when it deploys one (workflow.worker.enabled). Unset: leader."
+    },
+    {
       "key": "WF_OWNERSHIP_MODE",
       "group": "Proposals & retention",
       "description": "What a write to a column a workflow machine owns does when it comes from outside the machine. log: recorded in wf_ownership_violations and allowed. raise: refused. Unset: log in production, raise everywhere else."

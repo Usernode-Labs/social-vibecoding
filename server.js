@@ -121,8 +121,6 @@ const { topochainIngestRoutes } = require('./src/routes/topochain/ingest');
 const { topochainMobileRoutes } = require('./src/routes/topochain/mobile');
 const { topochainAdminRoutes } = require('./src/routes/topochain/admin');
 const github = require('./src/services/github');
-const llm = require('./src/services/llm');
-const llmTelemetry = require('./src/services/llm-telemetry');
 const worker = require('./src/services/worker');
 const activeWorkersSvc = require('./src/services/active-workers');
 const turnWatchdog = require('./src/services/turn-watchdog');
@@ -611,8 +609,6 @@ app.use(['/api/admin', '/api/v4/admin'], require('./src/middleware/same-site-bro
 app.use(require('./src/middleware/moderation').moderationGuard(config));
 app.use(require('./src/routes/moderation').moderationRoutes(config));
 app.use(require('./src/routes/app-blocks').appBlockRoutes(config));
-worker.setAccountDeletionGuard(sessionId => require('./src/services/account-deletion-cleanup')
-  .assertWorkerAllowed(getPool(config), sessionId));
 app.use(require('./src/services/account-deletion-runtime').trackResponse);
 app.use(require('./src/routes/account-deletion').accountDeletionRoutes(config));
 app.use(cliBrowserRoutes(config));
@@ -724,44 +720,10 @@ app.use(messagesOverviewRoutes(config));
 // version, and its apps / members / merged figures. One cached answer for
 // every viewer, so it sits behind authMiddleware beside the other overviews.
 app.use(platformAboutRoutes(config));
-// The Workshop's placement stage runs when a card arrives on or leaves a
-// board — which every route and service announces through ws.pushSessionUpdate
-// / pushIssueUpdate — on whichever instance handled the change (the row's
-// lease keeps two from racing). Registered here, not under the leader, for
-// that reason; the daily re-draft is the leader's sweep below.
-{
-  const workshopThemes = require('./src/services/workshop-themes');
-  const previewLifecycle = require('./src/services/preview-lifecycle');
-  if (typeof ws.onBoardChange === 'function') {
-    // Announced from inside preview runs too; the debounced reconcile
-    // outlives them, so it must not keep a run's guarded pool.
-    ws.onBoardChange((info) => previewLifecycle.detach(() => workshopThemes.noteBoardChange(getPool(config), info)));
-  }
-}
-// A promoted head whose checks were deferred because it conflicted with main
-// (services/check-admission.js) gets them the moment it measures clean —
-// against the preview that is already up for it, so a run rather than a
-// rebuild. Measurement happens on whichever instance took the vote, the
-// sweep or the capture, so the hook is registered on every instance, like
-// the board hook above. recheckSessionChecks is _inFlight-guarded at the
-// capture; a second kick for the same head costs nothing.
-{
-  const integration = require('./src/services/integration');
-  integration.onBecameClean(async (row) => {
-    const pool = getPool(config);
-    const { rows } = await pool.query(
-      `SELECT cs.*, a.slug AS app_slug, a.repo_url, a.name AS app_name
-         FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
-        WHERE cs.id = $1 AND cs.status = 'promoted'
-          AND cs.check_state = 'pending' AND cs.check_phase = 'deferred'`,
-      [row.id]
-    );
-    if (!rows[0]) return;
-    await require('./src/services/staging-recovery').recheckSessionChecks({
-      config, pool, session: rows[0], reason: 'conflict-resolved',
-    });
-  });
-}
+// The account-deletion guard, the Workshop's board-change hook and the
+// deferred-checks hook, registered the same way in every platform process
+// (the workflow worker too): src/services/process-bootstrap.js.
+require('./src/services/process-bootstrap').registerHooks(config);
 app.use(reportSnapshotRoutes(config));
 // Home-screen panels (#911): the challenges card's data + its per-user
 // show/hide. Me-scoped reads, so it sits behind authMiddleware like the
@@ -1113,12 +1075,15 @@ async function becomeLeader() {
     identity: leadership && leadership.identity,
   });
 
-  // Workflow pipeline slots, timers and services (a no-op unless a workflow
-  // flag is on). Correctness does not depend on running them here; the
-  // leader is simply where background work lives for now.
-  await require('./src/workflow/platform.ts').startWorkflowLoops().catch((err) => {
-    log.error('server', 'Workflow loops failed to start', { err: err.message });
-  });
+  // The workflow runtime's timers and services (a no-op unless a workflow
+  // flag is on), unless the workflow worker Deployment runs them
+  // (WF_LOOPS=worker, workflow-worker.js). Correctness does not depend on
+  // where they run; every web Pod runs pipeline slots either way.
+  if (config.wfLoops !== 'worker') {
+    await require('./src/workflow/platform.ts').startWorkflowLoops().catch((err) => {
+      log.error('server', 'Workflow loops failed to start', { err: err.message });
+    });
+  }
 
   // #2045: reconcile the shared hosted-asset backend once per rollout.
   //
@@ -1667,19 +1632,16 @@ async function start() {
     migration = await withMigrationLock(getPool(config), () => migrate(config));
   }
   const servicesStartedAt = Date.now();
-  await mobilePush.initialize(config);
-  await github.init(config);
-  // Configure the collection kill switch even on deployments with no
-  // Anthropic client. OpenRouter/local coding runs are initialized by their
-  // own paths and still need the provider-neutral collector.
-  llmTelemetry.init(config);
-  await llm.init(config);
+  // Phone pushes, GitHub, the LLM and its telemetry, as the workflow worker
+  // sets them up (src/services/process-bootstrap.js).
+  await require('./src/services/process-bootstrap').initServices(config);
   // The workflow runtime (src/workflow/platform.ts): every process appends
   // and waits for outcomes; the loops start in becomeLeader(), or here on a
-  // staging preview, which never stands for election but must still decide.
+  // staging preview, which never stands for election but must still decide,
+  // or in neither when the workflow worker runs them (WF_LOOPS=worker).
   // Never fatal: without a runtime, governsKind() is false and [main]'s
   // governance paths decide, as with the flag off.
-  await require('./src/workflow/platform.ts').startWorkflow(config, { loops: !runsClusterMaintenance() })
+  await require('./src/workflow/platform.ts').startWorkflow(config, { loops: !runsClusterMaintenance() && config.wfLoops !== 'worker' })
     .catch((err) => log.error('server', 'Workflow runtime failed to start; the legacy paths decide', { err: err.message }));
   startupDiagnostics = Object.freeze({
     totalMs: Date.now() - startedAt,
