@@ -112,7 +112,11 @@
  * With a frame focused (the platform shell around an app), the same tap
  * on the page around it posts `{ __usernode_keyboard: 'dismiss' }` to the
  * frame, and the kit in a frame blurs its own field when that message
- * comes from its parent window (its own opt-out still holds).
+ * comes from its parent window (its own opt-out still holds). A framed
+ * page with nothing focused of its own (the shell's side panel, while
+ * someone types in the app beside it) sends the same rule UP instead:
+ * `{ __usernode_keyboard: 'dismiss-parent' }` to its parent window, which
+ * applies it — its own field, or the focused app frame's.
  *
  * A presented sheet or side panel also carries `--un-presence` on its own
  * element: 1 at rest, 0 off-screen, and 1:1 with the finger in between,
@@ -648,6 +652,17 @@
   function isKeyboardDismissMessage(data) {
     return !!data && typeof data === 'object' && data.__usernode_keyboard === 'dismiss';
   }
+  // Up the other way, from a framed page with nothing focused of its own
+  // (the shell's side panel): a dismissing tap landed there, the keyboard
+  // is up in a field this page cannot see, and only the parent can apply
+  // the rule. A verb of its own, so a frame's parent-to-child listener
+  // (isKeyboardDismissMessage, above) cannot mistake it for one of its own.
+  function keyboardDismissParentMessage() {
+    return { __usernode_keyboard: 'dismiss-parent' };
+  }
+  function isKeyboardDismissParentMessage(data) {
+    return !!data && typeof data === 'object' && data.__usernode_keyboard === 'dismiss-parent';
+  }
 
   // Keyboard-aware reveal math for a focused field inside a content
   // scroller. scrollIntoView({block:'nearest'}) is blind here: keyboard
@@ -986,6 +1001,8 @@
     tapKeepsKeyboard: tapKeepsKeyboard,
     keyboardDismissMessage: keyboardDismissMessage,
     isKeyboardDismissMessage: isKeyboardDismissMessage,
+    keyboardDismissParentMessage: keyboardDismissParentMessage,
+    isKeyboardDismissParentMessage: isKeyboardDismissParentMessage,
     revealScrollDelta: revealScrollDelta,
     reorderDropIndex: reorderDropIndex,
     gridDropSide: gridDropSide,
@@ -1141,8 +1158,10 @@
    * does whatever it did.
    *
    * Cheap on any page: passive listeners that return at once unless a text
-   * field was focused when the finger landed, and nothing written but the
-   * blur. Off on desktop (no on-screen keyboard), and for a page whose
+   * field was focused when the finger landed — or, in a frame, unless the
+   * page sits framed, to carry a dismissing tap up — and nothing written
+   * but the blur and, up, the one message. Off on desktop (no on-screen
+   * keyboard), and for a page whose
    * <html> or <body> says data-un-keyboard-dismiss="off" as the finger
    * lands. One listener per document, every app's in its own frame: the
    * platform shell loads this file too (frontend/src/head.html), so its
@@ -1157,6 +1176,18 @@
    * passes the message on to a frame focused inside it. Posted, never
    * waited on, so the tap's own click is no later for it.
    *
+   * A frame with NOTHING focused of its own joins in too (request #4314):
+   * the shell's side panel is a frame of its own, and while someone types
+   * in the app beside it, a tap in the panel reaches only the panel's
+   * document — the shell and the app never hear it, and iPad Safari leaves
+   * the keyboard up. So in a framed page the finger is tracked whatever is
+   * focused here, and a qualifying tap on something that keeps no keyboard
+   * asks its parent to apply the rule: `{ __usernode_keyboard:
+   * 'dismiss-parent' }`, up to window.parent. The shell (the only side
+   * panel's parent) takes that from its #side-panel-frame only and does
+   * what its own tap would have: blurs its own focused field, or tells the
+   * focused app frame.
+   *
    * Touch events where the page has them (every phone), else pointer
    * events from a finger; never a mouse or a pen. The start is heard in
    * capture, before anything can stop it; the end in the window's bubble
@@ -1167,6 +1198,14 @@
   (function keyboardDismiss() {
     if (platform === 'desktop') return;
     var tap = null; // { x, y, at, moved, scrolled, multi }: the finger down now
+    // This page sits in a frame (every app's page; the shell's side panel
+    // is one too): it can always carry a dismissing tap UP to its parent,
+    // even when nothing is focused here for it to put away itself.
+    var framed = false;
+    try { framed = !!window.parent && window.parent !== window; } catch (err) { /* no parent */ }
+    // At the top level, the one frame whose tap reports are answered: the
+    // shell's side panel, the only <iframe> with this id.
+    var SIDE_PANEL_FRAME_ID = 'side-panel-frame';
 
     function now() {
       return window.performance && typeof window.performance.now === 'function'
@@ -1204,6 +1243,16 @@
         frame.contentWindow.postMessage(keyboardDismissMessage(), '*');
       } catch (err) { /* a frame mid-teardown has no keyboard */ }
     }
+    // The same, up: a frame with nothing focused of its own (the shell's
+    // side panel) asks its parent to apply the rule for a tap that landed
+    // here — the keyboard it should close is behind a field this page
+    // cannot see (#4314). To the parent window only, posted, never waited
+    // on, so the tap's own click is no later for it.
+    function tellParent() {
+      try {
+        window.parent.postMessage(keyboardDismissParentMessage(), '*');
+      } catch (err) { /* a parent mid-teardown has no keyboard either */ }
+    }
     function off() {
       return kbAttr(document.documentElement, KB_DISMISS_OFF_ATTR) === 'off'
         || kbAttr(document.body, KB_DISMISS_OFF_ATTR) === 'off';
@@ -1219,7 +1268,11 @@
     }
 
     function down(x, y) {
-      tap = !off() && (focusedField() || focusedFrame())
+      // In a frame the finger is tracked whatever is focused here: the
+      // tap may belong to a field in a NEIGHBOUR (the app beside the side
+      // panel), and only this page can carry the tap up to the parent
+      // that can reach it (#4314).
+      tap = !off() && (focusedField() || focusedFrame() || framed)
         ? { x: x, y: y, at: now(), moved: 0, scrolled: false, multi: false }
         : null;
     }
@@ -1235,8 +1288,13 @@
       if (!isKeyboardDismissTap({ moved: t.moved, ms: now() - t.at, scrolled: t.scrolled, multi: t.multi })) return;
       var field = focusedField();
       var frame = field ? null : focusedFrame();
-      if (!(field || frame) || tapKeepsKeyboard(pathOf(e), field || frame)) return;
-      if (field) putAway(field); else tell(frame);
+      // With nothing focused here, only the tapped path itself is asked:
+      // a tap on a control of this page keeps whatever keyboard is up
+      // behind a neighbour, exactly as it would keep this page's own.
+      if (tapKeepsKeyboard(pathOf(e), field || frame)) return;
+      if (field) putAway(field);
+      else if (frame) tell(frame);
+      else if (framed) tellParent();
     }
 
     // In a frame: the page around it heard a tap that closes the keyboard.
@@ -1244,6 +1302,25 @@
     // messages; a top-level page has no parent to hear it from.
     function onMessage(e) {
       if (!e || e.source !== window.parent || !isKeyboardDismissMessage(e.data) || off()) return;
+      var field = focusedField();
+      var frame = field ? null : focusedFrame();
+      if (field) putAway(field); else if (frame) tell(frame);
+    }
+
+    // At the top level, with a side panel: the panel's kit asked (tellParent,
+    // above) — a dismissing tap landed there while the keyboard is up behind
+    // a field it cannot see. From the panel's own window only, so an app
+    // frame's tap report (the same verb, posted up on the same rule) is
+    // nothing to act on; the panel is the only frame whose taps the shell
+    // owes an answer. The frame is looked up as the message lands, so a
+    // panel reopened as a new element is the right one, and a page with no
+    // side panel matches nothing. Then the same rule the shell's own taps
+    // follow: its focused field, or the frame the keyboard is up behind.
+    function onPanelMessage(e) {
+      if (!e || !isKeyboardDismissParentMessage(e.data) || off()) return;
+      var panel = null;
+      try { panel = document.getElementById(SIDE_PANEL_FRAME_ID); } catch (err) { /* no doc */ }
+      if (!panel || !panel.contentWindow || e.source !== panel.contentWindow) return;
       var field = focusedField();
       var frame = field ? null : focusedFrame();
       if (field) putAway(field); else if (frame) tell(frame);
@@ -1297,9 +1374,11 @@
     }
     // Element scrolls do not bubble, but they pass the window in capture.
     window.addEventListener('scroll', onScroll, quiet);
-    var framed = false;
-    try { framed = !!window.parent && window.parent !== window; } catch (err) { /* no parent */ }
-    if (framed) window.addEventListener('message', onMessage);
+    // A frame listens down (its parent's tap reports); a top-level page
+    // (the shell, the panel's parent) listens up (the panel's). Passive
+    // like the rest: nothing here prevents anything.
+    if (framed) window.addEventListener('message', onMessage, { passive: true });
+    else window.addEventListener('message', onPanelMessage, { passive: true });
   })();
 
   /* ────────────────────────────────────────────────────────────────────

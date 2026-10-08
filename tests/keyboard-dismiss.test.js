@@ -29,7 +29,12 @@
 //   6. around a frame (request #4273): with an app's field up, a tap on
 //      the shell's own chrome reaches only the shell, so the shell's
 //      listener tells the app's frame, and the kit in the frame puts its
-//      field away when its parent says so.
+//      field away when its parent says so;
+//   7. up from a frame (request #4314): the shell's side panel is a frame
+//      of its own, and while someone types in the app beside it a tap in
+//      the panel reaches only the panel's document. Its kit, nothing
+//      focused of its own, tells its parent, and the shell applies the
+//      same rule: its own field, or the focused app frame's.
 //
 // What this cannot do is raise a real keyboard; it checks the blur that
 // closes one.
@@ -408,7 +413,7 @@ test('nothing on a desktop, which has no on-screen keyboard: not even a listener
   p.tap(p.el('p'));
   assert.equal(field.blurs, 0);
   assert.equal(p.listeners.length, 0);
-  assert.equal(kitPage({ platform: 'android' }).listeners.length, 5, 'Android gets the same rule');
+  assert.equal(kitPage({ platform: 'android' }).listeners.length, 6, 'Android gets the same rule, and hears its side panel');
 });
 
 test('the shell runs the kit\'s listener as is: loaded as a plain script, and never turned off', () => {
@@ -497,11 +502,13 @@ test('the listener prevents nothing and writes nothing to the page but the blur'
   const src = between('  (function keyboardDismiss() {', '\n  })();');
   assert.doesNotMatch(src, /preventDefault\(|stopPropagation\(|style\.|classList|setAttribute/);
   assert.equal((src.match(/\.blur\(\)/g) || []).length, 1);
-  // And sends nothing but the one message, to a focused frame's window
-  // (part 6), never to its own parent.
-  assert.equal((src.match(/\.postMessage\(/g) || []).length, 1);
+  // And sends nothing but the two messages: down to a focused frame's
+  // window (part 6), and, from a frame with nothing focused of its own,
+  // up to its parent (part 7). Each its own verb, so no listener mistakes
+  // one direction for the other.
+  assert.equal((src.match(/\.postMessage\(/g) || []).length, 2);
   assert.match(src, /frame\.contentWindow\.postMessage\(keyboardDismissMessage\(\), '\*'\)/);
-  assert.doesNotMatch(src, /parent\.postMessage/);
+  assert.match(src, /window\.parent\.postMessage\(keyboardDismissParentMessage\(\), '\*'\)/);
 });
 
 test('the conventions and the kit\'s header tell an app how to keep the keyboard, or turn it off', () => {
@@ -515,8 +522,10 @@ test('the conventions and the kit\'s header tell an app how to keep the keyboard
   assert.match(header, /data-keep-keyboard/);
   assert.match(header, /data-un-keyboard-dismiss="off"/);
   // The message a page sends a focused frame (part 6), named where every
-  // app author reads what the kit does.
+  // app author reads what the kit does, and the one a framed page sends
+  // up to its parent (part 7).
   assert.match(header, /\{ __usernode_keyboard: 'dismiss' \}/);
+  assert.match(header, /\{ __usernode_keyboard: 'dismiss-parent' \}/);
 });
 
 // The opening tag of the JSX element whose attributes include the text at
@@ -752,10 +761,18 @@ test('in the frame, only a field that raises keys is put away, and the app\'s ow
   }
 });
 
-test('a top-level page, or a desktop, hears no such message at all', () => {
-  assert.equal(kitPage().listeners.filter((l) => l.type === 'message').length, 0, 'no parent');
+test('a top-level page hears no parent\'s dismissal, a desktop nothing at all', () => {
+  // A top-level page (the shell) keeps the one message listener part 7
+  // gives it — for the side panel's tap report, never a parent's dismiss:
+  // it has no parent to hear one from, and no listener acts on one.
+  assert.equal(kitPage().listeners.filter((l) => l.type === 'message').length, 1, 'no parent, one panel listener');
   const top = kitPage({ parent: 'self' });
-  assert.equal(top.listeners.filter((l) => l.type === 'message').length, 0, 'a top window is its own parent');
+  assert.equal(top.listeners.filter((l) => l.type === 'message').length, 1, 'a top window is its own parent');
+  const field = top.field('textarea');
+  top.focus(field);
+  top.fire('message', { source: { name: 'whoever' }, data: DISMISS });
+  top.fire('message', { source: top.win, data: DISMISS });
+  assert.equal(field.blurs, 0, 'nobody tells a top-level page to dismiss');
   assert.equal(kitPage({ platform: 'desktop', parent: {} }).listeners.length, 0, 'a framed desktop');
   assert.equal(kitPage({ platform: 'android', parent: {} }).listeners.length, 6, 'a framed phone: the tap\'s five, and the message');
 });
@@ -817,4 +834,258 @@ test('end to end: a tap on the shell\'s header closes the keyboard of the field 
   run();
   assert.equal(frame2.posted.length, 1, 'the shell still tells it');
   assert.equal(kept.blurs, 0, 'the app keeps its keyboard');
+});
+
+// ── 7. Up from a frame: the side panel tells the shell (request #4314) ──────
+//
+// The shell's side panel is a frame of its own. While someone types in the
+// app beside it, a tap in the panel reaches only the panel's document: its
+// kit sees no field of its own, the shell and the app never hear the tap,
+// and iPad Safari leaves the keyboard up. So in a framed page the finger is
+// tracked whatever is focused here, and a qualifying tap on something that
+// keeps no keyboard asks its parent to apply the rule —
+// `{ __usernode_keyboard: 'dismiss-parent' }`, up to window.parent. The
+// shell takes that from its #side-panel-frame only, and does what its own
+// tap would have: blurs its own focused field, or tells the focused app
+// frame.
+
+// A parent window: records what is posted up to it, as postMessage
+// delivers it.
+function parentWindow(deliver = null) {
+  const posted = [];
+  return {
+    posted,
+    postMessage(data, origin) {
+      const copy = structuredClone(data);
+      posted.push({ data: copy, origin });
+      if (deliver) deliver(copy, origin);
+    },
+  };
+}
+const DISMISS_PARENT = { __usernode_keyboard: 'dismiss-parent' };
+
+test('the up-message: one key in the bridge\'s family, a verb of its own', () => {
+  const { keyboardDismissParentMessage, isKeyboardDismissParentMessage, isKeyboardDismissMessage } = physics;
+  assert.deepEqual(keyboardDismissParentMessage(), DISMISS_PARENT);
+  assert.notEqual(keyboardDismissParentMessage(), keyboardDismissParentMessage(), 'a fresh object each time');
+  assert.equal(isKeyboardDismissParentMessage(keyboardDismissParentMessage()), true);
+  assert.equal(isKeyboardDismissParentMessage({ ...DISMISS_PARENT, extra: 1 }), true);
+  // Each direction's listener takes its own verb and nothing else.
+  assert.equal(isKeyboardDismissMessage(DISMISS_PARENT), false);
+  assert.equal(isKeyboardDismissParentMessage(DISMISS), false);
+  for (const data of [null, undefined, '', 'dismiss-parent', 0, [],
+    { __usernode_keyboard: 'dismiss' }, { __usernode_keyboard: 'show' }, { __usernode_theme: 'changed' }, {}]) {
+    assert.equal(isKeyboardDismissParentMessage(data), false, JSON.stringify(data));
+  }
+});
+
+test('a tap in a frame with nothing focused of its own asks the parent to dismiss', () => {
+  const parent = parentWindow();
+  const p = kitPage({ parent });
+  const text = p.el('p', {}, p.el('div', { class: 'transcript' }));
+  p.tap(text);
+  assert.deepEqual(parent.posted, [{ data: DISMISS_PARENT, origin: '*' }],
+    'up to the parent window, to any origin, as the down-message goes');
+  p.tap(text);
+  assert.equal(parent.posted.length, 2, 'every such tap, whatever the parent did with the last');
+  // With something focused here the down-rule stands, and the parent hears
+  // nothing: this page still puts its own field away.
+  const composer = p.field('textarea');
+  p.focus(composer);
+  p.tap(text);
+  assert.equal(composer.blurs, 1);
+  assert.equal(parent.posted.length, 2, 'its own field is not the parent\'s problem');
+  // And a frame focused here is told directly, as before (part 6).
+  const inner = appFrame(p);
+  p.focus(inner);
+  p.tap(text);
+  assert.equal(inner.posted.length, 1);
+  assert.equal(parent.posted.length, 2);
+});
+
+test('in a frame with nothing focused, the same exceptions keep the keyboard', () => {
+  const parent = parentWindow();
+  const p = kitPage({ parent });
+  const header = p.el('header', { class: 'side-panel-head' });
+  const tabs = p.el('nav');
+  for (const [what, target] of [
+    ['a field', p.el('input')],
+    ['a button', p.el('button', { 'aria-label': 'Close panel' }, header)],
+    ['a link', p.el('a', { href: '#x' })],
+    ['a tab', p.el('span', {}, p.el('div', { role: 'tab' }, tabs))],
+    ['a pressable row', p.el('div', { class: 'un-pressable' })],
+    ['inside data-keep-keyboard', p.el('p', {}, p.el('div', { 'data-keep-keyboard': '' }))],
+  ]) {
+    p.tap(target);
+    assert.equal(parent.posted.length, 0, what);
+  }
+  for (const [what, opts] of [
+    ['a scroll', { scroll: true }],
+    ['a drag', { to: [120, 330] }],
+    ['a long press', { ms: 800 }],
+    ['two fingers', { fingers: 2 }],
+    ['a cancelled touch', { cancel: true }],
+    ['a tap a handler cancelled', { prevented: true }],
+    ['a tap a handler stopped', { stopped: true }],
+  ]) {
+    p.tap(p.el('p'), opts);
+    assert.equal(parent.posted.length, 0, what);
+  }
+  for (const pointerType of ['mouse', 'pen']) {
+    const q = kitPage({ parent: parentWindow(), touch: false });
+    q.tap(q.el('p'), { pointerType });
+    assert.equal(q.win.parent.posted.length, 0, pointerType);
+  }
+  p.tap(p.el('p'));
+  assert.equal(parent.posted.length, 1, 'and the next real tap is carried up');
+});
+
+test('a frame that turned the listener off carries nothing up', () => {
+  for (const where of ['html', 'body']) {
+    const parent = parentWindow();
+    const p = kitPage({ parent });
+    p[where].setAttribute(physics.KB_DISMISS_OFF_ATTR, 'off');
+    p.tap(p.el('p'));
+    assert.equal(parent.posted.length, 0, where);
+    p[where].setAttribute(physics.KB_DISMISS_OFF_ATTR, 'on');
+    p.tap(p.el('p'));
+    assert.equal(parent.posted.length, 1, `${where}: any other value leaves it on`);
+  }
+});
+
+test('the shell answers the panel: its own field, or the frame the keyboard is up behind', () => {
+  // The keyboard is up behind the app beside the panel: the shell tells
+  // that frame, and moves no focus of its own.
+  const p = kitPage();
+  const panel = appFrame(p, { id: 'side-panel-frame' });
+  const app = appFrame(p, { id: 'app-iframe' });
+  p.doc.getElementById = (id) => (id === 'side-panel-frame' ? panel : id === 'app-iframe' ? app : null);
+  p.focus(app);
+  p.fire('message', { source: panel.contentWindow, data: DISMISS_PARENT });
+  assert.deepEqual(app.posted, [{ data: DISMISS, origin: '*' }]);
+  assert.equal(p.doc.activeElement, app, 'the frame still has it');
+
+  // The keyboard is up behind a field of the shell's own: it puts that away.
+  const q = kitPage();
+  const qPanel = appFrame(q, { id: 'side-panel-frame' });
+  q.doc.getElementById = (id) => (id === 'side-panel-frame' ? qPanel : null);
+  const search = q.field('input', {}, { type: 'text' });
+  q.focus(search);
+  q.fire('message', { source: qPanel.contentWindow, data: DISMISS_PARENT });
+  assert.equal(search.blurs, 1);
+  assert.equal(q.doc.activeElement, q.body);
+  q.fire('message', { source: qPanel.contentWindow, data: DISMISS_PARENT });
+  assert.equal(search.blurs, 1, 'nothing focused, nothing to do');
+});
+
+test('the shell takes the up-message from the panel\'s window only', () => {
+  const p = kitPage();
+  const panel = appFrame(p, { id: 'side-panel-frame' });
+  const app = appFrame(p, { id: 'app-iframe' });
+  p.doc.getElementById = (id) => (id === 'side-panel-frame' ? panel : id === 'app-iframe' ? app : null);
+  p.focus(app);
+  for (const [what, event] of [
+    ['an app frame\'s report of its own tap', { source: app.contentWindow, data: DISMISS_PARENT }],
+    ['another window', { source: { name: 'elsewhere' }, data: DISMISS_PARENT }],
+    ['itself', { source: p.win, data: DISMISS_PARENT }],
+    ['no source', { source: null, data: DISMISS_PARENT }],
+    ['the down-message, from the panel', { source: panel.contentWindow, data: DISMISS }],
+    ['another verb', { source: panel.contentWindow, data: { __usernode_keyboard: 'show' } }],
+    ['another family', { source: panel.contentWindow, data: { __usernode_theme: 'changed' } }],
+    ['a string', { source: panel.contentWindow, data: 'dismiss-parent' }],
+    ['nothing', { source: panel.contentWindow, data: null }],
+  ]) {
+    p.fire('message', event);
+    assert.equal(app.posted.length, 0, what);
+  }
+  // The frame is looked up as the message lands: a page with no side
+  // panel matches nothing, whoever speaks.
+  const bare = kitPage();
+  const bareApp = appFrame(bare, { id: 'app-iframe' });
+  bare.doc.getElementById = () => null;
+  bare.focus(bareApp);
+  bare.fire('message', { source: bareApp.contentWindow, data: DISMISS_PARENT });
+  assert.equal(bareApp.posted.length, 0, 'no panel frame, no answer');
+  // And the shell's own opt-out holds, as its taps follow it.
+  const off = kitPage();
+  const offPanel = appFrame(off, { id: 'side-panel-frame' });
+  off.doc.getElementById = (id) => (id === 'side-panel-frame' ? offPanel : null);
+  const field = off.field('textarea');
+  off.focus(field);
+  off.html.setAttribute(physics.KB_DISMISS_OFF_ATTR, 'off');
+  off.fire('message', { source: offPanel.contentWindow, data: DISMISS_PARENT });
+  assert.equal(field.blurs, 0, 'the shell turned its listener off');
+  off.html.setAttribute(physics.KB_DISMISS_OFF_ATTR, 'on');
+  off.fire('message', { source: offPanel.contentWindow, data: DISMISS_PARENT });
+  assert.equal(field.blurs, 1, 'any other value leaves it on');
+});
+
+test('end to end: a tap in the side panel closes the keyboard of the app beside it', () => {
+  // Messages are delivered as tasks, after the tap's own events: queued
+  // here, and run once the tap is over.
+  const tasks = [];
+  const run = () => { while (tasks.length) tasks.shift()(); };
+  const deliverTo = (page, from) => (data) => {
+    tasks.push(() => page.fire('message', { source: from, data, origin: 'https://homeroom.test' }));
+  };
+  // A parent window that records what a framed page posts up to it, and
+  // delivers it to the parent page as a message from the frame's window.
+  const upTo = (page) => {
+    const source = { win: null };
+    const win = {
+      postMessage(data, origin) {
+        const copy = structuredClone(data);
+        tasks.push(() => page.fire('message', { source: source.win, data: copy, origin }));
+      },
+    };
+    return { win, from: source };
+  };
+
+  // The shell, the app beside the panel, and the panel's page.
+  const shell = kitPage();
+  const app = kitPage({ parent: shell.win });
+  const panelUp = upTo(shell);
+  const panelPage = kitPage({ parent: panelUp.win });
+  panelUp.from.win = panelPage.win;
+  const panel = appFrame(shell, { id: 'side-panel-frame' });
+  panel.contentWindow = panelPage.win; // the frame's window IS the panel's
+  shell.doc.getElementById = (id) => (id === 'side-panel-frame' ? panel : null);
+  const frame = appFrame(shell, { id: 'app-iframe' }, deliverTo(app, shell.win));
+  const field = app.field('input', {}, { type: 'text' });
+  app.focus(field);
+  shell.focus(frame);
+
+  // A tap on plain text in the panel: up to the shell, then down to the
+  // app, whose field lets go.
+  panelPage.tap(panelPage.el('p'));
+  assert.equal(field.blurs, 0, 'the tap waits on nothing');
+  run();
+  assert.equal(field.blurs, 1, 'the app\'s field lets go');
+  assert.equal(app.doc.activeElement, app.body);
+
+  // A tap on a control of the panel's (Close) keeps the app's keyboard.
+  app.focus(field);
+  panelPage.tap(panelPage.el('button', { 'aria-label': 'Close panel' }));
+  run();
+  assert.equal(field.blurs, 1);
+
+  // The keyboard behind a field of the shell's own: the panel's tap puts
+  // that away too.
+  const search = shell.field('input', {}, { type: 'text' });
+  shell.focus(search);
+  panelPage.tap(panelPage.el('p'));
+  run();
+  assert.equal(search.blurs, 1);
+  assert.equal(shell.doc.activeElement, shell.body);
+
+  // A panel page that opted out carries nothing up, whatever is up beside it.
+  const shell2 = kitPage();
+  const quietUp = upTo(shell2);
+  const quiet = kitPage({ parent: quietUp.win });
+  quiet.body.setAttribute(physics.KB_DISMISS_OFF_ATTR, 'off');
+  const frame2 = appFrame(shell2, { id: 'app-iframe' });
+  shell2.focus(frame2);
+  quiet.tap(quiet.el('p'));
+  run();
+  assert.equal(frame2.posted.length, 0, 'the panel keeps its peace');
 });
