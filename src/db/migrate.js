@@ -212,6 +212,7 @@ async function migrate(config) {
   await backfillProposalIssuerAssignments(pool);
   await backfillUsernameChoiceForEmailHandles(pool);
   await migrateWaitlistCountryCodes(pool);
+  await publishTermsPublicOnGithub(pool);
   // After backfillVotesRequired, which reads the merge announcements.
   await clearAutomatedChannelLines(pool);
   await revokeLegacyGithubGrants(pool, config);
@@ -631,6 +632,69 @@ async function migrateWaitlistCountryCodes(pool) {
     }
   } catch (err) {
     log.warn('db', 'waitlist country-code migration skipped', { err: err.message });
+  }
+}
+
+// ── The terms say a project's description and code are public on GitHub ─
+//
+// #4384 moved the "public on GitHub" line off the make screen: Homeroom's
+// terms are the one place that says what making a project means. The terms
+// text lives in the database (`terms_versions`), so this publishes a new
+// version — the latest published one with the clause appended as a final
+// paragraph — and everyone who accepted the earlier version is shown the
+// existing "We updated our terms" toast on their next visit
+// (features/settings/terms-first-run.js).
+//
+// Guarded by a platform_settings marker, in the same style as
+// `migrateWaitlistCountryCodes` above, because this runs on every boot. The
+// marker is what makes it one-time rather than merely idempotent: without
+// it, an admin who later publishes terms without the clause would get a
+// copy with the clause on the next boot.
+//
+// Staging skips it entirely and writes no marker: seedStagingTopochain
+// publishes `staging-demo-v1` and consents every cloned user to it, and a
+// newer version would put the update toast on every preview screen.
+const TERMS_PUBLIC_ON_GITHUB_VERSION = '2026-10-08';
+const TERMS_PUBLIC_ON_GITHUB_CLAUSE =
+  'Projects you make here, including their description and code, are public on GitHub.';
+
+async function publishTermsPublicOnGithub(pool) {
+  if (process.env.USERNODE_ENV === 'staging') return;
+  try {
+    const { rows } = await pool.query(
+      `SELECT 1 FROM platform_settings WHERE key = 'terms_public_on_github_published'`
+    );
+    if (rows.length) return;
+
+    const res = await pool.query(
+      `WITH latest AS (
+         SELECT title, body_markdown, terms_link FROM terms_versions
+          WHERE published_at IS NOT NULL
+          ORDER BY published_at DESC, id DESC LIMIT 1)
+       INSERT INTO terms_versions
+         (version, title, body_markdown, terms_link, published_at, created_at, updated_at)
+       SELECT $1, title,
+              rtrim(body_markdown) || E'\n\n' || $2, terms_link, NOW(), NOW(), NOW()
+         FROM latest
+        WHERE position($2 in body_markdown) = 0
+       ON CONFLICT (version) DO NOTHING`,
+      [TERMS_PUBLIC_ON_GITHUB_VERSION, TERMS_PUBLIC_ON_GITHUB_CLAUSE]
+    );
+
+    await pool.query(
+      `INSERT INTO platform_settings (key, value, description) VALUES
+         ('terms_public_on_github_published', 'true',
+          'Marker: the one-time publication of the terms version that adds the public-on-GitHub clause (#4384) has run. Do not delete — deleting re-runs the publish, and it would append the clause again to whichever terms the admin has published since.')
+       ON CONFLICT (key) DO NOTHING`
+    );
+
+    if (res.rowCount) {
+      log.info('db', 'Published terms version with the public-on-GitHub clause', {
+        version: TERMS_PUBLIC_ON_GITHUB_VERSION,
+      });
+    }
+  } catch (err) {
+    log.warn('db', 'terms public-on-GitHub migration skipped', { err: err.message });
   }
 }
 
@@ -13690,6 +13754,7 @@ module.exports = {
   seedStagingBotChatRequest,
   seedStagingPlatformMail, auditDuplicatePrSessions,
   migrateWaitlistCountryCodes,
+  publishTermsPublicOnGithub,
   clearAutomatedChannelLines,
   backfillProposalIssuerAssignments,
   seedStagingTopicScrollThreads, seedStagingLlmUsage, seedStagingHomeLayout,

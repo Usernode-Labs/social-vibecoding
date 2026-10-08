@@ -236,27 +236,24 @@ test('"Make it" makes a private community through the dialog\'s own route', () =
   }
 });
 
-// #4174: every project's repository is public on GitHub, and its first
-// request is a public issue holding the description word for word. The make
-// screen says so, quietly, under Make it, from either door.
-test('under Make it, one quiet line says what you write and the code are public on GitHub', () => {
+// #4384 moved the "public on GitHub" line into Homeroom's terms: the make
+// screen's one job is to make a project, and the fact now lives where a
+// versioned clause can be accepted once, not as fine print on every visit.
+// From either door the button keeps its place, with the import link or
+// "Look around first" directly under it.
+test('the public-on-GitHub fine print is gone; Make it is followed by the one other way in', () => {
   const make = loadTsx(`${DIR}/make.tsx`);
-  assert.equal(make.MAKE_PUBLIC_LINE, 'What you write here, and the app’s code, are public on GitHub.');
+  assert.equal(make.MAKE_PUBLIC_LINE, undefined, 'the export is retired');
   for (const props of [
     { who: 'Jordan', onMade() {}, onLookAround() {} },
     { who: 'Jordan', entry: 'create', onMade() {}, onClose() {} },
   ]) {
     const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', props);
-    const line = /<p data-make-public="" class="([^"]*)">([^<]*)<\/p>/.exec(html);
-    assert.ok(line, `the line is drawn (${props.entry || 'first-session'})`);
-    assert.equal(line[2], make.MAKE_PUBLIC_LINE);
-    // Fine print: small and muted, never a warning colour.
-    assert.match(line[1], /\btext-\[13px\]/);
-    assert.match(line[1], /\btext-zinc-500\b/);
-    assert.doesNotMatch(line[1], /red-|amber-|font-(semi)?bold/);
-    assert.ok(html.indexOf('data-make-public') > html.indexOf('>Make it</button>'), 'under Make it');
+    assert.ok(!html.includes('data-make-public'), `the line is gone (${props.entry || 'first-session'})`);
+    assert.ok(!html.includes('public on GitHub'), `no public-on-GitHub text (${props.entry || 'first-session'})`);
+    assert.ok(html.includes('>Make it</button>'), 'Make it is still drawn');
     const next = props.entry === 'create' ? 'data-make-import-link' : 'Look around first';
-    assert.ok(html.indexOf('data-make-public') < html.indexOf(next), `above ${next}`);
+    assert.ok(html.indexOf(next) > html.indexOf('>Make it</button>'), `Make it is followed by ${next}`);
   }
 });
 
