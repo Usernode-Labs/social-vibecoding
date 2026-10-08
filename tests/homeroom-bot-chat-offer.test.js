@@ -183,7 +183,9 @@ test('WP-C: an unaddressed message is read as an idea, not as something said to 
   // says who decides; one sentence per card (#4044), so the offer is the
   // bot's own to make there, not the card's to describe.
   assert.match(read('frontend/src/features/first-session/tour-steps.ts'),
-    /title: 'Say hi, or share an idea',\s+text: 'The people using the app decide what goes in\.',/);
+    /title: translate\('onboarding:firstSession\.tour\.sayHi\.title'\),\s+text: translate\('onboarding:firstSession\.tour\.sayHi\.text'\),/);
+  assert.deepEqual(['title', 'text'].map((part) => require('./lib/platform-i18n').message(`onboarding:firstSession.tour.sayHi.${part}`)),
+    ['Say hi, or share an idea', 'The people using the app decide what goes in.']);
 });
 
 test('WP-C: offers against the full PostgreSQL schema', { timeout: 180000 }, async (t) => {

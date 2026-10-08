@@ -77,12 +77,14 @@
  * to nothing still runs: the screen dims whole and the card centres.
  */
 
+import { t as translate } from '../../../lib/i18n/runtime';
+
 export interface TourStep {
   /** Stable id, used for keys and for the tests that pin the order. */
   id: string;
-  /** The card's heading. */
+  /** The card's heading: a message id, read when the card is drawn. */
   title: string;
-  /** The card's body copy. One short paragraph, plain language. */
+  /** The card's body copy, a message id. One short paragraph, plain language. */
   body: string;
   /** Candidate selectors for the spotlight, in preference order. */
   targets: readonly string[];
@@ -132,8 +134,8 @@ export const TOUR_STEPS: readonly TourStep[] = [
     // community it is on, which is why the copy says "here" rather than
     // describing what the tab shows.
     id: 'communities',
-    title: 'Communities',
-    body: 'Homeroom is made of communities that build projects together. Anyone in one can propose a change, and the group votes it in. A community is Just you, a Private community or a Public community. Yours are here.',
+    title: 'onboarding:tour.step.communities.title',
+    body: 'onboarding:tour.step.communities.body',
     targets: ['#platform-tab-workshop'],
   },
   {
@@ -141,8 +143,8 @@ export const TOUR_STEPS: readonly TourStep[] = [
     // sits on the heading the step is about. `#app-list` is the fallback
     // for a section that has not rendered its box yet.
     id: 'apps',
-    title: 'My apps',
-    body: 'The apps you keep close. A small mark says where each one lives: people for a private community, a lock for one that is just yours. The last tile starts a new project.',
+    title: 'onboarding:tour.step.apps.title',
+    body: 'onboarding:tour.step.apps.body',
     targets: ['#home-apps-section', '#app-list'],
   },
   {
@@ -156,8 +158,8 @@ export const TOUR_STEPS: readonly TourStep[] = [
     // way rather than skipping past it — the next step points INSIDE the
     // menu, so a Next that only moved the counter would land on nothing.
     id: 'app-menu',
-    title: 'The Homeroom menu',
-    body: 'Inside any app, this mark opens its menu. Tap it, or tap Next to open it.',
+    title: 'onboarding:tour.step.appMenu.title',
+    body: 'onboarding:tour.step.appMenu.body',
     targets: ['#platform-mark-btn'],
     interactive: true,
     advanceOn: 'menu-open',
@@ -179,8 +181,8 @@ export const TOUR_STEPS: readonly TourStep[] = [
     // session, so the person this tour is for would look for a row they do
     // not have. The hub's ⋯ and a request's own page still offer it.
     id: 'menu-actions',
-    title: 'Suggest an improvement',
-    body: 'Say what should change. It doesn\'t vanish into a feedback box: Homeroom bot starts building it for you, or brings it to the group as a request, and you can follow along.',
+    title: 'onboarding:tour.step.menuActions.title',
+    body: 'onboarding:tour.step.menuActions.body',
     targets: ['#improve-quick-actions', '#improve-row-feedback'],
     needsPanel: true,
   },
@@ -195,8 +197,8 @@ export const TOUR_STEPS: readonly TourStep[] = [
     // tab after the signed-in user, so it names the place instead of a label
     // the tab no longer shows.
     id: 'settings',
-    title: 'Replay this any time',
-    body: 'You can replay this tour any time from Settings, on your profile.',
+    title: 'onboarding:tour.step.settings.title',
+    body: 'onboarding:tour.step.settings.body',
     targets: ['#platform-tab-me'],
     closesPanel: true,
   },
@@ -262,5 +264,5 @@ export function nextOpensMenu(index: number): boolean {
 
 /** The counter the card prints, e.g. "3 of 5". */
 export function stepCounter(index: number): string {
-  return `${clampIndex(index) + 1} of ${TOUR_LENGTH}`;
+  return translate('onboarding:tour.counter', { step: clampIndex(index) + 1, total: TOUR_LENGTH });
 }

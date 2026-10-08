@@ -36,11 +36,15 @@ test('B8: the doors that open the chat with Homeroom bot, and what they are call
   // The tour no longer sends a newcomer to the menu's Build it now: that
   // row shows only once they have had an agent session (first-session
   // run-through, 5 Oct 2026). The hub's ⋯ still offers it, above.
-  assert.match(read('frontend/src/features/home/tour/tour-steps.ts'), /body: 'Say what should change\. It doesn\\'t vanish into a feedback box: Homeroom bot starts building it for you, or brings it to the group as a request, and you can follow along\.',/);
+  assert.match(read('frontend/src/features/home/tour/tour-steps.ts'), /body: 'onboarding:tour\.step\.menuActions\.body',/);
+  assert.equal(require('./lib/platform-i18n').message('onboarding:tour.step.menuActions.body'),
+    'Say what should change. It doesn\'t vanish into a feedback box: Homeroom bot starts building it for you, or brings it to the group as a request, and you can follow along.');
   assert.doesNotMatch(read('frontend/src/features/home/tour/tour-steps.ts'), /tap Build it now/);
+  assert.doesNotMatch(JSON.stringify(JSON.parse(read('frontend/locales/en/onboarding.json'))), /tap Build it now/);
   // The made screen's plan card is the door after a new project (the
   // retired create dialog's "Open chat" was before it).
-  assert.match(read('frontend/src/features/first-session/made.tsx'), /data-first-session-plan-chat=""[^>]*>\s*Go to chat/);
+  assert.match(read('frontend/src/features/first-session/made.tsx'), /data-first-session-plan-chat=""[^>]*>\s*\{t\('onboarding:firstSession\.made\.goToChat'\)\}/);
+  assert.equal(require('./lib/platform-i18n').message('onboarding:firstSession.made.goToChat'), 'Go to chat');
   const store = read('frontend/src/features/messages/store.ts');
   assert.match(store, /openBot: \(reference\?: StagedObject \| null\) => \{ void openBot\(reference\); \},/);
   // B8: Ask for changes attaches the change on the composer when it names

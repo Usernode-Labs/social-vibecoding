@@ -424,7 +424,7 @@
       figure.setAttribute('aria-hidden', 'true');
       wrap.appendChild(figure);
       wrap.appendChild(el('span', 'sr-only',
-        `${n.toLocaleString('en-US')} ${n === 1 ? 'member' : 'members'}`));
+        PlatformI18n.t('onboarding:communities.memberCount', { count: n, memberCount: n.toLocaleString('en-US') })));
       return wrap;
     },
 
@@ -490,18 +490,18 @@
       panel.appendChild(scroller);
       // A welcome first: this is a new account's first screen after its
       // name and the terms, so it says what the place is before it asks.
-      scroller.appendChild(el('div', 'text-xl font-bold pt-3', 'Welcome to Homeroom!'));
+      scroller.appendChild(el('div', 'text-xl font-bold pt-3', PlatformI18n.t('onboarding:communities.welcome')));
       scroller.appendChild(el('p', 'text-sm text-zinc-600 dark:text-zinc-300 mt-1',
-        'Homeroom is a place where communities build the apps they use together.'));
+        PlatformI18n.t('onboarding:communities.intro')));
       scroller.appendChild(el('div',
         'text-[0.9375rem] font-[650] leading-5 text-zinc-900 dark:text-zinc-100 mt-5 mb-2',
-        'What communities do you want to join?'));
+        PlatformI18n.t('onboarding:communities.question')));
 
       // One card of rows, the platform's grouped-list shape: the plane
       // colour, a 20px radius and one inset hairline.
       const group = el('div', 'rounded-[20px] shadow-[inset_0_0_0_1px_var(--app-sheet-line)] divide-y divide-zinc-200/70 dark:divide-zinc-800');
       group.setAttribute('role', 'group');
-      group.setAttribute('aria-label', 'Communities');
+      group.setAttribute('aria-label', PlatformI18n.t('onboarding:communities.listLabel'));
       scroller.appendChild(group);
 
       const picked = new Set(list.filter((c) => c.checked).map((c) => c.slug));
@@ -542,7 +542,7 @@
       }
 
       scroller.appendChild(el('p', 'text-[0.8125rem] text-zinc-500 dark:text-zinc-400 mt-3',
-        'You can join or leave any time from Discover, and start your own private or public community once you are in.'));
+        PlatformI18n.t('onboarding:communities.footnote')));
 
       // The foot: the error line and the two answers. Its top edge is a
       // hairline only while there is more of the body below it to scroll
@@ -571,7 +571,7 @@
       const skip = el('button',
         'w-full mt-1 py-2 text-sm font-medium text-zinc-500 hover:text-zinc-800 ' +
         'dark:text-zinc-400 dark:hover:text-zinc-100 disabled:opacity-50',
-        'Skip for now');
+        PlatformI18n.t('onboarding:communities.skip'));
       skip.type = 'button';
       skip.setAttribute('data-join-communities-skip', '');
       foot.appendChild(skip);
@@ -588,19 +588,22 @@
         const n = joins([...picked]);
         skip.disabled = busy;
         save.disabled = busy || ticked === 0;
-        save.textContent = ticked === 0 ? 'Pick at least one'
-          : n === 0 ? 'Continue'
-            : `Join ${n} ${n === 1 ? 'community' : 'communities'}`;
+        save.textContent = ticked === 0 ? PlatformI18n.t('onboarding:communities.pickOne')
+          : n === 0 ? PlatformI18n.t('onboarding:communities.continue')
+            : PlatformI18n.t('onboarding:communities.join', { count: n });
         save.setAttribute('data-picked', String(ticked));
       }
       rows.forEach((paint) => paint());
       paintButton();
+      // The button's words follow the language on screen.
+      document.addEventListener('homeroom:language-changed', paintButton);
 
       let sheet = null;
       let watch = null;
       const dismiss = () => {
         CommunitiesFirstRun._answered = true;
         if (watch) watch.disconnect();
+        document.removeEventListener('homeroom:language-changed', paintButton);
         if (sheet && sheet.dismiss) sheet.dismiss();
         CommunitiesFirstRun._presented = false;
         CommunitiesFirstRun._resolve();
@@ -624,7 +627,7 @@
           });
           const body = await res.json().catch(() => ({}));
           if (!res.ok && !body.alreadyDone) {
-            status.textContent = body.error || 'Could not join those. Try again.';
+            status.textContent = body.error || PlatformI18n.t('onboarding:communities.error.notJoined');
             busy = false;
             paintButton();
             return;
@@ -644,11 +647,11 @@
           // Keeping Homeroom is not a join: nothing to announce for it.
           const n = joins(body.joined || []);
           if (n && window.PlatformUI) {
-            PlatformUI.toast(`You joined ${n} ${n === 1 ? 'community' : 'communities'}.`);
+            PlatformUI.toast(PlatformI18n.t('onboarding:communities.joinedToast', { count: n }));
           }
         } catch (err) {
           console.warn('[communities-first-run] answer failed:', err);
-          status.textContent = 'Network error. Try again.';
+          status.textContent = PlatformI18n.t('onboarding:communities.error.network');
           busy = false;
           paintButton();
         }

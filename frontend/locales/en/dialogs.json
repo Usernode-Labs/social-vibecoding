@@ -1461,7 +1461,7 @@
   },
   "feedback.fix.failedRequest": {
     "text": "Could not open a fix just now. You can try again from the request on the board.",
-    "description": "Brief message at the bottom of the screen when \"Build it yourself with a coding agent\" could not start a change. A fix is a change that solves the request; the board is the app's list of requests."
+    "description": "Brief message at the bottom of the screen when \"Build it now with a coding agent\" could not start a change. A fix is a change that solves the request; the board is the app's list of requests."
   },
   "feedback.fix.failedIssue": {
     "text": "Could not open a fix just now. You can try again from the issue on the board.",

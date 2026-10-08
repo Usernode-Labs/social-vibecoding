@@ -22,7 +22,9 @@ const DIR = 'frontend/src/features/first-session';
 const GC_FORM_SRC = 'frontend/src/features/group-chat/composer.tsx';
 
 test('the invited tour: nine steps, each screen whole or the tap that leads on, ending in Discussion', () => {
-  const { invitedSteps, MENU_TEXT, SUGGEST_TEXT } = loadTsx(`${DIR}/tour-steps.ts`);
+  // MENU_TEXT and SUGGEST_TEXT are message ids; the words are the catalog's.
+  const { invitedSteps, MENU_TEXT: MENU_ID, SUGGEST_TEXT: SUGGEST_ID } = loadTsx(`${DIR}/tour-steps.ts`);
+  const [MENU_TEXT, SUGGEST_TEXT] = [message(MENU_ID), message(SUGGEST_ID)];
   const steps = invitedSteps({ slug: 'sunday-run-club', name: 'Sunday Run Club' });
   assert.deepEqual(steps.map((s) => s.screen), ['home', 'app', 'app', 'app', 'app', 'home', 'hub', 'hub', 'discussion']);
   assert.deepEqual(steps.map((s) => (s.tap ? 'tap' : 'look')), ['tap', 'look', 'tap', 'look', 'tap', 'tap', 'look', 'tap', 'look']);
@@ -48,7 +50,8 @@ test('the invited tour: nine steps, each screen whole or the tap that leads on, 
 });
 
 test('starting a community and joining one share their first seven cards, word for word', () => {
-  const { invitedSteps, makerSteps, SUGGEST_TEXT } = loadTsx(`${DIR}/tour-steps.ts`);
+  const { invitedSteps, makerSteps, SUGGEST_TEXT: SUGGEST_ID } = loadTsx(`${DIR}/tour-steps.ts`);
+  const SUGGEST_TEXT = message(SUGGEST_ID);
   const project = { slug: 'sunday-run-club', name: 'Sunday Run Club', conversationId: 4 };
   assert.deepEqual(makerSteps(project).slice(0, 7), invitedSteps(project).slice(0, 7));
   // Never "group" for the people of a community, on any card of any tour.
@@ -66,7 +69,8 @@ test('starting a community and joining one share their first seven cards, word f
 // reader taps the Homeroom mark and the real menu opens, its Suggest button
 // pointed at but not pressed (Next, so no suggestion starts), and ✕ last.
 test('the invited and maker tours open the Homeroom menu for Suggest an improvement, after the app and before ✕', () => {
-  const { invitedSteps, makerSteps, MENU_TEXT, SUGGEST_TEXT, APP_MENU } = loadTsx(`${DIR}/tour-steps.ts`);
+  const { invitedSteps, makerSteps, MENU_TEXT: MENU_ID, SUGGEST_TEXT: SUGGEST_ID, APP_MENU } = loadTsx(`${DIR}/tour-steps.ts`);
+  const [MENU_TEXT, SUGGEST_TEXT] = [message(MENU_ID), message(SUGGEST_ID)];
   assert.equal(APP_MENU, '#apps-switcher-sheet');
   for (const steps of [
     invitedSteps({ slug: 'x', name: 'X' }),
@@ -465,9 +469,11 @@ test("You're in says that you joined, and shows the community: its app and its p
   const src = read(`${DIR}/index.tsx`);
   // The welcome, what the community makes, who is in it, and the button.
   // The story was told once, on the invite page; the tour teaches the rest.
-  assert.match(src, /<h1 id="first-session-title"[^>]*>\s+\{`Welcome to \$\{info\.name\}`\}/);
+  assert.match(src, /<h1 id="first-session-title"[^>]*>\s+\{t\('onboarding:firstSession\.welcome\.title', \{ community: info\.name \}\)\}/);
+  assert.equal(message('onboarding:firstSession.welcome.title', { community: 'Page Turners' }), 'Welcome to Page Turners');
   assert.doesNotMatch(src, /Welcome, \$\{who\}|You joined/);
-  assert.match(src, /\{`Go to \$\{info\.name\}`\}/);
+  assert.match(src, /\{t\('onboarding:firstSession\.welcome\.goTo', \{ community: info\.name \}\)\}/);
+  assert.equal(message('onboarding:firstSession.welcome.goTo', { community: 'Page Turners' }), 'Go to Page Turners');
   const youreIn = src.slice(src.indexOf('export function YoureIn('), src.indexOf('export type Mode ='));
   assert.ok(youreIn.length > 200, 'YoureIn is found');
   assert.doesNotMatch(youreIn, /How it works|group|Have a look|On Homeroom|You're in, |JoinedPicture|!`|!'/);
@@ -530,7 +536,8 @@ test('"You\'re in" reads who is in the community itself, and the picture is no l
   assert.match(src, /setCount\(Number\(body\.member_count\) \|\| null\);\s+setDescription\(/);
   assert.match(read('src/routes/apps.js'), /communities\.listMembers\(pool, app\.id, req\.query\.members === 'all' \? 200 : 8\)/);
   // While that is read, the list's place breathes; a read that fails shows no list.
-  assert.match(src, /<SkeletonGroup label="Loading who is in it"/);
+  assert.match(src, /<SkeletonGroup label=\{t\('onboarding:firstSession\.welcome\.loadingPeople'\)\}/);
+  assert.equal(message('onboarding:firstSession.welcome.loadingPeople'), 'Loading who is in it');
   assert.match(src, /\.catch\(\(\) => \{ if \(live\) setMembers\(\[\]\); \}\);/);
   // The inviter's row comes first: both ways in hand over their username.
   assert.match(read('public/js/app.js'), /inviter: standing\.inviter \|\| null,\s+inviterName: standing\.inviterName \|\| standing\.inviter \|\| null,/);

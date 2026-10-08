@@ -170,6 +170,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 
+import { useMessages } from '../../../lib/i18n/react';
 import { useClassToggle, useHiddenClass, useIsomorphicLayoutEffect } from '../../../lib/legacy-dom';
 import { isEmbeddedPanel } from '../../../lib/side-panel-mode';
 import { readVisibility, useVisibility } from '../../../lib/visibility-store';
@@ -500,6 +501,9 @@ export function OnboardingTour() {
   const [panelOpen, setPanelOpen] = useState(false);
   const [otherSurface, setOtherSurface] = useState(false);
 
+  // The card's words (the step's are message ids; the counter reads the
+  // runtime), in the language on screen.
+  const t = useMessages('onboarding');
   const step = stepAt(index);
   const last = isLastStep(index);
 
@@ -1050,10 +1054,10 @@ export function OnboardingTour() {
             id="home-tour-title"
             className="mt-1 text-sm font-semibold text-zinc-900 dark:text-zinc-100"
           >
-            {step.title}
+            {t(step.title)}
           </h2>
           <p id="home-tour-text" className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
-            {step.body}
+            {t(step.body)}
           </p>
           <div className="mt-4 flex items-center gap-2">
             <Button
@@ -1065,7 +1069,7 @@ export function OnboardingTour() {
               className="rounded px-1 py-1"
               onClick={() => setConfirming(true)}
             >
-              Skip
+              {t('onboarding:tour.skip')}
             </Button>
             <div className="ml-auto flex items-center gap-2">
               <Button
@@ -1078,7 +1082,7 @@ export function OnboardingTour() {
                 disabled={index === 0}
                 onClick={goBack}
               >
-                Back
+                {t('core:common.back')}
               </Button>
               {/*
                   On every step. On the menu step it opens the menu rather
@@ -1091,7 +1095,7 @@ export function OnboardingTour() {
                 size="sm"
                 onClick={goNext}
               >
-                {last ? 'Finish' : 'Next'}
+                {last ? t('onboarding:tour.finish') : t('onboarding:tour.next')}
               </Button>
             </div>
           </div>
@@ -1107,7 +1111,7 @@ export function OnboardingTour() {
             id="home-tour-confirm-text"
             className="text-sm text-zinc-700 dark:text-zinc-200"
           >
-            Are you sure? You can reopen this from Settings.
+            {t('onboarding:tour.confirm.text')}
           </p>
           <div className="mt-4 flex items-center justify-end gap-2">
             <Button
@@ -1118,7 +1122,7 @@ export function OnboardingTour() {
               ink="muted"
               onClick={() => setConfirming(false)}
             >
-              Keep going
+              {t('onboarding:tour.confirm.keepGoing')}
             </Button>
             <Button
               id="home-tour-confirm-skip"
@@ -1126,7 +1130,7 @@ export function OnboardingTour() {
               size="sm"
               onClick={() => finish('skip')}
             >
-              Skip the tour
+              {t('onboarding:tour.confirm.skip')}
             </Button>
           </div>
         </div>

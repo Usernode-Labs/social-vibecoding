@@ -1021,7 +1021,7 @@ const Home = {
     // is making says where it is in the build line's words, from the time it
     // is set up until it is live (Home.tileBuildLine), not "Spinning up...".
     const buildLine = Home.tileBuildLine(app);
-    const statusLabel = buildLine ? BUILD_LINE_WORDS[buildLine]
+    const statusLabel = buildLine ? message(BUILD_LINE_WORDS[buildLine])
       : isRunning ? ''
       : app.status === 'creating' ? message('home:grid.tile.status.creating')
       : isAwaiting ? message('home:grid.tile.status.awaitingSecrets')
@@ -2472,7 +2472,7 @@ const Home = {
     // statusLabel / warningHtml below — so "Spinning up…", "Awaiting
     // secrets" and "Error" are unaffected.
     const buildLine = Home.tileBuildLine(app);
-    const statusLabel = buildLine ? BUILD_LINE_WORDS[buildLine]
+    const statusLabel = buildLine ? htmlText(BUILD_LINE_WORDS[buildLine])
       : app.status === 'running' ? ''
       : app.status === 'creating' ? htmlText('home:grid.tile.status.creating')
       : isAwaiting ? htmlText('home:grid.tile.status.awaitingSecrets')

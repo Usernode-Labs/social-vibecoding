@@ -90,7 +90,7 @@ function mountHook({ pathname, fetchImpl }) {
   const card = loadTsx(CARD_PATH, {
     stubs: {
       react: fake.React,
-      '../../lib/i18n/react': { useMessages: () => englishPlatformI18n().t, RichMessage: () => null },
+      '../../lib/i18n/react': { useMessages: () => englishPlatformI18n().t, Message: () => null, RichMessage: () => null },
     },
   });
   const calls = [];

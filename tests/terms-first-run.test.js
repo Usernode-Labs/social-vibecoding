@@ -147,7 +147,8 @@ test('the trigger accepts by continuing, and never presents the sheet', () => {
   assert.doesNotMatch(triggerJs, /showTermsSheet\(/, 'the first run no longer presents the sheet');
   // Only somebody who accepted an earlier version hears about it, once.
   assert.match(triggerJs, /payload\.consent\.earlier_accepted === true/);
-  assert.match(triggerJs, /We updated our terms\. By continuing to use Homeroom, you agree to them\./);
+  assert.match(triggerJs, /window\.PlatformUI\.toast\(PlatformI18n\.t\('onboarding:terms\.updatedToast'\)\);/);
+  assert.equal(require('./lib/platform-i18n').message('onboarding:terms.updatedToast'), 'We updated our terms. By continuing to use Homeroom, you agree to them.');
   // A failed write is not an answer: the next check records it then.
   assert.match(triggerJs, /if \(res\.ok && body\.success\) \{\s*\n\s*TermsFirstRun\._answered = true;/);
   assert.match(triggerJs, /console\.warn\('\[terms-first-run\] terms acceptance not recorded:', err\);\s*\n\s*\}\s*\n\s*TermsFirstRun\._resolve\(\);/);

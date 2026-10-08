@@ -417,9 +417,11 @@ test('beside the field, every sign-up surface says the username will be public (
   assert.match(shared, /auth:register\.usernamePublic and auth:login\.signup\.usernamePublic/);
   assert.equal(message('auth:register.usernamePublic'), note);
   assert.equal(message('auth:login.signup.usernamePublic'), note);
-  // The gate is a classic module with no imports, so it spells the words;
-  // this is what holds the two copies together.
-  assert.ok(gateJs.includes(`const PUBLIC_NOTE = '${note}';`));
+  // The gate is a classic module with no imports, so it reads the words
+  // from the catalog by id; this is what holds the copies together.
+  assert.ok(gateJs.includes("const PUBLIC_NOTE = 'onboarding:username.publicNote';"));
+  assert.match(gateJs, /PlatformI18n\.t\(PUBLIC_NOTE\)/);
+  assert.equal(message('onboarding:username.publicNote'), note);
   // Right after the input, ahead of the error line, so a refusal never
   // displaces it — and the input names it for a screen reader.
   const inputAt = gateJs.indexOf('panel.appendChild(input);');
@@ -476,8 +478,11 @@ test('the declared checks reach the step and pin its copy', () => {
   // The strings the checks match on live in the module; a reword that
   // breaks them fails here, next to the code, instead of in a proposal
   // check.
+  // The module reads them from the catalog: the English of the ids it asks for.
+  const gateWords = [...gateJs.matchAll(/'(onboarding:username\.[A-Za-z.]+)'/g)].map((m) => message(m[1], { username: 'x' }));
+  assert.ok(gateWords.length >= 10, 'the gate reads its words by id');
   for (const t of ours) {
-    if (t.expectText) assert.ok(gateJs.includes(t.expectText), t.expectText);
+    if (t.expectText) assert.ok(gateWords.some((words) => words.includes(t.expectText)), t.expectText);
   }
   assert.ok(gateJs.includes('data-choose-username-save'));
   // #3575: the visual check asserts the field arrives EMPTY (the

@@ -79,6 +79,8 @@ function fakeCtx(paints) {
 function makeHomeEnv(user) {
   const sandbox = {
     console,
+    // The build line's words are read from the catalog (#4053).
+    PlatformI18n: englishPlatformI18n(),
     App: { user },
     document: {
       getElementById: () => null,

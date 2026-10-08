@@ -13,7 +13,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadTsx, renderComponent } = require('./lib/render-tsx');
-const { message } = require('./lib/platform-i18n');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
@@ -97,8 +97,10 @@ test('it never lands on a capture route, and has one screenshot state of its own
 
 test('one filled button that says what it will do, and a quiet Skip for now', () => {
   assert.match(GATE, /PlatformUI\.modal\(\{ contentEl: panel, dismissible: false \}\)/);
-  assert.match(GATE, /ticked === 0 \? 'Pick at least one'/);
-  assert.match(GATE, /`Join \$\{n\} \$\{n === 1 \? 'community' : 'communities'\}`/);
+  assert.match(GATE, /ticked === 0 \? PlatformI18n\.t\('onboarding:communities\.pickOne'\)/);
+  assert.equal(message('onboarding:communities.pickOne'), 'Pick at least one');
+  assert.match(GATE, /PlatformI18n\.t\('onboarding:communities\.join', \{ count: n \}\)/);
+  assert.deepEqual([1, 3].map((count) => message('onboarding:communities.join', { count })), ['Join 1 community', 'Join 3 communities']);
   // D1 (first-session test, 2026-10-03): keeping Homeroom is not a join. The
   // account is already in it, and it never ticks "Join a community" on the
   // card, so the button counts only the other ticks ("Continue" for Homeroom
@@ -106,21 +108,28 @@ test('one filled button that says what it will do, and a quiet Skip for now', ()
   assert.match(GATE, /const platform = new Set\(list\.filter\(\(c\) => c\.self_hosted\)\.map\(\(c\) => c\.slug\)\);/);
   assert.match(GATE, /const joins = \(slugs\) => slugs\.filter\(\(slug\) => !platform\.has\(slug\)\)\.length;/);
   assert.match(GATE, /const ticked = picked\.size;\s*\n\s*const n = joins\(\[\.\.\.picked\]\);/);
-  assert.match(GATE, /save\.textContent = ticked === 0 \? 'Pick at least one'\s*\n\s*: n === 0 \? 'Continue'\s*\n\s*: `Join \$\{n\}/);
+  assert.match(GATE, /save\.textContent = ticked === 0 \? PlatformI18n\.t\('onboarding:communities\.pickOne'\)\s*\n\s*: n === 0 \? PlatformI18n\.t\('onboarding:communities\.continue'\)\s*\n\s*: PlatformI18n\.t\('onboarding:communities\.join', \{ count: n \}\)/);
+  assert.equal(message('onboarding:communities.continue'), 'Continue');
   assert.match(GATE, /save\.setAttribute\('data-picked', String\(ticked\)\);/, 'what is ticked, Homeroom included');
-  assert.match(GATE, /const n = joins\(body\.joined \|\| \[\]\);\s*\n\s*if \(n && window\.PlatformUI\) \{\s*\n\s*PlatformUI\.toast\(`You joined \$\{n\}/);
+  assert.match(GATE, /const n = joins\(body\.joined \|\| \[\]\);\s*\n\s*if \(n && window\.PlatformUI\) \{\s*\n\s*PlatformUI\.toast\(PlatformI18n\.t\('onboarding:communities\.joinedToast', \{ count: n \}\)\)/);
+  assert.deepEqual([1, 2].map((count) => message('onboarding:communities.joinedToast', { count })), ['You joined 1 community.', 'You joined 2 communities.']);
   assert.doesNotMatch(GATE, /\(body\.joined \|\| \[\]\)\.length/, 'never the raw count, which has Homeroom in it');
   // A welcome and what the place is, then the question.
-  assert.ok(GATE.indexOf("'Welcome to Homeroom!'") > 0);
-  assert.match(GATE, /'Homeroom is a place where communities build the apps they use together\.'/);
-  assert.ok(GATE.indexOf("'Welcome to Homeroom!'") < GATE.indexOf("'What communities do you want to join?'"));
-  assert.match(GATE, /'You can join or leave any time from Discover, and start your own private or public community once you are in\.'/);
+  assert.ok(GATE.indexOf("PlatformI18n.t('onboarding:communities.welcome')") > 0);
+  assert.equal(message('onboarding:communities.welcome'), 'Welcome to Homeroom!');
+  assert.match(GATE, /PlatformI18n\.t\('onboarding:communities\.intro'\)/);
+  assert.equal(message('onboarding:communities.intro'), 'Homeroom is a place where communities build the apps they use together.');
+  assert.ok(GATE.indexOf("PlatformI18n.t('onboarding:communities.welcome')") < GATE.indexOf("PlatformI18n.t('onboarding:communities.question')"));
+  assert.equal(message('onboarding:communities.question'), 'What communities do you want to join?');
+  assert.match(GATE, /PlatformI18n\.t\('onboarding:communities\.footnote'\)/);
+  assert.equal(message('onboarding:communities.footnote'), 'You can join or leave any time from Discover, and start your own private or public community once you are in.');
   // A row with no description of its own is just its name: no empty line.
   assert.match(GATE, /if \(c\.detail\) \{\s*\n\s*text\.appendChild\(el\('div', 'mt-0\.5 line-clamp-2/);
   // In the screen's order, so the first one ticked is the card's.
   assert.match(GATE, /join: list\.map\(\(c\) => c\.slug\)\.filter\(\(s\) => picked\.has\(s\)\)/);
   // Skip is an answer: it posts `{ skip: true }` through the same path.
-  assert.match(GATE, /'Skip for now'\);\s*\n\s*skip\.type = 'button';\s*\n\s*skip\.setAttribute\('data-join-communities-skip', ''\);/);
+  assert.equal(message('onboarding:communities.skip'), 'Skip for now');
+  assert.match(GATE, /PlatformI18n\.t\('onboarding:communities\.skip'\)\);\s*\n\s*skip\.type = 'button';\s*\n\s*skip\.setAttribute\('data-join-communities-skip', ''\);/);
   assert.match(GATE, /skip\.addEventListener\('click', \(\) => \{ void answer\(\{ skip: true \}\); \}\);/);
   // Both in the screen's foot since #3563 (the test below), Skip after Join.
   assert.ok(GATE.indexOf("foot.appendChild(save);") < GATE.indexOf("foot.appendChild(skip);"),
@@ -145,7 +154,7 @@ test('Join and Skip stay on screen however short it is: the body scrolls, the fo
   assert.match(GATE, /const scroller = el\('div', 'min-h-\[7\.5rem\] overflow-y-auto overscroll-y-contain'\);/);
   assert.ok(GATE.indexOf('panel.appendChild(scroller);') < GATE.indexOf('panel.appendChild(foot);'),
     'the foot is under the body');
-  for (const part of ["'Welcome to Homeroom!'", 'scroller.appendChild(group);', "'You can join or leave any time"]) {
+  for (const part of ["PlatformI18n.t('onboarding:communities.welcome')", 'scroller.appendChild(group);', "PlatformI18n.t('onboarding:communities.footnote')"]) {
     const at = GATE.indexOf(part);
     assert.ok(at > 0 && GATE.lastIndexOf('scroller.appendChild(', at) > GATE.lastIndexOf('foot.appendChild(', at),
       `${part} is in the body`);
@@ -577,7 +586,7 @@ function loadGate() {
     addEventListener() {},
   };
   const window = { document };
-  vm.runInNewContext(GATE, { window, document, console, URLSearchParams, location: { search: '' } });
+  vm.runInNewContext(GATE, { window, document, console, URLSearchParams, location: { search: '' }, PlatformI18n: englishPlatformI18n() });
   const el = (tag, cls, text) => {
     const n = node(tag);
     if (cls) n.className = cls;

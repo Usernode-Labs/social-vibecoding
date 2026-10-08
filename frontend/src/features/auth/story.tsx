@@ -17,6 +17,7 @@
 
 // The three examples are the make screen's own starting points (Evan, 8 Oct
 // 2026, #4354): the same three here and there, the tier list drawn as one.
+import { Message } from '../../lib/i18n/react';
 import { TEMPLATES } from '../first-session/examples';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { TierChart } from '../first-session/tier-chart';
@@ -55,8 +56,8 @@ export function Story({ primaryClass, onStart, onSignIn }: {
               <li key={e.key} className="flex items-center gap-3 px-3.5 py-2.5 [&+&]:shadow-[inset_0_1px_0_var(--app-sheet-line)]">
                 <span className="app-icon-tile flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-2xl" aria-hidden="true">{e.chart ? <TierChart /> : e.emoji}</span>
                 <span className="min-w-0 flex-1">
-                  <span className="block text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">{e.title}</span>
-                  <span className="block text-[13px] text-zinc-500 dark:text-zinc-400">{e.line}</span>
+                  <span className="block text-[15px] font-[650] text-zinc-900 dark:text-zinc-100"><Message id={e.title} /></span>
+                  <span className="block text-[13px] text-zinc-500 dark:text-zinc-400"><Message id={e.line} /></span>
                 </span>
               </li>
             ))}

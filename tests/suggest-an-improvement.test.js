@@ -79,7 +79,8 @@ test('every door to filing a request says Suggest an improvement', () => {
   assert.match(mine, /data-profile-work-ask=""[\s\S]{0,200}>\s*Suggest an improvement\s*<\/Button>/, 'Your requests ends on it');
   assert.match(mine, /requests: 'You have not suggested an improvement yet\.'/, 'and says so when it is empty');
   assert.match(read('frontend/src/features/home/tour/tour-steps.ts'),
-    /id: 'menu-actions',\s*title: 'Suggest an improvement',/, 'the tour names the button by its words');
+    /id: 'menu-actions',\s*title: 'onboarding:tour\.step\.menuActions\.title',/, 'the tour names the button by its words');
+  assert.equal(require('./lib/platform-i18n').message('onboarding:tour.step.menuActions.title'), 'Suggest an improvement');
   assert.match(read('frontend/src/features/messages/index.tsx'),
     /hint: 'messages:inbox\.new\.bot\.hint'/, 'Messages\' new-chat menu');
   assert.equal(message('messages:inbox.new.bot.hint'), 'Make an app or suggest an improvement');

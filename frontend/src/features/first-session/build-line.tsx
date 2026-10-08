@@ -33,8 +33,9 @@ import type { ReactNode } from 'react';
 
 import { CheckIcon, SpinnerRingIcon } from '@/components/ui/icons';
 
-// The words, once (./build-line-words.js, plain JavaScript so home.js and
-// its classic-script tests read the same ones).
+import { useMessages } from '../../lib/i18n/react';
+// The words, once, as message ids (./build-line-words.js, plain JavaScript
+// so home.js and its classic-script tests read the same ones).
 import { BUILD_LINE_WORDS } from './build-line-words.js';
 
 export { BUILD_LINE_WORDS };
@@ -43,9 +44,9 @@ export { BUILD_LINE_WORDS };
  * One line the server never sends (so not in BUILD_LINE_WORDS, which match
  * its states one for one): the maker's hub card while the first-session tour
  * runs, in place of "Review the plan" (./tour-running.ts). A spinner, as the
- * lines on their way have.
+ * lines on their way have. A message id, as BUILD_LINE_WORDS holds.
  */
-export const WORKING_LINE_WORDS = 'Homeroom bot is working on it';
+export const WORKING_LINE_WORDS = 'onboarding:buildLine.working';
 
 /** The lines the server sends (`first_version.line`). */
 export type ServerBuildLine = keyof typeof BUILD_LINE_WORDS;
@@ -77,8 +78,10 @@ export function buildLineDone(state: BuildLineState): boolean {
  * (#4392, Homeroom bot's thanks: "Building it · usually 10 to 25 min").
  */
 export function BuildLine({ state, note = null, className = '' }: { state: BuildLineState; note?: string | null; className?: string }): ReactNode {
+  const t = useMessages('onboarding');
   const asks = buildLineAsks(state);
   const done = buildLineDone(state);
+  const words = t(state === 'working' ? WORKING_LINE_WORDS : BUILD_LINE_WORDS[state]);
   // A span, so it can sit in a row's text as well as in a card.
   return (
     <span
@@ -93,7 +96,7 @@ export function BuildLine({ state, note = null, className = '' }: { state: Build
       ) : (
         <SpinnerRingIcon className="h-3.5 w-3.5 shrink-0 animate-spin motion-reduce:animate-none" aria-hidden="true" />
       )}
-      <span className="truncate">{note ? `${state === 'working' ? WORKING_LINE_WORDS : BUILD_LINE_WORDS[state]} · ${note}` : state === 'working' ? WORKING_LINE_WORDS : BUILD_LINE_WORDS[state]}</span>
+      <span className="truncate">{note ? t('onboarding:buildLine.withNote', { line: words, note }) : words}</span>
     </span>
   );
 }

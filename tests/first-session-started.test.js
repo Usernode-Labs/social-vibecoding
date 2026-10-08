@@ -17,6 +17,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -32,9 +33,9 @@ const MADE = { slug: 'plant-pal', name: 'Plant Pal', emoji: '🪴', description:
 const draw = (props) => renderToHtml(createElement(made.MadeScreen, { made: MADE, me: 'maya', onContinue() {}, onOpenChat() {}, ...props }));
 
 test('the words: the community first, one quiet line, buttons that say what comes next', () => {
-  assert.equal(made.COMMUNITY_LABEL, 'Your new community');
-  assert.equal(made.INVITE_HINT, 'Invite people to use it and help improve it together.');
-  assert.equal(made.PREVIEW_LABEL, 'What they\'ll see');
+  assert.equal(message(made.COMMUNITY_LABEL), 'Your new community');
+  assert.equal(message(made.INVITE_HINT), 'Invite people to use it and help improve it together.');
+  assert.equal(message(made.PREVIEW_LABEL), 'What they\'ll see');
   assert.equal(made.sharedLine('shared'), 'Invite shared. Next, a short tour.');
   // Where there is no share sheet, the link is copied (decided 6 October 2026).
   assert.equal(made.sharedLine('copied'), 'Link copied. Next, a short tour.');
@@ -43,7 +44,7 @@ test('the words: the community first, one quiet line, buttons that say what come
   assert.equal(made.sharedLine('copied', false), 'Link copied.');
   assert.equal(made.continueLabel('first-session', true, 'Plant Pal'), 'Start the tour');
   assert.equal(made.continueLabel('first-session', false, 'Plant Pal'), 'Invite people later');
-  for (const words of [made.COMMUNITY_LABEL, made.INVITE_HINT, made.PREVIEW_LABEL, made.sharedLine('shared'), made.sharedLine('copied'), made.NO_BOT_NOTE]) {
+  for (const words of [message(made.COMMUNITY_LABEL), message(made.INVITE_HINT), message(made.PREVIEW_LABEL), made.sharedLine('shared'), made.sharedLine('copied'), message(made.NO_BOT_NOTE)]) {
     assert.doesNotMatch(words, /!|—|\bgroup\b/, words);
   }
 });
@@ -97,9 +98,10 @@ test('C5: after sharing, the line says so, and the buttons keep their places: Sh
   // Invite people later was.
   const shared = CODE.slice(CODE.indexOf('{sent ? ('), CODE.indexOf('{inviting ? ('));
   assert.ok(shared.indexOf('data-first-session-share-again=""') < shared.indexOf('data-first-session-continue=""'));
-  assert.match(CODE, /<button type="button" data-first-session-share-again="" onClick=\{\(\) => setInviting\(true\)\} className=\{SECONDARY\}>\s*Share again/);
+  assert.match(CODE, /<button type="button" data-first-session-share-again="" onClick=\{\(\) => setInviting\(true\)\} className=\{SECONDARY\}>\s*\{t\('onboarding:firstSession\.made\.shareAgain'\)\}/);
+  assert.equal(message('onboarding:firstSession.made.shareAgain'), 'Share again');
   assert.match(CODE, /<Button type="button" data-first-session-continue="" onClick=\{\(\) => onContinue\(false\)\} layout="full" variant="pillAccent"/);
-  assert.match(CODE, /\{sentHow \? sharedLine\(sentHow, !fromCreate\) : INVITE_HINT\}/);
+  assert.match(CODE, /\{sentHow \? sharedLine\(sentHow, !fromCreate\) : t\(INVITE_HINT\)\}/);
   assert.match(CODE, /onSent=\{\(how\) => setSentHow\(how\)\}/);
   // The logo bar stays behind the sheet and after sharing; Share invite is gone.
   assert.doesNotMatch(draw(), /Go to the Homeroom app|Invite sent|joined\./);

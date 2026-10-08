@@ -96,11 +96,11 @@ test('the five steps are the ones the design settled on, in order', () => {
 
 test('each step carries copy, and none of it is an em dash', () => {
   for (const step of steps.TOUR_STEPS) {
-    assert.ok(step.title.length > 0, `${step.id} has a title`);
-    assert.ok(step.body.length > 12, `${step.id} has body copy`);
+    assert.ok(message(step.title).length > 0, `${step.id} has a title`);
+    assert.ok(message(step.body).length > 12, `${step.id} has body copy`);
     // tests/no-em-dash-in-copy.test.js bans it across frontend/src; this
     // table is all copy, so it is worth saying twice.
-    assert.doesNotMatch(`${step.title} ${step.body}`, /—/, `${step.id} is em-dash free`);
+    assert.doesNotMatch(`${message(step.title)} ${message(step.body)}`, /—/, `${step.id} is em-dash free`);
   }
 });
 
@@ -111,7 +111,7 @@ test('every step points at a REAL control, and nothing is illustrated', () => {
   // The whole My apps section, heading included, so the card never sits on
   // the heading the step is about (#3240); the grid is the fallback.
   assert.deepEqual([...byId.apps.targets], ['#home-apps-section', '#app-list']);
-  assert.match(byId.apps.body, /people for a private community, a lock for one that is just yours/,
+  assert.match(message(byId.apps.body), /people for a private community, a lock for one that is just yours/,
     'the step names the tile marks the grid draws');
   // The way into Settings is the Me tab, whose screen carries
   // #profile-row-settings (#2718).
@@ -812,7 +812,7 @@ test('?shot=welcome-tour opens the tour at step 1 and writes nothing (#3567)', (
   const check = DAPP.tests.find((t) => t.path === '/?shot=welcome-tour');
   assert.ok(check, 'dapp.json declares a check on the tour shot');
   assert.match(check.expectSelector, /#home-tour:not\(\.hidden\)/);
-  assert.ok(steps.TOUR_STEPS[0].body.toLowerCase().includes(check.expectText.toLowerCase()),
+  assert.ok(message(steps.TOUR_STEPS[0].body).toLowerCase().includes(check.expectText.toLowerCase()),
     'and it asserts the communities step\'s own copy');
 });
 
@@ -821,13 +821,13 @@ test('the communities step names what the screen names (#3567)', () => {
   // people see it by its audience, in the screen's own words.
   const step = steps.TOUR_STEPS[0];
   assert.equal(step.id, 'communities');
-  assert.equal(step.title, 'Communities');
-  assert.match(step.body, /communities that build projects together/);
-  assert.match(step.body, /propose a change, and the group votes it in/);
+  assert.equal(message(step.title), 'Communities');
+  assert.match(message(step.body), /communities that build projects together/);
+  assert.match(message(step.body), /propose a change, and the group votes it in/);
   for (const audience of ['Just you', 'a Private community', 'a Public community']) {
-    assert.ok(step.body.includes(audience), `names ${audience}`);
+    assert.ok(message(step.body).includes(audience), `names ${audience}`);
   }
-  assert.doesNotMatch(step.body, /\bapps?\b/, 'a thing being built is a project');
+  assert.doesNotMatch(message(step.body), /\bapps?\b/, 'a thing being built is a project');
 });
 
 test('nothing opens the tour by itself: a request, or a reload under one in progress', () => {
