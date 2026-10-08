@@ -2134,7 +2134,9 @@ function checkRecoveryInFlight(sessionId) {
 // here until the harvest seats it, which waits for the gone owner's
 // heartbeat to lapse. Starting it over in that gap threw finished suites
 // away and, under the preview lifecycle, cancelled running ones (7 Oct
-// 2026). The harvest settles it instead (check-harvest.runOnCluster).
+// 2026). The harvest settles it instead (check-harvest.runOnCluster). The
+// preview heals ask it too (Pass 3 and recoverSessions): a rebuild would
+// replace the preview under the run and abort its harvest.
 async function checkRunLeftToHarvest(config, pool, session, reason) {
   const run = await require('./src/services/check-harvest').runOnCluster(config, pool, session, {
     staleMs: CHECKS_STALE_MS,
@@ -2384,6 +2386,12 @@ async function recoverSessions(config) {
   for (const session of rows) {
     try {
       if (!(await stagingRecovery.stagingNeedsRebuild(session, { config }))) continue;
+      // Boot is when the old leader's runs are being harvested. A rebuild
+      // would replace the preview under one and abort its harvest, so a
+      // session with its run still on the cluster is left alone here: Pass 3
+      // heals a proposal's preview once the run is read, and a Preview click
+      // rebuilds a missing one.
+      if (await checkRunLeftToHarvest(config, pool, session, 'startup')) continue;
       await stagingRecovery.rebuildSessionStaging({ config, pool, session, reason: 'startup' });
     } catch (err) {
       log.warn('server', 'Failed to recover session', { sessionId: session.id, err: err.message });
@@ -5447,6 +5455,11 @@ function startSessionAutoPauseSweeper(config) {
         if (!(await stagingRecovery.stagingNeedsRebuild(session, { config }))) continue;
         const last = stagingHealAttempts.get(session.id) || 0;
         if (Date.now() - last < STAGING_HEAL_COOLDOWN_MS) continue;
+        // A rebuild replaces the preview a checks run is testing and, under
+        // the preview lifecycle, takes the row its harvest writes through.
+        // A run of the session's commit still on the cluster is left to the
+        // harvest, as Pass 4 leaves it; a later tick heals the preview.
+        if (await checkRunLeftToHarvest(config, pool, session, 'heal')) continue;
         // Stamp the attempt BEFORE the (minutes-long) build so a later
         // tick won't kick off a duplicate concurrent rebuild for the same
         // session while this one is still in flight.

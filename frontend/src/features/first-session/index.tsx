@@ -756,16 +756,6 @@ function viewerName(): string {
 }
 
 /**
- * Whether Homeroom bot builds this viewer's first version (make.tsx
- * makeLine). Only a `homeroomBotDm` the server said false turns it off: a
- * session snapshot from before the field still reads as the bot, which is
- * what the make screen always said.
- */
-export function viewerBotBuilds(user: { homeroomBotDm?: boolean } | null | undefined): boolean {
-  return user?.homeroomBotDm !== false;
-}
-
-/**
  * "What do you want to make?" from the Create button, over nothing else, or
  * open on importing a GitHub repo (`startImport`, #create/import). Answers
  * whether it opened: something already holding the screen keeps it.
@@ -982,7 +972,6 @@ export function FirstSession() {
         entry="create"
         startImport={!!mode.startImport}
         underHeader={underHeader}
-        botBuilds={viewerBotBuilds(legacy().App?.user)}
         // Nothing is answered: the tile behind is refreshed, so the new
         // project is in the grid when the made screen goes, and the
         // allowance is read again.
@@ -999,7 +988,6 @@ export function FirstSession() {
     return (
       <MakeScreen
         who={viewerName()}
-        botBuilds={viewerBotBuilds(legacy().App?.user)}
         // POST /api/apps answered the question as it made the project.
         onMade={(made) => { noteAnswered(); setMode({ kind: 'made', made }); }}
         onLookAround={() => {

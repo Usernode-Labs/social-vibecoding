@@ -150,7 +150,7 @@ test('the make screen from Create: New project, a close, a small "Import from a 
   for (const words of ['What do you want to make?', 'What should it do?', 'What should we call it?', '>Make it</button>']) {
     assert.ok(create.includes(words), words);
   }
-  assert.match(create, /data-first-session-example="run"/);
+  assert.match(create, /data-first-session-example="tier"/);
 
   const first = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', onMade() {}, onLookAround() {} });
   assert.match(first, /data-make-entry="first-session"/);
@@ -161,13 +161,14 @@ test('the make screen from Create: New project, a close, a small "Import from a 
   const make = loadTsx(`${DIR}/make.tsx`);
   assert.equal(make.makeEyebrow('create', 'Jordan'), 'New project');
   assert.equal(make.makeEyebrow('first-session', ''), 'You\'re in!');
-  assert.match(make.makeLine(true), /Homeroom bot builds the first version while you invite your people\.$/);
-  assert.match(make.makeLine(false), /It becomes the project’s first request while you invite your people\.$/);
-  for (const line of [make.makeLine(true), make.makeLine(false), make.IMPORT_TITLE, make.IMPORT_LINE]) assert.doesNotMatch(line, /—/);
-  const { viewerBotBuilds } = loadTsx(ISLAND);
-  assert.equal(viewerBotBuilds({ homeroomBotDm: false }), false);
-  assert.equal(viewerBotBuilds({ homeroomBotDm: true }), true);
-  assert.equal(viewerBotBuilds({}), true, 'a snapshot from before the field reads as it always did');
+  for (const line of [make.IMPORT_TITLE, make.IMPORT_LINE]) assert.doesNotMatch(line, /—/);
+  // Evan, 8 Oct 2026: no line under the question. The starting points come
+  // straight after it, from either door.
+  assert.equal(make.makeLine, undefined);
+  for (const html of [create, first]) {
+    assert.doesNotMatch(html, /Describe it for your group/);
+    assert.match(html, /What do you want to make\?<\/h1><\/div><p[^>]*>Start from an idea<\/p>/);
+  }
 
   const src = read(`${DIR}/make.tsx`);
   assert.match(src, /onClick=\{\(\) => setMode\('import'\)\}/);

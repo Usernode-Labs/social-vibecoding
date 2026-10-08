@@ -1329,9 +1329,16 @@ async function deleteApplication(config, runtimeName) {
     deleteIfPresent(core, 'deleteNamespacedSecret', withSuffix(runtimeName, 'env'), namespace),
     // Keep shared and legacy TLS material across rebuilds, idle teardown and
     // failed rollouts. Certificate retirement is a separate operator action.
-    deleteIfPresent(apps, 'deleteNamespacedDeployment', runtimeName, namespace, {
-      propagationPolicy: 'Foreground', ...(uid ? { body: { preconditions: { uid } } } : {}),
-    }),
+    //
+    // Foreground keeps the Deployment until its Pods are gone, which is what
+    // the wait below reads. With a body the API server takes the delete
+    // options from the body alone, so the policy goes in with the
+    // precondition; beside it, as a query option, it was ignored, the
+    // Deployment went at once and the wait returned with its Pods still
+    // running (the same mistake orphaned check Pods, #4310).
+    deleteIfPresent(apps, 'deleteNamespacedDeployment', runtimeName, namespace, uid
+      ? { body: { propagationPolicy: 'Foreground', preconditions: { uid } } }
+      : { propagationPolicy: 'Foreground' }),
   ]);
   const failed = deletions.find(result => result.status === 'rejected');
   if (failed) throw failed.reason;
@@ -1972,7 +1979,10 @@ async function runUnitSuiteJob(config, options) {
 
 // A DELETE response only acknowledges termination. Keep preview ownership
 // until every consuming Pod has stopped, including Jobs orphaned by a crash.
-async function cancelPreviewChecks(config, sessionId, previewRunId = null) {
+// `spare(runId)` keeps the Jobs of the runs it names (by preview-run-id):
+// the preview lifecycle spares a run of the revision it is about to leave
+// to the harvest (check-harvest.runToCollect).
+async function cancelPreviewChecks(config, sessionId, previewRunId = null, { spare = () => false } = {}) {
   const { batch, core } = getClients();
   const namespace = config.kubernetes.workerNamespace;
   const selector = `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/session-id=${sessionId}`
@@ -1982,7 +1992,9 @@ async function cancelPreviewChecks(config, sessionId, previewRunId = null) {
     const name = job.metadata.name;
     if (!name.startsWith(`sv-capture-s${sessionId}-`)
         && !name.startsWith(`sv-unit-suite-s${sessionId}-`)) return;
-    if (previewRunId && job.metadata.labels?.['social.usernode.io/preview-run-id'] !== previewRunId) return;
+    const runId = job.metadata.labels?.['social.usernode.io/preview-run-id'];
+    if (previewRunId && runId !== previewRunId) return;
+    if (runId && spare(runId)) return;
     const podsStopped = async () => {
       const pods = await core.listNamespacedPod({ namespace, labelSelector: `job-name=${name}` });
       return (pods.items || []).every(pod => ['Succeeded', 'Failed'].includes(pod.status?.phase));
@@ -2170,22 +2182,31 @@ async function runCheckJob(config, {
     }
   };
   const boundedOutput = text => boundedCheckOutput(text, maxBuffer);
+  // A create the API refused or never answered: nothing ran, so the caller
+  // can say the check could not start rather than that it failed
+  // (services/unit-suite.js reads the mark).
+  const create = async (call) => {
+    try { return await call(); } catch (err) {
+      if (err && typeof err === 'object') err.checkJobNotCreated = true;
+      throw err;
+    }
+  };
   try {
     signal?.throwIfAborted();
     if (inputSecretName) {
-      inputSecret = await core.createNamespacedSecret({ namespace, body: {
+      inputSecret = await create(() => core.createNamespacedSecret({ namespace, body: {
         apiVersion: 'v1', kind: 'Secret',
         metadata: { name: inputSecretName, namespace, labels: labels({ sessionId, environment: unitSuite ? 'worker' : 'capture' }) },
         type: 'Opaque', stringData: unitSuite
           ? Object.fromEntries(Object.entries(env || {}).map(([key, value]) => [key, String(value)]))
           : { 'tests.json': String(stdinPayload) },
-      } });
+      } }));
       inputSecretCreated = true;
     }
     signal?.throwIfAborted();
     // A refused create (the namespace's quota, for one) leaves no Job to own
     // the Secret; the finally below deletes it.
-    const createdJob = await batch.createNamespacedJob({ namespace, body });
+    const createdJob = await create(() => batch.createNamespacedJob({ namespace, body }));
     // A platform restart must not orphan private clone credentials. The Job's
     // TTL also garbage-collects its input Secret if normal cleanup cannot run.
     // The Secret goes first so a Pod never starts without its input, which

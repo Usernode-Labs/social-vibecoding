@@ -1,7 +1,9 @@
 /**
- * The C key opens Suggest an improvement (#4289). Experimental: off until a
- * person turns it on in Settings, Experimental, and saved on that device only
- * (a keyboard shortcut is a property of the keyboard in front of you).
+ * The C key comments on the page (#4289 and its follow-up). Experimental: off
+ * until a person turns it on in Settings, Experimental, and saved on that
+ * device only (a keyboard shortcut is a property of the keyboard in front of
+ * you). What it opens is ../comment-pin/: a pin where the pointer is, a box
+ * beside it, and a request posted with a screenshot that shows the pin.
  *
  * ── Only a C nobody else used ─────────────────────────────────────────
  *
@@ -25,9 +27,17 @@
  * while that frame holds focus: a frame without focus cannot have had a key
  * pressed in it, so a message from one is not a person pressing C.
  *
- * What opens is exactly what the "Suggest an improvement" button opens
- * (`Improve.giveFeedback`), so the two ways in cannot drift: inside an app the
- * dialog asks whether the suggestion is for the app or for Homeroom (#4236).
+ * ── Where the pointer is ────────────────────────────────────────────────
+ *
+ * The pin goes where the person was pointing. Over the shell, this module
+ * watches the pointer itself; over the app's frame the shell sees no pointer
+ * events at all, so the bridge sends its own last position with the C (x, y
+ * in the frame's viewport) and it is placed by the frame's rectangle. Nobody
+ * has moved the pointer yet: the middle of the screen (or of the frame).
+ *
+ * The comment's code is loaded on the first C, not with the shell. If it
+ * cannot load, C opens what the "Suggest an improvement" button opens
+ * (`Improve.giveFeedback`) instead.
  *
  * The side panel (`?panel=1`) is the platform framed beside an app; its own
  * copy of this module stands down there.
@@ -154,6 +164,13 @@ interface DocLike {
   querySelectorAll(selector: string): ArrayLike<unknown>;
 }
 
+export interface Point { x: number; y: number }
+
+function finitePoint(x: unknown, y: unknown): Point | null {
+  return typeof x === 'number' && typeof y === 'number' && Number.isFinite(x) && Number.isFinite(y)
+    ? { x, y } : null;
+}
+
 interface WinLike extends SelectionHost {
   addEventListener(type: string, fn: (event: any) => void): void;
   setTimeout(fn: () => void, ms: number): unknown;
@@ -164,8 +181,8 @@ export interface SuggestShortcutDeps {
   win: WinLike;
   doc: DocLike;
   storage?: StorageLike | null;
-  /** Open Suggest an improvement, as its button does. */
-  open: () => void;
+  /** Open the comment, pinned at a viewport point (null: nobody has pointed). */
+  open: (point: Point | null) => void;
   /** Whether somebody is signed in: a visitor has no dialog to open. */
   signedIn: () => boolean;
 }
@@ -214,7 +231,16 @@ export function installSuggestShortcut(deps: SuggestShortcutDeps): void {
   const { win, doc, open, signedIn } = deps;
   const storage = deps.storage === undefined ? defaultStorage() : deps.storage;
 
-  // What has to hold for a C, from wherever, to open the dialog.
+  // The pointer over the shell's own page, passively.
+  let pointer: Point | null = null;
+  const notePointer = (e: { clientX?: number; clientY?: number }) => {
+    const p = finitePoint(e?.clientX, e?.clientY);
+    if (p) pointer = p;
+  };
+  win.addEventListener('pointermove', notePointer);
+  win.addEventListener('pointerdown', notePointer);
+
+  // What has to hold for a C, from wherever, to open the comment.
   const ready = (): boolean => {
     if (!suggestShortcutEnabled(storage)) return false;
     try {
@@ -236,6 +262,7 @@ export function installSuggestShortcut(deps: SuggestShortcutDeps): void {
     if (isTypingTarget(realTarget(e)) || isTypingTarget(doc.activeElement)) return;
     if (hasTextSelection(win)) return;
     if (!ready()) return;
+    const at = pointer;
     // A task later, every listener on the page has had the key; one that
     // used it said so with preventDefault. `ready()` runs again too, so a
     // screen that answered C by opening something of its own (without
@@ -243,19 +270,52 @@ export function installSuggestShortcut(deps: SuggestShortcutDeps): void {
     win.setTimeout(() => {
       if (e.defaultPrevented) return;
       if (!ready()) return;
-      open();
+      open(at);
     }, 0);
   });
 
   win.addEventListener('message', (e: { data?: unknown; source?: unknown }) => {
     const data = (e ? e.data : null) as Record<string, unknown> | null | undefined;
     if (!data || typeof data !== 'object' || data[SHORTCUT_MESSAGE_KEY] !== 'suggest') return;
-    const frame = doc.getElementById('app-iframe') as { contentWindow?: unknown } | null;
+    const frame = doc.getElementById('app-iframe') as {
+      contentWindow?: unknown;
+      getBoundingClientRect?: () => { left: number; top: number; width: number; height: number };
+    } | null;
     if (!frame || !e.source || e.source !== frame.contentWindow) return;
     if (doc.activeElement !== frame) return;
     if (!ready()) return;
-    open();
+    open(framePoint(frame, finitePoint(data.x, data.y)));
   });
+}
+
+/**
+ * A point in the app frame's viewport, as a point in the shell's: offset by
+ * the frame's rectangle and kept inside it. No point: the frame's middle.
+ */
+export function framePoint(
+  frame: { getBoundingClientRect?: () => { left: number; top: number; width: number; height: number } },
+  inFrame: Point | null,
+): Point | null {
+  let r: { left: number; top: number; width: number; height: number };
+  try {
+    if (typeof frame.getBoundingClientRect !== 'function') return null;
+    r = frame.getBoundingClientRect();
+  } catch {
+    return null;
+  }
+  if (!(r.width > 0) || !(r.height > 0)) return null;
+  const p = inFrame ?? { x: r.width / 2, y: r.height / 2 };
+  return {
+    x: r.left + Math.max(0, Math.min(r.width - 1, p.x)),
+    y: r.top + Math.max(0, Math.min(r.height - 1, p.y)),
+  };
+}
+
+/** Open the comment; what the "Suggest an improvement" button opens, if it cannot load. */
+function openComment(point: Point | null): void {
+  import('../comment-pin/comment-pin')
+    .then((m) => m.openCommentPin(point))
+    .catch(() => openSuggest());
 }
 
 /** What the "Suggest an improvement" button does. */
@@ -275,7 +335,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   installSuggestShortcut({
     win: window as unknown as WinLike,
     doc: document as unknown as DocLike,
-    open: openSuggest,
+    open: openComment,
     signedIn: () => !!(window as unknown as { App?: { user?: unknown } }).App?.user,
   });
   // Settings, Experimental paints and saves the switch through this; it is a

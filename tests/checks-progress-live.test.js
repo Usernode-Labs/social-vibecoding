@@ -290,7 +290,9 @@ test('maybeRunUnitSuite observes its container and reports once more at the end'
   assert.match(src, /const options = \{\n\s+onStdoutLine: observe,/);
   assert.match(src, /kubernetes\.runUnitSuiteJob\(config, \{ sessionId, \.\.\.options \}\)/);
   assert.match(src, /docker\.runOneShot\(`usernode-unit-suite-\$\{sessionId\}`, options\)/);
-  assert.match(src, /const finalSnap = tracker\.finish\(passed\);\n\s+report\(finalSnap\);/);
+  // The last report also says when the suite never reached `npm test`, so
+  // the card does not call a refused Job "finished with failures".
+  assert.match(src, /const finalSnap = tracker\.finish\(passed, \{ notRun: !!\(notRun \|\| setupFailed\) \}\);\n\s+report\(finalSnap\);/);
   assert.match(src, /echo "\$\{CLONED_SENTINEL\}"\nif \[ -f package-lock\.json \]/, 'the cloned marker precedes npm ci');
   assert.match(src, /\.\.\.\(summary \? \{ summary \} : \{\}\),/, 'the TAP summary rides the row');
 });
@@ -524,6 +526,12 @@ test('the unit suite (npm test) gets its own line, bar and phase copy', () => {
   assert.match(done.sentence, /finished with failures: 2 failed, 10861 passed\./);
   const ok = AppView._unitSuiteProgressView({ phase: 'done', done: true, exitOk: true, ran: 10, passed: 9, skipped: 1, failed: 0, expected: 10 });
   assert.equal(ok.sentence, 'The repo unit suite (npm test) finished: 9 passed, 1 skipped.');
+  // A suite that never reached `npm test` (its Job refused, its setup
+  // stopped) is not one that finished with 0 failures.
+  const notRun = AppView._unitSuiteProgressView({ phase: 'done', done: true, exitOk: false, notRun: true, ran: 0, passed: 0, failed: 0, expected: null });
+  assert.equal(notRun.sub, 'npm test could not run');
+  assert.equal(notRun.sentence, 'The repo unit suite (npm test) could not run, so no test result came back.');
+  assert.equal(notRun.bar.done, true);
   const notes = AppView._checksStatusNotes({
     check_state: 'pending', check_phase: 'testing', checks_checked_at: new Date().toISOString(),
     checks_progress: { ran: 2, passed: 2, failed: 0, expected: 10, unit: { phase: 'running', ran: 5, passed: 5, failed: 0, expected: null } },

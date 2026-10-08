@@ -151,9 +151,10 @@ import './lib/live-reads';
 // file dropped where nothing takes it no longer opens in place of the app.
 import './features/attachments/file-drag';
 import './lib/file-drop-guard';
-// #4289: the C key opens Suggest an improvement, behind Settings, Experimental's
-// switch (off by default). Two listeners on the document, the shell's own keys
-// and the bridge's message from inside an app, and no markup of its own.
+// #4289: the C key comments on the page (a pin where the pointer is), behind
+// Settings, Experimental's switch (off by default). Listeners on the document
+// (the shell's own keys and pointer, and the bridge's message from inside an
+// app); the comment itself (features/comment-pin/) loads on the first C.
 import './features/improve/suggest-shortcut';
 // #1084 chunk G: the retired public/js/dev-chat.js, moved into the bundle
 // verbatim. Imported HERE rather than from a Shell island for the same reason
