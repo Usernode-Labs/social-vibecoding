@@ -47,6 +47,7 @@ import { topicHeadStore } from './topic-store';
 import { ChangeConversation } from './conversation';
 import { TopicBack } from './topic-back';
 import { DescriptionEditor } from './description-editor';
+import { ISSUE_BODY_MAX } from '../../../lib/issue-body-limit';
 import type {
   ChecksVerdict,
   CheckRow,
@@ -1820,7 +1821,7 @@ function IssueBody(
             id="dev-issue-body-input"
             aria-labelledby="dev-issue-body-heading"
             rows={10}
-            maxLength={10000}
+            maxLength={ISSUE_BODY_MAX}
             width="full"
             box="default"
             className="resize-y"

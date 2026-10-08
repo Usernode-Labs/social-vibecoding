@@ -577,6 +577,12 @@ export function init() {
     const TITLE_GEN_DEBOUNCE_MS = 900;
     const TITLE_GEN_MIN_DESC = 12;
     const TITLE_GEN_MAX_PER_OPEN = 8;
+    // #4194: the description may run to 64,000 characters now; the title is
+    // named from its start, and the preview route refuses more than this
+    // (TITLE_SOURCE_MAX in lib/issue-body-limit.ts and routes/feedback.js,
+    // kept equal by tests/issue-body-limit.test.js). A literal, not an
+    // import: the controller's tests run it with its imports stripped.
+    const TITLE_GEN_SOURCE_MAX = 2000;
     const titleIdlePlaceholder = feedbackTitle.placeholder;
     let titleDirty = false;
     let lastGeneratedFor = '';
@@ -609,7 +615,7 @@ export function init() {
         const res = await fetch('/api/feedback/title', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ description: desc }),
+          body: JSON.stringify({ description: desc.slice(0, TITLE_GEN_SOURCE_MAX) }),
         });
         const data = res.ok ? await res.json() : {};
         // Stale (a newer request or a reset happened) or the user took

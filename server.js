@@ -312,6 +312,15 @@ app.use((req, res, next) => {
       && /^\/api\/apps\/[^/]+\/issues\/[^/]+\/spec$/.test(req.path)) {
     return express.json({ limit: '1mb' })(req, res, next);
   }
+  // #4194: a request's body may be as long as GitHub allows (65,536
+  // characters, services/issue-body-limit.js), which JSON escaping and
+  // multi-byte text take past the global 100kb parser; the feedback submit
+  // also carries an app's state snapshot. Both routes check the length
+  // themselves and refuse an oversized body with the numbers.
+  if ((req.method === 'POST' && req.path === '/api/feedback')
+      || (req.method === 'PATCH' && /^\/api\/apps\/[^/]+\/github-issues\/[^/]+\/body$/.test(req.path))) {
+    return express.json({ limit: '1mb' })(req, res, next);
+  }
   express.json()(req, res, next);
 });
 app.use(cookieParser());
