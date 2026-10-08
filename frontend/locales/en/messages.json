@@ -2457,7 +2457,7 @@
   },
   "inbox.new.agent.hint": {
     "text": "Plan and build a change with a coding agent",
-    "description": "Explains the \"Build it yourself\" choice in the \"New message\" menu. \"Change\" is a noun: a change to a project."
+    "description": "Explains the \"Build it now\" choice in the \"New message\" menu. \"Change\" is a noun: a change to a project."
   },
   "inbox.new.direct.label": {
     "text": "Direct message",

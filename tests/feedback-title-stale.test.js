@@ -30,6 +30,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const FEEDBACK_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'dialogs', 'feedback-controller.js'),
@@ -88,6 +89,8 @@ function makeHarness({ previewTitle = 'Partial Title' } = {}) {
   const fetchCalls = [];
 
   const sandbox = {
+    // The binding the controller's i18n import gives it (the import line is stripped above).
+    t: englishPlatformI18n().t,
     console: { ...console, warn: () => {}, debug: () => {} },
     URLSearchParams,
     location: { search: '', hash: '', pathname: '/' },

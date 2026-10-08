@@ -22,6 +22,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 const { composerHtml } = require('./lib/dev-composer-html');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
@@ -133,7 +134,8 @@ test('the agent session, the improvement form and Messages each wire the shared 
   assert.match(session, /\{drop\.dragging \? <DropOverlay \/> : null\}/);
 
   const feedback = read('frontend/src/features/dialogs/feedback.tsx');
-  assert.match(feedback, /<HostDropOverlay host=\{feedbackForm\} label="Drop images or a clip to attach" isDisabled=\{feedbackLocked\} \/>/);
+  assert.match(feedback, /<HostDropOverlay host=\{feedbackForm\} label=\{t\('dialogs:feedback\.dropLabel'\)\} isDisabled=\{feedbackLocked\} \/>/);
+  assert.equal(message('dialogs:feedback.dropLabel'), 'Drop images or a clip to attach');
   assert.match(read('frontend/src/features/dialogs/feedback-controller.js'),
     /feedbackForm\.addEventListener\('drop'/, 'the controller still does the attaching');
 
@@ -149,6 +151,8 @@ function loadGroupChat() {
   const fileDrag = drag();
   const uploads = [];
   const sandbox = {
+    // The binding the controller's i18n import gives it (the import line is stripped above).
+    t: englishPlatformI18n().t,
     location: { search: '', protocol: 'http:', host: 'localhost' },
     URLSearchParams,
     URL: { createObjectURL: () => 'blob:x', revokeObjectURL() {} },

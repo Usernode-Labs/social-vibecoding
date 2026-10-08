@@ -93,7 +93,9 @@ const DIALOG_IDS = [
  * is the load-bearing one: without it, a genuine dialog that forgot its
  * root would fall into the support half and skip every check in this file.
  */
-const SUPPORT_FILES = ['create-progress.tsx', 'app-allowance.tsx'];
+// controller-text.tsx is the first words of a node a controller module then
+// owns (feedback, members, app secrets); it renders text, never a root.
+const SUPPORT_FILES = ['create-progress.tsx', 'app-allowance.tsx', 'controller-text.tsx'];
 
 const allFiles = fs.readdirSync(DIALOGS)
   .filter((f) => f.endsWith('.tsx') && f !== 'index.tsx');

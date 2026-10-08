@@ -32,11 +32,18 @@ import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { ControllerText } from './controller-text';
 import { init as initMembers, MembersDialog as Members } from './members-controller';
 import { useDialog } from './use-dialog';
 
 export function MembersDialog() {
+  // Text only React writes follows the language here. The title, which the
+  // controller rewrites per app, starts from <ControllerText>; the controls
+  // the controller replaces with clones are relabelled by it
+  // (`_paintStaticLabels`).
+  const t = useMessages('dialogs');
   const dialog = useDialog('members', {
     onOpen: () => { void Members._load(); },
     onClose: () => Members._reset(),
@@ -60,7 +67,7 @@ export function MembersDialog() {
             "Members & approvals" everywhere else.
         */}
         <h2 id="members-modal-title" className="text-lg font-bold mb-4">
-          Members &amp; approvals
+          <ControllerText id="dialogs:members.title.full" />
         </h2>
         <div id="members-load-error" className="hidden text-sm text-red-700 dark:text-red-400 mb-4">
         </div>
@@ -69,7 +76,7 @@ export function MembersDialog() {
             htmlFor="members-invite-input"
             className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1"
           >
-            Invite a user
+            {t('dialogs:members.invite.label')}
           </label>
           <div className="relative">
             <Input
@@ -80,7 +87,7 @@ export function MembersDialog() {
               box="dialog"
               hint="muted"
               ring="seamless"
-              placeholder="username"
+              placeholder={t('dialogs:members.invite.placeholder')}
             />
             {/* Typeahead dropdown (GET /api/users/search) */}
             <div
@@ -94,7 +101,7 @@ export function MembersDialog() {
         </div>
         <div id="members-list-section" className="hidden mb-4">
           <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-            Collaborators
+            {t('dialogs:members.collaborators.heading')}
           </p>
           <div
             id="members-list"
@@ -112,11 +119,11 @@ export function MembersDialog() {
           className="hidden space-y-3 mb-4 pt-3 border-t border-zinc-200 dark:border-zinc-800"
         >
           <p className="text-sm font-semibold">
-            Proposal approvals
+            {t('dialogs:members.governance.heading')}
           </p>
           <div>
             <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-              Who can approve proposals
+              {t('dialogs:members.governance.who')}
             </label>
             <div className="flex p-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-sm font-medium">
               <button
@@ -124,20 +131,20 @@ export function MembersDialog() {
                 data-m-approver-policy="anyone"
                 className="members-vis-pill flex-1 rounded-md px-3 py-1.5 transition-colors"
               >
-                Everyone
+                {t('dialogs:members.governance.policy.everyone')}
               </button>
               <button
                 type="button"
                 data-m-approver-policy="invited"
                 className="members-vis-pill flex-1 rounded-md px-3 py-1.5 transition-colors"
               >
-                Invited approvers
+                {t('dialogs:members.governance.policy.invited')}
               </button>
             </div>
           </div>
           <div>
             <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-              How many approvals are needed
+              {t('dialogs:members.governance.howMany')}
             </label>
             <div className="flex items-center gap-2">
               <div className="flex p-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-sm font-medium flex-1">
@@ -146,14 +153,14 @@ export function MembersDialog() {
                   data-m-approvals-mode="default"
                   className="members-vis-pill flex-1 rounded-md px-3 py-1.5 transition-colors"
                 >
-                  Time &amp; majority
+                  {t('dialogs:members.governance.mode.default')}
                 </button>
                 <button
                   type="button"
                   data-m-approvals-mode="at_least"
                   className="members-vis-pill flex-1 rounded-md px-3 py-1.5 transition-colors"
                 >
-                  At least
+                  {t('dialogs:members.governance.mode.atLeast')}
                 </button>
               </div>
               <Input
@@ -172,11 +179,11 @@ export function MembersDialog() {
                 layout="hidden"
                 size="sm"
               >
-                Propose
+                {t('dialogs:members.governance.propose')}
               </Button>
             </div>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-              Changes open a proposal that is voted on under the current rules.
+              {t('dialogs:members.governance.note')}
             </p>
           </div>
           {/*
@@ -190,7 +197,7 @@ export function MembersDialog() {
             className="hidden space-y-2 rounded-lg border border-zinc-200 dark:border-zinc-800 p-3"
           >
             <p className="text-sm font-medium">
-              Initial approvers
+              {t('dialogs:members.initialApprovers.heading')}
             </p>
             <p id="members-initial-approvers-status" className="text-xs text-zinc-500 dark:text-zinc-400">
             </p>
@@ -205,7 +212,7 @@ export function MembersDialog() {
                 box="dialog"
                 hint="muted"
                 ring="seamless"
-                placeholder="add approvers to invite (optional)"
+                placeholder={t('dialogs:members.initialApprovers.placeholder')}
               />
               <div
                 id="members-initial-approver-suggestions"
@@ -220,14 +227,14 @@ export function MembersDialog() {
                 layout="flex"
                 size="sm"
               >
-                Propose
+                {t('dialogs:members.initialApprovers.propose')}
               </Button>
               <button
                 type="button"
                 id="members-initial-approvers-cancel"
                 className="flex-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-1.5 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
               >
-                Cancel
+                {t('core:common.cancel')}
               </button>
             </div>
           </div>
@@ -245,7 +252,7 @@ export function MembersDialog() {
         */}
         <div id="members-approvers-section" className="hidden mb-4">
           <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-            Approvers
+            {t('dialogs:members.approvers.heading')}
           </p>
           <div
             id="members-approvers-list"
@@ -253,7 +260,7 @@ export function MembersDialog() {
           >
           </div>
           <p id="members-approvers-dormant-note" className="hidden text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-            Approvers only take effect when &ldquo;Who can approve proposals&rdquo; is set to Invited approvers.
+            {t('dialogs:members.approvers.dormantNote')}
           </p>
           <div id="members-approver-invite" className="hidden relative mt-2">
             <Input
@@ -264,7 +271,7 @@ export function MembersDialog() {
               box="dialog"
               hint="muted"
               ring="seamless"
-              placeholder="invite an approver by username"
+              placeholder={t('dialogs:members.approvers.invitePlaceholder')}
             />
             <div
               id="members-approver-suggestions"
@@ -286,7 +293,7 @@ export function MembersDialog() {
         */}
         <div id="members-appadmins-section" className="hidden mb-4">
           <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-            App admins
+            {t('dialogs:members.appAdmins.heading')}
           </p>
           <div
             id="members-appadmins-list"
@@ -303,7 +310,7 @@ export function MembersDialog() {
                 box="dialog"
                 hint="muted"
                 ring="seamless"
-                placeholder="add an admin by username"
+                placeholder={t('dialogs:members.appAdmins.placeholder')}
               />
               <div
                 id="members-appadmins-suggestions"
@@ -320,20 +327,24 @@ export function MembersDialog() {
                   size="sm"
                   className="disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Propose
+                  {t('dialogs:members.appAdmins.propose')}
                 </Button>
                 <button
                   type="button"
                   id="members-appadmins-cancel"
                   className="flex-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-1.5 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
                 >
-                  Cancel
+                  {t('core:common.cancel')}
                 </button>
               </div>
             </div>
           </div>
           <p id="members-appadmins-status" className="text-sm mt-2 hidden">
           </p>
+          {/* Placeholder markup, never read: the section is hidden until the
+              controller's _renderAppAdmins has rewritten this note from the
+              catalog (dialogs:members.appAdmins.note.*). It stays as written
+              because the prerendered document is compared byte for byte. */}
           <p id="members-appadmins-note" className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
             Set in
             <code>
@@ -353,7 +364,7 @@ export function MembersDialog() {
             className="flex-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
             onClick={() => dialog.close()}
           >
-            Close
+            {t('core:common.close')}
           </button>
         </div>
       </DialogCard>

@@ -31,6 +31,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { message } = require('./lib/platform-i18n');
 
 const root = path.join(__dirname, '..');
 const SRC = fs.readFileSync(
@@ -72,7 +73,8 @@ test('one row per candidate, with the renderer doing the escaping', () => {
   assert.doesNotMatch(BODY, /innerHTML/, 'the list is not painted by innerHTML');
   // The row still shows number, title, author and both branches.
   assert.match(SRC, /#\{num\} · \{String\(c\.title \|\| ''\)\}/, 'number and title');
-  assert.match(SRC, /String\(c\.author \|\| 'unknown'\)/, 'author, with a fallback');
+  assert.match(SRC, /String\(c\.author \|\| t\('dialogs:importPr\.row\.unknownAuthor'\)\)/, 'author, with a fallback');
+  assert.equal(message('dialogs:importPr.row.unknownAuthor'), 'unknown');
   assert.match(SRC, /String\(c\.headBranch \|\| ''\)\} → \{String\(c\.baseBranch \|\| ''\)/,
     'head → base branches');
 });
@@ -84,27 +86,33 @@ test('the fork label is per-row and never renders blank', () => {
   const at = SRC.indexOf('{c.fromFork ? (');
   assert.ok(at > 0, 'the label is gated on the candidate’s own fromFork flag');
   const label = SRC.slice(at, SRC.indexOf(') : null}', at));
-  assert.match(label, /from a fork/, 'the caution is the point');
-  assert.match(label, /String\(c\.headRepo \|\| 'unknown fork'\)/,
+  assert.match(label, /id="dialogs:importPr\.row\.fromFork"\s+values=\{\{ repository: String\(c\.headRepo\) \}\}/, 'the caution is the point');
+  assert.equal(message('dialogs:importPr.row.fromFork', { repository: 'someone/app' }), 'from a fork: <0>someone/app</0>');
+  assert.match(label, /c\.headRepo \? \([\s\S]*\) : \(\s*<RichMessage\s+id="dialogs:importPr\.row\.fromUnknownFork"/,
     'missing metadata reads as unknown, not empty');
+  assert.equal(message('dialogs:importPr.row.fromUnknownFork'), 'from a fork: <0>unknown fork</0>');
   // It sits inside the row's own <span>, after the number/title line — so it
   // can only ever belong to the row it labels.
   assert.ok(SRC.indexOf('#{num} · ') < at, 'the label follows its own PR number');
   assert.ok(at < SRC.indexOf('{c.htmlUrl ? ('), '…and precedes that row’s GitHub link');
-  assert.equal((SRC.match(/from a fork: /g) || []).length, 1,
-    'exactly one fork label in the component, rendered per fork-headed row');
+  assert.equal((SRC.match(/dialogs:importPr\.row\.from(Unknown)?Fork"/g) || []).length, 2,
+    'exactly one fork label in the component (named or unknown), rendered per fork-headed row');
 });
 
 test('the empty and GitHub-off responses are distinct list states', () => {
   const load = fnBody('loadCandidates');
   // A 404 means GitHub isn't configured for this app — a state the user can't
   // act on is worse than a plain sentence saying so.
-  assert.match(load, /if \(!ok\) \{[\s\S]*GitHub isn’t configured for this app/,
+  assert.match(load, /if \(!ok\) \{[\s\S]*text: 'dialogs:importPr\.list\.notConfigured'/,
     'non-OK renders the GitHub-off note');
-  assert.match(load, /rows\.length === 0[\s\S]*No open pull requests are available/,
+  assert.equal(message('dialogs:importPr.list.notConfigured'), 'GitHub isn’t configured for this app, so there’s nothing to import.');
+  assert.match(load, /rows\.length === 0[\s\S]*text: 'dialogs:importPr\.list\.empty'/,
     'an empty candidate list renders the empty note');
-  assert.match(load, /kind: 'error', text: 'Couldn’t load pull requests/,
+  assert.equal(message('dialogs:importPr.list.empty'), 'No open pull requests are available to import right now.');
+  assert.match(SRC, /<div className=\{NOTE_CLASS\}>\{t\(list\.text\)\}<\/div>/, 'the note is read from its id when it renders');
+  assert.match(load, /kind: 'error', text: 'dialogs:importPr\.list\.loadFailed'/,
     'a thrown fetch is its own state, not an empty list');
+  assert.match(message('dialogs:importPr.list.loadFailed'), /^Couldn’t load pull requests/);
   assert.match(SRC, /list\.kind === 'note' \? \([\s\S]*NOTE_CLASS/, 'notes render in the note style');
   assert.match(SRC, /list\.kind === 'error' \? \([\s\S]*ERROR_CLASS/, 'errors render in the error style');
 });
@@ -133,10 +141,14 @@ test('the freeze covers the list, both buttons and the progress row', () => {
     'the list is inert and dimmed mid-import');
   assert.match(SRC, /useHiddenClass\(progressRef, !busy\)/, 'the progress row follows busy');
   assert.match(SRC, /useHiddenClass\(slowRef, !slow\)/, 'and the slow line follows its own state');
-  assert.match(SRC, /\{busy \? 'Importing…' : 'Import'\}/, 'the submit label says what is happening');
+  assert.match(SRC, /\{busy \? t\('dialogs:importPr\.submitting'\) : t\('dialogs:importPr\.submit'\)\}/, 'the submit label says what is happening');
+  assert.deepEqual([message('dialogs:importPr.submitting'), message('dialogs:importPr.submit')], ['Importing…', 'Import']);
 
   const freeze = fnBody('setImportBusy');
-  assert.match(freeze, /Importing PR #\$\{prNumber\}: checking it on GitHub/, 'progress names the PR');
+  assert.match(freeze, /setProgressPr\(prNumber \?\? null\)/, 'progress names the PR');
+  assert.match(SRC, /t\('dialogs:importPr\.progress', \{ number: progressPr \}\)/);
+  assert.equal(message('dialogs:importPr.progress', { number: 12 }),
+    'Importing PR #12: checking it on GitHub and adding it to In progress…');
   assert.match(freeze, /clearTimeout\(slowTimer\.current\)/, 'every call clears the slow timer first');
   assert.match(freeze, /if \(!on\) return;/, 'unfreezing never arms a new one');
   assert.match(freeze, /setTimeout\(\(\) => \{[\s\S]*setSlow\(true\);[\s\S]*\}, 8000\)/,
@@ -152,8 +164,9 @@ test('a dismiss mid-import is refused and a second submit is ignored', () => {
   assert.match(SRC, /canClose: \(\) => !busyRef\.current/, 'busy vetoes every close path');
   const submit = fnBody('submit');
   assert.match(submit, /if \(busy\) return;/, 'a second submit mid-flight is a no-op');
-  assert.match(submit, /if \(pr == null\) return setError\('Pick a pull request to import\.'\)/,
+  assert.match(submit, /if \(pr == null\) return setError\(t\('dialogs:importPr\.error\.pick'\)\)/,
     'no selection submits nothing and says why');
+  assert.equal(message('dialogs:importPr.error.pick'), 'Pick a pull request to import.');
 });
 
 test('only a server-confirmed import navigates to the unified change page', () => {
@@ -186,11 +199,15 @@ test('each failure names its own cause instead of "Import failed (HTTP N)"', () 
   );
   // The server's own 404/409 strings are already user-grade, so they win.
   assert.match(map, /if \(serverError\) return serverError;/, 'a server message wins');
-  assert.match(map, /status === 404[\s\S]{0,120}wasn’t found on GitHub/, '404 without a message');
-  assert.match(map, /status === 409[\s\S]{0,120}can’t be imported right now/, '409 without a message');
-  assert.match(map, /status === 503[\s\S]{0,120}platform is restarting/, '503 is the drain guard');
-  assert.match(map, /return 'Something went wrong importing this PR\. Please try again\.'/,
+  assert.match(map, /status === 404\) return translate\('dialogs:importPr\.error\.notFound', \{ number: prNumber \}\)/, '404 without a message');
+  assert.match(message('dialogs:importPr.error.notFound', { number: 12 }), /^PR #12 wasn’t found on GitHub/);
+  assert.match(map, /status === 409\) return translate\('dialogs:importPr\.error\.conflict', \{ number: prNumber \}\)/, '409 without a message');
+  assert.match(message('dialogs:importPr.error.conflict', { number: 12 }), /^PR #12 can’t be imported right now/);
+  assert.match(map, /status === 503\) return translate\('dialogs:importPr\.error\.restarting'\)/, '503 is the drain guard');
+  assert.match(message('dialogs:importPr.error.restarting'), /platform is restarting/);
+  assert.match(map, /return translate\('dialogs:importPr\.error\.generic'\)/,
     'anything else still says something actionable');
+  assert.equal(message('dialogs:importPr.error.generic'), 'Something went wrong importing this PR. Please try again.');
 });
 
 test('a failed import keeps the dialog open, unfrozen, with the message inline', () => {
@@ -212,7 +229,8 @@ test('a network error surfaces without navigating', () => {
   const submit = fnBody('submit');
   const net = submit.slice(submit.indexOf('} catch {'));
   assert.match(net, /setImportBusy\(false\)/, 'unfrozen');
-  assert.match(net, /setError\('Network error. Please try again\.'\)/, 'named for what it was');
+  assert.match(net, /setError\(t\('dialogs:importPr\.error\.network'\)\)/, 'named for what it was');
+  assert.equal(message('dialogs:importPr.error.network'), 'Network error. Please try again.');
   assert.match(net, /return;/, 'and nothing is navigated to');
 });
 
@@ -222,9 +240,10 @@ test('a throwing navigation still closes the dialog and toasts', () => {
   const submit = fnBody('submit');
   const tail = submit.slice(submit.indexOf('setImportBusy(false);\n    try {'));
   assert.match(tail, /PlatformUI\?\.toast\?\.\(/, 'the user is told');
-  assert.match(tail, /PR #\$\{pr\} was imported/, 'by PR number');
+  assert.match(tail, /t\('dialogs:importPr\.imported', \{ number: pr \}\)/, 'by PR number');
+  assert.match(message('dialogs:importPr.imported', { number: 12 }), /^PR #12 was imported/);
   // #866: and told that the Preview button isn't there yet — the staging
   // build takes minutes.
-  assert.match(tail, /Its preview is being built now/, 'with the preview expectation set');
+  assert.match(message('dialogs:importPr.imported', { number: 12 }), /Its preview is being built now/, 'with the preview expectation set');
   assert.ok(tail.indexOf('dialog.close()') > tail.indexOf('toast'), 'the dialog closes either way');
 });

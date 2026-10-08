@@ -76,17 +76,26 @@ test('the dialog says what a remix copies, what starts fresh and what it leaves 
 });
 
 test('the name field suggests "<App> (remix)" and a failed POST says so in plain words', () => {
-  assert.match(DIALOG_SRC, /`\$\{src\?\.name \|\| 'App'\} \(remix\)`/);
-  assert.match(DIALOG_SRC, /\{busy \? 'Remixing…' : 'Remix'\}/);
-  assert.match(DIALOG_SRC, /'Could not make your copy\.'/);
-  assert.match(DIALOG_SRC, /'Your copy is being made\. It will appear in your apps when it is ready\.'/);
+  assert.match(DIALOG_SRC, /inputRef\.current\.value = src\?\.name\s*\? t\('dialogs:fork\.defaultName\.named', \{ app: src\.name \}\)\s*: t\('dialogs:fork\.defaultName\.unnamed'\);/);
+  assert.equal(message('dialogs:fork.defaultName.named', { app: 'Book Club' }), 'Book Club (remix)');
+  assert.equal(message('dialogs:fork.defaultName.unnamed'), 'App (remix)');
+  assert.match(DIALOG_SRC, /\{busy \? t\('dialogs:fork\.submitting'\) : t\('dialogs:fork\.submit'\)\}/);
+  assert.deepEqual([message('dialogs:fork.submitting'), message('dialogs:fork.submit')], ['Remixing…', 'Remix']);
+  assert.match(DIALOG_SRC, /setError\(data\.error \|\| t\('dialogs:fork\.error\.failed'\)\)/);
+  assert.equal(message('dialogs:fork.error.failed'), 'Could not make your copy.');
+  assert.match(DIALOG_SRC, /toast\?\.\(\s*t\('dialogs:fork\.beingMade'\),/);
+  assert.equal(message('dialogs:fork.beingMade'), 'Your copy is being made. It will appear in your apps when it is ready.');
   assert.match(DIALOG_SRC, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(source\.slug\)\}\/fork`/,
     'the route keeps its name');
 });
 
 test('the allowance line names remixing among what shares it', () => {
   const src = read('frontend/src/features/dialogs/app-allowance.tsx');
-  assert.match(src, /Creating, importing and remixing share this allowance\./);
+  assert.match(src, /t\('dialogs:allowance\.detail\.available', \{ count: quota\.remaining \}\)/);
+  for (const id of ['dialogs:allowance.detail.available', 'dialogs:allowance.detail.availableSpent']) {
+    assert.match(message(id, { count: 2 }), /Creating, importing and remixing share this allowance\./);
+    assert.doesNotMatch(message(id, { count: 2 }), /importing and forking/);
+  }
   assert.doesNotMatch(src, /importing and forking/);
 });
 

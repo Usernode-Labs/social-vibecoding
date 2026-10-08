@@ -22,6 +22,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { message } = require('./lib/platform-i18n');
 
 const root = path.join(__dirname, '..');
 const REL = 'frontend/src/features/dialogs/app-settings.tsx';
@@ -48,13 +49,15 @@ test('the App settings dialog closes with the neutral pill, not the violet prima
 });
 
 test('the App settings title carries the dialog language\'s mb-1', () => {
-  const title = element('>App settings<');
+  assert.equal(message('dialogs:appSettings.title'), 'App settings');
+  const title = element(">{t('dialogs:appSettings.title')}<");
   assert.match(title, /\bmb-1\b/, `dialog titles write mb-1:\n${title}`);
   assert.doesNotMatch(title, /\bmb-2\b/, `dialog titles write mb-1, not mb-2:\n${title}`);
 });
 
 test('the App settings loading line is muted like the other dialogs\'', () => {
-  const line = element('>Loading app settings…<');
+  assert.equal(message('dialogs:appSettings.loading'), 'Loading app settings…');
+  const line = element(">{t('dialogs:appSettings.loading')}<");
   assert.match(
     line,
     /text-zinc-500 dark:text-zinc-400/,
@@ -70,12 +73,14 @@ test('the App settings loading line is muted like the other dialogs\'', () => {
 // public already), so the Access section says so once, under its own
 // description and in the same muted ink, whichever mode is chosen.
 test('the Access section says the code is public on GitHub either way', () => {
-  const said = 'The code is public on GitHub either way.';
+  assert.equal(message('dialogs:appSettings.access.codePublic'), 'The code is public on GitHub either way.');
+  const said = "{t('dialogs:appSettings.access.codePublic')}";
   const line = element(said);
   assert.match(line, /^<p className="text-sm text-zinc-500 dark:text-zinc-400 mb-3">/,
     `the line is the description's muted ink:\n${line}`);
-  const description = src.indexOf('Choose who can use this app and who can build changes for it.');
-  const modes = src.indexOf('role="radiogroup" aria-label="App access"');
+  const description = src.indexOf("{t('dialogs:appSettings.access.intro')}");
+  const modes = src.indexOf("role=\"radiogroup\" aria-label={t('dialogs:appSettings.access.groupLabel')}");
+  assert.equal(message('dialogs:appSettings.access.groupLabel'), 'App access');
   assert.ok(description > 0 && description < src.indexOf(said) && src.indexOf(said) < modes,
     'under the description, before the modes');
 });

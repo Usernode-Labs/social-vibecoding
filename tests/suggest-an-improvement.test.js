@@ -66,8 +66,11 @@ test('every door to filing a request says Suggest an improvement', () => {
   assert.match(read('frontend/src/features/improve/actions.tsx'),
     /id="improve-row-feedback"\s+label="Suggest an improvement"/, 'the Homeroom menu\'s one button');
   assert.match(read('frontend/src/features/dialogs/feedback.tsx'),
-    /<h2 className="text-lg font-bold">\s*Suggest an improvement\s*<\/h2>/, 'the dialog it opens, from every way in');
+    /<h2 className="text-lg font-bold">\s*\{t\('dialogs:feedback\.heading'\)\}\s*<\/h2>/);
+  assert.equal(message('dialogs:feedback.heading'), 'Suggest an improvement', 'the dialog it opens, from every way in');
   assert.match(read('frontend/src/features/dialogs/feedback-controller.js'),
+    /toast\?\.\(t\('dialogs:feedback\.draftSaved'\)\)/);
+  assert.match(message('dialogs:feedback.draftSaved'),
     /Reopen Suggest an improvement to finish it\./, 'the rescued-draft toast names it');
   const row = read('frontend/src/features/dev-board/actions-row.tsx');
   assert.match(row, /data-plus="issue"[\s\S]{0,200}title="Suggest an improvement"/, 'the hub\'s ⋯ leads with it');
