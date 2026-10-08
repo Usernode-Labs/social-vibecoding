@@ -1113,6 +1113,9 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_error_notified
 --   'building' — the branch is being built and the preview's database
 --                clone is being made (set by the callers that stamp
 --                'pending' BEFORE buildAndDeployStaging).
+--   'queued'   — the preview is healthy and the run is waiting for a
+--                checks slot (services/checks-queue.js) before it creates
+--                any Job; checks_progress.queue.ahead is its place in line.
 --   'testing'  — the preview is healthy and the headless suite is running
 --                against it (set by visuals.captureForSession's own
 --                setChecksPending at capture start).
@@ -9277,6 +9280,34 @@ CREATE TABLE IF NOT EXISTS check_runs (
 );
 COMMENT ON TABLE check_runs IS 'staging:private';
 CREATE INDEX IF NOT EXISTS idx_check_runs_session ON check_runs (session_id);
+-- The checks queue (services/checks-queue.js). A row now exists for the
+-- whole life of a run, from the moment it asks for a checks slot to the
+-- moment it settles: admitted_at is NULL while it waits and stamped once it
+-- holds one of the CHECKS_MAX_CONCURRENT_RUNS slots. The live rows ARE the
+-- slot count, so there is no second ledger to keep in step with them.
+--   kind        'proposal' (a session's capture and unit-suite Jobs) or
+--               'main' (main-watch's unit suite on a merge commit, which has
+--               no session: session_id is NULL and app_id names the app).
+--   queued_at   its place in line, FIFO within its class. A run that a
+--               restart re-drives keeps the place it had.
+--   admitted_at NULL while waiting. The default is NOW() so a row written
+--               by code that does not queue (a release from before this
+--               one, mid-rollout) counts as the running run it is.
+-- Guarded so a boot that finds the column already nullable takes no lock.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_attribute
+     WHERE attrelid = 'check_runs'::regclass AND attname = 'session_id' AND attnotnull
+  ) THEN
+    ALTER TABLE check_runs ALTER COLUMN session_id DROP NOT NULL;
+  END IF;
+END $$;
+ALTER TABLE check_runs ADD COLUMN IF NOT EXISTS kind VARCHAR(16) NOT NULL DEFAULT 'proposal';
+ALTER TABLE check_runs ADD COLUMN IF NOT EXISTS app_id INTEGER REFERENCES apps(id) ON DELETE CASCADE;
+ALTER TABLE check_runs ADD COLUMN IF NOT EXISTS queued_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE check_runs ADD COLUMN IF NOT EXISTS admitted_at TIMESTAMPTZ DEFAULT NOW();
+CREATE INDEX IF NOT EXISTS idx_check_runs_app ON check_runs (app_id) WHERE app_id IS NOT NULL;
 
 -- Renamed from visual_evidence_* when visual evidence became before & after
 -- shots. Guarded so boot is idempotent either way: an existing deployment
@@ -10198,6 +10229,16 @@ BEGIN
 END $$;
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_model TEXT;
 
+-- A build turn that ended without failing and changed nothing (live or
+-- shadow, homeroom-bot-live.js buildNudgePrompt): { turns: [{ turn
+-- ('build' | 'nudge'), ended, said, provider, providers, model, harness,
+-- requests, toolCalls, fileEdits, outputTokens, seconds }], nudged,
+-- notNudged, committed, recovered }. `said` is the agent's last message,
+-- clipped and redacted, kept for admins to read and never quoted to anybody
+-- else. It can quote a private project's code: private, as `review` is.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_no_change JSONB;
+COMMENT ON COLUMN homeroom_bot_runs.build_no_change IS 'staging:private';
+
 -- A live build waiting its turn: a live 'ready' verdict is built after the
 -- turn that read it ends, one build per project at a time, so reading the
 -- project's next request never waits for a build. Set when the verdict is
@@ -10222,6 +10263,15 @@ ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS plan_change TEXT;
 COMMENT ON COLUMN homeroom_bot_runs.plan_change IS 'staging:private';
 CREATE INDEX IF NOT EXISTS homeroom_bot_runs_awaiting_go_idx
   ON homeroom_bot_runs(awaiting_go_at) WHERE awaiting_go_at IS NOT NULL;
+-- #4175: a first version's plan that could not be sent keeps its run
+-- waiting (awaiting_go_at) and is tried again on later wakes, a few times
+-- over about an hour (homeroom-bot.js retryUnsentPlans), never built without
+-- its creator's Build it. `plan_send_attempts` counts the sends tried;
+-- `plan_unsent_at` is when the last one failed, NULL once one reached them.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS plan_send_attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS plan_unsent_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS homeroom_bot_runs_plan_unsent_idx
+  ON homeroom_bot_runs(plan_unsent_at) WHERE plan_unsent_at IS NOT NULL;
 -- #4239: a `person` verdict whose request is about the Homeroom platform
 -- itself rather than the project it was filed on (the triage's `platform`
 -- flag). Its requester is offered to move it to Homeroom's own board.
@@ -12152,10 +12202,9 @@ CREATE INDEX IF NOT EXISTS idx_test_phone_sign_ins_unused
   ON test_phone_sign_ins (phone_e164) WHERE used_at IS NULL;
 COMMENT ON TABLE test_phone_sign_ins IS 'staging:private';
 
--- The first-run "Add your phone number" step was answered, by "Not now" or
--- by closing it (POST /api/me/phone-ask/answered): it is not asked again, and
--- Home's card is where the phone is added after that. Adding the phone ends
--- the ask on its own (identity_needed below).
+-- The retired first-run "Add your phone number" step was answered (#4378
+-- retired the step: verification is asked only at a public step now). Kept
+-- so existing databases need nothing; nothing reads it.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_ask_answered_at TIMESTAMPTZ;
 
 -- VERIFIED IDENTITY (sybil protection for public decisions and the full AI
@@ -13093,3 +13142,31 @@ CREATE TRIGGER chat_sessions_wf_merge_owned
         OR OLD.live_at IS DISTINCT FROM NEW.live_at)
   EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=merge-followups/session:',
     'merged_at', 'merge_commit_sha', 'included_in_session_id', 'live_at');
+
+-- #4083: every account without access has a spot on the waitlist, however it
+-- was made. Signups now get one as they are made (waitlist.ensureAccountSignup);
+-- this gives the accounts already waiting without one theirs, once, guarded by
+-- a marker like `onboarding_gate_grandfathered`. Only a confirmed address (the
+-- account proved it), never an admin, a synthetic or a test account, and never
+-- an account that already has a row: a phone row, or one holding the address.
+-- In line from when the account was made; the token is the row's "Want in
+-- sooner?" capability, two v4 UUIDs' worth of randomness.
+INSERT INTO waitlist_signups (email, submitted_at, linked_user_id, confirmed_at, more_token)
+  SELECT LOWER(u.email), COALESCE(u.created_at, NOW()), u.id,
+         COALESCE(u.email_confirmed_at, NOW()),
+         replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '')
+    FROM users u
+   WHERE u.has_platform_access = FALSE
+     AND u.is_admin IS NOT TRUE
+     AND u.is_synthetic = FALSE
+     AND u.test_account_created_at IS NULL
+     AND u.email_confirmed = TRUE
+     AND u.email IS NOT NULL AND u.email <> ''
+     AND NOT EXISTS (SELECT 1 FROM waitlist_signups w WHERE w.linked_user_id = u.id)
+     AND NOT EXISTS (SELECT 1 FROM platform_settings WHERE key = 'waitlist_spots_backfilled')
+ON CONFLICT DO NOTHING;
+
+INSERT INTO platform_settings (key, value, description) VALUES
+  ('waitlist_spots_backfilled', 'true',
+    'Marker: the one-time backfill giving every waiting account a waitlist row (#4083) has run.')
+ON CONFLICT (key) DO NOTHING;

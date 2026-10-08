@@ -41,6 +41,11 @@ test('the verify answer says what happened, additively, and suggests no name', (
   assert.doesNotMatch(SIGNUP, /suggestedUsername/);
   // Read after linkUserByEmail, which releases an address the waitlist already let in.
   assert.ok(SIGNUP.indexOf('result.waitlisted = await isWaitlisted') > SIGNUP.indexOf('await waitlist.linkUserByEmail'));
+  // #4083: a waiting account gets its own spot, after the link (which lets a
+  // released address in) and before the waiting state is read.
+  const spot = SIGNUP.indexOf('await waitlist.ensureAccountSignup(pool, { userId: result.userId })');
+  assert.ok(spot > SIGNUP.indexOf('await waitlist.linkUserByEmail'));
+  assert.ok(spot < SIGNUP.indexOf('result.waitlisted = await isWaitlisted'));
 });
 
 test('the password step says the account is new, and asks for its handle with an empty field', () => {
@@ -64,7 +69,8 @@ test('the password step says the account is new, and asks for its handle with an
 });
 
 test('the waitlist is named before the waiting room, not by it', () => {
-  assert.match(LOGIN, /"New accounts join a short waitlist\. After this step you'll wait in the queue, and you'll get in automatically when it's your turn\."/);
+  assert.match(LOGIN, /'New accounts get a spot on the waitlist\. We\\u2019re letting people in a few at a time\.'/);
+  assert.doesNotMatch(LOGIN, /in the queue|your turn/);
   assert.match(LOGIN, /\{otpSignup\?\.waitlisted \? \(\s+<p id="otp-waitlist-note"/);
 });
 

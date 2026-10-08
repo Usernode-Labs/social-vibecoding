@@ -322,16 +322,10 @@
       { key: 'theme', label: 'Theme', group: 'Preferences', page: 'theme' },
       { key: 'dev-console', label: 'Developer console', group: 'Preferences', page: 'theme' },
       { key: 'admin-preview', label: 'Admin preview', group: 'Preferences', page: 'theme', gate: 'settings-admin-section' },
-      // #1556: GATED, and the gate is "this user already picked a language".
-      // The value is app-facing only (the iframe JWT `locale` claim and
-      // usernode.getUserLocale) and the platform shell is English-only, so a
-      // "Language" row in Preferences reads as a UI language switch that does
-      // nothing — which is exactly what the feedback reported. Hiding it from
-      // everyone who never set one, while keeping it for anyone who did, is
-      // what stops a stored preference becoming unreachable. The read paths
-      // are untouched; to re-launch the picker, drop this `gate` and the two
-      // gate lines in _renderLanguageSection.
-      { key: 'language', label: 'Language', group: 'Preferences', gate: 'settings-language-section' },
+      // Offered to everyone: Auto and the languages Homeroom ships
+      // (sections/language.tsx). #1556 had gated it on an already-saved
+      // locale while the row could not say what it did.
+      { key: 'language', label: 'Language', group: 'Preferences' },
       { key: 'alerts', label: 'Notifications', group: 'Preferences' },
       // What each app may do: the device access and AI spending you granted,
       // and the apps you blocked. They were split between Preferences and the
@@ -615,7 +609,7 @@
         botDmToggle.addEventListener('change', (e) => this._saveHomeroomBotDm(e.target.checked));
       }
 
-      // #4289: Press C to suggest an improvement. Kept on this device, not
+      // #4289: Press C to comment on the page. Kept on this device, not
       // the account (features/improve/suggest-shortcut.ts), so there is no
       // request to fail: the change is the save.
       const shortcutToggle = document.getElementById('suggest-shortcut-enabled');
@@ -775,9 +769,9 @@
         // the menu at all, and it lands here — possibly AFTER a cold-boot
         // deep link has already painted. Re-resolve the menu.
         this._renderWalletSection();
-        // #1556: `locale` decides whether the Language row is in the menu at
-        // all, and it lands here too — a cold-boot deep link paints before
-        // this resolves. Same reasoning as the two rows above.
+        // `locale` is what the Language select shows, and it lands here
+        // too: a cold-boot deep link to #settings/language paints before
+        // this resolves. Same reasoning as the wallet row above.
         this._renderLanguageSection();
         this._renderNavIfOpen();
       } catch {}
@@ -1686,21 +1680,15 @@
     _renderLanguageSection() {
       const select = document.getElementById('settings-locale');
       if (!select) return;
-      // #1556 capability gate, read back by _visibleSections(). Offered only
-      // to a user who already has a preference saved — see the SECTIONS note.
-      const section = document.getElementById('settings-language-section');
       const value = this.state.locale || '';
-      if (section) {
-        if (!value) { section.classList.add('hidden'); return; }
-        section.classList.remove('hidden');
-      }
-      // A saved value outside the curated list (set via the API, or a
-      // future wider picker) still needs to render truthfully — inject
-      // an option for it so the select doesn't silently show "Auto".
+      // A saved value outside the shipped list (chosen when the picker
+      // listed more, or set via the API) still needs to render truthfully:
+      // inject an option for it, under the language's own name, so the
+      // select doesn't silently show "Auto".
       if (value && ![...select.options].some((o) => o.value === value)) {
         const opt = document.createElement('option');
         opt.value = value;
-        opt.textContent = value;
+        opt.textContent = window.PlatformI18n?.languageName?.(value) || value;
         select.appendChild(opt);
       }
       select.value = value;
@@ -2685,32 +2673,27 @@
           status.classList.add('text-red-700', 'dark:text-red-400');
         }
       };
+      // The language runtime (frontend/src/lib/i18n) loads the language,
+      // then saves, then switches, so a failed save leaves this screen as it
+      // was. Its saveAccountLocale is the POST /api/me/locale: it also keeps
+      // App.user, this.state.locale and any open app iframe
+      // (AppView.notifyLocaleChanged, `usernode:locale-changed`) in step.
+      const i18n = window.PlatformI18n;
+      let saving = false;
       try {
-        const r = await fetch('/api/me/locale', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ locale: value || null }),
+        const applied = await i18n.changeLanguage(value || null, async (next) => {
+          saving = true;
+          await i18n.saveAccountLocale(next);
         });
-        const j = await r.json().catch(() => ({}));
-        if (!r.ok) return fail(j.error || 'Failed to save.');
-        this.state.locale = j.locale || null;
-        // Keep the shell's cached user in sync so the bridge's
-        // getUserLocale answers (app-view.js) reflect the new value
-        // without a re-fetch. Bare `App` — app.js declares it with
-        // `const`, so `window.App` is undefined (see _renderAdminSection).
-        if (typeof App !== 'undefined' && App.user) App.user.locale = this.state.locale;
-        // Live-update any open app iframe (usernode:locale-changed).
-        if (window.AppView && typeof AppView.notifyLocaleChanged === 'function') {
-          try { AppView.notifyLocaleChanged(this.state.locale); } catch {}
-        }
-        if (status) {
-          status.textContent = '✓ Saved';
-          status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-zinc-500', 'dark:text-zinc-400');
-          status.classList.add('text-emerald-700', 'dark:text-emerald-400');
-        }
+        // A newer choice replaced this one, and reports for itself.
+        if (!applied) return;
       } catch (err) {
-        fail(`Network error: ${err.message}`);
+        return fail(saving ? (err.message || 'Failed to save.') : 'Could not load that language. Try again.');
+      }
+      if (status) {
+        status.textContent = '✓ Saved';
+        status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-zinc-500', 'dark:text-zinc-400');
+        status.classList.add('text-emerald-700', 'dark:text-emerald-400');
       }
     },
 

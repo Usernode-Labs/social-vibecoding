@@ -358,6 +358,16 @@ const App = {
       await App.enterAnonymous();
       return;
     }
+    // `?shot=waiting` / `?shot=waiting-invite` (#4073): the waiting room,
+    // which only an account still waiting for access reaches, so no shot
+    // persona can. The anonymous shell, then the room over it; the room
+    // itself neither checks for access nor follows a link in a shot
+    // (features/auth/waiting.tsx, waitingShot).
+    if (App._waitingShot()) {
+      await App.enterAnonymous();
+      if (window.AuthScreens) AuthScreens.show('waiting');
+      return;
+    }
     // `?shot=offline` / `?shot=offline-signin` pin the offline state before
     // the boot check runs, so the shot never depends on real connectivity.
     // The signed-out variant boots the anonymous shell directly, exactly
@@ -615,10 +625,6 @@ const App = {
     // (features/settings/terms-first-run.js), so it has to be re-offered
     // once there is a verified one.
     try { window.TermsFirstRun?.maybePrompt?.(); } catch (e) { /* ignore */ }
-    // The phone step, the same: it skips a snapshot boot, waits for the
-    // terms, and the join screen below waits for it
-    // (frontend/src/features/auth/phone-first-run.tsx).
-    try { window.PhoneFirstRun?.maybePrompt?.(); } catch (e) { /* ignore */ }
     // And the communities join screen, which skips an unverified session for
     // the same reason. Without this, a browser that has signed in before
     // (every boot there starts from the snapshot) never showed it: that is
@@ -670,6 +676,9 @@ const App = {
     if (nativeBoundary) await nativeBoundary;
     // The boot reader sees signed-out only after native authority is closed.
     App._publishBootSession({ signedOut: true });
+    // Signed out, the language follows this device (frontend/src/lib/i18n).
+    // Not awaited: the sign-in screens never wait for a language pack.
+    void globalThis.PlatformI18n?.applySessionLanguage?.(null);
     // #2902: the apps kept loaded were the signed-out viewer's.
     if (typeof AppView !== 'undefined') AppView.evictAllAppFrames?.();
     // THE SIDE PANEL'S DOCUMENT HAS NO SESSION: the cookie it shares with the
@@ -811,6 +820,14 @@ const App = {
       try { history.replaceState(null, '', location.search + '#waitlist'); } catch (err) { /* ignore */ }
     }
     return true;
+  },
+
+  // True for `?shot=waiting` and `?shot=waiting-invite`, the waiting room for
+  // the before/after shots (see init). Pure UI state, no writes.
+  _waitingShot() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    return shot === 'waiting' || shot === 'waiting-invite';
   },
 
   // Screenshot-state deep links for the offline experience (#1021):
@@ -2551,7 +2568,9 @@ const App = {
     }
     if (Leaderboard.section === 'challenges') {
       if (!window.TopochainChallenges) return Promise.resolve();
-      return TopochainChallenges.loadChallenges();
+      // A pull or a correction wants the current numbers, read in place
+      // rather than from the worker's saved copy (#3985).
+      return TopochainChallenges.loadChallenges({ fresh: true });
     }
     Leaderboard._cache.clear();
     return Leaderboard._load();
@@ -2808,6 +2827,55 @@ const App = {
   // we know we might have missed something" rather than a periodic poll.
   _eventsWsHasConnected: false,
 
+  // #4318: a session's live events (`session_event`: the agent's progress,
+  // the Mayor's replies, status rows) reach only its owner's sockets and the
+  // sockets that WATCH it, so a screen showing a session's live transcript
+  // says so on this socket. `_watchedSessions` maps a session id to the set
+  // of reasons it is on screen; the socket watches every id with at least
+  // one, and is told them all again whenever it reconnects. Today the one
+  // reason is DevChat's open session (the session chat and the Mayor chat;
+  // DevChat.currentSession's setter calls setDevChatSession). Lists, boards,
+  // proposal pages and previews need nothing here: checks and preview
+  // events still reach everyone who may view the app.
+  _watchedSessions: new Map(),
+
+  watchSession(sessionId, reason = 'screen') {
+    const id = Number(sessionId);
+    if (!Number.isSafeInteger(id) || id <= 0) return;
+    let reasons = App._watchedSessions.get(id);
+    if (!reasons) {
+      reasons = new Set();
+      App._watchedSessions.set(id, reasons);
+      App._sendSessionWatch('watch_session', id);
+    }
+    reasons.add(reason);
+  },
+
+  unwatchSession(sessionId, reason = 'screen') {
+    const id = Number(sessionId);
+    const reasons = App._watchedSessions.get(id);
+    if (!reasons) return;
+    reasons.delete(reason);
+    if (reasons.size) return;
+    App._watchedSessions.delete(id);
+    App._sendSessionWatch('unwatch_session', id);
+  },
+
+  _devChatWatchedId: null,
+  setDevChatSession(sessionId) {
+    const id = Number(sessionId) > 0 ? Number(sessionId) : null;
+    if (id === App._devChatWatchedId) return;
+    if (App._devChatWatchedId != null) App.unwatchSession(App._devChatWatchedId, 'devchat');
+    App._devChatWatchedId = id;
+    if (id != null) App.watchSession(id, 'devchat');
+  },
+
+  _sendSessionWatch(type, sessionId) {
+    const socket = App.eventsWs;
+    if (!socket || socket.readyState !== 1) return; // re-sent on open
+    try { socket.send(JSON.stringify({ type, sessionId })); } catch { /* closed */ }
+  },
+
   connectEvents() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     // Same staging-iframe token fallback as GroupChat._openSocket — the
@@ -2826,6 +2894,9 @@ const App = {
       // A (re)opened socket proves we're online — clear the offline
       // banner immediately instead of waiting for the slow re-probe loop.
       if (window.Offline) Offline.nudge();
+      // #4318: a new socket watches nothing until told; tell it every
+      // session still on screen before anything else can be missed.
+      for (const id of App._watchedSessions.keys()) App._sendSessionWatch('watch_session', id);
       if (isReconnect) App.resyncCurrentView();
     };
 
@@ -3970,8 +4041,14 @@ const App = {
   _wirePullToRefresh() {
     const home = document.getElementById('home-screen');
     if (home) {
+      // The Challenges block keeps its read for a minute (HomePanels.TTL_MS),
+      // which a pull must not be answered from (#3985): it reads again,
+      // fresh, and Home.load() joins that read.
       PlatformUI.pullToRefresh(home,
-        () => App._refreshOrReload(() => Home.load()));
+        () => App._refreshOrReload(() => Promise.all([
+          window.HomePanels?.ensureLoaded?.({ force: true, fresh: true }),
+          Home.load(),
+        ])));
     }
     // The #apps browse screen (home-screen split). Its own scroller and
     // its own fetch, so it must not be routed through Home.load().
@@ -4351,10 +4428,7 @@ const App = {
           name: project.name || slug,
           iconEmoji: project.iconEmoji || null,
           iconUrl: project.iconUrl || null,
-          // The picture the invite page showed, and its one line, to fill
-          // "You're in" with the project rather than empty space.
-          description: project.description || null,
-          picture: project.picture || null,
+          inviter: standing.inviter || null,
           inviterName: standing.inviterName || standing.inviter || null,
           inviterMadeIt: !!standing.inviterMadeIt,
           building: !!standing.building,
@@ -4426,10 +4500,7 @@ const App = {
           title: `Join ${name}?`,
           message: from
             + (standing.note ? ` “${standing.note}”` : '')
-            + (count ? ` ${count} ${count === 1 ? 'person is' : 'people are'} in it.` : '')
-            // WP-E: the link's maker hears when somebody joins through it.
-            + (standing.inviterName || standing.inviter
-              ? ` ${standing.inviterName || `@${standing.inviter}`} will see that you joined.` : ''),
+            + (count ? ` ${count} ${count === 1 ? 'person is' : 'people are'} in it.` : ''),
           confirmLabel: 'Join',
           cancelLabel: 'Not now',
         }) : true;
@@ -8070,6 +8141,7 @@ const App = {
     if (App.embeddedPanel && window.UsernodeReact?.sidePanelEmbed?.forward?.('')) return;
     App.setChromeless(false);
     const leavingSlug = App.currentApp;
+    const returning = !App._isScreenVisible('home-screen');
     // Iframe caveat (spec): View Transitions snapshot the outgoing
     // page, and a live app iframe in that snapshot can flash on iOS
     // Safari. The kit 'zoom-out' transform-animates the LIVE view (no
@@ -8150,6 +8222,11 @@ const App = {
       },
     });
     App.updateHash();
+    // Coming back to Home from somewhere else (an app, the Challenges tab)
+    // reads its Challenges block again past its minute (#3985): what the
+    // viewer just did there is what the block counts. Home.load() joins
+    // that read. Only once there is a block; the first load brings it.
+    if (returning && window.HomePanels?._data) HomePanels.ensureLoaded({ force: true });
     Home.load();
   },
 

@@ -26,9 +26,26 @@
  * the poll for every visitor who never sees this screen. So the timer lives in
  * a ref driven by the patched hooks, and the only mount effect is the one that
  * clears it on unmount.
+ *
+ * ── The words (#4073) ──────────────────────────────────────────────────
+ *
+ * The onboarding canvas's waiting screen: the wordmark, "You're on the
+ * waitlist", "We let people in a few at a time, and we'll email you when your
+ * spot is ready.", the invite box when a link queued a community (only then:
+ * the list comes from the links this account followed), one picture, and
+ * Sign out as a small link. The email promise holds because every waiting
+ * account has a waitlist row however it was made, and every way of letting
+ * it in sends the "you're in" mail (#4083). The waitlist is said with its own words, waitlist, your spot, a few at a time
+ * and access, and never queue, batches or your turn. The
+ * line under the title was the account's username and "platform access",
+ * and a status line said when the page last checked; both are gone. The
+ * page still checks every 30 seconds, quietly, and a check that fails is
+ * tried again on the next one.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+
+import { Wordmark } from '@/components/ui/wordmark';
 
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -45,6 +62,27 @@ interface MeUser {
   hasPlatformAccess?: boolean;
 }
 
+/**
+ * `?shot=waiting` and `?shot=waiting-invite` (App._waitingShot in
+ * public/js/app.js): this screen for the before/after shots, which no shot
+ * persona reaches, since each one either has access or has no session. In a
+ * shot the screen neither checks for access nor follows a link: `-invite`
+ * draws the box for one queued community, the plain one draws none.
+ */
+export function waitingShot(search: string): 'plain' | 'invite' | null {
+  let shot: string | null = null;
+  try { shot = new URLSearchParams(search).get('shot'); } catch { /* no shot */ }
+  if (shot === 'waiting') return 'plain';
+  if (shot === 'waiting-invite') return 'invite';
+  return null;
+}
+
+/** "Sunday Run Club", "A and B", "A, B and C": the invite box's names. */
+export function namesLine(names: readonly string[]): string {
+  if (names.length < 2) return names[0] || '';
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
+
 export function WaitingScreen() {
   const rootRef = useRef<HTMLElement>(null);
   useVisibilityHiddenClass(rootRef, AUTH_SCREEN_IDS.waiting, false);
@@ -55,8 +93,6 @@ export function WaitingScreen() {
   // interior's nodes exist by the time the on-show hook runs.
   const mounted = useMountedOnReveal(AUTH_SCREEN_IDS.waiting);
 
-  const [who, setWho] = useState('');
-  const [checkState, setCheckState] = useState('');
   // The communities this account's invite links queued for the day it is
   // let in (src/services/community-invites.js). Empty until loaded, and
   // for most people forever.
@@ -89,7 +125,6 @@ export function WaitingScreen() {
       const data = await res.json();
       const user: MeUser | undefined = data && data.user;
       if (!user) return;
-      setWho(user.username || '');
       if (user.hasPlatformAccess) {
         // Released! Boot the full shell in place — same reload-free path as
         // login, including the deep link the visitor originally arrived with.
@@ -110,9 +145,8 @@ export function WaitingScreen() {
         }, 'pop');
         return;
       }
-      setCheckState('Last checked ' + new Date().toLocaleTimeString());
     } catch {
-      setCheckState('Connection issue, will retry');
+      /* tried again on the next poll */
     }
   }, [stopWaitingPoll]);
 
@@ -165,7 +199,11 @@ export function WaitingScreen() {
   }, [check]);
 
   const waitingOnShow = useCallback(() => {
-    setWho(legacy().App?.user?.username || '');
+    const shot = waitingShot(location.search);
+    if (shot) {
+      setQueued(shot === 'invite' ? [{ name: 'Sunday Run Club', inviter: null }] : []);
+      return;
+    }
     startWaitingPoll();
     void followAndList();
   }, [startWaitingPoll, followAndList]);
@@ -219,66 +257,57 @@ export function WaitingScreen() {
     >
       {mounted ? (
         <>
-      <div className="min-h-full flex items-center justify-center">
-        <div className="w-full max-w-sm px-6 py-16 text-center">
-          <h1 className="text-[28px] font-extrabold leading-tight tracking-tight mb-1 text-zinc-900 dark:text-zinc-100">
-            You're in the queue
+        <div className="mx-auto flex min-h-full w-full max-w-sm flex-col px-6 pt-16 pb-9 text-center">
+          <Wordmark className="mx-auto h-6 w-auto text-zinc-950 dark:text-white" />
+          <h1 className="mt-12 text-[30px] font-extrabold leading-[34px] text-zinc-900 dark:text-zinc-100">
+            You're on the waitlist
           </h1>
-          <p className="text-[15px] text-zinc-500 dark:text-zinc-400 mb-8 italic">
-            Homeroom
+          <p className="mt-3 text-pretty text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400">
+            We let people in a few at a time, and we'll email you when your spot is ready.
           </p>
-          <div className="rounded-2xl bg-white dark:bg-zinc-900 p-5 text-left space-y-3">
-            <p className="text-[17px] leading-snug text-zinc-900 dark:text-zinc-100">
-              {'Your account '}
-              <span id="waiting-who" className="font-semibold">
-                {who}
-              </span>
-              {" doesn't have platform access yet. We let people in from the waitlist in batches. You'll get in automatically when your turn comes."}
-            </p>
-            <p className="text-[15px] text-zinc-500 dark:text-zinc-400">
-              This page checks for you every so often; you can also just come back later.
-            </p>
-            <p id="waiting-check-state" className="text-[15px] text-zinc-500 dark:text-zinc-500">
-              {checkState}
-            </p>
-          </div>
           {queued.length ? (
-            <div data-waiting-queued="" className="mt-3 rounded-2xl bg-white dark:bg-zinc-900 p-5 text-left">
-              <p className="text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">When you're let in</p>
-              <ul className="mt-1 space-y-1 text-[15px] text-zinc-600 dark:text-zinc-300">
-                {queued.map((q) => (
-                  <li key={q.name}>
-                    {`You join ${q.name}${q.inviter ? `, from @${q.inviter}'s invite` : ''}.`}
-                  </li>
-                ))}
-              </ul>
-            </div>
+            <p data-waiting-queued="" className="mt-7 text-balance rounded-[20px] bg-white px-4 py-3.5 text-[15px] leading-5 text-zinc-600 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900 dark:text-zinc-300">
+              {`When you get access, you join ${namesLine(queued.map((q) => q.name))}.`}
+            </p>
           ) : null}
           {phoneOffered && queued.length ? (
             <AddPhoneCard groups={queued.map((q) => q.name)} onJoined={onJoined} />
           ) : null}
           {/*
+              The room's one picture, in the space between the lines and
+              Sign out (C1b-waiting on the onboarding canvas): the same
+              people the story shows, so it is a known face and no new art.
+
               QA 2026-09-24 Q12: this used to open with a violet "Use apps
               while you wait" pill to `#landing`. The landing stopped listing
               apps when its directory grid was removed (landing.tsx,
               `landingTileFor`), and for a waiting-room session it shows one
-              pill, "Your queue status", back to this screen: the promise led
-              in a circle. Nothing a waiting-room account can reach lists apps
-              today, so the pill is gone rather than pointed at something that
-              does not exist. Sign out is the one action left ("Sign out",
-              as Settings says it, beside every "Sign in").
+              pill, "Your spot on the waitlist", back to this screen: the
+              promise led in a circle. Nothing a waiting-room account can
+              reach lists apps today, so the pill is gone rather than pointed
+              at something that does not exist. Sign out is the one action
+              left ("Sign out", as Settings says it, beside every "Sign in"),
+              a small link at the foot of the screen.
           */}
-          <div className="mt-6 space-y-3">
-            <button
-              id="waiting-logout"
-              className="flex h-11 w-full items-center justify-center rounded-full bg-white text-[16px] font-semibold text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-              onClick={onLogout}
-            >
-              Sign out
-            </button>
+          <div className="flex grow items-center justify-center py-6">
+            <img
+              src="/brand/people.png"
+              alt=""
+              width={816}
+              height={612}
+              draggable={false}
+              className="block h-auto w-[220px] max-w-full"
+            />
           </div>
+          <button
+            id="waiting-logout"
+            type="button"
+            className="mx-auto px-2 py-3 text-[15px] font-medium text-violet-700 hover:underline dark:text-violet-400"
+            onClick={onLogout}
+          >
+            Sign out
+          </button>
         </div>
-      </div>
         </>
       ) : null}
     </main>

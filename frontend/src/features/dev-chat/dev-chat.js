@@ -83,7 +83,17 @@ const DevChat = {
   // whose whole history the reader asked for with "Show older".
   sessionsOlder: 0,
   _sessionsAllFor: null,
-  currentSession: null,
+  // The open session. An accessor (#4318) so that every assignment — here,
+  // in app-view.js, or in a test — also tells the events socket which
+  // session's live stream this tab needs (App.setDevChatSession).
+  _currentSession: null,
+  get currentSession() { return this._currentSession; },
+  set currentSession(session) {
+    this._currentSession = session;
+    try {
+      window.App?.setDevChatSession?.(session && session.id != null ? session.id : null);
+    } catch { /* the socket layer is best-effort; the owner still hears it */ }
+  },
   messages: [],
   isStreaming: false,
   selectedModel: loadStoredModel() || 'claude-opus-5-5',
@@ -2811,8 +2821,10 @@ const DevChat = {
         ...base,
         tone: 'amber',
         icon: 'person',
-        lead: 'Connect GitHub or X to unlock $10/day of Homeroom credits.',
-        tail: ' Either account unlocks the same tier; connecting both does not stack credits.',
+        // #4378: the allowance is weekly (#2571); an unverified account
+        // is asked to verify for more, in the sheet the button opens.
+        lead: 'You\u2019re out of this week\u2019s free AI credits.',
+        tail: ' Verify your account to get more: add your phone number, or link GitHub and X.',
         actionsHtml: actions({ verificationRequired: true }),
       };
     }
@@ -3202,7 +3214,9 @@ const DevChat = {
     const CO = window.CreditOptions;
     const state = CO ? DevChat._creditState() : null;
     if (state && state.level === 'locked') {
-      return 'Connect GitHub or X to unlock $10/day of Homeroom credits.';
+      return window.CreditOptions && CreditOptions.VERIFY_LINE
+        ? CreditOptions.VERIFY_LINE
+        : 'Verify your account to get more: add your phone number, or link GitHub and X.';
     }
     const reset = DevChat._creditResetSentence();
     const lead = DevChat._globalBudgetOut()

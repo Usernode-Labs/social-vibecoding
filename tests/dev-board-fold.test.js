@@ -1547,15 +1547,20 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // card still needs a refused send and stays with the unit tests.
   // 734 leaves 146 slots under the 880 ceiling.
   //
-  // 734 → 735: +1 (#4098): a change's explanation blocks on the proposal
+  // 734 → 735: +1 (checks queue): a built preview whose run waits for a
+  // checks slot reads "Waiting for a checks slot (2 ahead)" on its card. A
+  // new state on a new mock route (proposals/9000054), so nothing to fold it
+  // into; it mirrors the two phase checks on 9000022 and 9000026.
+  //
+  // 735 → 736: +1 (#4098): a change's explanation blocks on the proposal
   // page (the Before and after card, its Terms, the numbered Steps under the
   // summary, on mock 9000001). Folding it into that route's one check put
   // its selector past the 256 characters the runner reads, so it is a check
-  // of its own. 735 leaves 145 slots under the 880 ceiling.
+  // of its own. 736 leaves 144 slots under the 880 ceiling.
   //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 735);
+  checkCap.assertPinned(DAPP.tests.length, 736);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

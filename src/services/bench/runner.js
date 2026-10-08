@@ -522,6 +522,9 @@ async function buildResult({ built, base, branch, sessionId = null, deps, repo, 
     // each stage cost on its model (services/stage-costs.js).
     ...(Array.isArray(built.specScreens) && built.specScreens.length ? { specScreens: built.specScreens } : {}),
     ...(built.stageCosts ? { costParts: stageCosts.fromStages(built.stageCosts) } : {}),
+    // A build turn that changed nothing: what it said and did, and its nudge
+    // (homeroom-bot-live.js buildNudgePrompt), as a live run keeps it.
+    ...(built.noChange ? { noChange: built.noChange } : {}),
   };
   if (built.blocked) return { ...out, status: 'ok', parsed: { ...parsed, blocked: built.blocked }, raw_output: rawOf(`BLOCKED: ${built.blocked}`) };
   if (!built.ok) {
@@ -602,6 +605,9 @@ async function buildStage(ctx) {
     firstVersion: !!snapshot.extra?.firstVersion,
     sessionTitle: title,
     telemetry: TELEMETRY,
+    // A turn that changed nothing is nudged as a live build's is, and
+    // counted under its own lane.
+    origin: { lane: 'bench', trialId: trial.id },
     onSession: async (s) => { sessionId = s.id; await ctx.onSession?.(s.id, { branch }); },
     // A first version's spec model when it differs from its build's (the
     // `today` preset: the bot's own model for each stage), and a studio
@@ -1374,6 +1380,7 @@ function keptBuild(b) {
     ...(b.sight ? { sight: b.sight } : {}),
     ...(b.stageCosts ? { stageCosts: b.stageCosts } : {}),
     ...(Array.isArray(b.specScreens) && b.specScreens.length ? { specScreens: b.specScreens } : {}),
+    ...(b.noChange ? { noChange: b.noChange } : {}),
   };
 }
 
@@ -1544,11 +1551,22 @@ async function recoverStage({
  * was built from, when the caller has it; otherwise the session's. Pure.
  */
 function recoveredBuild({ session, result = {}, timedOut = false, specMd: given = null }) {
+  const live = require('../homeroom-bot-live');
   const r = result || {};
-  const turnFailed = timedOut ? null : require('../homeroom-bot-live').failedClaudeTurn(r);
+  const turnFailed = timedOut ? null : live.failedClaudeTurn(r);
   const landed = !timedOut && !turnFailed && r.pushOk === true && Number(r.ahead) > 0;
   const specMd = given || (String(session.spec_md || '').trim() ? session.spec_md : null);
+  // A turn that ended cleanly and changed nothing keeps what it said, as a
+  // build that was not interrupted does; recovery does not nudge it.
+  const facts = live.turnFacts({ routed: { result: r }, stopped: timedOut }, { model: session.agent_model || null });
+  const quit = facts.ended === 'no_change' || facts.ended === 'not_pushed';
   return {
+    ...(quit ? {
+      noChange: {
+        turns: [{ ...facts, said: live.agentSaid(r.lastResultText) }],
+        nudged: false, notNudged: 'a restart caught the turn, and recovery does not nudge', committed: null, recovered: true,
+      },
+    } : {}),
     ok: landed,
     sessionId: session.id,
     sha: landed ? (r.sha || null) : null,

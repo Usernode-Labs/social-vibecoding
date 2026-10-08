@@ -68,8 +68,10 @@ import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNod
 
 import { Button } from '@/components/ui/button';
 import { ArrowUpIcon, ChevronDownIcon, ChevronRightIcon } from '@/components/ui/icons';
-import { ProgressRing } from '@/components/ui/progress-ring';
 import { agoStamp } from '../../../lib/timestamp';
+import { type BuildLineState, buildLineOf } from '../../first-session/build-line';
+import { useTourRunning } from '../../first-session/tour-running';
+import { ThumbRow } from '../../first-session/sketch-card';
 import { swatchFor } from '../../messages/format';
 import { open as openConversation, openBot } from '../../messages/store';
 import { CardRowView } from '../card/fold';
@@ -182,6 +184,13 @@ export function ChannelCard({ slug, name, data, compact = false, onOpen }: {
             );
           })}
         </ol>
+      ) : toTab ? (
+        // #4045 (the owner, 7 Oct): the hub always shows its discussion, a
+        // new community's too. With nothing said yet the preview asks for
+        // the first word, and opens the Discussion tab.
+        <button type="button" className="dev-ws-hub-say-hi un-touch-target" data-ws-channel-empty="" onClick={onOpen}>
+          {`Say hi to ${name}`}
+        </button>
       ) : (
         <p className="dev-ws-week-note" data-ws-channel-empty="">Nobody has said anything here yet.</p>
       )}
@@ -309,64 +318,93 @@ function HubComposer({ slug, url, placeholder }: { slug: string; url: string; pl
 export const FIRST_VERSION_POLL_MS = 15000;
 
 /**
- * "Step 4 of 7: Build it". The name is the server's (`step_name`, from
- * homeroom-bot-dm.js firstVersionState for this viewer), so the hub says
- * exactly what the made screen and the App tab say, and follows them when
- * a step is renamed.
+ * #4053: the build line, the server's for this viewer (`line`, from
+ * homeroom-bot-dm.js firstVersionState), so the hub says exactly what the
+ * made screen and the App tab say: "Building it", never "Step 4 of 7: Build
+ * it", which read as an instruction to the person looking at it. Step
+ * numbers stay in Homeroom bot's chat.
  */
-export function firstVersionStep(fv: HubFirstVersion): string {
-  if (!fv.step || !fv.of) return fv.ready ? 'Ready to try' : 'Being built';
-  return `Step ${fv.step} of ${fv.of}${fv.step_name ? `: ${fv.step_name}` : ''}`;
+export function firstVersionLine(fv: HubFirstVersion): BuildLineState {
+  return buildLineOf(fv.line) || (fv.ready ? 'ready' : 'planning');
 }
 
 /**
- * The line under the step: what happens next, for whoever reads it. Its
- * maker is told what it waits on from them, or that the bot will message
- * them when it is ready or has a question (the made screen's words);
- * anybody else, whose description it is.
+ * The one thing the card offers, for whoever reads it (#4045), or null:
  *
- * NO BUILD TIME. Evan, 5 Oct 2026: no average build time for a first
- * version. It plans first and waits on its maker's answer, so an ordinary
- * request's typical build was a promise it did not keep.
+ *   review    its plan waits for their Build it      the person who started it
+ *   answer    Homeroom bot asked them a question     the person who started it
+ *   see       its plan waits, read only (#4074)      a member who did not start it
+ *   try       built and up for approval              everyone
+ *   open      live, in the project's first week      everyone
+ *
+ * A card with a button hides its build line (the owner, 6 Oct 2026): "Your
+ * plan is ready to review" over "Review the plan" said one thing twice, so
+ * the button says it and the app's own line sits under its name. See the
+ * plan is a quiet link beside the line, not a button, so "Planning it"
+ * stays.
  */
-export function firstVersionNote(fv: HubFirstVersion): string {
-  if (fv.ready) return 'Version one is ready to try.';
-  if (fv.waits_on === 'plan') return 'Homeroom bot has a plan for you.';
-  if (fv.waits_on === 'question') return 'Homeroom bot has a question for you.';
-  if (fv.mine) return 'Homeroom bot will message you when it’s ready to try, or if it has any questions.';
-  return fv.creator
-    ? `Homeroom bot is building it from @${fv.creator}’s description.`
-    : 'Homeroom bot is building it from its description.';
+export type FirstVersionAction = 'review' | 'answer' | 'see' | 'try' | 'open';
+
+export function firstVersionAction(fv: HubFirstVersion): FirstVersionAction | null {
+  const line = firstVersionLine(fv);
+  if (line === 'live') return 'open';
+  if (fv.ready) return fv.session_id ? 'try' : null;
+  if (fv.waits_on === 'plan') return 'review';
+  if (fv.waits_on === 'question') return 'answer';
+  if (fv.plan && fv.plan.bullets && fv.plan.bullets.length) return 'see';
+  return null;
 }
 
-/** Which of the card's states this is, for its `data-ws-first-version`. */
-export function firstVersionKind(fv: HubFirstVersion): 'ready' | 'plan' | 'question' | 'building' {
-  if (fv.ready) return 'ready';
-  return fv.waits_on || 'building';
-}
+const ACTION_WORDS: Record<Exclude<FirstVersionAction, 'see'>, string> = {
+  review: 'Review the plan',
+  answer: 'Answer the question',
+  try: 'Try it',
+  open: 'Open app',
+};
 
 /**
- * FIRST VERSION: where Homeroom bot's build of the project stands, while it
- * builds it from the description it was made with. The same steps the made
- * screen and the App tab say ("Step 4 of 7: Build it",
- * services/homeroom-bot-progress.js), read from the hub's own record
- * (GET /api/apps/:slug/community `first_version`), with the step as the
- * ring the bot's activity cards lead with.
+ * FIRST VERSION (#4045): the project's thumbnail drawn small, its icon on
+ * its colour and its name (../../first-session/sketch-card.tsx ThumbRow),
+ * with ONE more line and at most one thing to do (firstVersionAction). With
+ * nothing to tap, the line is the build line the made screen and the App
+ * tab draw ("Building it", ../../first-session/build-line.tsx), the
+ * server's for this viewer (GET /api/apps/:slug/community `first_version`).
+ * With a button, the button says where it is and the card has no line: the
+ * project's own description sits once, under the hub's people row (the
+ * owner, 8 Oct 2026).
  *
- * When the bot waits on its maker (its plan, for their Build it, or a
- * question), the card says so and "Go to chat" opens their chat with it,
- * where the plan is decided. Ready to try, "See the change" opens the change,
- * where it is tried and approved. Nothing for a project the bot is not
- * building, or once its first version is live.
+ *   Review the plan, Answer the question   open the maker's chat with
+ *                                          Homeroom bot, where it is answered
+ *   See the plan                           the plan, read only (./plan-page.tsx)
+ *   Try it                                 the version to try, as its message
+ *                                          in the chat opens it
+ *   Open app                               the app, once it is live
+ *
+ * No "First version" heading, no step count and no note under it: the
+ * thumbnail is what it is, and one line says where it is. Nothing for a
+ * project the bot is not building, or once its first version is live and
+ * the project's first week is over.
+ *
+ * While the first-session tour runs (../../first-session/tour-running.ts)
+ * there is no Review the plan: the card shows the build line, "Homeroom bot
+ * is working on it", and the tour's last card is what names the plan
+ * (requests #4391, #4393). After the tour, it is as above.
  *
  * No event marks each step, so while the card is on screen the record is
  * read again every FIRST_VERSION_POLL_MS, as the App tab and the made screen
  * read theirs (AppView._recheckFirstVersion, made.tsx).
  */
-export function FirstVersionCard({ slug, data }: { slug: string; data: CommunityPayload | null }): ReactNode {
+export function FirstVersionCard({ slug, data, emoji = null, onSeePlan }: {
+  slug: string;
+  data: CommunityPayload | null;
+  /** The project's icon, as the page already knows it (improveStore). */
+  emoji?: string | null;
+  /** Opens the plan, read only (./workshop.tsx's 'plan' page). */
+  onSeePlan?: () => void;
+}): ReactNode {
   const fv = data?.first_version || null;
   const ref = useRef<HTMLElement | null>(null);
-  const building = !!fv;
+  const building = !!fv && fv.line !== 'live';
   useEffect(() => {
     if (!building || !slug) return undefined;
     const timer = window.setInterval(() => {
@@ -376,55 +414,64 @@ export function FirstVersionCard({ slug, data }: { slug: string; data: Community
     }, FIRST_VERSION_POLL_MS);
     return () => window.clearInterval(timer);
   }, [building, slug]);
+  // While the first-session tour runs, its last card is what names the plan
+  // (../../first-session/tour-running.ts): no Review the plan here, only the
+  // build line saying the bot is on it.
+  const touring = useTourRunning();
   if (!fv) return null;
-  const step = firstVersionStep(fv);
-  const stepped = !!(fv.step && fv.of);
-  const chat = () => {
-    if (fv.conversation_id) openConversation(fv.conversation_id);
-    else void openBot();
+  const asked = firstVersionAction(fv);
+  const held = touring && asked === 'review';
+  const line: BuildLineState = held ? 'working' : firstVersionLine(fv);
+  const action = held ? null : asked;
+  const press = () => {
+    if (action === 'review' || action === 'answer') {
+      if (fv.conversation_id) openConversation(fv.conversation_id);
+      else void openBot();
+    } else if (action === 'try' && fv.session_id) {
+      (window as any).AppView?.tryFirstVersion?.(slug, fv.session_id);
+    } else if (action === 'open') {
+      (window as any).App?.openAppTab?.(slug, 'app');
+    }
   };
+  const button = action && action !== 'see';
   return (
-    <section ref={ref} className="dev-ws-strip dev-ws-hub-first" data-ws-first-version={firstVersionKind(fv)}>
+    <section ref={ref} className="dev-ws-strip dev-ws-hub-first" data-ws-first-version={line}>
       <div className="dev-ws-hub-first-row">
-        {stepped ? (
-          <ProgressRing
-            pct={Math.round(((fv.step || 0) / (fv.of || 1)) * 100)}
-            label={`${fv.step}/${fv.of}`}
-            title={step}
-            aria-hidden="true"
-          />
+        <ThumbRow
+          name={data?.name || slug}
+          colorKey={slug}
+          emoji={emoji}
+          line={button ? null : line}
+        />
+        {action === 'see' ? (
+          <button
+            type="button"
+            className="dev-ws-hub-first-see un-touch-target"
+            data-ws-first-version-plan=""
+            onClick={onSeePlan}
+          >
+            See the plan
+          </button>
         ) : null}
-        <span className="dev-ws-hub-door-text">
-          <span className="dev-ws-head">
-            <span className="dev-ws-head-title">First version</span>
-          </span>
-          <span className="dev-ws-hub-needs-first">
-            <span className="dev-ws-hub-needs-title" data-ws-first-version-step="">{step}</span>
-            <span className="dev-ws-hub-needs-sub" data-ws-first-version-note="">{firstVersionNote(fv)}</span>
-          </span>
-        </span>
       </div>
-      {fv.waits_on ? (
-        <Button
-          type="button"
-          variant="pillAccent"
-          size="sm"
-          ink="solid"
-          className="self-start"
-          data-ws-first-version-chat=""
-          onClick={chat}
-        >
-          Go to chat
-        </Button>
-      ) : fv.ready && fv.session_id ? (
-        <a
-          href={`#app/${encodeURIComponent(slug)}/dev/proposals/${fv.session_id}`}
-          className="dev-ws-hub-open un-touch-target self-start"
-          data-ws-first-version-change=""
-        >
-          See the change
-          <ChevronRightIcon className="w-3.5 h-3.5" aria-hidden="true" />
-        </a>
+      {button && action ? (
+        action === 'open' ? (
+          <button type="button" className="dev-ws-open-app dev-ws-hub-first-open" data-ws-first-version-action="open" onClick={press}>
+            {ACTION_WORDS.open}
+          </button>
+        ) : (
+          <Button
+            type="button"
+            layout="full"
+            variant="pillAccent"
+            size="pill"
+            ink="solid"
+            data-ws-first-version-action={action}
+            onClick={press}
+          >
+            {ACTION_WORDS[action]}
+          </Button>
+        )
       ) : null}
     </section>
   );
@@ -535,7 +582,9 @@ export const owesVote = (queue: DevWorkshopView['queue']): boolean => queue.some
 export function NothingToVote({ queue, onOpen, alone = false }: {
   queue: DevWorkshopView['queue'];
   onOpen: () => void;
-  /** Nobody but one person is in the project (hubAlone). */
+  /** Nobody but one person is in the project (hubAlone), or it is in its
+      first week (#4045), when nothing has been up for a vote yet: the
+      zero says nothing either way. */
   alone?: boolean;
 }): ReactNode {
   const claims = queue.filter((row) => row.kind !== 'vote').length;
@@ -567,22 +616,27 @@ export function hubAlone(data: Pick<CommunityPayload, 'audience' | 'member_count
  *
  *   'plain'  "No work in progress." (#3489): a project with people in it,
  *            where the place your work appears stays put
- *   null     a project nobody else is in, while something else on the hub
- *            already says what is next: its first version being built, the
- *            start-here banner, or nothing a read-only viewer can start
+ *   null     a project in its first week (#4045), or one nobody else is
+ *            in while something else on the hub already says what is
+ *            next: its first version being built, the start-here banner,
+ *            or nothing a read-only viewer can start
  *   'bot'    nobody else is in it and Homeroom bot builds here for you: to
  *            change something, tell it (`mine.bot`, AppView._botDoor)
  *   'menu'   nobody else is in it: the ⋯ is where a change is asked for
  */
 export type WorkEmpty = 'plain' | 'bot' | 'menu' | null;
 
-export function hubWorkEmpty({ alone, building, startHere, readOnly, bot }: {
+export function hubWorkEmpty({ alone, building, startHere, readOnly, bot, firstWeek = false }: {
   alone: boolean;
   building: boolean;
   startHere: boolean;
   readOnly: boolean;
   bot: boolean;
+  /** #4045: in a project's first week an empty Your work is left out:
+      it shows once you have some. */
+  firstWeek?: boolean;
 }): WorkEmpty {
+  if (firstWeek) return null;
   if (!alone) return 'plain';
   if (building || startHere || readOnly) return null;
   return bot ? 'bot' : 'menu';

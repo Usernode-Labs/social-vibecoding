@@ -1374,6 +1374,11 @@ html:not(.dark) .messages-markdown .gc-ref-issue { background: rgba(16, 185, 129
    its Not now takes the neutral fill above. */
 .messages-bot-answers .messages-bot-primary { color: var(--accent-ink); background: var(--accent); }
 .messages-bot-answers .messages-bot-primary:hover { filter: none; background: var(--accent-light); }
+/* #4046: "Notify me when it's ready" under the plan: an action in the
+   accent's tint, quieter than the plan's Build it. */
+.messages-bot-answers .messages-bot-tint { color: var(--accent-tint-ink); background: var(--accent-tint); }
+/* Tapped, it turns grey and says so, with a check: settled, not pressable. */
+.messages-bot-answers .messages-bot-done { color: var(--text-muted); background: var(--dc-raised); cursor: default; filter: none; }
 /* B6: an answer tapped as a choice (a plan's, or one of two questions)
    takes the same accent fill. Nothing is sent until Build it. */
 .messages-bot-answers button[aria-pressed="true"] { color: var(--accent-ink); background: var(--accent); }
@@ -3281,6 +3286,23 @@ form.agent-session-composer:focus-within {
   --un-toast-inset-bottom: var(--platform-tabs-h, 0px);
 }
 
+/* THE LANGUAGE NOTICE RESTS WHERE A TOAST DOES ("Showing Homeroom in Español
+   · Switch to English", features/shell/language-notice.tsx). Fixed, because
+   it has to stay in view until it is answered: in the page flow it scrolled
+   away with Home on a phone, and the sign-in screens are `fixed inset-0`
+   over anything in flow. Above those screens (z-40) and below the drawer and
+   panels (z-50), like the install strip. `--language-notice-inset` is the
+   island's own measurement when a composer sits above the tab bar. */
+#language-notice {
+  position: fixed;
+  left: 50%;
+  bottom: calc(16px + max(var(--language-notice-inset, var(--platform-tabs-h, 0px)), var(--platform-safe-bottom, 0px)));
+  z-index: 45;
+  width: max-content;
+  max-width: min(calc(100vw - 24px), 480px);
+  transform: translateX(-50%);
+}
+
 /* ── No glass, on any platform (#787, #3104, and since the phone audit) ──
    Live backdrop blur is unusually expensive in WebKit on a phone while the
    content behind it scrolls or a spring moves the surface every frame. #787
@@ -3652,6 +3674,43 @@ html[data-browser-scroller^="auth-"] body :is(
    `data-browser-scroller`, so nothing changes. */
 html.un-ios[data-browser-scroller="auth-landing-scroll"] [data-landing-story] {
   padding-bottom: max(0px, calc(100lvh - 100svh));
+}
+/* THE INVITE PAGE'S LAST LINE IS AT THE FOOT OF ITS SCROLLER (#4049). Paged
+   by the document in a phone browser, the landing's scroller is
+   content-height (`flex: none` above), so the column's `min-h-full` had
+   nothing to fill and the line that says what Homeroom is stopped under the
+   note, with empty page above the pinned Join bar. While an invite's page is
+   up, the scroller takes the rest of the screen above the bar and the column
+   takes all of it, so the line's `mt-auto` puts it at the foot, just above
+   Join. The bar clears Safari's toolbar and the home indicator itself. */
+html[data-browser-scroller="auth-landing-scroll"] #auth-landing-scroll:has(> * > [data-landing-invite-homeroom]) {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+html[data-browser-scroller="auth-landing-scroll"] #auth-landing-scroll > :has(> [data-landing-invite-homeroom]) {
+  flex: 1 0 auto;
+  width: 100%;
+}
+/* THE STORY IS A WHOLE SCREEN IN A PHONE BROWSER TOO (#4037). Paged by the
+   document, the landing's scroller is content-height (`flex: none` above),
+   so the column's `min-h-full` had nothing to fill and "Make an account",
+   its waitlist line and Sign in stopped under the tiles, with empty page
+   below them. While the story is up, the scroller takes the rest of the
+   screen under the header and the column takes all of it, so the story's
+   foot sits at the foot of the screen, as in the app. Scoped to the story:
+   the pitch and the invite cards keep their own height. The landing's logo
+   bar (#landing-header) stays above the story: it is a stranger's first
+   screen, so the logo says where they are (the owner's ruling, after a build
+   that hid it). tests/header-height-parity.test.js pins that nothing hides it. */
+html[data-browser-scroller="auth-landing-scroll"] #auth-landing-scroll:has(> * > [data-landing-story]) {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+html[data-browser-scroller="auth-landing-scroll"] #auth-landing-scroll > :has(> [data-landing-story]) {
+  flex: 1 0 auto;
+  width: 100%;
 }
 /* The anonymous overlay covered the signed-in shell, including any screen
    painted from the last-session snapshot. In document flow those roots must
@@ -6661,6 +6720,9 @@ body:has(#platform-header.hidden) #app-frame-host {
   flex: 0 0 auto;
 }
 .dc-credits-go:hover { background: var(--accent-light); }
+
+/* #4378: an unverified account's "Verify my account", under its line. */
+.dc-credits-verify { margin-top: 8px; }
 
 /* The "Are you a developer?" half of the out-of-credits card (#1281).
    The routes that need a terminal — the CLI lease and importing your own
@@ -14211,6 +14273,9 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 .dev-vote-btn:hover { background: var(--accent-light); }
 .dev-vote-btn-yes, .dev-vote-btn-yes:hover { background: var(--accent-tint); color: var(--accent); }
 .dev-vote-btn-no, .dev-vote-btn-no:hover { background: var(--state-blocked-bg); color: var(--state-blocked); }
+/* #3984: a vote on its way reads "Sending…" and takes no press until the
+   server answers. */
+.dev-vote-btn[aria-busy="true"] { cursor: progress; opacity: 0.75; }
 /* The picker: body-mounted and fixed, like .dev-card-menu, because the
    kanban columns scroll sideways and would clip it. */
 .dev-vote-pop {
@@ -17010,10 +17075,66 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 .dev-ws-hub-open .dev-ws-filter-dot { margin: 0 2px; }
 /* Your work's "Show N more" turns its caret over once it reads "Show less". */
 .dev-ws-hub-work-more { margin-top: 2px; }
-/* First version (hub-cards.tsx FirstVersionCard): the step as the ring the
-   bot's activity cards lead with, then the card's heading and its 15/13
-   pair, laid across like a door but not one. */
-.dev-ws-hub-first-row { display: flex; align-items: center; gap: 12px; min-width: 0; }
+/* First version (hub-cards.tsx FirstVersionCard, #4045): the project's
+   thumbnail drawn small (sketch-card.tsx ThumbRow: its icon on its colour,
+   its name and one line), with "See the plan" as a quiet link at the row's
+   end for a member, or one button under the row. Open app wears the hero's
+   Open app, in the community's colour, a full row wide. */
+.dev-ws-hub-first-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.dev-ws-hub-first-row > [data-thumb-row] { flex: 1 1 auto; }
+/* The ⋯ menu's settings (actions-row.tsx, #4045): behind one "Settings &
+   rules" row. On desktop the dropdown turns to them in place, on top of
+   the menu's own rows, until its back row or a close turns it back. */
+#dev-plus-menu .dev-plus-settings { display: none; }
+#dev-plus-menu[data-plus-view="settings"] > :not(.dev-plus-settings) { display: none; }
+#dev-plus-menu[data-plus-view="settings"] > .dev-plus-settings { display: block; }
+
+/* The hub's discussion preview with nothing said yet (#4045): one quiet
+   line in the accent that opens the Discussion tab. */
+.dev-ws-hub-say-hi {
+  align-self: flex-start; display: inline-flex; align-items: center; min-height: 44px; padding: 0;
+  border: 0; background: none; cursor: pointer;
+  font: inherit; font-size: 15px; font-weight: 500; color: var(--accent);
+}
+.dev-ws-hub-first-see {
+  flex: none; display: inline-flex; align-items: center; min-height: 44px; padding: 0 2px;
+  border: 0; background: none; cursor: pointer;
+  font: inherit; font-size: 15px; font-weight: 500; white-space: nowrap; color: var(--accent);
+}
+.dev-ws-hub-first .dev-ws-hub-first-open { width: 100%; height: 40px; justify-content: center; font-size: 16px; font-weight: 600; }
+
+/* The plan, for the people who joined (plan-page.tsx, #4074): a page under
+   the Hub. Its head is the disc back to the Hub and Homeroom bot's face and
+   name; then the plan as a card, read only; then who decides, and the way
+   to the Discussion tab. */
+.dev-ws-plan { display: flex; flex-direction: column; gap: 12px; }
+.dev-ws-planhead { display: flex; align-items: center; gap: 10px; min-height: 44px; }
+.dev-ws-plan-bot { width: 30px; height: 30px; border-radius: 8px; flex: none; object-fit: cover; }
+.dev-ws-plan-bot-name { font-size: 17px; font-weight: 650; color: var(--text-primary); }
+.dev-ws-plan-ai { font-size: 12px; font-weight: 600; color: var(--text-muted); }
+.dev-ws-plan-head { display: flex; flex-direction: column; gap: 2px; padding: 4px 4px 0; }
+.dev-ws-plan-title { margin: 0; font-size: 20px; line-height: 26px; font-weight: 700; color: var(--text-primary); }
+.dev-ws-plan-step { margin: 0; font-size: 13px; line-height: 18px; color: var(--text-muted); }
+/* One row per line of the plan, a grouped list's rows: 15px on a 22px line,
+   12px above and below, a hairline between rows from the text's edge. */
+.dev-ws-plan-row {
+  position: relative; padding: 12px 16px;
+  font-size: 15px; line-height: 22px; color: var(--text-primary);
+}
+.dev-ws-plan-row:not(:last-child)::after {
+  content: ''; position: absolute; left: 16px; right: 0; bottom: 0;
+  height: 1px; background: var(--app-sheet-line);
+}
+.dev-ws-plan-q { display: flex; flex-direction: column; gap: 2px; }
+.dev-ws-plan-qq { margin: 0; font-size: 13px; line-height: 18px; color: var(--text-muted); }
+.dev-ws-plan-qa { margin: 0; font-size: 15px; line-height: 22px; color: var(--text-primary); }
+.dev-ws-plan-foot { display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center; }
+.dev-ws-plan-who { margin: 0; font-size: 14px; line-height: 20px; color: var(--text-muted); }
+.dev-ws-plan-talk {
+  display: inline-flex; align-items: center; min-height: 44px; padding: 0 4px;
+  border: 0; background: none; cursor: pointer;
+  font: inherit; font-size: 15px; font-weight: 500; color: var(--accent);
+}
 
 /* ── What landed since you were last here (since-summary-card.tsx) ─────
    The hub's first card: the window as the heading, and at the far end Week
@@ -17869,14 +17990,39 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
 /* ── The hero's rows (community-card.tsx) ──
    Who is here: the faces, then "Public community · 23 members" as one
    phrase, the audience's glyph leading it. Then one row of what you can do:
-   Open app in the community's colour, Invite, the ⋯, and Join or Joined at
-   the far end, outlined, a state rather than an action. */
+   Open app in the community's colour, Invite, the ⋯, and Join at the far
+   end. Leave is a row of the ⋯ (#4045). */
 .dev-ws-hero-audience { display: inline-flex; align-items: center; gap: 4px; vertical-align: -3px; }
 .dev-ws-hero-audience b { font-weight: 650; }
 .dev-ws-hero-audience svg { width: 16px; height: 16px; flex: none; color: var(--text-muted); }
 .dev-ws-hero-row { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 32px; }
 .dev-ws-hero-row > .dev-ws-hero-actions { flex: 1 1 auto; min-width: 0; flex-wrap: wrap; }
 .dev-ws-hero-member { margin-left: auto; flex: none; display: flex; }
+/* #4045: in a project's first week the row leads with its people (the
+   canvas boards Hub and People): up to three faces, or your face between two
+   open seats, then "Private community" with its lock over "3 people", and
+   the actions at the far end. The words give way (an ellipsis) before the
+   buttons do, so it fits at 320px. */
+.dev-ws-hero-week-people { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 10px; }
+.dev-ws-hero-row > .dev-ws-hero-week-people + .dev-ws-hero-actions { flex: none; flex-wrap: nowrap; }
+.dev-ws-hero-week-who { min-width: 0; display: flex; flex-direction: column; }
+.dev-ws-hero-week-who .dev-ws-hero-audience {
+  display: flex; align-items: center; gap: 5px; min-width: 0;
+  font-size: 15px; line-height: 20px; vertical-align: baseline;
+}
+.dev-ws-hero-week-who .dev-ws-hero-audience svg { width: 13px; height: 13px; color: var(--text-primary); }
+.dev-ws-hero-week-who .dev-ws-hero-audience b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dev-ws-hero-week-count { font-size: 13px; line-height: 18px; color: var(--text-muted); white-space: nowrap; }
+/* Open seats around your face: a size up from the faces, overlapping, pale,
+   and not a control. */
+.dev-ws-hero-seats .dev-ws-hero-face { width: 28px; height: 28px; margin-right: -8px; }
+.dev-ws-hero-seats .dev-ws-hero-face:last-child { margin-right: 0; }
+.dev-ws-hero-seats .dev-ws-hero-face:nth-child(2) { z-index: 1; }
+.dev-ws-hero-seat { overflow: hidden; display: flex; align-items: flex-end; justify-content: center; }
+.dev-ws-hero-seat svg { display: block; width: 24px; height: 24px; margin-bottom: -4px; }
+.dark .dev-ws-hero-seat { opacity: .55; }
+/* The app's one line under the week's row. */
+.dev-ws-hero-row + .dev-ws-hero-desc { margin-top: -4px; }
 .dev-ws-open-app {
   display: inline-flex; align-items: center; gap: 6px; flex: none;
   height: 32px; padding: 0 14px;
@@ -17887,11 +18033,6 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
 }
 @media (hover: hover) {
   .dev-ws-open-app:hover { filter: brightness(1.1); }
-}
-.dev-ws-hero .dev-ws-joined {
-  background: transparent;
-  box-shadow: inset 0 0 0 1px var(--app-sheet-line);
-  color: var(--text-muted);
 }
 /* Join's popup hangs from the RIGHT: Join ends the row, so a popup opening
    rightward would leave the screen. The arrow moves with it. */
@@ -17917,7 +18058,6 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
 }
 .dev-ws-invite-from { margin: 0; font-size: 16px; line-height: 21px; font-weight: 650; color: var(--text-primary); }
 .dev-ws-invite-note { margin: 0; font-size: 15px; line-height: 21px; color: var(--text-primary); }
-.dev-ws-invite-seen { margin: 0; text-align: center; font-size: 13px; line-height: 18px; color: var(--text-muted); }
 
 /* ── The hub's discussion preview (hub-cards.tsx) ──
    The channel card's own look, cut to its last two messages with no
@@ -21540,7 +21680,7 @@ html.side-panel-resizing * {
    phone layout, which is the point: the panel is a phone-width column. */
 html.in-side-panel :is(#platform-header, #platform-tabs, #platform-rail-peek,
     #platform-parked, #chromeless-pill, #offline-banner, #mobile-install-banner,
-    #view-as-non-admin-banner, #platform-side-panel) {
+    #view-as-non-admin-banner, #language-notice, #platform-side-panel) {
   display: none !important;
 }
 html.in-side-panel {

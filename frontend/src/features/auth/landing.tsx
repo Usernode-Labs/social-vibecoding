@@ -39,6 +39,7 @@ import { alertVariants } from '@/components/ui/alert';
 import { buttonVariants } from '@/components/ui/button';
 import { ChevronLeftIcon, LockIcon } from '@/components/ui/icons';
 import { Wordmark } from '@/components/ui/wordmark';
+import { cn } from '@/lib/utils';
 
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -60,7 +61,7 @@ import {
   useAuthScreensPatch,
   zoomFx,
 } from './shared';
-import { DeadInvite, InvitePending, inviteTokenFrom, MadeForYou, useInvitePreview } from './invite-card';
+import { DeadInvite, InviteJoinBar, InvitePending, inviteTokenFrom, MadeForYou, useInvitePreview } from './invite-card';
 import { SignInSheet, type SignInProvider, type SignInResume } from './sign-in-sheet';
 import { Story } from './story';
 import { useWaitlistOptions, type WaitlistOptions, waitlistOptions } from './waitlist-shared';
@@ -419,12 +420,17 @@ const LANDING_BACK_CLASS = 'inline-flex items-center justify-center w-7 h-7 roun
  * `flex items-center justify-center` is what an anchor needs and a button
  * gets from the browser; `w-full` comes from `layout: 'full'`.
  */
-const PRIMARY_PILL = `${buttonVariants({
-  layout: 'full',
-  variant: 'pillAccent',
-  size: 'pillLg',
-  ink: 'solidLate',
-})} flex items-center justify-center`;
+const PRIMARY_PILL = cn(
+  buttonVariants({
+    layout: 'full',
+    variant: 'pillAccent',
+    size: 'pillLg',
+    ink: 'solidLate',
+  }),
+  // Weight 650 for the main buttons on the story and its sheets (the C1
+  // boards), where pillLg's own is 600.
+  'flex items-center justify-center font-[650]',
+);
 
 /**
  * The secondary pill, transcribed from `PILL_LINK` in login.tsx — the white
@@ -603,7 +609,7 @@ export function LandingScreen() {
   const { preview: invite, pending: invitePending } = useInvitePreview();
   const madeForYou = !!invite?.live;
   // Which sign-in sheet is up (./sign-in-sheet.tsx): an invite's Join, or
-  // the story's Get started or Sign in.
+  // the story's Make an account or Sign in.
   const [sheet, setSheet] = useState<null | 'join' | 'start' | 'signin'>(null);
   // Back from Apple or Google: where the sheet picks up (./sign-in-sheet.tsx).
   const [resume, setResume] = useState<SignInResume | null>(null);
@@ -628,7 +634,7 @@ export function LandingScreen() {
   const siteUrl = marketingSiteUrl(waitlistPayload);
 
   // THE STORY (./story.tsx), unless the first session's switch is off: what
-  // Homeroom is and "Get started", in place of the waitlist pitch, for a
+  // Homeroom is and "Make an account", in place of the waitlist pitch, for a
   // visitor with no session who did not come by an invite link. It is the
   // default, so it is what this interior's first render draws, before the
   // options say otherwise: the interior mounts on reveal
@@ -661,7 +667,7 @@ export function LandingScreen() {
    * states this screen has left:
    *   anonymous            → the "Join the waitlist" / "Sign in" pills and the
    *                          "Already joined?" line
-   *   waiting-room session → one "Your queue status" pill instead, back to the
+   *   waiting-room session → one "Your spot on the waitlist" pill instead, back to the
    *                          room that can tell them where they stand
    *
    * It does NOT decide the header label: that is `openApp`'s (the app's name
@@ -1240,15 +1246,15 @@ export function LandingScreen() {
             same box either way, and a class string that moved with the state
             would rewrite this element's attribute on every open and close.
             The mark is `h-7` — the content row exactly — takes its width from
-            its own aspect ratio and its ink from this element, which is why
-            it needs no dark variant; `title` gives it the accessible name the
+            its own aspect ratio, and is inked black (white in dark mode) like
+            the logotype everywhere (#4382); `title` gives it the accessible name the
             text branch has for free, so the bar still answers "Homeroom".
         */}
         <h1
           id="landing-header-title"
           className="flex-1 min-w-0 text-lg font-bold pointer-events-none truncate text-center"
         >
-          {openApp ? headerTitle : <Wordmark className="h-7 w-auto inline-block align-middle" title={LANDING_TITLE} />}
+          {openApp ? headerTitle : <Wordmark className="h-7 w-auto inline-block align-middle text-zinc-950 dark:text-white" title={LANDING_TITLE} />}
         </h1>
         {/*
             The trailing 28px, mirroring the lead box so the label sits on the
@@ -1282,7 +1288,9 @@ export function LandingScreen() {
             scroller's own bottom padding is the safe-area inset
             (.platform-safe-scroll REPLACES it), which is zero on a desktop
             or an Android without one, so the last thing on the screen needs
-            air of its own either way.
+            air of its own either way. A live invite's page ends on its pinned
+            Join bar instead (InviteJoinBar, below this scroller), which
+            clears the home indicator itself, so it keeps only `pb-4`.
 
             `flex min-h-full flex-col` is the BOTTOM PIN — board 1 is a flex
             column whose action block sits at the foot of the screen with that
@@ -1328,7 +1336,7 @@ export function LandingScreen() {
             safe-area inset in the scroller's own padding — so the pin cannot
             introduce an overflow of its own.
         */}
-        <div className="max-w-sm md:max-w-lg xl:max-w-2xl mx-auto flex min-h-full flex-col pb-[34px]">
+        <div className={`max-w-sm md:max-w-lg xl:max-w-2xl mx-auto flex min-h-full flex-col ${madeForYou ? 'pb-4' : 'pb-[34px]'}`}>
           {/*
               Offline explanation (#1021). Both ways in from this screen —
               the marketing waitlist page and Sign in — need a connection, so
@@ -1350,14 +1358,15 @@ export function LandingScreen() {
             </button>
           </div>
           {/*
-              AN INVITE LINK'S CARDS (./invite-card.tsx): who made it, the
-              project itself, the note and the way in. Only on
+              AN INVITE LINK'S CARDS (./invite-card.tsx): the project and who
+              invited you, its picture and the note. The way in is pinned
+              below this scroller (InviteJoinBar). Only on
               /invite/<token>, with a placeholder in their place until its
               preview is back — nothing here on any other visit. A dead link
               says why, above the pitch.
           */}
           {invitePending && !invite ? <InvitePending /> : null}
-          {madeForYou ? <MadeForYou preview={invite!} primaryClass={PRIMARY_PILL} onJoin={() => setSheet('join')} /> : null}
+          {madeForYou ? <MadeForYou preview={invite!} /> : null}
           {invite && !invite.live ? <DeadInvite preview={invite} /> : null}
           {/*
               DECORATIVE, so `alt` is empty: everything it says is said again
@@ -1496,7 +1505,7 @@ export function LandingScreen() {
               Come build the next version with us.
             </h1>
             <p className="mt-2.5 text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400 text-pretty">
-              Access opens in batches, and we'll email you when your spot is ready.
+              We're letting people in a few at a time, and we'll email you when your spot is ready.
             </p>
             {/*
                 THE WAY OUT TO THE LONG VERSION. One sentence is the right
@@ -1688,7 +1697,7 @@ export function LandingScreen() {
                 className={hiddenLast(!session, PRIMARY_PILL)}
                 onClick={onLeaveCta}
               >
-                Your queue status
+                Your spot on the waitlist
               </a>
             </div>
           </div>
@@ -1697,6 +1706,15 @@ export function LandingScreen() {
           ) : null}
         </div>
       </div>
+      {/*
+          A live invite's Join, pinned to the foot of the screen (#4203): the
+          column's next child after the scroller, so the scroller ends above
+          it and nothing on the page can sit under it. Not while an app is
+          open in the viewer, which takes the scroller's place.
+      */}
+      {madeForYou && !openApp ? (
+        <InviteJoinBar preview={invite!} primaryClass={PRIMARY_PILL} onJoin={() => setSheet('join')} />
+      ) : null}
       <ViewerRegion />
       {/*
           The sign-in sheet "Made for you"'s Join opens (./sign-in-sheet.tsx).
@@ -1707,11 +1725,6 @@ export function LandingScreen() {
         <SignInSheet
           open={sheet === 'join'}
           title={`Join ${invite!.project!.name}`}
-          intro={phoneSignIn
-            ? ''
-            : providers.length
-              ? 'Sign in or make an account. It takes a minute.'
-              : 'Sign in or make an account with your email. It takes a minute.'}
           followInvite
           providers={providers}
           native={nativeSignIn}
@@ -1728,9 +1741,6 @@ export function LandingScreen() {
         <SignInSheet
           open={sheet === 'start' || sheet === 'signin'}
           title={sheet === 'signin' ? 'Sign in' : 'Make your account'}
-          intro={sheet === 'signin'
-            ? (providers.length ? 'Welcome back.' : 'Welcome back. We\'ll email you a code.')
-            : (providers.length ? 'It takes a minute.' : 'With your email. It takes a minute.')}
           providers={providers}
           native={nativeSignIn}
           from={sheet === 'signin' ? 'signin' : 'story'}

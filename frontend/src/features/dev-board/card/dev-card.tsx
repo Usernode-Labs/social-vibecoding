@@ -57,7 +57,7 @@ import { useStoreState } from '../../../lib/use-store-state';
 import { clampPopoverHeight, placeUnderAnchor } from '../../../lib/anchor-popover';
 import { anchorRectOf, useAnchoredDismiss } from '../../../lib/popover-dismiss';
 import { cardTintClass } from '../../home/panels/ui';
-import { aiEnabledStore, cardNowStore } from './cards-store';
+import { aiEnabledStore, cardNowStore, voteSendingStore } from './cards-store';
 import type {
   ActionRef,
   ActionSpec,
@@ -85,6 +85,9 @@ function call(ref: ActionRef | undefined, node?: HTMLElement): void {
   if (node) args.push(node);
   fn.apply(av, args);
 }
+
+// Exported for the tests, which render VoteButton against the same instance.
+export { voteSendingStore };
 
 /**
  * `AppView.voteFillWidths`, transcribed (see the header): how wide each
@@ -530,6 +533,11 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
   // votes on does. Anything else demoted into this button (there is nothing
   // today) keeps the plain panel and the spec's own call.
   const isVote = yes.act?.fn === 'castVote' || yes.act?.fn === 'castIssueVote';
+  // #3984: this vote on its way (cards-store.ts voteSendingStore), from this
+  // button or any other surface: the card, the change's page, a notification.
+  const sendKey = `${yes.act?.fn}:${String(yes.act?.args?.[0] ?? '')}`;
+  const sendingAll = useStoreState(voteSendingStore);
+  const sending = isVote ? (sendingAll[sendKey] || null) : null;
   const startSide = (): 'yes' | 'no' => (mine === 'no' ? 'no' : 'yes');
   const shut = () => {
     setOpen(false);
@@ -548,10 +556,13 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
   // null sends none without asking. Slots the model left out are filled in
   // so the options bag always lands LAST — which is why the count is read
   // per function (VOTE_ARITY) rather than fixed at castVote's three.
+  //
+  // #3984: a vote already on its way is not sent again.
   const send = (a: ActionSpec, reason: string | null) => {
     shut();
     if (!a.act) return;
     if (!isVote) { call(a.act); return; }
+    if (voteSendingStore.get()[sendKey]) return;
     const args = [...(a.act.args || [])];
     const positional = VOTE_ARITY[a.act.fn] ?? 3;
     while (args.length < positional) args.push(null);
@@ -588,6 +599,7 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
   };
   const toggle = (e: MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
+    if (sending) return;
     if (open || sheetRef.current) { shut(); return; }
     setSide(startSide());
     setLine('');
@@ -750,14 +762,19 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
         data-vote-btn={faceKey}
         aria-haspopup="dialog"
         aria-expanded={open || !!sheetEl ? 'true' : undefined}
-        title={title}
-        disabled={disabled || approved}
+        title={sending ? 'Sending your vote.' : title}
+        aria-busy={sending ? 'true' : undefined}
+        disabled={disabled || approved || !!sending}
         onClick={toggle}
       >
-        {mine === 'yes' ? <CheckIcon aria-hidden="true" /> : null}
-        {mine === 'no' ? <XIcon aria-hidden="true" /> : null}
-        {face}
-        {approved ? null : <ChevronDownIcon className="dev-vote-caret" aria-hidden="true" />}
+        {sending ? 'Sending…' : (
+          <>
+            {mine === 'yes' ? <CheckIcon aria-hidden="true" /> : null}
+            {mine === 'no' ? <XIcon aria-hidden="true" /> : null}
+            {face}
+            {approved ? null : <ChevronDownIcon className="dev-vote-caret" aria-hidden="true" />}
+          </>
+        )}
       </button>
       {popover}
       {sheet}
@@ -779,6 +796,10 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
  * either way, its line included. `approve` (#3977) is a solo change whose
  * Yes is the one it needs: the header is "Your approval", the halves and the
  * button read "Approve" / "Don't approve", and neither half carries a tally.
+ * Its Yes line is a note too, whatever `solo` says (#4346): an approval is
+ * only ever asked on a project that is just yours, and a caller's `solo` can
+ * lag (the Needs you sheet reads it from a community lookup that may not have
+ * landed, and the staging demo's Just you project reads as public).
  * Exported for the tests that render it directly; the state lives in
  * `VoteButton`.
  */
@@ -850,7 +871,7 @@ export function VotePicker({
         <div className="dev-vote-reason" data-vote-reason={side}>
           <label className="dev-vote-reason-label" htmlFor={reasonId}>
             {yesOn
-              ? (solo ? 'Add a note, if you like.' : 'Add a line for the group, if you like.')
+              ? (solo || approve ? 'Add a note, if you like.' : 'Add a line for the group, if you like.')
               : 'What’s not working for you? One line is plenty.'}
           </label>
           <textarea

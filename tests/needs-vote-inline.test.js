@@ -79,6 +79,19 @@ test('the sheet sends its line with the vote, so castVote does not ask again', (
   assert.match(WORKSHOP, /\(k === 'n' \|\| k === 'N'\) && sheet === 'vote'\) \{ setVoteSide\('no'\); return; \}/);
 });
 
+// An approval row (a change on a project that is just yours) asks for a note
+// from the row itself, before the community read has landed and on the
+// staging demo's Just you card, whose project reads as public.
+test('an approval row\'s Yes line is a note before any community read; a group row keeps its line', () => {
+  const approval = reelRows([{ ...item, approve: true }])[0];
+  assert.equal(approval.yes.approve, true, 'the reel marks the row an approval');
+  const yes = form({ row: approval });
+  assert.match(yes, /<label class="dev-vote-reason-label" for="dev-ws-vote-reason-needs-proposal-42">Add a note, if you like\.<\/label>/);
+  assert.doesNotMatch(yes, /for the group/);
+  assert.match(form({ row: approval, side: 'no' }), /What’s not working for you\? One line is plenty\./, 'No is unchanged');
+  assert.match(form(), /Add a line for the group, if you like\./, 'a group row keeps its wording');
+});
+
 // #22: on a project that is just yours, the Yes line is a note: "for the
 // group" spoke to a group a solo project does not have. The form reads who
 // the row's project is for from the hub's shared community read

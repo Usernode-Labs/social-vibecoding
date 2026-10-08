@@ -152,6 +152,10 @@ COPY claude-openrouter-request.js /usr/local/bin/claude-openrouter-request.js
 # run-cc.sh asks it whether a Homeroom bot turn failed although claude
 # exited 0 (DISCARD_FAILED_TURN); the platform reads the same definition.
 COPY agent-api-failure.js /usr/local/bin/agent-api-failure.js
+# The Homeroom bot's build turns (STOP_GUARD=1): run-cc.sh installs it as a
+# Claude Code Stop hook that sends the agent back to work when it tries to end
+# a turn that has changed nothing.
+COPY build-stop-hook.js /usr/local/bin/build-stop-hook.js
 COPY shots-mcp.js /usr/local/bin/shots-mcp.js
 COPY visible-changes-mcp.js /usr/local/bin/visible-changes-mcp.js
 COPY shots-origin-proxy.js /usr/local/bin/shots-origin-proxy.js

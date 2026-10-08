@@ -27,11 +27,20 @@
 // Turning the feature on fleet-wide therefore never blocks an app on a
 // suite that was already broken before the feature existed.
 //
-// Failure phases. A clone/install failure is reported with a "suite setup
-// failed" prefix but still fails the row — a PR that breaks `npm ci` (bad
-// package.json, broken lockfile) must not merge just because the suite
-// never got to run. Operators can re-run checks from the proposal card if
-// the cause was a transient registry hiccup.
+// Failure phases. A suite that never reached `npm test` has no verdict to
+// give: its Job or input Secret could not be created (the worker
+// namespace's quota on 7 Oct 2026, a refusal from the API, an API that
+// could not be reached), or its pod stopped while cloning or installing
+// (proposal 7022: "BackoffLimitExceeded" with no test output). That row is
+// marked `couldNotRun` and names the cause in plain words (notRunOutcome
+// below), never records a failure in check history, and, when the suite is
+// merge-blocking, makes the run an 'error' (visuals.classifyTests): the
+// merge stays blocked and the error lane runs the checks again with
+// backoff. A PR that breaks `npm ci` itself (a version nothing satisfies,
+// a lockfile out of sync, an install script that fails) is still its own
+// failure: npm's error code says so (INSTALL_FAILURES), and the row is a
+// failing one, worded the same way and recorded in history. A suite that
+// ran and failed tests keeps its 'failing' verdict, exactly as before.
 
 'use strict';
 
@@ -349,7 +358,9 @@ function testsReported(lines) {
 // failure leads, in words main-watch.js matches on. Setup failure is said
 // only when no test reported (#4265): a red suite whose log lost the
 // sentinel is a red suite, and a summary that counts failures the output
-// does not name says so ahead of the tail.
+// does not name says so ahead of the tail. A run notRunOutcome (below)
+// places as never having reached `npm test` takes its reason from there
+// instead; what is left here is output it could not place.
 function failureDetailFromLines(lines, { timedOut = false } = {}) {
   const parts = [];
   if (timedOut) {
@@ -393,6 +404,292 @@ function failureOutcomeParts(stdout, stderr, { timedOut = false } = {}) {
     reason: failureDetailFromLines(lines, { timedOut }),
     ...unitFailureDetails(lines),
   };
+}
+
+// ── A suite that never ran ─────────────────────────────────────────────
+//
+// On 7 Oct 2026 the worker namespace hit its quota, and the unit suite's
+// Secret or Job create was refused ("exceeded quota: … requested:
+// secrets=1", "count/jobs.batch=1"). The refusal carried no output, so the
+// row read "Suite setup failed (clone / npm ci), so the tests never ran.",
+// the quota message was lost, and a merge-blocking suite made the run
+// 'failing': the proposal's fault, never retried, written to its check
+// history. Proposal 7022 reached the same row from a pod that ended with
+// "BackoffLimitExceeded: Error" and no output at all.
+//
+// The line between "never ran" and "ran and failed" is drawn on evidence,
+// and only one way: anything that says `npm test` started keeps the
+// verdict the exit code gave. That is the setup sentinel, one TAP test
+// line or a summary counter above zero in the output (#4265), or the same
+// seen on the live stream while the run went (`reachedTests`). What counts
+// as never ran:
+//
+//   * the runner never got the suite going: a Job or Secret create the API
+//     refused or never answered (kubernetes.runCheckJob marks those
+//     `checkJobNotCreated`), any other API failure before the Job ended, or
+//     a Docker container whose script never printed its first line;
+//   * the pod started and stopped in setup: the output opens with the
+//     script's workspace line and never reaches the setup sentinel. The
+//     clone, running out of time or memory, and an install npm says the
+//     network, registry or disk failed are the platform's; an install
+//     that failed on the proposal's own package files is the proposal's
+//     (INSTALL_FAILURES below), a failing row worded the same way;
+//   * the Job ended and its log held nothing at all.
+//
+// Output this cannot place, such as a log that lost its start and holds no
+// test line, keeps the failing verdict it had before.
+
+const NOT_RUN_LEAD = Object.freeze({
+  start: 'The unit suite could not start',
+  run: 'The unit suite could not run',
+  setup: 'The unit suite stopped before any test ran',
+});
+// The card caps check_error_detail at 280 characters, and so does this.
+const NOT_RUN_DETAIL_MAX = 280;
+const NOT_RUN_RAW_MAX = 400;
+const UNREACHABLE_CODES = new Set([
+  'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN', 'EHOSTUNREACH',
+  'ENETUNREACH', 'EPIPE', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_SOCKET',
+]);
+const UNREACHABLE_RE = /\b(?:ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|EHOSTUNREACH|ENETUNREACH)\b|socket hang up|fetch failed/i;
+
+// One line of free text as it may be stored: secrets scrubbed the way the
+// check logs scrub them, whitespace folded, `|` kept out (the row's reason
+// uses ` | ` between its parts), and clipped.
+function plainText(value, max) {
+  const text = redactString(String(value == null ? '' : value))
+    .replace(/([?&](?:token|jwt|auth|key)=)[^&\s]+/gi, '$1****')
+    .replace(/\|/g, '/')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return clipChars(text, max);
+}
+
+// The HTTP status a Kubernetes API error carries, or null.
+function httpStatusOf(err) {
+  const code = err?.code ?? err?.statusCode ?? err?.response?.statusCode ?? err?.response?.status;
+  return Number.isInteger(code) && code >= 100 && code <= 599 ? code : null;
+}
+
+// What the API server said, from its Status body. @kubernetes/client-node
+// 1.x throws `HTTP-Code: 403\nMessage: …\nBody: "{…}"\nHeaders: {…}`, with
+// the Status JSON encoded once more inside the message, and keeps the body
+// on `err.body`.
+function apiStatusMessage(err) {
+  const candidates = [err?.body];
+  const inMessage = /\nBody: ([\s\S]*?)(?:\nHeaders: |$)/.exec(String(err?.message || ''));
+  if (inMessage) candidates.push(inMessage[1]);
+  for (let c of candidates) {
+    for (let i = 0; i < 2 && typeof c === 'string'; i += 1) {
+      try { c = JSON.parse(c); } catch { break; }
+    }
+    if (c && typeof c === 'object' && typeof c.message === 'string' && c.message.trim()) return c.message;
+  }
+  return null;
+}
+
+function unreachable(err) {
+  return UNREACHABLE_CODES.has(err?.code) || UNREACHABLE_CODES.has(err?.cause?.code)
+    || UNREACHABLE_RE.test(String(err?.message || ''));
+}
+
+// The runner's own words: the API's Status message when there is one,
+// else the error's first line.
+function runnerRaw(err, max = NOT_RUN_RAW_MAX) {
+  const status = apiStatusMessage(err);
+  if (status) return plainText(status, max);
+  const message = typeof err === 'string' ? err : (typeof err?.message === 'string' ? err.message : '');
+  const lines = message.split('\n').map((l) => l.trim()).filter(Boolean);
+  // The client's wrapper with no Status body: its `Message:` line is the
+  // part worth keeping.
+  const http = /^HTTP-Code: (\d+)$/.exec(lines[0] || '');
+  if (http) {
+    const said = (lines.find((l) => l.startsWith('Message: ')) || '').slice('Message: '.length);
+    return plainText(`HTTP ${http[1]}${said ? `: ${said}` : ''}`, max);
+  }
+  return plainText(lines[0] || '', max);
+}
+
+// Why a runner-level error stopped the suite, in plain words. `creating`:
+// the error is a create the API refused or never answered.
+function runnerCause(err, { creating = false } = {}) {
+  const said = `${apiStatusMessage(err) || ''}\n${String(err?.message || '')}`;
+  if (/exceeded quota/i.test(said)) return 'the cluster\'s job quota was full';
+  if (unreachable(err)) return 'the cluster could not be reached';
+  const status = httpStatusOf(err);
+  if (creating && status === 403) return 'the cluster refused to create its job';
+  if (creating && status === 409) return 'a job with the same name was already there';
+  if (status) return `the cluster answered with an error (HTTP ${status})`;
+  const words = runnerRaw(err, 120);
+  const failed = creating ? 'its runner failed before the suite began' : 'its runner failed';
+  return words ? `${failed} (${words})` : failed;
+}
+
+// A `docker run` that failed before the container ran anything: the CLI's
+// own exit codes (125 the daemon, 126/127 the command), a missing binary,
+// or the daemon's words on stderr.
+function dockerNeverStarted(err, stderr) {
+  return [125, 126, 127, 'ENOENT'].includes(err?.code)
+    || /^docker: |Error response from daemon|Cannot connect to the Docker daemon/m.test(String(stderr || ''));
+}
+
+// ── Why an install failed: the proposal's or the platform's ──────────────
+//
+// A pod that stopped while installing its dependencies stopped for one of
+// two kinds of reason, and npm's own output says which. This list is the
+// one place that decides; extend it here.
+//
+//   'proposal'  the change's own package.json or lockfile: a version
+//               nothing satisfies, a package that does not exist, a tree
+//               that does not resolve, a file that does not parse, an
+//               engine it refuses, a lockfile out of sync, an install
+//               script that exits non-zero. Running it again fails again,
+//               so the run is 'failing' with history, as for any red suite.
+//   'platform'  the network, the registry, the disk or the machine.
+//               Running it again is the fix: 'error', retried.
+//
+// The last `npm error code X` line decides when one is listed (`code`);
+// otherwise the first entry whose `text` matches the output, in order. A
+// lifecycle script's failure prints a numeric code (`npm error code 1`), so
+// it is matched by its text. Running out of time or memory and a failed
+// clone are the platform's before this list is read (notRunOutcome).
+// Output that matches nothing is taken as the platform's, and its last line
+// is logged ("Unrecognised install failure") so the list can grow.
+const INSTALL_FAILURES = Object.freeze([
+  { fault: 'proposal', code: /^(?:ETARGET|E404|ERESOLVE|EJSONPARSE|EBADENGINE|EINTEGRITY|ENOVERSIONS|EUSAGE|ELIFECYCLE)$/ },
+  { fault: 'platform', code: /^(?:ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|ECONNREFUSED|ENETUNREACH|EHOSTUNREACH|ESOCKETTIMEDOUT)$/,
+    why: 'the package registry could not be reached' },
+  { fault: 'platform', code: /^(?:E429|E5\d\d)$/, why: 'the package registry answered with an error' },
+  { fault: 'platform', code: /^ENOSPC$/, why: 'the machine ran out of disk space' },
+  { fault: 'platform', code: /^ENOMEM$/, why: 'the machine ran out of memory' },
+  { fault: 'proposal', text: /can only install packages when your package\.json and package-lock\.json (?:or npm-shrinkwrap\.json )?are in sync/i,
+    why: 'its package.json and package-lock.json are out of sync' },
+  { fault: 'proposal', text: /\b404 Not Found - GET\b/, why: 'a package it names does not exist' },
+  { fault: 'proposal', text: /^npm (?:error|ERR!) command failed\b/m, why: 'an install script exited with an error' },
+  { fault: 'platform', text: /\b(?:ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|ECONNREFUSED)\b|socket hang up/i,
+    why: 'the package registry could not be reached' },
+  { fault: 'platform', text: /\bENOSPC\b|no space left on device/i, why: 'the machine ran out of disk space' },
+  { fault: 'platform', text: /JavaScript heap out of memory|\bENOMEM\b|^Killed$/m, why: 'the machine ran out of memory' },
+]);
+
+// Whose fault a failed install was, from its output: `{ fault, code, why }`,
+// or `{ fault: 'platform', unrecognised: true }` when nothing listed matches.
+function installFault(text) {
+  const out = String(text || '');
+  let code = null;
+  for (const m of out.matchAll(/^\s*npm (?:error|ERR!) code (\S+)\s*$/gm)) code = m[1];
+  const byCode = code && INSTALL_FAILURES.find((f) => f.code && f.code.test(code));
+  if (byCode) return { fault: byCode.fault, code, why: byCode.why || null };
+  const byText = INSTALL_FAILURES.find((f) => f.text && f.text.test(out));
+  if (byText) return { fault: byText.fault, code: null, why: byText.why };
+  return { fault: 'platform', code: null, why: null, unrecognised: true };
+}
+
+// The cause clause for a failed install.
+function installCause({ fault, code, why }) {
+  const said = code ? `npm error code ${code}` : '';
+  if (fault === 'proposal') return `installing its dependencies failed (${said || why})`;
+  if (why) return `installing its dependencies failed: ${why}${said ? ` (${said})` : ''}`;
+  return 'installing its dependencies failed';
+}
+
+// The output lines worth showing, newest last: the script's own markers
+// and blank lines dropped.
+function outputLines(text) {
+  return String(text || '').split('\n').map((l) => l.trim())
+    .filter((l) => l && !/^__UNIT_SUITE_[A-Z_]+__(=|$)/.test(l));
+}
+
+// The sentence for check_error_detail: the lead, the cause and, when the
+// run printed something, its last line, within NOT_RUN_DETAIL_MAX.
+function notRunSentence(lead, cause, lastLine = '') {
+  const base = `${lead}: ${cause}.`;
+  if (!lastLine) return clipChars(base, NOT_RUN_DETAIL_MAX);
+  const room = NOT_RUN_DETAIL_MAX - base.length - ' Last output: '.length;
+  return room > 20 ? `${base} Last output: ${clipChars(lastLine, room)}` : clipChars(base, NOT_RUN_DETAIL_MAX);
+}
+
+// Did this run never reach `npm test`? Returns `{ detail, reason }` when it
+// did not (detail: the plain sentence for check_error_detail; reason: the
+// row's failureReason, the sentence and then the runner's or the output's
+// own words), or null when the run's verdict stands. One case in between:
+// an install that failed on the proposal's own package files
+// (INSTALL_FAILURES) also never reached `npm test`, but it is the
+// proposal's failure, so it comes back with `ownFailure: true`, for a
+// failing row worded the same way. `unrecognised` carries an install
+// failure's last line when INSTALL_FAILURES did not know it, for the log.
+// `error` is what the runner threw (null on the harvest path, which reads a
+// finished Job); `exitCode` the container's own, when known;
+// `runtime` is 'kubernetes' or 'docker'. On Kubernetes `stdout` is the pod
+// log (both streams) and `stderr` the Job's own failure reason; on Docker
+// they are the container's two streams.
+function notRunOutcome({
+  stdout = '', stderr = '', error = null, timedOut = false, runtime = 'kubernetes', reachedTests = false,
+  exitCode = error?.code,
+} = {}) {
+  if (reachedTests) return null;
+  const out = String(stdout || '');
+  const errText = String(stderr || '');
+  const all = `${out}\n${errText}`;
+  if (all.includes(SETUP_DONE_SENTINEL) || testsReported(all.split('\n'))) return null;
+
+  const docker = runtime === 'docker';
+  const shown = outputLines(docker ? `${out}\n${errText}` : out);
+  const jobReason = docker ? '' : plainText(errText, NOT_RUN_RAW_MAX);
+  const raw = (parts) => parts.filter(Boolean).join(' | ');
+  const build = (lead, cause, rawText, lastLine = '') => {
+    const detail = notRunSentence(lead, cause, lastLine ? plainText(lastLine, NOT_RUN_DETAIL_MAX) : '');
+    // The runner's own words follow the sentence, unless the sentence
+    // already quotes them whole.
+    const extra = rawText && !detail.includes(rawText) ? ` | ${rawText}` : '';
+    return { detail, reason: clipChars(`${detail}${extra}`, FAILURE_DETAIL_MAX) };
+  };
+
+  // The runner never got the suite going (a refused or unanswered create),
+  // or failed before the Job ended (a configuration it refused, an API it
+  // lost). Neither is a verdict on the code.
+  if (error && !docker && !error.captureJobTerminated && !error.killed) {
+    const creating = error.checkJobNotCreated === true;
+    return build(creating ? NOT_RUN_LEAD.start : NOT_RUN_LEAD.run,
+      runnerCause(error, { creating }), runnerRaw(error));
+  }
+  if (docker && !out.trim() && (!error || dockerNeverStarted(error, errText) || !errText.trim())) {
+    const said = outputLines(errText).slice(-MAX_TAIL_LINES).map((l) => plainText(l, NOT_RUN_RAW_MAX));
+    return build(NOT_RUN_LEAD.start, 'Docker could not run its container',
+      raw(said.length ? said : [error ? runnerRaw(error) : '']));
+  }
+
+  // Killed for memory: Kubernetes says OOMKilled; Docker and a bare exit
+  // say 137 (SIGKILL).
+  const oom = /OOMKilled/.test(errText) || exitCode === 137;
+  const outLines = out.split('\n').map((l) => l.trim());
+  // The pod or container ran the script and stopped in setup.
+  if (outLines.some((l) => l.startsWith(`${ROOT_SENTINEL}=`))) {
+    const cloned = outLines.includes(CLONED_SENTINEL);
+    const step = cloned ? 'installing its dependencies' : 'cloning the repository';
+    const tail = shown.slice(-MAX_TAIL_LINES).map((l) => plainText(l, NOT_RUN_RAW_MAX));
+    const lastLine = shown[shown.length - 1] || '';
+    // Time, memory and the clone are the platform's; a failed install is
+    // whoever npm's output says it is.
+    if (oom || timedOut || !cloned) {
+      const cause = oom ? `it ran out of memory while ${step}`
+        : timedOut ? `${step} did not finish in ${Math.round(UNIT_SUITE_TIMEOUT_MS / 1000)}s`
+          : 'the repository could not be cloned';
+      return build(NOT_RUN_LEAD.setup, cause, raw([...tail, jobReason]), lastLine);
+    }
+    const fault = installFault(shown.join('\n'));
+    const outcome = build(NOT_RUN_LEAD.setup, installCause(fault), raw([...tail, jobReason]), lastLine);
+    if (fault.fault === 'proposal') return { ...outcome, ownFailure: true };
+    return fault.unrecognised ? { ...outcome, unrecognised: plainText(lastLine, NOT_RUN_RAW_MAX) } : outcome;
+  }
+  // The Job ended and its log held nothing at all.
+  if (!docker && !out.trim()) {
+    const cause = oom ? 'its job ran out of memory without printing anything'
+      : timedOut ? 'its job ran out of time without printing anything'
+        : 'its job ended without printing anything';
+    return build(NOT_RUN_LEAD.setup, cause, raw([jobReason, error ? runnerRaw(error) : '']));
+  }
+  return null;
 }
 
 // The container script. Fetches the exact ref the rest of the checks run
@@ -495,7 +792,18 @@ function makeUnitSuiteTracker(expected = null) {
       }
       return false;
     },
-    finish(exitOk) { phase = 'done'; this.exitOk = !!exitOk; return this.snapshot(); },
+    // `notRun`: the suite never reached `npm test` (notRunOutcome), so the
+    // card can say it could not run rather than that it finished red.
+    finish(exitOk, { notRun = false } = {}) {
+      phase = 'done';
+      this.exitOk = !!exitOk;
+      this.notRun = !exitOk && !!notRun;
+      return this.snapshot();
+    },
+    // Has the run reached `npm test`? The setup sentinel or a test line
+    // seen on the stream says so even when the final log comes back without
+    // either.
+    reachedTests() { return phase === 'running'; },
     snapshot() {
       const s = summary;
       // The summary's `pass` excludes skipped/todo, and `tests` counts both
@@ -510,6 +818,7 @@ function makeUnitSuiteTracker(expected = null) {
         expected: s && Number.isInteger(s.tests) ? s.tests : total,
         done: phase === 'done',
         ...(phase === 'done' ? { exitOk: !!this.exitOk } : {}),
+        ...(phase === 'done' && this.notRun ? { notRun: true } : {}),
         ...(s ? { summary: { ...s } } : {}),
         updatedAt: new Date().toISOString(),
       };
@@ -544,6 +853,29 @@ async function storeExpectedTests(pool, appId, total) {
     log.warn('unit-suite', 'Expected-tests store failed', { appId, err: err.message });
     return false;
   }
+}
+
+// A failed run, read once for both paths (the live run below and the
+// harvest's outcomeFromLog): a suite that never ran (`notRun`, an 'error'
+// when it is merge-blocking), an install that failed on the proposal's own
+// package files (`setupFailed`: a red suite, worded as notRunOutcome words
+// it), or a suite that ran and failed (the grouped reason and the per-test
+// excerpts). An install failure INSTALL_FAILURES does not know is logged
+// with its last line, so the list can grow.
+function readFailure({
+  sessionId = null, stdout, stderr, error = null, timedOut = false, runtime, reachedTests = false,
+  exitCode = undefined, fallback,
+}) {
+  const setup = notRunOutcome({ stdout, stderr, error, timedOut, runtime, reachedTests, exitCode });
+  if (setup?.unrecognised) {
+    log.warn('unit-suite', 'Unrecognised install failure, read as the platform\'s', {
+      sessionId, lastLine: setup.unrecognised,
+    });
+  }
+  if (setup?.ownFailure) return { reason: setup.reason, unitDetails: null, notRun: null, setupFailed: true };
+  if (setup) return { reason: setup.reason, unitDetails: null, notRun: setup, setupFailed: false };
+  const parts = failureOutcomeParts(stdout, stderr, { timedOut });
+  return { reason: parts.reason || fallback, unitDetails: parts, notRun: null, setupFailed: false };
 }
 
 // Run the proposal repo's unit suite and shape the outcome as one
@@ -595,9 +927,12 @@ async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, re
     }
   };
   const startedAt = Date.now();
+  const runtime = config?.workerRuntime === 'kubernetes' ? 'kubernetes' : 'docker';
   let passed = false;
   let reason = '';
   let unitDetails = null;
+  let notRun = null;
+  let setupFailed = false;
   try {
     const cloneUrl = await github.getCloneUrl(repoOwner, repoName);
     const options = {
@@ -618,7 +953,7 @@ async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, re
       timeoutMs: UNIT_SUITE_TIMEOUT_MS,
       maxBuffer: UNIT_SUITE_MAX_BUFFER,
     };
-    const result = config?.workerRuntime === 'kubernetes'
+    const result = runtime === 'kubernetes'
       ? await kubernetes.runUnitSuiteJob(config, { sessionId, ...options })
       : await docker.runOneShot(`usernode-unit-suite-${sessionId}`, options);
     readSummary(result?.stdout);
@@ -627,21 +962,23 @@ async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, re
     if (signal?.aborted) throw signal.reason;
     readSummary(err.stdout);
     const timedOut = err.killed === true || err.signal === 'SIGTERM' || err.signal === 'SIGKILL';
-    const parts = failureOutcomeParts(err.stdout, err.stderr, { timedOut });
-    reason = parts.reason;
-    unitDetails = parts;
-    if (!reason) reason = String(err.message || 'npm test failed').slice(0, FAILURE_DETAIL_MAX);
+    ({ reason, unitDetails, notRun, setupFailed } = readFailure({
+      sessionId, stdout: err.stdout, stderr: err.stderr, error: err, timedOut, runtime,
+      reachedTests: tracker.reachedTests(),
+      fallback: String(err.message || 'npm test failed').slice(0, FAILURE_DETAIL_MAX),
+    }));
   }
-  const finalSnap = tracker.finish(passed);
+  const finalSnap = tracker.finish(passed, { notRun: !!(notRun || setupFailed) });
   report(finalSnap);
   const summary = finalSnap.summary || null;
   if (summary && Number.isInteger(summary.tests)) await storeExpectedTests(pool, appId, summary.tests);
-  log.info('unit-suite', 'Unit suite finished', {
+  log.info('unit-suite', notRun ? 'Unit suite could not run' : 'Unit suite finished', {
     sessionId, repo: `${repoOwner}/${repoName}`, ref, passed, graduated,
     durationMs: Date.now() - startedAt, tests: summary ? summary.tests : undefined,
+    ...(notRun ? { reason: notRun.reason } : {}),
   });
 
-  return shapeOutcome({ passed, reason, graduated, summary, unitDetails });
+  return shapeOutcome({ passed, reason, graduated, summary, unitDetails, notRun, setupFailed });
 }
 
 // Did a proposal's stored checks (chat_sessions.test_results) include a
@@ -663,9 +1000,24 @@ function passedIn(testResults) {
 // The unit-suite check as the checks pipeline consumes it: one extraRows
 // entry plus its check-history record. Shared by the live run above and the
 // harvest path below so the two can never drift in shape.
-function shapeOutcome({ passed, reason, graduated, summary, unitDetails = null }) {
+//
+// A suite that never ran (`notRun`, from notRunOutcome) keeps the row, so
+// the card and the connector can say why, but marks it `couldNotRun` and
+// records no history: it observed nothing about the code, so it neither
+// graduates the check nor stamps a failure on it. `notRun` rides on the
+// outcome as the plain sentence the run's check_error_detail takes when
+// this suite is merge-blocking (visuals.classifyTests makes that run an
+// 'error').
+//
+// An install that failed on the proposal's own package files
+// (`setupFailed`) is a red suite like any other: failing, recorded in
+// history. Its row is marked `setupFailed` so main-watch, which never paused
+// merges for a suite that could not get going, still reads it as 'error'.
+function shapeOutcome({ passed, reason, graduated, summary, unitDetails = null, notRun = null, setupFailed = false }) {
   const checkKey = appManifest.checkKey(UNIT_CHECK_NAME, UNIT_CHECK_PATH);
-  const details = unitDetails && Array.isArray(unitDetails.details) ? unitDetails.details : [];
+  const neverRan = !passed && !!notRun;
+  const ownSetup = !passed && !neverRan && !!setupFailed;
+  const details = !neverRan && unitDetails && Array.isArray(unitDetails.details) ? unitDetails.details : [];
   return {
     row: {
       index: UNIT_CHECK_INDEX,
@@ -673,6 +1025,8 @@ function shapeOutcome({ passed, reason, graduated, summary, unitDetails = null }
       path: UNIT_CHECK_PATH,
       status: passed ? 'pass' : 'fail',
       advisory: passed ? false : !graduated,
+      ...(neverRan ? { couldNotRun: true } : {}),
+      ...(ownSetup ? { setupFailed: true } : {}),
       consoleErrors: [],
       failureReason: passed ? '' : reason,
       // The TAP summary block, when the runner printed one: the size of the
@@ -684,7 +1038,8 @@ function shapeOutcome({ passed, reason, graduated, summary, unitDetails = null }
       ...(details.length ? { failureDetails: details } : {}),
       ...(details.length && unitDetails.truncated ? { failureDetailsTruncated: true } : {}),
     },
-    history: { checkKey, name: UNIT_CHECK_NAME, path: UNIT_CHECK_PATH, passed },
+    history: neverRan ? null : { checkKey, name: UNIT_CHECK_NAME, path: UNIT_CHECK_PATH, passed },
+    ...(neverRan ? { notRun: notRun.detail } : {}),
   };
 }
 
@@ -696,7 +1051,7 @@ function shapeOutcome({ passed, reason, graduated, summary, unitDetails = null }
 // Job was still running passes its `tracker`; the summary counters are
 // re-fed regardless, which is idempotent (they replace, never add).
 async function outcomeFromLog({
-  pool, appId, sessionId, succeeded, stdout, stderr = '', timedOut = false,
+  pool, appId, sessionId, succeeded, stdout, stderr = '', timedOut = false, exitCode = undefined,
   graduated = false, tracker = null,
 }) {
   const t = tracker || makeUnitSuiteTracker(await loadExpectedTests(pool, appId));
@@ -704,21 +1059,21 @@ async function outcomeFromLog({
     if (/^# (tests|pass|fail|skipped|cancelled|todo) /.test(line)) t.feed(line);
   }
   const passed = !!succeeded;
-  let reason = '';
-  let unitDetails = null;
-  if (!passed) {
-    const parts = failureOutcomeParts(stdout, stderr, { timedOut });
-    reason = parts.reason;
-    unitDetails = parts;
-    if (!reason) reason = timedOut ? 'npm test timed out' : 'npm test failed';
-  }
-  const finalSnap = t.finish(passed);
+  // A Job that ended in setup, or with nothing in its log, never ran the
+  // suite: the same reading the live path takes (readFailure).
+  const { reason = '', unitDetails = null, notRun = null, setupFailed = false } = passed ? {} : readFailure({
+    sessionId, stdout, stderr, timedOut, runtime: 'kubernetes', exitCode,
+    reachedTests: typeof t.reachedTests === 'function' && t.reachedTests(),
+    fallback: timedOut ? 'npm test timed out' : 'npm test failed',
+  });
+  const finalSnap = t.finish(passed, { notRun: !!(notRun || setupFailed) });
   const summary = finalSnap.summary || null;
   if (summary && Number.isInteger(summary.tests)) await storeExpectedTests(pool, appId, summary.tests);
   log.info('unit-suite', 'Unit suite outcome read from its finished Job', {
     sessionId, appId, passed, graduated, tests: summary ? summary.tests : undefined,
+    ...(notRun ? { notRun: notRun.reason } : {}),
   });
-  return shapeOutcome({ passed, reason, graduated, summary, unitDetails });
+  return shapeOutcome({ passed, reason, graduated, summary, unitDetails, notRun, setupFailed });
 }
 
 module.exports = {
@@ -735,6 +1090,9 @@ module.exports = {
   failureDetail,
   failureDetailFromLines,
   failureOutcomeParts,
+  notRunOutcome,
+  installFault,
+  INSTALL_FAILURES,
   unitFailureDetails,
   excerptOfTest,
   diagnosticsFromBlock,

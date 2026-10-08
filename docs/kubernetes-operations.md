@@ -264,9 +264,21 @@ for other commits (background deletion; their input Secrets go with them).
 Runs for the same commit are left to finish, because their verdict still
 counts.
 
+The paths that start a run ask the same question first (`runToCollect`): a
+manual "Re-run checks" (or `recheck_change`), a promote or vote-time kick, a
+recheck that would rebuild the preview, the sweeper's preview heal, boot
+recovery, and every capture under the preview lifecycle. While the session
+still waits on that commit's verdict and its run is on the cluster, nothing new
+starts; the button and the tool say the run is still going. Once the verdict is
+stored the manifest is gone and a re-run starts fresh. Only a run whose inputs
+changed (new capture routes or shots for the same commit) replaces it.
+
 Under `PREVIEW_LIFECYCLE_ENABLED` the harvester adopts the run's
 `preview_operations` row first and writes through the same ownership check a
-live run does; a request for a newer revision aborts the harvest. Outside the
+live run does; a request for a newer revision aborts the harvest. A capture
+for the same revision finds the run under the lifecycle lock and leaves it:
+it cancels only other commits' check Jobs and does not take the row. A build,
+or a forced capture, still cancels every check Job of the session. Outside the
 Kubernetes capture runtime the harvester is a no-op. The stale sweep
 (`CHECKS_STALE_MS`) remains the backstop for rows with no manifest at all.
 
@@ -474,6 +486,17 @@ failures under CPU contention. Unit-suite Jobs default to 8 CPUs / 4Gi (the CPU
 quota sets `node --test`'s process-pool size), requesting 4 CPUs / 1Gi.
 Evidence replays share the capture reservation. A smaller explicit CPU limit
 also caps the request; coding-worker resource settings are independent.
+
+`CHECKS_MAX_CONCURRENT_RUNS` (default 4, chart `config.checksMaxConcurrentRuns`)
+bounds how many proposal checks runs have Jobs in the worker namespace at once;
+main-watch's run of main has one slot besides them. A run waits for its slot
+after its preview is built and before it creates a Job, so the namespace
+quota no longer queues Pods whose deadlines are already running. The slots are
+the live `check_runs` rows: `admitted_at IS NULL` is a run waiting,
+`queued_at` its place in line. Red check runs track check-Job CPU across the
+cluster (9% under 10 cores, 24 to 29% above, October 2026), because every
+preview under test loads the one shared Postgres primary; lower the cap
+before raising quotas when proposals' checks go red together.
 
 All three check kinds carry `social.usernode.io/workload=check`. A hostname
 topology-spread preference counts that group across sessions in the worker

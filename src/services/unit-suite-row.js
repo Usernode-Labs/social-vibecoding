@@ -62,6 +62,41 @@ function isUnitSuiteRow(r) {
     && (r.index === UNIT_CHECK_INDEX || (r.name === UNIT_CHECK_NAME && r.path === UNIT_CHECK_PATH));
 }
 
+// A unit-suite row whose suite never reached `npm test`: the Job or its
+// input Secret could not be created (the namespace quota, a refusal from the
+// API, an API that could not be reached), or its pod stopped in setup before
+// any test reported (services/unit-suite.js notRunOutcome). It names no
+// failing test, so a reader that lists failing tests leaves it out, and the
+// run it rides is an 'error' when the suite was merge-blocking.
+function isNotRunRow(r) {
+  return isUnitSuiteRow(r) && r.couldNotRun === true;
+}
+
+// Such a row's plain-words sentence, which leads its failureReason. The
+// same sentence is the run's check_error_detail when the suite's missing
+// verdict is what made the run an 'error'.
+function notRunDetail(r) {
+  if (!isNotRunRow(r)) return null;
+  const sentence = String(r.failureReason || '').split(' | ')[0].trim();
+  return sentence || null;
+}
+
+// A stored run whose 'error' verdict is the unit suite that could not run:
+// check_state 'error', a not-run unit row, and check_error_detail that row's
+// sentence. Returns the sentence, or null. An error with any other cause (a
+// capture that produced nothing, a preview that never booted) is not this,
+// even when the unit suite also could not run in it.
+function notRunError(session) {
+  if (!session || session.check_state !== 'error') return null;
+  let rows = session.test_results;
+  if (typeof rows === 'string') {
+    try { rows = JSON.parse(rows); } catch { return null; }
+  }
+  if (!Array.isArray(rows)) return null;
+  const detail = notRunDetail(rows.find(isNotRunRow));
+  return detail && detail === String(session.check_error_detail || '').trim() ? detail : null;
+}
+
 // One `file (N): name; name…` group of the reason services/unit-suite.js
 // writes. The file is a repo path, or the group a test with no `location:`
 // lands in, so a jest or npm line in a tail cannot pass for one.
@@ -69,8 +104,8 @@ const REASON_GROUP = /^(\(file not reported\)|\S+) \((\d+)\)(?:: (.+))?$/;
 
 // The failing tests a stored run's unit-suite row records (#4265): how many
 // failed and the first `max` of them as `{ file, test }`, or null when the
-// row is absent, passed, or names and counts no failing test (setup failed,
-// or the run was killed before it reported). A red run the platform runs
+// row is absent, passed, never ran, or names and counts no failing test (the
+// run was killed before it reported). A red run the platform runs
 // again can still carry these, and running the same code again does not fix
 // a test it fails, so a reader about to say "nothing to fix" asks this
 // first. The count is the TAP summary's when the row kept one.
@@ -81,7 +116,7 @@ function unitSuiteFailures(testResults, { max = 2 } = {}) {
   }
   if (!Array.isArray(rows)) return null;
   const row = rows.find(isUnitSuiteRow);
-  if (!row || row.status === 'pass') return null;
+  if (!row || row.status === 'pass' || isNotRunRow(row)) return null;
   const details = (Array.isArray(row.failureDetails) ? row.failureDetails : [])
     .filter((d) => d && d.test)
     .map((d) => ({ file: d.file ? String(d.file) : null, test: String(d.test) }));
@@ -114,5 +149,8 @@ module.exports = {
   MAX_INLINE_EXCERPT_TESTS,
   MAX_INLINE_EXCERPT_CHARS,
   isUnitSuiteRow,
+  isNotRunRow,
+  notRunDetail,
+  notRunError,
   unitSuiteFailures,
 };

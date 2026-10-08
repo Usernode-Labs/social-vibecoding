@@ -37,16 +37,18 @@ const DSN = process.env.TEST_DATABASE_URL
   || 'postgres://postgres:postgres@localhost:5432/postgres';
 const config = { captureRuntime: 'kubernetes', kubernetes: { workerNamespace: 'workers' } };
 
-// The table as schema.sql declares it, less the foreign key: the test schema
-// has no chat_sessions to point at.
+// The table as schema.sql declares it, with the checks queue's columns
+// (services/checks-queue.js), less the foreign keys: the test schema has no
+// chat_sessions or apps to point at.
 const DDL = (() => {
   const schema = fs.readFileSync(path.join(ROOT, 'src/db/schema.sql'), 'utf8');
   const start = schema.indexOf('CREATE TABLE IF NOT EXISTS check_runs');
   if (start < 0) throw new Error('check_runs is not in schema.sql any more');
-  const end = schema.indexOf(');', start) + 2;
+  const last = 'CREATE INDEX IF NOT EXISTS idx_check_runs_app';
+  const end = schema.indexOf(';', schema.indexOf(last, start)) + 1;
   return schema.slice(start, end)
-    .replace('IF NOT EXISTS ', '')
-    .replace(/\s*REFERENCES chat_sessions\(id\) ON DELETE CASCADE/, '');
+    .replace('CREATE TABLE IF NOT EXISTS', 'CREATE TABLE')
+    .replace(/\s*REFERENCES (chat_sessions|apps)\(id\) ON DELETE CASCADE/g, '');
 })();
 
 async function connect() {

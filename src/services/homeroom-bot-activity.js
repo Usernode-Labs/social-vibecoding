@@ -74,6 +74,9 @@
 // time from the tap. The card above stops being the request's card (its
 // record goes) and says where it went (`movedTo`), so the client stops
 // drawing it. There is still one card per request, and it notifies nobody.
+// #4392: that card is the bot's thanks for answering the plan, said once
+// whether Build it was tapped or typed: its words, then the project's
+// thumbnail row with the build line following the build.
 //
 // ONE PERSON'S, ALWAYS. Every row is read by the signed-in person's own id:
 // the route takes no user, conversation or message parameter. An app they
@@ -126,19 +129,28 @@ function proposalHref(slug, sessionId) {
 // live says it waits for (cardText).
 const FIRST_VERSION_WAIT_WORDS = 'Waiting for the first version to go live. I\'ll start on this as soon as it does.';
 
+/** #4392: what the bot says once its creator has answered a first version's plan. */
+function thanksText(appName) {
+  return `Thanks for answering about the plan. I'll let you know when ${appName} is ready to try.`;
+}
+
 /**
  * Pure: a card's words, for whatever does not draw the card itself. A card
  * `joined` to work already under way (catchUpCards) lands at the end of the
  * DM, after the work began, so it says the work was started earlier. A card
  * started by filing the request (#3767) says it was filed, not that the
  * work began: it may wait in the queue first, and the card says so. A card
- * moved under a plan by Build it (`go`, cardUnderPlan) says it is building.
+ * moved under a plan by Build it (`go`, cardUnderPlan) thanks them for
+ * answering and says what comes next (#4392): the chat draws those words
+ * over the project's thumbnail row and its build line
+ * (frontend/src/features/messages/bot-thanks-card.tsx), and they are the
+ * inbox's preview as they are.
  */
 function cardText({ appName, issueNumber, issueTitle, firstVersion }, dm, {
   joined = false, filed = false, queued = false, lowAllowance = false, waitsForFirstVersion = false, go = false,
 } = {}) {
+  if (go) return thanksText(appName);
   const line = dm.requestLine({ appName, issueNumber, issueTitle, firstVersion });
-  if (go) return `${line}\n\nBuilding ${firstVersion ? 'the first version' : 'this'} now. This card updates as I go.`;
   // The one place the weekly limit is mentioned before it is reached: under
   // a fifth of the week's building time left (dm.allowanceLow).
   const low = lowAllowance ? '\n\nYou\'re close to this week\'s building time.' : '';
@@ -200,6 +212,9 @@ async function sendCard(pool, {
       // progress, not a question (homeroom-bot-dm.js MIRRORED_KINDS).
       ...(startedAt ? { startedAt } : {}),
       ...(lookAt ? { lookAt } : {}),
+      // #4392: the thanks under a plan, drawn with its thumbnail row; the
+      // project's icon, when it has one, is the row's tile.
+      ...(go ? { thanks: true, ...(app.icon_emoji ? { appEmoji: String(app.icon_emoji) } : {}) } : {}),
     },
     idempotencyKey: key,
     // #3707: news about a request they started in the DM points back at it.
@@ -1037,11 +1052,15 @@ async function catchUpCards(pool, { user, settings = null, deps = {}, now = new 
 // that joins work already under way, sent when the viewer opens the DM
 // (staging-messages.js ensureDemoUnderWayCard, catchUpCards' stand-in). A
 // staging copy never runs the bot, so without them no card could be seen
-// there. No project stands behind them, so they link nowhere.
+// there. No project stands behind them, so they link nowhere. #4046: and two
+// first versions' cards, whose plans carry their step: one above a plan that
+// waits for Build it, one under a plan that was built.
 const DEMO_CARD_KEYS = Object.freeze({
   working: 'staging-hrbot-activity-working',
   done: 'staging-hrbot-activity-done',
   underWay: 'staging-hrbot-activity-under-way',
+  plan: 'staging-hrbot-activity-plan',
+  building: 'staging-hrbot-activity-building',
 });
 // The demo's work already under way: the plan for request #15, begun before
 // its card was there (the tray's demo lists it too, homeroom-bot-tray.js).
@@ -1050,7 +1069,7 @@ const DEMO_UNDER_WAY = Object.freeze({
 });
 
 /** Pure: the demo cards' state, for the fixture's message ids. Times are relative to `now`. */
-function demoState({ working = null, done = null, underWay = null }, now = Date.now()) {
+function demoState({ working = null, done = null, underWay = null, plan = null, building = null }, now = Date.now()) {
   const ago = (minutes) => new Date(now - minutes * 60 * 1000).toISOString();
   const links = { request: null, proposal: null };
   const cards = [];
@@ -1071,6 +1090,22 @@ function demoState({ working = null, done = null, underWay = null }, now = Date.
   if (done) {
     cards.push({ messageId: done, startedAt: ago(60 * 26 + 23), links, state: 'done', outcome: 'proposed', endedAt: ago(60 * 26) });
   }
+  // #4046: a first version's steps, by their own names (homeroom-bot-progress.js).
+  const steps = progressModule({}).FIRST_VERSION_STEPS;
+  if (plan) {
+    cards.push({
+      messageId: plan, startedAt: ago(16), links, state: 'working', stage: 'plan',
+      step: 3, of: steps.length, stepName: steps[2], doing: 'the plan is ready and waits for Build it', stepSince: ago(2),
+      waitingOn: 'them',
+    });
+  }
+  if (building) {
+    cards.push({
+      messageId: building, startedAt: ago(6), links, state: 'working', stage: 'building',
+      step: 4, of: steps.length, stepName: steps[3], doing: 'building it', stepSince: ago(5), stepLimitMinutes: 30,
+      typicalMinutes: { from: 10, to: 25 },
+    });
+  }
   return { cards };
 }
 
@@ -1087,6 +1122,7 @@ async function demoCards(pool, user, now = Date.now()) {
   const id = (key) => Number(rows.find((row) => row.idempotency_key === key)?.id) || null;
   return demoState({
     working: id(DEMO_CARD_KEYS.working), done: id(DEMO_CARD_KEYS.done), underWay: id(DEMO_CARD_KEYS.underWay),
+    plan: id(DEMO_CARD_KEYS.plan), building: id(DEMO_CARD_KEYS.building),
   }, now);
 }
 
@@ -1104,6 +1140,7 @@ module.exports = {
   continueCard,
   startCard,
   cardUnderPlan,
+  thanksText,
   outcomeOf,
   endedAt,
   linksOf,

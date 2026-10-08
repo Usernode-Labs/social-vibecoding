@@ -29,9 +29,10 @@ import { LocalAgentsList } from '../local-agents-list';
  * POST /api/me/homeroom-bot-dm and paints the switch from /api/auth/me's
  * `homeroomBotDm`; a full list answers 409 and the switch goes back off.
  *
- * #4289 Press C to suggest an improvement (default OFF) is the one switch
+ * #4289 Press C to comment on the page (default OFF) is the one switch
  * here kept on the DEVICE, not the account: a keyboard shortcut belongs to
- * the keyboard in front of you. ../../improve/suggest-shortcut.ts owns it
+ * the keyboard in front of you. C drops a pin where the pointer is
+ * (../../comment-pin/). ../../improve/suggest-shortcut.ts owns it
  * (localStorage) and publishes window.UsernodeReact.suggestShortcut, which
  * settings.js paints and saves the switch through.
  *
@@ -77,10 +78,10 @@ export function ExperimentalSection() {
         </div>
         <div className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
           <SwitchRow id="suggest-shortcut-enabled">
-            Press C to suggest an improvement
+            Press C to comment on the page
           </SwitchRow>
           <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
-            On a computer, pressing C opens Suggest an improvement. It does nothing while you're typing or have text selected, or when the screen or app you're in uses C for something of its own. Saved on this device only.
+            On a computer, pressing C drops a pin where your pointer is. Type what should change and press Enter: it's posted as a suggestion, with a screenshot of the page that shows your pin. It does nothing while you're typing or have text selected, or when the screen or app you're in uses C for something of its own. Saved on this device only.
           </p>
         </div>
       </div>

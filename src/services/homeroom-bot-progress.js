@@ -66,8 +66,14 @@ const BOT_USERNAME = 'homeroom_bot';
 // longest one, a platform build's plan and build turn, is under two hours).
 const BUSY_BUILD_HOURS = 4;
 
+// #4053: a first version's steps are named for what is happening, never as
+// an instruction: "Step 4 of 7: Build it" read to an invited member as if
+// they were asked to build it (onboarding test, 6 October 2026). Steps 4 to
+// 7 are the build line's own words (BUILD_LINE_STATES below), so Homeroom
+// bot's chat, the one place a step's number is said, names it the way every
+// thumbnail does. A request's steps keep their names for now.
 const FIRST_VERSION_STEPS = Object.freeze([
-  'Set up the project', 'Read the description', 'Write a plan', 'Build it', 'Test it', 'Approval', 'Live',
+  'Setting up the project', 'Reading the description', 'Planning it', 'Building it', 'Testing it', 'Ready to try', 'Live',
 ]);
 const REQUEST_STEPS = Object.freeze([
   'Read the request', 'Write a plan', 'Build it', 'Test it', 'Approval', 'Live',
@@ -125,17 +131,55 @@ const SETUP_PARTS = Object.freeze({
 // B6: a first version's plan is the one its creator answers (stage 'plan').
 // Once they tap Build it, the build's own plan being written, and its turn
 // and workspace being waited for, are the build to them, not the plan again:
-// "Step 3 of 7: Write a plan", "writing the plan for the build", read as if
-// their Build it had not counted (first-session run-through, 5 October 2026).
-// A request's steps are unchanged: its plan is the bot's own.
+// "Step 3 of 7", "writing the plan for the build", read as if their Build it
+// had not counted (first-session run-through, 5 October 2026). A request's
+// steps are unchanged: its plan is the bot's own.
 const FIRST_VERSION_BUILD_STAGES = new Set(['build_queued', 'starting', 'planning']);
+
+const STEP_ORDER = Object.freeze(['setup', 'read', 'plan', 'build', 'checks', 'vote', 'live']);
 
 function stepNumber(stage, firstVersion) {
   const key = firstVersion && FIRST_VERSION_BUILD_STAGES.has(stage) ? 'build' : STEP_OF_STAGE[stage];
   if (!key) return null;
-  const order = ['setup', 'read', 'plan', 'build', 'checks', 'vote', 'live'];
-  const at = order.indexOf(key);
+  const at = STEP_ORDER.indexOf(key);
   return firstVersion ? at + 1 : at;
+}
+
+/**
+ * #4053: the build line, one line at the foot of a project's thumbnail that
+ * says where its first version is, the same way on every screen that draws
+ * it (the made screen, the App tab, the hub). The browser holds the words
+ * (frontend/src/features/first-session/build-line.tsx); the server says
+ * which one, for the person reading:
+ *
+ *   planning     steps 1 to 3: set up, read, plan       everyone
+ *   plan         its plan waits for Build it            the person who started it
+ *   plan-member  the same                               everyone else
+ *   question     it asked the person who started it     them
+ *   building     step 4 (from Build it on)              everyone
+ *   testing      step 5: its checks                     everyone
+ *   ready        step 6: up for approval, to try        everyone
+ *   live         step 7                                 everyone
+ *
+ * Step numbers stay in Homeroom bot's chat: the line never counts.
+ */
+const BUILD_LINE_STATES = Object.freeze(['planning', 'plan', 'plan-member', 'question', 'building', 'testing', 'ready', 'live']);
+
+const BUILD_LINE_OF_STEP = Object.freeze({
+  setup: 'planning', read: 'planning', plan: 'planning', build: 'building', checks: 'testing', vote: 'ready', live: 'live',
+});
+
+/**
+ * Pure: the build line for a first version at `stage` (stageOf, or
+ * 'setting_up'), read by its creator (`forCreator`) or anyone else.
+ * `question` is a question the bot waits on the creator for. Null for a
+ * stage that is no step.
+ */
+function buildLineOf(stage, { forCreator = false, question = false } = {}) {
+  if (stage === 'plan') return forCreator ? 'plan' : 'plan-member';
+  if (stage === 'question' && question && forCreator) return 'question';
+  const key = FIRST_VERSION_BUILD_STAGES.has(stage) ? 'build' : STEP_OF_STAGE[stage];
+  return (key && BUILD_LINE_OF_STEP[key]) || null;
 }
 
 function iso(value) {
@@ -166,6 +210,12 @@ function checksWords({ check_state: state, check_phase: phase, checks_progress: 
   if (state === 'pending' || state === 'running') {
     if (phase === 'building') return 'running: building the preview first';
     const p = progress && typeof progress === 'object' ? progress : {};
+    if (phase === 'queued') {
+      const ahead = Number(p.queue && p.queue.ahead);
+      return Number.isInteger(ahead) && ahead > 0
+        ? `waiting for a checks slot (${ahead} ahead)`
+        : 'waiting for a checks slot';
+    }
     const ran = Number(p.ran);
     const expected = Number(p.expected);
     const failed = Number(p.failed) || 0;
@@ -1049,6 +1099,8 @@ function progressText(progress, { max = 5 } = {}) {
 module.exports = {
   FIRST_VERSION_STEPS,
   REQUEST_STEPS,
+  BUILD_LINE_STATES,
+  buildLineOf,
   SETUP_PARTS,
   BUSY_STAGES,
   IN_FLIGHT_STAGES,

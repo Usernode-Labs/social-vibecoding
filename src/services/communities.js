@@ -211,6 +211,21 @@ async function identityVoteRefusal(pool, appId, userId) {
   };
 }
 
+// #4378: making a project PUBLIC needs a verified owner, so each person
+// counts once on the public side. The same predicate the vote routes'
+// refusal rests on (identity_needed, inside public_vote_needs_identity): a
+// verified account, one let in before the rule, or the rule off all pass.
+// The same response shape, so the client opens the same verify sheet.
+async function identityPublicRefusal(pool, userId) {
+  if (!userId) return null;
+  const { rows } = await pool.query('SELECT identity_needed($1) AS needs', [userId]);
+  if (rows[0]?.needs !== true) return null;
+  return {
+    error: 'Public projects need a verified owner. Verify your phone number, or link both GitHub and X in Settings.',
+    code: 'identity_required',
+  };
+}
+
 function joinRequiredBody(app) {
   const name = app.name || app.slug || 'this project';
   return {
@@ -662,6 +677,7 @@ module.exports = {
   AUDIENCE_LABELS,
   privateVoteRefusal,
   identityVoteRefusal,
+  identityPublicRefusal,
   audienceSql,
   isMember,
   getMembership,

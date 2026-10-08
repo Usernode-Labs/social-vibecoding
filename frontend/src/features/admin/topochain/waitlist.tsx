@@ -918,8 +918,8 @@ function StoryLandingPanel() {
     setStory(data.data);
   }, []);
 
-  const help = 'Signed-out visitors see what Homeroom is and "Get started", which makes an account '
-    + 'and asks them what to make. Off, they are sent to the waitlist instead. Anyone new still '
+  const help = 'Signed-out visitors see what Homeroom is and "Make an account", which then asks '
+    + 'them what to make. Off, they are sent to the waitlist instead. Anyone new still '
     + 'waits here until admitted unless they already have access.';
   return (
     <div id="admin-topo-wl-story">

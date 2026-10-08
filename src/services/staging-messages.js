@@ -475,6 +475,9 @@ const BOT_DM_ASK_KEY = 'staging-hrbot-ask';
 const BOT_DM_PLAN_KEY = 'staging-hrbot-plan';
 const BOT_DM_PLAN_ACTION_ID = 990002;
 const BOT_DM_TWO_QUESTIONS_KEY = 'staging-hrbot-two-questions';
+// #4046: and a first version's plan its maker already built, which the
+// card that follows its build sits under.
+const BOT_DM_BUILT_PLAN_KEY = 'staging-hrbot-plan-built';
 // B7, #3870: a change ready to try, its card saying what the change is.
 // Its session id stands for no session: Try it opens nothing (the demo
 // project has no slug) and Approve answers with an error, never a vote.
@@ -560,6 +563,46 @@ async function ensureBotDmFixture(pool, user) {
     [opened.conversationId, bot.id, [BOT_DM_PLAN_KEY, BOT_DM_TWO_QUESTIONS_KEY]]
   )).rows.map((row) => row.idempotency_key));
   if (!sentB6.has(BOT_DM_PLAN_KEY)) {
+    // #4046: first, a plan built already, with the card that follows its
+    // build under it, and the waiting plan's own card above it, as a live
+    // first version has them. The plans carry their cards' steps (the
+    // client draws no card beside them), which demoCards gives. Sent with
+    // the waiting plan only, so an older fixture keeps its newest message.
+    const activity = require('./homeroom-bot-activity');
+    const dm = require('./homeroom-bot-dm');
+    const built = {
+      bullets: [
+        'Staging demo: everyone\'s miles this week',
+        'Log a run for any day',
+        'Each runner\'s miles against their goal',
+      ],
+      questions: [{
+        question: 'What counts as keeping up?',
+        answers: ['Each runner picks their own goal', 'One shared club goal', 'No goals, just everyone\'s miles'],
+      }],
+    };
+    const runClub = { appName: 'Staging demo run club', issueNumber: 1, firstVersion: true };
+    await conversations.sendMessage(pool, { id: bot.id }, opened.conversationId, {
+      content: dm.planCardText({ appName: runClub.appName, plan: built }),
+      idempotency_key: BOT_DM_BUILT_PLAN_KEY,
+    }, {
+      metadata: {
+        homeroomBot: {
+          kind: 'plan', ...runClub, plan: built, status: 'answered', chosen: 'build', answer: 'Build it',
+          choices: [built.questions[0].answers[0]],
+        },
+      },
+    });
+    await conversations.sendMessage(pool, { id: bot.id }, opened.conversationId, {
+      content: activity.cardText(runClub, dm, { go: true }),
+      idempotency_key: activity.DEMO_CARD_KEYS.building,
+      // #4392: drawn as the bot's thanks for answering, as cardUnderPlan sends it.
+    }, { metadata: { homeroomBot: { kind: 'activity', ...runClub, thanks: true, appEmoji: '🏃' } } });
+    const plants = { appName: 'Staging demo plants', issueNumber: 1, firstVersion: true };
+    await conversations.sendMessage(pool, { id: bot.id }, opened.conversationId, {
+      content: activity.cardText(plants, dm, { queued: true }),
+      idempotency_key: activity.DEMO_CARD_KEYS.plan,
+    }, { metadata: { homeroomBot: { kind: 'activity', ...plants } } });
     const plan = {
       bullets: [
         'Staging demo: a list of your plants with how often each needs water',

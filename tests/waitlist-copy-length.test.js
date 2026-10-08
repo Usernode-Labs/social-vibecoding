@@ -55,7 +55,7 @@ test('and keeps every claim it used to make', () => {
     /Describe the app you want in chat, an AI builds it, and the group votes the changes in\./,
     /built here, by the people who use it/,
     /run on the Homeroom chain, and contributors own a share of what they build/,
-    /Access opens in batches/,
+    /We're letting people in a few at a time\./,
     /public apps are open to everyone now/,
     /Just your email to join\./,
   ]) {
@@ -76,7 +76,7 @@ test('want-in-sooner drops the sentence that said it twice', () => {
     MORE.indexOf('id="more-invalid"'));
   assert.ok(wordsIn(intro) < 40, `saw ${wordsIn(intro)} words`);
   // What it must still say.
-  assert.match(flat(intro), /what we read when we pick the next group/);
+  assert.match(flat(intro), /what we read when we pick who gets in next/);
   assert.match(flat(intro), /come back and add to them any time/);
   // The retired half restated the first clause, and "every one is optional"
   // is the label above the heading already. Asserted on the RENDERED intro

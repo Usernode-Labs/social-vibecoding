@@ -20,7 +20,9 @@
 //   blocked         the spec found a ready request impossible as written:
 //                   nothing is built, and the post says why
 //   ready           a spec, then one GLM build turn in a dev session of the
-//                   bot's own, then the SAME /promote handler a person's
+//                   bot's own (and one nudge, if that turn ended having
+//                   changed nothing: buildNudgePrompt), then the SAME
+//                   /promote handler a person's
 //                   Propose button runs — pull request, staging, checks,
 //                   vote — and a post on the issue that links the proposal.
 //                   The spec is posted on the issue as soon as it is written
@@ -72,6 +74,8 @@ const stageCosts = require('./stage-costs');
 const { IN_LOOP_BROWSER_GUIDANCE } = require('./in-loop-browser');
 const buildContract = require('./build-contract');
 const designSkill = require('./design-skill');
+const events = require('./events');
+const { redactString } = require('./log-redaction');
 
 // A staging copy of the platform starts from production's settings, live
 // list included. Posting on real GitHub issues and pushing real branches
@@ -2011,6 +2015,200 @@ async function draftSpec({
   return { ok: true, specMd, version, costUsd, ...turn, ...(screens.length ? { screens } : {}) };
 }
 
+// ── The nudge: one more turn for a build that stopped before it built ────
+//
+// A build turn can end without failing and without changing anything: the
+// agent answers in text and makes no further tool call, which ends a turn,
+// and the harness pushes the branch unchanged. That was "the build produced
+// no change to propose" 23 times between 29 Sep and 8 Oct 2026, on first
+// versions and later changes alike. Hiking Tier List (run 1166, session
+// 7192): GLM 5.3 Flash, served by GMICloud, made 2 requests and one shell
+// command, wrote 157 tokens and stopped after 34 seconds; the same request
+// on a new run, served by Together, made 29 edits in 19 minutes. So a turn
+// that ends that way gets ONE more turn in the same session, which keeps
+// the agent's conversation and its worker, telling it to build now. Only
+// if that turn changes nothing too is the build said to have failed.
+//
+// The nudge runs on the build's own clock: what is left of it, never a new
+// one. It is not sent when the turn failed or was stopped (its clock, a
+// merge, a person), when a stop is waiting, when its push did not go
+// through (the work may be there, and "you changed nothing" would be
+// false), or when less than BUILD_NUDGE_MIN_MS of the clock is left: a
+// nudge has to resume a conversation of about 50k tokens, make the change,
+// check it and finish, and one its clock stops is thrown away and said as
+// a time-out, which tells the requester less than "no change" does. A turn
+// that quits early leaves nearly all of its clock (run 1166 left 39 of 40
+// minutes); one that worked to its last minutes and changed nothing chose
+// not to, which two more minutes would not change.
+//
+// Whatever a turn that changed nothing said last is kept (clipped,
+// redacted, display only: never read for meaning, never quoted to a
+// person), with what it did and which provider served it, on the result as
+// `noChange`, which each caller records on its run (build_no_change) or
+// trial; and counted, with no text, as events (recordNoChange), so the
+// early-quit rate per provider and the nudge's success can be read.
+const BUILD_NUDGE_MIN_MS = 3 * 60 * 1000;
+const BUILD_NUDGE_TELEMETRY = 'homeroom_bot_build_nudge';
+const AGENT_SAID_CHARS = 1000;
+// More than this many providers on one turn are not worth listing.
+const MAX_TURN_PROVIDERS = 8;
+
+/**
+ * What the nudge says. Resumed, it follows the agent's own last turn;
+ * `fresh` is for a conversation the runtime could not resume, where it
+ * follows the whole build prompt instead. `stopAt` is the build's own stop
+ * time (HH:MM UTC). Pure.
+ */
+function buildNudgePrompt({ stopAt = null, fresh = false } = {}) {
+  return [
+    fresh
+      ? 'A first try at this build ended without changing anything, so there was nothing to propose. The plan is approved.'
+      : 'The plan is approved. You ended your turn without changing anything, so there is nothing to propose yet.',
+    'Implement the spec now, in this repository: make the change it describes, then check that it works the way your instructions above ask.',
+    'Do not stop to summarize, ask a question or describe a plan until the change is made: a reply with no tool call ends your turn.',
+    'When your turn ends, your working tree is committed and pushed for you, so finish only once the work is in it.',
+    'Only if you find you cannot make the change safely, stop and say why.',
+    ...(stopAt ? [`The platform still stops this build at ${stopAt} UTC.`] : []),
+  ].join('\n');
+}
+
+/** Whether a build turn's push carried a change: what can be proposed. Pure. */
+function turnLanded(result) {
+  return !!result && result.pushOk === true && Number(result.ahead) > 0;
+}
+
+/**
+ * Why a build turn did not end cleanly, or null when it did: the clock
+ * stopped it, its dispatch failed, or the agent exited non-zero, reported
+ * an error or ended on an API error, under either CLI. Pure.
+ */
+function turnFault({ routed, stopped }) {
+  if (stopped) return 'stopped';
+  if (routed?.error) return 'failed';
+  const r = (routed && routed.result) || {};
+  const exited = (code) => code != null && Number(code) !== 0;
+  if (failedClaudeTurn(r) || r.fatalError || r.ccIsError === true
+    || exited(r.exitCode) || exited(r.agentExit) || exited(r.ccExit)) return 'failed';
+  return null;
+}
+
+/**
+ * Why a build turn that changed nothing is not nudged, or null to nudge it.
+ * `leftMs` is what is left of the build's clock; `stopPending`, a stop
+ * requested on the session (worker.getPendingStop). Pure.
+ */
+function whyNotNudge({ routed, stopped = false, leftMs, stopPending = false }) {
+  const fault = turnFault({ routed, stopped });
+  if (fault === 'stopped') return 'the turn was stopped';
+  if (fault) return 'the turn failed';
+  if (stopPending) return 'a stop was requested';
+  const r = (routed && routed.result) || {};
+  if (turnLanded(r)) return 'the turn changed something';
+  if (r.pushOk !== true || r.branchMismatch === true) return 'its push did not go through';
+  if (!(Number(leftMs) >= BUILD_NUDGE_MIN_MS)) {
+    return `less than ${Math.round(BUILD_NUDGE_MIN_MS / 60000)} minutes of its clock were left`;
+  }
+  return null;
+}
+
+/** An agent's last message as an admin may read it: redacted, clipped, or null. Pure. */
+function agentSaid(text) {
+  const said = clipText(redactString(String(text || '')), AGENT_SAID_CHARS);
+  return said || null;
+}
+
+/**
+ * What one build turn did, from the worker's result: the provider(s)
+ * OpenRouter routed it to, the model it asked for, its model requests,
+ * tool calls, file edits and output tokens, and how long it ran. No text.
+ * `ended` is 'changed', 'no_change' (it pushed the branch unchanged),
+ * 'not_pushed', 'stopped' or 'failed'. Pure.
+ */
+function turnFacts({ routed, stopped = false } = {}, { turn = 'build', model = null, seconds = null } = {}) {
+  const r = (routed && routed.result) || {};
+  const num = (v) => (v != null && v !== '' && Number.isFinite(Number(v)) ? Number(v) : null);
+  const name = (v) => (typeof v === 'string' && v ? v.slice(0, 80) : null);
+  const providers = (Array.isArray(r.routedProviders) ? r.routedProviders : [])
+    .map(name).filter(Boolean).slice(0, MAX_TURN_PROVIDERS);
+  if (!providers.length && name(r.routedProvider)) providers.push(name(r.routedProvider));
+  const fault = turnFault({ routed, stopped });
+  return {
+    turn,
+    ended: fault || (turnLanded(r) ? 'changed'
+      : r.pushOk === true && !(Number(r.ahead) > 0) && r.branchMismatch !== true ? 'no_change' : 'not_pushed'),
+    provider: name(r.routedProvider) || providers[providers.length - 1] || null,
+    providers,
+    model: name(model) || name(r.agentModel),
+    harness: name(r.agentHarness),
+    requests: num(r.providerTurnCount) ?? num(r.relayUsage?.requests) ?? num(r.providerUsage?.requests),
+    toolCalls: num(r.toolCallCount),
+    fileEdits: num(r.fileChangeCount),
+    outputTokens: num(r.outputTokens) ?? num(r.relayUsage?.outputTokens),
+    seconds: num(seconds) == null ? null : Math.round(num(seconds)),
+  };
+}
+
+/**
+ * The counters a weekly query reads, one `events` row each, written the
+ * moment the turn's outcome is known so a restart cannot lose them:
+ *   - `bot_build_no_change` for every build turn (the build's own, or a
+ *     nudge's) that ended cleanly and pushed nothing new: the early-quit
+ *     rate per provider, against the build turns agent_turns holds. The
+ *     build's own carries whether it was nudged, or why not.
+ *   - `bot_build_nudged` for every nudge, once it ends: whether it
+ *     committed, and what it did.
+ * The turn's facts only (turnFacts), never what the agent said. `origin` is
+ * { lane: 'live' | 'shadow' | 'bench', runId, trialId }. Never throws.
+ */
+async function recordBuildTurn(pool, {
+  type, appId = null, sessionId = null, userId = null, issueNumber = null, origin = null, facts, extra = {},
+}) {
+  if (!facts) return;
+  const { said: _said, ...counted } = facts;
+  try {
+    await events.record(pool, {
+      type, userId, appId, sessionId,
+      metadata: {
+        lane: origin?.lane || null,
+        runId: origin?.runId ?? null,
+        trialId: origin?.trialId ?? null,
+        issueNumber: issueNumber == null ? null : Number(issueNumber),
+        ...counted,
+        ...extra,
+      },
+    });
+  } catch { /* a counter never stops a build */ }
+}
+
+/**
+ * The counters for what `noChange` holds (recordBuildTurn): its first turn
+ * that changed nothing, and its nudge if it ran. `which` limits it to
+ * 'first' (as the turn ends, before any nudge) or 'nudge' (once the nudge
+ * ends). Never throws.
+ */
+async function recordNoChange(pool, { noChange, which = 'all', recovered = false, ...where }) {
+  if (!noChange || !Array.isArray(noChange.turns)) return;
+  const quit = (t) => t && (t.ended === 'no_change' || t.ended === 'not_pushed');
+  const first = noChange.turns.find((t) => t.turn === 'build') || null;
+  const nudge = noChange.turns.find((t) => t.turn === 'nudge') || null;
+  const T = events.EVENT_TYPES;
+  if (which !== 'nudge' && quit(first)) {
+    await recordBuildTurn(pool, {
+      ...where, type: T.BOT_BUILD_NO_CHANGE, facts: first,
+      extra: { nudged: !!noChange.nudged, notNudged: noChange.notNudged || null, recovered },
+    });
+  }
+  if (which !== 'first' && nudge) {
+    const extra = { committed: nudge.ended === 'changed', recovered };
+    await recordBuildTurn(pool, { ...where, type: T.BOT_BUILD_NUDGED, facts: nudge, extra });
+    if (quit(nudge)) {
+      await recordBuildTurn(pool, {
+        ...where, type: T.BOT_BUILD_NO_CHANGE, facts: nudge, extra: { nudged: false, notNudged: null, recovered },
+      });
+    }
+  }
+}
+
 /**
  * One build-mode turn in a bot session: the build itself, and each review
  * round's fix (bot-review.js), which starts a fresh thread with a prompt
@@ -2019,15 +2217,28 @@ async function draftSpec({
  * restart recovery can run a review's fix turns in a session whose build a
  * restart caught (homeroom-bot.js reviewRecoveredBuild). Resolves
  * { routed, stopped }.
+ *
+ * A turn that continues a conversation (the nudge, `resumeThreadId`) also
+ * carries `freshPrompt`, the whole prompt it stands on, for when that
+ * conversation cannot be continued: sent instead of `prompt` when the
+ * runtime starts a fresh thread (a thread another CLI wrote, or one the
+ * worker no longer has), and handed to Claude Code as the prompt of the
+ * fresh run it makes itself when --resume fails (run-cc.sh). Without it a
+ * fresh thread would get the nudge alone, with no spec to build. Its
+ * `telemetry` names the turn on its own ledger row.
  */
 function buildTurnRunner({
   pool, config, bot, session, model, branchName, containerName, deps,
   harness = 'auto', telemetry = null, onProgress = null,
 }) {
   const { worker, sessions, agentTurn, activeWorkers } = deps;
+  const runnerTelemetry = telemetry;
   return async ({
     prompt: turnPrompt, budgetMs, resumeThreadId = null, commitMsg, progress: turnProgress,
+    freshPrompt = null, telemetry: turnTelemetry = null,
   }) => {
+    // A turn may go on the ledger under a name of its own (the nudge).
+    const telemetry = turnTelemetry || runnerTelemetry;
     let turnStopped = false;
     let stopping = null;
     const timer = setTimeout(() => {
@@ -2054,7 +2265,10 @@ function buildTurnRunner({
         }),
         dispatchOnce: (ctx) => worker.execInWorker(session.id, {
           mode: 'build',
-          prompt: turnPrompt,
+          // The whole prompt when the runtime starts this attempt afresh, and
+          // as Claude Code's own fresh retry when its --resume fails.
+          prompt: freshPrompt && !ctx?.resumeSessionId ? freshPrompt : turnPrompt,
+          ...(freshPrompt && ctx?.resumeSessionId && ctx.agentHarness === 'claude' ? { resumeFallbackPrompt: freshPrompt } : {}),
           model,
           commitMsg,
           resumeSessionId: resumeThreadId,
@@ -2062,6 +2276,15 @@ function buildTurnRunner({
           // A failed turn's work is neither committed nor pushed, under either
           // CLI (failedClaudeTurn).
           discardFailedTurn: true,
+          // In Claude Code, a reply with no tool call ends the turn, and GLM
+          // ended about half of the bot's no-change builds that way within
+          // seconds. The stop guard (worker/build-stop-hook.js) sends it back
+          // to work, twice at most, while the turn has changed nothing. Every
+          // turn this runner runs is told to make a change: the build, and
+          // each review round's fix, where a fix that changes nothing still
+          // pays for another capture and review. The spec, triage and
+          // follow-up turns run elsewhere and never ask for it.
+          stopGuard: true,
           ...(ctx || {}),
           telemetryComponent: telemetry || 'homeroom_bot_build',
           onProgress: teeProgress(turnProgress, onProgress),
@@ -2114,6 +2337,11 @@ async function buildAndPropose({
   // #3654: the spec turn's own model, when it differs from the build's;
   // and, for a benchmark trial, its own session title and telemetry.
   specModel = null, sessionTitle = null, telemetry = null,
+  // Which lane runs it, for the record of a turn that changed nothing
+  // (recordNoChange): { lane: 'live' | 'shadow' | 'bench', runId, trialId };
+  // and where that record is kept the moment the turn ends, before any
+  // nudge, called with the `noChange` the result carries later.
+  origin = null, onNoChange = null,
   // #3737: a project's first version, whose spec and build decide and
   // record its look.
   firstVersion = false,
@@ -2194,6 +2422,10 @@ async function buildAndPropose({
   let buildPart = null;
   let reviewed = null;
   const fixTurnIds = [];
+  // A build turn that changed nothing, what it said and did, and its nudge
+  // (buildNudgePrompt): carried on every outcome after it, for the run.
+  let noChange = null;
+  const noChangeOut = () => (noChange ? { noChange } : {});
   const costsOut = () => {
     const stages = {};
     const specPart = spec && !spec.preset ? stageCosts.part({
@@ -2212,7 +2444,10 @@ async function buildAndPropose({
         WHERE id = $1 AND user_id = $2 AND status IN ('active', 'paused')`,
       [session.id, bot.id],
     ).catch(() => {});
-    return { ok: false, sessionId: session.id, branchName: session.branch_name || null, error, ...specOut(), ...costsOut() };
+    return {
+      ok: false, sessionId: session.id, branchName: session.branch_name || null, error, ...specOut(), ...costsOut(),
+      ...noChangeOut(),
+    };
   };
   // A skip is put away as a failed attempt is, and says why it stopped.
   const skipNow = async () => {
@@ -2344,32 +2579,92 @@ async function buildAndPropose({
     pool, config, bot, session, model, branchName, containerName, deps,
     harness: buildHarness, telemetry, onProgress,
   });
+  // The build's clock, from about when its turn starts (runBuildTurn's
+  // timer). A nudge runs on what is left of it.
+  const turnStartedMs = Date.now();
   const prompt = buildPrompt({
     seed, buildNote, spec: spec.ok ? spec.specMd : null, platformRepo, readsImages, firstVersion, guidance: buildGuidance,
-    // The turn's own clock, from about when it starts (runBuildTurn's timer).
-    clock: { startedAt: Date.now(), budgetMs: turnBudgetMs },
+    clock: { startedAt: turnStartedMs, budgetMs: turnBudgetMs },
   });
   // What the build was last doing, so a turn stopped on its clock says what
   // it was waiting on (#3385): 12 of the first 18 shadow failures were
   // time-outs, most of them cheap, with nothing recorded about why.
   const progress = lastActivity();
-  const { routed, stopped } = await runBuildTurn({
-    prompt, budgetMs: turnBudgetMs, commitMsg: `Homeroom bot: #${issueNumber} ${title}`.slice(0, 120), progress,
-  });
+  const commitMsg = `Homeroom bot: #${issueNumber} ${title}`.slice(0, 120);
+  let { routed, stopped } = await runBuildTurn({ prompt, budgetMs: turnBudgetMs, commitMsg, progress });
+  const buildTurnMs = Date.now() - turnStartedMs;
 
-  const result = (routed && routed.result) || {};
-  const buildCostUsd = Number.isFinite(routed && routed.estimatedCostUsd) ? routed.estimatedCostUsd : null;
-  buildPart = stageCosts.part({ usd: buildCostUsd, model, turnIds: routed?.logicalTurnId ? [routed.logicalTurnId] : [] });
-  // Both turns, the spec's and the build's, are the build's cost (and a
-  // review's, below).
-  let costUsd = buildCostUsd == null && spec.costUsd == null
-    ? null
-    : (buildCostUsd || 0) + (spec.costUsd || 0);
+  // What the build turns cost, a nudge's with the build's, and their ledger
+  // ids. Both turns, the spec's and the build's, are the build's cost (and
+  // a review's, below).
+  let buildCostUsd = null;
+  const buildTurnIds = [];
+  let costUsd = null;
+  const countTurn = (r) => {
+    if (Number.isFinite(r && r.estimatedCostUsd)) buildCostUsd = (buildCostUsd || 0) + r.estimatedCostUsd;
+    if (r?.logicalTurnId) buildTurnIds.push(r.logicalTurnId);
+    buildPart = stageCosts.part({ usd: buildCostUsd, model, turnIds: buildTurnIds });
+    costUsd = buildCostUsd == null && spec.costUsd == null
+      ? null
+      : (buildCostUsd || 0) + (spec.costUsd || 0);
+  };
+  countTurn(routed);
   // WP1 (#2): and once the build turn is over, whatever it came to, just
   // before it is proposed. A build stopped for this (noteRequestMerged ends
   // its turn) is a skip, not a failure.
   const skipped = await skipNow();
   if (skipped) return { ...(await fail(skipped)), skipped, costUsd };
+
+  // A turn that ended cleanly and changed nothing: one nudge, in this
+  // session, on what is left of the clock (buildNudgePrompt). What it said
+  // and did is kept either way.
+  if (!turnFault({ routed, stopped }) && !turnLanded(routed?.result)) {
+    const leftMs = turnStartedMs + turnBudgetMs - Date.now();
+    const notNudged = whyNotNudge({
+      routed, stopped, leftMs, stopPending: !!worker.getPendingStop?.(session.id),
+    });
+    const first = {
+      ...turnFacts({ routed, stopped }, { turn: 'build', model, seconds: buildTurnMs / 1000 }),
+      said: agentSaid(routed?.result?.lastResultText),
+    };
+    noChange = { turns: [first], nudged: !notNudged, notNudged, committed: null };
+    const where = { app: app.slug, issueNumber, sessionId: session.id, lane: origin?.lane || null };
+    log.warn('homeroom-bot', notNudged
+      ? 'A build turn ended without a change; not nudging it'
+      : 'A build turn ended without a change; nudging it once', {
+      ...where, ...first, notNudged, leftMs: Math.max(0, Math.round(leftMs)),
+    });
+    const counted = { appId: app.id, sessionId: session.id, userId: bot.id, issueNumber, origin };
+    await recordNoChange(pool, { ...counted, noChange, which: 'first' });
+    // Kept on the run before the nudge starts, so a restart in the middle
+    // of it still finds what the first turn said (homeroom-bot.js).
+    if (onNoChange) {
+      try { await onNoChange(noChange); } catch { /* the record never stops a build */ }
+    }
+    if (!notNudged) {
+      const stopAt = utcClock(turnStartedMs + turnBudgetMs);
+      const nudgeStartedMs = Date.now();
+      ({ routed, stopped } = await runBuildTurn({
+        prompt: buildNudgePrompt({ stopAt }),
+        freshPrompt: [prompt, '', buildNudgePrompt({ stopAt, fresh: true })].join('\n'),
+        resumeThreadId: routed?.result?.agentThreadId || null,
+        budgetMs: leftMs, commitMsg, progress, telemetry: telemetry || BUILD_NUDGE_TELEMETRY,
+      }));
+      countTurn(routed);
+      const nudge = turnFacts({ routed, stopped }, { turn: 'nudge', model, seconds: (Date.now() - nudgeStartedMs) / 1000 });
+      noChange.committed = nudge.ended === 'changed';
+      noChange.turns.push({ ...nudge, said: noChange.committed ? null : agentSaid(routed?.result?.lastResultText) });
+      if (noChange.committed) log.info('homeroom-bot', 'The nudge built it', { ...where, ...noChange.turns[1] });
+      else log.warn('homeroom-bot', 'The nudge did not build it either', { ...where, ...noChange.turns[1] });
+      await recordNoChange(pool, { ...counted, noChange, which: 'nudge' });
+    }
+    if (noChange.nudged) {
+      const skippedAfterNudge = await skipNow();
+      if (skippedAfterNudge) return { ...(await fail(skippedAfterNudge)), skipped: skippedAfterNudge, costUsd };
+    }
+  }
+
+  const result = (routed && routed.result) || {};
   if (stopped) {
     return { ...(await fail(`the build ran past its time limit${progress.suffix()}`)), costUsd };
   }
@@ -2416,7 +2711,7 @@ async function buildAndPropose({
     ).catch(() => {});
     return {
       ok: true, sessionId: session.id, branchName: session.branch_name,
-      sha: landedSha, commits: landedCommits, costUsd, ...specOut(), ...reviewOut, ...costsOut(),
+      sha: landedSha, commits: landedCommits, costUsd, ...specOut(), ...reviewOut, ...costsOut(), ...noChangeOut(),
     };
   }
 
@@ -2439,11 +2734,12 @@ async function buildAndPropose({
     return {
       ok: false, sessionId: session.id, ...pushed, costUsd,
       error: `the change was built but could not be proposed: ${why}`, ...specOut(), ...reviewOut, ...costsOut(),
+      ...noChangeOut(),
     };
   }
   return {
     ok: true, sessionId: session.id, prNumber: promoted.body.prNumber || null, ...pushed, costUsd, ...specOut(), ...reviewOut,
-    ...costsOut(),
+    ...costsOut(), ...noChangeOut(),
   };
 }
 
@@ -2603,6 +2899,17 @@ module.exports = {
   screenshotNote,
   buildAndPropose,
   buildTurnRunner,
+  buildNudgePrompt,
+  whyNotNudge,
+  turnFault,
+  turnLanded,
+  turnFacts,
+  agentSaid,
+  recordNoChange,
+  recordBuildTurn,
+  BUILD_NUDGE_MIN_MS,
+  BUILD_NUDGE_TELEMETRY,
+  AGENT_SAID_CHARS,
   reviewLanded,
   rollbackReviewBranch,
   recipeHarness,

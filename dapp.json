@@ -1510,7 +1510,7 @@
     {
       "name": "Create opens \"What do you want to make?\", the first session's own screen, as the one front door for a new project: a close, the examples, and a small \"Import from a GitHub repo\" (#748's route; the New project dialog is retired)",
       "path": "/#create",
-      "expectSelector": "[data-first-session-make][data-make-entry=\"create\"]:has([data-make-close]):has([data-first-session-example=\"run\"]) [data-make-import-link]",
+      "expectSelector": "[data-first-session-make][data-make-entry=\"create\"]:has([data-make-close]):has([data-first-session-example=\"tier\"]) [data-make-import-link]",
       "expectText": "What do you want to make?"
     },
     {
@@ -2702,6 +2702,11 @@
       "expectText": "prepare checks (waiting for an earlier run)"
     },
     {
+      "name": "Checks card says a built preview's run is waiting for a checks slot, and where it is in line",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000054",
+      "expectText": "Waiting for a checks slot (2 ahead)"
+    },
+    {
       "name": "Checks card says an author's commit started the run (#1144), in Details (B10b)",
       "path": "/?demo=1&details=1#app/usernode-2d5619/dev/proposals/9000022",
       "expectText": "Triggered by a new commit on this proposal."
@@ -3512,9 +3517,9 @@
       "expectSelector": "[data-settings-section=\"cli\"]:not(.hidden) #cli-setup-guide ol"
     },
     {
-      "name": "A Language deep link falls back to the default section (#1556)",
+      "name": "Language settings offers Auto and English",
       "path": "/#settings/language",
-      "expectSelector": "#settings-section-content [data-settings-section=\"profile\"]:not(.hidden)"
+      "expectSelector": "#settings-section-content [data-settings-section=\"language\"]:not(.hidden) #settings-language-section:not(.hidden) #settings-locale:has(option[value=\"\"]):has(option[value=\"en\"])"
     },
     {
       "name": "Settings shows Admin preview to a real admin",
@@ -3567,7 +3572,7 @@
       "expectText": "Staging demo read-only proposal"
     },
     {
-      "name": "The hub's ⋯ menu holds rename and secrets directly, no App settings nesting (#645)",
+      "name": "The hub's ⋯ menu holds rename and secrets in its Settings & rules panel, not behind App settings (#645, #4045)",
       "path": "/?demo=1&ws=status#app/usernode-2d5619/dev",
       "expectSelector": "#dev-plus-menu [data-plus='rename']"
     },
@@ -3589,8 +3594,8 @@
       "expectSelector": "#dev-plus-menu [data-plus='members']"
     },
     {
-      "name": "The hub's ⋯ menu shows the approver roster on an invited-approvers app (#646)",
-      "path": "/?demo=1&ws=status&shot=plus-menu#app/staging-demo-invited-approvers/dev",
+      "name": "The hub's ⋯ menu shows the approver roster in its Settings & rules panel on an invited-approvers app (#646, #4045)",
+      "path": "/?demo=1&ws=status&shot=plus-menu-settings#app/staging-demo-invited-approvers/dev",
       "expectSelector": "#dev-plus-menu [data-plus='members']",
       "expectText": "Members & approvals"
     },

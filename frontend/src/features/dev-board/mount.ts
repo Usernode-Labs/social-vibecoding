@@ -58,6 +58,7 @@ import { publishInviteOffer, type InviteOffer } from './workshop/invite-offer';
 import {
   aiEnabledStore,
   cardNowStore,
+  publishVoteSending,
   devKanbanStore,
   devWorkshopStore,
 } from './card/cards-store';
@@ -126,6 +127,8 @@ export interface DevBoardBridge {
   mountPermissionConsentModal(host: Element | null, view: PermissionConsentModalView): void;
   publishCardNow(now: number): void;
   publishAiEnabled(enabled: boolean): void;
+  /** #3984: a vote on its way, by `<fn>:<id>`; null clears it (cards-store.ts). */
+  publishVoteSending(key: string, side: 'yes' | 'no' | null): void;
   publishViewMode(mode: string): void;
   publishWorkshopGroup(mode: string): void;
   /** #3700: the invite link a project's page was opened from (App._followInvite). */
@@ -380,12 +383,16 @@ export const devBoardBridge: DevBoardBridge = {
     aiEnabledStore.set({ enabled });
   },
 
+  // #3984: a vote on its way (castVote / castIssueVote), for the Vote button.
+  publishVoteSending,
+
   // #4098: a change's explanation blocks. app-view.js splits the summary
   // through these so the hero draws the blocks natively and an HTML-only
   // sink shows them as Markdown; absent (a stale shell), the fence renders
   // as the code block it is.
   splitExplainBlocks: splitExplain,
   explainBlocksToMarkdown: explainToMarkdown,
+
   publishViewMode,
   publishWorkshopGroup,
   publishInviteOffer,

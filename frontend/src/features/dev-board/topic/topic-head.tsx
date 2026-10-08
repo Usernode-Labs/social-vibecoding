@@ -1334,7 +1334,9 @@ function RunPanel({ run, id }: { run: StepRun; id: string }): ReactNode {
     ? (c.done
       ? `${fmtCount(c.passed)} passed${c.failed ? ` · ${c.failed} failed` : ''}`
       : `${fmtCount(c.ran)} / ${c.expected ? fmtCount(c.expected) : '?'}${c.failed ? ` · ${c.failed} failed` : ''}`)
-    : (run.live ? (run.phase === 'testing' ? 'Starting' : 'After the build') : 'Did not run');
+    : (run.live
+      ? (run.phase === 'testing' ? 'Starting' : run.phase === 'queued' ? 'Waiting for a slot' : 'After the build')
+      : 'Did not run');
   const u = run.unit;
   const unitPhase = u && !u.done && (u.phase === 'cloning' || u.phase === 'installing') ? u.phase : null;
   const unitValue = !u ? '' : unitPhase ? `${unitPhase.charAt(0).toUpperCase()}${unitPhase.slice(1)}`

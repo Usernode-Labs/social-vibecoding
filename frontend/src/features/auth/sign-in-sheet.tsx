@@ -47,9 +47,11 @@
  *   username    POST /api/auth/phone/finish, the provider's step with the
  *               phone's own route, which mints the session.
  *
- * "Already on Homeroom? Sign in another way" leads to the other ways, for an
- * account made before; one made by email from here is not a private member
- * and waits in the queue.
+ * Under the phone step, past an "or", Continue with Apple and Continue with
+ * Google when an admin has set them up (the same buttons as the first step's
+ * otherwise), then "Already on Homeroom? Sign in with email", for an account
+ * made before; one made by email from here is not a private member and
+ * waits in the queue. That step still leads on to "Sign in with a password".
  *
  * "Sign in with a password" is a step of its own here too:
  *
@@ -142,7 +144,7 @@ import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { inviteEmailFromToken, readAutoSend, writeAutoSend } from './login';
 import { NativeLoginDetailsLink } from './native-login-details';
 import { PhoneInput, readPhone } from './phone-input';
-import { phoneRecaptchaToken, RECAPTCHA_NOTICE } from './recaptcha';
+import { phoneRecaptchaToken, RECAPTCHA_LINE } from './recaptcha';
 import { SessionConfirmationNotice, useSessionConfirmation } from './session-confirmation';
 import {
   blockedOffline,
@@ -154,7 +156,7 @@ import {
   sessionMintFailureMessage,
   USERNAME_RULE,
 } from './shared';
-import { TermsNotice } from './waitlist-shared';
+import { RecaptchaLine, TermsNotice } from './waitlist-shared';
 
 type Step = 'choose' | 'email' | 'code' | 'account' | 'username' | 'password' | 'phone' | 'phone-code';
 
@@ -247,10 +249,10 @@ const PROVIDER_LABEL: Record<SignInProvider, string> = { apple: 'Apple', google:
 // Apple's button is solid black (white on dark), Google's is white with a
 // hairline, as their sign-in guidelines draw them; both the sheet's pill shape.
 const PROVIDER_BUTTON: Record<SignInProvider, string> = {
-  apple: 'flex h-[50px] w-full items-center justify-center gap-2 rounded-full bg-black text-[17px] font-semibold text-white dark:bg-white dark:text-black disabled:opacity-60',
-  google: 'flex h-[50px] w-full items-center justify-center gap-2 rounded-full bg-white text-[17px] font-semibold text-zinc-900 shadow-[inset_0_0_0_1px_rgba(0,0,0,0.15)] dark:bg-zinc-800 dark:text-zinc-100 dark:shadow-[inset_0_0_0_1px_rgba(255,255,255,0.15)] disabled:opacity-60',
+  apple: 'flex h-[50px] w-full items-center justify-center gap-2 rounded-full bg-black text-[17px] font-[650] text-white dark:bg-white dark:text-black disabled:opacity-60',
+  google: 'flex h-[50px] w-full items-center justify-center gap-2 rounded-full bg-white text-[17px] font-[650] text-zinc-900 shadow-[inset_0_0_0_1px_rgba(0,0,0,0.15)] dark:bg-zinc-800 dark:text-zinc-100 dark:shadow-[inset_0_0_0_1px_rgba(255,255,255,0.15)] disabled:opacity-60',
 };
-const EMAIL_BUTTON = 'flex h-[50px] w-full items-center justify-center rounded-full bg-zinc-200 text-[17px] font-semibold text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100 disabled:opacity-60';
+const EMAIL_BUTTON = 'flex h-[50px] w-full items-center justify-center rounded-full bg-zinc-200 text-[17px] font-[650] text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100 disabled:opacity-60';
 
 // The server holds a second code back for this long (routes/auth.js); the
 // resend counts it down rather than pretending to send.
@@ -335,30 +337,22 @@ export const PHONE_NAME_MAX = 40;
 export { phoneE164 } from './phone-input';
 
 /**
- * The line over "Sign in with a password", for the screen that opened the
- * sheet. Only what is true there: an invite's Join and the story's Get
- * started make an account for a new address; the story's Sign in is for
- * somebody who has one.
+ * What sits under the first step's button (#4037, the owner's ruling of
+ * 7 October). Where the sheet makes an account (the story's Make an account,
+ * an invite's Join) it is the terms line alone, since continuing is agreeing
+ * (tests/terms-first-run.test.js); somebody with an account signs in from
+ * the story's own Sign in, or with the same email code. The story's Sign in,
+ * and the other ways after an invite's phone step, are for an account
+ * somebody has: "Sign in with a password" right under the button, then the
+ * terms line.
  */
-export function passwordLead(from: 'invite' | 'story' | 'signin'): string {
-  if (from === 'invite') return 'New to Homeroom? This makes your account. ';
-  if (from === 'story') return 'Already have an account? ';
-  return '';
+export function firstStepLine(from: 'invite' | 'story' | 'signin', phone = false): 'terms' | 'password' {
+  return from === 'signin' || phone ? 'password' : 'terms';
 }
 
 /** The line Google asks for where its reCAPTCHA badge is not shown (./recaptcha.ts). */
 export function RecaptchaNotice() {
-  const n = RECAPTCHA_NOTICE;
-  const link = 'underline hover:text-zinc-700 dark:hover:text-zinc-300';
-  return (
-    <p data-sign-in-sheet-recaptcha="" className="text-center text-[12px] leading-snug text-zinc-500 dark:text-zinc-400">
-      {n.lead}
-      <a href={n.privacy.href} target="_blank" rel="noopener noreferrer" className={link}>{n.privacy.label}</a>
-      {n.and}
-      <a href={n.terms.href} target="_blank" rel="noopener noreferrer" className={link}>{n.terms.label}</a>
-      {n.tail}
-    </p>
-  );
+  return <RecaptchaLine notice={RECAPTCHA_LINE} data={{ 'data-sign-in-sheet-recaptcha': '' }} />;
 }
 
 /** Where a waitlist "you're in" link's sheet starts. */
@@ -413,10 +407,14 @@ const QUIET = 'py-1 text-[15px] font-medium text-violet-700 dark:text-violet-400
 
 export type SignInSheetProps = {
   open: boolean;
-  /** "Join Sunday Run Club" */
+  /** "Join Sunday Run Club", "Make your account", "Sign in" */
   title: string;
-  /** The line under the title on the first step. */
-  intro: string;
+  /**
+   * A line under the title on the first step. Nobody passes one now: the
+   * title, the field and the button say it, and the phone sign-up's own
+   * copy is trimmed (#4326, #4037).
+   */
+  intro?: string;
   /** This sign-in is the Join pressed on an invite's page. */
   followInvite?: boolean;
   /** Apple and Google, when an admin has set them up (inside the app, those its build can show). */
@@ -466,7 +464,7 @@ function rememberInviteJoin() {
 }
 
 export function SignInSheet({
-  open, title, intro, followInvite = false, providers = [], native = false, phone = false, askName = true, from = 'signin',
+  open, title, intro = '', followInvite = false, providers = [], native = false, phone = false, askName = true, from = 'signin',
   returnTo = '/', resume = null, releaseToken = null, beforeFinish, onClose, primaryClass,
 }: SignInSheetProps) {
   const otherWays: Step = providers.length ? 'choose' : 'email';
@@ -953,14 +951,50 @@ export function SignInSheet({
 
   if (!open) return null;
 
+  const oneLine = firstStepLine(from, phone) === 'password' ? (
+    <>
+      <p className="text-center text-[13px] text-zinc-500 dark:text-zinc-400">
+        <a
+          href="#login"
+          data-sign-in-sheet-password=""
+          onClick={(e) => { e.preventDefault(); setError(null); setDetails(null); setStep('password'); }}
+          className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
+        >
+          Sign in with a password
+        </a>
+      </p>
+      <TermsNotice />
+    </>
+  ) : <TermsNotice />;
+
+  // Apple and Google, in the order the server lists them: the first step's
+  // own, or under the invite's phone step past an "or".
+  const providerButtons = providers.map((provider) => (
+    <button
+      key={provider}
+      type="button"
+      data-sign-in-provider={provider}
+      disabled={busy}
+      className={PROVIDER_BUTTON[provider]}
+      onClick={() => continueWith(provider)}
+    >
+      {provider === 'apple'
+        ? <AppleIcon className="h-[18px] w-[18px] -mt-0.5" aria-hidden="true" />
+        : <GoogleIcon className="h-[18px] w-[18px]" aria-hidden="true" />}
+      {`Continue with ${PROVIDER_LABEL[provider]}`}
+    </button>
+  ));
+
   const waitLeft = Math.max(0, Math.ceil((cooldownUntil - now) / 1000));
   const heading = step === 'choose' || step === 'email' || step === 'phone' ? title
     : step === 'code' ? 'Check your email'
       : step === 'phone-code' ? 'Check your texts'
         : step === 'password' ? 'Sign in'
           : step === 'username' ? 'Pick a username' : 'Finish your account';
-  // The opener's line is the first step's; with the phone first, the other
-  // ways are for an account made before.
+  // The first step says nothing under its title unless it is given a line:
+  // "Make your account", "Join Sunday Run Club" and "Sign in" already say
+  // it, and the field or the providers come next (#4037). With the phone
+  // first, the other ways are for an account made before.
   const sub = step === firstStep
     ? intro
     : step === 'choose'
@@ -1031,27 +1065,14 @@ export function SignInSheet({
 
         {step === 'choose' ? (
           <div className="mt-5 flex flex-col gap-2.5">
-            {providers.map((provider) => (
-              <button
-                key={provider}
-                type="button"
-                data-sign-in-provider={provider}
-                disabled={busy}
-                className={PROVIDER_BUTTON[provider]}
-                onClick={() => continueWith(provider)}
-              >
-                {provider === 'apple'
-                  ? <AppleIcon className="h-[18px] w-[18px] -mt-0.5" aria-hidden="true" />
-                  : <GoogleIcon className="h-[18px] w-[18px]" aria-hidden="true" />}
-                {`Continue with ${PROVIDER_LABEL[provider]}`}
-              </button>
-            ))}
+            {providerButtons}
             <button type="button" data-sign-in-provider="email" disabled={busy} className={EMAIL_BUTTON} onClick={() => { setError(null); setStep('email'); }}>
               Continue with email
             </button>
             {phone ? (
               <button type="button" data-sign-in-sheet-to-phone="" className={QUIET} onClick={() => { setError(null); setStep('phone'); }}>New to Homeroom? Join with your phone</button>
             ) : null}
+            {oneLine}
           </div>
         ) : null}
 
@@ -1064,6 +1085,7 @@ export function SignInSheet({
               </div>
             </div>
             <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? 'Sending code…' : 'Send code'}</button>
+            {oneLine}
             {providers.length ? (
               <button type="button" className={QUIET} onClick={() => { setError(null); setStep('choose'); }}>Other ways to continue</button>
             ) : null}
@@ -1193,35 +1215,33 @@ export function SignInSheet({
         ) : null}
         <SessionConfirmationNotice completion={completion} />
 
+        {step === 'phone' && providers.length ? (
+          <div data-sign-in-sheet-providers="" className="mt-4 flex flex-col gap-2.5">
+            <div data-sign-in-sheet-or="" className="flex items-center gap-3 text-[13px] text-zinc-500 dark:text-zinc-400">
+              <span aria-hidden="true" className="h-px flex-1 bg-[color:var(--app-sheet-line)]" />
+              or
+              <span aria-hidden="true" className="h-px flex-1 bg-[color:var(--app-sheet-line)]" />
+            </div>
+            {providerButtons}
+          </div>
+        ) : null}
         {step === 'phone' ? (
           <p className="mt-4 text-center text-[13px] text-zinc-500 dark:text-zinc-400">
             {'Already on Homeroom? '}
             <a
               href="#login"
-              data-sign-in-sheet-other-ways=""
-              onClick={(e) => { e.preventDefault(); setError(null); setDetails(null); setStep(otherWays); }}
+              data-sign-in-sheet-to-email=""
+              onClick={(e) => { e.preventDefault(); setError(null); setDetails(null); setStep('email'); }}
               className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
             >
-              Sign in another way
+              Sign in with email
             </a>
           </p>
         ) : null}
-        {step === 'choose' || step === 'email' ? (
-          <p className="mt-4 text-center text-[13px] text-zinc-500 dark:text-zinc-400">
-            {phone ? '' : passwordLead(from)}
-            <a
-              href="#login"
-              data-sign-in-sheet-password=""
-              onClick={(e) => { e.preventDefault(); setError(null); setDetails(null); setStep('password'); }}
-              className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
-            >
-              Sign in with a password
-            </a>
-          </p>
-        ) : null}
-        {/* The phone's steps run reCAPTCHA with its badge hidden (./recaptcha.ts):
-            Google's notice rides in the fine print there. */}
-        <TermsNotice className="mt-3" recaptcha={step === 'phone' || step === 'phone-code' ? RECAPTCHA_NOTICE : null} />
+        {/* The first step's terms sit in its group (above); every later step keeps them here. */}
+        {step === 'choose' || step === 'email' ? null : (
+          <TermsNotice className="mt-3" recaptcha={step === 'phone' || step === 'phone-code' ? RECAPTCHA_LINE : null} />
+        )}
       </div>
     </div>
   );

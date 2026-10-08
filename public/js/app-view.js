@@ -1058,7 +1058,11 @@ const AppView = {
       // fetches trigger (each dismisses an open menu by design), bounded, and
       // ended by a human's first real gesture so a person following one of
       // these links does not get a menu put back under them.
-      if (shot === 'plus-menu') {
+      // `?shot=plus-menu-settings` goes one step further (#4045): the menu,
+      // then its "Settings & rules" row, so the settings it now folds away
+      // are URL-reachable for the checks and the shots.
+      const plusMenuSettings = shot === 'plus-menu-settings';
+      if (shot === 'plus-menu' || plusMenuSettings) {
         let tries = 0;
         const done = () => {
           clearInterval(tick);
@@ -1073,7 +1077,12 @@ const AppView = {
           const menu = document.getElementById('dev-plus-menu');
           // Already up: nothing to do this tick, but keep the window open so a
           // repaint that dismisses it gets it back.
-          if (menu && !menu.classList.contains('hidden')) return;
+          if (menu && !menu.classList.contains('hidden')) {
+            if (plusMenuSettings && menu.getAttribute('data-plus-view') !== 'settings') {
+              menu.querySelector('[data-plus="settings"]')?.click();
+            }
+            return;
+          }
           document.getElementById('dev-plus-btn')?.click();
         }, 300);
       }
@@ -2838,14 +2847,14 @@ const AppView = {
   // offline shots above, and for the same reason: what it shows is the
   // shell's own screen, so no project has to be mid-build on the database
   // the shot runs against. Nothing is behind it: the record has no address
-  // and is not the routed app, so "Show the starter for now" frames nothing,
-  // and the chat button opens Messages.
+  // and is not the routed app.
   //
-  // `variant`: true or 'plan', its plan waiting for Build it; 'ready', built
-  // and waiting for the viewer's approval in a group; 'approved', the same
-  // once the viewer approved it, waiting on the other member with the
-  // group's clock running. Their change id stands for no change, so Try it
-  // and See the change open nothing real.
+  // `variant`: true or 'plan', its plan waiting for Build it (#4053: "Your
+  // plan is ready to review" on its thumbnail); 'ready', built and waiting
+  // for the viewer's approval in a group; 'approved', the same once the
+  // viewer approved it, waiting on the other member with the group's clock
+  // running. Their change id stands for no change, so Try it and See the
+  // change open nothing real. Otherwise it is being built ("Building it").
   showFirstVersionShot(variant = false) {
     const withPlan = variant === true || variant === 'plan';
     const ready = variant === 'ready' || variant === 'approved';
@@ -2853,11 +2862,14 @@ const AppView = {
       slug: 'staging-demo-first-version',
       name: 'Plant Pal',
       icon_emoji: '🪴',
+      description: 'Keep your plants alive: see which ones need water today.',
+      // Made up: there is no sketch of it to read.
+      shot: true,
       status: 'running',
       url: null,
       self_hosted: false,
       first_version: ready ? {
-        building: true, mine: variant === 'approved', step: 6, of: 7, stepName: 'Approval',
+        building: true, mine: variant === 'approved', step: 6, of: 7, line: 'ready',
         creator: variant === 'approved' ? null : 'jordan', ready: true, question: false, conversationId: null,
         approval: variant === 'approved' ? {
           sessionId: 990003, mustApprove: false, approved: true, waitingOn: ['sam'], more: 0, missing: 1,
@@ -2867,23 +2879,13 @@ const AppView = {
           goesLiveAt: new Date(Date.now() + 3 * 86400000).toISOString(), soon: false,
         },
       } : withPlan ? {
-        // B6: its plan waits for Build it. A shot: the action id stands for
-        // no plan, so a tap here decides nothing. The step is named as the
-        // server names it to the plan's creator while it waits on them
-        // (homeroom-bot-dm.js planWaitsStepName).
-        building: true, mine: true, step: 3, of: 7, stepName: 'Your turn: answer the plan',
+        // B6: its plan waits for Build it, as the server says it to the
+        // plan's creator (homeroom-bot-progress.js buildLineOf). The plan
+        // itself is answered in their chat with Homeroom bot, not here.
+        building: true, mine: true, step: 3, of: 7, line: 'plan',
         creator: null, ready: false, question: false, conversationId: null,
-        plan: {
-          bullets: [
-            'A list of your plants with a photo and how often each needs water',
-            'A Today view that shows which plants need watering now',
-            'Tap a plant to mark it watered, and its next date moves on by itself',
-          ],
-          questions: [{ question: 'How should it remind you?', answers: ['In the app', 'Phone alert'] }],
-          actionId: 990002, messageId: null, conversationId: null,
-        },
       } : {
-        building: true, mine: true, step: 4, of: 7, stepName: 'Build it',
+        building: true, mine: true, step: 4, of: 7, line: 'building',
         creator: null, ready: false, question: false, conversationId: null,
       },
     };
@@ -2983,22 +2985,23 @@ const AppView = {
   // made to "Start a new change". The server knows the state
   // (`first_version` on GET /api/apps/:slug, from
   // services/homeroom-bot-dm.js firstVersionState); while it says building,
-  // the App tab shows that instead of mounting the frame. Its creator gets
-  // their DM with the bot (and its question, when the bot waits on one);
-  // anyone else is told whose description it is. Once it is built and up
-  // for approval, it says it is ready to try and what it waits on
-  // (_firstVersionReadyView). "Show the starter for now" mounts the frame
-  // anyway, for the rest of this visit to the page, under a bar whose "Back
-  // to the first version" puts this screen back (hideStarter;
-  // features/app-frame/starter-bar.tsx).
+  // the App tab shows that instead of mounting the frame: the project's
+  // thumbnail with its build line (#4053), the same card and words as the
+  // made screen and the hub. Once it is built and up for approval, it says
+  // it is ready to try and what it waits on (_firstVersionReadyView).
+  //
+  // #4043: no plan and no way to the starter here. The plan used to be drawn
+  // under the step, with its questions and Build it, and an invited member's
+  // tour landed on "Show the starter for now" (#3944 added a bar over the
+  // starter to come back by). The plan is answered in the creator's chat
+  // with Homeroom bot, and the starter is a template, not their app.
   FIRST_VERSION_POLL_MS: 10000,
   _firstVersionTimer: null,
   _firstVersionRecord: null,
-  _starterShown: new Set(),
 
   _firstVersionPending(appData) {
     const fv = appData && appData.first_version;
-    return !!(fv && fv.building && appData.slug && !AppView._starterShown.has(appData.slug));
+    return !!(fv && fv.building && appData.slug);
   },
 
   // ── Painted only from an answer it can trust ──
@@ -3133,59 +3136,80 @@ const AppView = {
     return true;
   },
 
+  /**
+   * The thumbnail for the first version's screen (features/app-frame/
+   * app-status.tsx draws it, with the sketch's tagline once it is read, else
+   * the project's one line from dapp.json), and its build line for this
+   * reader (`first_version.line`), else what can be said without one.
+   */
+  _firstVersionThumb(appData) {
+    const fv = appData.first_version || {};
+    const snapshot = appData.manifest_snapshot && typeof appData.manifest_snapshot === 'object'
+      ? appData.manifest_snapshot : {};
+    const said = [appData.description, snapshot.description]
+      .find((line) => typeof line === 'string' && line.trim());
+    return {
+      thumb: {
+        name: appData.name || appData.slug,
+        slug: appData.slug,
+        emoji: appData.icon_emoji || null,
+        description: said ? said.replace(/\s+/g, ' ').trim() : null,
+        ...(appData.shot ? { sketch: false } : {}),
+      },
+      buildLine: typeof fv.line === 'string' && fv.line ? fv.line : (fv.ready ? 'ready' : 'planning'),
+    };
+  },
+
+  /**
+   * #4053: while it is being built, the thumbnail with its build line one
+   * line under it, and one line below that, for everyone: "It opens here
+   * when it’s ready." The build line says where it is ("Your plan is ready
+   * to review" to the person who started it). The plan and the bot's
+   * questions are answered in the creator's chat with Homeroom bot, so the
+   * creator, and only they, gets a way there under the card: "Review the
+   * plan" while their plan waits (the build line asks them, in blue), else
+   * a small "Open Homeroom bot" (owner, 8 Oct 2026). While a first-session tour
+   * card that says where the app opens is over this screen, the line hides
+   * (`tourSays`: the card carries `data-tour-says-where-it-opens`;
+   * features/app-frame/app-status.tsx). A card that does not say it, such as
+   * today's "this shows how the build is going", leaves it in place.
+   * While a first-session tour runs, app-status.tsx holds "Review the plan"
+   * back and its line says the bot is working on it (heldForTour): the
+   * tour's last card is what names the plan.
+   */
   _firstVersionView(appData) {
     const fv = appData.first_version || {};
-    const name = appData.name || appData.slug;
-    const mine = !!fv.mine;
-    const from = mine ? 'your description'
-      : (fv.creator ? `@${fv.creator}’s description` : 'its description');
-    const lines = [];
-    if (Number.isInteger(fv.step) && Number.isInteger(fv.of) && fv.stepName) {
-      lines.push(`Step ${fv.step} of ${fv.of}: ${fv.stepName}`);
-    }
-    // B6: the plan it waits on, with Build it, in place of the chat's button
-    // (Change something goes to that chat). The step line says the rest.
-    const plan = mine && fv.plan && Array.isArray(fv.plan.bullets) && fv.plan.bullets.length
-      && Number.isInteger(fv.plan.actionId) ? fv.plan : null;
     // Built and up for approval: no longer "being built" (_firstVersionReadyView).
-    if (!plan && fv.ready) return AppView._firstVersionReadyView(appData, lines);
-    if (plan) {
-      // Nothing more to say under the step: the card is what comes next.
-    } else if (mine && fv.question) lines.push('Homeroom bot has a question for you.');
-    else {
-      lines.push(mine ? 'We’ll message you when it’s ready.' : 'It opens here once it’s ready.');
-    }
+    if (fv.ready) return AppView._firstVersionReadyView(appData);
+    const thumb = AppView._firstVersionThumb(appData);
+    // Their DM, by its id when the record names it (members get neither).
+    const chat = fv.mine === true
+      ? {
+        key: 'botChat',
+        label: thumb.buildLine === 'plan' ? 'Review the plan' : 'Open Homeroom bot',
+        slug: appData.slug,
+        conversationId: Number.isInteger(fv.conversationId) ? fv.conversationId : null,
+        // The plan is the one thing that waits on them: the primary button.
+        // Otherwise it is a small, quiet way into the chat.
+        quiet: thumb.buildLine !== 'plan',
+        underCard: true,
+      }
+      : null;
     return {
-      dot: 'creating',
-      message: `${name} is being built from ${from}`,
+      dot: null,
+      message: appData.name || appData.slug,
       detail: null,
-      lines,
-      ...(plan ? {
-        plan: {
-          appName: name,
-          slug: appData.slug,
-          bullets: plan.bullets,
-          questions: Array.isArray(plan.questions) ? plan.questions : [],
-          actionId: plan.actionId,
-          messageId: Number.isInteger(plan.messageId) ? plan.messageId : null,
-          conversationId: Number.isInteger(plan.conversationId) ? plan.conversationId : null,
-        },
-      } : {}),
-      action: mine && !plan
-        ? { key: 'botChat', label: 'Open my chat with Homeroom bot', slug: appData.slug,
-          conversationId: Number.isInteger(fv.conversationId) ? fv.conversationId : null }
-        : null,
-      // While it is still being set up there is no starter to show.
-      secondary: appData.status === 'running'
-        ? { key: 'starter', label: 'Show the starter for now', slug: appData.slug }
-        : null,
+      ...thumb,
+      lines: ['It opens here when it’s ready.'],
+      tourSays: true,
+      action: chat,
     };
   },
 
   /**
    * The first version is built and up for approval (`first_version.ready`).
-   * The screen says so in plain words, under the step line it is given,
-   * and says what it waits on for whoever reads it, from
+   * Its thumbnail says Ready to try (#4053), and the screen says what it
+   * waits on for whoever reads it, from
    * `first_version.approval` (services/homeroom-bot-dm.js
    * firstVersionApproval):
    *
@@ -3201,24 +3225,22 @@ const AppView = {
    * cast after the answer was read: they read "You approved it." and whom
    * it still waits on (_firstVersionApprovalSeen).
    *
-   * "Show the starter for now" stays, quieter, under them. Without
-   * `approval` (a read that failed) its creator is pointed at their chat,
-   * as before. No amber dot: nothing is being built.
+   * Without `approval` (a read that failed) its creator is pointed at their
+   * chat, as before.
    */
-  _firstVersionReadyView(appData, lines) {
+  _firstVersionReadyView(appData) {
     const fv = appData.first_version || {};
     const slug = appData.slug;
     // "Your" is the reader's own Yes, as it stands now (_firstVersionApprovalSeen).
     const approval = fv.approval && Number.isInteger(fv.approval.sessionId) && fv.approval.sessionId > 0
       ? AppView._firstVersionApprovalSeen(appData, fv.approval) : null;
+    const lines = [];
     const view = {
       dot: null,
-      message: `The first version of ${appData.name || slug} is ready to try`,
+      message: appData.name || slug,
       detail: null,
+      ...AppView._firstVersionThumb(appData),
       lines,
-      secondary: appData.status === 'running'
-        ? { key: 'starter', label: 'Show the starter for now', slug }
-        : null,
     };
     if (!approval) {
       lines.push(fv.mine ? 'Try it from your chat.' : 'Waiting for approval.');
@@ -3232,12 +3254,16 @@ const AppView = {
     }
     const tryIt = { key: 'tryChange', label: 'Try it', slug, sessionId: approval.sessionId };
     const change = { key: 'seeChange', label: 'See the change', slug, sessionId: approval.sessionId };
+    // "Ready to try" stays on the thumbnail beside Try it (owner, 7 Oct):
+    // with the title gone it is the one thing that says it is ready.
     if (approval.mustApprove) {
       lines.push('Waiting for your approval.');
       return { ...view, action: tryIt, alt: change };
     }
     lines.push(AppView._firstVersionWaitLine(approval));
-    return approval.approved ? { ...view, action: tryIt, alt: change } : { ...view, action: change };
+    return approval.approved
+      ? { ...view, action: tryIt, alt: change }
+      : { ...view, action: change };
   },
 
   /**
@@ -3318,83 +3344,6 @@ const AppView = {
     const messages = window.UsernodeReact && window.UsernodeReact.messages;
     if (messages && typeof messages.open === 'function') messages.open(id);
     else location.hash = id ? `#messages/${id}` : '#messages';
-  },
-
-  /**
-   * B6: Build it, under the plan on the App tab: the same tap the plan's card
-   * in the chat sends, decided once on the server, with the choices tapped.
-   * The screen then reads the project again and shows the build's step.
-   */
-  async buildFirstVersion(slug, actionId, answers) {
-    const id = Number(actionId);
-    if (!slug || !Number.isInteger(id) || id <= 0) return;
-    try {
-      const resp = await fetch(`/api/conversations/homeroom-bot/actions/${id}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ choice: 'build', answers: (Array.isArray(answers) ? answers : []).map((a) => a || '') }),
-      });
-      if (!resp.ok && resp.status !== 409) {
-        const data = await resp.json().catch(() => ({}));
-        PlatformUI.toast(data.error || `Couldn't start building just now (HTTP ${resp.status}).`);
-      }
-    } catch (err) {
-      PlatformUI.toast(`Couldn't start building just now: ${err.message}`);
-    }
-    const current = AppView.appData;
-    if (current && current.slug === slug) AppView._recheckFirstVersion(current);
-  },
-
-  /** B6: Change something: the chat with Homeroom bot, with the plan quoted in its composer. */
-  changeFirstVersionPlan(_slug, conversationId, messageId) {
-    const messages = window.UsernodeReact && window.UsernodeReact.messages;
-    if (messages && typeof messages.quoteBotMessage === 'function') {
-      messages.quoteBotMessage(conversationId, messageId);
-      return;
-    }
-    AppView.openBotChat(_slug, conversationId);
-  },
-
-  /** "Show the starter for now": the app as it runs, for this visit. */
-  showStarter(slug) {
-    if (!slug) return;
-    AppView._starterShown.add(slug);
-    AppView._stopFirstVersionWatch();
-    if (AppView.appData && AppView.appData.slug === slug
-        && App.currentApp === slug && App.currentTab === 'app') {
-      AppView.renderAppTab();
-    }
-  },
-
-  /**
-   * "Back to the first version", on the bar over the starter
-   * (features/app-frame/starter-bar.tsx): the first version's screen again,
-   * read past every cache on the way if the record on hand is old
-   * (renderAppTab's `_firstVersionTrusted`), and its recheck armed again.
-   */
-  hideStarter(slug) {
-    if (!slug || !AppView._starterShown.delete(slug)) return;
-    AppView._publishStarter(AppView.appData);
-    if (AppView.appData && AppView.appData.slug === slug
-        && App.currentApp === slug && App.currentTab === 'app') {
-      AppView.renderAppTab();
-    }
-  },
-
-  /**
-   * Whose starter the bar is over: this record's, while its first version
-   * is on its way and the viewer asked for the starter; else nobody. Said on
-   * every App tab render, so a record that comes back built (or another
-   * app) takes the bar away. The bar itself draws only over that app's
-   * mounted frame.
-   */
-  _publishStarter(appData) {
-    const fv = appData && appData.first_version;
-    const slug = fv && fv.building && appData.slug && AppView._starterShown.has(appData.slug)
-      ? appData.slug : '';
-    const starter = typeof window !== 'undefined' && window.UsernodeReact
-      && window.UsernodeReact.appStarter;
-    if (starter && typeof starter.set === 'function') starter.set(slug);
   },
 
   _stopFirstVersionWatch() {
@@ -3506,10 +3455,6 @@ const AppView = {
     // _teardownDevRoots. Switching away from the Dev tab lands here.
     AppView._teardownDevRoots();
 
-    // #15: the bar over a starter shown while its first version is built,
-    // or no bar. Before any branch, so each one leaves it right.
-    AppView._publishStarter(appData);
-
     if (!appData || appData.status !== 'running' || !appData.url) {
       if (appData?.status === 'creating') {
         // WebSocket delivery is the fast path, but it is not a durability
@@ -3550,7 +3495,7 @@ const AppView = {
 
     // #15: the first version is still being built from the description, so
     // the running app is the starter. Say so instead of framing it, and keep
-    // asking until it is built (or the viewer asks for the starter).
+    // asking until it is built.
     if (AppView._firstVersionPending(appData)) {
       AppView._teardownLaunch();
       AppView._unmountAppFrame();
@@ -5584,7 +5529,7 @@ const AppView = {
     let note = null;
     if (live) {
       const why = AppView._checksTriggerCopy(item.check_trigger);
-      const title = AppView._checksPhaseCopy(item.check_phase).title;
+      const title = AppView._checksPhaseCopy(item.check_phase, item).title;
       note = why ? `${title} ${why}` : title;
     } else if (item.check_state === 'error' && item.check_error_detail) {
       // The run's own reason first: it is the one that can say "not this
@@ -5875,7 +5820,15 @@ const AppView = {
       return { state: 'failed', text: broken === 1 ? 'Tested · One thing isn’t working' : `Tested · ${broken} things aren’t working` };
     }
     if (state === 'passing') return { state: 'passed', text: 'Tested · All checks passed' };
-    if (state === 'pending') return { state: 'running', text: 'Testing it…' };
+    if (state === 'pending') {
+      // A run waiting for a checks slot says so, with its place in line
+      // ("Waiting for a checks slot (2 ahead)"). This is the one line about
+      // the checks the change page shows without opening Details, and a long
+      // wait that read "Testing it…" would look like a stuck run.
+      return item.check_phase === 'queued'
+        ? { state: 'running', text: AppView._checksPhaseCopy('queued', item).title }
+        : { state: 'running', text: 'Testing it…' };
+    }
     if (state === 'failing') return { state: 'failed', text: 'Testing found a problem' };
     if (state === 'skipped') return { state: 'skipped', text: 'Not tested' };
     if (AppView._checksWillRetry(item)) return { state: 'running', text: 'Testing will run again' };
@@ -7043,10 +6996,35 @@ const AppView = {
     const ac = new AbortController();
     AppView._plusMenuAbort = ac;
     const { signal } = ac;
+    // #4045: "Settings & rules" is one row that opens the project's
+    // settings on top of the menu (actions-row.tsx #dev-plus-settings). On
+    // desktop the dropdown turns to that panel (`data-plus-view`, app.css)
+    // and its back row turns it back; closing always returns it to the menu.
+    const settingsPanel = document.getElementById('dev-plus-settings');
+    const showSettings = (on) => {
+      if (on) menu.setAttribute?.('data-plus-view', 'settings');
+      else menu.removeAttribute?.('data-plus-view');
+    };
     const close = () => {
       menu.classList.add('hidden');
       btn.setAttribute('aria-expanded', 'false');
+      showSettings(false);
     };
+    // A sheet's rows, in DOM order, so a group heading arrives between the
+    // rows it heads (see below).
+    const sheetActions = (nodes) => nodes.map((node) => {
+      if (!node.hasAttribute('data-plus')) {
+        return { heading: true, label: node.textContent.replace(/\s+/g, ' ').trim() };
+      }
+      const titleEl = node.querySelector('[data-plus-title]') || node.querySelector('span');
+      const glyph = node.querySelector('svg')?.cloneNode(true);
+      if (glyph) glyph.removeAttribute('class');
+      return {
+        label: (titleEl?.textContent || node.textContent).replace(/\s+/g, ' ').trim(),
+        iconEl: glyph || undefined,
+        handler: () => node.click(),
+      };
+    });
     // The rows a keyboard can reach (QA 2026-09-24 Q18).
     const PLUS_ROWS = 'button[data-plus]:not([disabled])';
     btn.addEventListener('click', (e) => {
@@ -7066,7 +7044,11 @@ const AppView = {
         // nothing, labelled `— Build a change —`: same weight and ink as the
         // actions around it, and tappable, so the dashes were the only thing
         // saying it was not a choice.
-        const nodes = Array.from(menu.querySelectorAll('button[data-plus], [data-plus-group]'));
+        //
+        // The settings panel's rows are not this sheet's: its "Settings &
+        // rules" row presents them as a sheet of their own (below).
+        const nodes = Array.from(menu.querySelectorAll('button[data-plus], [data-plus-group]'))
+          .filter((node) => !(settingsPanel && settingsPanel.contains(node)));
         PlatformUI.actionSheet({
           actions: nodes.map((node) => {
             if (!node.hasAttribute('data-plus')) {
@@ -7095,12 +7077,17 @@ const AppView = {
             return {
               label: (titleEl?.textContent || node.textContent).replace(/\s+/g, ' ').trim(),
               iconEl: glyph || undefined,
+              // The menu's one lit row, Suggest an improvement (actions-row.tsx
+              // `lit`, the owner, 8 Oct 2026), is lit in the sheet too.
+              highlighted: node.hasAttribute('data-plus-lit'),
               handler: () => node.click(),
             };
           }),
         });
         return;
       }
+      // Every open starts on the menu itself, never on the settings panel.
+      showSettings(false);
       const open = menu.classList.toggle('hidden') === false;
       btn.setAttribute('aria-expanded', open ? 'true' : 'false');
       // Refresh the App secrets item's "N required missing" state only
@@ -7155,6 +7142,31 @@ const AppView = {
         App.openFeedbackModal({ fromDev: true, intent: 'issue' });
       }, { signal });
     }
+    const settingsBtn = menu.querySelector('[data-plus="settings"]');
+    settingsBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (PlatformUI.isTouch()) {
+        // On touch the first sheet has gone by now: the settings come up as
+        // a sheet of their own, headed with the row's name.
+        // The owner, 7 Oct: a second sheet of the same kind, titled, whose
+        // last card is Back rather than Cancel. Back brings the menu back.
+        const rows = settingsPanel
+          ? Array.from(settingsPanel.querySelectorAll('button[data-plus]')) : [];
+        Promise.resolve(PlatformUI.actionSheet({
+          title: 'Settings & rules', cancelLabel: 'Back', actions: sheetActions(rows),
+        })).then((picked) => { if (!picked && btn.isConnected) btn.click(); });
+        return;
+      }
+      showSettings(true);
+      const first = settingsPanel && Array.from(settingsPanel.querySelectorAll('button[data-plus]'))
+        .find((el) => !el.disabled && el.getClientRects().length > 0);
+      if (first) first.focus({ preventScroll: true });
+    }, { signal });
+    settingsPanel?.querySelector('[data-plus-back]')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      showSettings(false);
+      if (settingsBtn) settingsBtn.focus({ preventScroll: true });
+    }, { signal });
     const importPrBtn = menu.querySelector('[data-plus="import-pr"]');
     if (importPrBtn) {
       importPrBtn.addEventListener('click', () => {
@@ -7609,18 +7621,9 @@ const AppView = {
         ? { slug: AppView.appData.slug, name: AppView.appData.name, readOnly: !!AppView.readOnly || archived }
         : null);
 
-    // (#3) First-arrival framing: name what Group Chat is for. Group chat
-    // is rarely empty (system messages), so a permanent banner would be
-    // clutter — show it once per browser, then it disappears. The read AND
-    // the write stay here: whether it has been seen is a browser fact, and a
-    // component that stamped it would fire again on every re-render.
-    let introAppName = null;
-    try {
-      if (!localStorage.getItem('usernode_seen_gc_intro')) {
-        introAppName = (app && app.name) ? app.name : 'this app';
-        localStorage.setItem('usernode_seen_gc_intro', '1');
-      }
-    } catch { /* private-mode / disabled storage: just skip the intro */ }
+    // No first-arrival banner (#3's "This is where everyone using … talks
+    // and votes on proposed changes to it."): the owner, 6 October 2026. The
+    // Discussion tab's name and its messages say what it is.
 
     // The PANE is features/group-chat/general-chat.tsx's — the message
     // stream, the status line, the composer and the spec panel's slot —
@@ -7639,7 +7642,6 @@ const AppView = {
     const previousList = content.querySelector('#gc-messages');
     if (previousList) AppView._reactGroupChat()?.unmountTranscript(previousList);
     AppView._reactGroupChat()?.mountGeneralChat(content, {
-      introAppName,
       readOnly: !!(app && app.readOnly),
       notice: archived
         ? 'This was Homeroom\u2019s project discussion. It is read-only now: Homeroom\u2019s channel is #general.'
@@ -8854,11 +8856,13 @@ const AppView = {
   WORKSHOP_SEEN_KEY: 'workshopSeen',
   // A project page's four tabs under its coloured header: the hub (`status`),
   // Discussion (its channel), Needs you and the Workshop, and All items, the
-  // page under the Workshop. A query param reaches
+  // page under the Workshop, and `plan`, the page under the hub where the
+  // people who joined read the first version's plan (#4074; visited, never
+  // reopened on: _setWorkshopTab keeps the hub). A query param reaches
   // each directly (`?ws=needs`) because the platform's own rule is that a
   // screen only reachable by interacting needs a URL: the declared checks
   // select against it and the proposal screenshots are shot from it.
-  WORKSHOP_TABS: ['status', 'discussion', 'workshop', 'needs', 'all'],
+  WORKSHOP_TABS: ['status', 'discussion', 'workshop', 'needs', 'all', 'plan'],
   _workshopModels() {
     const src = (typeof DevChat !== 'undefined' && DevChat && DevChat.MODELS) || null;
     if (!src || typeof src !== 'object') return { list: [], selected: null };
@@ -8915,7 +8919,7 @@ const AppView = {
       const stored = window.localStorage.getItem(AppView.WORKSHOP_TAB_KEY);
       // A remembered page (Needs you, All items) reopens as itself, with its
       // way back to the tab it hangs off above it.
-      if (AppView.WORKSHOP_TABS.indexOf(stored) !== -1) return stored;
+      if (AppView.WORKSHOP_TABS.indexOf(stored) !== -1 && stored !== 'plan') return stored;
       // A viewer who last left the Dev screen on the Board gets the tab those
       // columns live in, for the same reason _getWorkshopGroup gives them the
       // pane: migrating the retired mode without carrying what it MEANT would
@@ -9061,7 +9065,8 @@ const AppView = {
   },
 
   _setWorkshopTab(key) {
-    const next = AppView.WORKSHOP_TABS.indexOf(key) !== -1 ? key : 'status';
+    // The plan is gone once it is built, so the page reopens on the hub.
+    const next = AppView.WORKSHOP_TABS.indexOf(key) !== -1 && key !== 'plan' ? key : 'status';
     // An explicit tap retires the URL override, exactly as `_setWorkshopGroup`
     // does — otherwise `?ws=` would keep winning over every later press.
     AppView._workshopTabUrlOverride = null;
@@ -12373,7 +12378,7 @@ const AppView = {
         && typeof window !== 'undefined' && window.MergeStatus) {
       const life = MergeStatus.lifecycle(s);
       if (life.key === 'checks_running' && s.check_phase) {
-        const phase = AppView._checksPhaseCopy(s.check_phase);
+        const phase = AppView._checksPhaseCopy(s.check_phase, s);
         return {
           t: 'ms', key: 'state', tone: 'neutral',
           label: phase.title, title: phase.detail, spinner: true,
@@ -13983,6 +13988,11 @@ const AppView = {
         const at = Math.min(steps.filter((s) => s.state === 'done').length + 1, steps.length || 1);
         return `Building preview · ${at} of ${steps.length || 5}`;
       }
+      // Built, and in line for a checks slot: where it is in the line.
+      if (p.check_phase === 'queued') {
+        const place = AppView._checksQueuePlace(p);
+        return place ? `Waiting for a slot · ${place}` : 'Waiting for a slot';
+      }
       if (prog && prog.bar.expected) return `Running · ${prog.bar.ran} of ${prog.bar.expected}`;
       if (prog && prog.bar.ran) return `Running · ${prog.bar.ran} so far`;
       return p.check_phase === 'building' ? 'Building preview' : 'Running';
@@ -15573,7 +15583,13 @@ const AppView = {
     const done = !!u.done;
     let sub;
     let sentence;
-    if (done) {
+    if (done && u.notRun === true) {
+      // Its Job was refused or its setup stopped before any test ran
+      // (services/unit-suite.js notRunOutcome): no test failed, and the
+      // verdict says why once it lands.
+      sub = 'npm test could not run';
+      sentence = 'The repo unit suite (npm test) could not run, so no test result came back.';
+    } else if (done) {
       const ok = u.exitOk !== false;
       sub = ok ? `npm test finished: ${passed} passed` : `npm test finished: ${failed} failed`;
       sentence = ok
@@ -15656,16 +15672,21 @@ const AppView = {
       // manually. #607: a FRESH run (under the ~10-min stale window) shows
       // just the spinner + started-at line — offering "Re-run checks" seconds
       // after a run began was the confusion in the issue report.
-      const stale = AppView._checksRunStale(pr.checks_checked_at);
+      // A run waiting for a checks slot is not stuck however long it waits:
+      // the queue starts it, and a re-run would only join the line again.
+      const queued = pr.check_phase === 'queued';
+      const stale = !queued && AppView._checksRunStale(pr.checks_checked_at);
       // Name the STAGE the run is actually in. A checks run is two very
       // differently-sized halves — build the branch + clone the app's data,
       // then run the suite against the live preview — and one opaque message
       // for both made a mid-flight build look identical to a wedged one. An
       // unrecognised / absent phase (legacy rows, a proposal checked before
       // this shipped) keeps the previous wording verbatim.
-      const phase = AppView._checksPhaseCopy(pr.check_phase);
+      const phase = AppView._checksPhaseCopy(pr.check_phase, pr);
       const rows = [{ t: 'line', parts: [`${phase.detail} Merge is blocked until all tests pass.`] }];
-      if (pr.checks_checked_at) rows.push({ t: 'line', parts: [`Started ${relTime(pr.checks_checked_at)}.`], weight: 'foot' });
+      if (pr.checks_checked_at) {
+        rows.push({ t: 'line', parts: [`${queued ? 'Waiting since' : 'Started'} ${relTime(pr.checks_checked_at)}.`], weight: 'foot' });
+      }
       // …and WHY it started. "Started 4 minutes ago" answers a different
       // question from "who asked for this": a run kicked off by the
       // platform's own recovery sweeper reads as inexplicable churn without
@@ -15982,6 +16003,14 @@ const AppView = {
       title: 'Running the automated tests…',
       detail: 'The preview is up and the automated tests are running against it.',
     },
+    // Between the two: the preview is up and the run waits its turn, because
+    // the platform runs a few proposals' checks at a time
+    // (services/checks-queue.js). Nothing is wrong and nobody has to act.
+    // The title gains the place in line when the row carries it.
+    queued: {
+      title: 'Waiting for a checks slot',
+      detail: 'The preview is up. Homeroom runs a few proposals’ checks at a time so they don’t slow each other down, and these start on their own when a slot frees up.',
+    },
     // Not a stage of a run: the run stopped on purpose after the build. The
     // head conflicts with main, so the preview exists for reviewers and the
     // tests wait for a head that can merge. No spinner belongs on this.
@@ -15991,11 +16020,24 @@ const AppView = {
     },
   },
 
-  _checksPhaseCopy(phase) {
-    return AppView.CHECKS_PHASE_COPY[phase] || {
+  // `pr` is optional: a queued run's title says how many runs are ahead of
+  // it when the row carries that (checks_progress.queue.ahead).
+  _checksPhaseCopy(phase, pr) {
+    const copy = AppView.CHECKS_PHASE_COPY[phase] || {
       title: 'Checks are still running…',
       detail: 'The staging build is being tested.',
     };
+    if (phase !== 'queued') return copy;
+    const place = AppView._checksQueuePlace(pr);
+    return place ? { ...copy, title: `${copy.title} (${place})` } : copy;
+  },
+
+  // "2 ahead", "next in line", or '' when the row does not say.
+  _checksQueuePlace(pr) {
+    const q = pr && pr.checks_progress && pr.checks_progress.queue;
+    const ahead = q && Number.isInteger(q.ahead) && q.ahead >= 0 ? q.ahead : null;
+    if (ahead === null) return '';
+    return ahead === 0 ? 'next in line' : `${ahead} ahead`;
   },
 
   // Why the run in flight started (chat_sessions.check_trigger). Written in
@@ -16062,6 +16104,10 @@ const AppView = {
         if (btn) { btn.disabled = false; btn.textContent = 'Re-run checks'; }
         return;
       }
+      // A run of this commit is still on the cluster and its result is on
+      // the way, so the server left it to finish rather than start over.
+      // Say so: the card keeps showing that run, not a new one.
+      if (data.collecting) PlatformUI.toast('These checks are still running, so they were not started again. The result will show here when they finish.');
       // #607: the server stamped 'pending' before responding — refresh so
       // the spinning "Checks running…" badge renders immediately (the WS
       // pending broadcast covers everyone else's screens).
@@ -19564,8 +19610,9 @@ const AppView = {
   },
 
   // A checks error the merge gate still counts as in progress: the run
-  // overlapped a platform update and goes again on its own
-  // (visuals.settleCaptureRun). Every other error blocks on the author.
+  // overlapped a platform update and goes again on its own. Nothing records
+  // that any more (#3828), but rows stored before still run again and read
+  // this way. Every other error blocks on the author.
   // Same reading as MergeStatus.checksWillRetry.
   _checksWillRetry(pr) {
     if (!pr || pr.check_state !== 'error') return false;
@@ -22011,8 +22058,10 @@ const AppView = {
   async castVote(sessionId, vote, expectedEpoch = null, opts = null) {
     // Guard against double-click / mashing: one in-flight vote per session.
     // The server is idempotent on an unchanged vote, but blocking here
-    // avoids pointless round-trips and keeps the UI responsive.
-    const key = `${sessionId}:${vote}`;
+    // avoids pointless round-trips and keeps the UI responsive. #3984: per
+    // session, not per side, so a No pressed while a Yes is on its way does
+    // not race it (and the "Sending…" mark is cleared by the one vote).
+    const key = `${sessionId}`;
     if (AppView._voteInFlight.has(key)) return false;
     AppView._voteInFlight.add(key);
     // #1688: the line, before anything is painted — a cancelled No must
@@ -22031,6 +22080,9 @@ const AppView = {
     if (onSend) {
       try { onSend(vote); } catch { /* the caller's paint, never the vote's */ }
     }
+    // #3984: every Vote button for this change reads "Sending…" until the
+    // server answers (the finally below), whichever surface sent it.
+    AppView._publishVoteSending(`castVote:${sessionId}`, vote);
     // #1924: the card leaves "Needs your vote" on the click, not after the
     // 1–2 s round-trip. The lane (and the Board's needs-vote filter, and the
     // card's own Yes/No highlight) all read `my_vote` off the cached row, so
@@ -22121,7 +22173,14 @@ const AppView = {
     }
     finally {
       AppView._voteInFlight.delete(key);
+      AppView._publishVoteSending(`castVote:${sessionId}`, null);
     }
+  },
+
+  // #3984: a vote on its way, for the card's Vote button (cards-store.ts
+  // voteSendingStore). `key` is `<fn>:<id>`; a null side clears it.
+  _publishVoteSending(key, side) {
+    try { AppView._reactDevBoard()?.publishVoteSending?.(key, side); } catch { /* paint only */ }
   },
 
   // Vote on a governance proposal (env-var change, close-issue, rename,
@@ -22160,7 +22219,6 @@ const AppView = {
       AppView._voteInFlight.delete(key);
       return;
     }
-
     const issue = (AppView._govProposals || []).find((g) => g.id === issueId);
     const kind = issue ? issue.kind : null;
     const targetN = (issue && issue.payload && issue.payload.issueNumber) || null;
@@ -22176,6 +22234,8 @@ const AppView = {
       if (deciding) AppView._endGovApply(issueId, phase, error);
     };
 
+    // #3984: as castVote, cleared in the finally below.
+    AppView._publishVoteSending(`castIssueVote:${issueId}`, vote === 'down' ? 'no' : 'yes');
     try {
       const res = await fetch(`/api/issues/${issueId}/vote`, {
         method: 'POST',
@@ -22251,6 +22311,7 @@ const AppView = {
       PlatformUI.toast(`Vote failed: ${(err && err.message) || 'connection lost'}`);
     } finally {
       AppView._voteInFlight.delete(key);
+      AppView._publishVoteSending(`castIssueVote:${issueId}`, null);
     }
   },
 

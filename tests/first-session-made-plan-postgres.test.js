@@ -136,7 +136,7 @@ test('the made screen reads the waiting plan off the real GET /api/apps/:slug, f
     listening.close();
   });
 
-  const { madeAppOf, madeAppUrl, waitingPlan, buildLine } = loadTsx(MADE);
+  const { madeAppOf, madeAppUrl, waitingPlan, madeLine } = loadTsx(MADE);
   // The made screen's own read: its URL, and what it takes from the answer.
   const get = async () => {
     const res = await fetch(`http://127.0.0.1:${listening.address().port}${madeAppUrl(app.slug)}`);
@@ -146,7 +146,7 @@ test('the made screen reads the waiting plan off the real GET /api/apps/:slug, f
 
   let card;
   await t.test('the bot\'s own plan path leaves the first version waiting on its creator', async () => {
-    assert.equal(await bot.awaitGo(pool, { runId: run.id, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot }), true);
+    assert.equal(await bot.awaitGo(pool, { runId: run.id, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot }), 'waiting');
     const state = (await progress.requestStates(pool, { userId: alex.id }))
       .find((s) => Number(s.row.issue_number) === 1).state;
     assert.deepEqual([state.stage, state.waitingOn], ['plan', 'them']);
@@ -165,8 +165,8 @@ test('the made screen reads the waiting plan off the real GET /api/apps/:slug, f
     assert.equal(body.first_version, undefined, 'nothing at the top of the answer: what the made screen used to read');
     const fv = body.app.first_version;
     assert.equal(fv.mine, true);
-    // Its creator's turn, said as theirs (homeroom-bot-dm.js planWaitsStepName).
-    assert.deepEqual([fv.step, fv.of, fv.stepName, fv.ready], [3, 7, 'Your turn: answer the plan', false]);
+    // #4053: it waits on its creator, said as theirs (buildLineOf).
+    assert.deepEqual([fv.step, fv.of, fv.line, fv.ready], [3, 7, 'plan', false]);
     assert.deepEqual(fv.plan.bullets, PLAN.bullets);
     assert.ok(Number.isInteger(fv.plan.actionId), 'an action to decide, as a number');
     assert.equal(fv.plan.actionId, card.meta.actionId);
@@ -180,7 +180,7 @@ test('the made screen reads the waiting plan off the real GET /api/apps/:slug, f
       messageId: Number(card.id),
       conversationId: Number(card.conversation_id),
     });
-    assert.equal(buildLine(read.firstVersion, read.status, true), 'Step 3 of 7: Your turn: answer the plan');
+    assert.equal(madeLine(read.firstVersion, true), 'plan', 'Your plan is ready to review, at the foot of its thumbnail');
   });
 
   await t.test('another member reads the step, never the plan', async () => {
@@ -190,7 +190,7 @@ test('the made screen reads the waiting plan off the real GET /api/apps/:slug, f
       assert.equal(read.firstVersion.mine, false);
       assert.equal(read.firstVersion.plan, undefined);
       assert.equal(waitingPlan(read.firstVersion), null);
-      assert.equal(read.firstVersion.stepName, `Waiting for @${alex.username} to answer the plan`, 'whose turn it is');
+      assert.equal(read.firstVersion.line, 'plan-member', 'Planning it, for everyone else');
     } finally {
       viewer = alex;
     }
@@ -204,14 +204,14 @@ test('the made screen reads the waiting plan off the real GET /api/apps/:slug, f
     assert.equal(read.firstVersion.plan, undefined);
     assert.equal(waitingPlan(read.firstVersion), null);
     // Build it was the plan's answer: what follows is the build to its maker,
-    // "Step 4 of 7: Build it", never "Write a plan" again (Evan, 5 October
-    // 2026), and the bot's own account of it says building, not "writing the
-    // plan for the build".
-    assert.deepEqual([read.firstVersion.step, read.firstVersion.stepName], [4, 'Build it'], 'its build waits its turn on the build\'s step');
+    // step 4, "Building it", never the plan again (Evan, 5 October 2026), and
+    // the bot's own account of it says building, not "writing the plan for
+    // the build".
+    assert.deepEqual([read.firstVersion.step, read.firstVersion.line], [4, 'building'], 'its build waits its turn on the build\'s step');
     const { rightNow } = await progress.progressFor(pool, { userId: alex.id, facts: false });
     const mine = rightNow.find((e) => e.firstVersion);
     assert.ok(mine, 'the first version is in progress');
-    assert.deepEqual([mine.step, mine.stepName], [4, 'Build it']);
+    assert.deepEqual([mine.step, mine.stepName], [4, 'Building it'], 'Step 4 of 7 · Building it, in the chat');
     assert.doesNotMatch(String(mine.doing), /plan/);
   });
 });

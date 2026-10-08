@@ -832,6 +832,29 @@ function stagingMockProposals(viewer) {
         updatedAt: hoursAgo(0.015),
       },
     },
+    // The wait between the halves: the preview is built and the run is in
+    // the checks queue, two runs ahead of it (services/checks-queue.js). A
+    // real preview only shows this under load, so this row is how the
+    // "Waiting for a checks slot" wording is reviewable.
+    {
+      ...mk(9000054, 900154,
+        '[Mock] Checks-phase test: preview built, waiting for a checks slot',
+        0.06, 1, 0, 0, { required: 2, windowEndsAt: hoursAhead(70) }),
+      check_state: 'pending',
+      check_phase: 'queued',
+      check_trigger: 'commit-push',
+      recheckable: true,
+      test_results: [],
+      checks_checked_at: hoursAgo(0.05),
+      checks_progress: {
+        build: {
+          step: 'done',
+          steps: [...mockBuildSteps(), { key: 'prepare_checks', ms: 2140 }],
+          totalMs: 19964,
+        },
+        queue: { ahead: 2, since: hoursAgo(0.05) },
+      },
+    },
     // #607: a freshly promoted proposal whose first checks run hasn't even
     // stamped 'pending' yet (staging build still going) — NO verdict, NO
     // console snapshot. The grey "Checks starting…" spinner badge + the
@@ -894,10 +917,11 @@ function stagingMockProposals(viewer) {
       test_results: [],
     },
     // The other red badge that is not the author's to fix: a run that
-    // overlapped a platform rollout and came back red is stored as 'error'
-    // and runs again on its own. No ordinary staging steps can make a run
-    // overlap a rollout, so this row is how the sentence is reviewable. It
-    // reads the constant the settle path writes, so the copy cannot drift.
+    // overlapped a platform rollout and came back red was stored as 'error'
+    // and runs again on its own (#3828). Nothing writes that any more, but
+    // rows stored before still read this way until they run again, so this
+    // row keeps the sentence reviewable. It reads the constant those rows
+    // carry, so the copy cannot drift.
     {
       ...mk(9000046, 900146,
         '[Mock] Checks-error test: the checks ran while Homeroom was updating',
@@ -6477,6 +6501,11 @@ async function checkAndMerge(config, pool, session, options = {}) {
     // _inFlight-guarded at the capture, so a double kick costs nothing.
     const checksDeferred = checkRows[0]?.check_state === 'pending'
       && checkRows[0]?.check_phase === 'deferred';
+    // A run waiting for a checks slot (services/checks-queue.js): built, in
+    // line, and started by the queue, so no kick is owed however long it
+    // has waited.
+    const checksQueued = checkRows[0]?.check_state === 'pending'
+      && checkRows[0]?.check_phase === 'queued';
     if (checksDeferred && measured.mergesClean === true) {
       const stagingRecovery = require('../services/staging-recovery');
       stagingRecovery.recheckSessionChecks({
@@ -6513,7 +6542,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
         : 0;
       // A deferred row is not stale: nothing was started for it, so nothing
       // is overdue, and the kick above (or the hook) owns its next run.
-      const stalePending = !checksDeferred && (checkState === null
+      const stalePending = !checksDeferred && !checksQueued && (checkState === null
         || (checkState === 'pending' && (Date.now() - checkedAt) > CHECKS_STALE_MS));
       if (checksRevisionMismatch) {
         if (session.source === 'imported') {
@@ -6545,19 +6574,25 @@ async function checkAndMerge(config, pool, session, options = {}) {
       // staging preview that crashed on boot, e.g. a bad migration/seed) so
       // the block isn't an unexplained dead-end — the owner can act on it.
       const errorDetail = checkState === 'error' ? (checkRows[0]?.check_error_detail || null) : null;
-      // A red run that overlapped a platform rollout was recorded as an
-      // 'error' the stuck-checks reconcile runs again (visuals.js
-      // settleCaptureRun). Its preview started fine and nobody has to act.
+      // A red run that overlapped a platform rollout used to be recorded as
+      // an 'error' the stuck-checks reconcile runs again (#3828). Nothing
+      // writes it now; rows stored before still run again and read so.
       const rolloutRetry = errorDetail === require('../services/staging-recovery').ROLLOUT_RETRY_DETAIL;
+      // An 'error' because the repo unit suite could not run: its preview
+      // started fine, so the sentence must not blame it.
+      const unitNotRun = checkState === 'error'
+        && !!require('../services/unit-suite-row').notRunError({ ...checkRows[0], check_state: checkState });
       const reason = checkState === 'failing'
         ? `has ${failingCount || 'failing'} test${failingCount === 1 ? '' : 's'} failing`
         : checkState === 'error'
           ? (rolloutRetry
             ? 'ran its tests while Homeroom was updating, so they will run again on their own'
-            : errorDetail
-              ? `couldn't run its tests, because its staging preview failed to start (${errorDetail})`
-              : "couldn't run its tests")
-          : 'is still running its tests';
+            : unitNotRun
+              ? `couldn't run its unit suite, so its checks have no verdict yet (${errorDetail})`
+              : errorDetail
+                ? `couldn't run its tests, because its staging preview failed to start (${errorDetail})`
+                : "couldn't run its tests")
+          : checksQueued ? 'is waiting for a checks slot' : 'is still running its tests';
       const blockMsg = `${label} reached the vote threshold but ${reason}. Merge is blocked until checks pass. The proposal's tests re-run automatically when its owner pushes a fix.`;
       // Said once. This gate runs on every vote and every check re-run, and
       // it used to post the same sentence each time — eight copies on one
@@ -6590,11 +6625,15 @@ async function checkAndMerge(config, pool, session, options = {}) {
             ? `${failingCount || 'some'} failing. They re-run on the next push`
             : rolloutRetry
               ? 'they ran while Homeroom was updating and will run again'
-              : checkState === 'error'
-                ? 'the staging preview could not start, so the tests could not run'
-                : checksDeferred
-                  ? 'waited for the head to merge cleanly; running now'
-                  : 'still running',
+              : unitNotRun
+                ? 'the unit suite could not run, so there is no verdict yet'
+                : checkState === 'error'
+                  ? 'the staging preview could not start, so the tests could not run'
+                  : checksDeferred
+                    ? 'waited for the head to merge cleanly; running now'
+                    : checksQueued
+                      ? 'waiting for a checks slot; they start on their own'
+                      : 'still running',
         });
       gateSave();
       dend('blocked', 'Blocked: votes reached, but checks must pass first.');

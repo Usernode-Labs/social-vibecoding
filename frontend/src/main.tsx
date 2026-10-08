@@ -59,6 +59,9 @@
 import { flushSync } from 'react-dom';
 import { hydrateRoot } from 'react-dom/client';
 
+// Publishes window.PlatformI18n and follows the session's language. First,
+// so the adapter exists before any legacy module's init() can ask for it.
+import './lib/i18n/runtime';
 import { Shell } from './Shell';
 import './lib/overlay-scrim-bridge';
 import { bootStep } from './lib/boot-guard';
@@ -151,9 +154,10 @@ import './lib/live-reads';
 // file dropped where nothing takes it no longer opens in place of the app.
 import './features/attachments/file-drag';
 import './lib/file-drop-guard';
-// #4289: the C key opens Suggest an improvement, behind Settings, Experimental's
-// switch (off by default). Two listeners on the document, the shell's own keys
-// and the bridge's message from inside an app, and no markup of its own.
+// #4289: the C key comments on the page (a pin where the pointer is), behind
+// Settings, Experimental's switch (off by default). Listeners on the document
+// (the shell's own keys and pointer, and the bridge's message from inside an
+// app); the comment itself (features/comment-pin/) loads on the first C.
 import './features/improve/suggest-shortcut';
 // #1084 chunk G: the retired public/js/dev-chat.js, moved into the bundle
 // verbatim. Imported HERE rather than from a Shell island for the same reason
@@ -172,10 +176,6 @@ import './features/dev-chat/dev-chat.js';
 // route, not only on one screen's first reveal. Its listener is guarded, so
 // an anonymous document costs it nothing.
 import './features/auth/username-first-run.js';
-// The verified-identity rule's "Add your phone number", the first step on a
-// phone after the username and the terms, before the communities step below
-// (which waits on it), imported here for the same two reasons.
-import './features/auth/phone-first-run';
 // Communities, stage 5: "What communities do you want to join?", the step
 // after the username and the terms, imported here for the same two reasons.
 import './features/auth/communities-first-run.js';

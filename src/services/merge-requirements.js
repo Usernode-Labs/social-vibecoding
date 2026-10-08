@@ -554,10 +554,17 @@ function provisional(session) {
   // chose not to start yet: the head conflicts with main, and the verdict
   // runs once it merges cleanly. Nobody has to act, and nothing is running.
   const deferred = check === 'pending' && s.check_phase === 'deferred';
-  // A red run that overlapped a platform rollout is an 'error' the platform
-  // runs again on its own (visuals.js settleCaptureRun), so nobody has to act.
+  // A built preview whose run waits for a checks slot (services/checks-
+  // queue.js): in progress, and started by the queue, not by anyone here.
+  const queued = check === 'pending' && s.check_phase === 'queued';
+  // A red run that overlapped a platform rollout was stored as an 'error'
+  // the platform runs again on its own (#3828). Nothing writes that now;
+  // rows stored before still run again, so nobody has to act on them.
   const rolloutRetry = check === 'error'
     && s.check_error_detail === require('./staging-recovery').ROLLOUT_RETRY_DETAIL;
+  // An 'error' because the repo unit suite could not run (its Job was
+  // refused, its setup stopped before any test): the preview was fine.
+  const unitNotRun = check === 'error' && !!require('./unit-suite-row').notRunError(s);
   const checkState = (check === 'passing' || check === 'skipped') ? 'done'
     : rolloutRetry ? 'active'
       : (check === 'failing' || check === 'error') ? 'blocked'
@@ -569,9 +576,11 @@ function provisional(session) {
     state: checkState,
     detail: check === 'failing' ? { note: 'some checks are failing' }
       : rolloutRetry ? { note: 'they ran while Homeroom was updating and will run again' }
-        : check === 'error' ? { note: 'the staging preview could not start, so the tests could not run' }
-          : deferred ? { note: 'waiting for the head to merge cleanly; the preview is built, the tests run then' }
-            : check === 'pending' ? { note: 'still running' } : null,
+        : unitNotRun ? { note: 'the unit suite could not run, so there is no verdict yet' }
+          : check === 'error' ? { note: 'the staging preview could not start, so the tests could not run' }
+            : deferred ? { note: 'waiting for the head to merge cleanly; the preview is built, the tests run then' }
+              : queued ? { note: 'waiting for a checks slot; they start on their own' }
+                : check === 'pending' ? { note: 'still running' } : null,
   });
 
   if (s.shotsEnforced || s.shots_enforced) {

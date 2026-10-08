@@ -828,7 +828,7 @@ test('a plan nobody approved, or a run that ended some other way, is asked about
 
 test('a first version\'s ready verdict looks for an approved plan before it sends the plan card', () => {
   const src = require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot'), 'utf8');
-  assert.match(src, /if \(firstVersion && await carryApprovedPlan\(pool, \{ runId, appId: app\.id, issueNumber \}\)\) \{\n\s+await queueLiveBuild\(pool, \{ runId, appId: app\.id \}\);\n\s+acted = 'build_queued';\n\s+\} else if \(firstVersion && await awaitGo\(/);
+  assert.match(src, /if \(firstVersion && await carryApprovedPlan\(pool, \{ runId, appId: app\.id, issueNumber \}\)\) \{\n\s+await queueLiveBuild\(pool, \{ runId, appId: app\.id \}\);\n\s+acted = 'build_queued';\n\s+\} else if \(firstVersion\) \{\n\s+acted = PLAN_ACTED\[await awaitGo\(/);
 });
 
 test('admins read the week\'s incidents newest first, and a line says what happened', async () => {

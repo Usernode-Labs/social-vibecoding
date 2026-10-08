@@ -114,9 +114,11 @@ test('the channel is a hub card at its old address; Join asks under its button a
     'it hangs from the button');
   assert.match(css, /\.dev-ws-hero \.dev-ws-hero-member \.dev-ws-join-pop \{ left: auto; right: -6px; \}/,
     'from its right edge in the hero, where Join ends the actions row (#852)');
-  assert.match(src, /home\.setMembership\(slug, false\)/, 'Joined leaves through the same call Discover makes');
-  assert.match(src, /data-ws-community-leave=""[\s\S]*Joined/, 'Joined is the leave control, as on Discover');
-  assert.match(src, /\) : data\.is_creator \? null : \(/, 'the creator is never offered Leave');
+  // #4045: Leave is a row of the hub's ⋯ (it was the Joined pill), through
+  // the same call Discover makes, and never the creator's.
+  assert.match(src, /home\.setMembership\(slug, false\)/, 'Leave goes through the same call Discover makes');
+  assert.doesNotMatch(src, /data-ws-community-leave=""|>\s*Joined\s*</, 'no Joined pill on the hero');
+  assert.match(src, /return !!data && !!data\.is_member && !data\.is_creator;/, 'the creator is never offered Leave');
   // #3362: Invite is invite LINKS, which any member can make
   // (services/community-invites.js); Members & approvals stays the ⋯'s, behind
   // its own gate.

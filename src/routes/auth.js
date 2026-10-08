@@ -423,6 +423,9 @@ function authRoutes(config) {
         await managedOpenRouter.ensureIncludedKey({
           pool, userId: verified.userId, config, reason: 'signup_email',
         });
+        // The sign-up, as an activation code and a wallet record theirs
+        // (#4039): an email code made no user_signed_up before.
+        events.record(pool, { type: events.EVENT_TYPES.USER_SIGNED_UP, userId: verified.userId, metadata: { via: 'email' } });
       }
       createSignupCookie(res, verified.signupToken, verified.expiresAt);
       log.info('email-signup', 'Email code verified, password setup pending', {
@@ -752,14 +755,18 @@ function authRoutes(config) {
     // that is due it; FALSE when the whole lookup fails, which leaves the
     // join screen as it was.
     let storyFirstSession = false;
+    // What they told us on the waitlist the app should do, to open that
+    // question with (#4040). Only read while the question is theirs to
+    // answer, so it stops being sent once it is; null for no waitlist row
+    // linked to the account, or no answer in it.
+    let waitlistIdea = null;
     // The verified-identity rule (schema.sql identity_needed): a member it
     // holds to it, let in after it was switched on with no phone, GitHub and
-    // X, or zkPassport. `identityNeeded` draws Home's "Verify your account"
-    // card; `phoneAsk` asks them once, as the first first-run step on a
-    // phone (frontend/src/features/auth/phone-first-run.tsx), while phone
-    // sign-in is offered. Unreadable means neither.
+    // X, or zkPassport. `identityNeeded` lets the verify sheet ask at a
+    // public step (a public vote, making a project public, more AI
+    // credits) and Home's "Verify your account" card follow up on it.
+    // Unreadable means not held to it.
     let identityNeeded = false;
-    let phoneAsk = false;
     try {
       const { rows } = await pool.query(
         `SELECT u.anthropic_key_enc, u.anthropic_key_last4, u.usernode_pubkey,
@@ -772,7 +779,6 @@ function authRoutes(config) {
                   AND u.getting_started_gate) AS show_getting_started,
                 (u.tour_done_at IS NOT NULL) AS tour_done,
                 identity_needed(u.id) AS identity_needed,
-                (u.phone_ask_answered_at IS NOT NULL) AS phone_ask_answered,
                 EXISTS (
                   SELECT 1 FROM credentials.user_ai_credentials credential
                    WHERE credential.user_id = u.id
@@ -802,8 +808,8 @@ function authRoutes(config) {
       tourDone = rows[0]?.tour_done === true;
       // A member let in (not a private member, who waits for that).
       identityNeeded = rows[0]?.identity_needed === true && !!req.user.hasPlatformAccess;
-      phoneAsk = identityNeeded && rows[0]?.phone_ask_answered !== true && phoneAuth.offered(config);
       if (needsCommunitiesChoice) storyFirstSession = await firstSession.asksWhatToMake(pool, req.user.id);
+      if (storyFirstSession) waitlistIdea = await firstSession.waitlistIdea(pool, req.user.id);
       const verifiedLinks = await socialIdentity.verifiedProfileLinks(pool, req.user.id);
       profile = shapeProfile(rows[0], verifiedLinks);
     } catch {}
@@ -916,13 +922,14 @@ function authRoutes(config) {
         // alongside needsCommunitiesChoice, and stays TRUE until that
         // question is answered, so a reload asks it again.
         storyFirstSession,
+        // Only alongside storyFirstSession: the waitlist answer "What should
+        // it do?" opens with (frontend/src/features/first-session/make.tsx).
+        waitlistIdea,
         // The Getting started card on Home: shown to an account that came
         // through the join screen, until it is closed.
         showGettingStarted,
-        // The verified-identity rule holds this member to it (see above):
-        // Home's card, and, once, the first-run phone step.
+        // The verified-identity rule holds this member to it (see above).
         identityNeeded,
-        phoneAsk,
         // The welcome tour was finished or skipped on this account, on any
         // device (POST /api/me/tour-done; cleared by Reset first run). The
         // tour counts it done when this OR the browser's own flag says so

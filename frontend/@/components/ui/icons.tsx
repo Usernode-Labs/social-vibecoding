@@ -217,6 +217,18 @@ export const UserIcon = stroked(
   'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z',
 );
 
+/**
+ * A soft person silhouette, solid: a head and shoulders that run off the
+ * bottom edge, so a round frame crops them. The waiting seats in the
+ * community's people row (first-session/people-row.tsx) draw it in a tint,
+ * and the hub's open seats draw it pale in a circle (community-card.tsx
+ * WeekPeople).
+ */
+export const PersonSilhouetteIcon = filled(
+  'PersonSilhouetteIcon',
+  'M12 4.4a4.6 4.6 0 100 9.2 4.6 4.6 0 100-9.2zM2.5 24c.9-5.2 4.6-8.4 9.5-8.4s8.6 3.2 9.5 8.4z',
+);
+
 export const WalletIcon = stroked(
   'WalletIcon',
   'M21 12a2.25 2.25 0 00-2.25-2.25H15a3 3 0 11-6 0H5.25A2.25 2.25 0 003 12m18 0v6a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 18v-6m18 0V9M3 12V9m18 0a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 9m18 0V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v3',
@@ -855,6 +867,15 @@ export const HeartIcon = stroked(
   'HeartIcon',
   'M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12Z',
 );
+
+/**
+ * A phone with a plus on its screen: "Add Homeroom to your home screen", the
+ * mark menu's row for a private member who has not been Home yet (#4399).
+ */
+export const PhonePlusIcon = stroked('PhonePlusIcon', [
+  'M8 2.5h8a2 2 0 012 2v15a2 2 0 01-2 2H8a2 2 0 01-2-2v-15a2 2 0 012-2z',
+  'M12 9v6M9 12h6',
+]);
 
 /** Food & drink, a category of the emoji picker: a cup with steam. */
 export const CupIcon = stroked('CupIcon', [

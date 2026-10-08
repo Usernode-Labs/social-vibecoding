@@ -44,6 +44,11 @@
 // read. The other way round, a run starting stops the Jobs of the runs it
 // supersedes (stopSupersededRuns), so they stop holding the capacity it
 // needs.
+//
+// A run for the SAME commit is not superseded. Every path that starts a run
+// asks runToCollect first, and so does the preview lifecycle under its lock
+// before it cancels the session's Jobs: a run of that commit still on the
+// cluster, running or finished but not yet read, is left to be collected.
 
 const log = require('./logger');
 const checkRuns = require('./check-runs');
@@ -176,8 +181,15 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
     await settleLifecycle({ error: lifecycle.cancelled() });
     return { outcome: 'moot', why, ...base };
   };
+  // The re-driven run keeps this one's place in the checks queue
+  // (services/checks-queue.js): it asks for its slot as of the moment this
+  // one first did, so a restart, or Jobs lost under it, does not send it to
+  // the back of the line.
+  const queuedSince = row.queued_at || null;
   const redrive = async (session, why) => {
-    log.info('check-harvest', 'Orphaned run has nothing to read — re-driving its checks now', { ...base, why });
+    log.info('check-harvest', 'Orphaned run has nothing to read — re-driving its checks now', {
+      ...base, why, ...(row.admitted_at === null ? { waitingForSlot: true } : {}),
+    });
     await checkRuns.finish(pool, runId);
     await settleLifecycle({ error: new Error(why) });
     mergeDebug.endRun(pool, manifest.debugRunId || null, {
@@ -186,7 +198,9 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
     // Release the seat BEFORE the re-drive so captureForSession does not
     // park itself behind the harvest that is asking for it.
     release(null);
-    await stagingRecovery.recheckSessionChecks({ config, pool, session, reason: 'orphaned-run' });
+    await stagingRecovery.recheckSessionChecks({
+      config, pool, session, reason: 'orphaned-run', ...(queuedSince ? { queuedSince } : {}),
+    });
     return { outcome: 'redriven', why, ...base };
   };
   // Once the verdict from the Jobs is stored and the manifest cleared, the
@@ -279,8 +293,9 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
     // The unit-suite row, from the Job's own verdict. Graduation is read
     // now rather than from the manifest: the history could only have moved
     // towards graduated, and that is what a fresh run would see too. A Job
-    // that vanished contributes no row — the same as a runner that failed
-    // to launch in a live run.
+    // that ended in setup, or with an empty log, is a suite that never ran
+    // (unit-suite.js notRunOutcome), as on the live path. A Job that
+    // vanished contributes no row.
     let unitOutcome = null;
     if (unit && (unit.state === 'succeeded' || unit.state === 'failed')) {
       let graduated = false;
@@ -293,7 +308,7 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
       unitOutcome = await unitSuite.outcomeFromLog({
         pool, appId: app.id, sessionId,
         succeeded: unit.state === 'succeeded',
-        stdout: unit.stdout, stderr: unit.stderr, timedOut: unit.timedOut,
+        stdout: unit.stdout, stderr: unit.stderr, timedOut: unit.timedOut, exitCode: unit.exitCode,
         graduated, tracker: unitTracker,
       });
     }
@@ -353,10 +368,6 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
       runPartial: capture ? !!capture.partial : false,
       runPartialReason: capture ? (capture.partialReason || '') : '',
       unitOutcome,
-      // A harvested run outlived the process that launched it, so it ran
-      // across a restart: a red verdict from it runs again (visuals.js,
-      // ROLLOUT_BOOT_WINDOW_MS) instead of standing against the author.
-      overlappedRollout: true,
     });
     verdict = settled.traceStatus;
     // The live capture's finally block does not run after adoption. Without
@@ -491,21 +502,33 @@ async function sweep(config, { reason = 'sweep', pool = null, wait = false } = {
 // heartbeat lapses, unless the owner settles it first. A finished run that
 // nobody has read in that time is one the harvest could not read, and the
 // stale sweep starts it over as before. Never throws: a question it cannot
-// answer reads as no, so the stale sweep stays the backstop.
-async function runOnCluster(config, pool, session, { staleMs = null, now = Date.now() } = {}) {
+// answer reads as no, so the stale sweep stays the backstop. `commitSha`
+// asks about another commit than the session's checks pin.
+//
+// Yes, too, for a run of that commit still waiting for a checks slot
+// (services/checks-queue.js; `queued: true`). It has no Jobs yet; its owner
+// creates them once it is admitted, or, if its owner has died, the harvest
+// re-drives it in its place in line. Starting another would only queue a
+// second run of the same commit behind it.
+async function runOnCluster(config, pool, session, {
+  commitSha = session?.checks_commit_sha, staleMs = null, now = Date.now(),
+} = {}) {
   if (!isEnabled(config) || !session) return null;
   const sessionId = Number(session.id);
   try {
     const kubernetes = require('./kubernetes');
     const windowMs = staleMs ?? require('./staging-recovery').checksStaleMs();
     const { rows } = await pool.query(
-      `SELECT run_id, owner FROM check_runs
+      `SELECT run_id, owner, admitted_at FROM check_runs
         WHERE session_id = $1 AND commit_sha IS NOT DISTINCT FROM $2
         ORDER BY started_at DESC
         LIMIT 5`,
-      [sessionId, session.checks_commit_sha || null]
+      [sessionId, commitSha || null]
     );
     for (const row of rows) {
+      if (require('./checks-queue').isWaitingRow(row)) {
+        return { runId: row.run_id, owner: row.owner, capture: 'queued', unitSuite: 'queued', queued: true };
+      }
       const jobs = await kubernetes.findCheckJobs(config, { sessionId, previewRunId: row.run_id });
       if (!jobs.capture) continue;
       const found = [jobs.capture, jobs.unitSuite].filter(Boolean);
@@ -524,6 +547,39 @@ async function runOnCluster(config, pool, session, { staleMs = null, now = Date.
   }
 }
 
+// The same question from a path about to start a run for `commitSha` (the
+// session's checks pin when null): a manual or promote-time re-run, a
+// recheck, a capture, and the preview lifecycle before it cancels the
+// session's Jobs. Starting over threw a finished suite away, and under the
+// lifecycle the new run cancelled a running one and took the row the
+// harvest writes through. Yes only while the session, read now, is still
+// waiting on that commit's verdict (stillCurrent): a manifest that outlived
+// a stored verdict is no reason to refuse a run. Never throws.
+async function runToCollect(config, pool, sessionId, commitSha = null) {
+  if (!isEnabled(config) || !sessionId) return null;
+  try {
+    const session = await loadSession(pool, sessionId);
+    const commit = commitSha || session?.checks_commit_sha || null;
+    if (!stillCurrent(session, commit).current) return null;
+    return await runOnCluster(config, pool, session, { commitSha: commit });
+  } catch (err) {
+    log.warn('check-harvest', 'Could not ask whether a run is left to collect (non-fatal)', {
+      sessionId: Number(sessionId), err: err.message,
+    });
+    return null;
+  }
+}
+
+// The runs of the session whose manifest names `commitSha`: whoever reads
+// them, their verdict is one the row still takes. What stopSupersededRuns
+// and the preview lifecycle spare.
+async function runsOfCommit(pool, sessionId, commitSha) {
+  const { rows } = await pool.query(
+    'SELECT run_id, commit_sha FROM check_runs WHERE session_id = $1', [Number(sessionId)]
+  );
+  return new Set(rows.filter((row) => (row.commit_sha || null) === (commitSha || null)).map((row) => row.run_id));
+}
+
 // A run starting for a session supersedes the session's runs for any other
 // commit. storeChecks writes only the verdict for the commit the row is
 // pending on, so nobody reads what their Jobs produce, and under load those
@@ -538,13 +594,8 @@ async function runOnCluster(config, pool, session, { staleMs = null, now = Date.
 async function stopSupersededRuns(config, pool, { sessionId, runId, commitSha }) {
   if (!isEnabled(config) || !sessionId || !runId) return [];
   try {
-    const { rows } = await pool.query(
-      'SELECT run_id, commit_sha FROM check_runs WHERE session_id = $1', [Number(sessionId)]
-    );
-    const current = new Set([runId]);
-    for (const row of rows) {
-      if ((row.commit_sha || null) === (commitSha || null)) current.add(row.run_id);
-    }
+    const current = await runsOfCommit(pool, sessionId, commitSha);
+    current.add(runId);
     const stopped = await require('./kubernetes').stopCheckJobs(config, {
       sessionId: Number(sessionId), spare: (id) => current.has(id),
     });
@@ -582,6 +633,8 @@ module.exports = {
   adopt,
   start,
   runOnCluster,
+  runToCollect,
+  runsOfCommit,
   stopSupersededRuns,
   // Exported for tests.
   stillCurrent,

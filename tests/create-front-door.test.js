@@ -150,7 +150,7 @@ test('the make screen from Create: New project, a close, a small "Import from a 
   for (const words of ['What do you want to make?', 'What should it do?', 'What should we call it?', '>Make it</button>']) {
     assert.ok(create.includes(words), words);
   }
-  assert.match(create, /data-first-session-example="run"/);
+  assert.match(create, /data-first-session-example="tier"/);
 
   const first = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', onMade() {}, onLookAround() {} });
   assert.match(first, /data-make-entry="first-session"/);
@@ -161,13 +161,14 @@ test('the make screen from Create: New project, a close, a small "Import from a 
   const make = loadTsx(`${DIR}/make.tsx`);
   assert.equal(make.makeEyebrow('create', 'Jordan'), 'New project');
   assert.equal(make.makeEyebrow('first-session', ''), 'You\'re in!');
-  assert.match(make.makeLine(true), /Homeroom bot builds the first version while you invite your people\.$/);
-  assert.match(make.makeLine(false), /It becomes the project’s first request while you invite your people\.$/);
-  for (const line of [make.makeLine(true), make.makeLine(false), make.IMPORT_TITLE, make.IMPORT_LINE]) assert.doesNotMatch(line, /—/);
-  const { viewerBotBuilds } = loadTsx(ISLAND);
-  assert.equal(viewerBotBuilds({ homeroomBotDm: false }), false);
-  assert.equal(viewerBotBuilds({ homeroomBotDm: true }), true);
-  assert.equal(viewerBotBuilds({}), true, 'a snapshot from before the field reads as it always did');
+  for (const line of [make.IMPORT_TITLE, make.IMPORT_LINE]) assert.doesNotMatch(line, /—/);
+  // Evan, 8 Oct 2026: no line under the question. The starting points come
+  // straight after it, from either door.
+  assert.equal(make.makeLine, undefined);
+  for (const html of [create, first]) {
+    assert.doesNotMatch(html, /Describe it for your group/);
+    assert.match(html, /What do you want to make\?<\/h1><\/div><p[^>]*>Start from an idea<\/p>/);
+  }
 
   const src = read(`${DIR}/make.tsx`);
   assert.match(src, /onClick=\{\(\) => setMode\('import'\)\}/);
@@ -242,11 +243,30 @@ test('the made screen from Create goes to the project; an import lands there too
   }));
   assert.match(html, />Importing it from GitHub…</);
   assert.match(html, />Share invite<\/button>/, 'every new project ends on Share invite');
-  assert.match(html, />Invite people to Notes</);
+  assert.match(html, />Invite people to use it and help improve it together\.</);
   assert.doesNotMatch(html, /data-first-session-sketch/, 'an import is never sketched');
   const src = read(`${DIR}/made.tsx`);
   assert.doesNotMatch(src, /\bsolo\b|made\.audience/, 'nothing is made for Just me from here any more');
-  assert.match(src, /const card = !imported && showsCard\(sketch\.state\);/);
+  assert.match(src, /const card = !imported && !readyMade && showsCard\(sketch\.state\);/);
+});
+
+test('a ready-made app lands on the made screen like an import: set up, then ready, never sketched or built', () => {
+  const made = loadTsx(`${DIR}/made.tsx`);
+  assert.equal(made.buildLine(null, 'creating', false, false, true), 'Setting it up…');
+  assert.equal(made.buildLine(null, 'running', false, false, true), 'Ready to use.');
+  assert.equal(made.buildLine(null, 'error', false, false, true), 'Setting it up didn’t finish.', 'a stopped setup says so first');
+  assert.equal(made.buildNote(false, false, null, false, true), 'It works as it is. You and anyone you invite can change it from there.');
+  assert.equal(made.madeLine(null, false), null, 'Homeroom bot builds nothing, so there is no build line');
+  const html = renderToHtml(createElement(made.MadeScreen, {
+    made: { slug: 'groceries-1', name: 'Grocery List', emoji: '🛒', description: 'A grocery list', example: null, conversationId: null, readyMade: true },
+    me: 'sam', entry: 'first-session', onContinue() {}, onOpenChat() {},
+  }));
+  assert.match(html, />Setting it up…</);
+  assert.match(html, />🛒</, 'the ready-made app\'s own icon');
+  assert.match(html, />Share invite<\/button>/);
+  assert.doesNotMatch(html, /data-first-session-sketch/, 'a ready-made app is never sketched');
+  const src = read(`${DIR}/made.tsx`);
+  assert.match(src, /const making = imported \|\| readyMade \? appStatus !== 'running' : /);
 });
 
 test('a setup that stopped says so on the made screen, with Try again or Set secrets, as the progress view did', () => {
@@ -286,13 +306,13 @@ test('a setup that stopped says so on the made screen, with Try again or Set sec
   assert.match(src, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(made\.slug\)\}\/retry`, \{ method: 'POST', credentials: 'same-origin' \}\)/);
   assert.match(src, /if \(res\.ok\) setAppStatus\('creating'\);/);
   // And the plan's card is not drawn over it.
-  assert.match(src, /\{plan && !stalled \? <PlanWaitsCard/);
+  assert.match(src, /\{plan && !stalled && fromCreate \? <PlanWaitsCard/);
 });
 
 test('the server sketches the idea for both doors, and only the first session answers the join screen and counts in the Journey', () => {
   const src = read('src/routes/apps.js');
   assert.match(src, /const MAKE_ORIGINS = new Set\(\['first-session', 'create'\]\);/);
-  assert.match(src, /if \(MAKE_ORIGINS\.has\(req\.body\.from\) && !repoUrlNormalized\s+&& require\('\.\.\/services\/homeroom-bot-dm'\)\.normalizeBrief\(req\.body\.brief\)\) \{/);
+  assert.match(src, /if \(MAKE_ORIGINS\.has\(req\.body\.from\) && !repoUrlNormalized && !readyMade\s+&& require\('\.\.\/services\/homeroom-bot-dm'\)\.normalizeBrief\(req\.body\.brief\)\) \{/);
   assert.match(src, /\.\.\.\(MAKE_ORIGINS\.has\(req\.body\.from\) \? \{ from: req\.body\.from \} : \{\}\),/);
   // Answering the join screen stays the first session's.
   assert.match(src, /if \(req\.body\.from === 'first-session'\) \{\s+await require\('\.\.\/services\/first-session'\)\.answerJoinScreenByMaking/);
@@ -310,11 +330,13 @@ test('a stopped setup is not "Ready to try", and a Just me sketch is shared with
   // (Just me is no longer chosen at creation; the server still keeps the
   // shared point off a solo project's sketch for any other caller.)
   const src = read(`${DIR}/made.tsx`);
-  assert.match(src, /const stalled = stalledOf\(appStatus\);[\s\S]{0,500}const making = imported \? appStatus !== 'running' : \(!!stalled \|\| !\(building && !fv\)\);/);
-  // Not the bot's "Being made" either: nothing is being made while it is stopped.
-  assert.match(src, /botBuilds=\{botBuilds && !stalled\} built=\{!making \|\| !!\(fv && fv\.ready\)\}/);
-  const { pillLabel } = loadTsx(`${DIR}/sketch-card.tsx`);
-  assert.equal(pillLabel('idea'), 'Not built yet');
+  assert.match(src, /const stalled = stalledOf\(appStatus\);[\s\S]{0,500}const making = imported \|\| readyMade \? appStatus !== 'running' : \(!!stalled \|\| !\(building && !fv\)\);/);
+  // #4053: no build line either: nothing is being made while it is stopped.
+  assert.match(src, /const line = madeLine\(fv, botBuilds, !making, stalled, imported\);/);
+  const { madeLine } = loadTsx(`${DIR}/made.tsx`);
+  assert.equal(madeLine({ ready: true, line: 'ready' }, true, false, 'failed'), null);
+  assert.equal(madeLine({ ready: true, line: 'ready' }, true, false, 'needs-secrets'), null);
+  assert.equal(loadTsx(`${DIR}/sketch-card.tsx`).pillLabel, undefined, 'the "Not built yet" pill is gone');
 
   const sketch = require('../src/services/app-sketch');
   const brief = 'A tracker for our weekly miles, so we can see who is keeping up';
