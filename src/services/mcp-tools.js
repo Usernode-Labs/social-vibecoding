@@ -944,7 +944,10 @@ function failureReasonOf(result) {
 
 function shapeChecks(session) {
   const results = Array.isArray(session.test_results) ? session.test_results : [];
-  const failed = results.filter((t) => t && t.status && t.status !== 'pass');
+  // A unit suite that never reached `npm test` (its Job was refused, its pod
+  // stopped in setup) names no failing test, so it is not listed as one.
+  // When it is why the run errored, `error` below carries its reason.
+  const failed = results.filter((t) => t && t.status && t.status !== 'pass' && !unitSuiteRow.isNotRunRow(t));
   const ranOn = session.checks_commit_sha || null;
   const head = headShaOf(session);
   // #3978. The unit-suite row's stored per-test excerpts, previewed inline:
@@ -1325,6 +1328,22 @@ function shapeNextStep(session, checks, viewerId = null) {
       + ` and call submit_work with proposalId ${session.id} and that branch; otherwise poll get_proposal for the `
       + 'new verdict. Do not open a second proposal.';
   }
+  // The run errored because the repo unit suite could not run: its Job was
+  // refused or its setup stopped before any test. Nothing failed, and the
+  // error lane runs the checks again on its own, so "fix the build" would
+  // send the agent after a problem the code does not have.
+  const unitNotRun = unitSuiteRow.notRunError(session);
+  if (unitNotRun) {
+    const again = erroredRunWillRetry(session)
+      ? 'Homeroom runs errored checks again on its own, waiting longer between tries; poll get_proposal for the '
+        + 'new verdict.'
+      : 'Homeroom will not run them again on its own now; recheck_change re-runs them once the cause has cleared.';
+    return `The repo unit suite (npm test) could not run on ${ref}, so there is no verdict yet: `
+      + `${untrusted(unitNotRun, MAX_CHECK_ERROR_CHARS)} No test failed. ${again} Only if that reason points at `
+      + 'this change (installing its dependencies failed on its package.json or lockfile) fix it and push to '
+      + `${branch.youCanPush ? (branch.name || 'this proposal\'s branch') + ' in your own fork' : 'a branch in your OWN fork'}`
+      + ` and call submit_work with proposalId ${session.id} and that branch. Do not open a second proposal.`;
+  }
   // An errored run is a failure with no test to point at: the build or the
   // preview broke before the suite could report. Naming that is the difference
   // between fixing a test and fixing a Dockerfile.
@@ -1346,6 +1365,17 @@ function shapeNextStep(session, checks, viewerId = null) {
     : `Checks on ${ref} are failing and they gate merge — this cannot land however the vote goes. Fix the named tests and push `
       + 'to a branch in your OWN fork, then call submit_work with proposalId '
       + `${session.id} and that branch: ${whyYouCannotPush(branch)}. Do not open a second proposal.`;
+}
+
+// Will the error lane run this stored 'error' again on its own? The row is
+// one findStuckCheckSessions picks up, a retry is scheduled, and the streak
+// is under CHECK_MAX_AUTO_RETRIES. A row that does not say answers no, so a
+// rerun is never promised that will not come.
+function erroredRunWillRetry(session) {
+  if (!session || session.check_state !== 'error' || !session.branch_name) return false;
+  const recovery = require('./staging-recovery');
+  if (!recovery.isStuckCheckRecoveryScope(session) || session.check_next_retry_at == null) return false;
+  return (Number(session.consecutive_check_failures) || 0) < recovery.checkMaxAutoRetries();
 }
 
 // The 'error' a red run that overlapped a platform rollout is recorded as:
@@ -1597,6 +1627,13 @@ function changeNextStep(session, checks, live, kind = 'agent_mayor') {
     return `Checks on ${ref} ran while Homeroom was updating, so they will run again on their own. `
       + (unit ? `${unit} ${words.fixTests}${paused}`
         : `Nothing to fix yet; call get_change again for the new verdict.${paused}`);
+  }
+  if (unitSuiteRow.notRunError(session)) {
+    return `The repo unit suite (npm test) could not run on ${ref}, so there is no verdict yet, and no test failed. `
+      + (erroredRunWillRetry(session)
+        ? 'Homeroom runs the checks again on its own; call get_change again for the new verdict.'
+        : 'recheck_change re-runs the checks once the cause has cleared.')
+      + paused;
   }
   if (failing) {
     return checks.state === 'error' && !(checks.failing && checks.failing.length)

@@ -279,8 +279,9 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
     // The unit-suite row, from the Job's own verdict. Graduation is read
     // now rather than from the manifest: the history could only have moved
     // towards graduated, and that is what a fresh run would see too. A Job
-    // that vanished contributes no row — the same as a runner that failed
-    // to launch in a live run.
+    // that ended in setup, or with an empty log, is a suite that never ran
+    // (unit-suite.js notRunOutcome), as on the live path. A Job that
+    // vanished contributes no row.
     let unitOutcome = null;
     if (unit && (unit.state === 'succeeded' || unit.state === 'failed')) {
       let graduated = false;
@@ -293,7 +294,7 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
       unitOutcome = await unitSuite.outcomeFromLog({
         pool, appId: app.id, sessionId,
         succeeded: unit.state === 'succeeded',
-        stdout: unit.stdout, stderr: unit.stderr, timedOut: unit.timedOut,
+        stdout: unit.stdout, stderr: unit.stderr, timedOut: unit.timedOut, exitCode: unit.exitCode,
         graduated, tracker: unitTracker,
       });
     }

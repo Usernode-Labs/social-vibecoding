@@ -1111,8 +1111,10 @@ async function loadSessionCheckContext(pool, sessionId) {
 // bounded.
 function summarizeFailingChecks(checkState, testResults, max = FAILING_CHECKS_MAX) {
   if (checkState !== 'failing') return { total: 0, blocking: 0, rows: [] };
+  // A unit suite that never reached `npm test` names no failing test, and
+  // a fix turn handed it would go looking for one.
   const all = (Array.isArray(testResults) ? testResults : [])
-    .filter((r) => r && r.status !== 'pass');
+    .filter((r) => r && r.status !== 'pass' && !unitSuiteRow.isNotRunRow(r));
   const failing = [
     ...all.filter(unitSuiteRow.isUnitSuiteRow),
     ...all.filter((r) => !unitSuiteRow.isUnitSuiteRow(r)),
