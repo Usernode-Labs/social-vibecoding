@@ -71,7 +71,7 @@ export function Story({ primaryClass, onStart, onSignIn }: {
           Get started
         </a>
         <p className="mt-1 text-[15px] leading-5 text-zinc-500 dark:text-zinc-400">
-          Already have an account?{' '}
+          {'Already have an account? '}
           <a href="#login" data-landing-story-signin="" className="font-medium text-violet-700 dark:text-violet-400 hover:underline" onClick={(e) => { e.preventDefault(); onSignIn(); }}>
             Sign in
           </a>
