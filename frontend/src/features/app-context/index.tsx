@@ -32,6 +32,8 @@ const ABOUT_SHOT_TRIES = 100;
 
 /** The welcome tour's overlay (../home/tour/index.tsx), which drives this menu. */
 const TOUR_ID = 'home-tour';
+/** The first session's tour over the shell (../first-session/index.tsx Tour). */
+const FIRST_SESSION_TOUR = '[data-first-session-tour]';
 
 /** What the arrow keys move between in the menu: its buttons and links. */
 const SHEET_ROWS = 'a[href], button:not([disabled])';
@@ -92,7 +94,10 @@ export function AppContextIsland() {
   // that counted as an outside click shut the menu and the tour fell back
   // to the step that asks for it again ("Next on step 4 goes back to step
   // 3"). While the tour is up it decides when the menu closes: its
-  // `closesPanel` steps shut it through AppContext.close().
+  // `closesPanel` steps shut it through AppContext.close(). The first
+  // session's tour is spared the same way (#4390): its Suggest step points
+  // at a button in this menu, and it closes the menu itself when the reader
+  // moves on (../first-session/index.tsx, TourStep.inMenu).
   useEffect(() => {
     if (!open || adopted) return undefined;
     const onDoc = (event: Event) => {
@@ -100,7 +105,8 @@ export function AppContextIsland() {
       const sheet = document.getElementById('apps-switcher-sheet');
       const mark = document.getElementById(MARK_ID);
       const tour = document.getElementById(TOUR_ID);
-      if (t && (sheet?.contains(t) || mark?.contains(t) || tour?.contains(t))) return;
+      const firstSession = document.querySelector(FIRST_SESSION_TOUR);
+      if (t && (sheet?.contains(t) || mark?.contains(t) || tour?.contains(t) || firstSession?.contains(t))) return;
       if (AppContext._sheet) return;
       void AppContext.close();
     };
