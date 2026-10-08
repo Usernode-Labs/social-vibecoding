@@ -1525,14 +1525,18 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // seeded captures cover each state (#app/staging-demo-app/dev/proposals/
   // 900001). Its three old checks (the routes behind "All N screens", the
   // phone outline, the empty tile) are ONE now, folded with :has(); no other
-  // check is on that route. The agent session's hand-off walkthrough and its
-  // out-of-credits card stay unchecked: both open only after a tap (the
-  // composer's Build with, a refused send), and no route reaches them
-  // without a screenshot-only parameter. 733 leaves 147 slots.
+  // check is on that route.
+  //
+  // 733 → 734: +1 (#4312): the agent session's hand-off walkthrough, which
+  // #3976 retired with the classic chat, is read again through a real deep
+  // link: ?flow=claude-code on the agent-session fixture's address opens the
+  // composer's Build with on the Claude Code tab, and the check asserts the
+  // walkthrough's first step. The out-of-credits card stays unchecked: it
+  // opens only after a refused send. 734 leaves 146 slots.
   //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 733);
+  checkCap.assertPinned(DAPP.tests.length, 734);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

@@ -4802,6 +4802,15 @@
       "expectSelector": "[data-agent-session-thread=\"990801\"] [data-agent-session-run] > details.dc-cc-attached > .dc-cc-attached-summary > .dc-cc-head:has(> .dc-cc-attached-chevron) + .dc-status-venue + .dc-cc-chips"
     },
     {
+      "name": "#4312: a ?flow=claude-code deep link opens an agent session with Build with on the Claude Code tab, its walkthrough's first step showing",
+      "path": "/?flow=claude-code#messages/agent/990801",
+      "expectSelector": "[data-agent-session-thread=\"990801\"] [data-agent-session-build=\"claude-code\"] [data-agent-session-handoff-steps] [data-agent-session-handoff-step=\"github\"]",
+      "expectText": "GitHub linked",
+      "impact": [
+        "frontend/src/features/agent-session/**"
+      ]
+    },
+    {
       "name": "#2387: every message carries one hover bar (recent reactions, the picker, reply, save, ⋯), and a threaded one its reply count",
       "path": "/?demo=1#messages/910004",
       "expectSelector": ".messages-thread-channel .messages-message:has(.msgx-thread-chip) > .msgx-bar:has([aria-label^=\"React with\"]) > [aria-label=\"Add reaction\"] ~ [aria-label=\"Reply\"] ~ [aria-label=\"Save message\"] ~ .messages-action-more",

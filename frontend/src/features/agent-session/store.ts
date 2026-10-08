@@ -860,6 +860,36 @@ function storeOutbox(id: number) {
 
 // ── Opening and closing ────────────────────────────────────────────────
 
+// Deep link: ?flow=claude-code|codex on an agent session address opens the
+// composer's "Build with" on that agent's tab, the sheet a tap on the model
+// pill or a credits row opens (#4312). This is for a link somebody shares —
+// the in-app doors hand the agent over in memory (the hint's `handoff`).
+// The same validation the classic dev chat's own deep link does
+// (frontend/src/features/dev-chat/dev-chat.js, _devFlowFromQuery); anything
+// else is left in the address and ignored.
+function flowLinkFromQuery(): HandoffAgent | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const flow = new URLSearchParams(window.location.search).get('flow');
+    return flow === 'claude-code' || flow === 'codex' ? flow : null;
+  } catch { return null; }
+}
+
+/** Read and spend the deep link: the parameter is stripped, so a reload,
+ * a bookmark taken after the fact or Back does not reopen the sheet. */
+function consumeFlowLink(): HandoffAgent | null {
+  const agent = flowLinkFromQuery();
+  if (!agent || typeof window === 'undefined') return agent;
+  // Best-effort: if the address cannot be rewritten the sheet still opens
+  // and the parameter stays.
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('flow');
+    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
+  } catch { /* the sheet still opens */ }
+  return agent;
+}
+
 export async function openAgentSession({ id, host = 'screen', drawer = false }: {
   id: AgentSessionTarget;
   host?: AgentSessionHost;
@@ -868,7 +898,15 @@ export async function openAgentSession({ id, host = 'screen', drawer = false }: 
   // Every route into a conversation, the same one again included, asks for
   // any part of the model catalog that did not answer (loadModelCatalog).
   void loadModelCatalog();
-  if (id === 'new') return openDraft(host);
+  // A cold deep link opens a conversation twice (the screen's own effect,
+  // then app.js's router): the first open consumes the parameter, so the
+  // second reads nothing — the sheet is already open.
+  const flowLink = consumeFlowLink();
+  if (id === 'new') {
+    openDraft(host);
+    if (flowLink) openHandoff(flowLink);
+    return;
+  }
   // THE SAME SESSION AGAIN changes where it is drawn and nothing else — and in
   // particular does not claim the load (QA 2026-09-24 Q23). A cold deep link
   // opens it twice (the screen's own effect, then app.js's router), and the
@@ -882,6 +920,7 @@ export async function openAgentSession({ id, host = 'screen', drawer = false }: 
   // the conversation again, or came back to it): read it.
   if (state.id === id && state.open) {
     publish({ open: true, host, drawerOpen: drawer || state.drawerOpen });
+    if (flowLink) openHandoff(flowLink);
     syncTitle();
     applyCarriedPane();
     // Still loading: that read is this one's too.
@@ -901,6 +940,9 @@ export async function openAgentSession({ id, host = 'screen', drawer = false }: 
     session: null, draft: null, messages: [], actions: [], turn: IDLE_TURN, specSheet: null, preview: null, changeAction: null, drafts: [],
     credits: null, handoff: null, attachments: dropAllAttachments(), outbox: readOutbox(id), version: null,
   });
+  // The reset publish above writes handoff: null, so the deep link's
+  // openHandoff follows it — the order matters.
+  if (flowLink) openHandoff(flowLink);
   syncTitle();
   seen.clear();
   closeEvents();

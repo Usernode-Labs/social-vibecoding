@@ -273,3 +273,90 @@ test('the card\'s checks open the dialog and a failing run offers Re-run; the ba
   assert.match(panel, /This session is archived\. Unarchive it to keep going\./);
   assert.match(panel, /window\.AppView\?\.openSessionChecks\?\.\(item\.changeId\)/);
 });
+
+// The deep link (#4312): ?flow=claude-code|codex on an agent session address
+// opens the composer's Build with on that agent's tab, the same sheet a tap
+// on the model pill opens, and is then spent — the parameter is stripped, so
+// a reload of the cleaned address does not reopen it.
+test('a ?flow= deep link opens Build with on the named tab and is spent once', async () => {
+  const session = {
+    id: 7, title: 'Dark mode', status: 'open', focusApp: null, focusContext: {}, busy: false,
+    activeChange: { id: 50, appSlug: 'notes', appName: 'Notes', status: 'active', title: 'Dark mode', prNumber: 14, appSelfHosted: false },
+    changes: [], lastActivityAt: null, createdAt: null,
+  };
+  const fetchFor = async (url) => ({
+    ok: true,
+    status: 200,
+    json: async () => (/\/messages\?/.test(url) ? { messages: [], nextAfter: null }
+      : /\/actions$/.test(url) ? { actions: [] }
+        : /\/drafts$/.test(url) ? { drafts: [] }
+          : { session, turn: null }),
+  });
+
+  const boot = (search, href) => {
+    let replaced = null;
+    globalThis.window = {
+      location: { hash: href.slice(href.indexOf('#')), search, href, pathname: '/' },
+      history: {
+        state: null,
+        replaceState: (state, unused, url) => { replaced = url; },
+      },
+      App: { setHeaderTitle() {} },
+      UsernodeReact: {},
+    };
+    globalThis.EventSource = class { close() {} };
+    globalThis.fetch = withStateRead(fetchFor);
+    return { replaced: () => replaced };
+  };
+
+  // The unsent conversation: the sheet's tab is published through handoff,
+  // and the parameter leaves the address.
+  {
+    const cleaner = boot('?flow=claude-code', 'https://home.test/?flow=claude-code#messages/agent/new');
+    try {
+      const store = loadTsx('frontend/src/features/agent-session/store.ts');
+      await store.openAgentSession({ id: 'new', host: 'messages' });
+      assert.equal(store.getAgentSessionState().handoff, 'claude-code');
+      assert.equal(cleaner.replaced(), '/#messages/agent/new',
+        'the parameter is stripped, the hash kept');
+    } finally {
+      delete globalThis.window;
+      delete globalThis.fetch;
+      delete globalThis.EventSource;
+    }
+  }
+
+  // An existing conversation: the deep link lands while the transcript
+  // loads, and the reset publish does not wipe the handoff set after it.
+  {
+    const cleaner = boot('?flow=codex', 'https://home.test/?flow=codex#messages/agent/7');
+    try {
+      const store = loadTsx('frontend/src/features/agent-session/store.ts');
+      await store.openAgentSession({ id: 7, host: 'messages' });
+      assert.equal(store.getAgentSessionState().handoff, 'codex', 'the walkthrough is up after the read lands');
+      assert.equal(cleaner.replaced(), '/#messages/agent/7');
+    } finally {
+      delete globalThis.window;
+      delete globalThis.fetch;
+      delete globalThis.EventSource;
+    }
+  }
+
+  // Anything else there is ignored: no publish, no strip. And the same
+  // session opened again while it is on screen opens the sheet too.
+  {
+    const cleaner = boot('?flow=chatgpt', 'https://home.test/?flow=chatgpt#messages/agent/7');
+    try {
+      const store = loadTsx('frontend/src/features/agent-session/store.ts');
+      await store.openAgentSession({ id: 7, host: 'messages' });
+      assert.equal(store.getAgentSessionState().handoff, null, 'an unknown flow opens nothing');
+      assert.equal(cleaner.replaced(), null, 'an unknown flow is left in the address');
+      store.openAgentSession({ id: 7, host: 'screen' });
+      assert.equal(store.getAgentSessionState().handoff, null, 'the same-again open reads nothing either');
+    } finally {
+      delete globalThis.window;
+      delete globalThis.fetch;
+      delete globalThis.EventSource;
+    }
+  }
+});
