@@ -34,6 +34,7 @@ const journeyEvents = require('../services/journey-events');
 const log = require('../services/logger');
 const appAccess = require('../services/app-access');
 const invites = require('../services/community-invites');
+const stagingDemoInvite = require('../services/staging-demo-invite');
 const phoneAuth = require('../services/firebase-phone-auth');
 const challengeScorer = require('../services/topochain/challenge-scorer');
 const testAccounts = require('../services/test-accounts');
@@ -208,6 +209,12 @@ function communityInviteRoutes(config) {
   // here, and the answer is the same whoever asks. Its open is a signed-out
   // one: recorded, never told.
   router.get('/api/public/invites/:token', invitePreviewLimiter, async (req, res) => {
+    // Staging's demo link (services/staging-demo-invite.js): its pretend
+    // preview, counted as no open. Anywhere else it is an unknown token.
+    if (stagingDemoInvite.isDemoInvite(req.params.token)) {
+      res.setHeader('Cache-Control', 'no-store');
+      return res.json(stagingDemoInvite.demoInvitePreview());
+    }
     try {
       const preview = await invites.preview(pool, req.params.token);
       if (preview.live) countOpen(req, res, req.params.token);
@@ -256,6 +263,12 @@ function communityInviteRoutes(config) {
 
   router.get('/api/invite-links/by-token/:token', invitePreviewLimiter, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    // Staging's demo link is never followed: signed in, it is a link that
+    // does not work, answered without an error status.
+    if (stagingDemoInvite.isDemoInvite(req.params.token)) {
+      res.setHeader('Cache-Control', 'no-store');
+      return res.json(stagingDemoInvite.demoInviteDead());
+    }
     try {
       // `page` (the project's page, for somebody who may open it before
       // joining) follows the community read's own rule for the platform's
@@ -284,6 +297,10 @@ function communityInviteRoutes(config) {
   // (middleware/same-site-browser.js).
   router.post('/api/invite-links/by-token/:token/redeem', drainGuard, inviteRedeemLimiter, sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    // Staging's demo link grants nothing (services/staging-demo-invite.js).
+    if (stagingDemoInvite.isDemoInvite(req.params.token)) {
+      return res.status(410).json({ error: 'This invite link is not active.', reason: 'unknown' });
+    }
     try {
       // Signed in with the link in hand, for the admin Journey's invite
       // funnel (#4272). The standing read above records it first, but the
@@ -327,11 +344,16 @@ function communityInviteRoutes(config) {
   router.get('/invite/:token', invitePreviewLimiter, async (req, res, next) => {
     if (!req.accepts('html')) return next();
     const token = req.params.token;
+    // Staging's demo link: its pretend preview, and no invite cookie, so a
+    // sign-in from its page follows nothing.
+    const demo = stagingDemoInvite.isDemoInvite(token);
     try {
-      const preview = invites.isToken(token)
-        ? await invites.preview(pool, token)
-        : { live: false, reason: 'unknown' };
-      if (preview.live) {
+      const preview = demo
+        ? stagingDemoInvite.demoInvitePreview()
+        : invites.isToken(token)
+          ? await invites.preview(pool, token)
+          : { live: false, reason: 'unknown' };
+      if (preview.live && !demo) {
         invites.setInviteCookie(req, res, token);
         // The page's two reads (the preview and, signed in, the standing)
         // may start together: both carry this browser, so it counts once.

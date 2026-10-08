@@ -153,8 +153,9 @@ test('the paths: the page is a shell document; following from the waiting room i
     "router.get('/api/invite-links/queued',",
     "router.get('/invite/:token', invitePreviewLimiter,",
   ]) assert.ok(src.includes(route), route);
-  // Only a live link leaves its token for sign-in to follow.
-  assert.match(src, /if \(preview\.live\) \{\s*invites\.setInviteCookie\(req, res, token\);/);
+  // Only a live link leaves its token for sign-in to follow (never staging's
+  // demo link, tests/staging-demo-invite.test.js).
+  assert.match(src, /if \(preview\.live && !demo\) \{\s*invites\.setInviteCookie\(req, res, token\);/);
 });
 
 test('signing UP from an invite page follows the link server-side; signing IN is asked first', () => {
