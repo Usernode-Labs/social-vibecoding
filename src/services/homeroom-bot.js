@@ -6012,16 +6012,17 @@ async function actOnVerdict({
     await say('empty', live.emptyText(parsed), { dm: { reason: parsed.reason } });
   } else if (parsed.verdict === 'ready') {
     // B6: a first version waits for its creator's Build it, under the plan
-    // they are sent first. When the plan could not reach them, it is built
-    // as it was before plans.
+    // they are sent first. #4175: it is never built without it. A plan that
+    // could not reach them waits and is sent again (retryUnsentPlans); one
+    // with nobody to send it to stops (awaitGo).
     // #4210: a first version its creator already said Build it to, that a
     // restart sent back to be read again, is not asked again: it is built
     // from what they approved.
     if (firstVersion && await carryApprovedPlan(pool, { runId, appId: app.id, issueNumber })) {
       await queueLiveBuild(pool, { runId, appId: app.id });
       acted = 'build_queued';
-    } else if (firstVersion && await awaitGo(pool, { runId, app, issueNumber, parsed, bot, deps })) {
-      acted = 'awaiting_go';
+    } else if (firstVersion) {
+      acted = PLAN_ACTED[await awaitGo(pool, { runId, app, issueNumber, parsed, bot, deps })];
     } else {
       // Built after this turn, in a slot of its own (buildLive, started by
       // the lane), not inside it: the build held the project's one slot for
@@ -6045,10 +6046,12 @@ async function actOnVerdict({
  * a time, started by the lane (dispatch) as soon as its project has none
  * running. Never throws.
  */
+// Once: a run already waiting keeps its place, and one already building or
+// built is left alone.
 async function queueLiveBuild(pool, { runId, appId }) {
   try {
     await pool.query(
-      `UPDATE homeroom_bot_runs SET live_build_waiting_at = NOW()
+      `UPDATE homeroom_bot_runs SET live_build_waiting_at = COALESCE(live_build_waiting_at, NOW())
         WHERE id = $1 AND build_ok IS NULL AND build_session_id IS NULL`,
       [runId],
     );
@@ -6116,32 +6119,150 @@ function creatorChoiceNote(chosen, { bullets = [] } = {}) {
   return lines.length ? `\n\n${lines.join('\n')}` : '';
 }
 
+// #4175: a plan that could not be sent keeps its run waiting and is sent
+// again on a later wake, this many minutes after the attempt before (the
+// bot's sweeps run every REFRESH_INTERVAL_MS): four sends over about an
+// hour. Until 8 October 2026 it was built at once, with nobody asked.
+const PLAN_SEND_RETRY_MINUTES = [5, 15, 40];
+const PLAN_SEND_ATTEMPTS = PLAN_SEND_RETRY_MINUTES.length + 1;
+// Why a first version's plan stopped before anyone saw it (build_error,
+// after 'skipped: ', as retireWaitingPlans records a plan it ends).
+const PLAN_STOPPED_WHY = {
+  no_requester: 'nobody to send the plan to: its creator could not be found',
+  no_bot: 'nobody to send the plan to: its creator no longer has Homeroom bot',
+  unsent: 'the plan could not be sent to its creator',
+};
+// What actOnVerdict reports for each way awaitGo resolves.
+const PLAN_ACTED = {
+  waiting: 'awaiting_go', unsent: 'plan_unsent', stopped: 'plan_stopped', already: 'already_built', failed: 'plan_failed',
+};
+
 /**
  * A first version's ready verdict waits for its creator's Build it, under the
- * plan sent to them. Resolves true when it waits, false when the plan could
- * not be shown to them (it is then built at once, as before plans). Never
- * throws.
+ * plan sent to them. Never builds it. Resolves 'waiting' (the plan reached
+ * them), 'unsent' (it waits, and is sent again: retryUnsentPlans), 'stopped'
+ * (there is nobody to send it to: recorded as not built), 'already' (the run
+ * already has a build state: nothing is queued twice) or 'failed' (the wait
+ * could not be recorded). Never throws.
  */
 async function awaitGo(pool, { runId, app, issueNumber, parsed, bot, deps = {} }) {
   const plan = planFor(parsed);
   try {
     const { rowCount } = await pool.query(
-      `UPDATE homeroom_bot_runs SET awaiting_go_at = NOW(), plan = $2
+      `UPDATE homeroom_bot_runs SET awaiting_go_at = NOW(), plan = $2, plan_send_attempts = 0, plan_unsent_at = NULL
         WHERE id = $1 AND build_ok IS NULL AND build_session_id IS NULL AND live_build_waiting_at IS NULL`,
       [runId, JSON.stringify(plan)],
     );
-    if (!rowCount) return false;
-    const dm = deps.dm || require('./homeroom-bot-dm');
-    const sent = await dm.sendPlanCard(pool, { app, issueNumber, runId, plan, bot, ws: deps.ws || null });
-    if (sent?.messageId) {
-      log.info('homeroom-bot', 'A first version waits for its creator to check the plan', { app: app.slug, issueNumber, runId });
-      return true;
-    }
+    if (!rowCount) return 'already';
   } catch (err) {
-    log.warn('homeroom-bot', 'Could not send a first version\'s plan (building it now)', { app: app.slug, issueNumber, runId, err: err.message });
+    log.warn('homeroom-bot', 'Could not record a first version\'s plan', { app: app.slug, issueNumber, runId, err: err.message });
+    return 'failed';
   }
-  await pool.query('UPDATE homeroom_bot_runs SET awaiting_go_at = NULL WHERE id = $1', [runId]).catch(() => {});
-  return false;
+  return sendRunPlan(pool, { runId, app, issueNumber, plan, bot, deps });
+}
+
+/**
+ * #4175: one try at sending a waiting first version's plan to its creator.
+ * Sent: it waits for Build it. Nobody to send it to: it stops at once, as
+ * not built. Otherwise it waits to be sent again, until PLAN_SEND_ATTEMPTS
+ * tries have failed, and then stops. Resolves 'waiting', 'unsent' or
+ * 'stopped'. Never throws.
+ */
+async function sendRunPlan(pool, { runId, app, issueNumber, plan, bot, deps = {} }) {
+  let sent = null;
+  try {
+    const dm = deps.dm || require('./homeroom-bot-dm');
+    sent = await dm.sendPlanCard(pool, { app, issueNumber, runId, plan, bot, ws: deps.ws || null });
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not send a first version\'s plan (it waits, and is sent again)', {
+      app: app.slug, issueNumber, runId, err: err.message,
+    });
+  }
+  try {
+    if (sent?.messageId) {
+      await pool.query(
+        'UPDATE homeroom_bot_runs SET plan_send_attempts = plan_send_attempts + 1, plan_unsent_at = NULL WHERE id = $1',
+        [runId],
+      );
+      log.info('homeroom-bot', 'A first version waits for its creator to check the plan', { app: app.slug, issueNumber, runId });
+      return 'waiting';
+    }
+    if (sent?.stop) {
+      await stopUnsentPlan(pool, { runId, why: PLAN_STOPPED_WHY[sent.stop] || PLAN_STOPPED_WHY.unsent });
+      return 'stopped';
+    }
+    const { rows: [run] } = await pool.query(
+      `UPDATE homeroom_bot_runs SET plan_send_attempts = plan_send_attempts + 1, plan_unsent_at = NOW()
+        WHERE id = $1 AND awaiting_go_at IS NOT NULL AND build_ok IS NULL AND build_session_id IS NULL
+        RETURNING plan_send_attempts`,
+      [runId],
+    );
+    if (run && Number(run.plan_send_attempts) >= PLAN_SEND_ATTEMPTS) {
+      await stopUnsentPlan(pool, { runId, why: PLAN_STOPPED_WHY.unsent });
+      return 'stopped';
+    }
+    log.info('homeroom-bot', 'A first version\'s plan could not be sent; it waits to be sent again', {
+      app: app.slug, issueNumber, runId, attempts: run ? Number(run.plan_send_attempts) : null,
+    });
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not record a first version\'s plan send', { app: app.slug, issueNumber, runId, err: err.message });
+  }
+  return 'unsent';
+}
+
+/**
+ * #4175: a first version's plan that stops before anyone saw it is recorded
+ * as not built, with why, as retireWaitingPlans records one it ends. It had
+ * no card to close. Never throws.
+ */
+async function stopUnsentPlan(pool, { runId, why }) {
+  try {
+    const { rowCount } = await pool.query(
+      `UPDATE homeroom_bot_runs SET awaiting_go_at = NULL, plan_unsent_at = NULL, build_ok = FALSE, build_error = $2
+        WHERE id = $1 AND awaiting_go_at IS NOT NULL AND build_ok IS NULL AND build_session_id IS NULL`,
+      [runId, `skipped: ${why}`],
+    );
+    if (rowCount) log.info('homeroom-bot', 'A first version\'s plan stopped before anyone saw it', { runId, why });
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not stop a first version\'s plan', { runId, err: err.message });
+  }
+}
+
+/**
+ * #4175: send again the first versions' plans that could not be sent, each
+ * once its wait since the last try (PLAN_SEND_RETRY_MINUTES) is up. Run on
+ * the bot's sweep cadence. Resolves { sent, unsent, stopped }. Never throws.
+ */
+async function retryUnsentPlans(pool, bot, deps = {}) {
+  const out = { sent: 0, unsent: 0, stopped: 0 };
+  if (!bot?.id) return out;
+  let rows = [];
+  try {
+    ({ rows } = await pool.query(
+      `SELECT r.id, r.app_id, r.issue_number, r.plan, a.slug, a.name
+         FROM homeroom_bot_runs r JOIN apps a ON a.id = r.app_id
+        WHERE r.awaiting_go_at IS NOT NULL AND r.plan_unsent_at IS NOT NULL
+          AND r.build_ok IS NULL AND r.build_session_id IS NULL
+          AND r.plan_unsent_at <= NOW() - make_interval(mins => ($1::int[])[
+                GREATEST(1, LEAST(r.plan_send_attempts, cardinality($1::int[])))])
+        ORDER BY r.plan_unsent_at, r.id
+        LIMIT 20`,
+      [PLAN_SEND_RETRY_MINUTES],
+    ));
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not read the plans waiting to be sent again', { err: err.message });
+    return out;
+  }
+  for (const row of rows) {
+    const app = { id: Number(row.app_id), slug: row.slug, name: row.name };
+    const plan = {
+      bullets: Array.isArray(row.plan?.bullets) ? row.plan.bullets : [],
+      questions: Array.isArray(row.plan?.questions) ? row.plan.questions : [],
+    };
+    const state = await sendRunPlan(pool, { runId: Number(row.id), app, issueNumber: Number(row.issue_number), plan, bot, deps });
+    out[state === 'waiting' ? 'sent' : state] += 1;
+  }
+  return out;
 }
 
 /**
@@ -7552,6 +7673,9 @@ async function runOnce(pool, config, deps = {}) {
       // B6: and a plan nobody tapped Build it under for a week stops waiting.
       const stalePlans = await settleStalePlans(pool, { dm: deps.dm });
       if (stalePlans) out.plansStopped = stalePlans;
+      // #4175: and a first version's plan that could not be sent is sent again.
+      const resent = await retryUnsentPlans(pool, bot, { dm: deps.dm, ws: deps.ws || null });
+      if (resent.sent || resent.unsent || resent.stopped) out.plansResent = resent;
       // A change that passed its checks and waited longer than it should on
       // its before & after shots is offered as ready to try anyway.
       const heldReady = await (deps.dm || require('./homeroom-bot-dm')).sweepHeldReady?.(pool, { ws: deps.ws || null });
@@ -8485,6 +8609,9 @@ module.exports = {
   choicesFrom,
   creatorChoiceNote,
   awaitGo,
+  retryUnsentPlans,
+  PLAN_SEND_RETRY_MINUTES,
+  PLAN_SEND_ATTEMPTS,
   goAhead,
   carryApprovedPlan,
   retireWaitingPlans,

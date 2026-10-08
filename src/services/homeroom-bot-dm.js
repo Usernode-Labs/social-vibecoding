@@ -1450,13 +1450,18 @@ async function planCards(pool, { userId, appId, issueNumber }) {
  * B6: send a first version's plan to its creator, when they are somebody the
  * bot talks to: the card with its buttons (metadata.plan, actionId), a "needs
  * your answer" moment. Earlier plans for it now read "Replaced by a newer
- * plan". Resolves what sendDm did, or null when it reached nobody.
+ * plan". Resolves what sendDm did; { messageId: null, stop } when there is
+ * nobody to send it to (`no_requester`, or `no_bot`: the requester is no
+ * longer someone the bot works for); or null when the send failed.
  */
 async function sendPlanCard(pool, { app, issueNumber, runId, plan, bot, ws = null }) {
   if (!bot?.id || !app?.id || !runId || !plan?.bullets?.length) return null;
   const settings = await settingsModule().readSettings(pool);
   const requester = await requesterOf(pool, app.id, issueNumber);
-  if (!requester || !hasBot(settings, requester)) return null;
+  // #4175: nobody to send it to is said apart from a send that failed: the
+  // first stops its run at once, the second is tried again.
+  if (!requester) return { messageId: null, stop: 'no_requester' };
+  if (!hasBot(settings, requester)) return { messageId: null, stop: 'no_bot' };
   const name = app.name || app.slug;
   const questions = (plan.questions || []).slice(0, 2);
   const { rows: [action] } = await pool.query(
