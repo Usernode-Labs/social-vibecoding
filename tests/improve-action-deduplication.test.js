@@ -37,10 +37,11 @@ const actions = (html) => [...html.matchAll(/<button data-plus="([^"]+)"/g)].map
 
 test('the rendered + menu keeps only distinct actions, including app-management gates', () => {
   // B8: Suggest an improvement leads; Build it yourself is second.
-  assert.deepEqual(actions(board()), ['issue', 'new-change', 'import-pr', 'members', 'rename', 'secrets', 'fork']);
-  assert.deepEqual(actions(board({ showsMembers: false })), ['issue', 'new-change', 'import-pr', 'rename', 'secrets', 'fork']);
+  // #4045: "Settings & rules" is one row, its settings in the panel under it.
+  assert.deepEqual(actions(board()), ['issue', 'new-change', 'import-pr', 'settings', 'members', 'rename', 'secrets', 'fork']);
+  assert.deepEqual(actions(board({ showsMembers: false })), ['issue', 'new-change', 'import-pr', 'settings', 'rename', 'secrets', 'fork']);
   const platform = board({ selfHosted: true });
-  assert.deepEqual(actions(platform), ['issue', 'new-change', 'import-pr', 'members', 'rename', 'secrets']);
+  assert.deepEqual(actions(platform), ['issue', 'new-change', 'import-pr', 'settings', 'members', 'rename', 'secrets']);
   assert.match(platform, /Proposal approvals/);
   assert.match(platform, /Platform variables/);
   assert.doesNotMatch(platform, /Members &amp; visibility/);
@@ -70,10 +71,11 @@ test('hiding import leaves Suggest an improvement first, so the settings divider
   // heading any more: it is the menu's first, and "Settings & rules" says
   // where the rest begins.
   const html = board({ canCollaborate: false });
-  assert.deepEqual(actions(html), ['issue', 'new-change', 'members', 'rename', 'secrets', 'fork']);
+  // #4045: "Settings & rules" is one row now, its settings in a panel under it.
+  assert.deepEqual(actions(html), ['issue', 'new-change', 'settings', 'members', 'rename', 'secrets', 'fork']);
   assert.doesNotMatch(html, /data-plus-group="build"/);
   assert.doesNotMatch(html, /Add to the board/);
-  const settings = html.match(/<div data-plus-group="settings"[^>]*>/);
+  const settings = html.match(/<button data-plus="settings" data-plus-group="settings"[^>]*>/);
   assert.ok(settings);
   assert.match(settings[0], /border-t/);
   const withImport = board();
@@ -216,7 +218,9 @@ for (const touch of [false, true]) {
         assert.ok(h.classes.has('hidden'), 'touch never opens the desktop dropdown');
         // Build it yourself is React's own onClick (the sheet's handler
         // clicks the row), so _wirePlusMenu dispatches the rest.
-        sheet.actions.filter((item) => !item.heading && item.label !== 'Build it yourself')[index].handler();
+        // "Settings & rules" opens the settings as a sheet of their own
+        // (#4045); this harness has no panel, so its rows stay on this one.
+        sheet.actions.filter((item) => !item.heading && item.label !== 'Build it yourself' && item.label !== 'Settings & rules')[index].handler();
       } else {
         assert.equal(h.attributes['aria-expanded'], 'true');
         assert.equal(h.classes.has('hidden'), false);

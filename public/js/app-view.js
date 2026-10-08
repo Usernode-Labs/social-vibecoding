@@ -1058,7 +1058,11 @@ const AppView = {
       // fetches trigger (each dismisses an open menu by design), bounded, and
       // ended by a human's first real gesture so a person following one of
       // these links does not get a menu put back under them.
-      if (shot === 'plus-menu') {
+      // `?shot=plus-menu-settings` goes one step further (#4045): the menu,
+      // then its "Settings & rules" row, so the settings it now folds away
+      // are URL-reachable for the checks and the shots.
+      const plusMenuSettings = shot === 'plus-menu-settings';
+      if (shot === 'plus-menu' || plusMenuSettings) {
         let tries = 0;
         const done = () => {
           clearInterval(tick);
@@ -1073,7 +1077,12 @@ const AppView = {
           const menu = document.getElementById('dev-plus-menu');
           // Already up: nothing to do this tick, but keep the window open so a
           // repaint that dismisses it gets it back.
-          if (menu && !menu.classList.contains('hidden')) return;
+          if (menu && !menu.classList.contains('hidden')) {
+            if (plusMenuSettings && menu.getAttribute('data-plus-view') !== 'settings') {
+              menu.querySelector('[data-plus="settings"]')?.click();
+            }
+            return;
+          }
           document.getElementById('dev-plus-btn')?.click();
         }, 300);
       }
@@ -6976,10 +6985,35 @@ const AppView = {
     const ac = new AbortController();
     AppView._plusMenuAbort = ac;
     const { signal } = ac;
+    // #4045: "Settings & rules" is one row that opens the project's
+    // settings on top of the menu (actions-row.tsx #dev-plus-settings). On
+    // desktop the dropdown turns to that panel (`data-plus-view`, app.css)
+    // and its back row turns it back; closing always returns it to the menu.
+    const settingsPanel = document.getElementById('dev-plus-settings');
+    const showSettings = (on) => {
+      if (on) menu.setAttribute?.('data-plus-view', 'settings');
+      else menu.removeAttribute?.('data-plus-view');
+    };
     const close = () => {
       menu.classList.add('hidden');
       btn.setAttribute('aria-expanded', 'false');
+      showSettings(false);
     };
+    // A sheet's rows, in DOM order, so a group heading arrives between the
+    // rows it heads (see below).
+    const sheetActions = (nodes) => nodes.map((node) => {
+      if (!node.hasAttribute('data-plus')) {
+        return { heading: true, label: node.textContent.replace(/\s+/g, ' ').trim() };
+      }
+      const titleEl = node.querySelector('[data-plus-title]') || node.querySelector('span');
+      const glyph = node.querySelector('svg')?.cloneNode(true);
+      if (glyph) glyph.removeAttribute('class');
+      return {
+        label: (titleEl?.textContent || node.textContent).replace(/\s+/g, ' ').trim(),
+        iconEl: glyph || undefined,
+        handler: () => node.click(),
+      };
+    });
     // The rows a keyboard can reach (QA 2026-09-24 Q18).
     const PLUS_ROWS = 'button[data-plus]:not([disabled])';
     btn.addEventListener('click', (e) => {
@@ -6999,7 +7033,11 @@ const AppView = {
         // nothing, labelled `— Build a change —`: same weight and ink as the
         // actions around it, and tappable, so the dashes were the only thing
         // saying it was not a choice.
-        const nodes = Array.from(menu.querySelectorAll('button[data-plus], [data-plus-group]'));
+        //
+        // The settings panel's rows are not this sheet's: its "Settings &
+        // rules" row presents them as a sheet of their own (below).
+        const nodes = Array.from(menu.querySelectorAll('button[data-plus], [data-plus-group]'))
+          .filter((node) => !(settingsPanel && settingsPanel.contains(node)));
         PlatformUI.actionSheet({
           actions: nodes.map((node) => {
             if (!node.hasAttribute('data-plus')) {
@@ -7028,12 +7066,17 @@ const AppView = {
             return {
               label: (titleEl?.textContent || node.textContent).replace(/\s+/g, ' ').trim(),
               iconEl: glyph || undefined,
+              // The menu's one lit row, Suggest an improvement (actions-row.tsx
+              // `lit`, the owner, 8 Oct 2026), is lit in the sheet too.
+              highlighted: node.hasAttribute('data-plus-lit'),
               handler: () => node.click(),
             };
           }),
         });
         return;
       }
+      // Every open starts on the menu itself, never on the settings panel.
+      showSettings(false);
       const open = menu.classList.toggle('hidden') === false;
       btn.setAttribute('aria-expanded', open ? 'true' : 'false');
       // Refresh the App secrets item's "N required missing" state only
@@ -7088,6 +7131,31 @@ const AppView = {
         App.openFeedbackModal({ fromDev: true, intent: 'issue' });
       }, { signal });
     }
+    const settingsBtn = menu.querySelector('[data-plus="settings"]');
+    settingsBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (PlatformUI.isTouch()) {
+        // On touch the first sheet has gone by now: the settings come up as
+        // a sheet of their own, headed with the row's name.
+        // The owner, 7 Oct: a second sheet of the same kind, titled, whose
+        // last card is Back rather than Cancel. Back brings the menu back.
+        const rows = settingsPanel
+          ? Array.from(settingsPanel.querySelectorAll('button[data-plus]')) : [];
+        Promise.resolve(PlatformUI.actionSheet({
+          title: 'Settings & rules', cancelLabel: 'Back', actions: sheetActions(rows),
+        })).then((picked) => { if (!picked && btn.isConnected) btn.click(); });
+        return;
+      }
+      showSettings(true);
+      const first = settingsPanel && Array.from(settingsPanel.querySelectorAll('button[data-plus]'))
+        .find((el) => !el.disabled && el.getClientRects().length > 0);
+      if (first) first.focus({ preventScroll: true });
+    }, { signal });
+    settingsPanel?.querySelector('[data-plus-back]')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      showSettings(false);
+      if (settingsBtn) settingsBtn.focus({ preventScroll: true });
+    }, { signal });
     const importPrBtn = menu.querySelector('[data-plus="import-pr"]');
     if (importPrBtn) {
       importPrBtn.addEventListener('click', () => {
@@ -8777,11 +8845,13 @@ const AppView = {
   WORKSHOP_SEEN_KEY: 'workshopSeen',
   // A project page's four tabs under its coloured header: the hub (`status`),
   // Discussion (its channel), Needs you and the Workshop, and All items, the
-  // page under the Workshop. A query param reaches
+  // page under the Workshop, and `plan`, the page under the hub where the
+  // people who joined read the first version's plan (#4074; visited, never
+  // reopened on: _setWorkshopTab keeps the hub). A query param reaches
   // each directly (`?ws=needs`) because the platform's own rule is that a
   // screen only reachable by interacting needs a URL: the declared checks
   // select against it and the proposal screenshots are shot from it.
-  WORKSHOP_TABS: ['status', 'discussion', 'workshop', 'needs', 'all'],
+  WORKSHOP_TABS: ['status', 'discussion', 'workshop', 'needs', 'all', 'plan'],
   _workshopModels() {
     const src = (typeof DevChat !== 'undefined' && DevChat && DevChat.MODELS) || null;
     if (!src || typeof src !== 'object') return { list: [], selected: null };
@@ -8838,7 +8908,7 @@ const AppView = {
       const stored = window.localStorage.getItem(AppView.WORKSHOP_TAB_KEY);
       // A remembered page (Needs you, All items) reopens as itself, with its
       // way back to the tab it hangs off above it.
-      if (AppView.WORKSHOP_TABS.indexOf(stored) !== -1) return stored;
+      if (AppView.WORKSHOP_TABS.indexOf(stored) !== -1 && stored !== 'plan') return stored;
       // A viewer who last left the Dev screen on the Board gets the tab those
       // columns live in, for the same reason _getWorkshopGroup gives them the
       // pane: migrating the retired mode without carrying what it MEANT would
@@ -8984,7 +9054,8 @@ const AppView = {
   },
 
   _setWorkshopTab(key) {
-    const next = AppView.WORKSHOP_TABS.indexOf(key) !== -1 ? key : 'status';
+    // The plan is gone once it is built, so the page reopens on the hub.
+    const next = AppView.WORKSHOP_TABS.indexOf(key) !== -1 && key !== 'plan' ? key : 'status';
     // An explicit tap retires the URL override, exactly as `_setWorkshopGroup`
     // does — otherwise `?ws=` would keep winning over every later press.
     AppView._workshopTabUrlOverride = null;

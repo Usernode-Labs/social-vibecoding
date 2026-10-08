@@ -53,9 +53,13 @@ test('every action row has a glyph, and every glyph is decoration', () => {
   // "Make it private" (a public community's, on the hub) left the hero for
   // this menu in the UI overhaul's follow-up, and "Start a new change" left
   // the foot of the hub for its top (#852 review). "Suggest this back" is a
-  // remix owner's (./suggest-back-dialog.tsx).
-  assert.equal(rows.length, 12,
-    'new-change, issue, import-pr, make-private, app-settings, featured-illustration, members x2, rename, secrets, suggest-back, fork');
+  // remix owner's (./suggest-back-dialog.tsx). #4045: "Make it public" and
+  // Leave left the hero's row for it too (Leave was the Joined pill).
+  // #4045: "Settings & rules" is a row too, the one that opens the settings,
+  // and Remix is written twice: last in the settings sheet, and alone on the
+  // menu of a read-only viewer, who has no settings.
+  assert.equal(rows.length, 16,
+    'new-change, issue, import-pr, settings, make-public, make-private, leave, app-settings, featured-illustration, members x2, rename, secrets, suggest-back, fork x2');
   const icons = menu.match(/icon=\{<([A-Za-z]+Icon) className=\{PLUS_ICON_CLS\} aria-hidden="true" \/>\}/g) || [];
   assert.equal(icons.length, rows.length, 'one glyph per row, all aria-hidden');
   // No <button data-plus> survives outside the shared shell — a hand-written
