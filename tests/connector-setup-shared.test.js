@@ -47,13 +47,13 @@ const cardHtml = (view) => renderToHtml(createElement(card().ConnectorSetupInlin
 }));
 
 test('the shared module is the only place the two walkthroughs are written', () => {
-  // Six and seven, the counts both routes' summaries in Settings advertise
-  // ("6 steps · also sets up Claude Code", "7 steps · needs Developer mode").
+  // Six and six (#4431), the counts both routes' summaries in Settings advertise
+  // ("6 steps · also sets up Claude Code", "6 steps · a custom MCP server").
   const claude = STEPS.slice(STEPS.indexOf('export function ClaudeSetupSteps'),
     STEPS.indexOf('export function ChatgptSetupSteps'));
   const chatgpt = STEPS.slice(STEPS.indexOf('export function ChatgptSetupSteps'));
   assert.equal((claude.match(/<SetupStep n=\{\d\}/g) || []).length, 6);
-  assert.equal((chatgpt.match(/<SetupStep n=\{\d\}/g) || []).length, 7);
+  assert.equal((chatgpt.match(/<SetupStep n=\{\d\}/g) || []).length, 6);
 
   // Neither consumer restates them. A `SetupStep` in Settings is legitimate
   // — the Codex and generic-client routes still render rows in that idiom —
@@ -61,7 +61,7 @@ test('the shared module is the only place the two walkthroughs are written', () 
   // are what a copy would have to reproduce.
   for (const [name, src] of [['Settings', SETTINGS_SECTION], ['the launchpad card', INLINE]]) {
     assert.doesNotMatch(src, /Open connector settings\./, `${name} does not restate Claude's steps`);
-    assert.doesNotMatch(src, /Turn on Developer mode\./, `${name} does not restate ChatGPT's steps`);
+    assert.doesNotMatch(src, /Select Create custom MCP server\./, `${name} does not restate ChatGPT's steps`);
   }
   assert.match(SETTINGS_SECTION, /<ClaudeSetupSteps \/>/);
   assert.match(SETTINGS_SECTION, /<ChatgptSetupSteps \/>/);
@@ -271,11 +271,13 @@ test('the card renders the hooks the declared checks select on', () => {
   assert.match(html, /class="dc-flow-actions"/, 'the card reuses the walkthrough\u2019s own action row');
 });
 
-test('a ChatGPT card renders ChatGPT\'s seven steps and its recap', () => {
+test('a ChatGPT card renders ChatGPT\'s six steps and its recap', () => {
   const html = cardHtml({ product: 'ChatGPT' });
   assert.match(html, /data-connector-setup="ChatGPT"/);
-  assert.match(html, /Turn on Developer mode\./);
-  assert.equal((html.match(/<li class="flex gap-3">/g) || []).length, 7);
+  assert.match(html, /Click Browse directory\./);
+  assert.match(html, /Select Create custom MCP server\./);
+  assert.match(html, /Enter the MCP URL\./);
+  assert.equal((html.match(/<li class="flex gap-3">/g) || []).length, 6);
   assert.match(html, /In short:/);
   assert.doesNotMatch(html, /Add custom connector/, 'and none of Claude\u2019s');
 });

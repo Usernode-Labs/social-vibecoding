@@ -535,7 +535,7 @@ export function ConnectorsSection() {
           </Disclosure>
           </div>
         </Disclosure>
-        <Disclosure title="ChatGPT" hint="7 steps &middot; needs Developer mode">
+        <Disclosure title="ChatGPT" hint="6 steps &middot; a custom MCP server">
           <GuidedSetup id="connector-open-chatgpt" href="https://chatgpt.com/" product="ChatGPT" />
             <ChatgptSetupSteps />
         </Disclosure>
