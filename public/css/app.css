@@ -3653,6 +3653,23 @@ html[data-browser-scroller^="auth-"] body :is(
 html.un-ios[data-browser-scroller="auth-landing-scroll"] [data-landing-story] {
   padding-bottom: max(0px, calc(100lvh - 100svh));
 }
+/* THE INVITE PAGE'S LAST LINE IS AT THE FOOT OF ITS SCROLLER (#4049). Paged
+   by the document in a phone browser, the landing's scroller is
+   content-height (`flex: none` above), so the column's `min-h-full` had
+   nothing to fill and the line that says what Homeroom is stopped under the
+   note, with empty page above the pinned Join bar. While an invite's page is
+   up, the scroller takes the rest of the screen above the bar and the column
+   takes all of it, so the line's `mt-auto` puts it at the foot, just above
+   Join. The bar clears Safari's toolbar and the home indicator itself. */
+html[data-browser-scroller="auth-landing-scroll"] #auth-landing-scroll:has(> * > [data-landing-invite-homeroom]) {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+html[data-browser-scroller="auth-landing-scroll"] #auth-landing-scroll > :has(> [data-landing-invite-homeroom]) {
+  flex: 1 0 auto;
+  width: 100%;
+}
 /* The anonymous overlay covered the signed-in shell, including any screen
    painted from the last-session snapshot. In document flow those roots must
    leave the layout too, so visitors see only the anonymous page. */

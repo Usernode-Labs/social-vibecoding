@@ -34,11 +34,10 @@
  * It is drawn here, from text, by React: nothing the model wrote is markup.
  * The made screen draws it with its line (SketchCard below), the App tab
  * while the first version is on its way (features/app-frame/app-status.tsx),
- * and the invite page (../auth/invite-card.tsx) and "You're in"
- * (./joined-picture.tsx) while the project has no picture of its own. Those
- * two know only that it is on its way, not where, so they draw it without
- * a line. "You're in" for a new account, whose welcome leaves about 200px,
- * draws it `compact`: smaller art.
+ * and the invite page (../auth/invite-card.tsx) while the project has no
+ * picture of its own. The invite page knows only that it is on its way, not
+ * where, so it draws it without a line. `compact` is smaller art, for a
+ * screen with little room.
  *
  * ThumbRow is the small size, for a row: the tile on its colour, the name,
  * and the build line in place of the one line when there is one.

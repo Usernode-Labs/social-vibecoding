@@ -535,8 +535,12 @@ test('the signed-out invite card says what the project is, beside its icon and c
   assert.equal((html.match(/app-icon-tile/g) || []).length, 1, 'the icon shows once beside a picture too');
   assert.match(html, /data-landing-invite="live"[\s\S]*Maya invited you to Arena[\s\S]*data-landing-invite-picture="illustration"/);
   assert.doesNotMatch(html, /data-landing-invite-signup|Join Arena/, 'Join is the pinned bar, not in the scroller');
+  // The foot line closes the scroller, after the picture and the note (#4049).
+  assert.match(html, /data-landing-invite-picture="illustration"[\s\S]*data-landing-invite-homeroom=""[^>]*>On Homeroom, people using an app build and improve it together\.<\/p>$/);
+  assert.doesNotMatch(html, /will see that you joined/);
   const bar = renderToHtml(createElement(card.InviteJoinBar, { preview, primaryClass: 'x', onJoin() {} }));
-  assert.match(bar, /data-landing-invite-join=""[\s\S]*data-landing-invite-signup=""[^>]*>Join Arena<\/a>[\s\S]*data-landing-invite-seen=""[^>]*>Maya will see that you joined\.<\/p>/);
+  assert.match(bar, /data-landing-invite-join=""[\s\S]*data-landing-invite-signup=""[^>]*>Join Arena<\/a>/);
+  assert.doesNotMatch(bar, /will see that you joined|data-landing-invite-seen/, 'the bar is Join alone');
   assert.match(bar, /padding-bottom:calc\(0\.75rem \+ var\(--platform-safe-bottom, env\(safe-area-inset-bottom, 0px\)\)\)/);
   assert.equal(card.pictureIsTile({ picture: { kind: 'sketch', card: null } }), true);
 });

@@ -2,12 +2,19 @@
  * The first session after an invite: "You're in", then a short tour on the
  * real screens.
  *
- *   welcome  A full-screen card on the landing's wallpaper: you joined this
- *            group, and — for an account the invite's own sign-up made — what
- *            Homeroom is, in three lines. Under that, the project as its
- *            invite showed it (./joined-picture.tsx). "Go to <name>" starts
- *            the tour, told whether its first version is still being built
- *            (read here from GET /api/apps/:slug, now that they may).
+ *   welcome  "You're in" (#4052): on the landing's wallpaper, under the
+ *            Homeroom logo bar, then "Welcome to <name>",
+ *            then what the community makes together, its app's thumbnail
+ *            (./sketch-card.tsx, with no build line), then everyone in it,
+ *            one row each, the inviter first and you marked "You", and
+ *            "Go to <name>" fixed at the foot (owner, 7 October: it should
+ *            read as a community, the people and the thing they build). The
+ *            story was told once, on the invite page, and the tour teaches
+ *            the rest: no "How it works" (Evan, onboarding test, 6 October
+ *            2026).
+ *            Go to starts the tour, told whether its first version is still
+ *            being built (read here from GET /api/apps/:slug, now that they
+ *            may).
  *   tour     ./tour-steps.ts, over the live shell. Each screen is shown whole
  *            first, then the control that leads on is cut out of the dim and
  *            the reader presses it, or the card's blue hint, which presses
@@ -54,14 +61,16 @@ import { type Dispatch, type SetStateAction, useCallback, useEffect, useLayoutEf
 import { flushSync } from 'react-dom';
 
 import { Button } from '@/components/ui/button';
+import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { Wordmark } from '@/components/ui/wordmark';
 
 import { pushDismissible, type Release } from '../../lib/back-stack';
 import { invalidateAppAllowance } from '../dialogs/app-allowance-store.js';
+import { swatchFor } from '../messages/format';
 import { cardPosition } from './card-placement';
-import { joinPicture, JoinedPicture } from './joined-picture';
 import { type Made, type MakeEntry, MakeScreen } from './make';
+import { FeaturedCard } from './sketch-card';
 import { MadeScreen, madeAppOf, madeAppUrl } from './made';
 import { type FirstVersionStage, invitedSteps, makerSteps, privateSteps, type TourScreen, type TourStep } from './tour-steps';
 
@@ -72,6 +81,8 @@ export type FirstSessionInfo = {
   name: string;
   iconEmoji?: string | null;
   iconUrl?: string | null;
+  /** The username of whoever sent the link, whose row "You're in" lists first. */
+  inviter?: string | null;
   inviterName?: string | null;
   inviterMadeIt?: boolean;
   /** Its first version is still on its way: "<maker> is making it" (community-invites.js firstVersionPending). */
@@ -81,9 +92,16 @@ export type FirstSessionInfo = {
    * account on its first sign-in: services/test-accounts.js onFirstRun).
    */
   newAccount?: boolean;
-  /** The project's one line, and the picture its invite showed (./joined-picture.tsx). */
+  /**
+   * Who is in the community, how many in all, and what its app is, for
+   * "You're in"'s list and card. Only a screenshot state carries them;
+   * "You're in" reads them itself otherwise (GET /api/apps/:slug/community).
+   */
+  people?: Member[] | null;
+  memberCount?: number | null;
   description?: string | null;
-  picture?: unknown;
+  /** A screenshot state's made-up welcome (youreInShot): Go to closes it. */
+  shot?: boolean;
   /** Where its first version stands, for the tour's second step (./tour-steps.ts). */
   firstVersion?: FirstVersionStage;
 };
@@ -566,25 +584,35 @@ export function Tour({ info, steps, onEnd }: { info: FirstSessionInfo; steps: To
 }
 
 /**
- * "You're in"'s ground: the landing's wallpaper under the wordmark, full
- * screen. Held empty (WelcomeHeld) while the invite's standing is read.
+ * "You're in"'s ground: the landing's wallpaper, full screen, under the
+ * Homeroom logo bar every first-run screen wears (owner, 7 October). Held
+ * empty (WelcomeHeld) while the invite's standing is read.
  */
-function WelcomeFrame({ children, held = false }: { children: React.ReactNode; held?: boolean }) {
+function WelcomeFrame({ children, foot = null, held = false }: { children: React.ReactNode; foot?: React.ReactNode; held?: boolean }) {
   return (
     <div
       role="dialog"
       aria-labelledby={held ? undefined : 'first-session-title'}
       aria-label={held ? 'Opening your invite' : undefined}
       data-first-session-welcome={held ? 'held' : ''}
-      className="fixed inset-0 z-[9000] flex flex-col overflow-y-auto text-zinc-900 dark:text-zinc-100"
+      className="fixed inset-0 z-[9000] flex flex-col text-zinc-900 dark:text-zinc-100"
       style={{ background: 'var(--home-wallpaper, #f4f2e4)' }}
     >
       <div className="flex h-[52px] shrink-0 items-center justify-center pt-[env(safe-area-inset-top)]">
         <Wordmark className="h-6 w-auto text-[color:var(--brand-ink)]" />
       </div>
-      <div className="mx-auto flex w-full max-w-sm grow flex-col px-4 pb-[max(34px,env(safe-area-inset-bottom))] text-center">
-        {children}
+      {/* The page scrolls under a foot that stays: a long list of people
+          never pushes the one button off the screen. */}
+      <div data-first-session-scroll="" className="min-h-0 flex-1 overflow-y-auto">
+        <div className={`mx-auto flex min-h-full w-full max-w-sm flex-col px-6 text-center ${foot ? 'pb-4' : 'pb-[max(40px,env(safe-area-inset-bottom))]'}`}>
+          {children}
+        </div>
       </div>
+      {foot ? (
+        <div data-first-session-foot="" className="mx-auto w-full max-w-sm shrink-0 px-6 pb-[max(24px,env(safe-area-inset-bottom))] pt-3">
+          {foot}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -593,88 +621,223 @@ function WelcomeFrame({ children, held = false }: { children: React.ReactNode; h
 export function WelcomeHeld() {
   return (
     <WelcomeFrame held>
-      <SkeletonGroup label="Opening your invite" className="flex flex-col items-center">
-        <Skeleton shape="block" className="mt-4 h-12 w-56 rounded-full" />
-        <Skeleton className="mt-5 w-28" />
-        <Skeleton shape="block" className="mt-4 h-8 w-64" />
-        <Skeleton shape="muted" className="mt-4 w-56" />
+      <SkeletonGroup label="Opening your invite" className="my-auto flex flex-col items-center pb-10">
+        <span className="flex">
+          <Skeleton shape="block" className="h-10 w-10 rounded-full" />
+          <Skeleton shape="block" className="-ml-2.5 h-10 w-10 rounded-full" />
+        </span>
+        <Skeleton className="mt-5 w-32" />
+        <Skeleton shape="block" className="mt-3 h-9 w-64" />
       </SkeletonGroup>
     </WelcomeFrame>
   );
 }
 
+export type YoureInShot = 'youre-in' | 'youre-in-many';
+
+/** "You're in"'s screenshot state named by `?shot=`, or null. */
+export function youreInShot(): YoureInShot | null {
+  if (typeof location === 'undefined') return null;
+  let shot: string | null = null;
+  try { shot = new URLSearchParams(location.search || '').get('shot'); } catch { /* ignore */ }
+  return shot === 'youre-in' || shot === 'youre-in-many' ? shot : null;
+}
+
+/**
+ * The made-up welcome a screenshot state draws, for the before/after shots,
+ * which cannot follow a link as one person and join as another: Sunday Run
+ * Club, made by Maya, with the viewer just in it. `youre-in-many` has eight
+ * people, more than a phone shows above the button, so the list scrolls.
+ */
+export function shotWelcome(shot: YoureInShot, viewer: string): FirstSessionInfo {
+  const others = shot === 'youre-in-many'
+    ? [['sam', 'Sam'], ['jordan', 'Jordan'], ['ada', 'Ada'], ['noor', 'Noor'], ['tom', 'Tom'], ['lena', 'Lena']]
+    : [];
+  const you = (typeof window !== 'undefined' && legacy().App?.user?.displayName) || null;
+  const people = [['maya', 'Maya'], [viewer, you], ...others]
+    .filter(([username]) => !!username)
+    .map(([username, name]) => ({ username: username as string, name }));
+  return {
+    slug: 'sunday-run-club',
+    name: 'Sunday Run Club',
+    iconEmoji: '🏃',
+    inviter: 'maya',
+    inviterName: 'Maya',
+    inviterMadeIt: true,
+    building: true,
+    newAccount: true,
+    people,
+    memberCount: people.length,
+    description: "Track your club's weekly miles and see who keeps up",
+    shot: true,
+  };
+}
+
+/** One person in the community, as "You're in" lists them. */
+export type Member = { username: string; name?: string | null };
+
+/** The members a community read carries, cleaned: every one, in its order. */
+export function membersOf(value: unknown): Member[] {
+  if (!Array.isArray(value)) return [];
+  const out: Member[] = [];
+  for (const m of value) {
+    if (!m || typeof m !== 'object') continue;
+    const row = m as { username?: unknown; display_name?: unknown; name?: unknown };
+    const username = String(row.username || '').trim();
+    if (!username || out.some((o) => o.username === username)) continue;
+    const name = String(row.name || row.display_name || '').trim();
+    out.push({ username, name: name || null });
+  }
+  return out;
+}
+
+/**
+ * Which member sent the link: by username when the welcome carries it, else
+ * by the name it was shown under. Null when they are not in the list.
+ */
+export function inviterOf(members: Member[], inviter?: string | null, inviterName?: string | null): string | null {
+  const found = members.find((m) => (inviter
+    ? m.username === inviter
+    : !!inviterName && (m.name === inviterName || m.username === inviterName)));
+  return found ? found.username : null;
+}
+
+/**
+ * The list's order: whoever sent the link first, then everyone else in the
+ * order the community read gives (who started it, then the newest).
+ */
+export function rosterOrder(members: Member[], inviter: string | null): Member[] {
+  const first = inviter ? members.findIndex((m) => m.username === inviter) : -1;
+  return first > 0 ? [members[first], ...members.slice(0, first), ...members.slice(first + 1)] : members;
+}
+
+/** How many people, in words: "1 person", "8 people". */
+export function peopleCount(n: number): string {
+  return `${n} ${n === 1 ? 'person' : 'people'}`;
+}
+
+/**
+ * One person's row: their face (their initial on the colour they wear across
+ * the shell, ../messages/format.tsx), their name, and under it who they are
+ * to you: "You", "Invited you", else their @username. 44px, the size of a
+ * row's tile, so the hairline lines up as it does in every list.
+ */
+function MemberRow({ member, you, inviter }: { member: Member; you: boolean; inviter: boolean }) {
+  const name = member.name || member.username;
+  return (
+    <ListRow
+      data-first-session-member={member.username}
+      chevron={false}
+      leading={(
+        <span
+          aria-hidden="true"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[17px] font-bold text-white"
+          style={{ background: swatchFor(member.username) }}
+        >
+          {name.charAt(0).toUpperCase()}
+        </span>
+      )}
+      title={name}
+      subtitle={you ? 'You' : inviter ? 'Invited you' : `@${member.username}`}
+    />
+  );
+}
+
 export function YoureIn({ info, onGo }: { info: FirstSessionInfo; onGo: (firstVersion: FirstVersionStage) => void }) {
   const user = legacy().App?.user;
-  const who = user?.displayName || user?.username || '';
-  const existing = !info.newAccount;
-  const maker = info.inviterMadeIt && info.inviterName ? info.inviterName : null;
-  // Nothing is made yet while its first version is on its way.
-  const made = info.building ? 'is making' : 'made';
+  const [members, setMembers] = useState<Member[] | null>(() => (info.people ? membersOf(info.people) : null));
+  const [count, setCount] = useState<number | null>(info.memberCount ?? null);
+  const [description, setDescription] = useState<string | null>(info.description ?? null);
   const go = useRef<HTMLButtonElement>(null);
   useEffect(() => { go.current?.focus(); }, []);
   // Whether its first version is still being built, for the tour's App
   // step: the record as the App tab reads it, past the service worker's
-  // cache. A read that fails leaves the step as it was.
+  // cache. A read that fails leaves the step as it was. A screenshot state
+  // has no record to read.
   const stage = useRef<FirstVersionStage>(info.firstVersion ?? (info.building ? 'building' : null));
   useEffect(() => {
+    if (info.shot) return undefined;
     let live = true;
     fetch(madeAppUrl(info.slug), { credentials: 'same-origin', cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : null))
       .then((body) => { if (live && body) stage.current = firstVersionStage(body); })
       .catch(() => {});
     return () => { live = false; };
-  }, [info.slug]);
-  const tile = info.iconUrl ? <img src={info.iconUrl} alt="" className="h-full w-full object-cover" /> : (info.iconEmoji || info.name.slice(0, 1));
+  }, [info.slug, info.shot]);
+  // Who is in it, every one of them, and what its app is: the hub's own
+  // read. A read that fails leaves the card with its name and no list.
+  useEffect(() => {
+    if (info.shot || info.people) return undefined;
+    let live = true;
+    fetch(`/api/apps/${encodeURIComponent(info.slug)}/community?members=all`, { credentials: 'same-origin' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body) => {
+        if (!live) return;
+        setMembers(body ? membersOf(body.members) : []);
+        if (body) {
+          setCount(Number(body.member_count) || null);
+          setDescription(typeof body.description === 'string' ? body.description : null);
+        }
+      })
+      .catch(() => { if (live) setMembers([]); });
+    return () => { live = false; };
+  }, [info.slug, info.shot, info.people]);
+  const sender = members ? inviterOf(members, info.inviter, info.inviterName) : null;
+  const roster = members ? rosterOrder(members, sender) : null;
+  const total = Math.max(count || 0, roster ? roster.length : 0);
   return (
-    <WelcomeFrame>
-      <div className="mx-auto mt-4 inline-flex items-center gap-2 rounded-full bg-white py-1.5 pl-1.5 pr-4 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
-        <span className="app-icon-tile flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-[10px] text-xl" aria-hidden="true">
-          {tile}
-        </span>
-        <span className="text-[14px] font-semibold">{`You joined ${info.name}`}</span>
-      </div>
-      <p className="mt-4 text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">
-        {who ? `You're in, ${who}!` : 'You\'re in!'}
-      </p>
-      <h1 id="first-session-title" className="mt-2.5 text-balance text-[30px] font-extrabold leading-[34px]">
-        {existing ? `Welcome to ${info.name}.` : 'On Homeroom, communities make apps together.'}
-      </h1>
-      <p className="mt-2.5 text-pretty text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400">
-        {existing
-          ? `${maker ? `${maker} ${made} it for the group.` : 'It is the group\'s own app.'} Have a look, then say hi.`
-          : 'Anyone using an app can change it. The group decides what goes in.'}
-      </p>
-      {existing ? null : (
-        <div className="mt-6 rounded-2xl bg-white p-4 text-left shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
-          <p className="text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">How it works</p>
-          <ol className="mt-3 grid gap-2.5">
-            {[
-              maker ? `Someone makes an app for their group. ${maker} ${made} this one.` : 'Someone makes an app for their group.',
-              'Anyone in the group can suggest an improvement. Homeroom bot builds it.',
-              'The group decides what goes in.',
-            ].map((line, i) => (
-              <li key={line} className="flex items-start gap-2.5 text-[15px] leading-snug text-zinc-700 dark:text-zinc-200">
-                <span className="mt-px flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full bg-violet-600 text-[12px] font-bold text-white">{i + 1}</span>
-                <span>{line}</span>
-              </li>
-            ))}
-          </ol>
-        </div>
+    <WelcomeFrame
+      foot={(
+        <Button
+          ref={go}
+          type="button"
+          onClick={() => onGo(stage.current)}
+          layout="full"
+          variant="pillAccent"
+          size="pillLg"
+          ink="solidLate"
+          className="flex items-center justify-center"
+        >
+          {`Go to ${info.name}`}
+        </Button>
       )}
-      <JoinedPicture slug={info.slug} name={info.name} picture={joinPicture(info.picture)} description={info.description} tile={tile} building={!!info.building} compact={!existing} />
-      <div className="grow" />
-      <Button
-        ref={go}
-        type="button"
-        onClick={() => onGo(stage.current)}
-        layout="full"
-        variant="pillAccent"
-        size="pillLg"
-        ink="solidLate"
-        className="mt-8 flex items-center justify-center"
-      >
-        {`Go to ${info.name}`}
-      </Button>
+    >
+      <h1 id="first-session-title" className="mt-6 text-balance text-[32px] font-extrabold leading-9 tracking-[-0.01em]">
+        {`Welcome to ${info.name}`}
+      </h1>
+      {/* What the community makes together, above the people who make it. */}
+      <div data-first-session-app="" className="mt-6">
+        <FeaturedCard
+          name={info.name}
+          colorKey={info.name}
+          emoji={info.iconEmoji || null}
+          card={null}
+          description={description}
+          sketching={false}
+        />
+      </div>
+      <div data-first-session-people="" className="text-left">
+        {roster === null ? (
+          <SkeletonGroup label="Loading who is in it" className="pt-6">
+            <Skeleton className="mb-3 w-20" />
+            <Skeleton shape="block" className="h-[146px] w-full rounded-[20px]" />
+          </SkeletonGroup>
+        ) : roster.length ? (
+          <>
+            <SectionHeader>{peopleCount(total)}</SectionHeader>
+            <GroupedList className="mx-0">
+              {roster.map((m) => (
+                <MemberRow
+                  key={m.username}
+                  member={m}
+                  you={!!user?.username && m.username === user.username}
+                  inviter={m.username === sender}
+                />
+              ))}
+            </GroupedList>
+          </>
+        ) : null}
+      </div>
     </WelcomeFrame>
   );
 }
@@ -819,6 +982,22 @@ export function FirstSession() {
     const onAuthed = () => check(true);
     document.addEventListener('sv:authed', onAuthed);
     return () => document.removeEventListener('sv:authed', onAuthed);
+  }, []);
+
+  // `?shot=youre-in` and `?shot=youre-in-many`: "You're in" from made-up
+  // data (shotWelcome), for the before/after shots, once the shell has a
+  // signed-in viewer. Not once per project, and Go to only closes it.
+  useEffect(() => {
+    const shot = youreInShot();
+    if (!shot) return undefined;
+    const open = () => {
+      if (!legacy().App?.user) return;
+      setMode((prev) => (prev.kind === 'none' || prev.kind === 'held'
+        ? { kind: 'welcome', info: shotWelcome(shot, legacy().App?.user?.username || viewerName()) } : prev));
+    };
+    open();
+    document.addEventListener('sv:authed', open);
+    return () => document.removeEventListener('sv:authed', open);
   }, []);
 
   // The bridge App._followInvite calls. welcome() answers whether it will
@@ -1047,6 +1226,7 @@ export function FirstSession() {
       <YoureIn
         info={mode.info}
         onGo={(firstVersion) => {
+          if (mode.info.shot) { setMode({ kind: 'none' }); return; }
           rememberCommunity(mode.info.slug);
           enterScreen('home', mode.info.slug);
           setMode({ kind: 'tour', info: { ...mode.info, firstVersion }, path: 'invited' });

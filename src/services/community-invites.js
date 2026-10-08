@@ -481,26 +481,6 @@ async function firstVersionPending(db, appId) {
 }
 
 /**
- * The same picture for somebody who has just joined, at addresses that need
- * no link ("You're in", frontend/src/features/first-session): the card of
- * the idea, as words the screen draws itself, and the Discover card's image,
- * which anyone may see. An after-shot is served only through a live link,
- * so a member is shown none here. Null for no picture.
- */
-function memberPicture(slug, picture) {
-  if (!picture || !slug) return null;
-  if (picture.kind === 'sketch') return { kind: 'sketch', url: null, darkUrl: null, card: picture.card };
-  if (picture.kind === 'illustration') {
-    return {
-      kind: 'illustration',
-      url: `/app-illustrations/${picture.id}`,
-      darkUrl: picture.darkId ? `/app-illustrations/${picture.darkId}` : null,
-    };
-  }
-  return null;
-}
-
-/**
  * What a link shows before anyone signs in. A live link discloses the
  * project's name, icon and one-line description, who invited you (and
  * whether they made it), their note, one picture of it (pictureFor) and how
@@ -959,7 +939,6 @@ module.exports = {
   cleanNote,
   pictureBytes,
   pictureFor,
-  memberPicture,
   firstVersionPending,
   joiningRule,
   joiningRuleText,
