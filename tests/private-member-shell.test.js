@@ -37,7 +37,7 @@ test('the private tour: four steps on Home, Next through each, ending on the wai
     ['Best brunch spots is on your Home', 'Open it any time from here.'],
     ['You can find Best brunch spots here', 'Communities lists every community you\'re in.'],
     ['Homeroom bot is in Messages', 'It makes Best brunch spots with you. You can always find it here.'],
-    ['Your own apps start here', 'Join the waitlist to get your spot.'],
+    ['Your own apps start here', 'The waitlist is only for making apps of your own.'],
   ]);
   // One short sentence a card; the Messages card says its second ("You can always find it here.").
   for (const s of steps) assert.ok(s.text.split(/[.?]\s/).length <= (s.title === 'Homeroom bot is in Messages' ? 2 : 1), `short: ${s.text}`);

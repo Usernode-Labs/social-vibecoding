@@ -65,9 +65,11 @@ test('and keeps every claim it used to make', () => {
 
 test('the heading and the step line are untouched: checks pin them', () => {
   // "Enter your confirmation code" and "Registered with" are declared-check
-  // text on ?shot= routes, and the whole pitch hides on `joined` as before.
+  // text on ?shot= routes. The whole pitch hides on `joined` as before, and
+  // since #4381 also for a queued session (an invited person already let
+  // in) — "Just your email to join." carries that extended gate.
   assert.match(WAITLIST, /Join the waitlist/);
-  assert.match(WAITLIST, /hiddenLast\(joined, 'mt-3 text-sm font-medium/);
+  assert.match(WAITLIST, /hiddenLast\(hasSession \|\| joined, 'mt-3 text-sm font-medium/);
 });
 
 test('want-in-sooner drops the sentence that said it twice', () => {

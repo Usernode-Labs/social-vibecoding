@@ -39,6 +39,12 @@
  * steps you are on. Two steps, not three — the stage-2 survey is offered after
  * both and counting it would make an optional thing look required.
  *
+ * #4381: the pitch also hides for a queued session — an invited person the
+ * link already let in, who reads one line ("Your community is already yours.
+ * The waitlist is only for making apps of your own.") above `#waitlist-queued`
+ * instead of a pitch addressed to somebody with no community yet. The
+ * signed-out visitor's pitch, form and flow are untouched.
+ *
  * ── Joining first, confirmation second (#1528) ───────────────────────
  *
  * A successful POST saves the signup, so acknowledge that before asking for
@@ -325,6 +331,16 @@ export function WaitlistScreen() {
    * console.errors, which fails proposal checks.
    */
   const statusRead = codeOnly || alreadyConfirmed;
+  /**
+   * The queued viewer (#4381): a session the invite link already let in,
+   * the state the screen detects as `hasSession`. For them the pitch is not
+   * addressed to them — their community is already theirs — so one line
+   * takes its place. A signed-out visitor still reads the whole pitch, and
+   * `joined` keeps hiding it for a flow they are already past. False in the
+   * prerender (`hasSession` is state `waitlistOnShow` sets), like the queue
+   * note's gate beside it.
+   */
+  const queuedSession = hasSession && !joined;
   /** The resend button's own status line. Kept apart from #waitlist-msg so a
    *  resend result and a wrong-code error cannot overwrite each other. */
   const [resendNote, setResendNote] = useState<{ text: string; tone: MsgTone } | null>(null);
@@ -1089,8 +1105,12 @@ export function WaitlistScreen() {
             The pitch. It answers "why would I join", so it belongs to step 1
             only — after the join it is four blocks of answered question sitting
             on top of the one instruction that still matters.
+
+            #4381: it also hides for a queued session — an invited person the
+            link already let in, for whom none of it is addressed to them. One
+            line below takes its place for that state.
         */}
-        <h1 className={hiddenLast(joined, 'mt-1 text-2xl font-bold')}>
+        <h1 className={hiddenLast(hasSession || joined, 'mt-1 text-2xl font-bold')}>
           Join the waitlist
         </h1>
         {/*
@@ -1103,13 +1123,13 @@ export function WaitlistScreen() {
             are four separate claims, and a reader scanning for "what is this
             and what does joining cost me" was having to take them as prose.
         */}
-        <p className={hiddenLast(joined, 'mt-3 text-sm text-zinc-500 dark:text-zinc-400')}>
+        <p className={hiddenLast(hasSession || joined, 'mt-3 text-sm text-zinc-500 dark:text-zinc-400')}>
           Describe the app you want in chat, an AI builds it, and the group
         votes the changes in.
         </p>
         <ul
           className={hiddenLast(
-            joined,
+            hasSession || joined,
             'mt-3 space-y-1.5 text-sm text-zinc-500 dark:text-zinc-400 list-disc pl-5',
           )}
         >
@@ -1124,8 +1144,18 @@ export function WaitlistScreen() {
             We let people in a few at a time. The public apps are open to everyone now.
           </li>
         </ul>
-        <p className={hiddenLast(joined, 'mt-3 text-sm font-medium text-zinc-700 dark:text-zinc-200')}>
+        <p className={hiddenLast(hasSession || joined, 'mt-3 text-sm font-medium text-zinc-700 dark:text-zinc-200')}>
           Just your email to join.
+        </p>
+        {/*
+            #4381: the queued viewer's one line, in the pitch's slot and with
+            the same emphasis "Just your email to join." carries. Says what
+            the waitlist is for; the queue note below it says what happens
+            next. No button — there is nothing to join on this state.
+        */}
+        <p className={hiddenFirst(!queuedSession, 'mt-3 text-sm font-medium text-zinc-700 dark:text-zinc-200')}>
+          Your community is already yours. The waitlist is only for making
+          apps of your own.
         </p>
         {/*
             Stage-1 waitlist survey (two-stage waitlist, ported from the

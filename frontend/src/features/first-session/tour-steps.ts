@@ -289,7 +289,9 @@ export function privateSteps({ slug, name }: TourProject): TourStep[] {
       target: '#home-waitlist-card',
       ringed: true,
       title: 'Your own apps start here',
-      text: 'Join the waitlist to get your spot.',
+      // #4381: their community is already theirs; the queue framing
+      // ("join the waitlist to get your spot") is not addressed to them.
+      text: 'The waitlist is only for making apps of your own.',
       last: true,
     },
   ];
