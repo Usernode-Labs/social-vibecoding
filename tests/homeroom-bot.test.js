@@ -228,7 +228,7 @@ test('settings default to off and clamp their numbers', () => {
     continueReads: true,
     // The bot is for the people on the list until an admin says everyone;
     // the platform's own project stays out; the proposal ceiling is automatic.
-    audience: 'list', audienceSince: null, livePlatform: false, proposalCeiling: 0, platformSlugs: [],
+    audience: 'list', audienceSince: null, livePlatform: false, proposalCeiling: 0, liveBuildStream: true, platformSlugs: [],
   });
   const t = bot.parseSettings([
     { key: bot.KEY_MODE, value: 'shadow' },

@@ -4486,6 +4486,28 @@ async function runBenchCapture(containerName, {
 // Tear down a warm worker container (eviction). Volume is preserved so
 // the next `ensureWorker` re-warms with CC's session memory intact. A
 // finished build's unpushed commit is pushed first (rescueUnpushedCommit).
+// #4449: Live (services/first-version-live.js), a watcher run beside a
+// first version's build turn, outside it: its files written, started in the
+// background, its stream read and finally stopped, each by a short shell
+// script the platform builds (first-version-live.js). `files` are
+// { path, content } under /tmp/usernode-live/; a read answers the script's
+// stdout. Nothing here touches the turn, its journal or its checkout.
+const LIVE_FILE_PATH_RE = /^\/tmp\/usernode-live\/[a-z0-9-]{1,40}\.(js|cjs)$/;
+
+async function runLiveScript(containerName, script, { files = [], args = [], timeoutMs = 20000, maxBuffer = null } = {}) {
+  if (!containerName) throw new Error('runLiveScript: no worker');
+  for (const file of files) {
+    if (!LIVE_FILE_PATH_RE.test(file.path)) throw new Error(`runLiveScript: invalid file path ${file.path}`);
+    const write = `mkdir -p /tmp/usernode-live\n${buildTurnContextFileScript(file.content, file.path)}`;
+    // eslint-disable-next-line no-await-in-loop
+    await execWorkerCommand(containerName, ['sh', '-s'], write, { timeoutMs: 30000 });
+  }
+  const { stdout } = await execWorkerCommand(containerName, ['sh', '-c', script, 'sh', ...args.map(String)], null, {
+    timeoutMs, ...(maxBuffer ? { maxBuffer } : {}),
+  });
+  return String(stdout || '');
+}
+
 async function evictWorker(sessionId) {
   const meta = _registryGet(sessionId);
   const containerName = meta?.containerName || workerContainerName(sessionId);
@@ -5112,6 +5134,8 @@ module.exports = {
   // #3737: the benchmark's screenshot step, outside any agent turn
   runBenchCapture,
   buildBenchCaptureCommand,
+  // #4449: Live's watcher, beside a first version's build turn
+  runLiveScript,
   BENCH_CAPTURE_SCRIPT_PATH,
   warmRegistrySnapshot,
   adoptWarmWorker,

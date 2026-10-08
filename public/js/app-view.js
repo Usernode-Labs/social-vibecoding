@@ -2874,6 +2874,10 @@ const AppView = {
   // same member once it is tested, and 'ready' and 'approved', show three
   // real screens. Every picture is a plainly made-up sample
   // (_firstVersionSampleScreen), never a real app.
+  //
+  // #4449: 'live', the member's own being built with Live offered: Preview
+  // selected, and Live, when chosen, plays a plainly made-up recording
+  // (features/app-frame/live-band.tsx sampleRecording).
   showFirstVersionShot(variant = false) {
     const withPlan = variant === true || variant === 'plan';
     const ready = variant === 'ready' || variant === 'approved';
@@ -2914,11 +2918,12 @@ const AppView = {
           goesLiveAt: new Date(Date.now() + 3 * 86400000).toISOString(), soon: false,
         },
         screens: realScreens(12),
-      } : variant === 'member' || variant === 'testing' ? {
+      } : variant === 'member' || variant === 'testing' || variant === 'live' ? {
         building: true, mine: false, member: true, ready: false, question: false, conversationId: null,
         ...(variant === 'testing'
           ? { step: 5, of: 7, line: 'testing', screens: realScreens(4) }
           : { step: 4, of: 7, line: 'building', caption: 'Adding the watering reminders', screens: firstLook }),
+        ...(variant === 'live' ? { live: true } : {}),
         creator: 'jordan',
         makerNote: 'Help me pick which plants we track first!',
         memberPlan,
@@ -3198,6 +3203,7 @@ const AppView = {
     // shows in place of the icon (_firstVersionScreens).
     const caption = typeof fv.caption === 'string' && fv.caption.trim() ? fv.caption.trim().slice(0, 40) : null;
     const screens = AppView._firstVersionScreens(appData);
+    const live = AppView._firstVersionLive(appData);
     return {
       thumb: {
         name: appData.name || appData.slug,
@@ -3209,7 +3215,22 @@ const AppView = {
       buildLine: typeof fv.line === 'string' && fv.line ? fv.line : (fv.ready ? 'ready' : 'planning'),
       ...(caption ? { buildNote: caption } : {}),
       ...(screens ? { screens } : {}),
+      ...(live ? { live } : {}),
     };
+  },
+
+  /**
+   * #4449: Live, the app itself taking shape, offered to a member while it is
+   * built (`first_version.live`, routes/apps.js firstVersionLiveFields, only
+   * while the Admin setting is on). Its "Preview | Live" switch remembers the
+   * choice per person, so it carries who is reading. A screenshot state
+   * plays a made-up recording and fetches nothing. Null: no switch.
+   */
+  _firstVersionLive(appData) {
+    const fv = appData.first_version || {};
+    if (fv.live !== true || fv.line !== 'building' || !appData.slug) return null;
+    const id = typeof App !== 'undefined' && App.user && App.user.id != null ? String(App.user.id) : 'guest';
+    return { slug: appData.slug, userKey: id, ...(appData.shot ? { sample: true } : {}) };
   },
 
   /**

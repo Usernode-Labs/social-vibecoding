@@ -136,7 +136,7 @@ function glyphOf(name: string, emoji: string | null, sketched: boolean): string 
  * `children` close the card's body, under the line (the invite page's
  * invitation, #4394).
  */
-export function FeaturedCard({ name, colorKey, emoji, iconUrl = null, card, description = null, sketching: sketched = !card, line = null, lineNote = null, titleId, heading = false, compact = false, large = false, band = null, children = null }: {
+export function FeaturedCard({ name, colorKey, emoji, iconUrl = null, card, description = null, sketching: sketched = !card, line = null, lineNote = null, titleId, heading = false, compact = false, large = false, band = null, bandCorner = null, children = null }: {
   name: string;
   /** Picks a colour when there is no emoji to read one from (the project's slug). */
   colorKey: string;
@@ -165,6 +165,11 @@ export function FeaturedCard({ name, colorKey, emoji, iconUrl = null, card, desc
    * first-version-screens.tsx). None: the icon, as everywhere else.
    */
   band?: ReactNode;
+  /**
+   * #4449: drawn over the colour band's top-right corner (the App tab's
+   * "Preview | Live" switch, ../app-frame/live-switch.tsx).
+   */
+  bandCorner?: ReactNode;
   /** More of the card's body, under the line. */
   children?: ReactNode;
 }) {
@@ -192,6 +197,7 @@ export function FeaturedCard({ name, colorKey, emoji, iconUrl = null, card, desc
               {iconUrl ? <img src={iconUrl} alt="" className="h-full w-full object-cover" /> : glyph ? <Glyph key={glyph} glyph={glyph} /> : null}
             </span>
           )}
+          {bandCorner ? <div className="absolute right-3 top-3 z-10">{bandCorner}</div> : null}
         </div>
         <div className="flex flex-col gap-1 px-4 pb-4 pt-3.5">
           <Title id={titleId} className={large ? 'truncate text-[20px] font-bold leading-[26px]' : 'truncate text-[17px] font-bold leading-[22px]'}>{name}</Title>

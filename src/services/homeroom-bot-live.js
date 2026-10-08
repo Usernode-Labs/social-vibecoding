@@ -2441,6 +2441,11 @@ async function buildAndPropose({
   // worker it can be drawn in once the spec is written ({ specHtml,
   // containerName }). Started, never waited on: the build goes straight on.
   onFirstLook = null,
+  // #4449: a first version's Live (services/first-version-live.js), handed
+  // the worker as its build turn starts ({ containerName }) and answering
+  // { end({ buildTurnMs, turnsMs, nudged }) }, called once the build turn
+  // (and its nudge) is over. Never waited on: the build goes straight on.
+  onBuildTurn = null,
 }) {
   const { worker, sessions, agentTurn, sessionLifecycle, activeWorkers } = deps;
   const buildStartedMs = Date.now();
@@ -2675,8 +2680,22 @@ async function buildAndPropose({
   // time-outs, most of them cheap, with nothing recorded about why.
   const progress = lastActivity();
   const commitMsg = `Homeroom bot: #${issueNumber} ${title}`.slice(0, 120);
+  // #4449: Live watches the build turn, beside it, from its start to its end.
+  let liveTurn = null;
+  if (onBuildTurn) {
+    try { liveTurn = onBuildTurn({ containerName }) || null; } catch { liveTurn = null; }
+  }
+  let buildTurnMs = null;
+  const endLive = () => {
+    const turn = liveTurn;
+    liveTurn = null;
+    if (!turn || typeof turn.end !== 'function') return;
+    void Promise.resolve()
+      .then(() => turn.end({ buildTurnMs, turnsMs: Date.now() - turnStartedMs, nudged: !!noChange?.nudged }))
+      .catch(() => {});
+  };
   let { routed, stopped } = await runBuildTurn({ prompt, budgetMs: turnBudgetMs, commitMsg, progress });
-  const buildTurnMs = Date.now() - turnStartedMs;
+  buildTurnMs = Date.now() - turnStartedMs;
 
   // What the build turns cost, a nudge's with the build's, and their ledger
   // ids. Both turns, the spec's and the build's, are the build's cost (and
@@ -2697,7 +2716,10 @@ async function buildAndPropose({
   // before it is proposed. A build stopped for this (noteRequestMerged ends
   // its turn) is a skip, not a failure.
   const skipped = await skipNow();
-  if (skipped) return { ...(await fail(skipped)), skipped, costUsd };
+  if (skipped) {
+    endLive();
+    return { ...(await fail(skipped)), skipped, costUsd };
+  }
 
   // A turn that ended cleanly and changed nothing: one nudge, in this
   // session, on what is left of the clock (buildNudgePrompt). What it said
@@ -2744,9 +2766,13 @@ async function buildAndPropose({
     }
     if (noChange.nudged) {
       const skippedAfterNudge = await skipNow();
+      if (skippedAfterNudge) endLive();
       if (skippedAfterNudge) return { ...(await fail(skippedAfterNudge)), skipped: skippedAfterNudge, costUsd };
     }
   }
+
+  // The build turn, and its nudge, are over: so is Live.
+  endLive();
 
   const result = (routed && routed.result) || {};
   if (stopped) {

@@ -37,7 +37,7 @@
  * is the whole point of that path — the frame must survive.
  */
 
-import { useCallback, useState, type ReactNode } from 'react';
+import { Suspense, lazy, useCallback, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 
@@ -47,7 +47,11 @@ import { useTourRunning } from '../first-session/tour-running';
 import { FeaturedCard, sketching, useSketch } from '../first-session/sketch-card';
 import { appStatusStore } from './app-status-store.js';
 import { type FirstVersionScreens, ScreensBand, hasScreens } from './first-version-screens';
+import { type FirstVersionLive, LiveSwitch, useLiveChoice } from './live-switch';
 import { type FirstVersionWaiting, WaitingCard, lineNote } from './waiting-card';
+
+// #4449: Live's player (rrweb) is loaded only when somebody opens Live.
+const LiveBand = lazy(() => import('./live-band'));
 
 /** The resolved placeholder. `null` means some other owner has the host. */
 export interface AppStatusView {
@@ -78,6 +82,11 @@ export interface AppStatusView {
    * shows in place of its icon (./first-version-screens.tsx).
    */
   screens?: FirstVersionScreens | null;
+  /**
+   * #4449: Live, offered to a member while it is built ("Building it"):
+   * the band's "Preview | Live" switch (./live-switch.tsx).
+   */
+  live?: FirstVersionLive | null;
   /**
    * The lines say what a first-session tour card can say over this screen
    * ("It opens here when it’s ready."), so they hide while a card that says
@@ -130,11 +139,12 @@ export interface FirstVersionThumb {
  * (GET /api/apps/:slug/sketch, as the made screen reads it), else its
  * description.
  */
-function FirstVersionCard({ thumb, line, note = null, screens = null }: {
+function FirstVersionCard({ thumb, line, note = null, screens = null, live = null }: {
   thumb: FirstVersionThumb;
   line: BuildLineState | null;
   note?: string | null;
   screens?: FirstVersionScreens | null;
+  live?: FirstVersionLive | null;
 }): ReactNode {
   const sketch = useSketch(thumb.sketch === false ? null : thumb.slug);
   const card = sketch.card;
@@ -144,6 +154,17 @@ function FirstVersionCard({ thumb, line, note = null, screens = null }: {
   const [emptyKey, setEmptyKey] = useState<string | null>(null);
   const onEmpty = useCallback(() => setEmptyKey(shownKey), [shownKey]);
   const shows = hasScreens(screens) && emptyKey !== shownKey ? screens : null;
+  // #4449: while it is built, Preview (the above) or Live, as this person
+  // last chose. At "Testing it" the switch goes, and the real screens show.
+  const liveOffered = !!live && line === 'building';
+  const [choice, choose] = useLiveChoice(liveOffered ? live.userKey : null);
+  const watching = liveOffered && choice === 'live';
+  const preview = shows ? <ScreensBand key={shownKey} screens={shows} name={thumb.name} onEmpty={onEmpty} /> : null;
+  const band = watching && live ? (
+    <Suspense fallback={preview}>
+      <LiveBand key={live.slug} live={live} firstLook={shows && shows.kind === 'first_look' ? shows : null} name={thumb.name} />
+    </Suspense>
+  ) : preview;
   return (
     <div className="w-full max-w-[342px]" data-app-first-version={line || ''}>
       <FeaturedCard
@@ -155,7 +176,8 @@ function FirstVersionCard({ thumb, line, note = null, screens = null }: {
         sketching={!card && !thumb.description && sketching(sketch.state)}
         line={line}
         lineNote={note}
-        band={shows ? <ScreensBand key={shownKey} screens={shows} name={thumb.name} onEmpty={onEmpty} /> : null}
+        band={band}
+        bandCorner={liveOffered ? <LiveSwitch value={choice} onChange={choose} /> : null}
       />
     </div>
   );
@@ -238,6 +260,7 @@ export function AppStatusView_({ view: answered }: { view: AppStatusView }): Rea
           line={line}
           note={(line === 'building' && view.buildNote) || (waiting ? lineNote(line) : null)}
           screens={view.screens || null}
+          live={view.live || null}
         />
       ) : (
         <p className={titled ? 'max-w-sm text-base font-semibold text-zinc-900 dark:text-zinc-100' : 'text-sm'}>{view.message}</p>

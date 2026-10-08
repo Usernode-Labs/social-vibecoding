@@ -12789,6 +12789,45 @@ COMMENT ON TABLE first_version_screens IS 'staging:private';
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_caption TEXT;
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_caption_at TIMESTAMPTZ;
 
+-- #4449: LIVE, the new app itself taking shape while a first version is
+-- built (services/first-version-live.js). A watcher in the build's worker
+-- boots the app on every change and records it with rrweb; what it records
+-- is SANITISED (no URL but data:, no script) before it is kept here, and
+-- read back only by the project's members (GET
+-- /api/apps/:slug/first-version/live). Per run: the restarts kept and
+-- failed, and why the watcher stopped (the run's numbers, also recorded as
+-- a `live_build_stream` event once its build turn ends).
+CREATE TABLE IF NOT EXISTS first_version_live (
+  bot_run_id       INTEGER PRIMARY KEY REFERENCES homeroom_bot_runs(id) ON DELETE CASCADE,
+  next_seq         INTEGER NOT NULL DEFAULT 1,
+  -- The chunk the latest good restart's recording starts at: a viewer
+  -- behind it starts over from there.
+  base_seq         INTEGER,
+  bytes            INTEGER NOT NULL DEFAULT 0,
+  restarts_kept    INTEGER NOT NULL DEFAULT 0,
+  restarts_failed  INTEGER NOT NULL DEFAULT 0,
+  good_at          TIMESTAMPTZ,
+  failed_at        TIMESTAMPTZ,
+  event_at         TIMESTAMPTZ,
+  stopped_why      VARCHAR(32),
+  started_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ended_at         TIMESTAMPTZ
+);
+COMMENT ON TABLE first_version_live IS 'staging:private';
+-- The latest good restart's events (kind 'full') and what was recorded on
+-- it since ('inc'), at most about 2 MB a run. Private: a recording shows
+-- the app's data.
+CREATE TABLE IF NOT EXISTS first_version_live_chunks (
+  bot_run_id  INTEGER NOT NULL REFERENCES homeroom_bot_runs(id) ON DELETE CASCADE,
+  seq         INTEGER NOT NULL,
+  kind        VARCHAR(8) NOT NULL CHECK (kind IN ('full', 'inc')),
+  events      JSONB NOT NULL,
+  bytes       INTEGER NOT NULL CHECK (bytes > 0),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (bot_run_id, seq)
+);
+COMMENT ON TABLE first_version_live_chunks IS 'staging:private';
+
 -- ===================================================================
 -- Workflow foundation: the kernel's tables (src/workflow/kernel/).
 --

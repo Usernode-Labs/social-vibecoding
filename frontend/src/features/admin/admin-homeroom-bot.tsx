@@ -86,6 +86,8 @@ interface Settings {
   // Whether reading a request again continues the conversation that read it
   // last, rather than starting from the repository again.
   continueReads?: boolean;
+  // #4449: whether a first version's members can watch it take shape (Live).
+  liveBuildStream?: boolean;
   // Who has the bot: the people on dmUsers (and their projects), or everyone
   // with platform access (every project but a paused one and, unless
   // livePlatform, the platform's own). audienceSince is when it was switched
@@ -1133,6 +1135,7 @@ interface Form {
   dmUsers: string[];
   dmChat: boolean;
   continueReads: boolean;
+  liveBuildStream: boolean;
   shadowBuilds: boolean;
   shadowBuildPlatform: boolean;
   buildConcurrency: string;
@@ -1158,6 +1161,7 @@ const FIELD_LABEL: Record<FormKey, string> = {
   dmUsers: 'people in DMs',
   dmChat: 'reading DMs',
   continueReads: 'continuing its last read',
+  liveBuildStream: 'Live while a first version builds',
   shadowBuilds: 'shadow builds',
   shadowBuildPlatform: 'shadow builds of the platform',
   buildConcurrency: 'shadow builds at once',
@@ -1187,6 +1191,7 @@ export function savedForm(p: Pick<Payload, 'settings' | 'bot'>): Form {
     dmUsers: s.dmUsers || [],
     dmChat: s.dmChat !== false,
     continueReads: s.continueReads !== false,
+    liveBuildStream: s.liveBuildStream !== false,
     shadowBuilds: !!s.shadowBuilds,
     shadowBuildPlatform: !!s.shadowBuildPlatform,
     buildConcurrency: String(s.buildConcurrency ?? 2),
@@ -1240,7 +1245,7 @@ export function buildPatch(form: Form, saved: Form, dirty: FormKey[]): { patch: 
     else if (key === 'liveApps') patch.liveApps = [...new Set(form.liveApps.filter(Boolean))];
     else if (key === 'pausedApps') patch.pausedApps = [...new Set(form.pausedApps.filter(Boolean))];
     else if (key === 'dmUsers') patch.dmUsers = form.dmUsers;
-    else if (key === 'dmChat' || key === 'continueReads' || key === 'shadowBuilds' || key === 'shadowBuildPlatform' || key === 'livePlatform') patch[key] = form[key];
+    else if (key === 'dmChat' || key === 'continueReads' || key === 'liveBuildStream' || key === 'shadowBuilds' || key === 'shadowBuildPlatform' || key === 'livePlatform') patch[key] = form[key];
     else if (key === 'audience') patch.audience = form.audience;
     else if (key === 'models') {
       const changed: Record<string, string> = {};
@@ -2199,6 +2204,22 @@ function HomeroomBotSection() {
                 When somebody adds to a request, the bot picks up the conversation it read the request in, with what changed,
                 instead of reading the app&apos;s code from the start. It reads afresh when that conversation is gone (a new
                 worker), after three continued reads in a row, or a day after the last one.
+              </p>
+              <label className="flex items-center gap-2 mt-4 text-sm" htmlFor="admin-homeroom-bot-live-build-stream">
+                <input
+                  id="admin-homeroom-bot-live-build-stream" type="checkbox"
+                  className="h-4 w-4 rounded border-zinc-600 bg-zinc-800 text-violet-700 focus:ring-violet-500 dark:text-violet-400"
+                  checked={form.liveBuildStream}
+                  disabled={!canWrite}
+                  onChange={(e) => setField('liveBuildStream', e.target.checked)}
+                />
+                <span>Live while a first version builds</span>
+              </label>
+              <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-live-build-stream-note">
+                While a project&apos;s first version is built, a watcher in its worker boots the app on every change and
+                records it, and the project&apos;s members can switch its App tab from Preview to Live. Off: no watcher
+                starts and nobody is offered Live. Build times with and without it are recorded
+                (first_version_build_turn events).
               </p>
             </details>
 
