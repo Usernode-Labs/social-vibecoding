@@ -41,6 +41,7 @@ import { ShareDialog } from './share';
 import { AppSecretsDialog } from './app-secrets';
 import { BoardFiltersDialog } from './board-filters';
 import { WalletRecoveryDialog } from './wallet-recovery';
+import { AppDomainDialog } from './app-domain';
 
 export function Dialogs() {
   return (
@@ -68,6 +69,8 @@ export function Dialogs() {
       <AppSettingsDialog />
       <AppNotificationsDialog />
       <ReportDialog />
+      {/* #4405: a project's custom domain. New markup, appended last. */}
+      <AppDomainDialog />
     </>
   );
 }

@@ -12762,6 +12762,72 @@ CREATE INDEX IF NOT EXISTS idx_bot_capture_artifacts_trial ON bot_capture_artifa
 CREATE INDEX IF NOT EXISTS idx_bot_capture_artifacts_created ON bot_capture_artifacts(created_at);
 COMMENT ON TABLE bot_capture_artifacts IS 'staging:private';
 
+-- #4387: what a first version's App tab shows while it is built
+-- (services/first-version-screens.js). The FIRST LOOK, the spec's main
+-- drawn screen rendered to a phone-sized PNG in the build's worker, from
+-- "Building it"; then up to three REAL screens of the build, kept from its
+-- review's last capture, from "Testing it". Images only, never the model's
+-- HTML; read back only by the project's members (GET
+-- /api/apps/:slug/first-version/screens/:kind/:n). Private: an app's
+-- screens can show any of its data.
+CREATE TABLE IF NOT EXISTS first_version_screens (
+  id            VARCHAR(32) PRIMARY KEY CHECK (id ~ '^[0-9a-f]{32}$'),
+  bot_run_id    INTEGER NOT NULL REFERENCES homeroom_bot_runs(id) ON DELETE CASCADE,
+  kind          VARCHAR(16) NOT NULL CHECK (kind IN ('first_look', 'real')),
+  position      SMALLINT NOT NULL CHECK (position >= 0 AND position < 3),
+  content_type  VARCHAR(32) NOT NULL,
+  data          BYTEA NOT NULL,
+  width         INTEGER CHECK (width IS NULL OR width > 0),
+  height        INTEGER CHECK (height IS NULL OR height > 0),
+  bytes         INTEGER NOT NULL CHECK (bytes > 0),
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (bot_run_id, kind, position)
+);
+COMMENT ON TABLE first_version_screens IS 'staging:private';
+-- #4387: the build agent's latest "Adding …" phrase (usernode-progress),
+-- the App tab's build line note while a first version is built.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_caption TEXT;
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_caption_at TIMESTAMPTZ;
+
+-- #4449: LIVE, the new app itself taking shape while a first version is
+-- built (services/first-version-live.js). A watcher in the build's worker
+-- boots the app on every change and records it with rrweb; what it records
+-- is SANITISED (no URL but data:, no script) before it is kept here, and
+-- read back only by the project's members (GET
+-- /api/apps/:slug/first-version/live). Per run: the restarts kept and
+-- failed, and why the watcher stopped (the run's numbers, also recorded as
+-- a `live_build_stream` event once its build turn ends).
+CREATE TABLE IF NOT EXISTS first_version_live (
+  bot_run_id       INTEGER PRIMARY KEY REFERENCES homeroom_bot_runs(id) ON DELETE CASCADE,
+  next_seq         INTEGER NOT NULL DEFAULT 1,
+  -- The chunk the latest good restart's recording starts at: a viewer
+  -- behind it starts over from there.
+  base_seq         INTEGER,
+  bytes            INTEGER NOT NULL DEFAULT 0,
+  restarts_kept    INTEGER NOT NULL DEFAULT 0,
+  restarts_failed  INTEGER NOT NULL DEFAULT 0,
+  good_at          TIMESTAMPTZ,
+  failed_at        TIMESTAMPTZ,
+  event_at         TIMESTAMPTZ,
+  stopped_why      VARCHAR(32),
+  started_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ended_at         TIMESTAMPTZ
+);
+COMMENT ON TABLE first_version_live IS 'staging:private';
+-- The latest good restart's events (kind 'full') and what was recorded on
+-- it since ('inc'), at most about 2 MB a run. Private: a recording shows
+-- the app's data.
+CREATE TABLE IF NOT EXISTS first_version_live_chunks (
+  bot_run_id  INTEGER NOT NULL REFERENCES homeroom_bot_runs(id) ON DELETE CASCADE,
+  seq         INTEGER NOT NULL,
+  kind        VARCHAR(8) NOT NULL CHECK (kind IN ('full', 'inc')),
+  events      JSONB NOT NULL,
+  bytes       INTEGER NOT NULL CHECK (bytes > 0),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (bot_run_id, seq)
+);
+COMMENT ON TABLE first_version_live_chunks IS 'staging:private';
+
 -- ===================================================================
 -- Workflow foundation: the kernel's tables (src/workflow/kernel/).
 --
@@ -13164,3 +13230,44 @@ INSERT INTO platform_settings (key, value, description) VALUES
   ('waitlist_spots_backfilled', 'true',
     'Marker: the one-time backfill giving every waiting account a waitlist row (#4083) has run.')
 ON CONFLICT (key) DO NOTHING;
+
+-- Custom domains (#4405): a project served at a web address its manager
+-- owns, beside its Homeroom address. One row per claim; the hostname is
+-- proved by two DNS records (a CNAME to the app's Homeroom hostname and a
+-- TXT `_homeroom.<hostname>` carrying the verification token), then the
+-- edge issues a certificate and the gate routes the host to the app
+-- (services/app-domains.js has the status machine). Private in staging: a
+-- preview never serves a custom host, and the sweep never runs there.
+CREATE TABLE IF NOT EXISTS app_domains (
+  id                 SERIAL PRIMARY KEY,
+  app_id             INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  hostname           VARCHAR(253) UNIQUE NOT NULL,
+  verification_token CHAR(32) NOT NULL,
+  status             VARCHAR(16) NOT NULL DEFAULT 'pending',
+  dns_checked_at     TIMESTAMPTZ,
+  verified_at        TIMESTAMPTZ,
+  live_at            TIMESTAMPTZ,
+  cert_expires_at    TIMESTAMPTZ,
+  last_error         TEXT,
+  failure_count      INTEGER NOT NULL DEFAULT 0,
+  created_by         INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  disabled_at        TIMESTAMPTZ,
+  disabled_by        INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+COMMENT ON TABLE app_domains IS 'staging:private';
+-- One custom domain per project in this version.
+CREATE UNIQUE INDEX IF NOT EXISTS app_domains_one_per_app ON app_domains (app_id);
+CREATE INDEX IF NOT EXISTS app_domains_status_idx ON app_domains (status);
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'app_domains_status_check') THEN
+    ALTER TABLE app_domains ADD CONSTRAINT app_domains_status_check
+      CHECK (status IN ('pending', 'verified', 'live', 'failed', 'disabled'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'app_domains_hostname_check') THEN
+    ALTER TABLE app_domains ADD CONSTRAINT app_domains_hostname_check
+      CHECK (hostname ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$');
+  END IF;
+END $$;

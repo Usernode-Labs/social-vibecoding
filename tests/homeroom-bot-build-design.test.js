@@ -235,8 +235,11 @@ test('a first version\'s build uses the starter\'s design kit and records its lo
     // And App bench context pack 4's nudge and look-and-fix loop
     // (services/design-skill.js; tests/design-skill.test.js).
     const pack4 = live.guidanceLines(designSkill.stageGuidance('build', { firstVersion: true })).join('\n');
-    assert.equal(first.replace(`${lines}\n`, '').replace(`${pack4}\n`, ''), other,
-      'the record, the skill\'s nudge and the look-and-fix loop are the only differences');
+    // #4387: and the "Adding …" phrases its waiting members see.
+    const progress = live.FIRST_VERSION_PROGRESS_LINES.join('\n');
+    assert.ok(first.includes(progress) && !other.includes('usernode-progress'));
+    assert.equal(first.replace(`${lines}\n`, '').replace(`${progress}\n`, '').replace(`${pack4}\n`, ''), other,
+      'the record, the progress phrases, the skill\'s nudge and the look-and-fix loop are the only differences');
     // Every build, a later one included, reads the note through the guidance.
     for (const p of [first, other]) {
       assert.match(p, /If the app's `CLAUDE\.md` has a "## Design" section \(or a `Design:` note under "App-specific conventions"\), that is this app's look/);
@@ -357,4 +360,38 @@ test('a live first version passes the flag to its build, and a benchmark trial r
   const specStage = runner.slice(runner.indexOf('async function specStage('), runner.indexOf('async function buildResult('));
   const buildStage = runner.slice(runner.indexOf('async function buildStage('), runner.indexOf('function followupTurn('));
   for (const stage of [specStage, buildStage]) assert.match(stage, /firstVersion: !!snapshot\.extra\?\.firstVersion,/);
+});
+
+// #4387: once a first version's spec is written, its drawn screens are
+// handed on for the App tab's first look, with the worker they can be drawn
+// in, and the build goes straight on without waiting for it.
+test('a first version\'s spec screens are handed to its first look, and nothing waits on it', async () => {
+  const HTML_SPEC = '<article data-spec><h1>Plants</h1><section data-spec-tab="user"><figure data-screens>'
+    + '<template data-screen data-size="phone"><div data-side="after" data-change="1">Today</div></template>'
+    + '<ol data-changes><li>The list</li></ol></figure><p>What changes.</p></section>'
+    + '<section data-spec-tab="tech"><p>How.</p></section></article>';
+  const h = buildHarness();
+  h.deps.seesImages = true;
+  const exec = h.deps.worker.execInWorker;
+  h.deps.worker.execInWorker = async (id, opts) => (opts.mode === 'scout' ? { lastResultText: HTML_SPEC } : exec(id, opts));
+  const looks = [];
+  let release;
+  const held = new Promise((r) => { release = r; });
+  const built = await live.buildAndPropose({
+    pool: h.pool, deps: h.deps, ...ARGS, model: 'm', firstVersion: true,
+    onFirstLook: async (args) => { looks.push(args); await held; },
+  });
+  release();
+  assert.equal(built.ok, true, 'built while the first look was still being drawn');
+  assert.equal(looks.length, 1);
+  assert.equal(looks[0].containerName, 'w');
+  assert.ok(looks[0].specHtml.includes('<template data-screen data-size="phone">'));
+  assert.equal('specHtml' in built, false, 'the HTML is never carried onto the result');
+
+  // A markdown spec draws nothing to look at.
+  const md = buildHarness();
+  md.deps.seesImages = true;
+  const none = [];
+  await live.buildAndPropose({ pool: md.pool, deps: md.deps, ...ARGS, model: 'm', firstVersion: true, onFirstLook: (a) => none.push(a) });
+  assert.equal(none.length, 0);
 });

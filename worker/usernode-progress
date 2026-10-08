@@ -1,0 +1,17 @@
+#!/bin/sh
+# usernode-progress "Adding the tier rows" (#4387): what a first version's
+# build is adding now, for the people waiting on it. The build prompt asks
+# the agent to run it as it starts each point of the approved plan, with a
+# short phrase that starts with "Adding". Nothing is sent from here: the
+# platform reads the phrase off the command in the turn's own stream
+# (services/first-version-screens.js captionOf), cleans it and shows it as
+# the App tab's build line note ("Building it · Adding the tier rows").
+#
+# Exit 0 always: a note never fails a build.
+phrase="$*"
+if [ -z "$phrase" ]; then
+  echo 'usage: usernode-progress "Adding <what>" (at most 40 characters)'
+  exit 0
+fi
+echo "Noted: $phrase"
+exit 0

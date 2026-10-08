@@ -39,8 +39,6 @@ import { DevBoardFrame, type DevBoardFrameProps } from './board-frame';
 import { CardMenu } from './card-menu';
 import { cardMenuStore, type CardMenuRowView } from './card-menu-store';
 import { DevChatSubView } from './chat-frame';
-import { IssueComments } from './issue-comments';
-import { issueCommentsStore, type IssueCommentsState } from './issue-comments-store';
 import { KanbanFilters } from './kanban-filters';
 import { mainPauseStore, type MainPauseState } from './main-pause-store';
 import { releaseStallStore, type ReleaseStallState } from './release-stall-store';
@@ -65,6 +63,8 @@ import type { DevKanbanView, DevWorkshopView } from './card/model';
 import { DevWorkshop } from './workshop/workshop';
 import { TopicHead } from './topic/topic-head';
 import { topicHeadStore, type TopicHeadState } from './topic/topic-store';
+import { publishRequestThread } from './topic/request-model';
+import type { TranscriptMessage } from '../group-chat/transcript-store';
 import { AutoSessionModal } from './modals/auto-session-modal';
 import { SessionChecks, type SessionChecksProps } from './modals/session-checks';
 import { CreditOptionsModal } from './modals/credit-options-modal';
@@ -103,8 +103,6 @@ export interface DevBoardBridge {
   publishMainPause(state: MainPauseState): void;
   publishReleaseStall(state: ReleaseStallState): void;
   publishDiscussion(state: DiscussionState): void;
-  mountIssueComments(host: Element | null): void;
-  publishIssueComments(state: IssueCommentsState): void;
   mountKanbanFilters(host: Element | null): void;
   publishKanbanFilters(patch: Partial<KanbanFiltersState>): void;
   mountVotingHelp(host: Element | null, props: VotingHelpProps): void;
@@ -114,8 +112,9 @@ export interface DevBoardBridge {
   mountKanban(host: Element | null): void;
   publishKanban(view: DevKanbanView): void;
   mountTopicHead(host: Element | null): void;
-  mountChangePage(host: Element | null): void;
   publishTopicHead(state: TopicHeadState): void;
+  /** #4453: a request's stream, as `GroupChat.renderThread` publishes it — for its spec cards. */
+  publishRequestThread(number: number, rows: TranscriptMessage[]): void;
   mountAutoSessionModal(host: Element | null, view: AutoSessionModalView): void;
   mountSessionChecks(host: Element | null, props: SessionChecksProps): void;
   mountCreditOptionsModal(host: Element | null, view: CreditOptionsModalView): void;
@@ -176,8 +175,8 @@ cardNowStore.setFlush(flushSync);
 // The topic head's too, and it is load-bearing three times:
 // `_renderTopicHead` fills the kudos hosts it just rendered,
 // `_loadSessionTranscript` fills the transcript body on the line after the
-// repaint that opened it, and `_loadIssueComments` mounts into the comment
-// host the same way.
+// repaint that opened it, and a request's page portals its header and back
+// chip into the thread shell's hosts in the same paint (#4453).
 topicHeadStore.setFlush(flushSync);
 
 /**
@@ -273,14 +272,6 @@ export const devBoardBridge: DevBoardBridge = {
     discussionStore.set(state);
   },
 
-  mountIssueComments(host) {
-    mountLegacyPortal(host, createElement(IssueComments));
-  },
-
-  publishIssueComments(state) {
-    issueCommentsStore.set(state);
-  },
-
   // The shared Board/Activity filter strip. Its initial `mounted: false`
   // state draws no children while data loads; the frame keeps the host's
   // one-row reservation in place until this mount and publish fill it.
@@ -331,13 +322,12 @@ export const devBoardBridge: DevBoardBridge = {
     mountLegacyPortal(host, createElement(TopicHead));
   },
 
-  mountChangePage(host) {
-    mountLegacyPortal(host, createElement('div', { className: 'dev-change-overview platform-safe-scroll h-full' },
-      createElement('div', { id: 'gc-thread-head' }, createElement(TopicHead, { conversation: true }))));
-  },
-
   publishTopicHead(state) {
     topicHeadStore.set(state);
+  },
+
+  publishRequestThread(number, rows) {
+    publishRequestThread(Number(number), rows || []);
   },
 
   // The three body-mounted modals. Each host is created by app-view.js on

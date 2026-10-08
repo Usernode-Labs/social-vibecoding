@@ -734,3 +734,131 @@ test('#4396: the maker, a reader who is not a member, and a ready version get no
   assert.doesNotMatch(out, /While you wait|<button/);
   assert.doesNotMatch(out, /usually 10 to 25 min/);
 });
+
+// #4387: what a member watches while it is built. The thumbnail's band shows
+// the first look, then its real screens, and the build line says what it
+// is adding. Pictures only, from the members' route; any missing piece is
+// the thumbnail as it was.
+
+const LOOK = { kind: 'first_look', count: 1, at: '2026-10-08T10:00:00.000Z', v: '1791453600000' };
+
+test('#4387: building, the first look in a phone frame and the caption as the line\'s note', () => {
+  const { AppView } = makeAppView();
+  const v = view(AppView, firstVersionApp({}, { ...MEMBER, line: 'building', caption: 'Adding the tier rows', screens: LOOK }));
+  assert.equal(v.buildNote, 'Adding the tier rows');
+  assert.deepEqual(v.screens, {
+    kind: 'first_look', at: LOOK.at, images: ['/api/apps/plant-pal/first-version/screens/first_look/0?v=1791453600000'],
+  });
+  const out = html(v);
+  assert.match(out, /data-first-version-screens="first_look"/);
+  assert.match(out, /First look · drawn from the plan/);
+  assert.match(out, /<img src="\/api\/apps\/plant-pal\/first-version\/screens\/first_look\/0\?v=1791453600000" alt="A first look at Plant Pal, drawn from the plan"/);
+  assert.match(out, /h-\[340px\]/, 'the band is taller for it');
+  assert.match(out, /data-build-line="building"[^>]*>.*Building it · Adding the tier rows/, 'the caption replaces the time note');
+  assert.doesNotMatch(out, /usually 10 to 25 min/);
+  assert.equal((out.match(/role="status"/g) || []).length, 1, 'one build line');
+  assert.doesNotMatch(out, /data-first-version-dots/, 'one picture, no dots');
+});
+
+test('#4387: the maker gets the same, and keeps their way into the chat', () => {
+  const { AppView } = makeAppView();
+  const v = view(AppView, firstVersionApp({}, { mine: true, line: 'building', caption: 'Adding the tier rows', screens: LOOK }));
+  assert.equal(v.action.label, 'Open Homeroom bot');
+  const out = html(v);
+  assert.match(out, /First look · drawn from the plan/);
+  assert.match(out, /Building it · Adding the tier rows/);
+});
+
+test('#4387: from Testing it, up to three real screens with page dots; they stay at Ready to try', () => {
+  const { AppView } = makeAppView();
+  const real = { kind: 'real', count: 3, at: new Date(Date.now() - 4 * 60000).toISOString(), v: '7' };
+  const v = view(AppView, firstVersionApp({}, { ...MEMBER, step: 5, line: 'testing', screens: real }));
+  assert.equal(v.screens.images.length, 3);
+  assert.equal('buildNote' in v, false);
+  const out = html(v);
+  assert.match(out, /data-first-version-screens="real"/);
+  assert.match(out, /Real screen · 4 min ago/);
+  assert.equal((out.match(/aria-label="Screen \d of 3"/g) || []).length, 3);
+  assert.match(out, /alt="Plant Pal, real screen 2 of 3"/);
+  const ready = view(AppView, firstVersionApp({}, {
+    ...MEMBER, ready: true, line: 'ready', screens: real,
+    approval: { sessionId: 31, mustApprove: true, approved: false, waitingOn: [], more: 0, missing: 1, goesLiveAt: null, soon: false },
+  }));
+  const readyOut = html(ready);
+  assert.match(readyOut, /data-first-version-screens="real"/);
+  assert.match(readyOut, /Waiting for your approval\./);
+  assert.match(readyOut, /Try it/);
+});
+
+test('#4387: no screens, unknown kinds and a caption off the build line leave the thumbnail as it was', () => {
+  const { AppView } = makeAppView();
+  for (const screens of [undefined, null, { kind: 'html', count: 1 }, { kind: 'real', count: 0 }]) {
+    const v = view(AppView, firstVersionApp({}, { ...MEMBER, line: 'building', screens }));
+    assert.equal('screens' in v, false, JSON.stringify(screens));
+    assert.doesNotMatch(html(v), /data-first-version-screens|h-\[340px\]/);
+  }
+  // A caption the server sent for another line is not drawn on it.
+  const out = html(view(AppView, firstVersionApp({}, { ...MEMBER, line: 'testing', caption: 'Adding the tier rows' })));
+  assert.doesNotMatch(out, /Adding the tier rows/);
+  // A real project never takes pictures from the record itself, only from its members' route.
+  const v = view(AppView, firstVersionApp({}, { ...MEMBER, line: 'building', screens: { kind: 'first_look', count: 0, images: ['data:image/png;base64,AAAA'] } }));
+  assert.equal('screens' in v, false);
+});
+
+test('#4387: the pill says how long ago the real screens were taken', () => {
+  const m = loadTsx('frontend/src/features/app-frame/first-version-screens.tsx');
+  const now = Date.parse('2026-10-08T12:00:00Z');
+  assert.equal(m.screensPill({ kind: 'first_look', at: null }, now), 'First look · drawn from the plan');
+  assert.equal(m.realScreenPill('2026-10-08T11:56:00Z', now), 'Real screen · 4 min ago');
+  assert.equal(m.realScreenPill('2026-10-08T11:59:50Z', now), 'Real screen · 1 min ago');
+  assert.equal(m.realScreenPill('2026-10-08T09:30:00Z', now), 'Real screen · 2 h ago');
+  assert.equal(m.realScreenPill(null, now), 'Real screen');
+});
+
+// #4449: Live, the app itself taking shape, beside the first look. While it
+// is built, a member's band gets a "Preview | Live" switch (Preview first,
+// and exactly #4387's first look); at Testing it the switch goes.
+
+test('#4449: building with Live offered, the switch over the band with Preview chosen', () => {
+  const { AppView } = makeAppView();
+  const v = view(AppView, firstVersionApp({}, { ...MEMBER, line: 'building', caption: 'Adding the tier rows', screens: LOOK, live: true }));
+  assert.deepEqual(v.live, { slug: 'plant-pal', userKey: '1' });
+  const out = html(v);
+  assert.match(out, /data-first-version-live-switch="preview"/);
+  assert.match(out, /<button type="button" aria-pressed="true" data-live-choice="preview"[^>]*>Preview<\/button>/);
+  assert.match(out, /<button type="button" aria-pressed="false" data-live-choice="live"[^>]*>Live<\/button>/);
+  // Preview is exactly the first look, and the build line is unchanged.
+  assert.match(out, /First look · drawn from the plan/);
+  assert.doesNotMatch(out, /data-first-version-live=/, 'the player is not loaded');
+  assert.match(out, /Building it · Adding the tier rows/);
+  assert.equal((out.match(/role="status"/g) || []).length, 1, 'one build line');
+});
+
+test('#4449: no switch without Live, off the build line, or once it is tested', () => {
+  const { AppView } = makeAppView();
+  for (const fv of [
+    { ...MEMBER, line: 'building', screens: LOOK },
+    { ...MEMBER, line: 'testing', screens: LOOK, live: true },
+    { ...MEMBER, line: 'planning', live: true },
+    { ...MEMBER, line: 'building', live: 'yes' },
+  ]) {
+    const v = view(AppView, firstVersionApp({}, fv));
+    assert.equal('live' in v, false, JSON.stringify(fv));
+    assert.doesNotMatch(html(v), /data-first-version-live-switch/);
+  }
+  // Without a first look the switch still shows, on the icon's band.
+  const out = html(view(AppView, firstVersionApp({}, { ...MEMBER, line: 'building', live: true })));
+  assert.match(out, /data-first-version-live-switch="preview"/);
+  assert.doesNotMatch(out, /h-\[340px\]/);
+});
+
+test('#4449: the screenshot state plays a made-up recording and fetches nothing', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  assert.match(src, /'first-version-live': 'live'/);
+  assert.match(SRC, /\.\.\.\(variant === 'live' \? \{ live: true \} : \{\}\)/);
+  assert.match(SRC, /\.\.\.\(appData\.shot \? \{ sample: true \} : \{\}\)/);
+  const band = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'app-frame', 'live-band.tsx'), 'utf8');
+  assert.match(band, /if \(live\.sample\) \{[\s\S]*sampleRecording\(\)/);
+  assert.match(band, /'Sample live stream'/);
+  assert.match(band, /'Not a real app'/);
+});

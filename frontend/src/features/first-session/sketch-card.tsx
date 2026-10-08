@@ -136,7 +136,7 @@ function glyphOf(name: string, emoji: string | null, sketched: boolean): string 
  * `children` close the card's body, under the line (the invite page's
  * invitation, #4394).
  */
-export function FeaturedCard({ name, colorKey, emoji, iconUrl = null, card, description = null, sketching: sketched = !card, line = null, lineNote = null, titleId, heading = false, compact = false, large = false, children = null }: {
+export function FeaturedCard({ name, colorKey, emoji, iconUrl = null, card, description = null, sketching: sketched = !card, line = null, lineNote = null, titleId, heading = false, compact = false, large = false, band = null, bandCorner = null, children = null }: {
   name: string;
   /** Picks a colour when there is no emoji to read one from (the project's slug). */
   colorKey: string;
@@ -159,6 +159,17 @@ export function FeaturedCard({ name, colorKey, emoji, iconUrl = null, card, desc
   compact?: boolean;
   /** The name at 20px, for a card that is the screen's one subject. */
   large?: boolean;
+  /**
+   * #4387: what the colour band shows in place of the icon, made taller for
+   * it (the App tab's first look and real screens, ../app-frame/
+   * first-version-screens.tsx). None: the icon, as everywhere else.
+   */
+  band?: ReactNode;
+  /**
+   * #4449: drawn over the colour band's top-right corner (the App tab's
+   * "Preview | Live" switch, ../app-frame/live-switch.tsx).
+   */
+  bandCorner?: ReactNode;
   /** More of the card's body, under the line. */
   children?: ReactNode;
 }) {
@@ -172,18 +183,21 @@ export function FeaturedCard({ name, colorKey, emoji, iconUrl = null, card, desc
         data-featured-card={sketched ? 'sketching' : 'ready'}
         className="relative overflow-hidden rounded-[20px] bg-white text-left text-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900 dark:text-zinc-100"
       >
-        <div className={`relative flex items-center justify-center overflow-hidden bg-zinc-200 dark:bg-zinc-800 ${compact ? 'h-[88px]' : 'h-[132px]'}`}>
+        <div className={`relative flex items-center justify-center overflow-hidden bg-zinc-200 dark:bg-zinc-800 ${band ? 'h-[340px]' : compact ? 'h-[88px]' : 'h-[132px]'}`}>
           <div
             aria-hidden="true"
             className={`absolute inset-0 transition-opacity duration-500 ease-out motion-reduce:transition-none ${color ? 'opacity-100' : 'opacity-0'}`}
             style={color ? { backgroundColor: color } : undefined}
           />
-          <span
-            aria-hidden="true"
-            className={`app-icon-tile relative flex items-center justify-center overflow-hidden leading-none shadow-[0_6px_18px_rgba(0,0,0,0.16)] ${compact ? 'h-14 w-14 rounded-2xl text-[32px]' : 'h-[76px] w-[76px] rounded-[22px] text-[44px]'}`}
-          >
-            {iconUrl ? <img src={iconUrl} alt="" className="h-full w-full object-cover" /> : glyph ? <Glyph key={glyph} glyph={glyph} /> : null}
-          </span>
+          {band || (
+            <span
+              aria-hidden="true"
+              className={`app-icon-tile relative flex items-center justify-center overflow-hidden leading-none shadow-[0_6px_18px_rgba(0,0,0,0.16)] ${compact ? 'h-14 w-14 rounded-2xl text-[32px]' : 'h-[76px] w-[76px] rounded-[22px] text-[44px]'}`}
+            >
+              {iconUrl ? <img src={iconUrl} alt="" className="h-full w-full object-cover" /> : glyph ? <Glyph key={glyph} glyph={glyph} /> : null}
+            </span>
+          )}
+          {bandCorner ? <div className="absolute right-3 top-3 z-10">{bandCorner}</div> : null}
         </div>
         <div className="flex flex-col gap-1 px-4 pb-4 pt-3.5">
           <Title id={titleId} className={large ? 'truncate text-[20px] font-bold leading-[26px]' : 'truncate text-[17px] font-bold leading-[22px]'}>{name}</Title>

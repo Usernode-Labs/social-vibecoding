@@ -982,7 +982,10 @@ async function ensureAppGateBackend(config, { readyTimeoutMs = 60000, retryAfter
 function ingressWithGateRoute(ingress, mode) {
   const own = ingress?.metadata?.name;
   if (!own) return null;
-  const target = mode === 'on' ? APP_GATE_NAME : own;
+  // A custom domain's Ingress (#4405) is not named after a Service: the app
+  // Service it fronts is in its annotation (customDomainIngressManifest).
+  const service = ingress?.metadata?.annotations?.[CUSTOM_DOMAIN_SERVICE_ANNOTATION] || own;
+  const target = mode === 'on' ? APP_GATE_NAME : service;
   let changed = false;
   const rules = (ingress?.spec?.rules || []).map((rule) => {
     if (!rule?.http || !Array.isArray(rule.http.paths)) return rule;
@@ -990,7 +993,7 @@ function ingressWithGateRoute(ingress, mode) {
       if (item?.path !== '/' || !item?.backend?.service) return item;
       const current = item.backend.service.name;
       // Only ever swap between the two names this code writes.
-      if (current !== own && current !== APP_GATE_NAME) return item;
+      if (current !== service && current !== APP_GATE_NAME) return item;
       if (current === target) return item;
       changed = true;
       return { ...item, backend: { ...item.backend, service: { ...item.backend.service, name: target } } };
@@ -1312,6 +1315,95 @@ async function getDebugLogs(config, runtimeName, { tailLines = 200, maxBytes = 2
       timer = setTimeout(() => reject(new Error('Runtime log read timed out')), timeoutMs);
     })]);
   } finally { clearTimeout(timer); }
+}
+
+// ── Custom domains (#4405) ────────────────────────────────────────────
+//
+// A project served at a web address its manager owns. The app's own Ingress
+// stays exactly as it is (one host, the shared wildcard Secret, no issuer:
+// tests/kubernetes-app-tls.test.js); a SECOND Ingress, `sv-domain-<id>`,
+// carries the custom host, routes it the same way (the asset prefixes to
+// the shared asset backend, everything else through the gate when it is on
+// or to the app's Service) and, unlike the app's, asks cert-manager for a
+// certificate of its own: this host is not under the wildcard, and the
+// manager has already proved they control it (services/app-domains.js) by
+// the time this is written, so an HTTP-01 challenge for it can succeed and
+// nobody else's name ever costs the issuer a certificate.
+//
+// The Secret the certificate lands in is the Ingress's own and goes with it.
+// The app's Service name rides in an annotation so the gate switch
+// (ingressWithGateRoute) can point the catch-all back at it.
+const CUSTOM_DOMAIN_SERVICE_ANNOTATION = 'social.usernode.io/app-service';
+const CUSTOM_DOMAIN_ID_LABEL = 'social.usernode.io/domain-id';
+
+function customDomainResourceName(domain) {
+  return dnsName(`sv-domain-${domain.id}`);
+}
+
+// Pure, so the shape can be asserted without a cluster.
+function customDomainIngressManifest({ domain, app, namespace, cfg, assetBackend, gateBackend = null, serviceName }) {
+  const name = customDomainResourceName(domain);
+  const hostname = String(domain.hostname || '').toLowerCase();
+  const service = serviceName || app.runtime_name || appResourceName(app, 'production');
+  const assetPaths = assetBackend ? PLATFORM_ASSET_PREFIXES.map(platformAssetPath) : [];
+  return {
+    apiVersion: 'networking.k8s.io/v1', kind: 'Ingress', metadata: {
+      name, namespace,
+      labels: { ...labels({ appId: app.id, environment: 'production' }), [CUSTOM_DOMAIN_ID_LABEL]: String(domain.id) },
+      annotations: {
+        'cert-manager.io/cluster-issuer': cfg.clusterIssuer || 'letsencrypt-public',
+        [CUSTOM_DOMAIN_SERVICE_ANNOTATION]: service,
+      },
+    },
+    spec: {
+      ingressClassName: cfg.ingressClassName,
+      rules: [{ host: hostname, http: { paths: [
+        ...assetPaths,
+        { path: '/', pathType: 'Prefix', backend: { service: { name: gateBackend || service, port: { number: 3000 } } } },
+      ] } }],
+      tls: [{ hosts: [hostname], secretName: withSuffix(name, 'tls') }],
+    },
+  };
+}
+
+async function deployCustomDomain(config, { app, domain }) {
+  const cfg = config.kubernetes;
+  const namespace = cfg.appNamespace;
+  const hostname = String(domain.hostname || '').toLowerCase();
+  if (!hostname || !/^[a-z0-9.-]+$/.test(hostname)) throw new Error('Invalid custom domain hostname');
+  require('./caddy').assertAppHostname(hostname, cfg.platformDomain);
+  const { networking } = getClients();
+  let assetBackend = null;
+  try {
+    assetBackend = await ensurePlatformAssetBackend(config);
+  } catch (err) {
+    log.warn('kubernetes', 'platform asset backend unavailable — custom domain routes without asset paths', {
+      namespace, hostname, error: err?.message,
+    });
+  }
+  let gateBackend = null;
+  if (appGateMode(config) === 'on') {
+    try {
+      gateBackend = await ensureAppGateBackend(config);
+    } catch (err) {
+      log.warn('kubernetes', 'app gate unavailable — custom domain routes straight to the app', {
+        namespace, hostname, error: err?.message,
+      });
+    }
+  }
+  await upsert(networking, 'readNamespacedIngress', 'createNamespacedIngress', 'replaceNamespacedIngress', namespace,
+    customDomainIngressManifest({ domain, app, namespace, cfg, assetBackend, gateBackend }));
+  return { name: customDomainResourceName(domain), hostname };
+}
+
+// The Ingress and the certificate Secret cert-manager wrote for it. The
+// app's own resources are never touched.
+async function deleteCustomDomain(config, { domain }) {
+  const namespace = config.kubernetes.appNamespace;
+  const name = customDomainResourceName(domain);
+  const { core, networking } = getClients();
+  await deleteIfPresent(networking, 'deleteNamespacedIngress', name, namespace);
+  await deleteIfPresent(core, 'deleteNamespacedSecret', withSuffix(name, 'tls'), namespace);
 }
 
 async function restartApplication(config, runtimeName) {
@@ -2790,6 +2882,8 @@ module.exports = {
   _quantityNumberForTest: quantityNumber,
   PLATFORM_ASSET_PREFIXES, PLATFORM_ASSET_NAME, ensurePlatformAssetBackend,
   _appIngressManifestForTest: appIngressManifest,
+  customDomainResourceName, customDomainIngressManifest, deployCustomDomain, deleteCustomDomain,
+  CUSTOM_DOMAIN_SERVICE_ANNOTATION,
   _platformAssetEnvForTest: platformAssetEnv,
   APP_GATE_NAME, APP_GATE_HEALTH_PATH, appGateMode, ensureAppGateBackend, reconcileAppGateIngresses,
   _appGateDeploymentManifestForTest: appGateDeploymentManifest,

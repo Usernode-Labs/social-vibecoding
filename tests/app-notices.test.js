@@ -68,7 +68,7 @@ test('the Friday card is shown while it is fresh, as its own sentence, naming no
 test('the reads: this app, the settings kinds, the last week; the latest card of the last three days', async () => {
   assert.match(notices.SETTINGS_SQL, /e\.event_type = ANY\(\$2::text\[\]\)\s+AND e\.created_at > NOW\(\) - \(\$3 \|\| ' days'\)::interval\s+AND e\.app_id = \$1/);
   assert.match(notices.WEEK_SQL, /e\.event_type = 'weekly_digest'/);
-  assert.deepEqual([...notices.SETTINGS_TYPES], ['visibility_changed', 'governance_changed', 'app_admins_changed', 'app_lock_changed', 'approver_joined']);
+  assert.deepEqual([...notices.SETTINGS_TYPES], ['visibility_changed', 'governance_changed', 'app_admins_changed', 'app_lock_changed', 'app_domain_changed', 'approver_joined']);
   assert.equal(notices.SETTINGS_DAYS, 7);
   assert.equal(notices.WEEK_DAYS, 3);
   const seen = [];

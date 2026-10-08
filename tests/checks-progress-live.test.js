@@ -847,6 +847,13 @@ test('#2170: every ?demo=1 mock with a verdict carries the kept shape; a run in 
       assert.equal(row.checks_progress.build.step, 'done');
       assert.equal(row.checks_progress.queue.ahead, 2);
       assert.equal('checksMs' in row.checks_progress, false);
+    } else if (row.id === 9000026) {
+      // #4452: part way through its checks, for the change page's one
+      // testing bar: the build done, the checks and the unit suite running.
+      assert.equal(row.checks_progress.build.step, 'done');
+      assert.deepEqual([row.checks_progress.ran, row.checks_progress.expected], [284, 840]);
+      assert.deepEqual([row.checks_progress.unit.ran, row.checks_progress.unit.expected], [6900, 19240]);
+      assert.equal('checksMs' in row.checks_progress, false);
     } else {
       assert.equal(row.checks_progress, undefined, `${row.id}: a run in flight (or none) carries no cost`);
     }

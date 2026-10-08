@@ -20,6 +20,7 @@ const staging = require('../services/staging');
 const { drainGuard } = require('../services/lifecycle');
 const deployFailure = require('../services/deploy-failure');
 const { appCreateLimiter, appAllowanceRequestLimiter, issueCreateLimiter, githubLookupLimiter, feedbackTitleLimiter } = require('../middleware/rate-limits');
+const { rateLimit } = require('express-rate-limit');
 const events = require('../services/events');
 const appOpenings = require('../services/app-openings');
 const appAccess = require('../services/app-access');
@@ -40,6 +41,7 @@ const communityInvites = require('../services/community-invites');
 const emailInvites = require('../services/email-invites');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const appActivity = require('../services/app-activity');
+const appDomains = require('../services/app-domains');
 
 // Cap on the `initialApprovers` list a governance-pr request may carry
 // (see that route below) — a sanity bound, not a product limit.
@@ -250,6 +252,27 @@ function compactGlobalChatApp(app, user, adminAppIds = new Set()) {
 const IS_LOCAL_DEV = process.env.NODE_ENV === 'development' || process.env.USERNODE_LOCAL_DEV === '1';
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
+// #4405: the address Share offers. The custom domain once it is live, the
+// Homeroom address until then (and on a dev box, where the app's url is
+// localhost and no custom host could reach it).
+function shareUrl(url, customDomain) {
+  if (!url || !customDomain || customDomain.status !== 'live') return url;
+  if (!/^https:/.test(url)) return url;
+  return `https://${customDomain.hostname}`;
+}
+
+// The live custom domain of each listed app, keyed by app id, in one read.
+async function liveDomainsFor(pool, appIds) {
+  const map = new Map();
+  if (!appIds.length) return map;
+  const { rows } = await pool.query(
+    `SELECT app_id, hostname, status FROM app_domains WHERE status = 'live' AND app_id = ANY($1::int[])`,
+    [appIds]
+  );
+  for (const row of rows) map.set(Number(row.app_id), { hostname: row.hostname, status: row.status });
+  return map;
+}
+
 // Catalog samples are stored rows; all app APIs use the same identity.
 const stagingApps = require('../services/staging-apps');
 
@@ -357,6 +380,40 @@ async function waitingMemberFields(pool, appId, viewerId, state) {
     memberPlan: sharedPlan(state.plan || state.chosenPlan),
     makerNote: text ? text.slice(0, 200) : null,
   };
+}
+
+/**
+ * #4387: what a first version's App tab shows a MEMBER while it is built
+ * (services/first-version-screens.js): `caption`, the build agent's
+ * "Adding …" phrase while it is built, and `screens` ({ kind, count, at, v }),
+ * the first look from "Building it", the real screens from "Testing it",
+ * each image read from GET /api/apps/:slug/first-version/screens/:kind/:n.
+ * Both come from the plan, which is a read for members (hubFirstVersion), so
+ * anyone else gets neither and sees the thumbnail: `{}`.
+ */
+async function firstVersionShowcaseFields(pool, appId, viewerId, { mine = false, line = null } = {}) {
+  if (viewerId == null) return {};
+  const fvScreens = require('../services/first-version-screens');
+  const showcase = await fvScreens.showcaseOf(pool, appId);
+  if (!showcase) return {};
+  const fields = fvScreens.firstVersionShowcase(showcase, line);
+  if (!fields.caption && !fields.screens) return {};
+  if (!mine && !(await communities.isMember(pool, appId, viewerId))) return {};
+  return fields;
+}
+
+/**
+ * #4449: whether a MEMBER's App tab offers Live while the first version is
+ * built (services/first-version-live.js): `{ live: true }` at "Building it"
+ * while the Admin setting is on, for the maker and the project's members,
+ * the readers of its first look; else `{}`.
+ */
+async function firstVersionLiveFields(pool, appId, viewerId, { mine = false, line = null } = {}) {
+  if (viewerId == null || line !== 'building') return {};
+  const fvLive = require('../services/first-version-live');
+  if (!(await fvLive.liveEnabled(pool))) return {};
+  if (!mine && !(await communities.isMember(pool, appId, viewerId))) return {};
+  return { live: true };
 }
 
 /**
@@ -859,6 +916,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       const contributorCounts = await contributors.loadContributorCounts(
         pool, rows.map((a) => a.id)
       );
+      // #4405: the live custom domain of each app, one round trip, so the
+      // Share dialog can offer it without a per-app read.
+      const liveDomains = await liveDomainsFor(pool, rows.map((a) => a.id));
       // #4053: where each first version Homeroom bot is making stands, for
       // its Home tile, in the build line this viewer reads.
       const firstVersionLines = await firstVersionLinesFor(
@@ -971,6 +1031,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           last_failure_reason: lf ? (lf.reason || null) : null,
           last_failure_at: lf ? (lf.at || null) : null,
           url,
+          custom_domain: liveDomains.get(Number(a.id)) || null,
+          share_url: shareUrl(url, liveDomains.get(Number(a.id))),
           staging_sample: stagingSample,
           version,
           deployProgress: appDeployStatus.read(a.slug),
@@ -1687,6 +1749,13 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           const state = await botDm.firstVersionState(pool, appRow.id, { viewerId: req.user?.id ?? null });
           if (state) {
             const mine = req.user?.id != null && Number(state.userId) === Number(req.user.id);
+            // #4387: what its members watch while it is built, read only
+            // for a member (firstVersionShowcaseFields).
+            const showcase = await firstVersionShowcaseFields(pool, appRow.id, req.user?.id, { mine, line: state.line || null })
+              .catch(() => ({}));
+            // #4449: and whether they can watch it take shape (Live).
+            const liveFields = await firstVersionLiveFields(pool, appRow.id, req.user?.id, { mine, line: state.line || null })
+              .catch(() => ({}));
             firstVersion = {
               building: true,
               mine,
@@ -1706,6 +1775,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
               // Ready to try: the change, and who it waits on, as this
               // viewer reads it (firstVersionApproval).
               ...(state.ready && state.approval ? { approval: state.approval } : {}),
+              ...showcase,
+              ...liveFields,
               // No "usually about N minutes" (WP-E used to send the
               // ordinary request's typical build here): a first version
               // plans first and waits on its creator's answer, and took 50
@@ -1765,6 +1836,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         ...accessFlags(appRow, req.user, isCollaborator, adminAppIds, contributorCount,
           config.selfAppSlug),
       };
+      // #4405: the project's custom domain, and the address Share offers.
+      const domainRow = stagingSample ? null : await appDomains.forApp(pool, appRow.id);
+      appPayload.custom_domain = domainRow ? { hostname: domainRow.hostname, status: domainRow.status } : null;
+      appPayload.share_url = shareUrl(url, domainRow && domainRow.status === 'live' ? appPayload.custom_domain : null);
       await attachForkLineage(pool, appPayload);
       res.json({ app: appPayload });
     } catch (err) {
@@ -1823,6 +1898,88 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     } catch (err) {
       log.error('apps', 'Failed to read sketch', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #4387: one of a first version's screens for its App tab (the first
+  // look, or a real screen: services/first-version-screens.js), as a PNG,
+  // for the project's MEMBERS only, the read that says it is there
+  // (firstVersionShowcaseFields). 404 for anyone else, as for a screen that
+  // is not there: neither says whether it exists. Private to the browser
+  // that asked; nothing in it runs.
+  router.get('/api/apps/:slug/first-version/screens/:kind/:n', async (req, res) => {
+    try {
+      const fvScreens = require('../services/first-version-screens');
+      const kind = String(req.params.kind || '');
+      const n = /^[0-9]$/.test(req.params.n || '') ? Number(req.params.n) : -1;
+      if (!fvScreens.KINDS.includes(kind) || n < 0 || n >= fvScreens.MAX_SCREENS || !req.user?.id) {
+        return res.status(404).json({ error: 'Not found' });
+      }
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS);
+      if (!app || !(await communities.isMember(pool, app.id, req.user.id))) return res.status(404).json({ error: 'Not found' });
+      const row = await fvScreens.readScreen(pool, app.id, kind, n);
+      if (!row || row.content_type !== 'image/png') return res.status(404).json({ error: 'Not found' });
+      res.set({
+        'Content-Type': 'image/png',
+        'Cache-Control': 'private, max-age=3600',
+        'X-Content-Type-Options': 'nosniff',
+        'Content-Security-Policy': "default-src 'none'",
+      });
+      return res.send(Buffer.isBuffer(row.data) ? row.data : Buffer.from(row.data || ''));
+    } catch (err) {
+      log.error('apps', 'Failed to read a first version screen', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #4449: LIVE, the new app taking shape while its first version is built
+  // (services/first-version-live.js): the recording since `since`, the last
+  // chunk this viewer has, or from the latest good restart when it is
+  // behind it (`reset`). Already sanitised: nothing in it fetches anything.
+  // For the project's MEMBERS only, the gate of its screens above; 404 for
+  // anyone else, and while the Admin setting is off.
+  const liveMember = async (req) => {
+    if (!req.user?.id) return null;
+    const fvLive = require('../services/first-version-live');
+    if (!(await fvLive.liveEnabled(pool))) return null;
+    const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS);
+    if (!app || !(await communities.isMember(pool, app.id, req.user.id))) return null;
+    return app;
+  };
+  router.get('/api/apps/:slug/first-version/live', async (req, res) => {
+    try {
+      const app = await liveMember(req);
+      if (!app) return res.status(404).json({ error: 'Not found' });
+      const raw = String(req.query.since ?? '');
+      const since = /^[0-9]{1,9}$/.test(raw) ? Number(raw) : 0;
+      const live = await require('../services/first-version-live').liveOf(pool, app.id, since);
+      if (!live) return res.status(404).json({ error: 'Not found' });
+      res.set({ 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+      return res.json(live);
+    } catch (err) {
+      log.error('apps', 'Failed to read a first version\'s Live', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #4449: a member opened Live, or watched it for `seconds` (sent when they
+  // close or hide it): analytics only (events.js live_build_opened,
+  // live_build_watched).
+  router.post('/api/apps/:slug/first-version/live/seen', sameOriginBrowserOnly, async (req, res) => {
+    try {
+      const app = await liveMember(req);
+      if (!app) return res.status(404).json({ error: 'Not found' });
+      const body = req.body || {};
+      const kind = body.kind === 'opened' || body.kind === 'watched' ? body.kind : null;
+      const runId = Number(body.runId);
+      if (!kind || !Number.isInteger(runId) || runId <= 0) return res.status(400).json({ error: 'kind and runId are required' });
+      await require('../services/first-version-live').recordView(pool, {
+        userId: req.user.id, appId: app.id, runId, kind, seconds: body.seconds, goodFrame: body.goodFrame === true,
+      });
+      return res.json({ ok: true });
+    } catch (err) {
+      log.error('apps', 'Failed to record a Live view', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
     }
   });
 
@@ -3191,6 +3348,111 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
   // services/edge-gate.js (handleAuthorize) has the details; middleware/auth.js
   // lets this one path through without a session so it can answer for a
   // signed-out visitor too.
+  // ── Custom domains (#4405) ───────────────────────────────────────────
+  //
+  // A project's own web address, claimed by whoever manages it and proved
+  // by two DNS records (services/app-domains.js has the status machine).
+  // Owner-set state, like secrets and the lock: not a dapp.json field, so no
+  // vote. The read answers any viewer (the dialog's manage flag decides what
+  // it shows); the writes need canManageApp and never apply to the platform's
+  // own app. "Check now" is bounded per app so a person tapping it cannot
+  // make the platform hammer public resolvers.
+  const domainCheckLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 6,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    keyGenerator: (req) => `domain-check:${req.params.slug}`,
+    handler: (req, res) => res.status(429).json({ error: 'Checked too often. Wait a minute and try again.', code: 'rate_limited' }),
+  });
+
+  async function domainContext(req, res, { manage = false } = {}) {
+    const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS);
+    if (!app) { res.status(404).json({ error: 'App not found' }); return null; }
+    const canManage = await appAdmins.canManageApp(pool, app, req.user);
+    if (manage) {
+      if (!canManage) { res.status(403).json({ error: 'Only the people who manage this app can change its domain' }); return null; }
+      if (refuseIfSelfHosted(app, res)) return null;
+    }
+    return { app, canManage };
+  }
+
+  function domainPayload(app, row, canManage) {
+    return {
+      domain: appDomains.publicRow(row),
+      records: row ? appDomains.expectedRecords(app, row) : [],
+      homeroom_host: caddy.productionHostname(app.slug),
+      can_manage: !!canManage && !app.self_hosted,
+    };
+  }
+
+  router.get('/api/apps/:slug/domain', async (req, res) => {
+    try {
+      const ctx = await domainContext(req, res);
+      if (!ctx) return;
+      const row = await appDomains.forApp(pool, ctx.app.id);
+      res.json(domainPayload(ctx.app, row, ctx.canManage));
+    } catch (err) {
+      log.error('apps', 'Read custom domain failed', { slug: req.params.slug, message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/apps/:slug/domain', drainGuard, sameOriginBrowserOnly, async (req, res) => {
+    try {
+      const ctx = await domainContext(req, res, { manage: true });
+      if (!ctx) return;
+      let row;
+      try {
+        row = await appDomains.claim(pool, ctx.app, req.body?.hostname, req.user);
+      } catch (err) {
+        if (appDomains.isHostnameError(err)) return res.status(400).json({ error: err.message, code: err.code });
+        if (err.code === 'already_has_domain' || err.code === 'hostname_taken') {
+          return res.status(409).json({ error: err.message, code: err.code });
+        }
+        if (err.code === 'claim_limit') return res.status(429).json({ error: err.message, code: err.code });
+        throw err;
+      }
+      log.info('apps', 'Custom domain claimed', { slug: ctx.app.slug, hostname: row.hostname, by: req.user.username });
+      res.status(201).json(domainPayload(ctx.app, row, true));
+    } catch (err) {
+      log.error('apps', 'Claim custom domain failed', { slug: req.params.slug, message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/apps/:slug/domain/check', drainGuard, domainCheckLimiter, sameOriginBrowserOnly, async (req, res) => {
+    try {
+      const ctx = await domainContext(req, res, { manage: true });
+      if (!ctx) return;
+      const row = await appDomains.forApp(pool, ctx.app.id);
+      if (!row) return res.status(404).json({ error: 'This project has no custom domain' });
+      if (row.status === 'disabled') {
+        return res.status(409).json({ error: 'An admin has disabled this domain.', code: 'disabled' });
+      }
+      const next = await appDomains.checkNow(pool, config, row);
+      res.json(domainPayload(ctx.app, next, true));
+    } catch (err) {
+      log.error('apps', 'Check custom domain failed', { slug: req.params.slug, message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.delete('/api/apps/:slug/domain', drainGuard, sameOriginBrowserOnly, async (req, res) => {
+    try {
+      const ctx = await domainContext(req, res, { manage: true });
+      if (!ctx) return;
+      const row = await appDomains.forApp(pool, ctx.app.id);
+      if (!row) return res.status(404).json({ error: 'This project has no custom domain' });
+      await appDomains.remove(pool, config, ctx.app, row, req.user);
+      log.info('apps', 'Custom domain removed', { slug: ctx.app.slug, hostname: row.hostname, by: req.user.username });
+      res.status(204).end();
+    } catch (err) {
+      log.error('apps', 'Remove custom domain failed', { slug: req.params.slug, message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.get('/__access/authorize', async (req, res) => {
     try {
       return await edgeGate.handleAuthorize(pool, req, res);
@@ -3925,7 +4187,8 @@ module.exports = {
   // one resolver, so it is pinned there rather than through a route.
   attachForkLineage,
   appRoutes, sweepStuckCreatingApps, accessFlags, canDeleteApp, compactGlobalChatApp,
-  deleteBlockReason, isCoreApp, hubFirstVersion, firstVersionLinesFor, sharedPlan, waitingMemberFields,
+  deleteBlockReason, isCoreApp, hubFirstVersion, firstVersionLinesFor, sharedPlan, waitingMemberFields, firstVersionShowcaseFields,
+  firstVersionLiveFields,
   // #2524: the activity guard and its two bounds, so the contract is
   // unit-testable without standing up the whole app router.
   activitySeconds, ACTIVITY_MAX_PER_POST, ACTIVITY_MAX_PER_DAY,

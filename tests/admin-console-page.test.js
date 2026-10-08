@@ -129,6 +129,8 @@ test('the console island imports every admin module, console first', () => {
     // How the Homeroom bot builds first versions, and how each configuration measures up.
     'admin-bot-configs',
     'admin-campaigns', 'admin-codes', 'admin-db-export',
+    // #4405: every custom domain a project has claimed.
+    'admin-domains',
     'admin-e2e', 'admin-estimator', 'admin-featured-apps', 'admin-features',
     'admin-gallery',
     // #2684: the Homeroom bot's shadow-mode verdicts and their ratings.

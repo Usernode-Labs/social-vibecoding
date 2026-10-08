@@ -730,6 +730,7 @@ test('#1130: no credential-SHAPED column name in schema.sql is readable without 
   const REVIEWED_READABLE = new Set([
     // Public/derived identifiers and non-secret metadata.
     'apps.storage_bucket',                 // bucket NAME, not a key
+    'app_domains.verification_token',      // #4405: the value of a public DNS TXT record; it proves control of a hostname, never signs anyone in
     'mcp_authorization_codes.code_challenge', // the public half of PKCE
     'mcp_clients.client_id',               // public OAuth client identifier
     'mcp_tokens.client_id',

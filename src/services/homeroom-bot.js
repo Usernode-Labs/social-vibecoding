@@ -69,6 +69,10 @@ function activity() { return require('./homeroom-bot-activity'); }
 // side builds and their results (services/bot-configs.js), and its review
 // (services/bot-review.js). Lazy: they read this module's settings.
 function botConfigs() { return require('./bot-configs'); }
+// #4387: what a first version's App tab shows while it is built.
+function firstVersionScreens() { return require('./first-version-screens'); }
+// #4449: and Live, the app itself while it is built.
+function firstVersionLive() { return require('./first-version-live'); }
 function botReview() { return require('./bot-review'); }
 // #4210: interrupted builds, kept for admins.
 function incidents() { return require('./platform-incidents'); }
@@ -166,12 +170,18 @@ const KEY_LIVE_PLATFORM = 'homeroom_bot_live_platform';
 // list audience, as before, and EVERYONE_PROPOSAL_CEILING with `everyone`,
 // where "per live app" would be every app there is.
 const KEY_PROPOSAL_CEILING = 'homeroom_bot_proposal_ceiling';
+// #4449: Live, a first version shown taking shape while it is built
+// (services/first-version-live.js, which reads it through its own short
+// cache). On unless switched off: off, no watcher starts and no App tab
+// offers it.
+const KEY_LIVE_BUILD_STREAM = 'live_build_stream';
 const SETTING_KEYS = Object.freeze([
   KEY_MODE, KEY_CONCURRENCY, KEY_BATCH_SIZE, KEY_PAUSED_APPS,
   KEY_TURN_SECONDS, KEY_TURN_INPUT_TOKENS, KEY_LIVE_APPS,
   KEY_SHADOW_BUILDS, KEY_BUILD_CONCURRENCY, KEY_SHADOW_BUILD_PLATFORM,
   KEY_DM_USERS, KEY_USER_WEEKLY_CENTS, KEY_LIVE_AT_ONCE, KEY_PER_PERSON, KEY_DM_CHAT,
   KEY_CONTINUE_READS, KEY_AUDIENCE, KEY_AUDIENCE_SINCE, KEY_LIVE_PLATFORM, KEY_PROPOSAL_CEILING,
+  KEY_LIVE_BUILD_STREAM,
   ...Object.values(KEY_MODELS),
 ]);
 const MAX_DM_USERS = 50;
@@ -205,6 +215,7 @@ const DEFAULTS = Object.freeze({
   audienceSince: null,
   livePlatform: false,
   proposalCeiling: 0,
+  liveBuildStream: true,
   // Not a stored setting: the projects somebody on the DM list made
   // (homeroom-bot-dm.js projectsMadeFor), live like the apps in liveApps.
   // readSettings fills it in, with the list audience only.
@@ -586,11 +597,12 @@ function parseSettings(rows) {
   const audienceSince = Number.isFinite(sinceMs) ? new Date(sinceMs).toISOString() : null;
   const livePlatform = map.get(KEY_LIVE_PLATFORM) === 'on';
   const proposalCeiling = clampInt(map.get(KEY_PROPOSAL_CEILING), DEFAULTS.proposalCeiling, 0, MAX_PROPOSAL_CEILING);
+  const liveBuildStream = map.get(KEY_LIVE_BUILD_STREAM) !== 'off';
   return {
     mode, concurrency, batchSize, pausedApps, liveApps, turnSeconds, turnInputTokens,
     shadowBuilds, buildConcurrency, shadowBuildPlatform, dmUsers, userWeeklyCents,
     liveAtOnce, perPerson, dmChat, continueReads, models,
-    audience, audienceSince, livePlatform, proposalCeiling,
+    audience, audienceSince, livePlatform, proposalCeiling, liveBuildStream,
     firstVersionApps: [],
     platformSlugs: [],
   };
@@ -740,6 +752,10 @@ function validateSettingsPatch(patch) {
     if (typeof body.livePlatform !== 'boolean') return { ok: false, error: 'livePlatform must be true or false' };
     updates.push([KEY_LIVE_PLATFORM, body.livePlatform ? 'on' : 'off']);
   }
+  if (body.liveBuildStream !== undefined) {
+    if (typeof body.liveBuildStream !== 'boolean') return { ok: false, error: 'liveBuildStream must be true or false' };
+    updates.push([KEY_LIVE_BUILD_STREAM, body.liveBuildStream ? 'on' : 'off']);
+  }
   if (body.proposalCeiling !== undefined) {
     const n = Number(body.proposalCeiling);
     if (!Number.isInteger(n) || n < 0 || n > MAX_PROPOSAL_CEILING) {
@@ -869,6 +885,7 @@ async function writeSettings(pool, patch, actorId, config = {}) {
       [key, value, actorId || null],
     );
   }
+  if (valid.updates.some(([key]) => key === KEY_LIVE_BUILD_STREAM)) firstVersionLive().forgetSetting(pool);
   if (valid.weeklyLimitCents !== undefined) {
     // The cap lives on the bot's users row, which the first pass used to be
     // the only thing that created — so a cap saved before that pass updated
@@ -6689,6 +6706,25 @@ async function buildLive({
       ),
       origin: { lane: 'live', runId },
       onNoChange: (noChange) => keepNoChange(pool, runId, noChange),
+      // #4387: what the people waiting on a first version watch on its App
+      // tab: the spec's main screen drawn as its first look, and the build
+      // agent's "Adding …" phrases (services/first-version-screens.js).
+      ...(firstVersion ? (() => {
+        // #4449: and Live, the app itself taking shape, watched beside the
+        // build turn while the Admin setting is on; every first version's
+        // build turn is measured, with whether it was watched.
+        const caption = firstVersionScreens().captionWatcher(pool, runId);
+        const liveWatch = firstVersionLive().liveController({
+          pool, runId, appId: app.id, worker: deps.worker || require('./worker'),
+        });
+        return {
+          onProgress: (line) => { caption(line); liveWatch.onProgress(line); },
+          onBuildTurn: (turn) => liveWatch.onBuildTurn(turn),
+          onFirstLook: ({ specHtml, containerName }) => firstVersionScreens().renderFirstLook({
+            pool, worker: deps.worker || require('./worker'), containerName, runId, specHtml,
+          }),
+        };
+      })() : {}),
       ...(version ? {
         harnessOf: live.recipeHarness,
         review,
@@ -6701,6 +6737,11 @@ async function buildLive({
     liveBuildsInFlight.delete(runId);
   }
   if (built) built.model = model;
+  // #4387: and, once it is reviewed, up to three of its real screens, from
+  // the review's last capture, for its App tab from "Testing it".
+  if (firstVersion && built?.review?.finalCapture) {
+    await firstVersionScreens().keepRealScreens(pool, runId, built.review.finalCapture);
+  }
   if (built.specMd) {
     await pool.query('UPDATE homeroom_bot_runs SET build_spec_md = $2 WHERE id = $1', [runId, built.specMd])
       .catch(() => {});
@@ -8895,6 +8936,7 @@ module.exports = {
   KEY_PER_PERSON,
   KEY_DM_CHAT,
   KEY_CONTINUE_READS,
+  KEY_LIVE_BUILD_STREAM,
   AUDIENCES,
   KEY_AUDIENCE,
   KEY_AUDIENCE_SINCE,

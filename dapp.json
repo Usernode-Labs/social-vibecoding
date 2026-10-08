@@ -964,27 +964,28 @@
       "expectSelector": "#dev-body .gc-vote-item > .flex-1:first-child > .dev-card-head + .dev-card-meta + .dev-card-badges.dev-card-status + .gc-card-actions"
     },
     {
-      "name": "Proposal page as a Needs-you item: the hero (the eyebrow with its state, the age at its right, the title, the by-line with the change's own number at its end, the tags, the band with the ⋯ last), then the Discussion; the steps are in Details (B10b)",
+      "name": "#4455: a change’s page is a Messages thread: the Workshop chip above the sheet (the header draws no arrow), \"Change #N\" and its category over the ⋯ disc, the change as the root post (who, when, the title, its summary as a quote), the Votes card above the Testing card; the steps are in Details",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000043",
-      "expectSelector": "#gc-thread-head .dev-topic > .dev-topic-hero:has(.dev-ws-eyebrow + .dev-ws-item-of):has(> .dev-topic-hero-by .font-mono):has(> .dev-topic-hero-chips + .dev-topic-hero-actions > .gc-card-actions > [data-card-menu]:last-child) + .dev-conversation",
-      "expectText": "Waiting for approval"
+      "expectSelector": "body:has(#back-btn.hidden) .dev-change:has(#gc-thread-back .dev-topic-back):has(#gc-thread-bar .messages-thread-sub):has(#gc-thread-bar [data-card-menu]) [data-change-root=\"9000043\"] [data-change-gate=\"votes\"] + [data-change-gate=\"testing\"]",
+      "expectText": "Change #900143"
     },
     {
-      "name": "Vote sits at the end of the hero's status pill, as on a card; Re-run checks is the blocked Checks step's accent pill, in Details (B10b)",
+      "name": "#4455: Vote is the Votes card’s button; Re-run checks is the blocked Checks step’s accent pill, in Details (B10b)",
       "path": "/?demo=1&details=1#app/usernode-2d5619/dev/proposals/9000043",
-      "expectSelector": "body:has(.dev-topic-hero-status > .dev-status-pill + .dev-vote-btn) .dev-details-card .dev-topic-steps [data-req-gate=\"checks\"][data-req-state=\"blocked\"] .dev-ledger-ops > .gc-vote-btn-accent[data-act=\"castRecheck\"]",
+      "expectSelector": "body:has([data-change-gate=\"votes\"] > .dev-change-gate-act > .dev-vote-btn) .dev-details-card .dev-topic-steps [data-req-gate=\"checks\"][data-req-state=\"blocked\"] .dev-ledger-ops > .gc-vote-btn-accent[data-act=\"castRecheck\"]",
       "expectText": "Re-run checks"
     },
     {
-      "name": "Addresses is one line under the summary (after the Tested line, B10b): the label, then the issue as a chip with its number bold and its title after it",
+      "name": "#4455: one row under the summary: \"Addresses\", then the request as a chip with its number bold and its title after it",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000013",
-      "expectSelector": "#gc-thread-head .dev-topic-hero > .dev-topic-hero-summary ~ .dev-topic-hero-issues > .dev-topic-hero-issues-line > .dev-topic-hero-issues-k + a.dev-ws-chip.dev-topic-issue[href*=\"/dev/issues/900017\"] > b + span",
+      "expectSelector": "#gc-thread-head .dev-change-root .dev-request-ask ~ .dev-change-addresses > .dev-change-chips > .dev-change-chips-lead + .dev-change-chips-first > a.dev-ws-chip.dev-topic-issue[href*=\"/dev/issues/900017\"] > b + span",
       "expectText": "Addresses"
     },
     {
-      "name": "Issue page, round three: GitHub ends the meta line, and the Discussion sheet follows the card",
-      "path": "/?demo=1#app/usernode-2d5619/dev/issues/900008",
-      "expectSelector": "#gc-thread-head .dev-topic > .dev-topic-card:has(.dev-card-topic .dev-card-meta) ~ #dev-issue-comments.dev-topic-comments"
+      "name": "#4453: a request's page is one sheet, Messages' reply thread: the header names the request and its category, the request is the root post (its title, its words as a quote, where it stands, its spec), then \"N replies\" and the stream",
+      "path": "/?demo=1#app/usernode-2d5619/dev/issues/900003",
+      "expectSelector": ".dev-request > .dev-request-sheet.dc-lift-session:has(> #gc-thread-bar .messages-thread-name + [data-request-category]) > #gc-thread-scroll.messages-thread-scroll > #gc-thread-head + [data-language=\"request\"] > .messages-reply-count",
+      "expectText": "Request #900003"
     },
     {
       "name": "Dev board, round three: the vote is one button beside the state bar, with a picker; #1688 puts \"Still yes?\" on a card backed on an earlier version and \"Thank <author>\" in a fresh card's kudos slot",
@@ -1109,10 +1110,10 @@
       "expectText": "Draft ready to review"
     },
     {
-      "name": "Issue detail: the topic head explains the work state in a plain dated sentence (#1112)",
+      "name": "#4453: where a request stands is one card under it: the stepper with the step it is at, one sentence for who is on it, and the date the claim lapses (#1112)",
       "path": "/?demo=1#app/usernode-2d5619/dev/issues/900014",
-      "expectSelector": "#gc-thread-head [data-work-note=\"paused\"]",
-      "expectText": "paused"
+      "expectSelector": "#gc-thread-head .dev-request-root .dev-request-ask + .dev-request-status[data-request-stage=\"asked\"]:has(.dev-request-step[data-state=\"now\"][aria-current=\"step\"]) .dev-request-say + .dev-request-fine",
+      "expectText": "opens up for someone else"
     },
     {
       "name": "Dev board: your own session card offers its visibility toggle as a pill",
@@ -1169,15 +1170,9 @@
       "expectSelector": "#dev-kanban button.attr-chip.dev-badge[data-attr-field=\"priority\"]"
     },
     {
-      "name": "Request detail renders the Set priority / Set category metadata chips; who is on it shows only when somebody is (B10c)",
+      "name": "#4453: everything that is not the next step is behind the request sheet's ⋯ disc (priority, category and assignee, the author's edits, the claim), and the card's chips are gone (B10c, #2427)",
       "path": "/?demo=1#app/usernode-2d5619/dev/issues/900008",
-      "expectSelector": "button.attr-chip[data-attr-field=\"priority\"]",
-      "expectText": "Set priority"
-    },
-    {
-      "name": "Request detail metadata chips keep their compiled utility styling (no console error from the cascade self-check); the category chip's dot, now that an empty assignee chip is not drawn (B10c)",
-      "path": "/?demo=1#app/usernode-2d5619/dev/issues/900008",
-      "expectSelector": "button.attr-chip[data-attr-field=\"category\"] .attr-dot"
+      "expectSelector": "body:not(:has(#gc-thread-head button.attr-chip)) #gc-thread-bar .messages-thread-header > button.messages-thread-action[data-card-menu=\"request:900008\"][aria-label=\"More actions\"]"
     },
     {
       "name": "Dev board cards offer Explore in a coding agent — on the card face or in its ⋯ menu (#827, #1135)",
@@ -1629,9 +1624,9 @@
       "expectText": "Chat shared. Stop sharing"
     },
     {
-      "name": "A shared session’s card page carries no build surface — only the pill that leaves for it",
-      "path": "/?demo=1#app/usernode-2d5619/dev/shared/990002",
-      "expectSelector": "#dev-topic-thread:not(:has([data-change-build])):not(:has([data-transcript-body])) [data-change-conversation=\"990002\"][aria-label=\"Discussion\"]",
+      "name": "A shared session’s page carries no build surface; its ⋯ holds the door that leaves for it (#4455)",
+      "path": "/?demo=1&shot=card-menu&card=session:990002#app/usernode-2d5619/dev/shared/990002",
+      "expectSelector": "body:has(#dev-topic-thread [data-change-root=\"990002\"]):not(:has(#dev-topic-thread [data-change-build])):not(:has(#dev-topic-thread [data-transcript-body])) .dev-card-menu [data-menu-idx]",
       "expectText": "Read the build"
     },
     {
@@ -2140,38 +2135,40 @@
       "expectText": "No work in progress."
     },
     {
-      "name": "Foreign proposal: Explore in a coding agent is a pill on the hero's band, which the ⋯ menu closes (#827); the Votes step names who voted, with How voting works as the ? at the line's end",
-      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000001",
-      "expectSelector": "body:has(.gc-card-actions > .gc-explore-chat-btn[data-proposal-id=\"9000001\"]:not([data-folded]) ~ [data-card-menu]:last-child) [data-note=\"votes\"] .dev-ledger-review-line > .dev-ledger-roster + .dev-ledger-help > .voting-help-btn",
+      "name": "Foreign proposal: Explore in a coding agent is a row of the sheet’s ⋯ (#827, #4455); the Votes step names who voted, with How voting works as the ? at the line’s end",
+      "path": "/?demo=1&shot=card-menu&card=proposal:9000001#app/usernode-2d5619/dev/proposals/9000001",
+      "expectSelector": "body:has([data-note=\"votes\"] .dev-ledger-review-line > .dev-ledger-roster + .dev-ledger-help > .voting-help-btn) .dev-card-menu [data-menu-idx]",
       "expectText": "Explore in a coding agent"
     },
     {
-      "name": "At-least-approvals proposal renders the approvals pill (#646)",
+      "name": "At-least-approvals proposal: the Votes card counts the yes it still needs, and says the advisory ones count for nothing (#646, #4455)",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000023",
-      "expectText": "of 1 approval"
+      "expectText": "Needs 1 more yes",
+      "expectSelector": "[data-change-gate=\"votes\"][data-tone=\"ask\"] .dev-change-gate-figure"
     },
     {
-      "name": "Invited-approver proposal splits advisory votes into the status pill suffix (#695)",
+      "name": "Invited-approver proposal: the Votes card says how many yeses are advisory (#695, #4455)",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000025",
-      "expectSelector": ".gc-vote-count-suffix[title*=\"advisory votes from non-approvers\"]",
-      "expectText": "of 1 approval"
+      "expectSelector": "[data-change-gate=\"votes\"] .dev-change-gate-note",
+      "expectText": "2 more yeses are advisory"
     },
     {
-      "name": "Explicit-approval proposal locks the status pill and shows no merge countdown (#788)",
+      "name": "Explicit-approval proposal: the Votes card says it needs another member’s Yes, and shows no merge countdown (#788, #3826, #4455)",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000030",
-      "expectSelector": ".gc-vote-count-lock",
-      "expectText": "Vote · 1/3"
+      "expectSelector": "[data-change-gate=\"votes\"]:not(:has(.gc-merge-countdown)) .dev-change-gate-note",
+      "expectText": "Needs a Yes from another member"
     },
     {
-      "name": "Explicit-approval proposal whose votes are all in says the member floor is unmet (#3826)",
+      "name": "Explicit-approval proposal whose votes are all in: the Votes card asks for the viewer’s Yes and says why (#3826, #4455)",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000095",
-      "expectSelector": ".gc-vote-count",
-      "expectText": "Needs your Yes · 3/3"
+      "expectSelector": "[data-change-gate=\"votes\"][data-tone=\"ask\"] .dev-change-gate-figure",
+      "expectText": "Needs your yes"
     },
     {
-      "name": "Explicit-approval proposal still shows the rejection countdown (#788)",
+      "name": "Explicit-approval proposal still shows the rejection countdown, as the Votes card’s figure (#788, #4455)",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000032",
-      "expectSelector": ".gc-reject-countdown"
+      "expectSelector": "[data-change-gate=\"votes\"][data-tone=\"bad\"] .dev-change-gate-figure",
+      "expectText": "Set aside in"
     },
     {
       "name": "A passed close proposal whose window elapsed shows the closing spinner (#1010)",
@@ -2664,14 +2661,15 @@
       "expectText": "[Mock] Newly filed issue — should render on top"
     },
     {
-      "name": "Issue topic shows the author-only title and body edit controls (#2427)",
-      "path": "/?demo=1#app/usernode-2d5619/dev/issues/900008",
-      "expectSelector": "#gc-thread-head:has([data-issue-title='900008']):has([data-issue-body-edit='900008'])"
+      "name": "#4453: the root post names who asked and when, then the title in bold; the leading Source line is not drawn on Homeroom",
+      "path": "/?demo=1#app/usernode-2d5619/dev/issues/900003",
+      "expectSelector": ".dev-request-root[data-ref-issue='900003'] .messages-message-head:has(time[title]) + h1.dev-request-title + .dev-request-ask .dev-issue-body > p:first-child:not(:has(strong))",
+      "expectText": "Topic cards overflow on narrow phones"
     },
     {
-      "name": "Issue topic screenshots link to the full-size file and open in the in-app viewer, body and discussion (#2349, #3908)",
+      "name": "Request page screenshots link to the full-size file and open in the in-app viewer, in the request's words and in the replies (#2349, #3908, #4453)",
       "path": "/?demo=1#app/usernode-2d5619/dev/issues/900010",
-      "expectSelector": "#gc-thread-head:has(.dev-topic-gh-thread[data-image-viewer-scope] .dc-inline-img-link > [alt=\"Screenshot from a phone\"]) .dev-topic-about[data-image-viewer-scope] .dc-inline-img-link[href][target=\"_blank\"] > .dc-inline-img",
+      "expectSelector": "body:has(#gc-thread-messages .dev-request-stream[data-image-viewer-scope] .dc-inline-img-link > [alt=\"Screenshot from a phone\"]) #gc-thread-head .dev-request-root [data-image-viewer-scope] .dc-inline-img-link[href][target=\"_blank\"] > .dc-inline-img",
       "expectText": "[Mock] issue with an attached screenshot"
     },
     {
@@ -2680,14 +2678,16 @@
       "expectText": "Checks starting"
     },
     {
-      "name": "Checks card names the preview-preparation stage on a building run",
+      "name": "#4452: the Testing card says where a building run is, and how long testing usually takes here",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000022",
-      "expectText": "Preparing the staging preview"
+      "expectText": "Building the preview, step 1 of 5",
+      "expectSelector": "[data-change-gate=\"testing\"] .dev-change-gate-note"
     },
     {
-      "name": "Checks card names the test stage on a testing run",
+      "name": "#4452: a testing run is one bar, the build and the checks split by how long each usually takes, with the time left",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000026",
-      "expectText": "Running the automated tests"
+      "expectText": "min left",
+      "expectSelector": "[data-change-gate=\"testing\"] .dev-change-bar > .dev-change-bar-seg > [data-state=\"done\"][style*=\"100%\"]"
     },
     {
       "name": "Checks card names the fifth build step while the run waits behind an earlier one",
@@ -3571,6 +3571,17 @@
       "expectSelector": "#dev-plus-menu [data-plus='rename']"
     },
     {
+      "name": "The hub's ⋯ menu offers Custom domain in its Settings & rules panel to whoever manages the project (#4405)",
+      "path": "/?demo=1&ws=status#app/staging-demo-custom-domain/dev",
+      "expectSelector": "#dev-plus-menu [data-plus='domain']"
+    },
+    {
+      "name": "Custom domain: the dialog lists the CNAME and TXT records to add and says the domain is waiting for DNS (#4405)",
+      "path": "/?shot=app-domain#app/staging-demo-custom-domain",
+      "expectSelector": "body:has(#app-domain-modal:not(.hidden)) #app-domain-records",
+      "expectText": "homeroom-verify"
+    },
+    {
       "name": "App settings: the core platform app cannot be deleted from the UI, and the danger zone says why (#2161)",
       "path": "/?shot=app-settings#app/usernode-2d5619",
       "expectSelector": "body:has(#app-settings-modal:not(.hidden)) #app-delete-blocked",
@@ -3695,9 +3706,10 @@
       "expectText": "Preview building"
     },
     {
-      "name": "Imported proposal whose preview failed shows the unavailable chip (#866)",
+      "name": "Imported proposal whose preview failed: the Testing card says so, with its retry in place of the Preview button (#866, #4455)",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000043",
-      "expectText": "Preview unavailable"
+      "expectText": "The preview didn’t start",
+      "expectSelector": "[data-change-gate=\"testing\"][data-tone=\"bad\"]:has([data-act=\"swapToStagingForSession\"]) .dev-change-gate-figure"
     },
     {
       "name": "Freshness (#1442): a conflicted proposal says so in one short line on its merge step, in Details (B10b)",
@@ -3752,9 +3764,9 @@
       "expectText": "Not measured yet"
     },
     {
-      "name": "Freshness (#1442): behind-but-clean needs no sync: the merge step is done, and the status pill counts down to merge",
+      "name": "Freshness (#1442): behind-but-clean needs no sync: the merge step is done, and the Votes card counts down to merge",
       "path": "/?demo=1&details=1#app/usernode-2d5619/dev/proposals/9000033",
-      "expectSelector": "body:has(.dev-topic-hero-status .gc-merge-countdown) .dev-step[data-req-gate=\"integration\"][data-req-state=\"done\"]",
+      "expectSelector": "body:has([data-change-gate=\"votes\"] .dev-change-gate-figure) .dev-step[data-req-gate=\"integration\"][data-req-state=\"done\"]",
       "expectText": "No conflicts with main"
     },
     {
@@ -4143,19 +4155,14 @@
       "expectText": "We sent you a code. It expires in 10 minutes."
     },
     {
-      "name": "#2916: back from an issue is the Workshop chip at the top of the pane, to the layout it was opened from, and the header draws no arrow beside it",
+      "name": "#2916: back from a request is the Workshop chip above its sheet, to the layout it was opened from, and the header draws no arrow beside it (#4453)",
       "path": "/?demo=1&view=workshop#app/usernode-2d5619/dev/issues/900014",
-      "expectSelector": "body:has(#platform-header a#back-btn.hidden) #dev-topic-thread #gc-thread-head .dev-topic > a.dev-topic-back:first-child[aria-label=\"Back to Workshop\"][href=\"#app/usernode-2d5619/workshop\"] ~ .dev-topic-card"
+      "expectSelector": "body:has(#platform-header a#back-btn.hidden) #dev-topic-thread #gc-thread-back > a.dev-topic-back:first-child[aria-label=\"Back to Workshop\"][href=\"#app/usernode-2d5619/workshop\"]"
     },
     {
-      "name": "…and from an issue opened on it, the same chip to the same screen (#2916)",
+      "name": "…and from a request opened on it, the same chip to the same screen (#2916)",
       "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev/issues/900014",
-      "expectSelector": "body:has(#platform-header a#back-btn.hidden) .dev-topic > a.dev-topic-back:first-child[href=\"#app/usernode-2d5619/workshop\"]"
-    },
-    {
-      "name": "#2916: a proposal page leads with the same Workshop chip above its hero, and the header draws no arrow",
-      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000043",
-      "expectSelector": "body:has(#platform-header a#back-btn.hidden) #gc-thread-head .dev-topic > a.dev-topic-back:first-child[href=\"#app/usernode-2d5619/workshop\"] + .dev-topic-hero"
+      "expectSelector": "body:has(#platform-header a#back-btn.hidden) #gc-thread-back:has(> a.dev-topic-back:first-child[href=\"#app/usernode-2d5619/workshop\"]) + .dev-request-sheet"
     },
     {
       "name": "The bar's two edges: nothing to leave by on Home, and the bell left of the mark",
@@ -4284,10 +4291,10 @@
       ]
     },
     {
-      "name": "A long comment in an issue's discussion is clamped and offers a Show more (#2556)",
-      "path": "/?demo=1#app/usernode-2d5619/dev/issues/900008",
-      "expectSelector": "#dev-issue-comments .dev-issue-comment .dev-feed-msg-text.dev-issue-body.line-clamp-4 + button.dev-comment-more",
-      "expectText": "Show more"
+      "name": "#4453: a request's replies are one stream in the order they were written: a GitHub comment between two Homeroom messages, in the same row, with \"on GitHub\" after its time",
+      "path": "/?demo=1#app/usernode-2d5619/dev/issues/900003",
+      "expectSelector": "#gc-thread-messages .dev-request-stream > .gc-msg[data-msg-id=\"9902011\"]:first-child + .gc-msg-github[data-username=\"staging-tester\"] .gc-msg-time[title] + .gc-msg-via",
+      "expectText": "on GitHub"
     },
     {
       "name": "The page ground carries the reskin's grey, not the old white (#1400)",
@@ -4337,14 +4344,9 @@
       "expectSelector": "#app-content > .dc-lift.dc-lift-strip #dev-forum-scroll"
     },
     {
-      "name": "An issue page opens as a sheet over the board strip, with its thread inside",
+      "name": "A request's reply box is Messages' thread composer at the foot of the sheet: the + disc, the field, the round Send (#4453)",
       "path": "/?demo=1#app/usernode-2d5619/dev/issues/900008",
-      "expectSelector": "#dev-topic-thread > .dev-thread.dc-lift.dc-lift-session #gc-thread-messages"
-    },
-    {
-      "name": "The issue thread's composer is a card with a paper-clip glyph and a round Send",
-      "path": "/?demo=1#app/usernode-2d5619/dev/issues/900008",
-      "expectSelector": "#gc-thread-form.gc-composer-card > .gc-composer-glyph ~ textarea ~ .gc-send[aria-label=\"Send\"]"
+      "expectSelector": ".dev-request-sheet > .messages-composer.messages-composer-thread.platform-safe-bar > #gc-thread-form.messages-composer-card .messages-composer-add > #gc-thread-attach-btn"
     },
     {
       "name": "A project's channel is a sheet over the board strip, and its composer is the same card (Homeroom's own is read-only history now, so this reads another project's); its old full-screen address opens the project page's Discussion tab, where the channel is (#3653)",
@@ -4417,9 +4419,9 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "#1808: an issue's GitHub comments carry a day and a time, and the year once it is not this one; and Homeroom bot’s spec on a request is a spec card under its title, not the comment’s own lines (#3490)",
+      "name": "#1808: a request's GitHub replies carry a day and a time, and the year once it is not this one; Homeroom bot's spec comment is the request's spec card and a line saying it was posted, not a reply (#3490, #4453)",
       "path": "/?demo=1#app/usernode-2d5619/dev/issues/900003",
-      "expectSelector": "#dev-issue-comments:has(details[data-issue-spec] > summary .dev-issue-spec-kicker + .dev-issue-spec-title) .dev-issue-comment.dev-feed-msg .dev-feed-msg-head time.dev-feed-msg-time[title]",
+      "expectSelector": "body:has(#gc-thread-head .dev-request-specs > .messages-object-card.dev-request-spec .messages-object-icon ~ .dev-request-read):has(#gc-thread-messages .dev-request-event[data-request-event=\"spec\"]) #gc-thread-messages .gc-msg-github .gc-msg-time[title]",
       "expectText": "2024"
     },
     {
@@ -4440,22 +4442,16 @@
     },
     {
       "id": "group-chat.proposal-event",
-      "name": "A proposal's own Discussion keeps the line that put it up for a vote: a message from whoever proposed it, name and stamp on the header line, and one box with a glyph and a line of text that is no door, because the proposal is the page",
+      "name": "#4455: a change’s stream keeps the line that put it up for a vote, as one quiet line naming who asked, with its stamp",
       "path": "/?demo=1#app/staging-demo-quiet/dev/proposals/900110",
-      "expectSelector": "[data-change-discussion] .gc-event[data-event=\"submitted\"][data-here][data-msg-id=\"900118\"]:has(div.gc-event-box > .dev-card-icon + .gc-event-text) span:has(> [data-event-sender]) + span > .gc-msg-time[title]",
-      "expectText": "Asked for approval",
+      "expectSelector": "#gc-thread-messages[data-language=\"change\"] .dev-request-event[data-change-event=\"submitted\"][data-msg-id=\"900118\"] > .dev-request-event-text > b + .dev-request-event-time[title]",
+      "expectText": "staging-demo-quiet-builder asked for approval",
       "visual": true,
       "impact": [
         "frontend/src/features/group-chat/**",
         "public/js/group-chat.js",
         "src/db/migrate.js"
       ]
-    },
-    {
-      "name": "A proposal's own Discussion names who put it up for a vote, where a person's message names its author",
-      "path": "/?demo=1#app/staging-demo-quiet/dev/proposals/900110",
-      "expectSelector": "[data-change-discussion] .gc-event[data-msg-id=\"900118\"] [data-event-sender]",
-      "expectText": "staging-demo-quiet-builder"
     },
     {
       "name": "A project's channel is what people said: where nobody has spoken it is the quiet card alone, with no line from Homeroom about a proposal, a merge or anything else",
@@ -4525,38 +4521,26 @@
     {
       "name": "#4269: a proposal's before/after shows its first screen and keeps the rest behind All 5 screens, with a phone capture in a device outline and an empty tile for a route with no production version",
       "path": "/#app/staging-demo-app/dev/proposals/900001",
-      "expectSelector": "#dev-topic-thread [data-topic-sheet=\"hero\"] [data-visuals-scope]:has(.usn-visual-more .usn-visual-phone):has(.usn-visual-empty) .usn-visual-more > .usn-visual-more-summary",
+      "expectSelector": "#dev-topic-thread [data-change-shots=\"legacy\"] [data-visuals-scope]:has(.usn-visual-more .usn-visual-phone):has(.usn-visual-empty) .usn-visual-more > .usn-visual-more-summary",
       "expectText": "All 5 screens"
-    },
-    {
-      "name": "A change opens its full overview with a single action band",
-      "path": "/#app/usernode-2d5619/dev/proposals/900801",
-      "expectSelector": "#dev-topic-thread .dev-topic-hero .gc-card-actions [data-card-menu]",
-      "expectText": "Discussion"
     },
     {
       "name": "#2327: an author can edit an underway proposal title; the draft's steps are the path it will take, its own Submitted for review step first",
       "path": "/?demo=1&conversation=discussion#app/usernode-2d5619/dev/proposals/990101",
-      "expectSelector": "body:has(.dev-step[data-note=\"review\"][data-req-state=\"waiting\"] ~ [data-note=\"votes\"] ~ [data-note=\"mergeability\"] ~ [data-note=\"checks\"] ~ [data-note=\"github\"]) .dev-topic-hero button[aria-label=\"Edit title\"]",
+      "expectSelector": "body:has(.dev-step[data-note=\"review\"][data-req-state=\"waiting\"] ~ [data-note=\"votes\"] ~ [data-note=\"mergeability\"] ~ [data-note=\"checks\"] ~ [data-note=\"github\"]) #gc-thread-head .dev-change-root button[aria-label=\"Edit title\"]",
       "expectText": "Your in-progress session"
     },
     {
-      "name": "#2327: an author can also edit a proposal title in review",
+      "name": "#2327: an author can also edit a proposal title in review; a full change page has its ⋯ and no build surface of its own (#4455)",
       "path": "/#app/usernode-2d5619/dev/proposals/900801",
-      "expectSelector": ".dev-topic-hero button[aria-label=\"Edit title\"]",
+      "expectSelector": "body:has(#gc-thread-bar [data-card-menu]) #dev-topic-thread:not(:has([data-change-build])):not(:has(#dc-view)) .dev-change-root button[aria-label=\"Edit title\"]",
       "expectText": "Staging demo: pills fall back after a build"
     },
     {
-      "name": "A full change page has the Discussion sheet and the Open build pill, and no build surface of its own",
-      "path": "/#app/usernode-2d5619/dev/proposals/900801",
-      "expectSelector": "#dev-topic-thread:not(:has([data-change-build])):not(:has(#dc-view)) [data-change-conversation=\"900801\"][aria-label=\"Discussion\"]",
-      "expectText": "Open build"
-    },
-    {
-      "name": "A change in review has its group discussion in the Discussion sheet under the card, with no tabs, in the general chat's language: a person's message as a named row with no bubble (#2783), a platform notice as a message from the app with one box",
+      "name": "#4455: a change’s replies are Messages rows and its notices single lines, in one stream under \"N replies\", with the reply box at the foot of the sheet",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000043",
-      "expectSelector": "[data-change-conversation] [data-change-discussion]:has([data-language=\"chat\"] > .gc-msg:not(.gc-msg-self) .gc-msg-content):not(:has(.gc-bubble)):has(.gc-event[data-event=\"notice\"][data-here] .gc-event-text) #gc-thread-input",
-      "expectText": "Visible to the group"
+      "expectSelector": ".dev-change:has(.dev-change-stream > .gc-msg:not(.gc-msg-self) .gc-msg-content):has(.dev-change-stream > [data-change-event=\"notice\"]) .messages-composer-card #gc-thread-input",
+      "expectText": "replies"
     },
     {
       "name": "#2038: an approved proposal being brought up to date says so on the card",

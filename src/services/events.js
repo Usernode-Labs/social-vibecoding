@@ -63,6 +63,10 @@ const EVENT_TYPES = Object.freeze({
   // The app's lock toggled (POST /api/apps/:slug/lock), with { locked }.
   // Read back by services/app-notices.js with the settings changes above.
   APP_LOCK_CHANGED: 'app_lock_changed',
+  // A project's custom domain (#4405, services/app-domains.js): metadata
+  // carries { hostname, action } with action one of added | live | removed
+  // | failed | disabled | enabled. Read back by services/app-notices.js.
+  APP_DOMAIN_CHANGED: 'app_domain_changed',
   // The Friday card (services/weekly-digest.js), its data as metadata. A
   // channel carries no activity, so this is where the card lives, and a
   // project's Workshop shows it for a few days (services/app-notices.js).
@@ -234,6 +238,23 @@ const EVENT_TYPES = Object.freeze({
   //   bot_build_nudged     a nudge, once it ended; adds { committed }
   BOT_BUILD_NO_CHANGE: 'bot_build_no_change',
   BOT_BUILD_NUDGED: 'bot_build_nudged',
+  // #4449: Live, the new app shown taking shape while its first version is
+  // built (services/first-version-live.js). Written to compare build times
+  // with and without the watcher, and to see how often Live showed nothing.
+  //   first_version_build_turn  every first version's build turn, once it
+  //                        ends: { runId, buildTurnMs (its first turn),
+  //                        turnsMs (with a nudge), nudged, watcher (whether
+  //                        the watcher ran), setting (whether Live was on) }
+  //   live_build_stream    per run, when its watcher stops: { runId,
+  //                        restartsKept, restartsFailed, goodFrame (ever had
+  //                        one), memoryStop, stoppedWhy, bytes }
+  //   live_build_opened    a member opened Live: { runId }
+  //   live_build_watched   how long they watched, sent when they close or
+  //                        hide it: { runId, seconds, goodFrame }
+  FIRST_VERSION_BUILD_TURN: 'first_version_build_turn',
+  LIVE_BUILD_STREAM: 'live_build_stream',
+  LIVE_BUILD_OPENED: 'live_build_opened',
+  LIVE_BUILD_WATCHED: 'live_build_watched',
 });
 
 // Record a single analytics event. Fire-and-forget — returns a promise

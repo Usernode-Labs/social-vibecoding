@@ -94,7 +94,11 @@ export interface Quote {
   targetId: number | null;
 }
 
-export type MessageKind = 'message' | 'system' | 'vote' | 'spec_share';
+/**
+ * `github` (#4453) is a comment on a request's GitHub issue, which a request's
+ * page draws in the same stream as its thread (AppView._requestThreadRows).
+ */
+export type MessageKind = 'message' | 'system' | 'vote' | 'spec_share' | 'github';
 
 /**
  * B9: a request's chip on its message (homeroom-bot-chat.js setStatus).
@@ -351,6 +355,12 @@ export interface TranscriptMessage {
    * version" message in a project's channel. Absent or null on every other row.
    */
   openApp?: { label: string; target: string } | null;
+  /**
+   * #4455: a system row that announces the preview build, from its metadata:
+   * `started` (a change's page leaves it out: its Testing card says so) or
+   * `ready` ("The preview is ready · Try it"). Absent on every other row.
+   */
+  stagingBuild?: 'started' | 'ready';
   /** Spec-share rows only — see SpecShareView. Null on every other kind. */
   specShare: SpecShareView | null;
   /**
@@ -393,6 +403,14 @@ export interface TranscriptMessage {
   threadRoot?: boolean;
   /** Set on a reply-thread reply; the general transcript draws it as activity. */
   replyOf?: ReplyInStream | null;
+  /** #4453: a `github` row's stable key (GitHub's comment id, or its place). */
+  key?: string;
+  /**
+   * #4453: Homeroom bot's spec on a `github` row (`AppView._botSpecOf`): its
+   * title and its text, as markdown and rendered. A request's page draws it
+   * as a spec card and an event line, not as a comment.
+   */
+  githubSpec?: { title: string | null; markdown: string; html: string } | null;
 }
 
 /**
@@ -451,7 +469,19 @@ export interface TranscriptLead {
    * whoever did it, the general chat's language. Absent or 'flat', the
    * thread keeps its flat named rows and centred lines (an issue's page).
    */
-  language?: 'chat' | 'flat';
+  language?: 'chat' | 'flat' | 'request' | 'change';
+  /**
+   * #4453: a request's page. `loaded` once its thread's history has
+   * answered; `githubMore` when GitHub returned only the newest comments,
+   * with the issue's page to read the rest on.
+   */
+  request?: { loaded: boolean; githubMore?: { url: string | null } | null } | null;
+  /**
+   * #4455: a change's page. `loaded` once its thread's history has answered;
+   * `closed` is what the page says instead of a stream while nobody else can
+   * see the change (its thread is not read then).
+   */
+  change?: { loaded: boolean; closed: string | null } | null;
   /**
    * The general chat only: where the reader's reading stood when the
    * channel opened (`GroupChat._takeUnreadMark`), the newest message read

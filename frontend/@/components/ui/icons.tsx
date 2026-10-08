@@ -569,6 +569,17 @@ export const CogIcon = stroked('CogIcon', [
   'M15 12a3 3 0 11-6 0 3 3 0 016 0z',
 ]);
 
+/**
+ * A globe, for a project's custom domain (#4405): the Settings & rules row
+ * that opens the Custom domain dialog. Renders behind state (the row shows
+ * only to whoever manages the project), so it is on the expected-absent list
+ * in tests/shell-icon-set.test.js.
+ */
+export const GlobeIcon = stroked(
+  'GlobeIcon',
+  'M12 21a9 9 0 100-18 9 9 0 000 18zm0 0c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3M3.6 9h16.8M3.6 15h16.8',
+);
+
 export const SunIcon = stroked(
   'SunIcon',
   'M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z',

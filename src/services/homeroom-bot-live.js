@@ -1715,6 +1715,17 @@ const FIRST_VERSION_DESIGN_LINES = Object.freeze([
   '`?demo=1` only, and idempotent, as the platform conventions\' "Staging mock data" says.',
 ]);
 
+// #4387: the people waiting on a first version see what it is adding now,
+// as its build line's note ("Building it · Adding the tier rows"): the
+// phrase is read off this command in the turn's stream
+// (services/first-version-screens.js captionOf).
+const FIRST_VERSION_PROGRESS_LINES = Object.freeze([
+  '',
+  'The people waiting for this app can see what you are working on. As you start each point of the approved plan, run',
+  '`usernode-progress "Adding <what>"` once, with a short phrase in plain words that starts with "Adding" and is at most',
+  '40 characters, for example `usernode-progress "Adding the tier rows"`. It only shows them the phrase.',
+]);
+
 /**
  * A first version's design lines, for a game starter when it has one: what
  * the repository already is, and that its look, not its game, is placeholder.
@@ -1769,6 +1780,7 @@ function buildPrompt({
     planNoteText(buildNote, firstVersion),
     ...specBlock,
     ...(firstVersion ? firstVersionDesignLines(starter) : []),
+    ...(firstVersion ? FIRST_VERSION_PROGRESS_LINES : []),
     ...stageGuidanceLines('build', { firstVersion, guidance }),
     '',
     // The rules every on-platform build works under (services/build-contract.js):
@@ -2068,7 +2080,12 @@ async function draftSpec({
   // How much its drawn screens hold (spec-html.js screenStats): measured,
   // never cut.
   const screens = read.specHtml ? specHtml.screenStats(read.specHtml) : [];
-  return { ok: true, specMd, version, costUsd, ...turn, ...(screens.length ? { screens } : {}) };
+  // #4387: the HTML too, for a first version's first look (buildAndPropose
+  // `onFirstLook`); never carried onto a result (specOut).
+  return {
+    ok: true, specMd, version, costUsd, ...turn, ...(screens.length ? { screens } : {}),
+    ...(read.specHtml ? { specHtml: read.specHtml } : {}),
+  };
 }
 
 // ── The nudge: one more turn for a build that stopped before it built ────
@@ -2420,6 +2437,15 @@ async function buildAndPropose({
   // onState, budgetCheck }. Neither for any other build.
   harnessOf = null,
   review = null,
+  // #4387: a first version's first look, handed the spec's HTML and the
+  // worker it can be drawn in once the spec is written ({ specHtml,
+  // containerName }). Started, never waited on: the build goes straight on.
+  onFirstLook = null,
+  // #4449: a first version's Live (services/first-version-live.js), handed
+  // the worker as its build turn starts ({ containerName }) and answering
+  // { end({ buildTurnMs, turnsMs, nudged }) }, called once the build turn
+  // (and its nudge) is over. Never waited on: the build goes straight on.
+  onBuildTurn = null,
 }) {
   const { worker, sessions, agentTurn, sessionLifecycle, activeWorkers } = deps;
   const buildStartedMs = Date.now();
@@ -2603,6 +2629,12 @@ async function buildAndPropose({
         log.warn('homeroom-bot', 'Posting the spec failed (building anyway)', { sessionId: session.id, err: err.message });
       }
     }
+    if (onFirstLook && spec.specHtml) {
+      const drawIn = containerName;
+      void Promise.resolve()
+        .then(() => onFirstLook({ specHtml: spec.specHtml, containerName: drawIn }))
+        .catch((err) => log.warn('homeroom-bot', 'The first look could not be drawn', { sessionId: session.id, err: err.message }));
+    }
   } else {
     log.warn('homeroom-bot', 'No spec; building from the plan', { sessionId: session.id, error: spec.error });
     if (spec.stopped) {
@@ -2648,8 +2680,22 @@ async function buildAndPropose({
   // time-outs, most of them cheap, with nothing recorded about why.
   const progress = lastActivity();
   const commitMsg = `Homeroom bot: #${issueNumber} ${title}`.slice(0, 120);
+  // #4449: Live watches the build turn, beside it, from its start to its end.
+  let liveTurn = null;
+  if (onBuildTurn) {
+    try { liveTurn = onBuildTurn({ containerName }) || null; } catch { liveTurn = null; }
+  }
+  let buildTurnMs = null;
+  const endLive = () => {
+    const turn = liveTurn;
+    liveTurn = null;
+    if (!turn || typeof turn.end !== 'function') return;
+    void Promise.resolve()
+      .then(() => turn.end({ buildTurnMs, turnsMs: Date.now() - turnStartedMs, nudged: !!noChange?.nudged }))
+      .catch(() => {});
+  };
   let { routed, stopped } = await runBuildTurn({ prompt, budgetMs: turnBudgetMs, commitMsg, progress });
-  const buildTurnMs = Date.now() - turnStartedMs;
+  buildTurnMs = Date.now() - turnStartedMs;
 
   // What the build turns cost, a nudge's with the build's, and their ledger
   // ids. Both turns, the spec's and the build's, are the build's cost (and
@@ -2670,7 +2716,10 @@ async function buildAndPropose({
   // before it is proposed. A build stopped for this (noteRequestMerged ends
   // its turn) is a skip, not a failure.
   const skipped = await skipNow();
-  if (skipped) return { ...(await fail(skipped)), skipped, costUsd };
+  if (skipped) {
+    endLive();
+    return { ...(await fail(skipped)), skipped, costUsd };
+  }
 
   // A turn that ended cleanly and changed nothing: one nudge, in this
   // session, on what is left of the clock (buildNudgePrompt). What it said
@@ -2717,9 +2766,13 @@ async function buildAndPropose({
     }
     if (noChange.nudged) {
       const skippedAfterNudge = await skipNow();
+      if (skippedAfterNudge) endLive();
       if (skippedAfterNudge) return { ...(await fail(skippedAfterNudge)), skipped: skippedAfterNudge, costUsd };
     }
   }
+
+  // The build turn, and its nudge, are over: so is Live.
+  endLive();
 
   const result = (routed && routed.result) || {};
   if (stopped) {
@@ -2947,6 +3000,7 @@ module.exports = {
   buildSeesImages,
   revisionDesignText,
   FIRST_VERSION_DESIGN_LINES,
+  FIRST_VERSION_PROGRESS_LINES,
   guidanceLines,
   CONTENT_RULES_SLUG,
   REQUEST_IS_DATA_LINES,

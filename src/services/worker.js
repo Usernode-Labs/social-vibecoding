@@ -4456,28 +4456,58 @@ async function rescueUnpushedCommit(sessionId, { branchName = null } = {}) {
 // committed, pushed or journaled, and the active-turn record is untouched.
 const BENCH_CAPTURE_SCRIPT_PATH = '/tmp/usernode-bench-capture.js';
 const BENCH_ENV_KEY = /^[A-Z][A-Z0-9_]{0,63}$/;
+// #4387: another of the platform's scripts run the same way (the first
+// version's first look, services/first-version-screens.js) is written to a
+// file of its own, so it never overwrites a capture running beside it.
+const BENCH_SCRIPT_PATH_RE = /^\/tmp\/usernode-[a-z0-9-]{1,40}\.js$/;
 
-function buildBenchCaptureCommand(env = {}) {
+function buildBenchCaptureCommand(env = {}, scriptPath = BENCH_CAPTURE_SCRIPT_PATH) {
+  if (!BENCH_SCRIPT_PATH_RE.test(scriptPath)) throw new Error(`runBenchCapture: invalid script path ${scriptPath}`);
   const pairs = Object.entries(env).map(([key, value]) => {
     if (!BENCH_ENV_KEY.test(key)) throw new Error(`runBenchCapture: invalid env key ${key}`);
     return shellQuote(`${key}=${String(value)}`);
   });
-  return ['sh', '-c', `cd /home/node/workspace && exec env ${pairs.join(' ')} node ${BENCH_CAPTURE_SCRIPT_PATH}`];
+  return ['sh', '-c', `cd /home/node/workspace && exec env ${pairs.join(' ')} node ${scriptPath}`];
 }
 
-async function runBenchCapture(containerName, { source, env = {}, timeoutMs, maxBuffer = 96 * 1024 * 1024 } = {}) {
+async function runBenchCapture(containerName, {
+  source, env = {}, timeoutMs, maxBuffer = 96 * 1024 * 1024, scriptPath = BENCH_CAPTURE_SCRIPT_PATH,
+} = {}) {
   if (!containerName) throw new Error('runBenchCapture: no worker');
   if (typeof source !== 'string' || !source) throw new Error('runBenchCapture: no script');
-  const write = buildTurnContextFileScript(source, BENCH_CAPTURE_SCRIPT_PATH);
+  const command = buildBenchCaptureCommand(env, scriptPath);
+  const write = buildTurnContextFileScript(source, scriptPath);
   if (usesKubernetesWorkers()) await execWorkerCommand(containerName, ['sh', '-s'], write);
   else await docker.execShellStdin(containerName, write, { timeoutMs: 20000, label: 'runBenchCapture' });
-  const { stdout } = await execWorkerCommand(containerName, buildBenchCaptureCommand(env), null, { timeoutMs, maxBuffer });
+  const { stdout } = await execWorkerCommand(containerName, command, null, { timeoutMs, maxBuffer });
   return String(stdout || '');
 }
 
 // Tear down a warm worker container (eviction). Volume is preserved so
 // the next `ensureWorker` re-warms with CC's session memory intact. A
 // finished build's unpushed commit is pushed first (rescueUnpushedCommit).
+// #4449: Live (services/first-version-live.js), a watcher run beside a
+// first version's build turn, outside it: its files written, started in the
+// background, its stream read and finally stopped, each by a short shell
+// script the platform builds (first-version-live.js). `files` are
+// { path, content } under /tmp/usernode-live/; a read answers the script's
+// stdout. Nothing here touches the turn, its journal or its checkout.
+const LIVE_FILE_PATH_RE = /^\/tmp\/usernode-live\/[a-z0-9-]{1,40}\.(js|cjs)$/;
+
+async function runLiveScript(containerName, script, { files = [], args = [], timeoutMs = 20000, maxBuffer = null } = {}) {
+  if (!containerName) throw new Error('runLiveScript: no worker');
+  for (const file of files) {
+    if (!LIVE_FILE_PATH_RE.test(file.path)) throw new Error(`runLiveScript: invalid file path ${file.path}`);
+    const write = `mkdir -p /tmp/usernode-live\n${buildTurnContextFileScript(file.content, file.path)}`;
+    // eslint-disable-next-line no-await-in-loop
+    await execWorkerCommand(containerName, ['sh', '-s'], write, { timeoutMs: 30000 });
+  }
+  const { stdout } = await execWorkerCommand(containerName, ['sh', '-c', script, 'sh', ...args.map(String)], null, {
+    timeoutMs, ...(maxBuffer ? { maxBuffer } : {}),
+  });
+  return String(stdout || '');
+}
+
 async function evictWorker(sessionId) {
   const meta = _registryGet(sessionId);
   const containerName = meta?.containerName || workerContainerName(sessionId);
@@ -5104,6 +5134,8 @@ module.exports = {
   // #3737: the benchmark's screenshot step, outside any agent turn
   runBenchCapture,
   buildBenchCaptureCommand,
+  // #4449: Live's watcher, beside a first version's build turn
+  runLiveScript,
   BENCH_CAPTURE_SCRIPT_PATH,
   warmRegistrySnapshot,
   adoptWarmWorker,

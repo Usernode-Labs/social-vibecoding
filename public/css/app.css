@@ -15533,30 +15533,11 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-topic-transcript .st-section { margin: 0; }
 
 /* ── Discussion ──
-   The GitHub thread (an issue's, read-only) is the head's last sheet and
-   the app's own thread — `#gc-thread-messages`, the group chat's transcript
-   host — is dressed as the sheet after it. With both present they run
-   together as ONE sheet: the comments keep the top corners, the messages
-   keep the bottom ones, and the heading is drawn once. */
+   The app's own thread — `#gc-thread-messages`, the group chat's transcript
+   host — is dressed as the sheet after the head. A request's page is its own
+   layout (#4453, `.dev-request` below): its GitHub comments are rows of that
+   thread. */
 #gc-thread-head { display: block; }
-#dev-issue-comments:empty { display: none; }
-.dev-topic-gh-thread { display: flex; flex-direction: column; gap: 8px; }
-.dev-topic-gh-more { font-size: 12px; color: var(--text-muted); }
-.dev-topic-gh-more a { text-decoration: underline; }
-.dev-topic-gh-tag {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-  /* A softer pill than --bg-tertiary itself (QA 2026-09-24 Q20): 10px muted
-     type on the full #e3e3e6 is 4.33:1; at 60% over the bubble it is ~4.8 in
-     light and ~5.6 in dark, and it still reads as a tag. */
-  background: color-mix(in srgb, var(--bg-tertiary) 60%, transparent);
-  padding: 1px 6px;
-  border-radius: 999px;
-}
-#dev-issue-comments .dev-feed-msg { font-size: 13px; }
 
 /* ── The change page as the Workshop's Needs-you item ──────────────────
    topic/topic-head.tsx ChangeHero, StepsSheet and DetailsSheet. The hero
@@ -15807,26 +15788,6 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   .dev-topic-hero-summary { font-size: 16px; }
   .dev-step-vote-bar { flex-basis: 120px; }
 }
-#dev-issue-comments .dev-feed-msg-text { font-size: 13px; }
-/* #3490: Homeroom bot's spec, under its sentence (issue-comments.tsx
-   BotSpec). A card in the plane colour with one hairline, the spec's title
-   on it as a row's title (15 over the 13 of its label), folded as GitHub
-   folds it; open, the spec in the spec viewer's own typography. */
-.dev-issue-spec {
-  margin-top: 8px; border-radius: 14px; overflow: hidden;
-  background: var(--dc-sheet-solid); box-shadow: inset 0 0 0 1px var(--app-sheet-line);
-}
-.dev-issue-spec-head {
-  display: flex; align-items: center; gap: 10px; min-height: 44px;
-  padding: 10px 12px; cursor: pointer; list-style: none;
-}
-.dev-issue-spec-head::-webkit-details-marker { display: none; }
-.dev-issue-spec-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1 1 auto; }
-.dev-issue-spec-kicker { font-size: 13px; color: var(--text-muted); }
-.dev-issue-spec-title { font-size: 15px; font-weight: 650; line-height: 1.3; color: var(--text-primary); }
-.dev-issue-spec-chev { width: 18px; height: 18px; flex: none; color: var(--text-muted); transition: transform .15s ease; }
-.dev-issue-spec[open] .dev-issue-spec-chev { transform: rotate(180deg); }
-.dev-issue-spec-body { padding: 2px 12px 14px; border-top: 1px solid var(--app-sheet-line); padding-top: 12px; }
 /* The Workshop row's two-line preview names the spec after the sentence. */
 .dev-feed-comment-spec { display: block; margin-top: 2px; font-weight: 600; color: var(--text-primary); }
 #dev-topic-thread #gc-thread-messages {
@@ -15854,19 +15815,6 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   text-transform: uppercase;
   color: var(--text-muted);
 }
-/* Run the two halves of an issue's conversation together. */
-#gc-thread-head:has(#dev-issue-comments:not(:empty)) .dev-topic-comments {
-  border-bottom-left-radius: 0;
-  border-bottom-right-radius: 0;
-  padding-bottom: 6px;
-}
-#gc-thread-head:has(#dev-issue-comments:not(:empty)) + #gc-thread-messages {
-  margin-top: 0;
-  border-top-left-radius: 0;
-  border-top-right-radius: 0;
-  padding-top: 4px;
-}
-#gc-thread-head:has(#dev-issue-comments:not(:empty)) + #gc-thread-messages::before { content: none; }
 /* "Load earlier" as a quiet pill; the empty line as a muted centred note. */
 #dev-topic-thread #gc-thread-earlier {
   height: 26px;
@@ -15929,6 +15877,420 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 @media (max-width: 639px) {
   #dev-topic-thread .gc-msg > .min-w-0 { max-width: 100%; }
 }
+/* ═══════════════════════════════════════════════════════════════════════
+   #4453: A REQUEST'S PAGE, drawn as a Messages reply thread
+   (group-chat/thread-shell.tsx `RequestShell`). The "‹ Workshop" chip, then
+   ONE sheet, the one Messages opens a reply thread in: its header ("Request
+   #N", the category, ⋯), a scroller with the request as the root post
+   (dev-board/topic/request-head.tsx) and its replies under "N replies"
+   (group-chat/transcript.tsx `RequestRows`), and the thread's composer at
+   its foot.
+
+   Messages' tokens are only defined on `.messages-layout` and
+   `.dev-ws-discussion`, so they are defined here too, with the same values.
+   ═══════════════════════════════════════════════════════════════════════ */
+.dev-request {
+  --messages-surface: #ffffff;
+  --messages-surface-2: var(--bg-secondary);
+  --messages-hair: var(--border-light);
+  --messages-disc-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 780px;
+  height: 100%;
+  min-height: 0;
+  margin: 0 auto;
+  padding: 0 12px;
+  box-sizing: border-box;
+}
+.dark .dev-request {
+  --messages-surface: var(--dc-raised);
+  --messages-surface-2: #3a3a3c;
+  --messages-hair: rgba(255, 255, 255, 0.08);
+  --messages-disc-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+.dev-request-back { flex: 0 0 auto; display: flex; padding-left: 4px; }
+.dev-request-back:empty { display: none; }
+.dev-request-back .dev-topic-back { margin: 0 0 12px; }
+.dev-request-sheet { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.dev-request-bar { flex: 0 0 auto; }
+.dev-request-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.dev-request-bar .messages-thread-action { position: relative; }
+
+/* The root post: the request itself. */
+.dev-request-root { padding-top: 4px; padding-bottom: 14px; }
+.dev-request-title {
+  margin: 4px 0 6px;
+  font-size: 20px;
+  line-height: 1.25;
+  font-weight: 700;
+  color: var(--text-primary);
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+/* The asker's own words: a quote, set apart from what the page says. */
+.dev-request-ask {
+  margin: 2px 0 0;
+  padding: 2px 0 2px 12px;
+  border-left: 3px solid color-mix(in srgb, var(--text-muted) 40%, transparent);
+}
+.dev-request-ask-text { font-size: 15px; line-height: 1.5; color: var(--text-secondary); overflow-wrap: anywhere; }
+.dev-request-ask-text .dev-issue-body { font-size: inherit; color: inherit; }
+.dev-request-ask-text p,
+.dev-request-ask-text .dc-p { margin: 0 0 4px; }
+.dev-request-ask-text ul { margin: 0 0 4px; padding-left: 20px; list-style: disc; }
+.dev-request-ask-text ol { margin: 0 0 4px; padding-left: 20px; list-style: decimal; }
+.dev-request-ask-text strong { color: var(--text-primary); }
+/* The hub's own reveal, in the quote's text column; the caret turns over. */
+.dev-request-more.dev-ws-reveal-start { margin-top: 4px; padding-left: 0; width: auto; }
+.dev-request-more .dev-ws-reveal-chev { transition: transform 240ms cubic-bezier(.32, .72, 0, 1); }
+@media (prefers-reduced-motion: reduce) {
+  .dev-request-more .dev-ws-reveal-chev { transition: none; }
+}
+
+/* Where it stands: a card on the sheet, the stepper, a sentence, the next step. */
+.dev-request-status {
+  margin-top: 10px;
+  max-width: 560px;
+  border-radius: 16px;
+  padding: 14px 14px 12px;
+  background: var(--messages-surface);
+}
+.dev-request-steps {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+}
+.dev-request-step { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 5px; min-width: 0; }
+.dev-request-step::before {
+  content: '';
+  position: absolute;
+  top: 10px;
+  left: 24px;
+  right: 4px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--messages-hair);
+}
+.dev-request-step:last-child::before { display: none; }
+.dev-request-step[data-state="done"]::before { background: color-mix(in srgb, var(--text-muted) 45%, transparent); }
+.dev-request-step-mark {
+  position: relative;
+  z-index: 1;
+  width: 22px;
+  height: 22px;
+  box-sizing: border-box;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--messages-hair);
+  background: var(--messages-surface);
+  color: var(--text-muted);
+}
+.dev-request-step-mark svg { width: 13px; height: 13px; stroke-width: 2.5; }
+/* Done: a muted check ring, no fill. Now: the lit ring and dot. Next: a hairline. */
+.dev-request-step[data-state="done"] .dev-request-step-mark { border-color: color-mix(in srgb, var(--text-muted) 55%, transparent); }
+.dev-request-step[data-state="now"] .dev-request-step-mark { border-color: var(--lit-ink); background: var(--lit-tint); }
+.dev-request-step[data-state="now"] .dev-request-step-mark::after {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--lit-ink);
+}
+.dev-request-step-label { font-size: 13px; font-weight: 600; color: var(--text-muted); }
+.dev-request-step[data-state="now"] .dev-request-step-label { color: var(--text-primary); font-weight: 700; }
+.dev-request-say { margin: 0; font-size: 15px; font-weight: 600; color: var(--text-primary); }
+.dev-request-fine { margin: 2px 0 0; font-size: 13px; color: var(--text-muted); }
+.dev-request-actions { margin-top: 12px; display: flex; gap: 8px; }
+.dev-request-primary {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent-ink);
+  background: var(--accent);
+  padding: 8px 16px;
+  border-radius: 999px;
+  text-decoration: none;
+}
+.dev-request-primary:hover { background: var(--accent-light); }
+.dev-request-primary:disabled { opacity: .55; cursor: default; }
+
+/* Each spec at its newest version, hanging off the request as a shared item. */
+.dev-request-specs.messages-object-list { margin-top: 8px; max-width: 560px; }
+.dev-request-read {
+  appearance: none;
+  flex: 0 0 auto;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--messages-surface-2);
+  padding: 7px 14px;
+  border-radius: 999px;
+}
+.dev-request-read:disabled { opacity: .6; cursor: default; }
+
+/* The stream: no sheet of its own (the sheet is the thread's), Messages'
+   row metrics, and the viewer's own replies not set apart. */
+#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) {
+  margin: 0;
+  max-width: none;
+  padding: 0 0 8px;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  display: block;
+}
+#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"])::before { content: none; }
+#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg { padding: 8px 16px; gap: 12px; }
+#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg[data-grouped] { padding-top: 1px; padding-bottom: 1px; }
+#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 {
+  flex: 1 1 0%;
+  max-width: 100%;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg-self > .min-w-0 { background: transparent; }
+#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg-username-self { color: inherit; }
+#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .flex { gap: 8px; margin-bottom: 0; }
+#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .flex > .truncate { font-size: 17px; }
+#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .flex > .shrink-0 { font-size: 15px; }
+#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .leading-snug { font-size: 17px; line-height: 1.3; }
+#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > [aria-hidden="true"] {
+  width: 36px;
+  height: 36px;
+  font-size: 13px;
+  border-radius: 12px;
+  margin-top: 0;
+}
+#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg-time { font-size: inherit; }
+#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg-content {
+  font-size: 17px;
+  line-height: 1.3;
+  color: var(--text-primary);
+}
+/* Messages' own desktop scale: 15 over 13, the words at 15. */
+@media (min-width: 768px) {
+  #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .flex > .truncate { font-size: 15px; }
+  #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .flex > .shrink-0 { font-size: 13px; }
+  #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg > .min-w-0 > .leading-snug,
+  #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg-content { font-size: 15px; line-height: 1.4; }
+}
+.gc-msg-via { color: var(--text-muted); white-space: nowrap; }
+/* Something that happened: one muted line, its glyph in the avatar column. */
+#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .dev-request-event,
+.dev-request-event {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 6px 16px;
+  text-align: left;
+  font-size: 15px;
+  color: var(--text-muted);
+}
+.dev-request-event-glyph { flex: 0 0 36px; text-align: center; font-size: 15px; }
+.dev-request-event-text { min-width: 0; overflow-wrap: anywhere; }
+.dev-request-event-text b { color: var(--text-primary); font-weight: 600; }
+.dev-request-event-time { white-space: nowrap; }
+.dev-request-event-link {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+.dev-request-event-link:hover { text-decoration: underline; }
+@media (max-width: 640px) {
+  .dev-request { padding: 0 8px; }
+  .dev-request-title { font-size: 18px; }
+  .dev-request-step-label { font-size: 12px; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   #4455: A CHANGE'S PAGE, the same thread (`.dev-request.dev-change`), with
+   the change as its root post (dev-board/topic/change-head.tsx): the title,
+   the summary as the request page's quote, one row with the requests it
+   addresses and the thanks, then two cards one above the other (Votes, then
+   Testing: each its name and figure over its bar, its button beside them and
+   one line under), then the Before and after card. Its stream is the
+   request page's (`[data-language="change"]` above).
+
+   A bar still moving is drawn in the lit ink; a finished one is full and
+   green, with a green check and figure (AGENTS.md, "a finished progress bar
+   may be green"): done is good news here, not a state to quieten.
+   ═══════════════════════════════════════════════════════════════════════ */
+.dev-change-via { margin-left: -4px; color: var(--text-muted); }
+.dev-change-stale { margin: 6px 0 0; font-size: 13px; color: var(--text-muted); }
+.dev-change-root .dev-topic-hero-more { margin-top: 6px; }
+.dev-change-root .dev-change-issues { margin-top: 10px; }
+
+/* The requests it addresses, and the thanks: one row. */
+.dev-change-addresses { margin-top: 10px; }
+.dev-change-chips {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 6px;
+  row-gap: 6px;
+}
+.dev-change-chips-lead { grid-area: 1 / 1; font-size: 13px; color: var(--text-muted); }
+.dev-change-chips-first { grid-area: 1 / 2; min-width: 0; display: flex; align-items: center; gap: 6px; }
+.dev-change-chips .dev-topic-issue { flex: 0 1 auto; min-width: 0; max-width: 100%; }
+.dev-change-reqs-more { flex: none; }
+/* The thanks host is `display: contents`, so the button's wrap is the cell. */
+.dev-change-chips .dev-change-thanks { grid-area: 1 / 3; justify-self: end; margin-left: 4px; }
+.dev-change-chips:not(:has(.dev-change-chips-first)) .dev-change-thanks { grid-area: 1 / 1 / 2 / -1; justify-self: start; margin-left: 0; }
+.dev-change-chips-rest {
+  grid-area: 2 / 2 / 3 / -1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* Votes, then Testing: two cards in the Messages surface. */
+.dev-change-pair { margin-top: 12px; display: grid; gap: 8px; }
+.dev-change-gate {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 16px;
+  padding: 12px 12px 12px 14px;
+  border-radius: 16px;
+  background: var(--messages-surface);
+}
+.dev-change-gate-main { min-width: 0; }
+.dev-change-gate-act { display: flex; align-items: center; gap: 8px; }
+.dev-change-gate-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; line-height: 1.3; }
+.dev-change-gate-name { display: inline-flex; align-items: center; gap: 6px; font-size: 15px; font-weight: 600; color: var(--text-primary); }
+.dev-change-gate-check { width: 14px; height: 14px; color: var(--state-ok); stroke-width: 2.5; }
+.dev-change-gate-figure { font-size: 13px; color: var(--text-muted); font-variant-numeric: tabular-nums; text-align: right; }
+.dev-change-gate[data-tone="ask"] .dev-change-gate-figure { color: var(--accent); font-weight: 600; }
+.dev-change-gate[data-tone="done"] .dev-change-gate-figure { color: var(--state-ok); font-weight: 600; }
+.dev-change-gate[data-tone="bad"] .dev-change-gate-figure { color: var(--state-blocked); font-weight: 600; }
+.dev-change-gate[data-tone="warn"] .dev-change-gate-figure { color: var(--state-attention); font-weight: 600; }
+.dev-change-bar { margin-top: 8px; height: 8px; display: flex; gap: 3px; }
+.dev-change-bar-seg {
+  position: relative;
+  height: 100%;
+  min-width: 6px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--text-muted) 16%, transparent);
+}
+.dev-change-bar-fill { position: absolute; inset: 0 auto 0 0; border-radius: inherit; transition: width 400ms cubic-bezier(.32, .72, 0, 1); }
+.dev-change-bar-fill[data-state="moving"],
+.dev-change-gate[data-done="false"] .dev-change-bar-fill[data-state="done"] { background: var(--lit-ink); }
+.dev-change-gate[data-done="true"] .dev-change-bar-fill[data-state="done"] { background: var(--state-ok); }
+.dev-change-bar-fill[data-state="bad"] { background: var(--state-blocked); }
+.dev-change-gate-note { grid-column: 1 / -1; margin: 8px 0 0; font-size: 13px; line-height: 1.4; color: var(--text-muted); }
+.dev-change-gate-link {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  color: var(--accent);
+}
+.dev-change-gate-link:hover { text-decoration: underline; }
+@media (prefers-reduced-motion: reduce) {
+  .dev-change-bar-fill { transition: none; }
+}
+
+/* The cards' buttons at Messages' size: Preview a neutral pill, the
+   re-run the accent one; Vote is the card's own picker button. */
+.dev-change-gate-act .gc-vote-btn {
+  height: 34px;
+  padding: 0 14px;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.dev-change-gate-act .gc-vote-btn svg { width: 16px; height: 16px; }
+.dev-change-gate-act .gc-vote-btn-preview {
+  color: var(--text-primary);
+  background: var(--messages-surface-2);
+  border-color: transparent;
+}
+.dev-change-gate-act .gc-vote-btn-preview:hover { background: var(--accent-tint); color: var(--accent); }
+.dev-change-gate-act .gc-conflict-badge { font-size: 13px; }
+/* The thanks, on the Addresses row: a quiet chip, as the row's other chips. */
+.dev-change-chips .dev-change-thanks > .gc-vote-btn {
+  height: 26px;
+  padding: 0 10px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--messages-surface);
+  border-color: var(--messages-hair);
+}
+.dev-change-chips .dev-change-thanks > .gc-vote-btn:hover { color: var(--accent); background: var(--accent-tint); }
+.dev-change-chips .dev-thanks-tail { display: none; }
+
+/* Before and after: the viewer specs use, its switch beside the title. */
+.dev-change-card-name { flex: 1 1 auto; min-width: 0; font-size: 15px; font-weight: 600; color: var(--text-primary); }
+.dev-change-shots { margin-top: 8px; border-radius: 16px; overflow: hidden; background: var(--messages-surface); }
+.dev-change-shots .shots-viewer { border-radius: 0; box-shadow: none; background: transparent; }
+.dev-change-shots .shots-bar { padding: 10px 10px 8px 14px; }
+.dev-change-shots .shots-stage { margin: 0 10px; border-radius: 12px; border: 0; }
+.dev-change-shots .shots-view-notes { padding: 12px 14px 4px; }
+.dev-change-shots .shots-claims { padding: 0 14px 12px; }
+.dev-change-shots-plain { padding: 12px 14px 14px; }
+.dev-change-shots-line { margin: 8px 0 0; display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text-muted); }
+.dev-change-shots-tiles { margin-top: 8px; }
+.dev-change-closed-note { margin: 0; padding: 6px 16px 12px; font-size: 15px; color: var(--text-muted); }
+
+/* Shot details, in the Details sheet. */
+.dev-shot-details-claims { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.dev-shot-details-meta, .dev-shot-details-flow { margin-top: 2px; color: var(--text-muted); }
+.dev-shot-details-builds { margin: 10px 0 0; display: flex; flex-wrap: wrap; gap: 6px; font-size: 12px; color: var(--text-muted); }
+
+@media (max-width: 640px) {
+  /* The requests take the row's width; the thanks goes on a line of its own. */
+  .dev-change-chips { grid-template-columns: auto minmax(0, 1fr); }
+  .dev-change-chips .dev-change-thanks { grid-area: 3 / 1 / 4 / -1; justify-self: start; margin-left: 0; }
+  .dev-change-chips:not(:has(.dev-change-chips-first)) .dev-change-thanks { grid-area: 1 / 1 / 2 / -1; }
+  /* The post's body takes the sheet's width: a small avatar beside the
+     name, then the title, the summary and its cards at full width. */
+  .dev-change-root { position: relative; display: block; }
+  .dev-change-root > [aria-hidden="true"]:first-child {
+    position: absolute;
+    left: 12px;
+    top: 4px;
+    width: 24px;
+    height: 24px;
+    border-radius: 8px;
+    font-size: 11px;
+  }
+  .dev-change-root .messages-message-head { padding-left: 32px; min-height: 24px; align-items: center; }
+  /* A taller frame for a shot on a phone. */
+  .dev-change-shots .shots-stage { margin: 0 8px; aspect-ratio: 4 / 5; }
+}
+
 /* ── The Workshop ──────────────────────────────────────────────────
    features/dev-board/workshop/workshop.tsx. The lander's own chrome:
    the strips above the themes, the theme cards, the folded rows inside
