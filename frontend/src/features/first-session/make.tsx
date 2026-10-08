@@ -145,7 +145,7 @@ const ARRIVED = 'translate-y-0 opacity-100 transition-[transform,opacity] durati
 const HINT = 'pb-1 text-xs text-zinc-500 dark:text-zinc-400';
 const NEEDED = 'pb-1 text-xs text-red-700 dark:text-red-400';
 // What stands in a template's blank, and the field for their own words there.
-const BLANK = 'rounded-md bg-violet-50 px-1.5 py-px font-semibold text-violet-700 [box-decoration-break:clone] dark:bg-violet-950 dark:text-violet-300';
+const BLANK = 'rounded-md bg-violet-50 px-1 py-px font-semibold text-violet-700 [box-decoration-break:clone] dark:bg-violet-950 dark:text-violet-300';
 const BLANK_FIELD = 'mx-0.5 inline-block w-[9.5em] max-w-full rounded-md border-0 bg-violet-50 px-1.5 align-baseline text-[17px] font-semibold leading-[26px] text-violet-700 placeholder-zinc-500 shadow-[inset_0_-2px_0_var(--accent)] focus:outline-none dark:bg-violet-950 dark:text-violet-300';
 // The game's box for the rest of the sentence: a field, plainly, ringed in
 // the accent while it is empty so it is the next thing to do.
@@ -573,7 +573,7 @@ export function MakeScreen({
                       />
                     </>
                   ) : null}
-                  <div className="mb-1 mt-3 flex flex-wrap gap-2" role="group" aria-label="Choices">
+                  <div className="mb-1 mt-3 flex flex-wrap gap-1.5" role="group" aria-label="Choices">
                     {chips.map((c) => (
                       <Chip
                         key={c.key}
@@ -581,7 +581,7 @@ export function MakeScreen({
                         selected={choice === c.key}
                         data-make-choice={c.key}
                         onClick={() => pickChoice(c.key)}
-                        className={choice === c.key ? 'px-3.5' : `px-3.5 ${TILE_OFF}`}
+                        className={choice === c.key ? 'px-3' : `px-3 ${TILE_OFF}`}
                       >
                         {c.label}
                       </Chip>

@@ -445,7 +445,7 @@ test('the game\'s box reads as a field to type in, and the tiles are two by two'
   assert.match(src, /<div className="grid grid-cols-2 gap-2" role="group" aria-label="Ideas">/);
   // The choices are the shell's chip, and wrap.
   assert.match(src, /import \{ Chip \} from '@\/components\/ui\/chip';/);
-  assert.match(src, /<div className="mb-1 mt-3 flex flex-wrap gap-2" role="group" aria-label="Choices">/);
+  assert.match(src, /<div className="mb-1 mt-3 flex flex-wrap gap-1.5" role="group" aria-label="Choices">/);
 });
 
 test('the make screen sends the device\'s time zone with Make it, so the sketch\'s today is the maker\'s', () => {
