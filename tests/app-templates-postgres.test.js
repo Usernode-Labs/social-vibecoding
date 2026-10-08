@@ -241,57 +241,123 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
     });
   });
 
-  await t.test('a grocery list: aisles, ticked in place, aisles in the store\'s order, and who did what', async () => {
-    const all = (d) => d.aisles.flatMap((a) => a.items).concat(d.other);
-    await run('grocery-list', '/api/list', (d) => demo(all(d)), async (app) => {
-      let list = (await app.call('GET', '/api/list', { as: ada })).data;
-      assert.deepEqual(list.aisles.map((a) => a.name),
-        ['Produce', 'Bakery', 'Dairy & eggs', 'Meat & fish', 'Pantry', 'Frozen', 'Drinks', 'Household'], 'a new list has the usual aisles');
-      const dairy = list.aisles.find((a) => a.name === 'Dairy & eggs').id;
-      const milk = await app.call('POST', '/api/items', { as: ada, body: { name: 'Oat milk', note: ' 2 cartons ', aisleId: dairy } });
-      assert.equal(milk.status, 201);
-      const twice = await app.call('POST', '/api/items', { as: grace, body: { name: 'oat MILK' } });
-      assert.deepEqual(twice.data, { id: milk.data.id, already: true }, 'still needed, so it is not added twice');
-      assert.equal((await app.call('POST', '/api/items', { as: ada, body: { name: '' } })).status, 400);
-      const loose = await app.call('POST', '/api/items', { as: ada, body: { name: 'Candles', aisleId: 999999 } });
-      assert.equal(loose.status, 201, 'an aisle that is not one puts it under Other');
+  await t.test('a grocery list: Todo List\'s rules for one shared list', async () => {
+    // Production has no staging rows, so its first visitor is offered the
+    // examples instead; a staging list already has rows, so it is not.
+    const staged = (d) => {
+      const n = demo(d.items, 'text');
+      if (!n) {
+        assert.deepEqual(d.items.map((i) => [i.text, i.checked, i.category_id]),
+          [['Milk', false], ['Eggs', false], ['Coffee', false], ['Bread', true]].map((r) => r.concat(d.categories[0].id)),
+          'a new list starts with a few examples in General, offered once');
+      }
+      return n;
+    };
+    await run('grocery-list', '/api/list', staged, async (app) => {
+      const get = async (as = ada) => (await app.call('GET', '/api/list', { as })).data;
+      const item = (list, id) => list.items.find((i) => i.id === id);
+      let list = await get();
+      const general = list.categories[0];
+      assert.equal(general.is_default, true, 'General first');
+      assert.deepEqual(list.categories.slice(1).map((c) => c.id), [900001, 900002, 900003]);
+      assert.equal(list.list.due_dates_enabled, false);
 
-      assert.deepEqual((await app.call('PATCH', `/api/items/${milk.data.id}`, { as: grace, body: { bought: true } })).data, { ok: true });
-      list = (await app.call('GET', '/api/list', { as: ada })).data;
-      const row = list.aisles.find((a) => a.id === dairy).items.find((i) => i.id === milk.data.id);
-      assert.deepEqual([row.name, row.note, row.by, row.mine, row.bought, row.boughtBy], ['Oat milk', '2 cartons', 'ada', true, true, 'grace'],
-        'ticked, it stays in its aisle');
-      assert.ok(list.other.some((i) => i.id === loose.data.id));
-      assert.deepEqual(list.activity.slice(0, 2).map((e) => [e.by, e.verb, e.text]), [['grace', 'bought', 'Oat milk'], ['ada', 'added', 'Candles']], 'newest first');
-      assert.equal(list.activity[0].mine, false);
+      // Quick-add goes to the top of General; a retried add is the same item.
+      const coffee = item(list, 900001);
+      const oat = await app.call('POST', '/api/items', { as: ada, body: { text: ' Oat milk ', client_op_id: 'op-1' } });
+      assert.equal(oat.status, 200);
+      assert.deepEqual([oat.data.item.text, oat.data.item.category_id, oat.data.item.created_by], ['Oat milk', general.id, 'ada']);
+      assert.ok(oat.data.item.sort_order < coffee.sort_order, 'at the top');
+      const again = await app.call('POST', '/api/items', { as: ada, body: { text: 'Oat milk', client_op_id: 'op-1' } });
+      assert.equal(again.data.item.id, oat.data.item.id, 'idempotent');
+      assert.equal((await get()).items.filter((i) => i.text === 'Oat milk').length, 1);
+      assert.equal((await app.call('POST', '/api/items', { as: ada, body: { text: '  ' } })).status, 400);
 
-      // Edit: name, note and aisle.
-      const pantry = list.aisles.find((a) => a.name === 'Pantry').id;
-      await app.call('PATCH', `/api/items/${loose.data.id}`, { as: grace, body: { name: 'Tea lights', note: 'unscented', aisleId: pantry } });
-      list = (await app.call('GET', '/api/list', { as: ada })).data;
-      assert.deepEqual(list.aisles.find((a) => a.id === pantry).items.map((i) => [i.name, i.note]), [['Tea lights', 'unscented']]);
-      assert.equal((await app.call('PATCH', `/api/items/${loose.data.id}`, { as: grace, body: { name: '  ' } })).status, 400);
+      // Into a category: its top.
+      const lemons = (await app.call('POST', '/api/categories/900001/items', { as: ada, body: { text: 'Lemons' } })).data.item;
+      assert.deepEqual([lemons.category_id, lemons.sort_order], [900001, 0]);
+      assert.equal((await app.call('POST', '/api/categories/999/items', { as: ada, body: { text: 'x' } })).status, 404);
 
-      // Aisles: add, rename, reorder, remove (its items go to Other).
-      const baby = await app.call('POST', '/api/aisles', { as: ada, body: { name: 'Baby' } });
-      assert.equal(baby.status, 201);
-      await app.call('PATCH', `/api/aisles/${baby.data.id}`, { as: ada, body: { name: 'Baby things' } });
-      const ids = list.aisles.map((a) => a.id).concat(baby.data.id).reverse();
-      assert.equal((await app.call('POST', '/api/aisles/order', { as: ada, body: { ids } })).status, 200);
-      list = (await app.call('GET', '/api/list', { as: ada })).data;
-      assert.deepEqual(list.aisles.map((a) => a.id), ids, 'the store\'s order');
-      assert.equal(list.aisles[0].name, 'Baby things');
-      assert.equal((await app.call('POST', '/api/aisles/order', { as: ada, body: { ids: ['x'] } })).status, 400);
-      await app.call('DELETE', `/api/aisles/${pantry}`, { as: ada });
-      list = (await app.call('GET', '/api/list', { as: ada })).data;
-      assert.ok(list.other.some((i) => i.id === loose.data.id), 'a removed aisle\'s items go to Other');
+      // Ticking keeps the place and says who; the activity line is somebody else's.
+      const ticked = (await app.call('PATCH', `/api/items/${lemons.id}`, { as: grace, body: { checked: true } })).data.item;
+      assert.deepEqual([ticked.checked, ticked.last_checked_by, ticked.sort_order], [true, 'grace', 0]);
+      list = await get();
+      assert.deepEqual(list.activity, { actor: 'grace', verb: 'checked', text: 'Lemons' });
+      assert.equal((await get(grace)).activity.actor !== 'grace', true, 'never your own');
+      const order = list.items.map((i) => i.checked);
+      assert.deepEqual(order, order.slice().sort((a, b) => a - b), 'open items first, then ticked');
+      const unticked = (await app.call('PATCH', `/api/items/${lemons.id}`, { as: ada, body: { checked: false } })).data.item;
+      assert.deepEqual([unticked.checked, unticked.completed_at, unticked.last_checked_by, unticked.sort_order], [false, null, 'ada', 0]);
 
-      const cleared = await app.call('POST', '/api/items/clear-bought', { as: grace });
-      assert.ok(cleared.data.cleared >= 2, 'the seeded bought bananas and the milk');
-      list = (await app.call('GET', '/api/list', { as: ada })).data;
-      assert.ok(!all(list).some((i) => i.bought));
-      assert.equal(list.activity[0].verb, 'cleared');
-      assert.equal((await app.call('DELETE', `/api/items/${loose.data.id}`, { as: grace })).status, 200, 'it is everyone\'s list');
+      // Edit, and move to another category: its end.
+      assert.equal((await app.call('PATCH', `/api/items/${lemons.id}`, { as: ada, body: { text: 'Limes' } })).data.item.text, 'Limes');
+      assert.equal((await app.call('PATCH', `/api/items/${lemons.id}`, { as: ada, body: { text: ' ' } })).status, 400);
+      const moved = (await app.call('PATCH', `/api/items/${lemons.id}`, { as: ada, body: { category_id: 900002 } })).data.item;
+      assert.equal(moved.category_id, 900002);
+      assert.ok(moved.sort_order > item(list, 900005).sort_order, 'at the end');
+      assert.equal((await app.call('PATCH', `/api/items/${lemons.id}`, { as: ada, body: { category_id: 999 } })).status, 400);
+      assert.equal((await app.call('PATCH', '/api/items/999999', { as: ada, body: { text: 'x' } })).status, 404);
+
+      // Due dates: wall-clock values, a time only with a date, off keeps them.
+      assert.equal((await app.call('PATCH', '/api/list', { as: grace, body: { due_dates_enabled: true } })).status, 200);
+      assert.equal((await get()).list.due_dates_enabled, true);
+      assert.equal((await app.call('PATCH', '/api/list', { as: grace, body: {} })).status, 400);
+      let due = (await app.call('PATCH', `/api/items/${lemons.id}`, { as: ada, body: { due_date: '2026-10-10', due_time: '18:30' } })).data.item;
+      assert.deepEqual([due.due_date, due.due_time], ['2026-10-10', '18:30']);
+      assert.equal((await app.call('PATCH', `/api/items/${lemons.id}`, { as: ada, body: { due_date: '10/10/2026' } })).status, 400);
+      assert.equal((await app.call('PATCH', `/api/items/${lemons.id}`, { as: ada, body: { due_time: '25:00' } })).status, 400);
+      await app.call('PATCH', '/api/list', { as: grace, body: { due_dates_enabled: false } });
+      assert.equal(item(await get(), lemons.id).due_date, '2026-10-10', 'switching due dates off keeps them');
+      due = (await app.call('PATCH', `/api/items/${lemons.id}`, { as: ada, body: { due_date: null } })).data.item;
+      assert.deepEqual([due.due_date, due.due_time], [null, null], 'clearing the date clears the time');
+      due = (await app.call('PATCH', `/api/items/${lemons.id}`, { as: ada, body: { due_time: '09:00' } })).data.item;
+      assert.equal(due.due_time, null, 'no time without a date');
+
+      // Removing says who removed what, after the item is gone.
+      assert.equal((await app.call('DELETE', `/api/items/${oat.data.item.id}`, { as: grace })).status, 200, 'it is everyone\'s list');
+      assert.equal((await app.call('DELETE', `/api/items/${oat.data.item.id}`, { as: grace })).status, 404);
+      assert.deepEqual((await get()).activity, { actor: 'grace', verb: 'removed', text: 'Oat milk' });
+
+      // Categories: add at the end, rename, reorder with General pinned.
+      const bakery = (await app.call('POST', '/api/categories', { as: ada, body: { name: 'Bakery' } })).data.category;
+      assert.equal(bakery.is_default, false);
+      assert.equal((await app.call('POST', '/api/categories', { as: ada, body: { name: '' } })).status, 400);
+      await app.call('PATCH', `/api/categories/${bakery.id}`, { as: grace, body: { name: 'Bread' } });
+      const ids = [900003, bakery.id, general.id, 900001, 900002];
+      assert.equal((await app.call('POST', '/api/categories/reorder', { as: ada, body: { categoryIds: ids } })).status, 200);
+      list = await get();
+      assert.deepEqual(list.categories.map((c) => c.id), [general.id, 900003, bakery.id, 900001, 900002]);
+      assert.equal(list.categories[2].name, 'Bread');
+      assert.equal((await app.call('POST', '/api/categories/reorder', { as: ada, body: { categoryIds: ['x'] } })).status, 400);
+
+      // Reorder one section of a category by hand.
+      await app.call('POST', '/api/categories/900001/reorder-items', { as: ada, body: { itemIds: [900004, 900002] } });
+      list = await get();
+      assert.deepEqual(list.items.filter((i) => i.category_id === 900001 && !i.checked).map((i) => i.id), [900004, 900002]);
+
+      // Deleting a category deletes its items, and records each removal.
+      assert.equal((await app.call('DELETE', '/api/categories/900002', { as: grace })).status, 200);
+      list = await get();
+      assert.ok(!list.items.some((i) => i.id === lemons.id || i.id === 900005));
+      assert.equal(list.activity.verb, 'removed');
+
+      // Markdown import: add merges by name (General is the General part);
+      // replace starts again. The last category cannot go.
+      const imported = await app.call('POST', '/api/import', { as: ada, body: { mode: 'add', categories: [
+        { name: 'bread', items: [{ text: 'Sourdough' }, { text: 'Bagels', checked: true }] },
+        { name: 'General', items: [{ text: 'Salt' }] },
+      ] } });
+      assert.equal(imported.status, 200);
+      list = await get();
+      assert.equal(list.categories.length, 4, 'nothing new: both merged');
+      assert.deepEqual(list.items.filter((i) => i.category_id === bakery.id).map((i) => [i.text, i.checked]), [['Sourdough', false], ['Bagels', true]]);
+      assert.ok(list.items.some((i) => i.text === 'Salt' && i.category_id === general.id));
+      assert.equal((await app.call('POST', '/api/import', { as: ada, body: { categories: [] } })).status, 400);
+      await app.call('POST', '/api/import', { as: ada, body: { mode: 'replace', categories: [{ name: 'General', items: [{ text: 'Only this' }] }] } });
+      list = await get();
+      assert.deepEqual([list.categories.length, list.categories[0].is_default, list.items.map((i) => i.text)], [1, true, ['Only this']]);
+      const last = await app.call('DELETE', `/api/categories/${list.categories[0].id}`, { as: ada });
+      assert.deepEqual([last.status, last.data.error], [400, "Can't delete the only category: a list needs at least one"]);
     });
   });
 

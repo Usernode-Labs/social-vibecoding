@@ -31,42 +31,71 @@
   </script>
 </head>
 <body class="min-h-screen bg-ground text-fg">
-  <main class="mx-auto flex max-w-xl flex-col gap-6 px-4 py-8">
+  <main class="mx-auto flex max-w-xl flex-col gap-4 px-4 py-8">
     <header class="flex flex-col gap-1">
-      <h1 class="text-title">{{APP_NAME}}</h1>
-      <p class="text-body text-muted">One list for everyone, aisle by aisle. Add what's needed, and tick it off at the store.</p>
+      <div class="flex items-center gap-1">
+        <div class="min-w-0 flex-1">
+          <h1 class="text-title">{{APP_NAME}}</h1>
+        </div>
+        <button id="undo" type="button" class="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-fg hover:bg-raised disabled:cursor-default disabled:opacity-30 disabled:hover:bg-transparent" aria-label="Undo" title="Undo" disabled></button>
+        <button id="redo" type="button" class="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-fg hover:bg-raised disabled:cursor-default disabled:opacity-30 disabled:hover:bg-transparent" aria-label="Redo" title="Redo" disabled></button>
+        <button id="menu-button" type="button" class="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-fg hover:bg-raised" aria-label="List options" aria-expanded="false" aria-controls="menu"></button>
+      </div>
+      <!-- The latest thing somebody else did this week. -->
+      <p id="activity" class="min-w-0 truncate text-small text-muted" hidden></p>
     </header>
 
-    <!-- The latest thing somebody else did, and the last few things anyone did. -->
-    <section id="activity" class="flex flex-col gap-2" hidden>
-      <div class="flex items-center justify-between gap-3">
-        <p id="activity-line" class="min-w-0 text-small text-muted"></p>
-        <button id="activity-toggle" type="button" class="btn-secondary shrink-0 border-0 bg-transparent px-2 text-small text-muted" aria-expanded="false" aria-controls="activity-list">Recent activity</button>
+    <!-- The list's options. -->
+    <div id="menu" class="list" hidden>
+      <button id="show-completed" type="button" class="list-row w-full text-left hover:bg-raised">Show all completed</button>
+      <button id="hide-completed" type="button" class="list-row w-full text-left hover:bg-raised">Hide all completed</button>
+      <label class="list-row cursor-pointer justify-between hover:bg-raised">
+        <span>Include due dates</span>
+        <input id="due-switch" type="checkbox" role="switch" class="h-5 w-5 accent-accent">
+      </label>
+      <button id="open-export" type="button" class="list-row w-full text-left hover:bg-raised">Export markdown</button>
+      <button id="open-import" type="button" class="list-row w-full text-left hover:bg-raised">Import markdown</button>
+    </div>
+
+    <section id="export" class="card flex flex-col gap-3" hidden>
+      <h2 class="text-heading">Export markdown</h2>
+      <p class="text-small text-muted">Copy this markdown, or select it and copy it yourself.</p>
+      <textarea id="export-text" rows="12" readonly spellcheck="false" class="field resize-y font-mono text-small" aria-label="The list as markdown"></textarea>
+      <div class="flex flex-wrap justify-end gap-2">
+        <button id="export-close" type="button" class="btn-secondary">Close</button>
+        <button id="export-copy" type="button" class="btn-primary">Copy</button>
       </div>
-      <ul id="activity-list" class="list" hidden></ul>
     </section>
 
-    <form id="add-form" class="flex flex-col gap-2" autocomplete="off">
-      <label for="add-name" class="section-label mb-0">Add to the list</label>
-      <div class="flex gap-2">
-        <input id="add-name" name="name" type="text" maxlength="80" required class="field flex-1 min-w-0"
-          placeholder="e.g. oat milk">
+    <section id="import" class="card flex flex-col gap-3" hidden>
+      <h2 class="text-heading">Import markdown</h2>
+      <p class="text-small text-muted">Paste markdown to import into this list. Add merges into matching categories; Replace clears the list first. ~~Strikethrough~~ items import as completed.</p>
+      <textarea id="import-text" rows="12" spellcheck="false" class="field resize-y font-mono text-small" aria-label="Markdown to import"
+        placeholder="# **My List**&#10;&#10;* Category&#10;  * item&#10;  * ~~done item~~"></textarea>
+      <div class="flex flex-wrap justify-end gap-2">
+        <button id="import-cancel" type="button" class="btn-secondary">Cancel</button>
+        <button id="import-replace" type="button" class="btn-secondary text-danger">Import (replace)</button>
+        <button id="import-add" type="button" class="btn-primary">Import (add)</button>
+      </div>
+    </section>
+
+    <div class="flex flex-col gap-2">
+      <div class="relative">
+        <input id="search" type="search" autocomplete="off" class="field pr-11" placeholder="Search items…" aria-label="Search items">
+        <button id="search-clear" type="button" class="absolute right-0 top-0 flex h-11 w-11 items-center justify-center text-muted" aria-label="Clear search" hidden></button>
+      </div>
+      <!-- Quick-add: into the list's General items, at the top. -->
+      <form id="quick-add" class="flex gap-2" autocomplete="off">
+        <input name="text" type="text" maxlength="500" class="field min-w-0 flex-1" placeholder="Add an item…" aria-label="Add an item">
         <button type="submit" class="btn-primary shrink-0">Add</button>
-      </div>
-      <div class="flex gap-2">
-        <input name="note" type="text" maxlength="80" class="field flex-1 min-w-0" aria-label="Note, if any"
-          placeholder="Note, e.g. 2 cartons">
-        <select id="add-aisle" name="aisle" class="field w-36 shrink-0" aria-label="Aisle"></select>
-      </div>
-      <p id="status" class="text-small text-danger" role="alert" hidden></p>
-    </form>
+      </form>
+    </div>
 
     <!-- Loading: shapes where the list will be. -->
     <div id="loading" class="flex flex-col gap-2" aria-label="Loading">
+      <div class="skeleton h-12 w-full"></div>
       <div class="skeleton h-5 w-32"></div>
       <div class="skeleton h-12 w-full"></div>
-      <div class="skeleton h-12 w-full"></div>
-      <div class="skeleton h-5 w-24"></div>
       <div class="skeleton h-12 w-full"></div>
     </div>
 
@@ -77,30 +106,26 @@
       <button id="retry" type="button" class="btn-secondary">Retry</button>
     </div>
 
-    <!-- Empty: only when the load worked and nothing is on the list. -->
+    <!-- Empty: only when the load worked and the list has nothing on it. -->
     <div id="empty" class="state-empty card" hidden>
-      <p class="text-heading">Nothing on the list</p>
-      <p class="text-body text-muted">When something runs out, add it above. It goes in its aisle, and everyone sees it.</p>
+      <p class="text-heading">Nothing on the list yet</p>
+      <p class="text-body text-muted">Add what you need above. Give it categories, such as aisles or shops, below.</p>
     </div>
 
-    <div id="aisles" class="flex flex-col gap-5" hidden></div>
+    <p id="no-results" class="px-1 text-body text-muted" hidden></p>
 
-    <div id="tools" class="flex flex-wrap items-center gap-2" hidden>
-      <button id="clear-bought" type="button" class="btn-secondary" hidden>Clear bought</button>
-      <button id="arrange" type="button" class="btn-secondary border-0 bg-transparent text-muted" aria-expanded="false" aria-controls="arranger">Arrange aisles</button>
-    </div>
+    <!-- The General items first, with no heading, then each category. -->
+    <div id="categories" class="flex flex-col gap-5" hidden></div>
 
-    <!-- The aisles themselves: rename, remove, add, and put them in the store's order. -->
-    <section id="arranger" class="flex flex-col gap-2" hidden>
-      <h2 class="section-label mb-0">Aisles, in your store's order</h2>
-      <ul id="aisle-list" class="list"></ul>
-      <form id="aisle-form" class="flex gap-2" autocomplete="off">
-        <input name="name" type="text" maxlength="40" required class="field flex-1 min-w-0" aria-label="New aisle"
-          placeholder="New aisle, e.g. Baby">
-        <button type="submit" class="btn-secondary shrink-0">Add aisle</button>
-      </form>
-    </section>
+    <form id="new-category" class="flex gap-2" autocomplete="off" hidden>
+      <input name="name" type="text" maxlength="100" class="field min-w-0 flex-1" placeholder="New category…" aria-label="New category">
+      <button type="submit" class="btn-secondary shrink-0">Add</button>
+    </form>
   </main>
+
+  <div id="toast" class="pointer-events-none fixed inset-x-0 bottom-6 z-50 flex justify-center px-4" role="status" aria-live="polite" hidden>
+    <p id="toast-text" class="rounded-lg bg-fg px-4 py-2 text-small text-ground shadow-lg"></p>
+  </div>
 
   <script src="/app.js"></script>
 </body>
