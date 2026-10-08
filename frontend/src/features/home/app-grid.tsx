@@ -68,6 +68,7 @@ import { LIVE_APP_LABEL, LiveAppDot, useLiveAppSlugs } from '../app-frame/live-a
 import { AppsLoadError } from '../apps/load-error';
 import { NO_APPS_YET } from '../apps/no-apps-yet';
 import { TileSkeleton } from '../apps/tile-skeleton';
+import { BUILD_LINE_TILE_CARD, buildLineTileClass } from '../first-session/build-line-words.js';
 import { CreateTile } from './create-tile';
 import { gridStore, type GridItem, type GridPlacement, type HomeAppView, type IconView } from './grid-store';
 
@@ -200,7 +201,7 @@ function AppCardTile({ app, style, yours, live }: {
       className={`app-card app-card-draggable touch-pan-y relative rounded-xl transition-colors p-3 flex flex-col items-center text-center gap-1.5 ${
         app.clickable ? (yours ? 'cursor-grab' : 'cursor-pointer')
           : app.showRetry ? 'cursor-not-allowed' : 'cursor-not-allowed grayscale-[0.75]'
-      }`}
+      }${app.buildLine ? ` ${BUILD_LINE_TILE_CARD}` : ''}`}
       data-slug={app.slug}
       data-status={app.status}
       data-locked={String(app.locked)}
@@ -334,6 +335,11 @@ function AppCardTile({ app, style, yours, live }: {
               Retry
             </button>
           </div>
+        ) : app.buildLine ? (
+          // #4053: the first version's build line, in the tile's words.
+          <p className={buildLineTileClass(app.buildLine)} data-build-line={app.buildLine}>
+            {app.statusLabel}
+          </p>
         ) : app.statusLabel ? (
           <p
             className={`app-card-status ${app.isAwaiting ? 'text-[color:var(--state-attention)]' : 'text-[color:var(--state-blocked)]'}`}

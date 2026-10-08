@@ -7,12 +7,11 @@
  * services/community-invites.js pictureFor), handed over by whichever way in
  * they came: the link's standing (App._followInvite) or an accepted invite's
  * welcome (collab-invites.js welcomeFor, at member addresses). A project
- * still without a picture of its own shows the featured card of its idea
+ * still without a picture of its own shows the thumbnail of its idea
  * (./sketch-card.tsx), drawn here from its words, so it does not depend on
- * the link still being live once this join has spent it: "Being made" while
- * its first version is on its way, no pill once it is not, and `compact`
- * (the art and the tagline) for a new account, whose welcome leaves about
- * 200px. The Discover card's image is anyone's; an after-shot comes only
+ * the link still being live once this join has spent it: without its build
+ * line (#4053), which needs the step this screen is not told, and `compact`
+ * (smaller art) for a new account, whose welcome leaves about 200px. The Discover card's image is anyone's; an after-shot comes only
  * through a live link, and one that does not load falls back to the next
  * thing.
  *
@@ -52,7 +51,7 @@ export function joinPicture(picture: unknown): JoinPicture | null {
 // phone.
 const FRAME = 'relative mt-6 flex min-h-[200px] max-h-[440px] flex-[999_1_0%] flex-col overflow-hidden rounded-[20px] bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900';
 
-export function JoinedPicture({ slug, name, picture, description, tile, building = false, compact = false }: {
+export function JoinedPicture({ slug, name, picture, description, tile, compact = false }: {
   slug: string;
   name: string;
   picture: JoinPicture | null;
@@ -61,14 +60,14 @@ export function JoinedPicture({ slug, name, picture, description, tile, building
   tile: React.ReactNode;
   /** Its first version is still on its way (community-invites.js firstVersionPending). */
   building?: boolean;
-  /** Little room: the card of the idea without its points. */
+  /** Little room: the thumbnail with smaller art. */
   compact?: boolean;
 }) {
   const [failed, setFailed] = useState(false);
   if (picture && picture.kind === 'sketch') {
     return (
       <div data-first-session-picture="sketch" className="mt-6">
-        <FeaturedCard name={name} colorKey={slug} emoji={picture.card.emoji} card={picture.card} stage={building ? 'making' : 'plain'} compact={compact} />
+        <FeaturedCard name={name} colorKey={slug} emoji={picture.card.emoji} card={picture.card} compact={compact} />
       </div>
     );
   }

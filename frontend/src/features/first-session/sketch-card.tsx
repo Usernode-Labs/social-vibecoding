@@ -1,44 +1,54 @@
 /**
- * The first session's sketch: a featured card of the idea, the way an app
- * store features an app, while Homeroom bot makes the real thing
- * (services/app-sketch.js makes it from the description, a few seconds after
- * Make it).
+ * The project's thumbnail (#4053): what the app will be, while Homeroom bot
+ * makes the real thing. Its icon on its colour, its name, and one line about
+ * it, the sketch's tagline (services/app-sketch.js makes it from the
+ * description, a few seconds after Make it) or, without one, the project's
+ * own description. While its first version is on its way, the build line
+ * (./build-line.tsx) is one line just under the card, with its spinner.
  *
  *   art     the idea's colour (read off its emoji, lib/community-color.ts,
- *           so it is the colour the project's own page wears later), under
- *           faint construction stripes while it is being made, with its
- *           emoji as the icon it now is, and a pill saying where it is:
- *           "Sketching the idea", "Being made", "Ready to try";
- *   body    its name, a one-line tagline, and the points that fit four
- *           lines (fitPoints), each with an open dashed ring: not built yet;
- *   footer  on the made screen, Homeroom bot's step.
+ *           so it is the colour the project's own page wears later), with
+ *           its emoji as the icon it now is;
+ *   body    its name and the line, clamped to two lines;
+ *   line    where its first version is, when the screen knows: under the
+ *           card, not in it.
  *
- * 5 October 2026, on Evan's phone: the sketch was a framed mock of the app's
- * main screen that scrolled inside the made screen, under grey bars and
- * "Sketching <name> from your description…" for about twenty seconds. It
- * read as the app itself rather than as something being made. The card is a
- * fixed size and never scrolls: every region has its own height, the tagline
- * is clamped to two lines, and only the points that fit are drawn.
+ * It used to be a featured card under construction: faint diagonal stripes,
+ * a "Being made" pill, the points it would do with open dashed rings, and
+ * "Step 1 of 7: Set up the project" in its footer. Three of its parts talked
+ * about the build and the points read like a plan, so the card read as the
+ * build rather than as a thumbnail of the app (Evan, onboarding test on
+ * iPhone, 6 October 2026, #4041). Now one line says where it is, and the card
+ * shows what it will be. The line is SEPARATE from the card (owner, 8 Oct
+ * 2026, reversing the 6 October call to keep it inside): one line about 8px
+ * under it, so the card stays the app's picture and the line reads as the
+ * build's progress. FeaturedCard draws both, so every screen that shows the
+ * app has the line in the same place.
  *
  * WHILE IT IS SKETCHED the same frame stands with the name already in place
  * (and the example's emoji, if one was picked), on a neutral ground, and a
- * band of light passes over the lines where the tagline and points will land.
- * When the card comes, its colour fades in and its words rise into place.
- * Transform and opacity only, no delay; with reduced motion nothing moves.
+ * band of light passes over the card. When the card comes,
+ * its colour fades in and its words rise into place. Transform and opacity
+ * only, no delay; with reduced motion nothing moves.
  *
  * It is drawn here, from text, by React: nothing the model wrote is markup.
- * The invite page (../auth/invite-card.tsx) and "You're in"
- * (./joined-picture.tsx) draw the same card while the project has no picture
- * of its own: "Being made" while its first version is on its way, and with
- * no pill (`plain`) when they cannot say. "You're in" for a new account,
- * whose welcome leaves about 200px, draws it `compact`: the art and the
- * tagline, no points.
+ * The made screen draws it with its line (SketchCard below), the App tab
+ * while the first version is on its way (features/app-frame/app-status.tsx),
+ * and the invite page (../auth/invite-card.tsx) and "You're in"
+ * (./joined-picture.tsx) while the project has no picture of its own. Those
+ * two know only that it is on its way, not where, so they draw it without
+ * a line. "You're in" for a new account, whose welcome leaves about 200px,
+ * draws it `compact`: smaller art.
+ *
+ * ThumbRow is the small size, for a row: the tile on its colour, the name,
+ * and the build line in place of the one line when there is one.
  */
 
 import { type ReactNode, useEffect, useState } from 'react';
 
 import { useResolvedCommunityColor } from '../../lib/community-color';
 
+import { BuildLine, type BuildLineState } from './build-line';
 import type { Made } from './make';
 
 export type FeaturedCardData = { emoji: string; tagline: string; points: string[] };
@@ -46,23 +56,6 @@ export type FeaturedCardData = { emoji: string; tagline: string; points: string[
 export type SketchState = 'loading' | 'none' | 'pending' | 'ready' | 'failed';
 
 export type Sketch = { state: SketchState; card: FeaturedCardData | null };
-
-/** Where the project is, as the card's pill says it; `plain` says nothing. */
-export type CardStage = 'sketching' | 'making' | 'ready' | 'idea' | 'plain';
-
-/** The pill's words for each stage ('' for none). */
-export function pillLabel(stage: CardStage): string {
-  if (stage === 'sketching') return 'Sketching the idea';
-  if (stage === 'ready') return 'Ready to try';
-  if (stage === 'idea') return 'Not built yet';
-  if (stage === 'plain') return '';
-  return 'Being made';
-}
-
-/** Under construction: the stripes and the pill's pulse. */
-function underway(stage: CardStage): boolean {
-  return stage === 'sketching' || stage === 'making' || stage === 'idea';
-}
 
 /** The card in an answer (GET /api/apps/:slug/sketch, an invite's picture), or null. */
 export function sketchCardOf(value: unknown): FeaturedCardData | null {
@@ -82,27 +75,10 @@ export function showsCard(state: SketchState): boolean {
   return state === 'loading' || state === 'pending' || state === 'ready';
 }
 
-// The points get four lines of the card. A point longer than LINE_CHARS is
-// counted as two (it wraps at 390px; each is clamped to two), so the list
-// never runs past its box. The first point is always drawn.
-export const POINT_LINES = 4;
-const LINE_CHARS = 36;
-
-/** The points, in order, that fit the card's four lines. */
-export function fitPoints(points: readonly string[], lines: number = POINT_LINES): string[] {
-  const out: string[] = [];
-  let used = 0;
-  for (const point of points) {
-    const need = point.length > LINE_CHARS ? 2 : 1;
-    if (out.length && used + need > lines) break;
-    out.push(point);
-    used += need;
-  }
-  return out;
+/** Whether the sketch is still on its way: the card stands, being sketched. */
+export function sketching(state: SketchState): boolean {
+  return state === 'loading' || state === 'pending';
 }
-
-// Faint diagonal stripes: the card is under construction while it is made.
-const STRIPES = 'repeating-linear-gradient(135deg, rgba(255,255,255,0.08) 0 12px, rgba(255,255,255,0) 12px 24px)';
 
 /** Mounts hidden and settles on the next frame: a rise into place, no delay. */
 function useArrived(): boolean {
@@ -114,121 +90,143 @@ function useArrived(): boolean {
   return arrived;
 }
 
-function Glyph({ emoji }: { emoji: string }) {
+function Glyph({ glyph }: { glyph: string }) {
   const arrived = useArrived();
   return (
     <span className={`transition-[opacity,transform] duration-300 ease-out motion-reduce:transition-none ${arrived ? 'scale-100 opacity-100' : 'scale-75 opacity-0'}`}>
-      {emoji}
+      {glyph}
     </span>
   );
 }
 
-function Words({ card, color, compact = false }: { card: FeaturedCardData; color: string | null; compact?: boolean }) {
+function Tagline({ text }: { text: string }) {
   const arrived = useArrived();
   return (
-    <div data-featured-card-words="" className={`transition-[opacity,transform] duration-300 ease-out motion-reduce:transition-none ${arrived ? 'translate-y-0 opacity-100' : 'translate-y-1 opacity-0'}`}>
-      <p className="mt-1 line-clamp-2 h-10 text-[15px] leading-5 text-zinc-500 dark:text-zinc-400">{card.tagline}</p>
-      {compact ? null : (
-        <ul className="mt-3 flex flex-col gap-1">
-          {fitPoints(card.points).map((point) => (
-            <li key={point} className="flex items-start gap-2.5 text-[15px] leading-5">
-              <span
-                aria-hidden="true"
-                className="mt-0.5 h-4 w-4 shrink-0 rounded-full border-[1.5px] border-dashed border-zinc-300 dark:border-zinc-600"
-                style={color ? { borderColor: color } : undefined}
-              />
-              <span className="line-clamp-2 min-w-0">{point}</span>
-            </li>
-          ))}
-        </ul>
-      )}
+    <p
+      data-featured-card-words=""
+      className={`line-clamp-2 text-[15px] leading-5 text-zinc-500 transition-[opacity,transform] duration-300 ease-out motion-reduce:transition-none dark:text-zinc-400 ${arrived ? 'translate-y-0 opacity-100' : 'translate-y-1 opacity-0'}`}
+    >
+      {text}
+    </p>
+  );
+}
+
+/** Where the one line will land, while the card is sketched. */
+function Placeholder() {
+  return (
+    <div aria-hidden="true" className="flex h-10 flex-col justify-center gap-2">
+      <div className="h-3 w-11/12 rounded-full bg-zinc-200 dark:bg-zinc-800" />
+      <div className="h-3 w-2/3 rounded-full bg-zinc-200 dark:bg-zinc-800" />
     </div>
   );
 }
 
-/** Where the tagline and the points will land, while the card is sketched. */
-function Placeholder() {
-  return (
-    <div aria-hidden="true">
-      <div className="mt-1 flex h-10 flex-col justify-center gap-2">
-        <div className="h-3 w-11/12 rounded-full bg-zinc-200 dark:bg-zinc-800" />
-        <div className="h-3 w-2/3 rounded-full bg-zinc-200 dark:bg-zinc-800" />
-      </div>
-      <div className="mt-3 flex flex-col gap-1">
-        {['w-3/5', 'w-1/2', 'w-2/3'].map((width) => (
-          <div key={width} className="flex h-5 items-center gap-2.5">
-            <span className="h-4 w-4 shrink-0 rounded-full border-[1.5px] border-dashed border-zinc-300 dark:border-zinc-600" />
-            <span className={`h-3 ${width} rounded-full bg-zinc-200 dark:bg-zinc-800`} />
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+/** What the tile shows: the emoji, else the name's first letter once nothing more is coming. */
+function glyphOf(name: string, emoji: string | null, sketched: boolean): string | null {
+  if (emoji) return emoji;
+  return sketched ? null : (name.trim().slice(0, 1).toUpperCase() || null);
 }
 
 /**
- * The card itself, a fixed 394px tall with a footer (352px without): art
- * 148 (the icon sits below the pill), words 204, footer 42. Compact, 172px:
- * art 88, then the name and the tagline (84). `card` null is the card being
- * sketched.
+ * The thumbnail. Art 132px (88px `compact`), the name and its line, and the
+ * build line just under the card (8px below it, not in it) when `line` is
+ * given. `sketching` is the card
+ * still being sketched (by default, while there is no `card`); `description`
+ * stands in for the sketch's tagline when there is none.
  */
-export function FeaturedCard({ name, colorKey, emoji, card, stage, titleId, heading = false, footer = null, compact = false }: {
+export function FeaturedCard({ name, colorKey, emoji, card, description = null, sketching: sketched = !card, line = null, titleId, heading = false, compact = false }: {
   name: string;
   /** Picks a colour when there is no emoji to read one from (the project's slug). */
   colorKey: string;
   /** The icon: the card's, or one already known while it is sketched. */
   emoji: string | null;
   card: FeaturedCardData | null;
-  stage: CardStage;
+  /** The project's own description, said when there is no sketch. */
+  description?: string | null;
+  sketching?: boolean;
+  /** Where its first version is (./build-line.tsx), or none. */
+  line?: BuildLineState | null;
   titleId?: string;
   /** The name as the screen's heading (the made screen's dialog is labelled by it). */
   heading?: boolean;
-  footer?: ReactNode;
-  /** The art and the tagline only, for a screen with little room. */
+  /** Smaller art, for a screen with little room. */
   compact?: boolean;
 }) {
-  const color = useResolvedCommunityColor(card && emoji ? { iconEmoji: emoji, key: colorKey } : null);
-  const sketching = !card;
+  const color = useResolvedCommunityColor(sketched ? null : { iconEmoji: emoji, key: colorKey });
+  const glyph = glyphOf(name, emoji, sketched);
+  const tagline = (card && card.tagline) || (description || '').trim();
   const Title = heading ? 'h1' : 'p';
   return (
-    <div
-      data-featured-card={sketching ? 'sketching' : 'ready'}
-      className="relative overflow-hidden rounded-[20px] bg-white text-left text-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900 dark:text-zinc-100"
-    >
-      <div className={`relative flex items-center justify-center overflow-hidden bg-zinc-200 dark:bg-zinc-800 ${compact ? 'h-[88px] pt-4' : 'h-[148px] pt-6'}`}>
-        <div
-          aria-hidden="true"
-          className={`absolute inset-0 transition-opacity duration-500 ease-out motion-reduce:transition-none ${color ? 'opacity-100' : 'opacity-0'}`}
-          style={color ? { backgroundColor: color } : undefined}
-        />
-        {underway(stage) ? <div aria-hidden="true" className="absolute inset-0" style={{ backgroundImage: STRIPES }} /> : null}
-        <span
-          aria-hidden="true"
-          className={`app-icon-tile relative flex items-center justify-center leading-none shadow-[0_6px_18px_rgba(0,0,0,0.18)] ${compact ? 'h-14 w-14 rounded-2xl text-[32px]' : 'h-[76px] w-[76px] rounded-[22px] text-[44px]'}`}
-        >
-          {emoji ? <Glyph key={emoji} emoji={emoji} /> : null}
-        </span>
-        {stage === 'plain' ? null : (
-          <span data-featured-card-stage={stage} className="absolute left-3 top-3 inline-flex items-center gap-1.5 rounded-full bg-black/45 px-2.5 py-1 text-[12px] font-semibold leading-4 text-white">
-            {underway(stage) ? <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-white motion-safe:animate-pulse" /> : null}
-            {pillLabel(stage)}
+    <div className="flex flex-col gap-2">
+      <div
+        data-featured-card={sketched ? 'sketching' : 'ready'}
+        className="relative overflow-hidden rounded-[20px] bg-white text-left text-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900 dark:text-zinc-100"
+      >
+        <div className={`relative flex items-center justify-center overflow-hidden bg-zinc-200 dark:bg-zinc-800 ${compact ? 'h-[88px]' : 'h-[132px]'}`}>
+          <div
+            aria-hidden="true"
+            className={`absolute inset-0 transition-opacity duration-500 ease-out motion-reduce:transition-none ${color ? 'opacity-100' : 'opacity-0'}`}
+            style={color ? { backgroundColor: color } : undefined}
+          />
+          <span
+            aria-hidden="true"
+            className={`app-icon-tile relative flex items-center justify-center leading-none shadow-[0_6px_18px_rgba(0,0,0,0.16)] ${compact ? 'h-14 w-14 rounded-2xl text-[32px]' : 'h-[76px] w-[76px] rounded-[22px] text-[44px]'}`}
+          >
+            {glyph ? <Glyph key={glyph} glyph={glyph} /> : null}
           </span>
-        )}
+        </div>
+        <div className="flex flex-col gap-1 px-4 pb-4 pt-3.5">
+          <Title id={titleId} className="truncate text-[17px] font-bold leading-[22px]">{name}</Title>
+          {sketched ? <Placeholder /> : tagline ? <Tagline key={tagline} text={tagline} /> : null}
+        </div>
+        {sketched ? (
+          <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden motion-reduce:hidden">
+            <div className="h-full w-2/5 bg-gradient-to-r from-transparent via-white/60 to-transparent motion-safe:animate-card-sweep dark:via-white/[0.06]" />
+          </div>
+        ) : null}
       </div>
-      <div className={`px-4 pt-3.5 ${compact ? 'h-[84px]' : 'h-[204px]'}`}>
-        <Title id={titleId} className="truncate text-[20px] font-bold leading-6">{name}</Title>
-        {card ? <Words card={card} color={color} compact={compact} /> : <Placeholder />}
-      </div>
-      {footer ? (
-        <div className="flex h-[42px] items-center gap-1.5 px-4 text-[13px] text-zinc-500 shadow-[inset_0_1px_0_var(--app-sheet-line)] dark:text-zinc-400">
-          {footer}
+      {line ? (
+        <div data-featured-card-line="" className="px-1">
+          <BuildLine state={line} />
         </div>
       ) : null}
-      {sketching ? (
-        <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden motion-reduce:hidden">
-          <div className="h-full w-2/5 bg-gradient-to-r from-transparent via-white/60 to-transparent motion-safe:animate-card-sweep dark:via-white/[0.06]" />
-        </div>
-      ) : null}
+    </div>
+  );
+}
+
+/**
+ * The thumbnail drawn small, for a row: a 56px tile on the project's colour
+ * with its icon, its name, and under it the build line when there is one,
+ * else its one line.
+ */
+export function ThumbRow({ name, colorKey, emoji, tagline = null, line = null }: {
+  name: string;
+  colorKey: string;
+  emoji: string | null;
+  tagline?: string | null;
+  line?: BuildLineState | null;
+}): ReactNode {
+  const color = useResolvedCommunityColor({ iconEmoji: emoji, key: colorKey });
+  const glyph = glyphOf(name, emoji, false);
+  return (
+    <div data-thumb-row="" className="flex min-w-0 items-center gap-3 text-left text-zinc-900 dark:text-zinc-100">
+      <span
+        aria-hidden="true"
+        className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-zinc-200 dark:bg-zinc-800"
+        style={color ? { backgroundColor: color } : undefined}
+      >
+        <span className="app-icon-tile flex h-10 w-10 items-center justify-center rounded-xl text-2xl leading-none shadow-[0_3px_8px_rgba(0,0,0,0.14)]">
+          {glyph}
+        </span>
+      </span>
+      <span className="flex min-w-0 flex-col gap-0.5">
+        <span className="truncate text-[15px] font-[650] leading-5">{name}</span>
+        {line ? (
+          <BuildLine state={line} />
+        ) : tagline ? (
+          <span className="line-clamp-2 text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400">{tagline}</span>
+        ) : null}
+      </span>
     </div>
   );
 }
@@ -238,16 +236,22 @@ export function FeaturedCard({ name, colorKey, emoji, card, stage, titleId, head
 const SKETCH_POLL_MS = 2000;
 const SKETCH_GIVE_UP_MS = 90 * 1000;
 
-/** GET /api/apps/:slug/sketch until the card is here, failed, or there is none. */
-export function useSketch(slug: string): Sketch {
-  const [sketch, setSketch] = useState<Sketch>({ state: 'loading', card: null });
+/**
+ * GET /api/apps/:slug/sketch until the card is here, failed, or there is
+ * none. No slug: none, asked of nobody (a screenshot state's made-up project).
+ */
+export function useSketch(slug: string | null): Sketch {
+  const [sketch, setSketch] = useState<Sketch>(() => (slug ? { state: 'loading', card: null } : { state: 'none', card: null }));
   useEffect(() => {
+    if (!slug) { setSketch({ state: 'none', card: null }); return undefined; }
     let live = true;
     let timer = 0;
     const started = Date.now();
     const read = async () => {
+      // No such project to this reader (the App tab's screenshot state has
+      // none): nothing to wait for, rather than ninety seconds of asking.
       const data = await fetch(`/api/apps/${encodeURIComponent(slug)}/sketch`, { credentials: 'same-origin', cache: 'no-store' })
-        .then((r) => (r.ok ? r.json() : null))
+        .then((r) => (r.ok ? r.json() : r.status === 404 ? { status: 'none' } : null))
         .catch(() => null);
       if (!live) return;
       const status = data?.status;
@@ -266,40 +270,33 @@ export function useSketch(slug: string): Sketch {
 }
 
 /**
- * The made screen's card (./made.tsx): sketching, then the idea, with
- * Homeroom bot's step under it and the line about what happens next below.
+ * The made screen's card (./made.tsx): the thumbnail, being sketched and
+ * then the idea, with the build line just under the card and the line about
+ * what happens next below that.
  */
-export function SketchCard({ made, sketch, line, note, busy, botBuilds, built }: {
+export function SketchCard({ made, sketch, line, note }: {
   made: Made;
   sketch: Sketch;
-  /** buildLine: "Step 2 of 7: Read the description". */
-  line: string;
+  /** Where its first version is (./build-line.tsx), or none for a project Homeroom bot does not build. */
+  line: BuildLineState | null;
   /** buildNote: what happens next, under the card. */
   note: string;
-  busy: boolean;
-  botBuilds: boolean;
-  /** Version one is ready to try. */
-  built: boolean;
 }) {
   const card = sketch.card;
-  const stage: CardStage = !card ? 'sketching' : built ? 'ready' : botBuilds ? 'making' : 'idea';
+  const sketched = !card && sketching(sketch.state);
   return (
     <div data-first-session-sketch={card ? 'ready' : sketch.state} className="mt-4">
-      {card ? null : <p role="status" className="sr-only">{`Sketching ${made.name} from your description…`}</p>}
+      {sketched ? <p role="status" className="sr-only">{`Sketching ${made.name} from your description…`}</p> : null}
       <FeaturedCard
         name={made.name}
         colorKey={made.slug}
         emoji={card?.emoji || made.emoji || null}
         card={card}
-        stage={stage}
+        description={made.description}
+        sketching={sketched}
+        line={line}
         titleId="first-session-made-title"
         heading
-        footer={(
-          <>
-            {busy ? <span className="status-dot creating shrink-0" aria-hidden="true" /> : null}
-            <span className="truncate" data-first-session-build="">{line}</span>
-          </>
-        )}
       />
       <p className="px-1 pt-2.5 text-[13px] leading-snug text-zinc-500 dark:text-zinc-400">{note}</p>
     </div>

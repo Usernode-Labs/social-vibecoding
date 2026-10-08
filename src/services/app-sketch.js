@@ -77,8 +77,9 @@ const CARD_SCHEMA = Object.freeze({
 });
 
 // What the card holds, in characters: a tagline and a point are each at most
-// two lines of the card at 390px (it shows the points that fit four lines,
-// first-session sketch-card.tsx fitPoints). The model is asked for less.
+// two lines of a card at 390px. The model is asked for less. Since #4053 the
+// project's thumbnail (first-session sketch-card.tsx) draws the emoji and
+// the tagline only; the points stay in the record.
 const TAGLINE_MAX = 80;
 const POINT_MAX = 72;
 const POINTS_MAX = 4;

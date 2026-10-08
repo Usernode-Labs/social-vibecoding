@@ -7,11 +7,12 @@
  * `innerHTML` string and then bound two buttons by id afterwards, because
  * the branch re-renders on every status change and a delegated listener
  * would have re-attached. A sixth since #15: the first version, being built
- * by the Homeroom bot from the project's description, with a line or two on
- * where it is, the way into the bot's DM for its creator, and the starter
- * for anyone who wants it anyway. Once that version is built and up for
- * approval, the same screen says it is ready to try and what it waits on,
- * with Try it and See the change.
+ * by the Homeroom bot from the project's description. Since #4053 that is
+ * the project's thumbnail (features/first-session/sketch-card.tsx) with its
+ * build line one line under it, and "It opens here when it’s ready." below that:
+ * no plan, no step count, nothing to press (#4043). Once that version is
+ * built and up for approval, the same thumbnail says Ready to try, and the
+ * screen says what it waits on, with Try it and See the change.
  *
  * ── Why this can own `#app-content` ────────────────────────────────────
  *
@@ -31,13 +32,13 @@
  * is the whole point of that path — the frame must survive.
  */
 
-import { useState, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 
 import { useStoreState } from '../../lib/use-store-state';
-import { PlanCardView } from '../messages/bot-plan-view';
-import type { HomeroomBotPlanQuestion } from '../messages/types';
+import { type BuildLineState, buildLineOf } from '../first-session/build-line';
+import { FeaturedCard, sketching, useSketch } from '../first-session/sketch-card';
 import { appStatusStore } from './app-status-store.js';
 
 /** The resolved placeholder. `null` means some other owner has the host. */
@@ -48,13 +49,29 @@ export interface AppStatusView {
   /** The missing secret names, or the failure reason — one mono red line. */
   detail: string | null;
   /**
-   * Plain lines under the message, which then reads as the screen's title
-   * (#15: the first version's step, and what comes next).
+   * Plain lines under the message, which then reads as the screen's title,
+   * or under the thumbnail (#15: what comes next).
    */
   lines?: string[];
   /**
+   * #4053: the project whose first version is on its way, drawn as its
+   * thumbnail in place of the message, with `buildLine` one line under it.
+   */
+  thumb?: FirstVersionThumb | null;
+  /** None: no line (a screen that cannot know the step). */
+  buildLine?: BuildLineState | null;
+  /**
+   * The lines say what a first-session tour card can say over this screen
+   * ("It opens here when it’s ready."), so they hide while a card that says
+   * it is on the page: one that carries `data-tour-says-where-it-opens`. A
+   * tour card that does not say it leaves the line in place.
+   */
+  tourSays?: boolean;
+  /**
    * At most one, and only for a viewer who can act on it. `botChat` opens
-   * the viewer's DM with the Homeroom bot (#15), by its id when known.
+   * the viewer's DM with the Homeroom bot (#15), by its id when known. "Review the
+   * plan" while their plan waits, "Open Homeroom bot" (`quiet`) while it
+   * builds, "Open my chat with Homeroom bot" once it is ready to try.
    * `tryChange` and `seeChange` are a first version that is ready to try:
    * its change's preview and its change page, by the change's id.
    */
@@ -64,48 +81,44 @@ export interface AppStatusView {
     slug: string;
     conversationId?: number | null;
     sessionId?: number | null;
+    /** A small secondary button, not the screen's one primary action. */
+    quiet?: boolean;
+    /** Drawn right under the thumbnail and its build line, ahead of the lines. */
+    underCard?: boolean;
   } | null;
   /** A second way on, beside the action (a first version's change page, under Try it). */
   alt?: { key: 'seeChange'; label: string; slug: string; sessionId: number } | null;
-  /**
-   * A quieter way on, under the action (#15: the starter, for now). Under
-   * an `alt` it is the third button, and drawn as the quietest.
-   */
-  secondary?: { key: 'starter'; label: string; slug: string } | null;
-  /**
-   * B6: the plan a first version waits on, for its creator: the same card as
-   * in their chat with Homeroom bot, whose Build it is decided the same way.
-   */
-  plan?: FirstVersionPlan | null;
 }
 
-export interface FirstVersionPlan {
-  appName: string;
+/** What the thumbnail is drawn from: the project's record (AppView.appData). */
+export interface FirstVersionThumb {
+  name: string;
   slug: string;
-  bullets: string[];
-  questions: HomeroomBotPlanQuestion[];
-  actionId: number;
-  messageId: number | null;
-  conversationId: number | null;
+  emoji: string | null;
+  /** Its description, said until (or unless) the sketch has a tagline. */
+  description: string | null;
+  /** False for a made-up project (`?shot=first-version`): no sketch to read. */
+  sketch?: boolean;
 }
 
-/** B6: the plan, with its taps handed to AppView (buildFirstVersion, changeFirstVersionPlan). */
-function FirstVersionPlanCard({ plan }: { plan: FirstVersionPlan }): ReactNode {
-  // Pressed here until the screen reads the project again and moves on.
-  const [pressed, setPressed] = useState(false);
+/**
+ * The project's thumbnail, with its sketch's tagline once that is read
+ * (GET /api/apps/:slug/sketch, as the made screen reads it), else its
+ * description.
+ */
+function FirstVersionCard({ thumb, line }: { thumb: FirstVersionThumb; line: BuildLineState | null }): ReactNode {
+  const sketch = useSketch(thumb.sketch === false ? null : thumb.slug);
+  const card = sketch.card;
   return (
-    <div className="mt-3 flex w-full justify-center">
-      <PlanCardView
-        surface="app"
-        appName={plan.appName}
-        plan={{ bullets: plan.bullets, questions: plan.questions }}
-        state="open"
-        busy={pressed}
-        onBuild={(answers) => {
-          setPressed(true);
-          call('buildFirstVersion', plan.slug, plan.actionId, answers);
-        }}
-        onChange={() => call('changeFirstVersionPlan', plan.slug, plan.conversationId, plan.messageId)}
+    <div className="w-full max-w-[342px]" data-app-first-version={line || ''}>
+      <FeaturedCard
+        name={thumb.name}
+        colorKey={thumb.slug}
+        emoji={card?.emoji || thumb.emoji}
+        card={card}
+        description={thumb.description}
+        sketching={!card && !thumb.description && sketching(sketch.state)}
+        line={line}
       />
     </div>
   );
@@ -134,49 +147,57 @@ function press(action: StatusAction): void {
   else call(opener, action.slug, action.conversationId ?? null);
 }
 
+const LINE = 'max-w-sm text-sm';
+const THUMB_LINE = 'max-w-sm pt-1 text-[15px] leading-5';
+// Hidden while a tour card that says where the app opens is on the page.
+const THUMB_LINE_TOUR_SAYS = 'max-w-sm pt-1 text-[15px] leading-5 [body:has([data-tour-says-where-it-opens])_&]:hidden';
+
+function actionButton(action: NonNullable<AppStatusView['action']>): ReactNode {
+  // "Open Homeroom bot": the creator's small, quiet way into the chat while
+  // the first version builds, under the thumbnail and its build line.
+  if (action.quiet) {
+    return (
+      <Button id={ACTIONS[action.key].id} variant="pillRaised" size="sm" ink="accent" className="min-h-9" onClick={() => press(action)}>
+        {action.label}
+      </Button>
+    );
+  }
+  return (
+    <Button id={ACTIONS[action.key].id} className={action.underCard ? 'mt-1' : 'mt-3'} onClick={() => press(action)}>
+      {action.label}
+    </Button>
+  );
+}
+
 export function AppStatusView_({ view }: { view: AppStatusView }): ReactNode {
   const action = view.action;
   const titled = !!view.lines?.length;
+  const thumb = view.thumb || null;
   return (
     <div className="flex flex-col items-center justify-center h-full text-zinc-500 dark:text-zinc-400 gap-2 p-4 text-center">
       {view.dot ? <div className={`status-dot ${view.dot}`}></div> : null}
-      <p className={titled ? 'max-w-sm text-base font-semibold text-zinc-900 dark:text-zinc-100' : 'text-sm'}>{view.message}</p>
-      {titled ? view.lines!.map((line) => <p key={line} className="max-w-sm text-sm">{line}</p>) : null}
-      {view.plan ? <FirstVersionPlanCard key={view.plan.actionId} plan={view.plan} /> : null}
+      {thumb ? (
+        <FirstVersionCard key={thumb.slug} thumb={thumb} line={buildLineOf(view.buildLine)} />
+      ) : (
+        <p className={titled ? 'max-w-sm text-base font-semibold text-zinc-900 dark:text-zinc-100' : 'text-sm'}>{view.message}</p>
+      )}
+      {action && action.underCard ? actionButton(action) : null}
+      {titled ? view.lines!.map((line) => (
+        <p
+          key={line}
+          {...(view.tourSays ? { 'data-app-first-version-note': '' } : {})}
+          className={!thumb ? LINE : view.tourSays ? THUMB_LINE_TOUR_SAYS : THUMB_LINE}
+        >
+          {line}
+        </p>
+      )) : null}
       {view.detail ? (
         <p className="text-xs font-mono text-red-700 max-w-md break-words dark:text-red-400">{view.detail}</p>
       ) : null}
-      {action ? (
-        <Button id={ACTIONS[action.key].id} className="mt-3" onClick={() => press(action)}>
-          {action.label}
-        </Button>
-      ) : null}
+      {action && !action.underCard ? actionButton(action) : null}
       {view.alt ? (
         <Button id={ACTIONS[view.alt.key].id} variant="neutral" ink="neutral" onClick={() => press(view.alt!)}>
           {view.alt.label}
-        </Button>
-      ) : null}
-      {view.secondary && view.alt ? (
-        <Button
-          id="app-first-version-starter"
-          variant="unstyled"
-          size="sm"
-          ink="muted"
-          className="rounded-lg"
-          onClick={() => call('showStarter', view.secondary!.slug)}
-        >
-          {view.secondary.label}
-        </Button>
-      ) : null}
-      {view.secondary && !view.alt ? (
-        <Button
-          id="app-first-version-starter"
-          variant="neutral"
-          ink="neutral"
-          className={action ? '' : 'mt-3'}
-          onClick={() => call('showStarter', view.secondary!.slug)}
-        >
-          {view.secondary.label}
         </Button>
       ) : null}
     </div>
