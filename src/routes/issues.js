@@ -204,6 +204,9 @@ function stagingMockIssues(repoUrl) {
     title,
     body,
     labels: ['usernode'],
+    // #4453: a request's page says when it was asked; a day before its
+    // last activity, as a filed request is.
+    createdAt: hoursAgo(hours + 24),
     updatedAt: hoursAgo(hours),
     htmlUrl: `${base}/issues/${number}`,
     user: 'staging-tester',
@@ -223,8 +226,11 @@ function stagingMockIssues(repoUrl) {
       // Homeroom (safeMention's zero-width space after the `@`), so its page
       // shows the mention as a link to their page.
       + '@​staging_tester lmk wyt', 9),
+    // #4453: filed on Homeroom, so its body opens with the Source line
+    // GitHub keeps and the request's page leaves out.
     mk(900003, '[Mock] Topic cards overflow on narrow phones',
-      'Staging-only mock issue for previewing the Dev card list.\n\n'
+      '**Source:** Homeroom user (staging-tester)\n\n'
+      + 'Staging-only mock issue for previewing the Dev card list.\n\n'
       + 'On a 360px-wide viewport the action buttons on issue cards can '
       + 'push past the card edge. They should wrap onto their own row '
       + 'instead.', 30),

@@ -1,13 +1,15 @@
-// "Show more" on a long comment (#2556), on all three surfaces that draw one.
+// "Show more" on a long comment (#2556), on both surfaces that draw one.
 //
-// ── Why one file for three surfaces ────────────────────────────────────
+// ── Why one file for two surfaces ──────────────────────────────────────
 //
-// A card's comments render in three places and they do NOT share a renderer:
-// the topic sheet's GitHub discussion and the card's own reply thread are
-// React (frontend/src/features/dev-board/), and the Workshop's inline
-// recent-comments slot is an innerHTML string written by the legacy
-// `AppView._fillFeedComments`. A React island must not reconcile over a node
-// `public/js/**` writes, so the clamp is implemented twice on purpose.
+// A card's comments render in two places and they do NOT share a renderer:
+// the card's own reply thread is React (frontend/src/features/dev-board/),
+// and the Workshop's inline recent-comments slot is an innerHTML string
+// written by the legacy `AppView._fillFeedComments`. A React island must not
+// reconcile over a node `public/js/**` writes, so the clamp is implemented
+// twice on purpose. (A request's own page drew a third, its GitHub thread;
+// since #4453 those comments are rows of the page's Messages thread, which
+// draws a reply whole, as Messages does.)
 //
 // Twice is exactly the number of places a behaviour drifts, so this file
 // holds the two implementations to the same three promises:
@@ -124,31 +126,7 @@ test('the sanitized-markdown case lands on the clamped node itself', () => {
   assert.equal(html, '<div class="dev-feed-msg-text dev-issue-body line-clamp-4"><p>hello</p></div>');
 });
 
-// ── 3. Surface one: the topic sheet's GitHub discussion ───────────────
-
-test('the issue discussion clamps each comment body', () => {
-  const html = renderToHtml(createElement(
-    loadTsx('frontend/src/features/dev-board/issue-comments.tsx').IssueCommentsView,
-    {
-      comments: [{
-        key: '1',
-        author: 'evan',
-        bot: false,
-        createdAt: '2026-03-04T15:30:00Z',
-        bodyHtml: `<p>${'a long comment. '.repeat(80)}</p>`,
-      }],
-      truncated: false,
-      htmlUrl: null,
-    },
-  ));
-  assert.match(html, /class="dev-feed-msg-text dev-issue-body line-clamp-4"/);
-  // The control is NOT in the first paint: only a laid-out box can say
-  // whether this comment is long, and an island's initial render has to be
-  // the markup the prerendered document carries.
-  assert.doesNotMatch(html, /Show more/);
-});
-
-// ── 4. Surface two: the card's own reply thread ───────────────────────
+// ── 3. The card's own reply thread ────────────────────────────────────
 
 test('the card\'s thread panel clamps a long reply and keeps its newlines', () => {
   const { MessageLine } = loadTsx('frontend/src/features/dev-board/card/feed-thread.tsx');
@@ -636,27 +614,22 @@ test('an answer that lands after another app opened is cached, not painted', asy
 });
 
 test('an opened issue does not show another app\'s comments for the same number', async () => {
-  const published = [];
+  let renders = 0;
   const AppView = makeAppView({
-    document: {
-      getElementById: (id) => (id === 'dev-issue-comments' ? {} : null),
-      querySelector: () => null,
-      querySelectorAll: () => [],
-      addEventListener: () => {},
-      body: { appendChild: () => {} },
-    },
     fetch: async (url) => commentsFor(url.includes('/apps/other-app/') ? 'from other-app' : 'from demo-app'),
+    // #4453: the comments are rows of the request page's thread, which the
+    // loader redraws once they are in hand.
+    GroupChat: { activeThread: { type: 'issue', ref: 12 }, renderThread: () => { renders += 1; } },
   });
-  AppView._reactDevBoard = () => ({ mountIssueComments: () => {}, publishIssueComments: (view) => published.push(view) });
-  AppView._issueCommentsView = (comments) => comments.map((c) => c.body);
-
   AppView._devTopic = { kind: 'issue', id: 12 };
+  const bodies = () => [...(AppView._requestThreadRows(12)?.rows || []).map((r) => r.text)];
   await AppView._loadIssueComments({ number: 12, htmlUrl: null });
-  assert.deepEqual(published.at(-1), ['from demo-app']);
+  assert.deepEqual(bodies(), ['from demo-app']);
 
   AppView.appData = { slug: 'other-app', can_collaborate: true };
   await AppView._loadIssueComments({ number: 12, htmlUrl: null });
-  assert.deepEqual(published.at(-1), ['from other-app']);
+  assert.deepEqual(bodies(), ['from other-app']);
+  assert.equal(renders, 2, 'each answer redraws the open request\'s stream');
 });
 
 test('a row\'s own thread under the card is keyed by app too', () => {

@@ -22,10 +22,12 @@
  *   surfaces still call (the admin gallery, the dev chat's "Changes ready"
  *   card, and its own tests), so it stays a string builder.
  *
- * And two genuine controller hosts, rendered once, empty, with a constant
- * className: `#dev-issue-comments` (features/dev-board/issue-comments.tsx
- * mounts into it) and `[data-transcript-body]`, which
- * public/js/session-transcript.js fills on expand.
+ * And a genuine controller host, rendered once, empty, with a constant
+ * className: `[data-transcript-body]`, which public/js/session-transcript.js
+ * fills on expand.
+ *
+ * A request's page is ./request-head.tsx (#4453): the request as a Messages
+ * thread's root post, its GitHub comments in the thread's own stream.
  */
 
 import { Fragment, useEffect, useRef, useState } from 'react';
@@ -46,6 +48,7 @@ import { useInlineImageViewer } from '../../image-viewer/image-viewer';
 import { topicHeadStore } from './topic-store';
 import { ChangeConversation } from './conversation';
 import { TopicBack } from './topic-back';
+import { RequestHead } from './request-head';
 import { DescriptionEditor } from './description-editor';
 import { ISSUE_BODY_MAX } from '../../../lib/issue-body-limit';
 import type {
@@ -603,6 +606,9 @@ function Transcript({ t }: { t: TranscriptSection }): ReactNode {
 export function TopicHead({ conversation = false }: { conversation?: boolean }): ReactNode {
   const { card, body, item } = useStoreState(topicHeadStore);
   if (!card || !body) return null;
+  // #4453: a request's page is a Messages reply thread with the request as
+  // its root post, not the card and its sheets.
+  if (body.request) return <RequestHead key={`request:${body.request.number}`} r={body.request} />;
   // `back`: this IS the topic page, whose one back control is the chip at the
   // top of the pane (#2916, ./topic-back.tsx). Every kind of topic comes
   // through here, a change page and an issue/governance thread head alike.
@@ -1716,9 +1722,6 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
               beside it. Both are the dev session page's now, behind the
               hero's pill. */}
           {conversation ? <ChangeConversation key={body.changeId} item={session} body={body} /> : null}
-          {/* The GitHub thread's host (issue-comments.tsx mounts into it):
-              a body that carries one gets it whatever page it is on. */}
-          {body.comments ? <div id="dev-issue-comments" className="dev-topic-sheet dev-topic-comments"></div> : null}
           {id ? (
             <DetailsSheet
               id={Number(id)}
@@ -1750,6 +1753,26 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
       )}
     </div>
   );
+}
+
+/**
+ * Save a request's words: the author's PATCH, then every issue cache the page
+ * may have resolved through, returning the body as stored and rendered.
+ * Shared by the Workshop's About sheet (`IssueBody`) and a request's root
+ * post (./request-head.tsx).
+ */
+export async function saveIssueBody(slug: string, issue: number, draft: string): Promise<{ body: string; html: string }> {
+  const av = typeof window !== 'undefined' ? (window as any).AppView : null;
+  const response = await fetch(`/api/apps/${slug}/github-issues/${issue}/body`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ body: draft }),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result.error || 'Couldn’t save the request.');
+  const body = typeof result.body === 'string' ? result.body : draft;
+  const html = typeof av?._cacheIssueBody === 'function' ? av._cacheIssueBody(issue, body) : '';
+  return { body, html };
 }
 
 function IssueBody(
@@ -1789,19 +1812,9 @@ function IssueBody(
     setSaving(true);
     setError('');
     try {
-      const response = await fetch(`/api/apps/${slug}/github-issues/${editor.issue}/body`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ body: draft }),
-      });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.error || 'Couldn’t save the request.');
-      const savedBody = typeof result.body === 'string' ? result.body : draft;
-      const rendered = typeof av?._cacheIssueBody === 'function'
-        ? av._cacheIssueBody(editor.issue, savedBody)
-        : '';
-      setDraft(savedBody);
-      setHtml(rendered);
+      const saved = await saveIssueBody(slug, editor.issue, draft);
+      setDraft(saved.body);
+      setHtml(saved.html);
       setEditing(false);
       if (typeof av?._renderTopicHead === 'function') av._renderTopicHead();
     } catch (err) {
@@ -1869,8 +1882,9 @@ function IssueBody(
  * holds the one topic the screen is on and an inline expansion is not
  * navigation: two readers of one store would fight over it.
  *
- * The Workshop passes `comments: false`, so the singleton
- * `#dev-issue-comments` host below is emitted on the topic screen only.
+ * A request's own page draws none of this: it is a thread
+ * (./request-head.tsx), and only the Workshop's inline expansion still draws
+ * a request through these sections.
  */
 export function TopicBodySections({ body }: { body: TopicBody }): ReactNode {
   const a = body.actions;
@@ -1942,9 +1956,6 @@ export function TopicBodySections({ body }: { body: TopicBody }): ReactNode {
           <Transcript t={body.transcript} />
         </section>
       ) : null}
-      {/* The GitHub thread's host (issue-comments.tsx mounts into it), last
-          so app.css can run it into the Discussion sheet below the head. */}
-      {body.comments ? <div id="dev-issue-comments" className="dev-topic-sheet dev-topic-comments"></div> : null}
     </>
   );
 }

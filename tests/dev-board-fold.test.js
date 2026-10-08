@@ -1561,9 +1561,17 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // by `?shot=app-domain` on the seeded staging-demo-custom-domain project.
   // 737 leaves 143 slots.
   //
+  // 737 → 735: −2 (#4453): a request's page is one Messages reply-thread
+  // sheet. Its two chip checks (Set priority, the category dot) and the
+  // author's title and body pencils are rows of the sheet's ⋯ now, so one
+  // check reads that disc in their place, and the "issue page is a sheet"
+  // check is folded into the one that reads the sheet's anatomy. The rest
+  // were rewritten in place on their routes.
+  // 735 leaves 145 slots.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 737);
+  checkCap.assertPinned(DAPP.tests.length, 735);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

@@ -346,7 +346,6 @@ test('the issue topic page renders the reference as a navigable row', () => {
     assert.ok(!bare.includes(`>${label}<`), label);
   }
   // …and the rest of the issue page is untouched by its absence.
-  assert.match(bare, /id="dev-issue-comments"/);
   assert.ok(bare.includes('About this request'));
 });
 

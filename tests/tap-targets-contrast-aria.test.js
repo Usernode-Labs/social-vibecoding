@@ -99,18 +99,14 @@ test('Q20: the card band labels read on the accent tint', () => {
   assert.match(hover, /color: var\(--accent-tint-ink\);/, 'and hover keeps the same ink');
 });
 
-test('Q20: the Workshop count chips and the GitHub tag clear AA', () => {
+test('Q20: the Workshop count chips clear AA', () => {
   // --state-neutral-bg over a dark category card measures #3e3f43.
   const chip = CSS.match(/\n\.dark \.dev-ws-cnt \{ color: (#[0-9a-f]{6}); \}/);
   assert.ok(chip, 'the dark chip label has its own ink');
   assert.ok(contrast(chip[1], '#3e3f43') >= 4.5, `${chip[1]} on #3e3f43`);
-  const tag = block('\n.dev-topic-gh-tag {');
-  assert.match(tag, /background: color-mix\(in srgb, var\(--bg-tertiary\) 60%, transparent\);/);
-  // The tag rides a --bg-primary bubble: 60% of --bg-tertiary over it.
-  const lightBg = over(token(LIGHT, '--bg-tertiary'), 0.6, token(LIGHT, '--bg-primary'));
-  const darkBg = over(token(DARK, '--bg-tertiary'), 0.6, token(DARK, '--bg-primary'));
-  assert.ok(contrast(token(LIGHT, '--text-muted'), lightBg) >= 4.5, `light tag ${lightBg}`);
-  assert.ok(contrast(token(DARK, '--text-muted'), darkBg) >= 4.5, `dark tag ${darkBg}`);
+  // The GitHub tag that rode a request's comment bubbles went with them
+  // (#4453): a GitHub reply says "on GitHub" after its time, in the row's
+  // own muted ink.
 });
 
 test('Q20: the bell badge, the Discover meta line and the list subtitles use the passing shades', () => {

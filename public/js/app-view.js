@@ -5020,10 +5020,8 @@ const AppView = {
     if (t.kind === 'issue') {
       card = AppView._issueCardModel(item, { noNav: true });
       const closedBand = AppView._issueClosedBandView(item);
-      // #396: the issue body, then the GitHub comment thread. The thread is
-      // fetched lazily (after paint) into `#dev-issue-comments`, which the
-      // head renders as an empty host, so a cached (or empty) result reuses
-      // what is already there across WS-driven refreshes.
+      // #396: the issue body. Its GitHub comments are fetched lazily (after
+      // paint, `_loadIssueComments`) into the thread's stream (#4453).
       body = {
         actions: AppView._detailActionsView('issue', item),
         // (#2431) The mirror of a proposal's issue chips: which change is
@@ -5038,7 +5036,9 @@ const AppView = {
           markdown: String(item.body || ''),
           canEdit: AppView._canEditIssueAuthor(item),
         },
-        comments: true,
+        // #4453: its own page draws the request as a thread's root post.
+        // The Workshop's inline expansion draws the sections above instead.
+        request: AppView._requestView(item),
       };
     } else if (t.kind === 'proposal') {
       card = AppView._proposalCardModel(item, { noNav: true });
@@ -5162,6 +5162,187 @@ const AppView = {
       how,
       ref: merged ? ref : null,
     };
+  },
+
+  // ── #4453: a request's page, drawn as a Messages reply thread ─────────
+  //
+  // The request is the thread's root post: who asked and when, its title,
+  // its words, and under them the card that says where it stands. Its specs,
+  // its GitHub comments and its replies are the thread's stream
+  // (`_requestThreadRows`, features/group-chat/transcript.tsx). Everything
+  // that is not the next step is a row of the sheet header's ⋯.
+  //
+  // The page used to say who was on it in six places (the work-state chip,
+  // the assignee chip, the work note, its "Also:", the admins' Claims line
+  // and the thread's claim line); the status card says it once, and the
+  // thread's claim line reads as what happened.
+  _requestView(issue) {
+    const n = issue.number;
+    const top = issue.category && issue.category.top;
+    const placed = top ? null : AppView._placedCategoryFor('issue', n);
+    const meta = top ? AppView._categoryMeta(top) : null;
+    let category = meta ? meta.label : (placed ? placed.name : (top || null));
+    if (category) category = category.charAt(0).toUpperCase() + category.slice(1);
+    const askedAt = issue.createdAt || null;
+    const stamp = askedAt && typeof GroupChat !== 'undefined' && GroupChat._stamp
+      ? GroupChat._stamp(askedAt) : (askedAt ? relStamp(askedAt) : { text: '', title: '' });
+    const words = AppView._requestWords(issue.body);
+    const canEditTitle = AppView._canEditIssueAuthor(issue);
+    return {
+      number: n,
+      category,
+      menuKey: AppView._registerCardMenu(`request:${n}`, AppView._requestMenuItems(issue)),
+      asker: issue.created_by_username || issue.user || 'someone',
+      askedAt,
+      askedTime: stamp.text,
+      askedTitle: stamp.title,
+      title: issue.title || '',
+      titleEditing: canEditTitle && AppView._editingIssueTitle === n ? { issue: n, initial: issue.title || '' } : null,
+      bodyHtml: words.text.trim() ? AppView._issueBodyHtml({ body: words.text }) : '',
+      editor: {
+        issue: n,
+        markdown: words.text,
+        source: words.source,
+        canEdit: AppView._canEditIssueAuthor(issue),
+      },
+      status: AppView._requestStatusView(issue),
+    };
+  },
+
+  // A request filed on Homeroom opens with a "**Source:** Homeroom user
+  // (maya)" line. GitHub needs it: the bot files the issue, so the line is
+  // who asked (routes/issues.js creatorFromSourceLine reads it back). Here
+  // the root post already names who asked, so the page draws the words
+  // after it, and the editor puts it back on save. Display only: the stored
+  // body keeps the line.
+  _requestWords(body) {
+    const text = typeof body === 'string' ? body : '';
+    const m = /^\s*(\*\*Source:\*\*[^\n]*)(?:\n\s*)*/.exec(text);
+    return m ? { source: m[1], text: text.slice(m[0].length) } : { source: null, text };
+  },
+
+  // The status card: how far the request got by what its row knows (a change
+  // underway or in review is Built, merged is Voted in; the stream adds Spec,
+  // topic/request-model.ts requestStage), one sentence, the claim's lapse,
+  // and the one action this viewer would take next.
+  _requestStatusView(issue) {
+    const ref = AppView._issueProposalRefView(issue);
+    const st = AppView._issueWorkState(issue);
+    const closed = issue.state === 'closed';
+    const merged = !!(ref && ref.state === 'merged');
+    let stage = 'asked';
+    if (merged) stage = 'voted';
+    else if ((ref && (ref.state === 'underway' || ref.state === 'review')) || (st && st.key === 'in_review')) stage = 'built';
+
+    const who = st ? st.who : null;
+    const others = st && st.people > 1 ? st.people - 1 : 0;
+    const subject = who === 'you' ? 'You' : (who || 'Someone');
+    const plural = others ? ` and ${others} other${others === 1 ? '' : 's'}` : '';
+    const are = who === 'you' || others ? 'are' : 'is';
+    let lead;
+    if (merged) lead = 'Voted in.';
+    else if (!st) lead = 'Nobody is working on this yet.';
+    else if (st.key === 'in_review') {
+      lead = who === 'you' ? 'Your change for this is waiting for approval.'
+        : who ? `${who}’s change for this is waiting for approval.` : 'A change for this is waiting for approval.';
+    } else if (st.key === 'bot') {
+      lead = issue.bot && issue.bot.what === 'queued' ? 'Homeroom bot will build this next.'
+        : AppView._botWorkReading(issue.bot) ? 'Homeroom bot is reading this.' : 'Homeroom bot is building this.';
+    } else if (st.key === 'auto_solving') lead = 'An auto-solve run is working on this.';
+    else if (st.key === 'answer_needed') lead = 'An auto-solve run asked a question that needs an answer.';
+    else if (st.key === 'draft_ready') lead = 'An auto-solve run left a draft to look over.';
+    // A paused session: they started it, and nobody is in it right now.
+    else if (st.key === 'paused') lead = `${subject}${plural} started working on this.`;
+    else lead = who === 'you' && !others ? 'You’re working on this.' : `${subject}${plural} ${are} working on this.`;
+
+    let note = null;
+    if (merged) note = closed ? `${ref.label} closed it.` : `${ref.label} is live.`;
+    else if (ref && ref.state === 'review' && !(st && st.key === 'in_review')) note = 'A change for it is waiting for approval.';
+    else if (ref && ref.state === 'underway') note = 'A change for it is underway.';
+
+    // The claim's lapse, which the work-state sentence used to bury.
+    let fine = null;
+    if (st && st.clearAt && (st.key === 'claimed' || st.key === 'paused') && !closed) {
+      let date = '';
+      try { date = new Date(st.clearAt).toLocaleDateString([], { month: 'short', day: 'numeric' }); } catch { date = ''; }
+      if (date) fine = `If nothing moves by ${date}, it opens up for someone else.`;
+    }
+
+    let action = null;
+    const toChange = ref ? { label: 'See the change', href: ref.href } : null;
+    if (closed) {
+      action = toChange;
+    } else if (merged) {
+      action = toChange;
+    } else if (!AppView.readOnly && issue.myPrSessionId) {
+      action = {
+        label: 'Continue your work', title: 'Open your agent session on this request',
+        act: { fn: 'openChangeWorkspace', args: [issue.myPrSessionId] },
+      };
+    } else if (!AppView.readOnly) {
+      const primary = AppView._issuePrimaryActionSpec(issue, { noNav: true });
+      action = primary
+        ? { label: primary.label, title: primary.title, disabled: !!primary.disabled, act: primary.act }
+        : toChange;
+    } else {
+      action = toChange;
+    }
+    if (action && action.act && typeof action.act.fn !== 'string') action.act = undefined;
+
+    const how = issue.closed_via === 'admin' ? ' by an admin' : issue.closed_via === 'vote' ? ' by vote' : '';
+    const when = issue.closedAt ? relStamp(issue.closedAt).text : '';
+    return {
+      stage,
+      lead,
+      note,
+      fine,
+      action,
+      closed: closed && !merged ? `This request was closed${how}${when ? `, ${when}` : ''}.` : null,
+    };
+  },
+
+  // The sheet header's ⋯: everything that is not the next step. The work
+  // rows first (more work, the viewer's claim, an admin's release of
+  // somebody else's), then editing it, its tags, and the rest of what a
+  // request's card offers.
+  _requestMenuItems(issue) {
+    const n = issue.number;
+    const closed = issue.state === 'closed';
+    const base = AppView._issueMenuItems(issue, { noNav: true });
+    const WORK = ['Build it now', 'Start more work', 'Claim it', 'Stop working on this'];
+    const work = [];
+    if (!AppView.readOnly && !closed && issue.myPrSessionId) {
+      work.push({ label: 'Start more work', icon: 'generate', title: 'Start another agent session on this request', act: () => AppView.chooseIssueWork(n) });
+    }
+    for (const row of base) {
+      if (WORK.includes(row.label) && !(row.label === 'Start more work' && work.length)) work.push(row);
+    }
+    const rest = base.filter((row) => !WORK.includes(row.label));
+    // An admin's escape hatch for a stuck claim: the DELETE route is the
+    // authoritative gate (claimer or write-admin).
+    const release = [];
+    const claims = (issue.in_progress && Array.isArray(issue.in_progress.claims)) ? issue.in_progress.claims : [];
+    if (!closed && typeof App !== 'undefined' && App.user && App.user.canAdminWrite) {
+      for (const c of claims) {
+        if (c.mine) continue;
+        const userId = parseInt(c.userId, 10) || 0;
+        release.push({
+          label: `Release ${c.username || 'their'}’s claim`, icon: 'clear',
+          title: `Release ${c.username || 'this'} claim (admin)`,
+          act: () => AppView.clearIssueClaim(n, userId),
+        });
+      }
+    }
+    const edit = [];
+    if (AppView._canEditIssueAuthor(issue)) {
+      edit.push({ label: 'Edit title', icon: 'edit', act: () => AppView.beginIssueTitleEdit(n) });
+      edit.push({
+        label: 'Edit request', icon: 'edit',
+        act: () => window.dispatchEvent(new CustomEvent('request-body-edit', { detail: n })),
+      });
+    }
+    const tags = closed ? [] : AppView._attrMenuItems('issue', n, issue);
+    return [...work, ...release, ...edit, ...tags, ...rest];
   },
 
   // #1045: the ONE rule for whether a proposal row offers the "Explore in
@@ -6995,6 +7176,9 @@ const AppView = {
       ref: t.id,
       container: slot,
       fullHeight: true,
+      // #4453: a request's page is a Messages reply thread, the request its
+      // root post, with its GitHub comments in the same stream.
+      ...(t.kind === 'issue' ? { language: 'request', placeholder: 'Reply…' } : {}),
       // #363: request the in-scroll header slot so _renderTopicHead can paint
       // the topic card/body above the messages in the same scroll region.
       withHeader: true,
@@ -9981,12 +10165,6 @@ const AppView = {
    * is what the row already carries. Returns only the half that goes below
    * the card — the Workshop is already drawing the card itself, and drawing
    * it twice is the hybrid this whole line of work exists to stop being.
-   *
-   * `comments` is forced OFF. The topic screen's GitHub thread mounts into
-   * `#dev-issue-comments`, a singleton id, and the Workshop's sheet already
-   * carries both that thread and the app thread above this point. Asking
-   * for a second host would give the page two nodes with one id and the
-   * loader would fill whichever it found first.
    */
   _issueUnclaimed(it) {
     const ip = it && it.in_progress;
@@ -13250,61 +13428,75 @@ const AppView = {
     return { lead: m[1].trim(), title, body: lines.join('\n').trim() };
   },
 
-  // #396: the GitHub comment thread for an issue, rendered beneath the
-  // issue body in the topic sub-view. One row per comment (author + date +
-  // markdown body), with bot comments tagged. When `truncated`, a final
-  // line notes older comments were omitted and links out to the full
-  // thread on GitHub. Returns '' when there are no comments so nothing
-  // renders. Markdown goes through the same DevChat.renderMarkdown pipeline
-  // as the body.
-  // The GitHub thread under an issue's topic card, as the view model
-  // features/dev-board/issue-comments.tsx draws.
+  // #4453: an issue's GitHub comments, as rows of its page's ONE stream.
+  // A request's page is a Messages reply thread, and a reply written on
+  // GitHub is drawn as the same named row as one written here, in the order
+  // they were written: `GroupChat.renderThread` merges these into the
+  // thread's own rows by time (features/group-chat/transcript.tsx
+  // `RequestRows`). Null until `_loadIssueComments` has the comments.
   //
-  // `_issueCommentsHtml` lived here. What it decided stays: which authors are
-  // bots and the SANITIZER — a comment body is arbitrary GitHub markdown, run
-  // through `DevChat.renderMarkdown` (the same one the dev chat and the group
-  // chat's transcript use), with an escaped-`<pre>` fallback for a page where
-  // dev-chat.js did not load.
+  // What #396 and #1808 decided stays here: which authors are bots, and the
+  // SANITIZER — a comment body is arbitrary GitHub markdown, run through
+  // `DevChat.renderMarkdown` (images opt-in, the raw <img> form GitHub
+  // writes for a resized screenshot rebuilt from its safe fields), with an
+  // escaped-`<pre>` fallback for a page where dev-chat.js did not load. The
+  // stamp is the thread's own (`GroupChat._stamp`): the reader's zone, a
+  // date once it is not today's.
   //
-  // What does NOT stay is the date's slice. `createdAt.slice(0, 10)` took the
-  // first ten characters of GitHub's ISO string, which is a UTC date: a
-  // comment posted at 8pm in Sao Paulo was stamped with the NEXT day, and one
-  // posted at 6am in Tokyo with the previous one. It also carried no time at
-  // all — the thing #1808 was filed about, sitting directly above a Discussion
-  // thread that got it right. The raw instant goes through now and
-  // features/dev-board/issue-comments.tsx formats it in the reader's own zone
-  // with the shared helper.
-  _issueCommentsView(comments, truncated, htmlUrl) {
-    const list = Array.isArray(comments) ? comments : [];
+  // #3490: Homeroom bot's spec comment carries the spec in a `<details>` fold
+  // (`_botSpecOf`). It rides as `githubSpec`, rendered as the spec viewer
+  // renders one, and the page draws it as a spec card rather than a reply,
+  // or leaves it out when the thread has the posting it mirrors.
+  _requestThreadRows(number) {
+    const slug = AppView.appData && AppView.appData.slug;
+    if (!slug) return null;
+    const entry = AppView._ghComments.get(AppView._ghCommentsKey(slug, Number(number)));
+    if (!entry) return null;
     const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
-      // GitHub issue comments can carry both Markdown image syntax and the
-      // raw <img ...> form GitHub writes when a screenshot is resized. The
-      // shared renderer keeps images opt-in and rebuilds that raw form from
-      // its safe src/alt fields before sanitizing it.
       ? (str) => DevChat.renderMarkdown(str, { images: true })
       : (str) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(str)}</pre>`;
-    // #3490: a spec renders as the spec viewer renders one, with paragraph
-    // semantics rather than a chat's line breaks.
     const renderSpec = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
       ? (str) => DevChat.renderMarkdown(str, { breaks: false })
       : (str) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(str)}</pre>`;
     // #3952: as in the request's body (_issueBodyHtml).
     const mentions = typeof renderRequestMentions === 'function' ? renderRequestMentions : (h) => h;
-    return {
-      comments: list.map((c, i) => {
-        const spec = AppView._botSpecOf(c);
-        return {
-          key: String(c.id != null ? c.id : `i${i}`),
-          author: c.author || 'unknown',
-          bot: AppView._isBotCommentAuthor(c.author),
-          createdAt: c.createdAt || '',
-          bodyHtml: mentions(renderMd(spec ? spec.lead : (c.body || ''))),
-          spec: spec ? { title: spec.title, html: renderSpec(spec.body) } : null,
-        };
-      }),
-      truncated: !!truncated,
-      htmlUrl: htmlUrl || null,
-    };
+    const stampOf = (iso) => (typeof GroupChat !== 'undefined' && GroupChat._stamp
+      ? GroupChat._stamp(iso) : relStamp(iso));
+    const rows = (entry.comments || []).map((c, i) => {
+      const spec = AppView._botSpecOf(c);
+      const stamp = c.createdAt ? stampOf(c.createdAt) : { text: '', title: '' };
+      return {
+        id: null,
+        key: String(c.id != null ? c.id : `i${i}`),
+        kind: 'github',
+        username: c.author || 'unknown',
+        senderId: null,
+        time: stamp.text,
+        timeTitle: stamp.title,
+        at: c.createdAt || null,
+        bodyHtml: spec ? '' : mentions(renderMd(c.body || '')),
+        text: spec ? '' : String(c.body || ''),
+        systemText: '',
+        mine: false,
+        editedTitle: null,
+        unread: false,
+        bookmarked: false,
+        flash: false,
+        canEdit: false,
+        showEdit: false,
+        showBookmark: false,
+        showReact: false,
+        quote: null,
+        reactions: [],
+        attachments: [],
+        voteRowClass: '',
+        voteRef: null,
+        specShare: null,
+        githubSpec: spec ? { title: spec.title, markdown: spec.body, html: renderSpec(spec.body) } : null,
+      };
+    });
+    const item = AppView._findItem('issue', Number(number));
+    return { rows, truncated: !!entry.truncated, htmlUrl: (item && item.htmlUrl) || null };
   },
 
   // ── Shared dev-chat transcript (read-only) ─────────────────────────
@@ -13503,13 +13695,11 @@ const AppView = {
     }
   },
 
-  // #396: lazily fetch + render an issue's GitHub comment thread into the
-  // #dev-issue-comments placeholder. Cached per app and issue in _ghComments
-  // so WS-driven _renderTopicHead refreshes paint from cache without a
-  // refetch. Best-effort: a failed fetch leaves the placeholder empty (the
-  // issue body still renders). Re-resolves the placeholder after the await
-  // since _renderTopicHead may have repainted, and bails if the user
-  // navigated away from this issue.
+  // #396: lazily fetch an issue's GitHub comments for its page's stream
+  // (`_requestThreadRows`). Cached per app and issue in _ghComments, so the
+  // WS-driven `_renderTopicHead` refreshes cost no refetch. Best-effort: a
+  // failed fetch leaves the stream with the thread's own rows. Re-checks the
+  // topic after the await, and bails if the reader has left this issue.
   async _loadIssueComments(item) {
     if (!item || item.number == null) return;
     const number = item.number;
@@ -13517,26 +13707,8 @@ const AppView = {
     const slug = AppView.appData && AppView.appData.slug;
     if (!slug) return;
     const key = AppView._ghCommentsKey(slug, number);
-
-    const paint = (data) => {
-      const t = AppView._devTopic;
-      if (!t || t.kind !== 'issue' || t.id !== number) return;
-      // Issue numbers repeat across apps: the same number open in another
-      // app is not this issue (#4178).
-      if ((AppView.appData && AppView.appData.slug) !== slug) return;
-      const slot = document.getElementById('dev-issue-comments');
-      if (!slot) return;
-      // The thread is features/dev-board/issue-comments.tsx's. The host is
-      // re-rendered by `_renderTopicHead` on every WS-driven refresh, so this
-      // mounts each time — the portal registry keys on the element, and the
-      // one the previous head left behind is swept as detached.
-      AppView._reactDevBoard()?.mountIssueComments(slot);
-      AppView._reactDevBoard()?.publishIssueComments(
-        AppView._issueCommentsView(data.comments, data.truncated, item.htmlUrl));
-    };
-
-    const cached = AppView._ghComments.get(key);
-    if (cached) { paint(cached); return; }
+    // In hand already: the stream drew it when the thread rendered.
+    if (AppView._ghComments.get(key)) return;
 
     try {
       const res = await fetch(
@@ -13544,13 +13716,18 @@ const AppView = {
       );
       if (!res.ok) return;
       const data = await res.json();
-      const entry = {
+      AppView._ghComments.set(key, {
         comments: Array.isArray(data.comments) ? data.comments : [],
         truncated: !!data.truncated,
-      };
-      AppView._ghComments.set(key, entry);
-      paint(entry);
-    } catch (_) { /* best-effort: leave the placeholder empty */ }
+      });
+      const t = AppView._devTopic;
+      if (!t || t.kind !== 'issue' || t.id !== number) return;
+      // Issue numbers repeat across apps: the same number open in another
+      // app is not this issue (#4178).
+      if ((AppView.appData && AppView.appData.slug) !== slug) return;
+      const a = typeof GroupChat !== 'undefined' ? GroupChat.activeThread : null;
+      if (a && a.type === 'issue' && Number(a.ref) === number) GroupChat.renderThread({ keepScroll: true });
+    } catch (_) { /* best-effort: the thread's own rows stand */ }
   },
 
   // The proposal's plain-language summary (pr_summary_md), rendered at the
