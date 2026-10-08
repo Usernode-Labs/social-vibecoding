@@ -113,6 +113,24 @@ test('Discover card: a focusable button named by its app, attributes after data-
   assert.match(html, /class="card-add-btn [^"]*"[^>]*aria-label="Add Alpha Board to My apps"/);
 });
 
+// #4020: the corner control says what it does in words (a tooltip does
+// nothing on a phone), and a card with no description says so instead of
+// showing only a name and a contributor count.
+test('Discover card: the add control is labelled, and an app with no description says so', () => {
+  const html = renderToHtml(createElement(DiscoverCard, { tile: TILE }));
+  const btn = html.match(/<button[^>]*class="card-add-btn [^"]*"[^>]*>([\s\S]*?)<\/button>/);
+  assert.ok(btn, 'the add control renders');
+  assert.match(btn[1], /<span>Add<\/span>/, 'a visible word, not only a glyph');
+  assert.match(html, /class="home-discover-blurb [^"]*">No description yet</);
+
+  const added = renderToHtml(createElement(DiscoverCard, { tile: { ...TILE, added: true, blurb: 'Rank restaurants with friends' } }));
+  assert.match(added, /<span>Added<\/span>/);
+  assert.match(added, /data-added="true"/);
+  assert.doesNotMatch(added, /bg-emerald-500/, 'the settled state is grey, not a filled green pill');
+  assert.match(added, /class="home-discover-blurb [^"]*">Rank restaurants with friends</, 'a real description wins');
+  assert.doesNotMatch(added, /No description yet/);
+});
+
 test('Discover card: the editor preview stays a picture, out of the tab order', () => {
   const html = renderToHtml(createElement(DiscoverCard, { tile: TILE, preview: true, previewTheme: 'light' }));
   const tag = html.match(/<div class="app-card home-discover-card [^>]*>/)[0];

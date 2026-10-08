@@ -19463,6 +19463,8 @@ button.dev-fold-mark:focus-visible { outline: 2px solid var(--accent); outline-o
 .home-discover-card[data-preview-theme="dark"] :is(.home-discover-blurb, .home-discover-meta) { color: #8e8e93; }
 .home-discover-card[data-preview-theme="light"] .card-add-btn[data-added="false"] { background: white; color: #0062cc; border-color: #e3e3e6; }
 .home-discover-card[data-preview-theme="dark"] .card-add-btn[data-added="false"] { background: #2c2c2e; color: #5aa9ff; border-color: #48484a; box-shadow: none; }
+.home-discover-card[data-preview-theme="light"] .card-add-btn[data-added="true"] { background: white; color: #48484a; border-color: #e3e3e6; }
+.home-discover-card[data-preview-theme="dark"] .card-add-btn[data-added="true"] { background: #2c2c2e; color: #c7c7cc; border-color: #48484a; box-shadow: none; }
 
 /* ═══════════════════════════════════════════════════════════════════
    #platform-tabs — the shell's five sections, as a permanent bar
