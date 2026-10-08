@@ -72,8 +72,19 @@ const RETRY_MAX_MS = 30000;
 /** Publishes are best-effort; a bus outage must never break a local send. */
 let _pool = null;
 
+// A process that publishes and never listens (the workflow worker,
+// startPublisher). Its envelopes carry `p: 1`, so a listener does not take
+// them as a peer that could hear it (see _isAlone): the worker hears nothing,
+// and counting it kept a lone web Pod publishing to nobody. And it sends one
+// envelope at a time: everything it broadcasts reaches a browser only through
+// here, and concurrent queries on different pool connections commit, and so
+// arrive, in any order.
+let _publisherOnly = false;
+let _sendChain = Promise.resolve();
+const _from = () => (_publisherOnly ? { i: INSTANCE_ID, p: 1 } : { i: INSTANCE_ID });
+
 function _envelope(kind, routing, data) {
-  return { i: INSTANCE_ID, k: kind, r: routing || null, d: data };
+  return { ..._from(), k: kind, r: routing || null, d: data };
 }
 
 // ── Knowing when nobody else is listening (#4318) ────────────────────
@@ -125,8 +136,11 @@ function _isAlone(state, now) {
 }
 
 function _sendRaw(kind, body) {
-  _pool.query('SELECT pg_notify($1, $2)', [CHANNEL, body])
+  const pool = _pool;
+  const send = () => pool.query('SELECT pg_notify($1, $2)', [CHANNEL, body])
     .catch((err) => log.warn('ws-bus', 'publish failed', { kind, err: err.message }));
+  if (_publisherOnly) _sendChain = _sendChain.then(send);
+  else send();
 }
 
 function _sayHello() {
@@ -171,7 +185,7 @@ function _encode(kind, routing, data) {
   if (Buffer.byteLength(body, 'utf8') > MAX_PAYLOAD_BYTES) {
     // Too big for NOTIFY. Send the nudge instead of a truncated lie.
     try {
-      body = JSON.stringify({ i: INSTANCE_ID, k: kind, r: routing || null, o: 1 });
+      body = JSON.stringify({ ..._from(), k: kind, r: routing || null, o: 1 });
     } catch { return null; }
     log.debug('ws-bus', 'payload oversize, sending resync nudge', { kind });
   }
@@ -237,8 +251,8 @@ function _flushBatch(key) {
   try {
     // One item is an ordinary envelope; only a real batch needs the wrapper.
     body = items.length === 1
-      ? JSON.stringify({ i: INSTANCE_ID, ...items[0] })
-      : JSON.stringify({ i: INSTANCE_ID, k: 'batch', b: items });
+      ? JSON.stringify({ ..._from(), ...items[0] })
+      : JSON.stringify({ ..._from(), k: 'batch', b: items });
   } catch { return; }
   _sendRaw(items.length === 1 ? items[0].k : 'batch', body);
 }
@@ -307,8 +321,9 @@ function _handleNotification(msg) {
   }
   // Our own echo. Already delivered locally, before it was ever published.
   if (!env || env.i === INSTANCE_ID) return;
-  // Anything from another instance proves it exists (see _isAlone).
-  _peers.lastPeerAt = Date.now();
+  // Anything from another instance proves it exists (see _isAlone), unless
+  // that instance only publishes: it cannot hear what this one sends.
+  if (!env.p) _peers.lastPeerAt = Date.now();
   if (env.k === HELLO_KIND) return;
   if (typeof _onMessage !== 'function') return;
   if (env.k === 'batch') {
@@ -428,6 +443,7 @@ function _scheduleReconnect() {
  */
 function start({ pool, connectionString, onMessage, onListening }) {
   _pool = pool || null;
+  _publisherOnly = false;
   _connectionString = connectionString || null;
   _onMessage = onMessage || null;
   _onListening = onListening || null;
@@ -445,6 +461,7 @@ function start({ pool, connectionString, onMessage, onListening }) {
  */
 function startPublisher({ pool }) {
   _pool = pool || null;
+  _publisherOnly = true;
   _connectionString = null;
   _onMessage = null;
   _onListening = null;
@@ -453,6 +470,8 @@ function startPublisher({ pool }) {
 
 async function stop() {
   flushBatches();
+  // What a publisher-only process queued goes out before its pool closes.
+  await _sendChain;
   _stopped = true;
   if (_hintTimer) { clearTimeout(_hintTimer); _hintTimer = null; }
   if (_peerTimer) { clearInterval(_peerTimer); _peerTimer = null; }

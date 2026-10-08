@@ -315,11 +315,14 @@ test('a batch never outgrows the NOTIFY budget, and an oversize item still nudge
 
 // ── A process with no sockets: the workflow worker ────────────────────
 
-test('a publisher-only process publishes without ever listening', () => {
+const sent = () => new Promise((r) => setImmediate(r));  // a publisher-only send is queued
+
+test('a publisher-only process publishes without ever listening', async () => {
   const pool = fakePool();
   bus.startPublisher({ pool });
   try {
     bus.publish('global', null, { type: 'app_status' });
+    await sent();
     assert.equal(pool.calls.length, 1);
     assert.equal(bus._peers.listenerSince, 0, 'it never listens, so it never counts itself alone');
   } finally {
@@ -327,7 +330,7 @@ test('a publisher-only process publishes without ever listening', () => {
   }
 });
 
-test('issue-cache changes cross to the other instances, and a receiver does not publish them again', () => {
+test('issue-cache changes cross to the other instances, and a receiver does not publish them again', async () => {
   const github = require('../src/services/github');
   const pool = fakePool();
   bus.startPublisher({ pool });
@@ -335,9 +338,10 @@ test('issue-cache changes cross to the other instances, and a receiver does not 
     assert.equal(github.noteIssuesClosed('Org', 'Repo', [5, 6]), 2);
     github.invalidateIssuesCache('Org', 'Repo');
     github.unsuppressIssues('Org', 'Repo', [6]);
-    const sent = pool.calls.map((c) => JSON.parse(c.params[1]));
-    assert.deepEqual(sent.map((e) => e.k), ['github_issues', 'github_issues', 'github_issues']);
-    assert.deepEqual(sent.map((e) => e.d), [
+    await sent();
+    const envelopes = pool.calls.map((c) => JSON.parse(c.params[1]));
+    assert.deepEqual(envelopes.map((e) => e.k), ['github_issues', 'github_issues', 'github_issues']);
+    assert.deepEqual(envelopes.map((e) => e.d), [
       { owner: 'Org', repo: 'Repo', closed: [5, 6], ttlMs: 10 * 60 * 1000 },
       { owner: 'Org', repo: 'Repo', invalidate: true },
       { owner: 'Org', repo: 'Repo', unsuppress: [6] },
@@ -345,6 +349,7 @@ test('issue-cache changes cross to the other instances, and a receiver does not 
     pool.calls.length = 0;
     // What another instance does with the first one: record it here only.
     github.applyIssueChange({ owner: 'Other', repo: 'Repo', closed: [9] });
+    await sent();
     assert.equal(pool.calls.length, 0, 'applied without publishing');
     bus.startPublisher({ pool: null });
     assert.equal(github.unsuppressIssues('Other', 'Repo', [9]), 1, 'the closed issue was recorded');
@@ -358,4 +363,41 @@ test('the bus handler hands issue changes and turn stops to their local halves',
   const body = WS_SRC.slice(at, WS_SRC.indexOf('\n}', at));
   assert.match(body, /case 'github_issues':[\s\S]*?applyIssueChange\(data\)/);
   assert.match(body, /case 'worker_stop':[\s\S]*?notePendingStop\(data\?\.sessionId, data\?\.at\)/);
+});
+
+test('a publisher-only envelope is delivered, but is not a peer that could hear this instance', () => {
+  const seen = collect();
+  bus._peers.lastPeerAt = -Infinity;
+  notify({ i: 'workflow-worker', p: 1, k: 'global', r: null, d: { type: 'app_status' } });
+  assert.equal(seen.length, 1, 'delivered like any other');
+  assert.equal(bus._peers.lastPeerAt, -Infinity, 'a lone web Pod stays alone: the worker hears nothing');
+  notify({ i: 'another-web-pod', k: 'global', r: null, d: { type: 'app_status' } });
+  assert.ok(bus._peers.lastPeerAt > 0, 'an instance that listens still counts');
+});
+
+test('a publisher-only process marks its envelopes and sends them one at a time, in order', async () => {
+  const started = [];
+  const pending = [];
+  const pool = {
+    query: (sql, params) => {
+      started.push(JSON.parse(params[1]));
+      return new Promise((resolve) => pending.push(resolve));
+    },
+  };
+  bus.startPublisher({ pool });
+  const tick = () => new Promise((r) => setImmediate(r));
+  try {
+    bus.publish('global', null, { type: 'deploy', phase: 'start' });
+    bus.publish('global', null, { type: 'deploy', phase: 'end' });
+    await tick();
+    assert.equal(started.length, 1, 'the second waits for the first');
+    assert.equal(started[0].p, 1);
+    pending.shift()();
+    await tick();
+    assert.deepEqual(started.map((e) => e.d.phase), ['start', 'end']);
+    pending.shift()();
+    await bus.stop();
+  } finally {
+    bus.startPublisher({ pool: null });
+  }
 });

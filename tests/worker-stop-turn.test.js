@@ -673,6 +673,7 @@ test('a stop is published, and another process records it only for a turn it run
   const { worker, restore } = loadWorker();
   try {
     await worker.stopTurn(8200);
+    await new Promise((r) => setImmediate(r));  // a publisher-only send is queued
     assert.deepEqual(sent.filter((e) => e.k === 'worker_stop').map((e) => e.d.sessionId), [8200]);
     // On another process (notePendingStop, from the bus): it runs 8201's turn.
     warmSession(worker, 8201);
