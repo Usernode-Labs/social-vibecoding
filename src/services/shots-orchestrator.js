@@ -19,6 +19,7 @@ const shotsControl = require('./shots-control');
 const shotsHomeTile = require('./shots-home-tile');
 const environment = require('./shots-environment');
 const identities = require('./shots-identities');
+const shotsFixtures = require('./shots-fixtures');
 const lifecycle = require('./lifecycle');
 const planContract = require('./visible-changes');
 const previewClock = require('./preview-clock');
@@ -390,7 +391,7 @@ const GUEST_WHO = Object.freeze({
 // What the shots agent reads first: the declared changes, the two
 // addresses to shoot, which browser to use for whom, and background it may
 // use to find the screens. Everything from the proposal is marked untrusted.
-function shotsBrief({ run, session, revision, pair, deployment, intent, guestKind = null, homeTile = null }) {
+function shotsBrief({ run, session, revision, pair, deployment, intent, guestKind = null, homeTile = null, invited = false }) {
   const testingPaths = testingPathsForSession(session);
   // A change that only shows at certain times declares the moment to see it
   // at (services/preview-clock.js). Both copies run as staging, so each opens
@@ -419,6 +420,20 @@ function shotsBrief({ run, session, revision, pair, deployment, intent, guestKin
         tool: 'browser_guest',
         who: GUEST_WHO[guestKind] || 'a visitor who is not signed in',
       },
+      // The invited members exist only in Homeroom's own copies, where their
+      // fixtures are in (the pair's availableFixtures). Anywhere else these
+      // browsers are absent from the brief.
+      ...(invited ? {
+        invited_member: {
+          tool: 'browser_invited_member',
+          who: 'an invited member: an invite link let them into a private project before they were let into '
+            + 'Homeroom, and they have not been to Home yet, so the project menu offers Go to Homeroom',
+        },
+        waitlisted_member: {
+          tool: 'browser_waitlisted_member',
+          who: 'an invited member who has been Home and joined the waitlist by email',
+        },
+      } : {}),
     },
     changedFiles: {
       items: revision.files.slice(0, 200),
@@ -733,7 +748,7 @@ function recordAgentDiagnostic(metrics, raw) {
   }
   if (raw.signal === 'SIGTERM' || raw.signal === 'SIGINT') event.signal = raw.signal;
   if (['base', 'head', 'hosted', 'outside'].includes(raw.side)) event.side = raw.side;
-  if (['member', 'admin', 'full_admin', 'guest'].includes(raw.persona)) event.persona = raw.persona;
+  if (['member', 'admin', 'full_admin', 'guest', 'invited_member', 'waitlisted_member'].includes(raw.persona)) event.persona = raw.persona;
   if (['intent_start', 'declared_check', 'other'].includes(raw.routeHint)) {
     event.routeHint = raw.routeHint;
   }
@@ -768,7 +783,7 @@ function recordAgentDiagnostic(metrics, raw) {
       || kind === 'browser_call_start' || kind === 'browser_call_pending'
       || kind === 'browser_call_end') {
     event.tool = AGENT_DIAGNOSTIC_TOOLS.has(raw.tool) ? raw.tool : 'other';
-    if (['member', 'admin', 'full_admin', 'guest'].includes(raw.persona)) event.persona = raw.persona;
+    if (['member', 'admin', 'full_admin', 'guest', 'invited_member', 'waitlisted_member'].includes(raw.persona)) event.persona = raw.persona;
     if (['base', 'head', 'outside'].includes(raw.side)) event.side = raw.side;
     if (Number.isSafeInteger(raw.routeOrdinal) && raw.routeOrdinal > 0
         && raw.routeOrdinal <= 1000) event.routeOrdinal = raw.routeOrdinal;
@@ -1106,8 +1121,14 @@ async function executeRun(config, options, injected = {}) {
     const guest = await deps.identities.shotsGuestIdentity(pool, app, {
       selfApp: app.slug === config.selfAppSlug,
     });
+    // The invited-member browsers are minted only where both fixtures are in
+    // (the pair's availableFixtures), so a child app never carries their
+    // tokens.
+    const invitedFixtures = exploration.availableFixtures || [];
+    const invited = invitedFixtures.some((fixture) => fixture?.id === shotsFixtures.INVITED_PROFILE)
+      && invitedFixtures.some((fixture) => fixture?.id === shotsFixtures.WAITLISTED_PROFILE);
     const authTokens = {
-      ...await deps.identities.mintShotsAuthTokens(pool, app.id),
+      ...await deps.identities.mintShotsAuthTokens(pool, app.id, { invited }),
       ...(guest.token ? { guest: guest.token } : {}),
     };
     failurePhase = 'persist_exploration';
@@ -1135,6 +1156,7 @@ async function executeRun(config, options, injected = {}) {
       run, session, revision, pair, deployment: exploration, intent,
       guestKind: guest.kind,
       homeTile: shotsHomeTile.briefEntry(homeTiles),
+      invited,
     });
     const navigationHints = {
       intentPaths: intent.stories.map((story) => story.intent.startPath),

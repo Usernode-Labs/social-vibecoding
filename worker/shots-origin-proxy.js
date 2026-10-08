@@ -48,12 +48,15 @@ const hostedFile = process.env.SHOTS_HOSTED_ORIGINS_FILE || '';
 // platform mints one only for a view-public child app, as the production
 // edge does for a visitor with no account (services/edge-gate.js), and an
 // empty value leaves the guest with no identity at all.
-const PERSONAS = Object.freeze(['member', 'read_only_admin', 'full_admin', 'guest']);
+const PERSONAS = Object.freeze(['member', 'read_only_admin', 'full_admin', 'guest',
+  'invited_member', 'waitlisted_member']);
 const PERSONA_TOKEN_ENV = Object.freeze({
   member: 'SHOTS_MEMBER_TOKEN',
   read_only_admin: 'SHOTS_ADMIN_TOKEN',
   full_admin: 'SHOTS_FULL_ADMIN_TOKEN',
   guest: 'SHOTS_GUEST_TOKEN',
+  invited_member: 'SHOTS_INVITED_TOKEN',
+  waitlisted_member: 'SHOTS_WAITLISTED_TOKEN',
 });
 function personaPorts() {
   let parsed;

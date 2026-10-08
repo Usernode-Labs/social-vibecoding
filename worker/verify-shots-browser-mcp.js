@@ -128,7 +128,7 @@ async function main() {
   try {
     const stateDir = path.join(dir, 'state');
     fs.mkdirSync(stateDir);
-    for (const persona of ['member', 'read_only_admin', 'full_admin', 'guest']) {
+    for (const persona of ['member', 'read_only_admin', 'full_admin', 'guest', 'invited_member', 'waitlisted_member']) {
       fs.writeFileSync(path.join(stateDir, `${persona}.json`), '{"cookies":[],"origins":[]}');
     }
     const output = path.join(dir, 'mcp.json');
@@ -153,11 +153,12 @@ async function main() {
         SHOTS_RECORD_CLIPS: '1',
       },
     });
-    for (const persona of ['member', 'admin', 'full_admin', 'guest']) {
+    for (const persona of ['member', 'admin', 'full_admin', 'guest', 'invited_member', 'waitlisted_member']) {
       fs.mkdirSync(path.join(dir, 'shots', persona), { recursive: true });
     }
     const config = JSON.parse(fs.readFileSync(output, 'utf8'));
-    for (const persona of ['browser_member', 'browser_admin', 'browser_full_admin', 'browser_guest']) {
+    for (const persona of ['browser_member', 'browser_admin', 'browser_full_admin', 'browser_guest',
+      'browser_invited_member', 'browser_waitlisted_member']) {
       fs.writeFileSync(diagnosticFile, '');
       const tools = await verifyBrowser(config.mcpServers[persona]);
       const records = fs.readFileSync(diagnosticFile, 'utf8').trim().split('\n')
@@ -168,7 +169,9 @@ async function main() {
         })
         .filter((event) => event.persona === (persona === 'browser_admin' ? 'admin'
           : persona === 'browser_full_admin' ? 'full_admin'
-            : persona === 'browser_guest' ? 'guest' : 'member'));
+            : persona === 'browser_guest' ? 'guest'
+              : persona === 'browser_invited_member' ? 'invited_member'
+                : persona === 'browser_waitlisted_member' ? 'waitlisted_member' : 'member'));
       if (!records.some((event) => event.kind === 'browser_call_start')
           || !records.some((event) => event.kind === 'browser_call_end')) {
         throw new Error(`Browser observer did not record ${persona} tool timing`);

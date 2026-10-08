@@ -23,7 +23,7 @@ const proxyControlToken = String(process.env.SHOTS_PROXY_CONTROL_TOKEN || '');
 // Each persona's browser saves the files it is asked to (screenshots by name,
 // clips when a browser session closes) into its own directory here.
 const shotsDir = String(process.env.SHOTS_DIR || '');
-const PERSONA_DIRS = Object.freeze(['member', 'admin', 'full_admin', 'guest']);
+const PERSONA_DIRS = Object.freeze(['member', 'admin', 'full_admin', 'guest', 'invited_member', 'waitlisted_member']);
 if (!/^https?:\/\//.test(platform) || !/^[0-9a-f]{32}$/.test(runId) || !token) {
   process.stderr.write('Shots MCP configuration is incomplete.\n');
   process.exit(1);

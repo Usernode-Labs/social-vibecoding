@@ -37,8 +37,11 @@ You have two throwaway copies of the app with the same fixture data: the
 before address (without the change) and the after address (with it). Use the
 browser named for each change's persona in the brief: browser_member for
 member, browser_admin for read_only_admin, browser_full_admin for full_admin,
-browser_guest for guest. The guest browser is not signed in: it sees what a
-visitor who is not signed in sees, and the brief says what that is here.
+browser_guest for guest, browser_invited_member for invited_member and
+browser_waitlisted_member for waitlisted_member (the invited members exist
+only where the brief lists them). The guest browser is not signed in: it
+sees what a visitor who is not signed in sees, and the brief says what that
+is here.
 Do not sign in (the guest stays signed out too), expose storage, leave the
 two addresses, or change or add a change.
 

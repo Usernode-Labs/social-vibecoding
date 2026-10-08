@@ -21,7 +21,9 @@ function fixtureServer(side, hostedOrigin) {
     const url = new URL(request.url, 'http://fixture.invalid');
     const persona = url.searchParams.get('token') === 'member.jwt' ? 'member'
       : url.searchParams.get('token') === 'admin.jwt' ? 'admin'
-        : url.searchParams.get('token') === 'full-admin.jwt' ? 'full_admin' : null;
+        : url.searchParams.get('token') === 'full-admin.jwt' ? 'full_admin'
+          : url.searchParams.get('token') === 'invited.jwt' ? 'invited_member'
+            : url.searchParams.get('token') === 'waitlisted.jwt' ? 'waitlisted_member' : null;
     if (persona) {
       response.setHeader('Set-Cookie', `session=${side}-${persona}; Path=/; HttpOnly; Secure; SameSite=Lax`);
       response.setHeader('Content-Type', 'text/html');
@@ -31,7 +33,9 @@ function fixtureServer(side, hostedOrigin) {
     const stored = /(?:^|;\s*)session=([^;]+)/.exec(request.headers.cookie || '')?.[1];
     const matched = stored === `${side}-member` ? 'member'
       : stored === `${side}-admin` ? 'admin'
-        : stored === `${side}-full_admin` ? 'full_admin' : null;
+        : stored === `${side}-full_admin` ? 'full_admin'
+          : stored === `${side}-invited_member` ? 'invited_member'
+            : stored === `${side}-waitlisted_member` ? 'waitlisted_member' : null;
     if (url.pathname === '/api/apps') {
       response.statusCode = matched === 'member' ? 200 : 401;
       response.setHeader('Content-Type', 'application/json');
@@ -131,6 +135,7 @@ async function main() {
       SHOTS_HOSTED_ORIGINS_FILE: hostedFile,
       SHOTS_MEMBER_TOKEN: 'member.jwt', SHOTS_ADMIN_TOKEN: 'admin.jwt',
       SHOTS_FULL_ADMIN_TOKEN: 'full-admin.jwt',
+      SHOTS_INVITED_TOKEN: 'invited.jwt', SHOTS_WAITLISTED_TOKEN: 'waitlisted.jwt',
       SHOTS_DIR: path.join(dir, 'shots'),
     };
     const bootstrap = await execFileAsync(process.execPath, [path.join(__dirname, 'shots-browser-bootstrap.js')], {
@@ -159,6 +164,8 @@ async function main() {
     for (const [persona, serverName] of [
       ['member', 'browser_member'], ['admin', 'browser_admin'],
       ['full_admin', 'browser_full_admin'],
+      ['invited_member', 'browser_invited_member'],
+      ['waitlisted_member', 'browser_waitlisted_member'],
     ]) {
       const checks = origins.map((origin, index) => ({
         url: `${origin}/status`,
@@ -186,7 +193,7 @@ async function main() {
     catch (error) {
       throw new Error(`guest browser failed (${error.message}); proxy exit=${proxy.exitCode}; ${proxyError}`);
     }
-    process.stdout.write('All planner personas retained authenticated sessions and loaded an approved child frame on both private revisions; the guest stayed signed out.\n');
+    process.stdout.write('All planner personas retained authenticated sessions and loaded an approved child frame on both private revisions, and the invited members signed in; the guest stayed signed out.\n');
   } finally {
     if (proxy && proxy.exitCode === null) {
       proxy.kill('SIGTERM');

@@ -15,7 +15,9 @@ const { loadTrustedHostedAppOrigins } = require('./shots-hosted-origins');
 
 const reportedPersona = (persona) => (
   persona === 'member' ? 'member' : persona === 'full_admin' ? 'full_admin'
-    : persona === 'guest' ? 'guest' : 'admin'
+    : persona === 'guest' ? 'guest'
+      : persona === 'invited_member' ? 'invited_member'
+        : persona === 'waitlisted_member' ? 'waitlisted_member' : 'admin'
 );
 // What the guest browser starts from: no cookie and no storage on any origin.
 const SIGNED_OUT_STATE = '{"cookies":[],"origins":[]}\n';
@@ -99,10 +101,16 @@ async function main(progress) {
   const proxy = String(process.env.SHOTS_PROXY_SERVER || '');
   // The personas that sign in. The guest has no token to exchange (its
   // optional guest token is the proxy's alone), so none is required for it.
+  // The invited members sign in only when the pair's fixtures wrote their
+  // identities; otherwise their browsers stay signed out, like the guest.
   const personas = {
     member: String(process.env.SHOTS_MEMBER_TOKEN || ''),
     read_only_admin: String(process.env.SHOTS_ADMIN_TOKEN || ''),
     full_admin: String(process.env.SHOTS_FULL_ADMIN_TOKEN || ''),
+  };
+  const optionalPersonas = {
+    invited_member: String(process.env.SHOTS_INVITED_TOKEN || ''),
+    waitlisted_member: String(process.env.SHOTS_WAITLISTED_TOKEN || ''),
   };
   if (origins.length !== 2 || !outputDir || !proxy || Object.values(personas).some((value) => !value)) {
     throw new Error('Shots browser bootstrap configuration is incomplete.');
@@ -120,10 +128,21 @@ async function main(progress) {
     args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
   });
   try {
-    for (const [persona, token] of Object.entries(personas)) {
+    for (const [persona, token] of Object.entries({ ...personas, ...optionalPersonas })) {
       progress.persona = persona;
       progress.side = null;
       progress.bootstrap = null;
+      if (!token) {
+        // No token to exchange: the browser stays a visitor with no
+        // session, as the guest does.
+        progress.stage = 'storage_state';
+        progress.side = null;
+        progress.bootstrap = null;
+        const signedOut = path.join(outputDir, `${persona}.json`);
+        await fs.writeFile(signedOut, SIGNED_OUT_STATE, { mode: 0o600 });
+        await fs.chmod(signedOut, 0o600);
+        continue;
+      }
       const context = await browser.newContext({ serviceWorkers: 'block' });
       try {
         for (const [index, origin] of origins.entries()) {
@@ -149,6 +168,35 @@ async function main(progress) {
           reportAuth(persona, index === 0 ? 'base' : 'head', bootstrap, sessionCookiePresent);
           if (bootstrap.sessionCookieInstalled && !sessionCookiePresent) {
             throw new SessionBootstrapError('session_bootstrap_failed', 'The shots browser did not retain its private session cookie.');
+          }
+          if (persona === 'waitlisted_member') {
+            // This persona has been Home once, so the project menu no longer
+            // offers Go to Homeroom and Home's waitlist card reads "On the
+            // waitlist". Marking the visit is the page's own device memory:
+            // read the signed-in account from the page, then set the key it
+            // sets (public/js/app.js _notePrivateHome), on this origin only.
+            progress.stage = 'navigate';
+            const page = await context.newPage();
+            await page.goto(url.href, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+            const final = new URL(page.url());
+            if (final.origin !== origin) {
+              throw new SessionBootstrapError('cross_origin_navigation', 'Shots authentication left its private origin.');
+            }
+            const userId = await page.evaluate(async () => {
+              try {
+                const response = await fetch('/api/auth/me', { credentials: 'same-origin' });
+                if (!response.ok) return null;
+                const body = await response.json();
+                const id = body?.user?.id;
+                return Number.isInteger(id) || typeof id === 'number' ? String(id) : null;
+              } catch { return null; }
+            });
+            if (userId != null) {
+              await page.evaluate((id) => {
+                try { localStorage.setItem(`usernode:private-home:${id}`, String(Date.now())); } catch (_) { /* private mode */ }
+              }, userId);
+            }
+            await page.close();
           }
           if (persona === 'member') {
             progress.stage = 'hosted_catalog';

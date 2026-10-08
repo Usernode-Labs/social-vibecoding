@@ -149,7 +149,8 @@ test('every shots browser, the guest\'s included, is denied the tools that run c
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-denied-tools-'));
   try {
     const servers = Object.keys(writeConfig(dir).config.mcpServers).filter((name) => name.startsWith('browser_'));
-    assert.deepEqual(servers.sort(), ['browser_admin', 'browser_full_admin', 'browser_guest', 'browser_member']);
+    assert.deepEqual(servers.sort(), ['browser_admin', 'browser_full_admin', 'browser_guest',
+      'browser_invited_member', 'browser_member', 'browser_waitlisted_member']);
     for (const server of servers) {
       for (const tool of ['browser_evaluate', 'browser_run_code', 'browser_file_upload', 'browser_install']) {
         assert.ok(denied.has(`mcp__${server}__${tool}`), `${server} is denied ${tool}`);
@@ -174,7 +175,7 @@ test('the guest browser is never signed in, and its optional token never outlive
   assert.match(claudeRunner, /: "\$\{SHOTS_GUEST_TOKEN:=\}"/);
   assert.match(claudeRunner, /"guest":17895/);
   assert.match(claudeRunner,
-    /unset SHOTS_MEMBER_TOKEN SHOTS_ADMIN_TOKEN SHOTS_FULL_ADMIN_TOKEN SHOTS_GUEST_TOKEN\n/);
+    /unset SHOTS_MEMBER_TOKEN SHOTS_ADMIN_TOKEN SHOTS_FULL_ADMIN_TOKEN SHOTS_GUEST_TOKEN \\\n\s*SHOTS_INVITED_TOKEN SHOTS_WAITLISTED_TOKEN\n/);
 });
 
 test('a shots turn carries a guest token only when the platform minted one', () => {
@@ -234,7 +235,8 @@ test('the config writer gives each persona its own shots directory and records c
       SHOTS_JWT: 'secret-shots-jwt', SHOTS_MEMBER_TOKEN: 'secret-member-token',
     });
     assert.deepEqual(Object.keys(config.mcpServers).sort(),
-      ['browser_admin', 'browser_full_admin', 'browser_guest', 'browser_member', 'shots']);
+      ['browser_admin', 'browser_full_admin', 'browser_guest', 'browser_invited_member',
+        'browser_member', 'browser_waitlisted_member', 'shots']);
     // The bridge is named "shots" (Claude sees mcp__shots__*) and its
     // credentials come from the environment, never from this file.
     assert.deepEqual(config.mcpServers.shots, { command: 'node', args: ['/usr/local/bin/shots-mcp.js'] });
@@ -244,7 +246,8 @@ test('the config writer gives each persona its own shots directory and records c
 
     for (const [server, persona] of [
       ['browser_member', 'member'], ['browser_admin', 'admin'], ['browser_full_admin', 'full_admin'],
-      ['browser_guest', 'guest'],
+      ['browser_guest', 'guest'], ['browser_invited_member', 'invited_member'],
+      ['browser_waitlisted_member', 'waitlisted_member'],
     ]) {
       const args = config.mcpServers[server].args;
       assert.equal(args.filter((arg) => arg === '--output-dir').length, 1);
@@ -254,7 +257,8 @@ test('the config writer gives each persona its own shots directory and records c
     }
 
     const clips = writeConfig(dir, { SHOTS_RECORD_CLIPS: '1' }).config;
-    for (const server of ['browser_member', 'browser_admin', 'browser_full_admin', 'browser_guest']) {
+    for (const server of ['browser_member', 'browser_admin', 'browser_full_admin', 'browser_guest',
+      'browser_invited_member', 'browser_waitlisted_member']) {
       assert.equal(clips.mcpServers[server].args.filter((arg) => arg === '--save-video=1280x800').length, 1);
       assert.equal(clips.mcpServers[server].args.filter((arg) => arg.startsWith('--save-video')).length, 1);
     }
