@@ -1,7 +1,8 @@
 // The "set it up in Claude / ChatGPT" links in Settings → Connectors (#1607).
 //
-// The two product walkthroughs under the connector URL are six and seven
-// steps, and the reported cost was reading them: "instructions ... are too
+// The two product walkthroughs under the connector URL are six steps each
+// (ChatGPT's reworked for #4431), and the reported cost was reading them:
+// "instructions ... are too
 // long, maybe some link could be provided ... so that they imported the
 // instructions to the chat". These links open a NEW chat pre-loaded with the
 // server URL and the job.
@@ -111,7 +112,9 @@ test('#1607: the written walkthroughs stay, because a chat cannot click a settin
   // the hint states the step COUNT, so a walkthrough quietly losing steps now
   // fails here too. Whether the route starts open was never the point.
   assert.match(tsx, /6 steps &middot; also sets up Claude Code/);
-  assert.match(tsx, /7 steps &middot; needs Developer mode/);
+  // #4431: ChatGPT's route is the plugins directory now, and the
+  // Developer-mode gate it used to warn about is gone from the flow.
+  assert.match(tsx, /6 steps &middot; in Plugins &amp; Connectors/);
   // #2706: still complete, still authoritative, one module further out —
   // and the pane still renders both, which is what the counts above are a
   // promise about. tests/connector-setup-shared.test.js holds the counts
@@ -119,6 +122,7 @@ test('#1607: the written walkthroughs stay, because a chat cannot click a settin
   const steps = read(STEPS_TSX);
   assert.match(tsx, /<ClaudeSetupSteps \/>/);
   assert.match(tsx, /<ChatgptSetupSteps \/>/);
-  assert.match(steps, /Turn on Developer mode\./);
+  assert.match(steps, /Browse the plugins directory\./);
+  assert.doesNotMatch(steps, /Developer mode/);
   assert.match(steps, /Paste your MCP server URL\./);
 });
