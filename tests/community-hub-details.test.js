@@ -273,7 +273,7 @@ test('Make it public and Make it private are the ⋯\'s (Make it public stays on
   // row of the ⋯ (#4045, decision D), asking through the platform's confirm.
   const pub = CARD_SRC.slice(CARD_SRC.indexOf('function MakePublic('), CARD_SRC.indexOf('export function canMakePrivate('));
   assert.match(pub, />\s*Make it public\s*</);
-  assert.match(pub, /await proposeAudience\(slug, 'public'\);/);
+  assert.match(pub, /const proposed = await proposeAudience\(slug, 'public'\);/);
   assert.match(pub, /<p className="dev-ws-vote-sub">\{MAKE_PUBLIC_LINE\}<\/p>/);
   assert.equal(MAKE_PUBLIC_LINE, 'Anyone can find it on Discover, join, and propose changes. '
     + 'Members vote on this first, and it applies once it merges.', 'it says it is a proposal, not a switch');
@@ -289,7 +289,8 @@ test('Make it public and Make it private are the ⋯\'s (Make it public stays on
   assert.equal(canMakePublic({ audience: 'invited', can_manage: true, audience_change: { session_id: 4 } }), false);
   const conf = CARD_SRC.slice(CARD_SRC.indexOf('export async function confirmMakePublic('), CARD_SRC.indexOf('export function canMakePublic('));
   assert.match(conf, /ui\.confirm\(\{\s*title: `Make \$\{name\} a public community\?`,\s*message: MAKE_PUBLIC_LINE,\s*confirmLabel: 'Propose making it public',\s*cancelLabel: 'Not now',/);
-  assert.match(conf, /if \(!ok\) return;\s*try \{\s*await proposeAudience\(slug, 'public'\);/);
+  // #4378: an owner still to verify is asked first; Not now (false) leaves it private.
+  assert.match(conf, /if \(!ok\) return;\s*try \{\s*if \(!\(await proposeAudience\(slug, 'public'\)\)\) return;/);
   // LEAVE (#4045): the Joined pill's way out, as a row of the ⋯, for a
   // member who did not start it.
   assert.equal(canLeave({ is_member: true, is_creator: false }), true);

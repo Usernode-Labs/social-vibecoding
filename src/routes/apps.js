@@ -2724,6 +2724,13 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         return res.status(400).json({ error: 'The app already has that visibility' });
       }
 
+      // Making it public needs a verified owner (#4378), asked before any
+      // PR is opened; the client opens the verify sheet on this code.
+      if (viewVisibility === 'public' && app.view_visibility !== 'public') {
+        const identityRefusal = await communities.identityPublicRefusal(pool, req.user?.id);
+        if (identityRefusal) return res.status(403).json(identityRefusal);
+      }
+
       if (!github.isEnabled() || !process.env.GITHUB_BOT_TOKEN) {
         return res.status(503).json({
           error: 'Visibility changes need GitHub configured on the platform (GITHUB_BOT_TOKEN).',

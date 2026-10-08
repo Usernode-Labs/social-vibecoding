@@ -12196,10 +12196,9 @@ CREATE INDEX IF NOT EXISTS idx_test_phone_sign_ins_unused
   ON test_phone_sign_ins (phone_e164) WHERE used_at IS NULL;
 COMMENT ON TABLE test_phone_sign_ins IS 'staging:private';
 
--- The first-run "Add your phone number" step was answered, by "Not now" or
--- by closing it (POST /api/me/phone-ask/answered): it is not asked again, and
--- Home's card is where the phone is added after that. Adding the phone ends
--- the ask on its own (identity_needed below).
+-- The retired first-run "Add your phone number" step was answered (#4378
+-- retired the step: verification is asked only at a public step now). Kept
+-- so existing databases need nothing; nothing reads it.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_ask_answered_at TIMESTAMPTZ;
 
 -- VERIFIED IDENTITY (sybil protection for public decisions and the full AI

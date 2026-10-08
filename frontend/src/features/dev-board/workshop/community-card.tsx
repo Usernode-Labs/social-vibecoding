@@ -77,6 +77,7 @@ import { Button } from '@/components/ui/button';
 import { ChevronRightIcon, LockIcon, PersonSilhouetteIcon, PlayIcon, UserGroupIcon, UserIcon } from '@/components/ui/icons';
 import { swatchFor } from '../../messages/format';
 import { offerJoin, registerJoinAnchor } from '../../../lib/join-required';
+import { askToVerifyForPublic, identityNeededHere } from '../../auth/verify-identity';
 import { invitedByLine, joinByInvite, useInviteOffer, type InviteJoin, type InviteOffer } from './invite-offer';
 import { hubShot, hubShotPayload } from './hub-shot';
 
@@ -616,19 +617,42 @@ export function HeroPulse({ members, count, audience, audienceLabel, activity }:
  * to build; a private community is private to both, as the create dialog
  * maps them. A 409 is one already up, which the hero shows either way, so it
  * is not an error. Throws with words a person can read.
+ *
+ * #4378: making it public needs a verified owner. The route answers
+ * `identity_required` for one who is not; then the verify sheet asks, and
+ * once a phone is linked the proposal is sent again. Resolves false when
+ * they said Not now (the project stays private), true once it is up.
  */
-export async function proposeAudience(slug: string, to: 'public' | 'private'): Promise<void> {
-  const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/visibility-pr`, {
+export async function proposeAudience(slug: string, to: 'public' | 'private'): Promise<boolean> {
+  const send = () => fetch(`/api/apps/${encodeURIComponent(slug)}/visibility-pr`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(to === 'private'
       ? { collabVisibility: 'private', viewVisibility: 'private' }
       : { collabVisibility: 'public', viewVisibility: 'public' }),
   });
+  let res = await send();
   if (!res.ok && res.status !== 409) {
-    const body = await res.json().catch(() => ({}));
+    let body = await res.json().catch(() => ({}));
+    if (body && body.code === 'identity_required') {
+      if (!(await askToVerifyForPublic())) return false;
+      res = await send();
+      if (res.ok || res.status === 409) return true;
+      body = await res.json().catch(() => ({}));
+    }
     throw new Error((body && body.error) || 'That did not go through. Try again.');
   }
+  return true;
+}
+
+/**
+ * Before "Make it public" asks its question: an owner the verified-identity
+ * rule still holds is asked to verify first ("Verify to make it public").
+ * True to go on as before; false for Not now, which leaves it private.
+ */
+export async function verifiedToGoPublic(): Promise<boolean> {
+  if (!identityNeededHere()) return true;
+  return askToVerifyForPublic();
 }
 
 /** What making it public means, said before it is proposed (the Share it popup and ⋯'s confirm). */
@@ -681,6 +705,7 @@ export async function confirmMakePrivate(slug: string, name: string): Promise<vo
 export async function confirmMakePublic(slug: string, name: string): Promise<void> {
   const ui = (window as any).PlatformUI;
   if (!ui || typeof ui.confirm !== 'function') return;
+  if (!(await verifiedToGoPublic())) return;
   const ok = await ui.confirm({
     title: `Make ${name} a public community?`,
     message: MAKE_PUBLIC_LINE,
@@ -689,7 +714,7 @@ export async function confirmMakePublic(slug: string, name: string): Promise<voi
   });
   if (!ok) return;
   try {
-    await proposeAudience(slug, 'public');
+    if (!(await proposeAudience(slug, 'public'))) return;
   } catch (err) {
     ui.toast?.(err instanceof Error ? err.message : 'That did not go through. Try again.');
     return;
@@ -765,9 +790,9 @@ function MakePublic({ slug, name, onOpened }: {
     setBusy(true);
     setError('');
     try {
-      await proposeAudience(slug, 'public');
+      const proposed = await proposeAudience(slug, 'public');
       setOpen(false);
-      onOpened();
+      if (proposed) onOpened();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'That did not go through. Try again.');
     } finally {
@@ -786,7 +811,12 @@ function MakePublic({ slug, name, onOpened }: {
         data-ws-community-audience-change="open"
         aria-haspopup="dialog"
         aria-expanded={open}
-        onClick={() => { setError(''); setOpen((v) => !v); }}
+        onClick={() => {
+          setError('');
+          if (open) { setOpen(false); return; }
+          // #4378: an owner still to verify is asked first; Not now leaves it private.
+          void verifiedToGoPublic().then((go) => { if (go) setOpen(true); });
+        }}
       >
         Make it public
       </Button>
