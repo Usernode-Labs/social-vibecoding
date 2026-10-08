@@ -90,12 +90,6 @@ export function MobileInstallBanner() {
   // #4204: only somebody who is in. Starts false (the first render must be
   // the hidden strip either way) and turns on when the authed shell boots.
   const [member, setMember] = useState(false);
-  const [offer, setOffer] = useState<InstallOffer | null>(null);
-  // #1513: the home-screen instructions are one tap away rather than always
-  // on. #4400: that tap opens a sheet (./install-steps-sheet.tsx) rather than
-  // swapping the strip's one line for a sentence it had to truncate, so the
-  // strip itself never changes. Closing the sheet leaves the strip up.
-  const [stepsOpen, setStepsOpen] = useState(false);
   // #4399: not over the app a private member was invited into, while the
   // mark menu still offers them "Go to Homeroom" (../app-context/about-data
   // offeringGoToHomeroom). That menu's Go to Homeroom card carries the
@@ -103,6 +97,12 @@ export function MobileInstallBanner() {
   // it does for everyone. `tab` is read so the offer is recomputed when they
   // get there, which is when the remembered visit changes.
   const { privateMember, tab } = useStoreState(navStore);
+  const [offer, setOffer] = useState<InstallOffer | null>(null);
+  // #1513: the home-screen instructions are one tap away rather than always
+  // on. #4400: that tap opens a sheet (./install-steps-sheet.tsx) rather than
+  // swapping the strip's one line for a sentence it had to truncate, so the
+  // strip itself never changes. Closing the sheet leaves the strip up.
+  const [stepsOpen, setStepsOpen] = useState(false);
 
   // The fetch is skipped entirely for anyone who cannot be offered anything —
   // a desktop visitor, the native app, an installed PWA, someone who already
