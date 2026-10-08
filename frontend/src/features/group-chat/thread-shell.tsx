@@ -85,9 +85,14 @@ export interface ThreadShellProps {
    * in. Fill mode only. See `RequestShell` below.
    */
   request?: boolean;
+  /**
+   * #4455: a change's page, the same sheet (`RequestShell`) with the change
+   * as its root post. Fill mode only.
+   */
+  change?: boolean;
 }
 
-function Composer({ fill, readOnly, notice, placeholder, maxLength, request = false }: ThreadShellProps) {
+function Composer({ fill, readOnly, notice, placeholder, maxLength, request = false, change = false }: ThreadShellProps) {
   // `platform-safe-bar` on BOTH variants: in fill mode this block is the
   // bottom of the screen, so it carries the home-indicator inset above its own
   // padding, and the read-only notice that replaces it needs the identical
@@ -102,7 +107,7 @@ function Composer({ fill, readOnly, notice, placeholder, maxLength, request = fa
       </div>
     );
   }
-  if (request) {
+  if (request || change) {
     return (
       <div className={`messages-composer messages-composer-thread ${SAFE_BAR}`}>
         <ComposerSlots scope="thread" />
@@ -134,13 +139,18 @@ function Composer({ fill, readOnly, notice, placeholder, maxLength, request = fa
  *
  * Messages' tokens (`--messages-surface` and the rest) are defined on
  * `.dev-request` in app.css, as they are on `.messages-layout`.
+ *
+ * #4455: a change's page is the same sheet, with the change as its root post
+ * (features/dev-board/topic/change-head.tsx). `.dev-change` beside
+ * `.dev-request` is what app.css tells the two apart by.
  */
 function RequestShell(props: ThreadShellProps) {
   const scroll = useRef<HTMLDivElement>(null);
+  const change = !!props.change;
   return (
-    <div className="dev-request platform-kb-column">
+    <div className={change ? 'dev-request dev-change platform-kb-column' : 'dev-request platform-kb-column'}>
       <div id="gc-thread-back" className="dev-request-back" />
-      <section className="dev-request-sheet dc-lift dc-lift-session" aria-label="Request">
+      <section className="dev-request-sheet dc-lift dc-lift-session" aria-label={change ? 'Change' : 'Request'}>
         <div id="gc-thread-bar" className="dev-request-bar" />
         <div ref={scroll} id="gc-thread-scroll" className="messages-thread-scroll dev-request-scroll overscroll-contain">
           <div id="gc-thread-head" />
@@ -157,7 +167,7 @@ function RequestShell(props: ThreadShellProps) {
 export function ThreadShell(props: ThreadShellProps) {
   const { fill, withHeader } = props;
   const scroll = useRef<HTMLDivElement>(null);
-  if (fill && props.request) return <RequestShell {...props} />;
+  if (fill && (props.request || props.change)) return <RequestShell {...props} />;
   if (fill) {
     return (
       // `platform-kb-column` is what app.css hangs the keyboard reservation

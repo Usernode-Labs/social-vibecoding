@@ -99,7 +99,7 @@ function reducedMotion(): boolean {
  * motion snaps. Whether there is anything to fold is measured, so a short
  * request has no control under it.
  */
-function RequestWords({ html }: { html: string }): ReactNode {
+export function RequestWords({ html }: { html: string }): ReactNode {
   const text = useRef<HTMLDivElement>(null);
   const inner = useInnerHtml(html);
   // `open` is what the clamp says; `shown` is what the button says, which

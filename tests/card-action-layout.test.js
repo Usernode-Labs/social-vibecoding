@@ -780,7 +780,6 @@ test('B8: a change Homeroom bot built is recognised by its author', () => {
   assert.equal(AppView._botBuilt({ username: 'homeroom_bot' }), true);
   assert.equal(AppView._botBuilt({ username: 'ada' }), false);
   const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8');
-  assert.match(src, /key: 'ask-bot', cls: 'gc-vote-btn', label: 'Ask for changes',/);
-  assert.match(src, /if \(proposal && !botBuilt && AppView\._showExplorePill\(item\) && !AppView\.readOnly\)/,
-    'its band drops the explore pill; the ⋯ keeps Explore in a coding agent');
+  // #4455: a change's page has no band; asking the bot is a row of its ⋯.
+  assert.match(src, /if \(proposal && AppView\._botBuilt\(item\) && !ro\) \{\n\s+rows\.push\(\{\n\s+label: 'Ask for changes', icon: 'generate',/);
 });

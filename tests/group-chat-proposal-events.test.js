@@ -487,7 +487,7 @@ test('the quiet fixture app has a channel nobody has spoken in and one open vote
 
   const dapp = JSON.parse(read('dapp.json'));
   const checks = dapp.tests.filter((t) => /staging-demo-quiet/.test(t.path));
-  assert.equal(checks.length, 4);
+  assert.equal(checks.length, 3);
   assert.ok(!dapp.tests.some((t) => /activity-open|gc-activity/.test(`${t.path} ${t.expectSelector}`)), 'no digest anywhere in the manifest');
   const visual = checks.find((t) => t.visual);
   assert.ok(visual && visual.id === 'group-chat.proposal-event');
@@ -499,11 +499,11 @@ test('the quiet fixture app has a channel nobody has spoken in and one open vote
   // the name and the stamp each sit in their OWN wrapper span, so the sender
   // and `.gc-msg-time` are cousins, never siblings. On its own page the box
   // is a div, not a door: the proposal is the page.
-  assert.match(visual.expectSelector, /^\[data-change-discussion\] \.gc-event\[data-event="submitted"\]\[data-here\]\[data-msg-id="900118"\]:has\(div\.gc-event-box > \.dev-card-icon \+ \.gc-event-text\) span:has\(> \[data-event-sender\]\) \+ span > \.gc-msg-time\[title\]$/);
+  // #4455: on a change's own page the row is one quiet line in its stream,
+  // naming who asked, with its stamp.
+  assert.match(visual.expectSelector, /^#gc-thread-messages\[data-language="change"\] \.dev-request-event\[data-change-event="submitted"\]\[data-msg-id="900118"\] > \.dev-request-event-text > b \+ \.dev-request-event-time\[title\]$/);
   assert.ok(visual.expectSelector.length <= 256, 'app-manifest.js truncates a longer selector, silently breaking it');
-  assert.equal(visual.expectText, 'Asked for approval', 'B10d: the words every screen uses');
-  const sender = checks.find((t) => t.expectText === 'staging-demo-quiet-builder');
-  assert.ok(sender && /\[data-msg-id="900118"\] \[data-event-sender\]/.test(sender.expectSelector));
+  assert.equal(visual.expectText, 'staging-demo-quiet-builder asked for approval');
   // The channel, in the project and in Messages: the quiet card and nothing
   // else — no event row and no message row beside it.
   const quiet = checks.filter((t) => /gc-quiet\[data-quiet-chat\]/.test(t.expectSelector));

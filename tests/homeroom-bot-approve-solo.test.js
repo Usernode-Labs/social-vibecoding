@@ -152,14 +152,14 @@ test('#3977: Approve opens the picker a group\'s vote opens, and reads Approved 
   assert.match(group, />Vote<svg/);
   // One button, one path: the solo face is the group's button with other
   // words, so the board, the folded row (fold.tsx) and the change page
-  // (topic-head.tsx), which all draw VoteButton, open the picker alike.
+  // (change-head.tsx, its Votes card), which all draw VoteButton, open the picker alike.
   const fn = CARD_SRC.slice(CARD_SRC.indexOf('export function VoteButton('), CARD_SRC.indexOf('export function VotePicker('));
   assert.match(fn, /const approve = !!yes\.approve && yes\.act\?\.fn === 'castVote';/);
   assert.equal((fn.match(/<button\b/g) || []).length, 1, 'no second, one-tap button');
   assert.match(fn, /onClick=\{toggle\}/, 'the press opens the picker (popover on desktop, sheet on touch)');
   assert.doesNotMatch(fn, /send\(yes, null\); \}\}/, 'the one tap is gone');
   assert.match(fn, /approve=\{approve\}/, 'the picker is told it is an approval');
-  for (const file of ['frontend/src/features/dev-board/card/fold.tsx', 'frontend/src/features/dev-board/topic/topic-head.tsx']) {
+  for (const file of ['frontend/src/features/dev-board/card/fold.tsx', 'frontend/src/features/dev-board/topic/change-head.tsx']) {
     const src = fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
     assert.match(src, /<VoteButton yes=\{[^}]+\} no=\{[^}]+\} \/>/, `${file} draws the same button`);
   }

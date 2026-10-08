@@ -22,8 +22,9 @@ export interface QuietCardProps {
   canPost: boolean;
   appName: string;
   /**
-   * 'change' is a proposal's own Discussion (topic/conversation.tsx), where
-   * the same quiet card asks about this change rather than about the app.
+   * 'change' is a thread in the chat language about one change, where the
+   * same quiet card asks about this change rather than about the app. (A
+   * change's own page draws its stream as a thread since #4455.)
    */
   variant?: 'app' | 'change';
 }

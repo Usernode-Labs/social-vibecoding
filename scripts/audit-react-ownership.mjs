@@ -257,10 +257,13 @@ const OWNED = [
   },
   // #4453: a request's page is the same shell in its Messages-thread layout
   // (`RequestShell`), with the same one module-owned host. Its back and
-  // header hosts are the topic head's portals, React's too.
+  // header hosts are the topic head's portals, React's too. #4455: a
+  // change's page is that layout as well (`.dev-request.dev-change`), so this
+  // entry covers it; the legacy kudos host in its Addresses row is the topic
+  // head's documented `[data-kudos-host]` seam (below).
   {
     sel: '.dev-request',
-    except: ['#gc-thread-messages'],
+    except: ['#gc-thread-messages', '[data-kudos-host]'],
   },
   // The opened topic's head — the card and everything under it
   // (features/dev-board/topic/topic-head.tsx). Two seams inside it stay
@@ -412,6 +415,9 @@ const ROUTES = [
   // #4453: a request's page in its Messages-thread layout, on the demo
   // request that has GitHub comments, Homeroom replies and a spec.
   '?demo=1#app/usernode-2d5619/dev/issues/900003',
+  // #4455: a change's page in the same layout (`.dev-request.dev-change`),
+  // on the demo proposal whose testing is part way through.
+  '?demo=1#app/usernode-2d5619/dev/proposals/9000026',
   '#admin/e2e', '#admin/gallery', '#admin/node', '#admin/merges', '#admin/push', '#admin/campaigns', '#admin/mail', '#admin/sms', '#admin/estimator', '#admin/analytics', '#admin/journey', '#admin/overview', '#admin/codes', '#admin/featured-apps', '#admin/db-export', '#admin/features', '#admin/limits', '#admin/users', '#admin/users/900301', '#admin/support', '#admin/support/900302', '#admin/status', '#admin/incidents', '#admin/rollover', '#admin/staging-reap', '#admin/workflows',
   '#admin/model-costs', '#admin/reports', '#admin/welcome-dm', '#admin/sign-in', '#admin/test-accounts', '#admin/homeroom-bot', '#admin/homeroom-bot/settings', '#admin/homeroom-bot/benchmark', '#admin/small-changes',
   // The Benchmark's own places, in the same host (`when: '#admin/homeroom-bot'`
