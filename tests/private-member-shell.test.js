@@ -112,7 +112,7 @@ test('the waitlist card: join, an email, a code, then On the waitlist with "Want
   });
   assert.match(listed, /data-waitlist-card="listed"/);
   assert.match(listed, /On the waitlist/);
-  assert.match(listed, /We’ll email lina@example\.com when it’s your turn\./);
+  assert.match(listed, /We’ll email lina@example\.com when your spot is ready\./);
   assert.match(listed, new RegExp(`href="#more/${token}"[^>]*>Answer them now<`));
 
   const src = read(card);
@@ -133,7 +133,7 @@ test('the waitlist card: join, an email, a code, then On the waitlist with "Want
     standing: { state: 'listed', email: null, accountEmail: null, hasPhone: true, moreToken: token },
     onListed: () => {},
   });
-  assert.match(byPhone, /We’ll text you when it’s your turn\./);
+  assert.match(byPhone, /We’ll text you when your spot is ready\./);
   assert.match(byPhone, /id="home-waitlist-add-email"[^>]*>Add an email too</);
   assert.match(byPhone, new RegExp(`href="#more/${token}"`));
   assert.doesNotMatch(listed, /Add an email too/, 'an email row has nothing to add');

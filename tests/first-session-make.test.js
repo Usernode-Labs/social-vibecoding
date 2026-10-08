@@ -133,11 +133,41 @@ test('the landing: the story in place of the pitch unless switched off, for nobo
   assert.match(landing, /sessionStorage\.setItem\('usernode:first-session:make', '1'\)/);
   assert.match(landing, /fetch\('\/api\/me\/first-session\/started', \{ method: 'POST', credentials: 'same-origin' \}\)/);
   const story = read('frontend/src/features/auth/story.tsx');
-  for (const words of ['On Homeroom, communities make apps together.', 'Anyone using an app can change it. Your group decides what goes in.', 'What groups make', 'Get started', 'Already have an account? ']) {
-    assert.ok(story.includes(words), words);
-  }
   // No waitlist ask and no "learn more" link on it.
   assert.doesNotMatch(story, /Join the waitlist|Learn more about Homeroom/i);
+});
+
+// #4037, decisions A and B on the onboarding canvas, and the owner's review of
+// 8 October (C1-story): "Welcome to Homeroom" over the picture, one headline,
+// "For example" over the make screen's three examples (Evan's, #4354; their
+// rows are pinned by the templates test below), "Get started", then "Already
+// have an account? Sign in". Nothing under the button says what a new account
+// waits for.
+test('the story: label, headline, "For example" and the three examples, "Get started", then Sign in', () => {
+  const html = renderComponent('frontend/src/features/auth/story.tsx', 'Story', { primaryClass: 'pill', onStart() {}, onSignIn() {} });
+  // Each row: its emoji (the tier list draws a chart, no text), title and line.
+  const TEMPLATE_ROWS = loadTsx(`${DIR}/examples.ts`).TEMPLATES.flatMap((t) => (t.chart ? [t.title, t.line] : [t.emoji, t.title, t.line]));
+  const text = html.replace(/<[^>]+>/g, '\n').split('\n').map((t) => t.trim()).filter(Boolean)
+    .map((t) => t.replace(/&#x27;/g, "'"));
+  assert.deepEqual(text, [
+    'Welcome to Homeroom',
+    'On Homeroom, communities make apps together.',
+    'For example',
+    ...TEMPLATE_ROWS,
+    'Get started',
+    'Already have an account?',
+    'Sign in',
+  ]);
+  assert.match(html, /<a href="#signup" data-landing-story-start="" class="pill">Get started<\/a>/);
+  assert.match(html, /Already have an account\? <a href="#login" data-landing-story-signin=""/);
+  assert.match(html, /<a href="#login" data-landing-story-signin=""[^>]*>Sign in<\/a>/);
+  // In a phone browser too, the story fills the screen and its foot is at the foot.
+  const css = read('public/css/app.css');
+  assert.match(css, /html\[data-browser-scroller="auth-landing-scroll"\] #auth-landing-scroll:has\(> \* > \[data-landing-story\]\) \{\s+flex: 1 0 auto;\s+display: flex;\s+flex-direction: column;\s+\}/);
+  assert.match(css, /html\[data-browser-scroller="auth-landing-scroll"\] #auth-landing-scroll > :has\(> \[data-landing-story\]\) \{\s+flex: 1 0 auto;\s+width: 100%;\s+\}/);
+  for (const gone of [/Make an account/, /spot on the waitlist/, /Anyone using an app/, /What groups make/, /What communities make/]) {
+    assert.doesNotMatch(html, gone);
+  }
 });
 
 // Evan, 8 Oct 2026: the three examples became sentences to finish, each a
