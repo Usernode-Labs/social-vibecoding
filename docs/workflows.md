@@ -365,20 +365,25 @@ append and answer with the outcome.
 
 ## Running it
 
-**Where it runs.** The workflow runtime runs inside the platform process. There is no
-separate workflow Pod.
+**Where it runs.** The runtime has two parts, which can run in different processes:
+the **pipeline slots**, which decide (apply events, write projections, run the
+post-commit notifiers), and the **loops**, which act (timers, retention, service loops
+that run work items, and the boot backfill).
 
-- **Every process** records its flags in `wf_settings` at boot (`startWorkflow` in
+- **Every web process** records its flags in `wf_settings` at boot (`startWorkflow` in
   `server.js`). With a flag on, it also starts the runtime on its own pool
   (`application_name` `homeroom-workflow`), listens for outcomes so routes can wait for
   them, and runs pipeline slots. A Pod that is not the leader (the new one, during a
   rollout) therefore applies its own events at once instead of answering `202`. With
   every flag off, nothing else starts.
-- **The leader** also runs (`startWorkflowLoops` in `becomeLeader`):
-  - the timer and retention loop;
-  - service loops;
-  - a backfill that enrolls open rows the machine does not hold yet. A route that meets
-    an open row the machine does not hold enrolls it itself.
+- **The loops** run in one of two places, chosen by `WF_LOOPS`:
+  - `leader` (the default): the web Pod holding the leader lock runs them
+    (`startWorkflowLoops` in `becomeLeader`). A staging preview, which never stands for
+    election, runs them itself.
+  - `worker`: the **workflow worker** runs them (`workflow-worker.js`, the chart's
+    `workflow.worker.enabled`), and no web Pod does.
+- **The backfill** enrolls open rows the machine does not hold yet. A route that meets
+  an open row the machine does not hold enrolls it itself.
 - **Waking.** Each `wf_events` notification wakes one slot in each process. Idle loops
   sleep until a notification, the next thing they know is due (an event's backoff, a
   deadline, a work item), or a 30-second fallback; nothing polls every second. A
@@ -386,23 +391,42 @@ separate workflow Pod.
   statement that ends the event. The timer loop wakes only for a deadline earlier than
   the one it sleeps until, so a vote that re-arms the 10-minute backstop costs it
   nothing. The fallback only covers a lost notification.
-- **A staging preview** never stands for election, so it runs the loops itself. A
-  preview has no GitHub credentials and no app fleet, so its work items fail and show in
-  Admin → Workflows, where [main]'s inline calls only failed in the logs.
+- **A staging preview** has no GitHub credentials and no app fleet, so its work items
+  fail and show in Admin → Workflows, where [main]'s inline calls only failed in the
+  logs.
 
-Correctness does not depend on the leader: the loops can move to more processes, or to a
-Deployment of their own, without changing the machines.
+Correctness does not depend on where any of this runs: instance row locks decide who
+applies an event, and work claims are leased row locks.
 
-**Moving the loops to their own Deployment** is planned before the preview and checks
-machine, which drives far more external calls. It needs:
-- an entry point that starts the runtime with its loops and no HTTP server;
-- a second Deployment in the chart (same image, that command), with the web Pods no
-  longer running the loops;
-- a relay for the post-commit pushes. `pushIssueUpdate` and the other WebSocket
-  broadcasts reach only clients connected to the same process, so a separate Pod would
-  publish them (for example with Postgres `NOTIFY`) for the web Pods to re-broadcast;
-- a check of every post-commit call that relies on the platform Pod's Kubernetes
-  permissions or locks: the campaign start and the production rebuild.
+**The workflow worker** (`workflow-worker.js`) is a process with no HTTP app. It runs
+the shared bootstrap the web process runs (`src/services/process-bootstrap.js`: phone
+push, GitHub, the LLM, and the module-level hooks), then the runtime with its loops and
+no slots (`startWorkflow(config, { loops: true, worker: true })`), and serves only
+`/health` on 8081. What it means for the code:
+
+- **Results are decided on the web Pods.** A work result the worker appends is applied
+  by a web Pod's slot, within one wake-up. Notifiers run there too, beside the process
+  state some of them use (the merge queue's kick, Workshop placement, a campaign
+  start). The worker never applies an event.
+- **Browser pushes go over the bus.** The worker starts the WebSocket bus as a
+  publisher only (`ws.startPublisher`): every `broadcast*`, `pushToUser` and session
+  event it makes is published on `usernode_ws` for the web Pods to deliver. It
+  subscribes to nothing.
+- **No handler may rely on another process's memory.** What used to be per-process and
+  is reached from work handlers now travels the bus or is read from the database:
+  - GitHub's open-issues cache and closed-issue suppressions (`noteIssuesClosed`,
+    `unsuppressIssues`, `invalidateIssuesCache` publish `github_issues`);
+  - a turn's pending stop (`worker.stopTurn` publishes `worker_stop`, and the process
+    running the turn records it);
+  - whether a shots run holds a proposal's worker (`worker.retire` reads `shot_runs`
+    and waits for the run);
+  - whether an included change is busy (`included.find` pins the head it found, and the
+    `Included` guard refuses a change whose head moved, `head_moved`).
+  A new handler follows the same rule: state it needs from a web process goes through
+  the database or the bus.
+- **It records no booted build.** `apps.booted_shas` is what served; the worker serves
+  nothing, and a worker rolled out ahead of the web Pods would otherwise make a platform
+  release read live early.
 
 ### In production (Kubernetes)
 
@@ -411,11 +435,13 @@ machine, which drives far more external calls. It needs:
   It runs one replica (`platform.replicas`).
 - **During a rollout.** Old and new Pods serve together for a short time
   (`maxSurge: 1`). `PLATFORM_LEADER_LOCK` lets only the Pod holding the Postgres advisory
-  lock run background work, the workflow loops included.
+  lock run background work, the workflow loops included unless the workflow worker
+  runs them (`workflow.worker.enabled`, `docs/kubernetes-operations.md`).
 - **Schema.** The `wf_*` tables and triggers come from `schema.sql`. The chart's
   migration Job applies it before the Deployment rolls.
 - **Connections.** The runtime's pool adds `WF_POOL_MAX` connections per Pod while a
-  flag is on, beside the main pool's `DB_POOL_MAX`.
+  flag is on, beside the main pool's `DB_POOL_MAX`. The workflow worker has both too,
+  its `DB_POOL_MAX` set by `workflow.worker.dbPoolMax` (10).
 
 | Variable | Default | Set in production by | Meaning |
 |---|---|---|---|
@@ -424,11 +450,12 @@ machine, which drives far more external calls. It needs:
 | `WF_SLOTS` | 4 (1 on a staging preview) | the default | Pipeline slots in each process. |
 | `WF_POOL_MAX` | 6 (2 on a staging preview) | the default | Connections in the runtime's own pool, the outcome listener's included. Keep it above `WF_SLOTS`. |
 | `WF_OWNERSHIP_MODE` | `log` in production, `raise` elsewhere | the default | What a write to an owned column from outside the machine does. |
+| `WF_LOOPS` | `leader` | the chart: `worker` on the web Pods when `workflow.worker.enabled` | Where the loops run: the leader web Pod, or the workflow worker. |
 
 **Where the variables are set.**
 - **The Helm chart.** A Kubernetes Pod gets only the variables the chart lists, so a
   variable an operator needs to change is a chart value.
-- **`platform_env`.** All five are also declared in `dapp.json`'s `platform_env`, as
+- **`platform_env`.** All six are also declared in `dapp.json`'s `platform_env`, as
   the platform requires of every variable it reads. Values stored through the Platform
   variables panel only ever reached the retired VPS deploy.
 

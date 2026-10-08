@@ -360,10 +360,10 @@ When it is on, the governance-proposal machine in `src/workflow/` decides govern
 proposals. The governance-apply ticker and the stale sweeper's Pass 0b then leave those
 proposals alone. `docs/workflows.md` explains the machine and where it runs.
 
-- **Where it runs.** The machine runs inside the platform Pod; there is no extra
-  workload. Every Pod listens for outcomes and runs pipeline slots, so it applies its
-  own votes; only the advisory-lock leader runs the timer and service loops and the
-  boot backfill.
+- **Where it runs.** The machine's decisions run inside the platform Pods: every Pod
+  listens for outcomes and runs pipeline slots, so it applies its own votes. The
+  timer and service loops and the boot backfill run on the advisory-lock leader, or
+  in the workflow worker when it is deployed (see "Workflow worker" below).
 - **Schema.** The schema it needs (`wf_*` tables and triggers) is additive and ships
   with every release, whether the flag is on or off.
 
@@ -432,6 +432,52 @@ An ordinary rolling change, safe in both directions.
 - **New merges** take the old tail again.
 - **Merges the machine already accepted** still finish: the runtime keeps running while
   they have work left, and stops on a later boot once nothing is left.
+
+## Workflow worker
+
+`workflow.worker.enabled` (default `false`) deploys `social-vibecoding-workflow`: the
+platform image running `node workflow-worker.js`. It runs the workflow runtime's work
+items (deploys, GitHub calls, retirements) and timers, so they no longer share the web
+Pod's memory, CPU and `/tmp`. The web Pods get `WF_LOOPS=worker` and keep the pipeline
+slots, so decisions, projections and the post-commit pushes stay where they were.
+`docs/workflows.md` ("Running it") explains the split.
+
+- **What it shares.** The platform's image, environment, ServiceAccount
+  (`social-platform-runtime`, so the CNPG client policy admits it) and network
+  policies. It has no Service and no readiness probe; `/health` on 8081 is for the
+  kubelet.
+- **What is its own.** `workflow.worker.resources` (requests 500m and 1Gi, limits 2 CPU
+  and 3Gi), `tmpSizeLimit` (4Gi) and `dbPoolMax` (10, beside its `WF_POOL_MAX` pool).
+- **Quota.** During its own rollout it adds 1 CPU of requests (two Pods at 500m) to
+  the platform namespace, beside two platform Pods at 2 CPUs and the migration Job.
+  Check the namespace's `requests.cpu` headroom (`kubectl -n social-platform describe
+  resourcequota`) before turning it on.
+- **It does nothing until a workflow flag is on.** With every flag off it starts,
+  reports healthy and idles.
+
+### Activation and rollback
+
+An ordinary rolling change, safe in both directions.
+
+1. **Set the value.** Set `workflow.worker.enabled: true` in the platform's values in
+   the infra repository. Argo CD creates the worker and rolls the web Pods.
+2. **During the rollout overlap.** The old leader may still run the loops while the
+   worker runs its own. Both claim work safely (leased row locks); the same item never
+   runs twice at once.
+3. **Verify.**
+   - **The worker's log.** It shows `Workflow worker started` (and `Workflow runtime
+     started` while a flag is on).
+   - **The web Pods' logs.** No `Enrolled open governance proposals` from them after
+     the rollout: the worker enrolls.
+   - **Admin → Workflows.** New work attempts name the worker's Pod as their service,
+     and the problems panel lists no overdue work.
+4. **Watch it.** If the worker stops while the web Pods are healthy, votes and merges
+   are still recorded and decided, but their follow-up work and timers wait. Alert on
+   the worker's restarts and on work overdue by more than a few minutes.
+
+**Rollback.** Set the value back to `false`. The worker is deleted and the web Pods
+lose `WF_LOOPS=worker`, so the leader runs the loops again. Work the worker was running
+is resumed from its checkpoint once its lease lapses.
 
 ## Read-only inventory and logs
 
