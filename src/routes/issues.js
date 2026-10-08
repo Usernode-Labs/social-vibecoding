@@ -133,14 +133,13 @@ const MAX_CLOSE_REASON_LENGTH = 2000;
 // #556: cap for author-edited issue titles (rename route below). Matches
 // the feedback form's optional title input; far below GitHub's own limit.
 const MAX_ISSUE_TITLE_LENGTH = 200;
-// Matches the issue-draft service and feedback form. Empty is valid: GitHub
-// issues may deliberately have no description, but an accidental novel must
-// not ride through the app's JSON limit or make the topic unusable.
-const MAX_ISSUE_BODY_LENGTH = 10000;
-// GitHub's own issue-body limit: the most a request filed with screenshots
-// may come to once their embed lines are appended (MAX_REQUEST_BODY_CHARS in
-// services/mcp-tools.js is the same number).
-const MAX_GITHUB_ISSUE_BODY_CHARS = 65536;
+// GitHub's own issue-body limit (services/issue-body-limit.js): the most a
+// request filed with screenshots may come to once their embed lines are
+// appended, and the most its author may edit its body to (#4194: this was
+// 10,000, so a request written at length on GitHub could not be edited
+// here). Empty is valid: GitHub issues may deliberately have no description.
+const { GITHUB_ISSUE_BODY_MAX: MAX_GITHUB_ISSUE_BODY_CHARS } = require('../services/issue-body-limit');
+const MAX_ISSUE_BODY_LENGTH = MAX_GITHUB_ISSUE_BODY_CHARS;
 
 // A request body with its screenshots embedded exactly as the feedback
 // dialog embeds them, so every reader of `/issue-images/<id>` lines (the

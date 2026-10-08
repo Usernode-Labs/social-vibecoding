@@ -96,7 +96,7 @@ const MAX_REQUEST_PAGE = { titles: 200, full: MAX_LIST_ITEMS };
 // and an over-limit write is REFUSED with the limit and the real length
 // named so the caller can split or shorten deliberately.
 const MAX_REQUEST_TITLE_CHARS = 256;    // GitHub's own issue-title limit.
-const MAX_REQUEST_BODY_CHARS = 65536;   // GitHub's own issue-body limit.
+const { GITHUB_ISSUE_BODY_MAX: MAX_REQUEST_BODY_CHARS } = require('./issue-body-limit'); // GitHub's own issue-body limit.
 const MAX_ANSWER_CHARS = 8000;          // MAX_CHAT_LEN in services/ws.js.
 const MAX_CLOSE_REASON_CHARS = 2000;    // MAX_CLOSE_REASON_LENGTH in routes/issues.js.
 // submit_work's `description`: what share-in-progress and update-from-fork
