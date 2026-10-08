@@ -1089,7 +1089,7 @@ function shapeBranch(session) {
     // "submit an update" was the part every agent had to guess.
     updateWith: canPush
       ? 'push to that branch, then call submit_work with proposalId and branch so the votes and checks are reset now rather than on the next sweep'
-      : 'push to a branch in your own fork, then call submit_work with proposalId and that branch — Homeroom moves the proposal onto it; a dev session that is not yet up for a vote can also carry propose: true to be promoted the moment the update lands',
+      : 'push to a branch in your own fork, then call submit_work with proposalId and that branch — Homeroom moves the proposal onto it; or, with no push at all, call submit_work with the taskId of its update work order (prepare_work with proposalId) and a patch, which Homeroom applies on its current commit; a dev session that is not yet up for a vote can also carry propose: true to be promoted the moment the update lands',
   };
 }
 
@@ -4793,6 +4793,9 @@ function registerTools(server, ctx) {
     const revisedPr = result.proposalId && targetProposal && Number(targetProposal.pr_number) > 0
       ? Number(targetProposal.pr_number)
       : null;
+    // #4263: an update work order takes a patch like new work, except on a
+    // proposal whose head is a branch in the author's own fork.
+    const updateByPatch = !!result.proposalId && result.branchHome !== 'user_fork';
     return toolResult({
       taskId: result.taskId,
       appSlug: app.slug,
@@ -4827,7 +4830,10 @@ function registerTools(server, ctx) {
         + (result.proposalId
         ? `This work order REVISES ${proposalRef(result.proposalId, revisedPr)}, and it starts at that proposal's own current `
           + 'commit rather than at the app\'s main branch. Its coding agent submits it with submit_work using '
-          + `proposalId ${result.proposalId} and the branch it pushed — not as a new proposal. Tell the user that `
+          + (updateByPatch
+            ? `taskId ${result.taskId} and its patch (or proposalId ${result.proposalId} and a branch it pushed), which `
+              + 'updates that proposal — not as a new proposal. Tell the user that '
+            : `proposalId ${result.proposalId} and the branch it pushed — not as a new proposal. Tell the user that `)
           + 'submitting it clears the votes that proposal has already collected and asks its reviewers to look '
           + 'again, because that is the part they may not expect. '
         : '')
@@ -4840,10 +4846,11 @@ function registerTools(server, ctx) {
         + 'FIRST inspect the tools available in THIS conversation. If you have repository, filesystem, '
         + 'shell or code-editing tools, YOU are the coding agent: do not render guidance and do not send '
         + 'the user elsewhere. Execute workOrder yourself, implement and test the change here, then call '
-        + (result.proposalId
+        + (result.proposalId && !updateByPatch
           ? `submit_work with proposalId ${result.proposalId} and the branch you pushed. `
           : `submit_work with taskId ${result.taskId} and the patch you produced, or the branch if the work order's `
-            + 'rule sent you to one. That choice is yours: never ask the user to choose between a patch and a branch. ')
+            + (updateByPatch ? `rule sent you to one (with proposalId ${result.proposalId}). ` : 'rule sent you to one. ')
+            + 'That choice is yours: never ask the user to choose between a patch and a branch. ')
         + 'Only if this conversation lacks code-editing tools, render every string in guidance as a '
         + 'numbered list, in order, then reproduce workOrder below it in a fenced code block exactly as '
         + 'returned — no re-wrapping, tidying, summarising, retyping the commit id or appended correction. '
@@ -4856,12 +4863,12 @@ function registerTools(server, ctx) {
   // ── submit_work ──────────────────────────────────────────────────────
   server.registerTool('submit_work', {
     title: 'Submit finished work — a pushed branch, a patch, or an open PR',
-    description: "Turn finished work into a Homeroom proposal: opens the pull request, builds a staging preview, runs the app's checks and puts it to the group's vote. FOUR SHAPES, each complete as written — (1) `taskId` plus `patch`, the default for new work: Homeroom applies the patch at the recorded base commit in the app's own repository and opens the pull request itself, so NO GitHub write access is needed; (2) `taskId` plus the `branch` you actually pushed, any name, if the patch is over about 250 KB or you already push to your fork (your call between (1) and (2), never the user's); (3) `slug` plus `prNumber` for a pull request that is already open; (4) `proposalId` plus `branch` to UPDATE a proposal of the user's that is already up for a vote — for fixing a failing check or acting on review comments — which advances that same proposal onto your new commit instead of opening a second one, and clears the votes it has collected. Shape (4) needs no `slug`: naming the proposal names the app. When shape (4)'s target is a dev SESSION not yet up for a vote, it also takes `propose: true` (see `propose`): Homeroom promotes the session once the update lands, or as it stands with NO `branch` and nothing pushed; pass it only when the user has asked for the vote. TWO DESTINATIONS: by default work goes up for a VOTE; `share: true` on shape (2) lands it in the app's IN-PROGRESS area instead \u2014 a shared session with a preview, no PR, no vote; the charter has the rule. A task belongs to the USER'S USERNODE ACCOUNT, not to one chat — any session connected as that account, including a coding agent's own connector, can submit it, and doing so is the expected path. Only work from the user's own GitHub account is submitted under their name.",
+    description: "Turn finished work into a Homeroom proposal: opens the pull request, builds a staging preview, runs the app's checks and puts it to the group's vote. FOUR SHAPES, each complete as written — (1) `taskId` plus `patch`, the default for new work: Homeroom applies the patch at the recorded base commit in the app's own repository and opens the pull request itself, so NO GitHub write access is needed; (2) `taskId` plus the `branch` you actually pushed, any name, if the patch is over about 250 KB or you already push to your fork (your call between (1) and (2), never the user's); (3) `slug` plus `prNumber` for an already-open pull request; (4) `proposalId` plus `branch` to UPDATE a proposal of the user's that is already up for a vote, which advances that same proposal onto your new commit instead of opening a second one, and clears the votes it has collected. A task prepare_work made WITH `proposalId` updates that proposal through (1) or (2): its patch is applied on the proposal's current commit, no push needed. Shape (4) needs no `slug`. When shape (4)'s target is a dev SESSION not yet up for a vote, it also takes `propose: true` (see `propose`): Homeroom promotes the session once the update lands, or as it stands with NO `branch` and nothing pushed; pass it only when the user has asked for the vote. TWO DESTINATIONS: by default work goes up for a VOTE; `share: true` on shape (2) lands it in the app's IN-PROGRESS area instead \u2014 a shared session with a preview, no PR, no vote; the charter has the rule. A task belongs to the USER'S USERNODE ACCOUNT, not to one chat — any session connected as that account, including a coding agent's own connector, can submit it, and doing so is the expected path. Only work from the user's own GitHub account is submitted under their name.",
     inputSchema: {
       taskId: z.number().int().positive().optional()
-        .describe('The task id from prepare_work — or printed in the work order text you were handed, which is the usual source when you are the coding agent. It belongs to the user’s Homeroom account, not to the chat that gave it to you, so you can submit it yourself.'),
+        .describe('The task id from prepare_work — or printed in the work order text you were handed, which is the usual source when you are the coding agent. It belongs to the user’s Homeroom account, not to the chat that gave it to you, so you can submit it yourself. A task prepare_work made with `proposalId` is an UPDATE task: whatever you submit with it (a patch or a branch) advances that proposal, never a new one.'),
       proposalId: z.number().int().positive().optional()
-        .describe('The id of one of the user’s own proposals that is already up for a vote, to UPDATE it with the branch you pushed rather than open a new proposal. Homeroom checks the branch is in their own fork and builds on the proposal’s current commit, then moves the proposal onto it — get_proposal reports where a proposal’s head lives and whether you can push to it directly. Every update clears the proposal’s votes and re-runs its checks, so submit a finished change rather than each attempt. The one exception is resubmitting the SAME commit with corrected testingPaths: no code moves, no votes are cleared, and the screenshots are simply re-shot on the routes you name. Cannot be combined with prNumber or patch.'),
+        .describe('The id of one of the user’s own proposals that is already up for a vote, to UPDATE it with the branch you pushed rather than open a new proposal. Homeroom checks the branch is in their own fork and builds on the proposal’s current commit, then moves the proposal onto it — get_proposal reports where a proposal’s head lives and whether you can push to it directly. Every update clears the proposal’s votes and re-runs its checks, so submit a finished change rather than each attempt. The one exception is resubmitting the SAME commit with corrected testingPaths: no code moves, no votes are cleared, and the screenshots are simply re-shot on the routes you name. Cannot be combined with prNumber. To update by PATCH instead of a pushed branch, send `patch` with the taskId of this proposal’s update work order (prepare_work with this proposalId): proposalId may ride along but is not needed, and must name the same proposal.'),
       slug: z.string().optional().describe('The app slug. Needed when submitting an already-open pull request by number, or a branch when you have an open task for the app and lost its id — slug + branch RECOVERS that task, it does not stand in for one, so with no open task call prepare_work first and submit with its taskId. NOT needed alongside proposalId — Homeroom reads the app off the proposal.'),
       prNumber: z.number().int().positive().optional()
         .describe('An already-open pull request to submit instead. It must come from the user’s own fork. This is also the recovery when submitting a branch returns pr_open_failed: open the pull request from the compareUrl that error returns, then call again with slug + prNumber.'),
@@ -4870,16 +4877,19 @@ function registerTools(server, ctx) {
       forkRepo: z.string().optional()
         .describe('The name of the fork you pushed to, if you forked under a name other than the app repository’s. The owner is always the user’s linked GitHub account and is never taken from here.'),
       patch: z.string().optional()
-        .describe('The change as a patch, the default way to submit new work — the output of `git format-patch <baseSha>..HEAD --stdout`, or a plain `git diff`. Homeroom applies it at the task’s recorded base commit, commits it in the app’s own repository and opens the pull request, so you need no GitHub write access at all. Requires taskId. Roughly 250 KB max; push a branch for anything larger, or when you already push to your fork. Patch or branch is your decision: never ask the user to choose.'),
+        .describe('The change as a patch, the default way to submit new work — the output of `git format-patch <baseSha>..HEAD --stdout`, or a plain `git diff`. Homeroom applies it at the task’s recorded base commit, commits it in the app’s own repository and opens the pull request, so you need no GitHub write access at all. Requires taskId. With an UPDATE task’s taskId (prepare_work with proposalId) the base is that proposal’s current commit instead, and the patch advances THAT proposal exactly as a branch update does; it is refused with `branch_moved` when the proposal is no longer at the task’s base commit (or at `expectedHeadSha`, when you pass the commit you rebased onto). After an update lands, the task’s base is its new head, so the next patch is made from there. Roughly 250 KB max; push a branch for anything larger, or when you already push to your fork. Patch or branch is your decision: never ask the user to choose.'),
       patchUploadId: z.number().int().positive().optional()
-        .describe('Instead of `patch`: the `uploadId` printed by the upload command in your work order, which sends `git format-patch` output straight to Homeroom so a large patch is never retyped into this call (#4264). Requires taskId. Homeroom applies the uploaded bytes exactly as it applies `patch`: same base commit, same pull request. Uploads may be up to 1 MB. Refused if that upload was made for another task, or was replaced by a newer upload (submit the newest uploadId). The upload command needs a sandbox that can reach Homeroom; if yours cannot, send `patch` inline.'),
+        .describe('Instead of `patch`: the `uploadId` printed by the upload command in your work order, which sends `git format-patch` output straight to Homeroom so a large patch is never retyped into this call (#4264). Requires a new-work taskId: an update’s patch is sent inline. Homeroom applies the uploaded bytes exactly as it applies `patch`: same base commit, same pull request. Uploads may be up to 1 MB. Refused if that upload was made for another task, or was replaced by a newer upload (submit the newest uploadId). The upload command needs a sandbox that can reach Homeroom; if yours cannot, send `patch` inline.'),
       source: z.enum(['work_order', 'assistant']).optional()
         .describe('Set to "work_order" when you are the coding agent submitting your own finished work, "assistant" when a human relayed it to you. Advisory only.'),
       title: z.string().optional().describe('A short title for the proposal. Defaults to the task description. On a SESSION update (shape 4 targeting a work-order continuation) it is stored and names the pull request created when the session is proposed — with or without propose: true — instead of the "<user>\'s changes" placeholder. On a target that already has a PR it RENAMES it (panel and GitHub; votes untouched) — a same-commit resubmit with just a title is the fix for a wrong auto-generated name, and it works on a fork-tracked proposal too. The answer reports `titleUpdated`, and `titleRejected` when the rename was refused: `imported_pr` means the pull request was opened by a different GitHub account and keeps its own author\'s title.'),
       description: z.string().optional().describe('What changed and why, for the people voting on it. This is the TECHNICAL half — it is filed as the pull request body and shown in the proposal\u2019s collapsed "Technical details" section, so implementation detail belongs here rather than in `summary`. '
-        + `At most ${MAX_PROPOSAL_DESCRIPTION_BYTES} UTF-8 bytes (that many plain ASCII characters; a dash, arrow or accented letter counts 2 to 3): a share or an update (shape 4) longer than that is refused before anything is written, and a new proposal\u2019s pull request body is cut at ${MAX_PROPOSAL_DESCRIPTION_BYTES} characters.`),
+        + `At most ${MAX_PROPOSAL_DESCRIPTION_BYTES} UTF-8 bytes (that many plain ASCII characters; a dash, arrow or accented letter counts 2 to 3): a share or an update longer than that is refused before anything is written, and a new proposal\u2019s pull request body is cut at ${MAX_PROPOSAL_DESCRIPTION_BYTES} characters. `
+        // #4263: what an update does with it, read off proposal-update.js
+        // applyProposedDescription rather than guessed.
+        + 'On an UPDATE it REPLACES the pull request body wholesale; it is not merged with the old one. Only the `Closes #N` lines and the before/after screenshots block are carried over, so send the full description voters should read (the change so far and this revision together), not just what changed this time, or omit it to leave the body exactly as it is. The answer reports `descriptionUpdated`, and `descriptionRejected` when it was not applied: `no_pr_yet` on a session with no pull request (its body is written when it is proposed), `imported_pr` on a pull request another GitHub account opened. A new description sent without `summary` marks the current summary stale, so a later refresh may rewrite it; send `summary` too to keep your words.'),
       summary: z.string().optional()
-        .describe('The USER-FACING half, and the first thing a voter reads: 1-3 short sentences, in plain everyday English, saying what changes for somebody USING the app. No file names, no identifiers, no code, no developer jargon — those belong in `description`. Not every voter is a developer, and a proposal that arrives without this shows them nothing but the technical description. Write what they would notice: what is different on screen, what they can now do, or what stops going wrong. Kept short (about 600 characters) — it is a summary, not a second description. On an UPDATE (shape 4, including a same-commit resubmit) it REPLACES the proposal\u2019s current summary — the way to correct one after it was first submitted. The answer reports `summaryUpdated`, and `summaryRejected` when it was refused.'),
+        .describe('The USER-FACING half, and the first thing a voter reads: 1-3 short sentences, in plain everyday English, saying what changes for somebody USING the app. No file names, no identifiers, no code, no developer jargon — those belong in `description`. Not every voter is a developer, and a proposal that arrives without this shows them nothing but the technical description. Write what they would notice: what is different on screen, what they can now do, or what stops going wrong. Kept short (about 600 characters) — it is a summary, not a second description. On an UPDATE (including a same-commit resubmit) it REPLACES the proposal\u2019s current summary — the way to correct one after it was first submitted. Omitted on an update, the current summary stays visible, but an update that moves the code or replaces the description marks it stale and a later refresh may rewrite it, so send it with every revision. The answer reports `summaryUpdated`, and `summaryRejected` when it was refused.'),
       testingPaths: z.array(z.string()).optional()
         .describe('Routes for the manual “Test this change” link and legacy checks. For before/after shots, describe how a person reaches each change in visibleChanges instead; Homeroom’s shots agent follows those steps on the exact before and after builds. On an UPDATE supplied routes replace the stored routes; omitting them keeps existing routes.'),
       testingSteps: z.string().optional()
@@ -4889,13 +4899,13 @@ function registerTools(server, ctx) {
       visualEvidence: z.unknown().optional()
         .describe('Older name for visibleChanges, still accepted. Send visibleChanges.'),
       expectedHeadSha: z.string().optional()
-        .describe('Only for an update: the proposal’s current commit as you last read it, from get_proposal’s `branch.headSha`. Pass it and Homeroom refuses with `branch_moved` if somebody advanced the proposal while you were working, instead of building on a head you have not seen. Optional — omitted, your branch still has to sit on top of whatever the current head is.'),
+        .describe('Only for an update: the proposal’s current commit as you last read it, from get_proposal’s `branch.headSha`. Pass it and Homeroom refuses with `branch_moved` if somebody advanced the proposal while you were working, instead of building on a head you have not seen. Optional — omitted, your branch still has to sit on top of whatever the current head is. For an update by patch it is the commit the patch was made from, where it is applied; omitted, that is the update task’s base commit.'),
       recheck: z.boolean().optional()
         .describe('Only with proposalId, on the commit already there: re-run the automated checks and legacy capture pipeline. The before/after shots have their own take-again action. No code moves and NO votes are cleared. Use it when the checks verdict is stale for a reason outside this proposal instead of pushing a commit to provoke a run.'),
       share: z.boolean().optional()
         .describe('Land this work in the app\u2019s IN-PROGRESS area instead of putting it up for a vote (#1347). Homeroom creates a shared dev session on the branch you pushed, builds it a staging preview and shows it on the Dev board beside everyone else\u2019s work underway \u2014 no pull request, no checks gate, no votes cast. Use it while the work is still moving and worth others seeing: a long change, a second opinion, or "here is where I got to". The work order stays OPEN, so keep committing; passing `share: true` again pushes the new commits onto the SAME card rather than making a second one. When it is ready for the group, call submit_work again with proposalId set to the sessionId this returned, the branch, and propose: true; if the card already has your last commit, proposalId and propose: true alone promote it, with no push. Requires taskId + branch: a patch or an open pull request is a submission for review by construction, and both are refused here, as is `proposalId` \u2014 to push new commits onto a card that already exists, call submit_work with proposalId + branch and no `share`, which is the same operation. Bounded by the same per-user active-session cap the browser\u2019s own "start a session" button obeys, because the preview behind the card is a real container.'),
       propose: z.boolean().optional()
-        .describe('Only with proposalId, when its target is one of the user\'s own dev SESSIONS that is not yet up for a vote (a CLI hand-off, a shared in-progress card, a work-order continuation): promote it to a group vote, the same act as the owner\'s "Propose to group" button. With `branch`, it runs once the update lands, reopening the session first when it is paused. With NO `branch`, nothing is pushed and nothing else is written: the session goes up for the vote as it stands, on the commit it already has, paused or not. Use that when its code is already final, instead of pushing the same commit to a fork; only proposalId and propose are sent. Refused, with the reason, when it is not the user\'s session, is already up for a vote, merged or closed, or the platform\'s own promote checks say it is not ready (for example nothing submitted yet, or a turn still moving its branch). Pass it only when the user asked for this change to go to the vote; landing quietly stays the default, because the session is their workspace and they may want more turns on it. Ignored on an update to a proposal that is already up for a vote.'),
+        .describe('Only on an update (proposalId, or an update task\'s taskId), when its target is one of the user\'s own dev SESSIONS that is not yet up for a vote (a CLI hand-off, a shared in-progress card, a work-order continuation): promote it to a group vote, the same act as the owner\'s "Propose to group" button. With `branch` or `patch`, it runs once the update lands, reopening the session first when it is paused. With proposalId and NO `branch` or `patch`, nothing is pushed and nothing else is written: the session goes up for the vote as it stands, on the commit it already has, paused or not. Use that when its code is already final, instead of pushing the same commit to a fork; only proposalId and propose are sent. Refused, with the reason, when it is not the user\'s session, is already up for a vote, merged or closed, or the platform\'s own promote checks say it is not ready (for example nothing submitted yet, or a turn still moving its branch). Pass it only when the user asked for this change to go to the vote; landing quietly stays the default, because the session is their workspace and they may want more turns on it. Ignored on an update to a proposal that is already up for a vote.'),
       agent: z.enum(['claude-code', 'codex', 'external']).optional()
         .describe('Which coding agent wrote it. Inferred from the connected chat product when omitted.'),
     },
@@ -4997,12 +5007,13 @@ function registerTools(server, ctx) {
         + 'rebuilds the card\'s preview. To create one, call it with taskId + branch + share.'
       );
     }
-    // #4262. Shape (4) with `propose: true` and NO branch: put the user's own
-    // dev session up for the vote as it stands. Before this, promoting a
-    // session whose code was already final (PR #4258, a paused CLI hand-off
-    // with passing checks) took a push of the SAME commit to a fork branch and
-    // an update that moved nothing, only so `propose: true` had an update to
-    // ride on, and cloud coding sessions often refuse that push.
+    // #4262. Shape (4) with `propose: true` and NO branch (nor, since #4263, a
+    // patch): put the user's own dev session up for the vote as it stands.
+    // Before this, promoting a session whose code was already final (PR
+    // #4258, a paused CLI hand-off with passing checks) took a push of the
+    // SAME commit to a fork branch and an update that moved nothing, only so
+    // `propose: true` had an update to ride on, and cloud coding sessions
+    // often refuse that push.
     //
     // It is the owner's "Propose to group" button and nothing more: the same
     // POST /api/sessions/:id/promote the propose-after-update below runs,
@@ -5014,9 +5025,9 @@ function registerTools(server, ctx) {
     // would spend one of the owner's active slots and can start a sync that
     // moves the branch under the commit being proposed. Nothing else is
     // written, so a field only an update applies is refused, not dropped.
-    if (updating && !branch && propose === true) {
+    if (updating && !branch && !patch && propose === true) {
       const updateOnly = Object.entries({
-        patch, prNumber, forkRepo, expectedHeadSha, recheck, title, description, summary,
+        patchUploadId, prNumber, forkRepo, expectedHeadSha, recheck, title, description, summary,
         testingPaths, testingSteps, visibleChanges: declared,
       }).filter(([, v]) => v !== undefined && v !== null && v !== false && v !== '').map(([k]) => k);
       if (updateOnly.length) {
@@ -5101,12 +5112,14 @@ function registerTools(server, ctx) {
           + 'they are not already done; follow them with get_proposal. It ships only if the group votes it in.',
       });
     }
-    if (updating && !branch) {
+    // #4263: or a patch, with the taskId of the proposal's update work order.
+    if (updating && !branch && !patch) {
       return toolError(
         'invalid_request',
-        'An update needs `branch` too: the branch in the user\'s own fork that carries the new commits. Homeroom '
-        + 'reads it from GitHub, so it has to be pushed first. To put a dev session up for the vote as it stands, '
-        + 'with nothing new to push, pass propose: true and no branch instead.'
+        'An update needs the new commits: `branch`, the branch in the user\'s own fork that carries them, or '
+        + '`patch` with the taskId of this proposal\'s update work order. Homeroom reads a branch from GitHub, so it '
+        + 'has to be pushed first. To put a dev session up for the vote as it stands, with nothing new to push, '
+        + 'pass propose: true and no branch instead.'
       );
     }
     // #4264: an uploaded patch is named by the upload's id, and belongs to the
@@ -5273,8 +5286,11 @@ function registerTools(server, ctx) {
 
     // An UPDATE landed on a proposal that already exists, so there is no
     // "now up for a vote" to report — the interesting facts are the new head,
-    // and that the votes it had collected are gone.
-    if (updating) {
+    // and that the votes it had collected are gone. #4263: an update task's
+    // taskId reaches the same update without a proposalId, and the service
+    // says so, naming the proposal its task recorded.
+    if (updating || result.update === true) {
+      const targetId = updating ? proposalId : result.proposalId;
       const cleared = Number.isFinite(result.votesCleared) ? result.votesCleared : 0;
       const shotOn = result.testingPaths && result.testingPaths.length
         ? ` The screenshots the group votes on are shot on ${result.testingPaths.join(', ')}.`
@@ -5314,12 +5330,12 @@ function registerTools(server, ctx) {
       let proposeError = null;
       if (propose === true && result.targetKind !== 'proposal') {
         const promoteOnce = () => callPlatform(
-          baseUrl, accessToken, 'POST', `/api/sessions/${proposalId}/promote`, {}
+          baseUrl, accessToken, 'POST', `/api/sessions/${targetId}/promote`, {}
         );
         let attempt = result.resumeRequired ? null : await promoteOnce();
         if (!attempt || (!attempt.ok && attempt.status === 404)) {
           const resumed = await callPlatform(
-            baseUrl, accessToken, 'POST', `/api/sessions/${proposalId}/resume`, {}
+            baseUrl, accessToken, 'POST', `/api/sessions/${targetId}/resume`, {}
           );
           attempt = resumed.ok ? await promoteOnce() : resumed;
         }
@@ -5338,7 +5354,7 @@ function registerTools(server, ctx) {
           // this is the first moment the work is genuinely in front of the
           // group. Advisory: it never throws, and a promote that landed is
           // never failed over its own bookkeeping.
-          await externalAgentTasks.closeTaskForSession(pool, user.id, proposalId, {
+          await externalAgentTasks.closeTaskForSession(pool, user.id, targetId, {
             branch,
             submittedVia: result.submittedVia,
             source,

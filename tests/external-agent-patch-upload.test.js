@@ -460,7 +460,8 @@ test('the work order offers the upload for a large patch, keeps inline for small
   ), done);
   assert.match(done, /until 2026-10-08 14:05 UTC/);
   assert.match(done, /never print, commit or share it/);
-  assert.match(done, /a hosted\s+sandbox usually cannot/, 'says who it is for');
+  assert.match(done, /which not\s+every\s+sandbox can, so try it once/, 'says it may not reach');
+  assert.doesNotMatch(done, /hosted\s+sandbox usually cannot/, 'and guesses at no sandbox (#4263)');
   assert.match(done, /pass its\s+`uploadId` as `patchUploadId` in step 2 instead of `patch`/);
   assert.match(done, /Uploads take up to 1 MB, inline patches\s+about 250 KB/);
   // Order of preference: inline first, upload for large, branch last.
@@ -480,7 +481,8 @@ test('without a credential, and on an update, the work order is exactly what it 
   assert.match(plain, /4\. IF THE PATCH IS REFUSED as too large, push a branch as in step 1 and/);
   assert.equal(orderWith({ patchUpload: null }), plain);
 
-  // An update submits a branch, so even a credential handed in is not shown.
+  // An update's patch (#4263) is sent inline through the update route, so
+  // even a credential handed in is not shown.
   const update = orderWith({
     patchUpload: UPLOAD,
     targetProposal: { id: 4223, branchHome: 'app_repo', title: 'Tags', webPath: null },
@@ -705,6 +707,25 @@ test('submit_work refuses an upload of another task, a replaced or unknown one, 
     assert.equal(noTask.code, 'invalid_request');
     assert.match(noTask.message, /taskId/);
     assert.equal(applied.length, 0, 'nothing was applied');
+  });
+});
+
+// #4263. An update task's patch is sent inline: no upload command is printed
+// for one, and naming an upload id says so rather than "no such upload".
+test('an update task refuses patchUploadId and points at the inline patch', async () => {
+  const queries = [];
+  const pool = fakePool([
+    ['FROM external_agent_tasks t JOIN apps a', [{ ...TASK_ROW, target_session_id: 4223 }]],
+  ], queries);
+  await withStubbedApply(async (applied) => {
+    const result = await svc.submitWork(submitDeps(pool, []), {
+      user: { id: 3 }, taskId: 31, patchUploadId: 101,
+      updateProposal: async () => { throw new Error('must not update'); },
+    });
+    assert.equal(result.code, 'invalid_request');
+    assert.match(result.message, /Task 31 revises proposal 4223, and an update's patch is sent\s+inline as `patch`/);
+    assert.equal(applied.length, 0);
+    assert.ok(!queries.some((q) => q.sql.includes('external_agent_patch_uploads')), 'no upload was looked up');
   });
 });
 

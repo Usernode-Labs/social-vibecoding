@@ -109,9 +109,10 @@ async function sweep(pool) {
 }
 
 // Mint the credential for one task. Only an OPEN task of this user's that
-// opens NEW work qualifies: an update submits a branch on this base, so an
-// upload would have nowhere to go. Returns null when nothing was minted,
-// which the caller treats as "print the work order without the command".
+// opens NEW work qualifies: an update's patch (#4263) is sent inline, through
+// the proposal's update route, so an upload would have nowhere to go. Returns
+// null when nothing was minted, which the caller treats as "print the work
+// order without the command".
 async function issueUploadCredential(pool, { taskId, userId, origin }) {
   const id = taskIdOf(taskId);
   let base;

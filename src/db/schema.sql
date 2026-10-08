@@ -7033,13 +7033,16 @@ BEGIN
   --                      bot-owned branch in the app repo
   --   update_fork_head — the proposal's head already lived in the author's
   --                      fork, so advancing the tracked head WAS the write
+  -- And #4263 adds a third:
+  --   update_patch     — the author's patch was applied on the proposal's
+  --                      head and pushed onto that same bot-owned branch
   -- Widening a CHECK means replacing it, so this one constraint is dropped
   -- and recreated rather than added-if-absent. Safe on every boot: the new
   -- list is a superset, so no stored value can be excluded by it.
   ALTER TABLE external_agent_tasks DROP CONSTRAINT IF EXISTS external_agent_tasks_submitted_via_chk;
   ALTER TABLE external_agent_tasks ADD CONSTRAINT external_agent_tasks_submitted_via_chk
     CHECK (submitted_via IS NULL OR submitted_via IN (
-      'branch','branch_head_repo','mirror','patch','pr','update_branch','update_fork_head'));
+      'branch','branch_head_repo','mirror','patch','pr','update_branch','update_fork_head','update_patch'));
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint WHERE conname = 'external_agent_tasks_submitted_source_chk'
   ) THEN

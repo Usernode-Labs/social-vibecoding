@@ -149,8 +149,19 @@ async function patchGrowthBytes(git, baseSha) {
 // Returns { ok: true, branch, headSha, credential, cleanup } — `cleanup()`
 // removes the pushed branch and MUST be called if the caller's subsequent
 // createPR or pr-import fails.
+//
+// #4263. With `targetBranch`, the same apply lands on a branch that ALREADY
+// exists instead of a fresh one: an update to a proposal whose head is a
+// branch in the app's repository, at that head (`baseSha`). Everything above
+// the push is identical, so a revision is bounded exactly as new work is. The
+// push carries a lease pinned to `baseSha`, the way
+// external-agent-head.pushForkBranchToAppBranch advances the same branch from
+// a fork, so a proposal somebody moved in the meantime is `branch_moved`
+// rather than overwritten. `cleanup()` is then a no-op: no new ref was
+// written, and rolling the branch back would throw away the commit it just
+// accepted.
 async function applyPatch({
-  owner, repo, patch, baseSha, userId, taskId, maxBytes,
+  owner, repo, patch, baseSha, userId, taskId, maxBytes, targetBranch = null, sessionId = null,
 }) {
   // An uploaded patch arrives as the exact bytes the agent sent (#4264), so a
   // file in some legacy encoding survives the trip; an inline one is the tool
@@ -159,6 +170,9 @@ async function applyPatch({
   const text = body.toString('utf8');
   if (!text.trim()) {
     return fail('invalid_request', 'The patch is empty. Send the output of `git format-patch <baseSha>..HEAD --stdout`.');
+  }
+  if (targetBranch != null && !head.validRef(targetBranch)) {
+    return fail('invalid_request', 'That proposal branch name is not a valid git ref.');
   }
 
   // Size FIRST, before anything is parsed or any process is spawned. Only the
@@ -191,12 +205,14 @@ async function applyPatch({
     return fail('platform_unavailable', 'Homeroom cannot write to the app repository right now. Try again shortly.', { retryable: true });
   }
 
-  const branch = `${head.PATCH_BRANCH_PREFIX}u${userId || 0}-t${taskId || 0}-${head.nonce()}`;
+  const branch = targetBranch
+    || `${head.PATCH_BRANCH_PREFIX}u${userId || 0}-t${taskId || 0}-${head.nonce()}`;
   let pushed = false;
   let headSha = null;
 
   try {
-    await head.withScratchRepo(`patch-${taskId || 0}`, async ({ dir, git }) => {
+    const label = targetBranch ? `patch-s${sessionId || 0}` : `patch-${taskId || 0}`;
+    await head.withScratchRepo(label, async ({ dir, git }) => {
       const remote = head.authenticatedRemote(credential.token, owner, repo);
       // A shallow fetch of the base commit is enough: the full tree and
       // every blob AT that commit are present, which is what `git apply
@@ -285,11 +301,41 @@ async function applyPatch({
         throw e;
       }
 
-      await git(['push', remote, `HEAD:refs/heads/${branch}`]);
+      if (targetBranch) {
+        // The commit is a child of `baseSha`, so this moves a branch that is
+        // still at `baseSha` and nothing else: the lease names that exact
+        // commit, as the fork update's push does.
+        try {
+          await git(['push', `--force-with-lease=refs/heads/${branch}:${String(baseSha).toLowerCase()}`,
+            remote, `HEAD:refs/heads/${branch}`]);
+        } catch (err) {
+          // git's own words for a lease that no longer holds, read the way
+          // external-agent-head.pushForkBranchToAppBranch reads them.
+          const raw = head.redactToken(err && (err.stderr || err.message), credential.token);
+          if (/stale info|non-fast-forward|fetch first|rejected/i.test(raw)) {
+            throw new Error('patch_branch_moved');
+          }
+          throw err;
+        }
+      } else {
+        await git(['push', remote, `HEAD:refs/heads/${branch}`]);
+      }
       pushed = true;
     });
   } catch (err) {
     const kind = err && err.message;
+    if (kind === 'patch_branch_moved') {
+      log.info('external-agent-patch', 'update push refused: the proposal branch moved', {
+        owner, repo, branch, sessionId,
+      });
+      return fail(
+        'branch_moved',
+        `${branch} is no longer at ${baseSha}, the commit this patch was made against. Somebody else advanced `
+        + 'this proposal in the meantime. Re-read the proposal, rebase onto its current head, export the patch '
+        + 'again and submit it.',
+        { retryable: false }
+      );
+    }
     if (kind === 'patch_forbidden_path') {
       return fail(
         'patch_rejected',
@@ -315,9 +361,10 @@ async function applyPatch({
       );
     }
     if (kind === 'patch_did_not_apply') {
+      const where = targetBranch ? 'the proposal\'s current commit' : 'the commit this piece of work was reserved at';
       return fail(
         'patch_did_not_apply',
-        `That patch does not apply cleanly at ${baseSha}, the commit this piece of work was reserved at. Rebase `
+        `That patch does not apply cleanly at ${baseSha}, ${where}. Rebase `
         + `onto ${baseSha} and export the patch again, or push the branch to your fork and submit it with `
         + '`branch`.',
         { retryable: false, detail: (err && err.reason) || null }
@@ -327,7 +374,8 @@ async function applyPatch({
       owner, repo, taskId, credential: credential.source,
       err: head.redactToken(err && err.message, credential.token),
     });
-    if (pushed) {
+    // Never the proposal's own branch: it was there before this call.
+    if (pushed && !targetBranch) {
       await head.deleteBranch({ owner, repo, branch, token: credential.token });
     }
     return fail('platform_unavailable', 'Homeroom could not apply that patch just now. Try again shortly.', { retryable: true });
@@ -335,13 +383,16 @@ async function applyPatch({
 
   log.info('external-agent-patch', 'patch applied and pushed', {
     owner, repo, branch, taskId, credential: credential.source,
+    ...(targetBranch ? { sessionId, onto: 'existing_branch' } : {}),
   });
   return {
     ok: true,
     branch,
     headSha,
     credential: credential.source,
-    cleanup: () => head.deleteBranch({ owner, repo, branch, token: credential.token }),
+    cleanup: targetBranch
+      ? async () => {}
+      : () => head.deleteBranch({ owner, repo, branch, token: credential.token }),
   };
 }
 

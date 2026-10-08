@@ -1794,6 +1794,104 @@ test('submit_work takes shape (4) exactly as documented: proposalId + branch', a
   }
 });
 
+// ── #4263: revising a proposal by patch, through its update task ────────
+//
+// The update work order now prints `submit_work` with taskId + patch and no
+// proposalId. The service sends that to the update route; this module has to
+// report it as the update it is, not as a new proposal "now up for a vote".
+
+function updateTaskConnector(platformAnswer, task) {
+  const gh = require('../src/services/github');
+  const githubLink = require('../src/services/github-link');
+  const real = { gh: gh.isEnabled, link: githubLink.isEnabled };
+  gh.isEnabled = () => true;
+  githubLink.isEnabled = () => true;
+  const pool = {
+    async query(sql) {
+      // The task, for both loadOpenTask and loadAnyTask; nothing else is read.
+      if (/FROM external_agent_tasks t/.test(sql)) return { rows: [task] };
+      return { rows: [] };
+    },
+  };
+  const c = connector(platformAnswer, { scopes: [READ_SCOPE, WRITE_SCOPE], pool });
+  return {
+    ...c,
+    restore: () => { c.restore(); gh.isEnabled = real.gh; githubLink.isEnabled = real.link; },
+  };
+}
+
+const UPDATE_TASK_ROW = {
+  id: 44, user_id: 7, app_id: 3, status: 'open', target_session_id: 3140, issue_number: null,
+  base_sha: 'a'.repeat(40), app_slug: 'recipe-box', repo_url: 'https://github.com/o/recipe-box',
+  fork_owner: 'ada-gh', fork_repo: 'recipe-box', branch_name: 'usernode/recipe-box-update-3140-ab12',
+};
+
+test('submit_work with an update task\'s taskId + patch advances that proposal, and says so', async () => {
+  const PATCH = 'diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n';
+  const { handlers, calls, restore } = updateTaskConnector(() => ({
+    updated: true, proposalId: 3140, appSlug: 'recipe-box', prNumber: 52,
+    headSha: 'b1344508506dd8dc4a655f10c96c51389fcc30bb', previousHeadSha: 'a'.repeat(40),
+    votesCleared: 2, submittedVia: 'update_patch', targetKind: 'proposal', previewRebuilding: true,
+  }), UPDATE_TASK_ROW);
+  try {
+    const res = await handlers.get('submit_work')({ taskId: 44, patch: PATCH, source: 'work_order' });
+    assert.notEqual(res.isError, true, JSON.stringify(res.content));
+    // One call, to the UPDATE route of the proposal the task names: no
+    // pull request opened, no import, no second proposal.
+    assert.deepEqual(calls.map((c) => c.pathname), ['/api/apps/recipe-box/proposals/3140/update-from-fork']);
+    assert.equal(calls[0].body.patch, PATCH);
+    assert.equal(calls[0].body.expectedHeadSha, 'a'.repeat(40), 'applied at the head the work order named');
+    assert.equal(calls[0].body.branch, undefined);
+    // The update's own answer, word for word what a branch update says.
+    const out = res.structuredContent;
+    assert.equal(out.proposalId, 3140);
+    assert.equal(out.headSha, 'b1344508506dd8dc4a655f10c96c51389fcc30bb');
+    assert.equal(out.votesCleared, 2);
+    assert.equal(out.submittedVia, 'update_patch');
+    assert.match(out.nextStep, /^PR #52 \(proposal 3140\) now points at your new commit/);
+    assert.match(out.nextStep, /2 votes it had collected were cleared/);
+    assert.doesNotMatch(out.nextStep, /It is now up for a vote/, 'not reported as a new proposal');
+  } finally { restore(); }
+});
+
+test('propose: true on an update task promotes the session the task names', async () => {
+  const { handlers, calls, restore } = updateTaskConnector((method, pathname) => (
+    pathname.endsWith('/promote')
+      ? { prNumber: 61, prUrl: 'https://github.com/o/recipe-box/pull/61' }
+      : {
+        updated: true, proposalId: 3140, appSlug: 'recipe-box', prNumber: null,
+        headSha: 'b1344508506dd8dc4a655f10c96c51389fcc30bb', votesCleared: 0,
+        submittedVia: 'update_patch', targetKind: 'session', previewRebuilding: true,
+      }
+  ), UPDATE_TASK_ROW);
+  try {
+    const res = await handlers.get('submit_work')({ taskId: 44, patch: 'diff --git a/x b/x\n', propose: true });
+    assert.notEqual(res.isError, true, JSON.stringify(res.content));
+    assert.ok(calls.some((c) => c.pathname === '/api/sessions/3140/promote'),
+      'the id comes from the task, since the call carried no proposalId');
+    assert.equal(res.structuredContent.proposed, true);
+  } finally { restore(); }
+});
+
+test('submit_work documents what description and summary do on an update', () => {
+  const block = registration('submit_work');
+  const desc = block.slice(block.indexOf('description: z.string()'), block.indexOf('summary: z.string()'));
+  assert.match(desc, /REPLACES the pull request body wholesale; it is not merged with the old one/);
+  assert.match(desc, /`Closes #N` lines and the before\/after screenshots block/);
+  assert.match(desc, /omit it to leave the body exactly as it is/);
+  assert.match(desc, /no_pr_yet/);
+  assert.match(desc, /imported_pr/);
+  const summary = block.slice(block.indexOf('summary: z.string()'), block.indexOf('testingPaths: z.array'));
+  assert.match(summary, /REPLACES the proposal\\u2019s current summary/);
+  assert.match(summary, /marks it stale/);
+  // And the shape itself, in the tool description and on the fields.
+  const toolDesc = block.slice(block.indexOf('description:'), block.indexOf('inputSchema:'));
+  assert.match(toolDesc, /A task prepare_work made WITH `proposalId` updates that proposal/);
+  assert.match(toolDesc, /its patch is applied on the proposal's current commit, no push needed/);
+  assert.doesNotMatch(block, /Cannot be combined with prNumber or patch/);
+  assert.match(block, /send `patch` with the taskId of this proposal\u2019s update work order/);
+});
+
 // ── #2066: advancing a shared in-progress card ──────────────────────────
 //
 // A draft landed with `share: true`, more commits were pushed onto it, and
@@ -3902,9 +4000,10 @@ test('submit_work reaches the update through the platform route, not around it',
   assert.match(block, /proposals\/\$\{id\}\/update-from-fork/);
   assert.match(block, /callPlatform\(\s*\n?\s*baseUrl, accessToken, 'POST'/);
   assert.doesNotMatch(block, /force-with-lease|verifyForkBranch|pushForkBranchToAppBranch/);
-  // An update needs the branch it is advancing FROM.
+  // An update needs the new commits: the branch it is advancing FROM, or
+  // (#4263) a patch sent with the update work order's taskId.
   assert.match(block, /const updating = Number\.isInteger\(proposalId\) && proposalId > 0/);
-  assert.match(block, /if \(updating && !branch\)/);
+  assert.match(block, /if \(updating && !branch && !patch\)/);
   // The vote consequence is reported, because it is the one thing the user
   // must hear before it happens again.
   assert.match(block, /votesCleared/);
@@ -4713,8 +4812,18 @@ test('#2136 — a work order that revises a proposal names its pull request, and
     assert.equal(revise.proposalId, 4223);
     assert.equal(revise.prNumber, 2151, 'the number the person will recognise, beside the id');
     assert.match(revise.nextStep, /REVISES PR #2151 \(proposal 4223\), and it starts at that proposal's own current/);
-    assert.match(revise.nextStep, /submit_work with proposalId 4223 and the branch you pushed/,
-      'the argument is still spelled as the argument');
+    // #4263: an app-repo proposal is revised by patch first, with the update
+    // task's id, and the branch keeps the proposal id. Each argument is still
+    // spelled as the argument.
+    assert.match(revise.nextStep, /submit_work with taskId 88 and the patch you produced, or the branch/);
+    assert.match(revise.nextStep, /\(with proposalId 4223\)/, 'the argument is still spelled as the argument');
+    assert.match(revise.nextStep, /never ask the user to choose between a patch and a branch/);
+    // A head in the author's own fork still moves only by their push.
+    extra = { branchHome: 'user_fork' };
+    const forkHome = await run({ proposalId: 4223, brief: 'fix the failing test' }, [PR_ROW]);
+    assert.match(forkHome.nextStep, /submit_work with proposalId 4223 and the branch you pushed/);
+    assert.doesNotMatch(forkHome.nextStep, /and its patch|the patch you produced/);
+    extra = {};
 
     // A continued session has no pull request yet: null, and no "PR #null".
     const session = await run(
