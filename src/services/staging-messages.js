@@ -596,7 +596,8 @@ async function ensureBotDmFixture(pool, user) {
     await conversations.sendMessage(pool, { id: bot.id }, opened.conversationId, {
       content: activity.cardText(runClub, dm, { go: true }),
       idempotency_key: activity.DEMO_CARD_KEYS.building,
-    }, { metadata: { homeroomBot: { kind: 'activity', ...runClub } } });
+      // #4392: drawn as the bot's thanks for answering, as cardUnderPlan sends it.
+    }, { metadata: { homeroomBot: { kind: 'activity', ...runClub, thanks: true, appEmoji: '🏃' } } });
     const plants = { appName: 'Staging demo plants', issueNumber: 1, firstVersion: true };
     await conversations.sendMessage(pool, { id: bot.id }, opened.conversationId, {
       content: activity.cardText(plants, dm, { queued: true }),

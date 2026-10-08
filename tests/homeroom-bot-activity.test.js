@@ -936,20 +936,21 @@ const flat = { id: 21, slug: 'flat-4b-chores', name: 'Flat 4B Chores' };
 test('B6: Build it moves the request\'s card under the plan, read from the plan\'s run, and the card above stops being drawn', async () => {
   const { pool, dm, sent, queries, moved, settings } = underPlanDeps({ existing: { messageId: 800 } });
   const out = await activity.cardUnderPlan(pool, {
-    app: flat, issueNumber: 1, runId: 61, planMessageId: 900, requester: maker, bot, settings, deps: { dm },
+    app: { ...flat, icon_emoji: '🧹' }, issueNumber: 1, runId: 61, planMessageId: 900, requester: maker, bot, settings, deps: { dm },
   });
   assert.deepEqual(out, { conversationId: 5, messageId: 950, duplicate: false });
   assert.equal(sent.length, 1, 'one card, under the plan');
   const [card] = sent;
   assert.equal(card.idempotencyKey, 'hrbot-activity-run-61', 'the key catching up gives the same run\'s build: never two messages');
-  // #4046: the chat does not draw it (the plan carries its step); these words are the inbox's preview.
-  assert.equal(card.content, '**Flat 4B Chores**, its first version\n\nI\'ll message you here when it\'s ready to try.');
+  // #4392: the bot's thanks for answering, drawn over the app's card (bot-thanks-card.tsx), and the inbox's preview.
+  assert.equal(card.content, 'Thanks for answering about the plan. I\'ll let you know when Flat 4B Chores is ready to try.');
+  assert.equal(card.content, activity.thanksText('Flat 4B Chores'));
   assert.ok(!/—/.test(card.content));
   assert.deepEqual(card.metadata, {
     kind: 'activity', appSlug: 'flat-4b-chores', appName: 'Flat 4B Chores', issueNumber: 1,
     issueTitle: 'First version of Flat 4B Chores', firstVersion: true, askedText: 'A chores rota for our flat',
-    lookAt: '2026-10-04T10:02:00.123Z',
-  }, 'read from the run the plan came from; no startedAt, so its time counts from the tap');
+    lookAt: '2026-10-04T10:02:00.123Z', thanks: true, appEmoji: '🧹',
+  }, 'read from the run the plan came from; no startedAt, so its time counts from the tap; drawn as the thanks, with its icon');
   assert.equal(card.moment, undefined, 'a card rings nothing (homeroom-bot-dm.js MOMENTS has no activity)');
   assert.equal(dmSvc.momentOf(card.metadata), null);
   const insert = queries.find(([sql]) => /INSERT INTO homeroom_bot_dm_messages/.test(sql));
@@ -973,6 +974,8 @@ test('B6: a card already under the plan carries on; with none, Build it gives th
     app: flat, issueNumber: 1, runId: 61, planMessageId: 900, requester: maker, bot, settings: none.settings, deps: { dm: none.dm },
   })).messageId, 950);
   assert.equal(none.sent.length, 1);
+  assert.equal(none.sent[0].metadata.thanks, true);
+  assert.equal(none.sent[0].metadata.appEmoji, undefined, 'no icon yet: the row draws its first letter');
   assert.ok(!none.queries.some(([sql]) => /DELETE FROM homeroom_bot_dm_messages/.test(sql)), 'nothing to move');
   assert.equal(none.moved.length, 0);
 

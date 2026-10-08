@@ -31,10 +31,11 @@ import type { ConversationMessage, HomeroomBotActivity, HomeroomBotMeta } from '
  * it, then the card again under the plan once it was built. Now the plan is
  * the one place its step shows (planLayout below): a card above its plan is
  * not drawn, the plan reads that card's state for the line at its top
- * (planProgress), and the card Build it moved under the plan is not drawn
- * either: its words, "I'll message you here when it's ready to try.", are
- * the inbox's preview, and the hello already said so on this screen. While
- * it is being built, "Notify me when it's ready" is inside the plan card
+ * (planProgress). The card Build it moved under the plan is drawn as the
+ * bot's thanks for answering (#4392, ./bot-thanks-card.tsx: its words over
+ * the app's thumbnail row and build line); one moved before the thanks
+ * existed (no `thanks` in its metadata) is still not drawn. While it is
+ * being built, "Notify me when it's ready" is inside the plan card
  * (BotPlanCard's footer, ./notify-me.tsx).
  *
  * #4046: ONE SET OF SUGGESTIONS. While a plan or a question offers its own
@@ -152,12 +153,14 @@ function requestKey(meta: HomeroomBotMeta): string | null {
  *
  *   - an activity card before its plan is not drawn: the plan carries it,
  *     and neither is one after a plan that waits for Build it or was built
- *     (the card that follows the build);
+ *     (the card that follows the build), unless it is the bot's thanks
+ *     (#4392), which is always drawn;
  *   - the newest plan, waiting or built, reads the newest card's state.
  */
 export function planLayout(messages: readonly ConversationMessage[]): PlanLayout {
   const plans = new Map<string, ConversationMessage>();
   const cards = new Map<string, number[]>();
+  const thanks = new Set<number>();
   let answersOpen = false;
   for (const message of messages) {
     const meta = botMeta(message);
@@ -170,6 +173,7 @@ export function planLayout(messages: readonly ConversationMessage[]): PlanLayout
       if (!newest || message.id > newest.id) plans.set(key, message);
     } else if (isActivityMessage(message) && !isMovedActivity(message)) {
       cards.set(key, [...(cards.get(key) || []), message.id]);
+      if (meta.thanks) thanks.add(message.id);
     }
   }
   if (!plans.size) return answersOpen ? { ...NO_PLAN_LAYOUT, answersOpen } : NO_PLAN_LAYOUT;
@@ -178,7 +182,7 @@ export function planLayout(messages: readonly ConversationMessage[]): PlanLayout
   for (const [key, plan] of plans) {
     const ids = cards.get(key) || [];
     const carried = ['open', 'built'].includes(planState(botMeta(plan) as HomeroomBotMeta));
-    for (const id of ids) if (id < plan.id || carried) hidden.add(id);
+    for (const id of ids) if ((id < plan.id || carried) && !thanks.has(id)) hidden.add(id);
     const newest = Math.max(0, ...ids);
     if (newest && carried) cardOf.set(plan.id, newest);
   }

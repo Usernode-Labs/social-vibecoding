@@ -10223,6 +10223,16 @@ BEGIN
 END $$;
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_model TEXT;
 
+-- A build turn that ended without failing and changed nothing (live or
+-- shadow, homeroom-bot-live.js buildNudgePrompt): { turns: [{ turn
+-- ('build' | 'nudge'), ended, said, provider, providers, model, harness,
+-- requests, toolCalls, fileEdits, outputTokens, seconds }], nudged,
+-- notNudged, committed, recovered }. `said` is the agent's last message,
+-- clipped and redacted, kept for admins to read and never quoted to anybody
+-- else. It can quote a private project's code: private, as `review` is.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_no_change JSONB;
+COMMENT ON COLUMN homeroom_bot_runs.build_no_change IS 'staging:private';
+
 -- A live build waiting its turn: a live 'ready' verdict is built after the
 -- turn that read it ends, one build per project at a time, so reading the
 -- project's next request never waits for a build. Set when the verdict is

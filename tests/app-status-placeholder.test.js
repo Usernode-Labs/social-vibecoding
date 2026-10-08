@@ -383,6 +383,35 @@ test('#4053: the line is the server\'s for this reader; the plan and the bot\'s 
   assert.equal(view(AppView, firstVersionApp({}, { line: undefined })).buildLine, 'planning');
 });
 
+test('#4391/#4393: while the first-session tour runs, no "Review the plan": the bot is working on it', () => {
+  const { AppView } = makeAppView();
+  const plan = {
+    bullets: ['A list of your plants'], questions: [], actionId: 7, messageId: 70, conversationId: 42,
+  };
+  const mine = view(AppView, firstVersionApp({}, { line: 'plan', plan }));
+  const m = mod();
+  m.setTourRunning(true);
+  try {
+    const held = m.heldForTour(mine, true);
+    assert.equal(held.buildLine, 'working');
+    assert.equal(held.action, null);
+    const out = html(mine);
+    assert.match(out, /data-build-line="working"[^>]*>.*animate-spin.*Homeroom bot is working on it/);
+    assert.doesNotMatch(out, /Review the plan|plan is ready|app-first-version-chat/);
+    // Only the plan waiting is held: the build's own line and its quiet way in stay.
+    const building = view(AppView, firstVersionApp({}, { step: 4, line: 'building' }));
+    assert.deepEqual(m.heldForTour(building, true), building);
+    assert.match(html(building), /data-build-line="building"/);
+  } finally {
+    m.setTourRunning(false);
+  }
+  // Once it ends, exactly as before.
+  assert.deepEqual(m.heldForTour(mine, false), mine);
+  const after = html(mine);
+  assert.match(after, /<button[^>]* id="app-first-version-chat"[^>]*>Review the plan<\/button>/);
+  assert.match(after, /data-build-line="plan"[^>]*>.*Your plan is ready to review/);
+});
+
 test('#4053: the thumbnail\'s one line is dapp.json\'s, and no project details still draw it, from its name', () => {
   const { AppView } = makeAppView();
   const fromManifest = view(AppView, firstVersionApp({ description: undefined, manifest_snapshot: { description: 'Water   the plants\n together' } }));

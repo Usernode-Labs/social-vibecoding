@@ -74,6 +74,9 @@
 // time from the tap. The card above stops being the request's card (its
 // record goes) and says where it went (`movedTo`), so the client stops
 // drawing it. There is still one card per request, and it notifies nobody.
+// #4392: that card is the bot's thanks for answering the plan, said once
+// whether Build it was tapped or typed: its words, then the project's
+// thumbnail row with the build line following the build.
 //
 // ONE PERSON'S, ALWAYS. Every row is read by the signed-in person's own id:
 // the route takes no user, conversation or message parameter. An app they
@@ -126,22 +129,28 @@ function proposalHref(slug, sessionId) {
 // live says it waits for (cardText).
 const FIRST_VERSION_WAIT_WORDS = 'Waiting for the first version to go live. I\'ll start on this as soon as it does.';
 
+/** #4392: what the bot says once its creator has answered a first version's plan. */
+function thanksText(appName) {
+  return `Thanks for answering about the plan. I'll let you know when ${appName} is ready to try.`;
+}
+
 /**
  * Pure: a card's words, for whatever does not draw the card itself. A card
  * `joined` to work already under way (catchUpCards) lands at the end of the
  * DM, after the work began, so it says the work was started earlier. A card
  * started by filing the request (#3767) says it was filed, not that the
  * work began: it may wait in the queue first, and the card says so. A card
- * moved under a plan by Build it (`go`, cardUnderPlan) is not drawn in the
- * chat: the plan carries its step and offers Notify me (#4046,
- * frontend/src/features/messages/bot-plan.tsx). Its words are the inbox's
- * preview, so they say only what comes next.
+ * moved under a plan by Build it (`go`, cardUnderPlan) thanks them for
+ * answering and says what comes next (#4392): the chat draws those words
+ * over the project's thumbnail row and its build line
+ * (frontend/src/features/messages/bot-thanks-card.tsx), and they are the
+ * inbox's preview as they are.
  */
 function cardText({ appName, issueNumber, issueTitle, firstVersion }, dm, {
   joined = false, filed = false, queued = false, lowAllowance = false, waitsForFirstVersion = false, go = false,
 } = {}) {
+  if (go) return thanksText(appName);
   const line = dm.requestLine({ appName, issueNumber, issueTitle, firstVersion });
-  if (go) return `${line}\n\nI'll message you here when it's ready to try.`;
   // The one place the weekly limit is mentioned before it is reached: under
   // a fifth of the week's building time left (dm.allowanceLow).
   const low = lowAllowance ? '\n\nYou\'re close to this week\'s building time.' : '';
@@ -203,6 +212,9 @@ async function sendCard(pool, {
       // progress, not a question (homeroom-bot-dm.js MIRRORED_KINDS).
       ...(startedAt ? { startedAt } : {}),
       ...(lookAt ? { lookAt } : {}),
+      // #4392: the thanks under a plan, drawn with its thumbnail row; the
+      // project's icon, when it has one, is the row's tile.
+      ...(go ? { thanks: true, ...(app.icon_emoji ? { appEmoji: String(app.icon_emoji) } : {}) } : {}),
     },
     idempotencyKey: key,
     // #3707: news about a request they started in the DM points back at it.
@@ -1128,6 +1140,7 @@ module.exports = {
   continueCard,
   startCard,
   cardUnderPlan,
+  thanksText,
   outcomeOf,
   endedAt,
   linksOf,
