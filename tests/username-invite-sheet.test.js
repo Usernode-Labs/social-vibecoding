@@ -98,8 +98,8 @@ test('1. the invite as they will see it: "alex invited you to Page Turners" (#40
   // Live once a first version that was on its way is read as gone.
   assert.match(src, /if \(app\.firstVersion && !app\.firstVersion\.ready\) setBuilding\(true\);/);
   // A setup that stopped is not live either (tests/create-front-door.test.js).
-  // An import is live once it runs (it has no first version).
-  assert.match(src, /const making = imported \? appStatus !== 'running' : \(!!stalled \|\| !\(building && !fv\)\);/);
+  // An import, or a ready-made app, is live once it runs (it has no first version).
+  assert.match(src, /const making = imported \|\| readyMade \? appStatus !== 'running' : \(!!stalled \|\| !\(building && !fv\)\);/);
 });
 
 // ── 2. The note is remembered ───────────────────────────────────────────
