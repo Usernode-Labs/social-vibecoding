@@ -4773,6 +4773,53 @@ test('#2136 — get_proposal documents both keys, and the charter carries the na
   assert.ok(charter.CHARTER_FULL.includes(section.text));
 });
 
+// #4345. A client whose tool list predates patch uploads has no type for
+// patchUploadId and sends the id as text; the SDK refused the whole call at
+// -32602 before any handler ran. A digits-only string is now read as its
+// number in the schema, while what is ADVERTISED stays the plain integer, so
+// a current client still sends a number and sees no difference.
+test('#4345 — submit_work reads a digits-only patchUploadId as its number, and advertises an integer', () => {
+  const { z } = require('zod');
+  const { zodToJsonSchema } = require('zod-to-json-schema');
+  const c = connector(() => { throw new Error('must not call platform'); });
+  try {
+    const spec = c.specs.get('submit_work');
+    assert.ok(spec.inputSchema.patchUploadId, 'the field is registered');
+    // Parsed exactly as the SDK parses a call: against the whole registered
+    // shape, not the bare field.
+    const shape = z.object(spec.inputSchema);
+    const fromText = shape.safeParse({ taskId: 31, patchUploadId: '1' });
+    assert.equal(fromText.success, true, JSON.stringify(fromText.error));
+    assert.equal(fromText.data.patchUploadId, 1);
+    assert.equal(typeof fromText.data.patchUploadId, 'number');
+    const field = spec.inputSchema.patchUploadId;
+    const padded = field.safeParse(' 12 ');
+    assert.equal(padded.success, true, JSON.stringify(padded.error));
+    assert.equal(padded.data, 12);
+    const asNumber = field.safeParse(12);
+    assert.equal(asNumber.success, true);
+    assert.equal(asNumber.data, 12, 'a number passes through unchanged');
+    assert.equal(field.safeParse(undefined).success, true, 'still optional');
+
+    // Everything else is refused exactly as today.
+    for (const bad of ['abc', '0', '01', '-1', '1.5', '1e2', '0x1', true, null]) {
+      const r = field.safeParse(bad);
+      assert.equal(r.success, false, `still refused: ${JSON.stringify(bad)}`);
+    }
+
+    // What the tool list advertises is unchanged: an integer over zero, no
+    // wrapper around it, with the field's own description still attached.
+    const json = zodToJsonSchema(shape);
+    const advertised = json.properties.patchUploadId;
+    assert.deepEqual(
+      { type: advertised.type, exclusiveMinimum: advertised.exclusiveMinimum },
+      { type: 'integer', exclusiveMinimum: 0 }
+    );
+    assert.ok(!JSON.stringify(advertised).includes('anyOf'), 'no preprocess wrapper is advertised');
+    assert.match(advertised.description, /uploadId/, 'the existing description survives');
+  } finally { c.restore(); }
+});
+
 test('#2136 — a work order that revises a proposal names its pull request, and reports the number', async () => {
   const gh = require('../src/services/github');
   const githubLink = require('../src/services/github-link');

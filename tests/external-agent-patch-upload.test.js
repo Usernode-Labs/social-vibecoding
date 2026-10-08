@@ -829,14 +829,15 @@ function connector() {
   const tools = require('../src/services/mcp-tools');
   const { READ_SCOPE, WRITE_SCOPE } = require('../src/services/mcp-connect-constants');
   const handlers = new Map();
+  const specs = new Map();
   const realFetch = globalThis.fetch;
   globalThis.fetch = async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ app: { id: 7, slug: 'recipe-box', name: 'Recipe Box', repo_url: 'https://github.com/usernode-bot/recipe-box' } }) });
-  tools.registerTools({ registerTool(name, _spec, handler) { handlers.set(name, handler); } }, {
+  tools.registerTools({ registerTool(name, spec, handler) { handlers.set(name, handler); specs.set(name, spec); } }, {
     accessToken: 'svmcp_test', scopes: [READ_SCOPE, WRITE_SCOPE], user: { id: 3, username: 'ada' },
     clientName: 'Claude', clientId: 'c1', origin: 'https://homeroom.example',
     baseUrl: 'http://platform.internal', pool: null, config: {}, tokenId: null, grantId: null,
   });
-  return { handlers, restore: () => { globalThis.fetch = realFetch; } };
+  return { handlers, specs, restore: () => { globalThis.fetch = realFetch; } };
 }
 
 test('submit_work takes patchUploadId with a taskId, passes it to the service, and refuses it alone or beside a patch', async () => {
@@ -873,6 +874,47 @@ test('submit_work takes patchUploadId with a taskId, passes it to the service, a
   }
 });
 
+// #4345: a client whose tool list predates the field has no type for it and
+// sends the upload id as text. Parsed exactly as the SDK parses a call, it
+// reaches the handler as a number and submits the uploaded bytes through the
+// ordinary path — lookup, apply at the recorded base, clear.
+test('submit_work parses a digits-only patchUploadId the way the SDK does, and submits the upload', async () => {
+  const { z } = require('zod');
+  const bytes = Buffer.from(PATCH);
+  const queries = [];
+  const created = [];
+  const realSubmit = svc.submitWork;
+  const c = connector();
+  try {
+    const spec = c.specs.get('submit_work');
+    // The SDK validates every call against the registered shape, so the
+    // string is converted there — before the handler ever runs.
+    const args = z.object(spec.inputSchema).parse({ taskId: 31, patchUploadId: '1' });
+    assert.equal(args.patchUploadId, 1);
+    assert.equal(typeof args.patchUploadId, 'number');
+    assert.equal(args.patch, undefined, 'the inline patch argument was never there');
+
+    // The real service, under the test's own deps: what the handler received
+    // is what performs the lookup, the apply and the clear.
+    svc.submitWork = async (_deps, params) => realSubmit(
+      submitDeps(uploadPool(queries, { id: 1, task_id: 31, patch: bytes, bytes: bytes.length, sha256: 'x' }), created),
+      params
+    );
+    await withStubbedApply(async (applied) => {
+      const result = await c.handlers.get('submit_work')(args);
+      assert.ok(!result.isError, JSON.stringify(result.structuredContent));
+      assert.equal(applied.length, 1);
+      assert.ok(Buffer.isBuffer(applied[0].patch) && applied[0].patch.equals(bytes), 'the looked-up bytes were applied');
+      assert.equal(applied[0].baseSha, BASE_SHA, 'at the recorded base');
+      assert.ok(queries.some((q) => /DELETE FROM external_agent_patch_uploads WHERE task_id = \$1/.test(q.sql)),
+        'the upload was cleared');
+    });
+  } finally {
+    c.restore();
+    svc.submitWork = realSubmit;
+  }
+});
+
 test('prepare_work asks the service for the upload command, and submit_work documents the field', async () => {
   const realPrepare = svc.prepareWork;
   const gh = require('../src/services/github');
@@ -901,7 +943,10 @@ test('prepare_work asks the service for the upload command, and submit_work docu
     githubLink.isEnabled = saved.link;
   }
   const block = MCP_SRC.slice(MCP_SRC.indexOf("server.registerTool('submit_work'"));
-  assert.match(block, /patchUploadId: z\.number\(\)\.int\(\)\.positive\(\)\.optional\(\)/);
+  // #4345: the field is a preprocess that reads a digits-only string as its
+  // number; the advertised shape it wraps stays the plain integer.
+  assert.match(MCP_SRC, /const patchUploadIdSchema = z\.preprocess\(/);
+  assert.match(block, /patchUploadId: patchUploadIdSchema\s*\n\s*\.describe\(/);
   assert.match(block, /Uploads may be up to 1 MB/);
   assert.match(block, /if yours cannot, send `patch` inline/);
 });

@@ -4861,6 +4861,17 @@ function registerTools(server, ctx) {
   });
 
   // ── submit_work ──────────────────────────────────────────────────────
+  // #4345: a client whose tool list predates the patch-upload field has no
+  // type for it and sends the id as text. Read a digits-only string (leading
+  // zeros refused, whitespace trimmed) as its number before validation, so
+  // the call reaches the handler instead of dying at -32602. What is
+  // ADVERTISED is the plain integer below — zod-to-json-schema renders a
+  // preprocess as its inner schema — so a current client still sends a
+  // number and everything else is refused exactly as before.
+  const patchUploadIdSchema = z.preprocess(
+    (v) => (typeof v === 'string' && /^\s*[1-9][0-9]*\s*$/.test(v) ? Number(v.trim()) : v),
+    z.number().int().positive().optional()
+  );
   server.registerTool('submit_work', {
     title: 'Submit finished work — a pushed branch, a patch, or an open PR',
     description: "Turn finished work into a Homeroom proposal: opens the pull request, builds a staging preview, runs the app's checks and puts it to the group's vote. FOUR SHAPES, each complete as written — (1) `taskId` plus `patch`, the default for new work: Homeroom applies the patch at the recorded base commit in the app's own repository and opens the pull request itself, so NO GitHub write access is needed; (2) `taskId` plus the `branch` you actually pushed, any name, if the patch is over about 250 KB or you already push to your fork (your call between (1) and (2), never the user's); (3) `slug` plus `prNumber` for an already-open pull request; (4) `proposalId` plus `branch` to UPDATE a proposal of the user's that is already up for a vote, which advances that same proposal onto your new commit instead of opening a second one, and clears the votes it has collected. A task prepare_work made WITH `proposalId` updates that proposal through (1) or (2): its patch is applied on the proposal's current commit, no push needed. Shape (4) needs no `slug`. When shape (4)'s target is a dev SESSION not yet up for a vote, it also takes `propose: true` (see `propose`): Homeroom promotes the session once the update lands, or as it stands with NO `branch` and nothing pushed; pass it only when the user has asked for the vote. TWO DESTINATIONS: by default work goes up for a VOTE; `share: true` on shape (2) lands it in the app's IN-PROGRESS area instead \u2014 a shared session with a preview, no PR, no vote; the charter has the rule. A task belongs to the USER'S USERNODE ACCOUNT, not to one chat — any session connected as that account, including a coding agent's own connector, can submit it, and doing so is the expected path. Only work from the user's own GitHub account is submitted under their name.",
@@ -4878,7 +4889,7 @@ function registerTools(server, ctx) {
         .describe('The name of the fork you pushed to, if you forked under a name other than the app repository’s. The owner is always the user’s linked GitHub account and is never taken from here.'),
       patch: z.string().optional()
         .describe('The change as a patch, the default way to submit new work — the output of `git format-patch <baseSha>..HEAD --stdout`, or a plain `git diff`. Homeroom applies it at the task’s recorded base commit, commits it in the app’s own repository and opens the pull request, so you need no GitHub write access at all. Requires taskId. With an UPDATE task’s taskId (prepare_work with proposalId) the base is that proposal’s current commit instead, and the patch advances THAT proposal exactly as a branch update does; it is refused with `branch_moved` when the proposal is no longer at the task’s base commit (or at `expectedHeadSha`, when you pass the commit you rebased onto). After an update lands, the task’s base is its new head, so the next patch is made from there. Roughly 250 KB max; push a branch for anything larger, or when you already push to your fork. Patch or branch is your decision: never ask the user to choose.'),
-      patchUploadId: z.number().int().positive().optional()
+      patchUploadId: patchUploadIdSchema
         .describe('Instead of `patch`: the `uploadId` printed by the upload command in your work order, which sends `git format-patch` output straight to Homeroom so a large patch is never retyped into this call (#4264). Requires a new-work taskId: an update’s patch is sent inline. Homeroom applies the uploaded bytes exactly as it applies `patch`: same base commit, same pull request. Uploads may be up to 1 MB. Refused if that upload was made for another task, or was replaced by a newer upload (submit the newest uploadId). The upload command needs a sandbox that can reach Homeroom; if yours cannot, send `patch` inline.'),
       source: z.enum(['work_order', 'assistant']).optional()
         .describe('Set to "work_order" when you are the coding agent submitting your own finished work, "assistant" when a human relayed it to you. Advisory only.'),
