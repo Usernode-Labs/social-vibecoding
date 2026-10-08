@@ -147,20 +147,23 @@ test('the make screen from Create: New project, a close, a small "Import from a 
   assert.match(create, /<button type="button" data-make-import-link="" class="text-\[13px\] [^"]*">Import from a GitHub repo<\/button>/, 'small, under Make it');
   assert.ok(create.indexOf('data-make-import-link') > create.indexOf('>Make it</button>'));
   assert.doesNotMatch(create, /More options|data-make-more-options|Look around first/);
-  for (const words of ['Start your community', 'What should it do?', 'What should we call it?', '>Make it</button>']) {
+  for (const words of ['What do you want to make?', 'What should it do?', 'What should we call it?', '>Make it</button>']) {
     assert.ok(create.includes(words), words);
   }
   assert.match(create, /data-first-session-example="run"/);
 
   const first = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { onMade() {}, onLookAround() {} });
   assert.match(first, /data-make-entry="first-session"/);
-  assert.doesNotMatch(first, />Hi\b|New project/, 'no greeting on the first session');
+  assert.doesNotMatch(first, /New project/);
+  assert.doesNotMatch(first, />Hi\b/, 'no greeting without a name to greet');
   assert.match(first, /Look around first/);
   assert.doesNotMatch(first, /data-make-close|data-make-import-link|Import from a GitHub repo/, 'the first session does not offer an import');
 
   const make = loadTsx(`${DIR}/make.tsx`);
   assert.equal(make.makeEyebrow('create'), 'New project');
-  assert.equal(make.makeEyebrow('first-session'), null);
+  assert.equal(make.makeEyebrow('first-session'), null, 'no name, no greeting');
+  assert.equal(make.makeEyebrow('first-session', ' Maya '), 'Hi Maya', 'the first session greets by name');
+  assert.equal(make.makeEyebrow('create', 'Maya'), 'New project', 'Create is not a greeting');
   for (const line of [make.IMPORT_TITLE, make.IMPORT_LINE]) assert.doesNotMatch(line, /—/);
 
   const src = read(`${DIR}/make.tsx`);

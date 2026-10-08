@@ -163,9 +163,8 @@ test('"Make it" makes a private community through the dialog\'s own route', () =
   assert.match(make, /export type MakeEntry = 'first-session' \| 'create';/);
   assert.match(make, /entry = 'first-session'/, 'the first session is the default door');
   assert.match(make, /export const BRIEF_MIN = 10;/);
-  assert.match(read('frontend/src/features/dialogs/create-app.tsx'), /BRIEF_MIN = 10/);
   assert.equal(require('../src/services/homeroom-bot-dm').MIN_BRIEF_CHARS, 10, 'the server\'s floor');
-  for (const words of ['Start your community', 'What should it do?', 'What should we call it?', 'Your own idea', 'Or start from an example', 'Not sure yet? ', 'Look around first']) {
+  for (const words of ['What do you want to make?', 'What should it do?', 'What should we call it?', 'Your own idea', 'Your idea', 'Examples', 'Filled in from your waitlist answer.', 'Not sure yet? ', 'Look around first']) {
     assert.ok(make.includes(words), words);
   }
 });
@@ -173,26 +172,36 @@ test('"Make it" makes a private community through the dialog\'s own route', () =
 // #4038 and #4040 (canvas C2-make, C2b-make-waitlist, 6 Oct 2026): a title and
 // the one thing. No line under the title (it also said Homeroom bot builds
 // while you invite, which is not so: the plan waits until the tour ends), no
-// line under the name, and no "!". Owner, 7 Oct 2026 (canvas v74): the title
-// is "Start your community" (the screen starts a community; the app is what
-// it makes), and there is no "Hi <name>" above it: the logo bar, then the
-// title 16px under it.
-test('the make screen says only its question: "Start your community" under the logo bar, no greeting, no line under the title or the name', () => {
+// line under the name, and no "!". Owner, 8 Oct 2026 (Evan's final review):
+// the title is "What do you want to make?" ("together" read as you and the
+// AI), with a small caps "Hi <name>" over it, the label the story wears for
+// "Welcome to Homeroom", and a small caps "Examples" over the tiles.
+test('the make screen: "Hi <name>" over "What do you want to make?", "Examples" over the tiles, no line under the title', () => {
   const make = read(`${DIR}/make.tsx`);
-  for (const gone of ['Describe it for your group', 'while you invite', 'It\'s your group\'s name too', 'You\'re in!', '`Hi ${']) {
-    assert.ok(!make.includes(gone), `no longer says: ${gone}`);
+  for (const gone of ['Describe it for your group', 'while you invite', 'It\'s your group\'s name too', 'You\'re in!', 'Start your community', 'Or start from an example']) {
+    assert.ok(!make.replace(/^\/\*\*[\s\S]*?\*\/\n/, '').includes(gone), `no longer says: ${gone}`);
   }
-  const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { onMade() {}, onLookAround() {} });
-  assert.doesNotMatch(html, /tart from an example/, 'the tiles need no label');
-  assert.doesNotMatch(html, />Hi\b/, 'no greeting');
-  assert.doesNotMatch(html, /What do you want to make/, 'the old title is gone');
+  const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Salah', onMade() {}, onLookAround() {} });
+  assert.doesNotMatch(html, /Start your community|Or start from an example|tart from an example/);
   assert.doesNotMatch(html, /!/, 'no "!" anywhere on the screen');
-  // The title opens the form, 16px under the bar, and the tiles follow it with nothing between.
-  assert.match(html, /<div class="text-center"><h1 id="first-session-make-title" class="mt-4 text-balance text-\[30px\] font-extrabold leading-\[34px\]">Start your community<\/h1><\/div><div class="mt-7 grid grid-cols-2 gap-2" role="group"/);
-  // The waitlist opening has the same title, straight over its fields.
-  const wl = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { idea: 'A tracker for my run club', onMade() {}, onLookAround() {} });
-  assert.match(wl, />Start your community<\/h1>/);
-  assert.doesNotMatch(wl, />Hi\b/);
+  // The label wears the story's classes, and the title sits 10px under it.
+  const story = read('frontend/src/features/auth/story.tsx');
+  const labelClass = 'text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400';
+  assert.ok(story.includes(`className="mt-4 ${labelClass}"`), 'the story label this one copies');
+  assert.match(html, /<div class="text-center"><p data-make-eyebrow="" class="mt-4 text-\[13px\] font-semibold uppercase tracking-\[0\.8px\] text-zinc-500 dark:text-zinc-400">Hi Salah<\/p><h1 id="first-session-make-title" class="mt-2\.5 text-balance text-\[30px\] font-extrabold leading-\[34px\]">What do you want to make\?<\/h1><\/div>/);
+  assert.equal((html.match(/Hi Salah/g) || []).length, 1, 'no separate Hi line elsewhere');
+  // "Examples" is the label over the tiles, with nothing between.
+  assert.match(html, /<\/div><p id="first-session-make-examples" class="mt-6 px-1 text-\[13px\] font-semibold uppercase tracking-\[0\.8px\] text-zinc-500 dark:text-zinc-400">Examples<\/p><div class="mt-2 grid grid-cols-2 gap-2" role="group" aria-labelledby="first-session-make-examples">/);
+  // Without a name there is no greeting, and the title is the first thing under the bar.
+  const nameless = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { onMade() {}, onLookAround() {} });
+  assert.doesNotMatch(nameless, /data-make-eyebrow|>Hi\b/);
+  assert.match(nameless, /<div class="text-center"><h1 id="first-session-make-title" class="mt-4 text-balance/);
+  // The waitlist opening has the same label, title and Examples.
+  const wl = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { idea: 'A tracker for my run club', who: 'Salah', onMade() {}, onLookAround() {} });
+  assert.match(wl, />Hi Salah<\/p><h1[^>]*>What do you want to make\?<\/h1>/);
+  assert.match(wl, />Examples<\/p>/);
+  // The island hands the screen the viewer's name.
+  assert.match(read(`${DIR}/index.tsx`), /<MakeScreen\s+idea=\{shot \? shot\.idea : waitlistIdea\(\)\}\s+who=\{viewerName\(\)\}/);
 });
 
 test('it opens on the first example, chosen and filled in; their waitlist answer instead when they gave one', () => {
@@ -221,23 +230,32 @@ test('four tiles that look like buttons: the three examples and "Your own idea",
   const { EXAMPLES } = loadTsx(`${DIR}/examples.ts`);
   assert.ok(html.includes(`>${EXAMPLES[0].brief.replace(/'/g, '&#x27;')}</textarea>`), 'the brief is filled');
   assert.match(html, new RegExp(`id="first-session-name"[^>]*value="${EXAMPLES[0].name}"`));
-  assert.doesNotMatch(html, /Or start from an example/);
+  assert.doesNotMatch(html, /Filled in from your waitlist answer|Your idea</, 'the waitlist tile and its line are for the waitlist opening');
 });
 
-test('with a waitlist answer: "What should it do?" holds it, the name is theirs to give, and the examples are chips under the fields', () => {
+test('with a waitlist answer: the fourth tile is "Your idea", chosen, with their words in the field and the name theirs to give', () => {
   const idea = 'A tracker for my run club, so we can see who keeps up with their weekly miles';
   const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { idea, onMade() {}, onLookAround() {} });
   assert.ok(html.includes(`>${idea}</textarea>`));
   assert.match(html, /id="first-session-name"[^>]*value=""/);
   assert.match(html, /placeholder="For example, Sunday Run Club"/);
-  // The fields first, then the chips, none of them chosen, and no "Your own idea".
-  assert.ok(html.indexOf('id="first-session-brief"') < html.indexOf('Or start from an example'));
-  const chips = [...html.matchAll(/<button type="button" aria-pressed="(true|false)" data-first-session-example="(\w+)"[^>]*class="([^"]*)"/g)];
-  assert.deepEqual(chips.map((m) => m[2]), ['run', 'poll', 'trip']);
-  assert.ok(chips.every((m) => m[1] === 'false'));
-  assert.ok(chips.every((m) => /rounded-full/.test(m[3])), 'pills');
-  assert.ok(html.indexOf('Or start from an example') < html.indexOf('data-first-session-example="run"'));
-  assert.doesNotMatch(html, /data-first-session-own|Your own idea/);
+  // The same four tiles in the same grid: the three examples, none chosen, then "Your idea", chosen.
+  const tiles = [...html.matchAll(/<button type="button" aria-pressed="(true|false)" data-first-session-(example="(\w+)"|own="")[^>]*class="([^"]*)"/g)];
+  assert.deepEqual(tiles.map((m) => m[3] || 'own'), ['run', 'poll', 'trip', 'own']);
+  assert.deepEqual(tiles.map((m) => m[1]), ['false', 'false', 'false', 'true'], 'Run tracker is not chosen');
+  assert.match(tiles[3][4], /inset_0_0_0_2px_var\(--accent\)/);
+  assert.ok(tiles.every((m) => /flex min-h-16 items-center/.test(m[4])), 'tiles, not chips');
+  assert.match(html, />Your idea<\/span>/);
+  assert.doesNotMatch(html, /Your own idea/);
+  assert.ok(html.indexOf('>Examples</p>') < html.indexOf('data-first-session-example="run"'));
+  assert.ok(html.indexOf('data-first-session-own') < html.indexOf('id="first-session-brief"'), 'the tiles, then the fields');
+  // One quiet line under the fields says where the words came from.
+  assert.match(html, /<p data-make-waitlist-note="" class="mt-2 px-1 text-\[13px\] leading-\[18px\] text-zinc-500 dark:text-zinc-400">Filled in from your waitlist answer\.<\/p>/);
+  assert.ok(html.indexOf('id="first-session-name"') < html.indexOf('Filled in from your waitlist answer.'));
+  assert.equal((html.match(/Filled in from/g) || []).length, 1);
+  // Without a waitlist answer there is neither the tile nor the line.
+  const plain = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { onMade() {}, onLookAround() {} });
+  assert.doesNotMatch(plain, /data-make-waitlist-note|Filled in from/);
   // The island hands it over from the account (GET /api/auth/me).
   const island = read(`${DIR}/index.tsx`);
   assert.match(island, /const idea = legacy\(\)\.App\?\.user\?\.waitlistIdea;/);
@@ -261,14 +279,14 @@ test('?shot=make and ?shot=make-waitlist draw the make screen for the shots, and
   assert.match(island, /demo=\{!!shot\}/);
   assert.match(island, /onLookAround=\{\(\) => \{\s+if \(shot\) \{ setMode\(\{ kind: 'none' \}\); return; \}\s+noteAnswered\(\);/);
   const make = read(`${DIR}/make.tsx`);
-  assert.match(make, /setMissing\(gap\);[\s\S]*?return;\s+\}\s+if \(demo\) return;\s+setBusy\(true\);/);
+  assert.match(make, /setMissing\(gap\);[\s\S]*?return;\s+\}\s+if \(demo\) return;\s+makingRef\.current = true;\s+setBusy\(true\);/);
   // The first-run steps before it stand aside on any ?shot= address.
   assert.match(read('frontend/src/features/auth/communities-first-run.js'), /if \(params && \(params\.get\('shot'\) \|\| params\.get\('demo'\) \|\| params\.get\('token'\)\)\) \{\s+CommunitiesFirstRun\._resolve\(\);/);
 });
 
-// Owner, 6 Oct 2026: once an example has replaced their waitlist words, a
-// first chip, "Your idea", puts them back.
-test('with a waitlist answer, "Your idea" appears once an example replaced their words, and puts them back', () => {
+// Owner, 8 Oct 2026: "Your idea" is the fourth tile, chosen when the screen
+// opens; an example swaps its words in, and "Your idea" puts them back.
+test('with a waitlist answer, an example replaces their words and "Your idea" puts them back', () => {
   let slots = [];
   let at = 0;
   const real = require(require.resolve('react', { paths: [path.join(ROOT, 'frontend')] }));
@@ -283,6 +301,8 @@ test('with a waitlist answer, "Your idea" appears once an example replaced their
     useCallback(fn) { at++; return fn; },
     useEffect() { at++; },
     useLayoutEffect() { at++; },
+    // The allowance row's store (dialogs/app-allowance.tsx, which Make it reads for its limit).
+    useSyncExternalStore(subscribe, get) { at++; return get(); },
   };
   const { MakeScreen } = loadTsx(`${DIR}/make.tsx`, { stubs: { react: React } });
   const { EXAMPLES } = loadTsx(`${DIR}/examples.ts`);
@@ -295,29 +315,42 @@ test('with a waitlist answer, "Your idea" appears once an example replaced their
     if (node.props) find(node.props.children, test, out);
     return out;
   };
-  const chips = (tree) => find(tree, (n) => n.type === 'button' && (n.props['data-first-session-example'] !== undefined || n.props['data-first-session-own'] !== undefined));
+  const tiles = (tree) => find(tree, (n) => n.type === 'button' && (n.props['data-first-session-example'] !== undefined || n.props['data-first-session-own'] !== undefined));
   const yourIdea = (tree) => find(tree, (n) => n.props['data-first-session-own'] !== undefined)[0];
+  const note = (tree) => find(tree, (n) => n.props['data-make-waitlist-note'] !== undefined)[0];
   const brief = (tree) => find(tree, (n) => n.type === 'textarea')[0];
   const nameField = (tree) => find(tree, (n) => n.props.id === 'first-session-name')[0];
   let tree = draw();
-  assert.equal(yourIdea(tree), undefined, 'not offered while their words are still there');
+  assert.equal(tiles(tree).length, 4);
+  assert.equal(tiles(tree)[3], yourIdea(tree), 'the fourth tile');
+  assert.equal(yourIdea(tree).props['aria-pressed'], true, 'chosen when the screen opens');
+  assert.ok(tiles(tree).slice(0, 3).every((c) => c.props['aria-pressed'] === false), 'Run tracker is not chosen');
   assert.equal(brief(tree).props.value, idea);
-  // An example replaces them; "Your idea" comes first in the row.
-  chips(tree)[1].props.onClick();
+  assert.ok(note(tree), 'the line says where the words came from');
+  // Their own edits keep the tile and the line.
+  brief(tree).props.onChange({ target: { value: `${idea}, every week` } });
+  tree = draw();
+  assert.equal(yourIdea(tree).props['aria-pressed'], true);
+  assert.ok(note(tree));
+  // An example replaces them: its tile is chosen, "Your idea" is not, and the line goes.
+  tiles(tree)[1].props.onClick();
   tree = draw();
   assert.equal(brief(tree).props.value, EXAMPLES[1].brief);
-  assert.ok(yourIdea(tree), 'offered once an example replaced them');
-  assert.equal(chips(tree)[0], yourIdea(tree), 'the first chip');
+  assert.equal(nameField(tree).props.value, EXAMPLES[1].name);
   assert.equal(yourIdea(tree).props['aria-pressed'], false);
-  // It puts their words back, with the name as the screen opened it.
+  assert.deepEqual(tiles(tree).map((c) => c.props['aria-pressed']), [false, true, false, false]);
+  assert.equal(note(tree), undefined, 'the words are no longer the waitlist answer');
+  // "Your idea" puts their waitlist words back, with the name as the screen opened it.
   yourIdea(tree).props.onClick();
   tree = draw();
   assert.equal(brief(tree).props.value, idea);
   assert.equal(nameField(tree).props.value, '');
   assert.equal(yourIdea(tree).props['aria-pressed'], true);
-  assert.ok(chips(tree).slice(1).every((c) => c.props['aria-pressed'] === false));
+  assert.ok(tiles(tree).slice(0, 3).every((c) => c.props['aria-pressed'] === false));
+  assert.ok(note(tree));
   const src = read(`${DIR}/make.tsx`);
-  assert.match(src, /<DraftEditIcon className="h-4 w-4 text-violet-700 dark:text-violet-300" aria-hidden="true" \/>\s+Your idea\s+<\/button>/);
+  assert.match(src, /onClick=\{fromWaitlist \? restoreIdea : startOwn\}/, '"Your own idea" keeps clearing the fields');
+  assert.match(src, /<DraftEditIcon className="h-5 w-5" \/>/, 'the pencil');
 });
 
 test('the waitlist answer is the linked row\'s "What would its own app do", read only while the question is owed', async () => {
@@ -539,6 +572,8 @@ test('another example swaps its words in; "Your own idea" empties both fields an
     useCallback(fn) { at++; return fn; },
     useEffect() { at++; },
     useLayoutEffect() { at++; },
+    // The allowance row's store (dialogs/app-allowance.tsx, which Make it reads for its limit).
+    useSyncExternalStore(subscribe, get) { at++; return get(); },
   };
   const { MakeScreen } = loadTsx(`${DIR}/make.tsx`, { stubs: { react: React } });
   const { EXAMPLES } = loadTsx(`${DIR}/examples.ts`);

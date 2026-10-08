@@ -168,8 +168,8 @@ async function asksWhatToMake(pool, userId) {
  * "What would you build together?", saved through the stage-2 route
  * POST /api/public/waitlist/more/:token); the in-app survey's own wording of
  * the question is "What would its own app do that those tools can't?". The
- * make screen ("Start your community") opens with it in "What should it
- * do?" (#4040).
+ * make screen ("What do you want to make?") opens with it in "What should
+ * it do?" and a "Your idea" tile chosen (#4040).
  *
  * So only somebody who filled in that optional step, and then signed up with
  * the same email, gets it. A sign-up from the story's "Make an account"

@@ -1,9 +1,9 @@
 /**
- * "Start your community" (it was "What do you want to make?" until 7 Oct
- * 2026: the screen starts a community, and the app is what it makes): the
- * first thing an account made from the signed-out story is asked (../auth/story.tsx sets the session's
- * `usernode:first-session:make` flag in its sheet; ./index.tsx opens this
- * once the shell has signed them in).
+ * "What do you want to make?" (it was "Start your community" from 6 to 8 Oct
+ * 2026, and "together" read as you and the AI): the first thing an account
+ * made from the signed-out story is asked (../auth/story.tsx sets the
+ * session's `usernode:first-session:make` flag in its sheet; ./index.tsx opens
+ * this once the shell has signed them in).
  *
  * Two questions, the New project dialog's own (create-app.tsx), cut down:
  * what it should do, then what to call it — the name is the community's and
@@ -15,20 +15,24 @@
  * Create button.
  *
  * WHAT IT OPENS WITH (#4038, #4040; canvas C2-make and C2b-make-waitlist,
- * 6 Oct 2026). A title and the one thing: no line under the title, and
- * no greeting above it (owner, 7 Oct 2026: the logo bar, then the title).
- *   - Four tiles that look like buttons: the three examples (./examples.ts)
- *     and "Your own idea". The first example is chosen when the screen
- *     opens, both fields filled with its words, so the screen shows what an
- *     answer looks like and "Make it" works at once. Another example swaps
- *     its words in; "Your own idea" empties both fields and puts the caret
- *     in "What should it do?".
+ * 8 Oct 2026). A small caps "Hi <name>" over the title, the same label the
+ * signed-out story wears ("Welcome to Homeroom"), and no other greeting
+ * (owner, 8 Oct 2026; a line of its own under the title was cut on 7 Oct).
+ *   - A small caps "Examples" over four tiles that look like buttons: the
+ *     three examples (./examples.ts) and "Your own idea". The first example
+ *     is chosen when the screen opens, both fields filled with its words, so
+ *     the screen shows what an answer looks like and "Make it" works at once.
+ *     Another example swaps its words in; "Your own idea" empties both fields
+ *     and puts the caret in "What should it do?".
  *   - When they told us on the waitlist what their group's app should do
- *     (`waitlistIdea` on GET /api/auth/me, services/first-session.js), that
- *     answer is in "What should it do?" instead, the name is left to them,
- *     and the examples step back to a row of chips under the fields. Once
- *     an example has replaced their words, a first chip, "Your idea", puts
- *     them back.
+ *     (`waitlistIdea` on GET /api/auth/me, services/first-session.js), the
+ *     fourth tile is "Your idea" instead, chosen when the screen opens, with
+ *     that answer in "What should it do?" and the name left to them. No
+ *     example is chosen then. One quiet line under the fields says where the
+ *     words came from, for as long as they are the ones in the field. An
+ *     example swaps its words in, and "Your idea" puts the waitlist words
+ *     back. There is no "Your own idea" beside it: the field is theirs to
+ *     clear.
  *
  * ONE FRONT DOOR. It is also what the Create button opens, for everyone and
  * every time (App.showCreateModal, `entry` 'create'), so a second project
@@ -147,7 +151,7 @@ const INPUT = 'w-full border-0 bg-transparent px-0 py-1 text-[17px] text-zinc-90
 const ARRIVING = 'translate-y-6 opacity-0 transition-[transform,opacity] duration-300 ease-out motion-reduce:transition-none';
 const ARRIVED = 'translate-y-0 opacity-100 transition-[transform,opacity] duration-300 ease-out motion-reduce:transition-none';
 const NEEDED = 'pb-1 text-xs text-red-700 dark:text-red-400';
-// The tiles and chips are buttons and look it: a white face lifted off the
+// The tiles are buttons and look it: a white face lifted off the
 // wallpaper by a soft shadow, with a hairline, or the accent's ring when chosen.
 const LIFT = 'bg-white transition-transform active:scale-[0.98] motion-reduce:transition-none dark:bg-zinc-900';
 const RING_OFF = 'shadow-[0_1px_3px_rgba(0,0,0,0.1),inset_0_0_0_1px_var(--app-sheet-line)]';
@@ -155,7 +159,6 @@ const RING_ON = 'shadow-[0_1px_3px_rgba(0,0,0,0.1),inset_0_0_0_2px_var(--accent)
 const TILE = `flex min-h-16 items-center gap-2.5 rounded-2xl px-3 py-2 text-left ${LIFT}`;
 const TILE_FACE = 'flex h-10 w-10 shrink-0 items-center justify-center rounded-[11px]';
 const TILE_LABEL = 'min-w-0 flex-1 text-[15px] font-semibold leading-[19px]';
-const CHIP = `flex h-10 items-center gap-1.5 rounded-full pl-2.5 pr-3.5 text-[15px] font-semibold ${LIFT}`;
 
 export type Missing = 'brief' | 'name' | null;
 
@@ -184,10 +187,21 @@ export function openingAnswers(idea: string | null | undefined): { brief: string
   return { brief: first.brief, name: first.name, picked: first };
 }
 
-/** Over the question from Create: what this is. The first session has no greeting above its title. */
-export function makeEyebrow(entry: MakeEntry): string | null {
-  return entry === 'create' ? 'New project' : null;
+/**
+ * The small caps label over the title. From Create: what this is. On the
+ * first session: a greeting by name (none when the name is not known yet).
+ */
+export function makeEyebrow(entry: MakeEntry, who: string | null | undefined = null): string | null {
+  if (entry === 'create') return 'New project';
+  const name = typeof who === 'string' ? who.trim() : '';
+  return name ? `Hi ${name}` : null;
 }
+
+/** The screen's question. */
+export const MAKE_TITLE = 'What do you want to make?';
+
+/** Under the fields, when the waitlist answer is what they hold. */
+export const WAITLIST_NOTE = 'Filled in from your waitlist answer.';
 
 /**
  * Under Make it, quietly: what is public once it is made (#4174). Every
@@ -213,10 +227,12 @@ export const MAKE_ROOT = 'platform-kb-surface fixed inset-0 z-[9000] flex flex-c
 export const MAKE_ROOT_UNDER_HEADER = 'platform-kb-surface platform-under-header fixed inset-x-0 bottom-0 z-[9000] flex flex-col text-zinc-900 dark:text-zinc-100';
 
 export function MakeScreen({
-  idea = null, demo = false, onMade, onLookAround, entry = 'first-session', onClose, startImport = false, underHeader = false,
+  idea = null, who = null, demo = false, onMade, onLookAround, entry = 'first-session', onClose, startImport = false, underHeader = false,
 }: {
   /** What they told us on the waitlist the app should do, or null. */
   idea?: string | null;
+  /** Their name, for the greeting over the title (first session only). */
+  who?: string | null;
   /** A screenshot state (./index.tsx makeShot): "Make it" makes nothing. */
   demo?: boolean;
   onMade: (made: Made) => void;
@@ -243,12 +259,9 @@ export function MakeScreen({
   const [brief, setBrief] = useState(opening.brief);
   const [name, setName] = useState(opening.name);
   const [picked, setPicked] = useState<Example | null>(opening.picked);
-  // "Your own idea" (or, with a waitlist answer, "Your idea") was pressed:
-  // its tile or chip is the chosen one.
-  const [own, setOwn] = useState(false);
-  // With a waitlist answer: an example has replaced their words, so "Your
-  // idea" is offered to put them back. It stays once offered.
-  const [replaced, setReplaced] = useState(false);
+  // The fourth tile is the chosen one: "Your own idea" once pressed, or,
+  // with a waitlist answer, "Your idea" from the start.
+  const [own, setOwn] = useState(fromWaitlist);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // The answer a press of "Make it" found missing, said under its field
@@ -286,12 +299,11 @@ export function MakeScreen({
   const pick = useCallback((e: Example) => {
     setPicked(e);
     setOwn(false);
-    if (fromWaitlist) setReplaced(true);
     setBrief(e.brief);
     setName(e.name);
     setError(null);
     setMissing(null);
-  }, [fromWaitlist]);
+  }, []);
 
   // Empty fields for words of their own, with the caret where they begin
   // (inside the press, so a phone raises its keys).
@@ -363,9 +375,10 @@ export function MakeScreen({
     }
   }, [busy, demo, picked, brief, name, entry, onMade]);
   const needed = neededLine(missing, brief);
+  const eyebrow = makeEyebrow(entry, who);
 
   const fields = (
-    <div className={`${fromWaitlist ? 'mt-7' : 'mt-3.5'} overflow-hidden rounded-2xl bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900`}>
+    <div className="mt-3.5 overflow-hidden rounded-2xl bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
       <div className={FIELD}>
         <label htmlFor="first-session-brief" className={LABEL}>What should it do?</label>
         <textarea
@@ -490,79 +503,42 @@ export function MakeScreen({
           onSubmit={(e) => { e.preventDefault(); void make(); }}
         >
           <div className="text-center">
-            {makeEyebrow(entry) ? <p className="mt-4 text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">{makeEyebrow(entry)}</p> : null}
-            <h1 id="first-session-make-title" className={`${fromCreate ? 'mt-2.5' : 'mt-4'} text-balance text-[30px] font-extrabold leading-[34px]`}>Start your community</h1>
+            {eyebrow ? <p data-make-eyebrow="" className="mt-4 text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">{eyebrow}</p> : null}
+            <h1 id="first-session-make-title" className={`${eyebrow ? 'mt-2.5' : 'mt-4'} text-balance text-[30px] font-extrabold leading-[34px]`}>{MAKE_TITLE}</h1>
           </div>
-          {fromWaitlist ? (
-            <>
-              {fields}
-              <p className="mt-[18px] pb-2 text-[13px] text-zinc-500 dark:text-zinc-400">Or start from an example</p>
-              <div className="flex flex-wrap gap-2" role="group" aria-label="Examples">
-                {replaced ? (
-                  <button
-                    type="button"
-                    aria-pressed={own}
-                    data-first-session-own=""
-                    onClick={restoreIdea}
-                    className={`${CHIP} ${own ? RING_ON : RING_OFF}`}
-                  >
-                    <DraftEditIcon className="h-4 w-4 text-violet-700 dark:text-violet-300" aria-hidden="true" />
-                    Your idea
-                  </button>
-                ) : null}
-                {EXAMPLES.map((e) => {
-                  const on = picked?.key === e.key;
-                  return (
-                    <button
-                      key={e.key}
-                      type="button"
-                      aria-pressed={on}
-                      data-first-session-example={e.key}
-                      onClick={() => pick(e)}
-                      className={`${CHIP} ${on ? RING_ON : RING_OFF}`}
-                    >
-                      <span className="text-[18px]" aria-hidden="true">{e.emoji}</span>
-                      {e.short}
-                    </button>
-                  );
-                })}
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="mt-7 grid grid-cols-2 gap-2" role="group" aria-label="Start from">
-                {EXAMPLES.map((e) => {
-                  const on = picked?.key === e.key;
-                  return (
-                    <button
-                      key={e.key}
-                      type="button"
-                      aria-pressed={on}
-                      data-first-session-example={e.key}
-                      onClick={() => pick(e)}
-                      className={`${TILE} ${on ? RING_ON : RING_OFF}`}
-                    >
-                      <span className={`app-icon-tile ${TILE_FACE} text-[22px]`} aria-hidden="true">{e.emoji}</span>
-                      <span className={TILE_LABEL}>{e.short}</span>
-                    </button>
-                  );
-                })}
+          <p id="first-session-make-examples" className="mt-6 px-1 text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">Examples</p>
+          <div className="mt-2 grid grid-cols-2 gap-2" role="group" aria-labelledby="first-session-make-examples">
+            {EXAMPLES.map((e) => {
+              const on = picked?.key === e.key;
+              return (
                 <button
+                  key={e.key}
                   type="button"
-                  aria-pressed={own}
-                  data-first-session-own=""
-                  onClick={startOwn}
-                  className={`${TILE} ${own ? RING_ON : RING_OFF}`}
+                  aria-pressed={on}
+                  data-first-session-example={e.key}
+                  onClick={() => pick(e)}
+                  className={`${TILE} ${on ? RING_ON : RING_OFF}`}
                 >
-                  <span className={`${TILE_FACE} bg-violet-50 text-violet-700 dark:bg-violet-500/10 dark:text-violet-300`} aria-hidden="true">
-                    <DraftEditIcon className="h-5 w-5" />
-                  </span>
-                  <span className={TILE_LABEL}>Your own idea</span>
+                  <span className={`app-icon-tile ${TILE_FACE} text-[22px]`} aria-hidden="true">{e.emoji}</span>
+                  <span className={TILE_LABEL}>{e.short}</span>
                 </button>
-              </div>
-              {fields}
-            </>
-          )}
+              );
+            })}
+            <button
+              type="button"
+              aria-pressed={own}
+              data-first-session-own=""
+              onClick={fromWaitlist ? restoreIdea : startOwn}
+              className={`${TILE} ${own ? RING_ON : RING_OFF}`}
+            >
+              <span className={`${TILE_FACE} bg-violet-50 text-violet-700 dark:bg-violet-500/10 dark:text-violet-300`} aria-hidden="true">
+                <DraftEditIcon className="h-5 w-5" />
+              </span>
+              <span className={TILE_LABEL}>{fromWaitlist ? 'Your idea' : 'Your own idea'}</span>
+            </button>
+          </div>
+          {fields}
+          {fromWaitlist && own ? <p data-make-waitlist-note="" className="mt-2 px-1 text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400">{WAITLIST_NOTE}</p> : null}
           {allowance}
           {error ? <p role="alert" className="mt-3 text-[14px] text-red-700 dark:text-red-400">{error}</p> : null}
           <div className="grow" />
