@@ -217,7 +217,7 @@ function BotActions({ message, meta, conversationId }: { message: ConversationMe
       {chosen ? <p className="messages-bot-answered">{chosenAction?.type === 'prompt' && !chosenAction.quote ? `You asked: ${chosen}` : `You chose ${chosen}`}</p> : null}
       {meta.status === 'closed' && !chosen ? <p className="messages-bot-answered">No longer needed.</p> : null}
       {inviting && invite ? (
-        <InviteSheet made={invite} me={inviterName()} making={false} onClose={() => setInviting(false)} onSent={() => {}} />
+        <InviteSheet made={invite} me={inviterName()} onClose={() => setInviting(false)} onSent={() => {}} />
       ) : null}
     </div>
   );

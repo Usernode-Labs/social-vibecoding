@@ -95,9 +95,11 @@ test('a waiting plan is one small "Needs you" card under the project, with the w
   assert.doesNotMatch(src, /PlanCardView|decideBotAction|PlanSection|Build it'/, 'the made screen decides nothing');
   // Under the project card, never above it, so the sketch does not move when it lands.
   // (Not over a setup that stopped: its own card is the one thing to do then.)
-  const card = src.indexOf('{plan && !stalled ? <PlanWaitsCard');
+  // The first session draws none (the plan waits until the tour ends, #4041);
+  // from Create, which has no tour, it is the way to the chat.
+  const card = src.indexOf('{plan && !stalled && fromCreate ? <PlanWaitsCard');
   assert.ok(card > src.indexOf('<SketchCard made='), 'after the project card');
-  assert.ok(card < src.indexOf('Invite people to ${made.name}`}</p>'), 'before the invite');
+  assert.ok(card < src.indexOf('data-first-session-hint='), 'before the invite line');
   assert.match(src, /onOpenChat=\{\(\) => onOpenChat\(plan\.conversationId \?\? made\.conversationId\)\}/);
 });
 
@@ -106,10 +108,11 @@ test('while the plan waits, the build\'s note says so instead of promising a mes
   assert.equal(buildNote(true, true), 'Homeroom bot is waiting for your go-ahead.');
   assert.equal(buildNote(false, true), 'You or anyone you invite can build it from there.');
   const src = read(`${DIR}/made.tsx`);
-  assert.match(src, /const note = buildNote\(botBuilds, !!plan, stalled, imported\);/);
-  // Under the card of the idea (./sketch-card.tsx), and in the plain card
-  // without one. The sketch's caption calling it the real app is gone.
-  assert.match(src, /<SketchCard made=\{made\} sketch=\{sketch\} line=\{line\} note=\{note\} /);
+  assert.match(src, /: buildNote\(botBuilds, !!plan, stalled, imported\);/);
+  // Under the card of the idea (./sketch-card.tsx) only when it has something
+  // to say, and always in the plain card without one. The sketch's caption
+  // calling it the real app is gone.
+  assert.match(src, /<SketchCard made=\{made\} sketch=\{sketch\} line=\{line\} note=\{note\} \/>/);
   assert.match(src, /<p className="mt-1 text-\[13px\] text-zinc-500 dark:text-zinc-400">\{note\}<\/p>/);
   assert.doesNotMatch(src, /sketchCaption/);
   // The plain card's busy dot: not while it waits on them, nor on a setup that stopped (stalledOf).
@@ -169,38 +172,24 @@ test('the made screen has two ways on and nothing under them: no "look around Ho
   assert.match(html, />Share invite<\/button>/);
   assert.match(html, /<button type="button" data-first-session-continue=""[^>]*>Invite people later<\/button>/);
   assert.doesNotMatch(html, /look around|While you wait/i);
-  // Their invite line says it is still being built, not "while it's built".
-  assert.match(html, />They can follow along and chat with you while it&#x27;s being built\.<\/p>/);
-  assert.doesNotMatch(src, /while it's built/);
+  // The one line over them (#4041), and nothing about being built.
+  assert.match(html, />Invite people to use it and help improve it together\.<\/p>/);
+  assert.doesNotMatch(src, /while it's built|They can follow along/);
 });
 
-test('the invite line says who joined, once somebody has', () => {
-  const { joinedLine } = loadTsx(`${DIR}/made.tsx`);
+test('who joined is the people row, not a line: the community is read once, then while an invite is out', () => {
+  const { peopleOf } = loadTsx(`${DIR}/made.tsx`);
   const maker = { username: 'maya', display_name: 'Maya', source: 'creator' };
-  assert.equal(joinedLine(null), null);
-  assert.equal(joinedLine({ member_count: 1, members: [maker] }), null, 'only the maker: nobody joined yet');
-  assert.equal(joinedLine({ member_count: 2, members: [maker, { username: 'sam', display_name: null, source: 'collaborator' }] }), '✓ sam joined.');
-  assert.equal(joinedLine({ member_count: 2, members: [maker, { username: 'sam', display_name: 'Sam', source: 'joined' }] }), '✓ Sam joined.');
-  assert.equal(joinedLine({ member_count: 3, members: [maker, { username: 'sam', source: 'joined' }, { username: 'alex', source: 'joined' }] }), '✓ sam and alex joined.');
-  assert.equal(joinedLine({ member_count: 4, members: [maker, { username: 'a' }, { username: 'b' }, { username: 'c' }] }), '✓ 3 people joined.');
-  // `members` is the newest eight; the count is everyone.
-  assert.equal(joinedLine({ member_count: 12, members: [maker, { username: 'a' }] }), '✓ 11 people joined.');
+  assert.deepEqual(peopleOf(null, 'maya'), [{ username: 'maya' }], 'just you, before the community is read');
+  assert.deepEqual(peopleOf({ members: [maker, { username: 'sam' }] }, 'maya'), [maker, { username: 'sam' }]);
   const src = read(`${DIR}/made.tsx`);
-  // Read only while an invite is out, and in place of "Invite sent" once
-  // somebody joined.
   assert.match(src, /const community = useCommunity\(made\.slug, sent\);/);
+  assert.match(src, /<PeopleRow people=\{peopleOf\(community, me\)\} \/>/);
   assert.match(src, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/community`, \{ credentials: 'same-origin' \}\)/);
-  assert.match(src, /if \(!on\) return undefined;/);
-  const { sentLines } = loadTsx(`${DIR}/made.tsx`);
-  // #4196: what went out, said the way it went; never "Invite sent", which
-  // a share sheet cannot promise.
-  assert.deepEqual(sentLines(null), ['✓ Link shared.']);
-  assert.deepEqual(sentLines(null, 'shared'), ['✓ Link shared.']);
-  assert.deepEqual(sentLines(null, 'copied'), ['✓ Link copied.']);
-  assert.deepEqual(sentLines('✓ priya joined.'), ['✓ priya joined.']);
-  assert.deepEqual(sentLines('✓ priya joined.', 'copied'), ['✓ priya joined.']);
-  assert.doesNotMatch(src, /'✓ Invite sent/);
-  assert.match(src, /\{sent \? sentLines\(joined, sentHow\)\.map\(/);
+  assert.match(src, /const t = polling \? window\.setInterval\(read, COMMUNITY_POLL_MS\) : 0;/);
+  // #4196: what went out is said the way it went, never "Invite sent", which
+  // a share sheet cannot promise; and no line says who joined as well.
+  assert.doesNotMatch(src, /'✓ Invite sent|joinedLine|sentLines/);
   // The route says who is in it: newest first after the maker, and how many.
   const route = read('src/routes/apps.js');
   assert.match(route, /router\.get\('\/api\/apps\/:slug\/community',/);
@@ -218,31 +207,24 @@ test('the made screen renders with nothing read yet: no plan, the build\'s first
   }));
   assert.ok(!/data-first-session-plan/.test(html), 'no plan until one is read');
   assert.match(html, /data-build-line="planning"[^>]*>.*Homeroom bot is planning it/);
-  assert.match(html, />Homeroom is making your app\. It will message you when the first version is ready to try, or if it has any questions\.<\/p>/);
+  assert.doesNotMatch(html, /Homeroom is making your app/, 'nothing under the thumbnail but the build line');
   assert.match(html, /Invite people later/);
 });
 
-test('the invite sheet names its note on screen, the way it names what they\'ll get', () => {
-  // Evan, 5 October 2026: the note sat in the card under the project with
-  // no name of its own, so it read as part of what they'll get rather than
-  // something to write.
+test('the invite sheet: a small caps label over the invite as they will see it, and a note that names itself to a screen reader', () => {
+  // Evan, 5 October 2026: the note had no name of its own. The canvas
+  // (#4042) names the card instead, "What they'll see", and the note is the
+  // card's own last line, so it carries an aria-label and no visible one.
   const { InviteSheet } = loadTsx(`${DIR}/made.tsx`);
   const html = renderToHtml(createElement(InviteSheet, {
     made: { slug: 'plant-pal', name: 'Plant Pal', emoji: '🪴', description: null, example: null, conversationId: 12 },
     me: 'Maya', onClose() {}, onSent() {},
   }));
-  const label = html.match(/<label for="first-session-note" class="([^"]*)">([^<]*)<\/label>/);
-  assert.ok(label, 'the note has a label');
-  assert.equal(label[2], 'Note');
-  assert.doesNotMatch(label[1], /sr-only/, 'and it is on screen');
-  // The same 13px grey as "What they'll get" over the card, and the make
-  // screen's field labels (make.tsx LABEL).
-  assert.equal(label[1], 'block pb-1 text-[13px] text-zinc-500 dark:text-zinc-400');
-  assert.match(html, /<p class="mt-4 pb-1\.5 text-\[13px\] text-zinc-500 dark:text-zinc-400">What they&#x27;ll get<\/p>/);
-  assert.match(read(`${DIR}/make.tsx`), /const LABEL = 'block text-\[13px\] text-zinc-500 dark:text-zinc-400';/);
-  // Right above the box it names, inside the card.
-  assert.ok(html.indexOf('>Note</label>') < html.indexOf('<textarea id="first-session-note"'));
-  assert.ok(html.indexOf('data-first-session-invite-maker') < html.indexOf('>Note</label>'));
+  assert.match(html, /<p data-first-session-invite-label="" class="mt-4 pb-1\.5 text-xs font-bold uppercase tracking-\[0\.06em\] text-zinc-500 dark:text-zinc-400">What they&#x27;ll see<\/p>/);
+  assert.doesNotMatch(html, /<label for="first-session-note"/);
+  assert.match(html, /<textarea id="first-session-note" aria-label="Your note"/);
+  assert.ok(html.indexOf('What they&#x27;ll see') < html.indexOf('data-first-session-invite-line'));
+  assert.ok(html.indexOf('data-first-session-invite-line') < html.indexOf('<textarea id="first-session-note"'));
 });
 
 // ── The step while a plan is redone ──

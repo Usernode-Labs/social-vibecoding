@@ -60,7 +60,10 @@ export type Template = {
   own: { example: string; name: string; description: string };
   /** Always finished in the maker's own words; Your own comes first and is picked first. */
   finish?: boolean;
-  /** Suggested for the invite's note. */
+  /**
+   * Suggested for the invite's note. It is sent while the app is still being
+   * made, so it says "I'm making", never "Made us", and it has no "!" (#4042).
+   */
   note: string;
 };
 
@@ -81,7 +84,7 @@ export const TEMPLATES: readonly Template[] = [
       { key: 'games', label: 'Games', fill: 'games', name: 'Game Tier List', description: 'A game tier list' },
     ],
     own: { example: 'taco spots', name: '{words} Tier List', description: 'A tier list' },
-    note: 'Made us a tier list. Come add your picks and rank them!',
+    note: 'I\'m making us a tier list. Join and tell me what it needs.',
   },
   {
     key: 'game',
@@ -99,7 +102,7 @@ export const TEMPLATES: readonly Template[] = [
       { key: 'trivia', label: 'Trivia', fill: 'a trivia game where', example: 'every question is about one of us', name: 'Trivia Night', description: 'A trivia game' },
     ],
     own: { example: 'a card game where everyone bluffs', name: '', description: 'A game' },
-    note: 'Made us a game. Come play, and help build it!',
+    note: 'I\'m making us a game. Join and tell me what it needs.',
   },
   {
     key: 'organizer',
@@ -116,7 +119,7 @@ export const TEMPLATES: readonly Template[] = [
       { key: 'potlucks', label: 'Potlucks', fill: 'potlucks', tail: ': who\'s bringing what, so we don\'t end up with six salads.', name: 'Potluck Planner', description: 'A potluck planner' },
     ],
     own: { example: 'camping gear', name: '{words} Crew', description: 'An organizer' },
-    note: 'Made us an organizer. Come add to it!',
+    note: 'I\'m making us an organizer. Join and tell me what it needs.',
   },
 ];
 
