@@ -494,7 +494,8 @@ test('the make screen sends the longer description, never with an import', () =>
   assert.match(src, /maxLength=\{BRIEF_MAX\}/, 'the field stops at the maximum');
   // The description is the plain box or a template's sentence (`text`),
   // unless the choice is a ready-made app, which has nothing to build.
-  assert.match(src, /audience: 'invited',\s+\.\.\.\(ready \? \{ template: ready\.template \} : \{ brief: text\.trim\(\) \}\),/);
+  assert.match(src, /audience: 'invited',\s+\.\.\.\(ready \? \{ template: ready\.template \} : \{ brief: text\.trim\(\), \.\.\.\(starter \? \{ template: starter\.template \} : \{\}\) \}\),/,
+    'a ready-made app has nothing to build; a game preset sends its starter beside the brief');
   // The import sends its repository, and no description to build from.
   const imp = src.slice(src.indexOf('const importRepo = useCallback('), src.indexOf('const formClass ='));
   assert.match(imp, /postCreateApp\(\{ name: repoName, audience: 'invited', repoUrl, from: entry \}\)/);

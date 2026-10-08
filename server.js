@@ -1340,6 +1340,10 @@ async function becomeLeader() {
   // public/gated for the landing page's app directory. Re-probes after
   // deploys and hourly. See services/shell-probe.js.
   require('./src/services/shell-probe').start(config);
+  // Custom domains (#4405): verify pending claims against public DNS, route
+  // verified ones at the edge, and confirm the certificate came. Leader-only,
+  // like the probe above; see services/app-domains.js.
+  require('./src/services/app-domains').start(config);
   // #1405 path B: fires the "your agent is waiting on you" nudges whose delay
   // has elapsed without the agent standing them down. One query a minute
   // against a partial index; see services/connector-input-waits.js.

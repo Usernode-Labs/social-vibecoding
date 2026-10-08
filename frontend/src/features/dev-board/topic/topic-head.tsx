@@ -1145,14 +1145,14 @@ function ChangeHero({ id, card, body, linkedIssues, onIssuesSaved }: {
     <section className="dev-topic-sheet dev-topic-hero" data-topic-sheet="hero" data-ws-tint={h.tint}>
       <div className="dev-topic-hero-top">
         {/* B10b: what the page is and where it stands. The pull request it
-            names is in Details. */}
+            names rides the by-line below, and is in Details. */}
         <span className="dev-ws-eyebrow dev-topic-hero-eyebrow">
           {h.status ? `${h.kind} · ${h.status}` : h.kind}
         </span>
         {h.age ? <span className="dev-ws-item-of" title={h.age.title}>{h.age.s}</span> : null}
       </div>
       <h2 className="dev-ws-item-title dev-topic-hero-title"><TitleContent t={card.title} /></h2>
-      {h.author || h.age ? (
+      {h.author || h.age || h.ref ? (
         <p className="dev-ws-item-by dev-topic-hero-by">
           {h.author ? (
             <span className="dev-ws-item-avatar" style={{ background: swatchFor(h.author) }} aria-hidden="true">
@@ -1163,6 +1163,17 @@ function ChangeHero({ id, card, body, linkedIssues, onIssuesSaved }: {
             {h.author ? <b>{h.author}</b> : null}
             {h.age ? <span>{`${h.author ? ' · ' : ''}${h.verb} ${h.age.s}`}</span> : null}
             {h.provenance ? <span>{` · ${h.provenance}`}</span> : null}
+            {/* The change's number, as the card meta line's first fact reads
+                it (app-view.js `_proposalCardModel`): "PR#12", mono in the
+                accent, linking to GitHub when there is one. */}
+            {h.ref ? (
+              <span>
+                {` · `}
+                {h.ref.href
+                  ? <a href={h.ref.href} target="_blank" rel="noopener" className="font-mono text-violet-700 hover:underline dark:text-violet-400">{h.ref.s}</a>
+                  : <span className="font-mono text-violet-700 dark:text-violet-400">{h.ref.s}</span>}
+              </span>
+            ) : null}
           </span>
         </p>
       ) : null}

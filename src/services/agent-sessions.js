@@ -313,7 +313,7 @@ async function listAgentSessions(pool, { userId, status = 'open', limit = 20, be
 /**
  * Whether `userId` has ever had an agent session, archived ones included:
  * whether they have built something themselves with a coding agent. The
- * Homeroom menu's Agent chats section (Build it yourself and their
+ * Homeroom menu's Agent chats section (Build it now and their
  * sessions) is shown only then, so a first-time user's menu stays short
  * (first-session run-through, 5 Oct 2026; ../../frontend/src/features/
  * app-context/app-context-sheet.tsx). A list page with a session in it

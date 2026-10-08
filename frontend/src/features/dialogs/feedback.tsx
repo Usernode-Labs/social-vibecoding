@@ -425,6 +425,17 @@ export function FeedbackDialog() {
         </div>
         <div id="feedback-status" className="text-sm mt-2 hidden">
         </div>
+        {/* #3994: a message saved on this device that has not sent yet is
+            sent again on a press, instead of only when the outbox's own
+            triggers fire. The controller shows it while anything is waiting
+            and words it while a try is running. */}
+        <button
+          id="feedback-queue-retry"
+          type="button"
+          className="hidden mt-1 min-h-[44px] text-sm font-semibold text-violet-700 hover:underline disabled:cursor-not-allowed disabled:opacity-40 dark:text-violet-300"
+        >
+          Try again
+        </button>
         {/* #4033: Cancel and Post stay on screen while the form above them
             scrolls (a long description, the kudos row). `.feedback-actions`
             in app.css pins the row to the bottom of the kit modal, which is
@@ -509,7 +520,7 @@ export function FeedbackDialog() {
             <Button id="feedback-sent-mine" variant="neutral" ink="neutral" className="min-h-[44px]">See your requests</Button>
             <Button id="feedback-sent-done" variant="unstyled" ink="muted" className="min-h-[44px]">Done</Button>
             <button id="feedback-sent-fix" type="button" className="hidden self-center text-xs text-zinc-500 underline underline-offset-2 dark:text-zinc-400">
-              Build it yourself with a coding agent
+              Build it now with a coding agent
             </button>
           </div>
         </section>

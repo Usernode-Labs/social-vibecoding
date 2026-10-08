@@ -56,7 +56,7 @@ import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 
 import {
-  AppWindowIcon, ArrowRightIcon, ArrowUpTrayIcon, ChevronLeftIcon, ChevronRightIcon, CogIcon, EllipsisHorizontalIcon, GitHubIcon, KeyIcon, LightBulbIcon, LockIcon,
+  AppWindowIcon, ArrowRightIcon, ArrowUpTrayIcon, ChevronLeftIcon, ChevronRightIcon, CogIcon, EllipsisHorizontalIcon, GitHubIcon, GlobeIcon, KeyIcon, LightBulbIcon, LockIcon,
   PencilSparklesIcon, PencilSquareIcon, UserGroupIcon,
 } from '@/components/ui/icons';
 
@@ -356,7 +356,7 @@ export function DevPlusMenu({
             <PlusRow
               data-plus="new-change"
               icon={<PencilSparklesIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-              title="Build it yourself"
+              title="Build it now"
               sub="With a coding agent, then ask for approval"
               onClick={() => { callAppView('_closePlusMenu'); void Improve.startSession(); }}
             />
@@ -441,6 +441,15 @@ export function DevPlusMenu({
               icon={<KeyIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
               title="App settings"
               sub="Manage who can use and build this app"
+            /> : null}
+            {/* #4405: a project's own web address. Owner-set, like secrets,
+                so the same people who manage the app see it; never for the
+                platform's own app, which the deploy pipeline addresses. */}
+            {typeof window !== 'undefined' && window.AppView?.appData?.can_manage && !selfHosted ? <PlusRow
+              data-plus="domain"
+              icon={<GlobeIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+              title="Custom domain"
+              sub="Use your own web address for this project"
             /> : null}
             {canManageIllustration ? <PlusRow
               data-plus="featured-illustration"

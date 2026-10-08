@@ -178,6 +178,9 @@ function tagsFor(kind, app, input, ref) {
   return {
     taste: kind, app_slug: app.slug, repo_size: 'small', request_type: 'feature', difficulty: null, known_outcome: null,
     prompt_chars: input.brief.length, brief_placeholder: isPlaceholder(input.brief),
+    // The starter its first commit is scaffolded from, so a report can slice
+    // by it: the same brief from a game starter and from `empty`.
+    ...(input.template ? { template: input.template } : {}),
     ...(ref ? { taste_ref: String(ref).slice(0, 80) } : {}),
   };
 }
@@ -423,6 +426,7 @@ module.exports = {
   isPlaceholder,
   slugOf,
   validateInput,
+  tagsFor,
   inputOf,
   notRunnableReason,
   firstVersionRequest,

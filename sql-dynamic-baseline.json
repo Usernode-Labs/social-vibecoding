@@ -899,6 +899,13 @@
       "preview": "`SELECT ${columns} FROM apps WHERE slug = $1`"
     },
     {
+      "source": "src/services/app-domains.js",
+      "kind": "structural-template",
+      "fingerprint": "4d8364d2457874f40f71",
+      "count": 1,
+      "preview": "`UPDATE app_domains SET ${sets.join(', ')} WHERE id = $1 RETURNING ${ROW_COLUMNS}`"
+    },
+    {
       "source": "src/services/check-history.js",
       "kind": "structural-template",
       "fingerprint": "1dfaa6c9adb884fed818",

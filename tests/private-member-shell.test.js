@@ -107,7 +107,7 @@ test('the shell follows the tier: a reload when it changes, the store told, "Wan
   assert.match(read('frontend/src/features/nav/nav-store.js'), /viewer: null,\s+privateMember: false,/);
 });
 
-test('the mark menu: "Go to Homeroom" for a private member, and no terminal or Build it yourself', () => {
+test('the mark menu: "Go to Homeroom" for a private member, and no terminal or Build it now', () => {
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
   assert.match(sheet, /\{mounted && privateMember \? \(\s+<div\s+id="app-menu-homeroom-card"[^>]*>\s+<button\s+id="app-menu-row-homeroom"/);
   // A white card leading the list, right under "Suggest an improvement"

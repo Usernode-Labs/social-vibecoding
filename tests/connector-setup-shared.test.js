@@ -4,10 +4,11 @@
 // The ask was to put the "connect Homeroom" steps for Claude and ChatGPT on
 // the dev session page itself, inline, instead of sending the reader to
 // Settings. The risk that comes with that ask is a second copy of six and
-// seven steps of product-specific prose, which drifts the first time either
+// six steps of product-specific prose, which drifts the first time either
 // product moves a button — and the facts here are the ones people already
 // get wrong (the exact connector name, "there is no client secret",
-// ChatGPT's Developer-mode gate). So the steps live in
+// ChatGPT's plugins directory, reworked for #4431 and #4433). So the
+// steps live in
 // frontend/src/features/settings/connector-setup-steps.tsx and both screens
 // render that module.
 //
@@ -32,7 +33,9 @@ const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s
 
 const STEPS = read('frontend', 'src', 'features', 'settings', 'connector-setup-steps.tsx');
 const SETTINGS_SECTION = read('frontend', 'src', 'features', 'settings', 'sections', 'connectors.tsx');
+const SETTINGS_JS = read('frontend', 'src', 'features', 'settings', 'settings.js');
 const INLINE = read('frontend', 'src', 'features', 'dev-chat', 'connector-setup-inline.tsx');
+const HANDOFF = read('frontend', 'src', 'features', 'agent-session', 'handoff.tsx');
 const VIEW = read('frontend', 'src', 'features', 'dev-chat', 'view.tsx');
 const DEV_CHAT = read('frontend', 'src', 'features', 'dev-chat', 'dev-chat.js');
 const FLOW_SELECT = read('public', 'js', 'dev-flow-select.js');
@@ -47,13 +50,15 @@ const cardHtml = (view) => renderToHtml(createElement(card().ConnectorSetupInlin
 }));
 
 test('the shared module is the only place the two walkthroughs are written', () => {
-  // Six and seven, the counts both routes' summaries in Settings advertise
-  // ("6 steps · also sets up Claude Code", "7 steps · needs Developer mode").
+  // Six and four, the counts both routes' summaries in Settings advertise
+  // ("6 steps · also sets up Claude Code", "4 steps · in the plugins
+  // directory" — ChatGPT reworked for #4431, then to the direct
+  // chatgpt.com/plugins opening for #4433).
   const claude = STEPS.slice(STEPS.indexOf('export function ClaudeSetupSteps'),
     STEPS.indexOf('export function ChatgptSetupSteps'));
   const chatgpt = STEPS.slice(STEPS.indexOf('export function ChatgptSetupSteps'));
   assert.equal((claude.match(/<SetupStep n=\{\d\}/g) || []).length, 6);
-  assert.equal((chatgpt.match(/<SetupStep n=\{\d\}/g) || []).length, 7);
+  assert.equal((chatgpt.match(/<SetupStep n=\{\d\}/g) || []).length, 4);
 
   // Neither consumer restates them. A `SetupStep` in Settings is legitimate
   // — the Codex and generic-client routes still render rows in that idiom —
@@ -61,7 +66,7 @@ test('the shared module is the only place the two walkthroughs are written', () 
   // are what a copy would have to reproduce.
   for (const [name, src] of [['Settings', SETTINGS_SECTION], ['the launchpad card', INLINE]]) {
     assert.doesNotMatch(src, /Open connector settings\./, `${name} does not restate Claude's steps`);
-    assert.doesNotMatch(src, /Turn on Developer mode\./, `${name} does not restate ChatGPT's steps`);
+    assert.doesNotMatch(src, /Open the plugins directory\./, `${name} does not restate ChatGPT's steps`);
   }
   assert.match(SETTINGS_SECTION, /<ClaudeSetupSteps \/>/);
   assert.match(SETTINGS_SECTION, /<ChatgptSetupSteps \/>/);
@@ -78,8 +83,19 @@ test('the shared steps point at nothing that exists on only one of the screens',
   assert.doesNotMatch(prose, /under these steps/);
   assert.doesNotMatch(prose, /Stop the permission prompts|connector-case-|Name it homeroom/);
   // The one thing a step may point at is the value each caller renders
-  // above it, and both callers do render it.
+  // above it, and both callers do render it. Claude's steps still do.
+  // ChatGPT's step 3 names the endpoint itself instead, but carries it the
+  // same way — from the caller, never written into the copy: the
+  // launchpad card and the hand-off pass the live value as a prop, and
+  // Settings' interior ships a fill-in placeholder that settings.js
+  // replaces with the same derived origin the #connector-url field shows.
   assert.match(STEPS, /the MCP server URL above/);
+  assert.match(STEPS, /Enter Homeroom MCP server URL\./);
+  assert.match(STEPS, /data-connector-step-url="1"/);
+  assert.match(INLINE, /<ChatgptSetupSteps url=\{url\} \/>/);
+  assert.match(HANDOFF, /<ChatgptSetupSteps url=\{connectorUrl\} \/>/);
+  assert.match(SETTINGS_JS, /data-connector-step-url/,
+    'Settings fills the ChatGPT step from the derived origin, as it fills the field');
   assert.match(INLINE, /<ConnectorUrl url=\{url\} \/>/);
   assert.match(SETTINGS_SECTION, /id="connector-url"/);
   // And the fact the cross-reference was carrying survived the move.
@@ -107,8 +123,16 @@ test('Settings keeps its route, and everything that is only on it', () => {
 test('neither screen writes a host into the copy', () => {
   // The rule sections/connectors.tsx states and #2706 inherits: a host in
   // prose goes stale on a fork or a config change, so the live value is
-  // passed in and the steps say "the MCP server URL above".
-  for (const [name, src] of [['the shared steps', STEPS], ['the launchpad card', INLINE]]) {
+  // passed in — Claude's steps say "the MCP server URL above", and
+  // ChatGPT's step 3 renders the caller's value instead of pointing at
+  // the one above it. The fill-in placeholder in the shared steps is
+  // spelled with angle brackets so it cannot read as a plausible address,
+  // in the source or in the prerendered document.
+  for (const [name, src] of [
+    ['the shared steps', STEPS],
+    ['the launchpad card', INLINE],
+    ['the hand-off card', HANDOFF],
+  ]) {
     assert.doesNotMatch(src, /onhomeroom\.com/, `${name} names no host`);
     assert.doesNotMatch(src, /https:\/\/[a-z0-9.-]*\/mcp/, `${name} hardcodes no endpoint`);
   }
@@ -271,12 +295,26 @@ test('the card renders the hooks the declared checks select on', () => {
   assert.match(html, /class="dc-flow-actions"/, 'the card reuses the walkthrough\u2019s own action row');
 });
 
-test('a ChatGPT card renders ChatGPT\'s seven steps and its recap', () => {
+test('a ChatGPT card renders ChatGPT\'s four steps and its recap', () => {
   const html = cardHtml({ product: 'ChatGPT' });
   assert.match(html, /data-connector-setup="ChatGPT"/);
-  assert.match(html, /Turn on Developer mode\./);
-  assert.equal((html.match(/<li class="flex gap-3">/g) || []).length, 7);
-  assert.match(html, /In short:/);
+  // #4431 moved the flow to the plugins directory; #4433 opened it at the
+  // directory's own address, as a link, with no Developer mode anywhere in
+  // it and no Settings walk first.
+  assert.match(html, /Open the plugins directory\./);
+  assert.match(html, /href="https:\/\/chatgpt\.com\/plugins"/);
+  assert.match(html, /Create custom MCP server/);
+  // The step names the endpoint it asks for, and shows the same live value
+  // the ConnectorUrl field above it does: once in the field, once in the
+  // step. A host written into the step would survive neither a fork nor a
+  // config change (see the test above), so this pins the rendered value.
+  assert.match(html, /Enter Homeroom MCP server URL\./);
+  assert.equal((html.match(/https:\/\/example\.test\/mcp/g) || []).length, 2,
+    'the step shows the same live URL the field above it does');
+  assert.doesNotMatch(html, /Developer mode/);
+  assert.doesNotMatch(html, /Browse plugins directory/, 'no Settings walk first');
+  assert.equal((html.match(/<li class="flex gap-3">/g) || []).length, 4);
+  assert.match(html, /In short:<\/strong> chatgpt\.com\/plugins/);
   assert.doesNotMatch(html, /Add custom connector/, 'and none of Claude\u2019s');
 });
 

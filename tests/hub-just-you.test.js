@@ -291,6 +291,17 @@ test('the server cuts the bot\'s state to what the hub says, and hands the maker
     bullets: ['A trail list', 'Who is coming'],
     questions: [{ question: 'How long?', suggested: 'Half a day' }],
   });
+  // #4396: once its maker chose it (Build it), the plan chosen, cut the
+  // same way, while it is built and tested.
+  const chosen = { ...state, line: 'building', step: 4, plan: undefined, chosenPlan: {
+    bullets: ['A trail list', 'Who is coming'], questions: [{ question: 'How long?', answers: ['Half a day', 'A whole day'] }],
+  } };
+  assert.deepEqual(hubFirstVersion(chosen, 9, { member: true }).plan, {
+    bullets: ['A trail list', 'Who is coming'],
+    questions: [{ question: 'How long?', suggested: 'Half a day' }],
+  });
+  assert.equal(hubFirstVersion(chosen, 9).plan, null, 'not a member: none, while it builds either');
+  assert.equal(hubFirstVersion({ ...chosen, ready: true }, 9, { member: true }).plan, null, 'ready: none');
   assert.equal(hubFirstVersion(asked, 9).plan, null, 'not a member: none');
   assert.equal(hubFirstVersion({ ...asked, ready: true }, 9, { member: true }).plan, null, 'once built: none');
   assert.doesNotMatch(JSON.stringify(hubFirstVersion(asked, 9, { member: true })), /actionId|messageId|"conversationId"|A whole day/);

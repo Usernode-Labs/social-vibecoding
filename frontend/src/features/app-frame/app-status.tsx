@@ -10,7 +10,9 @@
  * by the Homeroom bot from the project's description. Since #4053 that is
  * the project's thumbnail (features/first-session/sketch-card.tsx) with its
  * build line one line under it, and "It opens here when it’s ready." below that:
- * no plan, no step count, nothing to press (#4043). Once that version is
+ * no plan, no step count, nothing to press (#4043); a member who is not its
+ * maker gets a "While you wait" card under it (#4396, ./waiting-card.tsx).
+ * Once that version is
  * built and up for approval, the same thumbnail says Ready to try, and the
  * screen says what it waits on, with Try it and See the change.
  *
@@ -41,6 +43,7 @@ import { type BuildLineState, buildLineOf } from '../first-session/build-line';
 import { useTourRunning } from '../first-session/tour-running';
 import { FeaturedCard, sketching, useSketch } from '../first-session/sketch-card';
 import { appStatusStore } from './app-status-store.js';
+import { type FirstVersionWaiting, WaitingCard, lineNote } from './waiting-card';
 
 /** The resolved placeholder. `null` means some other owner has the host. */
 export interface AppStatusView {
@@ -89,6 +92,12 @@ export interface AppStatusView {
   } | null;
   /** A second way on, beside the action (a first version's change page, under Try it). */
   alt?: { key: 'seeChange'; label: string; slug: string; sessionId: number } | null;
+  /**
+   * #4396: "While you wait", for a member who is not the maker of a first
+   * version that is not ready yet (AppView._firstVersionWaiting): a card
+   * under the thumbnail, ahead of the lines (./waiting-card.tsx).
+   */
+  waiting?: FirstVersionWaiting | null;
 }
 
 /** What the thumbnail is drawn from: the project's record (AppView.appData). */
@@ -107,7 +116,7 @@ export interface FirstVersionThumb {
  * (GET /api/apps/:slug/sketch, as the made screen reads it), else its
  * description.
  */
-function FirstVersionCard({ thumb, line }: { thumb: FirstVersionThumb; line: BuildLineState | null }): ReactNode {
+function FirstVersionCard({ thumb, line, note = null }: { thumb: FirstVersionThumb; line: BuildLineState | null; note?: string | null }): ReactNode {
   const sketch = useSketch(thumb.sketch === false ? null : thumb.slug);
   const card = sketch.card;
   return (
@@ -120,6 +129,7 @@ function FirstVersionCard({ thumb, line }: { thumb: FirstVersionThumb; line: Bui
         description={thumb.description}
         sketching={!card && !thumb.description && sketching(sketch.state)}
         line={line}
+        lineNote={note}
       />
     </div>
   );
@@ -190,15 +200,18 @@ export function AppStatusView_({ view: answered }: { view: AppStatusView }): Rea
   const action = view.action;
   const titled = !!view.lines?.length;
   const thumb = view.thumb || null;
-  return (
-    <div className="flex flex-col items-center justify-center h-full text-zinc-500 dark:text-zinc-400 gap-2 p-4 text-center">
+  const line = view.buildLine === 'working' ? 'working' : buildLineOf(view.buildLine);
+  const waiting = thumb && view.waiting ? view.waiting : null;
+  const body = (
+    <>
       {view.dot ? <div className={`status-dot ${view.dot}`}></div> : null}
       {thumb ? (
-        <FirstVersionCard key={thumb.slug} thumb={thumb} line={view.buildLine === 'working' ? 'working' : buildLineOf(view.buildLine)} />
+        <FirstVersionCard key={thumb.slug} thumb={thumb} line={line} note={waiting ? lineNote(line) : null} />
       ) : (
         <p className={titled ? 'max-w-sm text-base font-semibold text-zinc-900 dark:text-zinc-100' : 'text-sm'}>{view.message}</p>
       )}
       {action && action.underCard ? actionButton(action) : null}
+      {waiting ? <WaitingCard waiting={waiting} line={line} /> : null}
       {titled ? view.lines!.map((line) => (
         <p
           key={line}
@@ -217,6 +230,20 @@ export function AppStatusView_({ view: answered }: { view: AppStatusView }): Rea
           {view.alt.label}
         </Button>
       ) : null}
+    </>
+  );
+  // With the card the screen can be taller than the frame: it scrolls, and
+  // is centred while it fits (my-auto on the column inside).
+  if (waiting) {
+    return (
+      <div className="flex flex-col items-center h-full overflow-y-auto text-zinc-500 dark:text-zinc-400 p-4 text-center">
+        <div className="my-auto flex w-full flex-col items-center gap-2">{body}</div>
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-col items-center justify-center h-full text-zinc-500 dark:text-zinc-400 gap-2 p-4 text-center">
+      {body}
     </div>
   );
 }

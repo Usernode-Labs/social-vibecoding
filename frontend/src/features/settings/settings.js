@@ -1888,6 +1888,14 @@
       const connectorUrl = `${window.location.origin}/mcp`;
       if (urlField) urlField.value = connectorUrl;
 
+      // The ChatGPT walkthrough states the URL in its own step rather than
+      // pointing back at #connector-url. It carries the same derived origin
+      // the field shows, filled here the way the Codex blocks below are:
+      // the prerendered interior ships a fill-in placeholder, and a fork or
+      // a config change cannot leave a stale host behind.
+      const stepUrl = document.querySelector('[data-connector-step-url]');
+      if (stepUrl) stepUrl.textContent = connectorUrl;
+
       // #1607: the "set it up in <product>" links open a new chat pre-loaded
       // with the job. Built HERE, from the same derived origin the field
       // shows, so a fork or a config change cannot leave a hardcoded URL

@@ -837,9 +837,9 @@
       "expectText": "saved on this device and sent automatically"
     },
     {
-      "name": "A message already saved offline is counted, and the header carries a dot (#1054)",
+      "name": "A message already saved offline is counted, can be sent again, and the header carries a dot (#1054, #3994)",
       "path": "/?shot=feedback-queued",
-      "expectSelector": "body.is-offline #feedback-queue-dot:not(.hidden)",
+      "expectSelector": "body.is-offline:has(#feedback-queue-retry:not(.hidden)) #feedback-queue-dot:not(.hidden)",
       "expectText": "message saved on this device"
     },
     {
@@ -941,7 +941,7 @@
       "name": "Dev board: one composite status pill and a menu trigger per card (card-as-pointer)",
       "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban .gc-vote-item .dev-card-meta > .dev-chat-badge, #dev-kanban .gc-vote-item [data-card-menu]",
-      "expectText": "Build it yourself"
+      "expectText": "Build it now"
     },
     {
       "name": "Dev board: a card's type icon sits on its title row, not halfway down the card",
@@ -964,9 +964,9 @@
       "expectSelector": "#dev-body .gc-vote-item > .flex-1:first-child > .dev-card-head + .dev-card-meta + .dev-card-badges.dev-card-status + .gc-card-actions"
     },
     {
-      "name": "Proposal page as a Needs-you item: the hero (the eyebrow with its state, the age at its right, the title, the by-line, the tags, the band with the ⋯ last), then the Discussion; the steps are in Details (B10b)",
+      "name": "Proposal page as a Needs-you item: the hero (the eyebrow with its state, the age at its right, the title, the by-line with the change's own number at its end, the tags, the band with the ⋯ last), then the Discussion; the steps are in Details (B10b)",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000043",
-      "expectSelector": "#gc-thread-head .dev-topic > .dev-topic-hero:has(> .dev-topic-hero-top > .dev-ws-eyebrow + .dev-ws-item-of):has(> .dev-topic-hero-chips + .dev-topic-hero-actions > .gc-card-actions > [data-card-menu]:last-child) + .dev-conversation",
+      "expectSelector": "#gc-thread-head .dev-topic > .dev-topic-hero:has(.dev-ws-eyebrow + .dev-ws-item-of):has(> .dev-topic-hero-by .font-mono):has(> .dev-topic-hero-chips + .dev-topic-hero-actions > .gc-card-actions > [data-card-menu]:last-child) + .dev-conversation",
       "expectText": "Waiting for approval"
     },
     {
@@ -1047,7 +1047,7 @@
       "name": "Dev board, round three: a second action pill can fold into the menu (one-line band)",
       "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban-col-issues [data-issue-row] .gc-card-actions > .gc-vote-btn[data-act=\"markIssueInProgress\"][data-fold]",
-      "expectText": "I'll work on this"
+      "expectText": "Claim it"
     },
     {
       "name": "A Workshop row unfolds into the Activity sheet: the card, its thread, the send disc",
@@ -1083,7 +1083,7 @@
       "name": "Dev board: an issue card offers its claim toggle as a pill, not only in ⋯",
       "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
       "expectSelector": "#dev-body [data-issue-row] .gc-card-actions .gc-vote-btn[data-act=\"markIssueInProgress\"]",
-      "expectText": "I'll work on this"
+      "expectText": "Claim it"
     },
     {
       "name": "Dev board: the Underway column names the exact state — a paused session says \"Paused\", not \"In progress\" (#1112)",
@@ -1528,7 +1528,7 @@
     {
       "name": "Issue cards show every action that fits the band, each foldable; the rest fold into the menu behind the hamburger",
       "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
-      "expectText": "Build it yourself",
+      "expectText": "Build it now",
       "expectSelector": "#dev-kanban-col-issues .gc-vote-item .gc-card-actions > [data-act=\"chooseIssueWork\"][data-fold=\"1\"] ~ [data-card-menu]"
     },
     {
@@ -1548,16 +1548,16 @@
       "expectSelector": ".dev-ws-hero #dev-plus-menu [data-plus=\"import-pr\"]"
     },
     {
-      "name": "The hub's ⋯ menu leads with Suggest an improvement, then Build it yourself, then names its settings group (#1900, #852 review, B8)",
+      "name": "The hub's ⋯ menu leads with Suggest an improvement, then Build it now, then names its settings group (#1900, #852 review, B8)",
       "path": "/?demo=1&ws=status&shot=plus-menu#app/usernode-2d5619/dev",
       "expectSelector": "#dev-plus-menu > button[data-plus=\"issue\"]:first-child + button[data-plus=\"new-change\"] ~ [data-plus-group=\"settings\"]",
       "expectText": "Suggest an improvement"
     },
     {
-      "name": "Build it yourself leads the menu's Agent chats section, for a viewer who has had an agent session (the check viewer has), where New change went (#1490, #2718 review, UI overhaul, B8, first-session run-through)",
+      "name": "Build it now leads the menu's Agent chats section, for a viewer who has had an agent session (the check viewer has), where New change went (#1490, #2718 review, UI overhaul, B8, first-session run-through)",
       "path": "/?demo=1&shot=improve#app/usernode-2d5619/board",
       "expectSelector": "#apps-switcher-sheet[data-open] #app-menu-sessions > #improve-row-new-session",
-      "expectText": "Build it yourself"
+      "expectText": "Build it now"
     },
     {
       "name": "Suggest an improvement is the menu's one button, in exactly one place (#1490, #2718, UI overhaul)",
@@ -2273,7 +2273,7 @@
       "expectSelector": "#apps-switcher-sheet #switcher-nav > a#app-menu-row-workshop[data-context-row=\"workshop\"]"
     },
     {
-      "name": "The app-context sheet carries Build it yourself under Agent chats for a viewer who has had an agent session (Streamlined Concept, UI overhaul, B8, first-session run-through)",
+      "name": "The app-context sheet carries Build it now under Agent chats for a viewer who has had an agent session (Streamlined Concept, UI overhaul, B8, first-session run-through)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#app-menu-sessions #improve-row-new-session"
     },
@@ -2587,7 +2587,7 @@
       "expectText": "Communities"
     },
     {
-      "name": "The hub's discussion is a preview (its last two messages and Open, the Discussion tab, with no composer), and Suggest an improvement leads the hero's ⋯, Build it yourself next, rather than ending the hub (#852 review, B8)",
+      "name": "The hub's discussion is a preview (its last two messages and Open, the Discussion tab, with no composer), and Suggest an improvement leads the hero's ⋯, Build it now next, rather than ending the hub (#852 review, B8)",
       "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"status\"]:has(section[data-ws-channel=\"preview\"] button[data-ws-channel-open]):not(:has(section[data-ws-channel=\"preview\"] form)):not(:has([data-ws-start-change])) #dev-plus-menu > [data-plus=\"issue\"]:first-child",
       "expectText": "Discussion"
@@ -3167,10 +3167,10 @@
       "expectText": "Go to community"
     },
     {
-      "name": "Agent chats leads with Build it yourself (UI overhaul; it was Continue, then Agent sessions, then More; B8; shown once you have had an agent session, first-session run-through)",
+      "name": "Agent chats leads with Build it now (UI overhaul; it was Continue, then Agent sessions, then More; B8; shown once you have had an agent session, first-session run-through)",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav > #app-menu-sessions > #improve-row-new-session:nth-child(2)",
-      "expectText": "Build it yourself"
+      "expectText": "Build it now"
     },
     {
       "id": "workshop.all-apps",
@@ -3575,6 +3575,17 @@
       "name": "The hub's ⋯ menu holds rename and secrets in its Settings & rules panel, not behind App settings (#645, #4045)",
       "path": "/?demo=1&ws=status#app/usernode-2d5619/dev",
       "expectSelector": "#dev-plus-menu [data-plus='rename']"
+    },
+    {
+      "name": "The hub's ⋯ menu offers Custom domain in its Settings & rules panel to whoever manages the project (#4405)",
+      "path": "/?demo=1&ws=status#app/staging-demo-custom-domain/dev",
+      "expectSelector": "#dev-plus-menu [data-plus='domain']"
+    },
+    {
+      "name": "Custom domain: the dialog lists the CNAME and TXT records to add and says the domain is waiting for DNS (#4405)",
+      "path": "/?shot=app-domain#app/staging-demo-custom-domain",
+      "expectSelector": "body:has(#app-domain-modal:not(.hidden)) #app-domain-records",
+      "expectText": "homeroom-verify"
     },
     {
       "name": "App settings: the core platform app cannot be deleted from the UI, and the danger zone says why (#2161)",
@@ -4075,7 +4086,7 @@
       "name": "Connector setup offers Claude web and ChatGPT web as named routes with their step counts (#1289, #2370)",
       "path": "/?demo=1#settings/connectors",
       "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #connectors-section summary",
-      "expectText": "7 steps"
+      "expectText": "4 steps · in the plugins directory"
     },
     {
       "name": "Connector setup offers the Codex CLI as its own route (#1892, #2370)",

@@ -226,7 +226,8 @@ test('"Make it" makes a private community through the dialog\'s own route', () =
   assert.match(make, /const reply = await postCreateApp\(\{/);
   assert.doesNotMatch(make, /fetch\('\/api\/apps'/);
   // A description for Homeroom bot to build from, or a ready-made app to make (below).
-  assert.match(make, /audience: 'invited',\s+\.\.\.\(ready \? \{ template: ready\.template \} : \{ brief: text\.trim\(\) \}\),/);
+  assert.match(make, /audience: 'invited',\s+\.\.\.\(ready \? \{ template: ready\.template \} : \{ brief: text\.trim\(\), \.\.\.\(starter \? \{ template: starter\.template \} : \{\}\) \}\),/,
+    'a ready-made app has nothing to build; a game preset sends its starter beside the brief');
   // `from` is the door: 'first-session', or 'create' from the Create button.
   assert.match(make, /from: entry,/);
   assert.match(make, /export type MakeEntry = 'first-session' \| 'create';/);
@@ -266,6 +267,35 @@ test('a choice that needs no typing makes a ready-made app, with nothing for Hom
   const make = loadTsx(`${DIR}/make.tsx`);
   assert.equal(make.READY_LINE, 'Ready-made: nothing to build, so it is ready as soon as it is set up.');
   assert.match(src, /\{readyMadeOf\(template, choice\) \? <p data-make-ready="" className=\{HINT\}>\{READY_LINE\}<\/p> : null\}/);
+});
+
+// Evan, 8 Oct 2026: each game preset starts its project from a game
+// starter (services/app-templates.js `kind: 'game'`), a working multiplayer
+// game Homeroom bot builds the maker's own idea on, instead of an empty page.
+// Unlike a ready-made app, the brief still goes to the bot.
+test('a game preset starts from a working game starter, and its brief is still built', () => {
+  const { TEMPLATES, OWN, readyMadeOf, starterOf } = loadTsx(`${DIR}/examples.ts`);
+  const appTemplates = require('../src/services/app-templates');
+  const game = TEMPLATES.find((t) => t.key === 'game');
+  assert.deepEqual(game.choices.map((c) => c.starter), ['game-board', 'game-space', 'game-blocks', 'game-trivia']);
+  for (const c of game.choices) {
+    const s = starterOf(game, c.key);
+    assert.equal(s.template, c.starter);
+    assert.ok(appTemplates.botStarter(s.template), `${c.key}: a starter the bot builds on`);
+    assert.equal(appTemplates.isReadyMade(s.template), false, `${c.key}: never ready-made`);
+    assert.equal(readyMadeOf(game, c.key), null);
+    assert.ok(s.starts && !/\u2014/.test(s.starts), `${c.key}: says what it starts from`);
+  }
+  assert.equal(starterOf(game, OWN), null, 'their own game idea starts from the empty scaffold');
+  for (const t of TEMPLATES.filter((x) => x.key !== 'game')) {
+    for (const c of t.choices) assert.equal(starterOf(t, c.key), null, `${c.key}: no game starter`);
+  }
+  const make = loadTsx(`${DIR}/make.tsx`);
+  assert.equal(make.starterLine('a dice race'), 'Starts from a game that already works, a dice race, and Homeroom bot builds your idea on it.');
+  const src = read(`${DIR}/make.tsx`);
+  // Only while the sentence is drawn as it is, like a ready-made app.
+  assert.match(src, /const starter = templated && example \? starterOf\(example, choice\) : null;/);
+  assert.match(src, /\{starterOf\(template, choice\) \? <p data-make-starter="" className=\{HINT\}>\{starterLine\(starterOf\(template, choice\)!\.starts\)\}<\/p> : null\}/);
 });
 
 // #4384: the make screen no longer says, under Make it, that what you write

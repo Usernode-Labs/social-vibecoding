@@ -1590,10 +1590,13 @@ export function init() {
         return "You're offline. Your message will be saved on this device and sent automatically "
           + "when you're back online.";
       }
+      // #3994: not "sending now". The outbox sends on its own schedule, which
+      // can be ten minutes away, so the line says what is true and the
+      // Try again under it (#feedback-queue-retry) sends it now.
       if (n > 0) {
         return n === 1
-          ? '1 message saved on this device, sending now.'
-          : `${n} messages saved on this device, sending now.`;
+          ? "1 message saved on this device hasn't been sent yet."
+          : `${n} messages saved on this device haven't been sent yet.`;
       }
       return '';
     };
@@ -1634,6 +1637,7 @@ export function init() {
     // — same seam as the offline banner and the header's own visibility.
     const paintQueueDot = (n) => {
       publishVisibility('feedback-queue-dot', n > 0);
+      paintQueueRetry();
     };
 
     // Every count() is async (opening IndexedDB can take a moment) and three
@@ -1643,6 +1647,74 @@ export function init() {
     // ?shot=feedback-queued lost its dot, because the offline-change fired
     // before the seed and its slower read landed after it. Only the newest
     // read is allowed to paint.
+    // #3994: "Try again" under the status line, while anything saved on
+    // this device is still waiting. The outbox sends on its own triggers
+    // (coming back online, signing in, a backoff timer), and every one of
+    // them can miss a connection that is back, which left a person looking at
+    // a stuck message with nothing to press. It is hidden while the composer
+    // is locked (a message was just saved or filed), so it never sits under
+    // the "Saved on this device" confirmation. The words stay in the outbox
+    // throughout: a try that fails again only puts the message back on the
+    // schedule, and one the server refuses outright comes back into the box.
+    const queueRetryBtn = document.getElementById('feedback-queue-retry');
+    let queueRetrying = false;
+    const paintQueueRetry = () => {
+      if (!queueRetryBtn) return;
+      const show = queueRetrying || (queuePendingCount > 0 && !feedbackText.readOnly);
+      queueRetryBtn.classList.toggle('hidden', !show);
+      queueRetryBtn.disabled = queueRetrying;
+      queueRetryBtn.textContent = queueRetrying ? 'Sending…' : 'Try again';
+    };
+    const retryQueuedNow = async () => {
+      if (!window.FeedbackQueue?.retryNow || queueRetrying) return;
+      queueRetrying = true;
+      paintQueueRetry();
+      // A probe too, so a connection that came back clears the offline
+      // state (and the "Save for later" label) without waiting 15 s.
+      try { window.Offline?.nudge?.(); } catch (err) { /* ignore */ }
+      let res = null;
+      try { res = await window.FeedbackQueue.retryNow(); } catch (err) { res = null; }
+      queueRetrying = false;
+      const n = await readQueueCount();
+      paintQueueRetry();
+      const modal = document.getElementById('feedback-modal');
+      if (!modal || modal.classList.contains('hidden')) return;
+      // A sent message is announced by onFlushed's toast; the line itself
+      // goes back to describing what is left.
+      // A message the server refused outright comes back into an empty,
+      // editable box right away, as the open path's hand-back does. Someone
+      // mid-sentence keeps their sentence, and the refused one waits in the
+      // outbox for the next open.
+      if (res && res.failed > 0 && !feedbackText.readOnly && !feedbackText.value.trim()) {
+        const failed = await Promise.resolve(window.FeedbackQueue.takeFailed()).catch(() => null);
+        // takeFailed() is a store read, and the box stayed editable while it
+        // ran: typing that started meanwhile wins, and the record goes back.
+        if (failed && (feedbackText.readOnly || feedbackText.value.trim() || feedbackTitle.value.trim())) {
+          Promise.resolve(window.FeedbackQueue.putBack?.(failed)).catch(() => {});
+        } else if (failed) {
+          const p = failed.payload || {};
+          feedbackText.value = p.description || '';
+          if (p.title) { feedbackTitle.value = p.title; titleDirty = true; }
+          restoreChosenTarget(p.target);
+          showFeedbackNotice(`This message couldn't be sent: ${failed.lastError || 'the server rejected it'}.`
+            + ' Your text is back, so edit it and try again.', true);
+          queueLineText = '';
+          feedbackText.focus();
+          return;
+        }
+      }
+      if (n > 0 && (!res || res.remaining > 0)) {
+        showFeedbackNotice(n === 1
+          ? "Still couldn't send it. It's kept on this device and will try again by itself."
+          : `Still couldn't send them. All ${n} are kept on this device and will try again by themselves.`, true);
+        queueLineText = '';
+        return;
+      }
+      queueLineText = feedbackStatus.classList.contains('hidden') ? '' : feedbackStatus.textContent;
+      paintQueueState();
+    };
+    queueRetryBtn?.addEventListener('click', () => { void retryQueuedNow(); });
+
     let queueReadSeq = 0;
     const readQueueCount = () => {
       if (!window.FeedbackQueue) return Promise.resolve(null);
@@ -2190,10 +2262,15 @@ export function init() {
       if (window.FeedbackQueue && !saved) {
         Promise.resolve(window.FeedbackQueue.takeFailed()).then((failed) => {
           const modal = document.getElementById('feedback-modal');
-          if (!failed || modal.classList.contains('hidden')) return;
+          if (!failed) return;
           // Live text always wins — a returned draft must never overwrite
-          // what someone is typing right now.
-          if (feedbackText.readOnly || feedbackText.value.trim()) return;
+          // what someone is typing right now. #3994: and takeFailed() has
+          // already removed it, so a draft that cannot be shown goes back to
+          // the outbox for the next open instead of being dropped.
+          if (modal.classList.contains('hidden') || feedbackText.readOnly || feedbackText.value.trim()) {
+            Promise.resolve(window.FeedbackQueue.putBack?.(failed)).catch(() => {});
+            return;
+          }
           const p = failed.payload || {};
           feedbackText.value = p.description || '';
           if (p.title) { feedbackTitle.value = p.title; titleDirty = true; }

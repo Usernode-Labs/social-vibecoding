@@ -32,7 +32,9 @@
  *
  * The URL is the live `${origin}/mcp`, passed in rather than written into
  * the prose, for the reason sections/connectors.tsx gives: a host spelled
- * out in copy goes stale on a fork or a config change.
+ * out in copy goes stale on a fork or a config change. The ChatGPT steps
+ * take it as a prop too, so the step that asks for the paste shows the
+ * same value the field above it does.
  */
 
 import { useState } from 'react';
@@ -118,7 +120,7 @@ export function ConnectorSetupInline({ view }: { view: ConnectorSetupInlineView 
       </div>
 
       <div className="mt-4">
-        {product === 'ChatGPT' ? <ChatgptSetupSteps /> : <ClaudeSetupSteps />}
+        {product === 'ChatGPT' ? <ChatgptSetupSteps url={url} /> : <ClaudeSetupSteps />}
       </div>
 
       {/* The one fact neither product's own walkthrough states, and the one

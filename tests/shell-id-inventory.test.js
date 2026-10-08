@@ -354,14 +354,19 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── #4405: custom domains ───────────────────────────────────────────────
+  'app-domain-modal': '#4405: the Custom domain dialog (features/dialogs/app-domain.tsx), opened from the hub\'s ⋯ menu\'s Settings & rules row for whoever manages the project, or by `?shot=app-domain`. Ships hidden and EMPTY but for its title, its error line and the Close pill; everything else arrives from GET /api/apps/:slug/domain in its onOpen, so the prerender and the first client render agree. The ids that render behind that read (and so are not in the prerender, nor here): #app-domain-input and #app-domain-add (the claim form), #app-domain-section with #app-domain-status (the state in words and the sentence that says why), #app-domain-records (the CNAME and TXT rows dapp.json\'s declared check selects on), #app-domain-check, #app-domain-open and #app-domain-remove.',
+  'app-domain-error': '#4405: the dialog\'s error line, hidden until a request fails.',
+  'share-homeroom-address': '#4405: the "Also at <homeroom host>" line under Share\'s link, shown only when the link offered is the project\'s custom domain. Ships hidden and empty.',
   // ── #4127: one paperclip for Photo and Video in Send feedback ─────────
+  'feedback-queue-retry': '#3994: Try again under Send feedback\'s status line, shown while a message saved on this device has not been sent. It sends the outbox now (FeedbackQueue.retryNow) instead of waiting for reconnect, sign-in or the backoff timer. Shown and worded by ./feedback-controller.',
   'feedback-attach-btn': '#4127: the paperclip in Send feedback\'s attachment row. It opens #feedback-attach-menu, which holds the Photo (#feedback-screenshot-picker-btn) and Video (#feedback-video-btn) rows that were two buttons of their own, so the row fits on one line. dapp.json\'s feedback check selects on it.',
   'feedback-attach-menu': '#4127: the paperclip\'s popover, in the vote popover\'s frame. Opened and closed by ./feedback-controller (outside click, Escape, a choice).',
   'report-modal': '#2721 shared reporting dialog',
   // ── B8: Suggest an improvement answered by Homeroom bot ─────────────────
   'feedback-sent-line': 'B8: the line under the filed-request confirmation\'s heading, worded by the controller: "Your idea is on the board now. Find it on your profile…", or, where Homeroom bot builds it, "Homeroom bot is building it now, usually about 8 minutes…" (#3971).',
   'feedback-sent-chat': 'B8: Open chat, the confirmation\'s main button when Homeroom bot builds the request: the chat where its card is.',
-  'feedback-sent-fix': 'B8: the confirmation\'s small "Build it yourself with a coding agent" link, for somebody who could start a change there.',
+  'feedback-sent-fix': 'B8: the confirmation\'s small "Build it now with a coding agent" link, for somebody who could start a change there.',
   // ── #3971: a first request Homeroom bot builds is a first request ───────
   'feedback-sent-first': '#3971: "Your first request!" inside the bot\'s confirmation. B8 skipped the first-request moment whenever the bot built the request; it comes back here, beside Open chat rather than in place of it. Hidden unless the post was the person\'s first request and the bot builds it.',
   'feedback-sent-first-line': '#3971: that block\'s "You just helped shape <app>." line, named by the controller after the app the request was filed to.',
@@ -794,7 +799,7 @@ const ADDED_IDS = {
   // either: the UI overhaul added them to the prerender, and the
   // first-session run-through (5 Oct 2026) took them out of it. They are
   // the Homeroom menu's Agent chats section (it was "Continue", then "Agent
-  // sessions", then "More") and the Build it yourself row that leads it,
+  // sessions", then "More") and the Build it now row that leads it,
   // same ids, same call. The section is shown only to somebody who has had
   // an agent session, which is their own data, known after mount
   // (app-context-sheet.tsx AgentChats), so the prerender draws nothing

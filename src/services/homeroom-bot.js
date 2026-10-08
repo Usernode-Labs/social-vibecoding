@@ -427,6 +427,48 @@ const FIRST_VERSION_NOTE = [
   'care about, never the look or the theme. Often there are none: then give `choices` as an empty list.',
 ].join('\n');
 
+/**
+ * The first-version note, for a project made from a game starter
+ * (services/app-templates.js `bot`, by template id): its repository is a
+ * working game, not the empty scaffold, so the plan is the creator's game
+ * built by changing it. Null or any other template: FIRST_VERSION_NOTE as
+ * it is. Pure; throws when the wording it replaces has moved, so a reworded
+ * note fails its test instead of telling a starter's plan its screen is
+ * placeholder.
+ */
+function firstVersionNote(starter = null) {
+  const s = starter ? require('./app-templates').botStarter(starter) : null;
+  if (!s) return FIRST_VERSION_NOTE;
+  const swaps = [
+    ['the repository is still the platform\'s starter template.',
+      `the repository is already Homeroom's ${s.title}: ${s.bot.what}. It works, live, for everyone in the project.`],
+    ['the app the description asks for, kept to its core, built on the\ntemplate.',
+      'the game the description asks for, kept to its core, built ON that starter by changing it, never by starting\nover.'],
+    ['Sketch a look of its own, too: the starter\'s screen is placeholder, so there is no existing screen for it to look\nlike.',
+      'Sketch a look of its own, too: the starter\'s screen works, but wears the design kit\'s default look, not this\ngame\'s.'],
+  ];
+  const note = swaps.reduce((out, [from, to]) => {
+    if (!out.includes(from)) throw new Error(`First-version note wording not found: ${from.slice(0, 60)}`);
+    return out.replace(from, to);
+  }, FIRST_VERSION_NOTE);
+  return [
+    note,
+    `STARTER: ${s.bot.build} In \`build_note\`, say what of the starter the game keeps and what it changes. In \`plan\``,
+    'and `choices`, describe the creator\'s game, never the starter\'s example.',
+  ].join('\n');
+}
+
+/**
+ * The game starter a project was made from, by template id, when its first
+ * version builds on one (services/app-templates.js `bot`); else null. Read
+ * off the app's row, since the bot's app list does not carry it.
+ */
+async function starterOfApp(pool, appId) {
+  const { rows } = await pool.query('SELECT template FROM apps WHERE id = $1', [appId]);
+  const id = rows[0] ? rows[0].template : null;
+  return require('./app-templates').botStarter(id) ? id : null;
+}
+
 let timer = null;
 let stopped = false;
 let passInFlight = false;
@@ -1835,10 +1877,12 @@ function triagePromptFor({
   // The App bench studio's pack guidance (services/bench/packs.js). The
   // live bot never passes any, and then the prompt is what it always was.
   guidance = null,
+  // The game starter a first version builds on (firstVersionNote).
+  starter = null,
 }) {
   return [
     seed, live.screenshotNote(seed).join('\n').trim(), triagePrompt(), live.requestRulesLines().join('\n').trim(),
-    firstVersion ? FIRST_VERSION_NOTE : null,
+    firstVersion ? firstVersionNote(starter) : null,
     firstVersion ? membersNote(members) : null,
     firstVersion ? planChangeNote(planChange) : null,
     deciderNote(decider),
@@ -2980,9 +3024,18 @@ async function runTriage(pool, config, {
       triageGuidance = (await botConfigs().recipeGuidance(pool, version.recipe))?.triage || null;
     }
   }
+  // A project made from a game starter: its plan is the creator's game
+  // built on that working game (firstVersionNote).
+  const starter = liveMode && requester?.firstVersion
+    ? await starterOfApp(pool, app.id).catch((err) => {
+      log.warn('homeroom-bot', 'Could not read a project\'s starter', { app: app.slug, err: err.message });
+      return null;
+    })
+    : null;
   const promptInput = {
     seed, issueNumber, firstVersion: !!requester?.firstVersion, decider,
     ...(members ? { members } : {}),
+    ...(starter ? { starter } : {}),
     ...(triageGuidance ? { guidance: triageGuidance } : {}),
     ...(planChange ? { planChange: { ...planChange, requester: requester.username } } : {}),
   };
@@ -3007,6 +3060,7 @@ async function runTriage(pool, config, {
       ...(decider?.requesterDecides ? { decider } : {}),
       // So the benchmark rebuilds the prompt this look read (bench/runner.js).
       ...(members ? { members } : {}),
+      ...(starter ? { starter } : {}),
     },
   };
 
@@ -3707,14 +3761,18 @@ function noteBuildFault(error, now = Date.now()) {
  */
 async function recordBuildSnapshot(pool, {
   runId, app, repo, issueNumber, seed, buildNote, github = null, presetSpec = null,
-  firstVersion = false, platformRepo = false, model = null, specModel = null,
+  firstVersion = false, platformRepo = false, model = null, specModel = null, starter = null,
 }) {
   if (!runId || !app) return null;
   return snapshots.recordSnapshot(pool, {
     runId, stage: 'build', appId: app.id, issueNumber,
     baseSha: await headShaOf(github, repo, 'main'),
     texts: { seed, build_note: buildNote || '', preset_spec: presetSpec || '' },
-    extra: { model, specModel: specModel || model, firstVersion: !!firstVersion, platformRepo: !!platformRepo },
+    extra: {
+      model, specModel: specModel || model, firstVersion: !!firstVersion, platformRepo: !!platformRepo,
+      // The game starter a first version built on, so a replay builds on it too.
+      ...(starter ? { starter } : {}),
+    },
   });
 }
 
@@ -3743,9 +3801,11 @@ async function shadowBuild({
     await pool.query('UPDATE homeroom_bot_runs SET bot_config_version_id = $2 WHERE id = $1', [runId, version.id])
       .catch((err) => log.warn('homeroom-bot', 'Could not record the run\'s configuration', { runId, err: err.message }));
   }
+  // A first version made from a game starter builds on it (starterOfApp).
+  const starter = firstVersion ? await starterOfApp(pool, app.id).catch(() => null) : null;
   const snapshotId = await recordBuildSnapshot(pool, {
     runId, app, repo, issueNumber, seed, buildNote: parsed.buildNote, github: deps.github, presetSpec,
-    firstVersion, platformRepo: isPlatformRepo(app, config), model, specModel,
+    firstVersion, platformRepo: isPlatformRepo(app, config), model, specModel, starter,
   });
   if (version) {
     await botConfigs().spawnSideBuilds(pool, config, {
@@ -3758,7 +3818,7 @@ async function shadowBuild({
   const built = await live.buildAndPropose({
     pool, config, bot, app, repo, issueNumber, issue, seed, buildNote: parsed.buildNote,
     ...buildBudgets(app, config, turnBudgetMs, { firstVersion }), model, specModel, deps, presetSpec,
-    firstVersion,
+    firstVersion, starter,
     platformRepo: isPlatformRepo(app, config),
     onSession: (session) => pool.query(
       'UPDATE homeroom_bot_runs SET build_session_id = $2 WHERE id = $1', [runId, session.id],
@@ -6585,9 +6645,12 @@ async function buildLive({
   let built;
   let buildMs = null;
   try {
+    // A first version made from a game starter builds on it (starterOfApp),
+    // and so do its side builds, which replay this snapshot.
+    const starter = firstVersion ? await starterOfApp(pool, app.id).catch(() => null) : null;
     const snapshotId = await recordBuildSnapshot(pool, {
       runId, app, repo, issueNumber, seed, buildNote: parsed.buildNote, github,
-      firstVersion, platformRepo: isPlatformRepo(app, config), model, specModel,
+      firstVersion, platformRepo: isPlatformRepo(app, config), model, specModel, starter,
     });
     // The side builds, queued on the App bench lane before the live build
     // starts, from the same request, plan and commit (the snapshot above).
@@ -6612,8 +6675,9 @@ async function buildLive({
       pool, config, bot, app, repo, issueNumber, issue, seed, buildNote: parsed.buildNote,
       ...buildBudgets(app, config, turnBudgetMs, { firstVersion }), model, specModel, deps, onSpec, proposalCeiling,
       platformRepo: isPlatformRepo(app, config), presetSpec,
-      // #3737: a first version's spec and build decide and record its look.
-      firstVersion,
+      // #3737: a first version's spec and build decide and record its look;
+      // made from a game starter, they build on it.
+      firstVersion, starter,
       // WP1 (#2): asked once the plan is written and again just before it is
       // proposed (whyNotBuild).
       skipCheck: () => whyNotBuild(pool, { runId, botId: bot.id, appId: app.id, issueNumber, github, repo }),
@@ -8671,6 +8735,8 @@ module.exports = {
   KEY_MODELS,
   MODEL_ID_RE,
   triagePromptFor,
+  firstVersionNote,
+  starterOfApp,
   deciderNote,
   whoDecides,
   membersNote,

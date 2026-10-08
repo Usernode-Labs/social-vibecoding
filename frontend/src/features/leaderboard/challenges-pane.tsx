@@ -53,6 +53,7 @@ import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { resolveIllustration } from '../../lib/challenge-illustrations';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
+import { ActivityRow } from './activity-row';
 import { CHALLENGE_CARD_FACE, ChallengeCard, ChallengeMeta, ProgressRail } from './challenge-card';
 import { ChallengesIntro } from './challenges-intro';
 import { GroupHeader } from './group-header';
@@ -223,7 +224,7 @@ type ProfileView =
     kind: 'profile';
     name: string;
     stats: { label: string; value: string }[];
-    activities: { key: string; text: string; points: string }[] | null;
+    activities: { key: string; text: string; points: string; at: string | null }[] | null;
   };
 
 // ── Class strings ───────────────────────────────────────────────────────
@@ -759,10 +760,7 @@ function ProfileBody({ view }: { view: ProfileView }): ReactNode {
       {view.activities ? (
         <ul className="space-y-1">
           {view.activities.map((a) => (
-            <li key={a.key} className="flex items-center justify-between gap-3 text-xs">
-              <span className="text-zinc-600 dark:text-zinc-300">{a.text}</span>
-              <span className="font-mono text-zinc-500 dark:text-zinc-400">{a.points}</span>
-            </li>
+            <ActivityRow key={a.key} text={a.text} points={a.points} at={a.at} />
           ))}
         </ul>
       ) : (

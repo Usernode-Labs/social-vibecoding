@@ -1017,6 +1017,16 @@ const AppView = {
           }
         }, 300);
       }
+      // #4405: `?shot=app-domain` opens the Custom domain dialog on this app,
+      // so the declared check and the shots can photograph the records table
+      // and the status line. Reads only; same slug guard as above.
+      if (shot === 'app-domain') {
+        setTimeout(() => {
+          if (AppView.appData?.slug === slug) {
+            window.UsernodeReact?.dialogs?.appDomain?.open({ slug });
+          }
+        }, 300);
+      }
       // #1374: `?shot=app-notifications` opens the per-app Notifications
       // dialog. It is otherwise two taps inside a tile menu, which neither
       // the capture pipeline nor a dapp.json check can reach — the same
@@ -2854,7 +2864,10 @@ const AppView = {
   // for the viewer's approval in a group; 'approved', the same once the
   // viewer approved it, waiting on the other member with the group's clock
   // running. Their change id stands for no change, so Try it and See the
-  // change open nothing real. Otherwise it is being built ("Building it").
+  // change open nothing real. 'member' (#4396): being built, as a member
+  // who is not its maker reads it, with "While you wait" (its plan and the
+  // maker's note made up; Say hi to the group has no room behind it).
+  // Otherwise it is being built ("Building it").
   showFirstVersionShot(variant = false) {
     const withPlan = variant === true || variant === 'plan';
     const ready = variant === 'ready' || variant === 'approved';
@@ -2877,6 +2890,19 @@ const AppView = {
         } : {
           sessionId: 990003, mustApprove: true, approved: false, waitingOn: [], more: 0, missing: 1,
           goesLiveAt: new Date(Date.now() + 3 * 86400000).toISOString(), soon: false,
+        },
+      } : variant === 'member' ? {
+        building: true, mine: false, member: true, step: 4, of: 7, line: 'building',
+        creator: 'jordan', ready: false, question: false, conversationId: null,
+        makerNote: 'Help me pick which plants we track first!',
+        memberPlan: {
+          bullets: [
+            'A list of your plants, each with a photo',
+            'Which ones need water today, at the top',
+            'Tap a plant to mark it watered',
+            'A reminder when one has gone dry',
+          ],
+          questions: [{ question: 'How should it remind you?', suggested: 'In the app' }],
         },
       } : withPlan ? {
         // B6: its plan waits for Build it, as the server says it to the
@@ -3182,6 +3208,7 @@ const AppView = {
     // Built and up for approval: no longer "being built" (_firstVersionReadyView).
     if (fv.ready) return AppView._firstVersionReadyView(appData);
     const thumb = AppView._firstVersionThumb(appData);
+    const waiting = AppView._firstVersionWaiting(appData);
     // Their DM, by its id when the record names it (members get neither).
     const chat = fv.mine === true
       ? {
@@ -3203,6 +3230,32 @@ const AppView = {
       lines: ['It opens here when it’s ready.'],
       tourSays: true,
       action: chat,
+      ...(waiting ? { waiting } : {}),
+    };
+  },
+
+  /**
+   * #4396: WHILE YOU WAIT, for a member who is not its maker (`member`, the
+   * server's read; routes/apps.js waitingMemberFields): what
+   * features/app-frame/app-status.tsx WaitingCard needs for its three rows
+   * (Say hi to the group, See the plan, Suggest something) and their sheets.
+   * Null for the maker and for anyone who is not a member.
+   */
+  _firstVersionWaiting(appData) {
+    const fv = appData.first_version || {};
+    if (fv.mine === true || fv.member !== true || !appData.slug) return null;
+    const plan = fv.memberPlan && Array.isArray(fv.memberPlan.bullets) && fv.memberPlan.bullets.length
+      ? {
+        bullets: fv.memberPlan.bullets.filter((b) => typeof b === 'string'),
+        questions: Array.isArray(fv.memberPlan.questions) ? fv.memberPlan.questions : [],
+      }
+      : null;
+    return {
+      slug: appData.slug,
+      name: appData.name || appData.slug,
+      maker: typeof fv.creator === 'string' && fv.creator ? fv.creator : null,
+      makerNote: typeof fv.makerNote === 'string' && fv.makerNote.trim() ? fv.makerNote.trim() : null,
+      plan,
     };
   },
 
@@ -5206,7 +5259,8 @@ const AppView = {
     if (item.source === 'maintenance') bits.push('platform maintenance');
     return {
       // B10b: the eyebrow is "Change · Waiting for approval"; the pull
-      // request it names moved into Details (`ref`, drawn there).
+      // request it names rides the by-line's end (`ref`, as the card meta
+      // line's number reads it) and is in Details too.
       kind: 'Change',
       ref: n ? { s: `PR#${n}`, href: item.pr_url || null } : null,
       status,
@@ -6036,7 +6090,7 @@ const AppView = {
         });
       } else {
         pills.push({
-          key: 'claim', cls: 'gc-vote-btn', label: 'I\'ll work on this',
+          key: 'claim', cls: 'gc-vote-btn', label: 'Claim it',
           title: "Let everyone know you'll work on this. It's not a promise of progress",
           act: { fn: 'markIssueInProgress', args: [item.number] },
         });
@@ -7178,6 +7232,12 @@ const AppView = {
     appSettingsBtn?.addEventListener('click', () => {
       close();
       window.UsernodeReact?.dialogs?.appSettings?.open({ slug: AppView.appData?.slug });
+    }, { signal });
+    // #4405: the project's custom domain (features/dialogs/app-domain.tsx).
+    const domainBtn = menu.querySelector('[data-plus="domain"]');
+    domainBtn?.addEventListener('click', () => {
+      close();
+      window.UsernodeReact?.dialogs?.appDomain?.open({ slug: AppView.appData?.slug });
     }, { signal });
     const membersBtn = menu.querySelector('[data-plus="members"]');
     if (membersBtn) {
@@ -18340,6 +18400,10 @@ const AppView = {
     // #287: strictly per-viewer, and reverts to "Create proposal" once the
     // session is archived (the server filters archived rows out of
     // myPrSessionId).
+    //
+    // A change for this request already waiting for approval: no Build it
+    // now beside it. The "Waiting for approval" chip says where it stands.
+    if (!issue.myPrSessionId && AppView._issueAwaitingApproval(issue)) return null;
     return issue.myPrSessionId
       ? {
         key: 'primary', cls: 'gc-vote-btn', label: 'Start more work',
@@ -18348,10 +18412,23 @@ const AppView = {
       }
       : {
         // B8: building it yourself, with a coding agent, beside asking the bot.
-        key: 'primary', cls: 'gc-vote-btn', label: 'Build it yourself',
+        key: 'primary', cls: 'gc-vote-btn', label: 'Build it now',
         title: 'Start an agent session on this request',
         act: { fn: 'chooseIssueWork', args: [n] },
       };
+  },
+
+  /**
+   * Whether a change for this request is already waiting for approval: the
+   * work state is "Waiting for approval" (a linked session promoted or
+   * merging), or the change that addresses it is in review. Build it now is
+   * not offered then, so a second build is not started beside it.
+   */
+  _issueAwaitingApproval(issue) {
+    if (!issue) return false;
+    const st = AppView._issueWorkState(issue);
+    if (st && st.key === 'in_review') return true;
+    return !!(issue.addressed_by && issue.addressed_by.state === 'review');
   },
 
   /** B8: whether a change is one Homeroom bot built (its author is the bot's account). */
@@ -18463,7 +18540,7 @@ const AppView = {
         act: { fn: 'clearIssueClaim', args: [n] },
       }
       : {
-        key: 'claim', cls: 'gc-vote-btn', label: 'I\'ll work on this',
+        key: 'claim', cls: 'gc-vote-btn', label: 'Claim it',
         title: "Let everyone know you'll work on this. It's not a promise of progress. It clears itself after about 7 days with no activity; talking about it in the request's thread keeps it going.",
         act: { fn: 'markIssueInProgress', args: [n] },
       };
@@ -18490,8 +18567,8 @@ const AppView = {
       // B8: with Homeroom bot's button on the face, building it yourself is
       // the ≡'s first row, the same launcher; left out while the bot is on
       // it, as Start work is, so it is never built twice.
-      else if (AppView._botDoor() && !issue.bot) items.unshift({
-        label: 'Build it yourself', icon: 'generate', act: () => AppView.chooseIssueWork(n),
+      else if (AppView._botDoor() && !issue.bot && !AppView._issueAwaitingApproval(issue)) items.unshift({
+        label: 'Build it now', icon: 'generate', act: () => AppView.chooseIssueWork(n),
       });
       // "Pledge kudos" disables once the viewer has an open bounty here or
       // has spent their shared weekly allowance.
@@ -18527,7 +18604,7 @@ const AppView = {
             act: () => AppView.clearIssueClaim(n),
           }
           : {
-            label: 'I\'ll work on this',
+            label: 'Claim it',
             icon: 'progress',
             title: 'Let everyone know you’ll work on this. It’s not a promise of progress. It clears itself after about 7 days with no activity; talking about it in the request’s thread keeps it going.',
             act: () => AppView.markIssueInProgress(n),
@@ -21607,11 +21684,20 @@ const AppView = {
 
   // The work-state chip's SPEC. A chip whose state names a linked session
   // is a button that opens it; every other state is an inert span.
+  //
+  // "Waiting for approval" (with or without "· you") is the one state that
+  // is filled rather than tinted: it is what the request is waiting on, and
+  // it stands in for the Build it now it hides (_issuePrimaryActionSpec).
+  _WORK_REVIEW_CLS: 'bg-violet-600 text-white dark:bg-violet-500 dark:text-white',
+  _WORK_REVIEW_HOVER: 'hover:bg-violet-700 dark:hover:bg-violet-600',
   _inProgressChipSpec(issue) {
     const st = AppView._issueWorkState(issue);
     if (!st) return null;
-    const tone = AppView._WORK_TONE_CLS[st.tone] || AppView._WORK_TONE_CLS.sky;
-    const hover = AppView._WORK_TONE_HOVER[st.tone] || AppView._WORK_TONE_HOVER.sky;
+    const review = st.key === 'in_review';
+    const tone = review ? AppView._WORK_REVIEW_CLS
+      : (AppView._WORK_TONE_CLS[st.tone] || AppView._WORK_TONE_CLS.sky);
+    const hover = review ? AppView._WORK_REVIEW_HOVER
+      : (AppView._WORK_TONE_HOVER[st.tone] || AppView._WORK_TONE_HOVER.sky);
     const ip = issue.in_progress || null;
     const target = ip && ip.target;
     const targetId = target ? parseInt(target.sessionId, 10) : 0;

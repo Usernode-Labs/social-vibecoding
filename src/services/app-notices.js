@@ -37,6 +37,7 @@ const SETTINGS_TYPES = Object.freeze([
   'governance_changed',
   'app_admins_changed',
   'app_lock_changed',
+  'app_domain_changed',
   'approver_joined',
 ]);
 
@@ -99,6 +100,23 @@ function settingsLine(row) {
         by,
         at,
       };
+    case 'app_domain_changed': {
+      const hostname = typeof meta.hostname === 'string' ? meta.hostname : '';
+      if (!hostname) return null;
+      const DOMAIN_LINES = {
+        added: `Custom domain ${hostname} added`,
+        live: `Custom domain ${hostname} is live`,
+        removed: `Custom domain ${hostname} removed`,
+        failed: `Custom domain ${hostname} is not working`,
+        disabled: `Custom domain ${hostname} disabled by an admin`,
+        enabled: `Custom domain ${hostname} enabled again`,
+      };
+      const text = DOMAIN_LINES[meta.action];
+      if (!text) return null;
+      // The sweep marks a domain live or failed; nobody did that.
+      const sweep = meta.action === 'live' || meta.action === 'failed';
+      return { kind: 'domain', text, by: sweep ? null : by, at };
+    }
     case 'approver_joined':
       return row.username
         ? { kind: 'approver', text: `@${row.username} became an approver`, by: null, at }

@@ -121,9 +121,10 @@ url = "${CODEX_URL_PLACEHOLDER}"`;
  * hundred words on naming and three cases of permission rules, all open, all
  * at 12px — 6,330px on a phone before the social accounts at the bottom. Every
  * one of those is reference for a reader who has picked a route, so each is a
- * row now: the summary names the route and says what it costs ("7 steps ·
- * needs Developer mode"), which is what lets someone choose WITHOUT opening
- * any of them.
+ * row now: the summary names the route and says what it costs ("6 steps ·
+ * also sets up Claude Code", "4 steps · in the plugins directory"), which
+ * is what lets someone choose WITHOUT
+ * opening any of them.
  *
  * A `<details>` rather than a stateful island, on purpose. settings.js still
  * writes into these bodies by id (the case filtering, both Copy handlers, the
@@ -308,17 +309,22 @@ export function ConnectorsSection() {
             #1289: the one-line "Settings → Connectors, paste the URL" summary
             assumed both products still bury custom MCP servers one menu deep,
             and it skipped every step a first-time user actually stalls on —
-            ChatGPT's Developer mode gate, Claude's per-conversation toggle,
-            the Team/Enterprise Owner requirement. So each product gets its
-            own numbered walkthrough, current as of the flows the issue
-            documents. Wherever the products' generic docs say "your MCP
-            server URL", these steps point back at the #connector-url field
-            above — that field is the dynamic, per-deployment value, so the
-            copy never hardcodes a URL that a fork or a config change would
-            stale. Static prose, deliberately NOT filtered by which product
-            is already connected (unlike #connector-prompt-help's cases):
-            these are pre-connection instructions, so the reader by
-            definition hasn't told us which product they're in yet.
+            ChatGPT's plugins directory at chatgpt.com/plugins (where custom
+            MCP servers are created, #4431, #4433), Claude's
+            per-conversation toggle, the Team/Enterprise Owner requirement. So
+            each product gets its own numbered walkthrough, current as of the
+            flows the issues document. Wherever the products' generic docs say
+            "your MCP server URL", these steps carry the dynamic,
+            per-deployment value rather than a written host: they point back
+            at the #connector-url field above, and ChatGPT's step 3 renders
+            the same derived origin itself — the placeholder in its markup is
+            filled by Settings._loadConnectors() the way the field and the
+            Codex blocks are, so a fork or a config change cannot stale the
+            copy. Static prose, deliberately
+            NOT filtered by which product is already connected (unlike
+            #connector-prompt-help's cases): these are pre-connection
+            instructions, so the reader by definition hasn't told us which
+            product they're in yet.
         */}
         <Disclosure title="Claude.ai" hint="6 steps &middot; also sets up Claude Code">
           {/*
@@ -535,7 +541,7 @@ export function ConnectorsSection() {
           </Disclosure>
           </div>
         </Disclosure>
-        <Disclosure title="ChatGPT" hint="7 steps &middot; needs Developer mode">
+        <Disclosure title="ChatGPT" hint="4 steps &middot; in the plugins directory">
           <GuidedSetup id="connector-open-chatgpt" href="https://chatgpt.com/" product="ChatGPT" />
             <ChatgptSetupSteps />
         </Disclosure>

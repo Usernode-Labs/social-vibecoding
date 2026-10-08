@@ -856,6 +856,18 @@ test('#15: the first-version screenshot state is self-contained, and mounts no f
   const approved = h.status();
   assert.match(approved.lines[0], /^You approved it\. Waiting for @sam, or it goes live on \S+ if nobody objects\.$/);
   assert.deepEqual([approved.action.key, approved.alt.key], ['tryChange', 'seeChange']);
+  // #4396: `?shot=first-version-member`, being built, as a member who is not
+  // its maker: no button, and "While you wait" with the plan and the note.
+  assert.match(appJs, /'first-version-member': 'member',/);
+  AppView.showFirstVersionShot('member');
+  const member = h.status();
+  assert.equal(bridge.frame(), null);
+  assert.equal(member.buildLine, 'building');
+  assert.equal(member.action, null);
+  assert.deepEqual([...member.lines], ['It opens here when it’s ready.']);
+  assert.equal(member.waiting.maker, 'jordan');
+  assert.equal(member.waiting.plan.bullets.length, 4);
+  assert.equal(member.waiting.makerNote, 'Help me pick which plants we track first!');
 });
 
 // ── 5 October: never painted from an answer it cannot trust ──────────────

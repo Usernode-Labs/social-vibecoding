@@ -884,9 +884,11 @@ const App = {
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
     // B6: `?shot=first-version-plan`, the same screen while its plan waits for
     // Build it. `-ready` and `-approved`: built and up for approval, as a
-    // member who still has to approve it and as one who has.
+    // member who still has to approve it and as one who has. #4396:
+    // `-member`, being built, as a member who is not its maker reads it.
     const variants = {
       'first-version': false, 'first-version-plan': 'plan', 'first-version-ready': 'ready', 'first-version-approved': 'approved',
+      'first-version-member': 'member',
     };
     if (!Object.prototype.hasOwnProperty.call(variants, shot)) return;
     try {

@@ -145,7 +145,7 @@ test('?cards=open draws every card at full size, hooks intact: the board as it w
     'and it sits inside the action band');
   assert.ok(!/dev-card-status-end"[^>]*>(?:(?!<\/span>)[\s\S])*?dev-ws-open-btn/.test(html), 'not on the facts line');
   assert.ok(!/dev-ws-open-btn"[^>]*aria-expanded/.test(html), 'and never the in-place toggle here');
-  assert.match(html, /class="gc-card-actions"><button class="gc-vote-btn"(?=[^>]*data-fold="1")[^>]*data-act="chooseIssueWork">Build it yourself<\/button><button class="gc-vote-btn"(?=[^>]*data-fold="2")[^>]*data-act="markIssueInProgress">[^<]*<\/button><a class="gc-vote-btn dev-ws-open-btn" href="#app\/demo-app\/dev\/issues\/1575"[^>]*>Open card<\/a><button [^>]*dev-card-menu-btn"[^>]*data-card-menu=/,
+  assert.match(html, /class="gc-card-actions"><button class="gc-vote-btn"(?=[^>]*data-fold="1")[^>]*data-act="chooseIssueWork">Build it now<\/button><button class="gc-vote-btn"(?=[^>]*data-fold="2")[^>]*data-act="markIssueInProgress">[^<]*<\/button><a class="gc-vote-btn dev-ws-open-btn" href="#app\/demo-app\/dev\/issues\/1575"[^>]*>Open card<\/a><button [^>]*dev-card-menu-btn"[^>]*data-card-menu=/,
     'the card\u2019s own pills come first, each marked foldable, then the link, then the hamburger');
   // A card with nothing in its status band still drops the band (#1139):
   // the toggle is not in it.
@@ -1558,9 +1558,18 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // its selector past the 256 characters the runner reads, so it is a check
   // of its own. 736 leaves 144 slots under the 880 ceiling.
   //
+  // 735 → 737: +2 (#4405, custom domains): the hub's ⋯ menu offers Custom
+  // domain in its Settings & rules panel to whoever manages the project (a
+  // row the existing panel check cannot see, since it signs in on a project
+  // the check account does not manage), and the Custom domain dialog lists
+  // the CNAME and TXT records with the Waiting for DNS status line, opened
+  // by `?shot=app-domain` on the seeded staging-demo-custom-domain project.
+  // 737 → 738: +1 (#4098) is counted above as 735 → 736; with #4405's two
+  // it makes 738, which leaves 142 slots.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 736);
+  checkCap.assertPinned(DAPP.tests.length, 738);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

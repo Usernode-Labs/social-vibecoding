@@ -433,7 +433,7 @@ test('issue: the full demoted set, and Open on GitHub last', () => {
   assert.equal(labels[0], 'Pledge kudos');
   assert.ok(labels.some((l) => /Pledge kudos/.test(l)));
   // The claim toggle is PROMOTED to the action band, so it left the menu.
-  assert.ok(!labels.some((l) => /I'll work on this/.test(l)), 'promoted onto the face');
+  assert.ok(!labels.some((l) => /Claim it/.test(l)), 'promoted onto the face');
   assert.ok(hasAction(AppView._issueCardModel(ISSUE()), 'markIssueInProgress'),
     'and is wired on the face instead');
   assert.ok(labels.some((l) => /Propose to close/.test(l)));

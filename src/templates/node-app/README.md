@@ -27,3 +27,11 @@ SV's Kubernetes adapter selects `ensure:shell` before `build` to preserve the
 platform self-app's prerender/CSS ordering. The infra-owned compatibility
 buildpack covers legacy apps whose compilation only exists in a Dockerfile.
 It does not make arbitrary Dockerfiles executable by kpack.
+
+`extra-packages.json` holds the few packages a starter may add on top of
+these (services/app-templates.js, an entry's `dependencies`): each one's
+range and its lockfile entries, made the same way (`npm install <name>
+--package-lock-only --ignore-scripts` in a copy of this directory). Today
+that is `ws`, for the game starters' live connection. getTemplateFiles adds
+them to that app's package.json and lockfile only; every other app's pair is
+untouched.
