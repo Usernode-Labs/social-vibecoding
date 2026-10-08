@@ -108,12 +108,6 @@ export function invitedByLine(offer: Pick<InviteOffer, 'inviter' | 'inviterName'
   return offer.inviter ? `@${offer.inviter} invited you` : 'You were invited';
 }
 
-/** WP-E: the link's maker hears when somebody joins through it, so the page says so first. */
-export function seenByLine(offer: Pick<InviteOffer, 'inviter' | 'inviterName'>): string {
-  const who = offer.inviterName || (offer.inviter ? `@${offer.inviter}` : '');
-  return who ? `${who} will see that you joined.` : '';
-}
-
 const DEAD: Record<string, string> = {
   expired: 'That invite link has expired.',
   revoked: 'That invite link was turned off.',

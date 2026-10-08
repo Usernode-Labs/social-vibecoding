@@ -56,6 +56,7 @@ import { publishInviteOffer, type InviteOffer } from './workshop/invite-offer';
 import {
   aiEnabledStore,
   cardNowStore,
+  publishVoteSending,
   devKanbanStore,
   devWorkshopStore,
 } from './card/cards-store';
@@ -122,6 +123,8 @@ export interface DevBoardBridge {
   mountPermissionConsentModal(host: Element | null, view: PermissionConsentModalView): void;
   publishCardNow(now: number): void;
   publishAiEnabled(enabled: boolean): void;
+  /** #3984: a vote on its way, by `<fn>:<id>`; null clears it (cards-store.ts). */
+  publishVoteSending(key: string, side: 'yes' | 'no' | null): void;
   publishViewMode(mode: string): void;
   publishWorkshopGroup(mode: string): void;
   /** #3700: the invite link a project's page was opened from (App._followInvite). */
@@ -375,6 +378,9 @@ export const devBoardBridge: DevBoardBridge = {
   publishAiEnabled(enabled) {
     aiEnabledStore.set({ enabled });
   },
+
+  // #3984: a vote on its way (castVote / castIssueVote), for the Vote button.
+  publishVoteSending,
 
   publishViewMode,
   publishWorkshopGroup,

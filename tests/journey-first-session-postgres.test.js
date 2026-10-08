@@ -32,16 +32,22 @@ test('the reading: steps against the hour and the two-minute reward, the aha, th
     path: 'join', user_id: userId, username: `u${userId}`, slug: 'p1', name: 'P1', intent_at: start.toISOString(),
     reward_at: null, invited_at: null, running_at: null, said_at: at(start, said), suggested_at: at(start, suggested),
   });
+  const look = (userId, [made], start = t0) => ({
+    path: 'look', user_id: userId, username: `u${userId}`, slug: null, name: null, intent_at: start.toISOString(),
+    reward_at: null, invited_at: null, running_at: null, said_at: null, suggested_at: null, made_at: at(start, made),
+  });
   const rows = [
     make(1, [90, 1000, 80]),
     make(2, [200, 4000, null]),
     join(3, [100, null]),
     join(4, [null, 5000]),
+    look(5, [7200]),
+    look(6, [null]),
   ];
   const since = '2026-09-01T00:00:00Z';
   const funnel = { from: '2026-09-28T00:00:00.000Z', opened: 5, signedIn: 3, signedInByInvite: 2, signedInAlready: 1, joined: 2 };
   const r = journey.firstSessionReading(rows, funnel, {
-    week: { label: '2026-09-28', finished: true }, recordedFrom: { make: since, reward: since, opens: since, signedIn: since },
+    week: { label: '2026-09-28', finished: true }, recordedFrom: { make: since, reward: since, opens: since, signedIn: since, look: since },
   });
   assert.deepEqual([r.week, r.finished, r.sessionMinutes], ['2026-09-28', true, journey.FIRST_SESSION_MINUTES]);
   assert.equal(r.make.people, 2);
@@ -55,14 +61,20 @@ test('the reading: steps against the hour and the two-minute reward, the aha, th
   assert.deepEqual(r.join.steps.map((s) => [s.key, s.reached, s.inSession]), [['said', 1, 1], ['suggested', 1, 0]]);
   assert.equal(r.join.aha, 1, 'one invited person wrote within the hour; a request after it is not the aha');
   assert.deepEqual(r.opens, funnel, 'the funnel as read');
-  assert.deepEqual(r.examples.map((e) => e.userId), [4, 3, 2, 1], 'newest first');
-  assert.deepEqual(r.examples[3].steps, { reward: 90, invited: 1000, running: 80 });
+  // #4039: "Look around first" is its own outcome beside Made a project, with
+  // whether they made one of their own later.
+  assert.deepEqual([r.look.people, r.look.notRecorded], [2, null]);
+  assert.deepEqual(r.look.steps.map((s) => [s.key, s.reached, s.inSession, s.medianSeconds]), [['made', 1, 0, 7200]]);
+  assert.deepEqual(r.examples.map((e) => e.userId), [6, 5, 4, 3, 2, 1], 'newest first');
+  assert.deepEqual(r.examples[5].steps, { reward: 90, invited: 1000, running: 80 });
+  assert.deepEqual([r.examples[1].path, r.examples[1].project, r.examples[1].steps], ['look', null, { made: 7200 }]);
 
   // Before its records began, a measure reads "not recorded", never 0.
   const early = journey.firstSessionReading([], undefined, { week: { label: 'all', finished: false } });
   assert.equal(early.make.notRecorded.recorded, false);
   assert.equal(early.opens.recorded, false);
-  assert.deepEqual(early.recordedFrom, { make: null, reward: null, opens: null, signedIn: null });
+  assert.equal(early.look.notRecorded.recorded, false);
+  assert.deepEqual(early.recordedFrom, { make: null, reward: null, opens: null, signedIn: null, look: null });
   assert.deepEqual(early.make.steps.map((s) => [s.reached, s.medianSeconds]), [[0, null], [0, null], [0, null]]);
 });
 
@@ -132,7 +144,8 @@ test('first artefacts and the first-session reading against the full PostgreSQL 
     const r = await journey.firstSession(pool, { week: week() });
     assert.equal(r.make.notRecorded.recorded, false);
     assert.equal(r.opens.recorded, false);
-    assert.deepEqual([r.make.people, r.join.people, r.examples.length], [0, 0, 0]);
+    assert.equal(r.look.notRecorded.recorded, false);
+    assert.deepEqual([r.make.people, r.join.people, r.look.people, r.examples.length], [0, 0, 0, 0]);
   });
 
   const book = await project('book-swap', ana);
@@ -211,5 +224,30 @@ test('first artefacts and the first-session reading against the full PostgreSQL 
     assert.equal(cohort.opens.recorded, false, 'an open signed out is in no cohort: the funnel is everyone\'s');
     const left = await journey.firstSession(pool, { week: week(), leftOutIds: [ana] });
     assert.deepEqual([left.make.people, left.join.people], [0, 1]);
+  });
+
+  await t.test('"Look around first" is recorded once, with the answer, and counted beside the projects made', async () => {
+    const firstSession = require('../src/services/first-session');
+    const dee = await user('dee', { needs_communities_choice: true });
+    await firstSession.recordStart(pool, dee, 'sign_in');
+    await firstSession.answerJoinScreenByLookingAround(pool, dee);
+    await firstSession.answerJoinScreenByLookingAround(pool, dee);
+    const { rows } = await pool.query(
+      "SELECT user_id, metadata FROM events WHERE event_type = 'first_session_looked_around'");
+    assert.deepEqual(rows.map((x) => [x.user_id, x.metadata.via]), [[dee, 'sign_in']], 'once, however often it is pressed');
+    // Make it writes none: app_created with from 'first-session' is its record.
+    const eve = await user('eve', { needs_communities_choice: true });
+    await firstSession.answerJoinScreenByMaking(pool, eve);
+    assert.equal((await pool.query(
+      "SELECT COUNT(*)::int AS n FROM events WHERE event_type = 'first_session_looked_around' AND user_id = $1", [eve])).rows[0].n, 0);
+    // Then dee made a project of their own.
+    const later = await project('dee-later', dee);
+    assert.ok(later.id);
+    const r = await journey.firstSession(pool, { week: week() });
+    assert.equal(r.look.notRecorded, null);
+    assert.equal(r.look.people, 1);
+    assert.deepEqual(r.look.steps.map((s) => [s.key, s.reached]), [['made', 1]]);
+    assert.equal(r.examples.find((e) => e.path === 'look').name, 'dee');
+    assert.ok(r.recordedFrom.look);
   });
 });

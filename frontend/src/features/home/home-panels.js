@@ -264,17 +264,27 @@ const HomePanels = {
   //     /api/home-panels from its cache on a device that has drawn Home
   //     before. It is told first (App._announceRefreshIntent), as a pull and
   //     a board refresh tell it.
+  //
+  // `fresh` (a pull, a live re-read) goes further: the worker waits for the
+  // network instead of answering from its saved copy after its one-second
+  // deadline (public/sw.js, wantsFreshAnswer; lib/live-reads.ts's FRESH).
   _queued: null,
+  _queuedFresh: false,
 
   ensureLoaded(opts) {
     const force = !!(opts && opts.force);
+    const fresh = force && !!(opts && opts.fresh);
     if (!window.App || !App.user) return Promise.resolve();
+    HomePanels._watchLiveReads();
     if (HomePanels._inflight) {
       if (!force) return HomePanels._inflight;
+      if (fresh) HomePanels._queuedFresh = true;
       if (!HomePanels._queued) {
         const again = () => {
+          const queuedFresh = HomePanels._queuedFresh;
           HomePanels._queued = null;
-          return HomePanels.ensureLoaded({ force: true });
+          HomePanels._queuedFresh = false;
+          return HomePanels.ensureLoaded({ force: true, fresh: queuedFresh });
         };
         HomePanels._queued = HomePanels._inflight.then(again, again);
       }
@@ -308,7 +318,9 @@ const HomePanels = {
     if (expandKey) params.set('expand', expandKey);
     const qs = params.toString() ? `?${params.toString()}` : '';
 
-    HomePanels._inflight = fetch(`/api/home-panels${qs}`, { credentials: 'same-origin' })
+    const init = { credentials: 'same-origin' };
+    if (fresh) init.cache = 'no-cache';
+    HomePanels._inflight = fetch(`/api/home-panels${qs}`, init)
       .then((res) => (res.ok ? res.json() : null))
       .then((json) => {
         if (json && Array.isArray(json.panels)) {
@@ -325,6 +337,27 @@ const HomePanels = {
         HomePanels.render();
       });
     return HomePanels._inflight;
+  },
+
+  // Live reads (#3985, lib/live-reads.ts): coming back to the tab after a
+  // while, the socket reconnecting or the browser coming back online reads
+  // the block again, past its minute, while Home is the screen showing it. A
+  // challenge finished in another app then shows its new count on return.
+  //
+  // It also owns /api/home-panels, so the service worker's correction of it
+  // reaches the block. App._onApiUpdated's Home.load() could not: the copy the
+  // worker served had just restarted the minute, so that ordinary call read
+  // nothing and the old numbers stayed up after a reload. Registered once, on
+  // the first read.
+  _unwatchLive: null,
+  _watchLiveReads() {
+    if (HomePanels._unwatchLive) return;
+    const live = typeof window !== 'undefined' && window.UsernodeReact && window.UsernodeReact.liveReads;
+    if (!live || typeof live.watch !== 'function') return;
+    HomePanels._unwatchLive = live.watch(() => {
+      if (!HomePanels._data || !window.App?._isScreenVisible?.('home-screen')) return undefined;
+      return HomePanels.ensureLoaded({ force: true, fresh: true });
+    }, { reads: (url) => url.pathname === '/api/home-panels' });
   },
 
   panelFor(key) {

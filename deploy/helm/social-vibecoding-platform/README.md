@@ -420,6 +420,21 @@ browser working set; smaller limit overrides also lower the requests so
 Kubernetes can admit the Pod. Per-job ephemeral storage remains 1 GiB
 requested / 4 GiB limited. Changes apply to newly created check Jobs.
 
+`config.checksMaxConcurrentRuns` (`CHECKS_MAX_CONCURRENT_RUNS`, default 4)
+bounds how many proposal checks runs have their Jobs on the cluster at once,
+across every platform Pod. A run whose preview is built waits for a slot
+before it creates its capture and unit-suite Jobs, so their deadlines start
+only once it has one; proposals show "Waiting for a checks slot" meanwhile.
+Slots go to promoted proposals first, then submitted CLI hand-offs, then
+drafts, first come first served within each. Main-watch's run of the unit
+suite on a merge commit has one slot of its own besides these and goes first
+for any free one. The count is the live `check_runs` rows, so it survives a
+platform restart, and a run that was waiting keeps its place when the next
+leader re-drives it. Size it so the check Jobs' requests (4 CPU each, two per
+run) leave room in the worker namespace's ResourceQuota for coding workers,
+and so the previews under test do not saturate the shared Postgres primary.
+`0` turns the queue off.
+
 Capture Jobs visit the generated app and preview HTTPS ingress hostnames. The
 self-app's production capture uses the canonical platform hostname. Worker
 namespace DNS and egress must reach these ingress endpoints with valid TLS;

@@ -222,3 +222,48 @@ test('a test account\'s vote on an app a real person made says, in one line, tha
   assert.match(CSS, /\.dev-vote-uncounted \{/);
   assert.match(CSS, /\.gc-vote-uncounted \{/);
 });
+
+// ── #3984: a vote on its way ─────────────────────────────────────────
+
+test('#3984: while a vote is on its way the button reads "Sending…" and takes no press', () => {
+  const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+  const mod = loadTsx(CARD);
+  const draw = (y = yes, n = no) => renderToHtml(createElement(mod.VoteButton, { yes: y, no: n }));
+  assert.doesNotMatch(draw(), /Sending…|aria-busy/, 'nothing on its way: the plain face');
+  mod.voteSendingStore.set({ 'castVote:7': 'yes' });
+  const html = draw();
+  assert.match(html, /<button type="button" class="dev-vote-btn"[^>]*title="Sending your vote\."[^>]*aria-busy="true"[^>]*disabled=""[^>]*>Sending…<\/button>/);
+  assert.doesNotMatch(html, /dev-vote-caret/, 'no caret: there is nothing to pick until it lands');
+  const other = { ...yes, act: { fn: 'castVote', args: [8, 'yes', 3] } };
+  assert.doesNotMatch(draw(other, { ...no, act: { fn: 'castVote', args: [8, 'no', 3] } }), /Sending…/, 'only that change\'s buttons');
+  const issueYes = { ...yes, act: { fn: 'castIssueVote', args: [7, 'up'] } };
+  assert.doesNotMatch(draw(issueYes, { ...no, act: { fn: 'castIssueVote', args: [7, 'down'] } }), /Sending…/, 'a request with the same id is a different vote');
+  mod.voteSendingStore.set(() => ({}));
+  assert.doesNotMatch(draw(), /Sending…/);
+});
+
+test('#3984: castVote and castIssueVote set the mark once the vote is committed to, and clear it when the server answers', () => {
+  assert.match(SRC, /if \(voteSendingStore\.get\(\)\[sendKey\]\) return;/, 'a vote on its way is not sent again');
+  assert.match(SRC, /if \(sending\) return;\n    if \(open \|\| sheetRef\.current\)/, 'nor does the picker open over it');
+  assert.match(CSS, /\.dev-vote-btn\[aria-busy="true"\] \{ cursor: progress;/);
+  const appView = fs.readFileSync(path.join(__dirname, '..', 'public/js/app-view.js'), 'utf8');
+  const body = (name) => appView.slice(appView.indexOf(`async ${name}(`), appView.indexOf('\n  },\n', appView.indexOf(`async ${name}(`)));
+  const vote = body('castVote');
+  assert.match(vote, /const key = `\$\{sessionId\}`;/, 'one vote in flight per change, whichever side');
+  assert.ok(vote.indexOf("_publishVoteSending(`castVote:${sessionId}`, vote)") > vote.indexOf('if (reason === false)'),
+    'set after the line is in hand: a cancelled No never reads as sending');
+  assert.match(vote, /finally \{\s*AppView\._voteInFlight\.delete\(key\);\s*AppView\._publishVoteSending\(`castVote:\$\{sessionId\}`, null\);/);
+  const issue = body('castIssueVote');
+  assert.match(issue, /_publishVoteSending\(`castIssueVote:\$\{issueId\}`, vote === 'down' \? 'no' : 'yes'\);\n    try \{/);
+  assert.match(issue, /finally \{\s*AppView\._voteInFlight\.delete\(key\);\s*AppView\._publishVoteSending\(`castIssueVote:\$\{issueId\}`, null\);/);
+  assert.match(appView, /_publishVoteSending\(key, side\) \{\s*try \{ AppView\._reactDevBoard\(\)\?\.publishVoteSending\?\.\(key, side\); \}/);
+  const mount = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/dev-board/mount.ts'), 'utf8');
+  assert.match(mount, /\n  publishVoteSending,\n/, 'the bridge publishes it');
+});
+
+test('#3984: a notification\'s "Still yes" reads "Sending…" and its row takes no second press', () => {
+  const sheet = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/notifications/notifications-sheet.tsx'), 'utf8');
+  assert.match(sheet, /disabled=\{a\.key === 'still_yes' && busy\}/, 'only the vote waits; Accept, Decline and the rest do not');
+  assert.match(sheet, /\{a\.key === 'still_yes' && busy \? 'Sending…' : a\.label\}/);
+  assert.match(sheet, /\.then\(\(\) => setBusy\(false\)\)/);
+});

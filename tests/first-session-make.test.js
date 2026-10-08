@@ -66,6 +66,11 @@ test('making something, or looking around, answers the join screen without the G
   assert.deepEqual(pool.calls[0].params, [7, 'made']);
   await firstSession.answerJoinScreenByLookingAround(pool, 9);
   assert.deepEqual(pool.calls[1].params, [9, 'looked_around']);
+  // #4039: "Look around first" is its own outcome in the admin Journey,
+  // written with the answer in one statement, so once and only then; Make
+  // it is already app_created with from 'first-session'.
+  assert.match(pool.calls[1].sql, /RETURNING id, getting_started_seen->>'first_session' AS via\s+\)\s+INSERT INTO events \(user_id, event_type, metadata\)\s+SELECT a\.id, 'first_session_looked_around', jsonb_build_object\('via', a\.via\)\s+FROM answered a\s+WHERE \$2::text = 'looked_around'/);
+  assert.equal(require('../src/services/events').EVENT_TYPES.FIRST_SESSION_LOOKED_AROUND, 'first_session_looked_around');
   // Being shown the question is recorded once, and leaves it owed.
   await firstSession.recordStart(pool, 7, 'story');
   assert.doesNotMatch(pool.calls[2].sql, /needs_communities_choice = FALSE/);
@@ -108,9 +113,8 @@ test('an account that signs in some other way is asked what to make in the join 
   const island = read(`${DIR}/index.tsx`);
   assert.match(island, /const open = \(\) => setMode\(\(prev\) => \(prev\.kind === 'none' \? \{ kind: 'make' \} : prev\)\);\s+if \(now\) flushSync\(open\);\s+else open\(\);/);
   assert.match(island, /make\(\): boolean \{\s+try \{ sessionStorage\.removeItem\(MAKE_FLAG\); \} catch \{[^}]*\}\s+openMake\(setMode, true\);/);
-  // On a phone, the verified-identity rule's phone step comes first: the
-  // flag waits for it, then opens (tests/verified-identity-shell.test.js).
-  assert.match(island, /if \(!flagged\) return;\s+(?:\/\/[^\n]*\n\s+)*const phone = legacy\(\)\.PhoneFirstRun;\s+if \(now && phone\?\.comesFirst\?\.\(legacy\(\)\.App\?\.user\)\) \{\s+void phone\.settled\(\)\.then\(\(\) => check\(false\)\);\s+return;\s+\}\s+try \{ sessionStorage\.removeItem\(MAKE_FLAG\); \} catch \{[^}]*\}\s+openMake\(setMode, now\);/);
+  // No phone step waits in front of it any more (#4378): the flag opens it.
+  assert.match(island, /if \(!flagged\) return;\s+try \{ sessionStorage\.removeItem\(MAKE_FLAG\); \} catch \{[^}]*\}\s+openMake\(setMode, now\);/);
   // From the mount's own check it is an ordinary update: React is mid-effect
   // there and cannot draw synchronously.
   assert.match(island, /if \(legacy\(\)\.App\?\.user\) check\(false\);\s+const onAuthed = \(\) => check\(true\);/);
@@ -199,14 +203,16 @@ test('three templates, the same on the story and the make screen, each a whole s
   assert.equal(game.finish, true);
   assert.equal(firstChoice(game), OWN);
   assert.equal(sentence(game, 'board', '').blank, true, 'a starter still waits for the rest');
-  assert.equal(sentence(game, 'board', 'everyone owns an island').text, 'A new game we build together. For the first version, a board game where everyone owns an island.');
-  assert.equal(sentence(game, OWN, 'a card game where everyone bluffs!').text, 'A new game we build together. For the first version, a card game where everyone bluffs!');
+  assert.equal(sentence(game, 'board', 'we roll dice').text, 'A new game we build together. For the first version, a board game where we roll dice.');
+  assert.equal(sentence(game, OWN, 'a drawing game where one of us draws and everyone guesses!').text, 'A new game we build together. For the first version, a drawing game where one of us draws and everyone guesses!');
   assert.equal(suggestedName(game, OWN, 'a card game'), '', 'their own game is theirs to name');
   assert.equal(suggestedName(game, 'trivia', ''), 'Trivia Night');
   // The organizer: each choice says what it keeps.
   assert.deepEqual(organizer.choices.map((c) => [c.label, c.name]), [['Groceries', 'Grocery List'], ['Chores', 'Chore List'], ['Shared library', 'Lending Library'], ['Potlucks', 'Potluck Planner']]);
-  assert.equal(sentence(organizer, 'chores', '').text, 'An app to organize our chores: who\'s on what this week, and a nudge when it\'s your turn.');
-  assert.equal(suggestedName(organizer, OWN, 'camping gear'), 'Camping Gear Crew');
+  // (What the ready-made chore list does: it sends no nudge.)
+  assert.equal(sentence(organizer, 'chores', '').text, 'An app to organize our chores: who\'s on what this week, and whose turn it is next.');
+  assert.equal(sentence(organizer, 'library', '').text, 'An app to organize our shared library: what we can borrow, who has it now, and who\'s asking for it next.');
+  assert.equal(suggestedName(organizer, OWN, 'camping gear'), 'Camping Gear List');
   // The story says the same three, the tier list drawn as a tier list.
   const story = renderComponent('frontend/src/features/auth/story.tsx', 'Story', { primaryClass: 'pill', onStart() {}, onSignIn() {} });
   for (const t of TEMPLATES) assert.ok(story.includes(`>${t.title}<`) && story.includes(`>${t.line}<`), t.key);
@@ -219,7 +225,8 @@ test('"Make it" makes a private community through the dialog\'s own route', () =
   assert.match(make, /import \{ deviceTimeZone, postCreateApp \} from '\.\.\/dialogs\/post-create-app';/);
   assert.match(make, /const reply = await postCreateApp\(\{/);
   assert.doesNotMatch(make, /fetch\('\/api\/apps'/);
-  assert.match(make, /audience: 'invited',\s+brief: text\.trim\(\),/);
+  // A description for Homeroom bot to build from, or a ready-made app to make (below).
+  assert.match(make, /audience: 'invited',\s+\.\.\.\(ready \? \{ template: ready\.template \} : \{ brief: text\.trim\(\) \}\),/);
   // `from` is the door: 'first-session', or 'create' from the Create button.
   assert.match(make, /from: entry,/);
   assert.match(make, /export type MakeEntry = 'first-session' \| 'create';/);
@@ -231,27 +238,49 @@ test('"Make it" makes a private community through the dialog\'s own route', () =
   }
 });
 
-// #4174: every project's repository is public on GitHub, and its first
-// request is a public issue holding the description word for word. The make
-// screen says so, quietly, under Make it, from either door.
-test('under Make it, one quiet line says what you write and the code are public on GitHub', () => {
+// Evan, 8 Oct 2026: every choice that needs no typing makes one of
+// Homeroom's ready-made apps (services/app-templates.js), so there is no
+// first version to wait for. Your own words, and every game, still go to
+// Homeroom bot.
+test('a choice that needs no typing makes a ready-made app, with nothing for Homeroom bot to build', () => {
+  const { TEMPLATES, OWN, readyMadeOf } = loadTsx(`${DIR}/examples.ts`);
+  const appTemplates = require('../src/services/app-templates');
+  const [tier, game, organizer] = TEMPLATES;
+  const made = [...tier.choices, ...organizer.choices].map((c) => c.template);
+  assert.deepEqual(made, appTemplates.READY_IDS, 'every no-typing choice, and only those, is a ready-made app');
+  for (const c of game.choices) assert.equal(readyMadeOf(game, c.key), null, `${c.key}: a game is always built`);
+  assert.equal(readyMadeOf(tier, OWN), null, 'their own words are built');
+  assert.equal(readyMadeOf(organizer, OWN), null);
+  assert.deepEqual(readyMadeOf(tier, 'hikes'), { template: 'tier-list-hikes', emoji: '📊' });
+  // Its icon is the ready-made app's own, so the made screen and the tile agree.
+  for (const t of [tier, organizer]) {
+    for (const c of t.choices) assert.equal(readyMadeOf(t, c.key).emoji, appTemplates.get(c.template).icon, c.key);
+  }
+
+  const src = read(`${DIR}/make.tsx`);
+  // Only while the sentence is drawn as it is: written out, it is theirs to build.
+  assert.match(src, /const ready = templated && example \? readyMadeOf\(example, choice\) : null;/);
+  assert.match(src, /emoji: ready \? ready\.emoji : example \? example\.emoji : null,/);
+  assert.match(src, /\.\.\.\(ready \? \{ readyMade: true \} : \{\}\),/);
+  // The sentence says so, quietly, under its choices.
   const make = loadTsx(`${DIR}/make.tsx`);
-  assert.equal(make.MAKE_PUBLIC_LINE, 'What you write here, and the app’s code, are public on GitHub.');
+  assert.equal(make.READY_LINE, 'Ready-made: nothing to build, so it is ready as soon as it is set up.');
+  assert.match(src, /\{readyMadeOf\(template, choice\) \? <p data-make-ready="" className=\{HINT\}>\{READY_LINE\}<\/p> : null\}/);
+});
+
+// #4384: the make screen no longer says, under Make it, that what you write
+// and the code are public on GitHub (#4174 added that line). The other
+// "public on GitHub" lines (import, visibility, fork, settings) stay.
+test('nothing under Make it says what you write is public on GitHub', () => {
+  const make = loadTsx(`${DIR}/make.tsx`);
+  assert.equal(make.MAKE_PUBLIC_LINE, undefined);
   for (const props of [
     { who: 'Jordan', onMade() {}, onLookAround() {} },
     { who: 'Jordan', entry: 'create', onMade() {}, onClose() {} },
   ]) {
     const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', props);
-    const line = /<p data-make-public="" class="([^"]*)">([^<]*)<\/p>/.exec(html);
-    assert.ok(line, `the line is drawn (${props.entry || 'first-session'})`);
-    assert.equal(line[2], make.MAKE_PUBLIC_LINE);
-    // Fine print: small and muted, never a warning colour.
-    assert.match(line[1], /\btext-\[13px\]/);
-    assert.match(line[1], /\btext-zinc-500\b/);
-    assert.doesNotMatch(line[1], /red-|amber-|font-(semi)?bold/);
-    assert.ok(html.indexOf('data-make-public') > html.indexOf('>Make it</button>'), 'under Make it');
-    const next = props.entry === 'create' ? 'data-make-import-link' : 'Look around first';
-    assert.ok(html.indexOf('data-make-public') < html.indexOf(next), `above ${next}`);
+    assert.ok(html.includes('>Make it</button>'), `the screen is drawn (${props.entry || 'first-session'})`);
+    assert.doesNotMatch(html, /data-make-public|public on GitHub/);
   }
 });
 
@@ -449,13 +478,13 @@ test('a template fills in the description and the name; words of their own let g
   assert.deepEqual(chips(tree).map((c) => c.props['data-make-choice']), ['own', 'board', 'shooter', 'blocks', 'trivia']);
   assert.equal(chips(tree)[0].props.selected, true);
   assert.equal(words(tree).type, 'textarea');
-  assert.equal(words(tree).props.placeholder, 'For example, a card game where everyone bluffs');
+  assert.equal(words(tree).props.placeholder, 'For example, a drawing game where one of us draws and everyone guesses');
   assert.equal(writeOut(tree), undefined);
   assert.equal(nameField(tree).props.value, '', 'their own game is theirs to name');
   chips(tree)[1].props.onClick();
   tree = draw();
   assert.equal(nameField(tree).props.value, 'Board Game Night');
-  assert.equal(words(tree).props.placeholder, 'For example, everyone owns an island and trades to grow it');
+  assert.equal(words(tree).props.placeholder, 'For example, we roll dice and race each other around the board');
   // Your own idea: the plain box again, and a suggested name goes with the template.
   tiles(tree)[3].props.onClick();
   tree = draw();
@@ -498,8 +527,9 @@ test('after Make it: the build line, then one invite, and the second button says
   const src = read(`${DIR}/made.tsx`);
   // The first session's second button: on to the tour (continueLabel).
   assert.equal(made.continueLabel('first-session', false, 'Page Turners'), 'Invite people later');
-  assert.equal(made.continueLabel('first-session', true, 'Page Turners'), 'Go to the Homeroom app');
-  assert.match(src, /\{continueLabel\(entry, sent, made\.name\)\}/);
+  assert.equal(made.continueLabel('first-session', true, 'Page Turners'), 'Start the tour');
+  assert.match(src, /\{continueLabel\(entry, true, made\.name\)\}/);
+  assert.match(src, /\{continueLabel\(entry, false, made\.name\)\}/);
   // The note is said to be the first message.
   assert.match(src, /body: JSON\.stringify\(\{ days: LINK_DAYS, maxUses: LINK_USES, note: note\.trim\(\) \|\| null \}\)/);
   // Every link's default, the first one's too: a link lets somebody new
@@ -533,15 +563,13 @@ test('after Make it: the build line, then one invite, and the second button says
 test('the maker\'s tour ends in Homeroom bot\'s chat when it builds for them, and on the hub when not', () => {
   const { makerSteps } = loadTsx(`${DIR}/tour-steps.ts`);
   const withBot = makerSteps({ slug: 'film', name: 'Friday Film Crew', conversationId: 12 });
-  assert.deepEqual(withBot.map((s) => s.screen), ['home', 'app', 'app', 'app', 'home', 'hub', 'hub', 'bot']);
-  assert.equal(withBot[6].target, '#platform-tab-messages');
-  assert.equal(withBot[6].opensNext, true);
-  // Request #4183: step 7 says the bot stays in Messages, then what it builds.
-  assert.equal(withBot[6].text, 'You can always find it here. It\'s currently building Friday Film Crew.');
-  assert.equal(withBot[7].last, true);
+  assert.deepEqual(withBot.map((s) => s.screen), ['home', 'app', 'app', 'app', 'app', 'home', 'hub', 'hub', 'bot']);
+  assert.equal(withBot[7].target, '#platform-tab-messages');
+  assert.equal(withBot[7].opensNext, true);
+  assert.equal(withBot[8].last, true);
   const without = makerSteps({ slug: 'film', name: 'Friday Film Crew', conversationId: null });
-  assert.deepEqual(without.map((s) => s.screen), ['home', 'app', 'app', 'app', 'home', 'hub']);
-  assert.equal(without[5].last, true);
+  assert.deepEqual(without.map((s) => s.screen), ['home', 'app', 'app', 'app', 'app', 'home', 'hub']);
+  assert.equal(without[6].last, true);
   const index = read(`${DIR}/index.tsx`);
   assert.match(index, /else if \(screen === 'bot' && conversationId\) window\.location\.hash = `#messages\/\$\{conversationId\}`;/);
 });
@@ -551,30 +579,33 @@ test('the maker\'s tour ends in Homeroom bot\'s chat when it builds for them, an
 // needs you", the clock and ⋯) under it, and the newest card began part-way
 // down, with bullets and no "Here's my plan for …". He read it as the chat
 // missing its header.
-test('the maker\'s last step shows the chat with Homeroom bot whole: its header with its messages, the newest card from its top', () => {
+test('the maker\'s last step shows the chat with Homeroom bot whole: its header with its messages, the plan\'s buttons clear of the card', () => {
   const { makerSteps, BOT_CHAT_HEADER, BOT_CHAT_MESSAGES } = loadTsx(`${DIR}/tour-steps.ts`);
   const steps = makerSteps({ slug: 'film', name: 'Friday Film Crew', conversationId: 12 });
-  const chat = steps[7];
-  assert.equal(chat.title, 'Your chat with Homeroom bot');
+  const chat = steps[8];
+  assert.equal(chat.title, 'Homeroom bot is working on Friday Film Crew');
   assert.equal(BOT_CHAT_HEADER, '.messages-thread-direct > .messages-thread-header');
   assert.equal(BOT_CHAT_MESSAGES, '.messages-thread-direct > .messages-thread-scroll');
   // One cut-out round both (index.tsx targetBox draws a selector list as one box).
   assert.deepEqual(chat.target.split(',').map((s) => s.trim()), [BOT_CHAT_HEADER, BOT_CHAT_MESSAGES]);
-  assert.deepEqual(chat.newestFromTop, { scroller: BOT_CHAT_MESSAGES, rows: 'article.messages-message' });
-  assert.equal(chat.place, 'bottom');
-  assert.equal(chat.text, 'It shows how the build is going here, and messages you when it\'s ready to try. Ask it for changes any time.');
+  // The owner's planned-vs-built review, 6 October 2026: at the foot of the
+  // screen the card covered the Build it it names. It sits under the chat's
+  // header, and (7 October) the newest card begins just under it, so the
+  // plan's title and first lines are never under the card.
+  assert.deepEqual(chat.newestBelowCard, { scroller: BOT_CHAT_MESSAGES, rows: 'article.messages-message' });
+  assert.deepEqual(chat.place, { below: BOT_CHAT_HEADER });
+  assert.equal(chat.text, 'It\'ll let you know here when there\'s something to look at.');
   // And the platform's top bar over them, as one cut-out (Evan, 5 Oct 2026:
   // "include the header on step 7 also").
   assert.equal(chat.alongside, '#platform-header');
   assert.equal(chat.endsAbove, undefined, 'the transcript ends at the composer, above the tab bar');
-  // The other steps' targets (the close step cuts out the app screen, with
-  // ✕ its press: tests/first-session.test.js), and only this one moves a
-  // transcript.
-  assert.deepEqual(steps.slice(0, 7).map((s) => s.target), [
-    '.app-card[data-slug="film"]', '#app-content', '#platform-mark-btn', '#app-view', '#platform-tab-workshop', '#app-content', '#platform-tab-messages',
+  // The other steps' targets (the app screen whole, then the menu and ✕ on
+  // it: tests/first-session.test.js), and only this one moves a transcript.
+  assert.deepEqual(steps.slice(0, 8).map((s) => s.target), [
+    '.app-card[data-slug="film"]', '#app-view', '#platform-mark-btn', '#improve-row-feedback', '#back-btn', '#platform-tab-workshop', '#app-content', '#platform-tab-messages',
   ]);
-  assert.equal(steps[3].press, '#back-btn');
-  assert.deepEqual(steps.map((s) => !!s.newestFromTop), [false, false, false, false, false, false, false, true]);
+  assert.ok(steps.every((s) => !s.press), 'no cut-out rings a control inside a wider one');
+  assert.deepEqual(steps.map((s) => !!s.newestBelowCard), [false, false, false, false, false, false, false, false, true]);
   // The Messages screen draws what it names: a direct conversation's section,
   // whose first child is its header (none when embedded in a hub, which the
   // bot's chat never is), its scroller, and an <article> per message.
@@ -587,12 +618,12 @@ test('the maker\'s last step shows the chat with Homeroom bot whole: its header 
     /<article id=\{`messages-message-\$\{message\.id\}`\} data-message-id=\{message\.id\} className=\{`messages-message group /);
 });
 
-test('the newest card is shown from its top: scrolled back just far enough, never forward', () => {
-  const { scrollBackFor, showNewestFromTop } = loadTsx(`${DIR}/index.tsx`);
-  assert.equal(scrollBackFor(120, 60), 68, 'its first line above the transcript: back to 8px under its top');
-  assert.equal(scrollBackFor(120, 128), 0);
-  assert.equal(scrollBackFor(120, 400), 0, 'lower down is in view: never forward');
-  assert.equal(scrollBackFor(120, 119.5), 9, 'whole pixels, rounded up');
+test('the newest card begins just under the coach card: its title and first lines are never under it', () => {
+  const { scrollToBelow, showNewestBelow } = loadTsx(`${DIR}/index.tsx`);
+  assert.equal(scrollToBelow(300, 400), 92, 'below the card: on, until it begins 8px under it');
+  assert.equal(scrollToBelow(300, 150), -158, 'under the card: back');
+  assert.equal(scrollToBelow(300, 308), 0);
+  assert.equal(scrollToBelow(300, 308.4), 0, 'whole pixels');
 
   const box = (top, height = 40) => ({ getBoundingClientRect: () => ({ top, height }) });
   const transcript = ({ top = 120, height = 500, scrollTop = 900, rows = [] } = {}) => {
@@ -602,31 +633,28 @@ test('the newest card is shown from its top: scrolled back just far enough, neve
   const rootOf = (...scrollers) => ({ querySelectorAll: (sel) => { rootOf.asked = sel; return scrollers; } });
   const spec = { scroller: '.messages-thread-direct > .messages-thread-scroll', rows: 'article.messages-message' };
 
-  // The plan card, newest and taller than the space: its top 60px above.
-  const hidden = transcript({ height: 0, rows: [box(-400)] });
-  const shown = transcript({ rows: [box(-300), box(60, 700)] });
-  assert.equal(showNewestFromTop(spec, rootOf(hidden, shown)), true);
+  // The chat opened at its foot: the plan card, newest, begins at 150, under
+  // the coach card (its foot at 290): it goes back 148px, to begin at 298.
+  const hidden = transcript({ height: 0, rows: [box(400)] });
+  const shown = transcript({ rows: [box(60), box(150, 330)] });
+  assert.equal(showNewestBelow(spec, 290, rootOf(hidden, shown)), true);
   assert.equal(rootOf.asked, spec.scroller);
   assert.equal(shown.asked, spec.rows);
-  assert.equal(shown.scrollTop, 900 - 68, 'the visible transcript, not one drawn nowhere');
+  assert.equal(shown.scrollTop, 900 - 148, 'the visible transcript, not one drawn nowhere');
   assert.equal(hidden.scrollTop, 900);
-  // Already from its top, a short newest message, nothing loaded yet, or no
-  // transcript at all: nothing moves.
-  const fits = transcript({ rows: [box(130)] });
-  assert.equal(showNewestFromTop(spec, rootOf(fits)), false);
-  assert.equal(fits.scrollTop, 900);
-  assert.equal(showNewestFromTop(spec, rootOf(transcript({ rows: [box(520)] }))), false);
-  assert.equal(showNewestFromTop(spec, rootOf(transcript())), false);
-  assert.equal(showNewestFromTop(spec, rootOf()), false);
-  // Never past the transcript's start.
-  const near = transcript({ scrollTop: 20, rows: [box(-200, 900)] });
-  assert.equal(showNewestFromTop(spec, rootOf(near)), true);
-  assert.equal(near.scrollTop, 0);
+  // Already in place, nothing loaded yet, or no transcript at all: nothing moves.
+  const placed = transcript({ rows: [box(298, 100)] });
+  assert.equal(showNewestBelow(spec, 290, rootOf(placed)), false);
+  assert.equal(placed.scrollTop, 900);
+  assert.equal(showNewestBelow(spec, 290, rootOf(transcript())), false);
+  assert.equal(showNewestBelow(spec, 290, rootOf()), false);
 
-  // Each frame, before the cut-out is measured, so the ring is drawn round
-  // what it shows, and it holds when the rows arrive after the step lands.
+  // Each frame, under the card as it is drawn, before the cut-out is
+  // measured, and it holds when the rows arrive after the step lands.
   const src = read(`${DIR}/index.tsx`);
-  assert.match(src, /const reveal = stepRef\.current\.newestFromTop;\s+if \(reveal\) showNewestFromTop\(reveal\);\s+const m = measure\(at, stepRef\.current\);/);
+  assert.match(src, /const reveal = stepRef\.current\.newestBelowCard;\s+const card = reveal \? document\.querySelector\(CARD_SELECTOR\)\?\.getBoundingClientRect\(\) : null;\s+if \(reveal && card && card\.height\) showNewestBelow\(reveal, card\.bottom\);\s+const m = measure\(at, stepRef\.current\);/);
+  assert.match(src, /const CARD_SELECTOR = '\[role="dialog"\]\[aria-labelledby="first-session-tour-title"\]';/);
+  assert.match(src, /role="dialog"\s+aria-labelledby="first-session-tour-title"/);
 });
 
 test('the admin Journey page says which first session answered the join screen', () => {

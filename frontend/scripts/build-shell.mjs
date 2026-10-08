@@ -35,6 +35,12 @@ const dirname = path.dirname(fileURLToPath(import.meta.url));
 const FRONTEND = path.join(dirname, '..');
 const ROOT = path.join(FRONTEND, '..');
 
+// The bundled English catalog (src/lib/i18n/catalogs.generated.json) and the
+// hashed language packs are inputs of the bundle below. Only a mistake in the
+// English source can fail this; a translation never does. See
+// frontend/locales/README.md.
+require(path.join(ROOT, 'scripts/language-packs.js')).buildLanguagePacks(ROOT);
+
 const {
   expectedStamp, formatHtmlStamp, formatJsStamp, formatBuildMeta, normalizeBuildSha,
   buildScopedAssetUrl, prefixShellAssetUrls,

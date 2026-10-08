@@ -517,8 +517,62 @@ test('GET /challenges: category falls back to OTHER when the template has none',
     const item = body.data.find((c) => c.id === 2);
     assert.equal(item.category, 'OTHER');
     assert.equal(item.metric, null, 'no metric configured on this template');
-    assert.equal(item.cta_label, 'Existing Label', 'an existing cta_label is never overwritten by the fallback');
+    // #3202: a CTA without a link is no CTA. The template's own label is
+    // dropped with it, so the app draws no button that opens nothing.
+    assert.equal(item.cta_link, null);
+    assert.equal(item.cta_label, null, 'no link: no label, not even the template\'s own');
+    assert.equal(item.cta_type, null);
+    assert.equal(item.mobile_cta_label, null);
   });
+});
+
+test('GET /challenges: a CTA with a link keeps its label; a blank link sends none (#3202)', async () => {
+  const saved = { ...CHALLENGE_TEMPLATES[0] };
+  try {
+    await withServer({}, async (base) => {
+      let res = await getJson(base, '/api/v4/mobile/challenges?season_event_id=100', CAROL);
+      let item = (await res.json()).data.find((c) => c.id === 1);
+      assert.equal(item.cta_link, 'https://t/cta');
+      assert.equal(item.cta_type, 'button');
+      assert.equal(item.mobile_cta_label, 'Go Mobile', 'a mobile CTA with a link is sent as it is');
+      assert.equal(item.mobile_cta_link, 'app://go');
+
+      // Only the mobile link: everything passes through as before, the
+      // generic label included, for the app to draw that link with.
+      Object.assign(CHALLENGE_TEMPLATES[0], { cta_link: null });
+      res = await getJson(base, '/api/v4/mobile/challenges?season_event_id=100', CAROL);
+      item = (await res.json()).data.find((c) => c.id === 1);
+      assert.equal(item.cta_label, 'Get Started', 'a mobile-only CTA keeps the label');
+      assert.equal(item.mobile_cta_label, 'Go Mobile');
+      assert.equal(item.mobile_cta_link, 'app://go');
+
+      // Only the web link: a mobile label riding it is kept.
+      Object.assign(CHALLENGE_TEMPLATES[0], { cta_link: 'https://t/cta', mobile_cta_link: null });
+      res = await getJson(base, '/api/v4/mobile/challenges?season_event_id=100', CAROL);
+      item = (await res.json()).data.find((c) => c.id === 1);
+      assert.equal(item.mobile_cta_label, 'Go Mobile', 'a mobile label on the web link is kept');
+      assert.equal(item.cta_link, 'https://t/cta');
+
+      Object.assign(CHALLENGE_TEMPLATES[0], { cta_label: 'Start', cta_link: '  ', mobile_cta_link: '' });
+      res = await getJson(base, '/api/v4/mobile/challenges?season_event_id=100', CAROL);
+      item = (await res.json()).data.find((c) => c.id === 1);
+      assert.equal(item.cta_label, null, 'a whitespace link is no link');
+      assert.equal(item.cta_link, null);
+      assert.equal(item.mobile_cta_label, null);
+      assert.equal(item.mobile_cta_type, null);
+
+      // /seasons goes through the same rule.
+      res = await getJson(base, '/api/v4/mobile/seasons', ALICE);
+      const season10 = (await res.json()).data.find((s) => s.season_id === 10);
+      const ch1 = season10.events.find((e) => e.season_event_id === 100).challenges
+        .find((c) => c.challenge_id === 1);
+      assert.equal(ch1.cta_label, null);
+      assert.equal(ch1.cta_link, null);
+      assert.equal(ch1.mobile_cta_label, null);
+    });
+  } finally {
+    Object.assign(CHALLENGE_TEMPLATES[0], saved);
+  }
 });
 
 test('GET /challenges: active_only keeps only enabled + not-completed', async () => {

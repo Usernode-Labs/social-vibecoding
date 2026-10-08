@@ -1107,7 +1107,9 @@ function CreationCard({ scope, onOpen }: { scope: Scope; onOpen: OpenPerson }) {
 // somebody who joined one through an invite link, each timed from the start
 // of that session. The aha in the first session: the maker sent an invite,
 // or the person who joined wrote in its chat or filed a request, within the
-// hour. Under them, the invite funnel: links opened, sign-ins through one
+// hour. The question's other answer, "Look around first", is counted as its
+// own outcome beside Made a project (#4039), with whether they made one of
+// their own later. Under them, the invite funnel: links opened, sign-ins through one
 // (in their two ways: from the link, or already signed in), joins, and what
 // dropped off between each.
 
@@ -1122,10 +1124,11 @@ type FirstSessionData = {
   week: string; finished: boolean; sessionMinutes: number;
   make: { people: number; notRecorded: NotRecorded | null; steps: FirstSessionStep[]; aha: number };
   join: { people: number; steps: FirstSessionStep[]; aha: number };
+  look: { people: number; notRecorded: NotRecorded | null; steps: FirstSessionStep[] };
   opens: InviteFunnel | NotRecorded;
-  recordedFrom: { make: string | null; reward: string | null; opens: string | null; signedIn: string | null };
+  recordedFrom: { make: string | null; reward: string | null; opens: string | null; signedIn: string | null; look: string | null };
   examples: Array<{
-    path: 'make' | 'join'; userId: number; name: string; slug: string; project: string; startedAt: string | null;
+    path: 'make' | 'join' | 'look'; userId: number; name: string; slug: string | null; project: string | null; startedAt: string | null;
     steps: Record<string, number | null>;
   }>;
 };
@@ -1136,7 +1139,10 @@ const FIRST_SESSION_STEPS: Record<string, [string, string]> = {
   running: ['Running', 'their project ran for the first time'],
   said: ['Wrote in its chat', 'their first message in the project\'s chat'],
   suggested: ['Filed a request', 'their first request on the project'],
+  made: ['Made a project later', 'a project of their own, after looking around'],
 };
+
+const FIRST_SESSION_PATHS: Record<string, string> = { make: 'made it', join: 'joined', look: 'looked around' };
 
 function FirstSessionRows({ steps, people, minutes }: { steps: FirstSessionStep[]; people: number; minutes: number }) {
   return (
@@ -1267,6 +1273,18 @@ function FirstSessionCard({ scope, onOpen }: { scope: Scope; onOpen: OpenPerson 
           </div>
           <div className="mt-3"><FirstSessionRows steps={data.join.steps} people={data.join.people} minutes={minutes} /></div>
         </div>
+        <div id="admin-journey-first-session-look">
+          <div className={`${JUI.label} mb-1.5`}>Looked around first</div>
+          {data.look.notRecorded ? <Num v={data.look.notRecorded} /> : (
+            <>
+              <div className="flex items-baseline gap-2">
+                <span className={JUI.headline}>{data.look.people}</span>
+                <span className={JUI.fine}>{`chose Look around first, beside ${plural(data.make.people, 'project', 'projects')} made`}</span>
+              </div>
+              <div className="mt-3"><FirstSessionRows steps={data.look.steps} people={data.look.people} minutes={minutes} /></div>
+            </>
+          )}
+        </div>
       </div>
       {scope.cohort ? null : (
         <div id="admin-journey-first-session-opens">
@@ -1281,8 +1299,8 @@ function FirstSessionCard({ scope, onOpen }: { scope: Scope; onOpen: OpenPerson 
             <div key={`${e.path}-${e.userId}`} data-journey-first-session-example={e.path}>
               <div className="flex flex-wrap items-center gap-1.5">
                 <PersonChip person={{ userId: e.userId, name: e.name }} onOpen={onOpen} />
-                <span className="text-sm font-medium truncate min-w-0">{e.project}</span>
-                <span className={AdminUI.badge.outline}>{e.path === 'make' ? 'made it' : 'joined'}</span>
+                {e.project ? <span className="text-sm font-medium truncate min-w-0">{e.project}</span> : null}
+                <span className={AdminUI.badge.outline}>{FIRST_SESSION_PATHS[e.path] || e.path}</span>
               </div>
               <div className={`mt-0.5 flex flex-wrap gap-x-2 ${JUI.fine}`}>
                 {Object.entries(e.steps).map(([key, seconds]) => (

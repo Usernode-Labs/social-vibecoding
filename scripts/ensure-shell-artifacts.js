@@ -112,6 +112,12 @@ if (needsShell) {
   }
 } else {
   console.log(`[ensure-shell] ${htmlOnly ? 'HTML is' : 'shell artifacts are'} current`);
+  // The shell build writes the bundled language catalog, and the tests that
+  // load the language runtime import it. A current document does not prove
+  // that ignored file is still on disk, and making it is cheap.
+  if (read(path.join(ROOT, 'frontend/src/lib/i18n/catalogs.generated.json')) === null) {
+    require('./language-packs').buildLanguagePacks(ROOT);
+  }
 }
 
 // CSS also scans public/js/**, which is outside the shell stamp. Recompile on
