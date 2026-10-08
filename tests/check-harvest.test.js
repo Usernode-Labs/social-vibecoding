@@ -503,10 +503,25 @@ test('outcomeFromLog shapes the unit-suite row from a finished Job\'s output', a
   assert.equal(failed.row.advisory, true, 'not yet graduated: advisory');
   assert.ok(failed.row.failureReason, 'a failing Job carries a reason');
 
-  const timedOut = await unitSuite.outcomeFromLog({ pool, appId: 9, sessionId: 42, succeeded: false, stdout: '', timedOut: true, graduated: true });
+  // Killed at its deadline before printing a line: the pod never got to
+  // the suite (a full cluster keeps it pending), so it never ran.
+  const timedOut = await unitSuite.outcomeFromLog({ pool, appId: 9, sessionId: 42, succeeded: false, stdout: '', stderr: 'DeadlineExceeded', timedOut: true, graduated: true });
   assert.equal(timedOut.row.status, 'fail');
   assert.equal(timedOut.row.advisory, false);
-  assert.match(timedOut.row.failureReason, /exceeded .* killed|timed out/i, 'the same wording the live runner uses for a killed suite');
+  assert.equal(timedOut.row.couldNotRun, true);
+  assert.equal(timedOut.row.failureReason,
+    'The unit suite stopped before any test ran: its job ran out of time without printing anything. | DeadlineExceeded');
+  assert.equal(timedOut.history, null, 'it observed nothing, so it records nothing');
+
+  // Killed at its deadline while the tests ran: still the suite's verdict,
+  // worded as the live runner words a killed suite.
+  const slow = await unitSuite.outcomeFromLog({
+    pool, appId: 9, sessionId: 42, succeeded: false, timedOut: true, graduated: true,
+    stdout: `${unitSuite.SETUP_DONE_SENTINEL}\nok 1 - a\n`, stderr: 'DeadlineExceeded',
+  });
+  assert.equal(slow.row.couldNotRun, undefined);
+  assert.match(slow.row.failureReason, /^Suite run exceeded \d+s and was killed\./);
+  assert.equal(slow.history.passed, false);
 });
 
 // ── kubernetes: finding and reading the Jobs ────────────────────────────

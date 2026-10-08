@@ -15535,7 +15535,13 @@ const AppView = {
     const done = !!u.done;
     let sub;
     let sentence;
-    if (done) {
+    if (done && u.notRun === true) {
+      // Its Job was refused or its setup stopped before any test ran
+      // (services/unit-suite.js notRunOutcome): no test failed, and the
+      // verdict says why once it lands.
+      sub = 'npm test could not run';
+      sentence = 'The repo unit suite (npm test) could not run, so no test result came back.';
+    } else if (done) {
       const ok = u.exitOk !== false;
       sub = ok ? `npm test finished: ${passed} passed` : `npm test finished: ${failed} failed`;
       sentence = ok

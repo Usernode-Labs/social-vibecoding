@@ -2182,22 +2182,31 @@ async function runCheckJob(config, {
     }
   };
   const boundedOutput = text => boundedCheckOutput(text, maxBuffer);
+  // A create the API refused or never answered: nothing ran, so the caller
+  // can say the check could not start rather than that it failed
+  // (services/unit-suite.js reads the mark).
+  const create = async (call) => {
+    try { return await call(); } catch (err) {
+      if (err && typeof err === 'object') err.checkJobNotCreated = true;
+      throw err;
+    }
+  };
   try {
     signal?.throwIfAborted();
     if (inputSecretName) {
-      inputSecret = await core.createNamespacedSecret({ namespace, body: {
+      inputSecret = await create(() => core.createNamespacedSecret({ namespace, body: {
         apiVersion: 'v1', kind: 'Secret',
         metadata: { name: inputSecretName, namespace, labels: labels({ sessionId, environment: unitSuite ? 'worker' : 'capture' }) },
         type: 'Opaque', stringData: unitSuite
           ? Object.fromEntries(Object.entries(env || {}).map(([key, value]) => [key, String(value)]))
           : { 'tests.json': String(stdinPayload) },
-      } });
+      } }));
       inputSecretCreated = true;
     }
     signal?.throwIfAborted();
     // A refused create (the namespace's quota, for one) leaves no Job to own
     // the Secret; the finally below deletes it.
-    const createdJob = await batch.createNamespacedJob({ namespace, body });
+    const createdJob = await create(() => batch.createNamespacedJob({ namespace, body }));
     // A platform restart must not orphan private clone credentials. The Job's
     // TTL also garbage-collects its input Secret if normal cleanup cannot run.
     // The Secret goes first so a Pod never starts without its input, which

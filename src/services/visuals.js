@@ -32,6 +32,7 @@ const sessionBus = require('./session-bus');
 const appManifest = require('./app-manifest');
 const checkHistory = require('./check-history');
 const unitSuite = require('./unit-suite');
+const unitSuiteRow = require('./unit-suite-row');
 const contentReview = require('./content-review');
 const smallChange = require('./small-change');
 const assetRouteCheck = require('./asset-route-check');
@@ -893,6 +894,14 @@ function connectionExhaustionDetail(rows, { origin = '', census = null } = {}) {
 //
 // `options.extraRows` are synthesised blocking rows that did not come from
 // the container at all (today: the over-ceiling guard).
+//
+// The merge-blocking unit-suite row of a suite that never ran
+// (unit-suite.js notRunOutcome), or null.
+function blockingNotRun(extraRows) {
+  return (Array.isArray(extraRows) ? extraRows : [])
+    .find((r) => unitSuiteRow.isNotRunRow(r) && !r.advisory) || null;
+}
+
 function classifyTests(frames, expectedCount, options) {
   const opts = options || {};
   const dispatched = Array.isArray(opts.dispatched) ? opts.dispatched : null;
@@ -925,10 +934,13 @@ function classifyTests(frames, expectedCount, options) {
       return { state: 'error', results: results.concat(extraRows) };
     }
     const all = results.concat(extraRows);
+    // A merge-blocking unit suite that never ran gave no verdict: 'error'.
+    const notRun = blockingNotRun(extraRows);
+    if (notRun) return { state: 'error', results: all, errorDetail: unitSuiteRow.notRunDetail(notRun) };
     // Legacy container rows carry no advisory flag (always blocking);
     // extra rows block only when non-advisory — an ungraduated unit-suite
     // failure shows on the card without closing the gate (#1019 stance).
-    const anyFail = all.some((r) => r.status !== 'pass' && !r.advisory);
+    const anyFail = all.some((r) => r.status !== 'pass' && !r.advisory && !unitSuiteRow.isNotRunRow(r));
     return { state: anyFail ? 'failing' : 'passing', results: all };
   }
 
@@ -1092,7 +1104,24 @@ function classifyTests(frames, expectedCount, options) {
   }
 
   const results = rows.concat(extraRows);
-  const blocking = blockingFailures + extraRows.filter((r) => r && r.status !== 'pass' && !r.advisory).length;
+  const blocking = blockingFailures + extraRows
+    .filter((r) => r && r.status !== 'pass' && !r.advisory && !unitSuiteRow.isNotRunRow(r)).length;
+  // A merge-blocking unit suite that never reached `npm test` (its Job was
+  // refused, its pod stopped in setup) is the same fail-closed case as a
+  // graduated check with no verdict above: 'error', never 'failing'. The
+  // merge stays blocked, storeChecks schedules the error lane's retry, and
+  // no check history moves. Its sentence is the reason the card shows. An
+  // advisory one changes nothing here; its row says why it has no result.
+  const notRun = blockingNotRun(extraRows);
+  if (notRun) {
+    return {
+      state: 'error',
+      results,
+      errorDetail: unitSuiteRow.notRunDetail(notRun),
+      blockingCount: blocking, advisoryCount: advisoryFailures, passingCount: passed,
+      ranCount: rows.length, declaredCount: dispatched.filter((d) => d.repeatOf == null).length,
+    };
+  }
   return {
     state: blocking > 0 ? 'failing' : 'passing',
     results,
@@ -3320,7 +3349,8 @@ async function settleCaptureRun(config, pool, run) {
         // The unit-suite row graduates through the same history: its
         // first observed pass flips it from advisory to merge-blocking,
         // and (recordRun's COALESCE) no later failure demotes it.
-        if (unitOutcome) historyRows.push(unitOutcome.history);
+        // A suite that never ran observed nothing, so it records nothing.
+        if (unitOutcome && unitOutcome.history) historyRows.push(unitOutcome.history);
         // The asset-route row graduates the same way (#2315).
         if (assetOutcome) historyRows.push(assetOutcome.history);
         // And the render-health row: advisory until this app's pages have

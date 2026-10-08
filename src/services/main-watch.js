@@ -55,6 +55,7 @@
 
 const log = require('./logger');
 const unitSuite = require('./unit-suite');
+const unitSuiteRow = require('./unit-suite-row');
 
 function isEnabled() {
   const v = String(process.env.MAIN_WATCH_ENABLED ?? '1').trim().toLowerCase();
@@ -152,9 +153,11 @@ async function mergePause(pool, appId) {
 }
 
 // The verdict a run produced, from the unit-suite row. 'error' is a run
-// that could not happen — the clone or the install failed, or the runner
-// was killed at its deadline — and says nothing about main, so it pauses
-// nothing. A verdict about the code is 'passing' or 'failing'.
+// that could not happen — its Job could not be created, the clone or the
+// install failed (the row's `couldNotRun`, unit-suite.js notRunOutcome),
+// output that never reached a test, or a runner killed at its deadline —
+// and says nothing about main, so it pauses nothing. A verdict about the
+// code is 'passing' or 'failing'.
 function classify(outcome) {
   if (!outcome || !outcome.row) return { state: 'skipped', detail: { reason: 'no runnable test script' } };
   const row = outcome.row;
@@ -163,6 +166,10 @@ function classify(outcome) {
     ...(row.failureReason ? { failureReason: row.failureReason } : {}),
   };
   if (row.status === 'pass') return { state: 'passing', detail };
+  // A suite that never reached `npm test`: it could not run at all, or its
+  // install failed (`setupFailed`, unit-suite.js INSTALL_FAILURES). Neither
+  // has ever paused merges.
+  if (unitSuiteRow.isNotRunRow(row) || row.setupFailed === true) return { state: 'error', detail };
   const reason = String(row.failureReason || '');
   if (/^Suite setup failed/.test(reason) || /^Suite run exceeded/.test(reason)) {
     return { state: 'error', detail };

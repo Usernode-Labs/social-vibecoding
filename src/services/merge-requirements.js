@@ -558,6 +558,9 @@ function provisional(session) {
   // runs again on its own (visuals.js settleCaptureRun), so nobody has to act.
   const rolloutRetry = check === 'error'
     && s.check_error_detail === require('./staging-recovery').ROLLOUT_RETRY_DETAIL;
+  // An 'error' because the repo unit suite could not run (its Job was
+  // refused, its setup stopped before any test): the preview was fine.
+  const unitNotRun = check === 'error' && !!require('./unit-suite-row').notRunError(s);
   const checkState = (check === 'passing' || check === 'skipped') ? 'done'
     : rolloutRetry ? 'active'
       : (check === 'failing' || check === 'error') ? 'blocked'
@@ -569,9 +572,10 @@ function provisional(session) {
     state: checkState,
     detail: check === 'failing' ? { note: 'some checks are failing' }
       : rolloutRetry ? { note: 'they ran while Homeroom was updating and will run again' }
-        : check === 'error' ? { note: 'the staging preview could not start, so the tests could not run' }
-          : deferred ? { note: 'waiting for the head to merge cleanly; the preview is built, the tests run then' }
-            : check === 'pending' ? { note: 'still running' } : null,
+        : unitNotRun ? { note: 'the unit suite could not run, so there is no verdict yet' }
+          : check === 'error' ? { note: 'the staging preview could not start, so the tests could not run' }
+            : deferred ? { note: 'waiting for the head to merge cleanly; the preview is built, the tests run then' }
+              : check === 'pending' ? { note: 'still running' } : null,
   });
 
   if (s.shotsEnforced || s.shots_enforced) {
