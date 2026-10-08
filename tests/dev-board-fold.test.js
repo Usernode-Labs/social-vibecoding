@@ -1530,9 +1530,14 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // composer's Build with, a refused send), and no route reaches them
   // without a screenshot-only parameter. 733 leaves 147 slots.
   //
+  // 733 → 732: −1 (#4311): the Settings choice of where changes get built
+  // is gone (nothing acted on its value since #4268), so the check that
+  // read its row after the connectors on #settings/connectors went with it.
+  // 732 leaves 148 slots.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 733);
+  checkCap.assertPinned(DAPP.tests.length, 732);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

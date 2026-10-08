@@ -4162,12 +4162,6 @@
       "expectSelector": "a#back-btn[href=\"#apps\"]"
     },
     {
-      "name": "Settings can answer the build-flow question for good (#1049), after the connectors on Connectors & CLI, with no GitHub rows",
-      "path": "/#settings/connectors",
-      "expectSelector": "#settings-section-content:not(:has([data-settings-section=\"linked-accounts\"]:not(.hidden))) [data-settings-section=\"connectors\"]:not(.hidden) + [data-settings-section=\"build-venue\"]:not(.hidden):has(option[value=\"claude-code\"])",
-      "expectText": "Where changes get built"
-    },
-    {
       "name": "A connector-imported proposal names the coding agent that built it (#967)",
       "path": "/?demo=1#app/usernode-2d5619/board",
       "expectText": "Built with Claude Code"
