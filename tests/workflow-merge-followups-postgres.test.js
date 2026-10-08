@@ -200,7 +200,11 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     const voter = await user();
     const s = await proposal(a, { title: 'Dark mode' });
     await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, 'yes')`, [s.id, voter.id]);
+    // The voter was asked to vote: a bell row about the change.
+    await pool.query(`INSERT INTO notifications (user_id, app_id, session_id, kind) VALUES ($1, $2, $3, 'pr_proposed')`, [voter.id, a.id, s.id]);
     await merge(s);
+    assert.ok(pushed.some((p) => p.kind === 'user' && p.routing.userId === voter.id && p.data.type === 'notifications_changed'),
+      'everyone with a bell row about it re-reads their bell when it merges');
     assert.equal((await row(s.id)).live_at, null);
     assert.equal((await pool.query(`SELECT count(*)::int AS n FROM notifications WHERE session_id = $1 AND kind = 'pr_merged'`, [s.id])).rows[0].n, 0);
     work.results.set(WORK.deliver, { sha: SHA('a') });
@@ -224,7 +228,6 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     const { rows: [n] } = await pool.query(`SELECT id FROM notifications WHERE session_id = $1 AND kind = 'pr_merged'`, [s.id]);
     const toAuthor = pushed.filter((p) => p.kind === 'user' && p.routing.userId === s.author.id);
     assert.ok(toAuthor.some((p) => p.data.type === 'notification_new' && p.data.notificationId === n.id && !p.data.notification));
-    assert.ok(toAuthor.some((p) => p.data.type === 'notifications_changed'));
     // The requests it closed: the issue lists re-read once that work ended.
     assert.ok(heard.some((p) => p.data.type === 'issue_update' && p.data.action === 'github_synced' && p.data.source === 'pr_merged'));
     // Kicks into flows not migrated yet, once, where it decided.

@@ -207,7 +207,7 @@ test('workflow machines in a process of their own, and through its crash', { tim
   // ── Known dependencies on the web process's memory ──────────────────
 
   await t.test('a shots run holding a worker in the web process keeps a merge from retiring it', {
-    todo: 'worker.js#_workerHolds lives in the process running the shots run (list: services | calls src/services/worker.js#retireWorker); step 1 makes it durable',
+    todo: 'worker.js#_workerHolds lives in the process running the shots run (list: services | uses src/services/worker.js:retireWorker); step 1 makes it durable',
   }, async () => {
     const a = await app({ selfHosted: true });
     const s = await proposal(a);
@@ -223,7 +223,7 @@ test('workflow machines in a process of their own, and through its crash', { tim
   });
 
   await t.test('a change busy in the web process is not marked as carried by a merge', {
-    todo: 'active-workers.js#activeSessionOperations lives in the process running the operation (list: services | calls src/services/active-workers.js#isSessionBusy); step 1 makes it durable',
+    todo: 'active-workers.js#activeSessionOperations lives in the process running the operation (list: services | uses src/services/active-workers.js:isSessionBusy); step 1 makes it durable',
   }, async () => {
     const a = await app({ selfHosted: true });
     const carrier = await proposal(a);
@@ -248,7 +248,7 @@ test('workflow machines in a process of their own, and through its crash', { tim
   });
 
   await t.test('the version pill reads "deploying" while the workflow process deploys a merge', {
-    todo: 'app-deploy-status.js#_state lives in the process that deploys (list: services | calls src/services/staging.js#rebuildProduction); step 2 makes it durable',
+    todo: 'app-deploy-status.js#_state lives in the process that deploys (list: services | uses src/services/staging.js:rebuildProduction); step 2 makes it durable',
   }, async () => {
     const a = await app();
     const s = await proposal(a);

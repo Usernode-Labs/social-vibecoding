@@ -424,25 +424,29 @@ then a deployment change, with more than one replica and alerts on overdue work.
 
 ### What the machines still depend on (the list)
 
-`node scripts/workflow-state-trace.mjs` reads the source and lists, for each part of each
-machine (transitions and domain writes, each work handler, each notifier, the routes'
-side in `platform.ts`, the kernel), the boundary between it and the code not migrated
-yet:
-- each function outside `src/workflow/` its code calls (`calls`);
+`node scripts/workflow-state-trace.mjs` lists, for each part of each machine
+(transitions and domain writes, each work handler, each notifier, the routes' side in
+`platform.ts`, the kernel), the boundary between it and the code not migrated yet:
+- each place its code names code outside `src/workflow/` (`uses`), as the workflow code
+  writes it: `legacy('services/x').fn` is `uses src/services/x.js:fn`, a module handed
+  on whole is `(whole module)`, a member chosen at run time is `[computed]`. It is read
+  from the workflow code's own text, so an edit to the code behind it does not move it;
 - what its own code does that the part may not: module state, timers, work nobody
-  awaits, process listeners, outside I/O from a transition;
+  awaits, process listeners, outside I/O from a transition. For transitions and domain
+  writes, also what their calls reach, since all of it runs inside the transaction;
+  their reach is small;
 - each notifier still declared;
 - each table a work handler's own code writes;
 - each other writer of a column the machine owns (schema.sql's ownership triggers).
 
-That boundary can be read exactly, so it is what the list holds. How far a call reaches
-into the code behind it (the in-memory state, timers and I/O there) is a report,
-`--reach`, and not part of the list: reading it from a dynamic codebase is an
-approximation, and a gate must not move when the approximation does. The two-process
-and restart tests (below) show what the list cannot. `--paths` says where each entry
-comes from.
+How far a work handler's or a notifier's call reaches into the code behind it (the
+in-memory state, timers and I/O there) is a report, `--reach`, and not part of the list:
+that reach is large, and reading it from a dynamic codebase is an approximation, which
+a gate must not follow. The two-process and restart tests (below) show what the list
+cannot. `--paths` says where each entry comes from.
 
-The list is checked in, with the kernel's own mechanisms it allows and why.
+The list is checked in, with what it allows and why (the kernel's own mechanisms, the
+logger).
 `tests/workflow-process-state.test.js` fails when a change adds an entry, and when an
 entry disappears until the list is shrunk with `--shrink`, which never adds anything.
 So the list only shrinks, and a migration step is done when its entries are gone. A

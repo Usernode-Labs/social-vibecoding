@@ -9,11 +9,12 @@
 // script parses every module under src/ (and server.js), builds a call
 // graph of functions, and for each part of each machine under src/workflow/
 // (transitions, work handlers, notifiers, the routes' side, the kernel)
-// lists, exactly, its boundary: each function outside src/workflow/ its
-// code calls, what its own code does that the part may not, each notifier,
-// each table a handler writes itself, each other writer of a column the
-// machine owns (ratchetEntries). That is the list
-// tests/workflow-process-state.test.js gates on; it may only shrink.
+// lists its boundary, from the workflow code's own text: each place it
+// names code outside src/workflow/, what its own code does that the part may
+// not (for transitions, also what their calls reach), each notifier, each
+// table a handler writes itself, each other writer of a column the machine
+// owns (ratchetEntries). That is the list tests/workflow-process-state.test.js
+// gates on; it may only shrink.
 //
 // Behind each call, the walk reports (--reach) what it meets:
 //   state     a module-level binding that changes after load (a reassigned
@@ -874,6 +875,11 @@ function collectRefs(ctx, u, unitOf, writes) {
         const ext = moduleTarget(ctx, callee.expression);
         if (ext?.external && ioPackage(ext.external)) u.refs.push({ kind: 'io', io: ioPackage(ext.external), line: lineOf(sf, n) });
       }
+      // import('./x'): the whole module.
+      if (callee.kind === ts.SyntaxKind.ImportKeyword && n.arguments[0] && ts.isStringLiteralLike(n.arguments[0])) {
+        const target = resolveSpecifier(ctx.root, mod.file, n.arguments[0].text, false);
+        if (target) { mod.imports.add(target); u.refs.push({ kind: 'module', module: target, line: lineOf(sf, n) }); }
+      }
       // require('./x') / legacy('x') with no member: the whole module.
       const m = moduleTarget(ctx, n);
       if (m?.module && !(ts.isPropertyAccessExpression(n.parent) && n.parent.expression === n)) {
@@ -882,6 +888,14 @@ function collectRefs(ctx, u, unitOf, writes) {
     }
     if (ts.isPropertyAccessExpression(n) && !(ts.isPropertyAccessExpression(n.parent) && n.parent.expression === n && false)) {
       refMember(ctx, u, n);
+    }
+    // legacy('x')[name]: a member chosen at run time.
+    if (ts.isElementAccessExpression(n)) {
+      const m = moduleTarget(ctx, n.expression);
+      const id = ts.isIdentifier(n.expression) ? n.expression.text : null;
+      const alias = m?.module ? m : id ? (lookup(u, id)?.local.alias || (mod.top.get(id)?.kind === 'alias' ? mod.top.get(id).alias : null)) : null;
+      if (alias?.module && !(ts.isStringLiteralLike(n.argumentExpression))) u.refs.push({ kind: 'computed', module: alias.module, line: lineOf(sf, n) });
+      else if (alias?.module) u.refs.push({ kind: 'member', module: alias.module, member: n.argumentExpression.text, line: lineOf(sf, n), called: isCallee(n) });
     }
     if (ts.isIdentifier(n) && isReference(n)) refIdentifier(ctx, u, n);
     if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) sqlOf(u, n.text);
@@ -1498,58 +1512,98 @@ export function ownership(program, root = program.root) {
 
 // The ratchet's entries: per machine, `<role> | <entry>`, minus what the
 // baseline allows (process resources every module shares).
-// The list the ratchet gates on: the boundary between a machine and the
-// code not migrated yet, which can be read exactly, per part of the machine:
-//   calls      each function outside src/workflow/ its code calls directly;
+// The list the ratchet gates on, per part of each machine:
+//   uses       each place its code names code outside src/workflow/, as it
+//              is written there: `legacy('services/x').fn` is
+//              `uses src/services/x.js:fn`, a module handed on whole is
+//              `(whole module)`, a member chosen at run time is
+//              `[computed]`. Read from the source text, so neither the
+//              resolver nor an edit to the code behind it can move it;
 //   <kind>     what its own code does that the part may not: module state,
 //              timers, unawaited work, process listeners, outside I/O from
-//              a transition (FORBIDDEN);
+//              a transition (FORBIDDEN); for transitions and domain writes
+//              also behind their calls, since all of it would run inside
+//              the transaction (their reach is small and stable);
 //   notifier   each notifier still declared;
 //   writes     each table a work handler's own code writes;
 //   ownership  each other writer of a column the machine owns.
-// How far a call reaches into the code behind it is a report (--reach), not
-// part of the list: reading that from a dynamic codebase is an
-// approximation, and a gate must not move when the approximation does. The
-// two-process and restart tests prove what the list cannot.
+// What a work handler's or a notifier's call reaches behind it is a report
+// (--reach): reading that from a dynamic codebase is an approximation, and
+// a gate must not move when the approximation does. The two-process and
+// restart tests prove what the list cannot.
 const isWorkflowCode = (file) => file.startsWith('src/workflow/');
+const SHARED = new Set(['src/workflow/platform.ts']);
+
+// The part of a machine a function of its code belongs to.
+function roleOf(name, u) {
+  if (name === 'kernel') return 'kernel';
+  if (name === 'platform') return 'web';
+  if (!u.mod.file.startsWith(`src/workflow/${name}/`)) return 'shared';
+  if (!u.mod.file.endsWith('/services.ts')) return 'decider';
+  return u.top.name.endsWith('Notifiers') ? 'notifiers' : 'services';
+}
 
 export function ratchetEntries(trace, allowed = new Set(), root = REPO) {
   const tables = schemaTables(root);
+  const program = trace.program;
   const out = new Map();
   for (const [name, t] of trace.machines) {
     const set = new Map();   // entry -> detail
     const add = (e, detail) => { if (!set.has(e)) set.set(e, detail); };
-    for (const r of t.roles.values()) {
-      const forbidden = FORBIDDEN.get(r.role);
-      // The part's own code: workflow code it reaches without leaving it (a
-      // call out and back in is that call's business).
-      const own = [];
-      const seen = new Set(r.roots);
-      for (const u of r.roots) own.push(u);
-      for (let i = 0; i < own.length; i++) {
-        for (const e of trace.program.step(own[i]).edges) {
-          if (!e.unit || seen.has(e.unit) || !isWorkflowCode(e.unit.mod.file) || r.stops?.has(e.unit)) continue;
-          seen.add(e.unit);
-          own.push(e.unit);
-        }
+    // Its files, and the shared workflow modules they import (not another
+    // machine's, not the kernel's, not platform.ts, traced on their own).
+    const files = new Set(t.files);
+    for (const f of t.files) {
+      for (const i of program.modules.get(f)?.imports || []) {
+        if (isWorkflowCode(i) && !i.startsWith('src/workflow/kernel/') && !SHARED.has(i)
+          && ![...trace.machines.keys()].some((m) => i.startsWith(`src/workflow/${m}/`))) files.add(i);
       }
-      for (const u of own) {
-        const step = trace.program.step(u);
-        for (const e of step.edges) {
-          if (!e.unit || isWorkflowCode(e.unit.mod.file) || e.via === 'load') continue;
-          const target = e.unit.parent ? e.unit.top : e.unit;
-          add(`${r.role} | calls ${stable(target.label)}`, { from: r.name, detail: `from ${stable(u.label)}`, target });
-        }
-        for (const m of step.meets) {
-          const key = entryKey(m);
-          if (!forbidden.has(m.kind) || allowed.has(key) || !isWorkflowCode(m.mod.file)) continue;
-          add(`${r.role} | ${key}`, { from: r.name, meet: m, walk: r });
-        }
-        if (r.role === 'services') {
-          for (const [tbl, cols] of u.sql?.writes || []) {
-            if (tables.has(tbl)) add(`services | writes ${tbl}`, { from: r.name, detail: `${[...cols].sort().join(', ')}; ${stable(u.label)}` });
+    }
+    for (const f of files) {
+      for (const u of program.modules.get(f)?.units || []) {
+        const role = roleOf(name, u);
+        const at = { from: stable(u.label) };
+        for (const r of u.refs) {
+          if (r.kind === 'member' && !isWorkflowCode(r.module)) add(`${role} | uses ${r.module}:${r.member}`, at);
+          else if (r.kind === 'module' && !isWorkflowCode(r.module)) add(`${role} | uses ${r.module} (whole module)`, at);
+          else if (r.kind === 'computed' && !isWorkflowCode(r.module)) add(`${role} | uses ${r.module}[computed]`, at);
+          else if (r.kind === 'top' && r.member === undefined) {
+            const b = u.mod.top.get(r.name);
+            if (b?.kind === 'alias' && !isWorkflowCode(b.alias.module)) {
+              add(b.alias.member ? `${role} | uses ${b.alias.module}:${b.alias.member}` : `${role} | uses ${b.alias.module} (whole module)`, at);
+            }
           }
         }
+        if (roleOf(name, u) === 'services') {
+          for (const [tbl, cols] of u.sql?.writes || []) {
+            if (tables.has(tbl)) add(`services | writes ${tbl}`, { detail: `${[...cols].sort().join(', ')}; ${stable(u.label)}` });
+          }
+        }
+      }
+    }
+    for (const r of t.roles.values()) {
+      const forbidden = FORBIDDEN.get(r.role);
+      // Transitions and domain writes: everything they reach. The rest:
+      // what their own code does (workflow code reached through workflow
+      // code; a call out and back in is that call's business).
+      let meets;
+      if (r.role === 'decider') meets = [...r.met.values()];
+      else {
+        const own = [...r.roots];
+        const seen = new Set(own);
+        for (let i = 0; i < own.length; i++) {
+          for (const e of program.step(own[i]).edges) {
+            if (!e.unit || seen.has(e.unit) || !isWorkflowCode(e.unit.mod.file) || r.stops?.has(e.unit)) continue;
+            seen.add(e.unit);
+            own.push(e.unit);
+          }
+        }
+        meets = own.flatMap((u) => program.step(u).meets).filter((m) => isWorkflowCode(m.mod.file));
+      }
+      for (const m of meets) {
+        const key = entryKey(m);
+        if (!forbidden.has(m.kind) || allowed.has(key)) continue;
+        add(`${r.role} | ${key}`, { from: r.name, meet: m, walk: r });
       }
       if (r.role === 'notifiers') add(`notifiers | ${r.name}`, { from: r.name });
     }
@@ -1595,8 +1649,13 @@ function report(trace, allowed, opts, root) {
       else if (d.detail) why = `  [${d.detail}]`;
       lines.push(`- ${e}${why}`);
       if (opts.paths && d.meet) lines.push(`    via ${d.walk.pathTo(d.meet.via).join(' → ')}`);
-      if (opts.reach && d.target) {
-        const met = [...reachOf(d.target).met.values()].filter((m) => !allowed.has(m.key));
+      const usedTarget = (() => {
+        const m = /\| uses (\S+?):(\S+)$/.exec(e);
+        if (!m) return null;
+        return trace.program.resolveExport(m[1], m[2]).find((f) => f.unit)?.unit || null;
+      })();
+      if (opts.reach && usedTarget) {
+        const met = [...reachOf(usedTarget).met.values()].filter((m) => !allowed.has(m.key));
         if (met.length) {
           const kinds = new Map();
           for (const m of met) kinds.set(m.kind, (kinds.get(m.kind) || 0) + 1);

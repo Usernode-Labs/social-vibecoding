@@ -202,9 +202,7 @@ function toLive(e: Event<any>, data: Data, deliveredSha: string | null, ctx: Tra
   }))];
   const push = [...(x.push || []), voteUpdate(d, { live: true })];
   if (d.role === 'merge') push.push(appVersion({ appId: d.appId, appSlug: d.appSlug, sha: deliveredSha, prNumber: d.prNumber }));
-  // The author's new "your change is live" moves their phone's badge.
-  const notify = [...(x.notify || []), { type: 'badgeSync', sessionId: d.sessionId }];
-  return outcome('live', d, { writes, work, messages, push, notify });
+  return outcome('live', d, { writes, work, messages, push, notify: x.notify });
 }
 
 function lineInput(d: Data) {
@@ -384,7 +382,9 @@ function workResult(status: Followup['status']) {
       }
       // The requests it closed: the open-issues lists re-read. (The handler
       // used to say so midway; it is said when the work ends.)
-      if (p.kind === WORK.issues && !(prev.input as { closeOnly?: boolean } | null)?.closeOnly) {
+      // Only when it ran: GitHub off skips it, as [main]'s merge did.
+      if (p.kind === WORK.issues && status === 'done' && !(result as { skipped?: string }).skipped
+        && !(prev.input as { closeOnly?: boolean } | null)?.closeOnly) {
         return { next: { name: s.name, data: d }, push: [issueUpdate({ action: 'github_synced', appSlug: d.appSlug, appId: d.appId, source: 'pr_merged' })],
           notify: [{ type: 'boardChange', appId: d.appId, appSlug: d.appSlug }] };
       }
@@ -661,10 +661,8 @@ async function writeMergedNotification(tx: Tx, w: any, ctx: WriteContext) {
   });
   // Named, not carried: the relaying web process reads the row for the
   // author's tabs (ws.js relayNotification), so the bell's query never runs
-  // in, or holds up, the transition that makes the change live. Their bell
-  // and badge re-read too: the bell write before this one could not see it.
+  // in, or holds up, the transition that makes the change live.
   for (const row of created || []) {
     ctx.push(toUser(Number(row.user_id), { type: 'notification_new', notificationId: Number(row.id) }));
-    ctx.push(toUser(Number(row.user_id), { type: 'notifications_changed' }));
   }
 }

@@ -139,11 +139,17 @@ export function demoServices() {
   return {
     'demo.write': { async run() { await legacy('services/writer').write(null); } },
     'demo.own': { async run(ctx: any) { await ctx.pool.query("UPDATE things SET note = 'x' WHERE id = 1"); } },
+    'demo.computed': { async run(ctx: any) { return legacy('services/helper')[ctx.input.fn](); } },
+    'demo.handed': { async run() { return use(legacy('services/store')); } },
     'demo.remember': { async run() { legacy('services/store').remember('a', 1); legacy('services/lifecycle').run(1); } },
   };
 }
+function use(m: any) { return m.remember('a', 1); }
 export function demoNotifiers() {
-  return { kick: () => legacy('services/effects').schedule() };
+  return {
+    kick: () => legacy('services/effects').schedule(),
+    async late() { const m = await import('../../services/helper.js'); return m.helped(); },
+  };
 }
 `,
   'src/workflow/platform.ts': `
@@ -226,30 +232,35 @@ test('calls are followed through parameters, thunks, injected defaults and this'
   for (const n of [1, 2, 3, 4]) assert.ok(many.has(`state src/services/m${n}.js#s${n}`), `m${n}`);
 });
 
-test('the list is the boundary: each call out of the workflow code, and what that code does itself', async () => {
+test('the list is the boundary, as the workflow code writes it, and what transitions reach', async () => {
   const { m, root, program } = await fixture();
   const trace = m.traceMachines(root);
   const entries = [...m.ratchetEntries(trace, new Set(), root).get('demo').keys()];
   const has = (e) => assert.ok(entries.includes(e), `${e}\nin:\n${entries.join('\n')}`);
-  has('decider | calls src/services/effects.js#shell');
-  has('decider | calls src/services/helper.js#helped');
+  // Each place the workflow code names code outside src/workflow/.
+  has('decider | uses src/services/effects.js:shell');
+  has('decider | uses src/services/helper.js:helped');
+  has('services | uses src/services/writer.js:write');
+  has('services | uses src/services/store.js:remember');
+  has('services | uses src/services/lifecycle.js:run');
+  has('services | uses src/services/helper.js[computed]');
+  has('services | uses src/services/store.js (whole module)');
+  has('notifiers | uses src/services/effects.js:schedule');
+  has('notifiers | uses src/services/helper.js (whole module)');
+  // What its own code does; for transitions, also behind their calls.
   has('decider | state src/workflow/demo/machine.ts#memo');
   has('decider | io src/workflow/demo/machine.ts#fetched fetch');
-  has('services | calls src/services/writer.js#write');
-  has('services | calls src/services/store.js#remember');
-  has('services | calls src/services/lifecycle.js#createThing');
+  has('decider | io src/services/effects.js#shell child_process');
+  has('decider | state src/services/helper.js#seen');
   has('services | writes things');
   has('notifiers | notifier kick');
-  has('notifiers | calls src/services/effects.js#schedule');
   has('ownership | things.status ← src/services/writer.js#write');
   has('ownership | things.status ← trigger things_fill');
   assert.ok(!entries.some((e) => e.startsWith('ownership | things.note')), 'only owned columns');
-  // What lies behind a call is not in the list: the call is.
-  for (const behind of ['state src/services/helper.js#seen', 'state src/services/store.js#cache', 'io src/services/effects.js#shell child_process']) {
-    assert.ok(!entries.some((e) => e.endsWith(behind)), behind);
+  // Behind a handler's or a notifier's call: the report's, not the list's.
+  for (const behind of ['services | state src/services/store.js#cache', 'notifiers | timer src/services/effects.js#schedule setTimeout', 'services | writes logs']) {
+    assert.ok(!entries.includes(behind), behind);
   }
-  assert.ok(!entries.includes('services | writes logs'), 'a table the code behind a call writes');
-  // ...it is the report's (--reach), walked from the called function.
   assert.ok(program.walk([program.findUnit('src/services/store.js#remember')]).met.has('state src/services/store.js#cache'));
   const web = [...m.ratchetEntries(trace, new Set(), root).get('platform').keys()];
   assert.deepEqual(web, ['web | state src/workflow/platform.ts#runtime']);
