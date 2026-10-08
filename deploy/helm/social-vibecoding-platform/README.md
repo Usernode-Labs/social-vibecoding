@@ -455,3 +455,17 @@ Incomplete rollouts, controller failures, paused rollouts, and unavailable API
 reads remain distinct. This reports Argo-applied rollout state; image build and
 chart publication progress remain in the `Build Kubernetes images` workflow.
 Kubernetes self-app merges do not write the standalone host-deployer nudge.
+
+## The workflow worker
+
+`workflow.worker.enabled` (off by default) deploys `<fullname>-workflow`: the
+platform image running `node workflow-worker.js`, which runs the workflow
+runtime's work items and timers instead of the leader web Pod
+(`docs/workflows.md`, "Running it"). The web Pods then get `WF_LOOPS=worker`
+and keep the pipeline slots. It has no Service; its only port is the
+kubelet's `/health` probe on 8081. It shares the platform's environment
+(`social-vibecoding-platform.platformEnv` in `templates/platform.yaml`),
+ServiceAccount and network policies, with its own `DB_POOL_MAX`
+(`workflow.worker.dbPoolMax`), resources and `/tmp` size. It does nothing
+until a workflow flag is on. Turning the value off again hands the loops
+back to the leader at the next rollout.

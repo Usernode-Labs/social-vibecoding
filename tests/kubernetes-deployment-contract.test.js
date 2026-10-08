@@ -422,3 +422,36 @@ test('Kubernetes status inventory does not invoke Docker helpers', async () => {
   assert.deepEqual(await status.listContainers({ appRuntime: 'kubernetes' }), []);
   assert.deepEqual(await status.getStats({ appRuntime: 'kubernetes' }), {});
 });
+
+test('the workflow worker runs the platform image and environment, off by default, with no Service', () => {
+  const worker = read('deploy/helm/social-vibecoding-platform/templates/workflow.yaml');
+  const platform = read('deploy/helm/social-vibecoding-platform/templates/platform.yaml');
+  const values = read('deploy/helm/social-vibecoding-platform/values.yaml');
+  assert.match(values, /workflow:\n  worker:\n    enabled: false/);
+  assert.match(worker, /^\{\{- if and \.Values\.enabled \.Values\.platform\.enabled \.Values\.workflow\.worker\.enabled \}\}/);
+  assert.match(worker, /app\.kubernetes\.io\/component: workflow/);
+  assert.doesNotMatch(worker, /component: platform/, 'never selected by the platform Service or PDB');
+  assert.doesNotMatch(worker, /kind: Service\b/);
+  assert.match(worker, /image: \{\{ include "social-vibecoding-platform\.image" \.Values\.platform\.image \| quote \}\}/);
+  assert.match(worker, /serviceAccountName: social-platform-runtime/);
+  assert.match(worker, /command: \["node", "workflow-worker\.js"\]/);
+  assert.match(worker, /containerPort: 8081/);
+  assert.match(worker, /livenessProbe:\n\s+httpGet: \{path: \/health, port: health\}/);
+  assert.doesNotMatch(worker, /readinessProbe/, 'nothing routes to it');
+  assert.match(worker, /maxUnavailable: 0/);
+  // One environment for both, so they cannot drift; the per-role values sit beside it.
+  for (const tpl of [platform, worker]) {
+    assert.match(tpl, /include "social-vibecoding-platform\.platformEnv" \. \| trimPrefix "\\n" \| indent 10/);
+  }
+  assert.match(platform, /\{\{- define "social-vibecoding-platform\.platformEnv" \}\}/);
+  assert.match(platform, /name: WF_LOOPS, value: \{\{ ternary "worker" "leader" \.Values\.workflow\.worker\.enabled \| quote \}\}/);
+  assert.match(worker, /name: WF_LOOPS, value: worker/);
+  assert.match(worker, /name: DB_POOL_MAX, value: \{\{ \.Values\.workflow\.worker\.dbPoolMax \| int64 \| quote \}\}/);
+});
+
+test('the platform network policies cover the workflow worker too', () => {
+  const policy = read('deploy/helm/social-vibecoding-platform/templates/networkpolicy.yaml');
+  const both = /- \{key: app\.kubernetes\.io\/component, operator: In, values: \[platform, workflow\]\}/g;
+  // The platform policy, the chart-owned PostgreSQL ingress and the API server egress.
+  assert.equal((policy.match(both) || []).length, 3);
+});

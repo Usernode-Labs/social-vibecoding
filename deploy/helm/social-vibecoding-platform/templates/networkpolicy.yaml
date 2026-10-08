@@ -25,10 +25,14 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "-3"
 spec:
+  # The web Pods and the workflow worker (workflow.yaml), which runs the
+  # same image and reaches what the platform reaches. Nothing listens on
+  # the worker's port 3000, so the ingress below opens nothing there.
   podSelector:
     matchLabels:
       {{- include "social-vibecoding-platform.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: platform
+    matchExpressions:
+      - {key: app.kubernetes.io/component, operator: In, values: [platform, workflow]}
   policyTypes: [Ingress, Egress]
   ingress:
     - from:
@@ -150,7 +154,8 @@ spec:
         - podSelector:
             matchLabels:
               {{- include "social-vibecoding-platform.selectorLabels" . | nindent 14 }}
-              app.kubernetes.io/component: platform
+            matchExpressions:
+              - {key: app.kubernetes.io/component, operator: In, values: [platform, workflow]}
         {{- end }}
         {{- if .Values.migration.enabled }}
         - podSelector:
@@ -180,10 +185,12 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "-3"
 spec:
+  # The web Pods and the workflow worker, as in the platform policy above.
   endpointSelector:
     matchLabels:
       {{- include "social-vibecoding-platform.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: platform
+    matchExpressions:
+      - {key: app.kubernetes.io/component, operator: In, values: [platform, workflow]}
   ingress:
     - fromEntities: [ingress]
       toPorts:

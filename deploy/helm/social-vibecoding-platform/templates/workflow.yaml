@@ -1,0 +1,91 @@
+{{- if and .Values.enabled .Values.platform.enabled .Values.workflow.worker.enabled }}
+# The workflow worker (workflow-worker.js): the platform image running the
+# workflow runtime's work items and timers, with no HTTP app and no
+# Service. Its own component label keeps the platform Service, the PDB and
+# the platform's network policies from selecting it.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "social-vibecoding-platform.fullname" . }}-workflow
+  labels:
+    {{- include "social-vibecoding-platform.labels" . | nindent 4 }}
+    app.kubernetes.io/component: workflow
+spec:
+  replicas: {{ .Values.workflow.worker.replicas }}
+  revisionHistoryLimit: 5
+  progressDeadlineSeconds: 600
+  # Two workers at once are safe (work claims are leased row locks), so a
+  # release starts the new one before stopping the old.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "social-vibecoding-platform.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: workflow
+  template:
+    metadata:
+      annotations:
+        checksum/secrets: {{ toYaml .Values.secrets | sha256sum }}
+        social.usernode.io/source-revision: {{ .Values.release.sourceRevision | quote }}
+      labels:
+        {{- include "social-vibecoding-platform.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: workflow
+    spec:
+      # The platform's account: the work it runs (deploys, builds, previews)
+      # is what the platform did in-process.
+      serviceAccountName: social-platform-runtime
+      automountServiceAccountToken: true
+      # Running work is aborted at SIGTERM and resumed from its checkpoint by
+      # the next claim; this bounds closing the pools.
+      terminationGracePeriodSeconds: 90
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: workflow
+          image: {{ include "social-vibecoding-platform.image" .Values.platform.image | quote }}
+          imagePullPolicy: {{ .Values.platform.image.pullPolicy }}
+          command: ["node", "workflow-worker.js"]
+          securityContext:
+            {{- include "social-vibecoding-platform.containerSecurityContext" . | nindent 12 }}
+          envFrom:
+            - configMapRef:
+                name: social-build-policy
+            - secretRef:
+                name: {{ include "social-vibecoding-platform.secretName" . }}
+          env:
+{{ include "social-vibecoding-platform.platformEnv" . | trimPrefix "\n" | indent 10 }}
+            - {name: DB_POOL_MAX, value: {{ .Values.workflow.worker.dbPoolMax | int64 | quote }}}
+            - {name: WF_LOOPS, value: worker}
+          ports:
+            - {name: health, containerPort: 8081, protocol: TCP}
+          # Nothing routes to it, so it has no readiness probe.
+          startupProbe:
+            httpGet: {path: /health, port: health}
+            periodSeconds: 3
+            timeoutSeconds: 2
+            failureThreshold: 40
+          livenessProbe:
+            httpGet: {path: /health, port: health}
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.workflow.worker.resources | nindent 12 }}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: {{ .Values.workflow.worker.tmpSizeLimit | quote }}
+{{- end }}
