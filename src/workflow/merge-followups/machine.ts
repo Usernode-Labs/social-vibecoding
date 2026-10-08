@@ -125,6 +125,9 @@ const EVENTS = {
       },
       carrierState: p.carrierState as 'delivering' | 'live' | 'deploy_failed',
       deliveredSha: sha(p?.deliveredSha, 'deliveredSha'),
+      // The head found among the pull request's commits; null from a find
+      // that predates the pin (a result recorded before this version).
+      head: sha(p?.head, 'head'),
     };
   },
   // Production of this app now runs `sha` (a rebuild that succeeded, or the
@@ -303,12 +306,15 @@ function merged(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFStat
 // and MARK_SQL conditions, now read under the change's own lock. The
 // message is then refused and no instance is made, so the change can still
 // merge on its own, or be included by a later merge.
-function notIncludable(f: Facts, carrierAppId: number | null): string | null {
+function notIncludable(f: Facts, carrierAppId: number | null, head: string | null): string | null {
   const s = f.session;
   if (!s) return 'no_session';
   if (carrierAppId != null && s.appId !== carrierAppId) return 'other_app';
   if (s.status !== 'promoted') return 'moved_on';
   if (s.activeTurn) return 'turn_running';
+  // Its head is the one found among the merged pull request's commits: a
+  // revision that landed since (an upload, a sync with main) is not merged.
+  if (head && s.head !== head) return 'head_moved';
   if (s.isHeadless) return 'headless';
   if (!s.prNumber) return 'no_pull_request';
   if (s.pendingSecrets) return 'holds_secret_values';
@@ -359,7 +365,7 @@ function workResult(status: Followup['status']) {
       const prev = s.data.followups[p.workKey]!;
       const d: Data = { ...s.data, followups: { ...s.data.followups,
         [p.workKey]: { ...prev, status, ...(p.error ? { error: p.error.message } : {}) } } };
-      const result = (p.result || {}) as { sha?: string; contains?: boolean; ids?: number[] };
+      const result = (p.result || {}) as { sha?: string; contains?: boolean; found?: { id: number; head: string }[]; ids?: number[] };
       if (p.kind === WORK.deliver && s.name !== 'live') {
         if (status === 'done') return deployedBuild(e, s.name, d, result.sha ? String(result.sha).toLowerCase() : null, ctx);
         if (s.name === 'delivering') return toFailed(e, d, p.error?.message || 'the deploy failed');
@@ -368,13 +374,17 @@ function workResult(status: Followup['status']) {
         return toLive(e, d, result.sha || null, ctx);
       }
       if (p.kind === WORK.find && status === 'done') {
-        const found = (Array.isArray(result.ids) ? result.ids : []).filter((id) => Number.isInteger(id) && !d.included.includes(id));
-        const next = { ...d, included: [...d.included, ...found] };
-        return { next: { name: s.name, data: next }, messages: found.map((id) => ({
-          to: { machine: MACHINE, key: sessionKey(id) },
+        // Each change with the head that was found merged (`ids`, without
+        // heads, is a result recorded before heads were pinned).
+        const listed = Array.isArray(result.found) ? result.found
+          : (Array.isArray(result.ids) ? result.ids : []).map((id) => ({ id, head: null }));
+        const found = listed.filter((c) => Number.isInteger(c?.id) && !d.included.includes(c.id));
+        const next = { ...d, included: [...d.included, ...found.map((c) => c.id)] };
+        return { next: { name: s.name, data: next }, messages: found.map((c) => ({
+          to: { machine: MACHINE, key: sessionKey(c.id) },
           event: { type: 'Included', payload: {
-            sessionId: id, carrier: { ...carrierRef(d), mergeSha: d.mergeSha, mergedAt: d.mergedAt, force: d.force },
-            carrierState: s.name, deliveredSha: d.deliveredSha,
+            sessionId: c.id, carrier: { ...carrierRef(d), mergeSha: d.mergeSha, mergedAt: d.mergedAt, force: d.force },
+            carrierState: s.name, deliveredSha: d.deliveredSha, head: c.head,
           } },
         })) };
       }
@@ -484,7 +494,7 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
         Included: {
           guard: (s, e, f, ctx) => {
             if (ctx.key !== sessionKey(e.payload.sessionId)) return reject('key_mismatch');
-            const reason = notIncludable(f, e.appId);
+            const reason = notIncludable(f, e.appId, e.payload.head);
             return reason ? reject(reason) : ok();
           },
           to: (s, e, f, ctx) => included(e, f, ctx),

@@ -35,10 +35,13 @@ stub('../src/routes/issues', { async resolveSupersededCloseProposals() { return 
 const realWs = require('../src/services/ws');
 stub('../src/services/ws', { ...realWs, pushIssueUpdate() {} });
 
+const retired = [];
+stub('../src/services/worker', { async retireWorker(id) { retired.push(id); return { deferred: false }; } });
+
 const { mergeFollowupsServices } = require('../src/workflow/merge-followups/services.ts');
 const { WORK } = require('../src/workflow/merge-followups/machine.ts');
 
-const pool = { async query() { return { rows: [] }; } };
+const pool = { rows: [], async query() { return { rows: pool.rows }; } };
 const handlers = mergeFollowupsServices({ config: {}, pool });
 const run = (input) => handlers[WORK.issues].run({ input, key: 'issues', attempt: 1, resumeFrom: null, checkpoint: async () => {} });
 const base = { sessionId: 5, appId: 2, appSlug: 'shop', prNumber: 8, owner: 'acme', repo: 'shop' };
@@ -70,4 +73,44 @@ test('recording a close is part of the work: a database failure there is retried
   watch.result = { closed: [7], skipped: [], stillOpen: [] };
   await run({ ...base, linkedIssues: [7], closeOnly: false });
   assert.deepEqual(records.strict, [true], 'the watch runs strict too');
+});
+
+test('included.find names each change with the head found merged, reading no process\'s memory', async () => {
+  const A = 'a'.repeat(40);
+  const B = 'b'.repeat(40);
+  pool.rows = [
+    { id: 11, source: 'native', reviewed_head_sha: A.toUpperCase(), imported_pr_head_sha: null },
+    { id: 12, source: 'imported', reviewed_head_sha: null, imported_pr_head_sha: B },
+    { id: 13, source: 'native', reviewed_head_sha: 'c'.repeat(40), imported_pr_head_sha: null },
+  ];
+  gh.listPullRequestCommitShas = async () => ({ shas: [A, B], complete: true });
+  try {
+    const out = await handlers[WORK.find].run({ input: { ...base }, key: 'included', attempt: 1, resumeFrom: null, checkpoint: async () => {} });
+    assert.deepEqual(out, { found: [{ id: 11, head: A }, { id: 12, head: B }] });
+  } finally {
+    pool.rows = [];
+  }
+  const source = require('node:fs').readFileSync(require.resolve('../src/workflow/merge-followups/services.ts'), 'utf8');
+  assert.doesNotMatch(source, /isSessionBusy|active-workers/, 'a busy check in memory sees nothing from another process');
+});
+
+test('worker retirement waits for a shots run another process is running in the worker', async () => {
+  let working = 2;
+  const queries = [];
+  const shotsPool = { async query(sql, params) { queries.push(params); return { rows: working-- > 0 ? [{}] : [] }; } };
+  const retire = mergeFollowupsServices({ config: {}, pool: shotsPool, shotsPollMs: 5 })[WORK.retire];
+  const ctx = (signal) => ({ input: { sessionId: 31 }, key: 'retire', attempt: 1, resumeFrom: null, checkpoint: async () => {}, signal });
+  retired.length = 0;
+  assert.deepEqual(await retire.run(ctx(new AbortController().signal)), { deferred: false, waitedForShots: true });
+  assert.equal(queries.length, 3, 'read until the run stopped working');
+  assert.deepEqual(queries[0], [31, ['provisioning', 'exploring', 'replaying', 'reviewing']]);
+  assert.deepEqual(retired, [31], 'then retired, once');
+  // Stopping the process mid-wait reports nothing: the next claim waits again.
+  working = Infinity;
+  retired.length = 0;
+  const stop = new AbortController();
+  const pending = retire.run(ctx(stop.signal));
+  stop.abort();
+  await assert.rejects(pending, { name: 'AbortError' });
+  assert.deepEqual(retired, []);
 });

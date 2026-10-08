@@ -275,10 +275,14 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
   await t.test('F8: included changes are marked under their own lock and go live with their carrier', async () => {
     const a = await app();
     const carrier = await proposal(a, { title: 'Fix' });
-    const carried = await proposal(a, { status: 'promoted', linked: [4], title: 'First version' });
-    const busy = await proposal(a, { status: 'promoted' });
+    const carried = await proposal(a, { status: 'promoted', linked: [4], title: 'First version', extra: { head: SHA('c') } });
+    const busy = await proposal(a, { status: 'promoted', extra: { head: SHA('d') } });
     await pool.query(`UPDATE chat_sessions SET active_turn = '{"id":"t"}'::jsonb WHERE id = $1`, [busy.id]);
-    work.results.set(WORK.find, (input) => ({ ids: input.sessionId === carrier.id ? [carried.id, busy.id] : [] }));
+    // Found at one head, moved since (an upload or a sync with main in
+    // another process): its new head is not what merged.
+    const moved = await proposal(a, { status: 'promoted', extra: { head: SHA('e') } });
+    work.results.set(WORK.find, (input) => ({ found: input.sessionId === carrier.id
+      ? [{ id: carried.id, head: SHA('c') }, { id: busy.id, head: SHA('d') }, { id: moved.id, head: SHA('f') }] : [] }));
     await merge(carrier);
     // Run everything but the carrier's delivery: its deploy is still running.
     await pool.query(`UPDATE wf_work SET status = 'settled' WHERE key = $1 AND kind = $2`, [sessionKey(carrier.id), WORK.deliver]);
@@ -303,6 +307,11 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     const { rows: [refusal] } = await pool.query(
       `SELECT result, reason FROM wf_events WHERE machine = $1 AND key = $2 AND type = 'Included'`, [MACHINE, sessionKey(busy.id)]);
     assert.deepEqual({ ...refusal }, { result: 'rejected', reason: 'turn_running' });
+    assert.equal(await instance(moved), undefined);
+    assert.equal((await row(moved.id)).status, 'promoted');
+    const { rows: [movedRefusal] } = await pool.query(
+      `SELECT result, reason FROM wf_events WHERE machine = $1 AND key = $2 AND type = 'Included'`, [MACHINE, sessionKey(moved.id)]);
+    assert.deepEqual({ ...movedRefusal }, { result: 'rejected', reason: 'head_moved' });
     await pool.query('UPDATE chat_sessions SET active_turn = NULL WHERE id = $1', [busy.id]);
     assert.equal((await merge(busy)).result, 'accepted');
     // The carrier goes live (its own rebuild reports the merge commit), and so does what it carried.

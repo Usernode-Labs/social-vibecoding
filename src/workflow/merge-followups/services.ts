@@ -3,14 +3,19 @@
 // lost). The handlers reuse [main]'s functions; each is safe to run again
 // after a crash, which is what a retried work item does.
 
+import { setTimeout as delay } from 'node:timers/promises';
 import type { Json, Pool, WorkHandler } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
 import { backoff, closeAndComment, gone, permanent } from '../github-work.ts';
 import { WORK } from './machine.ts';
 
-interface Deps { config: any; pool: Pool }
+interface Deps { config: any; pool: Pool; shotsPollMs?: number }
 
-export function mergeFollowupsServices({ config, pool }: Deps): Record<string, WorkHandler> {
+// The states of a before/after shots run working inside the proposal's
+// worker (from provisioning to review; a planned run has not started).
+const SHOTS_WORKING = ['provisioning', 'exploring', 'replaying', 'reviewing'];
+
+export function mergeFollowupsServices({ config, pool, shotsPollMs = 15000 }: Deps): Record<string, WorkHandler> {
   const github = () => legacy('services/github');
   const session = async (id: number) => (await pool.query(
     `SELECT cs.*, a.slug AS app_slug, a.repo_url FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`,
@@ -86,14 +91,26 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
       },
     },
 
-    // Its worker and Claude Code volume go (a shots run holding the worker
-    // keeps it until the run ends).
+    // Its worker and Claude Code volume go. A shots run working in the
+    // worker keeps it until the run ends. In the process running the shots
+    // that is the run's hold, which worker.retireWorker defers to; any other
+    // process (the workflow worker) cannot see the hold, so it reads the run
+    // from the database and waits for it, at most the run's own budget.
     [WORK.retire]: {
       maxAttempts: 5,
       backoffMs: backoff,
-      async run({ input }): Promise<Json> {
+      async run({ input, signal }): Promise<Json> {
+        const until = Date.now() + (config.shots?.maxRunMs || 1_440_000) + 300_000;
+        let waited = false;
+        while (Date.now() < until) {
+          const { rows } = await pool.query(
+            'SELECT 1 FROM shot_runs WHERE session_id = $1 AND state = ANY($2::text[]) LIMIT 1', [input.sessionId, SHOTS_WORKING]);
+          if (!rows.length) break;
+          waited = true;
+          await delay(shotsPollMs, undefined, { signal });
+        }
         const result = await legacy('services/worker').retireWorker(input.sessionId);
-        return { deferred: !!result?.deferred };
+        return { deferred: !!result?.deferred, ...(waited ? { waitedForShots: true } : {}) };
       },
     },
 
@@ -104,14 +121,18 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
       backoffMs: backoff,
       async run({ input }): Promise<Json> {
         const gh = github();
-        if (!gh.isEnabled()) return { ids: [] };
+        if (!gh.isEnabled()) return { found: [] };
+        // Each change goes with the head that was found merged, which the
+        // Included guard compares under the change's lock: an operation on
+        // the change in some other process (an upload, a sync with main) that
+        // moved it since is caught there, where no process's memory is read.
         const changes = legacy('services/included-changes');
         const { rows } = await pool.query(changes.CANDIDATES_SQL, [input.appId, input.sessionId]);
-        const busy = legacy('services/active-workers').isSessionBusy;
-        const idle = rows.filter((c: { id: number }) => !busy(Number(c.id)));
-        if (!idle.length) return { ids: [] };
+        if (!rows.length) return { found: [] };
         const listed = await gh.listPullRequestCommitShas(input.owner, input.repo, input.prNumber);
-        return { ids: changes.containedIn(idle, listed?.shas).map((c: { id: number }) => Number(c.id)) };
+        const head = legacy('services/pr-vote-revision').reviewedHeadForSession;
+        return { found: changes.containedIn(rows, listed?.shas)
+          .map((c: any) => ({ id: Number(c.id), head: String(head(c)).toLowerCase() })) };
       },
     },
 
