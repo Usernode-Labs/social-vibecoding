@@ -279,8 +279,10 @@ export function privateSteps({ slug, name }: TourProject): TourStep[] {
       screen: 'home',
       target: '#platform-tab-messages',
       ringed: true,
-      title: 'Homeroom bot is in Messages',
-      text: `It makes ${name} with you. You can always find it here.`,
+      // What the bot is for, then where it is (#4397); the maker's and "Look
+      // around first" tours keep their own card.
+      title: 'Meet Homeroom bot',
+      text: `Tell it what ${name} should do next, and it builds it for the group to try. It's always here in Messages.`,
     },
     {
       // The card's own heading says what it is for ("Make and share your
