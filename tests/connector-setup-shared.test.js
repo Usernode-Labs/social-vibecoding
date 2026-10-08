@@ -3,11 +3,11 @@
 //
 // The ask was to put the "connect Homeroom" steps for Claude and ChatGPT on
 // the dev session page itself, inline, instead of sending the reader to
-// Settings. The risk that comes with that ask is a second copy of six and
-// seven steps of product-specific prose, which drifts the first time either
-// product moves a button — and the facts here are the ones people already
-// get wrong (the exact connector name, "there is no client secret",
-// ChatGPT's Developer-mode gate). So the steps live in
+// Settings. The risk that comes with that ask is a second copy of two
+// six-step walkthroughs of product-specific prose, which drifts the first
+// time either product moves a button — and the facts here are the ones
+// people already get wrong (the exact connector name, "there is no client
+// secret"). So the steps live in
 // frontend/src/features/settings/connector-setup-steps.tsx and both screens
 // render that module.
 //
@@ -47,13 +47,13 @@ const cardHtml = (view) => renderToHtml(createElement(card().ConnectorSetupInlin
 }));
 
 test('the shared module is the only place the two walkthroughs are written', () => {
-  // Six and seven, the counts both routes' summaries in Settings advertise
-  // ("6 steps · also sets up Claude Code", "7 steps · needs Developer mode").
+  // Six, the count both routes' summaries in Settings advertise
+  // ("6 steps · also sets up Claude Code", "6 steps").
   const claude = STEPS.slice(STEPS.indexOf('export function ClaudeSetupSteps'),
     STEPS.indexOf('export function ChatgptSetupSteps'));
   const chatgpt = STEPS.slice(STEPS.indexOf('export function ChatgptSetupSteps'));
   assert.equal((claude.match(/<SetupStep n=\{\d\}/g) || []).length, 6);
-  assert.equal((chatgpt.match(/<SetupStep n=\{\d\}/g) || []).length, 7);
+  assert.equal((chatgpt.match(/<SetupStep n=\{\d\}/g) || []).length, 6);
 
   // Neither consumer restates them. A `SetupStep` in Settings is legitimate
   // — the Codex and generic-client routes still render rows in that idiom —
@@ -271,11 +271,12 @@ test('the card renders the hooks the declared checks select on', () => {
   assert.match(html, /class="dc-flow-actions"/, 'the card reuses the walkthrough\u2019s own action row');
 });
 
-test('a ChatGPT card renders ChatGPT\'s seven steps and its recap', () => {
+test('a ChatGPT card renders ChatGPT\'s six steps and its recap', () => {
   const html = cardHtml({ product: 'ChatGPT' });
   assert.match(html, /data-connector-setup="ChatGPT"/);
-  assert.match(html, /Turn on Developer mode\./);
-  assert.equal((html.match(/<li class="flex gap-3">/g) || []).length, 7);
+  assert.match(html, /Open Settings\./);
+  assert.match(html, /MCP URL: <\/strong>enter the MCP server URL above\./);
+  assert.equal((html.match(/<li class="flex gap-3">/g) || []).length, 6);
   assert.match(html, /In short:/);
   assert.doesNotMatch(html, /Add custom connector/, 'and none of Claude\u2019s');
 });
