@@ -85,7 +85,12 @@ const MERGE_FINALIZATION_LOCK = 991013;
 // at once would otherwise each find the same piece of work without a card,
 // and send it one each when it moved on a step between them.
 const HOMEROOM_BOT_CARDS_LOCK = 991014;
+// The daily digest of unexpected errors (platform-incident-alerts.js):
+// session-scoped, held for the length of one hourly sweep's digest decision
+// so one instance sends the day's bell summary and the rest skip the hour.
+// A digest sent twice is worse than one sent late.
+const PLATFORM_INCIDENT_DIGEST_LOCK = 991015;
 
 module.exports = { ADMIN_MUTATION_LOCK, EXTERNAL_TASK_SUBMIT_LOCK, PROPOSAL_UPDATE_LOCK, MERGE_FINALIZATION_LOCK, BUILD_RETENTION_LOCK,
   STAGING_BUILD_LOCK, PRODUCTION_BUILD_LOCK, STAGING_TEMPLATE_LOCK, PREVIEW_LIFECYCLE_LOCK,
-  VOTE_DIGEST_LOCK, CHALLENGE_SCORER_LOCK, WEEKLY_DIGEST_LOCK, HOMEROOM_BOT_LOCK, HOMEROOM_BOT_CARDS_LOCK };
+  VOTE_DIGEST_LOCK, CHALLENGE_SCORER_LOCK, WEEKLY_DIGEST_LOCK, HOMEROOM_BOT_LOCK, HOMEROOM_BOT_CARDS_LOCK, PLATFORM_INCIDENT_DIGEST_LOCK };

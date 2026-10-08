@@ -1365,6 +1365,12 @@ async function becomeLeader() {
   // above — hourly sweep, advisory-locked — posting one card per app into
   // its chat on Fridays, and nothing at all on a quiet week.
   require('./src/services/weekly-digest').start(config);
+  // The unexpected errors' two bells (services/platform-incident-alerts.js):
+  // an hourly sweep that re-runs the threshold check as a backstop for one a
+  // restart lost, and decides the one-a-day digest when something was
+  // logged. Advisory-locked like the digest above; the per-event check
+  // itself runs in platform-incidents.record()'s chain.
+  require('./src/services/platform-incident-alerts').start(config);
   // Welcome messages: somebody let in gets a group with the people an admin
   // chose. Leader-only so one Pod sends; the queue row's lock and the
   // message's idempotency key keep a retry from sending twice anyway.

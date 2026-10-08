@@ -155,6 +155,28 @@ function stagingMockNotifications() {
       detail: 'apps_warn:40:50',
       sessionId: null, prTitle: null, prNumber: null, headlessIssueNumber: null,
     },
+    // An unexpected error's threshold alert and the daily digest (services/
+    // platform-incident-alerts.js), same reason as the platform limit row
+    // above: a preview never sends a real one, so these two rows are how a
+    // reviewer or a declared check sees the kinds render. No app, like the
+    // real rows: the incidents belong to the platform. Their copy is built
+    // from the detail token, so the figures stand in for "[Mock]".
+    {
+      ...base,
+      id: 990214, kind: 'platform_incident',
+      createdAt: new Date(now - 4 * 60 * 1000).toISOString(),
+      appId: null, appSlug: null, appName: null,
+      detail: 'build_interrupted:3',
+      sessionId: null, prTitle: null, prNumber: null, headlessIssueNumber: null,
+    },
+    {
+      ...base,
+      id: 990215, kind: 'platform_incident_digest',
+      createdAt: new Date(now - 26 * 60 * 60 * 1000).toISOString(),
+      appId: null, appSlug: null, appName: null,
+      detail: '2',
+      sessionId: null, prTitle: null, prNumber: null, headlessIssueNumber: null,
+    },
     {
       ...base,
       id: 990202, kind: 'auto_solve_done', detail: 'failed',

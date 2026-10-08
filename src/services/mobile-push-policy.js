@@ -183,6 +183,34 @@ function platformLimitCopy(detail) {
       body: `${used} of ${cap} coding sessions are running. At the limit, idle sessions are paused to make room` };
 }
 
+// services/platform-incident-alerts.js detail token: "<kind>:<count>", e.g.
+// "build_interrupted:3". Read back here rather than required from there:
+// that module reaches the database helpers, and copy assembly stays
+// dependency-free. The kind's words are the ones the bot's Rollout health
+// panel and the Unexpected errors section use; an unknown kind gets the
+// generic wording, the way platform_limit falls back on an unreadable token.
+const PLATFORM_INCIDENT_DETAIL_RE = /^([a-z_]{1,31}):(\d{1,7})$/;
+
+const PLATFORM_INCIDENT_KIND_LABELS = Object.freeze({
+  build_interrupted: 'Build interrupted',
+});
+
+function platformIncidentCopy(detail) {
+  const m = PLATFORM_INCIDENT_DETAIL_RE.exec(String(detail || ''));
+  if (!m) {
+    return {
+      title: 'Unexpected error logged',
+      body: 'The platform logged an error that should not happen. Open Admin → Unexpected errors',
+    };
+  }
+  const [, kind, count] = m;
+  const label = PLATFORM_INCIDENT_KIND_LABELS[kind] || 'Unexpected error logged';
+  return {
+    title: `${label} ${count} times in an hour`,
+    body: 'The platform logged an error that should not happen. Open Admin → Unexpected errors',
+  };
+}
+
 // Kind-specific {title, body}, or null when the kind's essential context is
 // missing (e.g. a mention without a sender) — null means the generic copy.
 function buildCopy(kind, context, now) {
@@ -593,6 +621,8 @@ function buildCopy(kind, context, now) {
     // cap, the level and the figures, so the push can say how close it is.
     case 'platform_limit':
       return platformLimitCopy(detail);
+    case 'platform_incident':
+      return platformIncidentCopy(detail);
     default:
       return null;
   }

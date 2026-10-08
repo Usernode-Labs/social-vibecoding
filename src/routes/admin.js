@@ -140,6 +140,42 @@ function adminRoutes(config) {
     }
   });
 
+  // ── Unexpected errors (the log of what should never happen) ──
+  //
+  // services/platform-incidents.js's filtered log for the console's
+  // Unexpected errors section: kind and time-range filters, per-kind-per-day
+  // counts, and the known kinds for the filter picker. Read-only, so it
+  // stays on the plain adminMiddleware gate — a view-only admin may read
+  // the log, like the rollover status above.
+  router.get('/api/admin/platform-incidents', async (req, res) => {
+    try {
+      const incidents = require('../services/platform-incidents');
+      // A kind the table does not hold yet lists all kinds rather than
+      // erroring: the picker only ever sends what this route offered it.
+      const kind = /^[a-z_]{1,64}$/.test(String(req.query.kind || '')) ? String(req.query.kind) : null;
+      const days = [7, 14, 30].includes(Number(req.query.days)) ? Number(req.query.days) : 30;
+      const limit = 200;
+      const [log_, counts] = await Promise.all([
+        incidents.query(pool, { kind, days, limit }),
+        incidents.countsByKindByDay(pool, { days, kind }),
+      ]);
+      if (!log_ || !counts) {
+        return res.status(500).json({ error: 'Internal server error' });
+      }
+      res.json({
+        days,
+        kind,
+        total: log_.total,
+        items: log_.items,
+        byKindByDay: counts.byKind,
+        kinds: Object.values(incidents.KINDS),
+      });
+    } catch (err) {
+      log.error('admin', 'Unexpected errors read failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // ── Mobile push diagnostics ────────────────────────────────
   //
   // Read-only operational visibility over the private push tables. The

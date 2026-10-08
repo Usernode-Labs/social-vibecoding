@@ -1012,6 +1012,59 @@ async function notifyManagedOpenRouterReviewAdmins(pool, args) {
   return rows;
 }
 
+// An unexpected error crossing its threshold (services/platform-incident-
+// alerts.js). Same audience as platform_limit — the full admins, the only
+// people who can act — and the same unread de-dupe: while an admin still
+// holds an unread alert whose kind part matches, no second row, so a burst
+// (and two Pods racing it) is one row per admin. `detail` is
+// "<kind>:<count>", kept inside the column's 32 characters.
+async function createPlatformIncidentAlertNotifications(pool, { kind, count }) {
+  const k = String(kind || '').slice(0, 32);
+  if (!k) return [];
+  const token = `${k}:${Number(count) || 0}`.slice(0, 32);
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, source_user_id, kind, detail)
+     SELECT admin.id, NULL, 'platform_incident', $1::varchar(32)
+       FROM users admin
+      WHERE admin.is_admin = TRUE
+        AND admin.admin_readonly = FALSE
+        AND NOT EXISTS (
+          SELECT 1 FROM notifications existing
+           WHERE existing.user_id = admin.id
+             AND existing.kind = 'platform_incident'
+             AND split_part(existing.detail, ':', 1) = $2
+             AND existing.read_at IS NULL
+        )
+     RETURNING id, user_id, source_user_id, kind, detail, created_at`,
+    [token, k],
+  );
+  return rows;
+}
+
+// The daily digest of unexpected errors, one row per full admin, only when
+// something was logged since the previous one (the sweep decides that).
+// Bell-only: the kind is deliberately NOT a registered push kind, so
+// nothing here can reach a phone.
+async function createPlatformIncidentDigestNotifications(pool, { count }) {
+  const token = String(Number(count) || 0).slice(0, 32);
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, source_user_id, kind, detail)
+     SELECT admin.id, NULL, 'platform_incident_digest', $1::varchar(32)
+       FROM users admin
+      WHERE admin.is_admin = TRUE
+        AND admin.admin_readonly = FALSE
+        AND NOT EXISTS (
+          SELECT 1 FROM notifications existing
+           WHERE existing.user_id = admin.id
+             AND existing.kind = 'platform_incident_digest'
+             AND existing.read_at IS NULL
+        )
+     RETURNING id, user_id, source_user_id, kind, detail, created_at`,
+    [token],
+  );
+  return rows;
+}
+
 // Hydrate one freshly-inserted notification row with the same joins
 // listForUser performs and push it to its recipient over WS as a
 // notification_new. Best-effort: completion notifications ride inside
@@ -1975,6 +2028,8 @@ module.exports = {
   createProposalVoteNotification,
   createRevisionRecheckNotifications,
   createAppHealthNotification,
+  createPlatformIncidentAlertNotifications,
+  createPlatformIncidentDigestNotifications,
   createPlatformLimitNotifications,
   createCheckFailedNotification,
   createSessionDoneNotification,

@@ -140,11 +140,11 @@ export interface Incidents {
   items: Incident[];
 }
 
-const INCIDENT_KIND: Record<string, string> = {
+export const INCIDENT_KIND: Record<string, string> = {
   build_interrupted: 'Build interrupted',
 };
 
-const INCIDENT_OUTCOME: Record<string, string> = {
+export const INCIDENT_OUTCOME: Record<string, string> = {
   resumed: 'carried on from its plan',
   requeued: 'started over from the request',
   failed: 'stopped: too many in a row',

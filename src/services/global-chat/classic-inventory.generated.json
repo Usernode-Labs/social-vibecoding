@@ -838,6 +838,21 @@
     {
       "source": "src/routes/admin.js",
       "method": "GET",
+      "path": "/api/admin/platform-incidents",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.get.admin.platform.incidents.4ca00128",
+      "domain": "admin",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin"
+    },
+    {
+      "source": "src/routes/admin.js",
+      "method": "GET",
       "path": "/api/admin/mobile-push/diagnostics",
       "expression": null,
       "status": "mapped",

@@ -457,6 +457,33 @@ test('platform limit alerts name the cap, how full it is, and the lever', () => 
   assert.equal(copy(undefined).title, 'Platform limit');
 });
 
+test('unexpected-error alerts name the kind, how many, and where to look', () => {
+  // Full admins only, and no app: the title carries no " · App" suffix.
+  const copy = (detail) => buildMessage({
+    ...INPUT, kind: 'platform_incident', context: { detail },
+  }).notification;
+  assert.deepEqual(copy('build_interrupted:3'), {
+    title: 'Build interrupted 3 times in an hour',
+    body: 'The platform logged an error that should not happen. Open Admin → Unexpected errors',
+  });
+  assert.deepEqual(copy('build_interrupted:7').title, 'Build interrupted 7 times in an hour');
+  // An unknown future kind still says what happened, in the generic words.
+  assert.deepEqual(copy('release_stalled:3'), {
+    title: 'Unexpected error logged 3 times in an hour',
+    body: 'The platform logged an error that should not happen. Open Admin → Unexpected errors',
+  });
+  // An unreadable token says only what kind of alert it is.
+  assert.deepEqual(copy('garbage'), {
+    title: 'Unexpected error logged',
+    body: 'The platform logged an error that should not happen. Open Admin → Unexpected errors',
+  });
+  // The digest kind is deliberately NOT push copy: it is bell-only, so
+  // nothing registers it as a push kind.
+  const prefs = require('../src/services/mobile-push-preferences');
+  assert.equal(prefs.ALLOWED_KINDS.has('platform_incident_digest'), false);
+  assert.equal(prefs.ALLOWED_KINDS.has('platform_incident'), true);
+});
+
 test('#2386: a friend request and its acceptance name the person and what to do', () => {
   const request = buildMessage({ ...INPUT, kind: 'friend_request', context: { sourceUsername: 'lin' } });
   assert.deepEqual(request.notification, {

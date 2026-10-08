@@ -5361,6 +5361,11 @@ INSERT INTO mobile_push_kind_categories (kind, category, default_enabled) VALUES
   -- (services/platform-limit-alerts.js). "Something happened that affects
   -- the apps you look after", one level up, so the same category.
   ('platform_limit', 'app_alerts', TRUE),
+  -- An unexpected error crossing its threshold (services/platform-incident-
+  -- alerts.js), full admins only, the same audience one level up again. The
+  -- digest kind gets NO row: it is bell-only, so it must not enter the push
+  -- kind set.
+  ('platform_incident', 'app_alerts', TRUE),
   ('reaction', 'lightweight_activity', FALSE),
   ('kudos', 'lightweight_activity', FALSE),
   ('conversation_invite', 'messages', TRUE),
@@ -5418,6 +5423,9 @@ DELETE FROM mobile_push_kind_categories
    'session_stalled',
    -- Server-wide limit alerts for full admins.
    'platform_limit',
+   -- Unexpected-error threshold alerts for full admins; the digest kind
+   -- stays out on purpose (bell-only, see the INSERT above).
+   'platform_incident',
    -- WP-E.
    'build_ready', 'build_needs_you', 'build_stopped', 'build_live',
    'invite_opened', 'member_joined', 'first_message'

@@ -336,6 +336,27 @@ test('platform limit rows say which cap, how full, and what happens next', async
   assert.ok(odd.subject.length > 0);
 });
 
+test('unexpected-error rows name the kind and the count, and point at the log', async () => {
+  // Full admins only and no app, so the meta line names Admin like the
+  // platform-limit kinds, and nobody is credited with having done anything.
+  const alert = await lines({ kind: 'platform_incident', detail: 'build_interrupted:3',
+    appName: null, sourceUsername: null });
+  assert.equal(alert.label, 'Build interrupted 3 times in an hour');
+  assert.match(alert.subject, /Open Admin → Unexpected errors\.$/);
+  assert.equal(alert.meta, 'Admin · 4m ago', 'no by-line');
+
+  // An unknown future kind falls back to the generic wording.
+  const unknown = await lines({ kind: 'platform_incident', detail: 'release_stalled:4',
+    appName: null, sourceUsername: null });
+  assert.equal(unknown.label, 'Unexpected error logged 4 times in an hour');
+
+  const digest = await lines({ kind: 'platform_incident_digest', detail: '2',
+    appName: null, sourceUsername: null });
+  assert.equal(digest.label, 'Unexpected errors: 2 in the last day');
+  assert.match(digest.subject, /Open Admin → Unexpected errors\.$/);
+  assert.equal(digest.meta, 'Admin · 4m ago');
+});
+
 // ─── 3. The renderer draws them in that order ───────────────────────────
 
 test('ScreenRow renders kind, subject, meta — in that order', () => {

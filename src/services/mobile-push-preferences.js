@@ -95,7 +95,13 @@ const CATEGORY_DEFINITIONS = Object.freeze([
     // only: the SERVER is nearing a cap that stops apps being created or
     // sessions starting (services/platform-limit-alerts.js). Only full
     // admins ever receive one, so nobody else's switch is affected.
-    kinds: Object.freeze(['issue_opened', 'app_health', 'platform_limit']),
+    //
+    // 'platform_incident' is the same split again: an unexpected error
+    // crossing its threshold (services/platform-incident-alerts.js), full
+    // admins only. Its daily digest kind is NOT here on purpose — the
+    // digest is bell-only, and this list is what ALLOWED_KINDS is built
+    // from.
+    kinds: Object.freeze(['issue_opened', 'app_health', 'platform_limit', 'platform_incident']),
   }),
   Object.freeze({
     key: 'lightweight_activity',

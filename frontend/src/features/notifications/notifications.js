@@ -919,6 +919,17 @@ const Notifications = {
       }
       return;
     }
+    // An unexpected error (its threshold alert or the day's digest) opens
+    // the log the rows are about.
+    if (item.kind === 'platform_incident' || item.kind === 'platform_incident_digest') {
+      Notifications._dismissSheetForNav();
+      if (typeof App !== 'undefined' && App.navigateToAdminConsole) {
+        App.navigateToAdminConsole('incidents');
+      } else {
+        window.location.hash = '#admin/incidents';
+      }
+      return;
+    }
     // #161/#194: completion notifications deep-link to their change.
     // session_done opens the lifecycle-aware detail page around its workspace;
     // auto_solve_done opens the Issues tab with that issue's accordion
@@ -1698,6 +1709,17 @@ function parsePlatformLimitDetail(detail) {
   return m ? { limit: m[1], level: m[2], used: Number(m[3]), cap: Number(m[4]) } : null;
 }
 
+// The words the Unexpected errors section (Admin → Unexpected errors) uses
+// for an incident kind, kept beside the row renderer so an alert row says
+// the same thing the log does. An unknown kind gets the generic wording.
+const INCIDENT_KIND_WORDS = Object.freeze({
+  build_interrupted: 'Build interrupted',
+});
+
+function incidentKindWord(kind) {
+  return INCIDENT_KIND_WORDS[kind] || 'Unexpected error logged';
+}
+
 // #161 defined these as the kinds that "demand attention": a finished dev
 // session or headless run, while still unread.
 //
@@ -2331,6 +2353,44 @@ function rowView(n) {
       segments: [
         { t: 'strong', v: `${limit.used} of ${limit.cap} ${noun} in use.` },
         { t: 'text', v: consequence },
+      ],
+    };
+  }
+
+  // An unexpected error crossing its threshold (services/platform-incident-
+  // alerts.js), full admins only, no app: the meta line says Admin like the
+  // platform-limit kinds above. detail is "<kind>:<count>"; the kind's words
+  // are the ones the Unexpected errors section uses, and an unknown kind
+  // falls back to the generic wording.
+  if (n.kind === 'platform_incident') {
+    const m = /^([a-z_]{1,31}):(\d{1,7})$/.exec(String(n.detail || ''));
+    const label = m
+      ? `${incidentKindWord(m[1])} ${m[2]} times in an hour`
+      : 'Unexpected error logged in an hour';
+    return {
+      ...base,
+      appLine: 'Admin',
+      wrap: true,
+      icon: '\u{1F6A8}',
+      label,
+      segments: [
+        { t: 'text', v: 'The platform logged an error that should not happen. Open Admin \u2192 Unexpected errors.' },
+      ],
+    };
+  }
+
+  // The daily digest of unexpected errors, bell-only (the kind is
+  // deliberately not a registered push kind). detail is the day's total.
+  if (n.kind === 'platform_incident_digest') {
+    const count = /^\d+$/.test(String(n.detail || '')) ? String(n.detail) : '';
+    return {
+      ...base,
+      appLine: 'Admin',
+      wrap: true,
+      icon: '\u{1F4CB}',
+      label: count ? `Unexpected errors: ${count} in the last day` : 'Unexpected errors in the last day',
+      segments: [
+        { t: 'text', v: 'Logged since the last summary. Open Admin \u2192 Unexpected errors.' },
       ],
     };
   }

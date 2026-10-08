@@ -98,7 +98,7 @@ const SESSION_KINDS = ['session_done', 'auto_solve_done', 'stale_pr', 'check_fai
 // the mark-read scoping test below sends as a request body.
 const DEMO_KINDS = [...SESSION_KINDS, 'session_stalled'];
 
-test('staging + ?demo=1: thirteen mock rows prepend, and only the unread ones bump unread', async () => {
+test('staging + ?demo=1: fifteen mock rows prepend, and only the unread ones bump unread', async () => {
   const pool = makeMockPool();
   const mod = loadRoutes('staging', pool);
   const { server, port } = await startServer(mod);
@@ -108,12 +108,12 @@ test('staging + ?demo=1: thirteen mock rows prepend, and only the unread ones bu
     const body = await res.json();
 
     const mocks = body.notifications.filter((n) => n.id >= 990000);
-    assert.equal(mocks.length, 13, 'exactly thirteen mock rows injected');
+    assert.equal(mocks.length, 15, 'exactly fifteen mock rows injected');
     assert.deepEqual(
       [...new Set(mocks.map((n) => n.kind))].sort(),
-      [...DEMO_KINDS, 'conversation_message', 'platform_limit', 'app_quota_changed', 'kudos'].sort(),
-      'every session-related kind is covered, plus the message row, a platform limit alert '
-      + 'an app allowance change (#3233) and a kudos row (#3227)'
+      [...DEMO_KINDS, 'conversation_message', 'platform_limit', 'platform_incident', 'platform_incident_digest', 'app_quota_changed', 'kudos'].sort(),
+      'every session-related kind is covered, plus the message row, a platform limit alert, '
+      + 'the two unexpected-error kinds (#4296), an app allowance change (#3233) and a kudos row (#3227)'
     );
     assert.equal(
       mocks.filter((n) => n.kind === 'session_done').length, 4,
@@ -151,14 +151,14 @@ test('staging + ?demo=1: thirteen mock rows prepend, and only the unread ones bu
     // "See more notifications" button: without it the button does not
     // render at all and the caught-up state is unreachable, so the two things
     // a reviewer is asked to look at are both invisible.
-    assert.equal(mocks.filter((n) => !n.readAt).length, 12,
-      'twelve unread rows feed the badges');
+    assert.equal(mocks.filter((n) => !n.readAt).length, 14,
+      'fourteen unread rows feed the badges');
     const readMocks = mocks.filter((n) => n.readAt);
     assert.equal(readMocks.length, 1, 'exactly one already-read row');
     assert.match(readMocks[0].sessionTitle, /\[Mock\]/,
       'and it is obviously fake, like the rest');
     assert.ok(
-      mocks.filter((n) => !['conversation_message', 'platform_limit', 'app_quota_changed'].includes(n.kind))
+      mocks.filter((n) => !['conversation_message', 'platform_limit', 'platform_incident', 'platform_incident_digest', 'app_quota_changed'].includes(n.kind))
         .every((n) => n.appSlug === 'staging-demo'),
       'obviously-fake app attribution on every APP-scoped row',
     );
@@ -179,10 +179,10 @@ test('staging + ?demo=1: thirteen mock rows prepend, and only the unread ones bu
     );
     // Real rows survive after the mocks; unread bumped by the UNREAD mock
     // count so the client's badge subtraction stays honest. Counting all
-    // thirteen would claim the read row as unread — inflating the badge by one
+    // fifteen would claim the read row as unread — inflating the badge by one
     // and leaving "Mark all read" enabled with nothing left to mark.
     assert.ok(body.notifications.some((n) => n.id === 1), 'real rows still present');
-    assert.equal(body.unread, 2 + 12);
+    assert.equal(body.unread, 2 + 14);
   } finally {
     server.close();
   }
@@ -226,7 +226,7 @@ test('stagingMockNotifications rows carry the fields the shared row renderers re
   const pool = makeMockPool();
   const mod = loadRoutes('staging', pool);
   const rows = mod.stagingMockNotifications();
-  assert.equal(rows.length, 13);
+  assert.equal(rows.length, 15);
   for (const r of rows) {
     assert.ok(r.id >= 990000 && r.id < 1000000, 'ids sit in the 99xxxx mock range');
     // `readAt` is null on every row EXCEPT the one that exists to be read —
@@ -240,7 +240,7 @@ test('stagingMockNotifications rows carry the fields the shared row renderers re
     // shape closed when they are both set, so a mock carrying them would be
     // describing something the real pipeline never emits.
     assert.equal(r.appName,
-      ['conversation_message', 'platform_limit', 'app_quota_changed'].includes(r.kind)
+      ['conversation_message', 'platform_limit', 'platform_incident', 'platform_incident_digest', 'app_quota_changed'].includes(r.kind)
         ? null : 'Staging demo app');
     assert.ok('sessionTitle' in r, '#971: every mock row carries the sessionTitle field');
   }
