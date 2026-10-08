@@ -30,12 +30,12 @@
  * ── The words (#4073) ──────────────────────────────────────────────────
  *
  * The onboarding canvas's waiting screen: the wordmark, "You're on the
- * waitlist", "We're letting people in a few at a time.", the invite box when a link
- * queued a community (only then: the list comes from the links this account
- * followed), one picture, and Sign out as a small link. It does not promise
- * an email: an account made by email code has no waitlist row, so nothing
- * would send one (#4083 makes every newcomer get a spot and the email). The
- * waitlist is said with its own words, waitlist, your spot, a few at a time
+ * waitlist", "We let people in a few at a time, and we'll email you when your
+ * spot is ready.", the invite box when a link queued a community (only then:
+ * the list comes from the links this account followed), one picture, and
+ * Sign out as a small link. The email promise holds because every waiting
+ * account has a waitlist row however it was made, and every way of letting
+ * it in sends the "you're in" mail (#4083). The waitlist is said with its own words, waitlist, your spot, a few at a time
  * and access, and never queue, batches or your turn. The
  * line under the title was the account's username and "platform access",
  * and a status line said when the page last checked; both are gone. The
@@ -263,7 +263,7 @@ export function WaitingScreen() {
             You're on the waitlist
           </h1>
           <p className="mt-3 text-pretty text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400">
-            We're letting people in a few at a time.
+            We let people in a few at a time, and we'll email you when your spot is ready.
           </p>
           {queued.length ? (
             <p data-waiting-queued="" className="mt-7 text-balance rounded-[20px] bg-white px-4 py-3.5 text-[15px] leading-5 text-zinc-600 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900 dark:text-zinc-300">

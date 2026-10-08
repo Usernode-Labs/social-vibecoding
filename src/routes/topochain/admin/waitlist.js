@@ -721,15 +721,27 @@ function waitlistAdminRoutes(config) {
   // ── POST /api/v4/admin/users/:id/grant-access ────────────────────────
   // Direct platform-access grant for an account that never joined the
   // waitlist. Idempotent. A release by hand like Admit, so the account it
-  // lets in gets the invite tree's generation-0 skips.
+  // lets in gets the invite tree's generation-0 skips, its waitlist rows are
+  // marked released, and it gets Admit's "you're in" mail (#4083): once,
+  // only from the grant that let it in, and not when a row's own release
+  // already sent it.
   router.post('/api/v4/admin/users/:id/grant-access', adminWriteGate, async (req, res) => {
     try {
       const id = toIntId(req.params.id);
       if (!id) return fail(res, 404, 'User not found.');
       const { rows } = await pool.query('SELECT id FROM users WHERE id = $1', [id]);
       if (!rows.length) return fail(res, 404, 'User not found.');
-      await waitlist.grantPlatformAccess(pool, id, { manualRelease: true });
-      log.info('topochain-admin', 'Platform access granted directly', { userId: id, adminId: req.user?.id });
+      const letIn = await waitlist.grantPlatformAccess(pool, id, { manualRelease: true });
+      log.info('topochain-admin', 'Platform access granted directly', { userId: id, adminId: req.user?.id, letIn });
+      if (letIn) {
+        try {
+          const release = await waitlist.releaseRowsForGrant(pool, id);
+          if (release) await sendReleaseMail(release, await loadReleaseMailMobile());
+        } catch (err) {
+          // The grant stands; only the notice failed.
+          log.error('topochain-admin', 'grant-access release mail failed', { userId: id, message: err.message });
+        }
+      }
       return ok(res, { data: { id, has_platform_access: true } });
     } catch (err) {
       log.error('topochain-admin', 'POST /admin/users/:id/grant-access failed', { message: err.message });

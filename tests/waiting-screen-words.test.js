@@ -33,9 +33,8 @@ function code(src) {
 test('the waiting screen: the title, one line, the invite box, Sign out', () => {
   const src = code(read(WAITING));
   assert.match(src, />\s*You're on the waitlist\s*</);
-  assert.match(src, />\s*We're letting people in a few at a time\.\s*</);
-  // No email promise until every newcomer gets one (#4083).
-  assert.doesNotMatch(src, /email you/);
+  // The email promise is back now every newcomer gets a spot and the mail (#4083).
+  assert.match(src, />\s*We let people in a few at a time, and we'll email you when your spot is ready\.\s*</);
   assert.match(src, /\{`When you get access, you join \$\{namesLine\(queued\.map\(\(q\) => q\.name\)\)\}\.`\}/);
   assert.match(src, /data-waiting-queued=""/);
   assert.match(src, /<Wordmark className="mx-auto h-6 w-auto text-zinc-950 dark:text-white" \/>/);
