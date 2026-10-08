@@ -70,12 +70,33 @@ test('the invite\'s Join sheet starts with a phone number when the server offers
   assert.doesNotMatch(phone, /username/i, 'no username is asked for');
   assert.match(phone, /id="sign-in-sheet-phone"[^>]*type="tel"[^>]*autoComplete="tel"|id="sign-in-sheet-phone"[^>]*type="tel"/);
   assert.match(phone, />Text me a code</);
-  assert.match(phone, /Already on Homeroom\? <a href="#login" data-sign-in-sheet-other-ways=""[^>]*>Sign in another way<\/a>/);
+  // Under the phone step, past an "or", Apple and Google as the first step
+  // draws them, then the email way for an account made before (#4377).
+  assert.match(phone, /Already on Homeroom\? <a href="#login" data-sign-in-sheet-to-email=""[^>]*>Sign in with email<\/a>/);
+  assert.match(phone, /<div data-sign-in-sheet-or=""[^>]*class="[^"]*text-\[13px\][^"]*text-zinc-500[^"]*"><span aria-hidden="true" class="h-px flex-1 bg-\[color:var\(--app-sheet-line\)\]"><\/span>or<span aria-hidden="true" class="h-px flex-1 bg-\[color:var\(--app-sheet-line\)\]"><\/span><\/div>/);
+  assert.match(phone, /<button type="button" data-sign-in-provider="apple"[^>]*class="[^"]*rounded-full bg-black[^"]*text-white[^"]*"><svg[\s\S]*?<\/svg>Continue with Apple<\/button>/);
+  assert.match(phone, /<button type="button" data-sign-in-provider="google"[^>]*class="[^"]*rounded-full bg-white[^"]*shadow-\[inset_0_0_0_1px_rgba\(0,0,0,0\.15\)\][^"]*"><svg[\s\S]*?<\/svg>Continue with Google<\/button>/);
+  const at = (needle) => { const i = phone.indexOf(needle); assert.ok(i >= 0, needle); return i; };
+  const order = ['>Text me a code<', 'data-sign-in-sheet-or=', '>Continue with Apple<', '>Continue with Google<', '>Sign in with email<', 'data-terms-notice=', 'data-recaptcha-line='];
+  for (let i = 1; i < order.length; i += 1) assert.ok(at(order[i - 1]) < at(order[i]), `${order[i - 1]} before ${order[i]}`);
+  assert.doesNotMatch(phone, /Continue with email|Sign in another way/);
+  // Inside the app the list is the app's own, and only Google may be on.
+  const googleOnly = render({ phone: true, providers: ['google'] });
+  assert.match(googleOnly, /data-sign-in-sheet-or=""/);
+  assert.match(googleOnly, />Continue with Google</);
+  assert.doesNotMatch(googleOnly, /Continue with Apple/);
+  // With none set up (production today, previews): no "or", no buttons, the link.
+  const bare = render({ phone: true, providers: [] });
+  assert.match(bare, /data-sign-in-sheet="phone"/);
+  assert.match(bare, /Already on Homeroom\? <a href="#login" data-sign-in-sheet-to-email=""[^>]*>Sign in with email<\/a>/);
+  assert.doesNotMatch(bare, /data-sign-in-sheet-or|data-sign-in-sheet-providers|data-sign-in-provider=|Continue with/);
+  assert.match(bare, /data-recaptcha-line=""/);
   // Google's notice, for the badge the sheet hides, is its own quieter line
   // under the terms (#4379).
   assert.match(phone, /data-terms-notice="recaptcha"[^>]*>By continuing, you agree to Homeroom&#x27;s (<!-- -->)?terms(<!-- -->)?\.<\/p><p data-recaptcha-line=""[^>]*class="[^"]*text-\[12px\][^"]*text-zinc-400[^"]*">Protected by reCAPTCHA · Google (<!-- -->)?<a href="https:\/\/policies\.google\.com\/privacy"[^>]*>Privacy<\/a>(<!-- -->)? · (<!-- -->)?<a href="https:\/\/policies\.google\.com\/terms"[^>]*>Terms<\/a><\/p>/);
   assert.doesNotMatch(phone, /Privacy Policy|Terms of Service|\(reCAPTCHA\)/);
-  assert.doesNotMatch(phone, /Continue with Apple|Sign in with a password|This makes your account/, 'the other ways are one tap away, not first');
+  assert.doesNotMatch(phone, /Sign in with a password|This makes your account/, 'the password is a step on from the email way');
+  assert.ok(phone.indexOf('sign-in-sheet-phone"') < phone.indexOf('Continue with Apple'), 'the phone stays first');
   assert.doesNotMatch(phone, /—/);
   // Without the offer it is the sheet it was.
   const before = render({ phone: false, providers: [], intro: 'Sign in or make an account with your email. It takes a minute.' });
@@ -94,6 +115,8 @@ test('the invite\'s Join sheet starts with a phone number when the server offers
 test('the sheet\'s phone steps: the code, then the username on the phone\'s own route', () => {
   const src = read(SHEET);
   assert.match(src, /const firstStep: Step = phone \? 'phone' : otherWays;/);
+  assert.match(src, /data-sign-in-sheet-to-email=""\s+onClick=\{\(e\) => \{ e\.preventDefault\(\); setError\(null\); setDetails\(null\); setStep\('email'\); \}\}/,
+    'the email way, which leads on to the password, whatever is set up');
   assert.match(src, /const recaptchaToken = await phoneRecaptchaToken\(\);\s+const res = await fetch\('\/api\/auth\/phone\/request'/);
   assert.match(src, /body: JSON\.stringify\(\{ phoneNumber: value, \.\.\.\(recaptchaToken \? \{ recaptchaToken \} : \{\}\) \}\)/);
   const verify = src.slice(src.indexOf('const verifyPhone = useCallback'), src.indexOf('const finishAccount = useCallback'));

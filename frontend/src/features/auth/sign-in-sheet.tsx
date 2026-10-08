@@ -47,9 +47,11 @@
  *   username    POST /api/auth/phone/finish, the provider's step with the
  *               phone's own route, which mints the session.
  *
- * "Already on Homeroom? Sign in another way" leads to the other ways, for an
- * account made before; one made by email from here is not a private member
- * and waits in the queue.
+ * Under the phone step, past an "or", Continue with Apple and Continue with
+ * Google when an admin has set them up (the same buttons as the first step's
+ * otherwise), then "Already on Homeroom? Sign in with email", for an account
+ * made before; one made by email from here is not a private member and
+ * waits in the queue. That step still leads on to "Sign in with a password".
  *
  * "Sign in with a password" is a step of its own here too:
  *
@@ -965,6 +967,24 @@ export function SignInSheet({
     </>
   ) : <TermsNotice />;
 
+  // Apple and Google, in the order the server lists them: the first step's
+  // own, or under the invite's phone step past an "or".
+  const providerButtons = providers.map((provider) => (
+    <button
+      key={provider}
+      type="button"
+      data-sign-in-provider={provider}
+      disabled={busy}
+      className={PROVIDER_BUTTON[provider]}
+      onClick={() => continueWith(provider)}
+    >
+      {provider === 'apple'
+        ? <AppleIcon className="h-[18px] w-[18px] -mt-0.5" aria-hidden="true" />
+        : <GoogleIcon className="h-[18px] w-[18px]" aria-hidden="true" />}
+      {`Continue with ${PROVIDER_LABEL[provider]}`}
+    </button>
+  ));
+
   const waitLeft = Math.max(0, Math.ceil((cooldownUntil - now) / 1000));
   const heading = step === 'choose' || step === 'email' || step === 'phone' ? title
     : step === 'code' ? 'Check your email'
@@ -1045,21 +1065,7 @@ export function SignInSheet({
 
         {step === 'choose' ? (
           <div className="mt-5 flex flex-col gap-2.5">
-            {providers.map((provider) => (
-              <button
-                key={provider}
-                type="button"
-                data-sign-in-provider={provider}
-                disabled={busy}
-                className={PROVIDER_BUTTON[provider]}
-                onClick={() => continueWith(provider)}
-              >
-                {provider === 'apple'
-                  ? <AppleIcon className="h-[18px] w-[18px] -mt-0.5" aria-hidden="true" />
-                  : <GoogleIcon className="h-[18px] w-[18px]" aria-hidden="true" />}
-                {`Continue with ${PROVIDER_LABEL[provider]}`}
-              </button>
-            ))}
+            {providerButtons}
             <button type="button" data-sign-in-provider="email" disabled={busy} className={EMAIL_BUTTON} onClick={() => { setError(null); setStep('email'); }}>
               Continue with email
             </button>
@@ -1209,16 +1215,26 @@ export function SignInSheet({
         ) : null}
         <SessionConfirmationNotice completion={completion} />
 
+        {step === 'phone' && providers.length ? (
+          <div data-sign-in-sheet-providers="" className="mt-4 flex flex-col gap-2.5">
+            <div data-sign-in-sheet-or="" className="flex items-center gap-3 text-[13px] text-zinc-500 dark:text-zinc-400">
+              <span aria-hidden="true" className="h-px flex-1 bg-[color:var(--app-sheet-line)]" />
+              or
+              <span aria-hidden="true" className="h-px flex-1 bg-[color:var(--app-sheet-line)]" />
+            </div>
+            {providerButtons}
+          </div>
+        ) : null}
         {step === 'phone' ? (
           <p className="mt-4 text-center text-[13px] text-zinc-500 dark:text-zinc-400">
             {'Already on Homeroom? '}
             <a
               href="#login"
-              data-sign-in-sheet-other-ways=""
-              onClick={(e) => { e.preventDefault(); setError(null); setDetails(null); setStep(otherWays); }}
+              data-sign-in-sheet-to-email=""
+              onClick={(e) => { e.preventDefault(); setError(null); setDetails(null); setStep('email'); }}
               className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
             >
-              Sign in another way
+              Sign in with email
             </a>
           </p>
         ) : null}
