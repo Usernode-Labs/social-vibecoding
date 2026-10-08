@@ -445,7 +445,7 @@ test("You're in says that you joined, and shows the community: its app and its p
   assert.ok(youreIn.length > 200, 'YoureIn is found');
   assert.doesNotMatch(youreIn, /How it works|group|Have a look|On Homeroom|You're in, |JoinedPicture|!`|!'/);
   // The Homeroom logo bar, like every first-run screen (owner, 7 October).
-  assert.match(src, /<Wordmark className="h-6 w-auto text-\[color:var\(--brand-ink\)\]" \/>/);
+  assert.match(src, /<Wordmark className="h-6 w-auto text-zinc-950 dark:text-white" \/>/);
   // Its first version still on its way is still handed to the tour.
   assert.match(read('public/js/app.js'), /building: !!standing\.building,/);
 });

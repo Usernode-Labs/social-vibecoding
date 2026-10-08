@@ -1409,7 +1409,7 @@ export function LoginScreen() {
           */}
           <Wordmark
             title="Homeroom"
-            className="mx-auto self-center mb-10 h-6 w-auto text-zinc-900 dark:text-zinc-100"
+            className="mx-auto self-center mb-10 h-6 w-auto text-zinc-950 dark:text-white"
           />
           <h1 className={view === 'recovery' || view === 'reset' ? SCREEN_H1_HIDDEN : SCREEN_H1}>
             {heading}

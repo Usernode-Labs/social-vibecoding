@@ -38,7 +38,7 @@ test('the waiting screen: the title, one line, the invite box, Sign out', () => 
   assert.doesNotMatch(src, /email you/);
   assert.match(src, /\{`When you get access, you join \$\{namesLine\(queued\.map\(\(q\) => q\.name\)\)\}\.`\}/);
   assert.match(src, /data-waiting-queued=""/);
-  assert.match(src, /<Wordmark className="mx-auto h-6 w-auto text-\[color:var\(--brand-ink\)\]" \/>/);
+  assert.match(src, /<Wordmark className="mx-auto h-6 w-auto text-zinc-950 dark:text-white" \/>/);
   assert.match(src, /id="waiting-logout"[\s\S]{0,400}?>\s*Sign out\s*<\/button>/);
   // Sign out is a small text link, not a pill; the room draws one picture, the
   // story's own, in the space above it (C1b-waiting).
