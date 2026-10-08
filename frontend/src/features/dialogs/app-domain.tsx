@@ -267,10 +267,10 @@ export function AppDomainDialog() {
                     <td className="py-1.5 pr-2">{record.type}</td>
                     <td className="py-1.5 pr-2 font-mono break-all">{recordName(record, domain.hostname)}</td>
                     <td className="py-1.5">
-                      <span className="font-mono break-all">{record.value}</span>{' '}
+                      <span className="font-mono break-all">{record.value}</span>
                       <button
                         type="button"
-                        className="text-violet-700 hover:text-violet-400 dark:text-violet-400 transition-colors"
+                        className="ml-1 text-violet-700 hover:text-violet-400 dark:text-violet-400 transition-colors"
                         onClick={() => void copy(record.value)}
                       >{copied === record.value ? 'Copied' : 'Copy'}</button>
                     </td>

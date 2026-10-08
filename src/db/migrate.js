@@ -127,9 +127,6 @@ async function migrate(config) {
   await seedStagingApproverPanel(pool);
   await seedStagingAppAdminsPanel(pool);
   await seedStagingReadonlyDevTab(pool);
-  // #4405: must run AFTER seedStagingReadonlyDevTab (its live domain hangs
-  // off that app) and after the check sign-in account exists.
-  await seedStagingCustomDomains(pool);
   await seedStagingQuietDiscussion(pool);
   await seedStagingYourApps(pool, config);
   await require('../services/staging-apps').seedCatalog(pool, config);
@@ -147,6 +144,10 @@ async function migrate(config) {
   await seedStagingViewOnlyAdmin(pool);
   await seedStagingWalletUsers(pool);
   await seedStagingEmailCodeAccounts(pool);
+  // #4405: must run AFTER seedStagingEmailCodeAccounts (the check sign-in
+  // account it makes an app admin is seeded there) and AFTER
+  // seedStagingReadonlyDevTab (its live domain hangs off that app).
+  await seedStagingCustomDomains(pool);
   await seedStagingPublicApiContributors(pool);
   await seedStagingVisuals(pool);
   await seedStagingLeaderboardProfile(pool);
