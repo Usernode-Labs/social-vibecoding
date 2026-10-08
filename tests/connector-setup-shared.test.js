@@ -33,7 +33,9 @@ const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s
 
 const STEPS = read('frontend', 'src', 'features', 'settings', 'connector-setup-steps.tsx');
 const SETTINGS_SECTION = read('frontend', 'src', 'features', 'settings', 'sections', 'connectors.tsx');
+const SETTINGS_JS = read('frontend', 'src', 'features', 'settings', 'settings.js');
 const INLINE = read('frontend', 'src', 'features', 'dev-chat', 'connector-setup-inline.tsx');
+const HANDOFF = read('frontend', 'src', 'features', 'agent-session', 'handoff.tsx');
 const VIEW = read('frontend', 'src', 'features', 'dev-chat', 'view.tsx');
 const DEV_CHAT = read('frontend', 'src', 'features', 'dev-chat', 'dev-chat.js');
 const FLOW_SELECT = read('public', 'js', 'dev-flow-select.js');
@@ -81,8 +83,19 @@ test('the shared steps point at nothing that exists on only one of the screens',
   assert.doesNotMatch(prose, /under these steps/);
   assert.doesNotMatch(prose, /Stop the permission prompts|connector-case-|Name it homeroom/);
   // The one thing a step may point at is the value each caller renders
-  // above it, and both callers do render it.
+  // above it, and both callers do render it. Claude's steps still do.
+  // ChatGPT's step 3 names the endpoint itself instead, but carries it the
+  // same way — from the caller, never written into the copy: the
+  // launchpad card and the hand-off pass the live value as a prop, and
+  // Settings' interior ships a fill-in placeholder that settings.js
+  // replaces with the same derived origin the #connector-url field shows.
   assert.match(STEPS, /the MCP server URL above/);
+  assert.match(STEPS, /Enter Homeroom MCP server URL\./);
+  assert.match(STEPS, /data-connector-step-url="1"/);
+  assert.match(INLINE, /<ChatgptSetupSteps url=\{url\} \/>/);
+  assert.match(HANDOFF, /<ChatgptSetupSteps url=\{connectorUrl\} \/>/);
+  assert.match(SETTINGS_JS, /data-connector-step-url/,
+    'Settings fills the ChatGPT step from the derived origin, as it fills the field');
   assert.match(INLINE, /<ConnectorUrl url=\{url\} \/>/);
   assert.match(SETTINGS_SECTION, /id="connector-url"/);
   // And the fact the cross-reference was carrying survived the move.
@@ -110,8 +123,16 @@ test('Settings keeps its route, and everything that is only on it', () => {
 test('neither screen writes a host into the copy', () => {
   // The rule sections/connectors.tsx states and #2706 inherits: a host in
   // prose goes stale on a fork or a config change, so the live value is
-  // passed in and the steps say "the MCP server URL above".
-  for (const [name, src] of [['the shared steps', STEPS], ['the launchpad card', INLINE]]) {
+  // passed in — Claude's steps say "the MCP server URL above", and
+  // ChatGPT's step 3 renders the caller's value instead of pointing at
+  // the one above it. The fill-in placeholder in the shared steps is
+  // spelled with angle brackets so it cannot read as a plausible address,
+  // in the source or in the prerendered document.
+  for (const [name, src] of [
+    ['the shared steps', STEPS],
+    ['the launchpad card', INLINE],
+    ['the hand-off card', HANDOFF],
+  ]) {
     assert.doesNotMatch(src, /onhomeroom\.com/, `${name} names no host`);
     assert.doesNotMatch(src, /https:\/\/[a-z0-9.-]*\/mcp/, `${name} hardcodes no endpoint`);
   }
@@ -283,6 +304,13 @@ test('a ChatGPT card renders ChatGPT\'s four steps and its recap', () => {
   assert.match(html, /Open the plugins directory\./);
   assert.match(html, /href="https:\/\/chatgpt\.com\/plugins"/);
   assert.match(html, /Create custom MCP server/);
+  // The step names the endpoint it asks for, and shows the same live value
+  // the ConnectorUrl field above it does: once in the field, once in the
+  // step. A host written into the step would survive neither a fork nor a
+  // config change (see the test above), so this pins the rendered value.
+  assert.match(html, /Enter Homeroom MCP server URL\./);
+  assert.equal((html.match(/https:\/\/example\.test\/mcp/g) || []).length, 2,
+    'the step shows the same live URL the field above it does');
   assert.doesNotMatch(html, /Developer mode/);
   assert.doesNotMatch(html, /Browse plugins directory/, 'no Settings walk first');
   assert.equal((html.match(/<li class="flex gap-3">/g) || []).length, 4);

@@ -16,10 +16,16 @@ import * as React from 'react';
  * (features/dev-chat/connector-setup-inline.tsx) while Settings keeps
  * rendering it as the static markup settings.js reads around.
  *
- * The URL is named as "the MCP server URL above" rather than spelled out,
- * on both screens, for the reason the connectors.tsx header gives: a host
- * written into prose goes stale on a fork or a config change. Each caller
- * puts the live `${origin}/mcp` value on screen next to these steps.
+ * How the connector URL is named splits by product. Claude's steps say
+ * "the MCP server URL above" and point at the value each caller renders
+ * above them, for the reason the connectors.tsx header gives: a host
+ * written into prose goes stale on a fork or a config change. ChatGPT's
+ * step 3 names the endpoint directly instead, and carries it the same way
+ * rather than as a written host: the caller hands over the live
+ * `${origin}/mcp` and the step renders that. Where no caller value exists
+ * (Settings' prerendered interior) a fill-in placeholder stands in until
+ * settings.js writes the same derived origin the #connector-url field
+ * shows.
  *
  * TWO SCREENS MEANS NO CROSS-REFERENCES. A step may point at the URL each
  * caller renders above it and at nothing else: Claude's step 2 used to send
@@ -101,11 +107,24 @@ export function ClaudeSetupSteps() {
  * plugins directory first. After the server is created it still has to be
  * switched on per chat, in the connector picker.
  *
- * The one URL the steps may spell out is ChatGPT's own page — it is
- * third-party and does not move with a fork, unlike the MCP server URL,
- * which stays "the one above" for the reason the module header gives.
+ * The one URL the steps spell out is ChatGPT's own page — it is
+ * third-party and does not move with a fork. The Homeroom endpoint in
+ * step 3 is not spelled either: it renders the live value the caller
+ * hands it, per the module header.
  */
-export function ChatgptSetupSteps() {
+
+/**
+ * What stands where the live connector URL goes when no caller value was
+ * handed in — Settings' prerendered interior, before script runs. The
+ * same fill-in style as the Codex blocks in sections/connectors.tsx: it
+ * reads as something to replace, not as an address someone might paste
+ * as-is. settings.js fills the step unconditionally from the origin it is
+ * served from, so this literal is never matched against — it only has to
+ * look like a fill-in.
+ */
+const STEP_URL_PLACEHOLDER = 'https://<your-homeroom-host>/mcp';
+
+export function ChatgptSetupSteps({ url }: { url?: string }) {
   return (
     <>
       <ol className="space-y-2">
@@ -115,15 +134,27 @@ export function ChatgptSetupSteps() {
         <SetupStep n={2} title="Create a custom MCP server.">
           Click <strong className="font-semibold text-zinc-600 dark:text-zinc-400">&ldquo;Add plugin&rdquo;</strong>, then choose <strong className="font-semibold text-zinc-600 dark:text-zinc-400">&ldquo;Create custom MCP server&rdquo;</strong>.
         </SetupStep>
-        <SetupStep n={3} title="Enter your MCP server URL.">
-          For Homeroom that is the MCP server URL above, a public HTTPS endpoint ending in <code className="font-mono text-zinc-600 dark:text-zinc-400">/mcp</code>. The server must be reachable by ChatGPT; one running only on <code className="font-mono text-zinc-600 dark:text-zinc-400">localhost</code> will not work directly.
+        <SetupStep n={3} title="Enter Homeroom MCP server URL.">
+          {/* The step names the endpoint itself rather than pointing at the
+              value rendered above it, but the URL is still never written
+              into the copy: the caller hands over the live `${origin}/mcp`
+              (the launchpad card and the hand-off as a prop), and Settings'
+              interior ships the placeholder until settings.js fills
+              `data-connector-step-url` from the same derived origin the
+              #connector-url field shows. */}
+          <code
+            data-connector-step-url="1"
+            className="break-all font-mono text-zinc-600 dark:text-zinc-400"
+          >
+            {url || STEP_URL_PLACEHOLDER}
+          </code>
         </SetupStep>
         <SetupStep n={4} title="Turn the server on in a chat.">
           Open the <code className="font-mono text-zinc-600 dark:text-zinc-400">+</code> / connector picker next to the message box, select the server you just created, and set it as active. Now ask ChatGPT to perform something that uses one of the tools, for example: <em>&ldquo;Use my MCP server to list the open support tickets.&rdquo;</em> When appropriate, ChatGPT will call the tools your MCP server exposes and use their results in the conversation.
         </SetupStep>
       </ol>
       <p className={`${CONNECTOR_BODY} mt-3 pt-3 border-t border-zinc-200 dark:border-zinc-800`}>
-        <strong className="font-semibold text-zinc-600 dark:text-zinc-400">In short:</strong> chatgpt.com/plugins &rarr; Add plugin &rarr; Create custom MCP server &rarr; enter the MCP server URL &rarr; connector picker &rarr; set it active.
+        <strong className="font-semibold text-zinc-600 dark:text-zinc-400">In short:</strong> chatgpt.com/plugins &rarr; Add plugin &rarr; Create custom MCP server &rarr; enter the Homeroom MCP server URL &rarr; connector picker &rarr; set it active.
       </p>
     </>
   );

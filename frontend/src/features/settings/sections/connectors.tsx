@@ -314,10 +314,13 @@ export function ConnectorsSection() {
             per-conversation toggle, the Team/Enterprise Owner requirement. So
             each product gets its own numbered walkthrough, current as of the
             flows the issues document. Wherever the products' generic docs say
-            "your MCP server URL", these steps point back at the
-            #connector-url field above — that field is the dynamic,
-            per-deployment value, so the copy never hardcodes a URL that a
-            fork or a config change would stale. Static prose, deliberately
+            "your MCP server URL", these steps carry the dynamic,
+            per-deployment value rather than a written host: they point back
+            at the #connector-url field above, and ChatGPT's step 3 renders
+            the same derived origin itself — the placeholder in its markup is
+            filled by Settings._loadConnectors() the way the field and the
+            Codex blocks are, so a fork or a config change cannot stale the
+            copy. Static prose, deliberately
             NOT filtered by which product is already connected (unlike
             #connector-prompt-help's cases): these are pre-connection
             instructions, so the reader by definition hasn't told us which
