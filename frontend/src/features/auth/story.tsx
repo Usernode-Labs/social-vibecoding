@@ -3,10 +3,10 @@
  * own, in place of the waitlist pitch (./landing.tsx shows it unless the
  * first session's switch is off, `story_landing` in the waitlist options).
  *
- * From the top, under the landing's logo bar: the small caps "Welcome to
- * Homeroom", the picture, one headline, the small caps "For example" over
- * the make screen's three examples (to show, not to press), the "Get
- * started" button and "Already have an account? Sign in" under it. Nothing under the button says what a new
+ * One centred group under the landing's logo bar: the picture, the small
+ * caps "Welcome to Homeroom", one headline, the small caps "For example"
+ * over the make screen's three examples (to show, not to press). The "Get
+ * started" button and "Already have an account? Sign in" stay at the foot. Nothing under the button says what a new
  * account waits for: the waiting screen does (C1-story on the onboarding
  * canvas, the owner's review of 8 October).
  *
@@ -29,22 +29,24 @@ export function Story({ primaryClass, onStart, onSignIn }: {
 }) {
   return (
     <div data-landing-story="" className="px-4 flex grow flex-col text-center">
-      <div className={`mt-1 ${SMALL_CAPS}`}>Welcome to Homeroom</div>
-      <img
-        src="/brand/people.png"
-        alt=""
-        width={816}
-        height={612}
-        draggable={false}
-        className="mx-auto mt-5 block h-auto w-[112px] max-w-full"
-      />
-      {/* Centred in the room between the picture and the button, with air
-          around it and between the headline and the examples. */}
-      <div className="my-auto flex flex-col items-center gap-7 py-6">
-        <h1 className="text-[28px] leading-[33px] font-extrabold text-balance">
+      {/* One group, centred in the room above the button: the picture, the
+          label 16px under it, the headline 8px under that, and the examples
+          28px lower. On a short phone the auto margins fall to zero and the
+          landing's scroller scrolls, so nothing slides under the button. */}
+      <div className="my-auto flex flex-col items-center py-6">
+        <img
+          src="/brand/people.png"
+          alt=""
+          width={816}
+          height={612}
+          draggable={false}
+          className="mx-auto block h-auto w-[200px] max-w-full"
+        />
+        <div className={`mt-4 ${SMALL_CAPS}`}>Welcome to Homeroom</div>
+        <h1 className="mt-2 text-[28px] leading-[33px] font-extrabold text-balance">
           On Homeroom, communities make apps together.
         </h1>
-        <div className="flex w-full max-w-sm md:max-w-md flex-col gap-2 text-left">
+        <div className="mt-7 flex w-full max-w-sm md:max-w-md flex-col gap-2 text-left">
           <div className={`px-1 ${SMALL_CAPS}`}>For example</div>
           <ul className="w-full overflow-hidden rounded-[20px] bg-white dark:bg-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)]">
             {TEMPLATES.map((e) => (
