@@ -217,7 +217,7 @@ test('liveOf: a viewer behind the latest good restart starts over from it', asyn
       if (/homeroom_bot_first_versions/.test(sql)) return { rows: [{ id: 7 }] };
       if (/FROM first_version_live WHERE/.test(sql)) return { rows: [{ base_seq: 4, good_at: '2026-10-08T10:00:00Z', failed_at: null, age: 3.4 }] };
       if (/FROM first_version_live_chunks/.test(sql)) {
-        return { rows: params[1] === 4 && /seq >= \$2/.test(sql) ? [{ seq: 4, events: [meta] }, { seq: 5, events: [full] }] : [{ seq: 6, events: [meta] }] };
+        return { rows: params[1] === 4 ? [{ seq: 4, events: [meta] }, { seq: 5, events: [full] }] : [{ seq: 6, events: [meta] }] };
       }
       return { rows: [] };
     },
@@ -230,6 +230,7 @@ test('liveOf: a viewer behind the latest good restart starts over from it', asyn
   const next = await live.liveOf(pool, 1, 5);
   assert.equal(next.reset, false);
   assert.equal(next.seq, 6);
+  assert.deepEqual(queries.at(-1).params, [7, 6], 'only what comes after the viewer\'s');
 });
 
 // ── The watcher and its controller ───────────────────────────────────────
@@ -373,7 +374,7 @@ test('the routes answer the project\'s members only, as its screens do', () => {
   assert.match(gate, /appAccess\.getAppForUser\(pool, req\.params\.slug, req\.user, 'view'/);
   assert.match(gate, /!\(await communities\.isMember\(pool, app\.id, req\.user\.id\)\)\) return null;/);
   assert.match(src, /router\.get\('\/api\/apps\/:slug\/first-version\/live', async \(req, res\) => \{\s+try \{\s+const app = await liveMember\(req\);\s+if \(!app\) return res\.status\(404\)/);
-  assert.match(src, /router\.post\('\/api\/apps\/:slug\/first-version\/live\/seen', async \(req, res\) => \{\s+try \{\s+const app = await liveMember\(req\);\s+if \(!app\) return res\.status\(404\)/);
+  assert.match(src, /router\.post\('\/api\/apps\/:slug\/first-version\/live\/seen', sameOriginBrowserOnly, async \(req, res\) => \{\s+try \{\s+const app = await liveMember\(req\);\s+if \(!app\) return res\.status\(404\)/);
   assert.match(src, /'Cache-Control': 'no-store'/);
 });
 

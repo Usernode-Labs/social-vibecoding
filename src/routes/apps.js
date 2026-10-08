@@ -1965,7 +1965,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
   // #4449: a member opened Live, or watched it for `seconds` (sent when they
   // close or hide it): analytics only (events.js live_build_opened,
   // live_build_watched).
-  router.post('/api/apps/:slug/first-version/live/seen', async (req, res) => {
+  router.post('/api/apps/:slug/first-version/live/seen', sameOriginBrowserOnly, async (req, res) => {
     try {
       const app = await liveMember(req);
       if (!app) return res.status(404).json({ error: 'Not found' });

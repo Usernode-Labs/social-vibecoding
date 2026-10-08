@@ -590,11 +590,10 @@ async function liveOf(pool, appId, since = 0) {
   if (!row || row.base_seq == null) return { runId, state, seq: 0, reset: false, events: [], age: null };
   const base = Number(row.base_seq);
   const after = Number.isInteger(since) && since >= base ? since : null;
+  // From the base (a viewer starting over), or after what the viewer has.
   const { rows } = await pool.query(
-    `SELECT seq, events FROM first_version_live_chunks
-      WHERE bot_run_id = $1 AND seq ${after == null ? '>= $2' : '> $2'}
-      ORDER BY seq`,
-    [runId, after == null ? base : after],
+    'SELECT seq, events FROM first_version_live_chunks WHERE bot_run_id = $1 AND seq >= $2 ORDER BY seq',
+    [runId, after == null ? base : after + 1],
   );
   const out = [];
   let seq = after == null ? base - 1 : after;

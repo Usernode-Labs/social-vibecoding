@@ -272,6 +272,7 @@ test('the live lane wires all three into a first version\'s build, and no other'
   const src = read('src/services/homeroom-bot.js');
   const at = src.indexOf('async function buildLive(');
   const body = src.slice(at, src.indexOf('\n}\n', at));
-  assert.match(body, /\.\.\.\(firstVersion \? \{\s*onProgress: firstVersionScreens\(\)\.captionWatcher\(pool, runId\),\s*onFirstLook: /);
+  // #4449: the caption watcher now shares the build's progress lines with Live.
+  assert.match(body, /\.\.\.\(firstVersion \? \(\(\) => \{[\s\S]*?const caption = firstVersionScreens\(\)\.captionWatcher\(pool, runId\);[\s\S]*?onProgress: \(line\) => \{ caption\(line\);[\s\S]*?onFirstLook: /);
   assert.match(body, /if \(firstVersion && built\?\.review\?\.finalCapture\) \{\s*await firstVersionScreens\(\)\.keepRealScreens\(pool, runId, built\.review\.finalCapture\);/);
 });
