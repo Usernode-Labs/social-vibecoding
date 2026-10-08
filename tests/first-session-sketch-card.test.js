@@ -246,6 +246,21 @@ test('an invite to a project still being built shows the same thumbnail, drawn f
   assert.match(html, /Never forget to water the flat&#x27;s plants/);
   // The invite knows that it is on its way, not where: no line (#4053).
   assert.doesNotMatch(html, /data-build-line|Being made|<iframe|first-session-made-title/);
+  // #4394: the card is the hero, so the project shows once: its own icon in
+  // the tile (not the sketch's emoji), its name at 20px, the tagline and the
+  // invitation under them, centred with the note above the foot line.
+  assert.equal((html.match(/app-icon-tile/g) || []).length, 1, 'one tile');
+  assert.equal((html.match(/>Plant Pal</g) || []).length, 1, 'the name once');
+  assert.match(html, /data-landing-invite-body="" class="flex grow flex-col justify-center py-4"><section data-landing-invite="live" data-landing-invite-picture="sketch"/);
+  assert.match(html, /text-\[20px\] font-bold[^"]*">Plant Pal<\/p>[\s\S]*Never forget to water[\s\S]*data-landing-invite-line=""[^>]*>Maya invited you · 1 person is in it<\/p>/);
+  assert.match(html, /<\/div><p data-landing-invite-homeroom=""/, 'the foot line is outside the centred group');
+  const own = renderToHtml(createElement(MadeForYou, { preview: { ...preview, project: { ...preview.project, iconEmoji: '🌵' } }, primaryClass: 'x', onJoin() {} }));
+  assert.match(own, /🌵/);
+  assert.doesNotMatch(own, /🪴/, 'the project\'s icon, not the sketch\'s');
+  const img = renderToHtml(createElement(MadeForYou, { preview: { ...preview, project: { ...preview.project, iconUrl: '/icons/plant.png' } }, primaryClass: 'x', onJoin() {} }));
+  assert.match(img, /app-icon-tile[^>]*><img src="\/icons\/plant\.png"/);
+  const anon = renderToHtml(createElement(MadeForYou, { preview: { ...preview, inviter: null, inviterName: null, memberCount: 0 }, primaryClass: 'x', onJoin() {} }));
+  assert.match(anon, /data-landing-invite-line=""[^>]*>You&#x27;re invited<\/p>/);
   const plain = renderToHtml(createElement(MadeForYou, { preview: { ...preview, building: false }, primaryClass: 'x', onJoin() {} }));
   assert.match(plain, /data-featured-card="ready"/);
   assert.doesNotMatch(plain, /data-build-line/);

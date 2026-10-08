@@ -131,14 +131,19 @@ function glyphOf(name: string, emoji: string | null, sketched: boolean): string 
  * build line just under the card (8px below it, not in it) when `line` is
  * given. `sketching` is the card
  * still being sketched (by default, while there is no `card`); `description`
- * stands in for the sketch's tagline when there is none.
+ * stands in for the sketch's tagline when there is none. `iconUrl` is the
+ * project's own icon image, drawn in the tile in place of the emoji, and
+ * `children` close the card's body, under the line (the invite page's
+ * invitation, #4394).
  */
-export function FeaturedCard({ name, colorKey, emoji, card, description = null, sketching: sketched = !card, line = null, titleId, heading = false, compact = false }: {
+export function FeaturedCard({ name, colorKey, emoji, iconUrl = null, card, description = null, sketching: sketched = !card, line = null, titleId, heading = false, compact = false, large = false, children = null }: {
   name: string;
   /** Picks a colour when there is no emoji to read one from (the project's slug). */
   colorKey: string;
   /** The icon: the card's, or one already known while it is sketched. */
   emoji: string | null;
+  /** The project's own icon image, which the tile shows instead of the emoji. */
+  iconUrl?: string | null;
   card: FeaturedCardData | null;
   /** The project's own description, said when there is no sketch. */
   description?: string | null;
@@ -150,8 +155,12 @@ export function FeaturedCard({ name, colorKey, emoji, card, description = null, 
   heading?: boolean;
   /** Smaller art, for a screen with little room. */
   compact?: boolean;
+  /** The name at 20px, for a card that is the screen's one subject. */
+  large?: boolean;
+  /** More of the card's body, under the line. */
+  children?: ReactNode;
 }) {
-  const color = useResolvedCommunityColor(sketched ? null : { iconEmoji: emoji, key: colorKey });
+  const color = useResolvedCommunityColor(sketched ? null : { iconUrl, iconEmoji: emoji, key: colorKey });
   const glyph = glyphOf(name, emoji, sketched);
   const tagline = (card && card.tagline) || (description || '').trim();
   const Title = heading ? 'h1' : 'p';
@@ -169,14 +178,15 @@ export function FeaturedCard({ name, colorKey, emoji, card, description = null, 
           />
           <span
             aria-hidden="true"
-            className={`app-icon-tile relative flex items-center justify-center leading-none shadow-[0_6px_18px_rgba(0,0,0,0.16)] ${compact ? 'h-14 w-14 rounded-2xl text-[32px]' : 'h-[76px] w-[76px] rounded-[22px] text-[44px]'}`}
+            className={`app-icon-tile relative flex items-center justify-center overflow-hidden leading-none shadow-[0_6px_18px_rgba(0,0,0,0.16)] ${compact ? 'h-14 w-14 rounded-2xl text-[32px]' : 'h-[76px] w-[76px] rounded-[22px] text-[44px]'}`}
           >
-            {glyph ? <Glyph key={glyph} glyph={glyph} /> : null}
+            {iconUrl ? <img src={iconUrl} alt="" className="h-full w-full object-cover" /> : glyph ? <Glyph key={glyph} glyph={glyph} /> : null}
           </span>
         </div>
         <div className="flex flex-col gap-1 px-4 pb-4 pt-3.5">
-          <Title id={titleId} className="truncate text-[17px] font-bold leading-[22px]">{name}</Title>
+          <Title id={titleId} className={large ? 'truncate text-[20px] font-bold leading-[26px]' : 'truncate text-[17px] font-bold leading-[22px]'}>{name}</Title>
           {sketched ? <Placeholder /> : tagline ? <Tagline key={tagline} text={tagline} /> : null}
+          {children}
         </div>
         {sketched ? (
           <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden motion-reduce:hidden">

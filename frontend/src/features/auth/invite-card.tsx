@@ -11,12 +11,18 @@
  *            once;
  *   picture  the project itself, when there is more to show than the tile:
  *            the after-shot of its latest change, else the Discover card's
- *            image, else, while it is built, the featured card of the idea
- *            its maker was shown (../first-session/sketch-card.tsx, drawn
- *            here from its words) (preview().project.picture), and the
- *            sender's note under it when they left one, and at the foot of
- *            the scroller the one line that says what Homeroom is
- *            (HOMEROOM_LINE, #4049);
+ *            image (preview().project.picture), under the hero. While it is
+ *            built the picture is the featured card of the idea its maker
+ *            was shown (../first-session/sketch-card.tsx, drawn here from
+ *            its words), and that card IS the hero (#4394): the project's
+ *            own icon on its colour, its name, its line and the invitation
+ *            under them, "Evan invited you · 26 people are in it"
+ *            (invitedYouLine), so the project shows once. The sender's note
+ *            follows when they left one. The cards and the note are one
+ *            group, centred between the header and the Join bar the way the
+ *            made screen centres its body (../first-session/made.tsx), and
+ *            at the foot of the scroller is the one line that says what
+ *            Homeroom is (HOMEROOM_LINE, #4049);
  *   join     "Join Supply Line", pinned to the bottom of the screen where a
  *            phone page keeps its main action (InviteJoinBar). The landing
  *            draws it OUTSIDE its scroller, below it, so it stays in reach
@@ -136,6 +142,18 @@ export function inviteLine(preview: InvitePreview): string {
   return members ? `${invited} · ${members}` : invited;
 }
 
+/**
+ * The invitation inside the project's own card (#4394), whose name is just
+ * above it: "Evan invited you · 26 people are in it"; "You're invited" when
+ * the sender is not known; a zero count says nothing.
+ */
+export function invitedYouLine(preview: InvitePreview): string {
+  const who = inviterLabel(preview);
+  const invited = who ? `${who} invited you` : "You're invited";
+  const members = membersPhrase(preview.memberCount);
+  return members ? `${invited} · ${members}` : invited;
+}
+
 /** The one line that names Homeroom, at the foot of the invite page (#4049). */
 export const HOMEROOM_LINE = 'On Homeroom, people using an app build and improve it together.';
 
@@ -195,6 +213,12 @@ function Tile({ project }: { project: NonNullable<InvitePreview['project']> }) {
   );
 }
 
+/** The sketch's card, when the project's picture is one that can be drawn. */
+function sketchOf(project: NonNullable<InvitePreview['project']>) {
+  const picture = project.picture;
+  return picture && picture.kind === 'sketch' ? sketchCardOf(picture) : null;
+}
+
 /**
  * Whether the hero is all the picture there is: no picture, or a sketch
  * without a card to draw. The hero then carries `data-landing-invite-picture
@@ -209,21 +233,11 @@ export function pictureIsTile(project: Pick<NonNullable<InvitePreview['project']
 /**
  * The project as a picture, under the hero. A shot is phone-shaped, so it shows its top:
  * the part of a screen that says what the project is. An illustration has
- * a dark version when its group made one, and each theme shows its own.
+ * a dark version when its group made one, and each theme shows its own. A
+ * sketch is not drawn here: its card is the hero (MadeForYou).
  */
 function Picture({ project }: { project: NonNullable<InvitePreview['project']>; building?: boolean }) {
   const picture = project.picture;
-  // WP-D: while it is built, the thumbnail of the idea its maker was shown.
-  // #4053: without its build line, which needs the step, and the invite
-  // knows only that its first version is on its way.
-  const card = picture && picture.kind === 'sketch' ? sketchCardOf(picture) : null;
-  if (card) {
-    return (
-      <div data-landing-invite-picture="sketch" className="mx-4 mt-3">
-        <FeaturedCard name={project.name} colorKey={project.name} emoji={card.emoji} card={card} />
-      </div>
-    );
-  }
   if (picture && picture.kind !== 'sketch') {
     const img = 'block w-full h-[340px] object-cover object-top';
     return (
@@ -274,39 +288,73 @@ export function DeadInvite({ preview }: { preview: InvitePreview }) {
  */
 export function MadeForYou({ preview }: { preview: InvitePreview }) {
   const project = preview.project!;
+  const sketch = sketchOf(project);
   const tile = pictureIsTile(project);
   return (
     <>
-      {/* #4203: one hero, the tile and name with the invitation under them,
-          instead of a "who made it" card above a second copy of the icon. */}
-      <section
-        data-landing-invite="live"
-        data-landing-invite-picture={tile ? 'tile' : undefined}
-        className={`${CARD} mt-4 flex flex-col items-center px-6 py-8 text-center`}
-      >
-        <Tile project={project} />
-        <p className="mt-3 text-[20px] font-bold leading-tight text-zinc-900 dark:text-zinc-100">{project.name}</p>
-        <p data-landing-invite-line="" className="mt-1.5 text-[15px] leading-snug text-zinc-500 dark:text-zinc-400 text-pretty">
-          {inviteLine(preview)}
-        </p>
-        {/* #3700: what it is, in its own line: the same proof the project's
-            page gives somebody signed in. */}
-        {project.description ? (
-          <p data-landing-invite-description="" className="mt-3 text-[15px] leading-snug text-zinc-700 dark:text-zinc-200 text-pretty">
-            {project.description}
-          </p>
+      {/* #4394: the cards and the note, one group, centred in the room
+          between the header and the Join bar, as the made screen centres
+          its body. The landing's column is a flex column at least the
+          scroller's height, so `grow` takes the room there is and nothing
+          when the page is taller than the screen. */}
+      <div data-landing-invite-body="" className="flex grow flex-col justify-center py-4">
+        {sketch ? (
+          // WP-D: while it is built, the thumbnail of the idea its maker was
+          // shown, and #4394: it is the hero, not a second copy of it. The
+          // tile is the project's own icon, and the invitation closes the
+          // card. #4053: without its build line, which needs the step, and
+          // the invite knows only that its first version is on its way.
+          <section data-landing-invite="live" data-landing-invite-picture="sketch" className="mx-4">
+            <FeaturedCard
+              name={project.name}
+              colorKey={project.name}
+              emoji={project.iconEmoji || (project.iconUrl ? null : sketch.emoji)}
+              iconUrl={project.iconUrl}
+              card={sketch}
+              description={project.description}
+              large
+            >
+              <p data-landing-invite-line="" className="mt-1 text-[15px] leading-snug text-zinc-700 dark:text-zinc-200 text-pretty">
+                {invitedYouLine(preview)}
+              </p>
+            </FeaturedCard>
+          </section>
+        ) : (
+          <>
+            {/* #4203: one hero, the tile and name with the invitation under
+                them, instead of a "who made it" card above a second copy of
+                the icon. */}
+            <section
+              data-landing-invite="live"
+              data-landing-invite-picture={tile ? 'tile' : undefined}
+              className={`${CARD} flex flex-col items-center px-6 py-8 text-center`}
+            >
+              <Tile project={project} />
+              <p className="mt-3 text-[20px] font-bold leading-tight text-zinc-900 dark:text-zinc-100">{project.name}</p>
+              <p data-landing-invite-line="" className="mt-1.5 text-[15px] leading-snug text-zinc-500 dark:text-zinc-400 text-pretty">
+                {inviteLine(preview)}
+              </p>
+              {/* #3700: what it is, in its own line: the same proof the
+                  project's page gives somebody signed in. */}
+              {project.description ? (
+                <p data-landing-invite-description="" className="mt-3 text-[15px] leading-snug text-zinc-700 dark:text-zinc-200 text-pretty">
+                  {project.description}
+                </p>
+              ) : null}
+            </section>
+            <Picture project={project} building={!!preview.building} />
+          </>
+        )}
+        {preview.note ? (
+          <section className={`${CARD} mt-3`}>
+            <p data-landing-invite-note="" className="rounded-2xl bg-violet-500/10 px-4 py-3 text-[15px] leading-snug text-zinc-700 dark:text-zinc-200">
+              <span className="font-medium">{`${inviterLabel(preview) || 'They'}:`}</span>
+              {` “${preview.note}”`}
+            </p>
+          </section>
         ) : null}
-      </section>
-      <Picture project={project} building={!!preview.building} />
-      {preview.note ? (
-        <section className={`${CARD} mt-3`}>
-          <p data-landing-invite-note="" className="rounded-2xl bg-violet-500/10 px-4 py-3 text-[15px] leading-snug text-zinc-700 dark:text-zinc-200">
-            <span className="font-medium">{`${inviterLabel(preview) || 'They'}:`}</span>
-            {` “${preview.note}”`}
-          </p>
-        </section>
-      ) : null}
-      <p data-landing-invite-homeroom="" className="mx-4 mt-auto pt-5 text-center text-[14px] leading-5 text-zinc-500 dark:text-zinc-400 text-pretty">
+      </div>
+      <p data-landing-invite-homeroom="" className="mx-4 pt-1 text-center text-[14px] leading-5 text-zinc-500 dark:text-zinc-400 text-pretty">
         {HOMEROOM_LINE}
       </p>
     </>

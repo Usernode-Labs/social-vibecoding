@@ -230,6 +230,12 @@ test('the words: the landing card, the invite pane', () => {
   assert.equal(card.inviteLine({ ...evan, memberCount: 1 }), 'Evan invited you to Supply Line · 1 person is in it');
   assert.equal(card.inviteLine({ ...evan, memberCount: 0 }), 'Evan invited you to Supply Line');
   assert.equal(card.inviteLine({ ...evan, memberCount: undefined }), 'Evan invited you to Supply Line');
+  // #4394: inside the project's own card the name is just above, so the
+  // invitation does not repeat it.
+  assert.equal(card.invitedYouLine(evan), 'Evan invited you · 26 people are in it');
+  assert.equal(card.invitedYouLine({ ...evan, inviter: null, inviterName: null }), "You're invited · 26 people are in it");
+  assert.equal(card.invitedYouLine({ ...evan, memberCount: 0 }), 'Evan invited you');
+  assert.equal(card.invitedYouLine({ ...evan, inviter: null, inviterName: null, memberCount: 0 }), "You're invited");
   assert.equal(card.membersPhrase(2), '2 people are in it');
   assert.equal(card.inviterLabel({ inviter: 'evan', inviterName: 'Evan' }), 'Evan');
   assert.equal(card.inviterLabel({ inviter: 'evan', inviterName: 'evan' }), '@evan');
@@ -352,8 +358,10 @@ test('the picture is served only through a live link, and only an after-shot of 
   const card = read('frontend/src/features/auth/invite-card.tsx');
   assert.doesNotMatch(card, /<iframe/);
   // #4053: the thumbnail, without a build line: the invite knows that its
-  // first version is on its way (`building`), not its step.
-  assert.match(card, /<FeaturedCard name=\{project\.name\} colorKey=\{project\.name\} emoji=\{card\.emoji\} card=\{card\} \/>/);
+  // first version is on its way (`building`), not its step. #4394: it is the
+  // hero, wearing the project's own icon.
+  assert.match(card, /<FeaturedCard\s+name=\{project\.name\}\s+colorKey=\{project\.name\}\s+emoji=\{project\.iconEmoji \|\| \(project\.iconUrl \? null : sketch\.emoji\)\}\s+iconUrl=\{project\.iconUrl\}\s+card=\{sketch\}/);
+  assert.doesNotMatch(card, /line=\{/);
   assert.match(card, /<Picture project=\{project\} building=\{!!preview\.building\} \/>/);
 });
 
