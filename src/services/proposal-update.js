@@ -350,6 +350,30 @@ async function updateProposalFromForkBranch(deps, params) {
   if (forkRepoName && !head.validSegment(forkRepoName)) {
     return fail('invalid_request', 'That fork name is not a valid GitHub repository name.');
   }
+  // #4263. A patch update rides the same route as a branch update, but the
+  // branch it names is one the PLATFORM wrote — applyPatch's temporary
+  // `usernode/patch-u…-t…-…` branch in the app's own repository — so the fork
+  // gate cannot apply to it and must not be bypassable through it. The
+  // namespace names the caller (only the platform writes
+  // `usernode/patch-u<id>-`), the branch must be one the patch run created
+  // rather than the proposal's own head, and no fork name is taken: there is
+  // no fork on this path.
+  const patchBranch = params.patchBranch === true;
+  if (patchBranch) {
+    if (forkRepoName) {
+      return fail('invalid_request', 'A patch update names a branch Homeroom wrote in the app\'s own repository; it takes no forkRepo.');
+    }
+    if (!branch.startsWith(`${head.PATCH_BRANCH_PREFIX}u${Number(user.id)}-`)) {
+      return fail(
+        'invalid_request',
+        'A patch update names the branch the patch application created — a `usernode/patch-u…` branch in the app\'s '
+        + 'own repository, returned by the submit_work call that carried the patch. It cannot name anything else.'
+      );
+    }
+    if (params.session && branch === String(params.session.branch_name || '').trim()) {
+      return fail('invalid_request', 'That branch is already this proposal\'s head. Send the branch the patch application created.');
+    }
+  }
   const expectedHeadSha = params.expectedHeadSha
     ? String(params.expectedHeadSha).trim().toLowerCase()
     : null;
@@ -409,6 +433,16 @@ async function updateProposalFromForkBranch(deps, params) {
       return fail('no_repository', 'That app has no GitHub repository, so its proposals have no branch to advance.');
     }
     const { owner, repo } = parsed;
+    // Re-checked UNDER the lock: the row may have changed while the caller
+    // queued, and a patch update must never run its push against a head that
+    // lives in a fork the platform does not write.
+    if (patchBranch && branchHomeOf(session) !== 'app_repo') {
+      return fail(
+        'invalid_request',
+        'This proposal follows a branch in its author\'s own fork, which a patch update cannot write. Push your '
+        + 'commits to that branch and submit with `branch` instead.'
+      );
+    }
     const forkRepo = forkRepoName || repo;
 
     const busy = deps.busy || defaultBusyCheck;
@@ -430,6 +464,11 @@ async function updateProposalFromForkBranch(deps, params) {
         prMetadata: deps.prMetadata || require('./pr-metadata'), username: user.username,
         session, owner, repo, forkOwner: link.login, forkRepo, branch,
         expectedLogin: link.login, expectedHeadSha, sessionId,
+        // #4263. Set by the patch-update path: `branch` is applyPatch's
+        // temporary branch in the app's own repository, so the fork
+        // attribution gate does not apply and the push reads its source from
+        // the app repository itself.
+        patchBranch: patchBranch,
         testing: normalizeTesting(params.testing),
         visibleChanges,
         title: normalizeProposedTitle(params.title),
@@ -1514,21 +1553,48 @@ async function advanceAppRepoBranch(ctx) {
     liveHead = null;
   }
 
-  // THE ATTRIBUTION GATE. Run here for the ancestry comparison, and again
-  // inside pushForkBranchToAppBranch immediately before the push — the
-  // second run is the load-bearing one, and this one is not permitted to
-  // replace it.
-  const verified = await head.verifyForkBranch({
-    githubPublic, forkOwner, forkRepo, branch, expectedLogin,
-  });
-  if (!verified.ok) return renameHeadFailure(verified, branch);
+  // THE ATTRIBUTION GATE — for a fork-source branch. Run here for the ancestry
+  // comparison, and again inside pushForkBranchToAppBranch immediately before
+  // the push — the second run is the load-bearing one, and this one is not
+  // permitted to replace it.
+  //
+  // A patch update (#4263) has no fork to verify: its source branch is
+  // applyPatch's temporary branch in THIS repository, written by the platform
+  // moments ago, and its namespace has already been checked against the
+  // caller. The source head is read straight off the app repository instead,
+  // and a first landing is refused outright — a patch applies onto a head that
+  // exists, so there is nothing for it to create.
+  let sourceHead;
+  if (ctx.patchBranch) {
+    if (firstLanding) {
+      return fail(
+        'invalid_request',
+        'This proposal\'s branch has no commit to patch onto yet. Push a branch to your fork and submit it with '
+        + '`branch`, or open a new proposal with the patch.'
+      );
+    }
+    try {
+      sourceHead = String(await gh.getBranchSha(owner, repo, branch)).trim().toLowerCase();
+    } catch (err) {
+      log.warn('proposal-update', 'could not read the applied patch branch', {
+        sessionId, branch, err: err.message,
+      });
+      return fail('platform_unavailable', 'Homeroom could not read the branch the patch was applied to. Try again shortly.', { retryable: true });
+    }
+  } else {
+    const verified = await head.verifyForkBranch({
+      githubPublic, forkOwner, forkRepo, branch, expectedLogin,
+    });
+    if (!verified.ok) return renameHeadFailure(verified, branch);
+    sourceHead = verified.headSha;
+  }
 
   if (!firstLanding) {
     // Nothing to push — but a resubmit may still be correcting the capture
     // routes, which is the one thing that used to have no way through (#1199).
-    if (verified.headSha === liveHead) return resubmitUnchanged(ctx, liveHead, 'update_branch');
+    if (sourceHead === liveHead) return resubmitUnchanged(ctx, liveHead, 'update_branch');
 
-    const ancestry = await checkAncestry({ gh, owner, repo, base: liveHead, head: verified.headSha, branch });
+    const ancestry = await checkAncestry({ gh, owner, repo, base: liveHead, head: sourceHead, branch });
     if (ancestry) return ancestry;
   }
 
@@ -1554,10 +1620,15 @@ async function advanceAppRepoBranch(ctx) {
       gh, githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin,
       targetBranch,
     })
-    : await head.pushForkBranchToAppBranch({
-      githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin,
-      targetBranch, expectedRemoteSha: liveHead, sessionId,
-    });
+    : await (ctx.patchBranch
+      ? head.pushAppBranchToAppBranch({
+        owner, repo, sourceBranch: branch,
+        targetBranch, expectedRemoteSha: liveHead, sessionId,
+      })
+      : head.pushForkBranchToAppBranch({
+        githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin,
+        targetBranch, expectedRemoteSha: liveHead, sessionId,
+      }));
   if (!pushed.ok) return renameHeadFailure(pushed, branch);
 
   if (session.source !== 'imported') {
@@ -1571,8 +1642,8 @@ async function advanceAppRepoBranch(ctx) {
   // routes off this session object (#1199).
   const testingApplied = await applyTestingMetadata({ pool, session, testing: ctx.testing });
   const shotsApplied = await applyShotsRevision({
-    pool, config, session, headSha: verified.headSha,
-    visibleChanges: ctx.visibleChanges, headChanged: liveHead !== verified.headSha,
+    pool, config, session, headSha: sourceHead,
+    visibleChanges: ctx.visibleChanges, headChanged: liveHead !== sourceHead,
   });
   // And the submitted title: stored for the promote-time lazy PR creation
   // when the row has no PR yet, or a rename of the existing PR when it does.
@@ -1600,7 +1671,7 @@ async function advanceAppRepoBranch(ctx) {
         pool, session, repoOwner: owner, repoName: repo,
         userMessage: '', ccSummary: '', username,
         userId: session.user_id, allowModelGeneration: false,
-        sourceHeadSha: verified.headSha,
+        sourceHeadSha: sourceHead,
         preferredTitle: session.proposed_pr_title || session.session_title || null,
       });
     } catch (err) {
@@ -1621,7 +1692,7 @@ async function advanceAppRepoBranch(ctx) {
     prUrl: session.pr_url || null,
     branchHome: 'app_repo',
     branch: targetBranch,
-    headSha: verified.headSha,
+    headSha: sourceHead,
     previousHeadSha: liveHead,
     // What this push actually landed on, decided here and not by the work
     // order — which was written before the agent started and may be an hour
@@ -1702,7 +1773,7 @@ async function advanceAppRepoBranch(ctx) {
     if (applied) votesClearing = cleared ? 'now' : 'none';
     log.info('proposal-update', 'advanced an imported proposal on its app-repo branch', {
       sessionId, owner, repo, targetBranch, previousHeadSha: liveHead,
-      headSha: verified.headSha, votesCleared: cleared ? votesCleared : 0, synced,
+      headSha: sourceHead, votesCleared: cleared ? votesCleared : 0, synced,
       repinned: repinned ? (viaMirror ? 'mirror' : (repinned.reason || 'unchanged')) : 'not_needed',
       votesClearing, votesAtRisk: votesCleared,
     });
@@ -1732,11 +1803,11 @@ async function advanceAppRepoBranch(ctx) {
   // started, so its preview describes the code that just arrived.
   if (kind === 'session' && session.status === 'active') {
     const settled = await settleActiveSession({
-      config, pool, session, sessionId, headSha: verified.headSha, parts,
+      config, pool, session, sessionId, headSha: sourceHead, parts,
     });
     log.info('proposal-update', 'advanced an active session from its author\'s fork', {
       sessionId, owner, repo, targetBranch, previousHeadSha: liveHead,
-      headSha: verified.headSha, rebuilding: settled.rebuilding,
+      headSha: sourceHead, rebuilding: settled.rebuilding,
     });
     return {
       ...landed,
@@ -1757,10 +1828,10 @@ async function advanceAppRepoBranch(ctx) {
   // worse than no tick), tear the stale preview down, and tell the caller the
   // session has to be reopened for the rest to happen.
   if (kind === 'session') {
-    await settlePausedSession({ pool, session, sessionId, headSha: verified.headSha, parts });
+    await settlePausedSession({ pool, session, sessionId, headSha: sourceHead, parts });
     log.info('proposal-update', 'advanced a paused session from its author\'s fork', {
       sessionId, owner, repo, targetBranch, previousHeadSha: liveHead,
-      headSha: verified.headSha,
+      headSha: sourceHead,
     });
     return {
       ...landed,
@@ -1814,7 +1885,7 @@ async function advanceAppRepoBranch(ctx) {
 
   log.info('proposal-update', 'advanced a proposal from its author\'s fork', {
     sessionId, owner, repo, targetBranch, previousHeadSha: liveHead,
-    headSha: verified.headSha, votesCleared: cleared ? votesCleared : 0,
+    headSha: sourceHead, votesCleared: cleared ? votesCleared : 0,
     votesClearing, votesAtRisk: votesCleared,
     moveKind: settled ? (reconciled.kind || null) : null,
   });

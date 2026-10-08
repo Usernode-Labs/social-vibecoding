@@ -1794,6 +1794,52 @@ test('submit_work takes shape (4) exactly as documented: proposalId + branch', a
   }
 });
 
+// ── #4263: a patch is a way in for an update too ────────────────────────
+
+test('a patch with a proposalId passes the branch-or-refuse gate and reaches the patch rules', async () => {
+  // Before #4263 this call was refused as "An update needs `branch` too" —
+  // the gate fired before the patch was ever looked at. Now the patch counts
+  // as a way in, and the refusal it meets names what a patch still needs.
+  const pool = { async query() { return { rows: [] }; } };
+  const { handlers, calls, restore } = connector(() => {
+    throw new Error('no platform call should happen for a refusal this early');
+  }, { scopes: [READ_SCOPE, WRITE_SCOPE], pool });
+  try {
+    const res = await handlers.get('submit_work')({
+      proposalId: 3140, patch: 'diff --git a/x b/x\n',
+    });
+    assert.equal(res.isError, true);
+    const text = res.content.map((c) => c.text).join('\n');
+    assert.match(text, /taskId from the work order/);
+    assert.doesNotMatch(text, /needs `branch` too/);
+    assert.deepEqual(calls, []);
+  } finally {
+    restore();
+  }
+});
+
+test('submit_work documents the patch update and what description and summary do on one', () => {
+  const block = registration('submit_work');
+  // Shape (4) has two ways in, and the patch one names its limits.
+  assert.match(block, /`proposalId` plus `branch`, or plus `taskId` and `patch`/);
+  // The proposalId doc uses typographic apostrophes; `.` covers them.
+  assert.match(block, /about 250 KB max; refused for a proposal whose head lives in the user.s own fork/);
+  assert.match(block, /rebase onto `branch\.headSha`, and resubmit with that commit as `expectedHeadSha`/);
+  // The patch field: a revision, not a second proposal — and the upload id
+  // stays a new-work-only device.
+  assert.match(block, /Requires taskId; with `proposalId` it revises that proposal instead of opening one/);
+  assert.match(block, /applied on the proposal.s current commit/);
+  assert.match(block, /`patchUploadId` is for new work only/);
+  // description on an update replaces the pull request body but keeps the
+  // platform's own lines — the Closes lines and the shots block — and
+  // omission leaves the body alone.
+  assert.match(block, /it REPLACES the pull request body/);
+  assert.match(block, /the `Closes #N` lines and the before\/after shots block are kept/);
+  assert.match(block, /Omit it to leave the body as it is/);
+  // summary likewise: replace or omit.
+  assert.match(block, /Omit it to leave the current summary alone/);
+});
+
 // ── #2066: advancing a shared in-progress card ──────────────────────────
 //
 // A draft landed with `share: true`, more commits were pushed onto it, and
@@ -3902,9 +3948,10 @@ test('submit_work reaches the update through the platform route, not around it',
   assert.match(block, /proposals\/\$\{id\}\/update-from-fork/);
   assert.match(block, /callPlatform\(\s*\n?\s*baseUrl, accessToken, 'POST'/);
   assert.doesNotMatch(block, /force-with-lease|verifyForkBranch|pushForkBranchToAppBranch/);
-  // An update needs the branch it is advancing FROM.
+  // An update needs the branch it is advancing FROM — or the patch to apply
+  // on its current commit (#4263).
   assert.match(block, /const updating = Number\.isInteger\(proposalId\) && proposalId > 0/);
-  assert.match(block, /if \(updating && !branch\)/);
+  assert.match(block, /if \(updating && !branch && !patch\)/);
   // The vote consequence is reported, because it is the one thing the user
   // must hear before it happens again.
   assert.match(block, /votesCleared/);

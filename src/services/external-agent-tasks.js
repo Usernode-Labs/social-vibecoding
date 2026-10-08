@@ -760,9 +760,10 @@ function buildWorkOrder({
   // rather than opening a new one. Four things change, and they are the four
   // an agent gets wrong if they are left implied: the starting commit is the
   // PROPOSAL's head and not the app's main branch, the submission carries a
-  // proposalId instead of asking for a new pull request, the patch fallback
-  // does not exist on this path, and submitting CLEARS the votes the proposal
-  // has already collected.
+  // proposalId instead of asking for a new pull request, a patch is applied
+  // on that head rather than opening a second proposal (and is refused where
+  // the head is a fork branch Homeroom cannot write), and submitting CLEARS
+  // the votes the proposal has already collected.
   const update = targetProposal && Number(targetProposal.id) > 0 ? targetProposal : null;
   const updateRef = update ? String(Number(update.id)) : null;
   const forkIsHome = !!(update && update.branchHome === 'user_fork');
@@ -1088,8 +1089,10 @@ function buildWorkOrder({
   // the base commit in the app's own repository, so an ordinary change needs
   // no fork and no GitHub write access — the push is what failed in most
   // production runs. A branch stays the fallback for a change over the patch
-  // limit, or for an agent that already pushes to its fork. An update has no
-  // patch path at all (a patch opens a second proposal), so it keeps the push.
+  // limit, or for an agent that already pushes to its fork. An update takes
+  // the same two ways in when its proposal's head lives in the app's own
+  // repository — the patch applies ON that head and moves the same proposal —
+  // and only a fork-home proposal keeps the push alone (#4263).
   //
   // #3687: which of the two is the AGENT's call, and the text says so. Given
   // a default and an exception and no owner for the choice, Claude Code on
@@ -1157,12 +1160,14 @@ function buildWorkOrder({
   if (hasTask && update) {
     // ── The update path's closing tree ─────────────────────────────────
     //
-    // Three of the create path's steps do not exist here and saying them
+    // Two of the create path's steps do not exist here and saying them
     // would be worse than silence: there is no pull request to open (the
-    // proposal already has one), the patch fallback is create-only (a patch
-    // opens a NEW proposal, which is the opposite of the ask), and "push
-    // again to the same branch" is exactly what does NOT work when the
-    // proposal's head is bot-owned — the whole reason this path exists.
+    // proposal already has one), and "push again to the same branch" is
+    // exactly what does NOT work when the proposal's head is bot-owned — the
+    // whole reason this path exists. The patch, by contrast, WORKS here now
+    // (#4263): applied on the proposal's own head it moves the same proposal,
+    // and is refused only where that head is a fork branch Homeroom cannot
+    // write.
     lines.push(
       '',
       `2. SUBMIT THE UPDATE, through the Homeroom connector. Call \`submit_work\``,
@@ -1205,13 +1210,35 @@ function buildWorkOrder({
       `${CMD}git push --force-with-lease origin HEAD`,
       '   IF IT ANSWERS `branch_moved`, somebody advanced the proposal while you',
       '   were working. Call `get_proposal` for its new head, rebase onto that and',
-      '   submit again. Neither is a reason to start over or to open a second',
+      '   submit again.',
+      ...(forkIsHome ? [] : [
+        '   If you sent a patch, rebase onto the new head, export the patch from it',
+        '   (`git format-patch <that head>..HEAD --stdout`) and pass that head as',
+        '   `expectedHeadSha`.',
+      ]),
+      '   Neither is a reason to start over or to open a second',
       '   proposal.',
       '',
-      '4. DO NOT SEND A PATCH on this path and do not call `prepare_work` again.',
-      '   Both open a SECOND proposal for a change the group is already voting on,',
-      `   which is the one outcome to avoid. If the push itself is refused, the`,
-      '   remedy above is the fix; report it and retry once.',
+      ...(forkIsHome
+        ? [
+          '4. DO NOT SEND A PATCH on this path: this proposal follows your fork\'s',
+          '   branch, which Homeroom cannot write. Push to that branch (step 1) and',
+          '   submit with `branch`. Do not call `prepare_work` again either — it',
+          '   opens a SECOND proposal for a change the group is already voting on.',
+          '   If the push itself is refused, the remedy in step 3 is the fix; report',
+          '   it and retry once.',
+        ]
+        : [
+          '4. A PATCH WORKS HERE TOO, instead of the push in step 1. Run',
+          `${CMD}git format-patch <the head this order prints>..HEAD --stdout`,
+          `   and call \`submit_work\` with proposalId ${updateRef}, taskId ${taskRef}, the patch as`,
+          '   `patch` (no `branch`), `expectedHeadSha` set to that head, and the same',
+          '   prose as step 2. Homeroom applies it on the proposal\'s current commit',
+          '   and moves this same proposal onto it, and the votes clear as they do',
+          '   for a pushed branch. Patches over about 250 KB are refused: push',
+          '   instead. Do not call `prepare_work` again and do not submit without',
+          '   proposalId: either opens a SECOND proposal.',
+        ]),
       '',
       '5. ON A CONNECTOR ERROR, relay it plainly rather than giving up:',
       '   `insufficient_scope` — ask the user to reconnect Homeroom and approve',
@@ -1442,10 +1469,11 @@ function buildWorkOrder({
       '   fix them. If you pushed a branch, push again to the SAME branch: the',
       '   proposal follows your branch, so a new commit re-runs the checks by',
       '   itself. If you sent a patch, the proposal\'s branch is in the app\'s own',
-      '   repository: revise it through `prepare_work` with its `proposalId` (an',
-      '   update work order). Do not call',
-      '   `submit_work` again and do not call `prepare_work` without that id — the',
-      '   pull request already exists, and a second submission would duplicate it.',
+      '   repository: call `prepare_work` with its `proposalId` for an update work',
+      '   order, then submit the fix against that proposalId as a patch or a',
+      '   branch, as that work order says. Do not submit again without that',
+      '   proposalId — the pull request already exists, and a second',
+      '   submission would duplicate it.',
       '   `get_proposal` also reports `shots`. For a user-visible',
       '   change, check that your declared changes were accepted and',
       '   wait for `verified`; `shotResults` says why any change was skipped,',
@@ -2347,6 +2375,20 @@ async function appSlugForProposal(pool, proposalId) {
   }
 }
 
+// The proposal row a patch update (#4263) needs before it touches git: where
+// the head lives (`branchHomeOf` reads it off these exact columns) and which
+// repository to apply the patch in. Routing and gate inputs only — the
+// ownership gate and the lease both run again behind the update route.
+async function loadProposalRowForUpdate(pool, proposalId) {
+  const { rows } = await pool.query(
+    `SELECT cs.id, cs.branch_name, cs.source, cs.imported_pr_head_repo, a.repo_url
+       FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
+      WHERE cs.id = $1`,
+    [Number(proposalId)]
+  );
+  return rows[0] || null;
+}
+
 // ── Serializing two callers on one task ────────────────────────────────
 //
 // The work order now tells the coding agent to submit for itself, so the
@@ -3008,7 +3050,7 @@ function prOpenFailed({ desc, owner, repo, forkOwner, forkRepo, branch }) {
 // create path because a second create would open a duplicate proposal, and on
 // this path there is no duplicate to open.
 async function submitUpdate(deps, params, proposalId) {
-  const { pool } = deps;
+  const { pool, gh = githubService } = deps;
   const {
     user, clientId, clientName, agent, source, taskId, updateProposal,
   } = params;
@@ -3016,14 +3058,26 @@ async function submitUpdate(deps, params, proposalId) {
   if (typeof updateProposal !== 'function') {
     return fail('platform_unavailable', 'This Homeroom client cannot submit proposal updates. Try again shortly.', { retryable: true });
   }
-  // A patch is create-only by construction: applyPatch writes a NEW branch in
-  // the app's repository and the caller opens a pull request against it, which
-  // is a second proposal for a change the group is already voting on.
-  if (params.patch) {
+  let branch = params.branch ? String(params.branch).trim() : '';
+  const patch = params.patch ? String(params.patch) : '';
+  // #4263. A patch update is now a first-class way to revise a proposal whose
+  // head lives in the app's own repository: the patch is applied ON the
+  // proposal's current commit and the commit that results is pushed onto that
+  // same proposal's branch — no second proposal, and no push to the user's
+  // fork, which cloud coding sessions often refuse. It is refused where the
+  // head is a fork branch Homeroom cannot write.
+  if (patch && branch) {
     return fail(
       'invalid_request',
-      'An update is submitted as a branch, not as a patch — a patch opens a second proposal for the same change. '
-      + 'Push the branch to your fork and pass its name.'
+      'Send one of `patch` or `branch`, not both: a patch update is applied on the proposal\'s current commit, '
+      + 'a branch update is read from your fork.'
+    );
+  }
+  if (patch && !taskId) {
+    return fail(
+      'invalid_request',
+      'A patch update needs the taskId from the update work order — call `prepare_work` with the proposal\'s '
+      + '`proposalId` and submit against the task it returns.'
     );
   }
   if (params.prNumber) {
@@ -3033,12 +3087,12 @@ async function submitUpdate(deps, params, proposalId) {
       + 'as a new proposal) — they are two different submissions.'
     );
   }
-  const branch = params.branch ? String(params.branch).trim() : '';
-  if (!branch) {
+  if (!branch && !patch) {
     return fail(
       'invalid_request',
-      'Pass `branch` too: the branch in your own fork that carries the new commits. Homeroom reads it from GitHub, '
-      + 'so it has to be pushed first.'
+      'Pass `branch` too: the branch in your own fork that carries the new commits, pushed first — or `patch` '
+      + 'with the taskId from the update work order, as `git format-patch <the proposal\'s current '
+      + 'commit>..HEAD --stdout`.'
     );
   }
   const expectedHeadSha = params.expectedHeadSha
@@ -3082,6 +3136,57 @@ async function submitUpdate(deps, params, proposalId) {
     );
   }
 
+  // ── The patch update (#4263) ─────────────────────────────────────────
+  //
+  // The patch is applied ON the proposal's current head — `expectedHeadSha`
+  // when the caller passed one (the route's lease then still checks it), the
+  // head read from GitHub now otherwise — and the branch that application
+  // creates is fed to the SAME update flow a fork branch takes. One refusal
+  // happens before any git work: a fork-home proposal is the one target a
+  // patch cannot advance, because Homeroom cannot write the branch it lives
+  // on.
+  let patchUpdate = null;
+  let patchBaseSha = null;
+  if (patch) {
+    const row = await loadProposalRowForUpdate(pool, proposalId);
+    if (proposalUpdate.branchHomeOf(row) === 'user_fork') {
+      return fail(
+        'invalid_request',
+        'This proposal follows a branch in your own fork, which Homeroom cannot write. Push your commits to that '
+        + 'branch and submit with `branch`.'
+      );
+    }
+    const parsed = gh.parseGithubUrl(row.repo_url);
+    if (!parsed) {
+      return fail('no_repository', 'That app has no GitHub repository, so there is nothing to apply a patch to.');
+    }
+    patchBaseSha = expectedHeadSha;
+    if (!patchBaseSha) {
+      try {
+        patchBaseSha = String(await gh.getBranchSha(parsed.owner, parsed.repo, row.branch_name)).trim().toLowerCase();
+      } catch (err) {
+        if (err && err.status === 404) {
+          return fail(
+            'invalid_request',
+            `This proposal's branch has no commit to patch onto yet. Push a branch to your fork and submit with `
+            + '`branch`, or open a new proposal with the patch.'
+          );
+        }
+        log.warn('external-agent-tasks', 'could not read the proposal head for a patch update', {
+          proposalId, err: err.message,
+        });
+        return fail('platform_unavailable', 'Homeroom could not read this proposal\'s current commit. Try again shortly.', { retryable: true });
+      }
+    }
+    const applied = await externalAgentPatch.applyPatch({
+      owner: parsed.owner, repo: parsed.repo, patch,
+      baseSha: patchBaseSha, userId: user.id, taskId: task.id,
+    });
+    if (!applied.ok) return applied;
+    patchUpdate = applied;
+    branch = applied.branch;
+  }
+
   // The testing metadata travels WITH the update (#1199). The route stores it
   // before the tails run their capture, so the screenshots the group votes on
   // are of the screen this revision changed rather than of whatever the first
@@ -3096,10 +3201,15 @@ async function submitUpdate(deps, params, proposalId) {
   // Empty for a task that names no request, which sends nothing and leaves
   // the stored linkage alone.
   const linkedIssues = linkedIssuesFor(task);
+  try {
   const updated = await updateProposal(slug, proposalId, {
     branch,
-    forkRepo: params.forkRepo ? String(params.forkRepo).trim() : null,
-    expectedHeadSha,
+    // #4263. On the patch path there is no fork in the submission: the branch
+    // is the platform's own patch branch, and the route is told so rather than
+    // being left to run the fork attribution gate against it.
+    ...(patchUpdate ? { patchBranch: true } : {}),
+    forkRepo: patchUpdate ? null : (params.forkRepo ? String(params.forkRepo).trim() : null),
+    expectedHeadSha: patchUpdate ? patchBaseSha : expectedHeadSha,
     ...(testing.testingPaths ? { testingPaths: testing.testingPaths } : {}),
     ...(testing.testingSteps ? { testingSteps: testing.testingSteps } : {}),
     ...(params.visibleChanges ? { visibleChanges: params.visibleChanges } : {}),
@@ -3153,7 +3263,10 @@ async function submitUpdate(deps, params, proposalId) {
                 submitted_source = $6, submitted_client_id = $7
           WHERE id = $1 AND user_id = $3`,
         [
-          task.id, proposalId, user.id, branch,
+          // #4263. A patch update stamps the PROPOSAL's own branch: the
+          // branch this call carried was applyPatch's temporary one, already
+          // deleted by the time the stamp runs.
+          task.id, proposalId, user.id, patchUpdate ? (result.branch || branch) : branch,
           SUBMIT_VIA.includes(result.submittedVia) ? result.submittedVia : null,
           normalizeSource(source),
           clientId || null,
@@ -3284,6 +3397,21 @@ async function submitUpdate(deps, params, proposalId) {
     externalAgent: label,
     submittedVia: result.submittedVia || null,
   };
+  } finally {
+    // #4263. The patch's temporary branch is deleted whatever happened: on
+    // success the commit is already on the proposal's own branch, and on a
+    // refusal nothing should be left behind. A cleanup failure is logged and
+    // never fails a submission that has already landed.
+    if (patchUpdate) {
+      try {
+        await patchUpdate.cleanup();
+      } catch (err) {
+        log.warn('external-agent-tasks', 'patch update cleanup failed', {
+          proposalId, err: err && err.message,
+        });
+      }
+    }
+  }
 }
 
 // deps: { pool, config, gh, githubLink, limits }

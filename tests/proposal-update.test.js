@@ -362,6 +362,109 @@ test('an app-repo proposal is advanced with a lease pinned to the head just read
   assert.equal(log.reconcile[0].session.id, 501);
 });
 
+// ── 3b. The patch update (#4263) ────────────────────────────────────────
+//
+// A patch update's source branch is applyPatch's temporary branch in the APP
+// repository, written by the platform for the caller — so the fork
+// attribution gate does not apply to it and the push reads its source from
+// the same repository it writes. These tests pin that nothing else changed:
+// the same lease, the same vote clearing, the same refusals.
+
+const PATCH_BRANCH = 'usernode/patch-u7-t44-ab12cd';
+const PATCH_HEAD = 'd'.repeat(40);
+
+test('a patch update skips the fork gate and pushes app-repo to app-repo, still leased', async () => {
+  const log = {};
+  const result = await run({
+    gh: {
+      // The applied branch lives in o/r now: its head is read straight off
+      // the app repository, which is what stands in for verifyForkBranch.
+      getBranchSha: async (owner, repo, name) =>
+        name === PATCH_BRANCH ? PATCH_HEAD : NATIVE_HEAD,
+    },
+    head: {
+      PATCH_BRANCH_PREFIX: 'usernode/patch-',
+      pushAppBranchToAppBranch: async (args) => {
+        (log.push = log.push || []).push(args);
+        return { ok: true, headSha: PATCH_HEAD, credential: { source: 'bot' } };
+      },
+    },
+  }, { patchBranch: true, branch: PATCH_BRANCH }, log);
+  assert.equal(result.ok, true);
+  assert.equal(result.headSha, PATCH_HEAD);
+  assert.equal(result.previousHeadSha, NATIVE_HEAD);
+  assert.equal(result.votesCleared, 4, 'the vote-clearing rule is the branch update’s, unchanged');
+  assert.equal(log.verify, undefined, 'the attribution gate never ran — the namespace was checked instead');
+  assert.equal(log.mirror, undefined, 'a patch update is a push, not a first landing');
+  assert.equal(log.push.length, 1);
+  assert.deepEqual(
+    Object.keys(log.push[0]).sort(),
+    ['expectedRemoteSha', 'owner', 'repo', 'sessionId', 'sourceBranch', 'targetBranch'].sort(),
+    'no fork fields reach an app-to-app push'
+  );
+  assert.equal(log.push[0].sourceBranch, PATCH_BRANCH);
+  assert.equal(log.push[0].targetBranch, 'dev/evan-1786376366569');
+  assert.equal(log.push[0].expectedRemoteSha, NATIVE_HEAD, 'the lease is still the live head');
+  assert.equal(log.push[0].sessionId, 501);
+});
+
+test('a patch update may name only the branch the patch run created', async () => {
+  const head = { PATCH_BRANCH_PREFIX: 'usernode/patch-' };
+  const wrongPrefix = await run({ head }, { patchBranch: true, branch: 'fix/failing-check' }, {});
+  assert.equal(wrongPrefix.code, 'invalid_request');
+  assert.match(wrongPrefix.message, /usernode\/patch-u…/);
+
+  const someoneElses = await run({ head }, { patchBranch: true, branch: 'usernode/patch-u9-t44-x' }, {});
+  assert.equal(someoneElses.code, 'invalid_request', 'u9 is not this caller');
+
+  // The same-head refusal can only be reached once the prefix has passed, so
+  // this session's head itself is patch-shaped.
+  const theHeadItself = await run(
+    { head, session: nativeSession({ branch_name: PATCH_BRANCH }) },
+    { patchBranch: true, branch: PATCH_BRANCH }, {}
+  );
+  assert.equal(theHeadItself.code, 'invalid_request');
+  assert.match(theHeadItself.message, /already this proposal's head/);
+
+  const withFork = await run(
+    { head }, { patchBranch: true, branch: PATCH_BRANCH, forkRepo: 'recipe-box' }, {}
+  );
+  assert.equal(withFork.code, 'invalid_request');
+  assert.match(withFork.message, /it takes no forkRepo/);
+});
+
+test('a patch update is refused under the lock where the head is a fork branch', async () => {
+  const log = {};
+  const forkSession = importedSession({ imported_pr_head_repo: 'someuser/recipe-box' });
+  const result = await run(
+    { session: forkSession, head: { PATCH_BRANCH_PREFIX: 'usernode/patch-' } },
+    { patchBranch: true, branch: PATCH_BRANCH }, log
+  );
+  assert.equal(result.code, 'invalid_request');
+  assert.match(result.message, /its author's own fork, which a patch update cannot write/);
+  assert.match(result.message, /submit with `branch`/);
+  assert.equal(log.push, undefined);
+  assert.equal(log.verify, undefined);
+  assert.deepEqual(log.serialized, [forkSession.id], 'the refusal is the re-read one, under the lock');
+});
+
+test('without patchBranch the fork gate still runs exactly as it did', async () => {
+  // The counterweight to the skip above: an ordinary branch update must not
+  // have found a new way around verifyForkBranch.
+  const log = {};
+  const result = await run({
+    head: {
+      PATCH_BRANCH_PREFIX: 'usernode/patch-',
+      pushAppBranchToAppBranch: async () => {
+        throw new Error('a branch update must never reach the app-to-app push');
+      },
+    },
+  }, {}, log);
+  assert.equal(result.ok, true);
+  assert.equal(log.verify.length, 1);
+  assert.equal(log.push.length, 1, 'and the push is the fork push');
+});
+
 test('the update runs inside the session queue, the lock and a session operation', async () => {
   const log = {};
   await run({}, {}, log);

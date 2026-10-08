@@ -446,8 +446,14 @@ function parseShareInProgressBody(body) {
 }
 
 function parseUpdateFromForkBody(body) {
-  exactKeys(body, ['branch', 'forkRepo', 'expectedHeadSha', 'testingPaths', 'testingSteps', 'title', 'description', 'summary', 'linkedIssues', 'recheck', 'visibleChanges', 'visualEvidence'], 'body');
+  exactKeys(body, ['branch', 'forkRepo', 'expectedHeadSha', 'patchBranch', 'testingPaths', 'testingSteps', 'title', 'description', 'summary', 'linkedIssues', 'recheck', 'visibleChanges', 'visualEvidence'], 'body');
   const branch = boundedText(body.branch, { label: 'branch', min: 1, max: 255, trim: true });
+  // #4263. A patch update rides this same route: the connector applies the
+  // caller's patch to a temporary branch in the app's own repository and
+  // submits THAT branch here. The service checks the namespace — only the
+  // platform writes `usernode/patch-u<caller>-` — and keeps the fork gate for
+  // every branch the caller pushed themselves.
+  const patchBranch = body.patchBranch === true;
   const forkRepo = body.forkRepo == null
     ? null
     : boundedText(body.forkRepo, { label: 'forkRepo', min: 1, max: 100, trim: true });
@@ -507,7 +513,7 @@ function parseUpdateFromForkBody(body) {
     ? []
     : parseImportLinkedIssues({ linkedIssues: body.linkedIssues });
   const testing = require('../services/testing-notes').parseSubmitted(body);
-  return { branch, forkRepo, expectedHeadSha, testing, title,
+  return { branch, forkRepo, expectedHeadSha, patchBranch, testing, title,
     description, summary,
     recheck, linkedIssues, visibleChanges: parseVisibleChanges(visibleChangesContract.declaredChanges(body)) };
 }
@@ -890,6 +896,7 @@ function proposalHandoffRoutes(config) {
           branch: input.branch,
           forkRepo: input.forkRepo,
           expectedHeadSha: input.expectedHeadSha,
+          patchBranch: input.patchBranch,
           testing: input.testing,
           visibleChanges: input.visibleChanges,
           title: input.title,

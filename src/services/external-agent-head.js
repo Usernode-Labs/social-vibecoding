@@ -405,6 +405,16 @@ async function mirrorForkBranch({
 // that has diverged further falls back to a full fetch rather than failing.
 const UPDATE_FETCH_DEPTH = 50;
 
+// The push went through but the branch is no longer where the caller read it:
+// "stale info" is git's own words for a lease that no longer holds, and
+// `non-fast-forward` / `fetch first` mean the same thing from the other
+// direction. One reader for both push paths, so the fork push and the
+// patch-update push can never disagree about what counts as the branch
+// having moved rather than a fault.
+function pushLostTheBranch(text) {
+  return /stale info|non-fast-forward|fetch first|rejected/i.test(String(text || ''));
+}
+
 async function pushForkBranchToAppBranch({
   githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin,
   targetBranch, expectedRemoteSha, sessionId,
@@ -474,10 +484,7 @@ async function pushForkBranchToAppBranch({
     // reader (and tests/external-agent-tasks.js's scrape) can see is there.
     const raw = err && (err.stderr || err.message);
     const text = redactToken(raw, credential.token);
-    // "stale info" is git's own words for a lease that no longer holds.
-    // `non-fast-forward` / `fetch first` mean the same thing from the other
-    // direction, and both are the branch having moved rather than a fault.
-    if (/stale info|non-fast-forward|fetch first|rejected/i.test(text)) {
+    if (pushLostTheBranch(text)) {
       log.info('external-agent-head', 'update push refused — the proposal branch moved', {
         owner, repo, targetBranch, sessionId: sessionId || null,
       });
@@ -514,6 +521,107 @@ async function pushForkBranchToAppBranch({
   // branch back to `expectedRemoteSha` on a later failure would throw away
   // the commits it just accepted.
   return { ok: true, headSha: verified.headSha, credential: credential.source };
+}
+
+// ── The patch update's push (#4263) ────────────────────────────────────
+//
+// The fork push above copies a branch from the CALLER'S fork. This one copies
+// a branch from the app's OWN repository onto the proposal's branch in that
+// same repository: applyPatch has just written the caller's patch to a
+// temporary `usernode/patch-u…-t…-…` branch there, and the update feeds that
+// branch to the existing update flow. No attribution gate runs here, and that
+// is not a relaxation: there is no fork to verify. The source branch was
+// created moments ago by applyPatch, in this repository, under this same
+// platform credential, and updateProposalFromForkBranch has already checked
+// that the branch name it was handed sits in the platform's own per-user patch
+// namespace before this runs. What is carried over unchanged from the fork
+// push is the part that protects a proposal under review:
+//
+//   the LEASE. `--force-with-lease` pinned to the live head this call read,
+//   so a proposal somebody else advanced in the meantime is refused with
+//   `branch_moved` rather than silently overwritten.
+async function pushAppBranchToAppBranch({
+  owner, repo, sourceBranch, targetBranch, expectedRemoteSha, sessionId,
+}) {
+  if (!validRef(sourceBranch) || !validRef(targetBranch)) {
+    return { ok: false, code: 'invalid_request', message: 'That branch name is not a valid git ref.' };
+  }
+  // The lease is the whole point, exactly as on the fork push: refusing to
+  // push without one would be a blind overwrite of a branch under review.
+  if (typeof expectedRemoteSha !== 'string' || !/^[0-9a-f]{40}$/i.test(expectedRemoteSha)) {
+    return {
+      ok: false,
+      code: 'platform_unavailable',
+      message: 'Homeroom does not know which commit this proposal is currently at, so it will not move its branch. Try again shortly.',
+      retryable: true,
+    };
+  }
+  const lease = `refs/heads/${targetBranch}:${expectedRemoteSha.toLowerCase()}`;
+
+  let credential;
+  try {
+    credential = await resolveWriteCredential(owner);
+  } catch (err) {
+    log.error('external-agent-head', 'no write credential for patch-update push', { owner, err: err && err.message });
+    return {
+      ok: false,
+      code: 'platform_unavailable',
+      message: 'Homeroom cannot write to the app repository right now. Try again shortly.',
+      retryable: true,
+    };
+  }
+
+  try {
+    await withScratchRepo(`patch-update-${sessionId || 0}`, async ({ git }) => {
+      // The source branch lives in the app's own repository, so the fetch
+      // carries the platform's credential — there is no public fork to read
+      // unauthenticated here.
+      const remote = authenticatedRemote(credential.token, owner, repo);
+      await git(['fetch', '--depth', String(UPDATE_FETCH_DEPTH), '--no-tags', remote, sourceBranch]);
+      await git(['push', `--force-with-lease=${lease}`, remote,
+        `FETCH_HEAD:refs/heads/${targetBranch}`]);
+    });
+  } catch (err) {
+    // Redacted twice, for the classification and for the log line, exactly as
+    // the fork push does: git's error text carries the tokened URL.
+    const raw = err && (err.stderr || err.message);
+    const text = redactToken(raw, credential.token);
+    if (pushLostTheBranch(text)) {
+      log.info('external-agent-head', 'patch-update push refused — the proposal branch moved', {
+        owner, repo, targetBranch, sessionId: sessionId || null,
+      });
+      return {
+        ok: false,
+        code: 'branch_moved',
+        message: `${targetBranch} is no longer at the commit this update was built against. Somebody else advanced `
+          + 'this proposal in the meantime. Re-read the proposal, rebase onto its current head, export the patch '
+          + 'from that and submit again.',
+        retryable: false,
+      };
+    }
+    log.error('external-agent-head', 'patch-update push failed', {
+      owner,
+      repo,
+      targetBranch,
+      credential: credential.source,
+      err: redactToken(raw, credential.token),
+    });
+    return {
+      ok: false,
+      code: 'platform_unavailable',
+      message: 'Homeroom could not push that patch onto the proposal. Try again shortly.',
+      retryable: true,
+    };
+  }
+
+  log.info('external-agent-head', 'advanced a proposal branch from an applied patch', {
+    owner, repo, targetBranch, sessionId: sessionId || null,
+    credential: credential.source,
+  });
+  // No `cleanup()` here either: the patch's own temporary branch is deleted by
+  // the caller (external-agent-tasks.js submitUpdate), and the proposal branch
+  // this advanced must not be rolled back.
+  return { ok: true, credential: credential.source };
 }
 
 // Best-effort removal of a branch this module wrote. Never throws: it runs
@@ -559,6 +667,8 @@ module.exports = {
   verifyForkBranch,
   mirrorForkBranch,
   pushForkBranchToAppBranch,
+  pushAppBranchToAppBranch,
+  pushLostTheBranch,
   deleteBranch,
   redactToken,
 };

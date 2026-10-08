@@ -321,8 +321,12 @@ test('the work order says the checks gate merge and how to clear them', () => {
     'resubmitting is not offered as the remedy'
   );
   const step7 = order.slice(order.indexOf('7. THEN CHECK THE CHECKS'));
-  assert.match(step7, /Do not call\s+`submit_work` again/);
-  assert.match(step7, /do not call `prepare_work`/);
+  // #4263 reshaped this prohibition: a patch-submitted proposal is revised
+  // through an update work order on its proposalId, so the order says do not
+  // SUBMIT again without that id rather than never calling submit_work at all.
+  assert.match(step7, /Do not submit again without that/);
+  assert.match(step7, /call `prepare_work` with its `proposalId`/,
+    'a patch-submitted proposal is revised through an update work order');
   // Evidence is revision-scoped and can fail honestly; no generic home-page
   // screenshot is allowed to masquerade as proof of an unreachable state.
   assert.match(step7, /shots/);
