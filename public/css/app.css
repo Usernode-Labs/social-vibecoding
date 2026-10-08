@@ -1761,6 +1761,9 @@ form.agent-session-composer:focus-within {
 .messages-composer-action svg { stroke-width: 1.8; }
 .messages-composer-action:hover { background: var(--messages-surface-2); }
 .messages-composer-action:disabled { opacity: .35; }
+/* #4389 — the mic while it listens: the send disc's accent fill, so the
+   listening state borrows a colour the row already has and adds none. */
+.messages-composer-action.is-listening { background: var(--accent); color: var(--accent-ink); }
 /* #1955 — the one "+" and the two named rows it opens. The wrapper is the
    positioning context AND the outside-press boundary, so the menu has to
    live inside it rather than beside the button. */

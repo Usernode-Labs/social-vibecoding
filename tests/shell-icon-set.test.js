@@ -50,12 +50,15 @@ const PKG = JSON.parse(read('frontend/package.json'));
 
 /** Every single-quoted string in the module that looks like SVG path data. */
 function modulePaths() {
-  return new Set(ICONS.match(/'M[^'\\\n]*'/g).map((s) => s.slice(1, -1)));
+  // `M` plus a digit: a path's M is followed by a coordinate, and a quoted
+  // component name that merely begins with M (`'MicrophoneIcon'`, #4389) is
+  // not a path and must not be read as one.
+  return new Set(ICONS.match(/'M\d[^'\\\n]*'/g).map((s) => s.slice(1, -1)));
 }
 
 /** The same read, over the wordmark primitive — see the note beside WORDMARK. */
 function wordmarkPaths() {
-  return new Set(WORDMARK.match(/'M[^'\\\n]*'/g).map((s) => s.slice(1, -1)));
+  return new Set(WORDMARK.match(/'M\d[^'\\\n]*'/g).map((s) => s.slice(1, -1)));
 }
 
 /** Every `<svg>` opening tag in a source file, brace- and quote-aware. */
@@ -243,6 +246,10 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // LockOpenIcon: Getting started's done card, "7 challenges unlocked"
     // (2026-10-01), which shows only once the list is finished.
     'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zM8 11V7a4 4 0 017.75-1.4',
+    // MicrophoneIcon (#4389): the speak button in the Homeroom bot's chat
+    // composer, drawn only in that conversation and only in browsers with
+    // speech support, so it never lands in the cold document.
+    'M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z',
     // LockIcon and UserGroupIcon LEFT this list with communities, stage 3:
     // the create dialog's first step (who it is for) draws them on its
     // "A group" and "A community" rows, and the dialog prerenders every step.

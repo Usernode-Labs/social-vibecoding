@@ -1,6 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 
-import { ArrowUpIcon, ArrowUpTrayIcon, PaperClipIcon, PlusIcon } from '@/components/ui/icons';
+import { ArrowUpIcon, ArrowUpTrayIcon, MicrophoneIcon, PaperClipIcon, PlusIcon } from '@/components/ui/icons';
 import * as api from './api';
 import { channels, draftFor, notifyTyping, replyFor, scopeKey, send, setDraft, setReply, takePendingAttach, takePendingShare, useMessagesSnapshot } from './store';
 import { mirrorsReplies, requestPlace } from './bot-question';
@@ -8,6 +8,7 @@ import type { ConversationUser, MessageAttachment, SharedObjectCard, SharedObjec
 import { fileSize, pendingObjectLabel, senderName } from './format';
 import { plainText } from './plain-text';
 import { useAutoGrow } from '../../lib/use-auto-grow';
+import { startSpeechInput, speechInputSupported, type SpeechInputSession } from '../../lib/speech-input';
 import { DropOverlay, useFileDrag } from '../attachments/file-drag';
 import { refusalSummary } from '../attachments/refusal-summary';
 import { prefixLookup, type PrefixLookup } from '../../lib/prefix-lookup';
@@ -97,6 +98,11 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   useAutoGrow(inputRef, value);
   const fileRef = useRef<HTMLInputElement>(null);
   const typingStop = useRef<number | null>(null);
+  // #4389: the speak button's recognition session, held so a second press can
+  // stop it and the cleanups below can end it. `listening` only drives the
+  // button's state and the field's placeholder.
+  const [listening, setListening] = useState(false);
+  const speech = useRef<SpeechInputSession | null>(null);
   const reply = replyFor(scope);
   // #2386: friends lead the @ list (features/friends/store.ts).
   const friendIds = useFriendIds();
@@ -156,6 +162,10 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   useEffect(() => () => {
     if (typingStop.current) window.clearTimeout(typingStop.current);
     notifyTyping(false);
+    // Leaving the conversation (or unmounting, thread composers included)
+    // ends a dictation in flight, not just the typing notice.
+    speech.current?.stop();
+    speech.current = null;
   }, [conversationId]);
 
   const boxShown = !!active && active.membershipStatus === 'member' && !!active.canSend;
@@ -455,6 +465,31 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   // the refocus, which is for the keyboard or mouse user who moved focus to
   // Send, never scrolls. Every other focus in this feature is
   // `preventScroll` for the same reason.
+  // ── Speaking the message (#4389) ─────────────────────────────────────
+  //
+  // Press the mic to start and again to stop; the phrases the browser
+  // finalises land in the field for review, never sent by themselves. The
+  // helper (lib/speech-input.ts) holds the browser-specific parts; here the
+  // dictated text goes through `updateValue` like typed text, so the cap,
+  // the draft store and the typing notice all behave as usual. The base is
+  // the field as it stood at the press, and each callback rewrites the whole
+  // dictation after it: the phrases arrive joined, so appending per phrase
+  // would double every earlier one.
+  function toggleSpeech() {
+    if (listening) { speech.current?.stop(); return; }
+    setError('');
+    const base = value;
+    speech.current = startSpeechInput({
+      onText: (transcript) => {
+        if (!transcript) return;
+        updateValue(base ? `${base} ${transcript}` : transcript);
+      },
+      onError: setError,
+      onEnd: () => { speech.current = null; setListening(false); },
+    });
+    setListening(true);
+  }
+
   function submit() {
     if (uploading || (!value.trim() && !attachments.length && !object)) return;
     setError(''); notifyTyping(false); setPrompt(null);
@@ -490,6 +525,12 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   if (!active.canSend) return <div className="messages-composer-disabled platform-safe-bar">You can’t send messages in this conversation.</div>;
   // Where the count turns amber, and the only length a phone shows it at.
   const nearLimit = value.length > 7600;
+  // The mic only in the Homeroom bot's own chat (#4389), and only where the
+  // browser can recognise speech. The Messages pane and the full-screen DM
+  // are this one component, so the one gate covers both; threads over the bot
+  // conversation are this component too (`active` is still the bot chat).
+  // Channels, groups, other DMs and agent chats fail the `homeroomBot` half.
+  const speechReady = active.kind === 'direct' && !!active.homeroomBot && speechInputSupported();
 
   return (
     <div className={`messages-composer platform-safe-bar ${inThread ? 'messages-composer-thread' : ''} ${dragging ? 'messages-composer-dragging' : ''}`} {...drop.handlers}>
@@ -541,7 +582,10 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
             </div>
           ) : null}
         </div>
-        <textarea ref={inputRef} value={value} onChange={onComposerChange} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (onEmojiKeyDown(event)) return; if (suggestionKeys(event)) return; if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(scope, null); }} onBlur={() => notifyTyping(false)} rows={1} maxLength={8000} placeholder={inThread ? 'Reply in thread…' : (prompt || 'Message…')} aria-label={inThread ? 'Reply in thread' : 'Message'} aria-autocomplete="list" aria-controls={suggestions.length ? listId : undefined} aria-activedescendant={activeOption >= 0 ? optionId(activeOption) : undefined} className="messages-composer-input" />
+        {speechReady ? (
+          <button type="button" className={`messages-composer-action ${listening ? 'is-listening' : ''}`} onMouseDown={(event) => event.preventDefault()} onClick={toggleSpeech} aria-pressed={listening} aria-label={listening ? 'Stop speaking' : 'Speak your message'} title={listening ? 'Stop speaking' : 'Speak your message'}><MicrophoneIcon aria-hidden="true" /></button>
+        ) : null}
+        <textarea ref={inputRef} value={value} onChange={onComposerChange} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (onEmojiKeyDown(event)) return; if (suggestionKeys(event)) return; if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(scope, null); }} onBlur={() => notifyTyping(false)} rows={1} maxLength={8000} placeholder={listening ? 'Listening…' : (inThread ? 'Reply in thread…' : (prompt || 'Message…'))} aria-label={inThread ? 'Reply in thread' : 'Message'} aria-autocomplete="list" aria-controls={suggestions.length ? listId : undefined} aria-activedescendant={activeOption >= 0 ? optionId(activeOption) : undefined} className="messages-composer-input" />
         <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={submit} disabled={!!uploading || (!value.trim() && !attachments.length && !object)} className="messages-send" aria-label="Send message"><ArrowUpIcon aria-hidden="true" /></button>
       </div>
       {error ? <p role="alert" className="mt-1 text-xs text-red-700 dark:text-red-400">{error}</p> : null}

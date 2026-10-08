@@ -30,8 +30,11 @@ function rule(selector) {
 }
 
 test('the composer offers ONE add control, not a paperclip and a tray', () => {
-  const actions = COMPOSER.match(/className="messages-composer-action"/g) || [];
-  assert.equal(actions.length, 1, 'exactly one round action button beside the field');
+  // Two round actions beside the field now: this add trigger and the bot
+  // chat's speak button (#4389). The count's real intent is unchanged — the
+  // ADD control is still exactly one, and the speak button carries no menu.
+  const actions = COMPOSER.match(/className=\{?[`"]messages-composer-action/g) || [];
+  assert.equal(actions.length, 2, 'the add trigger plus the speak button, nothing else');
   assert.match(COMPOSER, /aria-label="Add to message"/);
   assert.match(COMPOSER, /<PlusIcon aria-hidden="true" \/>/, 'the trigger is the plus');
 });

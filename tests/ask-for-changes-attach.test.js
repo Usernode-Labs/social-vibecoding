@@ -74,7 +74,7 @@ test('the composer takes the attached change: its chip, its prompt, the caret, a
   assert.match(composer, /window\.addEventListener\('usernode:messages-attach', attachPending\);/);
   assert.match(composer, /const pending = takePendingAttach\(conversationId\);/);
   assert.match(composer, /setObject\(pending\.object\); setPrompt\(pending\.placeholder\); setFocusWanted\(true\);/);
-  assert.match(composer, /placeholder=\{inThread \? 'Reply in thread…' : \(prompt \|\| 'Message…'\)\}/);
+  assert.match(composer, /placeholder=\{listening \? 'Listening…' : \(inThread \? 'Reply in thread…' : \(prompt \|\| 'Message…'\)\)\}/);
   assert.match(composer, /\{pendingObjectLabel\(object, stagedCard\)\}/);
   assert.match(composer, /object: object \? referenceOf\(object\) : undefined/, 'the staged title is never sent');
   assert.match(composer, /api\.resolveLinkCards\(\[\{ type, appSlug, issueNumber, sessionId, proposalId \}\]\)/,
