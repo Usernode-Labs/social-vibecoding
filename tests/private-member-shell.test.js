@@ -32,16 +32,19 @@ test('the private tour: four steps on Home, Next through each, ending on the wai
     '#home-waitlist-card',
   ]);
   // The other tours' words (#4044): one short title and one short sentence,
-  // the project by its name and never "group" (the owner, 7 October 2026).
+  // the project by its name and never "group" (the owner, 7 October 2026),
+  // but for the bot card, whose words the owner approved for #4397.
   assert.deepEqual(steps.map((s) => [s.title, s.text]), [
     ['Best brunch spots is on your Home', 'Open it any time from here.'],
     ['You can find Best brunch spots here', 'Communities lists every community you\'re in.'],
-    ['Homeroom bot is in Messages', 'It makes Best brunch spots with you. You can always find it here.'],
+    ['Meet Homeroom bot', 'Tell it what Best brunch spots should do next, and it builds it for the group to try. It\'s always here in Messages.'],
     ['Your own apps start here', 'Join the waitlist to get your spot.'],
   ]);
-  // One short sentence a card; the Messages card says its second ("You can always find it here.").
-  for (const s of steps) assert.ok(s.text.split(/[.?]\s/).length <= (s.title === 'Homeroom bot is in Messages' ? 2 : 1), `short: ${s.text}`);
-  assert.doesNotMatch(JSON.stringify(steps.map((s) => [s.title, s.text])), /group/i);
+  // One short sentence a card; the Messages card says its second ("It's always here in Messages.").
+  for (const s of steps) assert.ok(s.text.split(/[.?]\s/).length <= (s.title === 'Meet Homeroom bot' ? 2 : 1), `short: ${s.text}`);
+  // Only the bot card says who tries what it builds, "the group" (#4397).
+  assert.doesNotMatch(JSON.stringify(steps.filter((s) => s.title !== 'Meet Homeroom bot').map((s) => [s.title, s.text])), /group/i);
+  assert.doesNotMatch(steps[2].title, /group/i);
   // Each points at its place and leads on with Next, as "Look around first" does.
   assert.deepEqual(steps.map((s) => !!s.ringed), [true, true, true, true]);
   assert.deepEqual(steps.map((s) => !!s.last), [false, false, false, true]);
