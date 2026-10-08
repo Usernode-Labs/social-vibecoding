@@ -1,6 +1,12 @@
 // The tier list screen. Talks to api.js; every request carries the platform
 // token the frame was opened with, which is how the server knows who you are.
 //
+// One board, two rankings. "The group's" puts every item in the tier its
+// average lands in. "Yours" is the same board with your own tiers on it:
+// drag an item into a tier (press and hold first on a touch screen, so a
+// swipe still scrolls), or tap it and then tap a tier. Dragging it back to
+// "Not ranked yet" takes it off your board.
+//
 // Rendering builds elements and sets textContent, never innerHTML with
 // people's words in it, so an item called "<b>hi</b>" shows exactly that.
 // Class names are whole literals so the Tailwind build can see them.
@@ -14,18 +20,33 @@
     loading: document.getElementById('loading'),
     error: document.getElementById('error'),
     empty: document.getElementById('empty'),
-    group: document.getElementById('group'),
-    groupTiers: document.getElementById('group-tiers'),
-    rankers: document.getElementById('rankers'),
-    unranked: document.getElementById('unranked'),
-    yours: document.getElementById('yours'),
-    yourTiers: document.getElementById('your-tiers'),
-    yourCount: document.getElementById('your-count'),
+    ranking: document.getElementById('ranking'),
+    toggle: document.getElementById('view-toggle'),
+    note: document.getElementById('board-note'),
+    hint: document.getElementById('hint'),
+    board: document.getElementById('board'),
+    tray: document.getElementById('tray'),
+    trayLabel: document.getElementById('tray-label'),
+    trayItems: document.getElementById('tray-items'),
+    picked: document.getElementById('picked-actions'),
   };
 
   // Whole class names per tier, so the build and the <style> block see them.
   var TIER_CLASS = { S: 'tier-s', A: 'tier-a', B: 'tier-b', C: 'tier-c', D: 'tier-d', F: 'tier-f' };
   var TIERS = ['S', 'A', 'B', 'C', 'D', 'F'];
+  var CHIP = 'inline-flex max-w-full items-center rounded-lg bg-raised px-2.5 py-1.5 text-small font-medium';
+  var CHIP_MOVABLE = 'inline-flex min-h-9 max-w-full cursor-grab touch-manipulation select-none items-center rounded-lg border border-line bg-surface px-2.5 py-1.5 text-small font-medium shadow-sm';
+  var CHIP_PICKED = 'inline-flex min-h-9 max-w-full cursor-grab touch-manipulation select-none items-center rounded-lg border border-accent bg-surface px-2.5 py-1.5 text-small font-medium ring-2 ring-accent';
+
+  var data = null;
+  // Which ranking is on the board; remembered on this device.
+  var view = 'group';
+  try { if (localStorage.getItem('tier-list:view') === 'yours') view = 'yours'; } catch (e) { /* the group's */ }
+  // The item tapped and waiting for a tier, if any.
+  var picked = null;
+  // A drag under way: { id, chip, ghost, x, y, pointerId, touch, active, timer }.
+  var drag = null;
+  var justDragged = false;
 
   function api(method, url, body) {
     var headers = { 'x-usernode-token': token };
@@ -35,13 +56,13 @@
     if (body) headers['Content-Type'] = 'application/json';
     return fetch(url, { method: method, headers: headers, body: body ? JSON.stringify(body) : undefined })
       .then(function (res) {
-        return res.json().catch(function () { return {}; }).then(function (data) {
+        return res.json().catch(function () { return {}; }).then(function (d) {
           if (!res.ok) {
-            throw new Error(data.error === 'account_required'
+            throw new Error(d.error === 'account_required'
               ? 'Make an account to join in.'
-              : data.error || 'Something went wrong (' + res.status + ').');
+              : d.error || 'Something went wrong (' + res.status + ').');
           }
-          return data;
+          return d;
         });
       });
   }
@@ -95,97 +116,229 @@
   }
 
   function act(promise) {
-    return promise.then(function () { showStatus(null); return load(); }).catch(showStatus);
+    return promise.then(function () { showStatus(null); return load(); }).catch(function (err) { showStatus(err); return load(); });
   }
 
   function count(n, one, many) {
     return n + ' ' + (n === 1 ? one : many);
   }
 
-  // ── The group's tier list ──────────────────────────────────────────────
-
-  function groupRow(tier, items) {
-    var row = h('div', 'flex min-h-14 items-stretch');
-    row.setAttribute('data-tier', tier);
-    var label = h('div', 'flex w-14 shrink-0 items-center justify-center text-heading ' + TIER_CLASS[tier], tier);
-    label.setAttribute('aria-label', 'Tier ' + tier);
-    row.appendChild(label);
-    var chips = h('div', 'flex min-w-0 flex-1 flex-wrap items-center gap-1.5 px-3 py-2');
-    items.forEach(function (item) {
-      var chip = h('span', 'inline-flex max-w-full items-center rounded-lg bg-raised px-2.5 py-1 text-small');
-      chip.setAttribute('data-item', String(item.id));
-      chip.appendChild(h('span', 'truncate font-medium', item.name));
-      chip.title = item.name + ': ' + count(item.votes, 'person', 'people') + ' ranked it';
-      chips.appendChild(chip);
-    });
-    row.appendChild(chips);
-    return row;
+  function itemById(id) {
+    return data.items.filter(function (i) { return i.id === id; })[0];
   }
 
-  function renderGroup(data) {
-    el.groupTiers.textContent = '';
-    TIERS.forEach(function (tier) {
-      var items = data.items
-        .filter(function (i) { return i.tier === tier; })
-        .sort(function (a, b) { return b.average - a.average || b.votes - a.votes; });
-      el.groupTiers.appendChild(groupRow(tier, items));
-    });
-    el.rankers.textContent = data.rankers ? count(data.rankers, 'person', 'people') + ' ranking' : '';
-    var waiting = data.items.filter(function (i) { return !i.tier; });
-    el.unranked.hidden = !waiting.length;
-    el.unranked.textContent = waiting.length
-      ? 'Not in a tier yet: ' + waiting.map(function (i) { return i.name; }).join(', ')
-      : '';
+  // Where an item sits on the board being shown.
+  function placeOf(item) {
+    return view === 'yours' ? item.yours : item.tier;
   }
 
-  // ── Your tiers ─────────────────────────────────────────────────────────
+  // ── Placing an item in your tiers ───────────────────────────────────────
 
-  function yourRow(item) {
-    var row = h('li', 'flex flex-col gap-2 px-4 py-3');
-    row.setAttribute('data-item', String(item.id));
+  function place(id, tier) {
+    var item = itemById(id);
+    picked = null;
+    if (!item || item.yours === tier) { render(); return; }
+    item.yours = tier; // on the board straight away; the server agrees or the reload puts it back
+    render();
+    act(api('PUT', '/api/items/' + id + '/tier', { tier: tier }));
+  }
 
-    var top = h('div', 'flex items-start gap-3');
-    var names = h('div', 'min-w-0 flex-1');
-    names.appendChild(h('p', 'text-body font-medium break-words', item.name));
-    names.appendChild(h('p', 'text-small text-muted', item.mine ? 'Added by you' : 'Added by @' + item.by));
-    top.appendChild(names);
-    if (item.mine) {
-      var remove = h('button', 'btn-secondary -my-1 shrink-0 border-0 bg-transparent px-2 text-small text-muted', 'Remove');
-      remove.type = 'button';
-      remove.setAttribute('aria-label', 'Remove ' + item.name);
-      // Everyone's tiers for it go with it.
-      tapTwice(remove, 'Tap again to remove', function () { act(api('DELETE', '/api/items/' + item.id)); });
-      top.appendChild(remove);
+  function pick(id) {
+    picked = picked === id ? null : id;
+    render();
+  }
+
+  // ── Dragging ────────────────────────────────────────────────────────────
+
+  function dropTargetAt(x, y) {
+    var under = document.elementFromPoint(x, y);
+    return under ? under.closest('[data-drop]') : null;
+  }
+
+  function highlight(target) {
+    Array.prototype.forEach.call(document.querySelectorAll('[data-drop]'), function (n) {
+      n.classList.toggle('bg-raised', n === target);
+    });
+  }
+
+  function onPointerDown(e) {
+    if (view !== 'yours' || e.button > 0) return;
+    var chip = e.currentTarget;
+    drag = { id: Number(chip.getAttribute('data-item')), chip: chip, x: e.clientX, y: e.clientY, pointerId: e.pointerId, touch: e.pointerType !== 'mouse', active: false, timer: null };
+    // On a touch screen a drag starts after a short hold, so a swipe still scrolls.
+    if (drag.touch) drag.timer = setTimeout(begin, 220);
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointercancel', endDrag);
+  }
+
+  function begin() {
+    if (!drag || drag.active) return;
+    drag.active = true;
+    var rect = drag.chip.getBoundingClientRect();
+    var ghost = drag.chip.cloneNode(true);
+    ghost.className = 'pointer-events-none fixed z-50 inline-flex items-center rounded-lg border border-accent bg-surface px-2.5 py-1.5 text-small font-medium shadow-lg';
+    ghost.style.left = rect.left + 'px';
+    ghost.style.top = rect.top + 'px';
+    ghost.style.width = rect.width + 'px';
+    drag.offsetX = drag.x - rect.left;
+    drag.offsetY = drag.y - rect.top;
+    document.body.appendChild(ghost);
+    drag.ghost = ghost;
+    drag.chip.classList.add('opacity-40');
+  }
+
+  function onPointerMove(e) {
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    if (!drag.active) {
+      if (Math.abs(e.clientX - drag.x) + Math.abs(e.clientY - drag.y) < 6) return;
+      // Moving before the hold is a scroll on a touch screen; with a mouse it is a drag.
+      if (drag.touch) { endDrag(); return; }
+      begin();
     }
-    row.appendChild(top);
-
-    var picks = h('div', 'grid grid-cols-6 gap-1.5');
-    picks.setAttribute('role', 'group');
-    picks.setAttribute('aria-label', 'Your tier for ' + item.name);
-    TIERS.forEach(function (tier) {
-      var on = item.yours === tier;
-      var pick = h('button', on
-        ? 'min-h-11 rounded-lg text-body font-semibold ring-2 ring-fg ring-offset-2 ring-offset-surface ' + TIER_CLASS[tier]
-        : 'min-h-11 rounded-lg border border-line bg-surface text-body font-semibold text-muted hover:bg-raised', tier);
-      pick.type = 'button';
-      pick.setAttribute('data-pick', tier);
-      pick.setAttribute('aria-pressed', on ? 'true' : 'false');
-      pick.setAttribute('aria-label', tier + (on ? ', your tier. Tap to clear.' : ''));
-      pick.addEventListener('click', function () {
-        // Tapping your tier again takes the item out of your tiers.
-        act(api('PUT', '/api/items/' + item.id + '/tier', { tier: on ? null : tier }));
-      });
-      picks.appendChild(pick);
-    });
-    row.appendChild(picks);
-    return row;
+    drag.ghost.style.left = (e.clientX - drag.offsetX) + 'px';
+    drag.ghost.style.top = (e.clientY - drag.offsetY) + 'px';
+    highlight(dropTargetAt(e.clientX, e.clientY));
   }
 
-  function renderYours(data) {
-    el.yourTiers.textContent = '';
-    data.items.forEach(function (item) { el.yourTiers.appendChild(yourRow(item)); });
-    var ranked = data.items.filter(function (i) { return i.yours; }).length;
-    el.yourCount.textContent = ranked === data.items.length ? 'All ranked' : ranked + ' of ' + data.items.length + ' ranked';
+  function onPointerUp(e) {
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    var wasActive = drag.active;
+    var id = drag.id;
+    var target = wasActive ? dropTargetAt(e.clientX, e.clientY) : null;
+    endDrag();
+    if (!wasActive) return; // a tap: the click handler picks it
+    justDragged = true;
+    setTimeout(function () { justDragged = false; }, 0);
+    if (target) place(id, target.getAttribute('data-drop') || null);
+  }
+
+  function endDrag() {
+    if (!drag) return;
+    clearTimeout(drag.timer);
+    if (drag.ghost) drag.ghost.remove();
+    drag.chip.classList.remove('opacity-40');
+    highlight(null);
+    drag = null;
+    window.removeEventListener('pointermove', onPointerMove);
+    window.removeEventListener('pointerup', onPointerUp);
+    window.removeEventListener('pointercancel', endDrag);
+  }
+
+  // Once a drag is under way on a touch screen, the page must not scroll under it.
+  document.addEventListener('touchmove', function (e) { if (drag && drag.active) e.preventDefault(); }, { passive: false });
+
+  // ── The board ───────────────────────────────────────────────────────────
+
+  function chipFor(item) {
+    if (view === 'group') {
+      var still = h('span', CHIP, item.name);
+      still.setAttribute('data-item', String(item.id));
+      still.title = item.name + ': ' + count(item.votes, 'person', 'people') + ' ranked it';
+      return still;
+    }
+    var chip = h('button', picked === item.id ? CHIP_PICKED : CHIP_MOVABLE, item.name);
+    chip.type = 'button';
+    chip.setAttribute('data-item', String(item.id));
+    chip.setAttribute('aria-pressed', picked === item.id ? 'true' : 'false');
+    chip.setAttribute('aria-label', item.name + (item.yours ? ', in your ' + item.yours + ' tier' : ', not ranked yet') + '. Tap, then tap a tier to move it.');
+    chip.style.webkitTouchCallout = 'none';
+    chip.addEventListener('pointerdown', onPointerDown);
+    chip.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (!justDragged) pick(item.id);
+    });
+    chip.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+    return chip;
+  }
+
+  function sorted(items) {
+    if (view === 'yours') return items;
+    return items.slice().sort(function (a, b) { return b.average - a.average || b.votes - a.votes; });
+  }
+
+  function row(tier) {
+    var items = sorted(data.items.filter(function (i) { return placeOf(i) === tier; }));
+    var r = h('div', 'flex min-h-14 items-stretch');
+    r.setAttribute('data-tier', tier);
+    var label;
+    if (view === 'yours') {
+      r.setAttribute('data-drop', tier);
+      label = h('button', 'flex w-14 shrink-0 items-center justify-center text-heading ' + TIER_CLASS[tier], tier);
+      label.type = 'button';
+      label.setAttribute('aria-label', picked ? 'Put ' + itemById(picked).name + ' in ' + tier : 'Tier ' + tier);
+      r.addEventListener('click', function () { if (picked) place(picked, tier); });
+    } else {
+      label = h('div', 'flex w-14 shrink-0 items-center justify-center text-heading ' + TIER_CLASS[tier], tier);
+      label.setAttribute('aria-label', 'Tier ' + tier);
+    }
+    r.appendChild(label);
+    var chips = h('div', picked ? 'flex min-w-0 flex-1 cursor-pointer flex-wrap items-center gap-1.5 px-3 py-2' : 'flex min-w-0 flex-1 flex-wrap items-center gap-1.5 px-3 py-2');
+    items.forEach(function (item) { chips.appendChild(chipFor(item)); });
+    r.appendChild(chips);
+    return r;
+  }
+
+  function renderPicked() {
+    el.picked.textContent = '';
+    var item = picked && itemById(picked);
+    el.picked.hidden = !item;
+    if (!item) return;
+    if (item.yours) {
+      var out = h('button', 'btn-secondary', 'Take it off my board');
+      out.type = 'button';
+      out.addEventListener('click', function () { place(item.id, null); });
+      el.picked.appendChild(out);
+    }
+    if (item.mine) {
+      var remove = h('button', 'btn-secondary border-0 bg-transparent px-2 text-small text-muted', 'Remove it for everyone');
+      remove.type = 'button';
+      // Everyone's tiers for it go with it.
+      tapTwice(remove, 'Tap again to remove', function () { picked = null; act(api('DELETE', '/api/items/' + item.id)); });
+      el.picked.appendChild(remove);
+    }
+    var cancel = h('button', 'btn-secondary border-0 bg-transparent px-2 text-small text-muted', 'Cancel');
+    cancel.type = 'button';
+    cancel.addEventListener('click', function () { picked = null; render(); });
+    el.picked.appendChild(cancel);
+  }
+
+  function renderBoard() {
+    el.board.setAttribute('data-view', view);
+    el.board.textContent = '';
+    TIERS.forEach(function (tier) { el.board.appendChild(row(tier)); });
+
+    Array.prototype.forEach.call(el.toggle.querySelectorAll('[data-view]'), function (b) {
+      var on = b.getAttribute('data-view') === view;
+      b.setAttribute('aria-checked', on ? 'true' : 'false');
+      b.className = on
+        ? 'min-h-11 rounded-lg bg-accent px-4 text-body font-medium text-on-accent'
+        : 'min-h-11 rounded-lg px-4 text-body font-medium text-muted hover:bg-raised';
+    });
+
+    var waiting = data.items.filter(function (i) { return !placeOf(i); });
+    el.trayItems.textContent = '';
+    waiting.forEach(function (item) { el.trayItems.appendChild(chipFor(item)); });
+    if (view === 'yours') {
+      var ranked = data.items.length - waiting.length;
+      el.note.textContent = ranked === data.items.length ? 'All ranked' : ranked + ' of ' + data.items.length + ' ranked';
+      el.trayLabel.textContent = waiting.length ? 'Not ranked yet' : 'Not ranked yet: drag one here to take it off your board';
+      el.tray.hidden = false;
+      el.tray.setAttribute('data-drop', '');
+      el.tray.onclick = function () { if (picked && itemById(picked).yours) place(picked, null); };
+      el.hint.textContent = picked
+        ? 'Now tap a tier for ' + itemById(picked).name + '.'
+        : 'Drag each one into a tier, or tap it and then tap a tier.';
+      el.hint.hidden = false;
+    } else {
+      el.note.textContent = data.rankers ? 'From ' + count(data.rankers, 'person\'s', 'people\'s') + ' rankings' : 'Nobody has ranked yet';
+      el.trayLabel.textContent = 'Nobody has ranked these yet';
+      el.tray.hidden = !waiting.length;
+      el.tray.removeAttribute('data-drop');
+      el.tray.onclick = null;
+      el.hint.hidden = true;
+    }
+    renderPicked();
   }
 
   // ── Loading, empty, error ──────────────────────────────────────────────
@@ -194,14 +347,13 @@
     el.loading.hidden = state !== 'loading';
     el.error.hidden = state !== 'error';
     el.empty.hidden = state !== 'empty';
-    el.group.hidden = state !== 'ready';
-    el.yours.hidden = state !== 'ready';
+    el.ranking.hidden = state !== 'ready';
   }
 
-  function render(data) {
+  function render() {
     if (!data.items.length) return show('empty');
-    renderGroup(data);
-    renderYours(data);
+    if (picked && !itemById(picked)) picked = null;
+    renderBoard();
     show('ready');
   }
 
@@ -210,7 +362,13 @@
   function load() {
     if (loading) return loading;
     loading = api('GET', '/api/items')
-      .then(function (data) { loaded = true; render(data); })
+      .then(function (d) {
+        loaded = true;
+        // Not while somebody is mid-drag: the board would move under them.
+        if (drag) return;
+        data = d;
+        render();
+      })
       .catch(function (err) {
         // A refresh that fails keeps what is on screen; only a first load
         // with nothing to show turns into the error state.
@@ -221,6 +379,14 @@
     return loading;
   }
 
+  el.toggle.addEventListener('click', function (e) {
+    var b = e.target.closest('[data-view]');
+    if (!b) return;
+    view = b.getAttribute('data-view');
+    picked = null;
+    try { localStorage.setItem('tier-list:view', view); } catch (err) { /* not kept */ }
+    render();
+  });
   el.form.addEventListener('submit', function (e) {
     e.preventDefault();
     var input = el.form.elements.name;
@@ -231,12 +397,12 @@
 
   // Other people rank too: look again every 15 seconds while the app is on
   // screen, and straight away when it comes back. Skipped while someone is
-  // typing, so a refresh never interrupts them.
+  // typing, dragging or has picked an item, so a refresh never interrupts them.
   setInterval(function () {
     var typing = document.activeElement && document.activeElement.tagName === 'INPUT' && document.activeElement.value;
-    if (!document.hidden && !typing) load();
+    if (!document.hidden && !typing && !drag && !picked) load();
   }, 15000);
-  document.addEventListener('visibilitychange', function () { if (!document.hidden) load(); });
+  document.addEventListener('visibilitychange', function () { if (!document.hidden && !drag) load(); });
 
   load();
 })();

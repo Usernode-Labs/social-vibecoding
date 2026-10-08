@@ -192,7 +192,7 @@ for (const id of READY) {
     assert.doesNotMatch(script, /\.innerHTML\s*=|insertAdjacentHTML|document\.write/);
     assert.match(script, /var headers = \{ 'x-usernode-token': token \};/);
     assert.match(script, /if \(window\.usernode && window\.usernode\.previewNow\) headers\['x-usernode-now'\] = window\.usernode\.now\(\)\.toISOString\(\);/);
-    assert.match(script, /data\.error === 'account_required'/, 'a guest\'s write is asked to make an account, not shown a code');
+    assert.match(script, /\b\w+\.error === 'account_required'/, 'a guest\'s write is asked to make an account, not shown a code');
     // Homeroom's app frame allows no dialogs (no allow-modals), so confirm()
     // answers false unseen and the action never happens: ask in the page.
     assert.doesNotMatch(APP_FRAME_SANDBOX, /allow-modals/);

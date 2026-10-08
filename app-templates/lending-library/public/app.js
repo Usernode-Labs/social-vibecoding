@@ -2,6 +2,10 @@
 // platform token the frame was opened with, which is how the server knows
 // who you are.
 //
+// Each thing says who has it now. Ask for one and you join the line; whoever
+// has it hands it on to the first person who asked (or anyone else in the
+// line), and its owner can always say it is back with them.
+//
 // Rendering builds elements and sets textContent, never innerHTML with
 // people's words in it, so a thing called "<b>hi</b>" shows exactly that.
 // Class names are whole literals so the Tailwind build can see them.
@@ -19,10 +23,6 @@
     shelf: document.getElementById('shelf'),
     count: document.getElementById('shelf-count'),
   };
-
-  // The thing whose "how long?" choice is open, if any.
-  var choosing = null;
-  var last = null;
 
   function api(method, url, body) {
     var headers = { 'x-usernode-token': token };
@@ -51,46 +51,46 @@
     return node;
   }
 
+  function button(className, text, onClick) {
+    var b = h('button', className, text);
+    b.type = 'button';
+    if (onClick) b.addEventListener('click', onClick);
+    return b;
+  }
+
   /**
    * A tap that cannot be undone asks for a second one. window.confirm() is no
    * use here: Homeroom's app frame does not allow dialogs, so it returns false
    * without showing anything. The first tap says what the second will do, and
    * the button goes back to how it was after a few seconds.
    */
-  function tapTwice(button, armedLabel, action) {
+  function tapTwice(btn, armedLabel, action) {
     var timer = null;
     var resting = null;
     var label = null;
     var className = null;
     function rest() {
       timer = null;
-      button.textContent = '';
-      resting.forEach(function (n) { button.appendChild(n); });
-      if (label) button.setAttribute('aria-label', label);
-      button.className = className;
+      btn.textContent = '';
+      resting.forEach(function (n) { btn.appendChild(n); });
+      if (label) btn.setAttribute('aria-label', label);
+      btn.className = className;
     }
-    button.addEventListener('click', function () {
+    btn.addEventListener('click', function () {
       if (timer) {
         clearTimeout(timer);
         rest();
         action();
         return;
       }
-      resting = Array.prototype.slice.call(button.childNodes);
-      label = button.getAttribute('aria-label');
-      className = button.className;
-      button.textContent = armedLabel;
-      button.setAttribute('aria-label', armedLabel);
-      button.className = 'btn-secondary shrink-0 whitespace-nowrap border-0 bg-transparent px-2 text-small text-danger';
+      resting = Array.prototype.slice.call(btn.childNodes);
+      label = btn.getAttribute('aria-label');
+      className = btn.className;
+      btn.textContent = armedLabel;
+      btn.setAttribute('aria-label', armedLabel);
+      btn.className = 'btn-secondary shrink-0 whitespace-nowrap border-0 bg-transparent px-2 text-small text-danger';
       timer = setTimeout(rest, 4000);
     });
-  }
-
-  function button(className, text, onClick) {
-    var b = h('button', className, text);
-    b.type = 'button';
-    b.addEventListener('click', onClick);
-    return b;
   }
 
   /** A small "x" drawn as an SVG, for remove buttons. */
@@ -119,76 +119,80 @@
   }
 
   function act(promise) {
-    choosing = null;
-    return promise.then(function () { showStatus(null); return load(); }).catch(showStatus);
+    return promise.then(function () { showStatus(null); return load(); }).catch(function (err) { showStatus(err); return load(); });
   }
 
-  function statusLine(thing) {
-    var line = h('p', 'text-small text-muted');
-    var whose = thing.mine ? 'Yours' : 'Lent by @' + thing.owner;
-    if (!thing.out) {
-      line.textContent = whose + ' · on the shelf';
-      return line;
-    }
-    var holder = thing.borrowedByMe ? 'You have it' : 'With @' + thing.borrower;
-    line.textContent = (thing.borrowedByMe ? '' : whose + ' · ') + holder + ' · ';
-    line.appendChild(thing.overdue
-      ? h('span', 'font-medium text-danger', 'overdue since ' + day(thing.due))
-      : document.createTextNode('due back ' + day(thing.due)));
-    return line;
+  function at(username, me) { return me && username === me.username ? 'you' : '@' + username; }
+
+  function whereItIs(thing) {
+    if (thing.atHome) return thing.mine ? 'On your shelf' : 'On @' + thing.owner + '\'s shelf';
+    var who = thing.withMe ? 'You have it' : '@' + thing.holder + ' has it';
+    return (thing.mine ? 'Lent by you · ' : '') + who + ' since ' + day(thing.since);
+  }
+
+  function askLine(thing, me) {
+    if (!thing.asks.length) return null;
+    var names = thing.asks.map(function (a) { return at(a.username, me); });
+    var all = names.length === 1 ? names[0] : names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
+    return 'Asked for by ' + all;
   }
 
   function thingRow(thing, me) {
     var row = h('li', 'flex flex-col gap-2 px-4 py-3');
     row.setAttribute('data-thing', String(thing.id));
-    row.setAttribute('data-status', thing.out ? 'out' : 'in');
+    row.setAttribute('data-status', thing.atHome ? 'home' : 'out');
 
-    var top = h('div', 'flex items-center gap-3');
+    var top = h('div', 'flex items-start gap-3');
     var text = h('div', 'min-w-0 flex-1');
     text.appendChild(h('p', 'text-body font-medium break-words', thing.name));
     if (thing.note) text.appendChild(h('p', 'text-small text-muted break-words', thing.note));
-    text.appendChild(statusLine(thing));
+    text.appendChild(h('p', 'text-small text-muted', whereItIs(thing)));
+    var asks = askLine(thing, me);
+    if (asks) {
+      var asked = h('p', thing.withMe ? 'text-small font-medium text-accent' : 'text-small text-muted', asks);
+      asked.setAttribute('data-asks', String(thing.asks.length));
+      text.appendChild(asked);
+    }
     top.appendChild(text);
 
-    if (thing.out && thing.borrowedByMe) {
-      top.appendChild(button('btn-secondary shrink-0', 'Return', function () {
-        act(api('POST', '/api/things/' + thing.id + '/return'));
-      }));
-    } else if (thing.out && thing.mine) {
-      top.appendChild(button('btn-secondary shrink-0', 'It\'s back', function () {
-        act(api('POST', '/api/things/' + thing.id + '/return'));
-      }));
-    } else if (!thing.out && thing.mine) {
-      var remove = h('button', 'btn-secondary shrink-0 border-0 bg-transparent px-0 text-muted');
-      remove.type = 'button';
+    if (thing.mine && thing.atHome) {
+      var remove = button('btn-secondary shrink-0 border-0 bg-transparent px-0 text-muted');
       remove.setAttribute('aria-label', 'Take ' + thing.name + ' out of the library');
-      tapTwice(remove, 'Tap again', function () { act(api('DELETE', '/api/things/' + thing.id)); });
       remove.appendChild(crossIcon());
+      tapTwice(remove, 'Tap again', function () { act(api('DELETE', '/api/things/' + thing.id)); });
       top.appendChild(remove);
-    } else if (!thing.out && me && choosing !== thing.id) {
-      top.appendChild(button('btn-secondary shrink-0', 'Borrow', function () {
-        choosing = thing.id;
-        render(last);
-      }));
     }
     row.appendChild(top);
 
-    // How long for: a week, two weeks or a month.
-    if (!thing.out && choosing === thing.id) {
-      var choices = h('div', 'flex items-center gap-2');
-      choices.setAttribute('role', 'group');
-      choices.setAttribute('aria-label', 'Borrow ' + thing.name + ' for how long?');
-      [[7, '1 week'], [14, '2 weeks'], [28, 'A month']].forEach(function (c) {
-        choices.appendChild(button('btn-secondary flex-1 whitespace-nowrap px-2', c[1], function () {
-          act(api('POST', '/api/things/' + thing.id + '/borrow', { days: c[0] }));
+    // What you can do with it, from where you stand.
+    var actions = h('div', 'flex flex-wrap items-center gap-2');
+    if (thing.withMe || thing.mine) {
+      thing.asks.slice(0, 3).forEach(function (a) {
+        actions.appendChild(button('btn-secondary', 'Hand to @' + a.username, function () {
+          act(api('POST', '/api/things/' + thing.id + '/hand', { to: a.id }));
         }));
       });
-      var cancel = button('btn-secondary shrink-0 border-0 bg-transparent px-0 text-muted', null, function () { choosing = null; render(last); });
-      cancel.setAttribute('aria-label', 'Cancel');
-      cancel.appendChild(crossIcon());
-      choices.appendChild(cancel);
-      row.appendChild(choices);
     }
+    if (!thing.atHome && thing.mine && !thing.withMe) {
+      actions.appendChild(button('btn-secondary border-0 bg-transparent px-2 text-muted', 'It\'s back with me', function () {
+        act(api('POST', '/api/things/' + thing.id + '/back'));
+      }));
+    }
+    if (!thing.atHome && thing.withMe && !thing.mine) {
+      actions.appendChild(button('btn-secondary border-0 bg-transparent px-2 text-muted', 'I gave it back to @' + thing.owner, function () {
+        act(api('POST', '/api/things/' + thing.id + '/back'));
+      }));
+    }
+    if (!thing.withMe && me) {
+      actions.appendChild(thing.askedByMe
+        ? button('btn-secondary border-0 bg-transparent px-2 text-muted', 'Take back my ask', function () {
+          act(api('DELETE', '/api/things/' + thing.id + '/ask'));
+        })
+        : button('btn-secondary', 'Ask for it', function () {
+          act(api('POST', '/api/things/' + thing.id + '/ask'));
+        }));
+    }
+    if (actions.childNodes.length) row.appendChild(actions);
     return row;
   }
 
@@ -201,14 +205,13 @@
   }
 
   function render(data) {
-    last = data;
     el.shelf.textContent = '';
     data.things.forEach(function (t) { el.shelf.appendChild(thingRow(t, data.me)); });
     el.shelf.hidden = !data.things.length;
     el.empty.hidden = !!data.things.length;
-    var out = data.things.filter(function (t) { return t.out; }).length;
+    var out = data.things.filter(function (t) { return !t.atHome; }).length;
     el.count.textContent = data.things.length
-      ? data.things.length + (data.things.length === 1 ? ' thing' : ' things') + (out ? ' · ' + out + ' out' : '')
+      ? data.things.length + (data.things.length === 1 ? ' thing' : ' things') + (out ? ' · ' + out + ' lent out' : '')
       : '';
     show('ready');
   }
@@ -237,14 +240,14 @@
   });
   document.getElementById('retry').addEventListener('click', function () { show('loading'); load(); });
 
-  // Other people borrow too: look again every 30 seconds while the app is
-  // on screen, and straight away when it comes back. Skipped while someone
-  // is typing or choosing how long to borrow something for.
+  // Other people ask and hand things on too: look again every 20 seconds
+  // while the app is on screen, and straight away when it comes back.
+  // Skipped while someone is typing.
   setInterval(function () {
     var typing = document.activeElement && document.activeElement.tagName === 'INPUT' && document.activeElement.value;
-    if (!document.hidden && !typing && choosing === null) load();
-  }, 30000);
-  document.addEventListener('visibilitychange', function () { if (!document.hidden && choosing === null) load(); });
+    if (!document.hidden && !typing) load();
+  }, 20000);
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) load(); });
 
   load();
 })();

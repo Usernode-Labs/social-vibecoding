@@ -98,21 +98,24 @@
       <p class="text-body text-muted">Add the first one above. Everyone here can add more and rank them.</p>
     </div>
 
-    <section id="group" class="flex flex-col" hidden>
-      <div class="flex items-baseline justify-between gap-3">
-        <h2 class="section-label">The group's tier list</h2>
-        <p id="rankers" class="mb-2 px-1 text-small text-muted"></p>
+    <!-- One board, two rankings: the group's (every item in the tier its
+         average lands in) and yours (drag each into a tier, or tap it and
+         then tap a tier). -->
+    <section id="ranking" class="flex flex-col gap-3" hidden>
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div id="view-toggle" role="radiogroup" aria-label="Whose ranking" class="inline-flex rounded-xl border border-line bg-surface p-1">
+          <button type="button" role="radio" data-view="group" aria-checked="true" class="min-h-11 rounded-lg px-4 text-body font-medium">The group's</button>
+          <button type="button" role="radio" data-view="yours" aria-checked="false" class="min-h-11 rounded-lg px-4 text-body font-medium">Yours</button>
+        </div>
+        <p id="board-note" class="px-1 text-small text-muted"></p>
       </div>
-      <div id="group-tiers" class="list"></div>
-      <p id="unranked" class="mt-2 px-1 text-small text-muted" hidden></p>
-    </section>
-
-    <section id="yours" class="flex flex-col" hidden>
-      <div class="flex items-baseline justify-between gap-3">
-        <h2 class="section-label">Your tiers</h2>
-        <p id="your-count" class="mb-2 px-1 text-small text-muted"></p>
+      <p id="hint" class="px-1 text-small text-muted" aria-live="polite"></p>
+      <div id="board" class="list" data-view="group"></div>
+      <div id="tray" class="flex flex-col gap-2 rounded-xl border border-dashed border-line px-3 py-3" data-drop="">
+        <p id="tray-label" class="text-small text-muted"></p>
+        <div id="tray-items" class="flex min-h-11 flex-wrap items-center gap-1.5"></div>
       </div>
-      <ul id="your-tiers" class="list"></ul>
+      <div id="picked-actions" class="flex flex-wrap items-center gap-2" hidden></div>
     </section>
   </main>
 

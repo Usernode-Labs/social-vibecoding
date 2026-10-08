@@ -2,6 +2,10 @@
 // platform token the frame was opened with, which is how the server knows
 // who you are.
 //
+// Each potluck shows who is bringing what by course. Every dish can get a
+// reaction and comments ("is it vegetarian?"), and every potluck has its own
+// chat underneath.
+//
 // Rendering builds elements and sets textContent, never innerHTML with
 // people's words in it, so a dish called "<b>hi</b>" shows exactly that.
 // Class names are whole literals so the Tailwind build can see them.
@@ -133,9 +137,52 @@
 
   // ── A potluck ──────────────────────────────────────────────────────────
 
+  // Whose reaction picker is open, and whose comments are showing, by dish id.
+  var picking = null;
+  var opened = {};
+
+  function people(list, me) {
+    return list.map(function (u) { return me && u === me.username ? 'you' : '@' + u; }).join(', ');
+  }
+
+  function shortTime(iso) {
+    var at = new Date(iso);
+    return sameDay(at, new Date(current.now))
+      ? at.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+      : at.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  }
+
+  function sendForm(placeholder, label, onSend) {
+    var form = h('form', 'flex gap-2');
+    form.setAttribute('autocomplete', 'off');
+    var input = h('input', 'field min-w-0 flex-1');
+    input.type = 'text';
+    input.maxLength = 500;
+    input.placeholder = placeholder;
+    input.setAttribute('aria-label', label);
+    form.appendChild(input);
+    var send = h('button', 'btn-secondary shrink-0', 'Send');
+    send.type = 'submit';
+    form.appendChild(send);
+    var error = h('p', 'text-small text-danger');
+    error.setAttribute('role', 'alert');
+    error.hidden = true;
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      if (!input.value.trim()) return;
+      act(onSend(input.value), error);
+    });
+    var wrap = h('div', 'flex flex-col gap-1');
+    wrap.appendChild(form);
+    wrap.appendChild(error);
+    return wrap;
+  }
+
   function dishLine(d) {
+    var me = current.me;
+    var block = h('div', 'flex flex-col');
+    block.setAttribute('data-dish', String(d.id));
     var line = h('div', 'flex items-center gap-1');
-    line.setAttribute('data-dish', String(d.id));
     var text = h('p', 'min-w-0 flex-1 text-body break-words', d.dish);
     text.appendChild(h('span', 'text-small text-muted', d.mine ? ' · you' : ' · @' + d.by));
     line.appendChild(text);
@@ -147,7 +194,99 @@
       remove.addEventListener('click', function () { act(api('DELETE', '/api/dishes/' + d.id)); });
       line.appendChild(remove);
     }
-    return line;
+    block.appendChild(line);
+
+    // Reactions, a way to add one, and the comments.
+    var social = h('div', 'flex flex-wrap items-center gap-x-1');
+    d.reactions.forEach(function (r) {
+      var b = h('button', 'inline-flex min-h-11 items-center');
+      b.type = 'button';
+      b.setAttribute('data-reaction', r.emoji);
+      b.setAttribute('aria-pressed', r.mine ? 'true' : 'false');
+      b.setAttribute('aria-label', r.emoji + ' from ' + people(r.people, me) + (r.mine ? '. Tap to take yours back.' : '. Tap to add yours.'));
+      b.appendChild(h('span', r.mine
+        ? 'inline-flex items-center gap-1 rounded-full border border-accent bg-raised px-2 py-0.5 text-small'
+        : 'inline-flex items-center gap-1 rounded-full border border-line px-2 py-0.5 text-small', r.emoji + ' ' + r.count));
+      if (me) b.addEventListener('click', function () { act(api('POST', '/api/dishes/' + d.id + '/reactions', { emoji: r.emoji })); });
+      social.appendChild(b);
+    });
+    if (me) {
+      var react = h('button', 'btn-secondary border-0 bg-transparent px-2 text-small text-muted', picking === d.id ? 'Close' : 'React');
+      react.type = 'button';
+      react.setAttribute('aria-expanded', picking === d.id ? 'true' : 'false');
+      react.addEventListener('click', function () { picking = picking === d.id ? null : d.id; render(current); });
+      social.appendChild(react);
+    }
+    var talk = h('button', 'btn-secondary border-0 bg-transparent px-2 text-small text-muted',
+      d.comments.length ? count(d.comments.length, 'comment', 'comments') : 'Comment');
+    talk.type = 'button';
+    talk.setAttribute('aria-expanded', opened[d.id] ? 'true' : 'false');
+    talk.addEventListener('click', function () { opened[d.id] = !opened[d.id]; render(current); });
+    if (me || d.comments.length) social.appendChild(talk);
+    block.appendChild(social);
+
+    if (picking === d.id) {
+      var picker = h('div', 'flex flex-wrap gap-1');
+      picker.setAttribute('role', 'group');
+      picker.setAttribute('aria-label', 'React to ' + d.dish);
+      current.reactions.forEach(function (emoji) {
+        var mine = d.reactions.some(function (r) { return r.emoji === emoji && r.mine; });
+        var b = h('button', mine
+          ? 'min-h-11 min-w-11 rounded-lg border border-accent bg-raised text-heading'
+          : 'min-h-11 min-w-11 rounded-lg border border-line bg-surface text-heading hover:bg-raised', emoji);
+        b.type = 'button';
+        b.setAttribute('aria-label', (mine ? 'Take back ' : 'React with ') + emoji);
+        b.addEventListener('click', function () {
+          picking = null;
+          act(api('POST', '/api/dishes/' + d.id + '/reactions', { emoji: emoji }));
+        });
+        picker.appendChild(b);
+      });
+      block.appendChild(picker);
+    }
+
+    if (opened[d.id]) {
+      var thread = h('div', 'mt-1 flex flex-col gap-2 border-l-2 border-line pl-3');
+      d.comments.forEach(function (c) {
+        var p = h('p', 'text-small break-words');
+        p.appendChild(h('span', 'font-medium', c.mine ? 'You' : '@' + c.by));
+        p.appendChild(document.createTextNode(' ' + c.text));
+        thread.appendChild(p);
+      });
+      if (me) {
+        thread.appendChild(sendForm('e.g. is it vegetarian?', 'Comment on ' + d.dish, function (value) {
+          return api('POST', '/api/dishes/' + d.id + '/comments', { text: value });
+        }));
+      }
+      block.appendChild(thread);
+    }
+    return block;
+  }
+
+  function chat(p) {
+    var me = current.me;
+    var section = h('section', 'flex flex-col gap-2');
+    section.setAttribute('data-chat', String(p.id));
+    section.appendChild(h('h3', 'section-label mb-0', 'Chat'));
+    if (p.messages.length) {
+      var list = h('ul', 'list');
+      p.messages.forEach(function (m) {
+        var li = h('li', 'flex flex-col gap-0.5 px-4 py-2');
+        li.setAttribute('data-message', String(m.id));
+        li.appendChild(h('p', 'text-small text-muted', (m.mine ? 'You' : '@' + m.by) + ' · ' + shortTime(m.at)));
+        li.appendChild(h('p', 'text-body break-words', m.text));
+        list.appendChild(li);
+      });
+      section.appendChild(list);
+    } else {
+      section.appendChild(h('p', 'px-1 text-small text-muted', 'No messages yet. Say hello, or ask what is still missing.'));
+    }
+    if (me) {
+      section.appendChild(sendForm('Message everyone coming', 'Message everyone coming to ' + p.title, function (value) {
+        return api('POST', '/api/potlucks/' + p.id + '/messages', { text: value });
+      }));
+    }
+    return section;
   }
 
   function courseRow(c) {
@@ -236,6 +375,7 @@
     }
 
     if (data.me) block.appendChild(bringForm(p, data.courses));
+    block.appendChild(chat(p));
     return block;
   }
 
@@ -260,7 +400,10 @@
     }
   }
 
+  var current = null; // the last list read
+
   function render(data) {
+    current = data;
     el.potlucks.textContent = '';
     data.upcoming.forEach(function (p) { el.potlucks.appendChild(potluckBlock(p, data)); });
     el.potlucks.hidden = !data.upcoming.length;
@@ -302,14 +445,15 @@
   });
   document.getElementById('retry').addEventListener('click', function () { show('loading'); load(); });
 
-  // Other people sign up too: look again every 30 seconds while the app is
-  // on screen, and straight away when it comes back. Skipped while someone
-  // is typing, so a refresh never eats a half-written dish.
+  // Other people sign up, react and chat too: look again every 10 seconds
+  // while the app is on screen, and straight away when it comes back.
+  // Skipped while someone is typing or choosing a reaction, so a refresh
+  // never eats a half-written dish or message.
   setInterval(function () {
     var active = document.activeElement;
     var typing = active && (active.tagName === 'INPUT' || active.tagName === 'SELECT') && (active.value || active.tagName === 'SELECT');
-    if (!document.hidden && !typing) load();
-  }, 30000);
+    if (!document.hidden && !typing && picking === null) load();
+  }, 10000);
   document.addEventListener('visibilitychange', function () { if (!document.hidden) load(); });
 
   load();

@@ -210,8 +210,9 @@ test('three templates, the same on the story and the make screen, each a whole s
   assert.equal(suggestedName(game, 'trivia', ''), 'Trivia Night');
   // The organizer: each choice says what it keeps.
   assert.deepEqual(organizer.choices.map((c) => [c.label, c.name]), [['Groceries', 'Grocery List'], ['Chores', 'Chore List'], ['Shared library', 'Lending Library'], ['Potlucks', 'Potluck Planner']]);
-  // (Turns that go round everyone: the ready-made chore list's rota. It sends no nudge.)
-  assert.equal(sentence(organizer, 'chores', '').text, 'An app to organize our chores: who\'s on what this week, with turns that go round everyone.');
+  // (What the ready-made chore list does: it sends no nudge.)
+  assert.equal(sentence(organizer, 'chores', '').text, 'An app to organize our chores: who\'s on what this week, and whose turn it is next.');
+  assert.equal(sentence(organizer, 'library', '').text, 'An app to organize our shared library: what we can borrow, who has it now, and who\'s asking for it next.');
   assert.equal(suggestedName(organizer, OWN, 'camping gear'), 'Camping Gear Crew');
   // The story says the same three, the tier list drawn as a tier list.
   const story = renderComponent('frontend/src/features/auth/story.tsx', 'Story', { primaryClass: 'pill', onStart() {}, onSignIn() {} });

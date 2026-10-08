@@ -31,11 +31,20 @@
   </script>
 </head>
 <body class="min-h-screen bg-ground text-fg">
-  <main class="mx-auto flex max-w-xl flex-col gap-8 px-4 py-8">
+  <main class="mx-auto flex max-w-xl flex-col gap-6 px-4 py-8">
     <header class="flex flex-col gap-1">
       <h1 class="text-title">{{APP_NAME}}</h1>
-      <p class="text-body text-muted">One list for everyone. Add what's needed, and tick it off at the store.</p>
+      <p class="text-body text-muted">One list for everyone, aisle by aisle. Add what's needed, and tick it off at the store.</p>
     </header>
+
+    <!-- The latest thing somebody else did, and the last few things anyone did. -->
+    <section id="activity" class="flex flex-col gap-2" hidden>
+      <div class="flex items-center justify-between gap-3">
+        <p id="activity-line" class="min-w-0 text-small text-muted"></p>
+        <button id="activity-toggle" type="button" class="btn-secondary shrink-0 border-0 bg-transparent px-2 text-small text-muted" aria-expanded="false" aria-controls="activity-list">Recent activity</button>
+      </div>
+      <ul id="activity-list" class="list" hidden></ul>
+    </section>
 
     <form id="add-form" class="flex flex-col gap-2" autocomplete="off">
       <label for="add-name" class="section-label mb-0">Add to the list</label>
@@ -44,15 +53,20 @@
           placeholder="e.g. oat milk">
         <button type="submit" class="btn-primary shrink-0">Add</button>
       </div>
-      <input name="note" type="text" maxlength="80" class="field" aria-label="Note, if any"
-        placeholder="Note, if any: e.g. 2 cartons">
+      <div class="flex gap-2">
+        <input name="note" type="text" maxlength="80" class="field flex-1 min-w-0" aria-label="Note, if any"
+          placeholder="Note, e.g. 2 cartons">
+        <select id="add-aisle" name="aisle" class="field w-36 shrink-0" aria-label="Aisle"></select>
+      </div>
       <p id="status" class="text-small text-danger" role="alert" hidden></p>
     </form>
 
     <!-- Loading: shapes where the list will be. -->
     <div id="loading" class="flex flex-col gap-2" aria-label="Loading">
+      <div class="skeleton h-5 w-32"></div>
       <div class="skeleton h-12 w-full"></div>
       <div class="skeleton h-12 w-full"></div>
+      <div class="skeleton h-5 w-24"></div>
       <div class="skeleton h-12 w-full"></div>
     </div>
 
@@ -63,25 +77,28 @@
       <button id="retry" type="button" class="btn-secondary">Retry</button>
     </div>
 
-    <section id="needed-section" class="flex flex-col" hidden>
-      <div class="flex items-baseline justify-between gap-3">
-        <h2 class="section-label">Needed</h2>
-        <p id="needed-count" class="mb-2 px-1 text-small text-muted"></p>
-      </div>
-      <ul id="needed" class="list"></ul>
-      <!-- Empty: only when the load worked and nothing is needed. -->
-      <div id="empty" class="state-empty card" hidden>
-        <p class="text-heading">Nothing needed right now</p>
-        <p class="text-body text-muted">When something runs out, add it above and everyone will see it.</p>
-      </div>
-    </section>
+    <!-- Empty: only when the load worked and nothing is on the list. -->
+    <div id="empty" class="state-empty card" hidden>
+      <p class="text-heading">Nothing on the list</p>
+      <p class="text-body text-muted">When something runs out, add it above. It goes in its aisle, and everyone sees it.</p>
+    </div>
 
-    <section id="bought-section" class="flex flex-col" hidden>
-      <div class="flex items-center justify-between gap-3">
-        <h2 class="section-label mb-0">Bought</h2>
-        <button id="clear-bought" type="button" class="btn-secondary px-3 text-small">Clear bought</button>
-      </div>
-      <ul id="bought" class="list mt-2"></ul>
+    <div id="aisles" class="flex flex-col gap-5" hidden></div>
+
+    <div id="tools" class="flex flex-wrap items-center gap-2" hidden>
+      <button id="clear-bought" type="button" class="btn-secondary" hidden>Clear bought</button>
+      <button id="arrange" type="button" class="btn-secondary border-0 bg-transparent text-muted" aria-expanded="false" aria-controls="arranger">Arrange aisles</button>
+    </div>
+
+    <!-- The aisles themselves: rename, remove, add, and put them in the store's order. -->
+    <section id="arranger" class="flex flex-col gap-2" hidden>
+      <h2 class="section-label mb-0">Aisles, in your store's order</h2>
+      <ul id="aisle-list" class="list"></ul>
+      <form id="aisle-form" class="flex gap-2" autocomplete="off">
+        <input name="name" type="text" maxlength="40" required class="field flex-1 min-w-0" aria-label="New aisle"
+          placeholder="New aisle, e.g. Baby">
+        <button type="submit" class="btn-secondary shrink-0">Add aisle</button>
+      </form>
     </section>
   </main>
 

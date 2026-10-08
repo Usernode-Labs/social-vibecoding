@@ -241,31 +241,61 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
     });
   });
 
-  await t.test('a grocery list: one list, ticked off by whoever buys it, cleared when done', async () => {
-    await run('grocery-list', '/api/items', (d) => demo(d.items), async (app) => {
-      const milk = await app.call('POST', '/api/items', { as: ada, body: { name: 'Oat milk', note: ' 2 cartons ' } });
+  await t.test('a grocery list: aisles, ticked in place, aisles in the store\'s order, and who did what', async () => {
+    const all = (d) => d.aisles.flatMap((a) => a.items).concat(d.other);
+    await run('grocery-list', '/api/list', (d) => demo(all(d)), async (app) => {
+      let list = (await app.call('GET', '/api/list', { as: ada })).data;
+      assert.deepEqual(list.aisles.map((a) => a.name),
+        ['Produce', 'Bakery', 'Dairy & eggs', 'Meat & fish', 'Pantry', 'Frozen', 'Drinks', 'Household'], 'a new list has the usual aisles');
+      const dairy = list.aisles.find((a) => a.name === 'Dairy & eggs').id;
+      const milk = await app.call('POST', '/api/items', { as: ada, body: { name: 'Oat milk', note: ' 2 cartons ', aisleId: dairy } });
       assert.equal(milk.status, 201);
       const twice = await app.call('POST', '/api/items', { as: grace, body: { name: 'oat MILK' } });
       assert.deepEqual(twice.data, { id: milk.data.id, already: true }, 'still needed, so it is not added twice');
       assert.equal((await app.call('POST', '/api/items', { as: ada, body: { name: '' } })).status, 400);
-      assert.deepEqual((await app.call('PUT', `/api/items/${milk.data.id}/bought`, { as: grace, body: { bought: true } })).data, { bought: true });
-      let list = (await app.call('GET', '/api/items', { as: ada })).data.items;
-      const row = list.find((i) => i.id === milk.data.id);
-      assert.deepEqual([row.name, row.note, row.by, row.mine, row.bought, row.boughtBy], ['Oat milk', '2 cartons', 'ada', true, true, 'grace']);
-      assert.ok(list.findIndex((i) => i.id === milk.data.id) > list.findIndex((i) => !i.bought), 'what is needed comes first');
-      // Bought, it can be needed again as a new line.
-      const more = await app.call('POST', '/api/items', { as: ada, body: { name: 'Oat milk' } });
-      assert.equal(more.status, 201);
+      const loose = await app.call('POST', '/api/items', { as: ada, body: { name: 'Candles', aisleId: 999999 } });
+      assert.equal(loose.status, 201, 'an aisle that is not one puts it under Other');
+
+      assert.deepEqual((await app.call('PATCH', `/api/items/${milk.data.id}`, { as: grace, body: { bought: true } })).data, { ok: true });
+      list = (await app.call('GET', '/api/list', { as: ada })).data;
+      const row = list.aisles.find((a) => a.id === dairy).items.find((i) => i.id === milk.data.id);
+      assert.deepEqual([row.name, row.note, row.by, row.mine, row.bought, row.boughtBy], ['Oat milk', '2 cartons', 'ada', true, true, 'grace'],
+        'ticked, it stays in its aisle');
+      assert.ok(list.other.some((i) => i.id === loose.data.id));
+      assert.deepEqual(list.activity.slice(0, 2).map((e) => [e.by, e.verb, e.text]), [['grace', 'bought', 'Oat milk'], ['ada', 'added', 'Candles']], 'newest first');
+      assert.equal(list.activity[0].mine, false);
+
+      // Edit: name, note and aisle.
+      const pantry = list.aisles.find((a) => a.name === 'Pantry').id;
+      await app.call('PATCH', `/api/items/${loose.data.id}`, { as: grace, body: { name: 'Tea lights', note: 'unscented', aisleId: pantry } });
+      list = (await app.call('GET', '/api/list', { as: ada })).data;
+      assert.deepEqual(list.aisles.find((a) => a.id === pantry).items.map((i) => [i.name, i.note]), [['Tea lights', 'unscented']]);
+      assert.equal((await app.call('PATCH', `/api/items/${loose.data.id}`, { as: grace, body: { name: '  ' } })).status, 400);
+
+      // Aisles: add, rename, reorder, remove (its items go to Other).
+      const baby = await app.call('POST', '/api/aisles', { as: ada, body: { name: 'Baby' } });
+      assert.equal(baby.status, 201);
+      await app.call('PATCH', `/api/aisles/${baby.data.id}`, { as: ada, body: { name: 'Baby things' } });
+      const ids = list.aisles.map((a) => a.id).concat(baby.data.id).reverse();
+      assert.equal((await app.call('POST', '/api/aisles/order', { as: ada, body: { ids } })).status, 200);
+      list = (await app.call('GET', '/api/list', { as: ada })).data;
+      assert.deepEqual(list.aisles.map((a) => a.id), ids, 'the store\'s order');
+      assert.equal(list.aisles[0].name, 'Baby things');
+      assert.equal((await app.call('POST', '/api/aisles/order', { as: ada, body: { ids: ['x'] } })).status, 400);
+      await app.call('DELETE', `/api/aisles/${pantry}`, { as: ada });
+      list = (await app.call('GET', '/api/list', { as: ada })).data;
+      assert.ok(list.other.some((i) => i.id === loose.data.id), 'a removed aisle\'s items go to Other');
+
       const cleared = await app.call('POST', '/api/items/clear-bought', { as: grace });
-      assert.ok(cleared.data.cleared >= 2, 'the seeded bought coffee and the milk');
-      list = (await app.call('GET', '/api/items', { as: ada })).data.items;
-      assert.ok(!list.some((i) => i.bought));
-      assert.ok(list.some((i) => i.id === more.data.id));
-      assert.equal((await app.call('DELETE', `/api/items/${more.data.id}`, { as: grace })).status, 200, 'it is everyone\'s list');
+      assert.ok(cleared.data.cleared >= 2, 'the seeded bought bananas and the milk');
+      list = (await app.call('GET', '/api/list', { as: ada })).data;
+      assert.ok(!all(list).some((i) => i.bought));
+      assert.equal(list.activity[0].verb, 'cleared');
+      assert.equal((await app.call('DELETE', `/api/items/${loose.data.id}`, { as: grace })).status, 200, 'it is everyone\'s list');
     });
   });
 
-  await t.test('a chore list: turns go round the project\'s members and move on every Monday', async () => {
+  await t.test('a chore list: always one person\'s or taking turns round the project\'s members, moving on every Monday', async () => {
     await run('chore-list', '/api/chores', (d) => demo(d.chores), async (app) => {
       const thursday = '2026-10-08T12:00:00Z';
       const nextMonday = '2026-10-12T09:00:00Z';
@@ -273,67 +303,96 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
       assert.equal(week.data.week, '2026-10-05', 'the Monday of the week, UTC');
       assert.equal(week.data.rota, 'ok');
       assert.equal(week.data.people, 2);
-      const turns = week.data.chores.map((c) => c.turn);
-      assert.ok(turns.every((u) => u === 'ada' || u === 'grace'), 'only the project\'s members, from the platform');
-      assert.ok(turns.includes('ada') && turns.includes('grace'), 'shared out');
-      const first = week.data.chores[0];
+      assert.deepEqual(week.data.members.map((m) => m.username), ['ada', 'grace'], 'the platform\'s member list, for the picker');
+      const turning = week.data.chores.filter((c) => !c.fixed);
+      assert.ok(turning.every((c) => c.turn === 'ada' || c.turn === 'grace'), 'only the project\'s members');
+      assert.ok(turning.some((c) => c.turn === 'ada') && turning.some((c) => c.turn === 'grace'), 'shared out');
+      const first = turning[0];
       assert.equal(first.yours, first.turn === 'ada');
       assert.equal(first.next, first.turn === 'ada' ? 'grace' : 'ada', 'next week is the next member');
+      const plants = week.data.chores.find((c) => c.id === 900005);
+      assert.deepEqual([plants.fixed, plants.turn, plants.next], [true, 'staging-demo-user', null], 'always the same person\'s');
       const later = await app.call('GET', '/api/chores', { as: ada, now: nextMonday });
       assert.equal(later.data.week, '2026-10-12');
-      assert.equal(later.data.chores[0].turn, first.next, 'on Monday it moves on');
+      assert.equal(later.data.chores.find((c) => c.id === first.id).turn, first.next, 'on Monday it moves on');
+
+      // Always Grace's, then taking turns again.
+      const mow = await app.call('POST', '/api/chores', { as: ada, body: { name: 'Mow the lawn', assigneeId: 102 } });
+      assert.equal(mow.status, 201);
+      let chore = (await app.call('GET', '/api/chores', { as: ada, now: thursday })).data.chores.find((c) => c.id === mow.data.id);
+      assert.deepEqual([chore.fixed, chore.turn, chore.yours], [true, 'grace', false]);
+      chore = (await app.call('GET', '/api/chores', { as: grace, now: thursday })).data.chores.find((c) => c.id === mow.data.id);
+      assert.equal(chore.yours, true);
+      assert.equal((await app.call('POST', '/api/chores', { as: ada, body: { name: 'Bins', assigneeId: 103 } })).status, 400,
+        'nobody outside the project gets a chore');
+      await app.call('PATCH', `/api/chores/${mow.data.id}`, { as: grace, body: { name: 'Mow the lawn and edges', assigneeId: null } });
+      chore = (await app.call('GET', '/api/chores', { as: ada, now: thursday })).data.chores.find((c) => c.id === mow.data.id);
+      assert.deepEqual([chore.name, chore.fixed], ['Mow the lawn and edges', false]);
+      assert.ok(chore.turn === 'ada' || chore.turn === 'grace');
 
       // Done this week only.
-      const added = await app.call('POST', '/api/chores', { as: grace, body: { name: 'Water the plants' } });
-      assert.equal(added.status, 201);
-      assert.deepEqual((await app.call('PUT', `/api/chores/${added.data.id}/done`, { as: grace, body: { done: true }, now: thursday })).data, { done: true });
-      let chore = (await app.call('GET', '/api/chores', { as: ada, now: thursday })).data.chores.find((c) => c.id === added.data.id);
+      assert.deepEqual((await app.call('PUT', `/api/chores/${mow.data.id}/done`, { as: grace, body: { done: true }, now: thursday })).data, { done: true });
+      chore = (await app.call('GET', '/api/chores', { as: ada, now: thursday })).data.chores.find((c) => c.id === mow.data.id);
       assert.deepEqual([chore.done, chore.doneBy], [true, 'grace']);
-      chore = (await app.call('GET', '/api/chores', { as: ada, now: nextMonday })).data.chores.find((c) => c.id === added.data.id);
+      chore = (await app.call('GET', '/api/chores', { as: ada, now: nextMonday })).data.chores.find((c) => c.id === mow.data.id);
       assert.equal(chore.done, false, 'a new week starts undone');
       assert.equal((await app.call('PUT', '/api/chores/999999/done', { as: ada, body: { done: true } })).status, 404);
 
       // Somebody the platform does not count as a member sees the chores, not the rota.
       const outsider = await app.call('GET', '/api/chores', { as: sam });
       assert.equal(outsider.data.rota, 'not_member');
-      assert.ok(outsider.data.chores.every((c) => c.turn === null && !c.yours));
+      assert.deepEqual(outsider.data.members, []);
+      assert.ok(outsider.data.chores.filter((c) => !c.fixed).every((c) => c.turn === null && !c.yours));
       // The declared check's fixed rota, in staging and on ?demo=1 only.
       const fixed = await app.call('GET', '/api/chores?demo=1', { as: sam });
-      assert.deepEqual([...new Set(fixed.data.chores.map((c) => c.turn))].sort(), ['sam', 'staging-demo-ana', 'staging-demo-ben']);
+      assert.deepEqual([...new Set(fixed.data.chores.filter((c) => !c.fixed).map((c) => c.turn))].sort(), ['sam', 'staging-demo-ana', 'staging-demo-ben']);
       assert.ok(members.asked.every((u) => u === '/v1/members?limit=200'), 'one route, the conventions\' own');
-      assert.equal((await app.call('DELETE', `/api/chores/${added.data.id}`, { as: ada })).status, 200);
+      assert.equal((await app.call('DELETE', `/api/chores/${mow.data.id}`, { as: ada })).status, 200);
     });
   });
 
-  await t.test('a lending library: borrow for a week, two or a month, overdue by "now", back by owner or borrower', async () => {
+  await t.test('a lending library: who has it now, asking for it, handing it on, and back with its owner', async () => {
     await run('lending-library', '/api/things', (d) => demo(d.things), async (app) => {
       const seeded = (await app.call('GET', '/api/things', { as: ada })).data.things;
-      assert.ok(seeded.some((x) => x.out && !x.overdue), 'one out on loan');
-      assert.ok(seeded.some((x) => x.out && x.overdue), 'and one overdue');
+      assert.ok(seeded.some((x) => !x.atHome), 'one with somebody else');
+      assert.ok(seeded.some((x) => x.asks.length), 'and one somebody asked for');
 
       const drill = await app.call('POST', '/api/things', { as: ada, body: { name: 'Drill', note: 'Bits in the case' } });
       assert.equal(drill.status, 201);
       const id = drill.data.id;
-      assert.equal((await app.call('POST', `/api/things/${id}/borrow`, { as: ada, body: { days: 7 } })).status, 400, 'yours already');
-      assert.equal((await app.call('POST', `/api/things/${id}/borrow`, { as: grace, body: { days: 3 } })).status, 400, 'a week, two or a month');
       const now = '2026-10-08T12:00:00.000Z';
-      const lent = await app.call('POST', `/api/things/${id}/borrow`, { as: grace, body: { days: 14 }, now });
-      assert.deepEqual(lent.data, { due: '2026-10-22T12:00:00.000Z' });
-      assert.equal((await app.call('POST', `/api/things/${id}/borrow`, { as: sam, body: { days: 7 } })).status, 409, 'with one person at a time');
+      let thing = (await app.call('GET', '/api/things', { as: ada })).data.things.find((x) => x.id === id);
+      assert.deepEqual([thing.atHome, thing.withMe, thing.mine, thing.holder], [true, true, true, 'ada'], 'it starts on your shelf');
+      assert.equal((await app.call('POST', `/api/things/${id}/ask`, { as: ada })).status, 400, 'you have it already');
 
-      let thing = (await app.call('GET', '/api/things', { as: grace, now })).data.things[0];
-      assert.equal(thing.id, id, 'what you have borrowed comes first');
-      assert.deepEqual([thing.out, thing.borrower, thing.borrowedByMe, thing.overdue, thing.owner], [true, 'grace', true, false, 'ada']);
-      thing = (await app.call('GET', '/api/things', { as: ada, now: new Date(Date.parse(now) + 20 * DAY).toISOString() })).data.things.find((x) => x.id === id);
-      assert.equal(thing.overdue, true, 'overdue once "now" is past its due day');
+      // Grace and Sam ask; Ada hands it to Grace.
+      assert.equal((await app.call('POST', `/api/things/${id}/ask`, { as: grace, now })).status, 201);
+      assert.equal((await app.call('POST', `/api/things/${id}/ask`, { as: grace, now })).status, 201, 'asking again does nothing');
+      await app.call('POST', `/api/things/${id}/ask`, { as: sam, now: '2026-10-08T13:00:00.000Z' });
+      thing = (await app.call('GET', '/api/things', { as: ada })).data.things[0];
+      assert.equal(thing.id, id, 'what you have and somebody asked for comes first');
+      assert.deepEqual(thing.asks.map((a) => a.username), ['grace', 'sam'], 'first come, first served');
+      assert.equal((await app.call('POST', `/api/things/${id}/hand`, { as: sam, body: { to: 102 } })).status, 403, 'not yours to hand on');
+      assert.equal((await app.call('POST', `/api/things/${id}/hand`, { as: ada, body: { to: 999 } })).status, 400, 'only to somebody who asked');
+      assert.equal((await app.call('POST', `/api/things/${id}/hand`, { as: ada, body: { to: 102 }, now })).status, 200);
+      thing = (await app.call('GET', '/api/things', { as: grace })).data.things.find((x) => x.id === id);
+      assert.deepEqual([thing.atHome, thing.withMe, thing.holder, thing.since, thing.asks.map((a) => a.username)],
+        [false, true, 'grace', now, ['sam']], 'with Grace, and Sam is still in line');
 
-      assert.equal((await app.call('DELETE', `/api/things/${id}`, { as: ada })).status, 403, 'not while it is out');
-      assert.equal((await app.call('POST', `/api/things/${id}/return`, { as: sam })).status, 403);
-      assert.equal((await app.call('POST', `/api/things/${id}/return`, { as: ada })).status, 200, 'its owner says it is back');
+      // Grace hands it on to Sam; Sam takes his ask back meanwhile is not needed.
+      assert.equal((await app.call('POST', `/api/things/${id}/hand`, { as: grace, body: { to: 103 } })).status, 200);
+      thing = (await app.call('GET', '/api/things', { as: sam })).data.things.find((x) => x.id === id);
+      assert.deepEqual([thing.holder, thing.asks.length], ['sam', 0]);
+      // Grace asks again, then takes it back.
+      await app.call('POST', `/api/things/${id}/ask`, { as: grace });
+      assert.equal((await app.call('DELETE', `/api/things/${id}/ask`, { as: grace })).status, 200);
+      assert.equal((await app.call('GET', '/api/things', { as: grace })).data.things.find((x) => x.id === id).askedByMe, false);
+
+      assert.equal((await app.call('DELETE', `/api/things/${id}`, { as: ada })).status, 403, 'not while somebody else has it');
+      assert.equal((await app.call('POST', `/api/things/${id}/back`, { as: grace })).status, 403);
+      assert.equal((await app.call('POST', `/api/things/${id}/back`, { as: ada })).status, 200, 'its owner says it is back');
       thing = (await app.call('GET', '/api/things', { as: ada })).data.things.find((x) => x.id === id);
-      assert.equal(thing.out, false);
-      assert.equal((await app.call('POST', `/api/things/${id}/borrow`, { as: sam, body: { days: 28 } })).status, 201);
-      assert.equal((await app.call('POST', `/api/things/${id}/return`, { as: sam })).status, 200, 'or its borrower returns it');
+      assert.equal(thing.atHome, true);
       assert.equal((await app.call('DELETE', `/api/things/${id}`, { as: grace })).status, 403, 'only its owner takes it out');
       assert.equal((await app.call('DELETE', `/api/things/${id}`, { as: ada })).status, 200);
     });
@@ -345,6 +404,7 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
       const demoPotluck = seeded.upcoming.find((p) => p.id === 900001);
       assert.ok(demoPotluck.courses.some((c) => c.dishes.length), 'the check\'s dishes');
       assert.ok(demoPotluck.courses.some((c) => c.course !== 'Other' && !c.dishes.length), 'and a course nobody has taken');
+      assert.ok(demoPotluck.messages.length, 'and its chat');
 
       const now = '2026-10-08T12:00:00.000Z';
       const startsAt = '2026-10-10T18:00:00.000Z';
@@ -360,6 +420,7 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
 
       let p = (await app.call('GET', '/api/potlucks', { as: grace, now })).data.upcoming.find((x) => x.id === id);
       assert.deepEqual([p.title, p.startsAt, p.place, p.host, p.mine, p.dishes], ['Harvest potluck', startsAt, 'Ada\'s place', 'ada', false, 2]);
+      assert.deepEqual(p.messages, [], 'a new potluck\'s chat is empty');
       const desserts = p.courses.find((c) => c.course === 'Desserts');
       assert.deepEqual(desserts.dishes.map((d) => [d.dish, d.by, d.mine, d.canRemove]), [['Apple pie', 'grace', true, true]]);
       assert.deepEqual(p.courses.map((c) => c.course), ['Mains', 'Sides', 'Salads', 'Desserts', 'Drinks', 'Other']);
@@ -368,6 +429,25 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
       assert.ok(after.upcoming.some((x) => x.id === id), 'still on that evening');
       const gone = (await app.call('GET', '/api/potlucks', { as: ada, now: '2026-10-12T12:00:00Z' })).data;
       assert.ok(!gone.upcoming.some((x) => x.id === id) && gone.past.some((x) => x.id === id), 'then past');
+
+      // Reactions toggle; comments and the chat are kept in order.
+      assert.equal((await app.call('POST', `/api/dishes/${pie.data.id}/reactions`, { as: ada, body: { emoji: '🍕' } })).status, 400);
+      assert.deepEqual((await app.call('POST', `/api/dishes/${pie.data.id}/reactions`, { as: ada, body: { emoji: '😋' } })).data, { on: true });
+      await app.call('POST', `/api/dishes/${pie.data.id}/reactions`, { as: sam, body: { emoji: '😋' } });
+      await app.call('POST', `/api/dishes/${pie.data.id}/reactions`, { as: sam, body: { emoji: '🔥' } });
+      assert.deepEqual((await app.call('POST', `/api/dishes/${pie.data.id}/reactions`, { as: sam, body: { emoji: '🔥' } })).data, { on: false }, 'again takes it back');
+      assert.equal((await app.call('POST', `/api/dishes/${pie.data.id}/comments`, { as: ada, body: { text: ' ' } })).status, 400);
+      await app.call('POST', `/api/dishes/${pie.data.id}/comments`, { as: ada, body: { text: 'Is it the one with cinnamon?' }, now });
+      await app.call('POST', `/api/dishes/${pie.data.id}/comments`, { as: grace, body: { text: 'Yes!' }, now: '2026-10-08T12:05:00.000Z' });
+      assert.equal((await app.call('POST', `/api/potlucks/${id}/messages`, { as: sam, body: { text: '' } })).status, 400);
+      await app.call('POST', `/api/potlucks/${id}/messages`, { as: sam, body: { text: 'Who has a big table?' }, now });
+      await app.call('POST', `/api/potlucks/${id}/messages`, { as: ada, body: { text: 'Mine folds out' }, now: '2026-10-08T12:01:00.000Z' });
+      assert.equal((await app.call('POST', '/api/potlucks/999999/messages', { as: ada, body: { text: 'hi' } })).status, 404);
+      p = (await app.call('GET', '/api/potlucks', { as: grace, now })).data.upcoming.find((x) => x.id === id);
+      const pieNow = p.courses.find((c) => c.course === 'Desserts').dishes[0];
+      assert.deepEqual(pieNow.reactions.map((r) => [r.emoji, r.count, r.mine, r.people]), [['😋', 2, false, ['ada', 'sam']]]);
+      assert.deepEqual(pieNow.comments.map((c) => [c.by, c.text, c.mine]), [['ada', 'Is it the one with cinnamon?', false], ['grace', 'Yes!', true]]);
+      assert.deepEqual(p.messages.map((m) => [m.by, m.text]), [['sam', 'Who has a big table?'], ['ada', 'Mine folds out']], 'oldest first');
 
       const chili = p.courses.find((c) => c.course === 'Mains').dishes.find((d) => d.dish === 'Chili');
       assert.equal((await app.call('DELETE', `/api/dishes/${chili.id}`, { as: grace })).status, 403, 'not somebody else\'s dish');

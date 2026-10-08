@@ -125,8 +125,8 @@ export const TEMPLATES: readonly Template[] = [
     tail: ', so everyone can see what\'s where and who\'s on it.',
     choices: [
       { key: 'groceries', label: 'Groceries', fill: 'groceries', tail: ': one shared list, and whoever\'s at the store checks things off.', name: 'Grocery List', description: 'A grocery list', template: 'grocery-list', emoji: '🛒' },
-      { key: 'chores', label: 'Chores', fill: 'chores', tail: ': who\'s on what this week, with turns that go round everyone.', name: 'Chore List', description: 'A chore list', template: 'chore-list', emoji: '🧹' },
-      { key: 'library', label: 'Shared library', fill: 'shared library', tail: ': what we can borrow, who has it now, and when it\'s coming back.', name: 'Lending Library', description: 'A lending library', template: 'lending-library', emoji: '📚' },
+      { key: 'chores', label: 'Chores', fill: 'chores', tail: ': who\'s on what this week, and whose turn it is next.', name: 'Chore List', description: 'A chore list', template: 'chore-list', emoji: '🧹' },
+      { key: 'library', label: 'Shared library', fill: 'shared library', tail: ': what we can borrow, who has it now, and who\'s asking for it next.', name: 'Lending Library', description: 'A lending library', template: 'lending-library', emoji: '📚' },
       { key: 'potlucks', label: 'Potlucks', fill: 'potlucks', tail: ': who\'s bringing what, so we don\'t end up with six salads.', name: 'Potluck Planner', description: 'A potluck planner', template: 'potluck-planner', emoji: '🍲' },
     ],
     own: { example: 'camping gear', name: '{words} Crew', description: 'An organizer' },

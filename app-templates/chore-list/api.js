@@ -1,6 +1,6 @@
-// This app's API: the group's chores and a weekly rota. Turns go round the
-// project's members (the platform's member list) and move on every Monday,
-// UTC. server.js mounts it after the sign-in check: a write always has
+// This app's API: the group's chores, each one either always the same
+// person's or taking turns. Turns go round the project's members (the
+// platform's member list) and move on every Monday, UTC. server.js mounts it after the sign-in check: a write always has
 // req.user ({ id, username }); a read may come from a guest with no account
 // (req.guest, no req.user).
 //
@@ -102,7 +102,10 @@ async function migrate(pool) {
       name VARCHAR(${NAME_MAX}) NOT NULL,
       created_by INTEGER NOT NULL,
       created_by_name VARCHAR(255) NOT NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      -- Always this person's; NULL takes turns round the members.
+      assignee_id INTEGER,
+      assignee_name VARCHAR(255)
     )
   `);
   // One row per chore done in a week, keyed by that week's Monday.
@@ -131,22 +134,45 @@ async function migrate(pool) {
         (900004, 'Staging demo bathroom', 0, 'staging-demo-user')
       ON CONFLICT (id) DO NOTHING
     `);
+    await pool.query(`
+      INSERT INTO chores (id, name, created_by, created_by_name, assignee_id, assignee_name)
+      VALUES (900005, 'Staging demo plants', 0, 'staging-demo-user', 0, 'staging-demo-user')
+      ON CONFLICT (id) DO NOTHING
+    `);
   }
 }
 
+function rosterFor(req) {
+  return IS_STAGING && req.query.demo === '1'
+    ? Promise.resolve({ status: 'ok', members: demoMembers(req) })
+    : members(req);
+}
+
+/**
+ * Who a body says does a chore: undefined when it says nothing, null for
+ * "takes turns", or a member. A person the platform does not list as a
+ * member is refused, so nobody is given a chore in a group they are not in.
+ */
+async function assigneeOf(req) {
+  const body = req.body || {};
+  if (!Object.prototype.hasOwnProperty.call(body, 'assigneeId')) return { value: undefined };
+  if (body.assigneeId === null || body.assigneeId === '') return { value: null };
+  const roster = await rosterFor(req);
+  const person = (roster.members || []).find((m) => m.id === Number(body.assigneeId));
+  return person ? { value: person } : { error: 'Only somebody in this project can have a chore.' };
+}
+
 function routes(app, pool) {
-  // This week's chores: whose turn each is (when the rota is known), who is
-  // next, and whether it is done. The viewer's own come first.
+  // This week's chores: whose they are (always one person's, or whose turn it
+  // is when the rota is known), who is next, and whether it is done.
   app.get('/api/chores', async (req, res) => {
     try {
       const monday = weekStart(req.now);
       const week = weekNumber(monday);
       const weekDate = monday.toISOString().slice(0, 10);
-      const roster = IS_STAGING && req.query.demo === '1'
-        ? { status: 'ok', members: demoMembers(req) }
-        : await members(req);
+      const roster = await rosterFor(req);
       const { rows } = await pool.query(
-        `SELECT c.id, c.name, d.done_by_name
+        `SELECT c.id, c.name, c.assignee_id, c.assignee_name, d.done_by_name
            FROM chores c
            LEFT JOIN chore_done d ON d.chore_id = c.id AND d.week = $1
           ORDER BY c.id
@@ -154,15 +180,28 @@ function routes(app, pool) {
         [weekDate, CHORES_SHOWN]
       );
       const me = req.user ? req.user.id : null;
-      const chores = rows.map((r, index) => {
-        const turn = roster.members ? turnOf(roster.members, index, week) : null;
-        const next = roster.members && roster.members.length > 1 ? turnOf(roster.members, index, week + 1) : null;
+      // Turns are dealt out among the chores that take turns only, so a
+      // chore that is always one person's does not unbalance the rota.
+      let turnIndex = 0;
+      const chores = rows.map((r) => {
+        const fixed = r.assignee_id !== null;
+        let turn = null;
+        let next = null;
+        if (fixed) {
+          turn = { id: r.assignee_id, username: r.assignee_name };
+        } else if (roster.members) {
+          turn = turnOf(roster.members, turnIndex, week);
+          if (roster.members.length > 1) next = turnOf(roster.members, turnIndex, week + 1);
+          turnIndex += 1;
+        }
         return {
           id: r.id,
           name: r.name,
+          fixed,
           done: !!r.done_by_name,
           doneBy: r.done_by_name,
           turn: turn ? turn.username : null,
+          turnId: turn ? turn.id : null,
           yours: !!turn && turn.id === me,
           next: next ? next.username : null,
         };
@@ -172,6 +211,7 @@ function routes(app, pool) {
         week: weekDate,
         rota: roster.status,
         people: roster.members ? roster.members.length : null,
+        members: roster.members || [],
         chores,
       });
     } catch (err) {
@@ -183,11 +223,39 @@ function routes(app, pool) {
     const name = cleanText(req.body && req.body.name, NAME_MAX);
     if (!name) return res.status(400).json({ error: 'Say what the chore is.' });
     try {
+      const who = await assigneeOf(req);
+      if (who.error) return res.status(400).json({ error: who.error });
       const { rows } = await pool.query(
-        'INSERT INTO chores (name, created_by, created_by_name) VALUES ($1, $2, $3) RETURNING id',
-        [name, req.user.id, req.user.username]
+        `INSERT INTO chores (name, created_by, created_by_name, assignee_id, assignee_name)
+         VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+        [name, req.user.id, req.user.username, who.value ? who.value.id : null, who.value ? who.value.username : null]
       );
       res.status(201).json({ id: rows[0].id });
+    } catch (err) {
+      fail(res, err);
+    }
+  });
+
+  // Rename a chore, or change who does it (assigneeId null: takes turns).
+  app.patch('/api/chores/:id', async (req, res) => {
+    const id = idParam(req);
+    if (!id) return res.status(404).json({ error: 'That chore is not on the list any more.' });
+    const body = req.body || {};
+    try {
+      const { rows: found } = await pool.query('SELECT 1 FROM chores WHERE id = $1', [id]);
+      if (!found.length) return res.status(404).json({ error: 'That chore is not on the list any more.' });
+      if (Object.prototype.hasOwnProperty.call(body, 'name')) {
+        const name = cleanText(body.name, NAME_MAX);
+        if (!name) return res.status(400).json({ error: 'Say what the chore is.' });
+        await pool.query('UPDATE chores SET name = $2 WHERE id = $1', [id, name]);
+      }
+      const who = await assigneeOf(req);
+      if (who.error) return res.status(400).json({ error: who.error });
+      if (who.value !== undefined) {
+        await pool.query('UPDATE chores SET assignee_id = $2, assignee_name = $3 WHERE id = $1',
+          [id, who.value ? who.value.id : null, who.value ? who.value.username : null]);
+      }
+      res.json({ ok: true });
     } catch (err) {
       fail(res, err);
     }
