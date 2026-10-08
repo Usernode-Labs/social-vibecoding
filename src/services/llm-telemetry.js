@@ -40,6 +40,9 @@ const COMPONENTS = new Set([
   'homeroom_bot_triage',
   // #3146: its build turn on a live app, for a request it judged ready.
   'homeroom_bot_build',
+  // The one more turn a build turn that changed nothing is sent
+  // (homeroom-bot-live.js buildNudgePrompt), on the build's own clock.
+  'homeroom_bot_build_nudge',
   // Its spec turn, just before that build (live and shadow alike).
   'homeroom_bot_spec',
   // The reviewer's look at a first version's screenshots (services/bot-review.js).

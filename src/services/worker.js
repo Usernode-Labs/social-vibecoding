@@ -1265,7 +1265,14 @@ function observeCodingProviderResult(event, ordinal, onProgress, state) {
   const errorMessage = typeof event.errorMessage === 'string'
     ? event.errorMessage.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 300) || null
     : null;
-  if (providerName) state.routedProvider = providerName;
+  if (providerName) {
+    state.routedProvider = providerName;
+    // Every provider the turn's requests went to, in order, not only the
+    // last: whether a build that quits early follows a provider is read
+    // from this (homeroom-bot-live.js turnFacts). A few names at most.
+    const seen = Array.isArray(state.routedProviders) ? state.routedProviders : (state.routedProviders = []);
+    if (!seen.includes(providerName) && seen.length < 8) seen.push(providerName);
+  }
   noteCodingProviderUsage(event.usage, state);
   noteCodingProviderImages(event.images, state);
   const failed = (status != null && status >= 400) || !!errorType || !!errorMessage;
@@ -3282,7 +3289,9 @@ async function execInWorker(sessionId, {
   if (systemPrompt && !runsClaude) {
     throw new Error('execInWorker: systemPrompt is only supported for Claude turns');
   }
-  if (resumeFallbackPrompt && !isClaude) {
+  // Claude Code makes the fresh run itself when --resume fails (run-cc.sh),
+  // on Anthropic or on OpenRouter; Codex asks the host for one instead.
+  if (resumeFallbackPrompt && !isClaude && !isClaudeOpenRouter) {
     throw new Error('execInWorker: resumeFallbackPrompt is only supported for Claude turns');
   }
   if (resumeFallbackPrompt && mode !== 'build') {
@@ -3466,7 +3475,10 @@ async function execInWorker(sessionId, {
     // the catalog lists as taking files; anything else is a note.
     safeEnv.AGENT_MODEL_SUPPORTS_FILES = agentModelMetadata?.supportsFiles === true ? '1' : '';
     safeEnv.CLAUDE_RESUME_SESSION_ID = resumeSessionId || '';
-    safeEnv.RESUME_FALLBACK_PROMPT_FILE = '';
+    // The Homeroom bot's nudge (homeroom-bot-live.js buildTurnRunner): the
+    // whole build prompt, for the fresh run run-cc.sh makes when the build's
+    // conversation cannot be resumed. Empty for every other turn.
+    safeEnv.RESUME_FALLBACK_PROMPT_FILE = resumeFallbackPrompt ? TURN_RESUME_FALLBACK_PROMPT_PATH : '';
     safeEnv.TURN_UUID = turnUuid || '';
     safeEnv.OPENROUTER_API_BASE = openrouterApiBase || '';
     safeEnv.DISCARD_FAILED_TURN = discardFailedTurn === true ? '1' : '';
