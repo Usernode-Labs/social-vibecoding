@@ -301,7 +301,8 @@ export function privateSteps({ slug, name }: TourProject): TourStep[] {
  * Homeroom bot's chat (when the project has one: the bot builds for this
  * account), and otherwise on the hub. The plan waits there for Build it, and
  * nothing asks for it before the tour ends (decision C): the last card says
- * it is coming until it is in the chat, and how to answer it once it is.
+ * the bot is working on it until a plan is in the chat, and how to answer it
+ * once it is. Nothing else in the tour names the plan (./tour-running.ts).
  */
 export function makerSteps({ slug, name, conversationId }: TourProject): TourStep[] {
   const steps = sharedSteps(slug, name);
@@ -327,12 +328,14 @@ export function makerSteps({ slug, name, conversationId }: TourProject): TourSte
       // buttons it names, and over the plan's top it covered its title and
       // first lines (the owner, 6 and 7 October 2026).
       newestBelowCard: { scroller: BOT_CHAT_MESSAGES, rows: 'article.messages-message' },
-      title: `Homeroom bot is planning ${name}`,
-      text: 'It messages you here when the plan is ready.',
+      // Until a plan waits, nothing on the card says there is one coming:
+      // the bot may ask a question first (requests #4391, #4393).
+      title: `Homeroom bot is working on ${name}`,
+      text: 'It\'ll let you know here when there\'s something to look at.',
       instead: {
         when: PLAN_WAITING,
         title: 'Homeroom bot has a plan for you',
-        text: 'Tap Build it when the plan looks right.',
+        text: 'Answer it here: tap Build it, or tell it what to change.',
       },
       place: { below: BOT_CHAT_HEADER },
       last: true,

@@ -202,7 +202,7 @@ test('a new user\'s tour, numbered as its card numbers it, with what each step c
     { screen: 'hub', target: '#app-content', alongside: SCREEN_HEADER, endsAbove: BOTTOM_BARS, press: undefined, tap: undefined, title: 'The Friday Film Crew hub' },
     { screen: 'hub', target: '#platform-tab-messages', alongside: undefined, endsAbove: undefined, press: undefined, tap: 'Tap Messages', title: 'Homeroom bot is in Messages' },
     // 7: the chat with Homeroom bot, with the header over it.
-    { screen: 'bot', target: `${BOT_CHAT_HEADER}, ${BOT_CHAT_MESSAGES}`, alongside: SCREEN_HEADER, endsAbove: undefined, press: undefined, tap: undefined, title: 'Homeroom bot is planning Friday Film Crew' },
+    { screen: 'bot', target: `${BOT_CHAT_HEADER}, ${BOT_CHAT_MESSAGES}`, alongside: SCREEN_HEADER, endsAbove: undefined, press: undefined, tap: undefined, title: 'Homeroom bot is working on Friday Film Crew' },
   ]);
   // Why go to Messages: Homeroom bot is there, and it makes this app with you
   // (#4183; the owner, 8 October 2026).
@@ -964,15 +964,17 @@ test('every card sits clear of the tab bar: 20px above it near the foot, under w
   }, header);
 });
 
-test('the maker\'s tour ends on the plan: "planning" until it is in the chat, then how to answer it', () => {
+test('the maker\'s tour ends on the plan: "working on it" until it is in the chat, then how to answer it', () => {
   const { makerSteps, PLAN_WAITING } = loadTsx(`${DIR}/tour-steps.ts`);
   const { measure, wordsFor } = loadTsx(`${DIR}/index.tsx`);
   const last = makerSteps({ slug: 'run', name: 'Sunday Run Club', conversationId: 9 }).at(-1);
   assert.equal(last.last, true);
-  assert.deepEqual([last.title, last.text], ['Homeroom bot is planning Sunday Run Club', 'It messages you here when the plan is ready.']);
+  assert.deepEqual([last.title, last.text], ['Homeroom bot is working on Sunday Run Club', 'It\'ll let you know here when there\'s something to look at.']);
   assert.deepEqual(last.instead, {
-    when: PLAN_WAITING, title: 'Homeroom bot has a plan for you', text: 'Tap Build it when the plan looks right.',
+    when: PLAN_WAITING, title: 'Homeroom bot has a plan for you', text: 'Answer it here: tap Build it, or tell it what to change.',
   });
+  // Nothing before a plan waits says one is ready (requests #4391, #4393).
+  assert.doesNotMatch(`${last.title} ${last.text}`, /plan/i);
   // The open plan card in the chat with the bot, by the state its view draws.
   assert.equal(PLAN_WAITING, '.messages-thread-direct [data-bot-plan="open"]');
   assert.match(read('frontend/src/features/messages/bot-plan-view.tsx'), /data-bot-plan=\{shown\}/);
@@ -992,7 +994,7 @@ test('the maker\'s tour ends on the plan: "planning" until it is in the chat, th
     globalThis.document = doc(true);
     const plan = measure(5, last);
     assert.equal(plan.instead, true);
-    assert.deepEqual(wordsFor(last, plan, 5), { title: 'Homeroom bot has a plan for you', text: 'Tap Build it when the plan looks right.' });
+    assert.deepEqual(wordsFor(last, plan, 5), { title: 'Homeroom bot has a plan for you', text: 'Answer it here: tap Build it, or tell it what to change.' });
     // Only for the step it was measured for.
     assert.deepEqual(wordsFor(last, plan, 4), { title: last.title, text: last.text });
   } finally {
@@ -1005,6 +1007,30 @@ test('the maker\'s tour ends on the plan: "planning" until it is in the chat, th
   const src = read(`${DIR}/index.tsx`);
   assert.match(src, /const words = wordsFor\(step, measured, index\);/);
   assert.match(src, /\{words\.title\}<\/p>/);
+  // A plan that arrives while the card is already up switches its words: the
+  // frame loop measures every frame and keeps a new reading whenever
+  // `instead` flips, even though no box moved.
+  assert.match(src, /const m = measure\(at, stepRef\.current\);/);
+  assert.match(src, /const key = `\$\{at\}:\$\{boxKey\(m\.box\)\}:\$\{boxKey\(m\.press\)\}:\$\{m\.instead \? 1 : 0\}`;\s*if \(key !== last\) \{ last = key; setMeasured\(m\); \}/);
+});
+
+test('#4391/#4393: the tour says it is running while it is up, so nothing else asks for the plan', () => {
+  const src = read(`${DIR}/index.tsx`);
+  assert.match(src, /useEffect\(\(\) => \{\s*setTourRunning\(true\);\s*return \(\) => setTourRunning\(false\);\s*\}, \[\]\);/);
+  const store = loadTsx(`${DIR}/tour-running.ts`);
+  assert.equal(store.tourRunning(), false);
+  let calls = 0;
+  const off = store.subscribeTourRunning(() => { calls += 1; });
+  store.setTourRunning(true);
+  store.setTourRunning(true);
+  assert.equal(store.tourRunning(), true);
+  store.setTourRunning(false);
+  off();
+  store.setTourRunning(true);
+  store.setTourRunning(false);
+  assert.equal(calls, 2, 'told once per change, and not after unsubscribing');
+  // One flag for every copy of the module (a lazy chunk bundles its own).
+  assert.equal(globalThis[store.TOUR_RUNNING_KEY].running, false);
 });
 
 // Only a brand-new account's first session reaches a tour, so each has a

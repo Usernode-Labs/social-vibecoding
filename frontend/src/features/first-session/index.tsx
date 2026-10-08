@@ -75,6 +75,7 @@ import { type Made, type MakeEntry, MakeScreen } from './make';
 import { FeaturedCard } from './sketch-card';
 import { MadeScreen, madeAppOf, madeAppUrl } from './made';
 import { BOTTOM_BARS, type FirstVersionStage, invitedSteps, lookAroundSteps, makerSteps, privateSteps, type TourScreen, type TourStep } from './tour-steps';
+import { setTourRunning } from './tour-running';
 
 export type FirstSessionInfo = {
   slug: string;
@@ -529,6 +530,14 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
   indexRef.current = index;
   const box = boxForStep(measured, index);
   const pressBox = pressForStep(measured, index);
+
+  // While it is up, the hub's first-version card and the App tab hold back
+  // their "Review the plan" (./tour-running.ts): only the last card speaks of
+  // the plan.
+  useEffect(() => {
+    setTourRunning(true);
+    return () => setTourRunning(false);
+  }, []);
 
   // A new step measures its own target before it is painted, so its card
   // never shows beside the last step's cut-out (see Measured).
