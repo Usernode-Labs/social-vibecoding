@@ -68,13 +68,14 @@ import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { Wordmark } from '@/components/ui/wordmark';
 
 import { pushDismissible, type Release } from '../../lib/back-stack';
+import { AppContext } from '../app-context/app-context-controller.js';
 import { invalidateAppAllowance } from '../dialogs/app-allowance-store.js';
 import { swatchFor } from '../messages/format';
 import { cardPosition } from './card-placement';
 import { type Made, type MakeEntry, MakeScreen } from './make';
 import { FeaturedCard } from './sketch-card';
 import { MadeScreen, madeAppOf, madeAppUrl } from './made';
-import { BOTTOM_BARS, type FirstVersionStage, invitedSteps, lookAroundSteps, makerSteps, privateSteps, type TourScreen, type TourStep } from './tour-steps';
+import { APP_MENU, BOTTOM_BARS, type FirstVersionStage, invitedSteps, lookAroundSteps, makerSteps, privateSteps, type TourScreen, type TourStep } from './tour-steps';
 import { setTourRunning } from './tour-running';
 
 export type FirstSessionInfo = {
@@ -470,7 +471,7 @@ export function bringIntoView(step: Pick<TourStep, 'target' | 'revealWith'>, vie
     if (step.revealWith) pressTarget(step.revealWith);
     return false;
   }
-  if (el.closest('#platform-tabs, #platform-header, #platform-parked')) return true;
+  if (el.closest(`#platform-tabs, #platform-header, #platform-parked, ${APP_MENU}`)) return true;
   const header = document.getElementById('platform-header')?.getBoundingClientRect();
   const band = { top: header && header.height ? header.bottom : 0, bottom: footTop(visibleBoxes(BOTTOM_BARS), viewport) };
   const r = el.getBoundingClientRect();
@@ -593,17 +594,34 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
     if (index > 0) enterScreen(steps[index].screen, info.slug, info.conversationId);
   }, []);
 
-  // A step whose target never shows (a screen that did not open) opens its
-  // screen itself after a moment.
+  // A step inside the Homeroom menu (TourStep.inMenu) has it open: the tap
+  // before it opened it, and Back to it, or a tour opened part-way on it,
+  // opens it here. Moving on from it closes it, Back and Skip included, so
+  // the steps after it are on the app with nothing over it.
+  const inMenu = !!step.inMenu;
   useEffect(() => {
-    const t = window.setTimeout(() => { if (!targetBox(step.target)) enterScreen(step.screen, info.slug, info.conversationId); }, 2500);
+    if (!inMenu) return undefined;
+    if (!AppContext.isOpen()) AppContext.open();
+    return () => { if (AppContext.isOpen()) void AppContext.close(); };
+  }, [inMenu, index]);
+
+  // A step whose target never shows (a screen that did not open) opens its
+  // screen itself after a moment; a step in the menu, the menu.
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      if (targetBox(step.target)) return;
+      if (step.inMenu && !AppContext.isOpen()) AppContext.open();
+      else enterScreen(step.screen, info.slug, info.conversationId);
+    }, 2500);
     return () => window.clearTimeout(t);
   }, [index, step, info.slug]);
 
   const go = useCallback((to: number) => {
     if (to < 0) return;
     if (to >= steps.length) { onEnd(); return; }
-    if (steps[to].screen !== steps[index].screen || to < index) enterScreen(steps[to].screen, info.slug, info.conversationId);
+    // Back to a step in the menu stays on its screen: the menu opens over it
+    // (inMenu, above), and re-entering the app could close it again.
+    if (steps[to].screen !== steps[index].screen || (to < index && !steps[to].inMenu)) enterScreen(steps[to].screen, info.slug, info.conversationId);
     setIndex(to);
   }, [index, steps, info.slug, onEnd]);
 
@@ -648,7 +666,9 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
     // The layer itself lets presses through: only the shades, the card and
     // the covers over the cut-out take them, so the control the step asks
     // for is pressable.
-    <div data-first-session-tour={index + 1} className="pointer-events-none fixed inset-0 z-[9000]">
+    // A step in the menu is drawn over it: on touch the menu is a kit sheet
+    // (z-index 9991), and under it the card's Next was under its backdrop.
+    <div data-first-session-tour={index + 1} className={step.inMenu ? 'pointer-events-none fixed inset-0 z-[9995]' : 'pointer-events-none fixed inset-0 z-[9000]'}>
       {hole ? (
         <>
           <div className={SHADE} style={{ left: 0, top: 0, right: 0, height: Math.max(0, hole.top) }} />
@@ -725,7 +745,7 @@ function WelcomeFrame({ children, foot = null, held = false }: { children: React
       style={{ background: 'var(--home-wallpaper, #f4f2e4)' }}
     >
       <div className="flex h-[52px] shrink-0 items-center justify-center pt-[env(safe-area-inset-top)]">
-        <Wordmark className="h-6 w-auto text-[color:var(--brand-ink)]" />
+        <Wordmark className="h-6 w-auto text-zinc-950 dark:text-white" />
       </div>
       {/* The page scrolls under a foot that stays: a long list of people
           never pushes the one button off the screen. */}

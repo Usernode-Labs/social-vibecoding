@@ -30,7 +30,7 @@
  * ── The words (#4073) ──────────────────────────────────────────────────
  *
  * The onboarding canvas's waiting screen: the wordmark, "You're on the
- * waitlist", "We let people in a few at a time.", the invite box when a link
+ * waitlist", "We're letting people in a few at a time.", the invite box when a link
  * queued a community (only then: the list comes from the links this account
  * followed), one picture, and Sign out as a small link. It does not promise
  * an email: an account made by email code has no waitlist row, so nothing
@@ -258,12 +258,12 @@ export function WaitingScreen() {
       {mounted ? (
         <>
         <div className="mx-auto flex min-h-full w-full max-w-sm flex-col px-6 pt-16 pb-9 text-center">
-          <Wordmark className="mx-auto h-6 w-auto text-[color:var(--brand-ink)]" />
+          <Wordmark className="mx-auto h-6 w-auto text-zinc-950 dark:text-white" />
           <h1 className="mt-12 text-[30px] font-extrabold leading-[34px] text-zinc-900 dark:text-zinc-100">
             You're on the waitlist
           </h1>
           <p className="mt-3 text-pretty text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400">
-            We let people in a few at a time.
+            We're letting people in a few at a time.
           </p>
           {queued.length ? (
             <p data-waiting-queued="" className="mt-7 text-balance rounded-[20px] bg-white px-4 py-3.5 text-[15px] leading-5 text-zinc-600 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900 dark:text-zinc-300">

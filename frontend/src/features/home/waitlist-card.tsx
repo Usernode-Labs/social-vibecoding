@@ -169,7 +169,7 @@ export function WaitlistCardBody({ standing, onListed }: {
               ? 'You’re on the waitlist. We’ll text you when your spot is ready.'
               : 'You’re on the waitlist. We’ll email you when your spot is ready.')}
         </p>
-        <p className={SMALL}>We let people in a few at a time. Until then, you can use and change the apps in your communities.</p>
+        <p className={SMALL}>We're letting people in a few at a time. Until then, you can use and change the apps in your communities.</p>
         {byPhone ? (
           <button
             id="home-waitlist-add-email"
@@ -269,7 +269,7 @@ export function WaitlistCardBody({ standing, onListed }: {
         Join the waitlist
       </Button>
       {phoneOnly ? <p role="alert" className={msgClass(error ? 'error' : null)}>{error}</p> : null}
-      <p className={`${SMALL} text-center`}>We let people in a few at a time.</p>
+      <p className={`${SMALL} text-center`}>We're letting people in a few at a time.</p>
     </div>
   );
 }

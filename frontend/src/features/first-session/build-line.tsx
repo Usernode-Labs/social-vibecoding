@@ -72,7 +72,11 @@ export function buildLineDone(state: BuildLineState): boolean {
   return state === 'ready' || state === 'live';
 }
 
-export function BuildLine({ state, className = '' }: { state: BuildLineState; className?: string }): ReactNode {
+/**
+ * `note`, after the words: how long it usually takes, where a screen says so
+ * (#4392, Homeroom bot's thanks: "Building it · usually 10 to 25 min").
+ */
+export function BuildLine({ state, note = null, className = '' }: { state: BuildLineState; note?: string | null; className?: string }): ReactNode {
   const asks = buildLineAsks(state);
   const done = buildLineDone(state);
   // A span, so it can sit in a row's text as well as in a card.
@@ -89,7 +93,7 @@ export function BuildLine({ state, className = '' }: { state: BuildLineState; cl
       ) : (
         <SpinnerRingIcon className="h-3.5 w-3.5 shrink-0 animate-spin motion-reduce:animate-none" aria-hidden="true" />
       )}
-      <span className="truncate">{state === 'working' ? WORKING_LINE_WORDS : BUILD_LINE_WORDS[state]}</span>
+      <span className="truncate">{note ? `${state === 'working' ? WORKING_LINE_WORDS : BUILD_LINE_WORDS[state]} · ${note}` : state === 'working' ? WORKING_LINE_WORDS : BUILD_LINE_WORDS[state]}</span>
     </span>
   );
 }
