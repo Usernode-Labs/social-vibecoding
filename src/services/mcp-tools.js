@@ -4134,6 +4134,15 @@ function registerTools(server, ctx) {
         nextStep: 'Checks cannot run inside a staging preview of Homeroom itself, so nothing was started.',
       });
     }
+    if (body.collecting) {
+      return toolResult({
+        changeId,
+        started: false,
+        checkState: 'pending',
+        nextStep: 'A run of the checks on this commit is still going, so nothing new was started: its verdict '
+          + 'is recorded when it finishes. Call get_change for it.',
+      });
+    }
     return toolResult({
       changeId,
       started: true,

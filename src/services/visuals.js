@@ -1975,6 +1975,24 @@ function startShotsIfIdle(config, pool, sessionId, commitHash) {
 async function captureForSession(config, session, app, commitHash, stagingResult, opts = {}) {
   const lifecycle = require('./preview-lifecycle');
   if (lifecycle.enabled(config) && !lifecycle.current()) {
+    // A run of this commit still on the cluster, running or finished but not
+    // yet read, is the run this request asks for, and the harvest collects it
+    // (services/check-harvest.js). Starting another under the lifecycle
+    // cancelled it, and took the row the harvest writes through (7 Oct 2026).
+    // Asked before the run is requested: a forced request queues the row,
+    // which aborts the harvest. The lifecycle asks again under its lock. A
+    // request whose inputs changed (`replaceRun`: new capture routes or
+    // shots) is not asked about: it runs forced and cancels that run, as
+    // every same-commit request used to.
+    if (!opts.replaceRun) {
+      const left = await require('./check-harvest').runToCollect(config, getPool(config), session.id, commitHash);
+      if (left) {
+        log.info('visuals', 'A run of this commit is still on the cluster; leaving it to the harvest', {
+          sessionId: session.id, commitHash: commitHash || null, trigger: opts.trigger || null, ...left,
+        });
+        return;
+      }
+    }
     try {
       const completed = await lifecycle.run(config, session, commitHash, 'capture', async (operation, fresh) => {
         const runtime = require('./application-runtime');
@@ -1994,7 +2012,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         await operation.check();
         return captureForSession(config, fresh, app, operation.revision, stagingResult,
           { ...opts, force: opts.force || !!stagingResult });
-      }, { force: opts.force, onError: (err, pool, operation) =>
+      }, { force: opts.force || !!opts.replaceRun, onError: (err, pool, operation) =>
         publishCaptureError(pool, session.id, operation.revision, err, opts.send) });
       if (completed?.state) {
         maybeAutoMergeAfterChecks(config, getPool(config), session, completed.state);

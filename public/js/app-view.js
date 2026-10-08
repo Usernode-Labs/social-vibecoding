@@ -16024,6 +16024,10 @@ const AppView = {
         if (btn) { btn.disabled = false; btn.textContent = 'Re-run checks'; }
         return;
       }
+      // A run of this commit is still on the cluster and its result is on
+      // the way, so the server left it to finish rather than start over.
+      // Say so: the card keeps showing that run, not a new one.
+      if (data.collecting) PlatformUI.toast('These checks are still running, so they were not started again. The result will show here when they finish.');
       // #607: the server stamped 'pending' before responding — refresh so
       // the spinning "Checks running…" badge renders immediately (the WS
       // pending broadcast covers everyone else's screens).

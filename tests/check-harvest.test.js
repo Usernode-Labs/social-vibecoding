@@ -813,6 +813,67 @@ test('runOnCluster: nothing to read, or nothing read in time, still starts over'
   assert.equal(pool.calls.length, 0);
 });
 
+test('runOnCluster asks about the commit it is given, the session\'s pin by default', async (t) => {
+  stub(t, kubernetes, { findCheckJobs: async () => ({ capture: { name: 'c', state: 'running', finishedAt: null }, unitSuite: null }) });
+  const pool = runsPool([{ run_id: 'r1', owner: 'p' }]);
+  await harvest.runOnCluster(config, pool, { id: 42, checks_commit_sha: 'abc123' }, { commitSha: 'def456', staleMs: TEN_MIN, now: AT_2159 });
+  await harvest.runOnCluster(config, pool, { id: 42, checks_commit_sha: 'abc123' }, { staleMs: TEN_MIN, now: AT_2159 });
+  assert.deepEqual(pool.calls.map((c) => c.params), [[42, 'def456'], [42, 'abc123']]);
+});
+
+// ── A path about to start a run asks first ──────────────────────────────
+
+test('runToCollect: a run of the commit the session still waits on is left to collect, whoever asks', async (t) => {
+  let reads = 0;
+  stub(t, kubernetes, {
+    findCheckJobs: async (_cfg, { previewRunId }) => {
+      reads += 1;
+      return { capture: { name: `sv-capture-s42-${previewRunId}`, state: 'running', finishedAt: null }, unitSuite: null };
+    },
+  });
+  const ask = (session, commitSha, manifests = [{ run_id: 'r1', owner: 'dead-pod:7' }]) => {
+    const pool = makePool({
+      session,
+      answer: (sql) => (/FROM check_runs\s+WHERE session_id = \$1 AND commit_sha/.test(sql)
+        ? { rows: manifests.map((r) => ({ ...r })), rowCount: manifests.length } : null),
+    });
+    return harvest.runToCollect(config, pool, 42, commitSha).then((run) => ({ run, pool }));
+  };
+
+  // Pending on the commit, its capture still running: leave it.
+  const { run, pool } = await ask(sessionRow(), 'abc123');
+  assert.deepEqual(run, { runId: 'r1', owner: 'dead-pod:7', capture: 'running', unitSuite: 'none' });
+  assert.match(pool.calls[0].sql, /FROM chat_sessions cs JOIN apps a/, 'the session is read now, not trusted from the caller');
+  assert.deepEqual(pool.calls[1].params, [42, 'abc123']);
+  // No commit named: the session's own pin.
+  assert.equal((await ask(sessionRow(), null)).run.runId, 'r1');
+
+  // A verdict already stored, a head that moved on, a deferred head, a closed
+  // session: the run is not one the row is waiting on, so nothing is asked
+  // of the cluster and a fresh run may start.
+  reads = 0;
+  for (const session of [
+    sessionRow({ check_state: 'failing' }),
+    sessionRow({ checks_commit_sha: 'def456' }),
+    sessionRow({ check_phase: 'deferred' }),
+    sessionRow({ status: 'merged' }),
+    null,
+  ]) {
+    assert.equal((await ask(session, 'abc123')).run, null, JSON.stringify(session && session.check_state));
+  }
+  assert.equal(reads, 0);
+  // Nothing of that commit on the cluster.
+  assert.equal((await ask(sessionRow(), 'abc123', [])).run, null);
+});
+
+test('runToCollect never throws and is a no-op off Kubernetes', async () => {
+  const broken = { calls: [], async query(sql) { this.calls.push(sql); throw new Error('db down'); } };
+  assert.equal(await harvest.runToCollect(config, broken, 42, 'abc123'), null);
+  const pool = makePool({ session: sessionRow() });
+  assert.equal(await harvest.runToCollect({ captureRuntime: 'docker' }, pool, 42, 'abc123'), null);
+  assert.equal(pool.calls.length, 0);
+});
+
 test('findCheckJobs says when a finished Job ended, so a run nobody read can be told from one just done', async (t) => {
   kubernetes._setClientsForTest({ batch: {
     listNamespacedJob: async () => ({ items: [
