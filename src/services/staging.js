@@ -449,10 +449,19 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
 
     // A tree whose root links into a subdirectory needs that subdirectory
     // for the reads below to see what a whole clone shows them. Rare enough
-    // not to work out which one: give such a tree all of its files.
+    // not to work out which one: give such a tree all of its files, and its
+    // submodules' with them. The directory linked into can be a submodule,
+    // whose files are in another repository: with the sparse checkout off
+    // it is still an empty directory, and a dapp.json kept behind such a
+    // link read as "no manifest", so the preview was built without the
+    // secrets it requires. A submodule that cannot be fetched fails the
+    // build here, as it fails the whole clone.
     if (rootOnly && rootHasDanglingLink(cloneDir)) {
       await docker.execFileAsync('git', [
         '-C', cloneDir, 'sparse-checkout', 'disable',
+      ], { timeout: 120000 });
+      await docker.execFileAsync('git', [
+        '-C', cloneDir, 'submodule', 'update', '--init', '--recursive', '--depth', '1',
       ], { timeout: 120000 });
     }
 

@@ -44,8 +44,11 @@ const DOCKER = { jwtSecret: 's' };
 const APP = { id: 5, slug: 'widget', name: 'Widget', repo_url: 'https://github.com/acme/widget' };
 
 // git must not read this machine's configuration, and must never prompt.
+// A submodule is cloned over https in production; git refuses the file://
+// one the repository below uses unless told it may.
 const GIT_ENV = {
   ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0',
+  GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'protocol.file.allow', GIT_CONFIG_VALUE_0: 'always',
 };
 
 // Loads services/staging with its collaborators stubbed, the way
@@ -373,10 +376,29 @@ function makeOrigin(t) {
   fs.symlinkSync('config/dapp.json', path.join(root, 'dapp.json'));
   const c4 = commit('linked');
 
+  // The manifest kept in a submodule, behind a link at the root.
+  const sub = fs.mkdtempSync(path.join(os.tmpdir(), 'staging-root-only-sub-'));
+  t.after(() => fs.rmSync(sub, { recursive: true, force: true }));
+  gitIn(sub, 'init', '-q', '-b', 'main');
+  write(sub, 'dapp.json', manifest('In a submodule'));
+  gitIn(sub, 'add', '-A');
+  gitIn(sub, 'commit', '-q', '-m', 'manifest');
+  gitIn(root, 'checkout', '-q', '-b', 'dev/submodule', c1);
+  fs.rmSync(path.join(root, 'dapp.json'));
+  gitIn(root, 'submodule', '--quiet', 'add', `file://${sub}`, 'config');
+  fs.symlinkSync('config/dapp.json', path.join(root, 'dapp.json'));
+  const c5 = commit('manifest in a submodule');
+
+  // The same tree once the submodule's repository is gone.
+  gitIn(root, 'checkout', '-q', '-b', 'dev/submodule-gone');
+  const gitmodules = path.join(root, '.gitmodules');
+  fs.writeFileSync(gitmodules, fs.readFileSync(gitmodules, 'utf8').replace(`file://${sub}`, `file://${sub}-gone`));
+  commit('submodule moved away');
+
   gitIn(root, 'checkout', '-q', 'main');
   gitIn(root, 'config', 'uploadpack.allowFilter', 'true');
   gitIn(root, 'config', 'uploadpack.allowAnySHA1InWant', 'true');
-  return { url: `file://${root}`, c0, c1, c2, c3, c3b, c4 };
+  return { url: `file://${root}`, c0, c1, c2, c3, c3b, c4, c5 };
 }
 
 // What a build finds in the directory it is handed.
@@ -498,6 +520,53 @@ test('real git: a root file that links into a subdirectory is still read', async
     assert.deepEqual(manifests[0].secrets.map((s) => s.key), ['API_KEY'], 'so its required secrets are still checked');
     assert.ok(found[0].entries.includes('config'), 'the tree was given its files');
   } finally { restore(); }
+});
+
+test('real git: a root file that links into a submodule is still read', async (t) => {
+  const origin = makeOrigin(t);
+  const ids = [7078212, 7078213, 7078214, 7078215, 7078216, 7078217];
+  for (const id of ids) cleanup(t, id);
+  const run = async (config, id, commit, stored, branch = 'dev/submodule') => {
+    const { subject, manifests, builds, restore } = loadStaging({ cloneUrl: origin.url, stored });
+    try {
+      let err = null;
+      await subject.buildAndDeployStaging(config, session(id, { branch_name: branch }), APP, commit).catch((e) => { err = e; });
+      return { err, manifests, builds };
+    } finally { restore(); }
+  };
+
+  // The whole clone brings the submodule with it, so the manifest inside it
+  // is read and its required secret is asked for.
+  const whole = await run(DOCKER, ids[0], 'latest', {});
+  assert.equal(whole.err && whole.err.name, 'MissingSecretsError');
+  assert.deepEqual(whole.err.missingSecrets, ['API_KEY']);
+
+  // The root-only clone has to answer the same. Giving the tree its files is
+  // not enough: the submodule's are in another repository. Read as "no
+  // manifest", this preview was built without the secret it requires.
+  const rootOnly = await run(KUBERNETES, ids[1], 'latest', {});
+  assert.equal(rootOnly.err && rootOnly.err.name, 'MissingSecretsError');
+  assert.deepEqual(rootOnly.err.missingSecrets, ['API_KEY']);
+  assert.equal(rootOnly.builds.length, 0, 'and nothing was built');
+
+  const stored = await run(KUBERNETES, ids[2], 'latest', { API_KEY: 'k' });
+  assert.equal(stored.err, null);
+  assert.equal(stored.manifests[0].name, 'In a submodule');
+  assert.equal(stored.builds.length, 1);
+
+  // The exact-commit path reaches the same place.
+  const pinned = await run(KUBERNETES, ids[3], origin.c5, {});
+  assert.equal(pinned.err && pinned.err.name, 'MissingSecretsError');
+
+  // A submodule that cannot be fetched fails the whole clone. It fails the
+  // root-only one too: a manifest that could not be read is not "none".
+  const goneWhole = await run(DOCKER, ids[4], 'latest', { API_KEY: 'k' }, 'dev/submodule-gone');
+  assert.ok(goneWhole.err, 'the whole clone fails');
+  assert.equal(goneWhole.builds.length, 0);
+  const goneRootOnly = await run(KUBERNETES, ids[5], 'latest', { API_KEY: 'k' }, 'dev/submodule-gone');
+  assert.ok(goneRootOnly.err, 'the root-only clone fails rather than building without a manifest');
+  assert.notEqual(goneRootOnly.err.name, 'MissingSecretsError');
+  assert.equal(goneRootOnly.builds.length, 0);
 });
 
 test('real git: the failures are still failures, on the root-only clone', async (t) => {
