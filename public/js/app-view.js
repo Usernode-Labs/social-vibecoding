@@ -6036,7 +6036,7 @@ const AppView = {
         });
       } else {
         pills.push({
-          key: 'claim', cls: 'gc-vote-btn', label: 'I\'ll work on this',
+          key: 'claim', cls: 'gc-vote-btn', label: 'Claim it',
           title: "Let everyone know you'll work on this. It's not a promise of progress",
           act: { fn: 'markIssueInProgress', args: [item.number] },
         });
@@ -18310,7 +18310,7 @@ const AppView = {
       }
       : {
         // B8: building it yourself, with a coding agent, beside asking the bot.
-        key: 'primary', cls: 'gc-vote-btn', label: 'Build it yourself',
+        key: 'primary', cls: 'gc-vote-btn', label: 'Build it now',
         title: 'Start an agent session on this request',
         act: { fn: 'chooseIssueWork', args: [n] },
       };
@@ -18425,7 +18425,7 @@ const AppView = {
         act: { fn: 'clearIssueClaim', args: [n] },
       }
       : {
-        key: 'claim', cls: 'gc-vote-btn', label: 'I\'ll work on this',
+        key: 'claim', cls: 'gc-vote-btn', label: 'Claim it',
         title: "Let everyone know you'll work on this. It's not a promise of progress. It clears itself after about 7 days with no activity; talking about it in the request's thread keeps it going.",
         act: { fn: 'markIssueInProgress', args: [n] },
       };
@@ -18453,7 +18453,7 @@ const AppView = {
       // the ≡'s first row, the same launcher; left out while the bot is on
       // it, as Start work is, so it is never built twice.
       else if (AppView._botDoor() && !issue.bot) items.unshift({
-        label: 'Build it yourself', icon: 'generate', act: () => AppView.chooseIssueWork(n),
+        label: 'Build it now', icon: 'generate', act: () => AppView.chooseIssueWork(n),
       });
       // "Pledge kudos" disables once the viewer has an open bounty here or
       // has spent their shared weekly allowance.
@@ -18489,7 +18489,7 @@ const AppView = {
             act: () => AppView.clearIssueClaim(n),
           }
           : {
-            label: 'I\'ll work on this',
+            label: 'Claim it',
             icon: 'progress',
             title: 'Let everyone know you’ll work on this. It’s not a promise of progress. It clears itself after about 7 days with no activity; talking about it in the request’s thread keeps it going.',
             act: () => AppView.markIssueInProgress(n),

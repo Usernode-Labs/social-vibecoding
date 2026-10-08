@@ -940,7 +940,7 @@ function feedbackRoutes(config) {
         const homeroomBot = await require('../services/homeroom-bot-dm').noteRequestFiled(pool, {
           app: appContext, user: req.user, issueNumber: issue.number, title, askedText: description.trim(),
         });
-        // Its confirmation's small "Build it yourself" link, for somebody who
+        // Its confirmation's small "Build it now" link, for somebody who
         // could start a change here (the first-request moment's canFix rule).
         if (homeroomBot?.botWillBuild) {
           let canFix = false;

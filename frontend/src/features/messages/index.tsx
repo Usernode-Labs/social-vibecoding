@@ -547,7 +547,7 @@ const NEW_CHOICES = [
   // no app to pick first. It replaced "Agent chat", which asked which app and
   // opened a classic dev session there; those are no longer created. B8:
   // named for what it is beside Homeroom bot, building it yourself.
-  { key: 'agent', label: 'Build it yourself', hint: 'Plan and build a change with a coding agent' },
+  { key: 'agent', label: 'Build it now', hint: 'Plan and build a change with a coding agent' },
   { key: 'direct', label: 'Direct message', hint: 'Talk to one person' },
   { key: 'group', label: 'Group chat', hint: 'Bring a few people together' },
 ] as const;

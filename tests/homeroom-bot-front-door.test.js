@@ -29,15 +29,15 @@ test('B8: Suggest an improvement is gated on membership and hands its request to
 });
 
 test('B8: the doors that open the chat with Homeroom bot, and what they are called', () => {
-  assert.match(read('frontend/src/features/app-context/app-context-sheet.tsx'), /label="Build it yourself"/);
+  assert.match(read('frontend/src/features/app-context/app-context-sheet.tsx'), /label="Build it now"/);
   const row = read('frontend/src/features/dev-board/actions-row.tsx');
   assert.ok(row.indexOf('data-plus="issue"') < row.indexOf('data-plus="new-change"'), 'Suggest an improvement leads the hub\'s ⋯');
-  assert.match(row, /title="Build it yourself"\s+sub="With a coding agent, then ask for approval"/);
-  // The tour no longer sends a newcomer to the menu's Build it yourself: that
+  assert.match(row, /title="Build it now"\s+sub="With a coding agent, then ask for approval"/);
+  // The tour no longer sends a newcomer to the menu's Build it now: that
   // row shows only once they have had an agent session (first-session
   // run-through, 5 Oct 2026). The hub's ⋯ still offers it, above.
   assert.match(read('frontend/src/features/home/tour/tour-steps.ts'), /body: 'Say what should change\. It doesn\\'t vanish into a feedback box: Homeroom bot starts building it for you, or brings it to the group as a request, and you can follow along\.',/);
-  assert.doesNotMatch(read('frontend/src/features/home/tour/tour-steps.ts'), /tap Build it yourself/);
+  assert.doesNotMatch(read('frontend/src/features/home/tour/tour-steps.ts'), /tap Build it now/);
   // The made screen's plan card is the door after a new project (the
   // retired create dialog's "Open chat" was before it).
   assert.match(read('frontend/src/features/first-session/made.tsx'), /data-first-session-plan-chat=""[^>]*>\s*Go to chat/);

@@ -280,13 +280,13 @@ test('issue card: the state-driven primary + the in-progress toggle; kudos / clo
   assert.match(html, /gc-card-actions/, 'shared action row present');
   // The state-driven primary for a never-started issue.
   assert.ok(hasAction(model, 'chooseIssueWork', 5), 'the primary is wired');
-  assert.match(html, />Build it yourself</);
+  assert.match(html, />Build it now</);
   // …plus the promoted claim toggle. The card reserves an action band on
   // every row now, and this issue card had one button to put in it; claiming
   // is what a reader does with an issue before writing any code, and the
   // chip it toggles is right above it in the status band.
   assert.ok(hasAction(model, 'markIssueInProgress', 5), 'the claim toggle is wired');
-  assert.match(html, />I&#x27;ll work on this</);
+  assert.match(html, />Claim it</);
   assertCardActionContract(AppView, html, { primary: 2, menu: true, previewIcon: false });
   // Generating a headless proposal spends the viewer's credits, so it is a
   // chosen ⋯ action rather than the card's most prominent button.
@@ -295,7 +295,7 @@ test('issue card: the state-driven primary + the in-progress toggle; kudos / clo
   assert.ok(menuHas(AppView, html, /Propose to close/), 'Propose to close in ⋯');
   assert.ok(menuHas(AppView, html, /Set priority/), 'Set priority… in ⋯');
   // Promoted, so it is NOT also a menu row — one action, one place.
-  assert.ok(!menuHas(AppView, html, /I'll work on this/),
+  assert.ok(!menuHas(AppView, html, /Claim it/),
     'the claim toggle is on the face, so not duplicated in ⋯');
   // …and the ones that stayed demoted are not on the card face.
   assert.ok(!hasAction(model, 'giveIssueBounty'), 'no kudos pill');
@@ -752,27 +752,27 @@ test('B8: where Homeroom bot builds, asking it is the card\'s act, and building 
   const html = cardHtml(model);
   assert.ok(hasAction(model, 'askBotToBuild', 5), 'the bot button is wired');
   assert.match(html, />Ask Homeroom bot to build this</);
-  assert.equal(menuLabels(AppView, html)[0], 'Build it yourself', 'the same launcher, first in ≡');
-  assert.ok(menuHas(AppView, html, /^Build it yourself$/));
+  assert.equal(menuLabels(AppView, html)[0], 'Build it now', 'the same launcher, first in ≡');
+  assert.ok(menuHas(AppView, html, /^Build it now$/));
   // On the request's own page, its hint is the line under it.
   const head = AppView._issueCardModel(baseIssue(), { noNav: true });
   assert.ok(head.extra.some((e) => e.key === 'bot-door' && e.text === 'Usually ready to try in about 7 minutes.'));
   // While the bot is on it there is nothing to start: the asker can follow
-  // it, everybody else reads who asked; and no Build it yourself.
+  // it, everybody else reads who asked; and no Build it now.
   const mineOn = AppView._issueCardModel(baseIssue({ bot: { what: 'building', since: null, askedBy: 'maya', mine: true } }));
   assert.ok(hasAction(mineOn, 'openBotChatFromRequest'), 'See progress');
   assert.match(cardHtml(mineOn), />See progress</);
   const theirs = AppView._issueCardModel(baseIssue({ bot: { what: 'queued', since: null, askedBy: 'maya', mine: false } }));
   const theirsHtml = cardHtml(theirs);
   assert.match(theirsHtml, />Homeroom bot is on it</);
-  assert.ok(!menuHas(AppView, theirsHtml, /^Build it yourself$/), 'never built twice');
+  assert.ok(!menuHas(AppView, theirsHtml, /^Build it now$/), 'never built twice');
   const note = AppView._issueWorkState(baseIssue({ bot: { what: 'queued', since: null, askedBy: 'maya', mine: false } })).note;
   assert.match(note, /^maya asked Homeroom bot to build this\. It starts as soon as a builder is free/);
   // Where it does not build, building it yourself is the card's act, as Start work was.
   const plain = makeAppView(ME);
   const plainModel = plain._issueCardModel(baseIssue());
   assert.ok(hasAction(plainModel, 'chooseIssueWork', 5));
-  assert.match(cardHtml(plainModel), />Build it yourself</);
+  assert.match(cardHtml(plainModel), />Build it now</);
 });
 
 test('B8: a change Homeroom bot built is recognised by its author', () => {

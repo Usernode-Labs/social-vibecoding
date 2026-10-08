@@ -520,7 +520,7 @@ export function FeedbackDialog() {
             <Button id="feedback-sent-mine" variant="neutral" ink="neutral" className="min-h-[44px]">See your requests</Button>
             <Button id="feedback-sent-done" variant="unstyled" ink="muted" className="min-h-[44px]">Done</Button>
             <button id="feedback-sent-fix" type="button" className="hidden self-center text-xs text-zinc-500 underline underline-offset-2 dark:text-zinc-400">
-              Build it yourself with a coding agent
+              Build it now with a coding agent
             </button>
           </div>
         </section>

@@ -324,7 +324,7 @@ test('#3971: the group path is thanked and still says where it went', async () =
     'Your idea is on the board now. Find it on your profile, under Your requests.');
   assert.ok(h.el('feedback-sent-first').classList.contains('hidden'));
 });
-test('B8: Build it yourself opens the request on the board and starts a change from it', async () => {
+test('B8: Build it now opens the request on the board and starts a change from it', async () => {
   const h = harness({ response: { homeroomBot: BOT } });
   await h.submit();
   h.el('feedback-sent-fix').click(); await settle();

@@ -134,8 +134,8 @@ test('the starter copy names the row the Homeroom mark\'s menu really has', () =
   // B8: the menu leads with Suggest an improvement; making it yourself is its own row.
   assert.match(read('frontend/src/features/improve/actions.tsx'), /id="improve-row-feedback"\s+label="Suggest an improvement"/,
     'the menu still has Suggest an improvement');
-  assert.match(sheet, /id="improve-row-new-session"[\s\S]{0,600}label="Build it yourself"/,
-    'and the agent-session row is called Build it yourself');
+  assert.match(sheet, /id="improve-row-new-session"[\s\S]{0,600}label="Build it now"/,
+    'and the agent-session row is called Build it now');
   assert.match(read('frontend/src/features/header/platform-mark.tsx'), /aria-label="Homeroom menu"/,
     'the header control is still the Homeroom mark');
 });

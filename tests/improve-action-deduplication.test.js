@@ -36,7 +36,7 @@ const board = (props = {}) => renderToHtml(createElement(DevActionsRow, { ...BAS
 const actions = (html) => [...html.matchAll(/<button data-plus="([^"]+)"/g)].map((m) => m[1]);
 
 test('the rendered + menu keeps only distinct actions, including app-management gates', () => {
-  // B8: Suggest an improvement leads; Build it yourself is second.
+  // B8: Suggest an improvement leads; Build it now is second.
   // #4045: "Settings & rules" is one row, its settings in the panel under it.
   assert.deepEqual(actions(board()), ['issue', 'new-change', 'import-pr', 'settings', 'members', 'rename', 'secrets', 'fork']);
   assert.deepEqual(actions(board({ showsMembers: false })), ['issue', 'new-change', 'import-pr', 'settings', 'rename', 'secrets', 'fork']);
@@ -207,7 +207,7 @@ for (const touch of [false, true]) {
         assert.equal(h.sheets.length, index + 1, 'one sheet per click after re-wiring');
         const sheet = h.sheets.at(-1);
         assert.deepEqual(Array.from(sheet.actions, (item) => item.label), [
-          'Suggest an improvement', 'Build it yourself', 'Import Feature from a PR', 'Settings & rules',
+          'Suggest an improvement', 'Build it now', 'Import Feature from a PR', 'Settings & rules',
           'Members & approvals', 'App display name', 'App secrets', 'Remix',
         ]);
         // #1930: every action row carries its own glyph, class-stripped.
@@ -216,11 +216,11 @@ for (const touch of [false, true]) {
           assert.equal(item.iconEl.classRemoved, true, `${item.label}'s icon drops its Tailwind classes`);
         }
         assert.ok(h.classes.has('hidden'), 'touch never opens the desktop dropdown');
-        // Build it yourself is React's own onClick (the sheet's handler
+        // Build it now is React's own onClick (the sheet's handler
         // clicks the row), so _wirePlusMenu dispatches the rest.
         // "Settings & rules" opens the settings as a sheet of their own
         // (#4045); this harness has no panel, so its rows stay on this one.
-        sheet.actions.filter((item) => !item.heading && item.label !== 'Build it yourself' && item.label !== 'Settings & rules')[index].handler();
+        sheet.actions.filter((item) => !item.heading && item.label !== 'Build it now' && item.label !== 'Settings & rules')[index].handler();
       } else {
         assert.equal(h.attributes['aria-expanded'], 'true');
         assert.equal(h.classes.has('hidden'), false);
@@ -238,7 +238,7 @@ test('Suggest an improvement and Start a new change each exist once, and the rea
   // ONE BUTTON AND ONE ROW (UI overhaul). The menu's well held two buttons,
   // Give feedback and New change, and people found both confusing. The
   // button is Suggest an improvement now (the same dialog), and New change is
-  // "Build it yourself" under Agent chats in the menu's list, because
+  // "Build it now" under Agent chats in the menu's list, because
   // what it opens is an agent session.
   //
   // WHAT THIS FILE IS ABOUT is unchanged: each action exists ONCE and calls
@@ -252,8 +252,8 @@ test('Suggest an improvement and Start a new change each exist once, and the rea
   assert.ok(!MENU.includes('giveFeedback'),
     'the menu does not keep a second caller of the same method');
   assert.equal(MENU.split('id="improve-row-new-session"').length - 1, 1);
-  // B8: the row is Build it yourself, beside Suggest an improvement going to Homeroom bot.
-  assert.match(MENU, /id="improve-row-new-session"[\s\S]{0,160}onClick=\{\(\) => Improve\.startSession\(\)\}[\s\S]{0,480}label="Build it yourself"/);
+  // B8: the row is Build it now, beside Suggest an improvement going to Homeroom bot.
+  assert.match(MENU, /id="improve-row-new-session"[\s\S]{0,160}onClick=\{\(\) => Improve\.startSession\(\)\}[\s\S]{0,480}label="Build it now"/);
   // A read-only viewer may not start a change, as the button's gate was.
   assert.match(MENU, /\{readOnly \? null : \(\s*<button\s+id="improve-row-new-session"/);
   // #852 review: the hub's ⋯ leads with it too, calling the same method, and
@@ -280,8 +280,8 @@ test('Suggest an improvement is a real button[data-plus] row that leads the writ
   // It needs nothing of the viewer beyond a writeable board: present without
   // the collaborator bit, absent for the read-only viewer, who keeps Fork —
   // and on the platform app no "+" at all, as before.
-  // B8: first, with Build it yourself under it, and ahead of the rest.
-  assert.deepEqual(actions(html).slice(0, 2), ['issue', 'new-change'], 'it leads, Build it yourself second');
+  // B8: first, with Build it now under it, and ahead of the rest.
+  assert.deepEqual(actions(html).slice(0, 2), ['issue', 'new-change'], 'it leads, Build it now second');
   assert.deepEqual(actions(board({ canCollaborate: false })).slice(0, 2), ['issue', 'new-change']);
   assert.deepEqual(actions(board({ readOnly: true, canCollaborate: false })), ['fork']);
   assert.deepEqual(actions(board({ selfHosted: true, readOnly: true, canCollaborate: false })), []);
