@@ -407,16 +407,38 @@ const UPDATE_FETCH_DEPTH = 50;
 
 async function pushForkBranchToAppBranch({
   githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin,
-  targetBranch, expectedRemoteSha, sessionId,
+  targetBranch, expectedRemoteSha, sessionId, appRepoSource,
 }) {
   // THE ATTRIBUTION GATE, unchanged and unrelaxed. This path writes into the
   // app's own repository with the platform's credentials on behalf of a
   // proposal that is already up for a vote, so if anything it matters more
   // here than on the mirror path.
-  const verified = await verifyForkBranch({
-    githubPublic, forkOwner, forkRepo, branch, expectedLogin,
-  });
-  if (!verified.ok) return verified;
+  //
+  // ── …except when the source is a branch the platform wrote itself ───
+  //
+  // #4263. A patch UPDATE's source is a `usernode/patch-…` branch that THIS
+  // submission's applyPatch pushed into the app repository moments ago, built
+  // from the caller's own patch. There is no fork to read and no login to
+  // compare: the branch's existence IS the provenance verifyForkBranch
+  // establishes, and the caller passed the ownership gate before the patch
+  // was applied. The name is still checked against the platform's own
+  // namespace, so nothing a person chose can reach this mode.
+  let verified;
+  if (appRepoSource) {
+    if (!isMirrorNamespace(branch)) {
+      return {
+        ok: false,
+        code: 'invalid_request',
+        message: 'That branch is not one Homeroom wrote, so it cannot be pushed from the app repository.',
+      };
+    }
+    verified = { ok: true };
+  } else {
+    verified = await verifyForkBranch({
+      githubPublic, forkOwner, forkRepo, branch, expectedLogin,
+    });
+    if (!verified.ok) return verified;
+  }
 
   if (!validRef(targetBranch)) {
     return { ok: false, code: 'invalid_request', message: 'That proposal branch name is not a valid git ref.' };
@@ -432,6 +454,11 @@ async function pushForkBranchToAppBranch({
     };
   }
   const lease = `refs/heads/${targetBranch}:${expectedRemoteSha.toLowerCase()}`;
+
+  // The source branch's head, as this push saw it. A fork's is what
+  // verifyForkBranch read; a platform-owned source's is what the scratch fetch
+  // actually fetched (set inside the try below).
+  let sourceHeadSha = verified.headSha || null;
 
   let credential;
   try {
@@ -449,10 +476,15 @@ async function pushForkBranchToAppBranch({
   try {
     await withScratchRepo(`update-${sessionId || 0}`, async ({ git }) => {
       // UNAUTHENTICATED, exactly as the mirror reads: the fork is public and
-      // Homeroom holds no credential for the user's GitHub account.
-      const forkUrl = sourceCloneUrl(forkOwner, forkRepo);
+      // Homeroom holds no credential for the user's GitHub account. A
+      // platform-owned source branch has no fork — the source is the app
+      // repository itself, read with the same platform credential the push
+      // uses.
+      const sourceUrl = appRepoSource
+        ? authenticatedRemote(credential.token, owner, repo)
+        : sourceCloneUrl(forkOwner, forkRepo);
       try {
-        await git(['fetch', '--depth', String(UPDATE_FETCH_DEPTH), '--no-tags', forkUrl, branch]);
+        await git(['fetch', '--depth', String(UPDATE_FETCH_DEPTH), '--no-tags', sourceUrl, branch]);
       } catch (err) {
         // A fork whose branch is more than UPDATE_FETCH_DEPTH commits from
         // its root cannot be fetched shallowly at that depth in every case
@@ -461,11 +493,19 @@ async function pushForkBranchToAppBranch({
         log.warn('external-agent-head', 'shallow fetch failed — retrying unshallowed', {
           forkOwner, err: redactToken(err && err.message, credential.token),
         });
-        await git(['fetch', '--no-tags', forkUrl, branch]);
+        await git(['fetch', '--no-tags', sourceUrl, branch]);
+      }
+      let fetchedSha = verified.headSha;
+      if (appRepoSource) {
+        // No verifyForkBranch ran in this mode, so the head is taken from the
+        // fetch itself rather than from anyone's belief about the branch.
+        const { stdout } = await git(['rev-parse', 'FETCH_HEAD']);
+        fetchedSha = String(stdout).trim().toLowerCase();
       }
       await git(['push', `--force-with-lease=${lease}`,
         authenticatedRemote(credential.token, owner, repo),
         `FETCH_HEAD:refs/heads/${targetBranch}`]);
+      sourceHeadSha = fetchedSha;
     });
   } catch (err) {
     // Redacted twice on purpose, once for the classification below and once at
@@ -506,14 +546,16 @@ async function pushForkBranchToAppBranch({
     };
   }
 
-  log.info('external-agent-head', 'advanced a proposal branch from a fork branch', {
+  log.info('external-agent-head', appRepoSource
+    ? 'advanced a proposal branch from a platform-written branch'
+    : 'advanced a proposal branch from a fork branch', {
     owner, repo, forkOwner, targetBranch, sessionId: sessionId || null,
     credential: credential.source,
   });
   // No `cleanup()`: unlike the mirror this wrote no new ref, and rolling the
   // branch back to `expectedRemoteSha` on a later failure would throw away
   // the commits it just accepted.
-  return { ok: true, headSha: verified.headSha, credential: credential.source };
+  return { ok: true, headSha: sourceHeadSha, credential: credential.source };
 }
 
 // Best-effort removal of a branch this module wrote. Never throws: it runs

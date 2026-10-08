@@ -429,7 +429,7 @@ async function updateProposalFromForkBranch(deps, params) {
         pool, config, gh, head, votes, prImportSync, githubPublic,
         prMetadata: deps.prMetadata || require('./pr-metadata'), username: user.username,
         session, owner, repo, forkOwner: link.login, forkRepo, branch,
-        expectedLogin: link.login, expectedHeadSha, sessionId,
+        expectedLogin: link.login, expectedHeadSha, sessionId, userId: user.id,
         testing: normalizeTesting(params.testing),
         visibleChanges,
         title: normalizeProposedTitle(params.title),
@@ -1407,6 +1407,24 @@ function ownershipGate(session, user) {
   return null;
 }
 
+// A patch branch the platform itself wrote from the CALLER'S OWN patch
+// (#4263): `usernode/patch-u<userId>-…`, minted by
+// services/external-agent-patch.js's applyPatch in the same submission. Only
+// such a branch may be the SOURCE of an app-repo advance: it is the one
+// branch in the app's repository whose provenance the ownership gate already
+// covers, because it exists only as the result of this caller's patch having
+// been applied. Any other platform-owned name — another user's patch branch,
+// a mirror of somebody else's fork — keeps the fork verification, which
+// refuses it.
+const PATCH_SOURCE_PREFIX = 'usernode/patch-u';
+
+function ownPatchSource(branch, userId) {
+  const name = String(branch == null ? '' : branch).trim();
+  if (!name.startsWith(PATCH_SOURCE_PREFIX)) return false;
+  const m = /^(\d+)-/.exec(name.slice(PATCH_SOURCE_PREFIX.length));
+  return !!m && Number(m[1]) === Number(userId);
+}
+
 // Is the platform itself mid-write on this proposal? Same four questions the
 // commit-upload route asks, and for the same reason: a staging build or a
 // screenshot capture in flight is pinned to the CURRENT head, and moving the
@@ -1433,7 +1451,7 @@ function defaultBusyCheck(session) {
 async function advanceAppRepoBranch(ctx) {
   const {
     pool, config, gh, head, votes, prImportSync, githubPublic, prMetadata, username, session,
-    owner, repo, forkOwner, forkRepo, branch, expectedLogin, expectedHeadSha, sessionId,
+    owner, repo, forkOwner, forkRepo, branch, expectedLogin, expectedHeadSha, sessionId, userId,
   } = ctx;
   // The session tails talk to three modules that do real work — a staging
   // build, a container teardown, a websocket fan-out. Injectable for the same
@@ -1518,10 +1536,38 @@ async function advanceAppRepoBranch(ctx) {
   // inside pushForkBranchToAppBranch immediately before the push — the
   // second run is the load-bearing one, and this one is not permitted to
   // replace it.
-  const verified = await head.verifyForkBranch({
-    githubPublic, forkOwner, forkRepo, branch, expectedLogin,
-  });
-  if (!verified.ok) return renameHeadFailure(verified, branch);
+  //
+  // ── …unless the source is the caller's own patch branch (#4263) ─────
+  //
+  // A patch update's source is a `usernode/patch-…` branch THIS submission
+  // just pushed, built from the caller's own patch. There is no fork to
+  // verify: the branch's head is read from the app repository itself, and the
+  // ownership gate the caller passed stands in for the login comparison. Only
+  // the caller's OWN patch branch is eligible — `ownPatchSource` — so another
+  // user's patch branch or a mirrored fork branch still runs the gate and is
+  // refused there.
+  const patchSource = ownPatchSource(branch, userId);
+  let verified;
+  if (patchSource) {
+    let patchHead;
+    try {
+      patchHead = await gh.getBranchSha(owner, repo, branch);
+    } catch (err) {
+      log.warn('proposal-update', 'could not read the patch branch head', {
+        sessionId, branch, err: err.message,
+      });
+      return fail('platform_unavailable', 'Homeroom could not read the branch the patch was applied to. Try again shortly.', { retryable: true });
+    }
+    if (!patchHead || !SHA_RE.test(String(patchHead).trim())) {
+      return fail('platform_unavailable', 'Homeroom could not read the branch the patch was applied to. Try again shortly.', { retryable: true });
+    }
+    verified = { ok: true, headSha: String(patchHead).trim().toLowerCase() };
+  } else {
+    verified = await head.verifyForkBranch({
+      githubPublic, forkOwner, forkRepo, branch, expectedLogin,
+    });
+    if (!verified.ok) return renameHeadFailure(verified, branch);
+  }
 
   if (!firstLanding) {
     // Nothing to push — but a resubmit may still be correcting the capture
@@ -1557,6 +1603,7 @@ async function advanceAppRepoBranch(ctx) {
     : await head.pushForkBranchToAppBranch({
       githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin,
       targetBranch, expectedRemoteSha: liveHead, sessionId,
+      ...(patchSource ? { appRepoSource: true } : {}),
     });
   if (!pushed.ok) return renameHeadFailure(pushed, branch);
 

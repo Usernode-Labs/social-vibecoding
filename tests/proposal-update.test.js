@@ -379,6 +379,132 @@ test('the session operation is released even when the push fails', async () => {
   assert.deepEqual(log.released, [501]);
 });
 
+// ── 3b. The caller's own patch branch as the source (#4263) ────────────
+//
+// A patch update's source is a `usernode/patch-u<callerId>-…` branch the same
+// submission just pushed into the app's repository. There is no fork to
+// verify, so the head is read from the app repository and the lease push runs
+// in an app-repo-source mode — while every OTHER platform-owned name keeps the
+// fork gate, which refuses it.
+
+const PATCH_BRANCH = 'usernode/patch-u7-t44-deadbeef';
+const PATCH_HEAD = 'd'.repeat(40);
+
+test('a patch update reads its source head from the app repository, with no fork read', async () => {
+  const log = {};
+  const reads = [];
+  const result = await run({
+    gh: {
+      getBranchSha: async (owner, repo, branch) => {
+        reads.push(branch);
+        return branch === PATCH_BRANCH ? PATCH_HEAD : NATIVE_HEAD;
+      },
+    },
+  }, { branch: PATCH_BRANCH }, log);
+  assert.equal(result.ok, true);
+  assert.equal(result.branchHome, 'app_repo');
+  assert.equal(result.headSha, PATCH_HEAD, 'the head is the patch branch the submission just wrote');
+  assert.equal(result.previousHeadSha, NATIVE_HEAD);
+  assert.equal(result.votesCleared, 4);
+  // The proposal branch is read first (it pins the lease), then the patch
+  // branch (it is what is pushed). Nothing else.
+  assert.deepEqual(reads, ['dev/evan-1786376366569', PATCH_BRANCH]);
+  assert.equal(log.verify, undefined, 'no fork to verify — the source is in the app repository');
+  assert.equal(log.push.length, 1);
+  const pushed = log.push[0];
+  assert.equal(pushed.branch, PATCH_BRANCH);
+  assert.equal(pushed.targetBranch, 'dev/evan-1786376366569');
+  // The lease is still pinned to the TARGET branch's live head — not to the
+  // patch branch's, and not to anything the caller supplied.
+  assert.equal(pushed.expectedRemoteSha, NATIVE_HEAD);
+  assert.equal(pushed.appRepoSource, true, 'the push is told the source needs no fork verification');
+});
+
+test('the votes are counted before the push runs, on the patch path too', async () => {
+  const queries = [];
+  const log = {};
+  let queriesAtPush = null;
+  const result = await run({
+    pool: fakePool([
+      ['FROM chat_sessions cs JOIN apps a', [nativeSession()]],
+      ['FROM pr_votes', [{ n: 4 }]],
+    ], queries),
+    // The patch branch must read as a DIFFERENT commit from the proposal's
+    // head, or this is the same-commit resubmit and no push runs at all.
+    gh: {
+      getBranchSha: async (owner, repo, branch) => (branch === PATCH_BRANCH ? PATCH_HEAD : NATIVE_HEAD),
+    },
+    head: {
+      pushForkBranchToAppBranch: async (args) => {
+        queriesAtPush = queries.length;
+        log.push = [args];
+        return { ok: true, headSha: PATCH_HEAD, credential: { source: 'bot' } };
+      },
+    },
+  }, { branch: PATCH_BRANCH }, log);
+  assert.equal(result.ok, true);
+  assert.equal(result.votesCleared, 4);
+  assert.ok(queriesAtPush > 0);
+  assert.ok(
+    queries.slice(0, queriesAtPush).some((q) => q.sql.includes('FROM pr_votes')),
+    'the vote count is read before the head can move under it'
+  );
+});
+
+test('a patch update onto a proposal that moved is still refused with branch_moved', async () => {
+  const log = {};
+  const result = await run({
+    gh: {
+      getBranchSha: async (owner, repo, branch) => (branch === PATCH_BRANCH ? PATCH_HEAD : NATIVE_HEAD),
+    },
+    head: {
+      pushForkBranchToAppBranch: async () => ({ ok: false, code: 'branch_moved', message: 'stale info' }),
+    },
+  }, { branch: PATCH_BRANCH }, log);
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'branch_moved');
+  assert.equal(log.verify, undefined);
+});
+
+test('an unreadable patch branch is refused before anything is pushed, retryably', async () => {
+  const log = {};
+  const notFound = Object.assign(new Error('Not Found'), { status: 404 });
+  const result = await run({
+    gh: {
+      getBranchSha: async (owner, repo, branch) => {
+        if (branch === PATCH_BRANCH) throw notFound;
+        return NATIVE_HEAD;
+      },
+    },
+  }, { branch: PATCH_BRANCH }, log);
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'platform_unavailable');
+  assert.equal(result.retryable, true);
+  assert.equal(log.push, undefined, 'nothing is pushed from a head the platform could not read');
+});
+
+test('another user\'s patch branch, or a mirror branch, keeps the fork gate', async () => {
+  // Both are platform-owned names in the app's repository, but neither is THIS
+  // caller's patch branch — so neither may advance their proposal without the
+  // attribution gate answering for it. The gate refuses a branch that is not
+  // in the caller's own fork, which every one of these is not.
+  for (const branch of ['usernode/patch-u9-t55-beefcafe', 'usernode/from-someone-t3-8510c5ac']) {
+    const log = {};
+    const result = await run({
+      head: {
+        verifyForkBranch: async (args) => {
+          (log.verify = log.verify || []).push(args);
+          return { ok: false, code: 'fork_mismatch', message: 'internal wording' };
+        },
+      },
+    }, { branch }, log);
+    assert.equal(result.ok, false, branch);
+    assert.equal(result.code, 'not_your_fork', branch);
+    assert.ok(log.verify, `${branch} went through the fork gate`);
+    assert.equal(log.push, undefined, branch);
+  }
+});
+
 // ── 4. The attribution gate ────────────────────────────────────────────
 
 test('the fork owner comes from the freshly-read link, never from the caller', async () => {
