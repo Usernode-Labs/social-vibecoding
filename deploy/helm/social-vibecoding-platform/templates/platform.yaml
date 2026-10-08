@@ -111,6 +111,13 @@ spec:
             - {name: USERNODE_APPS_DOMAIN, value: {{ default .Values.config.domain .Values.config.appsDomain | quote }}}
             - {name: APP_GATE, value: {{ .Values.config.appGate | default "off" | quote }}}
             - {name: APP_HOST_SIGNIN, value: {{ .Values.config.appHostSignin | default "on" | quote }}}
+            {{- /* Only when set: an explicit empty value would override the build policy ConfigMap. */}}
+            {{- with .Values.config.buildkitPreviewStores }}
+            - {name: BUILDKIT_PREVIEW_STORES, value: {{ . | quote }}}
+            {{- end }}
+            {{- with .Values.config.buildkitPreviewStoreEpoch }}
+            - {name: BUILDKIT_PREVIEW_STORE_EPOCH, value: {{ . | quote }}}
+            {{- end }}
             - {name: CLI_CANONICAL_ORIGIN, value: {{ printf "https://%s" .Values.config.domain | quote }}}
             - {name: WAITLIST_OAUTH_ORIGIN, value: {{ .Values.config.waitlistOauthOrigin | quote }}}
             - {name: PLATFORM_INTERNAL_URL, value: {{ .Values.config.internalUrl | quote }}}

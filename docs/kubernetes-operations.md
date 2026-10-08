@@ -549,6 +549,132 @@ diff. Check the configured database Service and namespace. The cluster runtime
 uses networked PostgreSQL clients; do not run `docker exec usernode-db` on a
 cluster node or assume the historical standby is the active writer.
 
+## Kept store for preview image builds
+
+A BuildKit build Job starts with an empty daemon. It downloads and unpacks the
+cached layers from the registry, uploads the layer cache again when it is done,
+and fetches the whole source tree. `BUILDKIT_PREVIEW_STORES` lets the preview
+builds of chosen apps keep the daemon's store and a git mirror of the source on
+a PersistentVolumeClaim instead. It is off unless you set it, and with it off
+the Job and its script are exactly what they were.
+
+What a build on a kept store does differently: no layer download for what the
+store already holds, no cache upload, an incremental fetch. It imports the
+registry cache only until the store has completed one build. The image it
+pushes is built from the same Dockerfile, context and arguments.
+
+It is an optimisation that can always be skipped. A preview build falls back
+to the build described above, in the same Pod, when:
+
+- another build of the app holds the store (one daemon owns a store; the lock
+  is a file in the volume, and the second build does not wait for it);
+- the daemon cannot open the store, in which case the store is moved aside,
+  deleted in the background, and started empty;
+- the build on the store fails. It is run once more without the store, so a
+  failing Dockerfile is built twice before it is reported. If the second build
+  passes, the store was at fault and the next build starts it empty.
+
+And the platform builds again in a new Job without the claim when the store
+Job's Pod cannot be scheduled for 10 seconds or has not started after 45
+(claim missing, its node down or full, volume not attaching). After that the
+app's previews stay off the store for 10 minutes, so an outage costs one
+delayed build per ten minutes, not one per build.
+
+Only preview builds use it: an image built for a proposal session. A build of
+an app's main never mounts the claim, and a store-built image carries a
+different build recipe, so a deploy never reuses one.
+
+### What to create
+
+One claim per app, in the BuildKit namespace (`BUILDKIT_NAMESPACE`). The
+platform cannot create or read claims there; it only names one in the Pod.
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bk-store-APP_SLUG
+  namespace: social-buildkit
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: STORAGE_CLASS
+  resources:
+    requests:
+      storage: 20Gi
+```
+
+- **Access mode `ReadWriteOnce`, not `ReadWriteOncePod`.** Two builds of one
+  app may run at once; the second must be able to mount the claim to find the
+  lock taken. With `ReadWriteOncePod` it would sit unschedulable instead.
+- **Used for nothing else.** The build that holds the lock deletes everything
+  at the top of the volume except its own store directory.
+- **Size.** Before each build the store is pruned down to six tenths of the
+  volume's size, as `df` reports it in the Pod; the rest is room for the build
+  about to run and for the mirror (capped at 256 MB). The platform's own
+  previews hold about 0.85 GB after one build and add 50 to 70 MB per build.
+  When the pruned size is close to what one build needs, pruning starts to
+  evict dependency layers and builds reinstall them: slower, not failing.
+- **Ownership.** The Pod runs as uid 1000 with `fsGroup: 1000` and
+  `fsGroupChangePolicy: OnRootMismatch`. The CSI driver must apply `fsGroup`
+  (`fsGroupPolicy: ReadWriteOnceWithFSType` or `File`), or the volume's root
+  must already be writable by uid 1000.
+- **Node pinning.** With a node-local storage class the claim binds, on the
+  first build, to the node that build was scheduled on, and every later store
+  build of that app runs there. If that node is down or has no room for the
+  Pod, builds go on without the store after the 10 seconds above; they are
+  never lost. To move the store, turn it off, delete the claim, create it
+  again and turn it on.
+
+### Turning it on and off
+
+`BUILDKIT_PREVIEW_STORES` is `slug=claim`, comma separated, in the platform's
+environment: the foundation's `social-build-policy` ConfigMap, or this chart's
+`config.buildkitPreviewStores` (which, when set, wins over the ConfigMap). An
+entry that is not an app slug and a DNS-label claim name is ignored.
+
+```yaml
+config:
+  buildkitPreviewStores: "APP_SLUG=bk-store-APP_SLUG"
+```
+
+Remove the entry to turn it off. Builds already running finish; the next ones
+do not mount the claim. The claim and what is on it stay until you delete it.
+
+### Wiping a store
+
+Raise `BUILDKIT_PREVIEW_STORE_EPOCH` (`config.buildkitPreviewStoreEpoch`). The
+store's directory on the claim is named after the BuildKit image, the build
+mode and this number, so the next build of each app starts an empty store and
+deletes the old one. A new `BUILDKIT_IMAGE` does the same on its own. Deleting
+and recreating the claim (with the app's entry removed while you do) also
+works.
+
+### What a kept store shares
+
+All preview builds of one app use the same store, and build steps run the
+proposal's own Dockerfile and scripts. BuildKit's layer cache is keyed by a
+step's inputs, so one proposal's layers are only reused by a build with the
+same inputs, and `RUN --mount=type=cache` directories are emptied before every
+build. What remains is trust in the daemon's isolation of a build step: the
+lane runs the rootless daemon with its process sandbox off, so steps can see
+and signal the Pod's processes. In a test on a workstation a step could not
+read the store or another process's environment through `/proc` (the kernel
+refused it), but that is one kernel and not a guarantee. This is why builds of
+an app's main, whose images are deployed, stay off the store.
+
+### Looking at it
+
+```sh
+kubectl -n social-buildkit get jobs -l social.usernode.io/build-store=bk-store-APP_SLUG
+kubectl -n social-buildkit logs job/JOB_NAME | grep '^\[buildkit\]'
+```
+
+A build that used the store logs no `exporting cache to registry` step. One
+that did not says why in a `[buildkit]` line (`in use by another build`,
+`cannot open the kept store`, `failed; building once more without it`). The
+platform logs `BuildKit preview store unavailable; building without it` when a
+store Job's Pod could not start.
+
 ## Platform deployment reporting
 
 `/api/version` and admin status observe the platform Deployment. The chart
