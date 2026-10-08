@@ -328,9 +328,16 @@ test('#4053: while it is being built, the thumbnail with its build line, and whe
   assert.equal((out.match(/<button/g) || []).length, 1);
   assert.match(out, /<\/span><\/span><\/div><\/div><\/div><button id="app-first-version-chat"[^>]*>Open Homeroom bot<\/button><p /);
   assert.match(out, /rounded-full bg-white shadow-sm[^"]*text-violet-600[^"]*min-h-9/, 'secondary and small: raised pill, accent ink');
-  // Members get no way into somebody else's chat.
-  const member = html(view(makeAppView().AppView, firstVersionApp({}, { mine: false, conversationId: null })));
-  assert.doesNotMatch(member, /<button|Open Homeroom bot/);
+  // A member who is not the creator gets the community's Discussion instead
+  // (#4396), the one small button the screen has for them.
+  const memberView = view(makeAppView().AppView, firstVersionApp({}, { mine: false, conversationId: null }));
+  assert.deepEqual(memberView.action, {
+    key: 'discussion', label: 'Say hi in Discussion', slug: 'plant-pal', quiet: true, underCard: true,
+  });
+  const member = html(memberView);
+  assert.match(member, /<button id="app-first-version-discussion"[^>]*>Say hi in Discussion<\/button><p /);
+  assert.match(member, /rounded-full bg-white shadow-sm[^"]*text-violet-600[^"]*min-h-9/, 'same small raised pill as the creator\'s quiet button');
+  assert.doesNotMatch(member, /Open Homeroom bot|app-first-version-chat/, 'no way into somebody else\'s chat');
 });
 
 test('#4053: the build line is one line under the card (8px below it), not a row inside it', () => {
@@ -373,7 +380,9 @@ test('#4053: the line is the server\'s for this reader; the plan and the bot\'s 
   // Anyone else, the same moment.
   const theirs = view(AppView, firstVersionApp({}, { mine: false, conversationId: null, line: 'plan-member' }));
   assert.equal(theirs.buildLine, 'plan-member');
-  assert.equal(theirs.action, null, 'members get neither button');
+  assert.deepEqual(theirs.action, {
+    key: 'discussion', label: 'Say hi in Discussion', slug: 'plant-pal', quiet: true, underCard: true,
+  }, 'the plan waits on nobody but its maker; members get the Discussion instead');
   assert.match(html(theirs), /data-build-line="plan-member"[^>]*>.*Planning it/);
   // A question waiting on its creator, and the build itself.
   assert.match(html(view(AppView, firstVersionApp({}, { line: 'question', question: true }))), /Homeroom bot has a question for you/);
@@ -435,6 +444,7 @@ test('#15: a first version up for its vote says Ready to try, without a word on 
   const theirs = view(AppView, firstVersionApp({}, { mine: false, step: 6, line: 'ready', ready: true }));
   assert.deepEqual(theirs.lines, ['Waiting for approval.']);
   assert.equal(theirs.action, null);
+  assert.doesNotMatch(html(theirs), /Say hi in Discussion|app-first-version-discussion/);
 });
 
 // ── Ready to try: what it waits on, for whoever reads it ──
@@ -606,6 +616,29 @@ test('ready: Try it opens the change\'s preview on this app; See the change open
   assert.match(src, /tryChange: \{ id: 'app-first-version-try', opener: 'tryFirstVersion' \}/);
   assert.match(src, /seeChange: \{ id: 'app-first-version-change', opener: 'openFirstVersionChange' \}/);
   assert.match(src, /if \(action\.key === 'tryChange' \|\| action\.key === 'seeChange'\) call\(opener, action\.slug, action\.sessionId \?\? null\);/);
+});
+
+test('#4396: Say hi in Discussion opens the project page on its Discussion tab; the button is wired to that opener', () => {
+  const { AppView, sandbox } = makeAppView();
+  const nav = [];
+  sandbox.App.navigateToApp = (slug, tab) => { nav.push([slug, tab]); };
+  // The remembered tab must survive the door: the sandbox's localStorage
+  // stub reads null for everything, so give it a store first.
+  const stored = new Map();
+  sandbox.localStorage = {
+    getItem: (k) => (stored.has(k) ? stored.get(k) : null),
+    setItem: (k, v) => { stored.set(k, String(v)); },
+  };
+  AppView.openFirstVersionDiscussion('plant-pal');
+  assert.equal(AppView._workshopTab(), 'discussion', 'the page opens on its Discussion tab');
+  assert.deepEqual(nav, [['plant-pal', 'dev']], 'the navigation pushes the page\'s own entry, so Back returns to the App tab');
+  // No slug, no door.
+  AppView.openFirstVersionDiscussion(null);
+  assert.deepEqual(nav, [['plant-pal', 'dev']]);
+
+  // The island draws the button from the same ACTIONS map, with this opener.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'app-frame', 'app-status.tsx'), 'utf8');
+  assert.match(src, /discussion: \{ id: 'app-first-version-discussion', opener: 'openFirstVersionDiscussion' \}/);
 });
 
 test('#15: while the project is still being set up, the same thumbnail: Homeroom bot is planning it', () => {

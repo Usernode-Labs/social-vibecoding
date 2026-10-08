@@ -3168,7 +3168,10 @@ const AppView = {
    * questions are answered in the creator's chat with Homeroom bot, so the
    * creator, and only they, gets a way there under the card: "Review the
    * plan" while their plan waits (the build line asks them, in blue), else
-   * a small "Open Homeroom bot" (owner, 8 Oct 2026). While a first-session tour
+   * a small "Open Homeroom bot" (owner, 8 Oct 2026). A member who is not
+   * the creator has nothing to wait on in that chat (#4396): their one
+   * action is a small "Say hi in Discussion", the same door the hub's
+   * "Say hi to <name>" offers. While a first-session tour
    * card that says where the app opens is over this screen, the line hides
    * (`tourSays`: the card carries `data-tour-says-where-it-opens`;
    * features/app-frame/app-status.tsx). A card that does not say it, such as
@@ -3182,7 +3185,9 @@ const AppView = {
     // Built and up for approval: no longer "being built" (_firstVersionReadyView).
     if (fv.ready) return AppView._firstVersionReadyView(appData);
     const thumb = AppView._firstVersionThumb(appData);
-    // Their DM, by its id when the record names it (members get neither).
+    // Their DM, by its id when the record names it. A member who is not the
+    // creator waits on nothing in that chat (#4396): their one action is the
+    // community's Discussion, the same "Say hi" the hub's empty channel offers.
     const chat = fv.mine === true
       ? {
         key: 'botChat',
@@ -3194,7 +3199,13 @@ const AppView = {
         quiet: thumb.buildLine !== 'plan',
         underCard: true,
       }
-      : null;
+      : {
+        key: 'discussion',
+        label: 'Say hi in Discussion',
+        slug: appData.slug,
+        quiet: true,
+        underCard: true,
+      };
     return {
       dot: null,
       message: appData.name || appData.slug,
@@ -3344,6 +3355,20 @@ const AppView = {
     const messages = window.UsernodeReact && window.UsernodeReact.messages;
     if (messages && typeof messages.open === 'function') messages.open(id);
     else location.hash = id ? `#messages/${id}` : '#messages';
+  },
+
+  /**
+   * The member's button while the first version builds (#4396): the project's
+   * page on its Discussion tab. The tab first, so the page opens on it, then
+   * the navigation, which pushes the page's own entry — Back returns to the
+   * App tab. The same two doors the hub's "Say hi to <name>" uses.
+   */
+  openFirstVersionDiscussion(slug) {
+    if (!slug) return;
+    AppView._landOnDiscussion(slug, null);
+    if (typeof App !== 'undefined' && typeof App.navigateToApp === 'function') {
+      App.navigateToApp(slug, 'dev');
+    }
   },
 
   _stopFirstVersionWatch() {

@@ -75,9 +75,11 @@ export interface AppStatusView {
    * builds, "Open my chat with Homeroom bot" once it is ready to try.
    * `tryChange` and `seeChange` are a first version that is ready to try:
    * its change's preview and its change page, by the change's id.
+   * `discussion` is a member's way into the community's Discussion while
+   * the first version still builds (#4396): "Say hi in Discussion" (`quiet`).
    */
   action: {
-    key: 'secrets' | 'buildLog' | 'botChat' | 'tryChange' | 'seeChange';
+    key: 'secrets' | 'buildLog' | 'botChat' | 'discussion' | 'tryChange' | 'seeChange';
     label: string;
     slug: string;
     conversationId?: number | null;
@@ -135,6 +137,7 @@ const ACTIONS = {
   secrets: { id: 'awaiting-open-secrets', opener: 'openAwaitingSecrets' },
   buildLog: { id: 'app-error-build-log', opener: 'openAppBuildLog' },
   botChat: { id: 'app-first-version-chat', opener: 'openBotChat' },
+  discussion: { id: 'app-first-version-discussion', opener: 'openFirstVersionDiscussion' },
   tryChange: { id: 'app-first-version-try', opener: 'tryFirstVersion' },
   seeChange: { id: 'app-first-version-change', opener: 'openFirstVersionChange' },
 } as const;
