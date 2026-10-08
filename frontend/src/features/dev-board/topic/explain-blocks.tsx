@@ -42,7 +42,7 @@ function Comparison({ b }: { b: ComparisonBlock }) {
               <>
                 <span className={KEY}>Before</span>{` ${r.before} `}
                 <span aria-hidden="true">·</span>
-                {' '}<span className={KEY}>After</span>{` ${r.after}`}
+                <span className={KEY}>{' After'}</span>{` ${r.after}`}
               </>
             )}
           />
@@ -106,7 +106,7 @@ function Table({ b }: { b: TableBlock }) {
               <>
                 {rest.map((c, n) => (
                   <span key={n}>
-                    {n ? <>{' '}<span aria-hidden="true">·</span>{' '}</> : null}
+                    {n ? <span aria-hidden="true">{' · '}</span> : null}
                     <span className={KEY}>{`${c}:`}</span>{` ${r[n + 1]}`}
                   </span>
                 ))}
