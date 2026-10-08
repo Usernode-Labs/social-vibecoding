@@ -5876,8 +5876,12 @@ const AppView = {
     }
     if (state === 'passing') return { state: 'passed', text: 'Tested · All checks passed' };
     if (state === 'pending') {
+      // A run waiting for a checks slot says so, with its place in line
+      // ("Waiting for a checks slot (2 ahead)"). This is the one line about
+      // the checks the change page shows without opening Details, and a long
+      // wait that read "Testing it…" would look like a stuck run.
       return item.check_phase === 'queued'
-        ? { state: 'running', text: 'Waiting to be tested' }
+        ? { state: 'running', text: AppView._checksPhaseCopy('queued', item).title }
         : { state: 'running', text: 'Testing it…' };
     }
     if (state === 'failing') return { state: 'failed', text: 'Testing found a problem' };
