@@ -1075,6 +1075,29 @@ function adminRoutes(config) {
     };
   }
 
+  // #4296: the Unexpected events section. Read-only, so view-only admins see
+  // it too; the alerts it describes go to full admins only.
+  router.get('/api/admin/incidents', async (req, res) => {
+    // Required here, not at the top: platform-incidents reads the events
+    // type table when it loads, which route tests stub without.
+    const platformIncidents = require('../services/platform-incidents');
+    const platformIncidentAlerts = require('../services/platform-incident-alerts');
+    const q = req.query || {};
+    const listed = await platformIncidents.list(pool, {
+      days: q.days,
+      kind: typeof q.kind === 'string' && q.kind ? q.kind : null,
+      app: typeof q.app === 'string' && q.app ? q.app : null,
+    });
+    if (!listed) return res.status(500).json({ error: 'Could not read unexpected events' });
+    res.json({
+      ...listed,
+      alerts: {
+        hourlyThreshold: platformIncidentAlerts.HOURLY_THRESHOLD,
+        digestHourUtc: platformIncidentAlerts.DIGEST_HOUR_UTC,
+      },
+    });
+  });
+
   router.get('/api/admin/limits', async (_req, res) => {
     try {
       res.json(await readLimitsPayload());
@@ -2753,7 +2776,9 @@ function adminRoutes(config) {
             GROUP BY status`,
           [kind]
         ),
-        require('../services/mail/reports').readReports(pool),
+        require('../services/mail/reports').readReports(pool, {
+          provider: (config && (config.mailProvider || config.mailTransport?.provider)) || null,
+        }),
       ]);
 
       const last24h = {};
@@ -2817,6 +2842,10 @@ function adminRoutes(config) {
     if (!config.firebaseServiceAccountJsonB64) missing.push('FIREBASE_SERVICE_ACCOUNT_JSON_B64');
     res.json({
       offered: phoneAuth.offered(config),
+      // Texts go out only through Firebase; test numbers (PHONE_TEST_CODE,
+      // never in production) sign in without one.
+      texts: phoneAuth.firebaseOffered(config),
+      testNumbers: phoneAuth.testNumbersOn(config),
       enabled: config.firebasePhoneAuthEnabled === true,
       projectId: config.firebaseProjectId || null,
       missing,
@@ -2845,7 +2874,7 @@ function adminRoutes(config) {
         }
         if (outcome.status === 'not_offered') {
           return res.status(409).json({
-            error: 'Phone sign-in is not set up, so there is nothing to test.',
+            error: 'SMS is not set up, so there is no text to test.',
             code: 'not_offered',
           });
         }

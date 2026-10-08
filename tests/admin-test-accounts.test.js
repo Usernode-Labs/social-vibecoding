@@ -136,12 +136,14 @@ test('the section is registered everywhere a console section has to be', () => {
   // admin anyway, who sees only the notice; this file covers both branches.
 });
 
-test('it calls only the three test-account routes, and draws nothing from the API as markup or a link', () => {
+test('it calls only the four test-account routes, and draws nothing from the API as markup or a link', () => {
   const paths = [...CODE.matchAll(/['`](\/api\/[^'`]*)['`]/g)].map((m) => m[1]);
   assert.deepEqual([...new Set(paths)].sort(), [
     '/api/test-accounts',
     '/api/test-accounts/${account.userId}/retire',
+    '/api/test-accounts/phone-sign-ins',
   ]);
+  assert.match(CODE, /send\(fetchImpl, 'POST', '\/api\/test-accounts\/phone-sign-ins', \{\}\)/, 'a one-time phone sign-in');
   assert.match(CODE, /send\(fetchImpl, 'GET', '\/api\/test-accounts'\)/, 'the list');
   assert.match(CODE, /send\(fetchImpl, 'POST', '\/api\/test-accounts', built\.body\)/, 'create');
   assert.match(CODE, /send\(fetchImpl, 'POST', `\/api\/test-accounts\/\$\{account\.userId\}\/retire`,\n\s+\{ confirm: RETIRE_CONFIRMATION \}\)/,

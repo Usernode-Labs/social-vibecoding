@@ -159,16 +159,16 @@
     {
       "source": "src/routes/apps.js",
       "kind": "structural-template",
-      "fingerprint": "1012d07842e867c85087",
+      "fingerprint": "186bdc9221b3dd99e2f1",
       "count": 1,
-      "preview": "` SELECT ${appAccess.nonSecretAppColumnList('a')}, COALESCE(msg_counts.cnt, 0) AS message_count, COALESCE(activity.total_seconds, 0) AS total_seconds, COALESCE("
+      "preview": "`SELECT ${appAccess.ACCESS_COLUMNS}, name, repo_url, LEFT(manifest_snapshot->>'description', 280) AS description FROM apps WHERE slug = $1 AND (NOT self_hosted "
     },
     {
       "source": "src/routes/apps.js",
       "kind": "structural-template",
-      "fingerprint": "186bdc9221b3dd99e2f1",
+      "fingerprint": "36c97d735c90dad4c7d2",
       "count": 1,
-      "preview": "`SELECT ${appAccess.ACCESS_COLUMNS}, name, repo_url, LEFT(manifest_snapshot->>'description', 280) AS description FROM apps WHERE slug = $1 AND (NOT self_hosted "
+      "preview": "` SELECT ${appAccess.nonSecretAppColumnList('a')}, COALESCE(msg_counts.cnt, 0) AS message_count, COALESCE(activity.total_seconds, 0) AS total_seconds, COALESCE("
     },
     {
       "source": "src/routes/apps.js",
@@ -222,9 +222,16 @@
     {
       "source": "src/routes/dashboard.js",
       "kind": "structural-template",
-      "fingerprint": "0e4781dc8e3958f6ecdb",
+      "fingerprint": "01b8d6bfed9da13fce44",
       "count": 1,
-      "preview": "`SELECT COUNT(*) FILTER (WHERE status IN ('promoted','merging'))::int AS promoted, COUNT(*) FILTER (WHERE promoted_at IS NOT NULL)::int AS promoted_all_time, CO"
+      "preview": "`SELECT u.username AS name, u.is_admin AS is_admin, COUNT(cs.id)::int AS sessions, COUNT(*) FILTER (WHERE cs.pr_number IS NOT NULL)::int AS produced_pr, COUNT(*"
+    },
+    {
+      "source": "src/routes/dashboard.js",
+      "kind": "structural-template",
+      "fingerprint": "1549feffbea72b80fd1e",
+      "count": 1,
+      "preview": "`WITH spine AS ( SELECT generate_series( date_trunc('week', LEAST( (SELECT MIN(created_at) FROM users), NOW() - INTERVAL '12 weeks' )), date_trunc('week', NOW()"
     },
     {
       "source": "src/routes/dashboard.js",
@@ -271,14 +278,14 @@
     {
       "source": "src/routes/dashboard.js",
       "kind": "structural-template",
-      "fingerprint": "3f62c3bdf3fdaea04537",
+      "fingerprint": "43afefd2e8c3b28f1072",
       "count": 1,
       "preview": "`SELECT u.username AS name, u.is_admin AS is_admin, COALESCE(SUM(lu.total_cost_cents), 0)::float AS platform_cents, COALESCE(SUM(lu.byok_cost_cents), 0)::float "
     },
     {
       "source": "src/routes/dashboard.js",
       "kind": "structural-template",
-      "fingerprint": "63258cb606f0efd83fcf",
+      "fingerprint": "4477bc03e2c497e8a7b8",
       "count": 1,
       "preview": "`WITH spine AS ( SELECT generate_series( CURRENT_DATE - 29, CURRENT_DATE, INTERVAL '1 day' )::date AS day ), agg AS ( SELECT lu.date AS day, SUM(lu.total_cost_c"
     },
@@ -288,6 +295,13 @@
       "fingerprint": "6652d8408e0ebe9ccf04",
       "count": 1,
       "preview": "`WITH days AS ( SELECT generate_series(CURRENT_DATE - 89, CURRENT_DATE, INTERVAL '1 day')::date AS d ), ${rollupCte}, qualifying AS ( SELECT d.d, r.user_id FROM"
+    },
+    {
+      "source": "src/routes/dashboard.js",
+      "kind": "structural-template",
+      "fingerprint": "6a1293f6ec5183f2f86e",
+      "count": 1,
+      "preview": "`SELECT COALESCE(SUM(total_cost_cents) FILTER (WHERE date = CURRENT_DATE), 0)::float AS cents, COALESCE(SUM(total_cost_cents) FILTER (WHERE date >= date_trunc('"
     },
     {
       "source": "src/routes/dashboard.js",
@@ -306,20 +320,6 @@
     {
       "source": "src/routes/dashboard.js",
       "kind": "structural-template",
-      "fingerprint": "b6c9437cca9a92d70630",
-      "count": 1,
-      "preview": "`WITH spine AS ( SELECT generate_series( date_trunc('week', LEAST( (SELECT MIN(created_at) FROM users), NOW() - INTERVAL '12 weeks' )), date_trunc('week', NOW()"
-    },
-    {
-      "source": "src/routes/dashboard.js",
-      "kind": "structural-template",
-      "fingerprint": "b83cdde9dd029a386ae8",
-      "count": 1,
-      "preview": "`SELECT u.username AS name, u.is_admin AS is_admin, COUNT(cs.id)::int AS sessions, COUNT(*) FILTER (WHERE cs.pr_number IS NOT NULL)::int AS produced_pr, COUNT(*"
-    },
-    {
-      "source": "src/routes/dashboard.js",
-      "kind": "structural-template",
       "fingerprint": "ceaba7ce4b96293c9a3a",
       "count": 1,
       "preview": "`WITH spine AS ( SELECT generate_series( CURRENT_DATE - 29, CURRENT_DATE, INTERVAL '1 day' )::date AS day ), agg AS ( SELECT lu.date AS day, COUNT(*) FILTER (WH"
@@ -327,16 +327,16 @@
     {
       "source": "src/routes/dashboard.js",
       "kind": "structural-template",
-      "fingerprint": "d5accaf0d7be85f38b5e",
+      "fingerprint": "e6e828361a105e86586a",
       "count": 1,
-      "preview": "`SELECT COALESCE(SUM(total_cost_cents) FILTER (WHERE date = CURRENT_DATE), 0)::float AS cents, COALESCE(SUM(total_cost_cents) FILTER (WHERE date >= date_trunc('"
+      "preview": "`WITH days AS ( SELECT generate_series(${UTC_TODAY_SQL} - 89, ${UTC_TODAY_SQL}, INTERVAL '1 day')::date AS d ), activity AS ( SELECT DISTINCT user_id, day FROM "
     },
     {
       "source": "src/routes/dashboard.js",
       "kind": "structural-template",
-      "fingerprint": "e6e828361a105e86586a",
+      "fingerprint": "f1bf48fa7ca499f0e7b4",
       "count": 1,
-      "preview": "`WITH days AS ( SELECT generate_series(${UTC_TODAY_SQL} - 89, ${UTC_TODAY_SQL}, INTERVAL '1 day')::date AS d ), activity AS ( SELECT DISTINCT user_id, day FROM "
+      "preview": "`SELECT COUNT(*) FILTER (WHERE cs.status IN ('promoted','merging'))::int AS promoted, COUNT(*) FILTER (WHERE cs.promoted_at IS NOT NULL)::int AS promoted_all_ti"
     },
     {
       "source": "src/routes/debug.js",
@@ -383,6 +383,13 @@
     {
       "source": "src/routes/kudos.js",
       "kind": "structural-template",
+      "fingerprint": "23e047220a859a119a96",
+      "count": 1,
+      "preview": "`WITH credit AS ( SELECT pk.session_id, pk.created_at, pk.week_start FROM pr_kudos pk UNION ALL SELECT ib.awarded_session_id AS session_id, ib.awarded_at AS cre"
+    },
+    {
+      "source": "src/routes/kudos.js",
+      "kind": "structural-template",
       "fingerprint": "580da8bac408c7e7097f",
       "count": 1,
       "preview": "`SELECT * FROM (${arms.join('\\nUNION ALL\\n')}) h ORDER BY created_at DESC LIMIT $${params.length}`"
@@ -390,16 +397,9 @@
     {
       "source": "src/routes/kudos.js",
       "kind": "structural-template",
-      "fingerprint": "8d524af727e544febe38",
+      "fingerprint": "6d1bb72bebf3b7cb37ac",
       "count": 1,
-      "preview": "`SELECT cs.id AS session_id, cs.pr_number, cs.pr_url, cs.pr_title, cs.status, cs.created_at, cs.promoted_at, cs.merged_at, a.slug AS app_slug, a.name AS app_nam"
-    },
-    {
-      "source": "src/routes/kudos.js",
-      "kind": "structural-template",
-      "fingerprint": "f370c59aeb1f4e599f1a",
-      "count": 1,
-      "preview": "`WITH credit AS ( SELECT pk.session_id, pk.created_at, pk.week_start FROM pr_kudos pk UNION ALL SELECT ib.awarded_session_id AS session_id, ib.awarded_at AS cre"
+      "preview": "`SELECT cs.id AS session_id, cs.pr_number, cs.pr_url, cs.pr_title, -- Merged but not live yet (chat_sessions.live_at): the badge says going live. CASE WHEN cs.s"
     },
     {
       "source": "src/routes/llm-grants.js",
@@ -677,13 +677,6 @@
     {
       "source": "src/routes/topochain/admin/waitlist.js",
       "kind": "structural-template",
-      "fingerprint": "1bb7fab9edd7b565ffb1",
-      "count": 1,
-      "preview": "`SELECT w.id, w.email, w.submitted_at, w.released_at, w.confirmed_at, w.linked_user_id, w.answers, w.invited_by, (SELECT COUNT(*)::int FROM waitlist_signups c W"
-    },
-    {
-      "source": "src/routes/topochain/admin/waitlist.js",
-      "kind": "structural-template",
       "fingerprint": "467be03234670d53569c",
       "count": 1,
       "preview": "`SELECT w.id, w.email, w.submitted_at, w.released_at, w.confirmed_at, w.answers, (SELECT COUNT(*)::int FROM waitlist_signups c WHERE c.invited_by = w.id) AS inv"
@@ -694,6 +687,13 @@
       "fingerprint": "9ed73e877a98d985dacd",
       "count": 1,
       "preview": "`SELECT COUNT(*)::int AS c FROM waitlist_signups w ${countWhere.sql}`"
+    },
+    {
+      "source": "src/routes/topochain/admin/waitlist.js",
+      "kind": "structural-template",
+      "fingerprint": "d31136732b9ea3ddbde6",
+      "count": 1,
+      "preview": "`SELECT w.id, w.email, w.submitted_at, w.released_at, w.confirmed_at, w.linked_user_id, w.answers, w.invited_by, (SELECT COUNT(*)::int FROM waitlist_signups c W"
     },
     {
       "source": "src/routes/topochain/ingest.js",
@@ -1083,9 +1083,9 @@
     {
       "source": "src/services/homeroom-bot-progress.js",
       "kind": "structural-template",
-      "fingerprint": "a5e63b05f6e06ab86147",
+      "fingerprint": "70b2e1a76ca67c4838db",
       "count": 1,
-      "preview": "`SELECT cs.id, cs.app_id, a.slug, cs.status, cs.check_state, cs.check_phase, cs.checks_progress, cs.test_results, cs.session_title, cs.pr_title, cs.promoted_at,"
+      "preview": "`SELECT cs.id, cs.app_id, a.slug, CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'merging' ELSE cs.status END AS status, cs.check_state, cs.check_ph"
     },
     {
       "source": "src/services/homeroom-bot.js",
@@ -1627,11 +1627,39 @@
       "preview": "{ text, values, queryMode: 'extended' }"
     },
     {
+      "source": "src/workflow/kernel/pipeline.ts",
+      "kind": "runtime-expression",
+      "fingerprint": "93d56ab7639b288ef7f5",
+      "count": 1,
+      "preview": "opening(opts)"
+    },
+    {
+      "source": "src/workflow/kernel/pipeline.ts",
+      "kind": "structural-template",
+      "fingerprint": "ae6d8fe43761df6b9beb",
+      "count": 1,
+      "preview": "`${opening(opts)}; ${pickSql(names, versions, passed)}`"
+    },
+    {
       "source": "src/workflow/kernel/services.ts",
       "kind": "runtime-built-identifier",
       "fingerprint": "4ec7c53222c8a758c722",
       "count": 1,
       "preview": "sql"
+    },
+    {
+      "source": "src/workflow/merge-followups/services.ts",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "13088ed3d10fbb042d8b",
+      "count": 1,
+      "preview": "changes.CANDIDATES_SQL"
+    },
+    {
+      "source": "src/workflow/platform.ts",
+      "kind": "structural-template",
+      "fingerprint": "4cb190fab746c444e38d",
+      "count": 1,
+      "preview": "`SELECT count(*)::int AS yes, cs.votes_required FROM pr_votes pv JOIN chat_sessions cs ON cs.id = pv.session_id WHERE pv.session_id = $1 AND pv.vote = 'yes' AND"
     }
   ]
 }

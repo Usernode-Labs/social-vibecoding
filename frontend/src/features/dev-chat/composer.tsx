@@ -29,6 +29,7 @@ import {
 } from '@/components/ui/icons';
 import { Textarea } from '@/components/ui/textarea';
 
+import { DropOverlay } from '../attachments/file-drag';
 import { PendingStrip } from '../attachments/pending-strip';
 import { useStoreState } from '../../lib/use-store-state';
 import { attachStripStore } from './attach-strip-store';
@@ -328,6 +329,8 @@ export function DevComposerView({ s }: { s: ComposerState }): ReactNode {
             <span className="flex-1"></span>
             <SendButton send={s.send} />
           </div>
+          {/* #4065: the drop zone, while a file is held over the chat. */}
+          {s.dragging ? <DropOverlay /> : null}
         </form>
       </div>
     </>

@@ -53,6 +53,11 @@ export type NeedsFeedItem = {
   at: string | null;
   yes: number | null;
   no: number | null;
+  /**
+   * #4270: a change on a project that is just yours whose Yes is the one it
+   * needs (B7, the server's rule for `_cardVoteButtonSpecs`' `approve`).
+   */
+  approve?: boolean;
   app: { slug: string; name: string; icon_url: string | null; icon_emoji: string | null };
 };
 
@@ -68,7 +73,9 @@ export { plainSummary } from './summary-text';
  * (app-view.js `_workshopView`'s queue): the card's page, the question and
  * what Yes and No DO, who asked and when, the words, the ask box's address
  * and the thread's. A change's pair is `_cardVoteButtonSpecs`' (castVote with
- * the epoch); a group decision has none, and the vote sheet opens its page.
+ * the epoch, and on a project that is just yours the Yes marked `approve`, so
+ * the item says Approve and Don't approve as its card does, #4270); a group
+ * decision has none, and the vote sheet opens its page.
  * `html` renders a summary for the Description sheet (DevChat's renderer,
  * through AppView, where it is loaded).
  */
@@ -107,7 +114,7 @@ export function reelRows(
       },
       kind: 'vote',
       ask: change ? 'Should this change go in?' : 'Should this go ahead?',
-      yes: change ? { label: 'Yes', act: { fn: 'castVote', args: [item.id, 'yes', ...rev] } } : null,
+      yes: change ? { label: 'Yes', act: { fn: 'castVote', args: [item.id, 'yes', ...rev] }, ...(item.approve ? { approve: true } : {}) } : null,
       no: change ? { label: 'No', act: { fn: 'castVote', args: [item.id, 'no', ...rev] } } : null,
       who: item.author || null,
       ago: item.at ? agoStamp(item.at).text : '',

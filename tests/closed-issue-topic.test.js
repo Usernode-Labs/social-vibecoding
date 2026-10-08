@@ -159,7 +159,9 @@ test('a closed issue page offers no claim, kudos, close or start-work actions', 
       assert.ok(!menuLabels.includes(label), `no "${label}" menu row (noNav=${noNav})`);
     }
     assert.ok(menuLabels.includes('Share to…'), 'sharing it still works');
-    assert.deepEqual([...card.badges.map((b) => b.label)], ['Closed'], 'says Closed, and nothing to vote on');
+    // #4244: on its own page (noNav) the status band above the card says
+    // Closed, so the card does not; a list row still does.
+    assert.deepEqual([...card.badges.map((b) => b.label)], noNav ? [] : ['Closed'], 'says Closed once, and nothing to vote on');
     assert.equal(card.title.edit, undefined, 'no title edit on a closed issue');
   }
 

@@ -2,12 +2,12 @@ import { useEffect, useState } from 'react';
 
 import { CheckIcon } from '@/components/ui/icons';
 import { IconTile } from '@/components/ui/icon-tile';
+import { ProgressRing } from '@/components/ui/progress-ring';
 
 import * as api from './api';
 import { afterYesWords, countOf, waitingWords } from './approval-words';
 import { ensureBotActivity, useBotActivity } from './bot-activity-store';
 import { botMeta } from './bot-question';
-import { openAppTarget } from './bot-shared';
 import { scopeKey, setReply } from './store';
 import type {
   ConversationMessage, HomeroomBotAction, HomeroomBotGoesLive, HomeroomBotMeta, HomeroomBotReady, HomeroomBotReadyNow,
@@ -50,8 +50,9 @@ import type {
  * each ready card's change stands now (services/homeroom-bot-dm.js
  * readyStates, kept by ./bot-activity-store.ts, read again on the bot's news,
  * on a merge or a close, and on any vote on the change): once it is live the
- * card says so and its one button opens the app (readyCardState: `live`);
- * while it is merged it is going live; closed, it says it was closed; and
+ * card says so (readyCardState: `live`), with no button: #4228, the news
+ * that it went live, right under it, carries the one Open; while it is
+ * merged it is going live; closed, it says it was closed; and
  * while it is up for approval, who it waits on and what happens next are
  * the counts as they are now, not as they were when it was sent.
  */
@@ -244,6 +245,15 @@ export interface ReadyCardViewProps {
   locale?: string;
 }
 
+/**
+ * Pure (#4227): whether a card says something is under way right now, and
+ * leads with the spinner instead of its check: going live, or approved with
+ * nothing left but going live in a minute or two.
+ */
+export function readyMoving(state: ReadyCardState, next: HomeroomBotGoesLive | null): boolean {
+  return state === 'going_live' || (state === 'approved' && !!next?.soon);
+}
+
 /** One card, from its message and its state: pure, so a test can draw every state. */
 export function ReadyCardView({
   meta, state, actions, fresh = null, error = null, busy = false, onPress, goesLive = null, now, locale,
@@ -264,9 +274,13 @@ export function ReadyCardView({
       data-bot-ready={state}
     >
       <div className="flex items-center gap-3">
-        <IconTile size="xs" className="h-[38px] w-[38px] rounded-full bg-[color:var(--brand-tint)] text-[color:var(--brand-ink)] dark:bg-[color:var(--brand-tint)] dark:text-[color:var(--brand-ink)]">
-          <CheckIcon aria-hidden="true" />
-        </IconTile>
+        {readyMoving(state, next) ? (
+          <ProgressRing pct={0} title="Going live" spinning trackClassName="dark:stroke-zinc-700" />
+        ) : (
+          <IconTile size="xs" className="h-[38px] w-[38px] rounded-full bg-[color:var(--brand-tint)] text-[color:var(--brand-ink)] dark:bg-[color:var(--brand-tint)] dark:text-[color:var(--brand-ink)]">
+            <CheckIcon aria-hidden="true" />
+          </IconTile>
+        )}
         <div className="min-w-0 flex-1">
           <div className="text-[0.9375rem] font-semibold text-zinc-900 dark:text-zinc-100" data-bot-ready-title="">{readyTitle(meta)}</div>
           {what ? <p className="line-clamp-2 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400" data-bot-ready-change="">{what}</p> : null}
@@ -325,19 +339,14 @@ export function BotReadyCard({ message, conversationId }: { message: Conversatio
 
   const state = readyCardState({ meta, fresh, approved, stale: !!stale });
   // Stale: Try it, and Approve back (on the version it is at now) once
-  // tried. Live: the one button that opens the app.
+  // tried. Live: none, the news under it opens the app (#4228).
   const actions = state === 'open' ? all
     : state === 'stale' ? all.filter((action) => action.type === 'preview' || (stale?.tried && action.type === 'vote'))
-      : state === 'live' ? (fresh?.actions || [])
-        : [];
+      : [];
 
   async function press(action: HomeroomBotAction) {
     if (!meta) return;
     setError(null);
-    if (action.type === 'open') {
-      openAppTarget(action.target);
-      return;
-    }
     if (action.type === 'preview' && action.sessionId) {
       tryChange(meta, action.sessionId);
       if (stale) setStale({ ...stale, tried: true });

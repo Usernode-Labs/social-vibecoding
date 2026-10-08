@@ -447,8 +447,24 @@ function parseShareInProgressBody(body) {
 }
 
 function parseUpdateFromForkBody(body) {
-  exactKeys(body, ['branch', 'forkRepo', 'expectedHeadSha', 'testingPaths', 'testingSteps', 'title', 'description', 'summary', 'linkedIssues', 'recheck', 'visibleChanges', 'visualEvidence'], 'body');
-  const branch = boundedText(body.branch, { label: 'branch', min: 1, max: 255, trim: true });
+  exactKeys(body, ['branch', 'patch', 'forkRepo', 'expectedHeadSha', 'testingPaths', 'testingSteps', 'title', 'description', 'summary', 'linkedIssues', 'recheck', 'visibleChanges', 'visualEvidence'], 'body');
+  // #4263. The new work arrives as a fork `branch` OR as a `patch` (the
+  // connector's update-by-patch), never both. A patch is applied AT a commit,
+  // so it names that commit in `expectedHeadSha`. Its size limit is the
+  // patch service's own (it names the limit and the fallback); this bound is
+  // only the body's.
+  if (body.patch != null && body.branch != null) {
+    throw new ValidationError('Pass branch or patch, not both');
+  }
+  const patch = body.patch == null
+    ? null
+    : boundedText(body.patch, { label: 'patch', min: 1, max: 512 * 1024 });
+  if (patch != null && body.expectedHeadSha == null) {
+    throw new ValidationError('A patch needs expectedHeadSha: the commit it was made against');
+  }
+  const branch = patch != null
+    ? null
+    : boundedText(body.branch, { label: 'branch', min: 1, max: 255, trim: true });
   const forkRepo = body.forkRepo == null
     ? null
     : boundedText(body.forkRepo, { label: 'forkRepo', min: 1, max: 100, trim: true });
@@ -508,7 +524,7 @@ function parseUpdateFromForkBody(body) {
     ? []
     : parseImportLinkedIssues({ linkedIssues: body.linkedIssues });
   const testing = require('../services/testing-notes').parseSubmitted(body);
-  return { branch, forkRepo, expectedHeadSha, testing, title,
+  return { branch, patch, forkRepo, expectedHeadSha, testing, title,
     description, summary,
     recheck, linkedIssues, visibleChanges: parseVisibleChanges(visibleChangesContract.declaredChanges(body)) };
 }
@@ -889,6 +905,7 @@ function proposalHandoffRoutes(config) {
           user: req.user,
           session,
           branch: input.branch,
+          patch: input.patch,
           forkRepo: input.forkRepo,
           expectedHeadSha: input.expectedHeadSha,
           testing: input.testing,

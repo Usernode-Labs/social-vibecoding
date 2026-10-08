@@ -263,14 +263,16 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   { method: 'POST', pattern: '/api/bot-studio/bot/runs/:id/rating' },
   { method: 'GET', pattern: '/api/bot-studio/shots' },
   { method: 'GET', pattern: '/api/bot-studio/shots/:id' },
-  // The Homeroom bot's first-version configurations (routes/bot-configs.js):
-  // the same gate first on every handler, reads included (a pair shows
-  // screenshots of any app, private ones too); every write limited per
-  // person and refused to a browser on another origin. They change no app:
-  // they save a configuration version, set its role, and record a pick.
+  // The Homeroom bot's configurations, first versions' and later changes'
+  // (routes/bot-configs.js): the same gate first on every handler, reads
+  // included (a pair shows screenshots of any app, private ones too); every
+  // write limited per person and refused to a browser on another origin.
+  // They change no app: they save a configuration version, set its role, set
+  // a scope's side-build budget, and record a pick.
   { method: 'GET', pattern: '/api/bot-configs' },
   { method: 'POST', pattern: '/api/bot-configs' },
   { method: 'POST', pattern: '/api/bot-configs/:id/role' },
+  { method: 'POST', pattern: '/api/bot-configs/budget' },
   { method: 'GET', pattern: '/api/bot-configs/pairs/next' },
   { method: 'POST', pattern: '/api/bot-configs/pairs/:token/pick' },
   // Test accounts for first-run testing (routes/test-accounts.js). The third
@@ -287,6 +289,9 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   { method: 'POST', pattern: '/api/test-accounts' },
   { method: 'GET', pattern: '/api/test-accounts' },
   { method: 'POST', pattern: '/api/test-accounts/:id/retire' },
+  // A one-time phone sign-in for a test number, the same gate: what it signs
+  // in to is a test account (services/test-accounts.js mintPhoneSignIn).
+  { method: 'POST', pattern: '/api/test-accounts/phone-sign-ins' },
 ]);
 
 // ── Delegated grants (#2779) ───────────────────────────────────────────

@@ -28,6 +28,8 @@ import { phoneRecaptchaToken, RECAPTCHA_NOTICE } from '../auth/recaptcha';
 
 interface SmsStatus {
   offered?: boolean;
+  texts?: boolean;
+  testNumbers?: boolean;
   enabled?: boolean;
   projectId?: string | null;
   missing?: string[];
@@ -89,7 +91,17 @@ function StatusCard({ status, failed }: { status: SmsStatus | null; failed: bool
   if (failed) return <p className="text-sm text-zinc-500 dark:text-zinc-400">Could not load the SMS configuration.</p>;
   if (!status) return <p className={AdminUI.loading}>Loading…</p>;
 
-  if (status.offered) {
+  // Test numbers (PHONE_TEST_CODE, never in production): the fictional
+  // +1 … 555 01xx numbers sign in with one code and are never texted.
+  const testLine = status.testNumbers ? (
+    <p className="text-zinc-500 dark:text-zinc-400 mt-1">
+      {'Test numbers are on: +1, any area code, then 555 0100 to 0199, sign in with the code in '}
+      <Mono>PHONE_TEST_CODE</Mono>
+      {' and get no text. Each account one makes is a test account.'}
+    </p>
+  ) : null;
+
+  if (status.offered && status.texts !== false) {
     return (
       <div className={`${AdminUI.card} px-4 py-3 text-sm`}>
         <span className="font-semibold text-emerald-700 dark:text-emerald-400">SMS is set up:</span>
@@ -97,6 +109,19 @@ function StatusCard({ status, failed }: { status: SmsStatus | null; failed: bool
           {' phone sign-in is offered, and its codes are texted by Firebase project '}
           <Mono>{status.projectId || 'unknown'}</Mono>{'.'}
         </span>
+        {testLine}
+      </div>
+    );
+  }
+
+  if (status.offered) {
+    return (
+      <div className={`${AdminUI.card} px-4 py-3 text-sm`}>
+        <span className="font-semibold">Test numbers only:</span>
+        <span className="text-zinc-500 dark:text-zinc-400">
+          {' phone sign-in is offered, but SMS is not set up, so no text is ever sent and any other number is refused.'}
+        </span>
+        {testLine}
       </div>
     );
   }
@@ -166,7 +191,8 @@ function SmsSection() {
     })();
   }, []);
 
-  const offered = !!status?.offered;
+  // The test is a real text, so it needs Firebase, not just test numbers.
+  const offered = !!status && (status.texts ?? !!status.offered);
 
   const sendTest = async () => {
     if (sending || !offered) return;

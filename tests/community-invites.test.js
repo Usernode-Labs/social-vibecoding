@@ -167,12 +167,24 @@ test('signing UP from an invite page follows the link server-side; signing IN is
   // one line sits between the redeem and the branch, and nothing else may.
   // An existing account follows it only when the sign-in is the Join its page
   // asked for (the sheet sends followInvite); the cookie alone never does.
-  assert.match(auth, /const consented = verified\.created \|\| req\.body\?\.followInvite === true;\s+const invite = consented\s+\? await communityInvites\.redeemCarried\(pool, req, res, verified\.userId, \{\s+requirePhone: phoneAuth\.offered\(config\),\s+\}\)\s+: \(communityInvites\.clearInviteCookie\(res\), null\);\s+(?:\/\/[^\n]*\n\s*)*if \(invite && invite\.status === 'joined'\) await challengeScorer\.scoreOnJoin\(pool, config\);\s+if \(verified\.next === 'signed-in'\)/);
+  // Otherwise the carried copy is only dropped (dropCarried), which since
+  // #4272 also counts the sign-in for the admin Journey's invite funnel as
+  // one the link brought; it still follows nothing.
+  assert.match(auth, /const consented = verified\.created \|\| req\.body\?\.followInvite === true;\s+const invite = consented\s+\? await communityInvites\.redeemCarried\(pool, req, res, verified\.userId, \{\s+requirePhone: phoneAuth\.offered\(config\),\s+\}\)\s+: await communityInvites\.dropCarried\(pool, req, res, verified\.userId\);\s+(?:\/\/[^\n]*\n\s*)*if \(invite && invite\.status === 'joined'\) await challengeScorer\.scoreOnJoin\(pool, config\);\s+if \(verified\.next === 'signed-in'\)/);
   assert.match(read('frontend/src/features/auth/sign-in-sheet.tsx'), /body: JSON\.stringify\(\{ email, code, \.\.\.\(followInvite \? \{ followInvite: true \} : \{\}\) \}\)/);
   const login = auth.slice(auth.indexOf("log.info('auth', 'Login successful'"), auth.indexOf("log.info('auth', 'Login successful'") + 900);
-  assert.match(login, /communityInvites\.clearInviteCookie\(res\);/, 'a password sign-in drops the carried copy');
+  assert.match(login, /await communityInvites\.dropCarried\(pool, req, res, user\.id\);/, 'a password sign-in drops the carried copy');
   assert.doesNotMatch(login, /redeemCarried/);
+  for (const file of ['src/routes/phone-auth.js', 'src/routes/sign-in-providers.js']) {
+    assert.match(read(file), /: await communityInvites\.dropCarried\(pool, req, res, result\.userId\);/, `${file} drops it the same way`);
+  }
   const src = read('src/services/community-invites.js');
+  // Dropping it follows nothing: it clears the cookie and records the
+  // sign-in, and never reaches redeem().
+  const drop = src.slice(src.indexOf('async function dropCarried'), src.indexOf('module.exports'));
+  assert.match(drop, /clearInviteCookie\(res\);/);
+  assert.match(drop, /noteInviteSignedIn\(pool, \{ token, userId, carried: true \}\)/);
+  assert.doesNotMatch(drop, /redeem\(/);
   assert.match(src, /httpOnly: true,\s+sameSite: 'lax',/);
   // It never throws into a sign-in.
   assert.match(src, /log\.warn\('invites', 'Following a carried invite link failed'/);

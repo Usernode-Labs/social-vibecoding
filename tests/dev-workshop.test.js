@@ -4809,8 +4809,10 @@ test('the feed answers on the Vote sheet and moves by swipe, arrows or keys', ()
   assert.ok(!/data-ws-tint=\{index % 2/.test(WORKSHOP), 'and never from the index of the moment');
   assert.match(WORKSHOP, /el\.style\.scrollBehavior = 'auto';\s*el\.scrollTop = idx \* el\.clientHeight;\s*el\.style\.scrollBehavior = '';/,
     'a position correction is instant, whatever the scroller\'s own behaviour');
-  assert.match(WORKSHOP, /Voted \$\{voted\} · \$\{wide \? 'press ↓ or scroll' : 'swipe up'\} for the next/,
+  assert.match(WORKSHOP, /\$\{answeredWords\(row, voted\)\} · \$\{wide \? 'press ↓ or scroll' : 'swipe up'\} for the next/,
     'and the eyebrow becomes the confirmation');
+  // "Voted yes", or on a Just-you change "Approved" / "Not approved" (#3977).
+  assert.match(WORKSHOP, /if \(!approves\(row\)\) return `Voted \$\{voted\}`;\s*return voted === 'yes' \? 'Approved' : 'Not approved';/);
   // THE ARROWS: icon buttons with a NAME, since a chevron alone has none,
   // disabled at the ends rather than wrapping. Hidden on a phone, where the
   // swipe is the move; on a wide window they do what the wheel does.
@@ -5471,13 +5473,38 @@ test('the Needs-you card is marked voted only once the server has the vote (QA 2
   assert.match(body, /pinsRef\.current\.delete\(key\)/, 'a cancelled or failed vote drops the pin this press added');
   assert.match(body, /\{ onSend \}/, 'the rail says "Sending…" from the moment the vote is committed');
   assert.match(body, /if \(sendingRef\.current\.has\(key\)\) return;/, 'one vote per card in flight');
-  assert.match(WORKSHOP, /sending\[row\.key\] \? 'Sending…' : 'Vote'/);
+  assert.match(WORKSHOP, /sending\[row\.key\] \? 'Sending…' : \(approves\(row\) \? 'Approve' : 'Vote'\)/);
   // castVote's side of the contract.
   const view = read('public/js/app-view.js');
   const cast = view.slice(view.indexOf('  async castVote(sessionId, vote'));
   const castBody = cast.slice(0, cast.indexOf('\n  },\n'));
   assert.match(castBody, /if \(reason === false\) \{\s*AppView\._voteInFlight\.delete\(key\);\s*return false;/);
   assert.match(castBody, /return true;/);
+});
+
+test('#3977: on a project that is just yours, the Needs-you item reads Approve and Don\'t approve', () => {
+  // B7's approval (`_cardVoteButtonSpecs` marks the Yes `approve`) rides on
+  // the queue row, and the item says it in the card's words: the rail
+  // button, the swipe's two stamps and, once answered, the confirmation.
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView.appData = { ...AppView.appData, audience: 'solo' };
+  const row = AppView._workshopView().queue.find((r) => r.kind === 'vote');
+  assert.equal(row.yes.approve, true);
+  assert.ok(!('approve' in row.no));
+  const html = workshopHtml(AppView, 'needs');
+  assert.match(html, /<span class="dev-ws-rail-lab">Approve<\/span>/);
+  assert.match(html, /<span class="dev-ws-swipe-hint dev-ws-swipe-yes" aria-hidden="true">Approve<\/span>/);
+  assert.match(html, /<span class="dev-ws-swipe-hint dev-ws-swipe-no" aria-hidden="true">Don’t approve<\/span>/);
+  assert.match(WORKSHOP, /<p className="dev-ws-keys-hint" aria-hidden="true">\{approves\(row\) \? 'Y approve · N don’t approve · Enter send · Esc close' : 'Y yes · N no · Enter vote · Esc close'\}<\/p>/);
+  assert.match(WORKSHOP, /approve=\{approves\(row\)\}/, 'and the sheet\'s form is the card\'s picker, as an approval');
+  // A group's row is a vote, word for word.
+  const group = makeAppView();
+  seed(group);
+  assert.ok(!('approve' in group._workshopView().queue.find((r) => r.kind === 'vote').yes));
+  const groupHtml = workshopHtml(group, 'needs');
+  assert.match(groupHtml, /<span class="dev-ws-rail-lab">Vote<\/span>/);
+  assert.match(groupHtml, /dev-ws-swipe-yes" aria-hidden="true">Yes<\/span>/);
 });
 
 test('#3052: on a phone a card the viewer can vote on takes the swipe; an issue or a pairless row does not', () => {

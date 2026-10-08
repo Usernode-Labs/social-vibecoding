@@ -68,9 +68,10 @@ const PRIMARY_FILL = 'bg-violet-600';
  * ── The gap that is still open, named rather than quietly left ─────────
  *
  * `<select>` is NOT scanned. It has the same three fills and the same
- * primitive (@/components/ui/select.tsx), and adding it here flags four raw
- * selects that predate this rule — #dc-runner-select, the share dialog's two,
- * and #settings-dev-flow — in three files none of which #2437 is about.
+ * primitive (@/components/ui/select.tsx), and adding it here flags three raw
+ * selects that predate this rule — #dc-runner-select and the share dialog's
+ * two (#settings-dev-flow, the fourth, left with its setting in #4311) — in
+ * files none of which #2437 is about.
  * Converting them is a slice of its own; widening the scan without converting
  * them would mean three allow-list entries, which is the one thing this file's
  * header says an allow-list is not for. The three selects on the waitlist

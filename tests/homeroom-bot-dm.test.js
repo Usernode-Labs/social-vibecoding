@@ -481,19 +481,22 @@ test('the held message names no amount, and offers the group when there is one',
   assert.doesNotMatch(solo + group, /\$/);
 });
 
-// ── The create dialog and the DM screen ──────────────────────────────────
+// ── The make screen and the DM screen ────────────────────────────────────
 
-test('the create dialog sends the longer description, never with an import', () => {
-  const { createBody, BRIEF_MIN, BRIEF_MAX } = loadTsx('frontend/src/features/dialogs/create-app.tsx', {
-    stubs: { '../messages/store': { open() {} } },
-  });
+test('the make screen sends the longer description, never with an import', () => {
+  // The create dialog that sent it is retired; Create opens the make screen
+  // (frontend/src/features/first-session/make.tsx), which asks it of everyone.
+  const { BRIEF_MIN, BRIEF_MAX, missingAnswer } = loadTsx('frontend/src/features/first-session/make.tsx');
   assert.equal(BRIEF_MIN, dm.MIN_BRIEF_CHARS, 'the client and server agree on the minimum');
   assert.equal(BRIEF_MAX, dm.MAX_BRIEF_CHARS, 'and on the maximum');
-  const base = { name: 'Chore wheel', mode: 'new', audience: 'solo', approvers: null, approvals: null };
-  assert.equal(createBody({ ...base, brief: '  A fair chore rota for the house.  ' }).brief, 'A fair chore rota for the house.');
-  assert.equal(createBody({ ...base, brief: 'short' }).brief, undefined);
-  assert.equal(createBody({ ...base, mode: 'import', repoUrl: 'https://github.com/o/r', brief: 'A fair chore rota for the house.' }).brief, undefined);
-  assert.equal(createBody(base).brief, undefined);
+  assert.equal(missingAnswer('short', 'Chore wheel'), 'brief', 'under the minimum is asked for again, not sent');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/first-session/make.tsx'), 'utf8');
+  assert.match(src, /maxLength=\{BRIEF_MAX\}/, 'the field stops at the maximum');
+  assert.match(src, /audience: 'invited',\s+brief: brief\.trim\(\),/);
+  // The import sends its repository, and no description to build from.
+  const imp = src.slice(src.indexOf('const importRepo = useCallback('), src.indexOf('const formClass ='));
+  assert.match(imp, /postCreateApp\(\{ name: repoName, audience: 'invited', repoUrl, from: entry \}\)/);
+  assert.doesNotMatch(imp, /brief/);
 });
 
 test('the short description is suggested for everyone making a project, and every description is filed', () => {
@@ -547,7 +550,7 @@ test('a question in the DM draws its answers, the default marked, and says an an
   const answered = { ...message, metadata: { homeroomBot: { ...message.metadata.homeroomBot, status: 'answered', answer: 'Oldest first' } } };
   const after = renderToHtml(createElement(BotQuestion, { message: answered, conversationId: 3 }));
   assert.doesNotMatch(after, /Something else/, 'no buttons once answered');
-  assert.match(after, /You answered: Oldest first/);
+  assert.match(after, /<dt class="messages-bot-choice-label">You answered<\/dt><dd><span class="messages-bot-chosen">Oldest first<\/span><\/dd>/, '#4197: the answer as a chip, not a button');
 
   const person = { ...message, sender: { id: 4, username: 'ada' } };
   assert.equal(renderToHtml(createElement(BotQuestion, { message: person, conversationId: 3 })), '', 'only the bot\'s own');
@@ -840,6 +843,17 @@ test('#3772: "needs a person" says what to do about it, and a card already showi
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot-dm.js'), 'utf8');
   assert.match(src, /const CARD_SAYS = new Set\(\['spec'\]\);/);
   assert.match(src, /objects: dm\.card \? \[\] : cardsFor\(kind, dm, app, issueNumber\)\.filter\(\(c\) => !\(shown && c\.type === 'issue'\)\),/);
+});
+
+test('#4239: a request about Homeroom itself says so, and offers the move instead of Go ahead', () => {
+  const ctx = { appName: 'Ear Trainer', issueNumber: 13, issueTitle: 'Header colour' };
+  const text = dm.dmText('person', { reason: 'The header is drawn by Homeroom.', platform: true }, ctx);
+  assert.match(text, /This is about Homeroom itself rather than Ear Trainer, so no change to Ear Trainer can do it, and I haven't built anything: The header is drawn by Homeroom\./);
+  assert.match(text, /I can move it to Homeroom's own board, where the people who work on Homeroom look\. Tap below to choose\.$/);
+  assert.doesNotMatch(text, /\u2014/);
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot-dm.js'), 'utf8');
+  assert.match(src, /\.\.\.\(STUCK_ACTIONS\[kind\] && !\(kind === 'person' && dm\.platform\) \?/);
+  assert.match(src, /if \(kind === 'person' && dm\.platform\) \{\n    await require\('\.\/homeroom-bot-move'\)\.offerMove\(/);
 });
 
 test('"typing" goes out before the answer starts, bounded', () => {

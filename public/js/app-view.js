@@ -65,11 +65,20 @@ const AppView = {
   _ghIssuesMeta: { truncatedList: false, note: null, stale: false, repoUrl: null, myRemaining: null },
   _bountyInFlight: new Set(),
 
-  // #396: per-issue-number cache of the GitHub comment thread fetched
-  // lazily when an issue topic opens, so _renderTopicHead's live-refreshes
-  // (WS-driven) reuse it instead of refetching. Each entry is
-  // `{ comments, truncated }`; absent means "not loaded yet".
-  _ghComments: {},
+  // #396: per-issue cache of the GitHub comment thread fetched lazily when
+  // an issue topic opens, so _renderTopicHead's live-refreshes (WS-driven)
+  // reuse it instead of refetching. Each entry is `{ comments, truncated }`;
+  // absent means "not loaded yet".
+  //
+  // #4178: keyed by `_ghCommentsKey(slug, number)`, never by the number
+  // alone. Every app has its own repository, so issue numbers repeat across
+  // apps, and the cache outlives the app view: keyed by number, project B's
+  // issue #12 painted project A's comments without asking the server.
+  _ghComments: new Map(),
+
+  _ghCommentsKey(slug, number) {
+    return `${slug}/${number}`;
+  },
 
   // Scroll-position memory for the Dev card list, keyed by app slug
   // (`App.currentApp`). In-memory only — reset on a full page reload by
@@ -4460,6 +4469,12 @@ const AppView = {
     // let the paint below re-read it once — returning to a topic shows the
     // roster it had while the new one loads, rather than a loading line.
     AppView._invalidateVoteRoster(ref.id);
+    // The governance roster follows the same rule (#4177): it used to be read
+    // once per page load, so reopening a topic showed the roster from the
+    // first visit.
+    if (ref.kind === 'gov') AppView._invalidateGovVoteRoster(ref.id);
+    // ...and both re-read after a gap while the topic is open.
+    AppView._watchTopicLiveReads();
     // Arriving at a SESSION topic used to open its shared transcript here:
     // the "Read chat" pill that once set `_transcriptOpen` on its way was
     // gone, so landing on this page WAS the read-the-chat gesture. #2605
@@ -4906,15 +4921,19 @@ const AppView = {
     let body;
     if (t.kind === 'issue') {
       card = AppView._issueCardModel(item, { noNav: true });
+      const closedBand = AppView._issueClosedBandView(item);
       // #396: the issue body, then the GitHub comment thread. The thread is
       // fetched lazily (after paint) into `#dev-issue-comments`, which the
       // head renders as an empty host, so a cached (or empty) result reuses
       // what is already there across WS-driven refreshes.
       body = {
         actions: AppView._detailActionsView('issue', item),
-        // (#2431) The mirror of a proposal's issue chips: which change
-        // closed this issue, or is working on it.
-        addressedBy: AppView._issueProposalRefView(item),
+        // (#2431) The mirror of a proposal's issue chips: which change is
+        // working on this issue, or addressed it. (#4244) On a CLOSED issue
+        // the change that closed it rides in the card's status band instead,
+        // so the page says "closed" once.
+        closedBand,
+        addressedBy: closedBand && closedBand.ref ? null : AppView._issueProposalRefView(item),
         issueBodyHtml: AppView._issueBodyHtml(item),
         issueBodyEditor: {
           issue: item.number,
@@ -5022,6 +5041,28 @@ const AppView = {
       label: n ? `#${n}` : 'Change',
       title: ref.title || (n ? `Pull request #${n}` : `Change ${ref.sessionId}`),
       href: `#app/${slug}/dev/proposals/${ref.sessionId}`,
+    };
+  },
+
+  // #4244: a closed request's ONE status band, at the top of its card:
+  // "Closed · Oct 5 · by #10 <title>". Emerald when a merged change closed
+  // it (the change is the band's pill, the door to its page), zinc when a
+  // close vote or an admin did (`closed_via`, from the single-issue route).
+  // The card itself then carries no second "Closed" badge (_issueCardModel).
+  _issueClosedBandView(issue) {
+    if (!issue || issue.state !== 'closed') return null;
+    const ref = AppView._issueProposalRefView(issue);
+    const merged = !!(ref && ref.state === 'merged');
+    const stamp = issue.closedAt ? relStamp(issue.closedAt) : { text: '', title: '' };
+    const how = merged ? null
+      : issue.closed_via === 'admin' ? 'by an admin'
+        : issue.closed_via === 'vote' ? 'by vote' : null;
+    return {
+      tone: merged ? 'merged' : 'settled',
+      when: stamp.text || null,
+      whenTitle: stamp.title || null,
+      how,
+      ref: merged ? ref : null,
     };
   },
 
@@ -5189,8 +5230,11 @@ const AppView = {
     // tier 0); while its rollout is still pending or has failed, the eyebrow
     // does not claim it.
     const dep = item.deployment_state;
+    // live_at is null while a merge is still going live (the merge-followups
+    // workflow machine); a row without the field reads as it always did.
     const settled = (dep === 'pending' || dep === 'deploying') ? 'Going live'
-      : (dep === 'failed' || dep === 'stalled') ? 'Not live yet' : 'Live';
+      : (dep === 'failed' || dep === 'stalled') ? 'Not live yet'
+        : dep === 'deployed' ? 'Live' : item.live_at === null ? 'Going live' : 'Live';
     // A change that went live inside another one says which
     // (services/included-changes.js): "Live, included in #8".
     const included = AppView._includedInWords(item);
@@ -5351,8 +5395,12 @@ const AppView = {
 
     const merged = item.status === 'merged';
     const included = merged ? AppView._includedInWords(item) : null;
+    // Every step done is merged, which is live only once production runs it
+    // (live_at, null until then).
+    const goingLive = merged && item.live_at === null;
     return {
-      headline: req ? req.headline : (merged ? (included ? `Live, ${included}` : 'Live') : 'Where it stands'),
+      headline: goingLive ? 'Going live'
+        : req ? req.headline : (merged ? (included ? `Live, ${included}` : 'Live') : 'Where it stands'),
       detail: req ? (req.detail || null) : null,
       done: req ? req.done : null,
       total: req ? req.total : null,
@@ -6024,15 +6072,16 @@ const AppView = {
       const ipClaims = (item.in_progress && Array.isArray(item.in_progress.claims))
         ? item.in_progress.claims : [];
       const myClaim = ipClaims.some((c) => c.mine);
-      // Nor is there anything to claim while the Homeroom bot is reading or
-      // building the request: a claim would only tell it to step back.
+      // #4190: offered while the Homeroom bot is reading or building the
+      // request too. A claim made once it is on it means "I'm working on
+      // this too": the bot keeps going (homeroom-bot.js issueHolders).
       if (myClaim) {
         pills.push({
           key: 'claim', cls: 'gc-vote-btn', label: 'Stop working on this',
           title: 'Stop working on this so somebody else can pick it up',
           act: { fn: 'clearIssueClaim', args: [item.number] },
         });
-      } else if (!item.bot) {
+      } else {
         pills.push({
           key: 'claim', cls: 'gc-vote-btn', label: 'I\'ll work on this',
           title: "Let everyone know you'll work on this. It's not a promise of progress",
@@ -7099,12 +7148,11 @@ const AppView = {
     if (issueBtn) {
       issueBtn.addEventListener('click', () => {
         close();
-        // The shared feedback dialog with the open app preselected (#226):
-        // since #2707 only `target: 'app'` does that, and only where "This
-        // app" can be chosen. The same call Improve.giveFeedback() makes,
+        // The shared feedback dialog, asking where it goes with nothing
+        // chosen (#4236): no `target`, the same as Improve.giveFeedback(),
         // so the two entry points cannot drift. QA 2026-09-24: plus
         // `intent`, so the dialog is headed "File an issue".
-        App.openFeedbackModal({ fromDev: true, target: 'app', intent: 'issue' });
+        App.openFeedbackModal({ fromDev: true, intent: 'issue' });
       }, { signal });
     }
     const importPrBtn = menu.querySelector('[data-plus="import-pr"]');
@@ -7222,8 +7270,8 @@ const AppView = {
     AppView._tellChangePage({ id: Number(sessionId), patch: clean });
   },
   // topic-head.tsx's ChangeDetail listens for this: an id re-reads, `{ id,
-  // row }` adopts a row, `{ id, patch }` merges one, 'all' re-reads every
-  // mounted page.
+  // row }` adopts a row, `{ id, patch }` merges one. Re-reading every mounted
+  // page after a gap is live reads' job now (#4177, lib/live-reads.ts).
   _tellChangePage(detail) {
     if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function'
         || typeof CustomEvent === 'undefined') return;
@@ -10183,7 +10231,7 @@ const AppView = {
         // without being named, which is why the head counts and the
         // sentence enumerates rather than both trying to do both.
         total: moved.length,
-        shipped: moved.filter((e) => e.kind === 'merged').length,
+        shipped: moved.filter((e) => e.kind === 'merged' && e.item?.live_at !== null).length,
         opened: moved.filter((e) => e.kind === 'issue').length,
         proposed: moved.filter((e) => e.kind === 'proposal').length,
         rows: moved.slice(0, AppView.WORKSHOP_SINCE_MAX).map((e) => ({ ...e.row, key: `since:${e.row.key}`, at: e.t })),
@@ -10214,7 +10262,9 @@ const AppView = {
     // every day and matched no week anybody talks about.
     const weekStartMs = AppView._weekStart(nowMs);
     const mergedAtOf = (m) => ts(m.merged_at || m.closed_at || m.created_at);
-    const allMerged = Array.isArray(AppView._merged) ? AppView._merged : [];
+    // Counted once live: a merge still going live has live_at null (the
+    // merge-followups workflow machine); rows without the field count.
+    const allMerged = (Array.isArray(AppView._merged) ? AppView._merged : []).filter((m) => m.live_at !== null);
     const openEntries = entries.filter((e) => e.lane !== 'done' && e.lane !== 'shipped');
     // Open issues nobody has taken. The OPEN lane specifically, not every
     // unfinished entry: `_bucketDevItems` already moves an issue with a
@@ -10334,7 +10384,9 @@ const AppView = {
         // it (sanitised where it is built), for a proposal that has one.
         descriptionHtml: x.kind === 'proposal' ? AppView._proposalSummaryHtml(x.item) : '',
         ask: 'Should this change go in?',
-        yes: yes ? { label: yes.label, act: yes.act } : null,
+        // #3977: a Just-you change's Yes is its approval (B7), and the
+        // item says Approve / Don't approve, as its card does.
+        yes: yes ? { label: yes.label, act: yes.act, ...(yes.approve ? { approve: true } : {}) } : null,
         no: no ? { label: no.label, act: no.act } : null,
       });
     }
@@ -10619,7 +10671,7 @@ const AppView = {
   // has changed, and not before. Weak, so a slot a repaint dropped is forgotten.
   _feedCommentsPainted: null,
 
-  // Comment requests on the wire, by `slug/number`. `_ghComments` is only
+  // Comment requests on the wire, by `_ghCommentsKey`. `_ghComments` is only
   // written when an answer lands, so it cannot say "already asked", and
   // every wiring pass asks for the first few slots again. Before this, one
   // load of that board fetched the same three threads six times each.
@@ -10839,16 +10891,16 @@ const AppView = {
       }
     };
 
-    const cached = AppView._ghComments[number];
-    if (cached) { paint(cached); return; }
-
     const slug = AppView.appData && AppView.appData.slug;
     if (!slug) return;
+    const key = AppView._ghCommentsKey(slug, number);
+    const cached = AppView._ghComments.get(key);
+    if (cached) { paint(cached); return; }
+
     // One request per issue, however many slots and passes ask (see
     // `_ghCommentsInFlight`). The caller that joins does not wait for the
     // answer: `paint` finds every live slot for this number when it lands,
     // this one included.
-    const key = `${slug}/${number}`;
     if (AppView._ghCommentsInFlight[key]) return;
     AppView._ghCommentsInFlight[key] = true;
     try {
@@ -10861,8 +10913,11 @@ const AppView = {
         comments: Array.isArray(data.comments) ? data.comments : [],
         truncated: !!data.truncated,
       };
-      AppView._ghComments[number] = entry;
-      paint(entry);
+      AppView._ghComments.set(key, entry);
+      // The slots are found by number alone, so an answer that lands after
+      // another app opened would land in that app's slots for the same
+      // number. It is kept for its own app, and painted only there.
+      if ((AppView.appData && AppView.appData.slug) === slug) paint(entry);
     } catch (_) {
       /* best-effort: the row simply shows no replies */
     } finally {
@@ -12957,8 +13012,10 @@ const AppView = {
     const body = issue && typeof issue.body === 'string'
       ? issue.body.replace(/^(\*\*Source:\*\*\s*)usernode (user|admin)\b/m, '$1Homeroom $2')
       : '';
+    // #3952: the people it names are links, as in chat (group-chat.js).
+    const mentions = typeof renderRequestMentions === 'function' ? renderRequestMentions : (h) => h;
     return body.trim()
-      ? `<div class="dev-issue-body">${renderMd(body)}</div>`
+      ? `<div class="dev-issue-body">${mentions(renderMd(body))}</div>`
       : '';
   },
 
@@ -13066,6 +13123,8 @@ const AppView = {
     const renderSpec = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
       ? (str) => DevChat.renderMarkdown(str, { breaks: false })
       : (str) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(str)}</pre>`;
+    // #3952: as in the request's body (_issueBodyHtml).
+    const mentions = typeof renderRequestMentions === 'function' ? renderRequestMentions : (h) => h;
     return {
       comments: list.map((c, i) => {
         const spec = AppView._botSpecOf(c);
@@ -13074,7 +13133,7 @@ const AppView = {
           author: c.author || 'unknown',
           bot: AppView._isBotCommentAuthor(c.author),
           createdAt: c.createdAt || '',
-          bodyHtml: renderMd(spec ? spec.lead : (c.body || '')),
+          bodyHtml: mentions(renderMd(spec ? spec.lead : (c.body || ''))),
           spec: spec ? { title: spec.title, html: renderSpec(spec.body) } : null,
         };
       }),
@@ -13280,7 +13339,7 @@ const AppView = {
   },
 
   // #396: lazily fetch + render an issue's GitHub comment thread into the
-  // #dev-issue-comments placeholder. Cached per issue number in _ghComments
+  // #dev-issue-comments placeholder. Cached per app and issue in _ghComments
   // so WS-driven _renderTopicHead refreshes paint from cache without a
   // refetch. Best-effort: a failed fetch leaves the placeholder empty (the
   // issue body still renders). Re-resolves the placeholder after the await
@@ -13290,9 +13349,16 @@ const AppView = {
     if (!item || item.number == null) return;
     const number = item.number;
 
+    const slug = AppView.appData && AppView.appData.slug;
+    if (!slug) return;
+    const key = AppView._ghCommentsKey(slug, number);
+
     const paint = (data) => {
       const t = AppView._devTopic;
       if (!t || t.kind !== 'issue' || t.id !== number) return;
+      // Issue numbers repeat across apps: the same number open in another
+      // app is not this issue (#4178).
+      if ((AppView.appData && AppView.appData.slug) !== slug) return;
       const slot = document.getElementById('dev-issue-comments');
       if (!slot) return;
       // The thread is features/dev-board/issue-comments.tsx's. The host is
@@ -13304,12 +13370,10 @@ const AppView = {
         AppView._issueCommentsView(data.comments, data.truncated, item.htmlUrl));
     };
 
-    const cached = AppView._ghComments[number];
+    const cached = AppView._ghComments.get(key);
     if (cached) { paint(cached); return; }
 
     try {
-      const slug = AppView.appData && AppView.appData.slug;
-      if (!slug) return;
       const res = await fetch(
         `/api/apps/${slug}/github-issues/${number}/comments${AppView._demoQS()}`
       );
@@ -13319,7 +13383,7 @@ const AppView = {
         comments: Array.isArray(data.comments) ? data.comments : [],
         truncated: !!data.truncated,
       };
-      AppView._ghComments[number] = entry;
+      AppView._ghComments.set(key, entry);
       paint(entry);
     } catch (_) { /* best-effort: leave the placeholder empty */ }
   },
@@ -14272,19 +14336,10 @@ const AppView = {
         act: () => window.open(pr.pr_url, '_blank', 'noopener'),
       });
     }
-    // B7: on a project that is just the viewer's, the vote is one-tap
-    // Approve, and its No lives here, last and red: today's No, with its
-    // line asked for as any No's is.
-    if (!ro && pr.status === 'promoted' && pr.my_vote !== 'no' && AppView._approveSolo(pr)) {
-      const epoch = Number.isFinite(parseInt(pr.approval_epoch, 10)) ? parseInt(pr.approval_epoch, 10) : null;
-      items.push({
-        label: 'Don’t approve',
-        icon: 'withdraw',
-        title: 'Say no to this change, with a line on why',
-        danger: true,
-        act: () => AppView.castVote(pr.id, 'no', ...(epoch === null ? [] : [epoch])),
-      });
-    }
+    // #4270: B7's "Don't approve" item is gone from here. Since #3977 a
+    // Just-you change's Approve opens the vote picker, whose other side is
+    // Don't approve with its line in the box; this was a second way to the
+    // same No, asking for the line by prompt instead.
     return items;
   },
 
@@ -15775,11 +15830,30 @@ const AppView = {
       // A row that passed only after a retry keeps its reason line, which
       // the verdict view otherwise drops for anything green.
       keepReason: !!(r && r.passedOnRetry),
+      // #3978: the repo unit suite row's per-test excerpts, each with the
+      // file, the test name and the captured error text. Only that row
+      // carries failureDetails; the caps here mirror the capture side's, so
+      // a hostile stored row cannot flood the fold.
+      details: (Array.isArray(r && r.failureDetails) ? r.failureDetails : []).slice(0, 10).map((d) => ({
+        file: (d && d.file) ? String(d.file).slice(0, 200) : null,
+        test: String((d && d.test) || 'unnamed test').slice(0, 200),
+        excerpt: String((d && d.excerpt) || '').slice(0, 2048),
+      })),
       errors: (Array.isArray(r && r.consoleErrors) ? r.consoleErrors : []).map((e) => ({
         kind: (e && e.kind) ? String(e.kind) : 'console',
         message: String((e && e.message) || '').slice(0, 500),
         source: (e && e.source) ? String(e.source).slice(0, 200) : null,
       })),
+      // #3978. The repo unit suite's per-test failure excerpts (error,
+      // expected/actual, first stack frames), already bounded and redacted
+      // when the run stored them.
+      details: (Array.isArray(r && r.failureDetails) ? r.failureDetails : []).slice(0, 10)
+        .filter((d) => d && d.excerpt)
+        .map((d) => ({
+          file: d.file ? String(d.file).slice(0, 200) : null,
+          test: String(d.test || 'test').slice(0, 200),
+          excerpt: String(d.excerpt).slice(0, 1500),
+        })),
     });
 
     const blockingRows = results.filter((r) => r && r.status !== 'pass' && !r.advisory);
@@ -16509,17 +16583,27 @@ const AppView = {
   // "Loading votes…" is reserved for a roster that has genuinely never been
   // loaded. A stale roster is at worst a few hundred milliseconds behind,
   // which is strictly better than a blank one.
+  //
+  // #4177: a roster marked stale while a read of it is on the wire (a vote, a
+  // gap) is read once more, fresh, when that read lands, since its answer may
+  // predate whatever asked. So a roster being read is marked, even before
+  // its first answer.
   _voteRosterStale: new Set(),
 
   _invalidateVoteRoster(sessionId) {
     if (sessionId == null) return;
     const id = Number(sessionId);
-    if (AppView._voteRoster[sessionId]) AppView._voteRosterStale.add(id);
+    if (AppView._voteRoster[sessionId] || AppView._voteRosterInFlight.has(sessionId)) AppView._voteRosterStale.add(id);
     else delete AppView._voteRoster[sessionId];
   },
 
-  async _loadVoteRoster(sessionId) {
-    if (AppView._voteRosterInFlight.has(sessionId)) return;
+  // `fresh`: a live re-read after a gap (#4177), which must not be answered
+  // from the service worker's saved copy (`cache: 'no-cache'`, public/sw.js).
+  async _loadVoteRoster(sessionId, { fresh = false } = {}) {
+    if (AppView._voteRosterInFlight.has(sessionId)) {
+      if (fresh) AppView._voteRosterStale.add(Number(sessionId));
+      return;
+    }
     const stale = AppView._voteRosterStale.has(Number(sessionId));
     if (AppView._voteRoster[sessionId] && !stale) return;
     AppView._voteRosterStale.delete(Number(sessionId));
@@ -16528,6 +16612,9 @@ const AppView = {
       AppView._voteRosterInFlight.delete(sessionId);
       const before = (AppView._voteRoster[sessionId]?.earlierVoters || []).join('\n');
       AppView._voteRoster[sessionId] = view;
+      // Marked stale while this read was on the wire: once more, fresh,
+      // before the repaint below could start a plain read.
+      if (AppView._voteRosterStale.has(Number(sessionId))) void AppView._loadVoteRoster(sessionId, { fresh: true });
       AppView._renderTopicHead();
       // #3411: the Discussion marks the vote lines this roster says no longer
       // count, so repaint it when that set moves (and only then).
@@ -16538,7 +16625,7 @@ const AppView = {
       }
     };
     try {
-      const res = await fetch(`/api/sessions/${sessionId}/votes`);
+      const res = await fetch(`/api/sessions/${sessionId}/votes`, fresh ? { cache: 'no-cache' } : undefined);
       if (!res.ok) { publish({ phase: 'hidden' }); return; }
       const data = await res.json();
       const ctx = AppView._proposalsCtx || {};
@@ -16611,13 +16698,48 @@ const AppView = {
   _invalidateGovVoteRoster(issueId) {
     if (issueId == null) return;
     const id = Number(issueId);
-    if (AppView._govVoteRoster[issueId]) AppView._govVoteRosterStale.add(id);
+    if (AppView._govVoteRoster[issueId] || AppView._govVoteRosterInFlight.has(issueId)) AppView._govVoteRosterStale.add(id);
     else delete AppView._govVoteRoster[issueId];
   },
 
-  async _loadGovVoteRoster(issueId) {
+  // ── Live re-reads for the open topic (#4177) ─────────────────────────
+  //
+  // A governance roster was invalidated only by the viewer's OWN vote, so
+  // anyone else's never appeared on an open page. It now re-reads after a gap
+  // (lib/live-reads.ts: the socket reconnecting, the tab coming back, the
+  // service worker correcting this roster's read). A change page's roster
+  // re-reads with the page itself (topic-head.tsx's ChangeDetail), and every
+  // topic's discussion with the chat (GroupChat.resyncLoaded). Registered
+  // once, the first time a topic opens; the watcher reads whichever topic is
+  // open when a re-read comes.
+  _topicLiveWatch: null,
+  _watchTopicLiveReads() {
+    if (AppView._topicLiveWatch) return;
+    const live = window.UsernodeReact && window.UsernodeReact.liveReads;
+    if (!live || typeof live.watch !== 'function') return;
+    AppView._topicLiveWatch = live.watch(() => AppView._rereadOpenTopic(), {
+      reads: (url) => url.pathname === AppView._openGovRosterPath(),
+    });
+  },
+  _openGovRosterPath() {
+    const t = AppView._devTopic;
+    if (!t || t.kind !== 'gov' || !AppView.appData) return null;
+    return `/api/apps/${AppView.appData.slug}/governance/${t.id}/votes`;
+  },
+  _rereadOpenTopic() {
+    if (typeof App === 'undefined' || App.currentTab !== 'dev' || !AppView._openGovRosterPath()) return;
+    const id = AppView._devTopic.id;
+    AppView._invalidateGovVoteRoster(id);
+    return AppView._loadGovVoteRoster(id, { fresh: true });
+  },
+
+  // `fresh` as in `_loadVoteRoster`.
+  async _loadGovVoteRoster(issueId, { fresh = false } = {}) {
     if (issueId == null || !AppView.appData) return;
-    if (AppView._govVoteRosterInFlight.has(issueId)) return;
+    if (AppView._govVoteRosterInFlight.has(issueId)) {
+      if (fresh) AppView._govVoteRosterStale.add(Number(issueId));
+      return;
+    }
     const stale = AppView._govVoteRosterStale.has(Number(issueId));
     if (AppView._govVoteRoster[issueId] && !stale) return;
     AppView._govVoteRosterStale.delete(Number(issueId));
@@ -16625,11 +16747,14 @@ const AppView = {
     const publish = (view) => {
       AppView._govVoteRosterInFlight.delete(issueId);
       AppView._govVoteRoster[issueId] = view;
+      // As in `_loadVoteRoster`: marked stale meanwhile, read once more.
+      if (AppView._govVoteRosterStale.has(Number(issueId))) void AppView._loadGovVoteRoster(issueId, { fresh: true });
       AppView._renderTopicHead();
     };
     try {
       const slug = AppView.appData.slug;
-      const res = await fetch(`/api/apps/${slug}/governance/${issueId}/votes${AppView._demoQS()}`);
+      const res = await fetch(`/api/apps/${slug}/governance/${issueId}/votes${AppView._demoQS()}`,
+        fresh ? { cache: 'no-cache' } : undefined);
       if (!res.ok) { publish({ phase: 'hidden' }); return; }
       const data = await res.json();
       // A non-breaking space is not needed here (no approver ticks on a
@@ -17925,7 +18050,9 @@ const AppView = {
       : null;
 
     // ── Badges: close status + work state + at most three metadata chips ──
-    const badges = closed ? [closedBadge] : [
+    // (#4244) On its own page (noNav) the status band above the card says
+    // it, with when and by what, so the card does not say it twice.
+    const badges = closed ? (noNav ? [] : [closedBadge]) : [
       closeBadge,
       AppView._inProgressChipSpec(issue),
       ...AppView._attrChipSpecs('issue', n, issue, { omitUnset: !noNav }),
@@ -17940,8 +18067,7 @@ const AppView = {
       // with it before writing any code, and the chip it toggles is right
       // above in the status band — so the toggle belongs beside it, not two
       // taps away. Board only: the detail view already spells this action
-      // out in full in its own action list. None while the Homeroom bot is
-      // on it (see _issueProgressActionSpec).
+      // out in full in its own action list.
       const claim = noNav ? null : AppView._issueProgressActionSpec(issue);
       if (claim) actions.push(claim);
     }
@@ -18276,16 +18402,14 @@ const AppView = {
   // as the chip covering six OTHER states, so pressing it looked like it
   // ought to produce whichever of them the reader had last seen.
   //
-  // Null while the Homeroom bot is reading or building the request
-  // (issue.bot): there is nothing to take, and a claim tells the bot to step
-  // back from it mid-build. A claim the viewer already holds can still be
-  // released.
+  // #4190: offered while the Homeroom bot is reading or building the request
+  // (issue.bot) as well. A claim made once the bot is on it is somebody
+  // working on it alongside the bot, not a hold: the bot keeps going.
   _issueProgressActionSpec(issue) {
     const n = issue.number;
     const claims = (issue.in_progress && Array.isArray(issue.in_progress.claims))
       ? issue.in_progress.claims : [];
     const mine = claims.some((c) => c.mine);
-    if (!mine && issue.bot) return null;
     return mine
       ? {
         key: 'claim', cls: 'gc-vote-btn', label: 'Stop working on this',
@@ -18344,11 +18468,11 @@ const AppView = {
       // st.progressOnFace — the board card promotes this to a button
       // (_issueProgressActionSpec), so the row would duplicate it. It is
       // still a row wherever the face doesn't carry it (read-only boards).
-      // No Claim while the Homeroom bot is on the request, as on the face.
+      // Offered while the Homeroom bot is on the request too, as on the face.
       const ipClaims = (issue.in_progress && Array.isArray(issue.in_progress.claims))
         ? issue.in_progress.claims : [];
       const myClaim = ipClaims.some((c) => c.mine);
-      if (!st.progressOnFace && (myClaim || !issue.bot)) {
+      if (!st.progressOnFace) {
         items.push(myClaim
           ? {
             label: 'Stop working on this',
@@ -19907,6 +20031,13 @@ const AppView = {
         // about, and every app not redeployed since revision labels were
         // introduced would otherwise flag its whole history (#3368).
       }
+      // Merged, and production not yet known to run it: live_at is null until
+      // it does (the merge-followups workflow machine). A row without the
+      // field reads as it always did.
+      if (p.live_at === null) {
+        return { ...base, tier: 0, key: 'deploying', label: 'Going live…', tone: 'progress', spinner: true, lock: false, advisory: 0,
+          title: 'This change was approved. The app is still running the version before it.' };
+      }
       return { ...base, tier: 0, key: 'merged', label: '✓ Live', tone: 'ok', lock: false, advisory: 0 };
     }
     // 1 — in flight.
@@ -21369,12 +21500,15 @@ const AppView = {
     } else if (s.key === 'bot') {
       // B8: and who asked it to, when somebody did.
       if (s.bot === 'queued') {
-        main = `${s.botAskedBy ? `${s.botAskedBy} asked` : 'Somebody asked'} Homeroom bot to build this. It starts as soon as a builder is free, so nobody needs to claim it.`;
+        main = `${s.botAskedBy ? `${s.botAskedBy} asked` : 'Somebody asked'} Homeroom bot to build this. It starts as soon as a builder is free.`;
       } else {
         main = s.botAskedBy
-          ? `${s.botAskedBy} asked Homeroom bot to build this. It started ${s.bot === 'reading' ? 'reading' : 'building'} it${when}, so nobody needs to claim it.`
-          : `The Homeroom bot started ${s.bot === 'reading' ? 'reading' : 'building'} this request${when}, so nobody needs to claim it.`;
+          ? `${s.botAskedBy} asked Homeroom bot to build this. It started ${s.bot === 'reading' ? 'reading' : 'building'} it${when}.`
+          : `The Homeroom bot started ${s.bot === 'reading' ? 'reading' : 'building'} this request${when}.`;
       }
+      // #4190: Claim is offered beside the bot, and a claim made now does not
+      // stop it. Said only while nobody has (the "Also:" below names them).
+      if (!s.otherClaims) main += ' Anyone can still pick it up and work on it alongside the bot.';
     } else if (s.key === 'auto_solving') {
       main = 'An auto-solve run is working on this right now.';
     } else if (s.key === 'paused') {

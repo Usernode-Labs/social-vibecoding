@@ -165,15 +165,6 @@
       "mobileSupported": true
     },
     {
-      "key": "build-venue",
-      "label": "Where changes get built",
-      "group": "AI & building",
-      "gate": null,
-      "capabilityId": "settings.open.build_venue",
-      "classicPath": "#settings/build-venue",
-      "mobileSupported": true
-    },
-    {
       "key": "cli",
       "label": "CLI & coding-agent access",
       "group": "AI & building",
@@ -1325,6 +1316,21 @@
       "domain": "admin",
       "risk": "external_write",
       "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin"
+    },
+    {
+      "source": "src/routes/admin.js",
+      "method": "GET",
+      "path": "/api/admin/incidents",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.get.admin.incidents.862da7fa",
+      "domain": "admin",
+      "risk": "read",
+      "confirmation": "never",
       "renderer": "admin_record",
       "transport": "server_loopback",
       "mobileSupported": true,
@@ -3499,21 +3505,6 @@
     {
       "source": "src/routes/auth.js",
       "method": "POST",
-      "path": "/api/me/dev-flow",
-      "expression": null,
-      "status": "mapped",
-      "capabilityId": "settings.post.me.dev.flow.ae803a40",
-      "domain": "settings",
-      "risk": "external_write",
-      "confirmation": "required",
-      "renderer": "setting",
-      "transport": "server_loopback",
-      "mobileSupported": true,
-      "classicPath": "#settings"
-    },
-    {
-      "source": "src/routes/auth.js",
-      "method": "POST",
       "path": "/api/me/locale",
       "expression": null,
       "status": "mapped",
@@ -4242,6 +4233,21 @@
     {
       "source": "src/routes/bot-configs.js",
       "method": "POST",
+      "path": "/api/admin/homeroom-bot/configs/budget",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.post.admin.homeroom.bot.configs.budget.83ba9ee4",
+      "domain": "admin",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin"
+    },
+    {
+      "source": "src/routes/bot-configs.js",
+      "method": "POST",
       "path": "/api/admin/homeroom-bot/configs/:id/role",
       "expression": null,
       "status": "mapped",
@@ -4276,6 +4282,21 @@
       "expression": null,
       "status": "mapped",
       "capabilityId": "apps.post.bot.configs.d5ee6948",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps"
+    },
+    {
+      "source": "src/routes/bot-configs.js",
+      "method": "POST",
+      "path": "/api/bot-configs/budget",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.bot.configs.budget.10998c51",
       "domain": "apps",
       "risk": "external_write",
       "confirmation": "required",
@@ -6207,6 +6228,22 @@
       "classicPath": "#app/:slug/app"
     },
     {
+      "source": "src/routes/external-agent-patch-upload.js",
+      "method": "PUT",
+      "path": "/api/external-tasks/:taskId/patch",
+      "expression": null,
+      "status": "exempt",
+      "reason": "coding-agent patch upload authenticated by a one-time work-order token (#4264), never a signed-in Classic control"
+    },
+    {
+      "source": "src/routes/external-agent-patch-upload.js",
+      "method": "POST",
+      "path": "/api/external-tasks/:taskId/patch",
+      "expression": null,
+      "status": "exempt",
+      "reason": "coding-agent patch upload authenticated by a one-time work-order token (#4264), never a signed-in Classic control"
+    },
+    {
       "source": "src/routes/feedback.js",
       "method": "POST",
       "path": "/api/feedback/title",
@@ -7941,6 +7978,21 @@
       "expression": null,
       "status": "mapped",
       "capabilityId": "apps.post.me.waitlist.join.0a54f4d1",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps"
+    },
+    {
+      "source": "src/routes/member-waitlist.js",
+      "method": "POST",
+      "path": "/api/me/waitlist/join-phone",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.me.waitlist.join.phone.87f4b1bd",
       "domain": "apps",
       "risk": "external_write",
       "confirmation": "required",
@@ -10529,6 +10581,21 @@
     {
       "source": "src/routes/test-accounts.js",
       "method": "POST",
+      "path": "/api/test-accounts/phone-sign-ins",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.test.accounts.phone.sign.ins.1a7f5403",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps"
+    },
+    {
+      "source": "src/routes/test-accounts.js",
+      "method": "POST",
       "path": "/api/test-accounts/:id/retire",
       "expression": null,
       "status": "mapped",
@@ -13058,6 +13125,22 @@
       "transport": "server_loopback",
       "mobileSupported": true,
       "classicPath": "#app/:slug/app"
+    },
+    {
+      "source": "src/routes/workshop-overview.js",
+      "method": "GET",
+      "path": "/api/sessions/:id/votes",
+      "expression": null,
+      "status": "exempt",
+      "reason": "staging demo-card middleware represented by the concrete session vote capabilities"
+    },
+    {
+      "source": "src/routes/workshop-overview.js",
+      "method": "POST",
+      "path": "/api/sessions/:id/vote",
+      "expression": null,
+      "status": "exempt",
+      "reason": "staging demo-card middleware represented by the concrete session vote capabilities"
     },
     {
       "source": "src/routes/workshop-overview.js",

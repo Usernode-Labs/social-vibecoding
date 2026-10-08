@@ -121,17 +121,18 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 const SUMMARY_CONTRIBUTIONS_LIMIT = 5;
 
 const SUMMARY_COUNTS_SQL = `
-  SELECT COUNT(*) FILTER (WHERE cs.status = 'merged')::int AS merged,
-         COUNT(DISTINCT cs.app_id) FILTER (WHERE cs.status = 'merged')::int AS apps,
+  SELECT COUNT(*) FILTER (WHERE cs.status = 'merged' AND cs.live_at IS NOT NULL)::int AS merged,
+         COUNT(DISTINCT cs.app_id) FILTER (WHERE cs.status = 'merged' AND cs.live_at IS NOT NULL)::int AS apps,
          COUNT(*) FILTER (WHERE cs.status IN (
            'active', 'paused', 'promoted', 'merging', 'merged', 'archived'
          ))::int AS proposals_total,
          -- Your changes' "2 in progress" on Me (UI overhaul): the same two
          -- buckets GET /api/me/proposal-history files as in progress and
          -- open for a vote.
+         -- A merged change still going live (live_at) is in progress too.
          COUNT(*) FILTER (WHERE cs.status IN (
            'active', 'paused', 'promoted', 'merging'
-         ))::int AS in_progress,
+         ) OR (cs.status = 'merged' AND cs.live_at IS NULL))::int AS in_progress,
          (SELECT COUNT(*)::int
             FROM pr_kudos pk
             JOIN chat_sessions ks ON ks.id = pk.session_id
@@ -154,7 +155,7 @@ const SUMMARY_CONTRIBUTIONS_SQL = `
               WHERE ib.status = 'awarded' AND ib.awarded_session_id = cs.id))::int AS kudos
     FROM chat_sessions cs
     JOIN apps a ON a.id = cs.app_id
-   WHERE cs.user_id = $1 AND cs.is_headless = FALSE AND cs.status = 'merged'
+   WHERE cs.user_id = $1 AND cs.is_headless = FALSE AND cs.status = 'merged' AND cs.live_at IS NOT NULL
    ORDER BY cs.merged_at DESC NULLS LAST, cs.id DESC
    LIMIT $2
 `;
@@ -286,8 +287,10 @@ const MY_PROPOSALS_SQL = `
       FROM chat_sessions cs
      WHERE ${MY_PROPOSALS_WHERE} AND cs.is_headless = FALSE
      UNION ALL
-    SELECT 'merged' AS section, cs.id AS session_id, cs.session_title AS title,
-           cs.app_id, cs.status, COALESCE(cs.merged_at, cs.last_activity_at) AS at
+    -- Live once production runs it (live_at); going live, it is still in progress.
+    SELECT CASE WHEN cs.live_at IS NULL THEN 'openForVote' ELSE 'merged' END AS section,
+           cs.id AS session_id, cs.session_title AS title,
+           cs.app_id, cs.status, COALESCE(cs.live_at, cs.merged_at, cs.last_activity_at) AS at
       FROM chat_sessions cs
      WHERE cs.user_id = $1 AND cs.is_headless = FALSE AND cs.status = 'merged'
      UNION ALL
@@ -439,7 +442,7 @@ const MY_REQUESTS_SQL = `
     SELECT m.number, m.title, m.created_at,
            a.slug AS app_slug, a.name AS app_name, a.self_hosted,
            EXISTS (SELECT 1 FROM chat_sessions cs
-                    WHERE cs.app_id = m.app_id AND cs.status = 'merged'
+                    WHERE cs.app_id = m.app_id AND cs.status = 'merged' AND cs.live_at IS NOT NULL
                       AND m.number = ANY(cs.linked_issues)) AS shipped,
            EXISTS (SELECT 1 FROM issues c
                     WHERE c.app_id = m.app_id AND c.kind = 'close_issue' AND c.status = 'closed'

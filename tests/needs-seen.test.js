@@ -262,8 +262,10 @@ test('GET /api/workshop/counts says which votes `needs` counts, in the record\'s
   // numbers as a real one does.
   const seen = loadTsx(SEEN_SRC);
   const reel = loadTsx('frontend/src/features/workshop/needs-reel.tsx');
-  const keys = reel.reelRows(route.DEMO_NEEDS_FEED).map(seen.needsRowKey);
+  const keysOf = (slug) => reel.reelRows(route.DEMO_NEEDS_FEED.filter((it) => it.app.slug === slug)).map(seen.needsRowKey);
+  for (const slug of new Set(route.DEMO_NEEDS_FEED.map((it) => it.app.slug))) {
+    assert.deepEqual(route.DEMO_COUNTS[slug].owed, keysOf(slug), slug);
+  }
   const slug = 'staging-demo-your-app';
-  assert.deepEqual(route.DEMO_COUNTS[slug].owed, keys);
-  assert.equal(route.DEMO_COUNTS[slug].needs, keys.length);
+  assert.equal(route.DEMO_COUNTS[slug].needs, keysOf(slug).length);
 });

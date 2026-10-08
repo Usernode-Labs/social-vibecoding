@@ -43,7 +43,13 @@ const appManifest = require('./app-manifest');
 const log = require('./logger');
 const {
   UNIT_CHECK_NAME, UNIT_CHECK_PATH, UNIT_CHECK_INDEX, FAILURE_DETAIL_MAX, isUnitSuiteRow,
+  MAX_TEST_EXCERPT_CHARS, MAX_UNIT_EXCERPTS, MAX_UNIT_DETAILS_BYTES,
+  MAX_EXCERPT_PRECEDING_LINES, MAX_EXCERPT_LINE_CHARS, MAX_STACK_LINES,
 } = require('./unit-suite-row');
+// The same scrubbing the check logs and the logger use: an excerpt is
+// persisted in test_results and read back by agents, so a credential a test
+// printed (a DSN with a password, a token in a URL) must not survive.
+const { redactString } = require('./log-redaction');
 
 // The worker image ships node 22 + git + a local PostgreSQL 17 and is rebuilt
 // daily, so reusing it means no separate CI image to build or deploy. Repos
@@ -116,6 +122,11 @@ function relativeFile(location, root) {
   return p || null;
 }
 
+// TAP structure a backward walk stops at: another test line, the end of a
+// YAML block, a comment or a plan — everything after it that is not indented
+// is the suite's own stdout, which is what the excerpt wants to keep.
+const TAP_STRUCTURE = /^\s*(?:not ok\b|ok\b|\.\.\.|#\s|1\.\.\d+)/;
+
 // Every failing TOP-LEVEL test in TAP output, in order: `{ name, file }`.
 //
 // node:test prints the test's name on its `not ok` line and its file only
@@ -126,7 +137,11 @@ function relativeFile(location, root) {
 // failure — the exit code ignores it, so the reason must not send a fix
 // turn to it. `file` is null when the block has no `location:` (other TAP
 // producers; a runner that died mid-block).
-function failingTests(lines) {
+//
+// The block's own lines and the stdout just before the `not ok` ride along
+// (`blockLines`, `before`) for the per-test excerpts (#3978); the grouped
+// reason below reads only name and file, so its shape never moves.
+function failingTestsWithExcerpts(lines) {
   const rootLine = lines.find((l) => l.startsWith(`${ROOT_SENTINEL}=`));
   const root = rootLine ? rootLine.slice(ROOT_SENTINEL.length + 1).trim().replace(/\/+$/, '') : null;
   const out = [];
@@ -135,16 +150,34 @@ function failingTests(lines) {
     if (!m) continue;
     if (/\s#\s*(SKIP|TODO)\b/i.test(` ${m[1]}`)) continue;
     let file = null;
+    const blockLines = [];
     if (i + 1 < lines.length && lines[i + 1].trim() === '---') {
       for (let j = i + 2; j < lines.length && /^\s/.test(lines[j]); j += 1) {
         if (lines[j].trim() === '...') break;
+        blockLines.push(lines[j]);
         const loc = /^ {2}location:\s*['"]?(.*?)['"]?\s*$/.exec(lines[j]);
-        if (loc) { file = relativeFile(loc[1], root); break; }
+        if (loc && file === null) file = relativeFile(loc[1], root);
       }
     }
-    out.push({ name: m[1].trim() || '(unnamed test)', file });
+    // Up to MAX_EXCERPT_PRECEDING_LINES lines of the suite's own stdout
+    // printed just before the failure, oldest first. Empty lines are
+    // skipped, TAP structure and the container script's markers end the
+    // walk — they are the runner's, not the test's.
+    const before = [];
+    for (let j = i - 1; j >= 0 && before.length < MAX_EXCERPT_PRECEDING_LINES; j -= 1) {
+      const l = lines[j];
+      if (!l.trim()) continue;
+      if (/^__UNIT_SUITE_[A-Z_]+__(=|$)/.test(l.trim())) break;
+      if (TAP_STRUCTURE.test(l)) break;
+      before.unshift(l.trim());
+    }
+    out.push({ name: m[1].trim() || '(unnamed test)', file, blockLines, before });
   }
   return out;
+}
+
+function failingTests(lines) {
+  return failingTestsWithExcerpts(lines).map(({ name, file }) => ({ name, file }));
 }
 
 function clipName(name) {
@@ -216,19 +249,113 @@ function groupedFailures(failures, budget) {
   return parts;
 }
 
+// A test's YAML diagnostic block, with the stack folded to its first lines:
+// `error`, `code`, `expected`/`actual` and `failureType` are the diagnosis;
+// the rest of a stack is volume. Everything else in the block passes through.
+function diagnosticsFromBlock(blockLines) {
+  const out = [];
+  for (let i = 0; i < blockLines.length; i += 1) {
+    const line = blockLines[i];
+    out.push(line);
+    if (!/^\s*stack:\s*(\||\S|$)/.test(line)) continue;
+    const keyIndent = line.length - line.trimStart().length;
+    let j = i + 1;
+    let kept = 0;
+    for (; j < blockLines.length; j += 1) {
+      const l = blockLines[j];
+      if (l.length - l.trimStart().length <= keyIndent) break;
+      if (kept < MAX_STACK_LINES) { out.push(l); kept += 1; }
+    }
+    if (j - (i + 1) > kept) out.push(`  … ${j - (i + 1) - kept} more stack lines`);
+    i = j - 1;
+  }
+  return out;
+}
+
+const clipChars = (s, max) => (s.length > max ? `${s.slice(0, max - 1)}…` : s);
+
+// One failing test's excerpt: its YAML diagnostics, then the stdout printed
+// just before it. Redacted like the check logs (the same scrubbing plus
+// token-like query parameters — an excerpt is persisted and read back by
+// agents), clipped to MAX_TEST_EXCERPT_CHARS. Empty when the block and the
+// preceding stdout are both empty: the test's name is already in the reason.
+function excerptOfTest({ blockLines, before }) {
+  const diagnostics = diagnosticsFromBlock(blockLines)
+    .map((l) => l.replace(/\t/g, '  ').trimEnd())
+    .filter((l) => l.trim());
+  const stdout = before.map((l) => clipChars(l, MAX_EXCERPT_LINE_CHARS));
+  if (!diagnostics.length && !stdout.length) return '';
+  let text = diagnostics.join('\n');
+  if (stdout.length) {
+    const head = text ? `${text}\n— stdout just before the failure —\n` : '';
+    text = `${head}${stdout.join('\n')}`;
+  }
+  return clipChars(
+    redactString(text).replace(/([?&](?:token|jwt|auth|key)=)[^&\s]+/gi, '$1****'),
+    MAX_TEST_EXCERPT_CHARS
+  );
+}
+
+// The per-test excerpts of a failed run, capped: MAX_UNIT_EXCERPTS tests,
+// each MAX_TEST_EXCERPT_CHARS, and the whole array within
+// MAX_UNIT_DETAILS_BYTES (trailing tests give way first). `truncated` says
+// when anything was left out, so a reader can point at the rest.
+function unitFailureDetails(lines) {
+  const failures = failingTestsWithExcerpts(lines);
+  const details = [];
+  for (const f of failures) {
+    const excerpt = excerptOfTest(f);
+    if (!excerpt) continue;
+    details.push({ file: f.file, test: clipName(f.name), excerpt });
+    if (details.length >= MAX_UNIT_EXCERPTS) break;
+  }
+  let truncated = details.length < failures.length;
+  const bytes = () => details.reduce((n, d) => n + Buffer.byteLength(JSON.stringify(d), 'utf8'), 0);
+  while (details.length && bytes() > MAX_UNIT_DETAILS_BYTES) {
+    details.pop();
+    truncated = true;
+  }
+  return { details, truncated };
+}
+
+// A TAP summary counter's last value (`# fail 18` is 18), or null when the
+// output printed none.
+function summaryCounter(lines, key) {
+  const re = new RegExp(`^# ${key} (\\d+)\\s*$`);
+  let value = null;
+  for (const l of lines) {
+    const m = re.exec(l);
+    if (m) value = parseInt(m[1], 10);
+  }
+  return value;
+}
+
+// Did `npm test` report any test at all? One TAP test line, or a summary
+// counter above zero, says it ran, whatever else went wrong. The setup
+// sentinel alone cannot answer that: a long run's log can come back without
+// its start. PR #4217's did (#4265): its summary counted 21,713 passing and
+// 18 failing tests, the sentinel and every `not ok` line were gone, and the
+// row read "the tests never ran".
+function testsReported(lines) {
+  return lines.some((l) => /^\s*(?:not )?ok \d+\b/.test(l))
+    || ['tests', 'pass', 'fail', 'cancelled', 'skipped', 'todo']
+      .some((key) => summaryCounter(lines, key) > 0);
+}
+
 // Distill a failed run's output into a bounded failureReason. When the
 // output is TAP (node:test, tap): the failing tests grouped by the file each
 // one is in, then the summary counters. Otherwise the last few non-empty
 // lines of output (jest & friends, npm/git errors). A timeout or a setup
-// failure leads, in words main-watch.js matches on.
-function failureDetail(stdout, stderr, { timedOut = false } = {}) {
-  const out = `${String(stdout || '')}\n${String(stderr || '')}`;
-  const lines = out.split('\n');
+// failure leads, in words main-watch.js matches on. Setup failure is said
+// only when no test reported (#4265): a red suite whose log lost the
+// sentinel is a red suite, and a summary that counts failures the output
+// does not name says so ahead of the tail.
+function failureDetailFromLines(lines, { timedOut = false } = {}) {
   const parts = [];
   if (timedOut) {
     parts.push(`Suite run exceeded ${Math.round(UNIT_SUITE_TIMEOUT_MS / 1000)}s and was killed.`);
   }
-  if (!out.includes(SETUP_DONE_SENTINEL) && !timedOut) {
+  if (!lines.join('\n').includes(SETUP_DONE_SENTINEL) && !timedOut && !testsReported(lines)) {
     parts.push('Suite setup failed (clone / npm ci), so the tests never ran.');
   }
   const failures = failingTests(lines);
@@ -238,12 +365,34 @@ function failureDetail(stdout, stderr, { timedOut = false } = {}) {
     const grouped = groupedFailures(failures, FAILURE_DETAIL_MAX - fixed);
     parts.push(...grouped, ...counters);
   } else {
+    const failed = summaryCounter(lines, 'fail');
+    if (failed > 0) {
+      parts.push(`${failed} test${failed === 1 ? '' : 's'} failed, but the saved output does not name `
+        + `${failed === 1 ? 'it' : 'them'}.`);
+    }
     const tail = lines.map((l) => l.trim())
       .filter((l) => l && !/^__UNIT_SUITE_[A-Z_]+__(=|$)/.test(l))
       .slice(-MAX_TAIL_LINES);
     parts.push(...tail);
   }
   return parts.join(' | ').slice(0, FAILURE_DETAIL_MAX);
+}
+
+function failureDetail(stdout, stderr, { timedOut = false } = {}) {
+  const out = `${String(stdout || '')}\n${String(stderr || '')}`;
+  return failureDetailFromLines(out.split('\n'), { timedOut });
+}
+
+// One parse pass over a failed run's output yields both readers' answers:
+// the grouped reason (byte-for-byte what failureDetail always returned) and
+// the per-test excerpts beside it (#3978).
+function failureOutcomeParts(stdout, stderr, { timedOut = false } = {}) {
+  const out = `${String(stdout || '')}\n${String(stderr || '')}`;
+  const lines = out.split('\n');
+  return {
+    reason: failureDetailFromLines(lines, { timedOut }),
+    ...unitFailureDetails(lines),
+  };
 }
 
 // The container script. Fetches the exact ref the rest of the checks run
@@ -448,6 +597,7 @@ async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, re
   const startedAt = Date.now();
   let passed = false;
   let reason = '';
+  let unitDetails = null;
   try {
     const cloneUrl = await github.getCloneUrl(repoOwner, repoName);
     const options = {
@@ -477,7 +627,9 @@ async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, re
     if (signal?.aborted) throw signal.reason;
     readSummary(err.stdout);
     const timedOut = err.killed === true || err.signal === 'SIGTERM' || err.signal === 'SIGKILL';
-    reason = failureDetail(err.stdout, err.stderr, { timedOut });
+    const parts = failureOutcomeParts(err.stdout, err.stderr, { timedOut });
+    reason = parts.reason;
+    unitDetails = parts;
     if (!reason) reason = String(err.message || 'npm test failed').slice(0, FAILURE_DETAIL_MAX);
   }
   const finalSnap = tracker.finish(passed);
@@ -489,7 +641,7 @@ async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, re
     durationMs: Date.now() - startedAt, tests: summary ? summary.tests : undefined,
   });
 
-  return shapeOutcome({ passed, reason, graduated, summary });
+  return shapeOutcome({ passed, reason, graduated, summary, unitDetails });
 }
 
 // Did a proposal's stored checks (chat_sessions.test_results) include a
@@ -511,8 +663,9 @@ function passedIn(testResults) {
 // The unit-suite check as the checks pipeline consumes it: one extraRows
 // entry plus its check-history record. Shared by the live run above and the
 // harvest path below so the two can never drift in shape.
-function shapeOutcome({ passed, reason, graduated, summary }) {
+function shapeOutcome({ passed, reason, graduated, summary, unitDetails = null }) {
   const checkKey = appManifest.checkKey(UNIT_CHECK_NAME, UNIT_CHECK_PATH);
+  const details = unitDetails && Array.isArray(unitDetails.details) ? unitDetails.details : [];
   return {
     row: {
       index: UNIT_CHECK_INDEX,
@@ -525,6 +678,11 @@ function shapeOutcome({ passed, reason, graduated, summary }) {
       // The TAP summary block, when the runner printed one: the size of the
       // suite for the record. Absent for runners that print no TAP.
       ...(summary ? { summary } : {}),
+      // The failing tests' own excerpts (#3978), beside the grouped reason
+      // above. Only when the run failed AND something was captured: a run
+      // whose TAP carried no diagnostics keeps the names-only reason.
+      ...(details.length ? { failureDetails: details } : {}),
+      ...(details.length && unitDetails.truncated ? { failureDetailsTruncated: true } : {}),
     },
     history: { checkKey, name: UNIT_CHECK_NAME, path: UNIT_CHECK_PATH, passed },
   };
@@ -547,8 +705,11 @@ async function outcomeFromLog({
   }
   const passed = !!succeeded;
   let reason = '';
+  let unitDetails = null;
   if (!passed) {
-    reason = failureDetail(stdout, stderr, { timedOut });
+    const parts = failureOutcomeParts(stdout, stderr, { timedOut });
+    reason = parts.reason;
+    unitDetails = parts;
     if (!reason) reason = timedOut ? 'npm test timed out' : 'npm test failed';
   }
   const finalSnap = t.finish(passed);
@@ -557,7 +718,7 @@ async function outcomeFromLog({
   log.info('unit-suite', 'Unit suite outcome read from its finished Job', {
     sessionId, appId, passed, graduated, tests: summary ? summary.tests : undefined,
   });
-  return shapeOutcome({ passed, reason, graduated, summary });
+  return shapeOutcome({ passed, reason, graduated, summary, unitDetails });
 }
 
 module.exports = {
@@ -572,6 +733,11 @@ module.exports = {
   // Exported for tests.
   hasRunnableTestScript,
   failureDetail,
+  failureDetailFromLines,
+  failureOutcomeParts,
+  unitFailureDetails,
+  excerptOfTest,
+  diagnosticsFromBlock,
   isEnabled,
   UNIT_CHECK_NAME,
   UNIT_CHECK_PATH,

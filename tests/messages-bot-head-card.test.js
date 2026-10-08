@@ -189,10 +189,10 @@ test('the request card the message carries is the card, and nothing is fetched f
   assert.deepEqual(asked, [[]], 'no link asked for');
   assert.match(html, /^<div class="mb-1\.5 mt-1 max-w-\[480px\]" data-bot-head-card="request" data-bot-request-card="93"><a href="#app\/todo-list-b91765\/dev\/issues\/93" class="messages-object-card"/,
     'the card leads, linking the request');
-  assert.match(html, />Request</);
+  assert.match(html, />Request #93</, '#4212: the eyebrow names its number, as the bot\'s words do');
   assert.match(html, /Only close a category when its last item is checked/);
   assert.match(html, />Todo List</, 'its project alone');
-  assert.doesNotMatch(html, /closed|by usernode-bot|request #93|#93</,
+  assert.doesNotMatch(html, /closed|by usernode-bot|request #93|(?<!Request )#93</,
     'no status (a live request is GitHub\'s "closed", which read as turned down), no "by", and no line');
   assert.ok(html.indexOf('messages-object-card') < html.indexOf('messages-markdown'), 'then the words');
   assert.match(html, /<div class="messages-markdown gc-msg-content">I couldn't finish building this/);

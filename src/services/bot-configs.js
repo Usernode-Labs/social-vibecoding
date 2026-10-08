@@ -1,7 +1,25 @@
 'use strict';
 
 // Homeroom bot CONFIGURATIONS: how the bot builds a project's first version,
-// as versioned recipes, and how each one measures up.
+// and every later change, as versioned recipes, and how each one measures up.
+//
+// ── Scopes ──────────────────────────────────────────────────────────────
+//
+// Every version has a SCOPE. `first_version` is how a project's first
+// version is built (everything below, as it was before scopes). `later` is
+// every other build the bot makes, live or shadow (homeroom-bot.js buildLive
+// and shadowBuild): its current version's recipe decides the spec and build
+// models, the CLI each runs in (recipeHarness) and the spec's effort, and
+// the run names the version. Not the triage, which runs before anyone knows
+// what kind of build it is, nor a follow-up or revision turn on an open
+// proposal (the per-stage `followup` model). With no current `later`
+// version, a model it names missing from the stored catalog, or a lookup
+// that fails, a later change is built with the per-stage settings exactly as
+// before (laterVersion). A later recipe has no reviewer and no screenshot
+// step: its side versions are built beside it on the App bench lane at the
+// `build` stage (spawnSideBuilds), within their own weekly budget, and its
+// pairs show each side's spec and diff instead of screenshots (nextPair).
+// Each scope has exactly one current version; roles move within a scope.
 //
 // ── Recipes and versions ────────────────────────────────────────────────
 //
@@ -27,9 +45,10 @@
 // and never mixed across versions. A version's role is `current` (the one
 // that builds every live first version; exactly one at a time), `side`
 // (built silently beside each live first version, for comparison) or
-// `retired`. Only FIRST VERSIONS use the current configuration; every other
-// build the bot makes keeps the per-stage settings (homeroom-bot.js
-// stageModel).
+// `retired`, within its scope (Scopes, above): a `later` version builds, or
+// is built beside, every later change instead. A first version's SHADOW
+// build, a triage and a follow-up keep the per-stage settings
+// (homeroom-bot.js stageModel), as before.
 //
 // ── Results, pairs and stats ────────────────────────────────────────────
 //
@@ -60,10 +79,13 @@
 
 const crypto = require('crypto');
 const log = require('./logger');
+const stageCosts = require('./stage-costs');
 
 const GLM = 'z-ai/glm-5.3-flash';
 const OPUS = 'anthropic/claude-opus-5.5';
 const ROLES = Object.freeze(['current', 'side', 'retired']);
+const SCOPES = Object.freeze(['first_version', 'later']);
+const SCOPE_LABELS = Object.freeze({ first_version: 'First versions', later: 'Later changes' });
 const STAGES = Object.freeze(['triage', 'spec', 'build']);
 const KEY_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const MAX_ROUNDS = 5;
@@ -79,6 +101,26 @@ const MAX_SIDE_WEEKLY_CENTS = 1_000_000;
 // The App bench suite side builds are tasks of, one per live first version.
 const SIDE_SUITE_NAME = 'Bot configurations';
 const SIDE_RUN_KIND = 'bot_config';
+// The later changes' side builds: their own weekly spend ($50 unless an
+// admin sets another), their own bench run kind (which is what that spend is
+// read from), and the stage their tasks are (a later change's spec and
+// build, homeroom-bot buildAndPropose with no first-version design brief).
+const LATER_SIDE_WEEKLY_KEY = 'bot_config_later_side_weekly_cents';
+const DEFAULT_LATER_SIDE_WEEKLY_CENTS = 5000;
+const LATER_SIDE_RUN_KIND = 'bot_config_later';
+// Per scope: the side builds' budget setting, run kind, task stage, the lock
+// their week is spent under, and how a skip names the budget.
+const SIDE_BUILDS = Object.freeze({
+  first_version: Object.freeze({
+    key: SIDE_WEEKLY_KEY, defaultCents: DEFAULT_SIDE_WEEKLY_CENTS, runKind: SIDE_RUN_KIND, stage: 'first_version',
+    lock: 'bot_config_side_budget', spent: (limit) => `the side builds' weekly budget ($${limit}) is spent`,
+  }),
+  later: Object.freeze({
+    key: LATER_SIDE_WEEKLY_KEY, defaultCents: DEFAULT_LATER_SIDE_WEEKLY_CENTS, runKind: LATER_SIDE_RUN_KIND, stage: 'build',
+    lock: 'bot_config_later_side_budget',
+    spent: (limit) => `the later changes' side builds' weekly budget ($${limit}) is spent: they pause until the last seven days' spend is back under it`,
+  }),
+});
 // Room left in a side run's cap above its trials' estimates: a run's cap is
 // what is left of the week, never more than this many times the estimate.
 const SIDE_RUN_CAP_FACTOR = 3;
@@ -107,6 +149,23 @@ const SEED = Object.freeze([
     seedKey: 'opus-spec-no-review-v1', key: 'opus-spec-no-review', label: 'Opus spec + GLM, no reviewer', role: 'side',
     recipe: { models: { triage: GLM, spec: OPUS, build: GLM }, reviewer: null, pack: null },
     notes: 'The current configuration before any review round: taken from the live build\'s round-0 snapshot, never built on its own.',
+  }),
+]);
+
+// The later changes' two configurations: an Opus spec and a GLM build,
+// current, beside the pipeline as it was (all GLM). The same model ids and
+// the same idempotent seed as the first versions'. The triage named here is
+// never run: a later change's triage keeps the per-stage setting.
+const SEED_LATER = Object.freeze([
+  Object.freeze({
+    seedKey: 'later-opus-spec-v1', key: 'later-opus-spec', label: 'Opus spec + GLM build', role: 'current', scope: 'later',
+    recipe: { models: { triage: GLM, spec: OPUS, build: GLM }, reviewer: null, pack: null },
+    notes: 'Every later change, live or shadow: an Opus 5.5 spec and a GLM 5.3 Flash build. The triage keeps its per-stage model.',
+  }),
+  Object.freeze({
+    seedKey: 'later-all-glm-v1', key: 'later-all-glm', label: 'All GLM', role: 'side', scope: 'later',
+    recipe: { models: { triage: GLM, spec: GLM, build: GLM }, reviewer: null, pack: null },
+    notes: 'Later changes as they were built before: GLM 5.3 Flash for the spec and the build. Built silently beside each later change.',
   }),
 ]);
 
@@ -142,6 +201,16 @@ function num(v) {
 
 function iso(v) {
   return v ? new Date(v).toISOString() : null;
+}
+
+/** A scope as asked for: omitted is `first_version`, today's callers' scope; anything else unknown is null. Pure. */
+function scopeOf(raw) {
+  if (raw == null || raw === '') return 'first_version';
+  return SCOPES.includes(raw) ? raw : null;
+}
+
+function badScope() {
+  return httpError(400, `scope must be one of ${SCOPES.join(', ')}`);
 }
 
 // ── Recipes ──────────────────────────────────────────────────────────────
@@ -274,7 +343,7 @@ function reviews(recipe) {
 
 // ── Versions ─────────────────────────────────────────────────────────────
 
-const VERSION_COLS = `v.id, v.key, v.label, v.version, v.recipe, v.role, v.notes, v.created_at, v.role_changed_at,
+const VERSION_COLS = `v.id, v.key, v.label, v.version, v.recipe, v.role, v.scope, v.notes, v.created_at, v.role_changed_at,
             u.username AS created_by_name`;
 
 function versionOut(row) {
@@ -285,6 +354,7 @@ function versionOut(row) {
     label: row.label,
     version: Number(row.version),
     role: row.role,
+    scope: row.scope || 'first_version',
     recipe: recipeOf(row.recipe) || row.recipe,
     recipeLine: recipeLine(row.recipe),
     notes: row.notes || null,
@@ -294,19 +364,22 @@ function versionOut(row) {
   };
 }
 
-async function listVersions(pool) {
+/** One scope's versions, the current one first, then the side ones, then the retired ones. */
+async function listVersions(pool, scope = 'first_version') {
   const { rows } = await pool.query(
-    `SELECT v.id, v.key, v.label, v.version, v.recipe, v.role, v.notes, v.created_at, v.role_changed_at,
+    `SELECT v.id, v.key, v.label, v.version, v.recipe, v.role, v.scope, v.notes, v.created_at, v.role_changed_at,
             u.username AS created_by_name
        FROM bot_config_versions v LEFT JOIN users u ON u.id = v.created_by
+      WHERE v.scope = $1
       ORDER BY CASE v.role WHEN 'current' THEN 0 WHEN 'side' THEN 1 ELSE 2 END, v.key, v.version DESC`,
+    [scope],
   );
   return rows.map(versionOut);
 }
 
 async function versionById(pool, id) {
   const { rows: [row] } = await pool.query(
-    `SELECT v.id, v.key, v.label, v.version, v.recipe, v.role, v.notes, v.created_at, v.role_changed_at,
+    `SELECT v.id, v.key, v.label, v.version, v.recipe, v.role, v.scope, v.notes, v.created_at, v.role_changed_at,
             u.username AS created_by_name
        FROM bot_config_versions v LEFT JOIN users u ON u.id = v.created_by
       WHERE v.id = $1`,
@@ -316,40 +389,71 @@ async function versionById(pool, id) {
 }
 
 /**
- * The version that builds live first versions now, with its recipe, or null
- * when there is none (or it no longer validates): the bot then builds a first
- * version as it did before configurations. Never throws.
+ * The version of `scope` that builds now (a live first version's, or every
+ * later change's), with its recipe, or null when there is none (or it no
+ * longer validates): the bot then builds as it did before configurations.
+ * Never throws.
  */
-async function currentVersion(pool) {
+async function currentVersion(pool, scope = 'first_version') {
   try {
     const { rows: [row] } = await pool.query(
-      `SELECT v.id, v.key, v.label, v.version, v.recipe, v.role, v.notes, v.created_at, v.role_changed_at,
+      `SELECT v.id, v.key, v.label, v.version, v.recipe, v.role, v.scope, v.notes, v.created_at, v.role_changed_at,
               NULL::text AS created_by_name
          FROM bot_config_versions v
-        WHERE v.role = 'current'
+        WHERE v.role = 'current' AND v.scope = $1
         LIMIT 1`,
+      [scope],
     );
     const out = versionOut(row);
     return out && recipeOf(row.recipe) ? out : null;
   } catch (err) {
-    log.warn('bot-configs', 'Could not read the current configuration', { err: err.message });
+    log.warn('bot-configs', 'Could not read the current configuration', { scope, err: err.message });
     return null;
   }
 }
 
-/** The side versions, each with its recipe. Never throws. */
-async function sideVersions(pool) {
+/**
+ * The version a LATER change is built by, or null to build it with the
+ * per-stage settings exactly as before: the `later` scope has no current
+ * version (or its recipe no longer validates), a model it names is not in
+ * the stored OpenRouter catalog (or that cannot be read), or the lookup
+ * failed. Each is logged. Never throws.
+ */
+async function laterVersion(pool) {
+  try {
+    const version = await currentVersion(pool, 'later');
+    if (!version) {
+      log.info('bot-configs', 'No current later-changes configuration: building with the per-stage settings');
+      return null;
+    }
+    const refused = await checkRecipeModels(pool, version.recipe);
+    if (refused) {
+      log.warn('bot-configs', 'The later-changes configuration cannot run now: building with the per-stage settings', {
+        id: version.id, key: version.key, why: refused.error,
+      });
+      return null;
+    }
+    return version;
+  } catch (err) {
+    log.warn('bot-configs', 'Could not read the later-changes configuration: building with the per-stage settings', { err: err.message });
+    return null;
+  }
+}
+
+/** One scope's side versions, each with its recipe. Never throws. */
+async function sideVersions(pool, scope = 'first_version') {
   try {
     const { rows } = await pool.query(
-      `SELECT v.id, v.key, v.label, v.version, v.recipe, v.role, v.notes, v.created_at, v.role_changed_at,
+      `SELECT v.id, v.key, v.label, v.version, v.recipe, v.role, v.scope, v.notes, v.created_at, v.role_changed_at,
               NULL::text AS created_by_name
          FROM bot_config_versions v
-        WHERE v.role = 'side'
+        WHERE v.role = 'side' AND v.scope = $1
         ORDER BY v.id`,
+      [scope],
     );
     return rows.map(versionOut).filter((v) => recipeOf(v.recipe));
   } catch (err) {
-    log.warn('bot-configs', 'Could not read the side configurations', { err: err.message });
+    log.warn('bot-configs', 'Could not read the side configurations', { scope, err: err.message });
     return [];
   }
 }
@@ -359,22 +463,29 @@ function slugOf(label) {
 }
 
 /**
- * Save a new version: of an existing key (its next version), or of a new
- * one. The roles move with it, in one transaction:
- *   - saved `current`: the version current until now becomes `side` (or
- *     `retired`, when it is this key's own earlier version), and this key's
- *     other active versions are retired;
+ * Save a new version of `scope` (first versions unless said): of an existing
+ * key (its next version), or of a new one. A key belongs to one scope. The
+ * roles move with it, within its scope, in one transaction:
+ *   - saved `current`: the scope's version current until now becomes `side`
+ *     (or `retired`, when it is this key's own earlier version), and this
+ *     key's other active versions are retired;
  *   - saved `side`: this key's other side versions are retired (its current
  *     version, if it has one, stays current);
  *   - saved `retired`: nothing else moves.
+ * A later change's recipe has no reviewer: the review is a first version's.
  * Resolves { ok, version, demoted } or a refusal.
  */
 async function saveVersion(pool, {
-  key = null, label = null, recipe, role = 'side', notes = null, actorId = null,
+  key = null, label = null, recipe, role = 'side', notes = null, actorId = null, scope: rawScope = null,
 } = {}) {
   if (!ROLES.includes(role)) return httpError(400, `role must be one of ${ROLES.join(', ')}`);
+  const scope = scopeOf(rawScope);
+  if (!scope) return badScope();
   const v = validateRecipe(recipe);
   if (!v.ok) return v;
+  if (scope === 'later' && v.recipe.reviewer) {
+    return httpError(400, 'A later-changes recipe has no reviewer (reviewer: null): the review loop is for first versions');
+  }
   const cleanLabel = label == null ? null : String(label).replace(/\s+/g, ' ').trim();
   if (cleanLabel != null && (!cleanLabel || cleanLabel.length > MAX_LABEL_CHARS)) {
     return httpError(400, `label is 1 to ${MAX_LABEL_CHARS} characters`);
@@ -395,9 +506,15 @@ async function saveVersion(pool, {
     await client.query('BEGIN');
     await client.query("SELECT pg_advisory_xact_lock(hashtext('bot_config_versions'))");
     const { rows: [prev] } = await client.query(
-      'SELECT MAX(version)::int AS version, (ARRAY_AGG(label ORDER BY version DESC))[1] AS label FROM bot_config_versions WHERE key = $1',
+      `SELECT MAX(version)::int AS version, (ARRAY_AGG(label ORDER BY version DESC))[1] AS label,
+              (ARRAY_AGG(scope ORDER BY version DESC))[1] AS scope
+         FROM bot_config_versions WHERE key = $1`,
       [k],
     );
+    if (prev?.version && prev.scope && prev.scope !== scope) {
+      await client.query('ROLLBACK');
+      return httpError(409, `The key ${k} is a ${SCOPE_LABELS[prev.scope] || prev.scope} configuration: save it with scope "${prev.scope}", or under another key`, { code: 'scope_mismatch' });
+    }
     const finalLabel = cleanLabel || prev?.label || null;
     if (!finalLabel) {
       await client.query('ROLLBACK');
@@ -408,9 +525,9 @@ async function saveVersion(pool, {
       const { rows } = await client.query(
         `UPDATE bot_config_versions
             SET role = CASE WHEN key = $1 THEN 'retired' ELSE 'side' END, role_changed_at = NOW()
-          WHERE role = 'current'
+          WHERE role = 'current' AND scope = $2
           RETURNING id, role`,
-        [k],
+        [k, scope],
       );
       demoted.push(...rows.map((r) => ({ id: Number(r.id), role: r.role })));
       await client.query(
@@ -424,14 +541,14 @@ async function saveVersion(pool, {
       );
     }
     const { rows: [row] } = await client.query(
-      `INSERT INTO bot_config_versions (key, label, version, recipe, role, notes, created_by)
-       VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7)
+      `INSERT INTO bot_config_versions (key, label, version, recipe, role, notes, created_by, scope)
+       VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8)
        RETURNING id`,
-      [k, finalLabel, (Number(prev?.version) || 0) + 1, JSON.stringify(v.recipe), role, cleanNotes, actorId],
+      [k, finalLabel, (Number(prev?.version) || 0) + 1, JSON.stringify(v.recipe), role, cleanNotes, actorId, scope],
     );
     await client.query('COMMIT');
     const version = await versionById(pool, row.id);
-    log.info('bot-configs', 'Configuration version saved', { id: version.id, key: k, version: version.version, role, demoted });
+    log.info('bot-configs', 'Configuration version saved', { id: version.id, key: k, version: version.version, role, scope, demoted });
     return { ok: true, version, demoted };
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
@@ -443,14 +560,21 @@ async function saveVersion(pool, {
 
 /**
  * Change one version's role. Promoting a version to `current` demotes the
- * version current until now to `side`. The current version itself cannot be
- * made side or retired directly: there is always exactly one current, so
- * another version is promoted instead. Resolves { ok, version, demoted }.
+ * version current until now in its scope to `side`. The current version
+ * itself cannot be made side or retired directly: there is always exactly
+ * one current per scope, so another version is promoted instead. `scope`
+ * (first versions unless said) must be the version's own, so a caller says
+ * which kind of build it is changing. Resolves { ok, version, demoted }.
  */
-async function setRole(pool, { id, role } = {}) {
+async function setRole(pool, { id, role, scope: rawScope = null } = {}) {
   if (!ROLES.includes(role)) return httpError(400, `role must be one of ${ROLES.join(', ')}`);
+  const scope = scopeOf(rawScope);
+  if (!scope) return badScope();
   const target = await versionById(pool, id);
   if (!target) return httpError(404, 'No such configuration version');
+  if (target.scope !== scope) {
+    return httpError(409, `Version ${target.id} is a ${SCOPE_LABELS[target.scope] || target.scope} configuration: pass scope "${target.scope}"`, { code: 'scope_mismatch' });
+  }
   if (!recipeOf(target.recipe)) return httpError(409, 'That version\'s recipe no longer validates: save a new version instead');
   if (target.role === role) return { ok: true, version: target, demoted: [] };
   if (target.role === 'current') {
@@ -468,9 +592,9 @@ async function setRole(pool, { id, role } = {}) {
     if (role === 'current') {
       const { rows } = await client.query(
         `UPDATE bot_config_versions SET role = 'side', role_changed_at = NOW()
-          WHERE role = 'current' AND id <> $1
+          WHERE role = 'current' AND id <> $1 AND scope = $2
           RETURNING id`,
-        [Number(id)],
+        [Number(id), target.scope],
       );
       demoted.push(...rows.map((r) => ({ id: Number(r.id), role: 'side' })));
     }
@@ -491,27 +615,28 @@ async function setRole(pool, { id, role } = {}) {
 }
 
 /**
- * The three configurations every deploy starts from (SEED), each written
- * once (its seed_key), whatever an admin has done since: a seeded version an
- * admin retired stays retired, and the seeded current is written as a side
- * version when some other version is already current. Never throws.
+ * The configurations every deploy starts from (SEED, the first versions'
+ * three, and SEED_LATER, the later changes' two), each written once (its
+ * seed_key), whatever an admin has done since: a seeded version an admin
+ * retired stays retired, and a seeded current is written as a side version
+ * when some other version of its scope is already current. Never throws.
  */
 async function seedConfigs(pool) {
   let made = 0;
   try {
-    for (const s of SEED) {
+    for (const s of [...SEED, ...SEED_LATER]) {
       const v = validateRecipe(s.recipe);
       if (!v.ok) throw new Error(`seed ${s.seedKey}: ${v.error}`);
       // eslint-disable-next-line no-await-in-loop
       const { rowCount } = await pool.query(
-        `INSERT INTO bot_config_versions (key, label, version, recipe, role, notes, seed_key)
+        `INSERT INTO bot_config_versions (key, label, version, recipe, role, notes, seed_key, scope)
          SELECT $1, $2, 1, $3::jsonb,
-                CASE WHEN $4 = 'current' AND EXISTS (SELECT 1 FROM bot_config_versions WHERE role = 'current')
+                CASE WHEN $4 = 'current' AND EXISTS (SELECT 1 FROM bot_config_versions WHERE role = 'current' AND scope = $7)
                      THEN 'side' ELSE $4 END,
-                $5, $6
+                $5, $6, $7
           WHERE NOT EXISTS (SELECT 1 FROM bot_config_versions WHERE seed_key = $6 OR (key = $1 AND version = 1))
          ON CONFLICT DO NOTHING`,
-        [s.key, s.label, JSON.stringify(v.recipe), s.role, s.notes, s.seedKey],
+        [s.key, s.label, JSON.stringify(v.recipe), s.role, s.notes, s.seedKey, s.scope || 'first_version'],
       );
       made += rowCount || 0;
     }
@@ -551,7 +676,7 @@ async function upgradeSeedConfigs(pool) {
       await client.query("SELECT pg_advisory_xact_lock(hashtext('bot_config_versions'))");
       // eslint-disable-next-line no-await-in-loop
       const { rows: [seeded] } = await client.query(
-        `SELECT v.id, v.label, v.version FROM bot_config_versions v
+        `SELECT v.id, v.label, v.version, v.scope FROM bot_config_versions v
           WHERE v.role = 'current' AND v.key = $1 AND v.seed_key = $2 AND v.recipe = $3::jsonb
             AND NOT EXISTS (SELECT 1 FROM bot_config_versions o WHERE o.key = v.key AND o.version > v.version)
             AND NOT EXISTS (SELECT 1 FROM bot_config_versions n WHERE n.seed_key = $4)
@@ -570,9 +695,9 @@ async function upgradeSeedConfigs(pool) {
       );
       // eslint-disable-next-line no-await-in-loop
       await client.query(
-        `INSERT INTO bot_config_versions (key, label, version, recipe, role, notes, seed_key)
-         VALUES ($1, $2, $3, $4::jsonb, 'current', $5, $6)`,
-        [u.key, seeded.label, Number(seeded.version) + 1, JSON.stringify(to.recipe), u.to.notes, u.to.seedKey],
+        `INSERT INTO bot_config_versions (key, label, version, recipe, role, notes, seed_key, scope)
+         VALUES ($1, $2, $3, $4::jsonb, 'current', $5, $6, $7)`,
+        [u.key, seeded.label, Number(seeded.version) + 1, JSON.stringify(to.recipe), u.to.notes, u.to.seedKey, seeded.scope || 'first_version'],
       );
       // eslint-disable-next-line no-await-in-loop
       await client.query('COMMIT');
@@ -601,34 +726,44 @@ async function upgradeSeedConfigs(pool) {
  */
 async function recordResult(pool, {
   botRunId, configVersionId, source, trialId = null, status = 'done', built = null, booted = null,
-  costUsd = null, activeMs = null, sha = null, capture = null, error = null,
+  costUsd = null, activeMs = null, sha = null, capture = null, error = null, costParts = null,
 }) {
+  // What the cost was made of, stage by stage, adding up to it (stage-costs.js).
+  const breakdown = costParts ? stageCosts.breakdown(costUsd, costParts) : null;
   const { rows: [row] } = await pool.query(
     `INSERT INTO bot_config_results
        (bot_run_id, config_version_id, source, trial_id, status, built, booted, cost_usd, active_ms, sha, capture, error,
-        finished_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, CASE WHEN $5 = 'pending' THEN NULL ELSE NOW() END)
+        finished_at, cost_parts)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, CASE WHEN $5 = 'pending' THEN NULL ELSE NOW() END,
+             $13::jsonb)
      ON CONFLICT (bot_run_id, config_version_id) DO UPDATE
        SET source = EXCLUDED.source, trial_id = COALESCE(EXCLUDED.trial_id, bot_config_results.trial_id),
            status = EXCLUDED.status, built = EXCLUDED.built, booted = EXCLUDED.booted,
            cost_usd = EXCLUDED.cost_usd, active_ms = EXCLUDED.active_ms, sha = EXCLUDED.sha,
-           capture = EXCLUDED.capture, error = EXCLUDED.error, finished_at = EXCLUDED.finished_at
+           capture = EXCLUDED.capture, error = EXCLUDED.error, finished_at = EXCLUDED.finished_at,
+           cost_parts = EXCLUDED.cost_parts
        WHERE bot_config_results.status <> 'done'
      RETURNING id`,
     [Number(botRunId), Number(configVersionId), source, trialId == null ? null : Number(trialId), status,
       built == null ? null : !!built, booted == null ? null : !!booted, num(costUsd), num(activeMs) == null ? null : Math.round(num(activeMs)),
-      sha || null, capture ? JSON.stringify(capture) : null, error ? String(error).slice(0, 600) : null],
+      sha || null, capture ? JSON.stringify(capture) : null, error ? String(error).slice(0, 600) : null,
+      breakdown ? JSON.stringify(breakdown) : null],
   );
   return row ? Number(row.id) : null;
 }
 
-/** What the live run's own triage cost and took: shared by every configuration's result. */
+/** What the live run's own triage cost and took, and on which model: shared by every configuration's result. */
 async function triageShare(pool, botRunId) {
   const { rows: [r] } = await pool.query(
-    'SELECT cost_usd::float8 AS cost, duration_ms FROM homeroom_bot_runs WHERE id = $1',
+    'SELECT cost_usd::float8 AS cost, duration_ms, model FROM homeroom_bot_runs WHERE id = $1',
     [Number(botRunId)],
   );
-  return { costUsd: num(r?.cost) || 0, ms: num(r?.duration_ms) || 0 };
+  return { costUsd: num(r?.cost) || 0, ms: num(r?.duration_ms) || 0, model: r?.model || null };
+}
+
+/** The triage's part of a result's breakdown, from its share. Pure. */
+function triagePart(triage) {
+  return triage && triage.costUsd > 0 ? { triage: stageCosts.part({ usd: triage.costUsd, model: triage.model }) } : {};
 }
 
 const add = (a, b) => (a == null && b == null ? null : (Number(a) || 0) + (Number(b) || 0));
@@ -656,7 +791,8 @@ async function sessionLedger(pool, sessionId, beforeIso = null) {
 }
 
 /**
- * A live first version's outcome, recorded for the configurations it speaks
+ * A live first version's outcome (or a later change's, live or shadow, which
+ * has no review), recorded for the configurations it speaks
  * for: the current version's result from its final state, and every side
  * version's that is derivable from it (derivableFrom) from its round-0
  * snapshot. Then its pairs. `built` is buildAndPropose's answer (its
@@ -680,6 +816,14 @@ async function finishLive(pool, {
     const ledger = await sessionLedger(pool, built.sessionId, review?.startedAt || null).catch(() => ({ total: null, before: null }));
     const carried = Number(carriedUsd) > 0 ? Number(carriedUsd) : 0;
     const liveCost = ledger.total != null ? ledger.total + require('./bot-review').reviewerCost(review) + carried : built.costUsd;
+    // Its stages, on their models (stage-costs.js): the triage's share, and
+    // the build's own parts with their tokens from the ledger; the review's
+    // read from its state when the build did not carry them (a review a
+    // restart finished).
+    const parts = await stageCosts.withLedgerTokens(pool, {
+      ...stageCosts.reviewParts(review, { buildModel: version.recipe?.models?.build || null }),
+      ...stageCosts.fromStages(built.stageCosts),
+    });
     await recordResult(pool, {
       botRunId, configVersionId: version.id, source: 'live',
       built: builtOk,
@@ -689,6 +833,7 @@ async function finishLive(pool, {
       sha: built.sha || null,
       capture: finalCapture,
       error: builtOk ? null : (built.blocked ? `blocked: ${built.blocked}` : built.error || null),
+      costParts: { ...triagePart(triage), ...parts },
     });
     const round0 = review?.round0 || null;
     const sides = await pool.query(
@@ -696,10 +841,13 @@ async function finishLive(pool, {
         WHERE r.bot_run_id = $1 AND r.source = 'round0' AND r.status = 'pending'`,
       [Number(botRunId)],
     );
+    // The first build alone: its triage, spec and build, never the review.
+    const { review_reviewer: _rr, review_fixes: _rf, ...firstBuild } = parts;
     for (const s of sides.rows) {
       // eslint-disable-next-line no-await-in-loop
       await recordResult(pool, {
         botRunId, configVersionId: s.config_version_id, source: 'round0',
+        costParts: { ...triagePart(triage), ...(round0 ? firstBuild : parts) },
         built: round0 ? true : builtOk,
         booted: round0?.capture ? round0.capture.booted === true : (round0 ? null : (finalCapture ? finalCapture.booted === true : null)),
         costUsd: add(round0 ? (ledger.before != null ? ledger.before + carried : round0.costUsd) : liveCost, triage.costUsd),
@@ -712,7 +860,7 @@ async function finishLive(pool, {
     await settlePairs(pool, botRunId);
     return true;
   } catch (err) {
-    log.warn('bot-configs', 'Could not record a live first version\'s results', { botRunId, err: err.message });
+    log.warn('bot-configs', 'Could not record a configured build\'s results', { botRunId, err: err.message });
     return null;
   }
 }
@@ -740,6 +888,8 @@ async function finishSideTrial(pool, trialId) {
     const why = t.error || (t.parsed?.blocked ? `blocked: ${t.parsed.blocked}` : null);
     await recordResult(pool, {
       botRunId: t.bot_run_id, configVersionId: t.bot_config_version_id, source: 'trial', trialId: t.id,
+      // Its own stages (bench/runner.js buildStage), and the live run's triage.
+      costParts: { ...triagePart(triage), ...(t.parsed?.costParts || {}) },
       status: ranAtAll ? 'done' : 'skipped',
       built,
       booted: t.capture ? t.capture.booted === true : null,
@@ -759,6 +909,8 @@ async function finishSideTrial(pool, trialId) {
 
 // Why a pair whose two sides are one commit is left out (exclusionOf).
 const IDENTICAL_REASON = 'identical: both sides are the same commit (the review changed nothing)';
+// And a later change's, which has no review (laterExclusionOf).
+const LATER_IDENTICAL_REASON = 'identical: both sides are the same commit';
 
 /**
  * Why a pair is not offered, or null when it is: both sides the same commit
@@ -779,22 +931,45 @@ function exclusionOf(current, side) {
 }
 
 /**
- * Make the pairs one live first version now has: its current result against
- * each side result that is done. Idempotent. Resolves how many it made.
+ * Why a LATER change's pair is not offered, or null when it is: both sides
+ * the same commit, either side not built, or one known not to boot. A later
+ * change has no screenshot step, so neither side needs a capture: its pair
+ * is judged on each side's spec and diff. Pure.
+ */
+function laterExclusionOf(current, side) {
+  const which = (r) => (r === current ? 'the current configuration' : 'the side configuration');
+  if (current.sha && side.sha && current.sha === side.sha) return LATER_IDENTICAL_REASON;
+  for (const r of [current, side]) {
+    if (r.built !== true) return `didn't build (${which(r)})`;
+  }
+  for (const r of [current, side]) {
+    if (r.booted === false) return `didn't boot (${which(r)})`;
+  }
+  return null;
+}
+
+/**
+ * Make the pairs one configured build (a live first version, or a later
+ * change) now has: its current result against each side result that is
+ * done, left out by its scope's rule (exclusionOf, laterExclusionOf).
+ * Idempotent. Resolves how many it made.
  */
 async function settlePairs(pool, botRunId, { random = crypto.randomInt } = {}) {
   const { rows } = await pool.query(
-    `SELECT r.id, r.source, r.status, r.built, r.booted, r.capture IS NOT NULL AS has_capture, r.config_version_id, r.sha
+    `SELECT r.id, r.source, r.status, r.built, r.booted, r.capture IS NOT NULL AS has_capture, r.config_version_id, r.sha,
+            v.scope
        FROM bot_config_results r
+       JOIN bot_config_versions v ON v.id = r.config_version_id
       WHERE r.bot_run_id = $1`,
     [Number(botRunId)],
   );
   const current = rows.find((r) => r.source === 'live' && r.status === 'done');
   if (!current) return 0;
+  const exclude = current.scope === 'later' ? laterExclusionOf : exclusionOf;
   let made = 0;
   for (const side of rows) {
     if (side.source === 'live' || side.status !== 'done') continue;
-    const why = exclusionOf(
+    const why = exclude(
       { built: current.built, booted: current.booted, capture: current.has_capture ? {} : null, sha: current.sha || null },
       { built: side.built, booted: side.booted, capture: side.has_capture ? {} : null, sha: side.sha || null },
     );
@@ -924,39 +1099,112 @@ async function pairViews(pool, captures, { images = false } = {}) {
   return outs;
 }
 
+// A later change's spec as a picker reads it.
+const MAX_PAIR_SPEC_CHARS = 6000;
+
 /**
- * The next pair waiting for a pick, oldest first, blind: the request as the
- * bot read it and the plan every side built from, then Left and Right, each
- * with whether it booted and its eight most telling screenshots (images with
- * `images`). Nothing says which configuration is which, or what either
- * cost. The spec is left out on purpose: each configuration writes its own,
- * so showing one would say which side followed it. Resolves
- * { ok, pair: null } when none waits.
+ * What one side of a later change's pair changed from the base both started
+ * at: how many files, insertions and deletions, and a compare link by
+ * commit (`<repo>/compare/<base>...<sha>`), the same shape on both sides
+ * whatever branch holds the commit. Read from GitHub when it can be; a side
+ * build's own stored file list (`stored`) when it cannot. Null when neither
+ * is there. Never throws.
  */
-async function nextPair(pool, { images = false } = {}) {
+async function diffSummary({ github = null, repoUrl, base, sha, stored = null }) {
+  const repo = require('./homeroom-bot').parseRepo(repoUrl);
+  if (!repo || !base || !sha) return null;
+  let files = null;
+  if (github && typeof github.compareFiles === 'function') {
+    try {
+      files = (await github.compareFiles(repo.owner, repo.repo, `${base}...${sha}`, 1)).files || null;
+    } catch (err) {
+      log.warn('bot-configs', 'Could not read a pair side\'s diff', { sha, err: err.message });
+    }
+  }
+  if (!files && Array.isArray(stored)) files = stored;
+  if (!files) return null;
+  return {
+    files: files.length,
+    insertions: files.reduce((n, f) => n + (Number(f.additions) || 0), 0),
+    deletions: files.reduce((n, f) => n + (Number(f.deletions) || 0), 0),
+    compareUrl: `${String(repoUrl).replace(/\.git$/, '')}/compare/${base}...${sha}`,
+  };
+}
+
+/**
+ * Both sides of a LATER change's pair as a picker sees them, the current
+ * one's first: each one's own spec (each configuration writes its own, and
+ * both have one), the diff it made from the same base (diffSummary), whether
+ * it booted when that is known, and its screenshots only where a capture
+ * already exists (a later change has no screenshot step of its own). A diff
+ * either side cannot have is left off both, so a gap never says which side
+ * is which.
+ */
+async function laterPairSides(pool, p, snap, { images = false, github = null } = {}) {
+  const { rows: [trial] = [] } = p.side_trial_id
+    ? await pool.query("SELECT parsed->>'spec' AS spec, changed_files, base_sha FROM bench_trials WHERE id = $1", [p.side_trial_id])
+    : { rows: [] };
+  const base = snap?.baseSha || trial?.base_sha || null;
+  const diffs = await Promise.all([
+    diffSummary({ github, repoUrl: p.repo_url, base, sha: p.current_sha }),
+    diffSummary({ github, repoUrl: p.repo_url, base, sha: p.side_sha, stored: trial?.changed_files?.files || null }),
+  ]);
+  const shown = diffs.every(Boolean);
+  const views = await pairViews(pool, [p.current_capture, p.side_capture], { images });
+  return [[p.build_spec_md, p.current_capture], [trial?.spec, p.side_capture]].map(([spec, capture], i) => ({
+    ...views[i],
+    booted: capture ? capture.booted === true : null,
+    spec: spec ? clip(spec, MAX_PAIR_SPEC_CHARS) : null,
+    diff: shown ? diffs[i] : null,
+  }));
+}
+
+/**
+ * The next pair of `scope` (first versions unless said) waiting for a pick,
+ * oldest first, blind: the request as the bot read it and the plan every
+ * side built from, then Left and Right. A first version's each say whether
+ * it booted and show its eight most telling screenshots (images with
+ * `images`); its spec is left out on purpose, since each configuration
+ * writes its own and showing one would say which side followed it. A later
+ * change's each show its own spec and its diff (laterPairSides), and
+ * screenshots only where a capture exists. Nothing says which configuration
+ * is which, or what either cost. Resolves { ok, pair: null } when none
+ * waits.
+ */
+async function nextPair(pool, { images = false, scope: rawScope = null, github = null } = {}) {
+  const scope = scopeOf(rawScope);
+  if (!scope) return badScope();
   const { rows: [p] } = await pool.query(
     `SELECT p.id, p.token, p.bot_run_id, p.left_is_current, cr.capture AS current_capture, sr.capture AS side_capture,
-            r.build_note, a.name AS app_name,
-            (SELECT COUNT(*)::int FROM bot_config_pairs w WHERE w.status = 'waiting') AS waiting
+            cr.sha AS current_sha, sr.sha AS side_sha, sr.trial_id AS side_trial_id,
+            r.build_note, r.build_spec_md, a.name AS app_name, a.repo_url,
+            (SELECT COUNT(*)::int FROM bot_config_pairs w
+               JOIN bot_config_results wr ON wr.id = w.current_result_id
+               JOIN bot_config_versions wv ON wv.id = wr.config_version_id
+              WHERE w.status = 'waiting' AND wv.scope = $1) AS waiting
        FROM bot_config_pairs p
        JOIN bot_config_results cr ON cr.id = p.current_result_id
+       JOIN bot_config_versions cv ON cv.id = cr.config_version_id
        JOIN bot_config_results sr ON sr.id = p.side_result_id
        JOIN homeroom_bot_runs r ON r.id = p.bot_run_id
        JOIN apps a ON a.id = r.app_id
-      WHERE p.status = 'waiting'
+      WHERE p.status = 'waiting' AND cv.scope = $1
       ORDER BY p.id
       LIMIT 1`,
+    [scope],
   );
-  if (!p) return { ok: true, pair: null, waiting: 0 };
+  if (!p) return { ok: true, scope, pair: null, waiting: 0 };
   const snapshots = require('./homeroom-bot-snapshots');
   const snap = await snapshots.snapshotForRun(pool, p.bot_run_id, 'build').catch(() => null);
   const brief = snap?.texts?.seed || null;
   const plan = snap?.texts?.build_note || p.build_note || null;
-  const [left, right] = await pairViews(pool, p.left_is_current
-    ? [p.current_capture, p.side_capture]
-    : [p.side_capture, p.current_capture], { images });
+  const sides = scope === 'later'
+    ? await laterPairSides(pool, p, snap, { images, github })
+    : await pairViews(pool, [p.current_capture, p.side_capture], { images });
+  const [left, right] = p.left_is_current ? sides : [sides[1], sides[0]];
   return {
     ok: true,
+    scope,
     waiting: Number(p.waiting) || 0,
     pair: {
       pairId: p.token,
@@ -971,15 +1219,30 @@ async function nextPair(pool, { images = false } = {}) {
 
 /**
  * An admin's pick for one waiting pair: 'left', 'right' or 'tie', and an
- * optional note. Once: a pair already picked is refused. Resolves
- * { ok, waiting } with how many pairs still wait.
+ * optional note. Once: a pair already picked is refused, and so is one of
+ * another scope than `scope` (first versions unless said). Resolves
+ * { ok, waiting } with how many pairs of its scope still wait.
  */
-async function submitPick(pool, { pairId, pick, note = null, userId = null } = {}) {
+async function submitPick(pool, {
+  pairId, pick, note = null, userId = null, scope: rawScope = null,
+} = {}) {
   if (!['left', 'right', 'tie'].includes(pick)) return httpError(400, 'pick is left, right or tie');
+  const scope = scopeOf(rawScope);
+  if (!scope) return badScope();
   const token = String(pairId || '');
   if (!/^[A-Za-z0-9_-]{8,64}$/.test(token)) return httpError(400, 'Invalid pairId');
-  const { rows: [p] } = await pool.query('SELECT id, status, left_is_current FROM bot_config_pairs WHERE token = $1', [token]);
+  const { rows: [p] } = await pool.query(
+    `SELECT p.id, p.status, p.left_is_current, v.scope
+       FROM bot_config_pairs p
+       JOIN bot_config_results cr ON cr.id = p.current_result_id
+       JOIN bot_config_versions v ON v.id = cr.config_version_id
+      WHERE p.token = $1`,
+    [token],
+  );
   if (!p) return httpError(404, 'No such pair');
+  if (p.scope !== scope) {
+    return httpError(409, `That pair is one of ${SCOPE_LABELS[p.scope] || p.scope}: pass scope "${p.scope}"`, { code: 'scope_mismatch' });
+  }
   if (p.status !== 'waiting') return httpError(409, p.status === 'picked' ? 'That pair was already picked' : 'That pair is not offered for a pick');
   const winner = pick === 'tie' ? 'tie' : ((pick === 'left') === p.left_is_current ? 'current' : 'side');
   const { rowCount } = await pool.query(
@@ -988,7 +1251,13 @@ async function submitPick(pool, { pairId, pick, note = null, userId = null } = {
     [p.id, winner, note ? String(note).trim().slice(0, 1000) || null : null, userId],
   );
   if (!rowCount) return httpError(409, 'That pair was already picked');
-  const { rows: [w] } = await pool.query("SELECT COUNT(*)::int AS n FROM bot_config_pairs WHERE status = 'waiting'");
+  const { rows: [w] } = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM bot_config_pairs w
+       JOIN bot_config_results wr ON wr.id = w.current_result_id
+       JOIN bot_config_versions wv ON wv.id = wr.config_version_id
+      WHERE w.status = 'waiting' AND wv.scope = $1`,
+    [p.scope],
+  );
   return { ok: true, waiting: Number(w?.n) || 0 };
 }
 
@@ -1034,26 +1303,61 @@ function median(xs) {
 }
 
 /**
- * Every version with its numbers: builds, average real cost, median active
- * time, boot rate, and win rate against the version current now (picked
- * pairs between the two), the pairs that were not offered and why, and the
- * pairs still waiting for a pick. Per version, never across versions.
+ * What became of the proposals a version's LIVE builds opened, from the
+ * runs' own proposal sessions: merged, closed (withdrawn or turned down),
+ * open (up for a vote), or none (not proposed: it failed, was blocked or
+ * stopped). Shadow builds propose nothing and are not counted. Pure.
  */
-async function listWithStats(pool) {
-  const versions = await listVersions(pool);
+function outcomesOf(rows) {
+  const out = { merged: 0, closed: 0, open: 0, none: 0 };
+  for (const r of rows || []) {
+    if (r.mode !== 'live') continue;
+    if (!r.proposal_status) out.none += 1;
+    else if (r.proposal_status === 'merged') out.merged += 1;
+    else if (r.proposal_status === 'archived') out.closed += 1;
+    else out.open += 1;
+  }
+  return out;
+}
+
+/**
+ * One scope's versions (first versions unless said) with their numbers:
+ * builds, build rate, average real cost and what it was made of, median
+ * active time, boot rate, and win rate against the scope's version current
+ * now (picked pairs between the two), the pairs that were not offered and
+ * why, and the pairs still waiting for a pick; for a later change's current
+ * version, what became of its live builds' proposals. Per version, never
+ * across versions. Also the scope's side builds' week.
+ */
+async function listWithStats(pool, { scope: rawScope = null } = {}) {
+  const scope = scopeOf(rawScope);
+  if (!scope) return badScope();
+  const versions = await listVersions(pool, scope);
   const current = versions.find((v) => v.role === 'current') || null;
   const { rows: results } = await pool.query(
-    `SELECT config_version_id, built, booted, cost_usd::float8 AS cost, active_ms::float8 AS ms
-       FROM bot_config_results WHERE status = 'done'`,
+    `SELECT r.config_version_id, r.source, r.built, r.booted, r.cost_usd::float8 AS cost, r.active_ms::float8 AS ms, r.cost_parts,
+            run.mode, ps.status AS proposal_status
+       FROM bot_config_results r
+       JOIN bot_config_versions v ON v.id = r.config_version_id
+       JOIN homeroom_bot_runs run ON run.id = r.bot_run_id
+       LEFT JOIN chat_sessions ps ON ps.id = run.proposal_session_id
+      WHERE r.status = 'done' AND v.scope = $1`,
+    [scope],
   );
   const { rows: pairs } = await pool.query(
     `SELECT p.status, p.pick, p.excluded_reason, cr.config_version_id AS current_version, sr.config_version_id AS side_version
        FROM bot_config_pairs p
        JOIN bot_config_results cr ON cr.id = p.current_result_id
-       JOIN bot_config_results sr ON sr.id = p.side_result_id`,
+       JOIN bot_config_versions cv ON cv.id = cr.config_version_id
+       JOIN bot_config_results sr ON sr.id = p.side_result_id
+      WHERE cv.scope = $1`,
+    [scope],
   );
   const { rows: [skipped] } = await pool.query(
-    "SELECT COUNT(*)::int AS n FROM bot_config_results WHERE status = 'skipped'",
+    `SELECT COUNT(*)::int AS n FROM bot_config_results r
+       JOIN bot_config_versions v ON v.id = r.config_version_id
+      WHERE r.status = 'skipped' AND v.scope = $1`,
+    [scope],
   );
   const out = versions.map((v) => {
     const mine = results.filter((r) => Number(r.config_version_id) === v.id);
@@ -1087,7 +1391,15 @@ async function listWithStats(pool) {
       stats: {
         builds: mine.length,
         built: builtN,
+        buildRate: mine.length ? builtN / mine.length : null,
+        // A later change's current version: its live builds' proposals.
+        ...(scope === 'later' && v.role === 'current'
+          ? { proposals: outcomesOf(mine.filter((r) => r.source === 'live')) } : {}),
         avgCostUsd: costs.length ? costs.reduce((s, c) => s + c, 0) / costs.length : null,
+        // Beside it, what that cost was made of: each stage's average on the
+        // results that recorded their stages (n of them), on its models, with
+        // the remainder no stage names (stage-costs.js averages).
+        avgCostByStage: stageCosts.averages(mine.map((r) => r.cost_parts).filter(Boolean)),
         medianActiveMs: median(mine.map((r) => num(r.ms))),
         bootRate: bootKnown.length ? mine.filter((r) => r.booted === true).length / bootKnown.length : null,
         pairsWaiting: involving.filter((p) => p.status === 'waiting').length,
@@ -1095,40 +1407,86 @@ async function listWithStats(pool) {
       },
     };
   });
+  const budget = await sideBudget(pool, scope);
   return {
     ok: true,
+    scope,
+    label: SCOPE_LABELS[scope],
     versions: out,
     currentId: current ? current.id : null,
     pairsWaiting: pairs.filter((p) => p.status === 'waiting').length,
-    sideBuilds: { ...(await sideBudget(pool)), skipped: Number(skipped?.n) || 0 },
+    sideBuilds: {
+      ...budget,
+      skipped: Number(skipped?.n) || 0,
+      // Spent: no side build starts until the last seven days' spend is back under the limit.
+      paused: budget.leftUsd <= 0,
+    },
   };
+}
+
+/** Both scopes' numbers, labelled, first versions first (the connector's list). */
+async function listAllScopes(pool) {
+  const scopes = [];
+  for (const scope of SCOPES) {
+    // eslint-disable-next-line no-await-in-loop
+    const { ok: _ok, ...one } = await listWithStats(pool, { scope });
+    scopes.push(one);
+  }
+  return { ok: true, scopes, pairsWaiting: scopes.reduce((n, sc) => n + (Number(sc.pairsWaiting) || 0), 0) };
 }
 
 // ── Side builds on the App bench lane ────────────────────────────────────
 
-async function sideWeeklyCents(pool) {
+/** One scope's side builds' weekly limit in cents: its platform setting, or its default. */
+async function sideWeeklyCents(pool, scope = 'first_version') {
+  const b = SIDE_BUILDS[scope] || SIDE_BUILDS.first_version;
   try {
-    const { rows: [r] } = await pool.query('SELECT value FROM platform_settings WHERE key = $1', [SIDE_WEEKLY_KEY]);
+    const { rows: [r] } = await pool.query('SELECT value FROM platform_settings WHERE key = $1', [b.key]);
     const n = parseInt(r?.value, 10);
-    return Number.isFinite(n) && n >= 0 ? Math.min(n, MAX_SIDE_WEEKLY_CENTS) : DEFAULT_SIDE_WEEKLY_CENTS;
+    return Number.isFinite(n) && n >= 0 ? Math.min(n, MAX_SIDE_WEEKLY_CENTS) : b.defaultCents;
   } catch {
-    return DEFAULT_SIDE_WEEKLY_CENTS;
+    return b.defaultCents;
   }
 }
 
 /**
- * The side builds' week: the limit, what their runs spent in the last seven
- * days (interrupted attempts included), and what their trials still waiting
- * or running are expected to cost. Real dollars.
+ * Set one scope's side builds' weekly limit, in dollars (0 pauses them).
+ * Each scope's is its own setting. Resolves { ok, scope, sideBuilds }.
  */
-async function sideBudget(pool) {
-  const limitCents = await sideWeeklyCents(pool);
+async function setSideWeeklyBudget(pool, { scope: rawScope = null, weeklyUsd, actorId = null } = {}) {
+  const scope = scopeOf(rawScope);
+  if (!scope) return badScope();
+  const usd = Number(weeklyUsd);
+  const cents = Math.round(usd * 100);
+  if (weeklyUsd === null || weeklyUsd === '' || !Number.isFinite(usd) || cents < 0 || cents > MAX_SIDE_WEEKLY_CENTS) {
+    return httpError(400, `weeklyUsd must be a number of dollars from 0 to ${MAX_SIDE_WEEKLY_CENTS / 100}`);
+  }
+  await pool.query(
+    `INSERT INTO platform_settings (key, value, updated_at, updated_by)
+     VALUES ($1, $2, NOW(), $3)
+     ON CONFLICT (key) DO UPDATE
+       SET value = EXCLUDED.value, updated_at = NOW(), updated_by = EXCLUDED.updated_by`,
+    [SIDE_BUILDS[scope].key, String(cents), actorId],
+  );
+  log.info('bot-configs', 'Side builds\' weekly budget set', { scope, cents });
+  return { ok: true, scope, sideBuilds: await sideBudget(pool, scope) };
+}
+
+/**
+ * One scope's side builds' week: the limit, what their runs spent in the
+ * last seven days (interrupted attempts included), and what their trials
+ * still waiting or running are expected to cost. Real dollars.
+ */
+async function sideBudget(pool, scope = 'first_version') {
+  const b = SIDE_BUILDS[scope] || SIDE_BUILDS.first_version;
+  const limitCents = await sideWeeklyCents(pool, scope);
   const { rows: [r] } = await pool.query(
     `SELECT COALESCE(SUM(br.spent_usd), 0)::float8 AS spent,
             COALESCE((SELECT SUM(tr.est_cost_usd) FROM bench_trials tr JOIN bench_runs rr ON rr.id = tr.run_id
-                       WHERE rr.kind = 'bot_config' AND tr.status IN ('pending', 'running')), 0)::float8 AS pending
+                       WHERE rr.kind = $1 AND tr.status IN ('pending', 'running')), 0)::float8 AS pending
        FROM bench_runs br
-      WHERE br.kind = 'bot_config' AND br.created_at > NOW() - INTERVAL '7 days'`,
+      WHERE br.kind = $1 AND br.created_at > NOW() - INTERVAL '7 days'`,
+    [b.runKind],
   );
   const spentUsd = num(r?.spent) || 0;
   const pendingUsd = num(r?.pending) || 0;
@@ -1151,24 +1509,32 @@ async function ensureSideSuite(pool) {
 }
 
 /**
- * When a live first version starts building under the current version:
- * every side version gets its place. One derivable from the current one
- * (derivableFrom) waits for the live build's round-0 snapshot; any other is
- * a trial on the App bench lane, replaying the live run's request, triage
- * and plan on the live project's own repository at the commit the live
- * build starts from, linked to the live run and the version. Its spend is
- * the bench user's, within the side builds' weekly budget: once that is
- * spent, a side version is recorded skipped, with why, and nothing is
- * spawned. Idempotent (a live build restarted from its kept spec spawns
- * nothing twice). Never throws; resolves what it did.
+ * When a configured build starts under its scope's current version (a live
+ * first version, or a later change, live or shadow): every side version of
+ * that scope gets its place. One derivable from the current one
+ * (derivableFrom; first versions only, whose review keeps a round-0
+ * snapshot) waits for the live build's round-0 snapshot; any other is a
+ * trial on the App bench lane, replaying the run's request, triage and plan
+ * on the project's own repository at the commit the build starts from, in
+ * its own worker on its own `bench/` branch, never proposed or posted,
+ * linked to the run and the version: a first version's at the
+ * `first_version` stage, a later change's at the `build` stage. Its spend
+ * is the bench user's, within its scope's side builds' weekly budget: once
+ * that is spent, a side version is recorded skipped, with why, and nothing
+ * is spawned. `skipReason` records every side skipped for that reason
+ * instead (the platform's own repository, say). Idempotent (a build
+ * restarted from its kept spec spawns nothing twice). Never throws;
+ * resolves what it did.
  */
 async function spawnSideBuilds(pool, config, {
-  botRunId, app, snapshotId, current, deps = {},
+  botRunId, app, snapshotId, current, scope: rawScope = null, skipReason = null, deps = {},
 } = {}) {
   const out = { derived: 0, trials: 0, skipped: 0, runId: null };
-  if (!botRunId || !app?.id || !current?.recipe) return out;
+  const scope = scopeOf(rawScope);
+  if (!botRunId || !app?.id || !current?.recipe || !scope) return out;
+  const b = SIDE_BUILDS[scope];
   try {
-    const sides = await sideVersions(pool);
+    const sides = await sideVersions(pool, scope);
     if (!sides.length) return out;
     const { rows: had } = await pool.query(
       'SELECT config_version_id FROM bot_config_results WHERE bot_run_id = $1',
@@ -1178,7 +1544,13 @@ async function spawnSideBuilds(pool, config, {
     const toBuild = [];
     for (const side of sides) {
       if (already.has(side.id)) continue;
-      if (derivableFrom(current.recipe, side.recipe)) {
+      if (skipReason) {
+        // eslint-disable-next-line no-await-in-loop
+        await recordResult(pool, {
+          botRunId, configVersionId: side.id, source: 'trial', status: 'skipped', error: clip(skipReason, 300),
+        });
+        out.skipped += 1;
+      } else if (scope === 'first_version' && derivableFrom(current.recipe, side.recipe)) {
         // eslint-disable-next-line no-await-in-loop
         await recordResult(pool, { botRunId, configVersionId: side.id, source: 'round0', status: 'pending' });
         out.derived += 1;
@@ -1186,6 +1558,7 @@ async function spawnSideBuilds(pool, config, {
         toBuild.push(side);
       }
     }
+    if (skipReason && out.skipped) log.info('bot-configs', 'Side builds skipped', { botRunId, scope, skipped: out.skipped, why: skipReason });
     if (!toBuild.length) return out;
     // Each stage at its own model's price: the spec, the build, and the
     // reviewer's rounds with their fix turns (no triage: the live run's is
@@ -1211,22 +1584,25 @@ async function spawnSideBuilds(pool, config, {
     }
     if (!want.length) return out;
     // A first look, unlocked, so a week already spent makes no task.
-    const glance = await sideBudget(pool);
+    const glance = await sideBudget(pool, scope);
     let suiteId = null;
     let taskId = null;
     if (want.some((w) => w.est <= glance.leftUsd)) {
       suiteId = await ensureSideSuite(pool);
       const { rows: [task0] } = await pool.query(
-        "SELECT id FROM bench_tasks WHERE suite_id = $1 AND source_run_id = $2 AND stage = 'first_version'",
-        [suiteId, Number(botRunId)],
+        'SELECT id FROM bench_tasks WHERE suite_id = $1 AND source_run_id = $2 AND stage = $3',
+        [suiteId, Number(botRunId), b.stage],
       );
       taskId = task0?.id || null;
       if (!taskId) {
         const suites = require('./bench/suites');
         const task = await suites.insertTask(pool, {
-          suiteId, stage: 'first_version', sourceRunId: Number(botRunId), snapshotId: Number(snapshotId),
+          suiteId, stage: b.stage, sourceRunId: Number(botRunId), snapshotId: Number(snapshotId),
           appId: app.id, issueNumber: null,
-          tags: { bot_config: true, app_slug: app.slug || null, side_of_run: Number(botRunId) },
+          tags: {
+            bot_config: true, app_slug: app.slug || null, side_of_run: Number(botRunId),
+            ...(scope === 'later' ? { scope } : {}),
+          },
           reference: {}, referenceSource: 'authored',
         });
         taskId = task.id;
@@ -1243,15 +1619,15 @@ async function spawnSideBuilds(pool, config, {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      await client.query("SELECT pg_advisory_xact_lock(hashtext('bot_config_side_budget'))");
-      budget = await sideBudget(client);
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [b.lock]);
+      budget = await sideBudget(client, scope);
       let left = budget.leftUsd;
       for (const w of want) {
         if (!taskId || w.est > left) {
           // eslint-disable-next-line no-await-in-loop
           await recordResult(client, {
             botRunId, configVersionId: w.side.id, source: 'trial', status: 'skipped',
-            error: `the side builds' weekly budget ($${budget.limitUsd.toFixed(2)}) is spent`,
+            error: b.spent(budget.limitUsd.toFixed(2)),
           });
           out.skipped += 1;
         } else {
@@ -1264,11 +1640,12 @@ async function spawnSideBuilds(pool, config, {
         capUsd = Math.max(MIN_SIDE_RUN_CAP_USD, Math.min(budget.leftUsd, estTotal * SIDE_RUN_CAP_FACTOR));
         ({ rows: [run] } = await client.query(
           `INSERT INTO bench_runs (suite_id, models, baseline_model, stages, repeats, cap_usd, concurrency, note, kind)
-           VALUES ($1, $2::text[], $3, ARRAY['first_version'], 1, $4, $5, $6, 'bot_config')
+           VALUES ($1, $2::text[], $3, ARRAY[$7::text], 1, $4, $5, $6, $8)
            RETURNING id`,
           [suiteId, [...new Set(fits.map((f) => f.side.recipe.models.build))], fits[0].side.recipe.models.build,
             Math.round(capUsd * 100) / 100, Math.max(1, Math.min(fits.length, 3)),
-            `Side builds of Homeroom bot run ${Number(botRunId)}`],
+            `Side builds of Homeroom bot run ${Number(botRunId)}${scope === 'later' ? ' (a later change)' : ''}`,
+            b.stage, b.runKind],
         ));
         for (const f of fits) {
           // eslint-disable-next-line no-await-in-loop
@@ -1295,14 +1672,14 @@ async function spawnSideBuilds(pool, config, {
       client.release();
     }
     if (!fits.length) {
-      if (out.skipped) log.info('bot-configs', 'Side builds skipped', { botRunId, skipped: out.skipped, leftUsd: budget.leftUsd });
+      if (out.skipped) log.info('bot-configs', 'Side builds skipped', { botRunId, scope, skipped: out.skipped, leftUsd: budget.leftUsd });
       return out;
     }
     out.trials = fits.length;
     out.runId = Number(run.id);
     (deps.lane || require('./bench/lane')).wake();
     log.info('bot-configs', 'Side builds queued on the App bench lane', {
-      botRunId, benchRunId: out.runId, trials: out.trials, derived: out.derived, skipped: out.skipped, capUsd,
+      botRunId, scope, benchRunId: out.runId, trials: out.trials, derived: out.derived, skipped: out.skipped, capUsd,
     });
     return out;
   } catch (err) {
@@ -1322,8 +1699,14 @@ async function spawnSideBuilds(pool, config, {
  */
 async function abandonSideBuilds(pool, botRunId, why, deps = {}) {
   if (!botRunId) return 0;
-  const reason = clip(`the live first version was ${why || 'given up'}`, 300);
   try {
+    // A later change's side builds are stopped the same way; only the words differ.
+    const { rows: [run] = [] } = await pool.query(
+      `SELECT v.scope FROM homeroom_bot_runs r JOIN bot_config_versions v ON v.id = r.bot_config_version_id
+        WHERE r.id = $1`,
+      [Number(botRunId)],
+    );
+    const reason = clip(`${run?.scope === 'later' ? 'the build they are compared with' : 'the live first version'} was ${why || 'given up'}`, 300);
     const { rows: waiting } = await pool.query(
       `UPDATE bench_trials SET status = 'cancelled', finished_at = NOW(), error = $2
         WHERE bot_run_id = $1 AND status IN ('pending', 'awaiting')
@@ -1345,13 +1728,13 @@ async function abandonSideBuilds(pool, botRunId, why, deps = {}) {
       [Number(botRunId), reason],
     );
     if (waiting.length || running.length) {
-      log.info('bot-configs', 'Side builds of a first version given up were stopped', {
+      log.info('bot-configs', 'Side builds of a build given up were stopped', {
         botRunId, cancelled: waiting.length, stopping: running.length, why,
       });
     }
     return waiting.length + running.length;
   } catch (err) {
-    log.warn('bot-configs', 'Could not stop the side builds of a first version given up', { botRunId, err: err.message });
+    log.warn('bot-configs', 'Could not stop the side builds of a build given up', { botRunId, err: err.message });
     return 0;
   }
 }
@@ -1472,13 +1855,20 @@ module.exports = {
   GLM,
   OPUS,
   ROLES,
+  SCOPES,
+  SCOPE_LABELS,
   STAGES,
   SEED,
+  SEED_LATER,
+  scopeOf,
   MAX_ROUNDS,
   SIDE_WEEKLY_KEY,
   DEFAULT_SIDE_WEEKLY_CENTS,
+  LATER_SIDE_WEEKLY_KEY,
+  DEFAULT_LATER_SIDE_WEEKLY_CENTS,
   SIDE_SUITE_NAME,
   SIDE_RUN_KIND,
+  LATER_SIDE_RUN_KIND,
   validateRecipe,
   recipeOf,
   recipeLine,
@@ -1487,6 +1877,7 @@ module.exports = {
   listVersions,
   versionById,
   currentVersion,
+  laterVersion,
   sideVersions,
   saveVersion,
   setRole,
@@ -1498,20 +1889,26 @@ module.exports = {
   finishLive,
   finishSideTrial,
   exclusionOf,
+  laterExclusionOf,
   IDENTICAL_REASON,
+  LATER_IDENTICAL_REASON,
   settlePairs,
   readArtifactsById,
   CAPTURE_RETENTION_DAYS,
   pruneCaptureArtifacts,
   maybePruneCaptureArtifacts,
   pairViews,
+  diffSummary,
   nextPair,
   submitPick,
   wilson,
   winRateOf,
   median,
+  outcomesOf,
   listWithStats,
+  listAllScopes,
   sideWeeklyCents,
+  setSideWeeklyBudget,
   sideBudget,
   spawnSideBuilds,
   abandonSideBuilds,

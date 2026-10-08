@@ -106,3 +106,25 @@ test('the unit suite row leads the block, whole, however many checks fail', () =
 test('without a unit suite row the block does not mention re-running test files', () => {
   assert.doesNotMatch(buildFailingChecksBlock('failing', [failRow()]), /Re-run just those files/);
 });
+
+test('#3978: the unit row also carries its first failing test\'s error', () => {
+  // The grouped reason names files; the excerpt says what the first failure
+  // actually asserted, so the fix turn starts from the assertion.
+  const block = buildFailingChecksBlock('failing', [Object.assign(unitRow(), {
+    failureDetails: [{
+      file: 'tests/agent-sessions-postgres.test.js',
+      test: 'one Mayor turn at a time',
+      excerpt: "error: 'expected 42 to equal 41',\n  code: 'ERR_ASSERTION',\n  stack: |-\n    TestContext.<anonymous> (…)",
+    }],
+  })]);
+  assert.match(block, /first failing test's error: error: 'expected 42 to equal 41', code: 'ERR_ASSERTION', stack: \|-\s+TestContext/,
+    'flattened onto one line, indented under the row');
+  // It sits beside the reason, not instead of it.
+  assert.ok(block.includes(UNIT_REASON));
+});
+
+test('#3978: a unit row without excerpts keeps the reason-only line', () => {
+  const block = buildFailingChecksBlock('failing', [unitRow()]);
+  assert.ok(block.includes(UNIT_REASON));
+  assert.doesNotMatch(block, /first failing test's error/);
+});

@@ -29,7 +29,7 @@
  * open their tabs; the Workshop door went with the Workshop becoming a tab.
  *
  * Members & activity was the third card. It is the hero's now (#3268,
- * ./community-card.tsx HeroPeople and HeroActivity): who is here and how
+ * ./community-card.tsx HeroPulse): who is here and how
  * lively it has been are part of what the project IS, so they are read
  * where the page starts rather than three cards down.
  *

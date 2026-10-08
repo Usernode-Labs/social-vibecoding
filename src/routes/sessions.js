@@ -20,6 +20,7 @@ const buildContract = require('../services/build-contract');
 const staging = require('../services/staging');
 const topicAttrs = require('../services/topic-attributes');
 const agentSessions = require('../services/agent-sessions');
+const classicSessions = require('../services/classic-sessions');
 const { claimIssueForUser } = require('../services/issue-claims');
 const { appIdentityEnv } = require('../services/app-identity-env');
 const visuals = require('../services/visuals');
@@ -501,9 +502,13 @@ const MANUAL_SESSION_TITLE_MAX = 256;
 // Mayor creates each change through POST /api/apps/:slug/sessions on a
 // delegated grant; nothing else may create one any more (not a browser, a
 // shell cached before the switch, a CLI token, nor Global Chat's loopback),
-// and forking a chat into a new classic session is retired with them.
-// Sessions that already exist keep working exactly as they did: only the
-// creation routes read this.
+// and forking a chat into a new classic session is retired with them. Only
+// the creation routes read this.
+//
+// #3976: the sessions that already exist are read-only. Their chat takes no
+// new message and nothing continues their work; reading them and everything
+// about the proposal they became stays open. See services/classic-sessions.js
+// for the line between the two.
 const CLASSIC_SESSIONS_RETIRED = 'New work starts in an agent session now. '
   + 'Start one from Messages or New change.';
 
@@ -1127,6 +1132,14 @@ function summarizeFailingChecks(checkState, testResults, max = FAILING_CHECKS_MA
       consoleError: Array.isArray(r.consoleErrors) && r.consoleErrors[0]
         ? String(r.consoleErrors[0].message || '').slice(0, 200)
         : null,
+      // #3978: the unit-suite row's first failing-test excerpt — the
+      // assertion message and expected/actual, which the grouped reason
+      // above deliberately does not carry. One test, tightly clipped; the
+      // rest is what a re-run of the named files prints.
+      excerpt: unitSuiteRow.isUnitSuiteRow(r)
+        && Array.isArray(r.failureDetails) && r.failureDetails[0] && r.failureDetails[0].excerpt
+        ? String(r.failureDetails[0].excerpt).replace(/\s+/g, ' ').slice(0, 400)
+        : null,
     })),
   };
 }
@@ -1139,7 +1152,10 @@ function buildFailingChecksBlock(checkState, testResults) {
   const blocking = { length: summary.blocking };
   const lines = summary.rows.map((r) => {
     const firstConsole = r.consoleError ? ` · first console error: ${r.consoleError}` : '';
-    return `- [${r.advisory ? 'advisory' : 'BLOCKING'}] "${r.name}"${r.path ? ` (path: ${r.path})` : ''} — ${r.reason}${firstConsole}`;
+    const line = `- [${r.advisory ? 'advisory' : 'BLOCKING'}] "${r.name}"${r.path ? ` (path: ${r.path})` : ''} — ${r.reason}${firstConsole}`;
+    // The unit-suite row also carries its first failing test's error (#3978):
+    // what the failure actually asserted, flattened onto one indented line.
+    return r.excerpt ? `${line}\n  first failing test's error: ${r.excerpt}` : line;
   });
   const more = failing.length > FAILING_CHECKS_MAX
     ? `\n(+${failing.length - FAILING_CHECKS_MAX} more failing)` : '';
@@ -3274,7 +3290,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // defer to — the route's whole job is to start one unattended turn
       // immediately, and that turn may push. Deferring would only move the
       // same mint a few lines down the same request.
-      const branchName = branchNames.devBranchName(`auto-issue-${issueNumber}`);
+      const branchName = branchNames.devBranchName(`auto-issue-${issueNumber}`, Date.now(), issue && issue.title);
       try {
         await github.createBranch(repoOwner, repoName, branchName);
       } catch (err) {
@@ -3452,7 +3468,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // `fromBranch` argument below. Defer it and the first turn would
       // branch off main instead, silently discarding the work the clone
       // was created to continue.
-      const branchName = branchNames.devBranchName(req.user.username);
+      const branchName = branchNames.devBranchName(req.user.username, Date.now(), src.session_title);
       const [, repoOwner, repoName] = (src.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
       let inheritedCodeBranch = false;
       if (github.isEnabled() && repoOwner && repoName) {
@@ -3930,6 +3946,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // live path delivers the same shape via the visuals_ready event).
       // Best-effort — a visuals hiccup must not break opening the session.
       const session = rows[0];
+      // #3976: the dev chat reads this to put its composer away and say why.
+      // Decided here, beside the routes that refuse, so the screen and the
+      // server cannot disagree about which sessions take no new message.
+      session.classic_read_only = classicSessions.isClassicSession(session);
       // #1650: a managed local handoff cannot be proposed merely because it
       // is active. Its exact submitted head must have live staging and a
       // terminal passing verdict, and the in-memory build/check/capture gates
@@ -4240,6 +4260,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       await issueAnnounce.announceIssueCreated(pool, owner, repo, issue, isAppTarget
         ? { id: row.app_id, slug: row.app_slug, name: row.app_name }
         : null);
+      // #3952: the people the confirmed draft names with @. Never rejects.
+      notifications.notifyIssueMentions?.(pool, {
+        ...(isAppTarget ? { appId: row.app_id } : { owner, repo }),
+        issueNumber: issue.number, authorId: req.user.id,
+        text: `${draft.title || ''}\n\n${draft.body || ''}`,
+      });
 
       log.info('sessions', 'Issue filed after user confirm', {
         sessionId, msgId, number: issue.number, user: req.user.username,
@@ -4349,6 +4375,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const { backend, model, reasoningEffort } = req.body || {};
       if (!Number.isFinite(sessionId)) {
         return res.status(400).json({ error: 'Bad session id' });
+      }
+      // #3976: a classic session's coding agent and model are what its next
+      // turn would run on, and it has no next turn. Ahead of the resolvers,
+      // which can call out over the network and provision a key.
+      if (classicSessions.isClassicSession(
+        await classicSessions.loadOwned(pool, sessionId, req.user.id),
+      )) {
+        return res.status(409).json(classicSessions.refusal());
       }
 
       // ── Phase 1: validate network-dependent inputs BEFORE locking ──
@@ -4466,6 +4500,13 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const sessionId = parseInt(req.params.id, 10);
       if (!Number.isFinite(sessionId)) {
         return res.status(400).json({ error: 'Bad session id' });
+      }
+      // #3976: a classic session is not built anywhere next, so there is no
+      // venue left to choose for it.
+      if (classicSessions.isClassicSession(
+        await classicSessions.loadOwned(pool, sessionId, req.user.id),
+      )) {
+        return res.status(409).json(classicSessions.refusal());
       }
       const venue = typeof (req.body || {}).venue === 'string' ? req.body.venue : null;
       // Clearing is legitimate: it returns the session to "nobody has
@@ -4939,13 +4980,18 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     async (req, res) => {
       try {
         const { rows: sessionRows } = await pool.query(
-          `SELECT cs.id FROM chat_sessions cs
+          `SELECT cs.id, cs.agent_session_id, cs.is_headless, cs.source FROM chat_sessions cs
            WHERE cs.id = $1 AND cs.user_id = $2
              AND cs.status IN ('active', 'promoted')
              AND cs.is_headless = FALSE`,
           [req.params.id, req.user.id]
         );
         if (!sessionRows.length) return res.status(404).json({ error: 'Active session not found' });
+        // #3976: a file is uploaded to go with a message, and a classic
+        // session takes no new message.
+        if (classicSessions.isClassicSession(sessionRows[0])) {
+          return res.status(409).json(classicSessions.refusal());
+        }
         const sessionId = sessionRows[0].id;
 
         const filename = String(req.query.filename || '').trim();
@@ -5069,32 +5115,26 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
            AND cs.source IS DISTINCT FROM 'imported'`,
         [req.params.id, req.user.id]
       );
-      let { rows: sessionRows } = await loadChatSession();
+      const { rows: sessionRows } = await loadChatSession();
       if (!sessionRows.length) {
-        // A message to a paused session resumes it (#2779 follow-up): paused
-        // is bookkeeping, never something the user is asked to undo first.
-        // The resume keeps every rule the resume route has (the caps, and
-        // pausing the user's least recently used session to make room).
+        // A paused session is refused for what it is, never resumed first: a
+        // resume spends a slot and may pause another of the user's sessions.
+        // (A message to a paused classic session used to resume it, #2779
+        // follow-up; since #3976 a classic session takes no message at all.)
         const { rows: pausedRows } = await pool.query(
-          `SELECT id, agent_session_id FROM chat_sessions
+          `SELECT id, agent_session_id, is_headless, source FROM chat_sessions
             WHERE id = $1 AND user_id = $2 AND status = 'paused'
               AND is_headless = FALSE AND source IS DISTINCT FROM 'imported'`,
           [req.params.id, req.user.id]
         );
-        // Refused below anyway, so it is never resumed first: a resume
-        // spends a slot and may pause another of the user's sessions.
         if (pausedRows.length && pausedRows[0].agent_session_id != null) {
           return res.status(409).json({
             error: 'This change belongs to an agent session. Continue it there.',
             agentSessionId: pausedRows[0].agent_session_id,
           });
         }
-        if (pausedRows.length) {
-          const resumed = await resumePausedSession({
-            pool, config, user: req.user, sessionId: Number(pausedRows[0].id),
-          });
-          if (!resumed.ok) return res.status(resumed.status).json({ error: resumed.error });
-          ({ rows: sessionRows } = await loadChatSession());
+        if (pausedRows.length && classicSessions.isClassicSession(pausedRows[0])) {
+          return res.status(409).json(classicSessions.refusal());
         }
       }
       if (!sessionRows.length) {
@@ -5128,6 +5168,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           sessionId: session.id, clientMessageId, viewer: req.user,
         });
         if (delivery.received) return chatDelivery.answerDuplicate(res, delivery);
+      }
+      // #3976: every other row this route loads is a classic session, and a
+      // classic session is read-only: new work starts in an agent session.
+      // After the duplicate lookup, so a retry of a message stored before
+      // this landed still learns it was received. The turn below is kept
+      // for now; deleting the classic dev chat is a later change.
+      if (classicSessions.isClassicSession(session)) {
+        return res.status(409).json(classicSessions.refusal());
       }
       const isOpenRouterSession = registry.resolveBackend(session.agent_backend) === 'codex_openrouter';
 
@@ -5219,8 +5267,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // this handler is already holding.
       if (!String(session.branch_name || '').trim()) {
         try {
+          // #3229: the branch is named after the change, from the same
+          // LLM-free title the session's first name comes from.
           const ensured = await sessionLifecycle.ensureSessionBranch({
             pool, sessionId: session.id, username: req.user.username,
+            label: session.session_title || sessionTitles.deterministicTitle(message || ''),
           });
           session.branch_name = ensured.branchName;
         } catch (err) {
@@ -5672,25 +5723,22 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // once and cached, so the 3s status poll costs nothing.
   //
   // #1378: the set became a Map because `stoppable` is now part of the
-  // payload and the fixtures have to be able to show BOTH answers. A seeded
-  // fixture has no in-memory stop handle and no durable active_turn, so it
-  // would compute stoppable:false for all of them — regressing the two
-  // estimator fixtures to the "Finishing up…" spinner and breaking the
-  // checks that assert their cohort note. The '-unstoppable' fixture is the
-  // one that deliberately keeps the false answer.
+  // payload. A seeded fixture has no in-memory stop handle and no durable
+  // active_turn, so it would compute stoppable:false — regressing the
+  // estimator fixtures to the "Finishing up…" spinner — so each one declares
+  // itself stoppable. (A '-unstoppable' fixture kept the false answer until
+  // #4268 removed it: its screen was the composer's, which a read-only
+  // classic session no longer draws.)
   let stagingCohortFixtureIds = null;
   async function stagingCohortFixtureSessions() {
     if (process.env.USERNODE_ENV !== 'staging') return null;
     if (stagingCohortFixtureIds) return stagingCohortFixtureIds;
     try {
       const { rows } = await pool.query(
-        `SELECT id, branch_name FROM chat_sessions
+        `SELECT id FROM chat_sessions
           WHERE branch_name LIKE 'staging-fixture/cc-cohort-%'`
       );
-      stagingCohortFixtureIds = new Map(rows.map((r) => [
-        r.id,
-        { stoppable: !String(r.branch_name || '').endsWith('-unstoppable') },
-      ]));
+      stagingCohortFixtureIds = new Map(rows.map((r) => [r.id, { stoppable: true }]));
     } catch {
       stagingCohortFixtureIds = new Map();
     }

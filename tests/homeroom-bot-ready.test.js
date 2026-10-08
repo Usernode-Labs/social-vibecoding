@@ -106,7 +106,8 @@ test('B7: the card, drawn in every state', () => {
 
 test('B7: the client knows the new buttons, and Approve is the person\'s own vote, on the version they were sent', () => {
   const api = read('frontend/src/features/messages/api.ts');
-  assert.match(api, /const BOT_ACTION_TYPES = new Set\(\['server', 'open', 'prompt', 'preview', 'vote', 'reply'\]\);/);
+  // #4231: and Invite people, which the client answers itself.
+  assert.match(api, /const BOT_ACTION_TYPES = new Set\(\['server', 'open', 'prompt', 'preview', 'vote', 'reply', 'invite'\]\);/);
   assert.match(api, /fetch\(`\/api\/sessions\/\$\{sessionId\}\/vote`, \{/);
   assert.match(api, /body: JSON\.stringify\(epoch === null \? \{ vote: 'yes' \} : \{ vote: 'yes', expectedEpoch: epoch \}\),/);
   assert.match(api, /const stale = response\.status === 409 && pick\(data, 'headChanged'\) === true;/);

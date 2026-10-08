@@ -219,7 +219,11 @@ function stagingMockIssues(repoUrl) {
       'Staging-only mock issue for previewing the Dev card list.\n\n'
       + 'Power users vote on a lot of proposals — pressing Y/N while a '
       + 'proposal card is focused should cast the vote without reaching '
-      + 'for the mouse.', 9),
+      + 'for the mouse.\n\n'
+      // #3952: a person named with @, as GitHub stores a request filed on
+      // Homeroom (safeMention's zero-width space after the `@`), so its page
+      // shows the mention as a link to their page.
+      + '@​staging_tester lmk wyt', 9),
     mk(900003, '[Mock] Topic cards overflow on narrow phones',
       'Staging-only mock issue for previewing the Dev card list.\n\n'
       + 'On a 360px-wide viewport the action buttons on issue cards can '
@@ -355,11 +359,51 @@ function stagingMockIssues(repoUrl) {
     // The request the Homeroom bot is building. The bot does not run in a
     // preview, so the list route gives this row a synthetic `bot` state and
     // nothing else: its page says the bot is building it, its main button is
-    // the disabled "Homeroom bot is building…", and it offers no Claim.
+    // the disabled "Homeroom bot is building…", and (#4190) it still offers
+    // Claim, for working on it alongside the bot, but not Start work.
     mk(900018, '[Mock] The Homeroom bot is building this request',
       'Staging-only mock issue for previewing a request the Homeroom bot is '
-      + 'building. Nobody has claimed it and nobody needs to: the bot is on '
-      + 'it, so the page says so instead of offering Claim or Start work.', 2),
+      + 'building. Nobody has claimed it yet. The page says the bot is on it, '
+      + 'and still offers Claim for anyone who wants to work on it alongside '
+      + 'the bot, but not Start work.', 2),
+  ];
+}
+
+// #4244: two CLOSED staging-only requests, so a closed request's page (its
+// status band) can be previewed. Served by the single-issue route alone:
+// the board lists open requests, and these are not. 900031 was closed by a
+// merged change (its `addressed_by`, which the resolver would otherwise
+// answer from chat_sessions), 900032 by a close vote (`closed_via`). Each is
+// used only when the real lookups answer nothing. A no-op in production.
+function stagingMockClosedIssues(repoUrl) {
+  const base = (repoUrl || 'https://github.com/example/app')
+    .replace(/\.git$/, '').replace(/\/$/, '');
+  const daysAgo = (d) => new Date(Date.now() - d * 24 * 3600 * 1000).toISOString();
+  const mk = (number, title, body, days, extra) => ({
+    number,
+    title,
+    body,
+    labels: ['usernode'],
+    state: 'closed',
+    createdAt: daysAgo(days + 6),
+    updatedAt: daysAgo(days),
+    closedAt: daysAgo(days),
+    htmlUrl: `${base}/issues/${number}`,
+    user: 'staging-tester',
+    ...extra,
+  });
+  return [
+    mk(900031, '[Mock] Empty board shows no tier bands',
+      'Staging-only closed mock request. A merged change closed it, so its '
+      + 'page says so in a green band at the top of the card.', 9, {
+        mockAddressedBy: {
+          sessionId: 900031, state: 'merged', prNumber: 10, prUrl: null,
+          title: 'Show the four empty tier bands when the board has no restaurants',
+        },
+      }),
+    mk(900032, '[Mock] Retire the old tips banner',
+      'Staging-only closed mock request. A close vote closed it, so its page '
+      + 'says so in a grey band at the top of the card.', 9, { mockClosedVia: 'vote' }),
   ];
 }
 
@@ -1556,25 +1600,21 @@ function issueRoutes(config) {
       // app's stakeholders and gated on the `new_issues` category, which
       // DEFAULTS OFF — so on a platform with no stored preferences this
       // sends nothing at all, and it is opt-in per app from the tile menu.
+      // #3952: the people its text names with @ are told too; #4271: once
+      // each, the mention standing in for the new-request row
+      // (notifyIssueFiled). Only a request with its GitHub twin is read for
+      // names: a governance proposal's local id is not a request's number.
       //
       // Best-effort and never awaited into the response: filing an issue
       // must not fail because a notification insert did. The issue is on
       // the board either way, which is the whole reason suppressing a
-      // notification here is not destructive.
-      // Wrapped: a `.catch()` covers a rejected promise, not a synchronous
-      // throw, and filing an issue must not fail because of a notification.
-      try {
-        notifications.createIssueOpenedNotifications?.(pool, {
-          appId: app.id,
-          issueNumber: githubIssueNumber || rows[0].id,
-          authorId: req.user.id,
-        })?.then((created) => Promise.all(
-          created.map((row) => notifications.hydrateAndPush(pool, row))
-        ))?.catch((err) => log.error('issues',
-          'Issue-opened notification failed', { appId: app.id, err: err.message }));
-      } catch (err) {
-        log.error('issues', 'Issue-opened notification threw', { appId: app.id, err: err.message });
-      }
+      // notification here is not destructive. notifyIssueFiled never rejects.
+      notifications.notifyIssueFiled?.(pool, {
+        appId: app.id,
+        issueNumber: githubIssueNumber || rows[0].id,
+        authorId: req.user.id,
+        text: githubIssueNumber ? `${title}\n\n${description || ''}` : '',
+      });
       // Post the creation into the topic's own thread so the
       // discussion opens with its origin in context: governance proposals
       // (secret_change / rename / close_issue) thread on the local issue
@@ -2486,7 +2526,8 @@ function issueRoutes(config) {
       // reason the comments route below gives; without it the live fetch
       // goes first and the mock is only the fallback. No-op in production.
       const mock = IS_STAGING
-        ? stagingMockIssues(app.repo_url).find((i) => i.number === number) || null
+        ? stagingMockIssues(app.repo_url).find((i) => i.number === number)
+          || stagingMockClosedIssues(app.repo_url).find((i) => i.number === number) || null
         : null;
       let issue = null;
       if (mock && req.query.demo === '1') {
@@ -2552,12 +2593,36 @@ function issueRoutes(config) {
         }
         if (!bot && mock && number === 900018) bot = stagingMockBotWork();
       }
+      // #4244: a closed issue no merged change closed was closed by a
+      // close_issue vote, or an admin forcing one through. The applied row's
+      // audit payload says which, so the page's status band can too.
+      let closedVia = null;
+      if (issue.state === 'closed') {
+        const { rows: closeRows } = await pool.query(
+          `SELECT payload->>'appliedBy' AS applied_by
+             FROM issues
+            WHERE app_id = $1 AND kind = 'close_issue' AND status = 'closed'
+              AND payload->>'issueNumber' = $2::text
+              AND payload ? 'appliedAt'
+            ORDER BY id DESC
+            LIMIT 1`,
+          [app.id, number]
+        );
+        const by = closeRows[0] && String(closeRows[0].applied_by || '');
+        if (by && !by.startsWith('refused')) closedVia = by.startsWith('admin') ? 'admin' : 'vote';
+        if (!closedVia && issue === mock && mock.mockClosedVia) closedVia = mock.mockClosedVia;
+      }
+      const addressed = addressedBy.get(number)
+        || (issue === mock && mock.mockAddressedBy) || null;
+      const issueFields = { ...issue };
+      delete issueFields.mockAddressedBy;
+      delete issueFields.mockClosedVia;
 
       return res.json({
         issue: {
           state: 'open',
           closedAt: null,
-          ...issue,
+          ...issueFields,
           bounty_count: b ? b.cnt : 0,
           my_bounty: b ? !!b.mine : false,
           created_by_username: (creatorRows[0] && creatorRows[0].username)
@@ -2567,7 +2632,8 @@ function issueRoutes(config) {
           in_progress: null,
           bot,
           myPrSessionId: null,
-          addressed_by: addressedBy.get(number) || null,
+          addressed_by: addressed,
+          closed_via: closedVia,
           chatCount: (chat && chat.cnt) || 0,
           lastMessageAt: (chat && chat.last_at) || null,
           title_fallback: issue.title === FEEDBACK_FALLBACK_TITLE,
@@ -3845,7 +3911,9 @@ async function maybeApplySecretChangeProposal(config, pool, issue, options = {})
  * No GitHub writes (the issue is already closed; the proposer's reason is
  * NOT posted — the group never approved it) and no bounty changes.
  */
-async function resolveSupersededCloseProposals(pool, { appId, appSlug, numbers, cause } = {}) {
+// `strict`: a failure is thrown instead of logged (the merge-followups
+// workflow machine retries its work on it).
+async function resolveSupersededCloseProposals(pool, { appId, appSlug, numbers, cause, strict = false } = {}) {
   const nums = (Array.isArray(numbers) ? numbers : [])
     .map((n) => Number(n))
     .filter((n) => Number.isInteger(n) && n > 0);
@@ -3856,6 +3924,7 @@ async function resolveSupersededCloseProposals(pool, { appId, appSlug, numbers, 
     try {
       return { resolved: await workflow().targetsClosed(appId, nums, cause || { kind: 'github-close' }) };
     } catch (err) {
+      if (strict) throw err;
       log.warn('issues', 'Superseded close-proposal resolve failed', { appId, numbers: nums, err: err.message });
       return { resolved };
     }
@@ -3902,6 +3971,7 @@ async function resolveSupersededCloseProposals(pool, { appId, appSlug, numbers, 
       });
     }
   } catch (err) {
+    if (strict) throw err;
     log.warn('issues', 'Superseded close-proposal resolve failed', {
       appId, numbers: nums, err: err.message,
     });

@@ -78,7 +78,7 @@ const { reportAiRoutes } = require('./src/routes/report-ai');
 const { workshopAskRoutes } = require('./src/routes/workshop-ask');
 const { workshopThemesRoutes } = require('./src/routes/workshop-themes');
 const { sinceSummaryRoutes } = require('./src/routes/since-summary');
-const { workshopOverviewRoutes } = require('./src/routes/workshop-overview');
+const { workshopOverviewRoutes, demoNeedsVoteRoutes } = require('./src/routes/workshop-overview');
 const { appNoticesRoutes } = require('./src/routes/app-notices');
 const { messagesOverviewRoutes } = require('./src/routes/messages-overview');
 const { platformAboutRoutes } = require('./src/routes/platform-about');
@@ -233,6 +233,14 @@ app.use(explorerProxyRoutes(config));
 // no secret is configured. src/routes/github-webhook.js carries the rest.
 app.use(githubWebhookRoutes(config));
 app.use(require('./src/routes/mail-webhooks').mailWebhookRoutes(config));
+
+// ── Work-order patch uploads (#4264) ───────────────────────────────────────
+// A coding agent's one-time upload of a large patch for a connector work
+// order. HERE for the webhook's two reasons: the body is raw patch bytes
+// under whatever Content-Type curl sends, so it must precede the JSON
+// parser, and the caller is a sandbox with no session, authenticated by the
+// task's own token. src/routes/external-agent-patch-upload.js has the rest.
+app.use(require('./src/routes/external-agent-patch-upload').externalAgentPatchUploadRoutes(config));
 
 // ── Challenges API (SV web shell) ──────────────────────────────────────────
 // /challenges-api/* used to be a READ-ONLY proxy to the (now retired)
@@ -633,6 +641,9 @@ app.use(proposalHandoffRoutes(config));
 app.use(agentSessionRoutes(config, {
   scheduleInteractiveRecovery: scheduleInteractiveTurnRecovery,
 }));
+// #4313: the ?demo=1 Needs-you cards' votes, answered before the session
+// routers' guard refuses their negative ids (staging only).
+app.use(demoNeedsVoteRoutes());
 app.use(sessionRoutes(config, {
   scheduleInteractiveRecovery: scheduleInteractiveTurnRecovery,
 }));
@@ -1268,6 +1279,10 @@ async function becomeLeader() {
       log.warn('server', 'Failed kpack Build sweep failed', { err: err.message });
     });
   require('./src/services/build-retention').start(config);
+  // Ownerless check input Secrets and finished check Pods whose Job is gone:
+  // nothing else collects either, and the Secrets count against the worker
+  // namespace's quota. Bounded, every quarter hour. See services/check-retention.js.
+  require('./src/services/check-retention').start(config);
 
   // Backfill `main_sha` for apps created before #21 added the column.
   // Non-blocking: we log and continue so a single slow/unauthorized
@@ -1462,6 +1477,10 @@ async function becomeLeader() {
   // MAX_GLOBAL_SESSIONS) nears or reaches its ceiling.
   startPlatformLimitSweeper(config);
 
+  // #4296: a daily digest of errors that should not happen, and an alert
+  // when one kind piles up within an hour, for the full admins.
+  startPlatformIncidentAlertSweeper(config);
+
   // #907: release local coding-agent leases whose machine stopped
   // heartbeating, and fail the turn they were holding.
   startLocalAgentLeaseSweeper(config);
@@ -1498,10 +1517,14 @@ async function becomeLeader() {
   // on the cluster; services/check-harvest.js seats every such run and
   // reads its verdict rather than starting it over. Its claim phase is two
   // writes per run and completes before the chain moves on, so by the time
-  // reconcileStuckChecks looks, every harvestable session reads as in flight
-  // (checkRecoveryInFlight) and only genuinely ownerless rows get re-driven.
-  // The Job reads themselves run detached (`done`); boot never waits on a
-  // Job. No-op outside the Kubernetes capture runtime.
+  // reconcileStuckChecks looks, every run it could seat reads as in flight
+  // (checkRecoveryInFlight). It can seat a run only once its owner's
+  // heartbeat has lapsed: the old leader hands its rows over as it exits
+  // (check-runs.release in cleanup), and for a run whose process died
+  // without doing so, reconcileStuckChecks asks the cluster before it
+  // starts anything over (checkRunLeftToHarvest). The Job reads themselves
+  // run detached (`done`); boot never waits on a Job. No-op outside the
+  // Kubernetes capture runtime.
   const checkHarvest = require('./src/services/check-harvest');
   const mainWatch = require('./src/services/main-watch');
   const mergeFollowups = require('./src/services/merge-followup-recovery');
@@ -1511,6 +1534,9 @@ async function becomeLeader() {
     })
     .then(() => recoverStuckMerges(config))
     .then(() => {
+      // With the merge-followups machine on, a merge's follow-ups are its
+      // durable work, and this sweep would only race its delivery.
+      if (config.wfMergeFollowupsEnabled) return;
       mergeFollowups.recover(config).catch((err) => {
         log.warn('server', 'Boot merge follow-up recovery failed', { err: err.message });
       });
@@ -1542,7 +1568,7 @@ async function becomeLeader() {
   // out CHECKS_STALE_MS for the stale sweep to start it over.
   checkHarvest.start(config);
   mainWatch.start(config);
-  mergeFollowups.start(config);
+  if (!config.wfMergeFollowupsEnabled) mergeFollowups.start(config);
 
   // #144: re-arm post-merge issue-close watches a restart killed. The
   // watcher (services/issue-close-watcher.js) is fired-and-forgotten
@@ -1553,7 +1579,8 @@ async function becomeLeader() {
   // until someone happens to reload after the cache TTL. Re-watching
   // recently-merged sessions on boot closes that gap (and covers crash
   // restarts mid-watch for ordinary apps too).
-  resumeIssueCloseWatches(config).catch((err) => {
+  // With the merge-followups machine on, the watch is its durable work.
+  if (!config.wfMergeFollowupsEnabled) resumeIssueCloseWatches(config).catch((err) => {
     log.warn('server', 'Issue-close watch resume failed', { err: err.message });
   });
 
@@ -1865,7 +1892,7 @@ async function recoverStuckMerges(config, { attemptedOnly = false } = {}) {
   let rows;
   try {
     ({ rows } = await pool.query(
-      `SELECT cs.id, cs.status, cs.pr_number, cs.merge_commit_sha,
+      `SELECT cs.id, cs.app_id, cs.status, cs.pr_number, cs.merge_commit_sha,
               cs.merge_attempt_at,
               a.repo_url
          FROM chat_sessions cs
@@ -1913,11 +1940,24 @@ async function recoverStuckMerges(config, { attemptedOnly = false } = {}) {
         const [, owner, repo] = m;
         try {
           const pr = await github.getPR(owner, repo, row.pr_number);
-          if (pr && pr.merged) {
+          const workflow = require('./src/workflow/platform.ts');
+          if (pr && pr.merged && workflow.mergeFollowupsEnabled()) {
+            // The merge-followups machine records the merge and runs every
+            // follow-up the lost report would have (F2), not only the status.
+            await workflow.mergeObserved({
+              sessionId: row.id, appId: row.app_id,
+              mergeSha: pr.merge_commit_sha || null, mergedAt: pr.merged_at || null,
+            });
+            healed++;
+            log.info('server', 'Reported a merged-on-GitHub session to the merge-followups machine', {
+              sessionId: row.id, prNumber: row.pr_number, repo: `${owner}/${repo}`, mergeSha: pr.merge_commit_sha || null,
+            });
+          } else if (pr && pr.merged) {
             const { rowCount } = await pool.query(
               `UPDATE chat_sessions
                   SET status = 'merged',
                       merged_at = COALESCE(merged_at, $2, NOW()),
+                      live_at = COALESCE(live_at, NOW()),
                       merge_commit_sha = COALESCE(merge_commit_sha, $3)
                 WHERE id = $1 AND status IN ('promoted', 'merging')`,
               [row.id, pr.merged_at || null, pr.merge_commit_sha || null]
@@ -2079,6 +2119,25 @@ function checkRecoveryInFlight(sessionId) {
     || require('./src/services/check-harvest').isHarvesting(sessionId);
 }
 
+// The stale sweep's other question, the one no process can answer from its
+// own memory: does the session's run still have its Jobs on the cluster?
+// A run whose process has gone, or the harvest of one, is not in flight
+// here until the harvest seats it, which waits for the gone owner's
+// heartbeat to lapse. Starting it over in that gap threw finished suites
+// away and, under the preview lifecycle, cancelled running ones (7 Oct
+// 2026). The harvest settles it instead (check-harvest.runOnCluster).
+async function checkRunLeftToHarvest(config, pool, session, reason) {
+  const run = await require('./src/services/check-harvest').runOnCluster(config, pool, session, {
+    staleMs: CHECKS_STALE_MS,
+  });
+  if (run) {
+    log.info('server', 'Stuck checks still have their run on the cluster; leaving it to the harvest', {
+      sessionId: session.id, reason, ...run,
+    });
+  }
+  return !!run;
+}
+
 // #447: reconcile stuck proposal checks. check_state is only ever advanced
 // out of 'pending' by the same captureForSession invocation that set it, so
 // a process restart/crash mid-capture (or a staging rebuild that predated
@@ -2117,9 +2176,14 @@ async function reconcileStuckChecks(config) {
 
   const MAX_RECHECKS = 5;
   let rechecked = 0;
+  let leftToHarvest = 0;
   for (const session of rows) {
     if (rechecked >= MAX_RECHECKS) break;
     if (checkRecoveryInFlight(session.id)) continue;
+    if (await checkRunLeftToHarvest(config, pool, session, 'stuck-checks-boot')) {
+      leftToHarvest++;
+      continue;
+    }
     rechecked++;
     try {
       await stagingRecovery.recheckSessionChecks({
@@ -2132,7 +2196,7 @@ async function reconcileStuckChecks(config) {
     }
   }
   log.info('server', 'Stuck-check reconciliation complete', {
-    scanned: rows.length, rechecked,
+    scanned: rows.length, rechecked, leftToHarvest,
   });
 }
 
@@ -4348,22 +4412,25 @@ async function resumeDetachedTurnInner({
   // Checked first: a trial's session is never the bot's, but the dev-chat
   // tail must be unreachable for it whatever the bot check says.
   //
-  // What the clock had left when this recovery took the turn goes to the
-  // bot with the result: a build whose time runs out after a restart reached
-  // it is sent round again, not said to have taken too long
-  // (homeroom-bot.js restartRanItOut).
+  // Each restart that reaches the turn is counted on its record first, and
+  // the bot's clock gives that time back (homeroom-bot.js
+  // RESTART_ALLOWANCE_MS): the worker ran on, so a restart costs a build only
+  // the calls it makes back to the platform while the platform is down. A
+  // build whose clock still runs out ran too long on its own (7 Oct 2026:
+  // two builds that ran on through every restart were each sent round again
+  // from the start, twice).
   const benchTurn = require('./src/services/bench/runner').isBenchSession(session);
   const botTurn = !benchTurn && homeroomBotRecovery().isRecoveredBotSession(session);
   let botTimedOut = false;
   let botClock = null;
-  let botClockLeftMs = null;
   if (botTurn || benchTurn) {
+    const restarts = await turnLifecycle.noteRestart(pool, { sessionId, turnId: activeTurn.turnId }).catch(() => null);
+    const clockTurn = Number.isInteger(restarts) ? { ...activeTurn, restarts } : activeTurn;
     const deadline = await (benchTurn
-      ? require('./src/services/bench/lane').recoveryDeadline(pool, config, session, activeTurn)
-      : homeroomBotRecovery().recoveryDeadline(pool, config, session, activeTurn)).catch(() => null);
+      ? require('./src/services/bench/lane').recoveryDeadline(pool, config, session, clockTurn)
+      : homeroomBotRecovery().recoveryDeadline(pool, config, session, clockTurn)).catch(() => null);
     if (deadline != null) {
       const botClockMs = Math.max(0, deadline - Date.now());
-      botClockLeftMs = botClockMs;
       botClock = setTimeout(() => {
         botTimedOut = true;
         Promise.resolve(worker.stopTurn(sessionId)).catch(() => {});
@@ -4649,7 +4716,7 @@ async function resumeDetachedTurnInner({
 
   if (botTurn) {
     await homeroomBotRecovery().finishRecoveredTurn({
-      pool, session, activeTurn: recoveryActiveTurn, result, timedOut: botTimedOut, clockLeftMs: botClockLeftMs,
+      pool, session, activeTurn: recoveryActiveTurn, result, timedOut: botTimedOut,
     });
     const botCleanup = turnCleanupArgs(recoveryActiveTurn);
     recoveryRetry.requireDurableTurnCleanup(
@@ -5410,6 +5477,7 @@ function startSessionAutoPauseSweeper(config) {
         if (checkRecoveryInFlight(session.id)) continue;
         const last = checkRecheckAttempts.get(session.id) || 0;
         if (Date.now() - last < STAGING_HEAL_COOLDOWN_MS) continue;
+        if (await checkRunLeftToHarvest(config, pool, session, 'stuck-checks-sweep')) continue;
         // Stamp BEFORE the (minutes-long) recheck so a later tick won't kick
         // off a duplicate concurrent run for the same session.
         checkRecheckAttempts.set(session.id, Date.now());
@@ -6141,6 +6209,40 @@ function startPlatformLimitSweeper(config) {
   platformLimitSweeperHandle.unref?.();
 }
 
+// #4296: the unexpected events digest and hourly alert
+// (services/platform-incident-alerts.js). Leader-only, beside the platform
+// limit sweep and on the same pattern; the sweep's own advisory lock and
+// per-admin "already sent" check keep two processes from sending twice.
+let platformIncidentAlertSweeperHandle = null;
+let platformIncidentAlertFirstRunHandle = null;
+
+function startPlatformIncidentAlertSweeper(config) {
+  if (platformIncidentAlertSweeperHandle) return;
+  const pool = getPool(config);
+  const incidentAlerts = require('./src/services/platform-incident-alerts');
+  log.info('server', 'Unexpected events alert sweeper started', {
+    hourlyThreshold: incidentAlerts.HOURLY_THRESHOLD,
+    digestHourUtc: incidentAlerts.DIGEST_HOUR_UTC,
+    intervalMs: incidentAlerts.SWEEP_INTERVAL_MS,
+  });
+  let running = false;
+  const run = async () => {
+    if (lifecycle.isShuttingDown() || running) return;
+    running = true;
+    try {
+      await incidentAlerts.sweep(pool);
+    } catch (err) {
+      log.warn('server', 'Unexpected events alert sweep failed', { err: err.message });
+    } finally {
+      running = false;
+    }
+  };
+  platformIncidentAlertFirstRunHandle = setTimeout(run, 45 * 1000);
+  platformIncidentAlertFirstRunHandle.unref?.();
+  platformIncidentAlertSweeperHandle = setInterval(run, incidentAlerts.SWEEP_INTERVAL_MS);
+  platformIncidentAlertSweeperHandle.unref?.();
+}
+
 // Graceful shutdown: mark drain state so new chats/app-creates/builds get
 // 503'd, wait up to DRAIN_TIMEOUT_MS for in-flight HTTP handlers to
 // finish flushing DB writes, then exit.
@@ -6249,6 +6351,7 @@ async function cleanup() {
     log.warn('server', 'Stopping the benchmark lane failed', { err: err.message });
   }
   const retentionStop = require('./src/services/build-retention').stop();
+  const checkRetentionStop = require('./src/services/check-retention').stop();
   const scorerStop = require('./src/services/topochain/challenge-scorer').stop();
   // Stop claiming push jobs immediately. The bounded drain runs in
   // parallel with HTTP/session draining and is awaited before pool close.
@@ -6321,6 +6424,14 @@ async function cleanup() {
   if (platformLimitSweeperHandle) {
     clearInterval(platformLimitSweeperHandle);
     platformLimitSweeperHandle = null;
+  }
+  if (platformIncidentAlertFirstRunHandle) {
+    clearTimeout(platformIncidentAlertFirstRunHandle);
+    platformIncidentAlertFirstRunHandle = null;
+  }
+  if (platformIncidentAlertSweeperHandle) {
+    clearInterval(platformIncidentAlertSweeperHandle);
+    platformIncidentAlertSweeperHandle = null;
   }
   if (governanceApplyTickerHandle) {
     clearInterval(governanceApplyTickerHandle);
@@ -6412,6 +6523,27 @@ async function cleanup() {
     });
   }
 
+  // The checks runs this process launched, or was harvesting, go on without
+  // it: their Jobs belong to the cluster. Their rows still carry this
+  // process's heartbeat, though, and the next leader's boot harvest seats
+  // only a row whose heartbeat has lapsed, so hand them over
+  // (check-runs.release) BEFORE the leader lock is released below. Bounded
+  // like the build mark above.
+  const checkHarvest = require('./src/services/check-harvest');
+  if (shutdownPool && checkHarvest.isEnabled(config)) {
+    let releaseTimer = null;
+    const released = await Promise.race([
+      require('./src/services/check-runs').release(shutdownPool),
+      new Promise((resolve) => {
+        releaseTimer = setTimeout(() => resolve(null), BUILD_SHUTDOWN_MARK_TIMEOUT_MS);
+      }),
+    ]);
+    if (releaseTimer) clearTimeout(releaseTimer);
+    log.info('server', 'Handed this process\'s checks runs to the next harvest on shutdown', {
+      runs: released || 0, timedOut: released === null,
+    });
+  }
+
   // Close the pg pool so in-flight queries settle instead of being severed
   // by process.exit(). Bounded: a pool that won't drain must not hold the
   // process past the SIGKILL deadline.
@@ -6425,7 +6557,7 @@ async function cleanup() {
     let poolTimer = null;
     try {
       await Promise.race([
-        Promise.all([retentionStop, scorerStop, workflowStop]).then(() => shutdownPool.end()),
+        Promise.all([retentionStop, checkRetentionStop, scorerStop, workflowStop]).then(() => shutdownPool.end()),
         new Promise((resolve) => { poolTimer = setTimeout(resolve, POOL_CLOSE_TIMEOUT_MS); }),
       ]);
       log.info('server', 'Pool closed', { durationMs: Date.now() - poolStartedAt });

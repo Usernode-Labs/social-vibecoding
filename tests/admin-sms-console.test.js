@@ -127,6 +127,23 @@ test('status reports a complete setup as offered', async () => {
     assert.deepEqual(res.body.missing, []);
     assert.equal(res.body.canSendTest, true);
     assert.ok(!JSON.stringify(res.body).includes('web-key'));
+    assert.equal(res.body.texts, true);
+    assert.equal(res.body.testNumbers, false);
+  } finally { server.close(); }
+});
+
+test('status says when test numbers alone offer phone sign-in, and the test send stays off', async () => {
+  const server = await startServer({ phoneTestCode: '123456' });
+  try {
+    currentUser = fullAdmin();
+    const res = await call(server, 'GET', '/api/admin/sms/status');
+    assert.equal(res.body.offered, true);
+    assert.equal(res.body.texts, false, 'nothing is texted: the test send needs Firebase');
+    assert.equal(res.body.testNumbers, true);
+    assert.ok(!JSON.stringify(res.body).includes('123456'), 'the code never leaves the server');
+    const sent = await call(server, 'POST', '/api/admin/sms/test', { phoneNumber: '+447700900123' });
+    assert.equal(sent.status, 409);
+    assert.equal(sent.body.code, 'not_offered');
   } finally { server.close(); }
 });
 

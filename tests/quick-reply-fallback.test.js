@@ -594,9 +594,14 @@ test('staging seeds cover each fallback shape', () => {
     "fallback fixtures are seeded 'promoted' and 30 days old on purpose");
 });
 
-test('dapp.json checks the pill bar on the seeded fixture routes', () => {
-  // Fixed session ids (the route embeds one) are what make these routes
-  // stable across staging rebuilds.
+test('the classic pill bar is no longer a declared check (#3976)', () => {
+  // These fixtures' routes were checks-gated: the pill bar on each of
+  // 900801-900807. Classic sessions are read-only now and their composer,
+  // the pill bar with it, is put away, so a pill is never offered there and
+  // those checks were retired with the chat. The fixtures keep their fixed
+  // ids (the change page's checks still open 900801), and the derivation
+  // stays pinned by the unit tests above: it is the Mayor's, which agent
+  // sessions run too.
   const dapp = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'dapp.json'), 'utf8'));
   const MIGRATE_SRC = fs.readFileSync(
     path.join(__dirname, '..', 'src', 'db', 'migrate.js'),
@@ -604,14 +609,9 @@ test('dapp.json checks the pill bar on the seeded fixture routes', () => {
   );
   for (const id of [900801, 900802, 900803, 900805, 900806, 900807]) {
     assert.ok(MIGRATE_SRC.includes(`id: ${id},`), `fixture ${id} has a fixed id in the seed`);
-    const t = (dapp.tests || []).find((x) => x.path && x.path.includes(`/sessions/${id}`));
-    assert.ok(t, `dapp.json has a proposal check for session ${id}`);
-    assert.equal(t.expectSelector, '#dc-quick-replies.dc-quick-replies-active .dc-quick-pill',
-      `check ${id} asserts the pill bar actually rendered pills`);
+    assert.ok(!(dapp.tests || []).some((x) => x.path && x.path.includes(`/dev/sessions/${id}`)),
+      `no declared check loads classic session ${id}`);
   }
-  // #1001: the preamble fixture's check must assert the WRAP-UP's pill, not
-  // the preamble's — that is the supersession rule it exists to demonstrate.
-  const preambleCheck = (dapp.tests || []).find((x) => x.path && x.path.includes('/sessions/900807'));
-  assert.equal(preambleCheck.expectText, 'Preview the half-height rows',
-    'the newest pill-bearing row wins, so the wrap-up pill is what renders');
+  assert.ok(!(dapp.tests || []).some((x) => /#dc-quick-replies/.test(x.expectSelector || '')),
+    'no declared check drives the classic pill bar');
 });

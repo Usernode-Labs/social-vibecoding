@@ -1,7 +1,8 @@
 'use strict';
 
-// The three connector tools that let a full platform admin make, list and
-// retire test accounts for first-run testing (services/test-accounts.js).
+// The four connector tools that let a full platform admin make, list and
+// retire test accounts for first-run testing, and mint a one-time phone
+// sign-in for a test number (services/test-accounts.js).
 // Admin-only three times over, like the benchmark's tools: registered only for
 // a full admin, refused in the handler, refused by the route (which
 // tests/test-accounts-postgres.test.js and tests/mcp-connector-policy.test.js
@@ -14,7 +15,8 @@ const assert = require('node:assert/strict');
 const tools = require('../src/services/mcp-tools');
 const { READ_SCOPE, WRITE_SCOPE } = require('../src/services/mcp-connect-constants');
 
-const TOOLS = ['create_test_account', 'list_test_accounts', 'retire_test_account'];
+const TOOLS = ['create_test_account', 'create_test_phone_sign_in', 'list_test_accounts', 'retire_test_account'];
+const WRITES = ['create_test_account', 'create_test_phone_sign_in', 'retire_test_account'];
 
 function register({ user, scopes = [READ_SCOPE, WRITE_SCOPE], origin = 'https://homeroom.example' }) {
   const specs = new Map();
@@ -52,14 +54,12 @@ test('only a full admin\'s connector has the test-account tools at all', () => {
   const { specs } = register({ user: { ...ADMIN } });
   for (const name of TOOLS) assert.ok(specs.has(name), `${name} is offered to a full admin`);
   assert.equal(specs.get('list_test_accounts').annotations.readOnlyHint, true);
-  assert.equal(specs.get('create_test_account').annotations.readOnlyHint, false);
-  assert.equal(specs.get('retire_test_account').annotations.readOnlyHint, false);
-  // The two writes are acting tools (out of the setup hint and the shipped
+  for (const name of WRITES) assert.equal(specs.get(name).annotations.readOnlyHint, false, name);
+  // The writes are acting tools (out of the setup hint and the shipped
   // read-only allow rules); the read is named list_ so those rules cover it.
-  assert.ok(tools.ACTING_TOOLS.includes('create_test_account'));
-  assert.ok(tools.ACTING_TOOLS.includes('retire_test_account'));
+  for (const name of WRITES) assert.ok(tools.ACTING_TOOLS.includes(name), name);
   assert.ok(!tools.ACTING_TOOLS.includes('list_test_accounts'));
-  for (const name of ['create_test_account', 'retire_test_account']) {
+  for (const name of WRITES) {
     assert.doesNotMatch(name, /^(get|list)_/, `${name} must not borrow a read-only prefix`);
   }
 });
@@ -75,7 +75,7 @@ test('a handler refuses before any call when the user is no longer a full admin,
     assert.equal(out.structuredContent.code, 'admin_only', name);
   }
   const readOnly = register({ user: { ...ADMIN }, scopes: [READ_SCOPE] });
-  for (const name of ['create_test_account', 'retire_test_account']) {
+  for (const name of WRITES) {
     // eslint-disable-next-line no-await-in-loop
     const refused = await readOnly.handlers.get(name)({ userId: 5, confirm: 'RETIRE' });
     assert.equal(refused.structuredContent.code, 'insufficient_scope', `${name} needs the write scope`);
@@ -208,4 +208,37 @@ test('the charter tells the session how to handle the password and when to retir
   assert.match(section.text, /sign out on the device/);
   assert.match(section.text, /retire the account with retire_test_account/);
   assert.match(section.text, /seen by everyone/);
+});
+
+test('create_test_phone_sign_in hands back a number and a one-time code once, with the Join steps', async (t) => {
+  const calls = stubFetch(t, () => ({
+    body: { signIn: { phoneNumber: '+14155550142', code: '482913', expiresAt: '2026-10-07T19:00:00.000Z', signsInTo: null } },
+  }));
+  const { handlers } = register({ user: { ...ADMIN } });
+  const out = await handlers.get('create_test_phone_sign_in')({});
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].method, 'POST');
+  assert.equal(calls[0].url, 'http://platform.internal/api/test-accounts/phone-sign-ins');
+  const r = out.structuredContent;
+  assert.equal(r.phoneNumber, '+14155550142');
+  assert.equal(r.code, '482913');
+  assert.equal(r.signsInTo, null);
+  assert.ok(r.steps.some((s) => /No text is sent/.test(s)));
+  assert.match(r.nextStep, /once/);
+  assert.match(r.nextStep, /retire_test_account/);
+
+  const named = stubFetch(t, () => ({
+    body: { signIn: { phoneNumber: '+12125550150', code: '111222', expiresAt: '2026-10-07T19:00:00.000Z', signsInTo: 'ben_ito' } },
+  }));
+  const again = await handlers.get('create_test_phone_sign_in')({ phoneNumber: '+1 212 555 0150' });
+  assert.deepEqual(named[0].body, { phoneNumber: '+1 212 555 0150' });
+  assert.match(again.structuredContent.nextStep, /@ben_ito/);
+});
+
+test('create_test_phone_sign_in passes the route\'s refusals on with their own codes', async (t) => {
+  stubFetch(t, () => ({ status: 400, body: { error: 'Use a test number: +1, any area code, then 555 0100 to 0199.', code: 'not_test_number' } }));
+  const { handlers } = register({ user: { ...ADMIN } });
+  const out = await handlers.get('create_test_phone_sign_in')({ phoneNumber: '+447700900123' });
+  assert.equal(out.structuredContent.code, 'not_test_number');
+  assert.match(out.structuredContent.message || out.content[0].text, /test number/);
 });

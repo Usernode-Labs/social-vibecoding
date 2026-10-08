@@ -54,6 +54,8 @@ test('the problems panel lists each kind of problem, and says when nothing is st
         overdueDeadlines: [{ machine: 'governance-proposal', key: 'issue:5', deadlineAt: '2026-10-01T00:00:00Z' }],
         work: [{ id: 'w', machine: 'governance-proposal', key: 'issue:6', kind: 'github.closeIssue', workKey: 'target', status: 'settled', lastError: { message: '503' } }],
         ownershipViolations: [{ table_name: 'issues', column_path: 'status', count: 3, last_at: '2026-10-01T00:00:00Z' }],
+        ownershipViolationRows: [{ id: 7, table: 'issues', column: 'status', row: { id: 42 }, application: 'homeroom-platform',
+          query: 'UPDATE issues SET status = $1 WHERE id = $2', createdAt: '2026-10-01T00:00:00Z' }],
       },
     },
   });
@@ -61,6 +63,9 @@ test('the problems panel lists each kind of problem, and says when nothing is st
   assert.match(html, /governance-proposal \/ issue:4/);
   assert.match(html, /boom · 2 held/);
   assert.match(html, /out of retries/);
+  assert.match(html, /data-wf-violation="7"/);
+  assert.match(html, /row \{&quot;id&quot;:42\}/, 'the row the write touched');
+  assert.match(html, /by homeroom-platform/, 'the application that wrote it');
   assert.doesNotMatch(html, /Nothing is stuck/);
 });
 

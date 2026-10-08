@@ -197,6 +197,11 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
   const upstreamBase = base.href.replace(/\/+$/, '');
   const active = new Set();
   let requestOrdinal = 0;
+  // Each request's start and end also carry atMs, ms since this listener
+  // (and so the turn's Codex process) started: the journal is read again
+  // after a platform restart, so only the turn's own clock says when a
+  // request ran (worker.js noteCodingRequestClock).
+  const listenerStartedAt = performance.now();
   const server = http.createServer(async (req, res) => {
     if (req.method !== 'POST' || req.url !== '/responses') {
       replyError(res, 404, 'Unsupported OpenRouter adapter route');
@@ -259,6 +264,7 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
         timing = { ordinal, startedAt, stage: 'await_headers', status: null,
           responseBytes: 0, chunks: 0, outcome: 'ok' };
         emitTiming({ kind: 'provider_request_start', requestOrdinal: ordinal,
+          atMs: Math.max(0, Math.round(startedAt - listenerStartedAt)),
           payloadBytes, inputBytes, instructionBytes, inputItems, previousResponseLinked,
           maxOutputTokens: body.max_output_tokens });
         timing.interval = setInterval(() => emitTiming({
@@ -361,10 +367,12 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
     } finally {
       if (timing) {
         clearInterval(timing.interval);
+        const endedAt = performance.now();
         emitTiming({ kind: 'provider_request_end', requestOrdinal: timing.ordinal,
+          atMs: Math.max(0, Math.round(endedAt - listenerStartedAt)),
           outcome: timing.outcome, stage: timing.stage,
           ...(timing.status != null ? { httpStatus: timing.status } : {}),
-          durationMs: Math.max(0, Math.round(performance.now() - timing.startedAt)),
+          durationMs: Math.max(0, Math.round(endedAt - timing.startedAt)),
           responseBytes: Math.min(timing.responseBytes, 10_000_000),
           chunkCount: Math.min(timing.chunks, 1000),
         });

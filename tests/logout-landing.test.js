@@ -125,9 +125,19 @@ test('the session residue goes with the session, not just the snapshot', () => {
 
 test('a native shutdown that never lands is bounded, not permanent', () => {
   assert.match(SETTINGS, /const NATIVE_LOGOUT_SAFETY_MS = 5000;/);
+  // #3915: a second bound, armed when the terminal call is ISSUED rather than
+  // when native answers, so an app that never answers cannot hold a signed-out
+  // user on Settings. Both nets land on the same destination through one
+  // once-only exit. tests/native-logout-order.test.js runs it.
+  assert.match(SETTINGS, /const NATIVE_LOGOUT_ISSUED_SAFETY_MS = 8000;/);
   const logout = SETTINGS.slice(SETTINGS.indexOf('    async logout({ accountDeleted = false } = {}) {'));
   const body = logout.slice(0, logout.indexOf('\n    },'));
-  assert.match(body, /setTimeout\(\(\) => \{\s*\n\s*window\.location\.replace\(LANDING_URL\);\s*\n\s*\}, NATIVE_LOGOUT_SAFETY_MS\)/);
+  assert.match(body, /const leave = \(\) => \{\s*\n\s*if \(left\) return;\s*\n\s*left = true;\s*\n\s*window\.location\.replace\(LANDING_URL\);\s*\n\s*\};/);
+  assert.match(body, /const timer = setTimeout\(leave, ms\);/);
+  // Armed in the same synchronous block that issues the terminal call, so it
+  // counts from the call and cannot fire before it; and only once the server
+  // revoked the session.
+  assert.match(body, /if \(webRevoked\) armLeave\(NATIVE_LOGOUT_ISSUED_SAFETY_MS\);\s*\n\s*return NativeChrome\.commitNativeLogout\(\)\.then\(\(result\) => \{[\s\S]*?armLeave\(NATIVE_LOGOUT_SAFETY_MS\);/);
 });
 
 // ── The advisory that has to survive a navigation ──────────────────────

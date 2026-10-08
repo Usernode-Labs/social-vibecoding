@@ -140,12 +140,15 @@ test('Kubernetes enables before & after shots by default with one explicit kill 
     'Helm default treats boolean false as empty and would defeat the kill switch');
 });
 
-test('Kubernetes passes the workflow governance flag through, off by default', () => {
+test('Kubernetes passes the workflow flags through, off by default', () => {
   const platform = read('deploy/helm/social-vibecoding-platform/templates/platform.yaml');
   const values = read('deploy/helm/social-vibecoding-platform/values.yaml');
   assert.match(values, /workflowGovernanceEnabled: false/);
   assert.match(platform,
     /name: WF_GOVERNANCE_ENABLED, value: \{\{ \.Values\.platform\.workflowGovernanceEnabled \| quote \}\}/);
+  assert.match(values, /workflowMergeFollowupsEnabled: false/);
+  assert.match(platform,
+    /name: WF_MERGE_FOLLOWUPS_ENABLED, value: \{\{ \.Values\.platform\.workflowMergeFollowupsEnabled \| quote \}\}/);
 });
 
 test('Kubernetes workflow resolves all three images before publishing a release', () => {
@@ -224,6 +227,16 @@ test('Kubernetes workflow retains queued releases, publishes the tip, and never 
   assert.match(release, /compare "\$published_sha" "\$GITHUB_SHA"\)" = ahead/, 'only over an older revision');
   assert.match(release, /compare "\$GITHUB_SHA" "\$current_sha"\)" = ahead/, 'only a revision the branch still contains');
   assert.match(release, /\[ "\$RELEASE_CHANNEL" = stable \] \|\| decide false/, 'a candidate waits for its tip');
+  // The tip too (7 October: four rollouts in sixteen minutes) goes out no
+  // sooner than RELEASE_MIN_GAP_MINUTES after the release before it: it waits
+  // in the step, re-reading the branch, and a dispatched run never waits.
+  assert.match(release, /RELEASE_MIN_GAP_MINUTES: '10'/);
+  assert.match(release, /\[ "\$GITHUB_EVENT_NAME" != workflow_dispatch \] \\\n\s+\|\| decide true/,
+    'a run dispatched by hand is the way to release at once');
+  assert.match(release, /sleep \$\(\( wait_until - now < 30 \? wait_until - now : 30 \)\)\n\s+current_sha="\$\(branch_tip\)"/,
+    'every wait is followed by a fresh read of the branch tip');
+  assert.match(release, /^    permissions:\n(?:      #.*\n)*      actions: read$/m,
+    'the release age is read from this workflow\'s own runs');
   for (const step of ['Log in to GHCR for Helm', 'Publish OCI Helm release', 'Record atomic release']) {
     assert.match(release, new RegExp(`- name: ${step}\\n        if: steps\\.current_head\\.outputs\\.publish == 'true'`));
   }

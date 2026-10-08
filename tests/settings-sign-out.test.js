@@ -26,6 +26,21 @@ test('Settings and the waiting room say Sign out, on the same buttons', () => {
   assert.match(read('frontend/src/features/settings/settings.js'), /'Could not sign out\. Check your connection and try again\.'/);
 });
 
+// #3915, iOS: the tap disabled the button and changed nothing you could see,
+// so a phone that took a while to shut down looked frozen. It now dims and
+// says Signing out… while it runs (tests/native-logout-order.test.js runs
+// that), and a failure hands back the markup's own words.
+test('a running sign-out looks like one, and a failed one says Sign out again', () => {
+  const markup = read('frontend/src/features/settings/index.tsx');
+  const at = markup.indexOf('id="settings-logout"');
+  const button = markup.slice(at, markup.indexOf('</button>', at));
+  assert.match(button, /\bdisabled:opacity-60\b/);
+  assert.match(button, />\s*Sign out\s*$/);
+  const js = read('frontend/src/features/settings/settings.js');
+  assert.match(js, /const SIGN_OUT_LABEL = 'Sign out';/, 'the same words as the markup');
+  assert.match(js, /const SIGNING_OUT_LABEL = 'Signing out…';/);
+});
+
 test('the declared check that reads the button\'s words reads Sign out; the selectors are unchanged', () => {
   const manifest = JSON.parse(read('dapp.json'));
   const checks = manifest.tests.filter((t) => /#settings-logout/.test(t.expectSelector || ''));

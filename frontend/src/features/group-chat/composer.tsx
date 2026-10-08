@@ -37,6 +37,7 @@ import { Button } from '@/components/ui/button';
 import { ArrowUpIcon, PaperClipIcon } from '@/components/ui/icons';
 import { Textarea } from '@/components/ui/textarea';
 
+import { DropOverlay } from '../attachments/file-drag';
 import {
   PendingStrip,
   type PendingAttachmentView,
@@ -188,6 +189,11 @@ export interface ComposerFormProps {
 
 export function ComposerForm({ scope, fill, placeholder, maxLength }: ComposerFormProps) {
   const ids = IDS[scope];
+  // #4065: the drop zone, while a file is held over this composer or its
+  // messages. The module's tracker publishes the flag; it lies over the card,
+  // and takes no pointer events, so the drop still lands on the form.
+  const dragging = !!useComposerSlot(scope).dragging;
+  const dropZone = dragging ? <DropOverlay /> : null;
   // THE CARD. The two full-height composers — the Discussion's and a topic
   // thread's — are the same card Messages draws at the foot of its sheet: a
   // white surface with bare glyphs, a borderless field at reading size and
@@ -233,6 +239,7 @@ export function ComposerForm({ scope, fill, placeholder, maxLength }: ComposerFo
         >
           <ArrowUpIcon aria-hidden="true" />
         </button>
+        {dropZone}
       </form>
     );
   }
@@ -264,6 +271,7 @@ export function ComposerForm({ scope, fill, placeholder, maxLength }: ComposerFo
       <Button type="submit" size="sm" className="shrink-0" onMouseDown={(event) => event.preventDefault()}>
         Send
       </Button>
+      {dropZone}
     </form>
   );
 }

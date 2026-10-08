@@ -1322,7 +1322,7 @@ function factsFor(row: QueueRow, voted: string | null): Fact[] {
   const out: Fact[] = [];
   const st = row.card.pill ? row.card.pill.state : null;
   if (row.kind === 'vote' && st) {
-    if (voted) out.push({ key: 'voted', tone: 'ok', text: `You voted ${voted}` });
+    if (voted) out.push({ key: 'voted', tone: 'ok', text: youAnswered(row, voted) });
     // The count in the change page's own words: an at-least-N rule's pill
     // reads "1 of 2 approvals" there (AppView.statusPillState), and every
     // rule's count reads the same way here.
@@ -1331,7 +1331,7 @@ function factsFor(row: QueueRow, voted: string | null): Fact[] {
   } else if (row.kind === 'vote' && row.tally) {
     // The Communities feed's rows (#3488): the counts, without a threshold
     // it has not worked out for each project. A zero says nothing.
-    if (voted) out.push({ key: 'voted', tone: 'ok', text: `You voted ${voted}` });
+    if (voted) out.push({ key: 'voted', tone: 'ok', text: youAnswered(row, voted) });
     const said = [row.tally.yes ? `${row.tally.yes} yes` : '', row.tally.no ? `${row.tally.no} no` : ''].filter(Boolean).join(' · ');
     if (said) out.push({ key: 'tally', tone: undefined, text: said });
   }
@@ -1341,6 +1341,28 @@ function factsFor(row: QueueRow, voted: string | null): Fact[] {
     }
   }
   return out.slice(0, 4);
+}
+
+/**
+ * #3977: a change on a project that is just yours, whose Yes is the one it
+ * needs (B7: the row's `yes.approve`, from `_cardVoteButtonSpecs`), is
+ * approved rather than voted on, here as on its card: the rail, the sheet,
+ * the swipe and the confirmation say Approve and Don't approve. The
+ * Communities feed's rows carry it too (#4270: the needs feed's `approve`,
+ * features/workshop/needs-reel.tsx).
+ */
+function approves(row: QueueRow): boolean {
+  return row.kind === 'vote' && !!(row.yes && row.yes.approve);
+}
+/** The confirmation once the item is answered: "Voted yes", or "Approved" / "Not approved". */
+function answeredWords(row: QueueRow, voted: string): string {
+  if (!approves(row)) return `Voted ${voted}`;
+  return voted === 'yes' ? 'Approved' : 'Not approved';
+}
+/** The same, as the facts line says it. */
+function youAnswered(row: QueueRow, voted: string): string {
+  if (!approves(row)) return `You voted ${voted}`;
+  return voted === 'yes' ? 'You approved it' : 'You didn’t approve it';
 }
 
 /** The line under the vote question: where the vote stands, and what follows. */
@@ -1383,6 +1405,7 @@ export function NeedsVoteForm({ row, slug, side, line, boxRef, onSide, onLine, o
         tally={labelTally}
         withLine
         solo={solo}
+        approve={approves(row)}
         onSide={onSide}
         onLine={onLine}
         onBoxKey={onBoxKey}
@@ -1393,14 +1416,29 @@ export function NeedsVoteForm({ row, slug, side, line, boxRef, onSide, onLine, o
   );
 }
 
+/** The vote sheet's line under its question (tallyLine); exported for the render test. */
+export function VoteSub({ row, voted }: { row: QueueRow; voted: string | null }): ReactNode {
+  return <p className="dev-ws-vote-sub">{tallyLine(row, voted)}</p>;
+}
+
 /** "Yes (2/3)" → "2/3": the tally a vote spec's label carries, as the card's picker reads it. */
 function labelTally(a: { label?: string }): string {
   const m = /\(([^)]*)\)\s*$/.exec(a.label || '');
   return m ? m[1] : '';
 }
 
-function tallyLine(row: QueueRow): string {
+/**
+ * #4313: on a project that is just yours (approves) there is nobody else to
+ * count, so the line says whose answer it waits on, and once you have
+ * answered, the answer ("Approved." / "Not approved."). A pill's own word
+ * that is not the wait itself ("Checks failing") still follows it.
+ */
+function tallyLine(row: QueueRow, voted: string | null): string {
   const st = row.card.pill ? row.card.pill.state : null;
+  if (approves(row)) {
+    const said = voted ? `${answeredWords(row, voted)}.` : 'Waiting for your approval.';
+    return st && st.label && !/^Vote\b/.test(st.label) && !SAID_ELSEWHERE.has(st.key) ? `${said} ${st.label}.` : said;
+  }
   if (!st) {
     if (!row.tally) return '';
     const { yes, no } = row.tally;
@@ -1884,7 +1922,7 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
         {voted ? (
           <span className="dev-ws-item-done" data-ws-item-done="">
             <CheckIcon className="dev-ws-item-tick" aria-hidden="true" />
-            {`Voted ${voted} · ${wide ? 'press ↓ or scroll' : 'swipe up'} for the next`}
+            {`${answeredWords(row, voted)} · ${wide ? 'press ↓ or scroll' : 'swipe up'} for the next`}
           </span>
         ) : (
           // First-session run-through, 5 Oct 2026: a newcomer read
@@ -1939,8 +1977,8 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
       {/* The swipe's two hints, last so the item's reading order is
           untouched. Hidden until a drag fades one in (app.css), and
           aria-hidden: the Vote sheet's buttons are the accessible way. */}
-      {swipe ? <span className="dev-ws-swipe-hint dev-ws-swipe-yes" aria-hidden="true">Yes</span> : null}
-      {swipe ? <span className="dev-ws-swipe-hint dev-ws-swipe-no" aria-hidden="true">No</span> : null}
+      {swipe ? <span className="dev-ws-swipe-hint dev-ws-swipe-yes" aria-hidden="true">{approves(row) ? 'Approve' : 'Yes'}</span> : null}
+      {swipe ? <span className="dev-ws-swipe-hint dev-ws-swipe-no" aria-hidden="true">{approves(row) ? 'Don’t approve' : 'No'}</span> : null}
     </section>
   );
 });
@@ -1959,6 +1997,16 @@ const END_KEY = 'done';
 function wantsEnd(): boolean {
   if (typeof window === 'undefined' || typeof window.location === 'undefined') return false;
   try { return new URLSearchParams(window.location.search).get('shot') === 'needs-end'; } catch { return false; }
+}
+/**
+ * `?shot=needs-approve` (#4313): open the feed on its first item that asks
+ * for your approval (a project that is just yours), with its vote sheet up,
+ * so a declared check can read the sheet's line ("Waiting for your
+ * approval."). Read at mount, like `?shot=needs-end`.
+ */
+function wantsApprove(): boolean {
+  if (typeof window === 'undefined' || typeof window.location === 'undefined') return false;
+  try { return new URLSearchParams(window.location.search).get('shot') === 'needs-approve'; } catch { return false; }
 }
 
 /** "3 proposals", "1 proposal": a count with its noun. */
@@ -2324,6 +2372,9 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
   // Still owed the instant scroll to the end card (the effect below): true
   // until the scroller has a height to scroll by.
   const endScrollRef = useRef<boolean>(endOnOpen);
+  // Still owed the `?shot=needs-approve` open (the effect below): true until
+  // a row that approves has landed and the scroller has a height.
+  const approveOpenRef = useRef<boolean>(!endOnOpen && wantsApprove());
   const moreRef = useRef<HTMLButtonElement>(null);
   const commentsRef = useRef<HTMLDivElement>(null);
   const railRef = useRef<HTMLElement>(null);
@@ -2448,6 +2499,28 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
     el.scrollTop = items.length * el.clientHeight;
     el.style.scrollBehavior = '';
   }, [items]);
+
+  /**
+   * The `?shot=needs-approve` open: once the first row that approves has
+   * landed, land on it (instantly, as above) and put its vote sheet up.
+   * Once; after that the re-sync follows the row by key.
+   */
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!approveOpenRef.current || !el || !el.clientHeight) return;
+    const idx = items.findIndex((r) => approves(r));
+    if (idx < 0) return;
+    approveOpenRef.current = false;
+    curKeyRef.current = items[idx].key;
+    setAt(idx);
+    el.style.scrollBehavior = 'auto';
+    el.scrollTop = idx * el.clientHeight;
+    el.style.scrollBehavior = '';
+    setLeaving(null);
+    setSheet('vote');
+    setVoteSide('yes');
+    setVoteLine('');
+  }, [items]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const landOn = (idx: number) => {
     const c = Math.min(Math.max(idx, 0), items.length);
@@ -2766,7 +2839,10 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
       }
       if (k === 'd' || k === 'D') { toggleSheet('description'); return; }
       if (k === 'a' || k === 'A') { toggleSheet('ask'); return; }
-      if (k === 'c' || k === 'C') { toggleSheet('comments'); return; }
+      // Claimed with preventDefault: C is also the experimental Suggest an
+      // improvement shortcut (#4289), which leaves a key alone once a screen
+      // has used it.
+      if (k === 'c' || k === 'C') { e.preventDefault(); toggleSheet('comments'); return; }
       if ((k === 't' || k === 'T') && canTry) { tryIt(); return; }
       if ((k === 'm' || k === 'M') && moreRef.current) moreRef.current.click();
     };
@@ -2999,7 +3075,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
               onClick={() => toggleSheet('vote')}
             >
               <span className="dev-ws-rail-ic">{voted ? <CheckIcon aria-hidden="true" /> : <BallotIcon aria-hidden="true" />}</span>
-              <span className="dev-ws-rail-lab">{voted ? `Voted ${voted}` : (sending[row.key] ? 'Sending…' : 'Vote')}</span>
+              <span className="dev-ws-rail-lab">{voted ? answeredWords(row, voted) : (sending[row.key] ? 'Sending…' : (approves(row) ? 'Approve' : 'Vote'))}</span>
               <kbd className="dev-ws-rail-key" aria-hidden="true">V</kbd>
             </button>
           ) : (
@@ -3095,7 +3171,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
               <div className="dev-ws-sheet-card">
                 <span className="dev-ws-sheet-handle" aria-hidden="true" />
                 <p className="dev-ws-ask-q">{row.ask}</p>
-                <p className="dev-ws-vote-sub">{tallyLine(row)}</p>
+                <VoteSub row={row} voted={voted} />
                 {/* A group decision (a rename, a secret, closing a request)
                     carries no pair here: its votes can apply it on the spot,
                     so it is decided on its own page, which shows the options
@@ -3125,7 +3201,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
                     <button type="button" className="dev-ws-vote-later" onClick={closeSheet}>Decide later</button>
                   </>
                 )}
-                <p className="dev-ws-keys-hint" aria-hidden="true">Y yes · N no · Enter vote · Esc close</p>
+                <p className="dev-ws-keys-hint" aria-hidden="true">{approves(row) ? 'Y approve · N don’t approve · Enter send · Esc close' : 'Y yes · N no · Enter vote · Esc close'}</p>
               </div>
             </div>
           ) : null}

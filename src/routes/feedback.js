@@ -870,6 +870,11 @@ function feedbackRoutes(config) {
         await linkScreenshot(issueOwner, issueRepo, issue.number);
         await linkVideo(issueOwner, issueRepo, issue.number);
         await announceIssueCreated(pool, issueOwner, issueRepo, issue, appContext);
+        // #3952: the people the report names with @. Never rejects.
+        require('../services/notifications').notifyIssueMentions?.(pool, {
+          appId: appContext.id, issueNumber: issue.number, authorId: req.user?.id,
+          text: `${title}\n\n${description}`,
+        });
         // #964: the pledge goes last — after the issue exists and after the
         // announce — and can only ever add a `bounty` field to the response.
         // The filed issue is never at risk from it.
@@ -939,6 +944,11 @@ function feedbackRoutes(config) {
       // too. announceIssueCreated resolves the app row by repo (no-op
       // when none matches).
       await announceIssueCreated(pool, issueOwner, issueRepo, issue, null);
+      // #3952: as in the app branch, on the platform's own project.
+      require('../services/notifications').notifyIssueMentions?.(pool, {
+        owner: issueOwner, repo: issueRepo, issueNumber: issue.number, authorId: req.user?.id,
+        text: `${title}\n\n${description}`,
+      });
       // #964: same placement as the app branch. `app: null` sends
       // attachBounty to findAppByRepo, which resolves the platform repo to
       // the self-hosted platform app — the same row announceIssueCreated

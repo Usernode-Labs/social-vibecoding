@@ -4,6 +4,7 @@
 
 import { assertJson } from './machine.ts';
 import { append } from './stream.ts';
+import { checkout } from './pipeline.ts';
 import type { Json, Logger, Pool, WorkHandler } from './types.ts';
 
 export class LeaseLost extends Error {
@@ -34,7 +35,7 @@ interface Claimed { id: string; machine: string; key: string; kind: string;
 // services run in one process for now, so that is also the global limit.
 export async function claim(opts: ServiceOptions, kind: string, room: number): Promise<Claimed[]> {
   const leaseMs = opts.handlers.get(kind)!.leaseMs ?? DEFAULTS.leaseMs;
-  const client = await opts.pool.connect();
+  const client = await checkout(opts.pool);
   try {
     await client.query('BEGIN');
     const { rows } = await client.query<Claimed & { previous_claim: string | null }>(
@@ -70,6 +71,16 @@ export async function claim(opts: ServiceOptions, kind: string, room: number): P
   }
 }
 
+// Milliseconds until the next item of these kinds is due (queued, or a
+// lease that runs out), or null when there is none. New work notifies.
+export async function nextDueMs(pool: Pool, kinds: string[]): Promise<number | null> {
+  if (!kinds.length) return null;
+  const { rows: [r] } = await pool.query(
+    `SELECT (EXTRACT(EPOCH FROM min(CASE WHEN status = 'queued' THEN due_at ELSE lease_until END) - now()) * 1000)::float8 AS ms
+       FROM wf_work WHERE kind = ANY($1::text[]) AND status IN ('queued', 'running')`, [kinds]);
+  return r?.ms == null ? null : Number(r.ms);
+}
+
 type Report =
   | { outcome: 'succeeded'; result: Json }
   | { outcome: 'failed' | 'exhausted'; error: { message: string; code: string | null } }
@@ -78,7 +89,7 @@ type Report =
 // Finish an attempt under its claim. Returns false when the claim is gone,
 // in which case nothing was written.
 async function finish(opts: ServiceOptions, w: Claimed, report: Report): Promise<boolean> {
-  const client = await opts.pool.connect();
+  const client = await checkout(opts.pool);
   try {
     await client.query('BEGIN');
     const live = `id = $1 AND claim_id = $2 AND status = 'running' AND lease_until > now()`;

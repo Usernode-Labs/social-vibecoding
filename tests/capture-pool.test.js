@@ -1259,3 +1259,49 @@ test('a group budgets its one navigation, so a lone check can outlast NAV_TIMEOU
   assert.ok(loneGroupBudget > navTimeout,
     `a single-check group gets ${loneGroupBudget}ms, which must exceed NAV_TIMEOUT_MS ${navTimeout}ms`);
 });
+
+test('#3978: a failed expectText names what was on the page', async () => {
+  const read = collect();
+  const browser = { newPage: async () => ({
+    on() {}, async setViewport() {}, async goto() { return { status: () => 200 }; },
+    async waitForNetworkIdle() {},
+    async $(sel) { return sel === '#here' ? {} : null; },
+    async evaluate(fn) {
+      const src = String(fn);
+      if (/includes\(/.test(src)) return false;
+      if (/innerText/.test(src)) return '  Menu\n  Your apps\n  Board  ';
+      return true;
+    },
+    async close() {},
+  }) };
+  await runTests(browser, [
+    { index: 0, name: 'a', path: '/x', url: 'http://staging/x', expectText: 'welcome' },
+  ], { concurrency: 1, testTimeoutMs: 20000, env: { ...process.env, TEST_RETRY_RUNS: '0' } });
+  const frame = read().frames[0];
+  assert.equal(frame.status, 'fail');
+  assert.match(frame.failureReason, /Expected text "welcome" was not found on the page/);
+  assert.match(frame.failureReason, /the page text was: "Menu Your apps Board"/,
+    'the snippet is flattened and the caller can see what rendered instead');
+});
+
+test('#3978: an innerText probe that answers non-string leaves the reason alone', async () => {
+  const read = collect();
+  const browser = { newPage: async () => ({
+    on() {}, async setViewport() {}, async goto() { return { status: () => 200 }; },
+    async waitForNetworkIdle() {},
+    async $(sel) { return sel === '#here' ? {} : null; },
+    async evaluate(fn) {
+      const src = String(fn);
+      if (/includes\(/.test(src)) return false;
+      if (/innerText/.test(src)) throw new Error('probe refused');
+      return true;
+    },
+    async close() {},
+  }) };
+  await runTests(browser, [
+    { index: 0, name: 'a', path: '/x', url: 'http://staging/x', expectText: 'welcome' },
+  ], { concurrency: 1, testTimeoutMs: 20000, env: { ...process.env, TEST_RETRY_RUNS: '0' } });
+  const frame = read().frames[0];
+  assert.equal(frame.failureReason, 'Expected text "welcome" was not found on the page',
+    'no snippet, and no "true" or error text posing as one');
+});

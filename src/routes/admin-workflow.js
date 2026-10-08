@@ -33,7 +33,7 @@ function adminWorkflowRoutes(config) {
     try {
       const { inspect } = kernel();
       const [problems, counts] = await Promise.all([inspect.problems(pool), inspect.stateCounts(pool)]);
-      res.json({ running: platform().governanceEnabled(), actions: platform().adminEvents(), problems, counts });
+      res.json({ running: platform().workflowRunning(), actions: platform().adminEvents(), problems, counts });
     } catch (err) { fail(res, err, 'Workflow overview'); }
   });
 

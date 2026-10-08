@@ -35,6 +35,39 @@ const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 // (services/bench/packs.js hashOf over guidance, stage guidance and files).
 const PACK_4_SHA = 'b6f8432f01512c04a2f90b14cc6e7880a7670f8afeb71b2ec905a23263b94577';
 const PACK_2_SHA = 'a61e226385ef2e9c33c5bdcb932be415a42657941fbac83b9bd7e5dff215daff';
+// The live skill is pack 4's with four edits about colour (7 October 2026):
+// the colours a subject already has are its fit, not a cliché, so the
+// palette is as many named colours as the subject needs, and a calibration
+// trait is a default only where the subject does not call for it. Each pair
+// is [pack 4's text, the live text]; undoing them gives pack 4 back byte for
+// byte, and the live skill hashes to LIVE_SHA. A stored pack is never edited.
+const COLOUR_EDITS = [
+  ['Build with the brief\'s real content and subject matter throughout.\n',
+    'Build with the brief\'s real content and subject matter throughout.\n\nColours the subject already has, the ones people already read in its world (a map\'s water and parks, team colours, card suits, traffic-light statuses), are the fit to the subject, not a cliché. Use them, and be distinctive in how you use them, not by avoiding them.\n'],
+  ['so on a user\'s brief it reads as a tell);',
+    'so on a user\'s brief it reads as a tell), when nothing in the subject calls for a warm page;'],
+  ['and they appear regardless of subject. Where the brief pins down a visual direction, follow it exactly — the brief\'s own words always win, including when it asks for one of these looks. Where it leaves an axis free,',
+    'and they appear regardless of subject. A trait is a default only when the subject does not call for it. Where the brief pins down a visual direction, follow it exactly — the brief\'s own words always win, including when it asks for one of these looks. A subject\'s own vernacular (the colours, materials and forms people already read in its world) pins that axis down too. Where the brief and the subject leave an axis free,'],
+  ['- Color: the kit\'s tokens as 4–6 named colours, each with',
+    '- Color: the kit\'s tokens as named colours, as many as the subject needs: the neutrals, one action colour, and any set of colours the subject itself uses, each with'],
+];
+// And three about its visual language (later on 7 October 2026, "V1": a
+// spec prompt telling Opus this drew closer to what Opus makes building an
+// app alone): one visual language drawn from the subject and carried
+// through the screen, its signature element and the details that carry it,
+// rather than one bold element and nothing around it; Chanel's "remove one
+// accessory" goes with it. Undoing them too gives pack 4 back.
+const LANGUAGE_EDITS = [
+  ['including its one signature element.',
+    'including its signature element and the details that carry it.'],
+  ['Spend your boldness in one place. Let one element be the memorable thing — the signature element in `## Design` — keep everything around it quiet and disciplined, and cut any decoration that does not serve the brief.',
+    'Give the app one visual language drawn from its subject and carry it through the screen: the signature element in `## Design`, and the small consistent details that make the subject recognisable at a glance (a drawn icon for each kind of thing, the subject\'s own colours and materials, a typeface that suits it). Keep it coherent rather than loud, and cut decoration that carries no meaning, not detail that does.'],
+  ['states. Consider Chanel\'s advice: before leaving the house, take a look in the mirror and remove one accessory. Human creatives',
+    'states. Human creatives'],
+];
+const LIVE_EDITS = [...COLOUR_EDITS, ...LANGUAGE_EDITS];
+const LIVE_SHA = '8fc6f2b344386dfaf474d3f28a306eb5b69e04e48b6aff645fde849f8f50bdb8';
+const LIVE_PACK_2_SHA = 'cfe11e58b071e25f36374b5075ada6c27ce2ac7170849bf6dfc9092dbd781a76';
 
 const { NUDGE, FIRST_VERSION_LOOP, SKILL_PATH } = designSkill;
 const FIRST = { spec: designSkill.stageGuidance('spec', { firstVersion: true }), build: designSkill.stageGuidance('build', { firstVersion: true }) };
@@ -47,10 +80,21 @@ const SPEC = '# Title\n\n## User-facing changes\n\nx\n\n## Technical implementat
 
 // ── What it is ───────────────────────────────────────────────────────────
 
-test('the skill and the texts are App bench context pack 4, byte for byte', () => {
-  assert.equal(packs.hashOf({ guidance: '', stageGuidance: FIRST, files: designSkill.skillFiles() }), PACK_4_SHA);
-  // Its parent, v1, was the same files and the nudge at both stages.
-  assert.equal(packs.hashOf({ guidance: '', stageGuidance: { spec: NUDGE, build: NUDGE }, files: designSkill.skillFiles() }), PACK_2_SHA);
+test('the skill and the texts are App bench context pack 4, byte for byte but for its colour and visual-language edits', () => {
+  assert.equal(packs.hashOf({ guidance: '', stageGuidance: FIRST, files: designSkill.skillFiles() }), LIVE_SHA);
+  assert.equal(packs.hashOf({ guidance: '', stageGuidance: { spec: NUDGE, build: NUDGE }, files: designSkill.skillFiles() }), LIVE_PACK_2_SHA);
+  // Undo the colour and visual-language edits and it is pack 4 again; its
+  // parent, v1, was the same files and the nudge at both stages.
+  let skill = designSkill.skillFiles()[1].content;
+  for (const [was, now] of LIVE_EDITS) {
+    assert.equal(skill.split(now).length, 2, `the edit is there once: ${now.slice(0, 60)}`);
+    skill = skill.replace(now, was);
+  }
+  const pack4Files = [designSkill.skillFiles()[0], { ...designSkill.skillFiles()[1], content: skill }];
+  assert.equal(packs.hashOf({ guidance: '', stageGuidance: FIRST, files: pack4Files }), PACK_4_SHA);
+  assert.equal(packs.hashOf({ guidance: '', stageGuidance: { spec: NUDGE, build: NUDGE }, files: pack4Files }), PACK_2_SHA);
+  // None of its examples is one of the App bench's starter briefs.
+  assert.doesNotMatch(designSkill.skillFiles()[1].content, /bread|baking|proofing|RSS|feed reader|ear train|voxel|tier list|ranking/i);
 
   // Kept as reviewable text beside the design guidance.
   assert.equal(NUDGE, read('src/prompts/design-skill-nudge.md').trim());

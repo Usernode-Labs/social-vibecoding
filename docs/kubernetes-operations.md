@@ -33,6 +33,41 @@ a new atomic release. Missing platform or capture artifacts fail closed and
 require the normal `main` workflow; the scheduled path never rebuilds them as
 an incidental side effect.
 
+Every stable release restarts the platform, and each restart re-runs the
+checks of every proposal in flight and interrupts the bot's builds. The
+workflow runs one push to `main` at a time, and its "Check branch tip before
+publishing" step decides which runs publish:
+
+- **Spacing.** A stable release goes out no sooner than
+  `RELEASE_MIN_GAP_MINUTES` (10) after the previous one. The gap is timed
+  from the end of the run that published the previous release, which is when
+  Argo CD was asked to roll it out.
+- **The tip run waits.** The run for `main`'s tip waits inside that step for
+  the rest of the gap, then publishes. A newer merge landing during the wait
+  ends it: the waiting run skips, and the newer merge's run, queued behind it,
+  publishes once built. The newest merge is always released.
+- **Runs behind the tip** publish only when the newest release's revision
+  merged at least `RELEASE_EVERY_MINUTES` (15) before theirs, and they skip
+  inside the gap.
+
+On 7 October 2026 the platform rolled out four times in sixteen minutes
+(21:41:57 to 21:57:49 UTC) while approved proposals merged one after another;
+that is what the gap prevents.
+
+If the age of the previous release cannot be read, the run publishes as it
+did before the gap existed. Feature-branch candidates never wait.
+
+**To release at once, for example an urgent fix,** run the workflow on
+`main` by hand:
+
+```bash
+gh workflow run build-kubernetes-images.yml --ref main
+```
+
+A dispatched run never waits. A run that is waiting when the dispatched run
+is queued behind it skips in its favour, so `main` goes out as soon as the
+dispatched run has built, with one restart.
+
 Argo owns the platform Deployment, database, namespaces, service accounts and
 runtime permissions. The platform owns generated apps, previews, workers and
 check Jobs. Keep each change with its owner; source commits do not themselves
@@ -63,11 +98,12 @@ admins. The Dev board shows an amber banner with the workflow run linked until
 the running build catches up. A red run is reported at once; a run still going,
 a run that succeeded without a rollout, or no run at all is reported after
 `RELEASE_GRACE_MS` (default ten minutes). The workflow runs one push at a time,
-so after a burst of merges the newest one's run waits for the others: a run
-that has not finished is reported only once no run of the workflow on `main`
-has finished for the grace, and a run that succeeded gives the rollout its own
-grace from when it finished. Re-running the failed workflow jobs, or the next
-merge, releases the commit; a build that already carries the recorded commit
+so after a burst of merges the newest one's run waits for the others. The
+tip's run may also wait out the release gap above. So a run that has not
+finished is reported only once no run of the workflow on `main` has finished
+for the grace plus `RELEASE_MIN_GAP_MINUTES`. A run that succeeded gives the
+rollout its own grace from when it finished. Re-running the failed workflow
+jobs, or the next merge, releases the commit; a build that already carries the recorded commit
 reads as resolved at once, and the poller clears the record on the new build's
 first tick at `main`. A token without `actions:read` degrades to the time-based
 verdict rather than failing.
@@ -217,6 +253,17 @@ stuck — and every `CHECK_HARVEST_SWEEP_MS` (30s) after, at most
 - **moot** when the session no longer wants the run — decided meanwhile, head
   moved, session closed, or (under the preview lifecycle) a newer run owns it.
 
+A platform process that shuts down hands its rows over first: it stamps
+their heartbeat as long past, so the next leader's boot sweep seats them at
+once instead of a minute later. A run whose process died without doing so is
+still covered: before the stale sweep starts a session over, it looks for that
+session's current run on the cluster. If the capture Job is still running, or
+the run finished less than `CHECKS_STALE_MS` ago, the harvest settles it
+instead. A run that starts stops the still-running Jobs of the session's runs
+for other commits (background deletion; their input Secrets go with them).
+Runs for the same commit are left to finish, because their verdict still
+counts.
+
 Under `PREVIEW_LIFECYCLE_ENABLED` the harvester adopts the run's
 `preview_operations` row first and writes through the same ownership check a
 live run does; a request for a newer revision aborts the harvest. Outside the
@@ -267,6 +314,33 @@ existing `SQL_CHECK_CONNECTION_URL` supplied by the unit runner. It never falls
 back to the application's `DATABASE_URL`. Kubernetes termination and cancellation
 are covered by `tests/kubernetes-preview-cancellation.test.js` with API doubles.
 
+## Check Jobs, their input Secrets and the worker quota
+
+A checks run creates a capture Job and a unit-suite Job in the worker namespace,
+each with an input Secret the Job owns. Once the run's verdict is stored and
+its `check_runs` manifest cleared, the run deletes its finished Jobs with
+background propagation, which takes their Pods and Secrets too; the harvester
+does the same after settling an orphan. The Jobs' `ttlSecondsAfterFinished`
+(3600 s) covers everything else: superseded or failed runs, the main-watch
+suite, and whatever a crash leaves. Keep it at least that long, because it is
+how late a harvest can still read a run after a slow leader handover.
+
+`services/check-retention.js` removes what no owner will. On the leader, every
+15 minutes and at most 50 deletions a pass, it deletes:
+
+- check input Secrets (`sv-capture-…-input`, `sv-unit-suite-…-input`) with no
+  owner, older than two hours, that no Pod or Job in the namespace names;
+- finished check Pods whose Job is gone, finished at least the Job TTL ago.
+
+It never touches a worker's `-env` Secret or anything with an owner. It needs
+`list` on Secrets and `delete` on Pods in the worker namespace, which nothing
+else in the platform uses; the foundation owns those grants. Without them each
+pass logs `Check leftover sweep stopped` and deletes nothing.
+
+The namespace's ResourceQuota counts Secrets and Jobs as well as CPU. Size
+`secrets` and `count/jobs.batch` for bursts of concurrent runs on top of the
+worker env Secrets; they are object counts, so headroom costs nothing.
+
 ## Workflow governance machine
 
 `platform.workflowGovernanceEnabled` (default `false`) becomes `WF_GOVERNANCE_ENABLED`.
@@ -275,8 +349,9 @@ proposals. The governance-apply ticker and the stale sweeper's Pass 0b then leav
 proposals alone. `docs/workflows.md` explains the machine and where it runs.
 
 - **Where it runs.** The machine runs inside the platform Pod; there is no extra
-  workload. Every Pod listens for outcomes, and only the advisory-lock leader runs the
-  loops.
+  workload. Every Pod listens for outcomes and runs pipeline slots, so it applies its
+  own votes; only the advisory-lock leader runs the timer and service loops and the
+  boot backfill.
 - **Schema.** The schema it needs (`wf_*` tables and triggers) is additive and ships
   with every release, whether the flag is on or off.
 
@@ -292,8 +367,10 @@ directions. No maintenance window or scale-to-zero is needed.
    - The machine and the old apply functions both lock the proposal's row, so
      whichever commits first applies it. The machine ends the other's instance
      `superseded` (`closed_outside`).
-   - Until the new Pod is leader, its governance routes answer `202`. The vote or
-     withdrawal is recorded and applied once the loops start.
+   - The new Pod applies its own votes and withdrawals at once: its pipeline slots run
+     before it is leader. Only what the leader's loops do (timers, follow-up work, and
+     enrolling proposals opened before the flag) waits until it is elected. A route on
+     a proposal not enrolled yet enrolls it itself.
 3. **Verify.**
    - **The new Pod's log.** It shows `Workflow runtime started` and, on the leader,
      `Enrolled open governance proposals` with a count.
@@ -301,15 +378,48 @@ directions. No maintenance window or scale-to-zero is needed.
      is empty.
    - **Votes.** A vote on a test proposal answers at once.
 4. **Watch for old writers.** In production the ownership trigger logs instead of
-   refusing (`WF_OWNERSHIP_MODE` defaults to `log`). Over the following days,
-   `wf_ownership_violations` should stay empty. A row there names a code path that
-   still writes a governance proposal outside the machine.
+   refusing (`WF_OWNERSHIP_MODE` defaults to `log`). Over the following days, the
+   problems panel in Admin → Workflows should show no "written outside its machine"
+   line. One lists the column, how often, and its latest writes: the row, the
+   connection's `application_name` and the statement, which name the code path that
+   still writes a governance proposal outside the machine (`wf_ownership_violations`).
 
 **Rollback.** Set the value back to `false` and let Argo CD roll the Deployment.
 - **What happens to the proposals.** The old paths decide them again. The trigger
   stops guarding them as soon as the new Pods record the flag off.
 - **Turning it on again later is safe.** A proposal decided or deleted in the
   meantime ends its instance without being applied twice.
+
+## Workflow merge-followups machine
+
+`platform.workflowMergeFollowupsEnabled` (default `false`) becomes
+`WF_MERGE_FOLLOWUPS_ENABLED`. When it is on, what follows a merge (production delivery,
+preview teardown, included changes, closing requests, the announcements) is durable work
+of the merge-followups machine, and a change reads live only once production runs it.
+`merge-followup-recovery` and the boot resume of issue-close watches stand down.
+`docs/workflows.md` explains the machine.
+
+### Activation and rollback
+
+An ordinary rolling change, safe in both directions.
+
+1. **Set the value.** Set `platform.workflowMergeFollowupsEnabled: true` in the
+   platform's values in the infra repository. Argo CD rolls the Deployment.
+2. **During the rollout overlap.**
+   - An old Pod may still merge the old way. Once a new Pod has recorded the flag, the
+     ownership trigger logs such an old merge in `wf_ownership_violations`, which is
+     `log` mode in production. The old merge tail then runs as before.
+   - A merge on a new Pod is reported to the machine and finished by the leader's loops.
+3. **Verify.**
+   - **The new Pod's log.** It shows `Workflow runtime started` with `merge-followups`.
+   - **Admin → Workflows.** The next merge appears as `merge-followups / session:<id>`
+     and reaches `live`, and its problems panel is empty.
+   - **The proposal's thread.** It says "is live" after the deploy, not before.
+
+**Rollback.** Set the value back to `false`.
+- **New merges** take the old tail again.
+- **Merges the machine already accepted** still finish: the runtime keeps running while
+  they have work left, and stops on a later boot once nothing is left.
 
 ## Read-only inventory and logs
 

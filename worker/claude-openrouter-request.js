@@ -424,6 +424,13 @@ async function startMessagesAdapter({
   const redactOutcome = makeRedactor([apiKey, localToken]);
   const active = new Set();
   let requestOrdinal = 0;
+  // Each request's start and end also say when they happened (atMs), in ms
+  // since this listener started, which is when the turn's agent did. The
+  // platform reads the turn's journal again after a restart, so the moment
+  // it reads a line is not when the line was written; these stamps are what
+  // let it split a turn's time between the model and the tools between
+  // requests (worker.js noteCodingRequestClock).
+  const listenerStartedAt = performance.now();
   const emitTiming = (event) => {
     if (!onTiming) return;
     try { onTiming(event); } catch { /* Telemetry cannot affect the provider request. */ }
@@ -475,6 +482,7 @@ async function startMessagesAdapter({
           responseBytes: 0, chunks: 0, outcome: 'ok', images };
         emitTiming({
           kind: 'provider_request_start', requestOrdinal: ordinal,
+          atMs: Math.max(0, Math.round(startedAt - listenerStartedAt)),
           payloadBytes: Buffer.byteLength(serializedBody),
           inputBytes: body.messages == null ? 0 : Buffer.byteLength(JSON.stringify(body.messages)),
           instructionBytes: body.system == null ? 0 : Buffer.byteLength(JSON.stringify(body.system)),
@@ -577,10 +585,12 @@ async function startMessagesAdapter({
           ...Object.fromEntries(Object.entries(timing.result || {}).filter(([, v]) => v != null)),
           images: timing.images,
         });
+        const endedAt = performance.now();
         emitTiming({ kind: 'provider_request_end', requestOrdinal: timing.ordinal,
+          atMs: Math.max(0, Math.round(endedAt - listenerStartedAt)),
           outcome: timing.outcome, stage: timing.stage,
           ...(timing.status != null ? { httpStatus: timing.status } : {}),
-          durationMs: Math.max(0, Math.round(performance.now() - timing.startedAt)),
+          durationMs: Math.max(0, Math.round(endedAt - timing.startedAt)),
           responseBytes: Math.min(timing.responseBytes, 10_000_000),
           chunkCount: Math.min(timing.chunks, 1000),
         });
