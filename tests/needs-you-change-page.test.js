@@ -106,9 +106,12 @@ test('the hero: the eyebrow with its state, the age, the title, the by-line, the
     age: hero.age, author: 'maya', verb: 'proposed', provenance: null, tint: 'b',
   });
   assert.ok(v.body.hero.age && v.body.hero.age.s, 'the age is the card meta line’s own part');
-  // B10b: "Change · Waiting for approval"; the pull request is Details'.
+  // B10b: "Change · Waiting for approval"; the pull request it names rides
+  // the by-line's end, as the card meta line's number reads it — mono in
+  // the accent, linked to GitHub (it was Details-only until the number came
+  // up to the page).
   assert.match(page, /<span class="dev-ws-eyebrow dev-topic-hero-eyebrow">Change · Waiting for approval<\/span><span class="dev-ws-item-of"[^>]*>/);
-  assert.ok(!page.includes('PR#12') && !page.includes('github.com/example/app/pull/12'), 'no pull request on the page');
+  assert.match(page, /<span> · <a href="https:\/\/github\.com\/example\/app\/pull\/12" target="_blank" rel="noopener" class="font-mono text-violet-700 hover:underline dark:text-violet-400">PR#12<\/a><\/span><\/span><\/p>/);
   assert.match(details, /^<p class="dev-details-pr" data-details-part="pr"><span>PR#12<\/span><a href="https:\/\/github\.com\/example\/app\/pull\/12" target="_blank" rel="noopener">Open on GitHub<\/a><\/p>/);
   assert.match(html, /<h2 class="dev-ws-item-title dev-topic-hero-title">Authenticate previews<\/h2>/);
   assert.match(html, /<p class="dev-ws-item-by dev-topic-hero-by"><span class="dev-ws-item-avatar" style="background:#[0-9a-f]{6}" aria-hidden="true">M<\/span><span><b>maya<\/b><span> · proposed /);

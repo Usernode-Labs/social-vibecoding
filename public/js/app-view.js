@@ -5203,7 +5203,8 @@ const AppView = {
     if (item.source === 'maintenance') bits.push('platform maintenance');
     return {
       // B10b: the eyebrow is "Change · Waiting for approval"; the pull
-      // request it names moved into Details (`ref`, drawn there).
+      // request it names rides the by-line's end (`ref`, as the card meta
+      // line's number reads it) and is in Details too.
       kind: 'Change',
       ref: n ? { s: `PR#${n}`, href: item.pr_url || null } : null,
       status,
