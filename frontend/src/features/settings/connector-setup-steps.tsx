@@ -99,7 +99,10 @@ export function ClaudeSetupSteps() {
  * address, chatgpt.com/plugins, so the walkthrough opens there directly
  * instead of walking Settings &rarr; Plugins &amp; Connectors &rarr; Browse
  * plugins directory first. After the server is created it still has to be
- * switched on per chat, in the connector picker.
+ * switched on per chat, in the connector picker. #4438 retitled step 3 to
+ * "Enter Homeroom MCP server URL" and cut its body to one line: the address
+ * is the one each caller renders above, so the general reachability advice
+ * went.
  *
  * The one URL the steps may spell out is ChatGPT's own page — it is
  * third-party and does not move with a fork, unlike the MCP server URL,
@@ -115,8 +118,12 @@ export function ChatgptSetupSteps() {
         <SetupStep n={2} title="Create a custom MCP server.">
           Click <strong className="font-semibold text-zinc-600 dark:text-zinc-400">&ldquo;Add plugin&rdquo;</strong>, then choose <strong className="font-semibold text-zinc-600 dark:text-zinc-400">&ldquo;Create custom MCP server&rdquo;</strong>.
         </SetupStep>
-        <SetupStep n={3} title="Enter your MCP server URL.">
-          For Homeroom that is the MCP server URL above, a public HTTPS endpoint ending in <code className="font-mono text-zinc-600 dark:text-zinc-400">/mcp</code>. The server must be reachable by ChatGPT; one running only on <code className="font-mono text-zinc-600 dark:text-zinc-400">localhost</code> will not work directly.
+        {/* #4438: step 3 is Homeroom-specific now. The URL is the one each
+            caller renders above, so the step says only to paste it — the
+            public-endpoint and localhost advice was about servers in
+            general, not this one. */}
+        <SetupStep n={3} title="Enter Homeroom MCP server URL.">
+          Paste the MCP server URL above.
         </SetupStep>
         <SetupStep n={4} title="Turn the server on in a chat.">
           Open the <code className="font-mono text-zinc-600 dark:text-zinc-400">+</code> / connector picker next to the message box, select the server you just created, and set it as active. Now ask ChatGPT to perform something that uses one of the tools, for example: <em>&ldquo;Use my MCP server to list the open support tickets.&rdquo;</em> When appropriate, ChatGPT will call the tools your MCP server exposes and use their results in the conversation.

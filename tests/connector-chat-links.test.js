@@ -129,4 +129,8 @@ test('#1607: the written walkthroughs stay, because a chat cannot click a settin
   assert.doesNotMatch(steps, /Developer mode/);
   assert.doesNotMatch(steps, /Browse plugins directory/, 'no Settings walk first');
   assert.match(steps, /Paste your MCP server URL\./);
+  // #4438: ChatGPT's step 3 is titled for the product it is about, and its
+  // generic "your" wording is gone with the reachability sentence it carried.
+  assert.match(steps, /Enter Homeroom MCP server URL\./);
+  assert.doesNotMatch(steps, /Enter your MCP server URL\./);
 });

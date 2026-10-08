@@ -84,6 +84,11 @@ test('the shared steps point at nothing that exists on only one of the screens',
   // above it, and both callers do render it.
   assert.match(STEPS, /the MCP server URL above/);
   assert.match(INLINE, /<ConnectorUrl url=\{url\} \/>/);
+  // #4438: ChatGPT's step 3 is Homeroom-specific — it names the product and
+  // nothing else about the address, because the general advice about public
+  // endpoints and reachability was about servers in general, not this one.
+  assert.match(STEPS, /Enter Homeroom MCP server URL\./);
+  assert.doesNotMatch(stripComments(STEPS), /reachable by ChatGPT|localhost/);
   assert.match(SETTINGS_SECTION, /id="connector-url"/);
   // And the fact the cross-reference was carrying survived the move.
   assert.match(STEPS, /Claude Code builds its permission rules/);
