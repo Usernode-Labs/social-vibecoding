@@ -16,6 +16,9 @@ const challengeScorer = require('../services/topochain/challenge-scorer');
 // #11 (WP3): the platform issue and its receipt, shared with the Homeroom
 // bot's report_problem, which files through the service rather than here.
 const { parseGitHubRepo, createPlatformIssue, recordFeedbackReport } = require('../services/feedback-reports');
+// #4194: the description may be as long as a GitHub issue body allows, less
+// the room the lines this route adds around it need.
+const { GITHUB_ISSUE_BODY_MAX, FEEDBACK_DESCRIPTION_MAX } = require('../services/issue-body-limit');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
@@ -157,10 +160,45 @@ function parseVideoId(body) {
 
 // #685: app-provided state snapshots ("Include app state" checkbox).
 // The bridge caps the serialized snapshot at 32,768 chars client-side;
-// 40,000 is a defensive server ceiling that keeps the JSON request body
-// under the global 100 KB express.json() limit and the final issue body
-// (description ≤ 2,000 chars + this) under GitHub's 65,536-char maximum.
+// 40,000 is a defensive server ceiling on what the request may carry. Since
+// #4194 the description may use most of GitHub's 65,536-char body by itself,
+// so the snapshot is fitted into whatever is left (fitPageState below)
+// rather than assumed to fit.
 const MAX_PAGE_STATE_CHARS = 40000;
+
+// #4194: the title is named from the start of the description. A long report
+// says what it is about in its first paragraphs, and the naming call is
+// billable, so neither the live preview nor the submit-time call sends more.
+// The dialog's preview sends at most this much (feedback-controller.js).
+const TITLE_SOURCE_MAX = 2000;
+
+// Smallest snapshot worth keeping once it has to be cut to fit: below this
+// it says nothing, and the snapshot is left out instead.
+const MIN_PAGE_STATE_CHARS = 200;
+
+// Pure (exported for tests): the snapshot embed that fits beside `fixedBody`
+// within GitHub's body limit. Returns '' when there is no snapshot or no
+// useful room for one; a snapshot that had to be cut says so in its summary.
+function fitPageState(fixedBody, pageState, truncated, max = GITHUB_ISSUE_BODY_MAX) {
+  if (!pageState) return '';
+  const whole = buildPageStateEmbed(pageState, truncated);
+  if (fixedBody.length + whole.length <= max) return whole;
+  const overhead = buildPageStateEmbed('', true).length;
+  const room = max - fixedBody.length - overhead;
+  if (room < MIN_PAGE_STATE_CHARS) return '';
+  return buildPageStateEmbed(pageState.slice(0, room), true);
+}
+
+// The 400 for a body that would still be over GitHub's limit. The
+// description cap leaves room for the lines this route adds, so this is a
+// backstop; it names the numbers rather than trimming the report.
+function bodyTooLong(res, body) {
+  return res.status(400).json({
+    error: `This report comes to ${body.length} characters with its attachments, over GitHub's `
+      + `${GITHUB_ISSUE_BODY_MAX}-character limit. Shorten it by at least `
+      + `${body.length - GITHUB_ISSUE_BODY_MAX} characters.`,
+  });
+}
 
 // Pure (exported for tests): the collapsed <details> suffix appended to
 // the issue body for an app-provided state snapshot. Four-backtick fence
@@ -465,8 +503,8 @@ function feedbackRoutes(config) {
     if (!description || typeof description !== 'string' || description.trim().length === 0) {
       return res.status(400).json({ error: 'Description is required' });
     }
-    if (description.length > 2000) {
-      return res.status(400).json({ error: 'Description too long (max 2000 chars)' });
+    if (description.length > TITLE_SOURCE_MAX) {
+      return res.status(400).json({ error: `Description too long (max ${TITLE_SOURCE_MAX} chars)` });
     }
     try {
       const billing = await resolveTitleBilling(req.user?.id);
@@ -563,8 +601,8 @@ function feedbackRoutes(config) {
     if (!description || typeof description !== 'string' || description.trim().length === 0) {
       return res.status(400).json({ error: 'Description is required' });
     }
-    if (description.length > 2000) {
-      return res.status(400).json({ error: 'Description too long (max 2000 chars)' });
+    if (description.length > FEEDBACK_DESCRIPTION_MAX) {
+      return res.status(400).json({ error: `Description too long (max ${FEEDBACK_DESCRIPTION_MAX} chars)` });
     }
 
     // #556: optional user-chosen title. When present (non-empty after
@@ -761,7 +799,7 @@ function feedbackRoutes(config) {
           const billing = await resolveTitleBilling(req.user?.id);
           if (billing.error) throw new Error(`title billing unavailable: ${billing.error}`);
           const gen = await llm.generateIssueTitle({
-            description,
+            description: description.slice(0, TITLE_SOURCE_MAX),
             apiKey: billing.apiKey || undefined,
           });
           title = gen.title;
@@ -785,7 +823,7 @@ function feedbackRoutes(config) {
             `INSERT INTO title_heal_queue (user_id, owner, repo, issue_number, description)
              VALUES ($1, $2, $3, $4, $5)
              ON CONFLICT (owner, repo, issue_number) DO NOTHING`,
-            [req.user?.id || null, owner, repo, issueNumber, description.trim()]
+            [req.user?.id || null, owner, repo, issueNumber, description.trim().slice(0, TITLE_SOURCE_MAX)]
           );
         } catch (err) {
           log.warn('feedback', 'Failed to queue title heal', { repo: `${owner}/${repo}`, issueNumber, message: err.message });
@@ -845,13 +883,13 @@ function feedbackRoutes(config) {
       if (target === 'app') {
         // #685: the collapsed state-snapshot block goes last, after the
         // screenshot embed, so it never buries the description.
-        const pageStateSuffix = pageState
-          ? buildPageStateEmbed(pageState, pageStateTruncated)
-          : '';
         // #1054: the "written while offline" line sits with the other header
         // lines, above the description — it is context for reading the report,
         // not part of it.
-        const body = `**Source:** ${source}\n**App:** ${appContext.name} (${appContext.slug})\n${queuedLine}\n${description.trim()}${screenshotSuffix}${videoSuffix}${pageStateSuffix}`;
+        const fixedBody = `**Source:** ${source}\n**App:** ${appContext.name} (${appContext.slug})\n${queuedLine}\n${description.trim()}${screenshotSuffix}${videoSuffix}`;
+        // #4194: the snapshot gets whatever room the report leaves it.
+        const body = fixedBody + fitPageState(fixedBody, pageState, pageStateTruncated);
+        if (body.length > GITHUB_ISSUE_BODY_MAX) return bodyTooLong(res, body);
         let issue;
         try {
           issue = await github.createIssue(issueOwner, issueRepo, { title, body });
@@ -923,11 +961,13 @@ function feedbackRoutes(config) {
       // The platform repo, with the bot's token (services/feedback-reports.js
       // createPlatformIssue): a hand-rolled call that applies safeMention to
       // the user-typed title and description itself (#723).
+      const platformBody = `**Source:** ${source}\n${queuedLine}\n${description.trim()}${screenshotSuffix}${videoSuffix}`;
+      if (platformBody.length > GITHUB_ISSUE_BODY_MAX) return bodyTooLong(res, platformBody);
       const created = await createPlatformIssue({
         owner: issueOwner,
         repo: issueRepo,
         title,
-        body: `**Source:** ${source}\n${queuedLine}\n${description.trim()}${screenshotSuffix}${videoSuffix}`,
+        body: platformBody,
         pat,
       });
       // The underlying status is in the client-facing error (the hint), so
@@ -1029,6 +1069,10 @@ module.exports = {
   // #685: pure helpers exported for tests/feedback-page-state.test.js.
   buildPageStateEmbed,
   MAX_PAGE_STATE_CHARS,
+  // #4194: the description's limit and the snapshot fitted beside it.
+  fitPageState,
+  TITLE_SOURCE_MAX,
+  FEEDBACK_DESCRIPTION_MAX,
   normalizeQueuedAt,
   MAX_QUEUED_AT_CHARS,
 };

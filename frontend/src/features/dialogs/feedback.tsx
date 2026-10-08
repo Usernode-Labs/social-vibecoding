@@ -35,6 +35,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 
 import { HostDropOverlay } from '../attachments/file-drag';
+import { FEEDBACK_DESCRIPTION_MAX } from '../../lib/issue-body-limit';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { returnKeyHandler } from '../../lib/return-to-next';
 import { Feedback, init as initFeedback } from './feedback-controller';
@@ -242,7 +243,7 @@ export function FeedbackDialog() {
           <Textarea
             id="feedback-text"
             rows={4}
-            maxLength={2000}
+            maxLength={FEEDBACK_DESCRIPTION_MAX}
             aria-required="true"
             placeholder="Describe the change, or the problem you hit"
             className="resize-none"
