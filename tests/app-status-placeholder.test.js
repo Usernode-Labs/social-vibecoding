@@ -814,3 +814,51 @@ test('#4387: the pill says how long ago the real screens were taken', () => {
   assert.equal(m.realScreenPill('2026-10-08T09:30:00Z', now), 'Real screen · 2 h ago');
   assert.equal(m.realScreenPill(null, now), 'Real screen');
 });
+
+// #4449: Live, the app itself taking shape, beside the first look. While it
+// is built, a member's band gets a "Preview | Live" switch (Preview first,
+// and exactly #4387's first look); at Testing it the switch goes.
+
+test('#4449: building with Live offered, the switch over the band with Preview chosen', () => {
+  const { AppView } = makeAppView();
+  const v = view(AppView, firstVersionApp({}, { ...MEMBER, line: 'building', caption: 'Adding the tier rows', screens: LOOK, live: true }));
+  assert.deepEqual(v.live, { slug: 'plant-pal', userKey: '1' });
+  const out = html(v);
+  assert.match(out, /data-first-version-live-switch="preview"/);
+  assert.match(out, /<button type="button" aria-pressed="true" data-live-choice="preview"[^>]*>Preview<\/button>/);
+  assert.match(out, /<button type="button" aria-pressed="false" data-live-choice="live"[^>]*>Live<\/button>/);
+  // Preview is exactly the first look, and the build line is unchanged.
+  assert.match(out, /First look · drawn from the plan/);
+  assert.doesNotMatch(out, /data-first-version-live=/, 'the player is not loaded');
+  assert.match(out, /Building it · Adding the tier rows/);
+  assert.equal((out.match(/role="status"/g) || []).length, 1, 'one build line');
+});
+
+test('#4449: no switch without Live, off the build line, or once it is tested', () => {
+  const { AppView } = makeAppView();
+  for (const fv of [
+    { ...MEMBER, line: 'building', screens: LOOK },
+    { ...MEMBER, line: 'testing', screens: LOOK, live: true },
+    { ...MEMBER, line: 'planning', live: true },
+    { ...MEMBER, line: 'building', live: 'yes' },
+  ]) {
+    const v = view(AppView, firstVersionApp({}, fv));
+    assert.equal('live' in v, false, JSON.stringify(fv));
+    assert.doesNotMatch(html(v), /data-first-version-live-switch/);
+  }
+  // Without a first look the switch still shows, on the icon's band.
+  const out = html(view(AppView, firstVersionApp({}, { ...MEMBER, line: 'building', live: true })));
+  assert.match(out, /data-first-version-live-switch="preview"/);
+  assert.doesNotMatch(out, /h-\[340px\]/);
+});
+
+test('#4449: the screenshot state plays a made-up recording and fetches nothing', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  assert.match(src, /'first-version-live': 'live'/);
+  assert.match(SRC, /\.\.\.\(variant === 'live' \? \{ live: true \} : \{\}\)/);
+  assert.match(SRC, /\.\.\.\(appData\.shot \? \{ sample: true \} : \{\}\)/);
+  const band = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'app-frame', 'live-band.tsx'), 'utf8');
+  assert.match(band, /if \(live\.sample\) \{[\s\S]*sampleRecording\(\)/);
+  assert.match(band, /'Sample live stream'/);
+  assert.match(band, /'Not a real app'/);
+});

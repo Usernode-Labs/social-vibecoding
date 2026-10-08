@@ -403,6 +403,20 @@ async function firstVersionShowcaseFields(pool, appId, viewerId, { mine = false,
 }
 
 /**
+ * #4449: whether a MEMBER's App tab offers Live while the first version is
+ * built (services/first-version-live.js): `{ live: true }` at "Building it"
+ * while the Admin setting is on, for the maker and the project's members,
+ * the readers of its first look; else `{}`.
+ */
+async function firstVersionLiveFields(pool, appId, viewerId, { mine = false, line = null } = {}) {
+  if (viewerId == null || line !== 'building') return {};
+  const fvLive = require('../services/first-version-live');
+  if (!(await fvLive.liveEnabled(pool))) return {};
+  if (!mine && !(await communities.isMember(pool, appId, viewerId))) return {};
+  return { live: true };
+}
+
+/**
  * IN ITS FIRST WEEK, A FIRST VERSION THAT WENT LIVE STAYS ON THE HUB (#4045,
  * decision D), as its card's Live and Open app: firstVersionState answers
  * null once the bot's proposal merged, and the week's hub has nothing else
@@ -1739,6 +1753,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
             // for a member (firstVersionShowcaseFields).
             const showcase = await firstVersionShowcaseFields(pool, appRow.id, req.user?.id, { mine, line: state.line || null })
               .catch(() => ({}));
+            // #4449: and whether they can watch it take shape (Live).
+            const liveFields = await firstVersionLiveFields(pool, appRow.id, req.user?.id, { mine, line: state.line || null })
+              .catch(() => ({}));
             firstVersion = {
               building: true,
               mine,
@@ -1759,6 +1776,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
               // viewer reads it (firstVersionApproval).
               ...(state.ready && state.approval ? { approval: state.approval } : {}),
               ...showcase,
+              ...liveFields,
               // No "usually about N minutes" (WP-E used to send the
               // ordinary request's typical build here): a first version
               // plans first and waits on its creator's answer, and took 50
@@ -1910,6 +1928,57 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       return res.send(Buffer.isBuffer(row.data) ? row.data : Buffer.from(row.data || ''));
     } catch (err) {
       log.error('apps', 'Failed to read a first version screen', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #4449: LIVE, the new app taking shape while its first version is built
+  // (services/first-version-live.js): the recording since `since`, the last
+  // chunk this viewer has, or from the latest good restart when it is
+  // behind it (`reset`). Already sanitised: nothing in it fetches anything.
+  // For the project's MEMBERS only, the gate of its screens above; 404 for
+  // anyone else, and while the Admin setting is off.
+  const liveMember = async (req) => {
+    if (!req.user?.id) return null;
+    const fvLive = require('../services/first-version-live');
+    if (!(await fvLive.liveEnabled(pool))) return null;
+    const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS);
+    if (!app || !(await communities.isMember(pool, app.id, req.user.id))) return null;
+    return app;
+  };
+  router.get('/api/apps/:slug/first-version/live', async (req, res) => {
+    try {
+      const app = await liveMember(req);
+      if (!app) return res.status(404).json({ error: 'Not found' });
+      const raw = String(req.query.since ?? '');
+      const since = /^[0-9]{1,9}$/.test(raw) ? Number(raw) : 0;
+      const live = await require('../services/first-version-live').liveOf(pool, app.id, since);
+      if (!live) return res.status(404).json({ error: 'Not found' });
+      res.set({ 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+      return res.json(live);
+    } catch (err) {
+      log.error('apps', 'Failed to read a first version\'s Live', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #4449: a member opened Live, or watched it for `seconds` (sent when they
+  // close or hide it): analytics only (events.js live_build_opened,
+  // live_build_watched).
+  router.post('/api/apps/:slug/first-version/live/seen', async (req, res) => {
+    try {
+      const app = await liveMember(req);
+      if (!app) return res.status(404).json({ error: 'Not found' });
+      const body = req.body || {};
+      const kind = body.kind === 'opened' || body.kind === 'watched' ? body.kind : null;
+      const runId = Number(body.runId);
+      if (!kind || !Number.isInteger(runId) || runId <= 0) return res.status(400).json({ error: 'kind and runId are required' });
+      await require('../services/first-version-live').recordView(pool, {
+        userId: req.user.id, appId: app.id, runId, kind, seconds: body.seconds, goodFrame: body.goodFrame === true,
+      });
+      return res.json({ ok: true });
+    } catch (err) {
+      log.error('apps', 'Failed to record a Live view', { message: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -4119,6 +4188,7 @@ module.exports = {
   attachForkLineage,
   appRoutes, sweepStuckCreatingApps, accessFlags, canDeleteApp, compactGlobalChatApp,
   deleteBlockReason, isCoreApp, hubFirstVersion, firstVersionLinesFor, sharedPlan, waitingMemberFields, firstVersionShowcaseFields,
+  firstVersionLiveFields,
   // #2524: the activity guard and its two bounds, so the contract is
   // unit-testable without standing up the whole app router.
   activitySeconds, ACTIVITY_MAX_PER_POST, ACTIVITY_MAX_PER_DAY,
