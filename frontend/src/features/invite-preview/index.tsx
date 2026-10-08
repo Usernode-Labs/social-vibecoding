@@ -12,7 +12,7 @@
  *   SHOWN  the header in the community's colour, its icon and its name;
  *          "Private community · N members", a count with no faces; its
  *          one-line description; who invited them and their note; "Join
- *          <name>"; "<inviter> will see that you joined".
+ *          <name>".
  *   NOT    any member but the inviter, any item, the trend, the discussion,
  *          Open app, the project's address. Nothing here reads the project,
  *          and every read of it would be refused anyway until Join.

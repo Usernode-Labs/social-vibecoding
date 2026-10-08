@@ -18052,7 +18052,6 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
 }
 .dev-ws-invite-from { margin: 0; font-size: 16px; line-height: 21px; font-weight: 650; color: var(--text-primary); }
 .dev-ws-invite-note { margin: 0; font-size: 15px; line-height: 21px; color: var(--text-primary); }
-.dev-ws-invite-seen { margin: 0; text-align: center; font-size: 13px; line-height: 18px; color: var(--text-muted); }
 
 /* ── The hub's discussion preview (hub-cards.tsx) ──
    The channel card's own look, cut to its last two messages with no
