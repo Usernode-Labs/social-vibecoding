@@ -3571,6 +3571,17 @@
       "expectSelector": "#dev-plus-menu [data-plus='rename']"
     },
     {
+      "name": "The hub's ⋯ menu offers Custom domain in its Settings & rules panel to whoever manages the project (#4405)",
+      "path": "/?demo=1&ws=status#app/staging-demo-custom-domain/dev",
+      "expectSelector": "#dev-plus-menu [data-plus='domain']"
+    },
+    {
+      "name": "Custom domain: the dialog lists the CNAME and TXT records to add and says the domain is waiting for DNS (#4405)",
+      "path": "/?shot=app-domain#app/staging-demo-custom-domain",
+      "expectSelector": "body:has(#app-domain-modal:not(.hidden)) #app-domain-records",
+      "expectText": "homeroom-verify"
+    },
+    {
       "name": "App settings: the core platform app cannot be deleted from the UI, and the danger zone says why (#2161)",
       "path": "/?shot=app-settings#app/usernode-2d5619",
       "expectSelector": "body:has(#app-settings-modal:not(.hidden)) #app-delete-blocked",

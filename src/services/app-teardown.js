@@ -36,6 +36,20 @@ async function teardownApp(pool, config, app) {
     }
   }
 
+  // The custom domain's edge resources (#4405): its Ingress and the
+  // certificate Secret on Kubernetes; on Docker nothing, as below. The row
+  // itself goes with the app (ON DELETE CASCADE).
+  try {
+    const appDomains = require('./app-domains');
+    const domain = await appDomains.forApp(pool, app.id);
+    if (domain) {
+      await appDomains.teardownEdge(config, domain);
+      appDomains.invalidateHost(domain.hostname);
+    }
+  } catch (err) {
+    log.warn('apps', 'Custom domain teardown failed on app delete', { appId: app.id, err: err.message });
+  }
+
   // No Caddy route to remove — the wildcard site maps hostnames to
   // container names dynamically, so removing the container above
   // takes the app offline. The on-demand cert lingers harmlessly and

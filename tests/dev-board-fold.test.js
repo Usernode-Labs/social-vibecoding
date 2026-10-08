@@ -1553,9 +1553,17 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // into; it mirrors the two phase checks on 9000022 and 9000026.
   // 735 leaves 145 slots.
   //
+  // 735 → 737: +2 (#4405, custom domains): the hub's ⋯ menu offers Custom
+  // domain in its Settings & rules panel to whoever manages the project (a
+  // row the existing panel check cannot see, since it signs in on a project
+  // the check account does not manage), and the Custom domain dialog lists
+  // the CNAME and TXT records with the Waiting for DNS status line, opened
+  // by `?shot=app-domain` on the seeded staging-demo-custom-domain project.
+  // 737 leaves 143 slots.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 735);
+  checkCap.assertPinned(DAPP.tests.length, 737);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

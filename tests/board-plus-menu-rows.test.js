@@ -57,9 +57,10 @@ test('every action row has a glyph, and every glyph is decoration', () => {
   // Leave left the hero's row for it too (Leave was the Joined pill).
   // #4045: "Settings & rules" is a row too, the one that opens the settings,
   // and Remix is written twice: last in the settings sheet, and alone on the
-  // menu of a read-only viewer, who has no settings.
-  assert.equal(rows.length, 16,
-    'new-change, issue, import-pr, settings, make-public, make-private, leave, app-settings, featured-illustration, members x2, rename, secrets, suggest-back, fork x2');
+  // menu of a read-only viewer, who has no settings. #4405: Custom domain,
+  // under App settings, for whoever manages the project.
+  assert.equal(rows.length, 17,
+    'new-change, issue, import-pr, settings, make-public, make-private, leave, app-settings, domain, featured-illustration, members x2, rename, secrets, suggest-back, fork x2');
   const icons = menu.match(/icon=\{<([A-Za-z]+Icon) className=\{PLUS_ICON_CLS\} aria-hidden="true" \/>\}/g) || [];
   assert.equal(icons.length, rows.length, 'one glyph per row, all aria-hidden');
   // No <button data-plus> survives outside the shared shell — a hand-written

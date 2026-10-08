@@ -1017,6 +1017,16 @@ const AppView = {
           }
         }, 300);
       }
+      // #4405: `?shot=app-domain` opens the Custom domain dialog on this app,
+      // so the declared check and the shots can photograph the records table
+      // and the status line. Reads only; same slug guard as above.
+      if (shot === 'app-domain') {
+        setTimeout(() => {
+          if (AppView.appData?.slug === slug) {
+            window.UsernodeReact?.dialogs?.appDomain?.open({ slug });
+          }
+        }, 300);
+      }
       // #1374: `?shot=app-notifications` opens the per-app Notifications
       // dialog. It is otherwise two taps inside a tile menu, which neither
       // the capture pipeline nor a dapp.json check can reach — the same
@@ -7222,6 +7232,12 @@ const AppView = {
     appSettingsBtn?.addEventListener('click', () => {
       close();
       window.UsernodeReact?.dialogs?.appSettings?.open({ slug: AppView.appData?.slug });
+    }, { signal });
+    // #4405: the project's custom domain (features/dialogs/app-domain.tsx).
+    const domainBtn = menu.querySelector('[data-plus="domain"]');
+    domainBtn?.addEventListener('click', () => {
+      close();
+      window.UsernodeReact?.dialogs?.appDomain?.open({ slug: AppView.appData?.slug });
     }, { signal });
     const membersBtn = menu.querySelector('[data-plus="members"]');
     if (membersBtn) {

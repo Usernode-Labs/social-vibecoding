@@ -20,6 +20,7 @@ const staging = require('../services/staging');
 const { drainGuard } = require('../services/lifecycle');
 const deployFailure = require('../services/deploy-failure');
 const { appCreateLimiter, appAllowanceRequestLimiter, issueCreateLimiter, githubLookupLimiter, feedbackTitleLimiter } = require('../middleware/rate-limits');
+const { rateLimit } = require('express-rate-limit');
 const events = require('../services/events');
 const appOpenings = require('../services/app-openings');
 const appAccess = require('../services/app-access');
@@ -40,6 +41,7 @@ const communityInvites = require('../services/community-invites');
 const emailInvites = require('../services/email-invites');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const appActivity = require('../services/app-activity');
+const appDomains = require('../services/app-domains');
 
 // Cap on the `initialApprovers` list a governance-pr request may carry
 // (see that route below) — a sanity bound, not a product limit.
@@ -249,6 +251,27 @@ function compactGlobalChatApp(app, user, adminAppIds = new Set()) {
 // USERNODE_LOCAL_DEV=1 in your local .env to get the localhost fallback.
 const IS_LOCAL_DEV = process.env.NODE_ENV === 'development' || process.env.USERNODE_LOCAL_DEV === '1';
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
+
+// #4405: the address Share offers. The custom domain once it is live, the
+// Homeroom address until then (and on a dev box, where the app's url is
+// localhost and no custom host could reach it).
+function shareUrl(url, customDomain) {
+  if (!url || !customDomain || customDomain.status !== 'live') return url;
+  if (!/^https:/.test(url)) return url;
+  return `https://${customDomain.hostname}`;
+}
+
+// The live custom domain of each listed app, keyed by app id, in one read.
+async function liveDomainsFor(pool, appIds) {
+  const map = new Map();
+  if (!appIds.length) return map;
+  const { rows } = await pool.query(
+    `SELECT app_id, hostname, status FROM app_domains WHERE status = 'live' AND app_id = ANY($1::int[])`,
+    [appIds]
+  );
+  for (const row of rows) map.set(Number(row.app_id), { hostname: row.hostname, status: row.status });
+  return map;
+}
 
 // Catalog samples are stored rows; all app APIs use the same identity.
 const stagingApps = require('../services/staging-apps');
@@ -859,6 +882,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       const contributorCounts = await contributors.loadContributorCounts(
         pool, rows.map((a) => a.id)
       );
+      // #4405: the live custom domain of each app, one round trip, so the
+      // Share dialog can offer it without a per-app read.
+      const liveDomains = await liveDomainsFor(pool, rows.map((a) => a.id));
       // #4053: where each first version Homeroom bot is making stands, for
       // its Home tile, in the build line this viewer reads.
       const firstVersionLines = await firstVersionLinesFor(
@@ -971,6 +997,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           last_failure_reason: lf ? (lf.reason || null) : null,
           last_failure_at: lf ? (lf.at || null) : null,
           url,
+          custom_domain: liveDomains.get(Number(a.id)) || null,
+          share_url: shareUrl(url, liveDomains.get(Number(a.id))),
           staging_sample: stagingSample,
           version,
           deployProgress: appDeployStatus.read(a.slug),
@@ -1765,6 +1793,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         ...accessFlags(appRow, req.user, isCollaborator, adminAppIds, contributorCount,
           config.selfAppSlug),
       };
+      // #4405: the project's custom domain, and the address Share offers.
+      const domainRow = stagingSample ? null : await appDomains.forApp(pool, appRow.id);
+      appPayload.custom_domain = domainRow ? { hostname: domainRow.hostname, status: domainRow.status } : null;
+      appPayload.share_url = shareUrl(url, domainRow && domainRow.status === 'live' ? appPayload.custom_domain : null);
       await attachForkLineage(pool, appPayload);
       res.json({ app: appPayload });
     } catch (err) {
@@ -3191,6 +3223,111 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
   // services/edge-gate.js (handleAuthorize) has the details; middleware/auth.js
   // lets this one path through without a session so it can answer for a
   // signed-out visitor too.
+  // ── Custom domains (#4405) ───────────────────────────────────────────
+  //
+  // A project's own web address, claimed by whoever manages it and proved
+  // by two DNS records (services/app-domains.js has the status machine).
+  // Owner-set state, like secrets and the lock: not a dapp.json field, so no
+  // vote. The read answers any viewer (the dialog's manage flag decides what
+  // it shows); the writes need canManageApp and never apply to the platform's
+  // own app. "Check now" is bounded per app so a person tapping it cannot
+  // make the platform hammer public resolvers.
+  const domainCheckLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 6,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    keyGenerator: (req) => `domain-check:${req.params.slug}`,
+    handler: (req, res) => res.status(429).json({ error: 'Checked too often. Wait a minute and try again.', code: 'rate_limited' }),
+  });
+
+  async function domainContext(req, res, { manage = false } = {}) {
+    const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS);
+    if (!app) { res.status(404).json({ error: 'App not found' }); return null; }
+    const canManage = await appAdmins.canManageApp(pool, app, req.user);
+    if (manage) {
+      if (!canManage) { res.status(403).json({ error: 'Only the people who manage this app can change its domain' }); return null; }
+      if (refuseIfSelfHosted(app, res)) return null;
+    }
+    return { app, canManage };
+  }
+
+  function domainPayload(app, row, canManage) {
+    return {
+      domain: appDomains.publicRow(row),
+      records: row ? appDomains.expectedRecords(app, row) : [],
+      homeroom_host: caddy.productionHostname(app.slug),
+      can_manage: !!canManage && !app.self_hosted,
+    };
+  }
+
+  router.get('/api/apps/:slug/domain', async (req, res) => {
+    try {
+      const ctx = await domainContext(req, res);
+      if (!ctx) return;
+      const row = await appDomains.forApp(pool, ctx.app.id);
+      res.json(domainPayload(ctx.app, row, ctx.canManage));
+    } catch (err) {
+      log.error('apps', 'Read custom domain failed', { slug: req.params.slug, message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/apps/:slug/domain', drainGuard, sameOriginBrowserOnly, async (req, res) => {
+    try {
+      const ctx = await domainContext(req, res, { manage: true });
+      if (!ctx) return;
+      let row;
+      try {
+        row = await appDomains.claim(pool, ctx.app, req.body?.hostname, req.user);
+      } catch (err) {
+        if (appDomains.isHostnameError(err)) return res.status(400).json({ error: err.message, code: err.code });
+        if (err.code === 'already_has_domain' || err.code === 'hostname_taken') {
+          return res.status(409).json({ error: err.message, code: err.code });
+        }
+        if (err.code === 'claim_limit') return res.status(429).json({ error: err.message, code: err.code });
+        throw err;
+      }
+      log.info('apps', 'Custom domain claimed', { slug: ctx.app.slug, hostname: row.hostname, by: req.user.username });
+      res.status(201).json(domainPayload(ctx.app, row, true));
+    } catch (err) {
+      log.error('apps', 'Claim custom domain failed', { slug: req.params.slug, message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/apps/:slug/domain/check', drainGuard, domainCheckLimiter, sameOriginBrowserOnly, async (req, res) => {
+    try {
+      const ctx = await domainContext(req, res, { manage: true });
+      if (!ctx) return;
+      const row = await appDomains.forApp(pool, ctx.app.id);
+      if (!row) return res.status(404).json({ error: 'This project has no custom domain' });
+      if (row.status === 'disabled') {
+        return res.status(409).json({ error: 'An admin has disabled this domain.', code: 'disabled' });
+      }
+      const next = await appDomains.checkNow(pool, config, row);
+      res.json(domainPayload(ctx.app, next, true));
+    } catch (err) {
+      log.error('apps', 'Check custom domain failed', { slug: req.params.slug, message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.delete('/api/apps/:slug/domain', drainGuard, sameOriginBrowserOnly, async (req, res) => {
+    try {
+      const ctx = await domainContext(req, res, { manage: true });
+      if (!ctx) return;
+      const row = await appDomains.forApp(pool, ctx.app.id);
+      if (!row) return res.status(404).json({ error: 'This project has no custom domain' });
+      await appDomains.remove(pool, config, ctx.app, row, req.user);
+      log.info('apps', 'Custom domain removed', { slug: ctx.app.slug, hostname: row.hostname, by: req.user.username });
+      res.status(204).end();
+    } catch (err) {
+      log.error('apps', 'Remove custom domain failed', { slug: req.params.slug, message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.get('/__access/authorize', async (req, res) => {
     try {
       return await edgeGate.handleAuthorize(pool, req, res);

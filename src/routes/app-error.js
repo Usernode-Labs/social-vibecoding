@@ -145,7 +145,8 @@ function appErrorRoutes(config) {
 
     let displayName = null;
     try {
-      const parsed = appAccess.parseAppHost(rawHost);
+      // A Homeroom host or a live custom domain (#4405).
+      const parsed = await require('../services/app-domains').resolveAppHost(pool, rawHost);
       if (parsed) {
         // Only production hosts get the on-demand heal — staging previews
         // are owned by the staging heal sweep (server.js Pass 3).

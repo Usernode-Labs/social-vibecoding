@@ -353,6 +353,7 @@ const OWNED = [
   { sel: '#admin-section-content', when: '#admin/staging-reap' }, // features/admin/admin-staging-reap.tsx
   { sel: '#admin-section-content', when: '#admin/workflows' }, // features/admin/admin-workflows.tsx
   { sel: '#admin-section-content', when: '#admin/model-costs' }, // features/admin/admin-model-costs.tsx
+  { sel: '#admin-section-content', when: '#admin/domains' }, // features/admin/admin-domains.tsx (#4405)
   { sel: '#admin-section-content', when: '#admin/welcome-dm' }, // features/admin/admin-welcome-dm.tsx
   { sel: '#admin-section-content', when: '#admin/sign-in' }, // features/admin/admin-sign-in.tsx
   // #3654: the Homeroom bot section and its Benchmark tab (the tab is a tail
@@ -413,7 +414,7 @@ const ROUTES = [
   '#admin/homeroom-bot/benchmark/runs', '#admin/homeroom-bot/benchmark/runs/936551', '#admin/homeroom-bot/benchmark/runs/936550',
   '#admin/homeroom-bot/benchmark/suites', '#admin/homeroom-bot/benchmark/suites/936542', '#admin/homeroom-bot/benchmark/studio',
   // The Homeroom bot's configurations, versioned recipes and how each measures up.
-  '#admin/bot-configs',
+  '#admin/bot-configs', '#admin/domains',
   '#admin/api-tester', '#admin/sql-console', '#admin/settings', '#admin/app-version', '#admin/waitlist', '#admin/onchain-accounts', '#admin/user-activities', '#admin/delegations',
   '#admin/challenge-templates', '#admin/challenge-scoring', '#admin/seasons', '#admin/season-events',
 ];

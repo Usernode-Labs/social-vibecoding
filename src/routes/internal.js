@@ -43,7 +43,17 @@ async function isKnownHost(pool, rawDomain) {
   if (domain === USERNODE_DOMAIN) return true;
 
   const suffix = '.' + USERNODE_APPS_DOMAIN;
-  if (!domain.endsWith(suffix)) return false;
+  if (!domain.endsWith(suffix)) {
+    // A custom domain (#4405): Caddy's on-demand site asks before issuing,
+    // and only a claim the platform has verified or already serves may cost
+    // a certificate. Unknown hosts never reach the database.
+    if (!/^[a-z0-9.-]+$/.test(domain) || !domain.includes('.') || domain.endsWith('.' + USERNODE_DOMAIN)) return false;
+    const custom = await pool.query(
+      "SELECT 1 FROM app_domains WHERE hostname = $1 AND status IN ('verified', 'live') LIMIT 1",
+      [domain]
+    );
+    return custom.rowCount > 0;
+  }
   const label = domain.slice(0, -suffix.length);
   // Only single-level subdomains are routable (the wildcard matches one
   // label); reject anything with a further dot.
