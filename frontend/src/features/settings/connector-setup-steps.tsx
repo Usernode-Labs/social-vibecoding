@@ -88,7 +88,7 @@ export function ClaudeSetupSteps() {
 }
 
 /**
- * ChatGPT: seven steps, plus the one-line recap the route has always
+ * ChatGPT: six steps, plus the one-line recap the route has always
  * carried under them. The recap ships with the steps rather than beside
  * them because it is the same reference — a reader who has done this once
  * needs only that line, on either screen.
@@ -97,30 +97,21 @@ export function ChatgptSetupSteps() {
   return (
     <>
       <ol className="space-y-2">
-        <SetupStep n={1} title="Use ChatGPT on the web.">
-          Open ChatGPT in your browser. Custom MCP setup is currently a web feature.
+        <SetupStep n={1} title="Open Settings.">
+          In ChatGPT, open <strong className="font-semibold text-zinc-600 dark:text-zinc-400">Settings</strong> from your profile menu.
         </SetupStep>
-        <SetupStep n={2} title="Turn on Developer mode.">
-          In ChatGPT, go to <strong className="font-semibold text-zinc-600 dark:text-zinc-400">Profile &rarr; Settings &rarr; Security and login &rarr; Developer mode</strong> and turn Developer mode on.
+        <SetupStep n={2} title="Open Plugins.">
+          Choose <strong className="font-semibold text-zinc-600 dark:text-zinc-400">Plugins</strong> in the Settings list.
         </SetupStep>
-        <SetupStep n={3} title="Open the ChatGPT Plugins page.">
-          After Developer mode is enabled, open <strong className="font-semibold text-zinc-600 dark:text-zinc-400">ChatGPT Plugins</strong>.
-        </SetupStep>
-        <SetupStep n={4} title="Click the + button.">
-          The <code className="font-mono text-zinc-600 dark:text-zinc-400">+</code> button lets you add your own MCP-backed app.
-        </SetupStep>
-        <SetupStep n={5} title="Enter your MCP server details.">
-          Enter the URL of the remote MCP server (for Homeroom, the MCP server URL above) and configure authentication if required. The server must be reachable by ChatGPT; one running only on <code className="font-mono text-zinc-600 dark:text-zinc-400">localhost</code> will not work directly.
-        </SetupStep>
-        <SetupStep n={6} title="Create the app.">
-          ChatGPT connects to the MCP server and discovers the tools it exposes. Once that succeeds, save/create the app.
-        </SetupStep>
-        <SetupStep n={7} title="Use the MCP server in a chat.">
-          Start a <strong className="font-semibold text-zinc-600 dark:text-zinc-400">new ChatGPT conversation</strong> and open the <code className="font-mono text-zinc-600 dark:text-zinc-400">+</code> / tools menu next to the message box. Select Developer mode, then select the MCP app you just created. Now ask ChatGPT to perform something that uses one of the tools, for example: <em>&ldquo;Use my MCP server to list the open support tickets.&rdquo;</em> When appropriate, ChatGPT will call the tools your MCP server exposes and use their results in the conversation.
+        <SetupStep n={3} title="Click Browse directory.">{''}</SetupStep>
+        <SetupStep n={4} title="Click Add.">{''}</SetupStep>
+        <SetupStep n={5} title="Select Create custom MCP server.">{''}</SetupStep>
+        <SetupStep n={6} title="Enter the MCP URL.">
+          Paste the MCP server URL above, then start a new ChatGPT conversation and ask it to use Homeroom, for example: <em>&ldquo;Use Homeroom to list my apps.&rdquo;</em>
         </SetupStep>
       </ol>
       <p className={`${CONNECTOR_BODY} mt-3 pt-3 border-t border-zinc-200 dark:border-zinc-800`}>
-        <strong className="font-semibold text-zinc-600 dark:text-zinc-400">In short:</strong> Settings &rarr; Security and login &rarr; Developer mode ON &rarr; ChatGPT Plugins &rarr; <code className="font-mono text-zinc-600 dark:text-zinc-400">+</code> &rarr; Enter MCP server URL &rarr; Create &rarr; New chat &rarr; <code className="font-mono text-zinc-600 dark:text-zinc-400">+</code> &rarr; Developer mode &rarr; select your MCP app &rarr; Ask ChatGPT to use it.
+        <strong className="font-semibold text-zinc-600 dark:text-zinc-400">In short:</strong> Settings &rarr; Plugins &rarr; Browse directory &rarr; Add &rarr; Create custom MCP server &rarr; paste the MCP server URL.
       </p>
     </>
   );

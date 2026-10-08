@@ -107,8 +107,8 @@ url = "${CODEX_URL_PLACEHOLDER}"`;
 /**
  * The two product walkthroughs moved to ../connector-setup-steps (#2706).
  * The dev session page's hand-off launchpad now teaches the same connector
- * inline instead of sending the reader here, and a second copy of six and
- * seven steps is a second copy to keep true. `SetupStep` travelled with
+ * inline instead of sending the reader here, and a second copy of six
+ * steps is a second copy to keep true. `SetupStep` travelled with
  * them because the Codex and generic routes below still render rows in the
  * same idiom, and tests/connector-setup-shared.test.js pins that neither
  * screen grew a copy of its own.
@@ -121,8 +121,8 @@ url = "${CODEX_URL_PLACEHOLDER}"`;
  * hundred words on naming and three cases of permission rules, all open, all
  * at 12px — 6,330px on a phone before the social accounts at the bottom. Every
  * one of those is reference for a reader who has picked a route, so each is a
- * row now: the summary names the route and says what it costs ("7 steps ·
- * needs Developer mode"), which is what lets someone choose WITHOUT opening
+ * row now: the summary names the route and says what it costs ("6 steps ·
+ * in Plugins"), which is what lets someone choose WITHOUT opening
  * any of them.
  *
  * A `<details>` rather than a stateful island, on purpose. settings.js still
@@ -308,7 +308,7 @@ export function ConnectorsSection() {
             #1289: the one-line "Settings → Connectors, paste the URL" summary
             assumed both products still bury custom MCP servers one menu deep,
             and it skipped every step a first-time user actually stalls on —
-            ChatGPT's Developer mode gate, Claude's per-conversation toggle,
+            Claude's per-conversation toggle,
             the Team/Enterprise Owner requirement. So each product gets its
             own numbered walkthrough, current as of the flows the issue
             documents. Wherever the products' generic docs say "your MCP
@@ -322,7 +322,7 @@ export function ConnectorsSection() {
         */}
         <Disclosure title="Claude.ai" hint="6 steps &middot; also sets up Claude Code">
           {/*
-              #1607: the walkthroughs below are six and seven steps, and the
+              #1607: the walkthroughs below are six steps each, and the
               complaint was that reading them is the cost. These two links hand
               the same job to the assistant that is going to use the connector:
               they open a NEW chat pre-loaded with the server URL and the two
@@ -535,7 +535,7 @@ export function ConnectorsSection() {
           </Disclosure>
           </div>
         </Disclosure>
-        <Disclosure title="ChatGPT" hint="7 steps &middot; needs Developer mode">
+        <Disclosure title="ChatGPT" hint="6 steps &middot; in Plugins">
           <GuidedSetup id="connector-open-chatgpt" href="https://chatgpt.com/" product="ChatGPT" />
             <ChatgptSetupSteps />
         </Disclosure>
