@@ -2,6 +2,9 @@ import { useState } from 'react';
 
 import { InfoCircleIcon } from '@/components/ui/icons';
 
+import { InviteSheet } from '../first-session/made';
+import type { Made } from '../first-session/make';
+import { AnsweredChoices } from './bot-plan-view';
 import { answerBotQuestion, scopeKey, setReply, tapBotAction } from './store';
 import type { ConversationMessage, HomeroomBotAction, HomeroomBotMeta } from './types';
 
@@ -13,7 +16,9 @@ import type { ConversationMessage, HomeroomBotAction, HomeroomBotMeta } from './
  * in the composer for an answer of one's own. Tapping an answer sends it at
  * once, quoting the question, which is how the server knows which request
  * it answers (services/homeroom-bot-dm.js). Once answered (or closed by
- * newer news on the same request) the buttons go and the answer stays.
+ * newer news on the same request) the buttons go and the answer stays:
+ * #4197, a filled chip under a small "You answered" label, the tapped
+ * answer's look without its button (./bot-plan-view.tsx AnsweredChoices).
  *
  * EVERY ANSWER IS PUBLIC, and the line under an open question says so
  * before anybody taps: the bot posts it on the request's discussion, where
@@ -101,7 +106,8 @@ export function BotQuestion({ message, conversationId }: { message: Conversation
           {offer ? null : <button type="button" className="messages-bot-other" onClick={somethingElse}>Something else</button>}
         </div>
       ) : null}
-      {answered ? <p className="messages-bot-answered">{offer ? `You chose: ${answered}` : `You answered: ${answered}`}</p> : null}
+      {answered && offer ? <p className="messages-bot-answered">{`You chose: ${answered}`}</p> : null}
+      {answered && !offer ? <AnsweredChoices items={[{ question: 'You answered', answer: answered }]} /> : null}
       {(open || chosen) && mirrorsReplies(meta) ? (
         <p className="messages-bot-note">
           <InfoCircleIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
@@ -142,7 +148,10 @@ export function suggestsOnly(actions: readonly HomeroomBotAction[]): boolean {
 function BotActions({ message, meta, conversationId }: { message: ConversationMessage; meta: HomeroomBotMeta; conversationId: number }) {
   // The button pressed here, until the server's own state comes back.
   const [pressed, setPressed] = useState<HomeroomBotAction | null>(null);
+  // #4231: the invite sheet, opened in place by Invite people.
+  const [inviting, setInviting] = useState(false);
   const actions = meta.actions || [];
+  const invite = inviteMade(meta);
   const settled = meta.status === 'answered' || meta.status === 'closed';
   const open = !settled && !pressed && !message.deleted;
   const chosen = meta.status === 'answered' ? (meta.answer || null) : (pressed ? pressed.label : null);
@@ -160,6 +169,11 @@ function BotActions({ message, meta, conversationId }: { message: ConversationMe
   function press(action: HomeroomBotAction) {
     if (action.type === 'open') {
       void tapBotAction(message, action).catch(() => {});
+      return;
+    }
+    // #4231: decided here, on the device, and the buttons stay.
+    if (action.type === 'invite') {
+      if (invite) setInviting(true);
       return;
     }
     // A reply to write: the message quoted in the composer. Nothing is
@@ -202,6 +216,28 @@ function BotActions({ message, meta, conversationId }: { message: ConversationMe
       ) : null}
       {chosen ? <p className="messages-bot-answered">{chosenAction?.type === 'prompt' && !chosenAction.quote ? `You asked: ${chosen}` : `You chose ${chosen}`}</p> : null}
       {meta.status === 'closed' && !chosen ? <p className="messages-bot-answered">No longer needed.</p> : null}
+      {inviting && invite ? (
+        <InviteSheet made={invite} me={inviterName()} making={false} onClose={() => setInviting(false)} onSent={() => {}} />
+      ) : null}
     </div>
   );
+}
+
+/**
+ * #4231: the project an Invite people button invites to, as the first
+ * session's invite sheet takes it (../first-session/made.tsx InviteSheet):
+ * the message's own project, live already. Null without one.
+ */
+export function inviteMade(meta: HomeroomBotMeta): Made | null {
+  const slug = meta.appSlug || '';
+  if (!slug) return null;
+  return {
+    slug, name: meta.appName || slug, emoji: null, description: null, example: null, conversationId: null,
+  };
+}
+
+/** The signed-in person's name, for the invite's "<name> made <project>" (empty: "Made: <project>"). */
+function inviterName(): string {
+  const name = typeof window !== 'undefined' ? window.App?.user?.username : null;
+  return typeof name === 'string' ? name : '';
 }

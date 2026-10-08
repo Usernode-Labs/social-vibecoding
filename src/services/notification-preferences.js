@@ -118,7 +118,9 @@ const APP_CATEGORY_DEFINITIONS = Object.freeze([
     //
     // `mention` is deliberately NOT here. Being named by somebody is a
     // direct address rather than app activity, and muting it per app is a
-    // surprise nobody asked for; it stays account-level.
+    // surprise nobody asked for; it stays account-level. #3952's
+    // `issue_mention` (named in a request's text) is a mention too, and is
+    // not here for the same reason.
     //
     // #2387 adds `thread_reply`: somebody answered in a reply thread you
     // started or joined in this app's chat. That is this category's promise

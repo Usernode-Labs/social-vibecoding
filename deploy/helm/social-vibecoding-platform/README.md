@@ -59,7 +59,10 @@ lookup tag for subsequent releases with the same inputs; previously published
 charts retain their original digests. Registry retention must preserve images
 referenced by releases for rollback. A manual run on `main` publishes a normal
 stable release for Argo CD, including a new platform build and the selected
-component refreshes.
+component refreshes. A manual run never waits for the release gap: a push
+to `main` waits until the previous release is `RELEASE_MIN_GAP_MINUTES`
+old. So a manual run is also how to release an urgent fix without waiting;
+see "Ownership and releases" in `docs/kubernetes-operations.md`.
 
 `main` publishes stable `0.1.x` chart versions tracked by Argo CD. The
 `feat/k8s` branch publishes `0.0.x-feat-k8s` candidates that can be pulled and

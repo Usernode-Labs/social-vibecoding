@@ -259,7 +259,7 @@ test('an open panel renders ONE frame, at a constant address, with the spinner a
     title: 'Design review', canBack: true, loading: true,
   });
   const loading = renderToHtml(createElement(api.SidePanelIsland, {}));
-  assert.match(loading, /<iframe id="side-panel-frame" title="Side panel" src="\/\?panel=1#messages\/4" class="side-panel-frame"><\/iframe><div id="side-panel-loading"/,
+  assert.match(loading, /<iframe id="side-panel-frame" title="Side panel" src="\/\?panel=1#messages\/4" class="side-panel-frame" data-un-keyboard-relay=""><\/iframe><div id="side-panel-loading"/,
     'the frame is the body\'s first child, transparent while its document boots');
   assert.match(loading, />Design review<\/h2>/);
   api.sidePanelStore.set({ loading: false, route: 'app/x/dev/proposals/1', title: 'Proposal' });

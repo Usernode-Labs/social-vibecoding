@@ -88,6 +88,7 @@ const PHASE_OF_STAGE = Object.freeze({
   starting: 'building',
   planning: 'building',
   building: 'building',
+  reviewing: 'building',
   proposing: 'building',
   followup_queued: 'follow_up_queued',
   fix_queued: 'follow_up_queued',
@@ -207,6 +208,8 @@ function outcomeOf(row) {
     case 'ready':
       if (row.proposal_session_id) {
         if (row.proposal_status === 'merged') return 'live';
+        // #4227: merged, not running in production yet (pastRuns).
+        if (row.proposal_status === 'merging') return 'going_live';
         if (CLOSED_PROPOSAL.has(row.proposal_status)) return 'closed';
         return 'proposed';
       }
@@ -227,7 +230,7 @@ function outcomeOf(row) {
 /** Pure: when what a run came to happened: a proposal's own moments, else the run. */
 function atOf(row, outcome) {
   if (outcome === 'live') return iso(row.merged_at) || iso(row.proposal_at) || iso(row.created_at);
-  if (outcome === 'proposed' || outcome === 'closed') return iso(row.proposal_at) || iso(row.created_at);
+  if (outcome === 'proposed' || outcome === 'going_live' || outcome === 'closed') return iso(row.proposal_at) || iso(row.created_at);
   return iso(row.created_at);
 }
 
@@ -294,7 +297,7 @@ function leadOf(runs) {
     if (!since) return live;
   }
   if (outcomeOf(newest)) return newest;
-  return settled.find((row) => outcomeOf(row) === 'proposed') || newest;
+  return settled.find((row) => ['proposed', 'going_live'].includes(outcomeOf(row))) || newest;
 }
 
 /**
@@ -436,7 +439,9 @@ async function pastRuns(pool, { userId, limit = RUN_LIMIT }) {
             r.proposal_session_id, r.created_at,
             (r.plan IS NOT NULL AND r.plan->'chosen' IS NULL AND r.build_ok IS FALSE
               AND r.build_session_id IS NULL AND r.proposal_session_id IS NULL) AS plan_only,
-            cs.status AS proposal_status, COALESCE(cs.promoted_at, cs.created_at) AS proposal_at, cs.merged_at,
+            -- Merged but not live yet (live_at) reads as merging: going live.
+            CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'merging' ELSE cs.status END AS proposal_status,
+            COALESCE(cs.promoted_at, cs.created_at) AS proposal_at, cs.live_at AS merged_at,
             a.slug, a.name, q.issue_title, q.first_version
        FROM homeroom_bot_requesters q
        JOIN homeroom_bot_runs r ON r.app_id = q.app_id AND r.issue_number = q.issue_number
@@ -450,27 +455,49 @@ async function pastRuns(pool, { userId, limit = RUN_LIMIT }) {
   return rows;
 }
 
-/** The slugs among `items`' this person can still view. */
+/** Pure: an app's icon as a tray entry carries it (#4201): its image, else its emoji. */
+function iconOf(app) {
+  return {
+    iconUrl: app && app.icon_image_id ? `/app-icons/${app.icon_image_id}` : null,
+    iconEmoji: (app && app.icon_emoji) || null,
+  };
+}
+
+/**
+ * Pure: every entry of `work` with its app's icon (#4201), from `icons`
+ * (slug to iconOf). An app with none, or none known, carries nulls.
+ */
+function withIcons(work, icons = new Map()) {
+  const dress = (job) => ({ ...job, ...(icons.get(job.appSlug) || iconOf(null)) });
+  return { now: work.now.map(dress), needsYou: work.needsYou.map(dress), history: work.history.map(dress) };
+}
+
+/**
+ * The slugs among `items`' this person can still view, each with its app's
+ * icon (iconOf), so the tray draws an app it shows by its own icon.
+ */
 async function viewableSlugs(pool, user, items) {
   const slugs = [...new Set(items.map((item) => item.appSlug).filter(Boolean))];
-  if (!slugs.length) return new Set();
-  // The columns checkAppAccess reads (app-access.js ACCESS_COLUMNS), written
-  // out so the query stays static SQL.
+  if (!slugs.length) return new Map();
+  // The columns checkAppAccess reads (app-access.js ACCESS_COLUMNS), and the
+  // icon's, written out so the query stays static SQL.
   const { rows } = await pool.query(
-    `SELECT id, slug, created_by, self_hosted, collab_visibility, view_visibility, moderation_suspended_at
+    `SELECT id, slug, created_by, self_hosted, collab_visibility, view_visibility, moderation_suspended_at,
+            icon_image_id, icon_emoji
        FROM apps WHERE slug = ANY($1::text[])`,
     [slugs],
   );
-  const allowed = new Set();
+  const allowed = new Map();
   for (const app of rows) {
-    if (await appAccess.checkAppAccess(pool, app, user, 'view')) allowed.add(app.slug);
+    if (await appAccess.checkAppAccess(pool, app, user, 'view')) allowed.set(app.slug, iconOf(app));
   }
   return allowed;
 }
 
 /**
  * Everything the tray shows for `user`, the signed-in person:
- * { now, needsYou, history }. Never anybody else's: see the note at the top.
+ * { now, needsYou, history }, every entry with its app's icon (withIcons).
+ * Never anybody else's: see the note at the top.
  */
 async function workFor(pool, { user, settings = null, deps = {} }) {
   const userId = Number(user?.id);
@@ -486,10 +513,10 @@ async function workFor(pool, { user, settings = null, deps = {} }) {
     ...entries.map((item) => ({ appSlug: item.project })),
     ...rows.map((row) => ({ appSlug: row.slug })),
   ]);
-  return arrange(
+  return withIcons(arrange(
     entries.filter((item) => allowed.has(item.project)),
     rows.filter((row) => allowed.has(row.slug)),
-  );
+  ), allowed);
 }
 
 /**
@@ -519,11 +546,12 @@ function noteWorkChanged(userId, deps = {}) {
  * runs the bot, so without it the tray could not be seen there. Times are
  * relative to `now` so it always reads fresh. No project stands behind it
  * (as behind the fixture's own messages), so it links nowhere: `href` and
- * every link are null and the tray draws tiles without links.
+ * every link are null and the tray draws tiles without links. Its app has
+ * an emoji for an icon, so History draws its icon lead (#4201).
  */
 function demoWork(now = Date.now()) {
   const ago = (minutes) => new Date(now - minutes * 60 * 1000).toISOString();
-  const app = { appSlug: null, appName: 'Staging demo app' };
+  const app = { appSlug: null, appName: 'Staging demo app', iconUrl: null, iconEmoji: '🧪' };
   const nowhere = { href: null, links: { request: null, proposal: null, project: null } };
   const request = (issueNumber, title) => ({ key: `demo#${issueNumber}`, ...app, issueNumber, title, firstVersion: false });
   return {
@@ -559,7 +587,7 @@ function demoWork(now = Date.now()) {
 }
 
 module.exports = {
-  workFor, currentJobs, pastRuns, arrange, noteWorkChanged, demoWork,
+  workFor, currentJobs, pastRuns, arrange, noteWorkChanged, demoWork, iconOf, withIcons,
   jobOfProgress, needsYouOfProgress, entryOfRuns, leadOf, outcomeOf, hrefOf, keyOf, planOnly,
   OUTCOMES, NEEDS_YOU, PHASES, PHASE_OF_STAGE, HISTORY_LIMIT, NOW_LIMIT, NOT_FINISHED,
 };

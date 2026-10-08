@@ -130,3 +130,22 @@ test('app.css: a desktop control that keeps its ink, and stays under the pointer
   assert.match(SCREEN, /className=\{`messages-list-pane \$\{specBeside \? 'hidden' : /);
   assert.match(CSS, /\.global-chat-embedded > \.global-chat-toolbar \{ width: 100%; \}/);
 });
+
+// #4229: a strip too narrow for a readable conversation beside the list.
+test('a narrow strip: the list steps aside, the toggle is not drawn, and the bar\'s arrow goes back to it', () => {
+  const STORE = read('frontend/src/features/messages/store.ts');
+  // The strip's own width (so a folded rail counts), measured by the screen.
+  assert.match(STORE, /export const LIST_BESIDE_MIN_WIDTH = 860;/,
+    'the list column (22rem + 8px), the sheet\'s margins (8px + 12px) and a 480px sheet');
+  assert.match(STORE, /export function measureLayout\(width: number\): void \{\s*if \(!\(width > 0\)\) return;\s*const crowded = !isMobile\(\) && width < LIST_BESIDE_MIN_WIDTH;/,
+    'a hidden screen measures 0 and changes nothing');
+  assert.match(SCREEN, /new ResizeObserver\(\(\) => measureLayout\(el\.clientWidth\)\)/);
+  assert.match(SCREEN, /<div ref=\{layoutRef\} className=\{layout\}>/);
+  assert.match(SCREEN, /\$\{discussionOpen && snap\.listCrowded \? ' messages-list-crowded' : ''\}/);
+  // The toggle stays in the DOM (dapp.json selects it); CSS stands it down.
+  assert.match(CSS, /@media \(min-width: 768px\) \{\s*\.messages-layout\.messages-list-crowded > \.messages-list-pane \{ display: none; \}\s*\.messages-layout\.messages-list-crowded \.messages-list-toggle \{ display: none; \}/);
+  // The way back to the list, as on a phone.
+  assert.match(STORE, /function listAside\(\): boolean \{\s*return isMobile\(\) \|\| state\.listCrowded;\s*\}/);
+  assert.match(STORE, /const thread = listAside\(\) && !!\(state\.route\.conversationId \|\| state\.route\.appSlug \|\| state\.route\.agent\);/);
+  assert.match(STORE, /if \(!state\.route\.open \|\| !onThread \|\| !listAside\(\)\) return false;/);
+});

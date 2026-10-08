@@ -901,8 +901,20 @@ function serializeRebuild(slug, fn) {
 // gates it there; a general "deploy the artifact the checks ran against"
 // needs that difference resolved rather than tolerated.
 async function rebuildProduction(config, app, options = {}) {
-  return serializeRebuild(app.slug, () => withResourceUse(config, PRODUCTION_BUILD_LOCK, app.slug,
+  const result = await serializeRebuild(app.slug, () => withResourceUse(config, PRODUCTION_BUILD_LOCK, app.slug,
     () => rebuildProductionInner(config, app, options)));
+  // Every deploy that succeeds, whoever asked for it (a merge, the drift
+  // poller, "Check for updates", a heal): merges of this app still waiting
+  // to go live hear which build now runs, and check whether it contains them
+  // (the merge-followups workflow machine). Never a reason the deploy fails.
+  if (result?.sha) {
+    try {
+      await require('../workflow/platform.ts').productionDeployed(app.id, result.sha);
+    } catch (err) {
+      log.warn('staging', 'Could not report the deploy to waiting merges', { app: app.slug, err: err.message });
+    }
+  }
+  return result;
 }
 
 // Whether an offered image is of the tree that was just cloned, and so the

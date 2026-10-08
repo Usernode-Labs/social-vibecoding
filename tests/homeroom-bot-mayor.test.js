@@ -69,10 +69,10 @@ test('it reads the platform with the agent-session Mayor\'s connector reads, nev
   assert.match(read('src/services/mayor/mcp-shim.js'), /subject: String\(rateSubject \?\? agentSessionId\),/);
 });
 
-test('the tools: eleven lookups and actions and a reply, every one closed to extra arguments', () => {
+test('the tools: fourteen lookups and actions and a reply, every one closed to extra arguments', () => {
   assert.deepEqual(mayor.TOOLS.map((t) => t.function.name),
-    ['progress', 'my_work', 'request_detail', 'my_projects', 'answer_question', 'revise_proposal',
-      'comment_on_request', 'start_request', 'offer_request', 'withdraw_proposal', 'report_problem', 'reply']);
+    ['progress', 'my_work', 'request_detail', 'my_projects', 'list_source', 'read_source', 'answer_question', 'revise_proposal',
+      'comment_on_request', 'start_request', 'offer_request', 'offer_move_request', 'withdraw_proposal', 'report_problem', 'reply']);
   for (const t of mayor.TOOLS) {
     assert.equal(t.type, 'function');
     assert.equal(t.function.parameters.additionalProperties, false, t.function.name);
@@ -191,7 +191,8 @@ test('it is wired after the send, never into it, and files a request the way the
   assert.match(route, /setImmediate\(\(\) => \{\n\s+require\('\.\.\/services\/homeroom-bot-dm'\)\.noteUserMessage\(/);
   const src = read('src/services/homeroom-bot-mayor.js');
   assert.match(src, /INSERT INTO issues \(app_id, github_issue_number, title, description, kind, payload, created_by\)/);
-  assert.match(src, /createIssueOpenedNotifications/);
+  // #4271: the new-request row and the mentions, in one call (notifications.js).
+  assert.match(src, /notifyIssueFiled/);
   assert.match(src, /if \(!\(await canFile\(pool, app, user\)\)\)/, 'a tap re-checks membership before filing');
 });
 
@@ -417,7 +418,10 @@ test('#11 (WP3): withdrawing a proposal and telling the team are tools, describe
   assert.match(report.description, /The last few messages of this chat go only to the team, privately: say so\./);
   assert.match(report.description, /Keep anything private out of the summary and details/);
   assert.doesNotMatch(report.description, /last few messages of this chat[^.]*anyone can read/, 'the chat is never said to be public');
-  assert.deepEqual(mayor.OFFER_ANSWERS, { file_request: ['File it', 'Not now'], withdraw_proposal: ['Withdraw it', 'Keep it'] });
+  assert.deepEqual(mayor.OFFER_ANSWERS, {
+    file_request: ['File it', 'Not now'], withdraw_proposal: ['Withdraw it', 'Keep it'],
+    move_request: ['Move it to Homeroom', 'Keep it here'],
+  });
   assert.equal(mayor.REPORT_SOURCE, 'homeroom_bot');
 });
 
@@ -526,4 +530,105 @@ test('B2: the chat never runs out with building time, and allows 120 messages an
   // Nothing the bot says or is told to say names an amount of money.
   assert.doesNotMatch(src, /dollars\(/);
   assert.match(src, /Never name an amount of money\./);
+});
+
+// #4145: "check in main how it works" was answered with "I can't read the
+// app's code from here". It reads a project's code on main now, for anybody
+// who can build on that project, and never a file that holds secrets.
+function sourceFixture({ collab = 'public', view = 'public', files, contents = {} } = {}) {
+  const app = { id: 7, slug: 'mail-app', name: 'Mail app', repo_url: 'https://github.com/Usernode-Labs/mail-app', collab_visibility: collab, view_visibility: view };
+  const pool = { async query(sql) { return /FROM apps/.test(String(sql)) ? { rows: [app] } : { rows: [] }; } };
+  const reads = [];
+  const github = {
+    async listRepoFiles(owner, repo, ref) { reads.push(['tree', owner, repo, ref]); return { files, truncated: false }; },
+    async getFileContent(owner, repo, p, ref) { reads.push(['file', owner, repo, p, ref]); return p in contents ? contents[p] : null; },
+  };
+  return { pool, deps: { github }, reads, user: { id: 5, username: 'snait' } };
+}
+
+test('#4145: the DM reads a project\'s code on main, found by path, paged by line', async () => {
+  const f = sourceFixture({
+    files: [
+      { path: 'server.js', size: 900 }, { path: 'src/mail/track.js', size: 400 }, { path: 'src/mail/send.js', size: 300 },
+      { path: '.env', size: 20 }, { path: 'certs/server.pem', size: 10 },
+    ],
+    contents: { 'src/mail/track.js': Array.from({ length: 2000 }, (_, i) => `const line${i} = ${i};`).join('\n') },
+  });
+  const listed = await mayor.listSource(f.pool, { user: f.user, project: 'mail-app', dir: 'src', match: 'MAIL track', deps: f.deps });
+  assert.deepEqual(listed.files, [{ path: 'src/mail/track.js', size: 400 }]);
+  assert.equal(listed.branch, 'main');
+  const all = await mayor.listSource(f.pool, { user: f.user, project: 'Mail app', deps: f.deps });
+  assert.deepEqual(all.files.map((x) => x.path), ['server.js', 'src/mail/track.js', 'src/mail/send.js'], 'secret files are never listed');
+  assert.deepEqual(f.reads[0], ['tree', 'Usernode-Labs', 'mail-app', 'main']);
+
+  const first = await mayor.readSource(f.pool, { user: f.user, project: 'mail-app', path: './src/mail/track.js', deps: f.deps });
+  assert.equal(first.path, 'src/mail/track.js');
+  assert.equal(first.totalLines, 2000);
+  assert.match(first.text, /^1: const line0 = 0;/);
+  assert.ok(first.text.length <= mayor.SOURCE_CHUNK_CHARS);
+  assert.ok(first.nextLine > 1);
+  assert.ok(JSON.stringify(first).length < 12_000, 'one answer fits the tool result limit');
+  const next = await mayor.readSource(f.pool, { user: f.user, project: 'mail-app', path: 'src/mail/track.js', fromLine: first.nextLine, deps: f.deps });
+  assert.match(next.text, new RegExp(`^${first.nextLine}: `));
+
+  assert.match((await mayor.readSource(f.pool, { user: f.user, project: 'mail-app', path: 'nope.js', deps: f.deps })).error, /No such file on main/);
+  for (const p of ['.env', 'config/.env.production', 'certs/server.pem', '../other/x.js']) {
+    const before = f.reads.length;
+    assert.ok((await mayor.readSource(f.pool, { user: f.user, project: 'mail-app', path: p, deps: f.deps })).error, p);
+    assert.equal(f.reads.length, before, `${p} is never fetched`);
+  }
+});
+
+test('#4145: a project they cannot both see and build on is not read', async () => {
+  const f = sourceFixture({ collab: 'collaborators', files: [{ path: 'server.js', size: 1 }], contents: { 'server.js': 'x' } });
+  assert.match((await mayor.listSource(f.pool, { user: f.user, project: 'mail-app', deps: f.deps })).error, /No such project/);
+  assert.match((await mayor.readSource(f.pool, { user: f.user, project: 'mail-app', path: 'server.js', deps: f.deps })).error, /No such project/);
+  assert.equal(f.reads.length, 0);
+  // Open to any builder but seen only by its members: still not read.
+  const hidden = sourceFixture({ view: 'collaborators', files: [{ path: 'server.js', size: 1 }], contents: { 'server.js': 'x' } });
+  assert.match((await mayor.listSource(hidden.pool, { user: hidden.user, project: 'mail-app', deps: hidden.deps })).error, /No such project/);
+  assert.match((await mayor.readSource(hidden.pool, { user: hidden.user, project: 'mail-app', path: 'server.js', deps: hidden.deps })).error, /No such project/);
+  assert.equal(hidden.reads.length, 0);
+  // Nobody signed in reads nothing.
+  assert.match((await mayor.listSource(f.pool, { user: null, project: 'mail-app', deps: f.deps })).error, /No such project/);
+  const tools = Object.fromEntries(mayor.TOOLS.map((t) => [t.function.name, t.function]));
+  assert.deepEqual(tools.read_source.parameters.required, ['project', 'path']);
+  assert.match(mayor.systemPrompt({ username: 'snait' }), /Read the code of a project they can build on, as it is on main/);
+});
+
+test('#4239: moving a request about Homeroom itself, as the model and the person see it', () => {
+  const move = require('../src/services/homeroom-bot-move');
+  const tool = mayor.TOOLS.find((t) => t.function.name === 'offer_move_request').function;
+  assert.deepEqual(tool.parameters.required, ['project', 'number', 'reason']);
+  assert.match(tool.description, /Only a request they filed or asked for\./);
+  assert.match(tool.description, /nothing moves unless they tap Move it to Homeroom/);
+  assert.match(tool.description, /the original is closed, or put to its group's vote when anybody else took part in it/);
+  const prompt = mayor.systemPrompt({ username: 'ada' });
+  assert.match(prompt, /request_detail says aboutHomeroom when you left it for that reason/);
+  assert.match(prompt, /offer to move it there \(offer_move_request\)/);
+  // Typed, its buttons' words decide only a move.
+  assert.deepEqual(mayor.typedDecision('Move it to Homeroom'), { yes: true, plain: false, kind: 'move_request' });
+  assert.deepEqual(mayor.typedDecision('keep it here'), { yes: false, plain: false, kind: 'move_request' });
+  assert.deepEqual(mayor.typedDecision('keep it'), { yes: false, plain: false, kind: 'withdraw_proposal' });
+  // Only a tap moves it: a reply that says it did is not sent as it is.
+  const problems = [{ kind: 'moved', said: 'says a request was moved' }];
+  assert.equal(mayor.stripClaims('I moved it to Homeroom.', problems), 'I haven\'t moved it yet.');
+  // The request it files says where it came from and who first asked, and
+  // never names a private project on Homeroom's public board.
+  const link = move.requestLink('app.test', 'ear-trainer', 6);
+  assert.equal(link, 'https://app.test/#app/ear-trainer/dev/issues/6');
+  assert.equal(move.movedFooter({ app: { slug: 'ear-trainer', name: 'Ear Trainer', view_visibility: 'public' }, issueNumber: 6, link, author: 'ada' }),
+    'Moved from Ear Trainer #6 (https://app.test/#app/ear-trainer/dev/issues/6), first asked by @ada.');
+  assert.equal(move.movedFooter({ app: { slug: 'diary', name: 'Diary', view_visibility: 'private' }, issueNumber: 2, link, author: 'ada' }),
+    'Moved from a private project\'s request #2, first asked by @ada.');
+  assert.match(move.closedWords({ how: 'closed', appName: 'Ear Trainer' }), /I closed the original on Ear Trainer, since nobody else had joined in on it\./);
+  assert.match(move.closedWords({ how: 'vote', appName: 'Ear Trainer', author: true, reasons: ['others voted on it'] }),
+    /stays open until its group votes on closing it, because others voted on it\./);
+  assert.match(move.closedWords({ how: 'vote', appName: 'Ear Trainer', author: false }), /because you didn't file it\./);
+  const meta = move.moveOfferMeta({ app: { slug: 'ear-trainer', name: 'Ear Trainer' }, actionId: 9 });
+  assert.deepEqual(meta.actions.map((a) => [a.id, a.label, a.type]), [['yes', 'Move it to Homeroom', 'server'], ['no', 'Keep it here', 'server']]);
+  assert.equal(meta.actionId, 9);
+  for (const text of [move.moveOfferText({ name: 'Ear Trainer', issueNumber: 6, title: 'Header', why: 'It is the frame' }), tool.description]) {
+    assert.doesNotMatch(text, /\u2014/, 'no em dash');
+  }
 });

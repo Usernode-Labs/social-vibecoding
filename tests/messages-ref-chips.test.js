@@ -152,7 +152,8 @@ test('the row hands a bot message\'s project to its markdown, and a chip press r
   const fn = format.slice(format.indexOf('export function MessageMarkdown('), format.indexOf('\n}\n', format.indexOf('export function MessageMarkdown(')));
   assert.match(fn, /decorateRefs\(root, channels \|\| NO_CHANNELS, me, appSlug\);\s*return root\.innerHTML;\s*\}, \[content, channels, appSlug\]\);/,
     'the chips are rebuilt when the project changes');
-  assert.match(fn, /closest\?\.\('a\.gc-ref\[href\]'\)\?\.getAttribute\('href'\);\s*if \(href\) recordObjectOrigin\(event, href\);/);
+  assert.match(fn, /const chip = \(event\.target as Element \| null\)\?\.closest\?\.\('a\.gc-ref\[href\]'\);/);
+  assert.match(fn, /\n    recordObjectOrigin\(event, href\);\n  \};/, 'any chip it does not handle in place (#4241) records its origin');
   assert.match(fn, /onClick=\{appSlug \? openRef : undefined\} dangerouslySetInnerHTML=\{inner\}/,
     'no handler on a message that names no project');
 });

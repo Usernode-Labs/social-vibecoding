@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const bcrypt = require('bcrypt');
 const { getPool } = require('../db/pool');
 const { adminMiddleware, requireAdminWrite } = require('../middleware/admin');
-const { dbExportLimiter, mailTestLimiter } = require('../middleware/rate-limits');
+const { dbExportLimiter, mailTestLimiter, smsTestLimiter, smsTestNumberLimiter } = require('../middleware/rate-limits');
 const { clientIp } = require('../services/client-ip');
 const { drainGuard } = require('../services/lifecycle');
 const log = require('../services/logger');
@@ -18,6 +18,7 @@ const stagingReap = require('../services/staging-reap');
 const { isSessionBusy } = require('../services/active-workers');
 const stagingEnv = require('../services/staging-env');
 const mail = require('../services/mail');
+const phoneAuth = require('../services/firebase-phone-auth');
 const mobilePushDiagnostics = require('../services/mobile-push-diagnostics');
 const applicationRuntime = require('../services/application-runtime');
 const managedOpenRouter = require('../services/openrouter-managed-keys');
@@ -1073,6 +1074,29 @@ function adminRoutes(config) {
       system_tokens_daily_limit_cents: systemCents,
     };
   }
+
+  // #4296: the Unexpected events section. Read-only, so view-only admins see
+  // it too; the alerts it describes go to full admins only.
+  router.get('/api/admin/incidents', async (req, res) => {
+    // Required here, not at the top: platform-incidents reads the events
+    // type table when it loads, which route tests stub without.
+    const platformIncidents = require('../services/platform-incidents');
+    const platformIncidentAlerts = require('../services/platform-incident-alerts');
+    const q = req.query || {};
+    const listed = await platformIncidents.list(pool, {
+      days: q.days,
+      kind: typeof q.kind === 'string' && q.kind ? q.kind : null,
+      app: typeof q.app === 'string' && q.app ? q.app : null,
+    });
+    if (!listed) return res.status(500).json({ error: 'Could not read unexpected events' });
+    res.json({
+      ...listed,
+      alerts: {
+        hourlyThreshold: platformIncidentAlerts.HOURLY_THRESHOLD,
+        digestHourUtc: platformIncidentAlerts.DIGEST_HOUR_UTC,
+      },
+    });
+  });
 
   router.get('/api/admin/limits', async (_req, res) => {
     try {
@@ -2752,7 +2776,9 @@ function adminRoutes(config) {
             GROUP BY status`,
           [kind]
         ),
-        require('../services/mail/reports').readReports(pool),
+        require('../services/mail/reports').readReports(pool, {
+          provider: (config && (config.mailProvider || config.mailTransport?.provider)) || null,
+        }),
       ]);
 
       const last24h = {};
@@ -2798,6 +2824,78 @@ function adminRoutes(config) {
         res.json({ outcome });
       } catch (err) {
         log.error('admin', 'mail test failed', { message: err.message });
+        res.status(500).json({ error: 'Internal server error' });
+      }
+    });
+
+  // ── SMS delivery (Admin → SMS delivery) ──────────────────────────────
+  //
+  // Texts go out only through Firebase Phone Auth, as sign-in codes
+  // (services/firebase-phone-auth.js), so the test send is exactly that
+  // send. The status read names the platform variables that are missing,
+  // never what any of them hold, and is open to any admin.
+  router.get('/api/admin/sms/status', (req, res) => {
+    const missing = [];
+    if (config.firebasePhoneAuthEnabled !== true) missing.push('FIREBASE_PHONE_AUTH_ENABLED');
+    if (!config.firebaseWebApiKey) missing.push('FIREBASE_WEB_API_KEY');
+    if (!config.firebaseProjectId) missing.push('FIREBASE_PROJECT_ID');
+    if (!config.firebaseServiceAccountJsonB64) missing.push('FIREBASE_SERVICE_ACCOUNT_JSON_B64');
+    res.json({
+      offered: phoneAuth.offered(config),
+      // Texts go out only through Firebase; test numbers (PHONE_TEST_CODE,
+      // never in production) sign in without one.
+      texts: phoneAuth.firebaseOffered(config),
+      testNumbers: phoneAuth.testNumbersOn(config),
+      enabled: config.firebasePhoneAuthEnabled === true,
+      projectId: config.firebaseProjectId || null,
+      missing,
+      canSendTest: !!req.user?.canAdminWrite,
+    });
+  });
+
+  // Send one diagnostic text. Full admins only (it is a real, billed text
+  // to a number of the operator's choosing) and rate-limited per admin and
+  // per number. 200 for every answer Firebase gave — `refused` and
+  // `unreachable` are answers to the operator's question, the way the mail
+  // test's `failed` is. A malformed number is 400 and nothing is sent; an
+  // unconfigured platform is 409 and nothing is sent.
+  router.post('/api/admin/sms/test', requireAdminWrite, smsTestLimiter, smsTestNumberLimiter,
+    async (req, res) => {
+      try {
+        const body = req.body || {};
+        let outcome;
+        try {
+          outcome = await phoneAuth.sendTestCode(config, body.phoneNumber, body.recaptchaToken);
+        } catch (err) {
+          if (err instanceof phoneAuth.PhoneAuthError) {
+            return res.status(err.status).json({ error: err.message, code: err.code });
+          }
+          throw err;
+        }
+        if (outcome.status === 'not_offered') {
+          return res.status(409).json({
+            error: 'SMS is not set up, so there is no text to test.',
+            code: 'not_offered',
+          });
+        }
+
+        const phoneLast4 = outcome.phoneNumber.slice(-4);
+        events.record(pool, {
+          type: events.EVENT_TYPES.SMS_TEST_SENT,
+          userId: req.user.id,
+          metadata: { status: outcome.status, providerCode: outcome.providerCode, phoneLast4 },
+        });
+
+        log.warn('admin', 'Admin sent a test SMS', {
+          by: req.user.username,
+          status: outcome.status,
+          providerCode: outcome.providerCode,
+          phone: `…${phoneLast4}`,
+        });
+
+        res.json({ outcome: { ...outcome, sentAt: new Date().toISOString() } });
+      } catch (err) {
+        log.error('admin', 'sms test failed', { message: err.message });
         res.status(500).json({ error: 'Internal server error' });
       }
     });

@@ -141,6 +141,7 @@ import { useKeyboardSurface } from '../../lib/keyboard-surface';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { inviteEmailFromToken, readAutoSend, writeAutoSend } from './login';
 import { NativeLoginDetailsLink } from './native-login-details';
+import { PhoneInput, readPhone } from './phone-input';
 import { phoneRecaptchaToken, RECAPTCHA_NOTICE } from './recaptcha';
 import { SessionConfirmationNotice, useSessionConfirmation } from './session-confirmation';
 import {
@@ -327,19 +328,11 @@ function prefersReducedMotion(): boolean {
   }
 }
 
-/**
- * A typed phone number as the server takes it (firebase-phone-auth.js
- * normalizePhone): `+`, the country code and the number, with spaces,
- * dashes, dots and brackets dropped. Null for anything else; no country
- * code is guessed, since a wrong guess would text somebody else.
- */
 /** A name's length on the profile (routes/profile.js MAX_DISPLAY_NAME). */
 export const PHONE_NAME_MAX = 40;
 
-export function phoneE164(raw: string): string | null {
-  const value = String(raw || '').replace(/[\s().\u2010-\u2015-]/g, '');
-  return /^\+[1-9][0-9]{1,14}$/.test(value) ? value : null;
-}
+// The "+…" number as the server takes it, now kept with the shared field.
+export { phoneE164 } from './phone-input';
 
 /**
  * What sits under the first step's button (#4037, the owner's ruling of
@@ -397,6 +390,21 @@ export async function releaseArrival(token: string, now = Date.now()): Promise<R
   writeAutoSend(address);
   return { address, send: true };
 }
+
+/**
+ * On a step's main button: the press keeps the caret where it is until its
+ * click. iPhone Safari, 7 Oct 2026 (#4214): with the keyboard up, a tap on
+ * "Text me a code" only closed the keyboard. The press blurred the field,
+ * the sheet rode down with the keys before the click was dispatched, and the
+ * click landed on nothing. A mousedown whose default is prevented moves no
+ * focus, so the sheet stays put under the finger and the one tap submits;
+ * the next step's field then takes the caret with the keys still up, or the
+ * keys go down with the field when the step has none. Messages' and the
+ * composers' Send do the same (lib/keyboard-open.ts).
+ */
+export const HOLD_FIELD_FOCUS = {
+  onMouseDown: (event: { preventDefault(): void }) => { event.preventDefault(); },
+} as const;
 
 // White cards with the sheets' hairline, on the sheet's plane colour (the make screen's own field card).
 const FIELD_GROUP = 'overflow-hidden rounded-2xl bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900';
@@ -729,10 +737,10 @@ export function SignInSheet({
   }, [email, followInvite, finish]);
 
   // The phone's code (`phone`): a reCAPTCHA token first, then the text.
-  const requestPhoneCode = useCallback(async (raw: string) => {
+  // `value` is the E.164 number the field built (./phone-input.tsx), or one
+  // sent before, for the code step's resend.
+  const requestPhoneCode = useCallback(async (value: string) => {
     setError(null);
-    const value = phoneE164(raw);
-    if (!value) { setError('Enter your number with its country code, like +1 415 555 0123.'); return; }
     if (blockedOffline(setError)) return;
     setBusy(true);
     try {
@@ -772,14 +780,21 @@ export function SignInSheet({
   }, [phoneNumber]);
 
   // The phone step: a name for the group, then the number's code.
-  const submitPhoneStep = useCallback(() => {
+  const submitPhoneStep = useCallback(async () => {
     setError(null);
-    if (!askName) { phoneName.current = ''; void requestPhoneCode(phoneField.current?.value || ''); return; }
+    const read = await readPhone(phoneField.current);
+    if (!askName) {
+      phoneName.current = '';
+      if (!read.ok) { setError(read.error); return; }
+      void requestPhoneCode(read.e164);
+      return;
+    }
     const name = (nameField.current?.value || '').replace(/\s+/g, ' ').trim();
     if (!name) { setError('Enter your name.'); nameField.current?.focus({ preventScroll: true }); return; }
     if (name.length > PHONE_NAME_MAX) { setError(`Your name can be up to ${PHONE_NAME_MAX} characters.`); return; }
     phoneName.current = name;
-    void requestPhoneCode(phoneField.current?.value || '');
+    if (!read.ok) { setError(read.error); return; }
+    void requestPhoneCode(read.e164);
   }, [askName, requestPhoneCode]);
 
   const verifyPhone = useCallback(async () => {
@@ -1073,7 +1088,7 @@ export function SignInSheet({
                 <input ref={firstField} id="sign-in-sheet-email" type="email" autoComplete="email" inputMode="email" enterKeyHint="go" defaultValue={email} className={INPUT} {...HANDLE_FIELD} />
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Sending code…' : 'Send code'}</button>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? 'Sending code…' : 'Send code'}</button>
             {oneLine}
             {providers.length ? (
               <button type="button" className={QUIET} onClick={() => { setError(null); setStep('choose'); }}>Other ways to continue</button>
@@ -1085,7 +1100,7 @@ export function SignInSheet({
         ) : null}
 
         {step === 'phone' ? (
-          <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); submitPhoneStep(); }}>
+          <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void submitPhoneStep(); }}>
             <div className={FIELD_GROUP}>
               {askName ? (
                 <div className={FIELD}>
@@ -1095,14 +1110,10 @@ export function SignInSheet({
               ) : null}
               <div className={FIELD}>
                 <label htmlFor="sign-in-sheet-phone" className={LABEL}>Phone number</label>
-                <input ref={phoneField} id="sign-in-sheet-phone" type="tel" autoComplete="tel" inputMode="tel" enterKeyHint="go" defaultValue={phoneNumber} placeholder="+1 415 555 0123" className={INPUT} />
+                <PhoneInput inputRef={phoneField} id="sign-in-sheet-phone" defaultValue={phoneNumber} />
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Sending code…' : 'Text me a code'}</button>
-            <p className="text-center text-[13px] text-zinc-500 dark:text-zinc-400">
-              {askName ? 'Only this group sees your name, never your number.' : 'Nobody sees your number.'}
-            </p>
-            <RecaptchaNotice />
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? 'Sending code…' : 'Text me a code'}</button>
           </form>
         ) : null}
 
@@ -1115,7 +1126,7 @@ export function SignInSheet({
               </div>
             </div>
             <p className="text-[13px] text-zinc-500 dark:text-zinc-400">The code fills itself in on most phones.</p>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Checking…' : 'Continue'}</button>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? 'Checking…' : 'Continue'}</button>
             <div className="flex items-center justify-between">
               <button type="button" className={QUIET} onClick={() => { setError(null); setStep('phone'); }}>Use another number</button>
               <button type="button" className={`${QUIET} disabled:text-zinc-500 disabled:dark:text-zinc-400 disabled:no-underline`} disabled={busy || waitLeft > 0} onClick={() => { void requestPhoneCode(phoneNumber); }}>
@@ -1133,7 +1144,7 @@ export function SignInSheet({
                 <input ref={providerUsernameField} id="sign-in-sheet-provider-username" autoComplete="username" enterKeyHint="go" className={INPUT} placeholder={USERNAME_RULE} {...HANDLE_FIELD} />
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Finishing…' : 'Continue'}</button>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? 'Finishing…' : 'Continue'}</button>
           </form>
         ) : null}
 
@@ -1145,7 +1156,7 @@ export function SignInSheet({
                 <input ref={codeField} id="sign-in-sheet-code" inputMode="numeric" autoComplete="one-time-code" enterKeyHint="go" maxLength={6} className={`${INPUT} tracking-[0.4em]`} />
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Checking…' : 'Continue'}</button>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? 'Checking…' : 'Continue'}</button>
             <div className="flex items-center justify-between">
               <button type="button" className={QUIET} onClick={() => { setError(null); setStep('email'); }}>Use another email</button>
               <button type="button" className={`${QUIET} disabled:text-zinc-500 disabled:dark:text-zinc-400 disabled:no-underline`} disabled={busy || waitLeft > 0} onClick={() => { void requestCode(email); }}>
@@ -1167,7 +1178,7 @@ export function SignInSheet({
                 <PasswordInput ref={currentPasswordField} id="sign-in-sheet-current-password" name="password" required autoComplete="current-password" enterKeyHint="go" box="card" hint="dim" ring="bare" />
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Signing in…' : 'Sign in'}</button>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? 'Signing in…' : 'Sign in'}</button>
             <div className="flex items-center justify-between">
               <button type="button" className={QUIET} onClick={() => { setError(null); setDetails(null); setStep(otherWays); }}>
                 {providers.length ? 'Other ways to continue' : 'Use an email code'}
@@ -1196,7 +1207,7 @@ export function SignInSheet({
                 <input ref={confirmField} id="sign-in-sheet-confirm" type="password" autoComplete="new-password" enterKeyHint="go" className={INPUT} />
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Finishing…' : 'Continue'}</button>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? 'Finishing…' : 'Continue'}</button>
           </form>
         ) : null}
 
@@ -1222,7 +1233,9 @@ export function SignInSheet({
           </p>
         ) : null}
         {/* The first step's terms sit in its group (above); every later step keeps them here. */}
-        {step === 'choose' || step === 'email' ? null : <TermsNotice className="mt-3" />}
+        {step === 'choose' || step === 'email' ? null : (
+          <TermsNotice className="mt-3" recaptcha={step === 'phone' || step === 'phone-code' ? RECAPTCHA_NOTICE : null} />
+        )}
       </div>
     </div>
   );

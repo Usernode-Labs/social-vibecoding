@@ -264,7 +264,7 @@ test('offered right after Build it, inside the card, and not again once this acc
   const html = renderToHtml(createElement(PlanCardView, {
     appName: 'Flat 4B', plan, state: 'built', footer: createElement('span', { 'data-footer': '' }, 'after'),
   }));
-  assert.match(html, /You chose Build it<\/p><span data-footer="">after<\/span><\/div>$/, 'drawn last, inside the card');
+  assert.match(html, /<span>Building it<\/span><\/p><span data-footer="">after<\/span><\/div>$/, 'drawn last, inside the card');
 
   const card = read('frontend/src/features/messages/bot-plan.tsx');
   assert.match(card, /setPressed\(true\);\s*setOfferNotify\(!notifyMeChosen\(userId\)\);/,

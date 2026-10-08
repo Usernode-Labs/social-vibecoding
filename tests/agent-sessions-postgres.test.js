@@ -86,7 +86,10 @@ async function connect(t, { beforeMigration = null } = {}) {
       checks_checked_at TIMESTAMPTZ,
       shots_state VARCHAR(24), shots_run_id VARCHAR(32),
       -- A change's own durable turn (a build restart recovery can adopt).
-      active_turn JSONB);
+      active_turn JSONB,
+      -- When production first ran it: a merged change without it reads as
+      -- going live (the merge-followups workflow machine).
+      live_at TIMESTAMPTZ);
     -- The active change's running preview (activeChange.previewCapture).
     CREATE TABLE shot_runs (
       id VARCHAR(32) PRIMARY KEY,

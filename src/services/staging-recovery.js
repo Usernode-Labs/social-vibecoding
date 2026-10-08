@@ -782,6 +782,17 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
     detail,
   });
 
+  // A promoted proposal behind main can fail to start for main's sake, not
+  // its own: previews boot against production's database, which runs main's
+  // schema (#4186 against #4172). When it merges cleanly the platform syncs
+  // it, once per head, in the background; either way the plan says what the
+  // note below tells the author. Checked on every retry, before the streak
+  // gate, so a failure first measured while the mirror was down still gets
+  // its sync.
+  const catchUp = infrastructure ? null : await require('./boot-failure-sync').afterBootFailure({
+    config, pool, session, commitHash, err,
+  }).catch(() => null);
+
   const alreadyNotified = row && row.check_error_notified_at;
   if (!row || alreadyNotified) return;
 
@@ -826,7 +837,10 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
   // Still exactly one post per failure streak, either way: setChecksPending
   // clears check_error_notified_at when a new commit arrives, so a fresh
   // build failure always narrates, and quiet backoff retries never do.
-  const body = `⚠️ Staging preview failed to start, so automated checks can't run and this proposal can't merge yet. Reason: ${detail}`;
+  const aboutMain = require('./boot-failure-sync').explain(catchUp);
+  const body = catchUp && catchUp.sync
+    ? `⚠️ Staging preview failed to start. ${aboutMain} Reason: ${detail}`
+    : `⚠️ Staging preview failed to start, so automated checks can't run and this proposal can't merge yet.${aboutMain ? ` ${aboutMain}` : ''} Reason: ${detail}`;
   try {
     if (session.source === 'imported') {
       const { sendSystemMessage } = require('./ws');

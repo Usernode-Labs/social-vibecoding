@@ -60,7 +60,7 @@ import {
   useAuthScreensPatch,
   zoomFx,
 } from './shared';
-import { DeadInvite, InvitePending, inviteTokenFrom, MadeForYou, useInvitePreview } from './invite-card';
+import { DeadInvite, InviteJoinBar, InvitePending, inviteTokenFrom, MadeForYou, useInvitePreview } from './invite-card';
 import { SignInSheet, type SignInProvider, type SignInResume } from './sign-in-sheet';
 import { Story } from './story';
 import { useWaitlistOptions, type WaitlistOptions, waitlistOptions } from './waitlist-shared';
@@ -1282,7 +1282,9 @@ export function LandingScreen() {
             scroller's own bottom padding is the safe-area inset
             (.platform-safe-scroll REPLACES it), which is zero on a desktop
             or an Android without one, so the last thing on the screen needs
-            air of its own either way.
+            air of its own either way. A live invite's page ends on its pinned
+            Join bar instead (InviteJoinBar, below this scroller), which
+            clears the home indicator itself, so it keeps only `pb-4`.
 
             `flex min-h-full flex-col` is the BOTTOM PIN — board 1 is a flex
             column whose action block sits at the foot of the screen with that
@@ -1328,7 +1330,7 @@ export function LandingScreen() {
             safe-area inset in the scroller's own padding — so the pin cannot
             introduce an overflow of its own.
         */}
-        <div className="max-w-sm md:max-w-lg xl:max-w-2xl mx-auto flex min-h-full flex-col pb-[34px]">
+        <div className={`max-w-sm md:max-w-lg xl:max-w-2xl mx-auto flex min-h-full flex-col ${madeForYou ? 'pb-4' : 'pb-[34px]'}`}>
           {/*
               Offline explanation (#1021). Both ways in from this screen —
               the marketing waitlist page and Sign in — need a connection, so
@@ -1350,14 +1352,15 @@ export function LandingScreen() {
             </button>
           </div>
           {/*
-              AN INVITE LINK'S CARDS (./invite-card.tsx): who made it, the
-              project itself, the note and the way in. Only on
+              AN INVITE LINK'S CARDS (./invite-card.tsx): the project and who
+              invited you, its picture and the note. The way in is pinned
+              below this scroller (InviteJoinBar). Only on
               /invite/<token>, with a placeholder in their place until its
               preview is back — nothing here on any other visit. A dead link
               says why, above the pitch.
           */}
           {invitePending && !invite ? <InvitePending /> : null}
-          {madeForYou ? <MadeForYou preview={invite!} primaryClass={PRIMARY_PILL} onJoin={() => setSheet('join')} /> : null}
+          {madeForYou ? <MadeForYou preview={invite!} /> : null}
           {invite && !invite.live ? <DeadInvite preview={invite} /> : null}
           {/*
               DECORATIVE, so `alt` is empty: everything it says is said again
@@ -1697,6 +1700,15 @@ export function LandingScreen() {
           ) : null}
         </div>
       </div>
+      {/*
+          A live invite's Join, pinned to the foot of the screen (#4203): the
+          column's next child after the scroller, so the scroller ends above
+          it and nothing on the page can sit under it. Not while an app is
+          open in the viewer, which takes the scroller's place.
+      */}
+      {madeForYou && !openApp ? (
+        <InviteJoinBar preview={invite!} primaryClass={PRIMARY_PILL} onJoin={() => setSheet('join')} />
+      ) : null}
       <ViewerRegion />
       {/*
           The sign-in sheet "Made for you"'s Join opens (./sign-in-sheet.tsx).

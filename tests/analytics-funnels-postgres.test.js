@@ -36,16 +36,31 @@ test('funnels keep chronology, subjects, coverage and maturity honest in Postgre
         id integer PRIMARY KEY,
         is_admin boolean NOT NULL DEFAULT false,
         test_account_created_at timestamptz,
+        is_synthetic boolean NOT NULL DEFAULT false,
         created_at timestamptz NOT NULL
       );
       CREATE TABLE chat_sessions (
         id integer PRIMARY KEY,
         user_id integer NOT NULL REFERENCES users(id),
+        app_id integer,
+        created_from_issue_number integer,
         pr_number integer,
         status text NOT NULL DEFAULT 'active',
         promoted_at timestamptz,
         merged_at timestamptz,
         created_at timestamptz NOT NULL
+      );
+      CREATE TABLE issues (
+        id serial PRIMARY KEY,
+        app_id integer,
+        github_issue_number integer,
+        created_by integer
+      );
+      CREATE TABLE homeroom_bot_requesters (
+        app_id integer NOT NULL,
+        issue_number integer NOT NULL,
+        user_id integer NOT NULL,
+        PRIMARY KEY (app_id, issue_number)
       );
       CREATE TABLE pr_votes (
         session_id integer NOT NULL REFERENCES chat_sessions(id),
@@ -126,10 +141,12 @@ test('funnels keep chronology, subjects, coverage and maturity honest in Postgre
 
     const session = (id, userId, createdAt, opts = {}) => client.query(
       `INSERT INTO chat_sessions
-         (id, user_id, created_at, pr_number, status, promoted_at, merged_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+         (id, user_id, created_at, pr_number, status, promoted_at, merged_at,
+          app_id, created_from_issue_number)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
       [id, userId, createdAt, opts.pr ?? null, opts.status || 'active',
-        opts.promoted || null, opts.merged || null],
+        opts.promoted || null, opts.merged || null,
+        opts.app ?? null, opts.issue ?? null],
     );
     await session(101, 8, '2026-08-02T10:00Z', {
       pr: 101, status: 'merged', promoted: '2026-08-02T18:00Z', merged: '2026-08-06T10:00Z',
@@ -206,6 +223,33 @@ test('funnels keep chronology, subjects, coverage and maturity honest in Postgre
     });
     await event(16, 116, 'pr_opened', '2026-08-13T12:00Z', { prNumber: 116 });
 
+    // #3970: the Homeroom bot (a synthetic account) builds changes people
+    // ask it for. The bot is no one's signup, and each change it builds is
+    // the session of the person who asked: the recorded requester, else
+    // whoever filed the request. One with neither is nobody's.
+    await client.query(
+      "INSERT INTO users (id, is_admin, is_synthetic, created_at) VALUES (17, false, true, '2026-08-01T10:00Z')");
+    await event(17, null, 'dapp_opened', '2026-08-02T09:00Z', { source: 'app_tab' });
+    await client.query(
+      `INSERT INTO issues (app_id, github_issue_number, created_by)
+       VALUES (1, 501, 17), (1, 502, 2)`);
+    await client.query(
+      'INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id) VALUES (1, 501, 4)');
+    // Asked for by user 4 (who has never opened a session): a clean path.
+    await session(117, 17, '2026-08-24T10:00Z', {
+      app: 1, issue: 501, pr: 117, status: 'merged',
+      promoted: '2026-08-26T10:00Z', merged: '2026-08-27T10:00Z',
+    });
+    await event(17, 117, 'pr_opened', '2026-08-25T10:00Z', { prNumber: 117 });
+    // No requester recorded: credited to user 2, who filed the request.
+    await session(118, 17, '2026-08-24T11:00Z', { app: 1, issue: 502 });
+    // Built from no known request: nobody's, so in neither funnel.
+    await session(119, 17, '2026-08-24T12:00Z', {
+      app: 1, issue: 999, pr: 119, status: 'merged',
+      promoted: '2026-08-26T10:00Z', merged: '2026-08-27T10:00Z',
+    });
+    await event(17, 119, 'pr_opened', '2026-08-25T10:00Z', { prNumber: 119 });
+
     const withoutAdmins = await fetchFunnels(client, { now: AS_OF, includeAdmins: false });
     assert.equal(withoutAdmins.dappUsage.coverage.startsAt.toISOString(), '2026-08-01T00:00:00.000Z');
     assert.equal(withoutAdmins.dappUsage.coverage.unknown_coverage, 2);
@@ -215,7 +259,7 @@ test('funnels keep chronology, subjects, coverage and maturity honest in Postgre
       withoutAdmins.dappUsage.returned,
       withoutAdmins.dappUsage.engaged,
       withoutAdmins.dappUsage.creators,
-    ], [9, 4, 3, 1, 1]);
+    ], [9, 4, 3, 1, 1], 'the synthetic bot account is never a signup');
     assert.deepEqual([
       withoutAdmins.dappUsage.provisional.signed_up_provisional,
       withoutAdmins.dappUsage.provisional.opened_dapp_provisional,
@@ -231,10 +275,10 @@ test('funnels keep chronology, subjects, coverage and maturity honest in Postgre
       withoutAdmins.prSessions.produced_pr,
       withoutAdmins.prSessions.promoted,
       withoutAdmins.prSessions.merged,
-    ], [5, 4, 2, 2]);
+    ], [7, 5, 3, 3], 'bot builds count as their requesters\' sessions');
     assert.equal(withoutAdmins.prSessions.received_vote, 1,
       'append-only vote evidence survives a missing/deleted pr_votes row');
-    assert.equal(withoutAdmins.prSessions.merged_without_vote, 1);
+    assert.equal(withoutAdmins.prSessions.merged_without_vote, 2);
     assert.equal(withoutAdmins.prSessions.coverage.excluded, 5);
     assert.equal(withoutAdmins.prSessions.coverage.opening_unknown, 2);
     assert.equal(withoutAdmins.prSessions.coverage.promotion_bypassed, 2);
@@ -251,7 +295,7 @@ test('funnels keep chronology, subjects, coverage and maturity honest in Postgre
       withoutAdmins.prUsers.promoted,
       withoutAdmins.prUsers.received_vote,
       withoutAdmins.prUsers.merged,
-    ], [5, 5, 4, 1, 3]);
+    ], [7, 6, 5, 1, 4], 'the requester and the filer are builders; the bot is not');
 
     for (const stages of [
       ['signed_up', 'opened_dapp', 'returned', 'engaged', 'creators'],

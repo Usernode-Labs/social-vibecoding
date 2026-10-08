@@ -2489,6 +2489,18 @@ test('Discover draws no chrome of its own; its control is in the section heading
   assert.match(empty, /home-area-label[\s\S]*?id="home-browse-btn"/);
 });
 
+// #4184: the home section's heading is "Discover Communities". Only the
+// heading: the tab bar's "Discover", the link beside it and the panel
+// registry's title keep their words.
+test('the Discover section is headed Discover Communities; the tab and the link keep theirs', () => {
+  const heading = renderDiscover().match(/<h2 class="home-area-label[\s\S]*?<\/h2>/)[0];
+  assert.match(heading, /<span class="min-w-0 flex-1 truncate[^"]*">Discover Communities<\/span>/,
+    'the label truncates rather than wraps at 320px, beside the link');
+  assert.match(heading, />Browse all apps<\/span>/);
+  const bar = fs.readFileSync(path.join(__dirname, '../frontend/src/features/nav/tab-bar.tsx'), 'utf8');
+  assert.match(bar, /key: 'discover' as const, label: 'Discover', href: '#apps'/);
+});
+
 test('Discover’s degenerate states: cards, or the note — never both', () => {
   // Featured only: just the lane.
   const featuredOnly = renderDiscover({ popularApps: () => [] });

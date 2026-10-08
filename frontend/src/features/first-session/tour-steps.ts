@@ -103,6 +103,25 @@ function closeAppStep(): TourStep {
 }
 
 /**
+ * The app screen's Suggest step, the same on the invited and maker paths
+ * (request #4225): the Homeroom mark at the top of the app, described rather
+ * than opened, since this tour has no menu-open step of its own (the home
+ * tour's `app-menu` / `menu-actions` do open it). The copy is honest about
+ * what happens to a suggestion: Homeroom bot does not always build it, and
+ * sometimes brings it to the group as a request instead.
+ */
+export const SUGGEST_TEXT = 'It\'s in this menu, in every app. It doesn\'t vanish into a feedback box: Homeroom bot starts building it for you, or brings it to the group, and you can follow along.';
+
+function suggestStep(): TourStep {
+  return {
+    screen: 'app',
+    target: '#platform-mark-btn',
+    title: 'Suggest an improvement',
+    text: SUGGEST_TEXT,
+  };
+}
+
+/**
  * Where the project's first version stands, as its App tab shows it
  * (GET /api/apps/:slug `first_version`; public/js/app-view.js
  * _firstVersionView): Homeroom bot still building it, built and waiting for
@@ -146,7 +165,7 @@ export function appStep(name: string, firstVersion: FirstVersionStage = null): P
   return { title: `This is ${name}`, text: 'The group\'s app, made on Homeroom. Use it any time.' };
 }
 
-/** The invited path: seven steps, ending in the group's chat. */
+/** The invited path: eight steps, ending in the group's chat. */
 export function invitedSteps({ slug, name, firstVersion = null }: TourProject): TourStep[] {
   return [
     {
@@ -162,6 +181,7 @@ export function invitedSteps({ slug, name, firstVersion = null }: TourProject): 
       ...appStep(name, firstVersion),
       place: 'bottom',
     },
+    suggestStep(),
     closeAppStep(),
     {
       screen: 'home',
@@ -232,7 +252,7 @@ export function privateSteps({ slug, name }: TourProject): TourStep[] {
       screen: 'home',
       target: '#platform-tab-messages',
       title: 'Homeroom bot is in Messages',
-      text: 'Ask it for a change in plain words. It builds it, and the group decides what goes in.',
+      text: 'Ask it for a change in plain words. It starts building it, or brings it to the group, and you can follow along.',
     },
     {
       screen: 'home',
@@ -266,6 +286,7 @@ export function makerSteps({ slug, name, conversationId }: TourProject): TourSte
       text: 'Until the first version is ready, this shows how the build is going.',
       place: 'bottom',
     },
+    suggestStep(),
     closeAppStep(),
     {
       screen: 'home',
@@ -295,7 +316,7 @@ export function makerSteps({ slug, name, conversationId }: TourProject): TourSte
       screen: 'hub',
       target: '#platform-tab-messages',
       title: 'Homeroom bot is in Messages',
-      text: `It's building ${name} now.`,
+      text: `You can always find it here. It's currently building ${name}.`,
       tap: 'Tap Messages',
       opensNext: true,
     },

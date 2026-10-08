@@ -504,3 +504,41 @@ test('a failing twin close never breaks the watch', async () => {
     assert.equal(ws.length, 1, 'the panel refresh still went out');
   } finally { restore(); }
 });
+
+// The merge-followups workflow machine runs the watch as durable work: a
+// close it could not record must fail the work, which is then retried,
+// instead of settling while the twin or the close proposal stays open.
+test('strict: a failing twin close fails the watch, after its polls', async () => {
+  const calls = [], ws = [];
+  const pool = recordingPool({ fail: true });
+  const { subject, restore } = loadWithStubs({
+    calls, ws, issuesRoute: ISSUES_ROUTE_STUB,
+    gh: { getPR: async () => ({ body: 'Closes #3' }) },
+  });
+  try {
+    await assert.rejects(subject.watchIssuesClosedAfterMerge({ ...BASE_ARGS, pool, strict: true }), /db down/);
+    assert.equal(ws.length, 1, 'the close itself was still seen and broadcast');
+  } finally { restore(); }
+});
+
+test('strict: a failing superseded-proposal resolve fails the watch, and is asked to throw', async () => {
+  const calls = [], ws = [];
+  const asked = [];
+  const { subject, restore } = loadWithStubs({
+    calls, ws,
+    issuesRoute: {
+      resolveSupersededCloseProposals: async (pool, args) => {
+        asked.push(args.strict);
+        if (args.strict) throw new Error('db down');
+        return { resolved: [] };
+      },
+    },
+    gh: { getPR: async () => ({ body: 'Closes #3' }) },
+  });
+  try {
+    await assert.rejects(subject.watchIssuesClosedAfterMerge({ ...BASE_ARGS, pool: recordingPool(), strict: true }), /db down/);
+    assert.deepEqual(asked, [true]);
+    const res = await subject.watchIssuesClosedAfterMerge({ ...BASE_ARGS, pool: recordingPool() });
+    assert.deepEqual(res.closed, [3], 'without strict it is logged and the watch finishes, as before');
+  } finally { restore(); }
+});

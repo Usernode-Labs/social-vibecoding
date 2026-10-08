@@ -137,10 +137,11 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS locale VARCHAR(35);
 -- order to the user's own Claude Code / Codex web UI (the external-agent
 -- flow in services/external-agent-tasks.js).
 --
--- Written by POST /api/me/dev-flow, echoed by GET /api/auth/me as
--- `devFlowPreference`, and clearable back to NULL from Settings →
--- Connections. The CHECK is the same allowlist the route enforces, so a
--- direct DB write can never park an unrenderable value here.
+-- No longer read or written (#4311): POST /api/me/dev-flow, the
+-- `devFlowPreference` field of GET /api/auth/me and the Settings row were
+-- removed because nothing chose a venue from the value. The column and its
+-- CHECK stay so a rollback to an older build still finds them; drop them in
+-- a later migration once no deployable build reads them.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS dev_flow_preference TEXT;
 DO $$
 BEGIN
@@ -2533,6 +2534,8 @@ END $$;
 -- #3181 adds 'session_stalled': a dev-session turn ended without finishing
 -- (an error, a timeout, a lost worker, or a system pause mid-turn);
 -- session_id points to the session, like 'session_done'.
+-- #3952 adds 'issue_mention': somebody named you with @ in a request they
+-- filed; `detail` holds its number, like 'issue_opened'.
 CREATE TABLE IF NOT EXISTS notifications (
   id              SERIAL PRIMARY KEY,
   user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -3018,6 +3021,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_events_change_live_once
 CREATE UNIQUE INDEX IF NOT EXISTS idx_events_first_artefact_once
   ON events (app_id)
   WHERE event_type = 'first_artefact_shown';
+-- Its invite funnel (#4176): signing in through an invite link is recorded
+-- once per person per link, however often they sign in carrying it or
+-- open it signed in.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_events_invite_signed_in_once
+  ON events (user_id, (metadata->>'inviteId'))
+  WHERE event_type = 'invite_signed_in';
 
 -- Tagged staging:private so the analytics log (which is derived from
 -- chat_sessions / pr_kudos, both already private) is TRUNCATEd in staging
@@ -5305,6 +5314,8 @@ BEGIN
 END $$;
 INSERT INTO mobile_push_kind_categories (kind, category, default_enabled) VALUES
   ('mention', 'direct_interactions', TRUE),
+  -- #3952: named with @ in a request somebody filed. A mention, beside it.
+  ('issue_mention', 'direct_interactions', TRUE),
   ('reply', 'direct_interactions', TRUE),
   -- #2387: a reply in an app-chat reply thread you started or joined. A
   -- direct interaction like a reply to your message, so the same category.
@@ -5351,6 +5362,10 @@ INSERT INTO mobile_push_kind_categories (kind, category, default_enabled) VALUES
   -- (services/platform-limit-alerts.js). "Something happened that affects
   -- the apps you look after", one level up, so the same category.
   ('platform_limit', 'app_alerts', TRUE),
+  -- #4296: errors that should not happen, as a daily digest or one kind past
+  -- its hourly line (services/platform-incident-alerts.js). Full admins
+  -- only, beside platform_limit.
+  ('platform_incident', 'app_alerts', TRUE),
   ('reaction', 'lightweight_activity', FALSE),
   ('kudos', 'lightweight_activity', FALSE),
   ('conversation_invite', 'messages', TRUE),
@@ -5379,7 +5394,7 @@ ON CONFLICT (kind) DO UPDATE
       default_enabled = EXCLUDED.default_enabled;
 DELETE FROM mobile_push_kind_categories
  WHERE kind NOT IN (
-   'mention', 'reply', 'thread_reply', 'collab_invite', 'collab_invite_accepted',
+   'mention', 'issue_mention', 'reply', 'thread_reply', 'collab_invite', 'collab_invite_accepted',
    'approver_invite', 'approver_invite_accepted', 'spec_shared',
    'session_done', 'test_alert', 'auto_solve_done', 'stale_pr', 'check_failed',
    'pr_proposed', 'reaction', 'kudos',
@@ -5408,6 +5423,8 @@ DELETE FROM mobile_push_kind_categories
    'session_stalled',
    -- Server-wide limit alerts for full admins.
    'platform_limit',
+   -- #4296: the unexpected events digest and hourly alert, same audience.
+   'platform_incident',
    -- WP-E.
    'build_ready', 'build_needs_you', 'build_stopped', 'build_live',
    'invite_opened', 'member_joined', 'first_message'
@@ -7016,13 +7033,16 @@ BEGIN
   --                      bot-owned branch in the app repo
   --   update_fork_head — the proposal's head already lived in the author's
   --                      fork, so advancing the tracked head WAS the write
+  -- And #4263 adds a third:
+  --   update_patch     — the author's patch was applied on the proposal's
+  --                      head and pushed onto that same bot-owned branch
   -- Widening a CHECK means replacing it, so this one constraint is dropped
   -- and recreated rather than added-if-absent. Safe on every boot: the new
   -- list is a superset, so no stored value can be excluded by it.
   ALTER TABLE external_agent_tasks DROP CONSTRAINT IF EXISTS external_agent_tasks_submitted_via_chk;
   ALTER TABLE external_agent_tasks ADD CONSTRAINT external_agent_tasks_submitted_via_chk
     CHECK (submitted_via IS NULL OR submitted_via IN (
-      'branch','branch_head_repo','mirror','patch','pr','update_branch','update_fork_head'));
+      'branch','branch_head_repo','mirror','patch','pr','update_branch','update_fork_head','update_patch'));
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint WHERE conname = 'external_agent_tasks_submitted_source_chk'
   ) THEN
@@ -7123,6 +7143,57 @@ WHERE t.session_id = s.id
 -- is what the submission links and closes. The empty array on an older row
 -- means "just issue_number", exactly what it always meant.
 ALTER TABLE external_agent_tasks ADD COLUMN IF NOT EXISTS linked_issues INTEGER[] NOT NULL DEFAULT '{}';
+
+-- ── External-agent patch uploads (#4264) ─────────────────────────────
+--
+-- A patch reached submit_work only as a tool ARGUMENT, which the coding agent
+-- had to reproduce character by character: 63 KB and 134 KB in one session,
+-- and one slip in another (#4176) made the patch fail to apply and cost a
+-- round. prepare_work now also prints a one-time upload command; the agent
+-- pipes `git format-patch` into curl, the bytes land here, and submit_work
+-- takes the upload's id instead of `patch`. services/
+-- external-agent-patch-upload.js has the whole design.
+--
+-- Two tables, because a work order can be rendered more than once for one
+-- task (asking again for the same request returns the same task, with a
+-- fresh command) while a task keeps at most one upload.
+--
+-- external_agent_upload_tokens holds the credentials, as SHA-256 hashes only:
+-- the token itself is in the work order returned to the task's owner and
+-- nowhere else. Each is bound to one task, works on the upload route alone,
+-- and lapses after 24 hours (sooner if the task expires) or as soon as the
+-- task is no longer open. On the prod-debug deny list (debug-access.js).
+--
+-- external_agent_patch_uploads holds the newest patch uploaded for a task, as
+-- the exact bytes sent. Uploading again replaces it under a NEW id, so a
+-- submission naming an older id is refused rather than sending bytes the
+-- agent did not send. Deleted once the task is submitted with it, and swept
+-- when the task is closed or expires.
+--
+-- `staging:private`, like the tasks they belong to: unpublished work in
+-- flight, and credential hashes.
+CREATE TABLE IF NOT EXISTS external_agent_upload_tokens (
+  id          BIGSERIAL PRIMARY KEY,
+  task_id     BIGINT NOT NULL REFERENCES external_agent_tasks(id) ON DELETE CASCADE,
+  token_hash  TEXT NOT NULL UNIQUE CHECK (token_hash ~ '^[0-9a-f]{64}$'),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at  TIMESTAMPTZ NOT NULL
+);
+COMMENT ON TABLE external_agent_upload_tokens IS 'staging:private';
+COMMENT ON COLUMN external_agent_upload_tokens.token_hash IS 'staging:private';
+CREATE INDEX IF NOT EXISTS external_agent_upload_tokens_task_idx
+  ON external_agent_upload_tokens (task_id);
+
+CREATE TABLE IF NOT EXISTS external_agent_patch_uploads (
+  id          BIGSERIAL PRIMARY KEY,
+  task_id     BIGINT NOT NULL UNIQUE REFERENCES external_agent_tasks(id) ON DELETE CASCADE,
+  token_id    BIGINT REFERENCES external_agent_upload_tokens(id) ON DELETE SET NULL,
+  patch       BYTEA NOT NULL,
+  bytes       INTEGER NOT NULL CHECK (bytes > 0),
+  sha256      TEXT NOT NULL,
+  uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE external_agent_patch_uploads IS 'staging:private';
 
 -- ── Generic agent backend (Codex/OpenRouter BYOK; plan.md PR1) ───────
 -- chat_sessions today pins Claude continuity via cc_session_id. To add a
@@ -8660,6 +8731,46 @@ CREATE INDEX IF NOT EXISTS idx_waitlist_signups_project_invite
   ON waitlist_signups (project_invite_id) WHERE project_invite_id IS NOT NULL;
 COMMENT ON COLUMN waitlist_signups.project_invite_id IS 'staging:private';
 
+-- ── Phone rows on the waitlist (#4223) ─────────────────────────────────
+--
+-- An account with a verified phone (user_phone_identities) joins from
+-- Home's waitlist card with one tap and no email (services/member-waitlist.js,
+-- joinWithPhone). Its row has email NULL, linked_user_id set and
+-- confirmed_at stamped at insert: the verified phone stands for the
+-- confirmation. Releasing one is HELD until outbound SMS exists (#4096), so
+-- releaseWaitlistSignup refuses a row without an address.
+--
+-- The UNIQUE constraint on email stays: emails are stored lowercased by every
+-- writer, `ON CONFLICT (email)` names it, and NULLs are distinct under it, so
+-- any number of phone rows fit. The case-insensitive index below states the
+-- same rule on LOWER(email), created the way users_email_lower_unique is: a
+-- legacy case-variant pair downgrades to a warning, never a boot failure.
+--
+-- One phone row per account. Not one row of ANY kind per account: rows
+-- linked twice already exist (an account that confirmed two addresses on the
+-- card) and a full index would fail to build on them, and an account merge
+-- (services/user-merge.js) drops a merged account's rows that collide on a
+-- unique index, which would delete a real email signup. The member card's
+-- own writers keep the wider rule: joinWithPhone inserts only for an account
+-- with no listed row, and adding an email folds the phone row into it.
+ALTER TABLE waitlist_signups ALTER COLUMN email DROP NOT NULL;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+     WHERE schemaname = current_schema() AND indexname = 'waitlist_signups_email_lower_unique'
+  ) THEN
+    BEGIN
+      CREATE UNIQUE INDEX waitlist_signups_email_lower_unique
+        ON waitlist_signups (LOWER(email)) WHERE email IS NOT NULL;
+    EXCEPTION WHEN unique_violation THEN
+      RAISE WARNING 'waitlist_signups_email_lower_unique not created: case-variant duplicate emails exist; the raw-column UNIQUE (email) is kept';
+    END;
+  END IF;
+END $$;
+CREATE UNIQUE INDEX IF NOT EXISTS waitlist_signups_phone_row_unique
+  ON waitlist_signups (linked_user_id) WHERE email IS NULL;
+
 -- ── Proposal freshness (#1442) ─────────────────────────────────────────
 --
 -- Three numbers a voter reads off a promoted proposal — how far behind main
@@ -8999,6 +9110,20 @@ CREATE INDEX IF NOT EXISTS chat_sessions_integration_measured_idx
 -- resolution. The verdict stays 'pending' with this phase until the head
 -- merges cleanly, at which point the checks run (services/check-admission.js).
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_resolved_epoch INTEGER;
+
+-- The one exception to "behind is not a reason to sync": a promoted
+-- proposal whose preview fails to START while it is behind main and merges
+-- cleanly is synced by the platform (services/boot-failure-sync.js).
+-- Previews boot against production's database, which runs main's schema, so
+-- a schema change on main can stop an older branch's preview at once (#4186
+-- against #4172).
+--
+--   boot_failure_sync_head  the head the platform last synced for that
+--                           reason. NULL: never. Equal to the failed head: it
+--                           was tried, and a further failure on the same head
+--                           waits for a person. The sync's own head contains
+--                           main, so nothing syncs again until main moves.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS boot_failure_sync_head TEXT;
 
 -- ── Main watch ─────────────────────────────────────────────────────────
 --
@@ -10091,6 +10216,19 @@ ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS plan_change TEXT;
 COMMENT ON COLUMN homeroom_bot_runs.plan_change IS 'staging:private';
 CREATE INDEX IF NOT EXISTS homeroom_bot_runs_awaiting_go_idx
   ON homeroom_bot_runs(awaiting_go_at) WHERE awaiting_go_at IS NOT NULL;
+-- #4175: a first version's plan that could not be sent keeps its run
+-- waiting (awaiting_go_at) and is tried again on later wakes, a few times
+-- over about an hour (homeroom-bot.js retryUnsentPlans), never built without
+-- its creator's Build it. `plan_send_attempts` counts the sends tried;
+-- `plan_unsent_at` is when the last one failed, NULL once one reached them.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS plan_send_attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS plan_unsent_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS homeroom_bot_runs_plan_unsent_idx
+  ON homeroom_bot_runs(plan_unsent_at) WHERE plan_unsent_at IS NOT NULL;
+-- #4239: a `person` verdict whose request is about the Homeroom platform
+-- itself rather than the project it was filed on (the triage's `platform`
+-- flag). Its requester is offered to move it to Homeroom's own board.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS about_platform BOOLEAN;
 
 -- B9: a request asked for in a project's group chat, by mentioning Homeroom
 -- bot or by "Make this a request" on your own message. The message stays
@@ -10375,7 +10513,7 @@ CREATE TABLE IF NOT EXISTS bench_trial_artifacts (
   shot_id       VARCHAR(64) NOT NULL,
   viewport      VARCHAR(16) NOT NULL,
   look          VARCHAR(8) NOT NULL CHECK (look IN ('light', 'dark')),
-  state         VARCHAR(16) NOT NULL CHECK (state IN ('populated', 'empty', 'error', 'loading')),
+  state         VARCHAR(16) NOT NULL CHECK (state IN ('populated', 'empty', 'error', 'loading', 'result')),
   content_type  VARCHAR(32) NOT NULL,
   data          BYTEA NOT NULL,
   width         INTEGER CHECK (width IS NULL OR width > 0),
@@ -10386,6 +10524,15 @@ CREATE TABLE IF NOT EXISTS bench_trial_artifacts (
   UNIQUE (trial_id, shot_id)
 );
 COMMENT ON TABLE bench_trial_artifacts IS 'staging:private';
+-- A fifth state, `result`: the populated screen after its primary action
+-- was tapped once (worker/usernode-bench-capture.js). Widening the CHECK on
+-- a table made before it rejects no row already stored.
+DO $$
+BEGIN
+  ALTER TABLE bench_trial_artifacts DROP CONSTRAINT IF EXISTS bench_trial_artifacts_state_check;
+  ALTER TABLE bench_trial_artifacts ADD CONSTRAINT bench_trial_artifacts_state_check
+    CHECK (state IN ('populated', 'empty', 'error', 'loading', 'result'));
+END $$;
 
 -- The App bench studio (services/bench/studio.js): first versions built from
 -- a brief the way the create-app flow builds them, driven from an admin's
@@ -10560,7 +10707,7 @@ CREATE TABLE IF NOT EXISTS homeroom_bot_dm_actions (
   error           TEXT,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   decided_at      TIMESTAMPTZ,
-  CONSTRAINT homeroom_bot_dm_actions_kind_check CHECK (kind IN ('file_request', 'withdraw_proposal', 'build_plan')),
+  CONSTRAINT homeroom_bot_dm_actions_kind_check CHECK (kind IN ('file_request', 'withdraw_proposal', 'build_plan', 'move_request')),
   CONSTRAINT homeroom_bot_dm_actions_status_check
     CHECK (status IN ('open', 'done', 'declined', 'failed'))
 );
@@ -10570,13 +10717,18 @@ COMMENT ON TABLE homeroom_bot_dm_actions IS 'staging:private';
 -- skips an existing table, and its named CHECK allowed file_request only).
 -- B3: `build_plan`, the plan card a first version waits on (B6), decided by
 -- its buttons through the same action endpoint as an offer.
+-- #4239: `move_request`, an offer to move a request about Homeroom itself
+-- from a project's board to Homeroom's own (Move it to Homeroom / Keep it
+-- here). `app_id` is the project it is on and `source_issue_number` the
+-- request there; `issue_number` is the request it became on Homeroom's.
 ALTER TABLE homeroom_bot_dm_actions
   ADD COLUMN IF NOT EXISTS session_id INTEGER REFERENCES chat_sessions(id) ON DELETE CASCADE;
+ALTER TABLE homeroom_bot_dm_actions ADD COLUMN IF NOT EXISTS source_issue_number INTEGER;
 DO $$
 BEGIN
   ALTER TABLE homeroom_bot_dm_actions DROP CONSTRAINT IF EXISTS homeroom_bot_dm_actions_kind_check;
   ALTER TABLE homeroom_bot_dm_actions ADD CONSTRAINT homeroom_bot_dm_actions_kind_check
-    CHECK (kind IN ('file_request', 'withdraw_proposal', 'build_plan'));
+    CHECK (kind IN ('file_request', 'withdraw_proposal', 'build_plan', 'move_request'));
 END $$;
 
 -- The bot's own knobs, admin-tunable from its console section. `mode` is
@@ -11912,7 +12064,9 @@ END $$;
 -- SHA-256 of a random HttpOnly cookie (hr_iv) that names nothing and says
 -- nothing about where it is. A browser that later opens a link signed in,
 -- or joins through one, is given its account, so the person stays one row.
--- `notification_id` is the open notice they are counted on. It goes NULL
+-- `notification_id` is the open notice they are counted on: none for a
+-- browser only ever seen signed out, which tells nobody (#4176) until it
+-- opens a link signed in. It goes NULL
 -- when they join through the maker's link, whose own notice ("Joined
 -- through your invite") replaces their open; the row stays, so opening the
 -- link again later is still not news. staging:private: it says who looked
@@ -11978,6 +12132,28 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS test_account_created_at TIMESTAMPTZ;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS test_account_welcome_dm BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE INDEX IF NOT EXISTS idx_users_test_account_created_at
   ON users (test_account_created_at) WHERE test_account_created_at IS NOT NULL;
+
+-- One-time phone sign-ins for test accounts (services/test-accounts.js
+-- mintPhoneSignIn, the connector's create_test_phone_sign_in): a full admin
+-- gets a fictional test number (+1 … 555 0100–0199) and a random six-digit
+-- code, and the code signs in once, within 30 minutes and five tries, in any
+-- environment, production included. The account it makes is a test account
+-- (services/firebase-phone-auth.js, TEST NUMBERS). Only the code's bcrypt
+-- hash is kept. used_by is the account the code signed in.
+CREATE TABLE IF NOT EXISTS test_phone_sign_ins (
+  id          BIGSERIAL PRIMARY KEY,
+  phone_e164  VARCHAR(16) NOT NULL CHECK (phone_e164 ~ '^\+1[2-9][0-9]{2}55501[0-9]{2}$'),
+  code_hash   TEXT NOT NULL,
+  created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at  TIMESTAMPTZ NOT NULL,
+  attempts    SMALLINT NOT NULL DEFAULT 0,
+  used_at     TIMESTAMPTZ,
+  used_by     INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_test_phone_sign_ins_unused
+  ON test_phone_sign_ins (phone_e164) WHERE used_at IS NULL;
+COMMENT ON TABLE test_phone_sign_ins IS 'staging:private';
 
 -- The first-run "Add your phone number" step was answered, by "Not now" or
 -- by closing it (POST /api/me/phone-ask/answered): it is not asked again, and
@@ -12362,3 +12538,561 @@ CREATE TABLE IF NOT EXISTS small_change_tags (
 CREATE INDEX IF NOT EXISTS small_change_tags_created_idx
   ON small_change_tags (created_at DESC, id DESC);
 COMMENT ON TABLE small_change_tags IS 'staging:private';
+
+-- Homeroom bot CONFIGURATIONS (services/bot-configs.js): how the bot builds a
+-- project's FIRST VERSION, and (scope `later`, below) every later change, as
+-- versioned recipes. A recipe names the model of
+-- each stage (triage, spec, build), an optional REVIEWER (a model that looks
+-- at the build's screenshots and asks for fixes, up to maxRounds rounds
+-- within budgetMinutes) and an optional App bench context pack. Each row is
+-- one immutable VERSION: editing a configuration saves a new version, and
+-- every average is per version, never across them. `role` is what the
+-- version does now: `current` builds every live first version (exactly one
+-- at a time, the partial unique index), `side` is built silently beside each
+-- live first version on the App bench lane for comparison, and `retired` is
+-- neither. A later change follows the `later` scope's current version, or
+-- the per-stage settings (homeroom-bot.js stageModel) when it has none.
+-- `seed_key` makes the deploy's seed idempotent.
+-- Not private: admin-written recipes, nothing about anybody's app, and the
+-- bot's runs (a public table) name the version that built them.
+CREATE TABLE IF NOT EXISTS bot_config_versions (
+  id               SERIAL PRIMARY KEY,
+  key              TEXT NOT NULL,
+  label            TEXT NOT NULL,
+  version          INTEGER NOT NULL DEFAULT 1,
+  recipe           JSONB NOT NULL,
+  role             TEXT NOT NULL DEFAULT 'side',
+  notes            TEXT,
+  seed_key         TEXT,
+  created_by       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  role_changed_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT bot_config_versions_role_check CHECK (role IN ('current', 'side', 'retired')),
+  CONSTRAINT bot_config_versions_key_check CHECK (key ~ '^[a-z0-9][a-z0-9-]{0,39}$'),
+  CONSTRAINT bot_config_versions_version_check CHECK (version > 0),
+  UNIQUE (key, version)
+);
+-- A configuration's SCOPE: `first_version` (how a project's first version
+-- is built, every row before scopes) or `later` (every other build the bot
+-- makes, live or shadow: its spec and build models). Each scope has exactly
+-- one current version, so the one-current index is per scope; it replaces
+-- the single one, which a second scope's current would break. A key
+-- belongs to one scope.
+ALTER TABLE bot_config_versions ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'first_version';
+DO $$
+BEGIN
+  ALTER TABLE bot_config_versions DROP CONSTRAINT IF EXISTS bot_config_versions_scope_check;
+  ALTER TABLE bot_config_versions ADD CONSTRAINT bot_config_versions_scope_check
+    CHECK (scope IN ('first_version', 'later'));
+END $$;
+DROP INDEX IF EXISTS idx_bot_config_versions_one_current;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bot_config_versions_one_current_per_scope
+  ON bot_config_versions (scope) WHERE role = 'current';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bot_config_versions_seed
+  ON bot_config_versions (seed_key) WHERE seed_key IS NOT NULL;
+
+-- A live first version's configuration and its REVIEW (services/bot-review.js):
+-- which version built it; `review` the round-0 snapshot (the state after the
+-- first build, before any review), every round (its commit, the capture's
+-- artifacts, the reviewer's verdict and issues, what it cost and took) and
+-- why the loop stopped; `review_rounds` and `review_stop` the two numbers the
+-- run listing shows. `review->>'state'` is 'reviewing' (or 'capturing', a
+-- recipe with no reviewer whose first build is only captured) while the loop
+-- runs, so restart recovery proposes the last committed state rather than
+-- calling the build lost. Its captures are kept slim (whether the app booted
+-- and where each screenshot is stored); the full ones are private
+-- (bot_config_results).
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS bot_config_version_id INTEGER
+  REFERENCES bot_config_versions(id) ON DELETE SET NULL;
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS review JSONB;
+-- The review's issues quote what a private project's screens show, and its
+-- rounds name where their screenshots are: private, as plan_change is.
+-- review_rounds and review_stop, two numbers, stay public.
+COMMENT ON COLUMN homeroom_bot_runs.review IS 'staging:private';
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS review_rounds INTEGER;
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS review_stop TEXT;
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_runs_reviewing
+  ON homeroom_bot_runs(id) WHERE (review->>'state') IN ('reviewing', 'capturing');
+
+-- A SIDE build of a live first version runs on the App bench lane as a trial
+-- (services/bot-configs.js spawnSideBuilds): the live run it is compared
+-- with, and the configuration version it builds.
+ALTER TABLE bench_trials ADD COLUMN IF NOT EXISTS bot_run_id INTEGER
+  REFERENCES homeroom_bot_runs(id) ON DELETE SET NULL;
+ALTER TABLE bench_trials ADD COLUMN IF NOT EXISTS bot_config_version_id INTEGER
+  REFERENCES bot_config_versions(id) ON DELETE SET NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bench_trials_side_build
+  ON bench_trials(bot_run_id, bot_config_version_id, attempt) WHERE bot_run_id IS NOT NULL;
+
+-- What one configuration version made of one live first version: the
+-- current version's from the live build itself (source 'live'), a side
+-- version equal to it with no reviewer from the live build's round-0
+-- snapshot ('round0'), any other side version from its bench trial
+-- ('trial'). Cost and ACTIVE time (queue left out) include the live run's
+-- triage, which every configuration shares. `capture` is the screenshot
+-- step's summary; its artifact ids name rows in bot_capture_artifacts or
+-- bench_trial_artifacts. Private: it describes builds of private projects.
+-- A LATER change's (its version's scope) are its own build, live or shadow
+-- (source 'live'; the run's mode says which), and each side version's
+-- trial ('trial'): no review, so no round-0 result and no capture.
+CREATE TABLE IF NOT EXISTS bot_config_results (
+  id                 SERIAL PRIMARY KEY,
+  bot_run_id         INTEGER NOT NULL REFERENCES homeroom_bot_runs(id) ON DELETE CASCADE,
+  config_version_id  INTEGER NOT NULL REFERENCES bot_config_versions(id) ON DELETE CASCADE,
+  source             TEXT NOT NULL,
+  trial_id           INTEGER REFERENCES bench_trials(id) ON DELETE SET NULL,
+  status             TEXT NOT NULL DEFAULT 'pending',
+  built              BOOLEAN,
+  booted             BOOLEAN,
+  cost_usd           NUMERIC(18,8),
+  active_ms          BIGINT,
+  sha                TEXT,
+  capture            JSONB,
+  error              TEXT,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  finished_at        TIMESTAMPTZ,
+  CONSTRAINT bot_config_results_source_check CHECK (source IN ('live', 'round0', 'trial')),
+  CONSTRAINT bot_config_results_status_check CHECK (status IN ('pending', 'done', 'skipped')),
+  UNIQUE (bot_run_id, config_version_id)
+);
+CREATE INDEX IF NOT EXISTS idx_bot_config_results_version ON bot_config_results(config_version_id, status);
+CREATE INDEX IF NOT EXISTS idx_bot_config_results_trial ON bot_config_results(trial_id) WHERE trial_id IS NOT NULL;
+COMMENT ON TABLE bot_config_results IS 'staging:private';
+-- What the cost was made of (services/stage-costs.js breakdown): each stage
+-- (triage, spec, build, the review's reviewer calls and fix turns) with its
+-- model and dollars, and the remainder no stage names. Null on a result
+-- recorded before stages were.
+ALTER TABLE bot_config_results ADD COLUMN IF NOT EXISTS cost_parts JSONB;
+
+-- A blind PAIR: the current version's result and one side version's, from
+-- the same live first version, for an admin's pick (left, right or a tie)
+-- through the connector. `left_is_current` is drawn at random when the pair
+-- is made and never shown; `token` is the only id a picker sees. A pair
+-- where either side did not build or boot is `excluded` with why, never
+-- offered, and counted in the stats as that.
+CREATE TABLE IF NOT EXISTS bot_config_pairs (
+  id                 SERIAL PRIMARY KEY,
+  token              TEXT NOT NULL UNIQUE,
+  bot_run_id         INTEGER NOT NULL REFERENCES homeroom_bot_runs(id) ON DELETE CASCADE,
+  current_result_id  INTEGER NOT NULL REFERENCES bot_config_results(id) ON DELETE CASCADE,
+  side_result_id     INTEGER NOT NULL REFERENCES bot_config_results(id) ON DELETE CASCADE,
+  left_is_current    BOOLEAN NOT NULL,
+  status             TEXT NOT NULL DEFAULT 'waiting',
+  excluded_reason    TEXT,
+  pick               TEXT,
+  note               TEXT,
+  picked_by          INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  picked_at          TIMESTAMPTZ,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT bot_config_pairs_status_check CHECK (status IN ('waiting', 'excluded', 'picked')),
+  CONSTRAINT bot_config_pairs_pick_check CHECK (pick IS NULL OR pick IN ('current', 'side', 'tie')),
+  UNIQUE (current_result_id, side_result_id)
+);
+CREATE INDEX IF NOT EXISTS idx_bot_config_pairs_waiting ON bot_config_pairs(id) WHERE status = 'waiting';
+COMMENT ON TABLE bot_config_pairs IS 'staging:private';
+
+-- The review loop's screenshots (services/bot-review.js): one row per image
+-- of one round's capture, of a live run or of a bench trial whose recipe has
+-- a reviewer, stored as bench_trial_artifacts stores a trial's final ones.
+-- Private: an app's screens can show any of its data.
+CREATE TABLE IF NOT EXISTS bot_capture_artifacts (
+  id            VARCHAR(32) PRIMARY KEY CHECK (id ~ '^[0-9a-f]{32}$'),
+  bot_run_id    INTEGER REFERENCES homeroom_bot_runs(id) ON DELETE CASCADE,
+  trial_id      INTEGER REFERENCES bench_trials(id) ON DELETE CASCADE,
+  round         INTEGER NOT NULL CHECK (round >= 0),
+  shot_id       VARCHAR(64) NOT NULL,
+  viewport      VARCHAR(16) NOT NULL,
+  look          VARCHAR(8) NOT NULL CHECK (look IN ('light', 'dark')),
+  -- Any state the screenshot step plans (services/bench/capture.js STATES),
+  -- so a state it adds later needs no change here.
+  state         VARCHAR(16) NOT NULL CHECK (state ~ '^[a-z][a-z_]{0,15}$'),
+  content_type  VARCHAR(32) NOT NULL,
+  data          BYTEA NOT NULL,
+  width         INTEGER CHECK (width IS NULL OR width > 0),
+  height        INTEGER CHECK (height IS NULL OR height > 0),
+  bytes         INTEGER NOT NULL CHECK (bytes > 0),
+  sha256        VARCHAR(64) NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}$'),
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT bot_capture_artifacts_owner_check CHECK ((bot_run_id IS NULL) <> (trial_id IS NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_bot_capture_artifacts_run ON bot_capture_artifacts(bot_run_id, round) WHERE bot_run_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_bot_capture_artifacts_trial ON bot_capture_artifacts(trial_id, round) WHERE trial_id IS NOT NULL;
+-- Kept about 30 days, unless a pair still waiting for a pick shows them
+-- (services/bot-configs.js pruneCaptureArtifacts).
+CREATE INDEX IF NOT EXISTS idx_bot_capture_artifacts_created ON bot_capture_artifacts(created_at);
+COMMENT ON TABLE bot_capture_artifacts IS 'staging:private';
+
+-- ===================================================================
+-- Workflow foundation: the kernel's tables (src/workflow/kernel/).
+--
+-- Long-lived workflows run as persistent state machines. Routes, services,
+-- timers and other instances APPEND events to one stream (wf_events); only
+-- the transition pipeline applies them, one instance at a time under that
+-- instance's row lock, and writes the outcome (state, receipt, work,
+-- messages) in the same transaction. Every write the pipeline makes carries
+-- the writer marker `SET LOCAL app.wf_writer = 'transition'`, and the
+-- triggers below refuse instance, receipt and processed-event writes made
+-- without it. The marker guards against accidents, not against an attacker:
+-- no role or credential is involved.
+--
+-- Every row here can carry votes, actors and proposal payloads, so all of
+-- these tables are private to staging clones.
+-- ===================================================================
+
+-- One row per machine instance. `state` is the phase name, `data` its
+-- payload; `version` counts accepted transitions and `machine_version` is
+-- the definition version that last wrote the row, so an older process
+-- never applies events to an instance a newer one has written. The
+-- pseudo-state '(none)' is a row the pipeline inserted to lock an instance
+-- that does not exist yet; it is deleted again unless a creating event is
+-- accepted, or kept to carry a stalled or faulted flag when that event
+-- timed out or threw. app_id has no foreign key on purpose: an instance's history
+-- outlives the app row, like receipts outlive what they describe.
+CREATE TABLE IF NOT EXISTS wf_instances (
+  machine          TEXT NOT NULL,
+  key              TEXT NOT NULL,
+  app_id           INTEGER,
+  state            TEXT NOT NULL,
+  data             JSONB,
+  version          BIGINT NOT NULL DEFAULT 0,
+  machine_version  INTEGER NOT NULL,
+  deadline_at      TIMESTAMPTZ,
+  deadline_event   JSONB,
+  deadline_version BIGINT,
+  flag             TEXT CHECK (flag IN ('faulted', 'stalled')),
+  flag_detail      JSONB,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (machine, key),
+  CONSTRAINT wf_instances_deadline_shape
+    CHECK ((deadline_at IS NULL) = (deadline_event IS NULL))
+);
+CREATE INDEX IF NOT EXISTS wf_instances_state_idx ON wf_instances (machine, state);
+CREATE INDEX IF NOT EXISTS wf_instances_app_idx ON wf_instances (app_id, machine);
+CREATE INDEX IF NOT EXISTS wf_instances_deadline_idx
+  ON wf_instances (deadline_at) WHERE deadline_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS wf_instances_flag_idx
+  ON wf_instances (flag) WHERE flag IS NOT NULL;
+COMMENT ON TABLE wf_instances IS 'staging:private';
+
+-- The stream and, once processed, each instance's history. Anyone may
+-- append a pending event; only the pipeline may process it. `attempts`
+-- counts lock and statement timeouts (the event goes back to pending with
+-- `retry_at`); `error` keeps the last fault even after an admin release
+-- retries the event. `held` events wait behind a faulted one.
+CREATE TABLE IF NOT EXISTS wf_events (
+  id              BIGSERIAL PRIMARY KEY,
+  machine         TEXT NOT NULL,
+  key             TEXT NOT NULL,
+  app_id          INTEGER,
+  type            TEXT NOT NULL,
+  payload         JSONB NOT NULL DEFAULT '{}'::jsonb,
+  source          JSONB NOT NULL,
+  actor           TEXT,
+  request_key     TEXT NOT NULL,
+  caused_by       BIGINT REFERENCES wf_events(id) ON DELETE SET NULL,
+  status          TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending', 'processed', 'held')),
+  attempts        INTEGER NOT NULL DEFAULT 0,
+  retry_at        TIMESTAMPTZ,
+  result          TEXT CHECK (result IN ('accepted', 'rejected', 'replayed', 'faulted')),
+  reason          TEXT,
+  error           JSONB,
+  machine_version INTEGER,
+  state_before    TEXT,
+  state_after     TEXT,
+  version_after   BIGINT,
+  emitted         JSONB,
+  reply           JSONB,           -- the machine's answer to the producer (kernel reply hook)
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  processed_at    TIMESTAMPTZ,
+  CONSTRAINT wf_events_processed_shape
+    CHECK ((status = 'processed') = (result IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS wf_events_pending_idx
+  ON wf_events (machine, key, id) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS wf_events_instance_idx ON wf_events (machine, key, id);
+CREATE INDEX IF NOT EXISTS wf_events_caused_by_idx
+  ON wf_events (caused_by) WHERE caused_by IS NOT NULL;
+CREATE INDEX IF NOT EXISTS wf_events_processed_at_idx
+  ON wf_events (processed_at) WHERE status = 'processed';
+COMMENT ON TABLE wf_events IS 'staging:private';
+
+-- The stored outcome of an accepted request. A later event with the same
+-- (machine, key, request_key) and the same payload hash replays it; a
+-- different hash is a request_key_conflict. Rejections write no receipt.
+CREATE TABLE IF NOT EXISTS wf_receipts (
+  machine      TEXT NOT NULL,
+  key          TEXT NOT NULL,
+  request_key  TEXT NOT NULL,
+  payload_hash TEXT NOT NULL,
+  outcome      JSONB NOT NULL,
+  event_id     BIGINT NOT NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (machine, key, request_key)
+);
+COMMENT ON TABLE wf_receipts IS 'staging:private';
+
+-- Durable I/O requested by a transition, executed by a service. A service
+-- claims a row (claim_id + lease), may checkpoint under the claim, and on
+-- finishing marks it `reported` and appends the result event; the pipeline
+-- marks it `settled` when it applies that event. (machine, key, kind,
+-- work_key) is unique, so re-emitting a work key creates nothing.
+CREATE TABLE IF NOT EXISTS wf_work (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  machine       TEXT NOT NULL,
+  key           TEXT NOT NULL,
+  kind          TEXT NOT NULL,
+  work_key      TEXT NOT NULL,
+  input         JSONB NOT NULL,
+  checkpoint    JSONB,
+  status        TEXT NOT NULL DEFAULT 'queued'
+                  CHECK (status IN ('queued', 'running', 'reported', 'settled')),
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  claim_id      UUID,
+  lease_until   TIMESTAMPTZ,
+  due_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_error    JSONB,
+  result        JSONB,
+  caused_by     BIGINT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  settled_at    TIMESTAMPTZ,
+  CONSTRAINT wf_work_identity UNIQUE (machine, key, kind, work_key),
+  CONSTRAINT wf_work_claim_shape
+    CHECK ((status = 'running') = (claim_id IS NOT NULL AND lease_until IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS wf_work_due_idx
+  ON wf_work (kind, due_at) WHERE status IN ('queued', 'running');
+CREATE INDEX IF NOT EXISTS wf_work_instance_idx ON wf_work (machine, key, created_at);
+CREATE INDEX IF NOT EXISTS wf_work_settled_idx
+  ON wf_work (settled_at) WHERE status = 'settled';
+COMMENT ON TABLE wf_work IS 'staging:private';
+
+-- One row per claim of a work item. id is the claim id.
+CREATE TABLE IF NOT EXISTS wf_work_attempts (
+  id           UUID PRIMARY KEY,
+  work_id      UUID NOT NULL REFERENCES wf_work(id) ON DELETE CASCADE,
+  service_id   TEXT NOT NULL,
+  number       INTEGER NOT NULL,
+  outcome      TEXT NOT NULL DEFAULT 'running'
+                 CHECK (outcome IN ('running', 'succeeded', 'failed', 'retry', 'exhausted', 'lost')),
+  error        JSONB,
+  started_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  finished_at  TIMESTAMPTZ,
+  UNIQUE (work_id, number)
+);
+COMMENT ON TABLE wf_work_attempts IS 'staging:private';
+
+-- Kernel settings, written at boot (src/workflow/platform.ts):
+-- 'ownership_mode' is 'raise' (the default when absent) or 'log'; in log
+-- mode a write to an owned legacy column without the writer marker is
+-- allowed and recorded in wf_ownership_violations instead of refused.
+-- 'enabled:<machine>' exists while that machine's flag is on.
+CREATE TABLE IF NOT EXISTS wf_settings (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE wf_settings IS 'staging:private';
+
+CREATE TABLE IF NOT EXISTS wf_ownership_violations (
+  id          BIGSERIAL PRIMARY KEY,
+  table_name  TEXT NOT NULL,
+  column_path TEXT NOT NULL,
+  row_ref     JSONB,
+  query       TEXT,
+  application TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS wf_ownership_violations_created_idx
+  ON wf_ownership_violations (created_at DESC);
+COMMENT ON TABLE wf_ownership_violations IS 'staging:private';
+
+-- Kernel tables: instances and receipts are written only with the marker;
+-- events may be appended by anyone, but only as plain pending events, and
+-- only the pipeline changes or deletes them.
+CREATE OR REPLACE FUNCTION wf_require_writer() RETURNS TRIGGER AS $$
+BEGIN
+  IF current_setting('app.wf_writer', true) IS DISTINCT FROM 'transition' THEN
+    -- Nested: plpgsql does not short-circuit, and only wf_events has these fields.
+    IF TG_TABLE_NAME = 'wf_events' AND TG_OP = 'INSERT' THEN
+      IF NEW.status = 'pending' AND NEW.result IS NULL AND NEW.attempts = 0 THEN
+        RETURN NEW;
+      END IF;
+    END IF;
+    RAISE EXCEPTION 'WF_OWNERSHIP_VIOLATION: % on % outside the transition pipeline',
+      TG_OP, TG_TABLE_NAME;
+  END IF;
+  IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS wf_instances_writer ON wf_instances;
+CREATE TRIGGER wf_instances_writer
+  BEFORE INSERT OR UPDATE OR DELETE ON wf_instances
+  FOR EACH ROW EXECUTE FUNCTION wf_require_writer();
+DROP TRIGGER IF EXISTS wf_receipts_writer ON wf_receipts;
+CREATE TRIGGER wf_receipts_writer
+  BEFORE INSERT OR UPDATE OR DELETE ON wf_receipts
+  FOR EACH ROW EXECUTE FUNCTION wf_require_writer();
+DROP TRIGGER IF EXISTS wf_events_writer ON wf_events;
+CREATE TRIGGER wf_events_writer
+  BEFORE INSERT OR UPDATE OR DELETE ON wf_events
+  FOR EACH ROW EXECUTE FUNCTION wf_require_writer();
+
+-- Legacy columns a machine owns (its projection). Attach per table with the
+-- owned paths as arguments, `column` or `column.jsonKey`, and a WHEN clause
+-- for the rows the machine owns, for example:
+--   CREATE TRIGGER issues_wf_owned BEFORE UPDATE ON issues FOR EACH ROW
+--     WHEN (OLD.kind IN ('rename', ...))
+--     EXECUTE FUNCTION wf_guard_owned_columns('status', 'payload.appliedAt');
+-- An UPDATE that changes an owned path without the writer marker raises,
+-- or in 'log' mode is recorded and allowed.
+--
+-- A first argument '@enrolled=<machine>/<key prefix>' limits the guard to
+-- rows whose instance exists (key = prefix || id), and only while the
+-- machine is switched on (wf_settings 'enabled:<machine>', written at boot
+-- from its flag). A machine rolled out behind a flag owns a row from the
+-- moment it enrolls it; the legacy writers keep the rows it has not, and
+-- every row again while the flag is off.
+--
+-- A first argument '@enabled=<machine>' guards every row the trigger's WHEN
+-- clause selects, but only while the machine is switched on: for a change
+-- only the machine may make, whether or not the row is enrolled yet (the
+-- move of a proposal into 'merged' is what enrolls it).
+CREATE OR REPLACE FUNCTION wf_guard_owned_columns() RETURNS TRIGGER AS $$
+DECLARE
+  owned TEXT;
+  col TEXT;
+  sub TEXT;
+  before JSONB;
+  after JSONB;
+  mode TEXT;
+  enrolled TEXT;
+BEGIN
+  IF current_setting('app.wf_writer', true) = 'transition' THEN
+    RETURN NEW;
+  END IF;
+  before := to_jsonb(OLD);
+  after := to_jsonb(NEW);
+  IF TG_ARGV[0] LIKE '@enabled=%' THEN
+    IF NOT EXISTS (SELECT 1 FROM wf_settings
+                    WHERE key = 'enabled:' || substr(TG_ARGV[0], length('@enabled=') + 1)) THEN
+      RETURN NEW;
+    END IF;
+  ELSIF TG_ARGV[0] LIKE '@enrolled=%' THEN
+    enrolled := substr(TG_ARGV[0], length('@enrolled=') + 1);
+    IF NOT EXISTS (SELECT 1 FROM wf_settings WHERE key = 'enabled:' || split_part(enrolled, '/', 1)) THEN
+      RETURN NEW;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM wf_instances
+                    WHERE machine = split_part(enrolled, '/', 1)
+                      AND key = split_part(enrolled, '/', 2) || (before ->> 'id')) THEN
+      RETURN NEW;
+    END IF;
+  END IF;
+  FOREACH owned IN ARRAY TG_ARGV LOOP
+    CONTINUE WHEN owned LIKE '@%';
+    col := split_part(owned, '.', 1);
+    sub := NULLIF(split_part(owned, '.', 2), '');
+    IF (sub IS NULL AND (after -> col) IS DISTINCT FROM (before -> col))
+       OR (sub IS NOT NULL AND (after -> col -> sub) IS DISTINCT FROM (before -> col -> sub)) THEN
+      SELECT value INTO mode FROM wf_settings WHERE key = 'ownership_mode';
+      IF COALESCE(mode, 'raise') = 'log' THEN
+        INSERT INTO wf_ownership_violations (table_name, column_path, row_ref, query, application)
+        VALUES (TG_TABLE_NAME, owned, jsonb_build_object('id', before -> 'id'),
+                left(current_query(), 2000), current_setting('application_name', true));
+      ELSE
+        RAISE EXCEPTION 'WF_OWNERSHIP_VIOLATION: %.% is owned by a workflow machine', TG_TABLE_NAME, owned;
+      END IF;
+    END IF;
+  END LOOP;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- governance-proposal (src/workflow/governance-proposal/) owns a governance
+-- row's status and audit keys once the row is enrolled. The kinds are
+-- services/governance-kinds.js's list (pinned by
+-- tests/workflow-governance-postgres.test.js); general request twins are
+-- never owned.
+DROP TRIGGER IF EXISTS issues_wf_governance_owned ON issues;
+CREATE TRIGGER issues_wf_governance_owned
+  BEFORE UPDATE ON issues
+  FOR EACH ROW
+  WHEN (OLD.kind IN ('secret_change', 'rename', 'close_issue', 'maintenance_campaign', 'featured_illustration'))
+  EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=governance-proposal/issue:', 'status',
+    'payload.appliedAt', 'payload.appliedBy', 'payload.withdrawnAt', 'payload.supersededAt');
+
+-- merge-followups (src/workflow/merge-followups/): what a merged pull
+-- request still has to do once GitHub has merged it (deliver it, tear down
+-- its preview, close its requests, include the changes it carried, tell
+-- people). One instance per merged proposal, created by the merge.
+--
+-- live_at: when production first ran a revision containing this change.
+-- NULL while it is merged but not live yet ("going live"), or when its
+-- deploy failed. The machine sets it; with its flag off the legacy merge
+-- paths set it with the status, since there merged has always meant live.
+-- The backfill gives rows merged before the column the same reading, and
+-- leaves alone any row the machine holds.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS live_at TIMESTAMPTZ;
+-- booted_shas: the platform's own row only. The builds platform processes
+-- booted with, newest first, at most ten: [{ "sha": ..., "at": ... }].
+-- Written by each process at startup (src/workflow/platform.ts), never by
+-- the migration Job: main_sha is seeded from the incoming release's GIT_SHA
+-- by the migration that runs BEFORE the rollout, so it can name a build that
+-- does not serve yet. A history, not the last boot: during a rollout an
+-- older Pod can boot after a newer one, and the newer build still ran. A
+-- merge recovery records late checks the builds booted since it merged
+-- (merge-followups), since live_at is when production first ran it.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS booted_shas JSONB NOT NULL DEFAULT '[]'::jsonb;
+UPDATE chat_sessions cs SET live_at = COALESCE(cs.merged_at, cs.created_at, NOW())
+ WHERE cs.status = 'merged' AND cs.live_at IS NULL
+   AND NOT EXISTS (SELECT 1 FROM wf_instances w
+                    WHERE w.machine = 'merge-followups' AND w.key = 'session:' || cs.id);
+
+-- A row merged by anything but the machine reads as [main] always read it:
+-- live. That covers rows INSERTED as merged (seeds, fixtures, history) and
+-- the legacy merge paths, which run while the machine's flag is off. Only
+-- the machine (the transition pipeline's writer marker) makes a merged row
+-- that is not live yet.
+CREATE OR REPLACE FUNCTION chat_sessions_inserted_merged_live() RETURNS TRIGGER AS $$
+BEGIN
+  IF current_setting('app.wf_writer', true) IS DISTINCT FROM 'transition' THEN
+    NEW.live_at := COALESCE(NEW.merged_at, NOW());
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS chat_sessions_inserted_merged_live ON chat_sessions;
+CREATE TRIGGER chat_sessions_inserted_merged_live
+  BEFORE INSERT ON chat_sessions
+  FOR EACH ROW
+  WHEN (NEW.status = 'merged' AND NEW.live_at IS NULL)
+  EXECUTE FUNCTION chat_sessions_inserted_merged_live();
+DROP TRIGGER IF EXISTS chat_sessions_merged_live ON chat_sessions;
+CREATE TRIGGER chat_sessions_merged_live
+  BEFORE UPDATE ON chat_sessions
+  FOR EACH ROW
+  WHEN (NEW.status = 'merged' AND OLD.status IS DISTINCT FROM 'merged' AND NEW.live_at IS NULL)
+  EXECUTE FUNCTION chat_sessions_inserted_merged_live();
+
+-- While the machine is on, only it moves a proposal into 'merged' (the
+-- merge appends an event; recovery appends the same one), and once it holds
+-- a row it owns the merge's columns.
+DROP TRIGGER IF EXISTS chat_sessions_wf_merged ON chat_sessions;
+CREATE TRIGGER chat_sessions_wf_merged
+  BEFORE UPDATE ON chat_sessions
+  FOR EACH ROW
+  WHEN (OLD.status IS DISTINCT FROM 'merged' AND NEW.status = 'merged')
+  EXECUTE FUNCTION wf_guard_owned_columns('@enabled=merge-followups', 'status');
+DROP TRIGGER IF EXISTS chat_sessions_wf_merge_owned ON chat_sessions;
+CREATE TRIGGER chat_sessions_wf_merge_owned
+  BEFORE UPDATE ON chat_sessions
+  FOR EACH ROW
+  WHEN (OLD.merged_at IS DISTINCT FROM NEW.merged_at
+        OR OLD.merge_commit_sha IS DISTINCT FROM NEW.merge_commit_sha
+        OR OLD.included_in_session_id IS DISTINCT FROM NEW.included_in_session_id
+        OR OLD.live_at IS DISTINCT FROM NEW.live_at)
+  EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=merge-followups/session:',
+    'merged_at', 'merge_commit_sha', 'included_in_session_id', 'live_at');

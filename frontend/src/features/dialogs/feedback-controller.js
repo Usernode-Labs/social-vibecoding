@@ -232,9 +232,9 @@ export function init() {
     document.getElementById('feedback-sent-mine')?.addEventListener('click', openMine);
     document.getElementById('feedback-first-mine')?.addEventListener('click', openMine);
     document.getElementById('feedback-sent-done')?.addEventListener('click', closeFeedback);
-    // "Posted to Run Club" / "Posted to Homeroom" is the heading; the notice
-    // under it carries only what else happened (a bounty, the app's state),
-    // and says nothing when nothing did.
+    // "Thanks! Posted to Run Club" / "Thanks! Posted to Homeroom" is the
+    // heading; the notice under it carries only what else happened (a
+    // bounty, the app's state), and says nothing when nothing did.
     const sentTitle = document.getElementById('feedback-sent-title');
     // B8: the bot's version of it. `bot` is the post's `homeroomBot`
     // ({ botWillBuild, typicalMinutes, canFix, appSlug, issueNumber }).
@@ -242,16 +242,33 @@ export function init() {
     const sentChat = document.getElementById('feedback-sent-chat');
     const sentFix = document.getElementById('feedback-sent-fix');
     const sentMine = document.getElementById('feedback-sent-mine');
-    const SENT_LINE = 'Find it on your profile, under Your requests.';
+    // #3971: a first request the bot builds; see showSent's `firstApp`.
+    const sentFirst = document.getElementById('feedback-sent-first');
+    const sentFirstLine = document.getElementById('feedback-sent-first-line');
+    // #3971: "Thanks!" went with #3400 and B8 made the bot's answer "Got it",
+    // which read as bland next to what it replaced. Both say what happens
+    // next now; the bot's line promises what its chat does ("I'll message
+    // you here when it's ready to try").
+    const SENT_LINE = 'Your idea is on the board now. Find it on your profile, under Your requests.';
+    const BOT_TITLE = 'Your idea is underway!';
+    // `minutes` is the bot's typical build time (8 until it has five builds
+    // to take a median of); 8 here too when the post did not say.
+    const botLine = (minutes) => `Homeroom bot is building it now, usually about ${minutes} minutes. You'll get a message when it's ready to try.`;
     let sentBot = null;
-    const showSent = (title, notice = '', bot = null) => {
+    // `firstApp`: the app's name when this is the person's first request ever
+    // and the bot builds it. The first-request moment used to be skipped for
+    // the bot (B8), so the bot's confirmation carries it instead.
+    const showSent = (title, notice = '', bot = null, firstApp = '') => {
       const building = !!bot?.botWillBuild;
       sentBot = building ? bot : null;
-      if (sentTitle) sentTitle.textContent = building ? 'Got it' : title;
+      if (sentTitle) sentTitle.textContent = building ? BOT_TITLE : title;
       if (sentLine) {
         const minutes = Number(bot?.typicalMinutes) > 0 ? Number(bot.typicalMinutes) : 8;
-        sentLine.textContent = building ? `Homeroom bot is on it, usually about ${minutes} minutes.` : SENT_LINE;
+        sentLine.textContent = building ? botLine(minutes) : SENT_LINE;
       }
+      const first = building && !!firstApp;
+      if (sentFirstLine && first) sentFirstLine.textContent = `You just helped shape ${firstApp}.`;
+      sentFirst?.classList.toggle('hidden', !first);
       sentChat?.classList.toggle('hidden', !building);
       sentMine?.classList.toggle('hidden', building);
       sentFix?.classList.toggle('hidden', !(building && bot.canFix));
@@ -560,6 +577,12 @@ export function init() {
     const TITLE_GEN_DEBOUNCE_MS = 900;
     const TITLE_GEN_MIN_DESC = 12;
     const TITLE_GEN_MAX_PER_OPEN = 8;
+    // #4194: the description may run to 64,000 characters now; the title is
+    // named from its start, and the preview route refuses more than this
+    // (TITLE_SOURCE_MAX in lib/issue-body-limit.ts and routes/feedback.js,
+    // kept equal by tests/issue-body-limit.test.js). A literal, not an
+    // import: the controller's tests run it with its imports stripped.
+    const TITLE_GEN_SOURCE_MAX = 2000;
     const titleIdlePlaceholder = feedbackTitle.placeholder;
     let titleDirty = false;
     let lastGeneratedFor = '';
@@ -592,7 +615,7 @@ export function init() {
         const res = await fetch('/api/feedback/title', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ description: desc }),
+          body: JSON.stringify({ description: desc.slice(0, TITLE_GEN_SOURCE_MAX) }),
         });
         const data = res.ok ? await res.json() : {};
         // Stale (a newer request or a reset happened) or the user took
@@ -654,6 +677,47 @@ export function init() {
     // this module's, like every other node inside the card.
     const screenshotPreview = document.getElementById('feedback-screenshot-preview');
     const screenshotCount = document.getElementById('feedback-screenshot-count');
+    // #4127: Photos and the video picker are the two rows of a popover under
+    // one paperclip button (feedback.tsx), so the row stays on one line. The
+    // rows keep their own handlers below; this block only opens and closes
+    // the popover and keeps the paperclip in step with the rows: shown while
+    // either row is, inert while both are.
+    const attachBtn = document.getElementById('feedback-attach-btn');
+    const attachMenu = document.getElementById('feedback-attach-menu');
+    const attachRows = [screenshotPickerBtn, document.getElementById('feedback-video-btn')];
+    const attachMenuOpen = () => !!attachMenu && !attachMenu.classList.contains('hidden');
+    const setAttachMenuOpen = (open) => {
+      if (!attachMenu || !attachBtn) return;
+      attachMenu.classList.toggle('hidden', !open);
+      attachBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    };
+    const paintAttachButton = () => {
+      if (!attachBtn) return;
+      const shown = attachRows.filter((row) => row && !row.classList.contains('hidden'));
+      attachBtn.classList.toggle('hidden', shown.length === 0);
+      attachBtn.disabled = shown.length === 0 || shown.every((row) => row.disabled);
+      if (attachBtn.disabled || attachBtn.classList.contains('hidden')) setAttachMenuOpen(false);
+    };
+    if (attachBtn && attachMenu) {
+      attachBtn.addEventListener('click', (e) => {
+        if (e && e.stopPropagation) e.stopPropagation();
+        if (attachBtn.disabled) return;
+        setAttachMenuOpen(!attachMenuOpen());
+        if (attachMenuOpen()) {
+          const first = attachRows.find((row) => row && !row.classList.contains('hidden') && !row.disabled);
+          if (first) first.focus({ preventScroll: true });
+        }
+      });
+      // Any click outside the paperclip and its popover closes it. Capture
+      // phase, so a click something else stops still counts. (Escape is the
+      // kit modal's: it closes the dialog, and _reset closes this with it.)
+      document.addEventListener('click', (e) => {
+        if (!attachMenuOpen()) return;
+        const t = e && e.target;
+        if (t && (attachBtn.contains(t) || attachMenu.contains(t))) return;
+        setAttachMenuOpen(false);
+      }, true);
+    }
     const screenshotTools = window.ScreenshotSelect;
     const displayCaptureSupported = !!screenshotTools && screenshotTools.isSupported();
     let nativeCaptureSupported = false;
@@ -843,6 +907,7 @@ export function init() {
         : (count ? 'Attach another' : 'Attach screenshot');
       screenshotBtn.classList.toggle('hidden', full || !canCapture);
       screenshotPickerBtn.classList.toggle('hidden', full);
+      paintAttachButton();
       // #3027: say how many fit, so the second picture is not a guess.
       if (screenshotCount) {
         screenshotCount.textContent = count === 0
@@ -865,6 +930,7 @@ export function init() {
     const setScreenshotActionsDisabled = (disabled) => {
       screenshotBtn.disabled = disabled;
       screenshotPickerBtn.disabled = disabled;
+      paintAttachButton();
     };
 
     // Forget one attachment client-side. An already uploaded (now orphaned)
@@ -1135,6 +1201,8 @@ export function init() {
     });
 
     screenshotPickerBtn.addEventListener('click', () => {
+      // #4127: a choice closes the paperclip's popover.
+      setAttachMenuOpen(false);
       if (screenshotPickerBtn.disabled || screenshots.length >= MAX_SCREENSHOTS) return;
       // An image instead of the share the browser has not answered: that
       // attempt is over (see pendingCapture).
@@ -1221,13 +1289,16 @@ export function init() {
 
     const paintVideoActions = () => {
       videoBtn.classList.remove('hidden');
-      videoLabel.textContent = video ? 'Replace video' : 'Add video';
+      // #4127: a row in the paperclip's popover, beside "Photo".
+      videoLabel.textContent = video ? 'Replace video' : 'Video';
+      paintAttachButton();
       videoPreview.classList.toggle('hidden', !video);
       videoPreview.classList.toggle('flex', !!video);
     };
 
     const setVideoActionsDisabled = (disabled) => {
       videoBtn.disabled = disabled;
+      paintAttachButton();
     };
 
     const discardVideo = (entry) => {
@@ -1406,6 +1477,7 @@ export function init() {
     };
 
     videoBtn.addEventListener('click', () => {
+      setAttachMenuOpen(false);
       if (videoBtn.disabled) return;
       // Same page-death insurance as the Photos picker above: the file
       // picker is a native surface and the tab can be evicted behind it.
@@ -1951,17 +2023,21 @@ export function init() {
             AppView.refreshDevData('issue');
           }
           // B8: Homeroom bot is on it: its confirmation, first request or not.
+          // #3971: a first request says so inside it, naming the app.
           if (data.homeroomBot?.botWillBuild) {
-            showSent(postedTo, `${bountyNotice}${stateNotice}`.trim(), data.homeroomBot);
+            const first = !!data.firstFeedback && Number(data.firstFeedback.userId) === Number(App.user?.id);
+            showSent(postedTo, `${bountyNotice}${stateNotice}`.trim(), data.homeroomBot,
+              first ? (AppView?.appData?.name || 'this app') : '');
             return;
           }
           // B8: the bot is theirs but does not build here: it went to the group.
           const toGroup = data.homeroomBot && target === 'app'
-            ? `Sent to ${AppView?.appData?.name || 'this app'}'s group as a request` : postedTo;
+            ? `Sent to ${AppView?.appData?.name || 'this app'}'s group` : postedTo;
           // #3186: the confirmation stays, with "See your requests" in it,
-          // instead of closing itself (see showSent above).
+          // instead of closing itself (see showSent above). #3971: "Thanks!"
+          // leads it again, as it did before #3400.
           if (!showFirstFeedback(data.firstFeedback, feedbackStatus.textContent)) {
-            showSent(toGroup, `${bountyNotice}${stateNotice}`.trim());
+            showSent(`Thanks! ${toGroup}`, `${bountyNotice}${stateNotice}`.trim());
           }
           return;
         }
@@ -2021,8 +2097,10 @@ export function init() {
       const screenshotSession = ++screenshotProbeSequence;
       nativeCaptureSupported = false;
       resetScreenshotState();
-      // #3940: and clip-less, with the button repainted to "Add video".
+      // #3940: and clip-less, with the row repainted to "Video".
       resetVideoState();
+      // #4127: every open starts with the paperclip's popover shut.
+      setAttachMenuOpen(false);
       void probeNativeCaptureSupport(screenshotSession, true);
 
       // "This app" is only selectable when an app with a real repo is
@@ -2181,6 +2259,7 @@ export function init() {
     // line belongs to useStaticModal.
     Feedback._reset = () => {
       presentation += 1;
+      setAttachMenuOpen(false);
       clearTimeout(closeTimer);
       firstFeedback = null;
       firstSuccess?.classList.add('hidden');
@@ -2324,7 +2403,7 @@ export function init() {
   App._simulateFeedbackSent = () => {
     setComposerLocked(true);
     disableSubmit();
-    showSent('Posted to Homeroom');
+    showSent('Thanks! Posted to Homeroom');
   };
 
   // B8: ?shot=feedback-bot, what a request Homeroom bot builds is answered

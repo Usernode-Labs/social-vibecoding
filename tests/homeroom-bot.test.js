@@ -55,6 +55,24 @@ test('parseVerdict: "none" clears missing_fact, ready keeps its note, person kee
   assert.equal(person.reason, 'Changes the login flow.');
 });
 
+test('#4239: parseVerdict reads `platform` on a person verdict only', () => {
+  const about = bot.parseVerdict('{"verdict":"person","determined":true,"platform":true,"reason":"The header is Homeroom\'s, not the app\'s."}');
+  assert.equal(about.platform, true);
+  assert.equal(bot.parseVerdict('{"verdict":"person","reason":"A design call."}').platform, false, 'absent is false');
+  assert.equal(bot.parseVerdict('{"verdict":"person","platform":"yes","reason":"x"}').platform, false, 'only a real true');
+  assert.equal(bot.parseVerdict('{"verdict":"ready","platform":true,"build_note":"Edit app.js."}').platform, false,
+    'never on a verdict that builds');
+  const prompt = fs.readFileSync(path.join(__dirname, '..', 'src/prompts/homeroom-bot-triage.md'), 'utf8');
+  assert.match(prompt, /- `platform`: true ONLY with the verdict `person`, when the request is about the Homeroom platform itself rather than this app/);
+  assert.match(prompt, /"platform": true \(verdict person, only when the request is about the Homeroom platform itself, not this app\),/);
+  assert.equal(bot.PLATFORM_SELF_APP_SLUG, 'usernode-2d5619');
+  // Stored on the run, and carried to the requester's DM, which offers the move.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot.js'), 'utf8');
+  assert.match(src, /plan: parsed\.plan, aboutPlatform: !!parsed\.platform,/);
+  assert.match(src, /if \(parsed\.platform && \(await platformAppSlugs\(pool\)\)\.includes\(app\.slug\)\) parsed = \{ \.\.\.parsed, platform: false \};/);
+  assert.match(src, /\{ dm: \{ reason: parsed\.reason, \.\.\.\(parsed\.platform \? \{ platform: true \} : \{\}\) \} \}/);
+});
+
 test('parseVerdict finds the last verdict object whatever surrounds it', () => {
   // The notes quote code in a fence of their own and the block's closing
   // fence never comes: the old reader took the code fence as the only
@@ -730,6 +748,20 @@ test('relaySpend: no finished request means no figure at all', () => {
     bot.relaySpend({ requests: 1, inputTokens: 1_000_000, outputTokens: 0 }, PRICING, { estimateRequestedModelCost: realEstimator }),
     { requests: 1, inputTokens: 1_000_000, outputTokens: 0, costUsd: 0.075 },
   );
+});
+
+test('relaySpend: the relay\'s cache reads and writes are priced as the ledger prices them', () => {
+  const cachePriced = {
+    ...PRICING, cacheReadPricePerMillion: 0.0075, cacheWritePricePerMillion: 0.09375,
+  };
+  const usage = { requests: 3, inputTokens: 1_000_000, cachedInputTokens: 900_000, cacheWriteInputTokens: 50_000, outputTokens: 0 };
+  const spend = bot.relaySpend(usage, cachePriced, { estimateRequestedModelCost: realEstimator });
+  assert.equal(spend.costUsd, realEstimator(usage, cachePriced).estimatedCostUsd);
+  // 50K uncached at $0.075/M + 900K reads at $0.0075/M + 50K writes at $0.09375/M.
+  assert.equal(spend.costUsd, 0.0151875);
+  assert.equal(spend.inputTokens, 1_000_000, 'the tokens it reports are unchanged');
+  // Without cache prices, the old prompt-rate figure.
+  assert.equal(bot.relaySpend(usage, PRICING, { estimateRequestedModelCost: realEstimator }).costUsd, 0.075);
 });
 
 test('the stopped-run detail says its cost is a floor', () => {

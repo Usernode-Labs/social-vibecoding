@@ -836,6 +836,29 @@ test('native screenshot capture is a top-frame privileged action', async () => {
   );
 });
 
+test('saving a chat picture is a top-frame privileged action that takes image data only (#4055)', async () => {
+  const loaded = loadBridge({
+    capabilities: ['privilegedBridgeCapability', 'saveImage'],
+    responseMethods: { saveImage: true },
+  });
+
+  await assert.rejects(
+    loaded.sandbox.usernode.saveImage({ base64: 'AAAA', contentType: 'text/html', filename: 'x.html' }),
+    /image data/,
+  );
+  const saved = await loaded.sandbox.usernode.saveImage({ base64: 'iVBORw==', contentType: 'image/png', filename: 'shot.png' });
+  assert.equal(saved, true);
+  const post = loaded.nativePosts.find((p) => p.method === 'saveImage');
+  assert.deepEqual(post.args, { base64: 'iVBORw==', contentType: 'image/png', filename: 'shot.png' });
+  assert.equal(post.privilegedCapability, 'navigation-capability');
+  const root = path.join(__dirname, '..');
+  assert.equal(
+    fs.readFileSync(path.join(root, 'public/usernode-bridge.js'), 'utf8'),
+    fs.readFileSync(path.join(root, 'public/usernode-bridge/v1/bridge.js'), 'utf8'),
+    'both copies say the same',
+  );
+});
+
 test('native navigation requires a privileged envelope and a boolean', async () => {
   const loaded = loadBridge({
     capabilities: ['privilegedBridgeCapability', 'setBackNavigationEnabled'],

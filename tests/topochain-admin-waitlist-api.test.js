@@ -729,3 +729,33 @@ test('the invite-tree switch is gone: the admin router has no route for it', () 
   const route = require('node:fs').readFileSync(require.resolve('../src/routes/topochain/admin/waitlist.js'), 'utf8');
   assert.doesNotMatch(route, /\/api\/v4\/admin\/invite-tree/);
 });
+
+// #4223: a phone row has no email. The list shows it by its account, says
+// it joined by phone with at most the number's last four digits, and marks
+// it held until Homeroom can send texts (#4096).
+test('a phone row is listed by account, with its last four digits, and held for SMS', async () => {
+  signupRows.push({
+    id: 9,
+    email: null,
+    submitted_at: T(-1),
+    released_at: null,
+    confirmed_at: T(-1),
+    linked_user_id: 11,
+    invited_by: null,
+    answers: null,
+    phone_last4: '4242',
+  });
+  const res = await get('/api/v4/admin/waitlist?status=pending');
+  assert.equal(res.status, 200);
+  const phone = res.body.data.find((r) => r.id === 9);
+  assert.equal(phone.email, null);
+  assert.equal(phone.phone_only, true);
+  assert.equal(phone.phone_last4, '4242');
+  assert.equal(phone.needs_sms, true);
+  assert.ok(phone.linked_username, 'named by its account');
+  const email = res.body.data.find((r) => r.id === 1);
+  assert.deepEqual([email.phone_only, email.phone_last4, email.needs_sms], [false, null, false]);
+  const list = seenSql.find((s) => s.startsWith('SELECT w.id, w.email') && s.includes('LIMIT $1'));
+  assert.match(list, /CASE WHEN w\.email IS NULL THEN RIGHT\(ph\.phone_e164, 4\) END AS phone_last4/,
+    'never more of the number than its last four digits, and only for a phone row');
+});

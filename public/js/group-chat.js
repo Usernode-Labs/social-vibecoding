@@ -23,6 +23,17 @@ const GroupChat = {
   oldestMessageId: null,
   hasMore: true,
   _historyLoad: null,
+  // The general stream's catch-up state (#4177): `_latestLoad` is the
+  // catch-up in flight; `_streamLoaded` says its first page has loaded, even
+  // an empty one; the rest are `_general`'s, explained in "One rule for every
+  // read of a chat stream" below.
+  _latestLoad: null,
+  _latestAgain: false,
+  _streamLoaded: false,
+  _streamStale: false,
+  _syncedMax: -Infinity,
+  // One array per read in flight: the socket events that arrived meanwhile.
+  _liveWindows: new Set(),
   // Scroll-position memory. `_lockedToBottom` drives "should new incoming
   // messages auto-scroll?". `_savedScrollTop` is the last observed scroll
   // offset so we can restore it when the tab is re-mounted (group-chat DOM
@@ -175,7 +186,7 @@ const GroupChat = {
   // (#gc-messages) plus at most one mounted thread (#gc-thread-messages,
   // inside an Issues/Proposals accordion). Per-thread history caches
   // live in `threads`, keyed by `${type}:${ref}`.
-  threads: new Map(),       // key -> { messages, oldestId, hasMore, loaded, loading, failed }
+  threads: new Map(),       // key -> see `_threadState`
   // #2992: the general stream's first history request failed, so the
   // transcript offers "Try again" instead of an empty (or quiet) channel.
   _historyFailed: false,
@@ -189,7 +200,12 @@ const GroupChat = {
   _threadState(type, ref) {
     const key = GroupChat.threadKey(type, ref);
     if (!GroupChat.threads.has(key)) {
-      GroupChat.threads.set(key, { messages: [], oldestId: null, hasMore: true, loaded: false, loading: false, failed: false });
+      // `stale`, `again`, `syncedMax`, `read`: the catch-up state, see "One
+      // rule for every read of a chat stream" (#4177).
+      GroupChat.threads.set(key, {
+        messages: [], oldestId: null, hasMore: true, loaded: false, loading: false, failed: false,
+        stale: false, again: false, syncedMax: -Infinity, read: null,
+      });
     }
     return GroupChat.threads.get(key);
   },
@@ -256,6 +272,9 @@ const GroupChat = {
     const liveWs = GroupChat.ws && GroupChat.ws.readyState <= 1; // CONNECTING(0) or OPEN(1)
     if (GroupChat.appSlug === appSlug && liveWs) {
       GroupChat.render();
+      // #4177: a catch-up still owed (the last one failed) runs on the way in;
+      // one on the wire already will settle it.
+      if (GroupChat._streamStale && !GroupChat._latestLoad) void GroupChat._refreshLatest(null);
       GroupChat.attachScrollHandlers();
       GroupChat.restoreScroll();
       GroupChat._applyPendingReveal();
@@ -281,6 +300,7 @@ const GroupChat = {
     GroupChat.activeThread = null;
     GroupChat.oldestMessageId = null;
     GroupChat.hasMore = true;
+    GroupChat._resetStreamCatchUp();
     GroupChat._historyFailed = false;
     GroupChat._lockedToBottom = true;
     GroupChat._savedScrollTop = null;
@@ -301,6 +321,9 @@ const GroupChat = {
 
     GroupChat._openSocket();
     GroupChat.attachScrollHandlers();
+    // #4177: the re-reads this socket cannot see for itself (the events
+    // socket reconnecting, the tab coming back, the worker's corrections).
+    GroupChat._watchLiveReads();
     // The Homeroom bot started or finished work for the viewer: their cards
     // under its requests may have moved (botWorkChanged). Listened for once.
     if (!GroupChat._botWorkListener && typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
@@ -333,12 +356,14 @@ const GroupChat = {
 
     ws.onopen = () => {
       // Successful handshake → backoff resets, queued messages
-      // flush in order, history loads (refreshes the cache in case
-      // we missed broadcasts while disconnected).
+      // flush in order, and what is held catches up with what was sent
+      // while disconnected. It used to call loadHistory(), which on a
+      // stream that already had a page asks for the OLDER one before it
+      // (#4177): the messages missed during the drop never arrived.
       GroupChat._reconnectAttempts = 0;
       GroupChat._flushPendingOutgoing();
       GroupChat._renderStatusLine();
-      GroupChat.loadHistory();
+      GroupChat.resyncLoaded();
     };
 
     ws.onmessage = (event) => {
@@ -407,6 +432,7 @@ const GroupChat = {
 
   disconnect() {
     GroupChat._historyLoad = null;
+    GroupChat._resetStreamCatchUp();
     if (GroupChat._botCardsTimer) {
       clearTimeout(GroupChat._botCardsTimer);
       GroupChat._botCardsTimer = null;
@@ -437,21 +463,12 @@ const GroupChat = {
     GroupChat._pendingOutgoing.length = 0;
   },
 
-  // History can overlap messages already delivered over the socket. Keep the
-  // server's chronological positions, but prefer the live cached version.
-  _mergeHistory(messages, current) {
-    const byId = new Map();
-    for (const message of [...messages, ...current]) {
-      byId.set(String(message.id), message);
-    }
-    return [...byId.values()];
-  },
-
   // A block changes which persisted posts this viewer may see. Drop every
   // cached page (including topic discussions) before reloading from the
   // filtered API; an in-flight fetch may no longer publish its old result.
   refreshAfterBlock() {
     GroupChat._historyLoad = null;
+    GroupChat._resetStreamCatchUp();
     GroupChat.messages = [];
     GroupChat.oldestMessageId = null;
     GroupChat.hasMore = true;
@@ -469,10 +486,17 @@ const GroupChat = {
   },
 
   async loadHistory() {
+    // #4177: an older page waits for a catch-up on the wire, which can start
+    // the stream over and move the cursor this page reads from (and for the
+    // one queued behind it, which starts as that one lands).
+    while (GroupChat._latestLoad) await GroupChat._latestLoad;
     if (!GroupChat.appSlug || GroupChat._historyLoad) return;
     const load = {};
     GroupChat._historyLoad = load;
     const isFirstLoad = !GroupChat.oldestMessageId;
+    // #4177: what the socket delivers or changes during the read stays on its
+    // answer; a first page also keeps what it delivered before (`_takeNewest`).
+    const events = GroupChat._openLiveLog(GroupChat.messages);
     let ok = false;
     try {
       const url = GroupChat.oldestMessageId
@@ -492,16 +516,17 @@ const GroupChat = {
       // Disconnect invalidates this request, even if we return to the same app.
       if (GroupChat._historyLoad !== load) return;
       ok = true;
+      GroupChat._streamLoaded = true;
       GroupChat._historyFailed = false;
       // Where reading stood, from the first page and before markRead below
       // moves it: the stream opens at the first message after it.
       if (isFirstLoad) GroupChat._takeUnreadMark(body && body.read);
 
-      if (messages.length < 50) GroupChat.hasMore = false;
-
-      if (messages.length > 0) {
-        GroupChat.messages = GroupChat._mergeHistory(messages, GroupChat.messages);
-        GroupChat.oldestMessageId = messages[0].id;
+      if (!isFirstLoad) GroupChat._takeOlder(GroupChat._general, null, messages, body, events);
+      else {
+        // A page from the worker's saved copy is caught up at once (`finally`).
+        if (GroupChat._fromSavedCopy(res)) GroupChat._owe(GroupChat._general, true);
+        GroupChat._takeNewest(GroupChat._general, null, messages, body, events, true);
       }
 
       // Flushed: both branches below measure the scroller, and the rows have
@@ -523,6 +548,7 @@ const GroupChat = {
         container.scrollTop = prevScrollTop + (newScrollHeight - prevScrollHeight);
       }
     } catch { /* surfaced below */ } finally {
+      GroupChat._closeLiveLog(events);
       if (GroupChat._historyLoad === load) {
         GroupChat._historyLoad = null;
         // #2992: a failed FIRST page left the channel blank (or claiming a
@@ -533,6 +559,8 @@ const GroupChat = {
           GroupChat._historyFailed = true;
           GroupChat.render();
         }
+        // #4177: a catch-up asked for while this page was on the wire.
+        if (GroupChat._latestAgain && GroupChat._streamLoaded) void GroupChat._refreshLatest(null);
       }
     }
   },
@@ -571,15 +599,23 @@ const GroupChat = {
           if (msg.thread.type === 'message' && !GroupChat.messages.some((m) => String(m.id) === String(msg.id))) {
             const shouldStick = GroupChat._lockedToBottom || GroupChat._isOwnMessage(msg);
             GroupChat.messages.push(msg);
+            if (GroupChat._streamLoaded && !GroupChat._streamStale) GroupChat._syncedMax = Math.max(GroupChat._syncedMax, Number(msg.id) || -Infinity);
             GroupChat.appendMessage(msg);
             if (shouldStick) GroupChat.scrollToBottom();
           }
           break;
         }
+        // A catch-up read (#4177) can bring in a message a moment before its
+        // own broadcast arrives.
+        if (GroupChat.messages.some((m) => String(m.id) === String(msg.id))) break;
         // #2389: your own message always brings you to the bottom, even when
         // you had scrolled up — you just sent it, so you expect to see it.
         const shouldStick = GroupChat._lockedToBottom || GroupChat._isOwnMessage(msg);
         GroupChat.messages.push(msg);
+        // #4177: a live message extends the gap-free span of a loaded stream,
+        // unless a gap is pending, in which case it is past the gap and proves
+        // nothing (before the first page there is no span to extend).
+        if (GroupChat._streamLoaded && !GroupChat._streamStale) GroupChat._syncedMax = Math.max(GroupChat._syncedMax, Number(msg.id) || -Infinity);
         GroupChat.appendMessage(msg);
         if (shouldStick) GroupChat.scrollToBottom();
         // #2387: a message landing on the open channel is read.
@@ -596,9 +632,13 @@ const GroupChat = {
         GroupChat._applyBotRequestStatus(msg);
         break;
       }
-      case 'moderation_changed': {
-        void GroupChat.loadHistory();
-        GroupChat.loadThreadHistoryForOpen();
+      case 'moderation_changed':
+      // #4177: the relay could not deliver an event to this room (it was too
+      // big for NOTIFY, or this server's listener was down). Both mean the
+      // same thing a moderation change does: re-read what is held. Both used
+      // to call loadHistory(), whose page on a loaded stream is the OLDER one.
+      case 'resync_hint': {
+        GroupChat.resyncLoaded();
         break;
       }
       case 'chat_edit': {
@@ -650,7 +690,11 @@ const GroupChat = {
   _handleThreadIncoming(msg) {
     const { type, ref } = msg.thread;
     const st = GroupChat._threadState(type, ref);
+    // Already in hand from a catch-up read (#4177).
+    if (st.messages.some((m) => String(m.id) === String(msg.id))) return;
     st.messages.push(msg);
+    // #4177: see the general stream's `_syncedMax`.
+    if (st.loaded && !st.stale) st.syncedMax = Math.max(st.syncedMax ?? -Infinity, Number(msg.id) || -Infinity);
     const a = GroupChat.activeThread;
     if (a && a.type === type && Number(a.ref) === Number(ref)) {
       const el = document.getElementById('gc-thread-messages');
@@ -991,7 +1035,18 @@ const GroupChat = {
         ? (([sessionId, prNumber]) => ({ sessionId, prNumber }))(GroupChat._voteRef(msg))
         : null,
       specShare: isSpecShare ? GroupChat._specShareView(meta.specShare, msg) : null,
+      // #4238: Homeroom bot's "I've made the first version" line in the
+      // channel carries its Open button (ws.sendFirstVersionMessage). Only
+      // that metadata, which a person's post cannot set.
+      openApp: GroupChat._openAppView(kind === 'message' && !deleted && !threadType ? meta : null),
     };
+  },
+
+  _openAppView(meta) {
+    if (!meta || meta.kind !== 'first_version' || !Array.isArray(meta.actions)) return null;
+    const open = meta.actions.find((a) => a && a.type === 'open' && typeof a.target === 'string'
+      && a.target.startsWith('#app/') && typeof a.label === 'string' && a.label);
+    return open ? { label: open.label, target: open.target } : null;
   },
 
   // The React bridge, or null before the bundle has evaluated. Reached by name
@@ -1241,9 +1296,11 @@ const GroupChat = {
     // Only fetch on first open — the per-thread cache stays current
     // while connected (incoming WS messages are stored even when the
     // thread isn't mounted), and loadThreadHistory with an oldestId set
-    // pages BACKWARD (that's the "Load earlier" button's job).
+    // pages BACKWARD (that's the "Load earlier" button's job). A cache a
+    // gap left behind (#4177, `resyncLoaded`) catches up instead.
     const st = GroupChat._threadState(type, ref);
     if (!st.loaded) GroupChat.loadThreadHistory(type, ref);
+    else if (st.stale && !st.read) void GroupChat._refreshLatest({ type, ref });
   },
 
   // Drop the active thread render target (its history cache survives in
@@ -1260,7 +1317,13 @@ const GroupChat = {
   async loadThreadHistory(type, ref) {
     const slug = GroupChat.appSlug;
     if (!slug) return;
-    const st = GroupChat._threadState(type, ref);
+    let st = GroupChat._threadState(type, ref);
+    // #4177: "Load earlier" waits for a catch-up on the wire (see loadHistory).
+    while (st.read) {
+      await st.read;
+      if (GroupChat.appSlug !== slug) return;
+      st = GroupChat._threadState(type, ref);
+    }
     // A topic repaint can mount this thread again before its first fetch
     // finishes. Only one initial/page request may own this cache at a time.
     if (st.loading) return;
@@ -1269,34 +1332,31 @@ const GroupChat = {
     // A retry goes back to "Loading…" while it is in flight.
     if (st.failed) {
       st.failed = false;
-      const a = GroupChat.activeThread;
-      if (a && a.type === type && Number(a.ref) === Number(ref)) GroupChat.renderThread();
+      if (GroupChat._isOpenThread(type, ref)) GroupChat.renderThread();
     }
-    const beforeParam = st.oldestId ? `&before=${st.oldestId}` : '';
+    const thread = { type, ref };
+    const isFirstPage = !st.oldestId;
+    // #4177: as in loadHistory, socket events during the read are replayed.
+    const events = GroupChat._openLiveLog(st.messages);
     try {
-      const res = await fetch(
-        `/api/apps/${slug}/messages?thread_type=${encodeURIComponent(type)}&thread_ref=${encodeURIComponent(ref)}`
-        + `&limit=50${beforeParam}${beforeParam ? '' : GroupChat._demoParam()}`
-      );
+      const res = await fetch(st.oldestId
+        ? `${GroupChat._threadQuery(slug, thread)}&limit=50&before=${st.oldestId}`
+        : GroupChat._firstPageUrl(slug, thread));
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       const messages = Array.isArray(data.messages) ? data.messages : [];
       ok = true;
       if (GroupChat.threads.get(GroupChat.threadKey(type, ref)) !== st) return;
-      // #2387: a reply thread's first message, which heads the thread.
-      if (type === 'message' && data.root) st.root = data.root;
-      if (messages.length < 50) st.hasMore = false;
-      if (messages.length > 0) {
-        st.messages = GroupChat._mergeHistory(messages, st.messages);
-        st.oldestId = messages[0].id;
+      if (!isFirstPage) GroupChat._takeOlder(st, thread, messages, data, events);
+      else {
+        if (GroupChat._fromSavedCopy(res)) GroupChat._owe(st, true);
+        GroupChat._takeNewest(st, thread, messages, data, events, true);
       }
       st.loaded = true;
       st.failed = false;
-      const a = GroupChat.activeThread;
-      if (a && a.type === type && Number(a.ref) === Number(ref)) {
-        GroupChat.renderThread({ flush: true });
-      }
+      if (GroupChat._isOpenThread(type, ref)) GroupChat.renderThread({ flush: true });
     } catch { /* surfaced below */ } finally {
+      GroupChat._closeLiveLog(events);
       st.loading = false;
       // #2992: a failed FIRST page used to leave the thread on "Loading…"
       // forever — nothing re-rendered it. Record the failure and repaint so
@@ -1304,10 +1364,381 @@ const GroupChat = {
       // earlier page keeps the "Load earlier" control, which is its retry.
       if (!ok && !st.loaded && GroupChat.threads.get(GroupChat.threadKey(type, ref)) === st) {
         st.failed = true;
-        const a = GroupChat.activeThread;
-        if (a && a.type === type && Number(a.ref) === Number(ref)) GroupChat.renderThread();
+        if (GroupChat._isOpenThread(type, ref)) GroupChat.renderThread();
+      }
+      // #4177: a catch-up asked for while this page was on the wire.
+      if (st.loaded && st.again && GroupChat._isOpenThread(type, ref)) void GroupChat._refreshLatest(thread);
+    }
+  },
+
+  // ── One rule for every read of a chat stream (#4177) ────────────────
+  //
+  // A stream (the general one, or a thread) loads a page and then stays
+  // current from the socket. Every read (first page, "Load earlier", catch-up)
+  // follows the same rule: the socket events that arrive while it is on the
+  // wire are recorded (`_openLiveLog`) and replayed onto its answer
+  // (`_replayLive`), so each changes exactly the fields it changed live.
+  //
+  // A catch-up (`_refreshLatest`) re-reads the newest page after a gap: the
+  // socket was down, the relay could not deliver (`resync_hint`), the worker
+  // answered from an older saved copy, the tab was away. The newest page is
+  // the truth from its first id on (`_reconcileLatest`). Each stream keeps:
+  //   syncedMax  the newest id it holds with no gap before it; a live message
+  //              moves it only while no gap is pending;
+  //   stale      a catch-up is owed, until one succeeds;
+  //   again      one was asked for while a read was on the wire: it runs when
+  //              that read lands (only this re-runs at once, so a failing read
+  //              cannot loop);
+  //   read       the catch-up in flight, which "Load earlier" waits for.
+  // The general stream's fields live on GroupChat itself; `_general` gives them
+  // a thread state's names so one path serves both (`_streamOf`).
+
+  _general: {
+    get messages() { return GroupChat.messages; },
+    set messages(v) { GroupChat.messages = v; },
+    get oldestId() { return GroupChat.oldestMessageId; },
+    set oldestId(v) { GroupChat.oldestMessageId = v; },
+    get hasMore() { return GroupChat.hasMore; },
+    set hasMore(v) { GroupChat.hasMore = v; },
+    get syncedMax() { return GroupChat._syncedMax; },
+    set syncedMax(v) { GroupChat._syncedMax = v; },
+    get stale() { return GroupChat._streamStale; },
+    set stale(v) { GroupChat._streamStale = v; },
+    get again() { return GroupChat._latestAgain; },
+    set again(v) { GroupChat._latestAgain = v; },
+    get loaded() { return GroupChat._streamLoaded; },
+    get loading() { return !!(GroupChat._historyLoad || GroupChat._latestLoad); },
+    get read() { return GroupChat._latestLoad; },
+    root: null,
+  },
+
+  _streamOf(thread) {
+    return thread ? GroupChat._threadState(thread.type, thread.ref) : GroupChat._general;
+  },
+
+  _resetStreamCatchUp() {
+    GroupChat._latestLoad = null;
+    GroupChat._latestAgain = false;
+    GroupChat._streamLoaded = false;
+    GroupChat._streamStale = false;
+    GroupChat._syncedMax = -Infinity;
+  },
+
+  _isOpenThread(type, ref) {
+    const a = GroupChat.activeThread;
+    return !!a && a.type === type && String(a.ref) === String(ref);
+  },
+
+  // The address of a stream's newest page. Byte-identical to every first-page
+  // read, because the service worker keys its cache, and its corrections, by
+  // URL.
+  _threadQuery(slug, thread) {
+    return `/api/apps/${slug}/messages?thread_type=${encodeURIComponent(thread.type)}`
+      + `&thread_ref=${encodeURIComponent(thread.ref)}`;
+  },
+  _firstPageUrl(slug, thread) {
+    return thread
+      ? `${GroupChat._threadQuery(slug, thread)}&limit=50${GroupChat._demoParam()}`
+      : `/api/apps/${slug}/messages?limit=50${GroupChat._demoParam()}`;
+  },
+
+  // A catch-up waits for the network (the worker's `no-cache` rule, sw.js),
+  // but not forever: a half-dead link would otherwise hold it, and "Load
+  // earlier" and every later ask would wait behind it. A browser without
+  // `AbortSignal.timeout` (Safari before 16) gets the same from a timer.
+  _freshInit() {
+    const init = { cache: 'no-cache' };
+    const ms = GroupChat.CATCH_UP_TIMEOUT_MS;
+    try {
+      if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+        init.signal = AbortSignal.timeout(ms);
+      } else if (typeof AbortController === 'function') {
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(), ms);
+        init.signal = controller.signal;
+      }
+    } catch { /* no timeout: the browser's own applies */ }
+    return init;
+  },
+  CATCH_UP_TIMEOUT_MS: 30_000,
+
+  // The service worker stamps its saved copies (CACHED_AT_HEADER in sw.js).
+  _fromSavedCopy(res) {
+    try {
+      return !!(res && res.headers && typeof res.headers.get === 'function' && res.headers.get('sw-cached-at'));
+    } catch {
+      return false;
+    }
+  },
+
+  // ── What changes while a read is on the wire ──
+  //
+  // A read's answer is older than anything the socket delivers meanwhile. It
+  // notes what the stream holds when it starts (`log.held`); when it lands,
+  // whatever the stream holds that it did not hold then arrived during the
+  // read, and keeps its live copy. Edits, deletes, reactions and thread
+  // summaries are recorded as events and replayed onto the answer, so each
+  // changes exactly the fields it changed live.
+  _openLiveLog(messages) {
+    const log = [];
+    log.held = new Set(messages.map((m) => String(m.id)));
+    GroupChat._liveWindows.add(log);
+    return log;
+  },
+  _closeLiveLog(log) {
+    GroupChat._liveWindows.delete(log);
+  },
+  _noteLive(event) {
+    for (const log of GroupChat._liveWindows) log.push(event);
+  },
+  // A change that did not happen after all (a refused delete): out of every
+  // record, so it is not replayed onto an answer that never had it.
+  _forgetLive(kind, id) {
+    for (const log of GroupChat._liveWindows) {
+      for (let i = log.length - 1; i >= 0; i -= 1) {
+        if (log[i].kind === kind && String(log[i].id) === String(id)) log.splice(i, 1);
       }
     }
+  },
+
+  // A field event, applied to every held copy of its message (a reply is held
+  // in the general stream AND its thread, a thread's root on its own) and
+  // recorded for the reads in flight.
+  _applyLive(event) {
+    GroupChat._noteLive(event);
+    GroupChat._eachCopy(event.id, (m) => GroupChat._patchLive(m, event));
+  },
+
+  _patchLive(m, event) {
+    switch (event.kind) {
+      case 'edit':
+        m.content = event.content;
+        m.editedAt = event.editedAt;
+        break;
+      case 'reaction':
+        m.reactions = event.reactions || [];
+        break;
+      case 'summary':
+        m.thread = event.thread || null;
+        break;
+      case 'delete': {
+        m.deleted = true;
+        m.content = '';
+        m.reactions = [];
+        const meta = { ...(m.metadata || m.meta || {}) };
+        delete meta.attachments;
+        delete meta.quote;
+        m.metadata = meta;
+        break;
+      }
+      default:
+        break;
+    }
+  },
+
+  /**
+   * Put what arrived during a read onto its answer, then replay the read's
+   * events (onto a thread's root too). An arrival replaces the answer's copy
+   * of the same message, or goes at the end, in arrival order: it is newer
+   * than anything the answer holds (sorting by id would reorder the staging
+   * demo's mock rows). One older than `from`, the first id the answer is the
+   * truth for, is history "Load earlier" reads again.
+   */
+  _replayLive(answer, root, events, arrived, from) {
+    const list = answer.slice();
+    const at = new Map(list.map((m, i) => [String(m.id), i]));
+    for (const msg of arrived) {
+      if (Number(msg.id) < from) continue;
+      const i = at.get(String(msg.id));
+      if (i == null) { at.set(String(msg.id), list.length); list.push(msg); } else list[i] = msg;
+    }
+    for (const event of events) {
+      for (const m of list) if (String(m.id) === String(event.id)) GroupChat._patchLive(m, event);
+      if (root && String(root.id) === String(event.id)) GroupChat._patchLive(root, event);
+    }
+    return list;
+  },
+
+  /**
+   * Merge a stream's newest page into what it held. Pure. The page is the
+   * truth from its first id on (all of it when `full` is false: the server had
+   * nothing before it); what is held from before it is kept (`older` counts
+   * it). When the page starts after `before` (the stream's `syncedMax`), the
+   * gap is wider than a page: the stream starts over from the page (`reset`)
+   * and "Load earlier" pages back from there. Unknown counts as wider.
+   */
+  _reconcileLatest(current, latest, full, { before = -Infinity } = {}) {
+    const id = (m) => Number(m && m.id);
+    const start = full && latest.length ? id(latest[0]) : -Infinity;
+    const reset = full && latest.length > 0 && !(before >= start);
+    const older = reset ? [] : current.filter((m) => id(m) < start);
+    return { messages: [...older, ...latest], reset, older: older.length, start };
+  },
+
+  _maxId(list) {
+    let top = -Infinity;
+    for (const m of list) {
+      const n = Number(m && m.id);
+      if (Number.isFinite(n) && n > top) top = n;
+    }
+    return top;
+  },
+
+  /**
+   * Take a newest page into stream `s`: a catch-up, or (`first`) a first
+   * page, which also keeps what the stream held before it when the page
+   * lacks it (the socket delivered it before the page landed).
+   */
+  _takeNewest(s, thread, latest, data, log, first = false) {
+    const full = typeof data.has_more_before === 'boolean' ? data.has_more_before : latest.length >= 50;
+    const before = s.messages.filter((m) => log.held.has(String(m.id)));
+    const arrived = s.messages.filter((m) => !log.held.has(String(m.id)));
+    // A first page has nothing known gap-free before it: whatever the socket
+    // delivered first may lie past a gap, so it is not a boundary.
+    const next = GroupChat._reconcileLatest(before, latest, full, { before: first ? -Infinity : s.syncedMax });
+    let answer = next.messages;
+    if (first) {
+      const inAnswer = new Set(answer.map((m) => String(m.id)));
+      answer = [...answer, ...before.filter((m) => !inAnswer.has(String(m.id)) && !(Number(m.id) < next.start))];
+    }
+    const root = thread && thread.type === 'message' && data.root ? data.root : (thread ? s.root : null);
+    s.messages = GroupChat._replayLive(answer, root, log, arrived, next.start);
+    if (thread && root) s.root = root;
+    if (s.messages.length) s.oldestId = s.messages[0].id;
+    if (!full) s.hasMore = false;
+    else if (next.reset || !next.older) s.hasMore = true;
+    // The answer's newest id is the server's. What arrived past it extends the
+    // gap-free span only when no other gap is pending (`again`): otherwise it
+    // may lie past that gap, which the next catch-up must see.
+    s.syncedMax = GroupChat._maxId(s.again ? latest : s.messages);
+    if (!s.again) s.stale = false;
+    return next;
+  },
+
+  // Take an older page ("Load earlier") into stream `s`, in front.
+  _takeOlder(s, thread, page, data, log) {
+    const held = new Set(s.messages.map((m) => String(m.id)));
+    const root = thread && thread.type === 'message' && data.root ? data.root : (thread ? s.root : null);
+    s.messages = GroupChat._replayLive(
+      [...page.filter((m) => !held.has(String(m.id))), ...s.messages], root, log, [], Infinity);
+    if (thread && root) s.root = root;
+    if (page.length) s.oldestId = page[0].id;
+    const full = typeof data.has_more_before === 'boolean' ? data.has_more_before : page.length >= 50;
+    if (!full) s.hasMore = false;
+  },
+
+  // A catch-up is owed; `now`: run it as soon as the read on the wire lands.
+  _owe(s, now) {
+    s.stale = true;
+    if (now || s.loading) s.again = true;
+  },
+
+  /** Re-read one loaded stream's newest page (`thread` null: the general one). */
+  async _refreshLatest(thread) {
+    const slug = GroupChat.appSlug;
+    if (!slug) return;
+    const s = GroupChat._streamOf(thread);
+    if (!s.loaded && !s.loading) return;
+    if (s.loading) { GroupChat._owe(s, true); return; }
+    s.stale = true;
+    s.again = false;
+    const key = thread ? GroupChat.threadKey(thread.type, thread.ref) : null;
+    const current = () => (thread ? GroupChat.threads.get(key) === s : GroupChat._latestLoad === read);
+    let settle;
+    const read = new Promise((resolve) => { settle = resolve; });
+    if (thread) { s.loading = true; s.read = read; } else GroupChat._latestLoad = read;
+    const events = GroupChat._openLiveLog(s.messages);
+    try {
+      const res = await fetch(GroupChat._firstPageUrl(slug, thread), GroupChat._freshInit());
+      // The network failed and the worker could only answer from its saved
+      // copy: no catch-up at all. What is held stays, and still owed.
+      if (!res.ok || GroupChat._fromSavedCopy(res)) return;
+      const data = await res.json();
+      if (GroupChat.appSlug !== slug || !current()) return;
+      GroupChat._takeNewest(s, thread, Array.isArray(data.messages) ? data.messages : [], data, events);
+      if (thread) {
+        if (GroupChat._isOpenThread(thread.type, thread.ref)) GroupChat.renderThread({ keepScroll: true });
+        return;
+      }
+      GroupChat._historyFailed = false;
+      GroupChat.render({ flush: true });
+      if (GroupChat._lockedToBottom) GroupChat.scrollToBottom();
+      // What it brought onto the open channel is read, like a live message.
+      void GroupChat.markRead();
+    } catch {
+      // Best-effort: what is on screen stays, still owed.
+    } finally {
+      GroupChat._closeLiveLog(events);
+      settle();
+      if (thread) {
+        s.loading = false;
+        if (s.read === read) s.read = null;
+        if (s.again && GroupChat._isOpenThread(thread.type, thread.ref)) void GroupChat._refreshLatest(thread);
+      } else if (GroupChat._latestLoad === read) {
+        GroupChat._latestLoad = null;
+        if (s.again) void GroupChat._refreshLatest(null);
+      }
+    }
+  },
+
+  // A thread owes a catch-up: the open one runs it now; one off screen, or
+  // still on its first read, runs it when mounted again or when that lands.
+  _resyncThread(key, st) {
+    if (!st || (!st.loaded && !st.loading)) return;
+    const a = GroupChat.activeThread;
+    if (a && key === GroupChat.threadKey(a.type, a.ref)) void GroupChat._refreshLatest({ type: a.type, ref: a.ref });
+    else GroupChat._owe(st);
+  },
+
+  /**
+   * Bring every loaded stream up to date after a gap. The general stream,
+   * which every socket open reads, takes its first page if it has none yet.
+   */
+  resyncLoaded() {
+    if (!GroupChat.appSlug) return;
+    if (GroupChat._streamLoaded || GroupChat._historyLoad) void GroupChat._refreshLatest(null);
+    else void GroupChat.loadHistory();
+    for (const [key, st] of GroupChat.threads) GroupChat._resyncThread(key, st);
+  },
+
+  // A re-read live-reads.ts asks for: everything (`urls` null), or the streams
+  // whose newest page the service worker just corrected. The events socket
+  // reconnecting (`reconnect`) says nothing about this module's own socket,
+  // whose `onopen` and `resync_hint` already cover a gap in it; answering it
+  // too read every open stream twice per gap.
+  _onLiveResync(resync) {
+    if (!GroupChat.appSlug || !resync) return;
+    if (!resync.urls) {
+      // Unless the pass ALSO carries another trigger (the tab back after a
+      // while, back online), which the chat's socket may not have noticed.
+      const reasons = resync.reasons || [resync.reason];
+      if (!reasons.every((r) => r === 'reconnect')) GroupChat.resyncLoaded();
+      return;
+    }
+    for (const href of resync.urls) {
+      let u;
+      try { u = new URL(href, location.origin); } catch { continue; }
+      if (u.searchParams.has('before')) continue;
+      const type = u.searchParams.get('thread_type');
+      // The general stream, even one whose first page came back empty: that
+      // page may be the stale copy being corrected.
+      if (!type) { void GroupChat._refreshLatest(null); continue; }
+      const key = GroupChat.threadKey(type, u.searchParams.get('thread_ref'));
+      GroupChat._resyncThread(key, GroupChat.threads.get(key));
+    }
+  },
+
+  // Registered once, the first time a channel connects: the watcher reads
+  // whichever app this module is on when a re-read comes, so it outlives
+  // app switches without being re-registered.
+  _liveWatch: null,
+  _watchLiveReads() {
+    if (GroupChat._liveWatch) return;
+    const live = typeof window !== 'undefined' && window.UsernodeReact && window.UsernodeReact.liveReads;
+    if (!live || typeof live.watch !== 'function') return;
+    GroupChat._liveWatch = live.watch((resync) => GroupChat._onLiveResync(resync), {
+      reads: (u) => !!GroupChat.appSlug && u.pathname === `/api/apps/${GroupChat.appSlug}/messages`,
+    });
   },
 
   // #363: the element that actually scrolls a mounted thread. In the unified
@@ -1378,7 +1809,10 @@ const GroupChat = {
     );
     el.dataset.loaded = st.loaded ? '1' : '';
 
-    if (!scroll) return;
+    // A catch-up (#4177) changes rows at the bottom and inside the newest
+    // page, not above the reader: the "Load earlier" offset below would move
+    // them by however much was added under them.
+    if (!scroll || (opts && opts.keepScroll)) return;
     if (wasLoaded) {
       scroll.scrollTop = prevTop + (scroll.scrollHeight - prevHeight);
     } else if (unified) {
@@ -1932,6 +2366,15 @@ const GroupChat = {
     GroupChat._applyDelete({ id });
     const restore = () => {
       for (const [m, copy] of before) Object.assign(m, copy, { deleted: false });
+      // #4177: the delete did not happen, so it comes out of every read's
+      // record, and off a copy a read brought in meanwhile.
+      GroupChat._forgetLive('delete', id);
+      const was = before.length ? before[0][1] : null;
+      if (was) {
+        GroupChat._eachCopy(id, (m) => {
+          if (m.deleted) Object.assign(m, { deleted: false, content: was.content, reactions: was.reactions, metadata: was.metadata });
+        });
+      }
       GroupChat.render();
       if (GroupChat.activeThread) GroupChat.renderThread();
     };
@@ -1976,15 +2419,7 @@ const GroupChat = {
   _applyDelete(data) {
     const id = Number(data && (data.id ?? data.messageId ?? data.message_id));
     if (!id) return;
-    GroupChat._eachCopy(id, (m) => {
-      m.deleted = true;
-      m.content = '';
-      m.reactions = [];
-      const meta = { ...(m.metadata || m.meta || {}) };
-      delete meta.attachments;
-      delete meta.quote;
-      m.metadata = meta;
-    });
+    GroupChat._applyLive({ kind: 'delete', id });
     GroupChat._react()?.patchTranscriptMessage(id, {
       deleted: true, text: '', bodyHtml: '', quote: null, attachments: [], reactions: [], editedTitle: null,
     });
@@ -1994,7 +2429,7 @@ const GroupChat = {
   _applyThreadSummary(data) {
     const id = Number(data && (data.root_id ?? data.rootId));
     if (!id) return;
-    GroupChat._eachCopy(id, (m) => { m.thread = data.thread || null; });
+    GroupChat._applyLive({ kind: 'summary', id, thread: data.thread || null });
     GroupChat._react()?.patchTranscriptMessage(id, { thread: GroupChat._threadSummaryView({ thread: data.thread }) });
   },
 
@@ -2229,14 +2664,9 @@ const GroupChat = {
   },
 
   _updateMessageReactions(messageId, reactions) {
-    let msg = GroupChat.messages.find((m) => String(m.id) === String(messageId));
-    if (!msg) {
-      for (const st of GroupChat.threads.values()) {
-        msg = st.messages.find((m) => String(m.id) === String(messageId));
-        if (msg) break;
-      }
-    }
-    if (msg) msg.reactions = reactions || [];
+    // Every copy: a reply is held in the general stream AND in its thread.
+    GroupChat._applyLive({ kind: 'reaction', id: messageId, reactions: reactions || [] });
+    const msg = GroupChat._findMessage(messageId);
     // A field update, not a targeted innerHTML write into a row React owns.
     const me = App.user && App.user.username;
     GroupChat._react()?.patchTranscriptMessage(Number(messageId), {
@@ -2444,8 +2874,8 @@ const GroupChat = {
   _applyEdit(data) {
     const { messageId, content, editedAt } = data || {};
     if (messageId == null) return;
-    const msg = GroupChat._findMessage(messageId);
-    if (msg) { msg.content = content; msg.editedAt = editedAt; }
+    // Every copy: a reply is held in the general stream AND in its thread.
+    GroupChat._applyLive({ kind: 'edit', id: messageId, content, editedAt });
     const row = GroupChat._findRow(messageId);
     if (!row) return;
     // If the author had this open in an editor, close it — the broadcast is
@@ -2791,6 +3221,46 @@ const GroupChat = {
         }
       });
     }
+    GroupChat._wireDropZone(dropEls, t);
+  },
+
+  // #4065: show the drop zone while a file is held over the composer or its
+  // messages. The drop itself is the listener above; this only counts the
+  // drag in and out (features/attachments/file-drag.tsx's tracker, reached
+  // through the bridge) and publishes `dragging` into the composer's slot,
+  // where the React card draws the outline. One tracker per composer scope,
+  // shared by both elements, so moving from the messages to the box is one
+  // drag. Never lit on a read-only thread, where nothing can be dropped.
+  _dropTrackers: { general: null, thread: null },
+  _wireDropZone(els, thread) {
+    const api = typeof window !== 'undefined' && window.UsernodeReact && window.UsernodeReact.fileDrag;
+    if (!api || !api.createFileDragTracker) return;
+    const scope = GroupChat._composerScope(thread);
+    const previous = GroupChat._dropTrackers[scope];
+    if (previous) { previous.reset(); previous.dispose(); }
+    const tracker = api.createFileDragTracker({
+      isDisabled: () => GroupChat._readOnly(),
+      onChange: (dragging) => GroupChat._publishComposer(scope, { dragging }),
+    });
+    GroupChat._dropTrackers[scope] = tracker;
+    for (const el of els) {
+      if (!el) continue;
+      // The form survives a re-render now (it is React's), so its listeners
+      // are bound once and read whichever tracker is current for the scope.
+      if (el._gcDropZone) continue;
+      el._gcDropZone = true;
+      el.addEventListener('dragenter', (e) => GroupChat._dropTrackers[scope]?.enter(e));
+      el.addEventListener('dragleave', (e) => GroupChat._dropTrackers[scope]?.leave(e));
+      el.addEventListener('drop', () => GroupChat._dropTrackers[scope]?.reset());
+    }
+  },
+
+  // The line a drop or a pick shows when it left files out: the first reason,
+  // and how many more went with it (#4065).
+  _refusalSummary(first, more) {
+    const api = typeof window !== 'undefined' && window.UsernodeReact && window.UsernodeReact.fileDrag;
+    if (api && api.refusalSummary) return api.refusalSummary(first, more);
+    return first;
   },
 
   // Mirror the server's classifier (src/services/attachments.js
@@ -2839,14 +3309,25 @@ const GroupChat = {
     GroupChat._setAttachError(null, thread);
     const key = GroupChat._attachScopeKey(thread);
     const L = GroupChat.ATTACH_LIMITS;
-    for (const file of Array.from(fileList)) {
+    // #4065: one line for every file this drop or pick left out — the first
+    // reason, and how many more went with it — not whichever came last.
+    let firstRefusal = null;
+    let refused = 0;
+    const refuse = (reason, count = 1) => {
+      firstRefusal = firstRefusal || reason;
+      refused += count;
+      GroupChat._setAttachError(GroupChat._refusalSummary(firstRefusal, refused - 1), thread);
+    };
+    const files = Array.from(fileList);
+    for (let i = 0; i < files.length; i += 1) {
+      const file = files[i];
       if (GroupChat.pendingAttachments.filter((a) => a.scope === key).length >= L.maxPerMessage) {
-        GroupChat._setAttachError(`Up to ${L.maxPerMessage} files per message.`, thread);
+        refuse(`Up to ${L.maxPerMessage} files per message.`, files.length - i);
         break;
       }
       const classified = await GroupChat._classifyChatFile(file);
       if (classified.error) {
-        GroupChat._setAttachError(classified.error, thread);
+        refuse(classified.error);
         continue;
       }
       const entry = {
@@ -4291,13 +4772,21 @@ function decorateMentionsAndRefs(node) {
   }
 }
 
+// The viewer's username, lower-cased: their own mention gets `-self`.
+function viewerMentionKey() {
+  return (typeof App !== 'undefined' && App.user && App.user.username
+    ? App.user.username : '').toLowerCase();
+}
+
 // Replace one text node with [text, <a class="gc-mention">…</a>,
 // <span class="gc-ref">…</span>, …] when it contains mentions/refs.
 function decorateTextNode(textNode) {
   const value = textNode.nodeValue != null ? textNode.nodeValue : (textNode.textContent || '');
-  const me = (typeof App !== 'undefined' && App.user && App.user.username
-    ? App.user.username : '').toLowerCase();
-  const segs = tokenizeMentionsAndRefs(value, me, knownChannelHandles());
+  replaceTextWithSegments(textNode, tokenizeMentionsAndRefs(value, viewerMentionKey(), knownChannelHandles()));
+}
+
+// The tokenizer's segments, built through DOM APIs in place of `textNode`.
+function replaceTextWithSegments(textNode, segs) {
   if (segs.length === 1 && segs[0].type === 'text') return; // nothing to decorate
   const parent = textNode.parentNode;
   if (!parent) return;
@@ -4345,7 +4834,10 @@ function decorateTextNode(textNode) {
 // path and the server-side mention parser (MENTION_CHARS, length 1..32). The
 // leading boundary char each pattern requires is preserved as text. One
 // combined regex so `PR#12` is never half-consumed by the bare `#N` pattern.
-function tokenizeMentionsAndRefs(text, me, channels) {
+// `opts.mentionsOnly` (#3952, a request's text) leaves every ref and channel
+// as text, the way an unknown `#word` is left.
+function tokenizeMentionsAndRefs(text, me, channels, opts) {
+  const mentionsOnly = !!(opts && opts.mentionsOnly);
   // #2783: a third alternative, `#name` for a channel — a letter first, so it
   // never competes with `#123`. Only a handle in `channels` is one; any other
   // `#word` is left as text.
@@ -4363,6 +4855,7 @@ function tokenizeMentionsAndRefs(text, me, channels) {
   };
   while ((m = RE.exec(text)) !== null) {
     if (m[6] != null && !known.has(m[6].toLowerCase())) continue;
+    if (mentionsOnly && m[3] == null) continue;
     pushText(text.slice(pos, m.index));
     pushText(m[1]); // boundary char (start-of-string is '')
     if (m[3] != null) {
@@ -4377,6 +4870,83 @@ function tokenizeMentionsAndRefs(text, me, channels) {
   pushText(text.slice(pos));
   if (segs.length === 0) segs.push({ type: 'text', value: '' });
   return segs;
+}
+
+// ── #3952: @mentions in a request's text ──────────────────────────────
+//
+// A request's description and its comments name people the way a chat
+// message does ("@snait lmk wyt"), so they get the chat's mention links: the
+// same tokenizer, markup and Homeroom bot exception as above, mentions only.
+// A request's `#12` or `PR#3` opens nothing on its page, so it stays text.
+//
+// Only a mention Homeroom wrote is linked. Everything Homeroom sends to
+// GitHub goes through services/github.js safeMention, which puts a
+// zero-width space after each `@` so GitHub pings nobody; that guard is how a
+// name typed here is told apart from a GitHub handle in an issue or comment
+// written on GitHub itself, which names a GitHub account rather than a person
+// here, and stays text. The guard comes out of every text node, display
+// only, so what reads (and copies) is what was typed, a code block's
+// `@scope/pkg` included. Takes and returns sanitized HTML (the output of
+// DevChat.renderMarkdown); app-view.js calls it for a request's body and its
+// GitHub comments.
+const GC_MENTION_GUARD = '@​';
+
+function renderRequestMentions(html) {
+  const text = html == null ? '' : String(html);
+  if (text.indexOf(GC_MENTION_GUARD) === -1) return text;
+  if (typeof document === 'undefined' || !document.createElement) return text;
+  const root = document.createElement('div');
+  root.innerHTML = text;
+  decorateRequestMentions(root, false);
+  return root.innerHTML;
+}
+
+// Walk like decorateMentionsAndRefs, but into <a>/<code>/<pre> too
+// (`literal`): the guard comes out there, and nothing is linked.
+function decorateRequestMentions(node, literal) {
+  const children = node.childNodes ? Array.prototype.slice.call(node.childNodes) : [];
+  for (const child of children) {
+    if (child.nodeType === 3) {
+      const value = child.nodeValue != null ? child.nodeValue : (child.textContent || '');
+      if (value.indexOf(GC_MENTION_GUARD) === -1) continue;
+      if (literal) child.nodeValue = value.split(GC_MENTION_GUARD).join('@');
+      else decorateGuardedMentions(child, value);
+    } else if (child.nodeType === 1) {
+      decorateRequestMentions(child, literal || GC_DECORATE_SKIP.has((child.tagName || '').toUpperCase()));
+    }
+  }
+}
+
+function decorateGuardedMentions(textNode, value) {
+  // The text without the guard, and where each guarded `@` lands in it.
+  const guarded = new Set();
+  let plain = '';
+  for (let i = 0; i < value.length; i += 1) {
+    if (value.startsWith(GC_MENTION_GUARD, i)) {
+      guarded.add(plain.length);
+      i += GC_MENTION_GUARD.length - 1;
+      plain += '@';
+    } else {
+      plain += value[i];
+    }
+  }
+  const segs = [];
+  let offset = 0;
+  let linked = false;
+  for (const seg of tokenizeMentionsAndRefs(plain, viewerMentionKey(), null, { mentionsOnly: true })) {
+    const raw = seg.type === 'text' ? seg.value : `@${seg.name}`;
+    if (seg.type === 'mention' && guarded.has(offset)) {
+      segs.push(seg);
+      linked = true;
+    } else if (segs.length && segs[segs.length - 1].type === 'text') {
+      segs[segs.length - 1].value += raw;
+    } else {
+      segs.push({ type: 'text', value: raw });
+    }
+    offset += raw.length;
+  }
+  if (linked) replaceTextWithSegments(textNode, segs);
+  else textNode.nodeValue = plain;
 }
 
 // ── #87: @mention autocomplete ─────────────────────────────────────────

@@ -51,6 +51,8 @@ const CURRENT_KINDS = [
   // A server-wide cap nearing its ceiling, for full admins only. Joins
   // app_alerts beside app_health (services/platform-limit-alerts.js).
   'platform_limit',
+  // #4296: its sibling, the unexpected events digest and hourly alert.
+  'platform_incident',
   // WP-E: the Homeroom bot's build moments ("Your builds"), and what an
   // invite link brings back to its maker ("Your invites").
   'build_ready', 'build_needs_you', 'build_stopped', 'build_live',
@@ -58,6 +60,9 @@ const CURRENT_KINDS = [
   // A person's message in a small private group's discussion, the group's
   // chat, so it rides the Messages switch.
   'channel_message',
+  // #3952: named with @ in a request somebody filed. A mention, so it rides
+  // direct_interactions beside the chat one.
+  'issue_mention',
 ];
 
 test('every current inbox kind maps exactly once to one closed category', () => {
@@ -119,6 +124,14 @@ test('#2386: friend requests and acceptances ride the direct-interactions switch
     assert.equal(isKindEnabled(kind, { direct_interactions: false }), false, `${kind} follows the switch`);
     assert.equal(isKindEnabled(kind, { messages: false }), true, `${kind} is not a Messages kind`);
   }
+});
+
+test('#3952: a mention in a request rides the direct-interactions switch, beside a chat mention', () => {
+  assert.equal(KIND_TO_CATEGORY.get('issue_mention'), 'direct_interactions');
+  assert.equal(KIND_TO_CATEGORY.get('issue_mention'), KIND_TO_CATEGORY.get('mention'));
+  assert.equal(isKindEnabled('issue_mention'), true, 'on by default, like a chat mention');
+  assert.equal(isKindEnabled('issue_mention', { direct_interactions: false }), false,
+    'turning mentions off on the phone silences it too');
 });
 
 test('#3181: a stalled session rides the developer-sessions switch, beside a finished one', () => {

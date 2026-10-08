@@ -154,6 +154,37 @@ test('ensureSessionBranch prefers the caller-supplied username', async () => {
   assert.match(out.branchName, /^dev\/ada-\d+$/);
 });
 
+test('#3229: ensureSessionBranch names the branch after the caller-supplied label', async () => {
+  const lifecycle = loadLifecycle();
+  const rows = new Map([[7, {
+    id: 7, branch_name: null, user_id: 3, username: 'evan', session_title: null, repo_url: null,
+  }]]);
+  const out = await lifecycle.ensureSessionBranch({
+    pool: fakePool(rows), sessionId: 7, label: 'Add a dark mode toggle',
+  });
+  assert.match(out.branchName, /^dev\/evan-add-a-dark-mode-toggle-\d+$/);
+});
+
+test('#3229: ensureSessionBranch falls back to the stored session title', async () => {
+  // The bot's build sessions and the dispatch backstop pass no label; the
+  // row's title is what they are about.
+  const lifecycle = loadLifecycle();
+  const rows = new Map([[7, {
+    id: 7, branch_name: null, user_id: 3, username: 'homeroom_bot',
+    session_title: '#3229 · Session branch names', repo_url: null,
+  }]]);
+  const out = await lifecycle.ensureSessionBranch({ pool: fakePool(rows), sessionId: 7 });
+  assert.match(out.branchName, /^dev\/homeroom_bot-3229-session-branch-names-\d+$/);
+});
+
+test('#3229: the first turn hands its deterministic title to the mint', () => {
+  const src = read('src/routes/sessions.js');
+  const chat = src.indexOf("router.post('/api/sessions/:id/chat'");
+  const ensure = src.indexOf('await sessionLifecycle.ensureSessionBranch(', chat);
+  const call = src.slice(ensure, src.indexOf('});', ensure));
+  assert.match(call, /label: session\.session_title \|\| sessionTitles\.deterministicTitle\(message/);
+});
+
 test('ensureSessionBranch still produces a valid name with no username at all', async () => {
   const lifecycle = loadLifecycle();
   const branchNames = require('../src/services/branch-names');
@@ -445,20 +476,17 @@ test('staging seeds a branchless session, and it is the only branchless fixture'
   assert.match(body, /\[staging fixture\]/, 'seeded rows must be obviously fake');
 });
 
-test('the deep links for both banner states are declared as checks', () => {
+test('the launchpad banner states are no longer declared checks (#3976)', () => {
+  // Both resume-banner states were checked through the launchpad shot link
+  // on classic sessions (990401, and this branchless 990411). Classic
+  // sessions are read-only now and are handed to no venue, so the launchpad
+  // never shows there and those checks were retired with the chat. The
+  // fixture stays until the classic dev chat itself is removed.
   const dapp = JSON.parse(read('dapp.json'));
   const paths = (dapp.tests || []).map((t) => String(t.path || ''));
-  assert.ok(
-    paths.some((p) => p.includes('/dev/sessions/990411')),
-    'the branchless fixture needs a check, or nothing renders that state'
-  );
-  const resume = (dapp.tests || []).filter((t) =>
-    String(t.expectSelector || '').includes('data-launchpad-resume'));
-  assert.ok(resume.length >= 2, 'both banner states must be checked');
-  for (const t of resume) {
-    assert.match(t.path, /^\/\?shot=launchpad&venue=/,
-      'the banner is only reachable through the launchpad shot link');
-  }
+  assert.ok(!paths.some((p) => p.includes('/dev/sessions/990411')));
+  assert.ok(!(dapp.tests || []).some((t) =>
+    String(t.expectSelector || '').includes('data-launchpad-resume')));
 });
 
 // ── the copy rule ───────────────────────────────────────────────────────

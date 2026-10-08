@@ -19,8 +19,10 @@
 //       proposal's current head
 //     → Homeroom pushes that branch onto the proposal's bot-owned branch
 //       under a `--force-with-lease`, with the platform's own credentials
-//     → the EXISTING head-moved machinery clears the votes, posts the
-//       "please re-review" note and rebuilds the preview and the checks.
+//     → the EXISTING head-moved machinery decides what the move costs the
+//       approvals (see the last paragraph below). For an ordinary revision
+//       it retires the votes, posts the "please re-review" note and rebuilds
+//       the preview and the checks.
 //
 // Three properties this file exists to keep, all of them checked by
 // tests/proposal-update.test.js:
@@ -40,11 +42,19 @@
 //      somebody else advanced in the meantime produces `branch_moved` rather
 //      than a silently discarded revision.
 //
-// Deliberately NOT here: any call to services/sync-main.js's
-// `recordPlatformPush`. The head this path installs is the AUTHOR'S work, so
-// it must classify as an `author_push` and clear the tally. Recording it as a
-// platform push would carry every existing approval onto code nobody in the
-// group has read.
+// Deliberately NOT here: any say in what the push costs the approvals. Since
+// #2038 a vote counts while its approval_epoch equals the proposal's
+// chat_sessions.approval_epoch (services/pr-vote-revision.js), and only the
+// head-moved machinery moves that epoch. It asks services/integration.js's
+// classifyHeadMove what kind of move this was (same, mechanical, resolved,
+// authored or unknown) by redoing git's merge of the approved head with the
+// slice of main the new head contains and comparing trees. Mechanical and
+// resolved keep the approvals. Anything else bumps the epoch, so every
+// earlier vote stops counting, and no vote row is deleted. The author's push
+// goes through that classifier like any other head move, and nothing here
+// vouches for it. An ordinary revision is authored and retires the votes. A
+// push that is exactly git's merge of the approved head with main keeps
+// them, because nobody wrote anything the group had not approved.
 
 const log = require('./logger');
 const summaryFreshness = require('./summary-freshness');
@@ -277,14 +287,21 @@ async function reloadSession(pool, sessionId) {
   }
 }
 
-// How many votes the update is about to invalidate. Counted BEFORE the write,
-// because both reconciliation paths delete the rows — and "your update
-// cleared 4 votes" is the one consequence the caller must be able to relay to
-// the user without guessing.
+// How many votes the update puts at risk: the ones counting right now,
+// counted before the push. Neither reconciliation path deletes a row. Since
+// #2038 a move that retires votes bumps chat_sessions.approval_epoch and the
+// rows stay, so counting every row would also count votes an earlier move
+// already retired. This is the count services/vote-revision.js takes before
+// a native session's authored push. "Your update cleared 4 votes" is the one
+// consequence the caller must be able to relay to the user without guessing.
 async function countVotes(pool, sessionId) {
   try {
     const { rows } = await pool.query(
-      `SELECT COUNT(*)::int AS n FROM pr_votes WHERE session_id = $1`,
+      `SELECT COUNT(*)::int AS n
+         FROM pr_votes pv
+         JOIN chat_sessions cs ON cs.id = pv.session_id
+        WHERE pv.session_id = $1
+          AND pv.approval_epoch = cs.approval_epoch`,
       [sessionId]
     );
     return Number(rows[0] && rows[0].n) || 0;
@@ -299,7 +316,8 @@ async function countVotes(pool, sessionId) {
 //   drive this without a database, a git binary or a GitHub account; the
 //   defaults are the real modules.
 //
-// params: { user, session, branch, forkRepo, expectedHeadSha, testing, origin }
+// params: { user, session, branch, forkRepo, expectedHeadSha, testing, origin,
+//           patch }
 //   `session` is the joined chat_sessions row the route loaded and
 //   access-checked. `branch` is the branch in the caller's OWN fork that
 //   carries the new work. `forkRepo` is only its NAME, for an agent that
@@ -307,6 +325,17 @@ async function countVotes(pool, sessionId) {
 //   comes from the verified GitHub link. `testing` is the revision's capture
 //   routes and steps, already validated by services/testing-notes.js's
 //   `parseSubmitted` — see applyTestingMetadata.
+//
+//   `patch` (#4263) carries the new work INSTEAD of `branch`: the same
+//   `git format-patch` / `git diff` text the connector's new-work patch path
+//   takes, applied here on the proposal's current head by that path's own
+//   machinery (services/external-agent-patch.js) and pushed onto the
+//   proposal's branch under a lease. `expectedHeadSha` is then required: it
+//   is the commit the patch was made against, and a proposal that has moved
+//   off it is `branch_moved`. Everything after the push (votes, checks,
+//   preview, testing metadata, title, description, summary) is the branch
+//   update's own tail, unchanged. Only a head in the app's repository can
+//   take one; a fork head is the author's to push.
 async function updateProposalFromForkBranch(deps, params) {
   const { pool, config } = deps;
   const gh = deps.gh || require('./github');
@@ -325,8 +354,12 @@ async function updateProposalFromForkBranch(deps, params) {
   // The branch name reaches a `git fetch` argv and the fork name reaches a
   // URL path, so both are validated by the same predicates the submit path
   // uses. One definition, in services/external-agent-head.js.
+  const patch = typeof params.patch === 'string' && params.patch.trim() ? params.patch : null;
   const branch = params.branch ? String(params.branch).trim() : '';
-  if (!head.validRef(branch)) {
+  if (patch && branch) {
+    return fail('invalid_request', 'Send the new work as a patch or as a branch, not both.');
+  }
+  if (!patch && !head.validRef(branch)) {
     return fail('invalid_request', 'branch must be the git branch you pushed to your fork.');
   }
   const forkRepoName = params.forkRepo ? String(params.forkRepo).trim() : null;
@@ -338,6 +371,15 @@ async function updateProposalFromForkBranch(deps, params) {
     : null;
   if (expectedHeadSha && !SHA_RE.test(expectedHeadSha)) {
     return fail('invalid_request', 'expectedHeadSha must be a 40-character commit id.');
+  }
+  // A patch is applied AT a commit, so it has to say which one. Without it
+  // the only candidate is whatever the head is now, which is exactly the
+  // guess the lease exists to rule out.
+  if (patch && !expectedHeadSha) {
+    return fail(
+      'invalid_request',
+      'A patch needs expectedHeadSha: the proposal\'s commit it was made against, which is where it is applied.'
+    );
   }
   let visibleChanges;
   if (params.visibleChanges !== undefined) {
@@ -413,6 +455,10 @@ async function updateProposalFromForkBranch(deps, params) {
         prMetadata: deps.prMetadata || require('./pr-metadata'), username: user.username,
         session, owner, repo, forkOwner: link.login, forkRepo, branch,
         expectedLogin: link.login, expectedHeadSha, sessionId,
+        // #4263. The new work as a patch instead of a fork branch, and the
+        // new-work patch path's own apply, injectable like `head`.
+        patch,
+        applyPatch: deps.applyPatch || require('./external-agent-patch').applyPatch,
         testing: normalizeTesting(params.testing),
         visibleChanges,
         title: normalizeProposedTitle(params.title),
@@ -433,6 +479,18 @@ async function updateProposalFromForkBranch(deps, params) {
         lifecycle: deps.lifecycle,
         pushSessionUpdate: deps.pushSessionUpdate,
       };
+      // #4263. A head in the author's fork is written by the author alone:
+      // the platform holds no credential for it, so a patch has nowhere to
+      // land and the honest answer is the branch route.
+      if (patch && branchHomeOf(session) === 'user_fork') {
+        return fail(
+          'invalid_request',
+          `This proposal follows ${session.branch_name || 'a branch'} in your own fork, which only you can push to, `
+          + 'so Homeroom cannot apply a patch to it. Commit the change on that branch, push it, and submit with '
+          + 'proposalId and branch.',
+          { retryable: false }
+        );
+      }
       const result = branchHomeOf(session) === 'user_fork'
         ? await advanceForkHead(ctx)
         : await advanceAppRepoBranch(ctx);
@@ -1247,8 +1305,8 @@ async function applyLinkedIssues({ pool, gh, session, owner, repo, linkedIssues 
 // whose screenshots came out wrong UNFIXABLE: the routes are only read when a
 // capture runs, a capture only runs when the head moves, and the head cannot
 // move for a change that is already correct. The advice left was "push an
-// empty commit", which clears every vote the proposal has collected to correct
-// a screenshot.
+// empty commit", which then cleared every vote the proposal had collected to
+// correct a screenshot.
 //
 // So a resubmit that carries DIFFERENT testing metadata now stores it and
 // re-runs the checks against it. What it deliberately does not do is touch the
@@ -1501,12 +1559,29 @@ async function advanceAppRepoBranch(ctx) {
   // inside pushForkBranchToAppBranch immediately before the push — the
   // second run is the load-bearing one, and this one is not permitted to
   // replace it.
-  const verified = await head.verifyForkBranch({
-    githubPublic, forkOwner, forkRepo, branch, expectedLogin,
-  });
-  if (!verified.ok) return renameHeadFailure(verified, branch);
+  //
+  // #4263. A PATCH has no fork to verify: its content arrived in this
+  // request from the proposal's own author (ownershipGate, twice), and it is
+  // applied ON `liveHead`, so it cannot drop a reviewed commit and needs no
+  // ancestry check. `verified` is filled in from the commit the apply wrote,
+  // below, and everything after the push reads it exactly as for a branch.
+  let verified = null;
+  if (!ctx.patch) {
+    verified = await head.verifyForkBranch({
+      githubPublic, forkOwner, forkRepo, branch, expectedLogin,
+    });
+    if (!verified.ok) return renameHeadFailure(verified, branch);
+  } else if (firstLanding) {
+    // Nothing has landed yet, so there is no commit to apply the patch at.
+    return fail(
+      'invalid_request',
+      'This work has no commits on its branch yet, so there is no commit to apply a patch at. Push a branch to '
+      + 'your fork and submit it with proposalId and branch.',
+      { retryable: false }
+    );
+  }
 
-  if (!firstLanding) {
+  if (!firstLanding && verified) {
     // Nothing to push — but a resubmit may still be correcting the capture
     // routes, which is the one thing that used to have no way through (#1199).
     if (verified.headSha === liveHead) return resubmitUnchanged(ctx, liveHead, 'update_branch');
@@ -1522,8 +1597,9 @@ async function advanceAppRepoBranch(ctx) {
   const kind = isContinuableStatus(session.status);
   const promoted = kind === 'proposal';
 
-  // Votes exist only on a proposal that is up for a vote, and the count has to
-  // happen BEFORE the write that deletes them. A session nobody is voting on
+  // Votes count only on a proposal that is up for a vote, and the count has
+  // to happen BEFORE the head move that may retire them: once the epoch
+  // moves, none of them is current any more. A session nobody is voting on
   // has nothing to count and nothing to clear.
   const votesCleared = promoted ? await countVotes(pool, sessionId) : 0;
 
@@ -1531,16 +1607,32 @@ async function advanceAppRepoBranch(ctx) {
   // the same gate in front of it; `mirrorForkBranch` is not a second
   // implementation of anything, it is the one the mirror rung already uses,
   // pointed at the name this row recorded instead of one it mints.
-  const pushed = firstLanding
-    ? await head.mirrorForkBranch({
-      gh, githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin,
-      targetBranch,
-    })
-    : await head.pushForkBranchToAppBranch({
-      githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin,
-      targetBranch, expectedRemoteSha: liveHead, sessionId,
+  //
+  // #4263. A patch is the new-work patch path's own apply (size, file-count,
+  // `.github/` and growth bounds included), aimed at THIS branch at
+  // `liveHead` and pushed under the same lease: a head that moved since the
+  // read above is `branch_moved`, never overwritten. Its refusals are already
+  // in the caller's vocabulary, so they pass through unrenamed.
+  let pushed;
+  if (ctx.patch) {
+    pushed = await ctx.applyPatch({
+      owner, repo, patch: ctx.patch, baseSha: liveHead, userId: session.user_id,
+      targetBranch, sessionId,
     });
-  if (!pushed.ok) return renameHeadFailure(pushed, branch);
+    if (!pushed.ok) return pushed;
+    verified = { ok: true, headSha: String(pushed.headSha || '').trim().toLowerCase() };
+  } else {
+    pushed = firstLanding
+      ? await head.mirrorForkBranch({
+        gh, githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin,
+        targetBranch,
+      })
+      : await head.pushForkBranchToAppBranch({
+        githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin,
+        targetBranch, expectedRemoteSha: liveHead, sessionId,
+      });
+    if (!pushed.ok) return renameHeadFailure(pushed, branch);
+  }
 
   if (session.source !== 'imported') {
     // The push has moved this proposal's code. Keep the previous summary out
@@ -1607,11 +1699,12 @@ async function advanceAppRepoBranch(ctx) {
     previousHeadSha: liveHead,
     // What this push actually landed on, decided here and not by the work
     // order — which was written before the agent started and may be an hour
-    // out of date. `submittedVia` stays 'update_branch' in all three: the
-    // schema's widened CHECK already allows it and a third value would need a
-    // migration for no gain.
+    // out of date. `submittedVia` stays 'update_branch' in all three tails,
+    // which say what the push landed on, not how the commit arrived. A patch
+    // does say so (#4263: 'update_patch', added to the schema's CHECK), the
+    // way the create path's 'patch' and 'mirror' tell its two rungs apart.
     targetKind: promoted ? 'proposal' : 'session',
-    submittedVia: 'update_branch',
+    submittedVia: ctx.patch ? 'update_patch' : 'update_branch',
     // What the screenshots this revision's capture shoots will be of — and
     // what it will NOT be of, because a route the caller sent was unusable.
     testingUpdated: testingApplied.changed,
@@ -1636,9 +1729,9 @@ async function advanceAppRepoBranch(ctx) {
   //
   // `syncImportedProposal` is that sweep's own per-proposal step: it re-reads
   // the pull request, sees the head this push just moved, and runs the
-  // existing imported-head machinery — advance the tracked SHA, clear the
-  // tally, post the re-review note, re-run the SHA-pinned checks. Nothing
-  // about it is reimplemented here.
+  // existing imported-head machinery — advance the tracked SHA, classify the
+  // move (an authored one retires the votes), post the note, re-run the
+  // SHA-pinned checks. Nothing about it is reimplemented here.
   //
   // 'unchanged' means GitHub's pull request still reads the commit before
   // this push — it updates a PR's head a few seconds after the branch moves.
@@ -1698,6 +1791,9 @@ async function advanceAppRepoBranch(ctx) {
       // the count that will go.
       votesClearing,
       votesAtRisk: votesCleared,
+      // The classifier kept the approvals. A 0 above can also mean nobody had
+      // voted, so the connector needs this to say "they still stand".
+      votesKept: !!(viaMirror && repinned.votesKept),
       checksRerun: rebuilding,
       previewRebuilding: rebuilding,
     };
@@ -1757,9 +1853,12 @@ async function advanceAppRepoBranch(ctx) {
   // already has one place that reconciles a moved native head.
   // `fresh: true` makes it re-read GitHub rather than trust the stored pin.
   //
-  // And no `recordPlatformPush` call anywhere above — which is exactly what
-  // makes classifyNativeHeadMove see an `author_push` and DELETE the tally
-  // instead of carrying it onto code the group has not read.
+  // Nothing above tells it who pushed, either. It asks services/integration.js
+  // classifyHeadMove what the move was and spends the answer on
+  // chat_sessions.approval_epoch: an authored or unknown move bumps it, so
+  // the earlier votes stop counting instead of carrying onto code the group
+  // has not read, and a mechanical or resolved one keeps them. No vote row is
+  // deleted either way.
   let reconciled = null;
   try {
     reconciled = await votes.reconcileNativeReviewedHead({
@@ -1777,23 +1876,35 @@ async function advanceAppRepoBranch(ctx) {
   // Boolean, not the truthy value: `checksRerun` and `previewRebuilding` are
   // reported to a client that branches on them, and `null` is neither answer.
   const settled = !!(reconciled && reconciled.updated === true);
+  // What the move actually cost, in the reconcile's own words, as Tail 1a
+  // reads them off its re-pin. A mechanical or resolved move keeps the
+  // approvals, and a mechanical one carries a green verdict onto the merged
+  // commit, so nothing rebuilds. A first binding (`changed: false`, a row
+  // with no pin yet) clears nothing and kicks nothing.
+  const moved = settled && reconciled.changed !== false;
+  const cleared = moved && reconciled.votesKept !== true;
+  const rebuilding = moved && reconciled.checksCarry !== true;
+  let votesClearing = votesCleared > 0 ? 'on_sync' : 'none';
+  if (settled) votesClearing = cleared ? 'now' : 'none';
 
   log.info('proposal-update', 'advanced a proposal from its author\'s fork', {
     sessionId, owner, repo, targetBranch, previousHeadSha: liveHead,
-    headSha: verified.headSha, votesCleared: settled ? votesCleared : 0,
-    votesClearing: settled ? 'now' : (votesCleared > 0 ? 'on_sync' : 'none'), votesAtRisk: votesCleared,
+    headSha: verified.headSha, votesCleared: cleared ? votesCleared : 0,
+    votesClearing, votesAtRisk: votesCleared,
+    moveKind: settled ? (reconciled.kind || null) : null,
   });
 
   return {
     ...landed,
     // Honest about what actually happened: the votes were counted before the
-    // write and are only reported cleared when the reconciliation that
-    // clears them ran.
-    votesCleared: settled ? votesCleared : 0,
-    votesClearing: settled ? 'now' : (votesCleared > 0 ? 'on_sync' : 'none'),
+    // write and are only reported cleared when the reconciliation ran and
+    // retired them.
+    votesCleared: cleared ? votesCleared : 0,
+    votesClearing,
     votesAtRisk: votesCleared,
-    checksRerun: settled,
-    previewRebuilding: settled,
+    votesKept: moved && reconciled.votesKept === true,
+    checksRerun: rebuilding,
+    previewRebuilding: rebuilding,
   };
 }
 
@@ -1969,10 +2080,11 @@ async function recordChangesReadyCard({ pool, session, sessionId, headSha }) {
 //
 // Here the author already has write access to the head — it is a branch in
 // their own fork — so there is nothing to push. Their push IS the update;
-// this only advances the head the platform TRACKS, which is what clears the
-// votes and rebuilds the checks. Calling it is still worth it: the sweeper
-// would get there eventually, and "eventually" is minutes of the group
-// voting on a revision that no longer exists.
+// this only advances the head the platform TRACKS, which is what retires the
+// votes (unless the move is a mechanical or resolved merge) and rebuilds the
+// checks. Calling it is still worth it: the sweeper would get there
+// eventually, and "eventually" is minutes of the group voting on a revision
+// that no longer exists.
 async function advanceForkHead(ctx) {
   const {
     pool, config, gh, head, prImportSync, githubPublic, session,
@@ -2098,11 +2210,13 @@ async function advanceForkHead(ctx) {
   });
 
   // The existing imported-head machinery, unchanged: it advances the tracked
-  // SHA, clears the tally, re-classifies dapp.json admins, posts the
-  // "earlier votes were cleared" note and re-runs the SHA-pinned checks and
-  // staging build.
+  // SHA, asks the same classifier what the move cost the approvals (an
+  // authored or unknown move bumps the epoch and posts the "earlier votes
+  // were cleared" note), re-classifies dapp.json admins and re-runs the
+  // SHA-pinned checks and staging build.
+  let moved = null;
   try {
-    await prImportSync.applyHeadChange({
+    moved = await prImportSync.applyHeadChange({
       config, pool, session, pr, repo: { owner, repo }, newHead: liveHead, oldHead,
     });
   } catch (err) {
@@ -2115,8 +2229,19 @@ async function advanceForkHead(ctx) {
     );
   }
 
+  // What the move actually cost, in applyHeadChange's own words. A mechanical
+  // or resolved move keeps the approvals, and a mechanical one can carry a
+  // green verdict, so nothing rebuilds. When another pass applied this head
+  // first (`applied: false`), the answer is that pass's, so the report stays
+  // what it has always been.
+  const applied = !!(moved && moved.applied);
+  const kept = applied && moved.votesKept === true;
+  const rebuilding = !(applied && moved.checksCarry === true);
+
   log.info('proposal-update', 'advanced an imported proposal to its fork\'s head', {
-    sessionId, prNumber, previousHeadSha: oldHead, headSha: liveHead, votesCleared,
+    sessionId, prNumber, previousHeadSha: oldHead, headSha: liveHead,
+    votesCleared: kept ? 0 : votesCleared, votesAtRisk: votesCleared,
+    moveKind: applied ? (moved.kind || null) : null,
   });
 
   return {
@@ -2130,9 +2255,11 @@ async function advanceForkHead(ctx) {
     branch,
     headSha: liveHead,
     previousHeadSha: oldHead,
-    votesCleared,
-    checksRerun: true,
-    previewRebuilding: true,
+    votesCleared: kept ? 0 : votesCleared,
+    votesAtRisk: votesCleared,
+    votesKept: kept,
+    checksRerun: rebuilding,
+    previewRebuilding: rebuilding,
     submittedVia: 'update_fork_head',
     titleUpdated: titleApplied.changed,
     ...(titleApplied.rejected ? { titleRejected: titleApplied.rejected } : {}),
