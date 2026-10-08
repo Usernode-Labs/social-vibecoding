@@ -775,7 +775,9 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
  * touch, so the wording and the rules cannot drift between the two.
  * `withLine` is false on a governance vote, which carries no line. `solo` is
  * a project that is just the viewer's: there is no group to address, so the
- * Yes side's optional line asks for a note instead. The No side is the same
+ * Yes side's optional line asks for a note instead (and an approval asks the
+ * same whether or not the community read has said solo yet — the label
+ * follows `approve` too). The No side is the same
  * either way, its line included. `approve` (#3977) is a solo change whose
  * Yes is the one it needs: the header is "Your approval", the halves and the
  * button read "Approve" / "Don't approve", and neither half carries a tally.
@@ -850,7 +852,7 @@ export function VotePicker({
         <div className="dev-vote-reason" data-vote-reason={side}>
           <label className="dev-vote-reason-label" htmlFor={reasonId}>
             {yesOn
-              ? (solo ? 'Add a note, if you like.' : 'Add a line for the group, if you like.')
+              ? (solo || approve ? 'Add a note, if you like.' : 'Add a line for the group, if you like.')
               : 'What’s not working for you? One line is plenty.'}
           </label>
           <textarea

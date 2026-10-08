@@ -188,10 +188,20 @@ test('#3977: the picker\'s sides read Approve and Don\'t approve, with the note,
     'Don\'t approve waits for its line, as a No does (the server asks for one)');
   const typed = picker({ side: 'no', line: 'Sort the list by date' });
   assert.match(typed, /<button type="button" class="dev-vote-reason-send dev-vote-reason-send-no">Don’t approve<\/button>/);
+  // #4346: the label follows `approve` alone, not just `solo` — the hub's
+  // community read may not have landed (or, on the staging demo, disagrees),
+  // and an approval is only asked on a project that is just yours anyway.
+  const readPending = picker({ solo: false });
+  assert.match(readPending, /Add a note, if you like\.<\/label>/,
+    'an approval asks for a note without the community read saying solo');
+  assert.doesNotMatch(readPending, /for the group/);
+  assert.match(picker({ solo: false, side: 'no' }), /What’s not working for you\? One line is plenty\.<\/label>/,
+    'the No side is worded as ever');
   const group = picker({ approve: false, solo: false });
   assert.match(group, />Your vote<\/div>/);
   assert.match(group, /Yes<span class="dev-vote-n">0\/1<\/span>/, 'a group keeps its words and tallies');
   assert.match(group, />Vote yes<\/button>/);
+  assert.match(group, /Add a line for the group, if you like\.<\/label>/, 'a group\'s Yes still asks for a line for the group');
 });
 
 test('#3977: a solo Don\'t approve sends its note the way a group\'s No sends its line', async () => {
@@ -269,10 +279,16 @@ test('#3977: the Needs you tab\'s vote sheet is the same picker, as an approval'
   assert.match(solo, /dev-vote-switch-yes" aria-pressed="true" data-act="castVote">[\s\S]*?Approve<\/button>/);
   assert.match(solo, /dev-vote-switch-no" aria-pressed="false" data-act="castVote">[\s\S]*?Don’t approve<\/button>/);
   assert.match(solo, /dev-vote-reason-send-yes">Approve<\/button>/);
+  // #4346: this render runs no effects, so `useCommunity` has not landed and
+  // `solo` is false — the moment before, the label got wrong today. The
+  // approval asks for its note anyway.
+  assert.match(solo, /Add a note, if you like\.<\/label>/);
+  assert.doesNotMatch(solo, /for the group/);
   assert.match(draw(true, 'no'), /dev-vote-reason-send-no" disabled="">Don’t approve<\/button>/);
   const group = draw(false);
   assert.match(group, />Your vote<\/div>/);
   assert.match(group, />Vote yes<\/button>/);
+  assert.match(group, /Add a line for the group, if you like\.<\/label>/, 'a group\'s sheet still asks for a line for the group');
 });
 
 // The needs feed's row for a change on a project that is just yours, and one
