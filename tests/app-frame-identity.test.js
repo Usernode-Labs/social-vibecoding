@@ -777,6 +777,18 @@ test('#15: a first version being built shows its thumbnail, not the starter, and
   }
 });
 
+test('#4396: a member while it builds gets Say hi in Discussion, not the maker\'s chat', async () => {
+  const h = await makeHarness();
+  const { AppView } = h;
+  AppView.appData = { ...h.record, self_hosted: false, first_version: { ...BUILDING, mine: false, conversationId: null } };
+  AppView.renderAppTab();
+  const member = h.status();
+  assert.equal(member.thumb.slug, SLUG, 'the same thumbnail');
+  assert.deepEqual([...member.lines], ['It opens here when it’s ready.']);
+  assert.deepEqual({ ...member.action }, { key: 'discussion', label: 'Say hi in Discussion', slug: SLUG, underCard: true });
+  assert.equal('quiet' in member.action, false, 'the member\'s one primary action, not a small pill');
+});
+
 test('#4053: the frame host holds only the launch host; the starter bar is retired', () => {
   const host = FRAME.slice(FRAME.indexOf('export function AppFrameHost'));
   assert.match(host, /className="hidden flex-1"/);

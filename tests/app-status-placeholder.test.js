@@ -328,9 +328,17 @@ test('#4053: while it is being built, the thumbnail with its build line, and whe
   assert.equal((out.match(/<button/g) || []).length, 1);
   assert.match(out, /<\/span><\/span><\/div><\/div><\/div><button id="app-first-version-chat"[^>]*>Open Homeroom bot<\/button><p /);
   assert.match(out, /rounded-full bg-white shadow-sm[^"]*text-violet-600[^"]*min-h-9/, 'secondary and small: raised pill, accent ink');
-  // Members get no way into somebody else's chat.
-  const member = html(view(makeAppView().AppView, firstVersionApp({}, { mine: false, conversationId: null })));
-  assert.doesNotMatch(member, /<button|Open Homeroom bot/);
+  // The maker never sees the member's button.
+  assert.doesNotMatch(out, /app-first-version-discussion|Say hi in Discussion/);
+  // A member waiting for somebody else's build gets one thing to do: say hi
+  // in the room that is already theirs (#4396), the screen's primary button,
+  // under the thumbnail block and ahead of the note line.
+  const mview = view(makeAppView().AppView, firstVersionApp({}, { mine: false, conversationId: null }));
+  assert.deepEqual(mview.action, { key: 'discussion', label: 'Say hi in Discussion', slug: 'plant-pal', underCard: true });
+  const member = html(mview);
+  assert.doesNotMatch(member, /app-first-version-chat|Open Homeroom bot/);
+  assert.equal((member.match(/<button/g) || []).length, 1);
+  assert.match(member, /<\/span><\/span><\/div><\/div><\/div><button id="app-first-version-discussion" class="rounded-lg bg-violet-600[^"]*mt-1">Say hi in Discussion<\/button><p /);
 });
 
 test('#4053: the build line is one line under the card (8px below it), not a row inside it', () => {
@@ -370,10 +378,11 @@ test('#4053: the line is the server\'s for this reader; the plan and the bot\'s 
   assert.doesNotMatch(out, /data-bot-plan|Build it|Change something/);
   assert.match(out, /<button[^>]* id="app-first-version-chat"[^>]*>Review the plan<\/button>/);
   assert.doesNotMatch(out, /Open Homeroom bot/, 'one button, not two to the same chat');
-  // Anyone else, the same moment.
+  // Anyone else, the same moment: their Say hi button, never a way into
+  // somebody else's chat.
   const theirs = view(AppView, firstVersionApp({}, { mine: false, conversationId: null, line: 'plan-member' }));
   assert.equal(theirs.buildLine, 'plan-member');
-  assert.equal(theirs.action, null, 'members get neither button');
+  assert.deepEqual(theirs.action, { key: 'discussion', label: 'Say hi in Discussion', slug: 'plant-pal', underCard: true }, 'members get the discussion button');
   assert.match(html(theirs), /data-build-line="plan-member"[^>]*>.*Planning it/);
   // A question waiting on its creator, and the build itself.
   assert.match(html(view(AppView, firstVersionApp({}, { line: 'question', question: true }))), /Homeroom bot has a question for you/);
@@ -605,6 +614,7 @@ test('ready: Try it opens the change\'s preview on this app; See the change open
   const src = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'app-frame', 'app-status.tsx'), 'utf8');
   assert.match(src, /tryChange: \{ id: 'app-first-version-try', opener: 'tryFirstVersion' \}/);
   assert.match(src, /seeChange: \{ id: 'app-first-version-change', opener: 'openFirstVersionChange' \}/);
+  assert.match(src, /discussion: \{ id: 'app-first-version-discussion', opener: 'openFirstVersionDiscussion' \}/);
   assert.match(src, /if \(action\.key === 'tryChange' \|\| action\.key === 'seeChange'\) call\(opener, action\.slug, action\.sessionId \?\? null\);/);
 });
 
@@ -632,6 +642,19 @@ test('#15: the chat button opens the DM by its id; nothing frames the starter wh
   sandbox.location = { hash: '' };
   AppView.openBotChat('plant-pal', 7);
   assert.equal(sandbox.location.hash, '#messages/7', 'without the bundle, the address does it');
+
+  // #4396: the member's Say hi button opens the project page's Discussion
+  // tab: the remembered tab is written, then the page's own address pushed.
+  sandbox.location = { hash: '' };
+  sandbox.App._hubHref = (slug) => `#app/${slug}/workshop`;
+  AppView.openFirstVersionDiscussion('plant-pal');
+  assert.equal(sandbox.location.hash, '#app/plant-pal/workshop');
+  assert.equal(AppView._discussionTarget.slug, 'plant-pal', 'Discussion is where the page opens');
+  assert.equal(AppView._discussionTarget.conversationId, null);
+  // A missing slug opens nothing.
+  sandbox.location.hash = '';
+  AppView.openFirstVersionDiscussion(null);
+  assert.equal(sandbox.location.hash, '');
 
   // #4053: "Show the starter for now" is gone, so a first version on its way
   // is pending for the whole visit, until the server says it is not.

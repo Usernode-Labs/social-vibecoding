@@ -3168,7 +3168,10 @@ const AppView = {
    * questions are answered in the creator's chat with Homeroom bot, so the
    * creator, and only they, gets a way there under the card: "Review the
    * plan" while their plan waits (the build line asks them, in blue), else
-   * a small "Open Homeroom bot" (owner, 8 Oct 2026). While a first-session tour
+   * a small "Open Homeroom bot" (owner, 8 Oct 2026). Everybody else gets one
+   * thing to do while it builds (#4396): "Say hi in Discussion", the project
+   * page's Discussion tab, where the people the app is for already read.
+   * While a first-session tour
    * card that says where the app opens is over this screen, the line hides
    * (`tourSays`: the card carries `data-tour-says-where-it-opens`;
    * features/app-frame/app-status.tsx). A card that does not say it, such as
@@ -3194,7 +3197,12 @@ const AppView = {
         quiet: thumb.buildLine !== 'plan',
         underCard: true,
       }
-      : null;
+      // A member waiting for somebody else's build says hi in the room that
+      // is already theirs (appData.slug is always set for a pending one,
+      // but a missing one leaves them the plain screen, as today).
+      : (appData.slug
+        ? { key: 'discussion', label: 'Say hi in Discussion', slug: appData.slug, underCard: true }
+        : null);
     return {
       dot: null,
       message: appData.name || appData.slug,
@@ -3344,6 +3352,18 @@ const AppView = {
     const messages = window.UsernodeReact && window.UsernodeReact.messages;
     if (messages && typeof messages.open === 'function') messages.open(id);
     else location.hash = id ? `#messages/${id}` : '#messages';
+  },
+
+  /**
+   * #4396: a member's button on the first-version screen. The page's own
+   * entry, pushed by the navigation, and the tab it opens on is Discussion
+   * because _landOnDiscussion wrote the remembered tab — the same door the
+   * first-session tour and the router's redirects use.
+   */
+  openFirstVersionDiscussion(slug) {
+    if (!slug) return;
+    AppView._landOnDiscussion(slug, null);
+    location.hash = App._hubHref(slug);
   },
 
   _stopFirstVersionWatch() {

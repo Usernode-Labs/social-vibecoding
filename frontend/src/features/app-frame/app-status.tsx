@@ -10,7 +10,8 @@
  * by the Homeroom bot from the project's description. Since #4053 that is
  * the project's thumbnail (features/first-session/sketch-card.tsx) with its
  * build line one line under it, and "It opens here when it’s ready." below that:
- * no plan, no step count, nothing to press (#4043). Once that version is
+ * no plan and no step count (#4043), the maker's way into their chat, and
+ * a member's "Say hi in Discussion" (#4396). Once that version is
  * built and up for approval, the same thumbnail says Ready to try, and the
  * screen says what it waits on, with Try it and See the change.
  *
@@ -73,11 +74,13 @@ export interface AppStatusView {
    * the viewer's DM with the Homeroom bot (#15), by its id when known. "Review the
    * plan" while their plan waits, "Open Homeroom bot" (`quiet`) while it
    * builds, "Open my chat with Homeroom bot" once it is ready to try.
+   * `discussion` is the project's Discussion tab, for a member who is not
+   * the maker, while the first version builds (#4396).
    * `tryChange` and `seeChange` are a first version that is ready to try:
    * its change's preview and its change page, by the change's id.
    */
   action: {
-    key: 'secrets' | 'buildLog' | 'botChat' | 'tryChange' | 'seeChange';
+    key: 'secrets' | 'buildLog' | 'botChat' | 'discussion' | 'tryChange' | 'seeChange';
     label: string;
     slug: string;
     conversationId?: number | null;
@@ -135,6 +138,7 @@ const ACTIONS = {
   secrets: { id: 'awaiting-open-secrets', opener: 'openAwaitingSecrets' },
   buildLog: { id: 'app-error-build-log', opener: 'openAppBuildLog' },
   botChat: { id: 'app-first-version-chat', opener: 'openBotChat' },
+  discussion: { id: 'app-first-version-discussion', opener: 'openFirstVersionDiscussion' },
   tryChange: { id: 'app-first-version-try', opener: 'tryFirstVersion' },
   seeChange: { id: 'app-first-version-change', opener: 'openFirstVersionChange' },
 } as const;
