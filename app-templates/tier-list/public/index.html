@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  {{DEV_CONSOLE_FORWARDER}}
+  <title>{{APP_NAME}}</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%237c3aed'/><circle cx='50' cy='50' r='18' fill='white'/></svg>">
+  <!-- This app's precompiled Tailwind (npm run build writes it on every
+       image build; tailwind.config.js says which files it scans). -->
+  <link rel="stylesheet" href="/tailwind.css">
+  <!-- The platform bridge, centrally hosted and loaded by RELATIVE path.
+       Never vendor it and never write a hostname in front of it. It is also
+       how the app answers the shell, so keep it even if no bridge API is
+       called. -->
+  <script src="/usernode-bridge/v1/bridge.js"></script>
+  <!-- Follow the viewer's Homeroom theme (the bridge reports it), with the
+       OS preference as the fallback outside Homeroom. -->
+  <script>
+    (function () {
+      var media = window.matchMedia('(prefers-color-scheme: dark)');
+      function applyTheme() {
+        var theme = (window.usernode && window.usernode.theme) || (media.matches ? 'dark' : 'light');
+        document.documentElement.classList.toggle('dark', theme === 'dark');
+        document.documentElement.style.colorScheme = theme;
+      }
+      applyTheme();
+      window.addEventListener('usernode:theme-changed', applyTheme);
+      media.addEventListener('change', applyTheme);
+    })();
+  </script>
+  <!-- The tier colours: this app's signature, in the design kit's way (an
+       "R G B" value for each look, text on them at 4.5:1 or more). The
+       classes are written out in full so app.js can name them whole. -->
+  <style>
+    :root {
+      --tier-s: 255 127 127;
+      --tier-a: 255 191 127;
+      --tier-b: 255 223 127;
+      --tier-c: 222 240 127;
+      --tier-d: 168 222 140;
+      --tier-f: 160 196 255;
+      --on-tier: 28 25 23;
+    }
+    .dark {
+      --tier-s: 230 110 110;
+      --tier-a: 230 166 104;
+      --tier-b: 226 196 102;
+      --tier-c: 196 214 104;
+      --tier-d: 140 196 116;
+      --tier-f: 132 170 232;
+      --on-tier: 12 10 9;
+    }
+    .tier-s { background-color: rgb(var(--tier-s)); color: rgb(var(--on-tier)); }
+    .tier-a { background-color: rgb(var(--tier-a)); color: rgb(var(--on-tier)); }
+    .tier-b { background-color: rgb(var(--tier-b)); color: rgb(var(--on-tier)); }
+    .tier-c { background-color: rgb(var(--tier-c)); color: rgb(var(--on-tier)); }
+    .tier-d { background-color: rgb(var(--tier-d)); color: rgb(var(--on-tier)); }
+    .tier-f { background-color: rgb(var(--tier-f)); color: rgb(var(--on-tier)); }
+  </style>
+</head>
+<body class="min-h-screen bg-ground text-fg">
+  <!-- What this tier list ranks, and the add field's example, were filled
+       in when the project was made. -->
+  <main class="mx-auto flex max-w-xl flex-col gap-8 px-4 py-8">
+    <header class="flex flex-col gap-1">
+      <h1 class="text-title">{{APP_NAME}}</h1>
+      <p class="text-body text-muted">Our favorite {{ITEM_PLURAL}}, ranked together. Add one, put each in a tier, and see where the group lands.</p>
+    </header>
+
+    <form id="add-form" class="flex flex-col gap-2" autocomplete="off">
+      <label for="add-name" class="section-label mb-0">Add a {{ITEM_ONE}}</label>
+      <div class="flex gap-2">
+        <input id="add-name" name="name" type="text" maxlength="60" required class="field flex-1 min-w-0"
+          placeholder="{{ITEM_EXAMPLE}}">
+        <button type="submit" class="btn-primary shrink-0">Add</button>
+      </div>
+      <p id="status" class="text-small text-danger" role="alert" hidden></p>
+    </form>
+
+    <!-- Loading: shapes where the tier list will be. -->
+    <div id="loading" class="flex flex-col gap-2" aria-label="Loading">
+      <div class="skeleton h-14 w-full"></div>
+      <div class="skeleton h-14 w-full"></div>
+      <div class="skeleton h-14 w-full"></div>
+    </div>
+
+    <!-- Error: only when the load failed. -->
+    <div id="error" class="state-error card" hidden>
+      <p class="text-heading">The tier list did not load</p>
+      <p class="text-body text-muted">Nothing you ranked is lost. Check your connection and try again.</p>
+      <button id="retry" type="button" class="btn-secondary">Retry</button>
+    </div>
+
+    <!-- Empty: only when the load worked and there is nothing yet. -->
+    <div id="empty" class="state-empty card" hidden>
+      <p class="text-heading">No {{ITEM_PLURAL}} yet</p>
+      <p class="text-body text-muted">Add the first one above. Everyone here can add more and rank them.</p>
+    </div>
+
+    <section id="group" class="flex flex-col" hidden>
+      <div class="flex items-baseline justify-between gap-3">
+        <h2 class="section-label">The group's tier list</h2>
+        <p id="rankers" class="mb-2 px-1 text-small text-muted"></p>
+      </div>
+      <div id="group-tiers" class="list"></div>
+      <p id="unranked" class="mt-2 px-1 text-small text-muted" hidden></p>
+    </section>
+
+    <section id="yours" class="flex flex-col" hidden>
+      <div class="flex items-baseline justify-between gap-3">
+        <h2 class="section-label">Your tiers</h2>
+        <p id="your-count" class="mb-2 px-1 text-small text-muted"></p>
+      </div>
+      <ul id="your-tiers" class="list"></ul>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

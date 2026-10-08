@@ -48,7 +48,7 @@ function walk(dir, out = []) {
 
 test('no user-facing copy says "Ask for a change" any more', () => {
   const offenders = [];
-  // (app-templates/ went with the four starters; read it if one comes back.)
+  // (app-templates/ holds the ready-made apps' screens, services/app-templates.js.)
   for (const dir of ['frontend/src', 'public/js', 'src', 'app-templates']) {
     if (!fs.existsSync(path.join(ROOT, dir))) continue;
     for (const rel of walk(dir)) {

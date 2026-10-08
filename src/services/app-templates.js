@@ -8,24 +8,46 @@
  * existed, byte for byte (services/template.js). Strict, like the rest of
  * create-options.js: an id not on the list is refused, not swapped.
  *
- * ONLY `empty` IS LEFT. The four starters (social productivity, multimedia
- * social, a 2D game, a 3D game) were offered by the create dialog's "Start
- * from a template", and were deleted with that dialog: Create opens "What do
- * you want to make?" (frontend/src/features/first-session/make.tsx), which
- * describes a project for Homeroom bot to build, or imports a GitHub repo.
- * The machinery stays, so a starter can come back as files and an entry:
+ * READY-MADE APPS (Evan, 8 October 2026). The four general starters of the
+ * old create dialog (social productivity, multimedia social, a 2D game, a 3D
+ * game) were deleted with it. What came back are apps finished enough that
+ * a project made from one needs nothing built: the eight choices on "What
+ * do you want to make?" that need no typing
+ * (frontend/src/features/first-session/examples.ts, each choice's
+ * `template`). A tier list of restaurants, hikes, cities or games is one
+ * app with its category filled in at creation; a grocery list, a chore
+ * list, a lending library and a potluck planner are one app each. They are
+ * `ready`: POST /api/apps starts no Homeroom bot build for them
+ * (routes/apps.js), so the project is usable as soon as it is running.
+ * Words of the maker's own, and every game, still go to Homeroom bot.
  *
- *   app-templates/<id>/  at the repository root, outside src/ because
+ * A starter is files and an entry:
+ *
+ *   app-templates/<dir>/ at the repository root, outside src/ because
  *                        scripts/check-sql.js validates every query under
  *                        src/ against the platform's own catalog, and a
- *                        starter's queries are against the app's database:
+ *                        starter's queries are against the app's database.
+ *                        `dir` is the entry's id unless it names another,
+ *                        so several entries can share one app:
  *     api.js             the app's own routes and tables (server.js mounts
  *                        it after the sign-in check and awaits its migrate);
- *     public/index.html  the screen, with `{{APP_NAME}}` and
- *                        `{{DEV_CONSOLE_FORWARDER}}` filled in at creation;
- *     public/app.js      the screen's script.
+ *     public/index.html  the screen, with `{{APP_NAME}}`,
+ *                        `{{DEV_CONSOLE_FORWARDER}}` and the entry's own
+ *                        `fill` values filled in at creation;
+ *     public/app.js      the screen's script, which holds no placeholder:
+ *                        what an entry fills is in the page, so one script
+ *                        serves every entry that shares the directory.
  *   an entry below       its title, summary, icon, features, tables and the
  *                        declared `tests` the new repository ships with.
+ *
+ * Rules every starter keeps: the platform conventions, like any app (the
+ * bridge by relative path and never vendored, no CDN, the viewer's theme,
+ * staging seeds gated on USERNODE_ENV and owned by fake identities, "now"
+ * read through `req.now` and `usernode.now()`, "everyone in the group" from
+ * the platform's member list), and the new app's design kit
+ * (styles/tailwind-input.css, written by template.js): colour only from its
+ * tokens, its type scale and components, so a ready-made app looks like the
+ * apps Homeroom bot builds.
  *
  * A project made from one of the deleted starters keeps its `apps.template`
  * value; app-creator reads anything that is not on the list as `empty`, so
@@ -42,24 +64,175 @@ const STARTERS_DIR = path.join(__dirname, '..', '..', 'app-templates');
 // more; these are the ones server.js and index.html depend on.
 const REQUIRED_FILES = ['api.js', 'public/index.html', 'public/app.js'];
 
+// Every starter's checks look at the screen and its script; one of them is
+// the visual flow its first proposals are compared on.
+const IMPACT = Object.freeze(['public/**', 'api.js']);
+
+/**
+ * One tier list per category: the same app (app-templates/tier-list), with
+ * what it ranks filled in. `example` is the add field's placeholder.
+ */
+function tierList(id, { plural, one, example, title }) {
+  return Object.freeze({
+    id,
+    dir: 'tier-list',
+    ready: true,
+    title,
+    summary: `A tier list of the group's favorite ${plural}: anyone adds one, everyone sorts them into tiers, and the group's ranking shows where each lands.`,
+    icon: '📊',
+    fill: Object.freeze({ ITEM_PLURAL: plural, ITEM_ONE: one, ITEM_EXAMPLE: example }),
+    features: Object.freeze([
+      `**Add ${plural}**: anyone in the project adds one; a name already on the list is not added twice.`,
+      '**Your tiers**: put each one in S, A, B, C, D or F. Change your mind any time.',
+      '**The group\'s tier list**: every item sits in the tier its average lands in, a tie going up.',
+    ]),
+    tables: '`tier_items` and `tier_votes`',
+    tests: Object.freeze([
+      {
+        id: 'tiers.board',
+        name: 'The group\'s tier list shows items in their tiers',
+        path: '/',
+        expectSelector: '#group-tiers [data-tier="S"] [data-item]',
+        visual: true,
+        impact: IMPACT,
+      },
+      { name: 'Your tiers list every item with its six tiers', path: '/', expectSelector: '#your-tiers [data-item] button[data-pick="F"]' },
+      { name: 'A new item can be added', path: '/', expectSelector: '#add-form input[name="name"]' },
+    ]),
+  });
+}
+
 const TEMPLATES = Object.freeze([
   Object.freeze({
     id: 'empty',
     title: 'Empty',
     summary: 'The starter screen with one example to replace.',
   }),
+  tierList('tier-list-restaurants', { plural: 'restaurants', one: 'restaurant', example: 'e.g. the taco place on Main St', title: 'Restaurant tier list' }),
+  tierList('tier-list-hikes', { plural: 'hikes', one: 'hike', example: 'e.g. the lake loop', title: 'Hiking tier list' }),
+  tierList('tier-list-cities', { plural: 'cities', one: 'city', example: 'e.g. Lisbon', title: 'City tier list' }),
+  tierList('tier-list-games', { plural: 'games', one: 'game', example: 'e.g. chess', title: 'Game tier list' }),
+  Object.freeze({
+    id: 'grocery-list',
+    ready: true,
+    title: 'Grocery list',
+    summary: 'One shared grocery list: anyone adds what is needed, whoever is at the store checks things off.',
+    icon: '🛒',
+    features: Object.freeze([
+      '**One shared list**: add an item with an optional note ("2 cartons"); it shows who added it.',
+      '**Check it off**: whoever buys it ticks it, and the list says who did.',
+      '**Clear the bought ones**: one tap tidies the list once the shopping is done.',
+    ]),
+    tables: '`grocery_items`',
+    tests: Object.freeze([
+      {
+        id: 'groceries.list',
+        name: 'The list shows what is needed and what was bought',
+        path: '/',
+        expectSelector: '#needed [data-item] input[type="checkbox"]',
+        visual: true,
+        impact: IMPACT,
+      },
+      { name: 'An item can be added', path: '/', expectSelector: '#add-form input[name="name"]' },
+    ]),
+  }),
+  Object.freeze({
+    id: 'chore-list',
+    ready: true,
+    title: 'Chore list',
+    summary: 'The group\'s chores, each with whose turn it is this week; turns rotate every Monday.',
+    icon: '🧹',
+    features: Object.freeze([
+      '**Your turn**: the chores that are yours this week come first.',
+      '**A weekly rota**: turns go round the project\'s members (the platform\'s member list, never just whoever opened the app), moving on every Monday (UTC).',
+      '**Done this week**: anyone can tick a chore off, and the list says who did.',
+    ]),
+    tables: '`chores` and `chore_done`',
+    tests: Object.freeze([
+      {
+        id: 'chores.week',
+        name: 'This week\'s chores are listed',
+        path: '/',
+        expectSelector: '#chores [data-chore]',
+        visual: true,
+        impact: IMPACT,
+      },
+      { name: 'With the demo rota, each chore says whose turn it is', path: '/?demo=1', expectSelector: '#chores [data-chore] [data-turn]' },
+    ]),
+  }),
+  Object.freeze({
+    id: 'lending-library',
+    ready: true,
+    title: 'Lending library',
+    summary: 'The things members can lend each other, who has each one now, and when it is due back.',
+    icon: '📚',
+    features: Object.freeze([
+      '**Things to borrow**: add something you can lend, with an optional note.',
+      '**Borrow and return**: borrow it for a week, two weeks or a month; its owner or borrower marks it back.',
+      '**Who has what**: what you have borrowed comes first, and anything overdue says so.',
+    ]),
+    tables: '`library_items` and `library_loans`',
+    tests: Object.freeze([
+      {
+        id: 'library.shelf',
+        name: 'The library lists things, borrowed and available',
+        path: '/',
+        expectSelector: '#shelf [data-thing][data-status="out"]',
+        visual: true,
+        impact: IMPACT,
+      },
+      { name: 'Something can be added to lend', path: '/', expectSelector: '#add-form input[name="name"]' },
+    ]),
+  }),
+  Object.freeze({
+    id: 'potluck-planner',
+    ready: true,
+    title: 'Potluck planner',
+    summary: 'Potlucks with a date and a place, and who is bringing what by course, so the table is not six salads.',
+    icon: '🍲',
+    features: Object.freeze([
+      '**Plan a potluck**: a name, a date, a time and a place.',
+      '**Who\'s bringing what**: say what you will bring and which course it is.',
+      '**A balanced table**: each course lists what is coming, and the courses nobody has taken yet are named.',
+    ]),
+    tables: '`potlucks` and `potluck_dishes`',
+    tests: Object.freeze([
+      {
+        id: 'potluck.next',
+        name: 'The next potluck shows who is bringing what',
+        path: '/',
+        expectSelector: '#potlucks [data-potluck] [data-course] [data-dish]',
+        visual: true,
+        impact: IMPACT,
+      },
+      { name: 'A potluck can be planned', path: '/', expectSelector: '#plan-form input[name="title"]' },
+    ]),
+  }),
 ]);
 
 const TEMPLATE_IDS = Object.freeze(TEMPLATES.map((t) => t.id));
 const BY_ID = new Map(TEMPLATES.map((t) => [t.id, t]));
+/** The ready-made apps: a project made from one needs nothing built. */
+const READY_IDS = Object.freeze(TEMPLATES.filter((t) => t.ready).map((t) => t.id));
 
 function isTemplate(id) {
   return typeof id === 'string' && BY_ID.has(id);
 }
 
+/** Whether a project made from this template is ready as it is (no Homeroom bot build). */
+function isReadyMade(id) {
+  return isTemplate(id) && !!BY_ID.get(id).ready;
+}
+
 /** The template's metadata, or null for an id that is not one. */
 function get(id) {
   return BY_ID.get(id) || null;
+}
+
+/** The directory a starter's files live in, under STARTERS_DIR. */
+function dirOf(id) {
+  const t = get(id);
+  return t ? (t.dir || t.id) : null;
 }
 
 /**
@@ -85,12 +258,13 @@ function walk(dir, base = dir, out = []) {
 
 /**
  * A starter's own files, as `{ path, content }` with the placeholders
- * filled in. `fill` maps a placeholder name (APP_NAME) to its text, already
- * escaped for where it lands. Empty for `empty`, which has none.
+ * filled in. `fill` maps a placeholder name (APP_NAME, or one of the
+ * entry's own `fill` names) to its text, already escaped for where it
+ * lands. Empty for `empty`, which has none.
  */
 function starterFiles(id, fill = {}) {
   if (!isTemplate(id) || id === DEFAULT_TEMPLATE) return [];
-  const dir = path.join(STARTERS_DIR, id);
+  const dir = path.join(STARTERS_DIR, dirOf(id));
   return walk(dir).map((rel) => ({
     path: rel,
     content: fs.readFileSync(path.join(dir, rel), 'utf8')
@@ -100,11 +274,14 @@ function starterFiles(id, fill = {}) {
 
 module.exports = {
   DEFAULT_TEMPLATE,
+  READY_IDS,
   REQUIRED_FILES,
   STARTERS_DIR,
   TEMPLATES,
   TEMPLATE_IDS,
+  dirOf,
   get,
+  isReadyMade,
   isTemplate,
   parseTemplate,
   starterFiles,

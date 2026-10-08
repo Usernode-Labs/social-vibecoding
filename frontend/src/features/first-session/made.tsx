@@ -83,6 +83,12 @@
  * has no sketch and nothing built from a description: its lines say it is
  * being imported, then that it runs (buildLine, buildNote). Every one is a
  * private community, so every one ends on Share invite.
+ *
+ * READY-MADE (Evan, 8 October 2026). A choice on the make screen that needs
+ * no typing (a tier list of restaurants, the grocery list, ...) makes one of
+ * Homeroom's ready-made apps (services/app-templates.js, `made.readyMade`):
+ * nothing is sketched or built, so like an import its lines say it is being
+ * set up, then that it is ready to use.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -202,13 +208,15 @@ export function stalledOf(appStatus: string | null): Stalled {
 }
 
 /** The build line's words ("Building it"), or what to say without a build. */
-export function buildLine(fv: FirstVersion, appStatus: string | null, botBuilds = true, imported = false): string {
+export function buildLine(fv: FirstVersion, appStatus: string | null, botBuilds = true, imported = false, readyMade = false): string {
   // Before any step: nothing is built on a setup that stopped.
   const stalled = stalledOf(appStatus);
   if (stalled === 'failed') return 'Setting it up didn’t finish.';
   if (stalled === 'needs-secrets') return 'It needs its secrets before it can start.';
   // An import has no first version: it is coming over, then it runs.
   if (imported) return appStatus === 'running' ? 'Imported. It’s running.' : 'Importing it from GitHub…';
+  // Nor has a ready-made app: it is set up, then it is ready.
+  if (readyMade) return appStatus === 'running' ? 'Ready to use.' : 'Setting it up…';
   if (fv && fv.ready) return 'Version one is ready to try.';
   // The plain card (no sketch) says the build line's words too, never a step count (#4053).
   if (fv && fv.step && fv.of) return BUILD_LINE_WORDS[buildLineOf(fv.line) || 'planning'];
@@ -246,10 +254,11 @@ export function madeLine(fv: FirstVersion, botBuilds: boolean, live = false, sta
  * same before and after the plan, that says it asks when it has questions.
  * While the plan waits, a project that is not sketched says so instead.
  */
-export function buildNote(botBuilds: boolean, planWaits = false, stalled: Stalled = null, imported = false): string {
+export function buildNote(botBuilds: boolean, planWaits = false, stalled: Stalled = null, imported = false, readyMade = false): string {
   if (stalled === 'failed') return 'Trying again usually clears it. If it stops again, ask an admin.';
   if (stalled === 'needs-secrets') return 'Set them, and it finishes starting.';
   if (imported) return 'Its repo says what it does. You and anyone you invite build on it from here.';
+  if (readyMade) return 'It works as it is. You and anyone you invite can change it from there.';
   if (!botBuilds) return 'You or anyone you invite can build it from there.';
   if (planWaits) return 'Homeroom bot is waiting for your go-ahead.';
   return 'Homeroom is making your app. It will message you when the first version is ready to try, or if it has any questions.';
@@ -747,6 +756,7 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
   const sent = sentHow !== null;
   const [retrying, setRetrying] = useState(false);
   const imported = !!made.imported;
+  const readyMade = !!made.readyMade;
   const fromCreate = entry === 'create';
   // Whether a first version has been read as on its way: once it has, a read
   // without one means it is live (or came to something else), and the
@@ -790,9 +800,9 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
   // Not live yet: nothing read, still on its way, up for approval, or a
   // setup that stopped. That last reads no first version either, and is
   // nothing to try: the card said "Ready to try" over "Setting it up didn't
-  // finish" until it counted here. An import has no first version at all:
-  // it is live once it runs.
-  const making = imported ? appStatus !== 'running' : (!!stalled || !(building && !fv));
+  // finish" until it counted here. An import, or a ready-made app, has no
+  // first version at all: it is live once it runs.
+  const making = imported || readyMade ? appStatus !== 'running' : (!!stalled || !(building && !fv));
 
   const botBuilds = made.conversationId != null;
   // WP-E: "Get a ping when it's ready?" in the Homeroom app, now that there
@@ -800,17 +810,17 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
   // nothing on the web, or once the phone's answer is decided).
   useEffect(() => { if (botBuilds) askForPingWhileBotBuilds(); }, [botBuilds]);
   const sketch = useSketch(made.slug);
-  // An import is never sketched: its plain card, not the sketch's frame
-  // while the (absent) sketch is read.
-  const card = !imported && showsCard(sketch.state);
+  // An import or a ready-made app is never sketched: its plain card, not the
+  // sketch's frame while the (absent) sketch is read.
+  const card = !imported && !readyMade && showsCard(sketch.state);
   const line = madeLine(fv, botBuilds, !making, stalled, imported);
   // The thumbnail says only what the build line does not: a quiet note when
   // the bot builds nothing, or what a stopped setup or an import needs. The
   // plain card says the build's words and one line about what happens next.
   const note = card
     ? (stalled || imported ? buildNote(botBuilds, !!plan, stalled, imported) : botBuilds ? null : NO_BOT_NOTE)
-    : buildNote(botBuilds, !!plan, stalled, imported);
-  const plainLine = buildLine(fv, appStatus, botBuilds, imported);
+    : buildNote(botBuilds, !!plan, stalled, imported, readyMade);
+  const plainLine = buildLine(fv, appStatus, botBuilds, imported, readyMade);
   // Something is under way: the project being set up, or the bot's build
   // (not while its plan waits on them, nor on a setup that stopped: then
   // nothing is).

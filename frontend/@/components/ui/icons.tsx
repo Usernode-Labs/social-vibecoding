@@ -220,7 +220,9 @@ export const UserIcon = stroked(
 /**
  * A soft person silhouette, solid: a head and shoulders that run off the
  * bottom edge, so a round frame crops them. The waiting seats in the
- * community's people row (first-session/people-row.tsx) draw it in a tint.
+ * community's people row (first-session/people-row.tsx) draw it in a tint,
+ * and the hub's open seats pale in a circle (community-card.tsx WeekPeople).
+ * #4361 and #4362 each added it, the second as a copy of the same shape.
  */
 export const PersonSilhouetteIcon = filled(
   'PersonSilhouetteIcon',
@@ -655,19 +657,6 @@ export const EllipsisVerticalIcon = ({ id, className, ...rest }: IconProps) => (
   </svg>
 );
 EllipsisVerticalIcon.displayName = 'EllipsisVerticalIcon';
-
-/**
- * A person's outline, filled: a head over shoulders, on a 24×24 box. The hub's
- * open seats draw it pale in a circle (community-card.tsx WeekPeople, the
- * canvas board People). A head and a path, so written out rather than built.
- */
-export const PersonSilhouetteIcon = ({ id, className, ...rest }: IconProps) => (
-  <svg id={id} className={className} viewBox="0 0 24 24" fill="currentColor" {...rest}>
-    <circle cx="12" cy="9" r="4.6" />
-    <path d="M2.5 24c.9-5.2 4.6-8.4 9.5-8.4s8.6 3.2 9.5 8.4z" />
-  </svg>
-);
-PersonSilhouetteIcon.displayName = 'PersonSilhouetteIcon';
 
 /**
  * The Dev card's ⋯ trigger — three dots on a HORIZONTAL row, in a 20×20 box.

@@ -15,6 +15,13 @@
  * `fill` (or the maker's own words), then that choice's `tail` or the
  * template's. A `finish` template (the game) always ends in the maker's own
  * words, typed in a box under the sentence, and its Your own comes first.
+ *
+ * READY-MADE. Every choice that needs no typing (the tier list's four, the
+ * organizer's four) names a `template`: one of Homeroom's ready-made apps
+ * (services/app-templates.js), which Make it makes instead of asking
+ * Homeroom bot to build a first version, so the project is usable as soon
+ * as it runs. Its `emoji` is that app's icon. Your own words, and every
+ * game, still go to Homeroom bot.
  */
 
 /** The choice that puts the maker's own words in the blank. */
@@ -34,6 +41,10 @@ export type Choice = {
   name: string;
   /** The project's one-line description (create-options DESCRIPTION_MAX, 90). */
   description: string;
+  /** The ready-made app it makes (services/app-templates.js READY_IDS), with nothing to build. */
+  template?: string;
+  /** That app's icon (its entry's `icon`), where it is not the template's own emoji. */
+  emoji?: string;
 };
 
 export type Template = {
@@ -78,10 +89,10 @@ export const TEMPLATES: readonly Template[] = [
     head: 'A tier list for our favorite ',
     tail: '. Anyone can add items, everyone sorts them, and we can see where they land.',
     choices: [
-      { key: 'restaurants', label: 'Restaurants', fill: 'restaurants', name: 'Restaurant Tier List', description: 'A restaurant tier list' },
-      { key: 'hikes', label: 'Hikes', fill: 'hikes', name: 'Hiking Tier List', description: 'A hiking tier list' },
-      { key: 'cities', label: 'Cities', fill: 'cities', name: 'City Tier List', description: 'A city tier list' },
-      { key: 'games', label: 'Games', fill: 'games', name: 'Game Tier List', description: 'A game tier list' },
+      { key: 'restaurants', label: 'Restaurants', fill: 'restaurants', name: 'Restaurant Tier List', description: 'A restaurant tier list', template: 'tier-list-restaurants' },
+      { key: 'hikes', label: 'Hikes', fill: 'hikes', name: 'Hiking Tier List', description: 'A hiking tier list', template: 'tier-list-hikes' },
+      { key: 'cities', label: 'Cities', fill: 'cities', name: 'City Tier List', description: 'A city tier list', template: 'tier-list-cities' },
+      { key: 'games', label: 'Games', fill: 'games', name: 'Game Tier List', description: 'A game tier list', template: 'tier-list-games' },
     ],
     own: { example: 'taco spots', name: '{words} Tier List', description: 'A tier list' },
     note: 'I\'m making us a tier list. Join and tell me what it needs.',
@@ -113,10 +124,10 @@ export const TEMPLATES: readonly Template[] = [
     head: 'An app to organize our ',
     tail: ', so everyone can see what\'s where and who\'s on it.',
     choices: [
-      { key: 'groceries', label: 'Groceries', fill: 'groceries', tail: ': one shared list, and whoever\'s at the store checks things off.', name: 'Grocery List', description: 'A grocery list' },
-      { key: 'chores', label: 'Chores', fill: 'chores', tail: ': who\'s on what this week, and a nudge when it\'s your turn.', name: 'Chore List', description: 'A chore list' },
-      { key: 'library', label: 'Shared library', fill: 'shared library', tail: ': what we can borrow, who has it now, and when it\'s coming back.', name: 'Lending Library', description: 'A lending library' },
-      { key: 'potlucks', label: 'Potlucks', fill: 'potlucks', tail: ': who\'s bringing what, so we don\'t end up with six salads.', name: 'Potluck Planner', description: 'A potluck planner' },
+      { key: 'groceries', label: 'Groceries', fill: 'groceries', tail: ': one shared list, and whoever\'s at the store checks things off.', name: 'Grocery List', description: 'A grocery list', template: 'grocery-list', emoji: '🛒' },
+      { key: 'chores', label: 'Chores', fill: 'chores', tail: ': who\'s on what this week, with turns that go round everyone.', name: 'Chore List', description: 'A chore list', template: 'chore-list', emoji: '🧹' },
+      { key: 'library', label: 'Shared library', fill: 'shared library', tail: ': what we can borrow, who has it now, and when it\'s coming back.', name: 'Lending Library', description: 'A lending library', template: 'lending-library', emoji: '📚' },
+      { key: 'potlucks', label: 'Potlucks', fill: 'potlucks', tail: ': who\'s bringing what, so we don\'t end up with six salads.', name: 'Potluck Planner', description: 'A potluck planner', template: 'potluck-planner', emoji: '🍲' },
     ],
     own: { example: 'camping gear', name: '{words} Crew', description: 'An organizer' },
     note: 'I\'m making us an organizer. Join and tell me what it needs.',
@@ -170,6 +181,15 @@ export function suggestedName(t: Template, key: string, words: string): string {
   if (key !== OWN) return choiceOf(t, key)?.name || '';
   const own = tidy(words).split(' ').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
   return own && t.own.name ? t.own.name.replace('{words}', own) : '';
+}
+
+/**
+ * The ready-made app a choice makes, and its icon, or null: for Your own
+ * words, a game, or a choice that has none.
+ */
+export function readyMadeOf(t: Template, key: string): { template: string; emoji: string } | null {
+  const c = key === OWN ? null : choiceOf(t, key);
+  return c && c.template ? { template: c.template, emoji: c.emoji || t.emoji } : null;
 }
 
 /** The project's one-line description for a choice. */

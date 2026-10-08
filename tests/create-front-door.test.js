@@ -247,7 +247,26 @@ test('the made screen from Create goes to the project; an import lands there too
   assert.doesNotMatch(html, /data-first-session-sketch/, 'an import is never sketched');
   const src = read(`${DIR}/made.tsx`);
   assert.doesNotMatch(src, /\bsolo\b|made\.audience/, 'nothing is made for Just me from here any more');
-  assert.match(src, /const card = !imported && showsCard\(sketch\.state\);/);
+  assert.match(src, /const card = !imported && !readyMade && showsCard\(sketch\.state\);/);
+});
+
+test('a ready-made app lands on the made screen like an import: set up, then ready, never sketched or built', () => {
+  const made = loadTsx(`${DIR}/made.tsx`);
+  assert.equal(made.buildLine(null, 'creating', false, false, true), 'Setting it up…');
+  assert.equal(made.buildLine(null, 'running', false, false, true), 'Ready to use.');
+  assert.equal(made.buildLine(null, 'error', false, false, true), 'Setting it up didn’t finish.', 'a stopped setup says so first');
+  assert.equal(made.buildNote(false, false, null, false, true), 'It works as it is. You and anyone you invite can change it from there.');
+  assert.equal(made.madeLine(null, false), null, 'Homeroom bot builds nothing, so there is no build line');
+  const html = renderToHtml(createElement(made.MadeScreen, {
+    made: { slug: 'groceries-1', name: 'Grocery List', emoji: '🛒', description: 'A grocery list', example: null, conversationId: null, readyMade: true },
+    me: 'sam', entry: 'first-session', onContinue() {}, onOpenChat() {},
+  }));
+  assert.match(html, />Setting it up…</);
+  assert.match(html, />🛒</, 'the ready-made app\'s own icon');
+  assert.match(html, />Share invite<\/button>/);
+  assert.doesNotMatch(html, /data-first-session-sketch/, 'a ready-made app is never sketched');
+  const src = read(`${DIR}/made.tsx`);
+  assert.match(src, /const making = imported \|\| readyMade \? appStatus !== 'running' : /);
 });
 
 test('a setup that stopped says so on the made screen, with Try again or Set secrets, as the progress view did', () => {
@@ -293,7 +312,7 @@ test('a setup that stopped says so on the made screen, with Try again or Set sec
 test('the server sketches the idea for both doors, and only the first session answers the join screen and counts in the Journey', () => {
   const src = read('src/routes/apps.js');
   assert.match(src, /const MAKE_ORIGINS = new Set\(\['first-session', 'create'\]\);/);
-  assert.match(src, /if \(MAKE_ORIGINS\.has\(req\.body\.from\) && !repoUrlNormalized\s+&& require\('\.\.\/services\/homeroom-bot-dm'\)\.normalizeBrief\(req\.body\.brief\)\) \{/);
+  assert.match(src, /if \(MAKE_ORIGINS\.has\(req\.body\.from\) && !repoUrlNormalized && !readyMade\s+&& require\('\.\.\/services\/homeroom-bot-dm'\)\.normalizeBrief\(req\.body\.brief\)\) \{/);
   assert.match(src, /\.\.\.\(MAKE_ORIGINS\.has\(req\.body\.from\) \? \{ from: req\.body\.from \} : \{\}\),/);
   // Answering the join screen stays the first session's.
   assert.match(src, /if \(req\.body\.from === 'first-session'\) \{\s+await require\('\.\.\/services\/first-session'\)\.answerJoinScreenByMaking/);
@@ -311,7 +330,7 @@ test('a stopped setup is not "Ready to try", and a Just me sketch is shared with
   // (Just me is no longer chosen at creation; the server still keeps the
   // shared point off a solo project's sketch for any other caller.)
   const src = read(`${DIR}/made.tsx`);
-  assert.match(src, /const stalled = stalledOf\(appStatus\);[\s\S]{0,500}const making = imported \? appStatus !== 'running' : \(!!stalled \|\| !\(building && !fv\)\);/);
+  assert.match(src, /const stalled = stalledOf\(appStatus\);[\s\S]{0,500}const making = imported \|\| readyMade \? appStatus !== 'running' : \(!!stalled \|\| !\(building && !fv\)\);/);
   // #4053: no build line either: nothing is being made while it is stopped.
   assert.match(src, /const line = madeLine\(fv, botBuilds, !making, stalled, imported\);/);
   const { madeLine } = loadTsx(`${DIR}/made.tsx`);

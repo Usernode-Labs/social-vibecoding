@@ -1345,8 +1345,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // make it from, and never a reason the create fails. A connector's
       // create sends no `from`, so it costs no sketch. `timeZone` is the
       // maker's device's, so the card's "today" is theirs (an unknown or
-      // invalid zone reads as UTC there).
-      if (MAKE_ORIGINS.has(req.body.from) && !repoUrlNormalized
+      // invalid zone reads as UTC there). A ready-made app has its own icon
+      // and nothing to sketch.
+      const readyMade = appTemplates.isReadyMade(template);
+      if (MAKE_ORIGINS.has(req.body.from) && !repoUrlNormalized && !readyMade
           && require('../services/homeroom-bot-dm').normalizeBrief(req.body.brief)) {
         await require('../services/app-sketch').startSketch(pool, {
           app: appRow, user: req.user, brief: req.body.brief,
@@ -1377,12 +1379,13 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // says so in their DM, which the dialog then offers to open; for
       // anybody else it is left to the group. Optional here (a connector
       // or an older client sends none), and never a reason the create fails.
-      // An import, or a project with no description, has nothing to build
-      // first; made by somebody on the bot's DM list, it is still one the
-      // bot acts on for real (noteProjectMade).
+      // An import, a ready-made app (services/app-templates.js: usable as
+      // soon as it runs) or a project with no description has nothing to
+      // build first; made by somebody on the bot's DM list, it is still one
+      // the bot acts on for real (noteProjectMade).
       let homeroomBot = null;
       const homeroomBotDm = require('../services/homeroom-bot-dm');
-      if (!repoUrlNormalized && homeroomBotDm.normalizeBrief(req.body.brief)) {
+      if (!repoUrlNormalized && !readyMade && homeroomBotDm.normalizeBrief(req.body.brief)) {
         try {
           homeroomBot = await homeroomBotDm.startFirstVersion(pool, config, {
             app: appRow, user: req.user, brief: req.body.brief,
