@@ -860,6 +860,31 @@ function storeOutbox(id: number) {
 
 // ── Opening and closing ────────────────────────────────────────────────
 
+/**
+ * A shared deep link's `?flow=claude-code|codex` (#4312): the page's own
+ * query, where the old classic-chat link carried it. Read once and stripped
+ * in place, so a reload, Back or a copied address does not open the sheet
+ * again; anything else, and any failure (no window, no history), leaves the
+ * address as it is.
+ */
+function takeFlowLink(): HandoffAgent | null {
+  try {
+    if (typeof window === 'undefined') return null;
+    const params = new URLSearchParams(window.location.search);
+    const flow = params.get('flow');
+    if (flow !== 'claude-code' && flow !== 'codex') return null;
+    params.delete('flow');
+    const rest = params.toString();
+    window.history.replaceState(
+      window.history.state ?? null, '',
+      `${window.location.pathname || '/'}${rest ? `?${rest}` : ''}${window.location.hash || ''}`,
+    );
+    return flow;
+  } catch {
+    return null;
+  }
+}
+
 export async function openAgentSession({ id, host = 'screen', drawer = false }: {
   id: AgentSessionTarget;
   host?: AgentSessionHost;
@@ -868,7 +893,15 @@ export async function openAgentSession({ id, host = 'screen', drawer = false }: 
   // Every route into a conversation, the same one again included, asks for
   // any part of the model catalog that did not answer (loadModelCatalog).
   void loadModelCatalog();
-  if (id === 'new') return openDraft(host);
+  // A ?flow= link opens Build with on that agent's tab, as the model pill
+  // does. Taken once, here, so whichever route answers first — the phone
+  // routes a cold link twice — consumes it.
+  const flow = takeFlowLink();
+  if (id === 'new') {
+    openDraft(host);
+    if (flow) publish({ handoff: flow });
+    return;
+  }
   // THE SAME SESSION AGAIN changes where it is drawn and nothing else — and in
   // particular does not claim the load (QA 2026-09-24 Q23). A cold deep link
   // opens it twice (the screen's own effect, then app.js's router), and the
@@ -881,7 +914,7 @@ export async function openAgentSession({ id, host = 'screen', drawer = false }: 
   // It is also the moment a screen is most likely behind (the user tapped
   // the conversation again, or came back to it): read it.
   if (state.id === id && state.open) {
-    publish({ open: true, host, drawerOpen: drawer || state.drawerOpen });
+    publish({ open: true, host, drawerOpen: drawer || state.drawerOpen, ...(flow ? { handoff: flow } : {}) });
     syncTitle();
     applyCarriedPane();
     // Still loading: that read is this one's too.
@@ -899,7 +932,9 @@ export async function openAgentSession({ id, host = 'screen', drawer = false }: 
     error: '',
     drawerOpen: drawer,
     session: null, draft: null, messages: [], actions: [], turn: IDLE_TURN, specSheet: null, preview: null, changeAction: null, drafts: [],
-    credits: null, handoff: null, attachments: dropAllAttachments(), outbox: readOutbox(id), version: null,
+    // A ?flow= link on a session's own address opens Build with once the
+    // composer mounts; nothing between here and `ready` clears it.
+    credits: null, handoff: flow, attachments: dropAllAttachments(), outbox: readOutbox(id), version: null,
   });
   syncTitle();
   seen.clear();

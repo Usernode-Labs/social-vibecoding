@@ -4652,6 +4652,12 @@
       "expectSelector": "[data-agent-session-thread=\"new\"] button[data-agent-session-model][aria-haspopup=\"dialog\"]"
     },
     {
+      "name": "#4312: a ?flow=claude-code link opens an unsent agent session with Build with on its Claude Code tab, at the walkthrough's first step",
+      "path": "/?flow=claude-code#app/usernode-2d5619/dev/sessions/new",
+      "expectSelector": "body:has([data-agent-session-thread=\"new\"]) [data-agent-session-build-panel=\"claude-code\"] [data-agent-session-handoff=\"claude-code\"] [data-agent-session-handoff-step=\"github\"]",
+      "expectText": "GitHub linked"
+    },
+    {
       "name": "#2772: a change in progress is listed in Messages as an agent conversation, and opens its session (beside the list since #2813)",
       "path": "/?demo=1#messages",
       "expectSelector": "#messages-screen:not(.hidden) [data-inbox-session=\"s990101\"] a[data-improve-row=\"session\"][href^=\"#messages/session/\"][href$=\"/990101\"]"

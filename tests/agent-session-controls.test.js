@@ -236,6 +236,74 @@ test('a refused message becomes the credits card, and stays in the conversation 
   }
 });
 
+test('a ?flow= link on an agent session address opens Build with on that agent\'s tab, once (#4312)', async () => {
+  const session = { id: 7, title: 'x', status: 'open', focusApp: null, focusContext: {}, busy: false, activeChange: null, changes: [] };
+  const replaced = [];
+  globalThis.window = {
+    // A plain stand-in: history.replaceState is what really rewrites the
+    // address, so the fake does the same to the stub's own fields.
+    location: { pathname: '/', search: '', hash: '' },
+    history: {
+      state: null,
+      replaceState(state, _unused, url) {
+        replaced.push(url);
+        this.state = state;
+        const [path, hash = ''] = String(url).split('#');
+        const queryAt = path.indexOf('?');
+        window.location.search = queryAt === -1 ? '' : path.slice(queryAt);
+        window.location.hash = hash ? `#${hash}` : '';
+      },
+    },
+    App: { setHeaderTitle() {} },
+    UsernodeReact: {},
+    PlatformUI: { toast() {} },
+  };
+  globalThis.EventSource = class { close() {} };
+  globalThis.fetch = withStateRead(async (url, init = {}) => {
+    const body = /\/messages\?/.test(url) ? { messages: [], nextAfter: null }
+      : /\/actions$/.test(url) ? { actions: [] }
+        : /\/drafts$/.test(url) ? { drafts: [] }
+          : /\/api\/agent-sessions$/.test(url) ? { sessions: [session] }
+            : { session, turn: null };
+    return { ok: true, status: 200, json: async () => body };
+  });
+  try {
+    const api = loadTsx('tests/fixtures/agent-session-api.ts');
+
+    // Not a flow this app hands over: ignored, address untouched.
+    window.location.search = '?flow=cursor&demo=1';
+    await api.openAgentSession({ id: 'new' });
+    assert.equal(api.getAgentSessionState().handoff, null);
+    assert.deepEqual(replaced, [], 'an unknown value changes nothing');
+
+    // The unsent session (#messages/agent/new and /dev/sessions/new alike):
+    // Build with opens on Codex, and the address keeps its other parameters
+    // and its hash, minus flow.
+    window.location.search = '?flow=codex&demo=1';
+    window.location.hash = '#messages/agent/new';
+    await api.openAgentSession({ id: 'new' });
+    assert.equal(api.getAgentSessionState().handoff, 'codex');
+    assert.deepEqual(replaced, ['/?demo=1#messages/agent/new']);
+
+    // Consumed: the strip already happened, so routing the draft again does
+    // not reopen the sheet.
+    api.closeHandoff();
+    await api.openAgentSession({ id: 'new' });
+    assert.equal(api.getAgentSessionState().handoff, null, 'no flow in the address, no handoff');
+
+    // An existing session's own address, after its load resolves.
+    window.location.search = '?flow=claude-code';
+    window.location.hash = '#messages/agent/7';
+    await api.openAgentSession({ id: 7 });
+    assert.equal(api.getAgentSessionState().handoff, 'claude-code');
+    assert.deepEqual(replaced[1], '/#messages/agent/7', 'flow stripped, the rest of the address kept');
+  } finally {
+    delete globalThis.window;
+    delete globalThis.fetch;
+    delete globalThis.EventSource;
+  }
+});
+
 test('the card\'s checks open the dialog and a failing run offers Re-run; the bar carries Changes and ⋯, Build is in the composer', () => {
   const api = loadTsx('tests/fixtures/agent-session-api.ts');
   const item = { kind: 'preview', key: 'k', text: 'Staging deployed!', url: 'https://s.example', prNumber: 14, changeId: 50, failed: false, error: null, superseded: false };
