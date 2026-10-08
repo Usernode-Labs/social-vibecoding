@@ -2540,16 +2540,22 @@
       "expectSelector": "#dev-forum-scroll:not(:has(#dev-chat-card)) #dev-workshop"
     },
     {
-      "name": "Since your last visit, on the Workshop page, files what moved under each week's heading, with a Clear on its own and a Show an earlier week always drawn (#2183, #3524)",
+      "name": "Since your last visit lists what other people did as rows, with its count and Clear, and Week by week follows, one row a week (#2183, #4457)",
       "path": "/?demo=1&shot=since-visit&ws=workshop#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop [data-ws-since]:has(> [data-ws-since-week] > .dev-ws-since-week-head) > .dev-ws-since-head:has(> .dev-ws-since-n + button[data-ws-since-clear]) ~ button.dev-ws-since-more[data-ws-since-more]",
-      "expectText": "Show an earlier week"
+      "expectSelector": "#dev-body #dev-workshop [data-ws-since]:has(> [data-ws-since-head] > .dev-ws-head-n + button[data-ws-since-clear]):has(> .dev-ws-wlist > .dev-ws-wrow .dev-ws-wrow-link[href*=\"/dev/\"]) + [data-ws-weeks] > .dev-ws-wlist > button.dev-ws-week[data-ws-week]",
+      "expectText": "Week by week"
     },
     {
-      "name": "Since your last visit: Clear goes live once a week's seen rows are unfolded, so they can be folded again (#2240)",
+      "name": "Since your last visit with nothing new says so in one line, and the weeks are still there (#4457)",
       "path": "/?demo=1&shot=since-seen&ws=workshop#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop [data-ws-since]:has([data-ws-since-seen]) > .dev-ws-since-head > button[data-ws-since-clear]:not([disabled])",
-      "expectText": "Clear"
+      "expectSelector": "#dev-body #dev-workshop [data-ws-since]:has(> [data-ws-since-head] > button[data-ws-since-clear][disabled]) > p[data-ws-since-none]",
+      "expectText": "Nothing new since you were last here."
+    },
+    {
+      "name": "A week's row opens the week as its own page in the Workshop tab, with the way back and its items grouped (#3947, #4457)",
+      "path": "/?demo=1&shot=week-page&ws=workshop#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-body #dev-workshop .dev-ws[data-ws-tab=\"workshop\"] .dev-ws-weekpage[data-ws-week-page] > [data-ws-pagehead]:has(button[data-ws-page-back]) ~ [data-ws-week-group] > .dev-ws-wlist > .dev-ws-wrow",
+      "expectText": "This week"
     },
     {
       "name": "A project's hub opens on what landed since your last visit, in a sentence or two, with its way to the Workshop page, week by week, in the head's corner beside the dismiss (staging demo line, #3510)",
@@ -2584,8 +2590,8 @@
     {
       "name": "The Workshop tab leads with All items, then the approval rules, then the notices panel (#3487, #3528)",
       "path": "/?demo=1&ws=workshop#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"workshop\"] > .dev-ws-tabbody > [data-ws-dashboard]:first-child + [data-ws-approval-rules] + [data-ws-notices]",
-      "expectText": "A change goes live"
+      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"workshop\"] > .dev-ws-tabbody > [data-ws-dashboard]:first-child + [data-ws-approval-rules]:has(> ol[data-ws-community-rule] > li.dev-ws-rule-step + li.dev-ws-rule-join + li[data-ws-rule-people]) + [data-ws-notices]",
+      "expectText": "It goes live"
     },
     {
       "name": "Kanban cards show the assignee initial-avatar",
@@ -2621,8 +2627,8 @@
     },
     {
       "name": "A card about your own session opens the card view, with the session a link inside it (#1887)",
-      "path": "/?demo=1&shot=mine-session&ws=workshop#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop [data-ws-lane=\"mine\"] > .dev-ws-rowwrap-open > .dev-ws-sheet > .dev-card-dense[data-session-chip] ~ .dev-ws-sheet-actions > a.dev-ws-link[data-ws-open-session][href*=\"/dev/sessions/\"]",
+      "path": "/?demo=1&shot=mine-session&ws=status#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-workshop [data-ws-lane=\"mine-hub\"] > .dev-ws-rowwrap-open > .dev-ws-sheet > .dev-card-dense[data-session-chip] ~ .dev-ws-sheet-actions > a.dev-ws-link[data-ws-open-session][href*=\"/dev/sessions/\"]",
       "expectText": "[Mock] Busy own session"
     },
     {

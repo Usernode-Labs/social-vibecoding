@@ -145,10 +145,12 @@ test('Q19: each small control named by the audit wears a hit-slop', () => {
   // and Show an earlier week below them steps back a week (#3524 renamed it
   // from "Show older").
   has('frontend/src/features/dev-board/workshop/since-summary-card.tsx', new RegExp(`className="dev-ws-since-card-x ${KIT}"`), 'the summary\'s ×');
-  has(ws, new RegExp(`className="dev-ws-reveal dev-ws-since-more ${KIT}"`), 'Show an earlier week');
-  // #3524: a week's one Show N more sits 4px under its last row, so it takes
-  // the dense 32px slop rather than the kit's 44px, as Your work's does.
-  has(ws, /className="dev-ws-reveal dev-ws-since-week-more touch-target-32"/, 'a week\'s Show N more');
+  // #4457: the reveals under a list (Show all N, Show earlier weeks) sit 4px
+  // under its last row, so they take the dense 32px slop rather than the
+  // kit's 44px, as Your work's does.
+  has(ws, /className="dev-ws-reveal touch-target-32" data-ws-since-more=""/, 'Since your last visit\'s Show all N');
+  has(ws, /className="dev-ws-reveal touch-target-32"\s+data-ws-weeks-more=""/, 'Show earlier weeks');
+  has('frontend/src/features/dev-board/workshop/week-pages.tsx', /className="dev-ws-reveal touch-target-32" data-ws-week-group-more=""/, 'a week group\'s Show all N');
   has(ws, new RegExp(`className="dev-ws-since-clear ${KIT}"`), 'Clear');
   // "N more of yours" is gone: the Workshop tab shows your own work in full.
   has(ws, new RegExp(`className="dev-ws-hub-open dev-ws-head-end ${KIT}"`), 'All items\' See all');

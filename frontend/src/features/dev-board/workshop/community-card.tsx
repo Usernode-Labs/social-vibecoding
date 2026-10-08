@@ -74,7 +74,7 @@
 import { useEffect, useReducer, useRef, useState, type ReactNode, type Ref } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { ChevronRightIcon, LockIcon, PersonSilhouetteIcon, PlayIcon, UserGroupIcon, UserIcon } from '@/components/ui/icons';
+import { CheckIcon, ChevronRightIcon, LockIcon, PersonSilhouetteIcon, PlayIcon, ShieldCheckIcon, UserGroupIcon, UserIcon } from '@/components/ui/icons';
 import { swatchFor } from '../../messages/format';
 import { offerJoin, registerJoinAnchor } from '../../../lib/join-required';
 import { askToVerifyForPublic, identityNeededHere } from '../../auth/verify-identity';
@@ -1272,27 +1272,155 @@ export function ShareItCard({ slug, name }: { slug: string; name?: string }) {
 }
 
 /**
- * HOW A CHANGE GETS IN, on the Workshop page: the approval rule, read from
- * the server rather than restated here (GET /api/apps/:slug/community,
- * `approval`), as the headline number an unopposed change needs. It is a
- * headline, not the whole gate: opposition raises it, and the line names
- * the quiet path that can put a change live below it
- * (services/active-users.js). It was the hero's last line; it sits with the
- * work it governs now. Nothing until the shared read has answered.
+ * The approvers' names on an invited-approvers project, for the drawing
+ * below: GET /api/apps/:slug/approvers, read once per page load and shared.
+ * Null until it answers, and for a viewer it refuses (it is collaborator-
+ * read), who then sees the faces of the project's members instead.
+ */
+const approverNames = new Map<string, string[] | null>();
+const approverReads = new Map<string, Promise<void>>();
+function useApprovers(slug: string, wanted: boolean): string[] | null {
+  const [, bump] = useReducer((n: number) => n + 1, 0);
+  useEffect(() => {
+    if (!wanted || !slug || approverNames.has(slug)) return;
+    let read = approverReads.get(slug);
+    if (!read) {
+      read = fetch(`/api/apps/${encodeURIComponent(slug)}/approvers`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((body: { approvers?: Array<{ username?: string; status?: string }> } | null) => {
+          const list = body && Array.isArray(body.approvers)
+            ? body.approvers.filter((a) => a && a.status === 'member' && a.username).map((a) => String(a.username))
+            : null;
+          approverNames.set(slug, list);
+        })
+        .catch(() => { approverNames.set(slug, null); });
+      approverReads.set(slug, read);
+    }
+    let live = true;
+    void read.then(() => { if (live) bump(); });
+    return () => { live = false; };
+  }, [slug, wanted]);
+  return approverNames.get(slug) || null;
+}
+
+/** "evan or snait", "evan, snait or maya", "evan and snait"; past three, the first three and "+N". */
+function nameList(names: string[], joiner: 'or' | 'and'): string {
+  if (!names.length) return '';
+  if (names.length > 3) return `${names.slice(0, 3).join(', ')} +${names.length - 3}`;
+  if (names.length === 1) return names[0];
+  return `${names.slice(0, -1).join(', ')} ${joiner} ${names[names.length - 1]}`;
+}
+
+/** How many faces the middle step shows before "+N" says the rest. */
+export const RULE_FACES = 3;
+
+/**
+ * The middle step in words: who has to say yes, the names under it, and the
+ * wait rule's line where there is one. Pure, for the tests; the three
+ * regimes are approvalLine's.
+ */
+export function approvalStep(
+  approval: CommunityPayload['approval'],
+  viewer: Pick<CommunityPayload, 'audience' | 'is_member'> | null | undefined,
+  approvers: string[] | null,
+): { who: string; names: string; wait: string; solo: boolean } {
+  const required = Math.max(1, Number(approval.required) || 1);
+  const electorate = Math.max(1, Number(approval.electorate) || 1);
+  if (viewer?.audience === 'solo' && viewer.is_member
+    && Number(approval.electorate) === 1 && Number(approval.required) === 1) {
+    return { who: 'You approve it', names: 'It is just you', wait: '', solo: true };
+  }
+  const fixed = approval.approvals_required != null;
+  const quiet = !fixed && required > 1;
+  const says = required === 1 ? 'says' : 'say';
+  if (approval.policy === 'invited') {
+    const who = required < electorate
+      ? `${required} of ${electorate} approvers ${says} yes`
+      : electorate === 1 ? 'The approver says yes'
+        : electorate === 2 && required === 2 ? 'Both approvers say yes'
+          : required === electorate ? `All ${electorate} approvers say yes`
+            : `${required} approvers say yes (there ${electorate === 1 ? 'is' : 'are'} ${electorate})`;
+    return {
+      who,
+      names: approvers ? nameList(approvers, required === 1 ? 'or' : 'and') : '',
+      wait: quiet ? 'Or after a wait, if one says yes and nobody says no' : '',
+      solo: false,
+    };
+  }
+  if (fixed) {
+    return { who: `${plural(required, 'member approves', 'members approve')}`, names: '', wait: '', solo: false };
+  }
+  return {
+    who: `${whoApproves(required, electorate, 'active member', 'active members').replace(/^./, (c) => c.toUpperCase())} ${says} yes`,
+    names: '',
+    wait: quiet ? 'Or after a wait, if one approves and nobody objects' : '',
+    solo: false,
+  };
+}
+
+/**
+ * HOW A CHANGE GETS IN, on the Workshop page (#4457): the approval rule
+ * DRAWN, as the three things that happen to a change — its checks pass, the
+ * people the rule names say yes, it goes live — read from the server rather
+ * than restated here (GET /api/apps/:slug/community, `approval`). It was one
+ * sentence with nothing to look at; that sentence is the drawing's
+ * accessible name now (`approvalLine`), so a screen reader still hears the
+ * rule whole.
  *
- * The rule and nothing else. A muted note under it said that changing these
- * rules is a change too, approved before it goes live; the owner dropped it
- * (5 Oct 2026), and the card is one line.
+ * The middle step wears faces: the approvers' on an invited-approvers
+ * project, with their names ("evan or snait"); otherwise a few members'
+ * and "+N" for the rest of the electorate; on a project that is just you,
+ * yours. The wait rule adds a line under it. The steps run across a wide
+ * card and stack on a phone and beside the Workshop's side panel (app.css).
  */
 export function ApprovalRules({ slug }: { slug: string }) {
   const data = useCommunity(slug);
+  const invited = !!(data && data.approval && data.approval.policy === 'invited');
+  const approvers = useApprovers(slug, invited);
   if (!data || !data.approval) return null;
+  const step = approvalStep(data.approval, data, approvers);
+  const electorate = Math.max(1, Number(data.approval.electorate) || 1);
+  const people = step.solo
+    ? (data.members || []).slice(0, 1).map((m) => m.username)
+    : invited && approvers
+      ? approvers.slice(0, RULE_FACES)
+      : (data.members || []).slice(0, RULE_FACES).map((m) => m.username);
+  const rest = step.solo ? 0 : Math.max(0, (invited && approvers ? approvers.length : electorate) - people.length);
   return (
     <section className="dev-ws-strip" data-ws-approval-rules="">
       <div className="dev-ws-head">
         <span className="dev-ws-head-title">Approval rules</span>
       </div>
-      <p className="dev-ws-rules-line" data-ws-community-rule="">{approvalLine(data.approval, data)}</p>
+      <ol className="dev-ws-rules" data-ws-community-rule="" aria-label={approvalLine(data.approval, data)}>
+        <li className="dev-ws-rule-step">
+          <span className="dev-ws-rule-tile" aria-hidden="true"><ShieldCheckIcon aria-hidden="true" /></span>
+          <span className="dev-ws-rule-text"><b>Its checks pass</b><span>on a preview of the change</span></span>
+        </li>
+        <li className="dev-ws-rule-join" aria-hidden="true" />
+        <li className="dev-ws-rule-step" data-ws-rule-people="">
+          <span className="dev-ws-rule-faces" aria-hidden="true">
+            {people.map((name) => (
+              <span key={name} className="dev-ws-rule-face" style={{ background: swatchFor(name) }}>
+                {(name || '?').charAt(0).toUpperCase()}
+              </span>
+            ))}
+            {rest ? <span className="dev-ws-rule-face dev-ws-rule-more">{`+${rest}`}</span> : null}
+            {!people.length && !rest ? (
+              <span className="dev-ws-rule-tile"><UserGroupIcon aria-hidden="true" /></span>
+            ) : null}
+          </span>
+          <span className="dev-ws-rule-text">
+            <b>{step.who}</b>
+            {step.names ? <span>{step.names}</span> : null}
+            {step.wait ? <span className="dev-ws-rule-wait">{step.wait}</span> : null}
+          </span>
+        </li>
+        <li className="dev-ws-rule-join" aria-hidden="true" />
+        <li className="dev-ws-rule-step">
+          <span className="dev-ws-rule-tile" data-tone="ok" aria-hidden="true"><CheckIcon aria-hidden="true" /></span>
+          <span className="dev-ws-rule-text"><b>It goes live</b><span>for everyone, right away</span></span>
+        </li>
+      </ol>
     </section>
   );
 }

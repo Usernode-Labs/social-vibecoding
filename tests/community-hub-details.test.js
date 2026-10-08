@@ -131,7 +131,8 @@ test('#3268: the hero carries who is here and the fortnight, and who it is for r
   assert.doesNotMatch(row, /<MakePublic|data-ws-community-leave/);
   // How a change gets in is the Workshop page's Approval rules card now.
   assert.doesNotMatch(hero, /data-ws-community-rule/);
-  assert.match(src, /export function ApprovalRules\([\s\S]*?data-ws-approval-rules=""[\s\S]*?data-ws-community-rule="">\{approvalLine\(data\.approval, data\)\}/);
+  // #4457: drawn as three steps, the sentence their accessible name.
+  assert.match(src, /export function ApprovalRules\([\s\S]*?data-ws-approval-rules=""[\s\S]*?<ol className="dev-ws-rules" data-ws-community-rule="" aria-label=\{approvalLine\(data\.approval, data\)\}>/);
   assert.doesNotMatch(read(HUB), /export function MembersCard/, 'the hub has no Members & activity card any more');
 });
 
@@ -245,10 +246,36 @@ test('the channel card\'s composer sends to the room and re-reads the hub', () =
   assert.match(route, /post_url: `\/api\/apps\/\$\{encodeURIComponent\(app\.slug\)\}\/messages`,/);
 });
 
+test('#4457: the approval rule is drawn as three steps: its checks pass, who says yes, it goes live', () => {
+  const { approvalStep, ApprovalRules } = loadTsx(CARD);
+  const member = { audience: 'invited', is_member: true };
+  // Invited approvers: the count of them, and their names.
+  assert.deepEqual(approvalStep({ policy: 'invited', approvals_required: null, electorate: 2, required: 1 }, member, ['evan', 'snait']),
+    { who: '1 of 2 approvers says yes', names: 'evan or snait', wait: '', solo: false });
+  assert.equal(approvalStep({ policy: 'invited', approvals_required: null, electorate: 2, required: 2 }, member, ['evan', 'snait']).who,
+    'Both approvers say yes');
+  assert.equal(approvalStep({ policy: 'invited', approvals_required: null, electorate: 5, required: 1 }, member, ['a', 'b', 'c', 'd', 'e']).names,
+    'a, b, c +2', 'past three, the first three and the rest counted');
+  // Members vote: the eased threshold, with the wait rule under it.
+  assert.deepEqual(approvalStep({ policy: 'anyone', approvals_required: null, electorate: 12, required: 2 }, { audience: 'open', is_member: true }, null),
+    { who: '2 of the 12 active members say yes', names: '', wait: 'Or after a wait, if one approves and nobody objects', solo: false });
+  // At least N: no clock, so no wait line.
+  assert.equal(approvalStep({ policy: 'anyone', approvals_required: 3, electorate: 9, required: 3 }, member, null).who, '3 members approve');
+  // A project that is just you.
+  assert.equal(approvalStep({ policy: 'anyone', approvals_required: null, electorate: 1, required: 1 }, { audience: 'solo', is_member: true }, null).who,
+    'You approve it');
+  // The drawing: three steps between two joins, the faces in the middle one.
+  const src = CARD_SRC.slice(CARD_SRC.indexOf('export function ApprovalRules('));
+  assert.match(src, /<b>Its checks pass<\/b>[\s\S]*?className="dev-ws-rule-join"[\s\S]*?data-ws-rule-people=""[\s\S]*?className="dev-ws-rule-join"[\s\S]*?<b>It goes live<\/b>/);
+  assert.match(src, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/approvers`\)|useApprovers\(slug, invited\)/);
+  assert.match(CARD_SRC, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/approvers`\)/, 'the approvers come from their own route');
+  assert.equal(typeof ApprovalRules, 'function');
+});
+
 test('a person who has not joined sees "Recently" over the same rows', () => {
   assert.match(LANDER, /const outsider = !!community && !community\.is_member;/);
   // A first visit, with no last visit to be since, reads "Recently" too.
-  assert.match(LANDER, /<span className="dev-ws-since-label">\{v\.since && !outsider \? 'Since your last visit' : 'Recently'\}<\/span>/);
+  assert.match(LANDER, /<span className="dev-ws-head-title">\{v\.since && !outsider \? 'Since your last visit' : 'Recently'\}<\/span>/);
   // The rows and Clear are the same for everyone (declared checks select on
   // Clear on Homeroom's page); only the heading's words change.
   assert.doesNotMatch(LANDER, /outsider \? null/);

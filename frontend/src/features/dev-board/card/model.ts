@@ -351,6 +351,42 @@ export interface FeedThreadRef {
   ref: number;
 }
 
+/** One small tag on a Workshop row: what is happening on the item. */
+export interface RowTag {
+  label: string;
+  tone: 'plain' | 'run' | 'ok' | 'warn' | 'bad';
+  glyph?: 'eye';
+}
+
+/**
+ * The Workshop tab's row, resolved (#4457): the facts its one line of words
+ * is made of, its tags, and on a change up for a vote, the vote. The card
+ * stays the source of the item's hooks and its Yes/No specs.
+ */
+export interface RowBrief {
+  /** The neutral tile's glyph. */
+  kind: 'request' | 'change' | 'live' | 'vote';
+  noun: string;
+  n: number | null;
+  /** Who made it ('' when nobody is named). */
+  by: string;
+  /** The viewer made it. */
+  mine: boolean;
+  category: string;
+  replies: number;
+  /** The requests a change addresses ("for #4455"). */
+  linked: number[];
+  /** The requests a live change closed. */
+  closed: number[];
+  /** Where it is, for a week's groups. */
+  stage: 'request' | 'worked' | 'vote' | 'live';
+  /** When it was made (epoch ms; 0 when unknown). */
+  at: number;
+  tags: RowTag[];
+  /** One part per Yes it needs; `ask` when this viewer's vote is wanted. */
+  vote: { yes: number; need: number; ask: boolean } | null;
+}
+
 export type ListRow =
   | {
     t: 'card';
@@ -373,6 +409,8 @@ export type ListRow =
     summary?: string | null;
     /** The server has themes but has not placed this card into one yet. */
     placing?: boolean;
+    /** What the Workshop tab's row says about it, in words (#4457, AppView._workshopBrief). */
+    brief?: RowBrief;
     /**
      * Which item the Needs-you deck's ask box is asking about — an ADDRESS,
      * never content. The server resolves the kind/ref pair against this

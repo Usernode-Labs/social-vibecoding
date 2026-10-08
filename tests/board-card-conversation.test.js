@@ -165,7 +165,7 @@ test('one helper hangs it on, so the two surfaces cannot drift again', () => {
   assert.match(APP_VIEW_SRC, /_attachRowConversation\(row, kind, item\) \{/);
   // The Workshop's own builder routes through it rather than repeating it.
   assert.match(APP_VIEW_SRC,
-    /const row = AppView\._attachRowConversation\(\{ t: 'card', key: card\.key, card \}, kind, item\);/,
+    /const row = AppView\._attachRowConversation\(\{\s*t: 'card', key: card\.key, card, brief: AppView\._workshopBrief\(kind, item, card\),\s*\}, kind, item\);/,
     'the Workshop’s rows are built by the shared helper');
   // Nothing hangs a thread on a row by hand any more.
   const strays = APP_VIEW_SRC.split('\n').filter((l) => /^\s*if \(th\) row\.thread = th;/.test(l));

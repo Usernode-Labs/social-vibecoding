@@ -1569,9 +1569,16 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // were rewritten in place on their routes.
   // 735 leaves 145 slots.
   //
+  // 735 → 736: +1 (#4457): a week's row opens the week as its own page in
+  // the Workshop tab (`?shot=week-page`), a state no other check's route
+  // reaches. The since list's two checks were rewritten in place on their
+  // routes (its rows and Week by week; the quiet visit's one line), and the
+  // approval rules' check now reads the drawn steps.
+  // 736 leaves 144 slots.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 735);
+  checkCap.assertPinned(DAPP.tests.length, 736);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

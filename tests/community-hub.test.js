@@ -117,20 +117,21 @@ test('a project page is four tabs, Hub, Discussion, Needs you and Workshop, with
   // The Workshop tab, in the owner's order (5 Oct 2026): All items with See
   // all, the approval rules, your work (its first three, #852 review), then
   // the since list by week.
-  const ws = LANDER.slice(LANDER.indexOf("{tab === 'workshop' ? ("), LANDER.indexOf("{tab === 'needs' ? ("));
+  const ws = LANDER.slice(LANDER.indexOf("{tab === 'workshop' && !weekUp ? ("), LANDER.indexOf("{tab === 'needs' ? ("));
   const w = (x) => ws.indexOf(x);
-  const wsOrder = ['data-ws-dashboard=""', '<ApprovalRules', '<WorkshopNotices', 'data-ws-mine=""', 'data-ws-since=""'].map(w);
+  // #4457: then the weeks, one row each, whose page replaces the tab's body.
+  const wsOrder = ['data-ws-dashboard=""', '<ApprovalRules', '<WorkshopNotices', 'data-ws-mine=""', 'data-ws-since=""', 'data-ws-weeks=""'].map(w);
   assert.ok(wsOrder.every((n) => n >= 0), `every section is on the tab: ${JSON.stringify(wsOrder)}`);
   assert.deepEqual([...wsOrder].sort((a, b) => a - b), wsOrder,
-    'All items, the approval rules, the notices panel under them, your work, then what changed');
-  assert.match(ws, /v\.mine\.rows\.slice\(0, mineAll \? undefined : WORKSHOP_WORK_FIRST\)/, 'your work shows its first rows');
+    'All items, the approval rules, the notices panel under them, your work, what changed, then week by week');
+  assert.match(ws, /rows=\{v\.mine\.rows\.slice\(0, mineAll \? undefined : WORKSHOP_WORK_FIRST\)/, 'your work shows its first rows');
   assert.equal(loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx').WORKSHOP_WORK_FIRST, 3);
   assert.match(ws, /data-ws-mine-more=""[\s\S]{0,160}onClick=\{\(\) => setMineAll\(!mineAll\)\}/, 'and the rest behind Show N more');
   assert.match(ws, /<span className="dev-ws-head-title">All items<\/span>\s*<button[\s\S]*?data-ws-all-open=""\s*onClick=\{\(\) => openTab\('all'\)\}/);
   // All items is the Workshop page's head now, its first section; the
   // approval rules come straight after it. They were the head (#3528), the
   // page's foot for a round (#3487), and the head of All items before that.
-  assert.match(ws, /^\{tab === 'workshop' \? \(\n\s*<>\n\s*\{\/\*(?:(?!\*\/)[\s\S])*\*\/\}\n\s*\{v\.dashboard \? \(\s*<section\s+className="dev-ws-strip"\s+data-ws-dashboard=""/,
+  assert.match(ws, /^\{tab === 'workshop' && !weekUp \? \(\n\s*<>\n\s*\{\/\*(?:(?!\*\/)[\s\S])*\*\/\}\n\s*\{v\.dashboard \? \(\s*<section\s+className="dev-ws-strip"\s+data-ws-dashboard=""/,
     'All items opens the Workshop page');
   assert.match(ws, /<\/section>\n\s*\) : null\}\n\n\s*\{\/\*(?:(?!\*\/)[\s\S])*\*\/\}\n\s*\{slug \? <ApprovalRules slug=\{slug\} \/> : null\}/,
     'and the approval rules follow it, with nothing between');
