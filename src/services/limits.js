@@ -561,7 +561,7 @@ async function checkBudget(pool, userId) {
   // limit was 0, so today's spend was always at or over it).
   if (entitlement.verificationRequired) {
     return {
-      error: 'Connect GitHub or X in Settings to unlock $10.00/day of Homeroom credits.',
+      error: "You're out of this week's free AI credits. Verify your account to get more: add your phone number, or link GitHub and X.",
       reason: 'verification_required',
       ...entitlement,
     };

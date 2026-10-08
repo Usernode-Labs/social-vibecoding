@@ -6721,6 +6721,9 @@ body:has(#platform-header.hidden) #app-frame-host {
 }
 .dc-credits-go:hover { background: var(--accent-light); }
 
+/* #4378: an unverified account's "Verify my account", under its line. */
+.dc-credits-verify { margin-top: 8px; }
+
 /* The "Are you a developer?" half of the out-of-credits card (#1281).
    The routes that need a terminal — the CLI lease and importing your own
    pull request — live in here rather than in the flat list above, so the

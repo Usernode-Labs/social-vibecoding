@@ -83,7 +83,7 @@ test('unverified tier is exactly $0 and returns an actionable refusal', async ()
   const budget = await limits.checkBudget(pool, 7);
   assert.equal(budget.reason, 'verification_required');
   assert.equal(budget.verificationRequired, true);
-  assert.match(budget.error, /Connect GitHub or X/);
+  assert.match(budget.error, /Verify your account to get more: add your phone number, or link GitHub and X\./);
   assert.equal(pool.calls.some((sql) => /SUM\(total_cost_cents\)/.test(sql)), false,
     'a zero user tier refuses before consulting the shared platform pool');
 

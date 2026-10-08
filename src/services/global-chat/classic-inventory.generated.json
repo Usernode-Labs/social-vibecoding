@@ -8544,21 +8544,6 @@
     },
     {
       "source": "src/routes/onboarding.js",
-      "method": "POST",
-      "path": "/api/me/phone-ask/answered",
-      "expression": null,
-      "status": "mapped",
-      "capabilityId": "apps.post.me.phone.ask.answered.b8a34b8f",
-      "domain": "apps",
-      "risk": "external_write",
-      "confirmation": "required",
-      "renderer": "app",
-      "transport": "server_loopback",
-      "mobileSupported": true,
-      "classicPath": "#apps"
-    },
-    {
-      "source": "src/routes/onboarding.js",
       "method": "GET",
       "path": "/api/me/getting-started",
       "expression": null,

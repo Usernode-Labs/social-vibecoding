@@ -113,9 +113,8 @@ test('an account that signs in some other way is asked what to make in the join 
   const island = read(`${DIR}/index.tsx`);
   assert.match(island, /const open = \(\) => setMode\(\(prev\) => \(prev\.kind === 'none' \? \{ kind: 'make' \} : prev\)\);\s+if \(now\) flushSync\(open\);\s+else open\(\);/);
   assert.match(island, /make\(\): boolean \{\s+try \{ sessionStorage\.removeItem\(MAKE_FLAG\); \} catch \{[^}]*\}\s+openMake\(setMode, true\);/);
-  // On a phone, the verified-identity rule's phone step comes first: the
-  // flag waits for it, then opens (tests/verified-identity-shell.test.js).
-  assert.match(island, /if \(!flagged\) return;\s+(?:\/\/[^\n]*\n\s+)*const phone = legacy\(\)\.PhoneFirstRun;\s+if \(now && phone\?\.comesFirst\?\.\(legacy\(\)\.App\?\.user\)\) \{\s+void phone\.settled\(\)\.then\(\(\) => check\(false\)\);\s+return;\s+\}\s+try \{ sessionStorage\.removeItem\(MAKE_FLAG\); \} catch \{[^}]*\}\s+openMake\(setMode, now\);/);
+  // No phone step waits in front of it any more (#4378): the flag opens it.
+  assert.match(island, /if \(!flagged\) return;\s+try \{ sessionStorage\.removeItem\(MAKE_FLAG\); \} catch \{[^}]*\}\s+openMake\(setMode, now\);/);
   // From the mount's own check it is an ordinary update: React is mid-effect
   // there and cannot draw synchronously.
   assert.match(island, /if \(legacy\(\)\.App\?\.user\) check\(false\);\s+const onAuthed = \(\) => check\(true\);/);
