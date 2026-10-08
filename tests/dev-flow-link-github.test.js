@@ -28,6 +28,10 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+// native-social-connect.js is import-free and reads the sentences it throws
+// from the PlatformI18n global, as it does in the shell. This is the real
+// English runtime, so the assertions below still check the words a person reads.
+globalThis.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');

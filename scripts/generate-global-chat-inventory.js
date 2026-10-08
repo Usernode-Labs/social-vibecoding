@@ -640,12 +640,22 @@ function discoverSettings() {
   // One entry per PART (a [data-settings-section] wrapper). `page` groups
   // parts into one nav row; every part's own #settings/<key> still resolves,
   // so each part stays an inspectable settings group of its own.
+  // The registry names each part and its group by message id
+  // (`settings:nav.part.profile`); the inventory records the English.
+  const english = JSON.parse(fs.readFileSync(
+    path.join(ROOT, 'frontend', 'locales', 'en', 'settings.json'), 'utf8',
+  ));
+  const said = (id) => {
+    const entry = english[id.replace(/^settings:/, '')];
+    if (!entry) throw new Error(`No English text for ${id}`);
+    return entry.text;
+  };
   return [...sectionBlock[1].matchAll(
     /\{\s*key:\s*'([^']+)',\s*label:\s*'([^']+)',\s*group:\s*'([^']+)'(?:,\s*page:\s*'([^']+)')?(?:,\s*gate:\s*'([^']+)')?\s*\}/g,
   )].map((match) => ({
     key: match[1],
-    label: match[2],
-    group: match[3],
+    label: said(match[2]),
+    group: said(match[3]),
     gate: match[5] || null,
     capabilityId: `settings.open.${match[1].replace(/[^a-z0-9]+/g, '_')}`,
     classicPath: `#settings/${match[1]}`,

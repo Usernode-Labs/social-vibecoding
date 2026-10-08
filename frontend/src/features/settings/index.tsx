@@ -61,6 +61,7 @@
 
 import type { ComponentType } from 'react';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { useStoreState } from '../../lib/use-store-state';
@@ -85,6 +86,10 @@ interface SettingsChunkState {
 }
 
 export function SettingsScreen() {
+  // Subscribed for the two texts this chassis renders itself. A new language
+  // patches those text nodes only; the footer React must not rebuild stays
+  // the node it was, wherever settings.js has moved it.
+  const t = useMessages('settings');
   // The sixteen panes mount on the screen's FIRST REVEAL, not in the
   // prerender (see lib/mount-on-reveal.ts). They were 437 of the document's
   // 1,485 elements, parsed, styled and hydrated on every load for a screen
@@ -162,7 +167,7 @@ export function SettingsScreen() {
                 id="settings-logout"
                 className="w-full rounded-full bg-red-500/10 px-4 py-2.5 text-[17px] font-semibold text-red-700 dark:text-red-400 hover:bg-red-500/15 transition-colors disabled:opacity-60 disabled:cursor-default disabled:hover:bg-red-500/10"
               >
-                Sign out
+                {t('settings:screen.signOut')}
               </button>
             </div>
           </div>
@@ -182,7 +187,7 @@ export function SettingsScreen() {
               {mounted && Sections ? <Sections /> : null}
               {mounted && !Sections && failed ? (
                 <p className="text-sm text-zinc-500 dark:text-zinc-400 p-4">
-                  Settings could not be loaded. Check your connection and try again.
+                  {t('settings:screen.loadFailed')}
                 </p>
               ) : null}
             </div>

@@ -29,6 +29,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { message } = require('./lib/platform-i18n');
 
 const root = path.join(__dirname, '..');
 const nativeChromeSource = fs.readFileSync(
@@ -278,7 +279,8 @@ test('every dead end leaves a console error AND a visible notice', () => {
   assert.match(body, /console\.error/);
   assert.match(body, /_unNotifNotice = \{/);
   // The tap acknowledges itself before anything can block, too.
-  assert.match(settingsSource, /Opening the notification prompt…/);
+  assert.match(settingsSource, /: tr\('settings:usernode\.notif\.openingNotificationPrompt'\),/);
+  assert.equal(message('settings:usernode.notif.openingNotificationPrompt'), 'Opening the notification prompt…');
 });
 
 test('the screen never renders an Open notification settings button the ' +

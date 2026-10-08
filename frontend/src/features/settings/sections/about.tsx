@@ -39,6 +39,7 @@
 
 import { SectionHeading } from '@/components/ui/field';
 
+import { useMessages } from '../../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../../lib/legacy-dom';
 import { useStoreState } from '../../../lib/use-store-state';
 import { improveStore } from '../../improve/improve-store.js';
@@ -60,6 +61,7 @@ import { NativeAppVersionRow } from '../../header/native-app-version-row';
  * already names on its own.
  */
 function AppVersionRow() {
+  const t = useMessages('settings');
   const { slug, selfHosted, version, deploying } = useStoreState(improveStore);
   const show = !!slug && !selfHosted;
   return (
@@ -70,12 +72,12 @@ function AppVersionRow() {
         : 'hidden drawer-ver-row flex items-center gap-2 px-4'}
     >
       <span className="drawer-ver-label">
-        App version
+        {t('settings:about.appVersion.label')}
       </span>
       <span
         id="about-app-version-slot"
         className="drawer-ver drawer-ver-value ml-auto min-w-0 justify-end font-mono truncate"
-      >{deploying ? 'deploying…' : version || 'unknown'}</span>
+      >{deploying ? t('settings:about.appVersion.deploying') : version || t('settings:about.appVersion.unknown')}</span>
     </div>
   );
 }
@@ -100,6 +102,7 @@ function AppVersionRow() {
  * before the first answer arrives, and that paints this host itself.
  */
 function PlatformVersionRow() {
+  const t = useMessages('settings');
   useIsomorphicLayoutEffect(() => {
     const App = window.App;
     if (App?._lastVersionInfo) App.renderPlatformVersionPill?.(App._lastVersionInfo);
@@ -107,7 +110,7 @@ function PlatformVersionRow() {
   return (
     <div id="drawer-row-platform-version" className="drawer-ver-row flex items-center gap-2 px-4">
       <span className="drawer-ver-label">
-        Platform version
+        {t('settings:about.platformVersion.label')}
       </span>
       <span
         id="platform-version-pill-slot"
@@ -119,11 +122,12 @@ function PlatformVersionRow() {
 }
 
 export function AboutSection() {
+  const t = useMessages('settings');
   return (
     <div data-settings-section="about" className="hidden">
       <div id="settings-about-section">
-        <SectionHeading title="About">
-          Which build of each part of the platform you are running.
+        <SectionHeading title={t('settings:about.title')}>
+          {t('settings:about.intro')}
         </SectionHeading>
 
         <AppVersionRow />

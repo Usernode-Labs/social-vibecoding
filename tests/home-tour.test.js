@@ -1021,7 +1021,9 @@ test('Settings offers Replay the tour, and it is a registered section', () => {
   assert.match(html, /id="settings-tour-replay"/);
   assert.match(html, /Replay the tour/);
   // Registered in the menu, a page of its own under Help & about.
-  assert.match(SETTINGS_JS, /\{ key: 'tour', label: 'Welcome tour', group: 'Help & about' \}/);
+  assert.match(SETTINGS_JS, /\{ key: 'tour', label: 'settings:nav\.part\.tour', group: 'settings:nav\.group\.helpAbout' \}/);
+  assert.equal(message('settings:nav.part.tour'), 'Welcome tour');
+  assert.equal(message('settings:nav.group.helpAbout'), 'Help & about');
 });
 
 test('Replay clears the flag, asks for the tour, then goes to Home', () => {

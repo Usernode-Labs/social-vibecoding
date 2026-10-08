@@ -21,6 +21,10 @@
  *    exceptions, and they earn it the same way: settings.js binds nothing
  *    inside them, so React is the only writer there. See ./theme.tsx and
  *    ./profile.tsx.
+ *    The one thing every pane does subscribe to is the language
+ *    (`useMessages`): a new language re-renders the pane, and React then
+ *    patches only the text nodes whose words changed. The elements, their
+ *    ids, classes and listeners stay the nodes settings.js bound.
  *  - each wrapper ships `hidden`, exactly as the hand-written shell did, and
  *    the router unhides the wrappers of exactly one page. That is the
  *    SECTION-ROUTING hidden.

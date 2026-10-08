@@ -6,7 +6,7 @@
 // are like-for-like, and the filter finds it by either name.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { message } = require('./lib/platform-i18n');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx, renderComponent } = require('./lib/render-tsx');
@@ -17,7 +17,8 @@ const NAV = 'frontend/src/features/settings/settings-nav.tsx';
 
 test('Settings and the waiting room say Sign out, on the same buttons', () => {
   const settings = read('frontend/src/features/settings/index.tsx');
-  assert.match(settings, /id="settings-logout"[\s\S]{0,400}?>\s*Sign out\s*<\/button>/);
+  assert.match(settings, /id="settings-logout"[\s\S]{0,400}?>\s*\{t\('settings:screen\.signOut'\)\}\s*<\/button>/);
+  assert.equal(message('settings:screen.signOut'), 'Sign out');
   const waiting = read('frontend/src/features/auth/waiting.tsx');
   assert.match(waiting, /id="waiting-logout"[\s\S]{0,300}?>\s*\{t\('auth:waiting\.signOut'\)\}\s*<\/button>/);
   assert.equal(message('auth:waiting.signOut'), 'Sign out');
@@ -25,7 +26,8 @@ test('Settings and the waiting room say Sign out, on the same buttons', () => {
     assert.doesNotMatch(src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\{\/\*[\s\S]*?\*\/\}/g, ''), />\s*Log out\s*</, `${name}: no "Log out" left on a button`);
   }
   // What it says when it fails was already "sign out".
-  assert.match(read('frontend/src/features/settings/settings.js'), /'Could not sign out\. Check your connection and try again\.'/);
+  assert.match(read('frontend/src/features/settings/settings.js'), /tr\('settings:signOut\.failed'\)/);
+  assert.equal(message('settings:signOut.failed'), 'Could not sign out. Check your connection and try again.');
 });
 
 // #3915, iOS: the tap disabled the button and changed nothing you could see,
@@ -37,10 +39,15 @@ test('a running sign-out looks like one, and a failed one says Sign out again', 
   const at = markup.indexOf('id="settings-logout"');
   const button = markup.slice(at, markup.indexOf('</button>', at));
   assert.match(button, /\bdisabled:opacity-60\b/);
-  assert.match(button, />\s*Sign out\s*$/);
+  assert.match(button, />\s*\{t\('settings:screen\.signOut'\)\}\s*$/);
+  assert.equal(message('settings:screen.signOut'), 'Sign out');
   const js = read('frontend/src/features/settings/settings.js');
-  assert.match(js, /const SIGN_OUT_LABEL = 'Sign out';/, 'the same words as the markup');
-  assert.match(js, /const SIGNING_OUT_LABEL = 'Signing out…';/);
+  // The same message id as the markup, so the same words in every language.
+  assert.match(js, /const SIGN_OUT_LABEL = 'settings:screen\.signOut';/, 'the same words as the markup');
+  assert.match(js, /const SIGNING_OUT_LABEL = 'settings:signOut\.signingOut';/);
+  assert.equal(message('settings:signOut.signingOut'), 'Signing out…');
+  assert.match(js, /btn\.textContent = tr\(SIGNING_OUT_LABEL\);/);
+  assert.match(js, /btn\.textContent = tr\(SIGN_OUT_LABEL\);/);
 });
 
 test('the declared check that reads the button\'s words reads Sign out; the selectors are unchanged', () => {
@@ -80,7 +87,14 @@ function menuWith(query) {
     useEffect() {},
     useSyncExternalStore: (subscribe, get) => get(),
   };
-  const nav = loadTsx(NAV, { stubs: { react: React, './settings-nav-store.js': { settingsNavStore: { get: () => descriptor, subscribe: () => () => {} } } } });
+  const nav = loadTsx(NAV, {
+    stubs: {
+      react: React,
+      './settings-nav-store.js': { settingsNavStore: { get: () => descriptor, subscribe: () => () => {} } },
+      // Called outside React's renderer: the English text, not the hook.
+      '../../lib/i18n/react': { useMessages: () => englishPlatformI18n().t },
+    },
+  });
   return { mobile: nav.SettingsMobileMenu(), desktop: nav.SettingsNavDesktop() };
 }
 

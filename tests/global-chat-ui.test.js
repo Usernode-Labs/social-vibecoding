@@ -304,16 +304,22 @@ test('Global Chat has a mobile/native layout and accessible composer controls', 
 test('Settings keeps navigation AI separate from development AI and reports spend', () => {
   assert.match(settings, /idPrefix = embedded \? `chat-global-chat-\$\{instanceId\}` : 'settings-global-chat'/);
   assert.match(settings, /id=\{`\$\{idPrefix\}-enabled`\}/);
-  assert.match(settings, /Enable experimental Global Chat/);
+  assert.match(settings, /t\('settings:globalChat\.enable\.label'\)/);
+  assert.equal(message('settings:globalChat.enable.label'), 'Enable experimental Global Chat');
   assert.match(settings, /api\.saveProfile\(\{ enabled: nextEnabled \}\)/);
   assert.match(settings, /initializeGlobalChat\(\{ force: true \}\)/);
-  assert.match(settings, /Global Chat model/);
-  assert.match(settings, /Low · recommended for GLM Flash/);
-  assert.match(settings, /Monthly Chat cap in USD/);
-  assert.match(settings, /Global Chat this month/);
-  assert.match(settings, /Overall OpenRouter remaining/);
-  assert.match(settings, /Development AI settings/);
-  assert.match(settings, /This profile only controls Global Chat/);
+  for (const [id, english] of [
+    ['settings:globalChat.model.label', /^Global Chat model$/],
+    ['settings:globalChat.effort.low', /^Low · recommended for GLM Flash$/],
+    ['settings:globalChat.cap.label', /Monthly Chat cap in USD/],
+    ['settings:globalChat.usage.thisMonth', /^Global Chat this month$/],
+    ['settings:globalChat.usage.overallRemaining', /^Overall OpenRouter remaining$/],
+    ['settings:globalChat.developmentSettings', /^Development AI settings$/],
+    ['settings:globalChat.footnote', /This profile only controls Global Chat/],
+  ]) {
+    assert.ok(settings.includes(`t('${id}')`), `the editor wires ${id}`);
+    assert.match(message(id), english);
+  }
 });
 
 test('rendered rows disclose locally and settings can be edited and saved in place', () => {

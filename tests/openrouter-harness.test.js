@@ -561,10 +561,13 @@ function renderedOpenRouterCopy() {
   const start = settings.indexOf('_normalizeOpenRouterCopy() {');
   const body = settings.slice(start, settings.indexOf('_formatOpenRouterPrice(value)', start));
   const pick = (re) => { const m = re.exec(body); assert.ok(m, String(re)); return m[1]; };
+  // The heading is the product's name, written out. The description and the
+  // label are catalog messages: what the screen shows is their English.
+  const { message: english } = require('./lib/platform-i18n');
   return {
     heading: pick(/heading\.textContent = '([^']*)'/),
-    intro: pick(/intro\.textContent = '([^']*)'/),
-    label: pick(/modelLabel\.textContent = '([^']*)'/),
+    intro: english(pick(/intro\.textContent = tr\('(settings:openrouter\.intro)'\)/)),
+    label: english(pick(/modelLabel\.textContent = tr\('(settings:openrouter\.model\.label)'\)/)),
   };
 }
 
@@ -576,15 +579,30 @@ test('the OpenRouter settings copy people see names the models that run in Claud
 });
 
 test('the static OpenRouter settings markup says exactly what the runtime copy says', () => {
-  const copy = renderedOpenRouterCopy();
+  // Both sides read the description and the label from the catalog now, so
+  // "exactly the same" is the same message id on each side; the heading is
+  // the product's name, written out in both.
+  const settings = fs.readFileSync(path.join(ROOT, 'frontend', 'src', 'features', 'settings', 'settings.js'), 'utf8');
+  const start = settings.indexOf('_normalizeOpenRouterCopy() {');
+  const runtime = settings.slice(start, settings.indexOf('_formatOpenRouterPrice(value)', start));
+  const runtimeId = (node) => {
+    const m = new RegExp(`${node}\\.textContent = \\w+\\('(settings:[\\w.]+)'\\)`).exec(runtime);
+    assert.ok(m, `${node} is written from a catalog message`);
+    return m[1];
+  };
+  const runtimeHeading = /heading\.textContent = '([^']*)'/.exec(runtime);
+  assert.ok(runtimeHeading, 'the runtime heading is the name, written out');
   const tsx = fs.readFileSync(path.join(ROOT, 'frontend', 'src', 'features', 'settings', 'sections', 'openrouter.tsx'), 'utf8');
-  const section = /<SectionHeading title=\{<>([^<]*)<\/>\}>\s*([^<]*?)\s*<\/SectionHeading>/.exec(tsx);
+  const section = /<SectionHeading title=\{<>([^<]*)<\/>\}>\s*\{t\('(settings:[\w.]+)'\)\}\s*<\/SectionHeading>/.exec(tsx);
   assert.ok(section, 'the OpenRouter SectionHeading is where this test expects it');
-  assert.equal(section[1], copy.heading);
-  assert.equal(section[2].replace(/\s+/g, ' '), copy.intro);
-  const label = /<Label[^>]*htmlFor="settings-openrouter-model">\s*([^<]*?)\s*<\/Label>/.exec(tsx);
+  assert.equal(section[1], runtimeHeading[1]);
+  assert.equal(section[2], runtimeId('intro'));
+  const label = /<Label[^>]*htmlFor="settings-openrouter-model">\s*\{t\('(settings:[\w.]+)'\)\}\s*<\/Label>/.exec(tsx);
   assert.ok(label, 'the model picker label is where this test expects it');
-  assert.equal(label[1], copy.label);
+  assert.equal(label[1], runtimeId('modelLabel'));
+  const { message } = require('./lib/platform-i18n');
+  assert.match(message(section[2]), /^Use any compatible model for all chat and coding in an OpenRouter session\./);
+  assert.equal(message(label[1]), 'OpenRouter model');
 });
 
 test('the transcript and the log name the CLI that actually ran', () => {

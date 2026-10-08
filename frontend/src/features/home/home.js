@@ -3423,17 +3423,19 @@ const Home = {
   },
   // Last-pass telemetry, for the Settings → "Widget icons" row. Kept
   // here rather than derived there: by the time someone opens Settings
-  // the interesting pass has long finished.
+  // the interesting pass has long finished. The outcome is recorded as
+  // `{ kind, sent, refused }`, not as text: Settings says it, together with
+  // the time, as one whole message (settings:usernode.widgetIcons.lastCheck.*).
   _lastHealAt: 0,
   _lastHealOutcome: null,
   async _healWidgetIconsPass() {
     if (Home._shortcutSupport?.mechanism !== 'widget') {
-      Home._lastHealOutcome = message('home:widget.heal.skippedMechanism');
+      Home._lastHealOutcome = { kind: 'skippedMechanism' };
       return;
     }
     const bridge = window.usernode;
     if (!bridge || typeof bridge.addHomeScreenShortcut !== 'function') {
-      Home._lastHealOutcome = message('home:widget.heal.skippedBridge');
+      Home._lastHealOutcome = { kind: 'skippedBridge' };
       return;
     }
     // Resolve the dual-icon capability BEFORE building any marker or
@@ -3505,9 +3507,9 @@ const Home = {
     }
     Home._lastHealOutcome = (sent || failed)
       ? (failed
-        ? message('home:widget.heal.sentRefused', { sent, refused: failed, count: sent })
-        : message('home:widget.heal.sent', { count: sent }))
-      : message('home:widget.heal.nothing');
+        ? { kind: 'sentRefused', sent, refused: failed }
+        : { kind: 'sent', sent })
+      : { kind: 'nothing' };
     if (healed) {
       try {
         const resp = await bridge.getHomeScreenShortcuts();

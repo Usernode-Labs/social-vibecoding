@@ -31,6 +31,14 @@ const read = (...rel) => fs.readFileSync(path.join(__dirname, '..', ...rel), 'ut
 // tests/connector-setup-codex.test.js.
 const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
+const { message } = require('./lib/platform-i18n');
+// The pane's prose lives in the catalog (frontend/locales/en/settings.json).
+// This is the English of every message a stretch of source wires, in order:
+// what a reader of that stretch sees, less the markup. Inline code and
+// emphasis appear as the catalog's numbered tags (<1>homeroom</1>).
+const wiredEnglish = (source) => [...source.matchAll(/['"]((?:settings|core):[\w.]+)['"]/g)]
+  .map((match) => message(match[1])).join('\n');
+
 const STEPS = read('frontend', 'src', 'features', 'settings', 'connector-setup-steps.tsx');
 const SETTINGS_SECTION = read('frontend', 'src', 'features', 'settings', 'sections', 'connectors.tsx');
 const SETTINGS_JS = read('frontend', 'src', 'features', 'settings', 'settings.js');
@@ -59,6 +67,8 @@ test('the shared module is the only place the two walkthroughs are written', () 
   const chatgpt = STEPS.slice(STEPS.indexOf('export function ChatgptSetupSteps'));
   assert.equal((claude.match(/<SetupStep n=\{\d\}/g) || []).length, 6);
   assert.equal((chatgpt.match(/<SetupStep n=\{\d\}/g) || []).length, 4);
+  assert.equal(message('settings:connectors.claudeSteps.open.title'), 'Open connector settings.');
+  assert.equal(message('settings:connectors.chatgptSteps.directory.title'), 'Open the plugins directory.');
 
   // Neither consumer restates them. A `SetupStep` in Settings is legitimate
   // — the Codex and generic-client routes still render rows in that idiom —
@@ -67,6 +77,8 @@ test('the shared module is the only place the two walkthroughs are written', () 
   for (const [name, src] of [['Settings', SETTINGS_SECTION], ['the launchpad card', INLINE]]) {
     assert.doesNotMatch(src, /Open connector settings\./, `${name} does not restate Claude's steps`);
     assert.doesNotMatch(src, /Open the plugins directory\./, `${name} does not restate ChatGPT's steps`);
+    // Nor wires the steps' own messages: those ids belong to the shared module.
+    assert.doesNotMatch(src, /settings:connectors\.(claudeSteps|chatgptSteps)\./, `${name} renders the module, not its messages`);
   }
   assert.match(SETTINGS_SECTION, /<ClaudeSetupSteps \/>/);
   assert.match(SETTINGS_SECTION, /<ChatgptSetupSteps \/>/);
@@ -79,7 +91,7 @@ test('the shared steps point at nothing that exists on only one of the screens',
   // is on the Settings pane and nowhere else, so on the launchpad the
   // sentence pointed at nothing. The reason is in the step now; Settings
   // keeps the disclosure for what a step should not carry.
-  const prose = stripComments(STEPS);
+  const prose = `${stripComments(STEPS)}\n${wiredEnglish(STEPS)}`;
   assert.doesNotMatch(prose, /under these steps/);
   assert.doesNotMatch(prose, /Stop the permission prompts|connector-case-|Name it homeroom/);
   // The one thing a step may point at is the value each caller renders
@@ -89,8 +101,9 @@ test('the shared steps point at nothing that exists on only one of the screens',
   // launchpad card and the hand-off pass the live value as a prop, and
   // Settings' interior ships a fill-in placeholder that settings.js
   // replaces with the same derived origin the #connector-url field shows.
-  assert.match(STEPS, /the MCP server URL above/);
-  assert.match(STEPS, /Enter Homeroom MCP server URL\./);
+  assert.match(wiredEnglish(STEPS), /the MCP server URL above/);
+  assert.match(STEPS, /title=\{t\('settings:connectors\.chatgptSteps\.url\.title'\)\}/);
+  assert.equal(message('settings:connectors.chatgptSteps.url.title'), 'Enter Homeroom MCP server URL.');
   assert.match(STEPS, /data-connector-step-url="1"/);
   assert.match(INLINE, /<ChatgptSetupSteps url=\{url\} \/>/);
   assert.match(HANDOFF, /<ChatgptSetupSteps url=\{connectorUrl\} \/>/);
@@ -99,7 +112,7 @@ test('the shared steps point at nothing that exists on only one of the screens',
   assert.match(INLINE, /<ConnectorUrl url=\{url\} \/>/);
   assert.match(SETTINGS_SECTION, /id="connector-url"/);
   // And the fact the cross-reference was carrying survived the move.
-  assert.match(STEPS, /Claude Code builds its permission rules/);
+  assert.match(wiredEnglish(STEPS), /Claude Code builds its permission rules/);
 });
 
 test('Settings keeps its route, and everything that is only on it', () => {

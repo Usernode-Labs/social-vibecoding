@@ -447,34 +447,6 @@
     "text": "Widget reorder failed: {{reason}}",
     "description": "Brief notice when saving the new order of apps on the Homeroom widget failed. {{reason}} is the error the phone reported."
   },
-  "widget.heal.skippedMechanism": {
-    "text": "skipped, not the widget mechanism",
-    "description": "Diagnostic outcome shown in Settings, on the \"Widget icons\" row, after a colon: the last pass that refreshes the widget's icons did not run because this device does not use the widget. Lower case because it follows a colon."
-  },
-  "widget.heal.skippedBridge": {
-    "text": "skipped, no shortcut bridge",
-    "description": "Diagnostic outcome shown in Settings, on the \"Widget icons\" row, after a colon: the last icon refresh did not run because the app cannot talk to the phone's shortcut feature. Lower case because it follows a colon."
-  },
-  "widget.heal.nothing": {
-    "text": "nothing to send",
-    "description": "Diagnostic outcome shown in Settings, on the \"Widget icons\" row, after a colon: the last icon refresh found every icon up to date. Lower case because it follows a colon."
-  },
-  "widget.heal.sent_one": {
-    "text": "sent {{count}}",
-    "description": "Diagnostic outcome shown in Settings, on the \"Widget icons\" row, after a colon: the last icon refresh sent {{count}} icons to the widget. Lower case because it follows a colon."
-  },
-  "widget.heal.sent_other": {
-    "text": "sent {{count}}",
-    "description": "Diagnostic outcome shown in Settings, on the \"Widget icons\" row, after a colon: the last icon refresh sent {{count}} icons to the widget. Lower case because it follows a colon."
-  },
-  "widget.heal.sentRefused_one": {
-    "text": "sent {{sent}}, {{refused}} refused",
-    "description": "Diagnostic outcome shown in Settings, on the \"Widget icons\" row, after a colon: the last icon refresh sent {{sent}} icons and the phone refused {{refused}} more. Lower case because it follows a colon."
-  },
-  "widget.heal.sentRefused_other": {
-    "text": "sent {{sent}}, {{refused}} refused",
-    "description": "Diagnostic outcome shown in Settings, on the \"Widget icons\" row, after a colon: the last icon refresh sent {{sent}} icons and the phone refused {{refused}} more. Lower case because it follows a colon."
-  },
   "gettingStarted.regionLabel": {
     "text": "Getting started",
     "description": "Accessible name of the card at the top of Home that lists a new member's first steps."

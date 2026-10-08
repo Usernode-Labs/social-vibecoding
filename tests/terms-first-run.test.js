@@ -206,12 +206,15 @@ test('every dead end is silent — console.warn at most, never console.error', (
 
 test('first-run mode adds the intro line and a Decline that records refusal', () => {
   assert.match(settingsJs,
+    /if \(firstRun\) \{\s*\n\s*panel\.appendChild\(el\('p',[\s\S]{0,120}tr\('settings:terms\.firstRunIntro'\)\)\);/);
+  assert.match(message('settings:terms.firstRunIntro'),
     /Reviewing the terms is part of joining the platform\./);
   assert.match(settingsJs, /postConsent\('refused',/);
   // Decline exists only in first-run framing; the settings/profile entry
   // points keep their current Accept + Close shape.
-  const declineAt = settingsJs.indexOf("'Decline'");
+  const declineAt = settingsJs.indexOf("tr('settings:terms.decline')");
   assert.ok(declineAt > 0, 'the Decline button label must exist');
+  assert.equal(message('settings:terms.decline'), 'Decline');
   const guard = settingsJs.lastIndexOf('if (firstRun) {', declineAt);
   assert.ok(guard > 0 && declineAt - guard < 900,
     'the Decline button must be gated on firstRun');
@@ -253,10 +256,13 @@ test('the first-run copy carries no token language (issue #1550)', () => {
   // paused. ...") are gone; the first sentence stays verbatim, and the
   // consent intent — read the published terms, then accept or decline, and
   // a decline is reversible — is carried by the replacements.
+  assert.match(sheetBody, /tr\('settings:terms\.firstRunIntro'\)/);
+  assert.equal(message('settings:terms.firstRunIntro'),
+    'Reviewing the terms is part of joining the platform. Please ' +
+    'read the full terms, then choose whether to accept.');
   assert.match(settingsJs,
-    /'Reviewing the terms is part of joining the platform\. Please ' \+\s*\n\s*'read the full terms, then choose whether to accept\.'/);
-  assert.match(settingsJs,
-    /PlatformUI\.toast\(\s*\n\s*'You can accept the terms later from your profile'\)/);
+    /PlatformUI\.toast\(\s*\n\s*tr\('settings:terms\.declinedToast'\)\)/);
+  assert.equal(message('settings:terms.declinedToast'), 'You can accept the terms later from your profile');
   // The whole dialog, not just the two strings: nothing it renders may
   // mention tokens again. Scoped to the sheet — settings.js elsewhere is
   // full of CLI and iframe auth tokens, which this must not trip on.
@@ -264,6 +270,12 @@ test('the first-run copy carries no token language (issue #1550)', () => {
     'the sheet-body slice must be bounded by anchors that both exist');
   assert.ok(!/token/i.test(sheetBody),
     'the terms dialog must not mention tokens');
+  // Its words are catalog messages now, so the same ban reads their English.
+  const sheetIds = [...new Set([...sheetBody.matchAll(/'((?:settings|core):[\w.]+)'/g)].map((m) => m[1]))];
+  assert.ok(sheetIds.length >= 10, 'the sheet wires its text from the catalog');
+  for (const id of sheetIds) {
+    assert.ok(!/token/i.test(message(id, { version: '1', date: 'd', count: 1 })), `${id} must not mention tokens`);
+  }
   // The backend gate is unchanged — only the copy stopped narrating it.
   assert.match(settingsJs, /postConsent\('refused',/);
 });

@@ -18,9 +18,9 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
