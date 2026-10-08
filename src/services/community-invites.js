@@ -229,6 +229,28 @@ async function listInvites(pool, { app, user }) {
   return { links: rows.map((r) => serializeLink(r, user?.id)), manages };
 }
 
+/**
+ * Whether `userId` has a live invite link for `app` (the same "live" as
+ * listInvites: not turned off, not past its end, not used up). The hub reads
+ * it to draw a project that is just theirs with open seats once a link is
+ * out (#4045, 8 Oct 2026). It is the only trace a link leaves: copying or
+ * sharing it happens on the person's device, and making the link is what
+ * opening the invite pane does, so this says "a link was made", which is as
+ * near to "went out" as the records get.
+ */
+async function hasLiveLink(pool, appId, userId) {
+  if (!appId || !userId) return false;
+  const { rows } = await pool.query(
+    `SELECT 1 FROM community_invites
+      WHERE app_id = $1 AND created_by = $2 AND revoked_at IS NULL
+        AND (expires_at IS NULL OR expires_at > NOW())
+        AND (max_uses IS NULL OR uses < max_uses)
+      LIMIT 1`,
+    [appId, userId]
+  );
+  return rows.length > 0;
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 function inDays(ms) {
@@ -478,26 +500,6 @@ async function firstVersionPending(db, appId) {
     log.warn('invites', 'Could not read whether a first version is on its way', { appId, err: err.message });
     return false;
   }
-}
-
-/**
- * The same picture for somebody who has just joined, at addresses that need
- * no link ("You're in", frontend/src/features/first-session): the card of
- * the idea, as words the screen draws itself, and the Discover card's image,
- * which anyone may see. An after-shot is served only through a live link,
- * so a member is shown none here. Null for no picture.
- */
-function memberPicture(slug, picture) {
-  if (!picture || !slug) return null;
-  if (picture.kind === 'sketch') return { kind: 'sketch', url: null, darkUrl: null, card: picture.card };
-  if (picture.kind === 'illustration') {
-    return {
-      kind: 'illustration',
-      url: `/app-illustrations/${picture.id}`,
-      darkUrl: picture.darkId ? `/app-illustrations/${picture.darkId}` : null,
-    };
-  }
-  return null;
 }
 
 /**
@@ -959,7 +961,6 @@ module.exports = {
   cleanNote,
   pictureBytes,
   pictureFor,
-  memberPicture,
   firstVersionPending,
   joiningRule,
   joiningRuleText,
@@ -972,6 +973,7 @@ module.exports = {
   deadReason,
   grantFor,
   canCreate,
+  hasLiveLink,
   canRevoke,
   createInvite,
   listInvites,

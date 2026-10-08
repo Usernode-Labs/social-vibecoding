@@ -1246,15 +1246,15 @@ export function LandingScreen() {
             same box either way, and a class string that moved with the state
             would rewrite this element's attribute on every open and close.
             The mark is `h-7` — the content row exactly — takes its width from
-            its own aspect ratio and its ink from this element, which is why
-            it needs no dark variant; `title` gives it the accessible name the
+            its own aspect ratio, and is inked black (white in dark mode) like
+            the logotype everywhere (#4382); `title` gives it the accessible name the
             text branch has for free, so the bar still answers "Homeroom".
         */}
         <h1
           id="landing-header-title"
           className="flex-1 min-w-0 text-lg font-bold pointer-events-none truncate text-center"
         >
-          {openApp ? headerTitle : <Wordmark className="h-7 w-auto inline-block align-middle" title={LANDING_TITLE} />}
+          {openApp ? headerTitle : <Wordmark className="h-7 w-auto inline-block align-middle text-zinc-950 dark:text-white" title={LANDING_TITLE} />}
         </h1>
         {/*
             The trailing 28px, mirroring the lead box so the label sits on the
@@ -1505,7 +1505,7 @@ export function LandingScreen() {
               Come build the next version with us.
             </h1>
             <p className="mt-2.5 text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400 text-pretty">
-              We let people in a few at a time, and we'll email you when your spot is ready.
+              We're letting people in a few at a time, and we'll email you when your spot is ready.
             </p>
             {/*
                 THE WAY OUT TO THE LONG VERSION. One sentence is the right

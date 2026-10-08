@@ -1,19 +1,26 @@
 'use strict';
 
-// A check run that overlapped a platform rollout and came back red is run
-// again, not held against the author.
+// The rollout relabel is retired: a run that crossed a restart is judged on
+// its own results.
 //
-// Every merge to main rolls the platform out. On 2026-10-04 four proposals
-// lost 21 to 34 declared checks each to runs that overlapped a rollout (one
-// slow cold page load fails every check sharing its document), and the same
-// commits passed when they ran again in a quiet window. A red run that
-// overlapped a rollout is now recorded as 'error' with a plain reason, so the
-// error lane's backoff runs it again, while the auto-retry cap still lets a
-// genuinely red commit stand as 'failing'.
+// #3828 recorded a red run as 'error' with "Checks ran while Homeroom was
+// updating, so they will run again." whenever the harvest settled it (it
+// outlived the process that launched it) or it started within five minutes
+// of a boot. Measured in production, that was the wrong cause: across 701
+// runs from 5 Oct 2026 that no rollout overlapped, 9% came back red while
+// the check Jobs used under 10 cores of the cluster and 24 to 29% above it,
+// and at equal load a rollout added little. So the relabel excused failures
+// that were the change's, and the checks queue (services/checks-queue.js)
+// bounds the load that caused the rest.
 //
-// Two kinds of run count as overlapping: one the check harvest settled (it
-// outlived the process that launched it), and a live one that started within
-// a short window after this platform process booted.
+// What still reads as infrastructure is what the run's own output shows to
+// be: an origin no route could reach (#1381), a Postgres out of connections
+// (#1771), a unit suite that never ran. Those classifiers apply to a
+// harvested run exactly as to a live one.
+//
+// The copy stays for the rows already stored with it: storeChecks gave each
+// a retry, so the error lane runs them again and every surface that reads
+// one still says so until it settles.
 //
 // Run with: node --test tests/checks-rollout-overlap.test.js
 
@@ -30,6 +37,7 @@ const lifecycle = require('../src/services/preview-lifecycle');
 const ws = require('../src/services/ws');
 const tools = require('../src/services/mcp-tools');
 const mergeRequirements = require('../src/services/merge-requirements');
+const appManifest = require('../src/services/app-manifest');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -37,7 +45,6 @@ const stripComments = (src) => src.replace(/^[ \t]*\/\/.*$/gm, '');
 
 const { ROLLOUT_RETRY_DETAIL } = stagingRecovery;
 const SHA = 'abc123';
-const MINUTE = 60 * 1000;
 
 function stub(t, mod, patch) {
   const saved = {};
@@ -53,37 +60,32 @@ function frame(index, status, extra = {}) {
   return `__USERNODE_TEST__ index=${index} status=${status} loadStatus=200\n${payload}\n__USERNODE_TEST_END__`;
 }
 
-// The shape of the 2026-10-04 runs: the page answered, slowly, so one check
-// timed out and the rest passed. Not a total wipeout, so neither the
-// unreachable-origin nor the connection-exhaustion rule re-labels it.
+// The shape of the 2026-10-04 runs the relabel was written for: the page
+// answered, slowly, so one check timed out and the rest passed. Not a total
+// wipeout, so neither infrastructure rule reads it as one.
 const RED = [
   frame(0, 'pass'),
   frame(1, 'fail', { failureReason: 'Page failed to load: Timed out after 23861ms' }),
   frame(2, 'pass'),
 ].join('\n');
 const GREEN = [frame(0, 'pass'), frame(1, 'pass'), frame(2, 'pass')].join('\n');
+// #1381: not one route could be reached.
+const UNREACHABLE = [0, 1, 2].map((i) => frame(i, 'fail', {
+  consoleErrors: [{ kind: 'load', message: 'net::ERR_CONNECTION_REFUSED at https://demo--s42.preview' }],
+})).join('\n');
+// #1771: every route failed, and the failures name the full server.
+const STARVED = [0, 1, 2].map((i) => frame(i, 'fail', {
+  failureReason: 'GET /api/board answered 500: sorry, too many clients already',
+})).join('\n');
 
-// The row the error lane reads: a promoted proposal, nothing errored yet.
-function laneRow(over = {}) {
-  return {
-    status: 'promoted', source: 'native', branch_name: 'usernode/s42',
-    checks_commit_sha: SHA, handoff_head_sha: null, handoff_uploaded_sha: null,
-    handoff_upload_checked_sha: null, consecutive_check_failures: 0, ...over,
-  };
-}
-
-// A pool that answers what a settlement asks. `checks` collects every
-// storeChecks write as { state, detail, retryScheduled }; `lane` is the
-// row the rollout lookup reads (or an Error to throw).
-function makePool({ lane = laneRow(), session = null, orphans = [] } = {}) {
+// A pool that answers what a settlement and a harvest ask. `checks` collects
+// every storeChecks write as { state, detail, retryScheduled, streakBumped }.
+// `graduated` is the app's graduated check keys.
+function makePool({ session = null, orphans = [], graduated = [] } = {}) {
   const pool = {
     calls: [], checks: [], deleted: [],
     async query(sql, params = []) {
       pool.calls.push({ sql, params });
-      if (/consecutive_check_failures\s+FROM chat_sessions WHERE id = \$1/.test(sql)) {
-        if (lane instanceof Error) throw lane;
-        return { rows: lane ? [{ ...lane }] : [], rowCount: lane ? 1 : 0 };
-      }
       if (/UPDATE chat_sessions\s+SET check_state = \$1/.test(sql)) {
         const retryScheduled = /check_next_retry_at = NOW\(\) \+ make_interval/.test(sql);
         pool.checks.push({
@@ -93,6 +95,9 @@ function makePool({ lane = laneRow(), session = null, orphans = [] } = {}) {
           streakBumped: /consecutive_check_failures = consecutive_check_failures \+ 1/.test(sql),
         });
         return { rows: [], rowCount: 1 };
+      }
+      if (/SELECT check_key FROM app_check_history/.test(sql)) {
+        return { rows: graduated.map((key) => ({ check_key: key })), rowCount: graduated.length };
       }
       if (/SELECT run_id, session_id, commit_sha, owner, manifest/.test(sql)) {
         return { rows: orphans.map((r) => ({ ...r })), rowCount: orphans.length };
@@ -124,19 +129,18 @@ const SESSION = {
 };
 const APP = { id: 9, slug: 'demo', name: 'Demo', repo_url: '' };
 
-function settle(pool, { stdout, overlappedRollout, sent = [] }) {
+function settle(pool, { stdout, sent = [], unitOutcome = null }) {
   return visuals.settleCaptureRun({}, pool, {
     session: SESSION, app: APP, commitHash: SHA, trigger: 'commit-push',
     send: (type, data) => sent.push({ type, ...data }),
     runStartedAt: Date.now(), media: false, capturePaths: ['/board'],
     pathDefaulted: false, prodRunning: false, stagingOrigin: '', targets: [],
     testsCount: 3, dispatched: null, ceilingDropped: 0,
-    stdout, stderr: '', runPartial: false, runPartialReason: '', unitOutcome: null,
-    overlappedRollout,
+    stdout, stderr: '', runPartial: false, runPartialReason: '', unitOutcome,
   });
 }
 
-// ── The copy ────────────────────────────────────────────────────────────
+// ── The copy, kept for the rows that carry it ───────────────────────────
 
 test('the recorded reason is plain, short and fits the field the card shows', () => {
   assert.equal(ROLLOUT_RETRY_DETAIL, 'Checks ran while Homeroom was updating, so they will run again.');
@@ -144,30 +148,22 @@ test('the recorded reason is plain, short and fits the field the card shows', ()
   assert.doesNotMatch(ROLLOUT_RETRY_DETAIL, /—|&mdash;|&#8212;/, 'user-facing copy carries no em dash');
 });
 
-// ── Whether the error lane will run it again ────────────────────────────
+// ── Nothing writes it any more ──────────────────────────────────────────
 
-test('errorVerdictWillRetry answers what findStuckCheckSessions and the cap would do', () => {
-  const { errorVerdictWillRetry } = stagingRecovery;
-  assert.equal(errorVerdictWillRetry(laneRow(), { maxAutoRetries: 6 }), true);
-  // The streak once storeChecks bumps it must still be under the cap: five
-  // errors in, the sixth would leave the row at 6 and the reconcile picks a
-  // row only while consecutive_check_failures < 6, so nothing would follow.
-  assert.equal(errorVerdictWillRetry(laneRow({ consecutive_check_failures: 4 }), { maxAutoRetries: 6 }), true);
-  assert.equal(errorVerdictWillRetry(laneRow({ consecutive_check_failures: 5 }), { maxAutoRetries: 6 }), false);
-  assert.equal(errorVerdictWillRetry(laneRow({ consecutive_check_failures: 9 }), { maxAutoRetries: 6 }), false);
-  // Outside the reconcile's scope nothing re-runs an error, so it never
-  // reads "will run again" there.
-  assert.equal(errorVerdictWillRetry(laneRow({ status: 'active', source: 'native' })), false,
-    'an open dev session is not in the stuck-checks scope');
-  assert.equal(errorVerdictWillRetry(laneRow({ status: 'merging' })), false);
-  assert.equal(errorVerdictWillRetry(laneRow({ branch_name: null })), false, 'nothing to rebuild from');
-  assert.equal(errorVerdictWillRetry(laneRow({
-    status: 'active', source: 'cli_handoff', handoff_head_sha: SHA,
-  })), true, 'a submitted CLI hand-off is in scope');
-  assert.equal(errorVerdictWillRetry(null), false);
+test('no run writes the rollout reason, and nothing stamps or reads a boot window', () => {
+  const visualsSrc = stripComments(read('src/services/visuals.js'));
+  assert.doesNotMatch(visualsSrc, /ROLLOUT_RETRY_DETAIL/, 'the settlement never records it');
+  assert.doesNotMatch(visualsSrc, /overlappedRollout|startedSoonAfterBoot|markPlatformBooted|ROLLOUT_BOOT_WINDOW_MS|rolloutRetryFollows/);
+  assert.equal(visuals.markPlatformBooted, undefined);
+  assert.equal(visuals.startedSoonAfterBoot, undefined);
+  assert.equal(visuals.ROLLOUT_BOOT_WINDOW_MS, undefined);
+  assert.doesNotMatch(stripComments(read('server.js')), /markPlatformBooted/, 'the boot is not stamped');
+  assert.doesNotMatch(stripComments(read('src/services/check-harvest.js')), /overlappedRollout/,
+    'a harvested run is settled like a live one');
+  assert.equal(stagingRecovery.errorVerdictWillRetry, undefined, 'its only reader went with it');
 });
 
-test('the cap is read in one place, and the reconcile reads the same one', (t) => {
+test('the auto-retry cap is still read in one place, and the reconcile reads it', (t) => {
   const saved = process.env.CHECK_MAX_AUTO_RETRIES;
   t.after(() => {
     if (saved === undefined) delete process.env.CHECK_MAX_AUTO_RETRIES;
@@ -177,109 +173,31 @@ test('the cap is read in one place, and the reconcile reads the same one', (t) =
   assert.equal(stagingRecovery.checkMaxAutoRetries(), 6);
   process.env.CHECK_MAX_AUTO_RETRIES = '3';
   assert.equal(stagingRecovery.checkMaxAutoRetries(), 3);
-  assert.equal(stagingRecovery.errorVerdictWillRetry(laneRow({ consecutive_check_failures: 2 })), false,
-    'the default comes from the same env var the reconcile reads');
   process.env.CHECK_MAX_AUTO_RETRIES = 'not a number';
   assert.equal(stagingRecovery.checkMaxAutoRetries(), 6);
-
   const server = stripComments(read('server.js'));
   assert.match(server, /const CHECK_MAX_AUTO_RETRIES = stagingRecovery\.checkMaxAutoRetries\(\);/);
   assert.match(server, /maxAutoRetries: CHECK_MAX_AUTO_RETRIES/);
 });
 
-// ── The boot window ─────────────────────────────────────────────────────
-
-test('a live run counts as overlapping only within the window after this process booted', () => {
-  const booted = Date.parse('2026-10-04T14:40:00Z');
-  const opts = { bootedAt: booted, windowMs: 5 * MINUTE };
-  assert.equal(visuals.startedSoonAfterBoot(booted + 30_000, opts), true);
-  assert.equal(visuals.startedSoonAfterBoot(booted + 5 * MINUTE, opts), true);
-  assert.equal(visuals.startedSoonAfterBoot(booted + 5 * MINUTE + 1, opts), false);
-  assert.equal(visuals.startedSoonAfterBoot(booted + 60 * MINUTE, opts), false);
-  assert.equal(visuals.startedSoonAfterBoot(booted - 1, opts), false);
-  assert.equal(visuals.startedSoonAfterBoot(booted + 1000, { bootedAt: null }), false,
-    'a process that never booted the platform (tests, scripts) has no window');
-  assert.equal(visuals.ROLLOUT_BOOT_WINDOW_MS, 5 * MINUTE);
-});
-
-test('the window is stamped by the platform boot and read at the live settlement', () => {
-  const server = stripComments(read('server.js'));
-  const start = server.slice(server.indexOf('async function start() {'));
-  assert.match(start.slice(0, 400), /const startedAt = Date\.now\(\);\s*visualsSvc\.markPlatformBooted\(startedAt\);/,
-    'stamped first thing in start(), before migrations and boot sweeps');
-  const src = stripComments(read('src/services/visuals.js'));
-  const live = src.slice(src.indexOf('async function captureForSession('), src.indexOf('function holdCapture('));
-  assert.match(live, /const settled = await settleCaptureRun\(config, pool, \{[\s\S]*overlappedRollout: startedSoonAfterBoot\(runStartedAt\),\s*\}\);/);
-});
-
 // ── A live run ──────────────────────────────────────────────────────────
 
-test('a live run within the boot window with failing frames stores error and schedules a retry', async (t) => {
+test('a live red run is failing, whenever it started: no lookup, no retry, history recorded', async (t) => {
   const pool = makePool();
   quiet(t, pool);
-  const booted = Date.now() - 2 * MINUTE;
   const sent = [];
-  const out = await settle(pool, {
-    stdout: RED, sent,
-    overlappedRollout: visuals.startedSoonAfterBoot(Date.now(), { bootedAt: booted }),
-  });
-  assert.equal(out.result.state, 'error');
-  assert.equal(out.traceStatus, 'error');
-  assert.deepEqual(pool.checks, [{
-    state: 'error', detail: ROLLOUT_RETRY_DETAIL, retryScheduled: true, streakBumped: true,
-  }], 'the error branch of storeChecks: backoff scheduled, streak bumped, reason recorded');
-  assert.equal(sent.filter((e) => e.type === 'checks_ready')[0].checkState, 'error');
-  assert.ok(!pool.calls.some((c) => /app_check_history/.test(c.sql)),
-    'a rollout blip stamps no fail_count on the checks that tripped');
-});
-
-test('a live run that started long after boot keeps its failing verdict', async (t) => {
-  const pool = makePool();
-  quiet(t, pool);
-  const booted = Date.now() - 3 * 60 * MINUTE;
-  const out = await settle(pool, {
-    stdout: RED, overlappedRollout: visuals.startedSoonAfterBoot(Date.now(), { bootedAt: booted }),
-  });
+  const out = await settle(pool, { stdout: RED, sent });
   assert.equal(out.result.state, 'failing');
-  assert.deepEqual(pool.checks.map((c) => c.state), ['failing']);
+  assert.deepEqual(pool.checks, [{ state: 'failing', detail: null, retryScheduled: false, streakBumped: false }]);
+  assert.equal(sent.filter((e) => e.type === 'checks_ready')[0].checkState, 'failing');
   assert.ok(!pool.calls.some((c) => /consecutive_check_failures\s+FROM chat_sessions/.test(c.sql)),
-    'a run that did not overlap does not even ask');
+    'it does not ask whether a retry would follow: there is nothing to relabel');
 });
 
-test('a passing run inside the window stays passing', async (t) => {
+test('a live green run is passing', async (t) => {
   const pool = makePool();
   quiet(t, pool);
-  const out = await settle(pool, { stdout: GREEN, overlappedRollout: true });
-  assert.equal(out.result.state, 'passing');
-  assert.deepEqual(pool.checks.map((c) => c.state), ['passing']);
-});
-
-// ── The cap ─────────────────────────────────────────────────────────────
-
-test('at the retry cap a red verdict from an overlapping run stands as failing', async (t) => {
-  // Five errors already in the streak (default cap 6): a sixth would leave
-  // the row 'error' with no retry to follow, hiding a red commit for good.
-  const atCap = makePool({ lane: laneRow({ consecutive_check_failures: 5 }) });
-  quiet(t, atCap);
-  const out = await settle(atCap, { stdout: RED, overlappedRollout: true });
-  assert.equal(out.result.state, 'failing');
-  assert.deepEqual(atCap.checks.map((c) => c.state), ['failing']);
-
-  // One under it, the retry still follows.
-  const under = makePool({ lane: laneRow({ consecutive_check_failures: 4 }) });
-  stub(t, lifecycle, { current: () => ({ pool: under }) });
-  const again = await settle(under, { stdout: RED, overlappedRollout: true });
-  assert.equal(again.result.state, 'error');
-});
-
-test('with no retry to follow, or no way to tell, the red verdict stands', async (t) => {
-  const outOfScope = makePool({ lane: laneRow({ status: 'active', source: 'native' }) });
-  quiet(t, outOfScope);
-  assert.equal((await settle(outOfScope, { stdout: RED, overlappedRollout: true })).result.state, 'failing');
-
-  const unreadable = makePool({ lane: new Error('connection reset') });
-  stub(t, lifecycle, { current: () => ({ pool: unreadable }) });
-  assert.equal((await settle(unreadable, { stdout: RED, overlappedRollout: true })).result.state, 'failing');
+  assert.equal((await settle(pool, { stdout: GREEN })).result.state, 'passing');
 });
 
 // ── A harvested run ─────────────────────────────────────────────────────
@@ -291,6 +209,8 @@ function orphanRow() {
     run_id: 'run-1', session_id: 42, commit_sha: SHA, owner: 'dead-pod:7',
     started_at: new Date(Date.now() - 90_000).toISOString(),
     heartbeat_at: new Date(Date.now() - 70_000).toISOString(),
+    queued_at: new Date(Date.now() - 95_000).toISOString(),
+    admitted_at: new Date(Date.now() - 92_000).toISOString(),
     stale: true,
     manifest: {
       launched: true, trigger: 'commit-push', startedAt: Date.now() - 90_000,
@@ -307,12 +227,19 @@ function harvestedSession() {
   };
 }
 
-async function harvestWith(t, stdout) {
-  const pool = makePool({ orphans: [orphanRow()], session: harvestedSession() });
+// The run's capture Job finished with `stdout`; `unit` is its unit-suite
+// Job's end, if it had one.
+async function harvestWith(t, stdout, { unit = null, graduated = [] } = {}) {
+  const pool = makePool({ orphans: [orphanRow()], session: harvestedSession(), graduated });
   quiet(t, pool);
   stub(t, kubernetes, {
-    findCheckJobs: async () => ({ capture: { name: 'sv-capture-s42-x', state: 'succeeded' }, unitSuite: null }),
-    collectCheckJob: async () => ({
+    findCheckJobs: async () => ({
+      capture: { name: 'sv-capture-s42-x', state: 'succeeded' },
+      unitSuite: unit ? { name: 'sv-unit-suite-s42-x', state: unit.state } : null,
+    }),
+    collectCheckJob: async (_cfg, { kind }) => (kind === 'unit-suite' ? {
+      stdout: '', stderr: '', exitCode: 1, timedOut: false, partial: false, partialReason: '', ...unit,
+    } : {
       state: 'succeeded', stdout, stderr: '', exitCode: 0, timedOut: false, partial: false, partialReason: '',
     }),
     deleteSettledCheckJobs: async () => 1,
@@ -323,23 +250,54 @@ async function harvestWith(t, stdout) {
   return { pool, result };
 }
 
-test('a harvested run with failing frames stores error and schedules a retry', async (t) => {
+test('a harvested red run stays failing: crossing a restart is not a reason to run it again', async (t) => {
   const { pool, result } = await harvestWith(t, RED);
   assert.equal(result.outcome, 'settled');
-  assert.equal(result.state, 'error', 'it outlived the process that launched it, so it ran across a restart');
-  assert.deepEqual(pool.checks, [{
-    state: 'error', detail: ROLLOUT_RETRY_DETAIL, retryScheduled: true, streakBumped: true,
-  }]);
-  assert.deepEqual(pool.deleted, ['run-1'], 'the manifest is cleared as for any settled run');
+  assert.equal(result.state, 'failing');
+  assert.deepEqual(pool.checks, [{ state: 'failing', detail: null, retryScheduled: false, streakBumped: false }],
+    'the passing/failing branch of storeChecks: no retry, no streak, no reason');
+  assert.deepEqual(pool.deleted, ['run-1'], 'the manifest, and with it the checks slot, is cleared');
 });
 
-test('a harvested passing run stays passing', async (t) => {
+test('a harvested green run stays passing', async (t) => {
   const { pool, result } = await harvestWith(t, GREEN);
   assert.equal(result.state, 'passing');
   assert.deepEqual(pool.checks.map((c) => c.state), ['passing']);
 });
 
-// ── What people and agents read ─────────────────────────────────────────
+test('the infrastructure classifiers still apply to a harvested run: an unreachable origin (#1381)', async (t) => {
+  const { pool, result } = await harvestWith(t, UNREACHABLE);
+  assert.equal(result.state, 'error');
+  assert.equal(pool.checks.length, 1);
+  assert.equal(pool.checks[0].retryScheduled, true, 'the error lane runs it again');
+  assert.match(pool.checks[0].detail, /^Staging preview unreachable/);
+  assert.notEqual(pool.checks[0].detail, ROLLOUT_RETRY_DETAIL);
+});
+
+test('the infrastructure classifiers still apply to a harvested run: Postgres out of connections (#1771)', async (t) => {
+  const { pool, result } = await harvestWith(t, STARVED);
+  assert.equal(result.state, 'error');
+  assert.match(pool.checks[0].detail, /^Infrastructure problem, not this change: the shared Postgres server ran out of connections/);
+  assert.equal(pool.checks[0].retryScheduled, true);
+});
+
+test('the infrastructure classifiers still apply to a harvested run: a unit suite that never ran', async (t) => {
+  const unitKey = appManifest.checkKey(unitSuiteRow.UNIT_CHECK_NAME, unitSuiteRow.UNIT_CHECK_PATH);
+  const { pool, result } = await harvestWith(t, GREEN, {
+    unit: { state: 'failed', stdout: '', stderr: 'BackoffLimitExceeded: Error' },
+    graduated: [unitKey],
+  });
+  assert.equal(result.state, 'error', 'a merge-blocking suite with no verdict is no verdict');
+  assert.match(pool.checks[0].detail, /unit suite/i);
+  assert.equal(pool.checks[0].retryScheduled, true);
+  assert.notEqual(pool.checks[0].detail, ROLLOUT_RETRY_DETAIL);
+});
+
+// ── What people and agents read, for a row stored with it ───────────────
+//
+// Rows recorded before the relabel was retired still carry the reason and a
+// scheduled retry, and the error lane still runs them again, so every
+// surface keeps reading them as "will run again" until they settle.
 
 const ORIGIN = 'https://social-vibecoding.usernodelabs.org';
 const rolloutRow = (over = {}) => ({

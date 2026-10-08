@@ -34,11 +34,10 @@
  * It is drawn here, from text, by React: nothing the model wrote is markup.
  * The made screen draws it with its line (SketchCard below), the App tab
  * while the first version is on its way (features/app-frame/app-status.tsx),
- * and the invite page (../auth/invite-card.tsx) and "You're in"
- * (./joined-picture.tsx) while the project has no picture of its own. Those
- * two know only that it is on its way, not where, so they draw it without
- * a line. "You're in" for a new account, whose welcome leaves about 200px,
- * draws it `compact`: smaller art.
+ * and the invite page (../auth/invite-card.tsx) while the project has no
+ * picture of its own. The invite page knows only that it is on its way, not
+ * where, so it draws it without a line. `compact` is smaller art, for a
+ * screen with little room.
  *
  * ThumbRow is the small size, for a row: the tile on its colour, the name,
  * and the build line in place of the one line when there is one.
@@ -199,12 +198,14 @@ export function FeaturedCard({ name, colorKey, emoji, card, description = null, 
  * with its icon, its name, and under it the build line when there is one,
  * else its one line.
  */
-export function ThumbRow({ name, colorKey, emoji, tagline = null, line = null }: {
+export function ThumbRow({ name, colorKey, emoji, tagline = null, line = null, lineNote = null }: {
   name: string;
   colorKey: string;
   emoji: string | null;
   tagline?: string | null;
   line?: BuildLineState | null;
+  /** After the build line's words (BuildLine `note`). */
+  lineNote?: string | null;
 }): ReactNode {
   const color = useResolvedCommunityColor({ iconEmoji: emoji, key: colorKey });
   const glyph = glyphOf(name, emoji, false);
@@ -222,7 +223,7 @@ export function ThumbRow({ name, colorKey, emoji, tagline = null, line = null }:
       <span className="flex min-w-0 flex-col gap-0.5">
         <span className="truncate text-[15px] font-[650] leading-5">{name}</span>
         {line ? (
-          <BuildLine state={line} />
+          <BuildLine state={line} note={lineNote} />
         ) : tagline ? (
           <span className="line-clamp-2 text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400">{tagline}</span>
         ) : null}
@@ -271,21 +272,24 @@ export function useSketch(slug: string | null): Sketch {
 
 /**
  * The made screen's card (./made.tsx): the thumbnail, being sketched and
- * then the idea, with the build line just under the card and the line about
- * what happens next below that.
+ * then the idea, with the build line just under the card. The screen's own
+ * heading is "Your new community" over it (#4041), so the card's name, the
+ * only place the name is said, is not a heading here. A note goes under the
+ * build line only when the screen has one to say (a project Homeroom bot
+ * does not build).
  */
-export function SketchCard({ made, sketch, line, note }: {
+export function SketchCard({ made, sketch, line, note = null }: {
   made: Made;
   sketch: Sketch;
   /** Where its first version is (./build-line.tsx), or none for a project Homeroom bot does not build. */
   line: BuildLineState | null;
-  /** buildNote: what happens next, under the card. */
-  note: string;
+  /** A quiet line under the card, or none. */
+  note?: string | null;
 }) {
   const card = sketch.card;
   const sketched = !card && sketching(sketch.state);
   return (
-    <div data-first-session-sketch={card ? 'ready' : sketch.state} className="mt-4">
+    <div data-first-session-sketch={card ? 'ready' : sketch.state}>
       {sketched ? <p role="status" className="sr-only">{`Sketching ${made.name} from your description…`}</p> : null}
       <FeaturedCard
         name={made.name}
@@ -295,10 +299,8 @@ export function SketchCard({ made, sketch, line, note }: {
         description={made.description}
         sketching={sketched}
         line={line}
-        titleId="first-session-made-title"
-        heading
       />
-      <p className="px-1 pt-2.5 text-[13px] leading-snug text-zinc-500 dark:text-zinc-400">{note}</p>
+      {note ? <p data-first-session-note="" className="px-1 pt-2.5 text-[13px] leading-snug text-zinc-500 dark:text-zinc-400">{note}</p> : null}
     </div>
   );
 }

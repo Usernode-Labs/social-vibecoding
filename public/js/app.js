@@ -680,6 +680,9 @@ const App = {
     if (nativeBoundary) await nativeBoundary;
     // The boot reader sees signed-out only after native authority is closed.
     App._publishBootSession({ signedOut: true });
+    // Signed out, the language follows this device (frontend/src/lib/i18n).
+    // Not awaited: the sign-in screens never wait for a language pack.
+    void globalThis.PlatformI18n?.applySessionLanguage?.(null);
     // #2902: the apps kept loaded were the signed-out viewer's.
     if (typeof AppView !== 'undefined') AppView.evictAllAppFrames?.();
     // THE SIDE PANEL'S DOCUMENT HAS NO SESSION: the cookie it shares with the
@@ -4421,10 +4424,7 @@ const App = {
           name: project.name || slug,
           iconEmoji: project.iconEmoji || null,
           iconUrl: project.iconUrl || null,
-          // The picture the invite page showed, and its one line, to fill
-          // "You're in" with the project rather than empty space.
-          description: project.description || null,
-          picture: project.picture || null,
+          inviter: standing.inviter || null,
           inviterName: standing.inviterName || standing.inviter || null,
           inviterMadeIt: !!standing.inviterMadeIt,
           building: !!standing.building,
@@ -4496,10 +4496,7 @@ const App = {
           title: `Join ${name}?`,
           message: from
             + (standing.note ? ` “${standing.note}”` : '')
-            + (count ? ` ${count} ${count === 1 ? 'person is' : 'people are'} in it.` : '')
-            // WP-E: the link's maker hears when somebody joins through it.
-            + (standing.inviterName || standing.inviter
-              ? ` ${standing.inviterName || `@${standing.inviter}`} will see that you joined.` : ''),
+            + (count ? ` ${count} ${count === 1 ? 'person is' : 'people are'} in it.` : ''),
           confirmLabel: 'Join',
           cancelLabel: 'Not now',
         }) : true;

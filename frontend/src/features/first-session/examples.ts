@@ -60,7 +60,10 @@ export type Template = {
   own: { example: string; name: string; description: string };
   /** Always finished in the maker's own words; Your own comes first and is picked first. */
   finish?: boolean;
-  /** Suggested for the invite's note. */
+  /**
+   * Suggested for the invite's note. It is sent while the app is still being
+   * made, so it says "I'm making", never "Made us", and it has no "!" (#4042).
+   */
   note: string;
 };
 
@@ -81,7 +84,7 @@ export const TEMPLATES: readonly Template[] = [
       { key: 'games', label: 'Games', fill: 'games', name: 'Game Tier List', description: 'A game tier list' },
     ],
     own: { example: 'taco spots', name: '{words} Tier List', description: 'A tier list' },
-    note: 'Made us a tier list. Come add your picks and rank them!',
+    note: 'I\'m making us a tier list. Join and tell me what it needs.',
   },
   {
     key: 'game',
@@ -93,13 +96,13 @@ export const TEMPLATES: readonly Template[] = [
     tail: '',
     finish: true,
     choices: [
-      { key: 'board', label: 'Board game', fill: 'a board game where', example: 'everyone owns an island and trades to grow it', name: 'Board Game Night', description: 'A board game' },
+      { key: 'board', label: 'Board game', fill: 'a board game where', example: 'we roll dice and race each other around the board', name: 'Board Game Night', description: 'A board game' },
       { key: 'shooter', label: 'Space shooter', fill: 'an arcade space shooter where', example: 'we fly together against waves of asteroids', name: 'Space Shooter', description: 'An arcade space shooter' },
-      { key: 'blocks', label: '3D blocks', fill: 'a 3D block game where', example: 'we build a city one block a day', name: 'Block World', description: 'A 3D block game' },
+      { key: 'blocks', label: '3D blocks', fill: 'a 3D block game where', example: 'we build whatever we want together', name: 'Block World', description: 'A 3D block game' },
       { key: 'trivia', label: 'Trivia', fill: 'a trivia game where', example: 'every question is about one of us', name: 'Trivia Night', description: 'A trivia game' },
     ],
-    own: { example: 'a card game where everyone bluffs', name: '', description: 'A game' },
-    note: 'Made us a game. Come play, and help build it!',
+    own: { example: 'a drawing game where one of us draws and everyone guesses', name: '', description: 'A game' },
+    note: 'I\'m making us a game. Join and tell me what it needs.',
   },
   {
     key: 'organizer',
@@ -115,8 +118,8 @@ export const TEMPLATES: readonly Template[] = [
       { key: 'library', label: 'Shared library', fill: 'shared library', tail: ': what we can borrow, who has it now, and when it\'s coming back.', name: 'Lending Library', description: 'A lending library' },
       { key: 'potlucks', label: 'Potlucks', fill: 'potlucks', tail: ': who\'s bringing what, so we don\'t end up with six salads.', name: 'Potluck Planner', description: 'A potluck planner' },
     ],
-    own: { example: 'camping gear', name: '{words} Crew', description: 'An organizer' },
-    note: 'Made us an organizer. Come add to it!',
+    own: { example: 'camping gear', name: '{words} List', description: 'An organizer' },
+    note: 'I\'m making us an organizer. Join and tell me what it needs.',
   },
 ];
 

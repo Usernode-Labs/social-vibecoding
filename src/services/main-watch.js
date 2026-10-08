@@ -52,10 +52,19 @@
 // State lives on the apps row (main_check_*; see schema.sql). Every write is
 // compare-and-swap on the merge commit, so a slow run for an older merge
 // cannot overwrite the verdict for a newer one.
+//
+// A run takes a slot in the checks queue (services/checks-queue.js) before
+// its Job exists, like a proposal's run: first in line, with a slot of its
+// own besides the proposals' cap, because it gates every merge on the app
+// and its suite runs against a Postgres in its own pod. A run still waiting
+// when a newer merge claims the row leaves the line; nobody would read it.
 
+const crypto = require('crypto');
 const log = require('./logger');
 const unitSuite = require('./unit-suite');
 const unitSuiteRow = require('./unit-suite-row');
+const checkRuns = require('./check-runs');
+const checksQueue = require('./checks-queue');
 
 function isEnabled() {
   const v = String(process.env.MAIN_WATCH_ENABLED ?? '1').trim().toLowerCase();
@@ -177,10 +186,58 @@ function classify(outcome) {
   return { state: 'failing', detail };
 }
 
-// One run of the suite on the merge commit, as a verdict. Never throws: a
-// runner that could not be reached is an 'error' verdict.
-async function runSuite(config, pool, app, parsed, mergeSha) {
+// Is `mergeSha` still the merge the app's row is about? A run waiting for
+// its slot asks each time it polls; any doubt answers yes, so a read that
+// fails never drops a run.
+async function stillTheMerge(pool, appId, mergeSha) {
   try {
+    const { rows } = await pool.query('SELECT main_check_sha FROM apps WHERE id = $1', [appId]);
+    return !rows[0] || sameSha(rows[0].main_check_sha, mergeSha);
+  } catch {
+    return true;
+  }
+}
+
+// The run's slot in the checks queue, on the cluster where its Job would run
+// (the unit suite runs where the workers do). Resolves `{ superseded,
+// release }`: superseded when a newer merge claimed the row while this one
+// waited; `release` gives the slot back. Never throws, and fails open: a
+// queue that cannot be joined lets the run go, as before the queue existed.
+async function takeSlot(config, pool, app, mergeSha) {
+  const none = { superseded: false, release: async () => {} };
+  if (config?.workerRuntime !== 'kubernetes' || !checksQueue.isEnabled()) return none;
+  const runId = crypto.randomUUID();
+  const place = await checksQueue.enqueue(pool, {
+    runId, kind: 'main', appId: app.id, commitSha: mergeSha, manifest: { kind: 'main' },
+  });
+  if (!place) return none;
+  const stopHeartbeat = checkRuns.startHeartbeat(pool, runId);
+  const release = async () => { stopHeartbeat(); await checkRuns.finish(pool, runId); };
+  const slot = await checksQueue.waitForSlot(pool, {
+    runId, stillWanted: () => stillTheMerge(pool, app.id, mergeSha),
+  });
+  if (slot.outcome === 'superseded') {
+    await release();
+    log.info('main-watch', 'Left the checks queue: a newer merge took the row', {
+      appId: app.id, sha: mergeSha, waitedMs: slot.waitedMs,
+    });
+    return { superseded: true, release: async () => {} };
+  }
+  if (slot.waitedMs >= checksQueue.POLL_MS) {
+    log.info('main-watch', 'Checks slot granted', { appId: app.id, sha: mergeSha, waitedMs: slot.waitedMs });
+  }
+  return { superseded: false, release };
+}
+
+// One run of the suite on the merge commit, as a verdict. Never throws: a
+// runner that could not be reached is an 'error' verdict. 'superseded' is a
+// run that never started because a newer merge took the row while it
+// waited for its slot; afterMerge stores nothing for it.
+async function runSuite(config, pool, app, parsed, mergeSha) {
+  let slot = null;
+  try {
+    slot = await takeSlot(config, pool, app, mergeSha);
+    if (slot.superseded) return { state: 'superseded', detail: {} };
     const outcome = await unitSuite.maybeRunUnitSuite({
       config, pool, appId: app.id,
       // Not a proposal's run: named for the app so a session's own cleanup
@@ -192,6 +249,8 @@ async function runSuite(config, pool, app, parsed, mergeSha) {
     return classify(outcome);
   } catch (err) {
     return { state: 'error', detail: { failureReason: String(err && err.message || err).slice(0, 600) } };
+  } finally {
+    if (slot) await slot.release().catch(() => {});
   }
 }
 
@@ -279,6 +338,7 @@ async function afterMerge(config, pool, { app, session = null, mergeSha, confirm
     });
     verdict = await runSuite(config, pool, app, parsed, mergeSha);
   }
+  if (verdict.state === 'superseded') return null;
 
   if (verdict.state === 'failing' && confirmEnabled()) {
     // Provisional: hold the pause, say so, and ask the suite again.
@@ -297,6 +357,7 @@ async function afterMerge(config, pool, { app, session = null, mergeSha, confirm
       appId: app.id, slug: app.slug, sha: mergeSha, prNumber, test: firstFailingTest(firstRun.failureReason),
     });
     const again = await runSuite(config, pool, app, parsed, mergeSha);
+    if (again.state === 'superseded') return null;
     if (again.state === 'passing') {
       verdict = { state: 'passing', detail: { ...again.detail, flake: firstRun } };
     } else if (again.state === 'failing') {
@@ -382,6 +443,12 @@ function staleMs() {
  * run: 'running' asks the suite again for that sha; 'confirming' resumes at
  * the re-run, with the recorded first red carried over.
  *
+ * The checks queue (services/checks-queue.js) moves both edges. A run of the
+ * row's sha whose process is alive, waiting for its slot or running, is
+ * never re-driven, however long ago the row was stamped. A run that was
+ * still waiting when its process died is re-driven at once rather than when
+ * the row goes stale, and the new run takes over its place in line.
+ *
  * Leader-only (server.js becomeLeader): once at boot, then on a timer. Rows
  * younger than `olderThanMs` are left alone — a live run somewhere else in
  * the cluster is stamped within the window. The runs themselves are not
@@ -397,9 +464,19 @@ async function resumeInterrupted(config, { pool = null, olderThanMs = staleMs() 
          FROM apps
         WHERE main_check_state IN ('running', 'confirming')
           AND main_check_sha IS NOT NULL
-          AND main_check_at < NOW() - ($1::int * interval '1 millisecond')
+          AND NOT EXISTS (
+            SELECT 1 FROM check_runs cr
+             WHERE cr.kind = 'main' AND cr.app_id = apps.id
+               AND lower(cr.commit_sha) = lower(apps.main_check_sha)
+               AND cr.heartbeat_at >= NOW() - ($2::int * interval '1 millisecond'))
+          AND (main_check_at < NOW() - ($1::int * interval '1 millisecond')
+               OR EXISTS (
+                 SELECT 1 FROM check_runs cr
+                  WHERE cr.kind = 'main' AND cr.app_id = apps.id
+                    AND lower(cr.commit_sha) = lower(apps.main_check_sha)
+                    AND cr.admitted_at IS NULL))
         ORDER BY main_check_at`,
-      [olderThanMs]
+      [olderThanMs, Math.round(checkRuns.ORPHAN_MS)]
     ));
   } catch (err) {
     log.warn('main-watch', 'Could not list interrupted runs (non-fatal)', { err: err.message });

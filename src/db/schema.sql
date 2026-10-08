@@ -1113,6 +1113,9 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_error_notified
 --   'building' — the branch is being built and the preview's database
 --                clone is being made (set by the callers that stamp
 --                'pending' BEFORE buildAndDeployStaging).
+--   'queued'   — the preview is healthy and the run is waiting for a
+--                checks slot (services/checks-queue.js) before it creates
+--                any Job; checks_progress.queue.ahead is its place in line.
 --   'testing'  — the preview is healthy and the headless suite is running
 --                against it (set by visuals.captureForSession's own
 --                setChecksPending at capture start).
@@ -9271,6 +9274,34 @@ CREATE TABLE IF NOT EXISTS check_runs (
 );
 COMMENT ON TABLE check_runs IS 'staging:private';
 CREATE INDEX IF NOT EXISTS idx_check_runs_session ON check_runs (session_id);
+-- The checks queue (services/checks-queue.js). A row now exists for the
+-- whole life of a run, from the moment it asks for a checks slot to the
+-- moment it settles: admitted_at is NULL while it waits and stamped once it
+-- holds one of the CHECKS_MAX_CONCURRENT_RUNS slots. The live rows ARE the
+-- slot count, so there is no second ledger to keep in step with them.
+--   kind        'proposal' (a session's capture and unit-suite Jobs) or
+--               'main' (main-watch's unit suite on a merge commit, which has
+--               no session: session_id is NULL and app_id names the app).
+--   queued_at   its place in line, FIFO within its class. A run that a
+--               restart re-drives keeps the place it had.
+--   admitted_at NULL while waiting. The default is NOW() so a row written
+--               by code that does not queue (a release from before this
+--               one, mid-rollout) counts as the running run it is.
+-- Guarded so a boot that finds the column already nullable takes no lock.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_attribute
+     WHERE attrelid = 'check_runs'::regclass AND attname = 'session_id' AND attnotnull
+  ) THEN
+    ALTER TABLE check_runs ALTER COLUMN session_id DROP NOT NULL;
+  END IF;
+END $$;
+ALTER TABLE check_runs ADD COLUMN IF NOT EXISTS kind VARCHAR(16) NOT NULL DEFAULT 'proposal';
+ALTER TABLE check_runs ADD COLUMN IF NOT EXISTS app_id INTEGER REFERENCES apps(id) ON DELETE CASCADE;
+ALTER TABLE check_runs ADD COLUMN IF NOT EXISTS queued_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE check_runs ADD COLUMN IF NOT EXISTS admitted_at TIMESTAMPTZ DEFAULT NOW();
+CREATE INDEX IF NOT EXISTS idx_check_runs_app ON check_runs (app_id) WHERE app_id IS NOT NULL;
 
 -- Renamed from visual_evidence_* when visual evidence became before & after
 -- shots. Guarded so boot is idempotent either way: an existing deployment
@@ -10191,6 +10222,16 @@ BEGIN
     CHECK (label_verdict IS NULL OR label_verdict IN ('question', 'ready', 'person', 'empty', 'answer', 'revise'));
 END $$;
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_model TEXT;
+
+-- A build turn that ended without failing and changed nothing (live or
+-- shadow, homeroom-bot-live.js buildNudgePrompt): { turns: [{ turn
+-- ('build' | 'nudge'), ended, said, provider, providers, model, harness,
+-- requests, toolCalls, fileEdits, outputTokens, seconds }], nudged,
+-- notNudged, committed, recovered }. `said` is the agent's last message,
+-- clipped and redacted, kept for admins to read and never quoted to anybody
+-- else. It can quote a private project's code: private, as `review` is.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_no_change JSONB;
+COMMENT ON COLUMN homeroom_bot_runs.build_no_change IS 'staging:private';
 
 -- A live build waiting its turn: a live 'ready' verdict is built after the
 -- turn that read it ends, one build per project at a time, so reading the

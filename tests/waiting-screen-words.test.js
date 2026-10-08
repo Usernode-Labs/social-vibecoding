@@ -37,7 +37,7 @@ test('the waiting screen: the title, one line, the invite box, Sign out', () => 
   assert.match(src, />\s*We let people in a few at a time, and we'll email you when your spot is ready\.\s*</);
   assert.match(src, /\{`When you get access, you join \$\{namesLine\(queued\.map\(\(q\) => q\.name\)\)\}\.`\}/);
   assert.match(src, /data-waiting-queued=""/);
-  assert.match(src, /<Wordmark className="mx-auto h-6 w-auto text-\[color:var\(--brand-ink\)\]" \/>/);
+  assert.match(src, /<Wordmark className="mx-auto h-6 w-auto text-zinc-950 dark:text-white" \/>/);
   assert.match(src, /id="waiting-logout"[\s\S]{0,400}?>\s*Sign out\s*<\/button>/);
   // Sign out is a small text link, not a pill; the room draws one picture, the
   // story's own, in the space above it (C1b-waiting).
@@ -106,14 +106,14 @@ test('?shot=waiting shows the room for the shots, without the poll', () => {
 // for the people of an app; their apps are in their communities.
 test('the Home waitlist card: a few at a time, your spot, no batches or group', () => {
   const src = code(read('frontend/src/features/home/waitlist-card.tsx'));
-  assert.match(src, /We let people in a few at a time\. Until then, you can use and change the apps in your communities\./);
+  assert.match(src, /We're letting people in a few at a time\. Until then, you can use and change the apps in your communities\./);
   assert.match(src, /We’ll email you when your spot is ready\./);
   for (const gone of [/batches/i, /your turn/i, /group&rsquo;s apps/, /The group doesn/]) assert.doesNotMatch(src, gone);
 });
 
 test('the waitlist pitch and form keep the email promise, without batches or groups', () => {
-  assert.match(code(read(LANDING)), /We let people in a few at a time, and we'll email you when your spot is ready\./);
+  assert.match(code(read(LANDING)), /We're letting people in a few at a time, and we'll email you when your spot is ready\./);
   const form = code(read('frontend/src/features/auth/waitlist.tsx'));
-  assert.match(form, /We let people in a few at a time\. We\\u2019ll email you when yours comes up\./);
+  assert.match(form, /We\\u2019re letting people in a few at a time\. We\\u2019ll email you when yours comes up\./);
   assert.doesNotMatch(form, /small groups|next group/);
 });

@@ -82,6 +82,13 @@ export interface HomeroomBotMeta {
    * follows the request now. This one is no longer drawn.
    */
   movedTo?: number;
+  /**
+   * #4392: the activity card Build it moved under a plan, drawn as the bot's
+   * thanks for answering: its words over the project's thumbnail row
+   * (./bot-thanks-card.tsx), the project's icon (`appEmoji`) as its tile.
+   */
+  thanks?: boolean;
+  appEmoji?: string;
   /** B7: once its person approved it, what happens next (services/homeroom-bot-dm.js goesLiveAfterYes). */
   goesLive?: HomeroomBotGoesLive;
 }
@@ -261,6 +268,8 @@ export interface HomeroomBotActivity {
   of: number | null;
   stepName: string | null;
   doing: string | null;
+  /** While it is working, the stage it is at (services/homeroom-bot-progress.js stageOf). */
+  stage?: string | null;
   outcome: HomeroomBotActivityOutcome | null;
   endedAt: string | null;
   /** How long the step it is at usually takes, in minutes, when it takes a while. */
