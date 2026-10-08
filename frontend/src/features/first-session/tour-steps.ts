@@ -1,9 +1,19 @@
 /**
- * The first-session tour's steps: real screens, one screen whole and then the
- * tap that leads on (./index.tsx draws them).
+ * The first-session tours' steps: real screens, one screen whole and then the
+ * tap that leads on (./index.tsx draws them). One short title and one short
+ * sentence per card: the card names the place, the screen behind it says the
+ * rest (#4044, the tour script on the onboarding canvas).
  *
- * The invited path walks what joining gave them: the project on Home, opened
- * and closed, its hub under Communities, and its Discussion, where it ends.
+ * Three tours. Starting a community and joining one share their first five
+ * cards, word for word: the project on Home, the project opened (and closed
+ * with ✕), where to find it under Communities, and its hub. The maker's ends
+ * on the plan in Homeroom bot's chat, which waits there until the tour is
+ * over (decision C); the invited one ends in Discussion. "Look around first"
+ * has its own four cards on Home (decision E, #4072): where to start a
+ * project later, and what the tab bar's places are. A private member, let in
+ * by an invite link before the waitlist let them in, gets four cards in the
+ * same words the first time they reach Home (#4080, privateSteps).
+ *
  * Every target is the product's own control or region, found by the
  * selectors the rest of the shell already pins (tests/baselines/
  * shell-markup.json, dapp.json): nothing here draws a picture of the product.
@@ -41,16 +51,43 @@ export type TourStep = {
    * of Next. The hint presses that control too (./index.tsx pressTarget).
    */
   tap?: string;
-  /** Where the card goes: under the target or over it (auto), at the foot of the screen, or just above another element. */
-  place?: 'auto' | 'bottom' | { above: string };
+  /** Where the card goes: under the target or over it (auto), at the foot of the screen, or just above or below another element. */
+  place?: 'auto' | 'bottom' | { above: string } | { below: string };
   /** Pressing the target lands on a list; open the next step's screen itself (the bot's chat, not the inbox). */
   opensNext?: boolean;
   /**
-   * A transcript in the cut-out: the newest of its `rows` is shown from its
-   * top edge (./index.tsx showNewestFromTop). Pinned to its newest line, a
-   * card taller than the transcript began part-way down, with no first line.
+   * A step that points at one control without asking for the press ("Look
+   * around first": Next leads on). The control is ringed as a tap step's is,
+   * and covered like the rest of the cut-out, so a press on it does not take
+   * the reader out of the tour.
    */
-  newestFromTop?: { scroller: string; rows: string };
+  ringed?: boolean;
+  /**
+   * What the card says instead while `when` is on screen: the maker's last
+   * step, once the plan it waits for has come into the chat.
+   */
+  instead?: { when: string; title: string; text: string };
+  /**
+   * A control that draws the target when the screen holds it back, pressed
+   * once if the target is not there: Home's "Show all N apps", behind which
+   * a full collapsed grid keeps the New project tile (home.js createHidden).
+   * The product's own handler draws it, as a finger on it would.
+   */
+  revealWith?: string;
+  /**
+   * A transcript in the cut-out: the newest of its `rows` begins just under
+   * the coach card (./index.tsx showNewestBelow), so the plan's title and
+   * first lines are never under the card, and as much of the rest as the
+   * screen holds, its Build it included, shows below them.
+   */
+  newestBelowCard?: { scroller: string; rows: string };
+  /**
+   * The card's words say where the app opens ("<project> opens here"), so
+   * the App tab's own "It opens here when it's ready." hides while the card
+   * is up: the card carries `data-tour-says-where-it-opens`, which that line
+   * reads (features/app-frame/app-status.tsx).
+   */
+  saysWhereItOpens?: boolean;
   last?: boolean;
 };
 
@@ -83,24 +120,14 @@ export const SCREEN_HEADER = '#platform-header';
  */
 export const BOTTOM_BARS = '#platform-parked, #platform-tabs';
 
+
 /**
- * The app screen's close step, the same on both paths: the app screen whole,
- * its top bar included, with ✕ ringed in it. It used to cut out ✕ alone and
- * dim the app it closes. `#app-view` holds both halves of the screen, the
- * build's progress (#app-content) and the running app (#app-frame-host).
+ * The plan waiting for its maker's Build it, in the chat with Homeroom bot
+ * (../messages/bot-plan-view.tsx draws `data-bot-plan` with its state). The
+ * conversation's own section scopes it, so the App tab's copy of the card
+ * never counts.
  */
-function closeAppStep(): TourStep {
-  return {
-    screen: 'app',
-    target: '#app-view',
-    alongside: SCREEN_HEADER,
-    press: '#back-btn',
-    title: 'Close it with ✕',
-    text: 'The app opens full screen. ✕ takes you back to Home.',
-    tap: 'Tap ✕',
-    place: 'bottom',
-  };
-}
+export const PLAN_WAITING = '.messages-thread-direct [data-bot-plan="open"]';
 
 /**
  * The app screen's Suggest step, the same on the invited and maker paths
@@ -122,10 +149,12 @@ function suggestStep(): TourStep {
 }
 
 /**
- * Where the project's first version stands, as its App tab shows it
+ * Where a project's first version stands, as its App tab shows it
  * (GET /api/apps/:slug `first_version`; public/js/app-view.js
  * _firstVersionView): Homeroom bot still building it, built and waiting for
- * approval, or neither (null: the app is what there is).
+ * approval, or neither (null: the app is what there is). "You're in" reads it
+ * (./index.tsx firstVersionStage); the cards no longer do, since the screen
+ * behind the app's card says it (#4043, #4053).
  */
 export type FirstVersionStage = 'building' | 'ready' | null;
 
@@ -133,7 +162,6 @@ export type TourProject = {
   slug: string;
   name: string;
   conversationId?: number | null;
-  firstVersion?: FirstVersionStage;
 };
 
 /**
@@ -145,81 +173,76 @@ export function hubTitle(name: string): string {
 }
 
 /**
- * The invited path's second step, over the App tab: what the page behind it
- * says. A project still being built reads "<name> is being built …" there,
- * so the step does not call it an app to use any time.
+ * The cards both paths open with, word for word (the tour script on the
+ * onboarding canvas): the project on Home; Suggest an improvement (#4225),
+ * on the app screen before ✕; the project opened, the app
+ * screen whole with ✕ ringed in it, one card where there were two (#4044:
+ * "focus the step on the ✕"); the Communities tab, naming the project
+ * instead of "its hub and its group chat"; and the hub, by what is on it
+ * (#4045). The Communities tab is ONE element, the phone's bottom bar below
+ * 768px and the rail above it (features/nav/tab-bar.tsx; its key is still
+ * `workshop`).
  */
-export function appStep(name: string, firstVersion: FirstVersionStage = null): Pick<TourStep, 'title' | 'text'> {
-  if (firstVersion === 'building') {
-    return {
-      title: `${name}, being built`,
-      text: 'Homeroom bot is building its first version. Until it\'s ready, this shows how the build is going.',
-    };
-  }
-  if (firstVersion === 'ready') {
-    return {
-      title: `This is ${name}`,
-      text: 'Its first version is ready to try, and goes live once the group approves it.',
-    };
-  }
-  return { title: `This is ${name}`, text: 'The group\'s app, made on Homeroom. Use it any time.' };
-}
-
-/** The invited path: eight steps, ending in the group's chat. */
-export function invitedSteps({ slug, name, firstVersion = null }: TourProject): TourStep[] {
+function sharedSteps(slug: string, name: string): TourStep[] {
   return [
     {
       screen: 'home',
       target: `.app-card[data-slug="${slug}"]`,
       title: `${name} is on your Home`,
       text: 'Open it any time from here.',
-      tap: 'Tap it to open it',
-    },
-    {
-      screen: 'app',
-      target: '#app-content',
-      ...appStep(name, firstVersion),
-      place: 'bottom',
+      tap: 'Tap it',
     },
     suggestStep(),
-    closeAppStep(),
+    {
+      // `#app-view` holds both halves of the screen, the build's progress
+      // (#app-content) and the running app (#app-frame-host), and the top
+      // bar over it is drawn in too.
+      screen: 'app',
+      target: '#app-view',
+      alongside: SCREEN_HEADER,
+      press: '#back-btn',
+      title: `${name} opens here`,
+      text: '✕ takes you back to Home.',
+      saysWhereItOpens: true,
+      tap: 'Tap ✕',
+      place: 'bottom',
+    },
     {
       screen: 'home',
-      // The Communities tab: ONE element, the phone's bottom bar below
-      // 768px and the rail above it (features/nav/tab-bar.tsx; its key is
-      // still `workshop`). A ring drawn anywhere else is the previous step's
-      // cut-out, which ./index.tsx no longer carries into this one.
       target: '#platform-tab-workshop',
-      title: 'The group lives in Communities',
-      text: 'Its hub and its group chat are there.',
+      title: `You can find ${name} here`,
+      text: 'Communities lists every community you\'re in.',
       tap: 'Tap Communities',
     },
     {
-      screen: 'hub',
       // The hub whole: its top bar over it, down to the tab bar.
+      screen: 'hub',
       target: '#app-content',
       alongside: SCREEN_HEADER,
       endsAbove: BOTTOM_BARS,
       title: hubTitle(name),
-      text: 'Communities opens on the group you just joined: who\'s in it, what\'s being built, and what\'s up for a vote.',
+      text: 'The discussion and the app\'s changes are here.',
       place: 'bottom',
     },
+  ];
+}
+
+/** Joining a community: seven steps, ending in its Discussion, where the people already are. */
+export function invitedSteps({ slug, name }: TourProject): TourStep[] {
+  return [
+    ...sharedSteps(slug, name),
     {
       screen: 'hub',
       target: '[data-ws-tab-btn="discussion"]',
-      title: 'Discussion is the group chat',
-      text: `Everyone in ${name} talks here.`,
+      title: 'Talk in Discussion',
+      text: `Everyone in ${name} reads it.`,
       tap: 'Tap Discussion',
-      place: 'bottom',
     },
     {
       screen: 'discussion',
       target: '#gc-messages, #gc-form',
-      title: 'The group chat',
-      // WP-C: Homeroom bot reads a newcomer's messages here for ideas, and
-      // offers to suggest one to the group (homeroom-bot-chat.js
-      // maybeOffer), so the tour says that it does.
-      text: 'Say hi, or share an idea for what it should do next. Homeroom bot offers to suggest an idea to the group in your name, and the group decides what goes in.',
+      title: 'Say hi, or share an idea',
+      text: 'The people using the app decide what goes in.',
       place: { above: '#gc-form' },
       last: true,
     },
@@ -228,85 +251,60 @@ export function invitedSteps({ slug, name, firstVersion = null }: TourProject): 
 
 /**
  * A PRIVATE MEMBER's tour (users.private_member_since): an invite link let
- * them into the group's app before they were let in, and they reach the rest
- * of Homeroom only through the mark menu's "Go to Homeroom". The first time
- * they do, four steps on the Home it opens: the app, where the group lives,
- * Homeroom bot, and the waitlist card that is how they make apps of their
- * own. Nothing to press but Next: every step is on the screen they are on.
+ * them into a community's app before they were let in, and they reach the
+ * rest of Homeroom only through the mark menu's "Go to Homeroom" (#4080).
+ * The first time they do, four cards on the Home it opens, in the other
+ * tours' words: the project, where to find it, Homeroom bot, and the
+ * waitlist card that is how they make apps of their own. Each points at one
+ * place and leads on with Next, as "Look around first" does: every step is
+ * on the screen they are on.
  */
 export function privateSteps({ slug, name }: TourProject): TourStep[] {
   return [
     {
       screen: 'home',
       target: `.app-card[data-slug="${slug}"]`,
+      ringed: true,
       title: `${name} is on your Home`,
       text: 'Open it any time from here.',
     },
     {
       screen: 'home',
       target: '#platform-tab-workshop',
-      title: 'The group lives in Communities',
-      text: 'Its hub, its group chat, and what is up for a vote.',
+      ringed: true,
+      title: `You can find ${name} here`,
+      text: 'Communities lists every community you\'re in.',
     },
     {
       screen: 'home',
       target: '#platform-tab-messages',
+      ringed: true,
       title: 'Homeroom bot is in Messages',
-      text: 'Ask it for a change in plain words. It starts building it, or brings it to the group, and you can follow along.',
+      text: `It makes ${name} with you. You can always find it here.`,
     },
     {
+      // The card's own heading says what it is for ("Make and share your
+      // own apps"); this card says where, and what the card does.
       screen: 'home',
       target: '#home-waitlist-card',
-      title: 'Make and share your own apps',
-      text: 'Join the waitlist for that, here. Until then, everything in your group is yours to use and change.',
+      ringed: true,
+      title: 'Your own apps start here',
+      text: 'Join the waitlist to get your spot.',
       last: true,
     },
   ];
 }
 
 /**
- * The maker's tour, after "Invite people later" or "Go to the Homeroom
- * app": the same shape as the invited one, but it ends where the build is,
- * in Homeroom bot's chat (when the project has one: the bot builds for this
- * account), and otherwise on the hub.
+ * Starting a community, after "Invite people later" or "Go to the Homeroom
+ * app": the same first five cards, then Messages, ending on the plan in
+ * Homeroom bot's chat (when the project has one: the bot builds for this
+ * account), and otherwise on the hub. The plan waits there for Build it, and
+ * nothing asks for it before the tour ends (decision C): the last card says
+ * it is coming until it is in the chat, and how to answer it once it is.
  */
 export function makerSteps({ slug, name, conversationId }: TourProject): TourStep[] {
-  const steps: TourStep[] = [
-    {
-      screen: 'home',
-      target: `.app-card[data-slug="${slug}"]`,
-      title: `${name} is on your Home`,
-      text: 'Open it any time from here.',
-      tap: 'Tap it to open it',
-    },
-    {
-      screen: 'app',
-      target: '#app-content',
-      title: `${name}, being built`,
-      text: 'Until the first version is ready, this shows how the build is going.',
-      place: 'bottom',
-    },
-    suggestStep(),
-    closeAppStep(),
-    {
-      screen: 'home',
-      // The same tab as the invited path's step 4 (see there).
-      target: '#platform-tab-workshop',
-      title: 'Your group lives in Communities',
-      text: 'Its hub and its group chat are there.',
-      tap: 'Tap Communities',
-    },
-    {
-      screen: 'hub',
-      // As the invited path's hub step: the whole screen but the tab bar.
-      target: '#app-content',
-      alongside: SCREEN_HEADER,
-      endsAbove: BOTTOM_BARS,
-      title: hubTitle(name),
-      text: 'Who\'s in it, what\'s being built, and what\'s up for a vote, once people join.',
-      place: 'bottom',
-    },
-  ];
+  const steps = sharedSteps(slug, name);
   if (!conversationId) {
     steps[steps.length - 1] = { ...steps[steps.length - 1], last: true };
     return steps;
@@ -316,7 +314,7 @@ export function makerSteps({ slug, name, conversationId }: TourProject): TourSte
       screen: 'hub',
       target: '#platform-tab-messages',
       title: 'Homeroom bot is in Messages',
-      text: `You can always find it here. It's currently building ${name}.`,
+      text: `It makes ${name} with you. You can always find it here.`,
       tap: 'Tap Messages',
       opensNext: true,
     },
@@ -324,12 +322,63 @@ export function makerSteps({ slug, name, conversationId }: TourProject): TourSte
       screen: 'bot',
       target: `${BOT_CHAT_HEADER}, ${BOT_CHAT_MESSAGES}`,
       alongside: SCREEN_HEADER,
-      newestFromTop: { scroller: BOT_CHAT_MESSAGES, rows: 'article.messages-message' },
-      title: 'Your chat with Homeroom bot',
-      text: 'It shows how the build is going here, and messages you when it\'s ready to try. Ask it for changes any time.',
-      place: 'bottom',
+      // The card at the top, under the chat's header, and the plan just
+      // under the card: at the foot of the screen the card covered the very
+      // buttons it names, and over the plan's top it covered its title and
+      // first lines (the owner, 6 and 7 October 2026).
+      newestBelowCard: { scroller: BOT_CHAT_MESSAGES, rows: 'article.messages-message' },
+      title: `Homeroom bot is planning ${name}`,
+      text: 'It messages you here when the plan is ready.',
+      instead: {
+        when: PLAN_WAITING,
+        title: 'Homeroom bot has a plan for you',
+        text: 'Tap Build it when the plan looks right.',
+      },
+      place: { below: BOT_CHAT_HEADER },
       last: true,
     },
   );
   return steps;
+}
+
+/**
+ * "Look around first" (decision E, #4072): it used to land on Home with
+ * nothing explained. Four cards on Home, each pointing at one place and
+ * leading on with Next, so nobody is taken anywhere: New project, where a
+ * community and its app start whenever they want one, then the tab bar's
+ * Discover, Communities and Messages.
+ */
+export function lookAroundSteps(): TourStep[] {
+  return [
+    {
+      screen: 'home',
+      target: '#home-create-tile',
+      revealWith: '#home-apps-more-btn',
+      ringed: true,
+      title: 'Make something any time',
+      text: 'New project starts a community and its app.',
+    },
+    {
+      screen: 'home',
+      target: '#platform-tab-discover',
+      ringed: true,
+      title: 'Find apps in Discover',
+      text: 'Open any app, or join its community.',
+    },
+    {
+      screen: 'home',
+      target: '#platform-tab-workshop',
+      ringed: true,
+      title: 'Communities you join show up here',
+      text: 'Each one has its own hub and discussion.',
+    },
+    {
+      screen: 'home',
+      target: '#platform-tab-messages',
+      ringed: true,
+      title: 'Homeroom bot is in Messages',
+      text: 'It makes apps with you. You can always find it here.',
+      last: true,
+    },
+  ];
 }

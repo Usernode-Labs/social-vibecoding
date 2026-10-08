@@ -66,6 +66,11 @@ test('making something, or looking around, answers the join screen without the G
   assert.deepEqual(pool.calls[0].params, [7, 'made']);
   await firstSession.answerJoinScreenByLookingAround(pool, 9);
   assert.deepEqual(pool.calls[1].params, [9, 'looked_around']);
+  // #4039: "Look around first" is its own outcome in the admin Journey,
+  // written with the answer in one statement, so once and only then; Make
+  // it is already app_created with from 'first-session'.
+  assert.match(pool.calls[1].sql, /RETURNING id, getting_started_seen->>'first_session' AS via\s+\)\s+INSERT INTO events \(user_id, event_type, metadata\)\s+SELECT a\.id, 'first_session_looked_around', jsonb_build_object\('via', a\.via\)\s+FROM answered a\s+WHERE \$2::text = 'looked_around'/);
+  assert.equal(require('../src/services/events').EVENT_TYPES.FIRST_SESSION_LOOKED_AROUND, 'first_session_looked_around');
   // Being shown the question is recorded once, and leaves it owed.
   await firstSession.recordStart(pool, 7, 'story');
   assert.doesNotMatch(pool.calls[2].sql, /needs_communities_choice = FALSE/);
@@ -533,15 +538,13 @@ test('after Make it: the build line, then one invite, and the second button says
 test('the maker\'s tour ends in Homeroom bot\'s chat when it builds for them, and on the hub when not', () => {
   const { makerSteps } = loadTsx(`${DIR}/tour-steps.ts`);
   const withBot = makerSteps({ slug: 'film', name: 'Friday Film Crew', conversationId: 12 });
-  assert.deepEqual(withBot.map((s) => s.screen), ['home', 'app', 'app', 'app', 'home', 'hub', 'hub', 'bot']);
-  assert.equal(withBot[6].target, '#platform-tab-messages');
-  assert.equal(withBot[6].opensNext, true);
-  // Request #4183: step 7 says the bot stays in Messages, then what it builds.
-  assert.equal(withBot[6].text, 'You can always find it here. It\'s currently building Friday Film Crew.');
-  assert.equal(withBot[7].last, true);
+  assert.deepEqual(withBot.map((s) => s.screen), ['home', 'app', 'app', 'home', 'hub', 'hub', 'bot']);
+  assert.equal(withBot[5].target, '#platform-tab-messages');
+  assert.equal(withBot[5].opensNext, true);
+  assert.equal(withBot[6].last, true);
   const without = makerSteps({ slug: 'film', name: 'Friday Film Crew', conversationId: null });
-  assert.deepEqual(without.map((s) => s.screen), ['home', 'app', 'app', 'app', 'home', 'hub']);
-  assert.equal(without[5].last, true);
+  assert.deepEqual(without.map((s) => s.screen), ['home', 'app', 'app', 'home', 'hub']);
+  assert.equal(without[4].last, true);
   const index = read(`${DIR}/index.tsx`);
   assert.match(index, /else if \(screen === 'bot' && conversationId\) window\.location\.hash = `#messages\/\$\{conversationId\}`;/);
 });
@@ -551,18 +554,22 @@ test('the maker\'s tour ends in Homeroom bot\'s chat when it builds for them, an
 // needs you", the clock and ⋯) under it, and the newest card began part-way
 // down, with bullets and no "Here's my plan for …". He read it as the chat
 // missing its header.
-test('the maker\'s last step shows the chat with Homeroom bot whole: its header with its messages, the newest card from its top', () => {
+test('the maker\'s last step shows the chat with Homeroom bot whole: its header with its messages, the plan\'s buttons clear of the card', () => {
   const { makerSteps, BOT_CHAT_HEADER, BOT_CHAT_MESSAGES } = loadTsx(`${DIR}/tour-steps.ts`);
   const steps = makerSteps({ slug: 'film', name: 'Friday Film Crew', conversationId: 12 });
-  const chat = steps[7];
-  assert.equal(chat.title, 'Your chat with Homeroom bot');
+  const chat = steps[6];
+  assert.equal(chat.title, 'Homeroom bot is planning Friday Film Crew');
   assert.equal(BOT_CHAT_HEADER, '.messages-thread-direct > .messages-thread-header');
   assert.equal(BOT_CHAT_MESSAGES, '.messages-thread-direct > .messages-thread-scroll');
   // One cut-out round both (index.tsx targetBox draws a selector list as one box).
   assert.deepEqual(chat.target.split(',').map((s) => s.trim()), [BOT_CHAT_HEADER, BOT_CHAT_MESSAGES]);
-  assert.deepEqual(chat.newestFromTop, { scroller: BOT_CHAT_MESSAGES, rows: 'article.messages-message' });
-  assert.equal(chat.place, 'bottom');
-  assert.equal(chat.text, 'It shows how the build is going here, and messages you when it\'s ready to try. Ask it for changes any time.');
+  // The owner's planned-vs-built review, 6 October 2026: at the foot of the
+  // screen the card covered the Build it it names. It sits under the chat's
+  // header, and (7 October) the newest card begins just under it, so the
+  // plan's title and first lines are never under the card.
+  assert.deepEqual(chat.newestBelowCard, { scroller: BOT_CHAT_MESSAGES, rows: 'article.messages-message' });
+  assert.deepEqual(chat.place, { below: BOT_CHAT_HEADER });
+  assert.equal(chat.text, 'It messages you here when the plan is ready.');
   // And the platform's top bar over them, as one cut-out (Evan, 5 Oct 2026:
   // "include the header on step 7 also").
   assert.equal(chat.alongside, '#platform-header');
@@ -570,11 +577,11 @@ test('the maker\'s last step shows the chat with Homeroom bot whole: its header 
   // The other steps' targets (the close step cuts out the app screen, with
   // ✕ its press: tests/first-session.test.js), and only this one moves a
   // transcript.
-  assert.deepEqual(steps.slice(0, 7).map((s) => s.target), [
-    '.app-card[data-slug="film"]', '#app-content', '#platform-mark-btn', '#app-view', '#platform-tab-workshop', '#app-content', '#platform-tab-messages',
+  assert.deepEqual(steps.slice(0, 6).map((s) => s.target), [
+    '.app-card[data-slug="film"]', '#platform-mark-btn', '#app-view', '#platform-tab-workshop', '#app-content', '#platform-tab-messages',
   ]);
-  assert.equal(steps[3].press, '#back-btn');
-  assert.deepEqual(steps.map((s) => !!s.newestFromTop), [false, false, false, false, false, false, false, true]);
+  assert.equal(steps[2].press, '#back-btn');
+  assert.deepEqual(steps.map((s) => !!s.newestBelowCard), [false, false, false, false, false, false, true]);
   // The Messages screen draws what it names: a direct conversation's section,
   // whose first child is its header (none when embedded in a hub, which the
   // bot's chat never is), its scroller, and an <article> per message.
@@ -587,12 +594,12 @@ test('the maker\'s last step shows the chat with Homeroom bot whole: its header 
     /<article id=\{`messages-message-\$\{message\.id\}`\} data-message-id=\{message\.id\} className=\{`messages-message group /);
 });
 
-test('the newest card is shown from its top: scrolled back just far enough, never forward', () => {
-  const { scrollBackFor, showNewestFromTop } = loadTsx(`${DIR}/index.tsx`);
-  assert.equal(scrollBackFor(120, 60), 68, 'its first line above the transcript: back to 8px under its top');
-  assert.equal(scrollBackFor(120, 128), 0);
-  assert.equal(scrollBackFor(120, 400), 0, 'lower down is in view: never forward');
-  assert.equal(scrollBackFor(120, 119.5), 9, 'whole pixels, rounded up');
+test('the newest card begins just under the coach card: its title and first lines are never under it', () => {
+  const { scrollToBelow, showNewestBelow } = loadTsx(`${DIR}/index.tsx`);
+  assert.equal(scrollToBelow(300, 400), 92, 'below the card: on, until it begins 8px under it');
+  assert.equal(scrollToBelow(300, 150), -158, 'under the card: back');
+  assert.equal(scrollToBelow(300, 308), 0);
+  assert.equal(scrollToBelow(300, 308.4), 0, 'whole pixels');
 
   const box = (top, height = 40) => ({ getBoundingClientRect: () => ({ top, height }) });
   const transcript = ({ top = 120, height = 500, scrollTop = 900, rows = [] } = {}) => {
@@ -602,31 +609,28 @@ test('the newest card is shown from its top: scrolled back just far enough, neve
   const rootOf = (...scrollers) => ({ querySelectorAll: (sel) => { rootOf.asked = sel; return scrollers; } });
   const spec = { scroller: '.messages-thread-direct > .messages-thread-scroll', rows: 'article.messages-message' };
 
-  // The plan card, newest and taller than the space: its top 60px above.
-  const hidden = transcript({ height: 0, rows: [box(-400)] });
-  const shown = transcript({ rows: [box(-300), box(60, 700)] });
-  assert.equal(showNewestFromTop(spec, rootOf(hidden, shown)), true);
+  // The chat opened at its foot: the plan card, newest, begins at 150, under
+  // the coach card (its foot at 290): it goes back 148px, to begin at 298.
+  const hidden = transcript({ height: 0, rows: [box(400)] });
+  const shown = transcript({ rows: [box(60), box(150, 330)] });
+  assert.equal(showNewestBelow(spec, 290, rootOf(hidden, shown)), true);
   assert.equal(rootOf.asked, spec.scroller);
   assert.equal(shown.asked, spec.rows);
-  assert.equal(shown.scrollTop, 900 - 68, 'the visible transcript, not one drawn nowhere');
+  assert.equal(shown.scrollTop, 900 - 148, 'the visible transcript, not one drawn nowhere');
   assert.equal(hidden.scrollTop, 900);
-  // Already from its top, a short newest message, nothing loaded yet, or no
-  // transcript at all: nothing moves.
-  const fits = transcript({ rows: [box(130)] });
-  assert.equal(showNewestFromTop(spec, rootOf(fits)), false);
-  assert.equal(fits.scrollTop, 900);
-  assert.equal(showNewestFromTop(spec, rootOf(transcript({ rows: [box(520)] }))), false);
-  assert.equal(showNewestFromTop(spec, rootOf(transcript())), false);
-  assert.equal(showNewestFromTop(spec, rootOf()), false);
-  // Never past the transcript's start.
-  const near = transcript({ scrollTop: 20, rows: [box(-200, 900)] });
-  assert.equal(showNewestFromTop(spec, rootOf(near)), true);
-  assert.equal(near.scrollTop, 0);
+  // Already in place, nothing loaded yet, or no transcript at all: nothing moves.
+  const placed = transcript({ rows: [box(298, 100)] });
+  assert.equal(showNewestBelow(spec, 290, rootOf(placed)), false);
+  assert.equal(placed.scrollTop, 900);
+  assert.equal(showNewestBelow(spec, 290, rootOf(transcript())), false);
+  assert.equal(showNewestBelow(spec, 290, rootOf()), false);
 
-  // Each frame, before the cut-out is measured, so the ring is drawn round
-  // what it shows, and it holds when the rows arrive after the step lands.
+  // Each frame, under the card as it is drawn, before the cut-out is
+  // measured, and it holds when the rows arrive after the step lands.
   const src = read(`${DIR}/index.tsx`);
-  assert.match(src, /const reveal = stepRef\.current\.newestFromTop;\s+if \(reveal\) showNewestFromTop\(reveal\);\s+const m = measure\(at, stepRef\.current\);/);
+  assert.match(src, /const reveal = stepRef\.current\.newestBelowCard;\s+const card = reveal \? document\.querySelector\(CARD_SELECTOR\)\?\.getBoundingClientRect\(\) : null;\s+if \(reveal && card && card\.height\) showNewestBelow\(reveal, card\.bottom\);\s+const m = measure\(at, stepRef\.current\);/);
+  assert.match(src, /const CARD_SELECTOR = '\[role="dialog"\]\[aria-labelledby="first-session-tour-title"\]';/);
+  assert.match(src, /role="dialog"\s+aria-labelledby="first-session-tour-title"/);
 });
 
 test('the admin Journey page says which first session answered the join screen', () => {

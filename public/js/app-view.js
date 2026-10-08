@@ -7542,18 +7542,9 @@ const AppView = {
         ? { slug: AppView.appData.slug, name: AppView.appData.name, readOnly: !!AppView.readOnly || archived }
         : null);
 
-    // (#3) First-arrival framing: name what Group Chat is for. Group chat
-    // is rarely empty (system messages), so a permanent banner would be
-    // clutter — show it once per browser, then it disappears. The read AND
-    // the write stay here: whether it has been seen is a browser fact, and a
-    // component that stamped it would fire again on every re-render.
-    let introAppName = null;
-    try {
-      if (!localStorage.getItem('usernode_seen_gc_intro')) {
-        introAppName = (app && app.name) ? app.name : 'this app';
-        localStorage.setItem('usernode_seen_gc_intro', '1');
-      }
-    } catch { /* private-mode / disabled storage: just skip the intro */ }
+    // No first-arrival banner (#3's "This is where everyone using … talks
+    // and votes on proposed changes to it."): the owner, 6 October 2026. The
+    // Discussion tab's name and its messages say what it is.
 
     // The PANE is features/group-chat/general-chat.tsx's — the message
     // stream, the status line, the composer and the spec panel's slot —
@@ -7572,7 +7563,6 @@ const AppView = {
     const previousList = content.querySelector('#gc-messages');
     if (previousList) AppView._reactGroupChat()?.unmountTranscript(previousList);
     AppView._reactGroupChat()?.mountGeneralChat(content, {
-      introAppName,
       readOnly: !!(app && app.readOnly),
       notice: archived
         ? 'This was Homeroom\u2019s project discussion. It is read-only now: Homeroom\u2019s channel is #general.'

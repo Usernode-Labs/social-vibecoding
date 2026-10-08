@@ -875,7 +875,7 @@ const Home = {
       // not in the layout, so it is never dragged, stored or displaced; a drop
       // onto its cell lands in an empty cell and the next paint moves it on.
       // It FLOWS instead (no placement) when there is no cell to follow: an
-      // empty launcher, where it comes after the "No apps added yet" note, and
+      // empty launcher, where it is all the grid shows, and
       // overflow tiles, which have no cell of their own either.
       //
       // Present for EVERY account: `canCreate` decides its treatment, never
