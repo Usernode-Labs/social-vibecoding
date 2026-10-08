@@ -33,7 +33,7 @@ function createDelivery({ runtime = applicationRuntime, progress = appDeployStat
     }
 
     const failedSha = failureSha(app.last_failure);
-    const deploying = progress.read(app.slug)?.deploying === true;
+    const deploying = (await progress.read(app.slug))?.deploying === true;
     const repo = typeof parseRepo === 'function' ? parseRepo(app.repo_url) : null;
     let dir = null;
     let headSha = null;

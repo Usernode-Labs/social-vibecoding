@@ -312,6 +312,9 @@ function notIncludable(f: Facts, carrierAppId: number | null, head: string | nul
   if (carrierAppId != null && s.appId !== carrierAppId) return 'other_app';
   if (s.status !== 'promoted') return 'moved_on';
   if (s.activeTurn) return 'turn_running';
+  // Worked on outside a turn record, in any process: a sync with main or a
+  // CLI hand-off may be about to push to it.
+  if (s.busy) return 'being_worked_on';
   // Its head is the one found among the merged pull request's commits: a
   // revision that landed since (an upload, a sync with main) is not merged.
   if (head && s.head !== head) return 'head_moved';

@@ -97,8 +97,10 @@ function containedIn(candidates, commitShas) {
 }
 
 // The app's other changes up for a vote, with a pull request and a recorded
-// head. Not one whose turn is running (a revision may be on its way, and it
-// decides), and not one holding a secret value for a variable it declares:
+// head. Not one whose turn is running or that any platform process is
+// working on (session_busy: a sync with main, a CLI hand-off, a turn's whole
+// window; a revision may be on its way, and it decides), and not one holding
+// a secret value for a variable it declares:
 // that value is applied only by the change's own merge
 // (services/pending-secrets.js), so it waits for that.
 const CANDIDATES_SQL = `SELECT cs.id, cs.source, cs.reviewed_head_sha, cs.imported_pr_head_sha
@@ -109,6 +111,10 @@ const CANDIDATES_SQL = `SELECT cs.id, cs.source, cs.reviewed_head_sha, cs.import
     AND NOT EXISTS (
       SELECT 1 FROM pending_secret_declarations p
        WHERE p.session_id = cs.id AND p.status = 'pending'
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM session_busy b
+       WHERE b.session_id = cs.id AND b.heartbeat_at > NOW() - interval '2 minutes'
     )
   ORDER BY cs.id`;
 
@@ -125,6 +131,10 @@ const MARK_SQL = `UPDATE chat_sessions c
   WHERE m.id = $1 AND m.status = 'merged'
     AND c.id = ANY($2::int[]) AND c.app_id = m.app_id
     AND c.status = 'promoted' AND c.active_turn IS NULL
+    AND NOT EXISTS (
+      SELECT 1 FROM session_busy b
+       WHERE b.session_id = c.id AND b.heartbeat_at > NOW() - interval '2 minutes'
+    )
   RETURNING c.id`;
 
 const INCLUDED_SQL = `SELECT c.*, a.slug AS app_slug, a.repo_url

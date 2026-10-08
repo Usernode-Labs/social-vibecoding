@@ -4,7 +4,7 @@
 // was the pill on the home tile, and on the app tab, where the person who
 // just approved it is standing, nothing. The button's `deploying` spinner was
 // wired to apps.status === 'deploying', a status app redeploys never set
-// (services/app-deploy-status.js keeps that in memory on purpose), and the
+// (services/app-deploy-status.js keeps it apart from apps.status), and the
 // frame is kept alive across Home and back, so the change stayed invisible
 // until a fresh session.
 //

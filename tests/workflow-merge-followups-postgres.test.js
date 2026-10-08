@@ -281,8 +281,13 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     // Found at one head, moved since (an upload or a sync with main in
     // another process): its new head is not what merged.
     const moved = await proposal(a, { status: 'promoted', extra: { head: SHA('e') } });
+    // Worked on in another process outside a turn (a sync with main, a CLI
+    // hand-off): it may be about to push.
+    const worked = await proposal(a, { status: 'promoted', extra: { head: SHA('9') } });
+    await pool.query(`INSERT INTO session_busy (session_id, holder) VALUES ($1, 'web-pod')`, [worked.id]);
     work.results.set(WORK.find, (input) => ({ found: input.sessionId === carrier.id
-      ? [{ id: carried.id, head: SHA('c') }, { id: busy.id, head: SHA('d') }, { id: moved.id, head: SHA('f') }] : [] }));
+      ? [{ id: carried.id, head: SHA('c') }, { id: busy.id, head: SHA('d') }, { id: moved.id, head: SHA('f') },
+        { id: worked.id, head: SHA('9') }] : [] }));
     await merge(carrier);
     // Run everything but the carrier's delivery: its deploy is still running.
     await pool.query(`UPDATE wf_work SET status = 'settled' WHERE key = $1 AND kind = $2`, [sessionKey(carrier.id), WORK.deliver]);
@@ -312,6 +317,10 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     const { rows: [movedRefusal] } = await pool.query(
       `SELECT result, reason FROM wf_events WHERE machine = $1 AND key = $2 AND type = 'Included'`, [MACHINE, sessionKey(moved.id)]);
     assert.deepEqual({ ...movedRefusal }, { result: 'rejected', reason: 'head_moved' });
+    assert.equal((await row(worked.id)).status, 'promoted');
+    const { rows: [workedRefusal] } = await pool.query(
+      `SELECT result, reason FROM wf_events WHERE machine = $1 AND key = $2 AND type = 'Included'`, [MACHINE, sessionKey(worked.id)]);
+    assert.deepEqual({ ...workedRefusal }, { result: 'rejected', reason: 'being_worked_on' });
     await pool.query('UPDATE chat_sessions SET active_turn = NULL WHERE id = $1', [busy.id]);
     assert.equal((await merge(busy)).result, 'accepted');
     // The carrier goes live (its own rebuild reports the merge commit), and so does what it carried.

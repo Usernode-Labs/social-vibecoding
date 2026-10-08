@@ -24,6 +24,27 @@ function notifySessionState(sessionId) {
   try {
     require('./session-state').touch(sessionId);
   } catch { /* notifier is best-effort; never break turn bookkeeping */ }
+  recordBusy(sessionId);
+}
+
+// What this process is doing to a session is also recorded where every
+// platform process sees it (a session_busy row, services/in-flight-record.js):
+// the workflow worker settles a merge's included changes, and must skip a
+// change a web Pod is working on just as this process's isSessionBusy does.
+// Written on the same edges that notify, so it follows the set and the
+// operations exactly.
+const { HOLDER, createHolds } = require('./in-flight-record');
+const busyHolds = createHolds('active-workers');
+const BUSY_HOLD_SQL = `INSERT INTO session_busy (session_id, holder) VALUES ($1, $2)
+  ON CONFLICT (session_id, holder) DO UPDATE SET heartbeat_at = NOW()`;
+const BUSY_RELEASE_SQL = 'DELETE FROM session_busy WHERE session_id = $1 AND holder = $2';
+
+function recordBusy(sessionId) {
+  const id = Number(sessionId);
+  if (!Number.isInteger(id) || id <= 0) return;
+  const busy = activeSessionOperations.has(id) || activeWorkers.has(id) || activeWorkers.has(String(id));
+  if (busy && !busyHolds.held(id)) busyHolds.hold(id, (pool) => pool.query(BUSY_HOLD_SQL, [id, HOLDER]));
+  else if (!busy && busyHolds.held(id)) busyHolds.release(id, (pool) => pool.query(BUSY_RELEASE_SQL, [id, HOLDER]));
 }
 
 class ActiveWorkerSet extends Set {

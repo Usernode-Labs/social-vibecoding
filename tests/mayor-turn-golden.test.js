@@ -63,8 +63,14 @@ function resetDb(session, { history = [] } = {}) {
   };
 }
 
+// Work-in-flight rows (session_busy, app_deploys: services/in-flight-record.js)
+// are written asynchronously beside the turn, so where they land among its
+// queries is timing, not behaviour; they are not part of the golden.
+const IN_FLIGHT = /\b(session_busy|app_deploys)\b/;
+
 async function poolQuery(sql, params = []) {
   const s = String(sql);
+  if (IN_FLIGHT.test(s)) return { rows: [], rowCount: 0 };
   rec.queries.push({ sql: s.replace(/\s+/g, ' ').trim(), params: normalizeParams(params) });
 
   if (/^(BEGIN|COMMIT|ROLLBACK)$/i.test(s.trim())) return { rows: [], rowCount: 0 };

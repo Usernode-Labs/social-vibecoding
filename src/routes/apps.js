@@ -829,6 +829,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       const firstVersionLines = await firstVersionLinesFor(
         pool, rows.filter((a) => !a.self_hosted && !stagingApps.isSample(a)), req.user?.id ?? null
       );
+      // Which apps a production deploy is running for, in whichever process.
+      const deploys = await appDeployStatus.readMany(rows.map((a) => a.slug));
 
       let apps = await Promise.all(rows.map(async (a) => {
         // Per-app missing-required-secrets list. Cheap (one extra query
@@ -938,7 +940,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           url,
           staging_sample: stagingSample,
           version,
-          deployProgress: appDeployStatus.read(a.slug),
+          deployProgress: deploys.get(a.slug) || null,
           missingSecrets,
           // Server-built icon URL so the client never assembles ids into
           // paths (and staging demo rows can inject arbitrary sources).
@@ -1750,7 +1752,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       if (!gated) return res.status(404).json({ error: 'App not found' });
       const info = await appVersion.getAppVersion(pool, req.params.slug);
       if (!info) return res.status(404).json({ error: 'App not found' });
-      res.json({ ...info, deployProgress: appDeployStatus.read(req.params.slug) });
+      res.json({ ...info, deployProgress: await appDeployStatus.read(req.params.slug) });
     } catch (err) {
       log.error('apps', 'Failed to get app version', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });

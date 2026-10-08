@@ -13096,3 +13096,35 @@ CREATE TRIGGER chat_sessions_wf_merge_owned
         OR OLD.live_at IS DISTINCT FROM NEW.live_at)
   EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=merge-followups/session:',
     'merged_at', 'merge_commit_sha', 'included_in_session_id', 'live_at');
+
+-- ── Work in flight, visible to every platform process ─────────────────
+-- What a process is doing right now, for the processes that must not
+-- step on it: the web Pods and the workflow worker (workflow-worker.js)
+-- share no memory. A row is held by one process (`holder`, random per
+-- process) and kept fresh by its heartbeat every 30 seconds; a row whose
+-- heartbeat is older than two minutes was left by a process that died,
+-- and reads as nothing. Nothing here is worth copying into a staging clone.
+
+-- A production deploy of an app (services/app-deploy-status.js markStart /
+-- markEnd): the version pill, the heal pass and the fleet rollover read it.
+CREATE TABLE IF NOT EXISTS app_deploys (
+  app_id        INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  holder        TEXT NOT NULL,
+  started_at    TIMESTAMPTZ NOT NULL,
+  from_sha      TEXT,
+  heartbeat_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (app_id, holder)
+);
+COMMENT ON TABLE app_deploys IS 'staging:private';
+
+-- A proposal that is being worked on outside a turn record (a coding turn's
+-- whole window in the chat handler, sync with main, a CLI hand-off; the
+-- in-memory set and operations of services/active-workers.js). A merge's
+-- included changes skip it.
+CREATE TABLE IF NOT EXISTS session_busy (
+  session_id    INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  holder        TEXT NOT NULL,
+  heartbeat_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (session_id, holder)
+);
+COMMENT ON TABLE session_busy IS 'staging:private';

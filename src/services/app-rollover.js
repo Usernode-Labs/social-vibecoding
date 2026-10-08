@@ -33,9 +33,10 @@
  *   - One job at a time (module-level singleton). A second start() while a
  *     job is live returns the in-flight job instead of beginning a second
  *     sweep; the route turns that into a 409.
- *   - In-memory, not persisted — same rationale as app-deploy-status.js: if
- *     the platform restarts mid-job the work dies with it, and a fresh
- *     process showing no in-flight job is exactly right. A stale guard
+ *   - In-memory, not persisted: the job runs on the leader, and if the
+ *     platform restarts mid-job the work dies with it, so a fresh process
+ *     showing no in-flight job is exactly right. (Each app's deploy is
+ *     recorded where every process sees it, by app-deploy-status.js.) A stale guard
  *     (30 min, mirroring DEPLOY_STALE_AFTER_MS) keeps a job that never
  *     unwound from blocking the next one forever.
  *   - Per-app failure isolation: every unit is individually caught, the
@@ -326,7 +327,7 @@ async function rollOne(config, pool, app) {
 
   // Something else (merge, drift poller, heal) owns this slug right now.
   // Stepping on it would interleave two stopAndRemove/runContainer pairs.
-  const deploy = appDeployStatus.read(app.slug);
+  const deploy = await appDeployStatus.read(app.slug);
   if (deploy && deploy.deploying) return { outcome: 'skipped_deploying' };
 
   const kubernetesMode = config.appRuntime === 'kubernetes';

@@ -31,7 +31,9 @@ test('the database\'s notice is ws-bus.js\'s own envelope, on its channel, and a
   const bus = read('src/services/ws-bus.js');
   const channel = /const CHANNEL = '([^']+)';/.exec(bus)[1];
   assert.match(announce, new RegExp(`pg_notify\\('${channel}', json_build_object\\(`), 'the channel every instance LISTENs on');
-  assert.match(bus, /return \{ i: INSTANCE_ID, k: kind, r: routing \|\| null, d: data \};/, 'the envelope ws-bus reads');
+  assert.match(bus, /return \{ \.\.\._from\(\), k: kind, r: routing \|\| null, d: data \};/, 'the envelope ws-bus reads');
+  assert.match(bus, /const _from = \(\) => \(_publisherOnly \? \{ i: INSTANCE_ID, p: 1 \} : \{ i: INSTANCE_ID \}\);/,
+    'an id, and `p` only from a publisher-only process');
   assert.match(announce, /'i', 'db:agent_sessions',\s*'k', 'user',\s*'r', json_build_object\('userId', NEW\.user_id\),\s*'d', json_build_object\(/);
   assert.match(read('src/services/ws.js'), /case 'user':\s*if \(r\.userId != null\) deliverToUser\(r\.userId, payload\);/);
   const seconds = Number(/interval '(\d+) seconds'/.exec(announce)[1]);

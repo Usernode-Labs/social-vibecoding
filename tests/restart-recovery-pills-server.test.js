@@ -316,8 +316,10 @@ function makeBackfillPool({ sessions = [], lastRows = {}, newestSystem = {} } = 
   };
 }
 
+// The session's busy record (session_busy, services/in-flight-record.js)
+// follows activeWorkers on its own; it is not a write of the backfill.
 function writes(pool) {
-  return pool.calls.filter((c) => /^\s*(INSERT|UPDATE)/i.test(c.sql.trim()));
+  return pool.calls.filter((c) => /^\s*(INSERT|UPDATE)/i.test(c.sql.trim()) && !/\bsession_busy\b/.test(c.sql));
 }
 
 test('backfill: a row that already has pills is left alone', async () => {

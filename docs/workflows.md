@@ -424,19 +424,21 @@ its checkpoint on the next claim. What it means for the code:
     and waits for any run not yet finished, planned ones included);
   - the Homeroom bot's wake after a merge (`noteRequestMerged` publishes it, for the
     process running the bot's loop);
-  - whether an included change is still the one that merged (`included.find` pins the
-    head it found, and the `Included` guard refuses a change whose recorded head moved,
-    `head_moved`).
+  - whether an included change is still the one that merged, and whether anyone is
+    working on it: `included.find` pins the head it found, and the `Included` guard
+    refuses a change whose recorded head moved (`head_moved`) or that any process is
+    working on outside a turn record (`being_worked_on`, below);
+  - whether an app is being deployed (`app-deploy-status.js`), which the version pill,
+    the heal pass and the fleet rollover read.
   A new handler follows the same rule: state it needs from a web process goes through
   the database or the bus.
-- **Not covered yet** (to settle before the worker is turned on):
-  - whether an app is deploying (`app-deploy-status.js`) is per process, so the web
-    Pods do not see a deploy the worker runs: the version pill, the heal pass and the
-    fleet rollover read it;
-  - an included change's busy check: an operation that pushes to the change without a
-    turn (sync with main, a turn's tail, a hand-off promotion) does not move its
-    recorded head first, so `head_moved` does not see it, and the in-memory check that
-    did is not visible from the worker.
+- **Work in flight is a row, not memory.** Two tables at the end of `schema.sql` say
+  what a process is doing right now: `app_deploys` (a production deploy, written by
+  `app-deploy-status.js` markStart / markEnd) and `session_busy` (a session being worked
+  on: the chat handler's turn window and every `beginSessionOperation`, such as sync with
+  main or a CLI hand-off, written by `active-workers.js`). The process holds its row and
+  renews it every 30 seconds (`services/in-flight-record.js`); readers count only rows
+  renewed in the last two minutes, so a process that dies stops counting within two.
 - **The worker's broadcasts** carry `p: 1`, so a web Pod does not take the worker for
   a peer that hears it (`_isAlone` in `ws-bus.js`), and they are sent one at a time, in
   the order they were made.

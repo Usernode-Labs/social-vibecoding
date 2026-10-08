@@ -267,7 +267,7 @@ async function checkAndHealOne(config, pool, app, { probeRunning = false, backgr
   if (inFlight.has(app.slug)) return { status: 'in_flight', slug: app.slug };
 
   const appDeployStatus = require('./app-deploy-status');
-  const deploy = appDeployStatus.read(app.slug);
+  const deploy = await appDeployStatus.read(app.slug);
   if (deploy && deploy.deploying) return { status: 'deploying', slug: app.slug };
 
   // Repo provisioning comes before the container-state logic: a repo-less

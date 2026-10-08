@@ -20,6 +20,7 @@ export interface Session {
   activeTurn: boolean;
   isHeadless: boolean;
   pendingSecrets: boolean;
+  busy: boolean;             // a platform process is working on it (session_busy)
   head: string | null;       // the reviewed head (an imported PR's observed head)
   // The preview, as the merge found it: demo mode deploys its image.
   staging: { imageRef: string; buildRef: string | null; commitSha: string } | null;
@@ -55,6 +56,8 @@ export async function readFacts(tx: Tx, sessionId: number, { lock }: { lock: boo
     `SELECT cs.id, cs.app_id, cs.status, cs.user_id, cs.pr_number, cs.pr_title, cs.linked_issues,
             cs.agent_session_id, cs.active_turn IS NOT NULL AS active_turn, cs.is_headless,
             cs.source, cs.reviewed_head_sha, cs.imported_pr_head_sha,
+            EXISTS (SELECT 1 FROM session_busy b
+                     WHERE b.session_id = cs.id AND b.heartbeat_at > NOW() - interval '2 minutes') AS busy,
             cs.staging_image_ref, cs.staging_build_ref, cs.staging_commit_sha,
             EXISTS (SELECT 1 FROM pending_secret_declarations p
                      WHERE p.session_id = cs.id AND p.status = 'pending') AS pending_secrets
@@ -68,6 +71,7 @@ export async function readFacts(tx: Tx, sessionId: number, { lock }: { lock: boo
       prNumber: s.pr_number ?? null, prTitle: s.pr_title ?? null, linkedIssues: issueNumbers(s.linked_issues),
       agentSessionId: s.agent_session_id ?? null, activeTurn: !!s.active_turn, isHeadless: !!s.is_headless,
       pendingSecrets: !!s.pending_secrets,
+      busy: !!s.busy,
       head: String(legacy('services/pr-vote-revision').reviewedHeadForSession(s) || '').toLowerCase() || null,
       staging: s.staging_image_ref && s.staging_commit_sha
         ? { imageRef: s.staging_image_ref, buildRef: s.staging_build_ref ?? null, commitSha: s.staging_commit_sha } : null,
