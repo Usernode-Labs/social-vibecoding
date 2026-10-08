@@ -538,7 +538,7 @@ export const SpecShareRow = memo(function SpecShareRow({ msg }: { msg: Transcrip
             }
           }}
         >
-          {loading ? 'Loading…' : 'View full spec'}
+          {loading ? 'Loading…' : 'View full plan'}
         </button>
       </div>
       <Reactions msg={msg} />

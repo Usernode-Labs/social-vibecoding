@@ -121,7 +121,7 @@ interface DmChat {
 type ModelStage = 'triage' | 'spec' | 'build' | 'followup';
 const MODEL_STAGES: { key: ModelStage; label: string }[] = [
   { key: 'triage', label: 'Triage' },
-  { key: 'spec', label: 'Spec' },
+  { key: 'spec', label: 'Plan' },
   { key: 'build', label: 'Build' },
   { key: 'followup', label: 'Follow-ups and check fixes' },
 ];
@@ -547,7 +547,7 @@ function BuildSpec({ run }: { run: Run }) {
   if (!run.build_spec_md) return null;
   return (
     <details className="text-sm" data-build-spec>
-      <summary className={`${AdminUI.muted} cursor-pointer`}>The spec it built from</summary>
+      <summary className={`${AdminUI.muted} cursor-pointer`}>The plan it built from</summary>
       <p className="mt-1 whitespace-pre-wrap break-words">{run.build_spec_md}</p>
     </details>
   );
@@ -1947,7 +1947,7 @@ function HomeroomBotSection() {
                     onChange={(e) => setField('botCap', e.target.value)}
                   />
                   <p className={`${AdminUI.muted} mt-1`}>
-                    {bot ? `${dollarsFromCents(bot.weeklySpentCents)} spent this week. Triage, specs, builds and shadow builds all come out of it.` : ''}
+                    {bot ? `${dollarsFromCents(bot.weeklySpentCents)} spent this week. Triage, plans, builds and shadow builds all come out of it.` : ''}
                   </p>
                 </div>
                 <div>

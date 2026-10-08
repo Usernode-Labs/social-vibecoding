@@ -71,7 +71,7 @@ test('the group chips filter the list, and combine with the search', () => {
 test('the item types are the dropdown’s, as chips, App first', () => {
   const { SHARE_TYPES } = mod();
   assert.deepEqual(SHARE_TYPES.map((t) => t.value), ['app', 'issue', 'proposal', 'governance', 'spec']);
-  assert.deepEqual(SHARE_TYPES.map((t) => t.label), ['App', 'GitHub issue', 'Code proposal', 'Governance proposal', 'Spec version']);
+  assert.deepEqual(SHARE_TYPES.map((t) => t.label), ['App', 'GitHub issue', 'Code proposal', 'Governance proposal', 'Plan version']);
 });
 
 test('the prerendered dialog leads with the search box, then the type chips, and no dropdown', () => {

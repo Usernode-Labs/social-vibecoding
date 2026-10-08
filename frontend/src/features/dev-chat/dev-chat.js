@@ -7593,7 +7593,7 @@ const DevChat = {
             version: msg.specVersion != null ? String(msg.specVersion) : 'latest',
             header: msg.specVersion != null
               ? `Spec v${msg.specVersion} · ${lineCount} lines`
-              : `Spec drafted · ${lineCount} lines`,
+              : `Plan drafted · ${lineCount} lines`,
             snippetHtml: DevChat.renderMarkdown(snippet, { breaks: false }),
           });
           return;
@@ -8268,7 +8268,7 @@ const DevChat = {
   // stay identical.
   FALLBACK_QUICK_REPLIES: {
     code_done: ['Propose it to the group', 'Make a tweak', 'What did it change?'],
-    spec_done: ['Build the spec', 'Revise the spec', 'What will this change?'],
+    spec_done: ['Build the plan', 'Revise the plan', 'What will this change?'],
     chat_generic: ['Make a change', 'What issues are open right now?', "What's the current state?"],
   },
 
@@ -12166,8 +12166,8 @@ const DevChat = {
       body = {
         kind: 'empty',
         copy: isOwner
-          ? 'No spec yet. Ask the AI to draft one.'
-          : 'No spec has been shared for this session yet.',
+          ? 'No plan yet. Ask the AI to draft one.'
+          : 'No plan has been shared for this session yet.',
       };
     } else if (htmlDoc && htmlDoc.split) {
       const tab = DevChat.specViewer.activeTab === 'tech' ? 'tech' : 'user';

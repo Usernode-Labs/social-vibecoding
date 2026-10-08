@@ -177,7 +177,7 @@ test('#3490: Homeroom bot\'s spec comment splits into its sentence and the spec'
   const body = live.specCommentText('# Fix the banner\n\n## User-facing changes\n\nIt blends in.\n\n## Design\n\nOne card.');
   const got = botSpecOf({ author: 'usernode-bot', body });
   assert.equal(got.title, 'Fix the banner');
-  assert.match(got.lead, /^Homeroom bot wrote a spec for this request and is building it now\./);
+  assert.match(got.lead, /^Homeroom bot wrote a plan for this request and is building it now\./);
   assert.doesNotMatch(got.lead, /details|summary/, 'the markers are gone, not shown as text');
   assert.equal(got.body, '## User-facing changes\n\nIt blends in.\n\n## Design\n\nOne card.');
   assert.equal(botSpecOf({ author: 'ada', body }), null, 'a person\'s comment stays as they wrote it');
@@ -192,7 +192,7 @@ test('#3490: Homeroom bot\'s spec comment splits into its sentence and the spec'
   assert.match(view, /bodyHtml: mentions\(renderMd\(spec \? spec\.lead : \(c\.body \|\| ''\)\)\),\n\s*spec: spec \? \{ title: spec\.title, html: renderSpec\(spec\.body\) \} : null,/);
   const feed = code.match(/_feedCommentsHtml\(comments\) \{([\s\S]*?)\n {2}\},/)[1];
   assert.match(feed, /const spec = AppView\._botSpecOf\(c\);/);
-  assert.match(feed, /escapeHtml\(spec\.title \? `The spec: \$\{spec\.title\}` : 'The spec'\)/);
+  assert.match(feed, /escapeHtml\(spec\.title \? `The plan: \$\{spec\.title\}` : 'The plan'\)/);
 });
 
 test('#3693: a spec the comments route clipped is still a spec, not raw markers', () => {
@@ -226,7 +226,7 @@ test('#3693: a spec the comments route clipped is still a spec, not raw markers'
   const got = botSpecOf(clipped);
   assert.ok(got, 'the clipped comment is still recognised as the spec');
   assert.equal(got.title, 'Add a light and dark mode toggle');
-  assert.match(got.lead, /^Homeroom bot wrote a spec for this request and is building it now\./);
+  assert.match(got.lead, /^Homeroom bot wrote a plan for this request and is building it now\./);
   for (const part of [got.lead, got.body]) {
     assert.doesNotMatch(part, /<\/?(details|summary)>/, 'no marker is left to show as text');
   }
@@ -246,7 +246,7 @@ test('#3490: the spec is drawn as a spec, folded under its title, outside the co
   });
   assert.match(html, /<div class="dev-feed-msg-text dev-issue-body line-clamp-4"><p class="dc-p">Homeroom bot wrote a spec\.<\/p><\/div><details class="dev-issue-spec" data-issue-spec="">/,
     'the sentence is the comment, and the spec follows it, not inside its clamp');
-  assert.match(html, /<summary class="dev-issue-spec-head"><span class="dev-issue-spec-text"><span class="dev-issue-spec-kicker">The spec<\/span><span class="dev-issue-spec-title">Fix the banner<\/span><\/span>/);
+  assert.match(html, /<summary class="dev-issue-spec-head"><span class="dev-issue-spec-text"><span class="dev-issue-spec-kicker">The plan<\/span><span class="dev-issue-spec-title">Fix the banner<\/span><\/span>/);
   assert.match(html, /<div class="dc-spec-viewer-body dev-issue-spec-body"><h4 class="dc-h4">Design<\/h4><p class="dc-p">One card\.<\/p><\/div><\/details>/,
     'the spec viewer\'s own typography');
   assert.doesNotMatch(html, /<details[^>]* open/, 'folded, as GitHub folds it');

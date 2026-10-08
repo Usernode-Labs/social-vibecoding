@@ -8351,15 +8351,15 @@ async function seedStagingCloneSpecPills(pool, config) {
   // nicer header" — a component out of a plan that covered more than that,
   // which reads as "build only that bit". The other two stay specific.
   const quickReplies = [
-    'Build the spec',
+    'Build the plan',
     'What does the plan for #42 change?',
-    'Revise the spec first',
+    'Revise the plan first',
   ];
   const followUpContent =
     'This session was cloned from an auto session that ran unattended on GitHub issue #42. '
     + "You're on your own branch (forked from the auto session's, so its commits carry over).\n\n"
-    + 'Where things stand: the auto session investigated the repo and drafted a spec — open the '
-    + "spec viewer to review it. When you're happy with it, tell me to build it and I'll dispatch "
+    + 'Where things stand: the auto session investigated the repo and drafted a plan — open the '
+    + "plan viewer to review it. When you're happy with it, tell me to build it and I'll dispatch "
     + 'the coding agent.';
   await pool.query(
     `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
@@ -8527,12 +8527,12 @@ async function seedStagingQuickReplyFallback(pool, config) {
       // sees which rung produced it; only the telemetry column differs.
       rows: [
         ['user', 'Plan how avatar uploads should work before building anything.', {}, 14],
-        ['assistant', 'The scout drafted a spec for avatar uploads — it adds a user_avatars '
+        ['assistant', 'The scout drafted a plan for avatar uploads — it adds a user_avatars '
           + 'table and a crop step, and it\'s in the spec viewer now.', {
           // #1046: post-spec, so the build pill is the whole-spec literal
           // and the other two carry this spec's specifics. Its dapp.json
           // check asserts the 'Build the spec' pill renders.
-          quickReplies: ['Build the spec', 'Drop the crop step from the plan', 'What does this add to the database?'],
+          quickReplies: ['Build the plan', 'Drop the crop step from the plan', 'What does this add to the database?'],
           quickRepliesSource: 'enforced',
         }, 12],
       ],
@@ -9380,7 +9380,7 @@ async function seedStagingSpecViewerSessions(pool, config) {
   const owner = userRows[0];
 
   const specA = [
-    '# Staging demo spec A: welcome banner',
+    '# Staging demo plan A: welcome banner',
     '',
     'Fixture spec for session A — if you see this in session B or C, that is bug #233.',
     '',
@@ -9395,7 +9395,7 @@ async function seedStagingSpecViewerSessions(pool, config) {
   ].join('\n');
 
   const specC = [
-    '# Staging demo spec C: compact session rows',
+    '# Staging demo plan C: compact session rows',
     '',
     'Fixture spec for session C — if you see this in session A or B, that is bug #233.',
     '',
@@ -9511,7 +9511,7 @@ async function seedStagingSharedSpecPanelSession(pool, config) {
   }
 
   const sharedV2 = [
-    '# Staging demo shared spec (v2)',
+    '# Staging demo shared plan (v2)',
     '',
     'This version was shared to the group — any viewer of this session',
     'should see it in the spec panel, share buttons and all owner',
@@ -9564,7 +9564,7 @@ async function seedStagingSharedSpecPanelSession(pool, config) {
       `INSERT INTO chat_sessions
          (id, app_id, user_id, branch_name, session_title, status, spec_md, created_at)
        VALUES ($1, $2, $3, $4,
-               '[staging fixture] Staging demo: spec shared to the group', 'paused',
+               '[staging fixture] Staging demo: plan shared to the group', 'paused',
                $5, NOW() - INTERVAL '2 hours')`,
       [sessionId, appId, demoUserId, fixtureBranch, draftAhead]
     );
@@ -9574,7 +9574,7 @@ async function seedStagingSharedSpecPanelSession(pool, config) {
       ['system', 'Spec drafted', {
         specPreview: sharedV2.slice(0, 400), specLines: sharedV2.split('\n').length, specVersion: 2,
       }, 100],
-      ['assistant', '[staging fixture] Spec v2 is in the viewer — I shared it with the group.', {}, 99],
+      ['assistant', '[staging fixture] Plan v2 is in the viewer — I shared it with the group.', {}, 99],
     ];
     for (const [role, content, metadata, mins] of transcript) {
       await pool.query(
@@ -9645,7 +9645,7 @@ async function seedStagingHtmlSpecSession(pool, config) {
   .sd-left{position:absolute;left:28px;top:28px;width:620px}
 </style>`;
   const html = `<article data-spec-styles="platform" data-spec>
-  <h1>Staging demo HTML spec: the vote card says how many approvals are left</h1>
+  <h1>Staging demo HTML plan: the vote card says how many approvals are left</h1>
   <p>A spec written as HTML. The User-facing tab opens on before and after screens; the Technical tab on a diagram and a table.</p>
   <section data-spec-tab="user">
     <figure data-screens>
@@ -10083,9 +10083,9 @@ async function seedStagingHeadlessFixtures(pool, config) {
     // stays pill-free: its answer chips own that turn.
     const wrapUp = {
       spec: {
-        text: '_Spec drafted — review it in the spec viewer after starting a session from this auto session._',
+        text: '_Plan drafted — review it in the plan viewer after starting a session from this auto session._',
         kind: 'spec_done',
-        pills: ['Build the spec', 'Revise the spec', 'What will this change?'],
+        pills: ['Build the plan', 'Revise the plan', 'What will this change?'],
       },
       code: {
         text: '_Change committed and pushed — start a session from this auto session to open the PR._',

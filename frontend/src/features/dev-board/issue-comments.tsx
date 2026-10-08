@@ -69,7 +69,7 @@ function BotSpec({ id, spec }: { id: string; spec: NonNullable<IssueCommentView[
     >
       <summary className="dev-issue-spec-head">
         <span className="dev-issue-spec-text">
-          <span className="dev-issue-spec-kicker">The spec</span>
+          <span className="dev-issue-spec-kicker">The plan</span>
           {spec.title ? <span className="dev-issue-spec-title">{spec.title}</span> : null}
         </span>
         <ChevronDownIcon className="dev-issue-spec-chev" aria-hidden="true" />

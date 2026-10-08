@@ -146,7 +146,7 @@ test('spec previews render as static text with no "View full spec" link', () => 
     id: 1, role: 'system', content: 'Spec drafted', created_at: 'x',
     metadata: { specPreview: '# Spec\n\n- item', specVersion: 2, specLines: 3 },
   }]));
-  assert.match(html, /Spec v2/);
+  assert.match(html, /Plan v2/);
   assert.match(html, /3 lines/);
   assert.match(html, /<md># Spec/);
   // A reader isn't authorised on GET /specs/:version unless it was

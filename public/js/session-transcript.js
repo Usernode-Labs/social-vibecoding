@@ -130,7 +130,7 @@
   function specPreviewHtml(msg) {
     const meta = (msg && msg.metadata) || {};
     if (typeof meta.specPreview !== 'string' || !meta.specPreview.trim()) return '';
-    const version = meta.specVersion != null ? 'Spec v' + meta.specVersion : 'Spec drafted';
+    const version = meta.specVersion != null ? 'Plan v' + meta.specVersion : 'Plan drafted';
     const lines = meta.specLines != null ? ' · ' + meta.specLines + ' lines' : '';
     return '<div class="st-spec-card">'
       + '<div class="st-spec-head">' + esc(version + lines) + '</div>'

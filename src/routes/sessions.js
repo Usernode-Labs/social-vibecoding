@@ -773,7 +773,7 @@ const STAGING_MOCK_TRANSCRIPT_IDS = new Set([990002]);
 const STAGING_MOCK_SPEC_MD = [
   '# [Mock] Readable cards on narrow screens',
   '',
-  'Staging demo spec — the cards get a two-row layout so the title stops being crushed.',
+  'Staging demo plan — the cards get a two-row layout so the title stops being crushed.',
   '',
   '## User-facing changes',
   '',
@@ -1389,8 +1389,8 @@ async function persistScoutPublication({
   if (!ccText) throw new Error('persistScoutPublication: spec content required');
   const lineCount = ccText.split('\n').length;
   const baseScoutText = hadSpec
-    ? `Scout revised the spec (now ${lineCount} lines).`
-    : `Scout drafted a ${lineCount}-line spec from the codebase.`;
+    ? `Scout revised the plan (now ${lineCount} lines).`
+    : `Scout drafted a ${lineCount}-line plan from the codebase.`;
   const scoutText = localAgentLabel
     ? `${baseScoutText} Drafted on ${localAgentLabel}, so no Homeroom credits were used.`
     : baseScoutText;
@@ -6582,13 +6582,13 @@ function buildHeadlessFollowUpMessage(src) {
     + `other users can clone the same auto session independently without affecting yours.`;
   switch (src.headless_outcome) {
     case 'spec':
-      return `${intro}\n\nWhere things stand: the auto session investigated the repo and drafted a spec. Open the spec viewer to review it. When you're happy with it, tell me to build it and I'll dispatch the coding agent (that turn also opens the PR and staging preview).`;
+      return `${intro}\n\nWhere things stand: the auto session investigated the repo and drafted a plan. Open the plan viewer to review it. When you're happy with it, tell me to build it and I'll dispatch the coding agent (that turn also opens the PR and staging preview).`;
     case 'code':
       return `${intro}\n\nWhere things stand: the code change is already committed and pushed on this branch. See the "Changes ready" card above. A staging preview may be shown there ("Preview staging" / "Test this change") if one built; if it didn't, the card still lets you propose and the preview is rebuilt then. No PR exists yet. Review the change, iterate if you want, and when you're ready hit "Propose to group" on the card, which opens the PR on this branch and starts the vote (or just ask me).`;
     case 'spec_code':
-      return `${intro}\n\nWhere things stand: the auto session drafted a spec (open the spec viewer to review it) AND implemented it: the change is committed and pushed on this branch. See the "Changes ready" card above; a staging preview may be shown there if one built, and either way the card lets you propose (the preview is rebuilt at propose time if needed). No PR exists yet. Review the spec and the change, iterate if you want, and when you're ready hit "Propose to group" on the card, which opens the PR on this branch and starts the vote (or just ask me).`;
+      return `${intro}\n\nWhere things stand: the auto session drafted a plan (open the plan viewer to review it) AND implemented it: the change is committed and pushed on this branch. See the "Changes ready" card above; a staging preview may be shown there if one built, and either way the card lets you propose (the preview is rebuilt at propose time if needed). No PR exists yet. Review the spec and the change, iterate if you want, and when you're ready hit "Propose to group" on the card, which opens the PR on this branch and starts the vote (or just ask me).`;
     default:
-      return `${intro}\n\nWhere things stand: the auto session ran into something that needs a human decision. See its last message above (the same questions were also posted as a comment on the GitHub issue). Answer here and we'll continue from where it left off.${(src.spec_md || '').trim() ? ' The auto session also drafted a spec, so open the spec viewer to review it alongside the questions.' : ''}`;
+      return `${intro}\n\nWhere things stand: the auto session ran into something that needs a human decision. See its last message above (the same questions were also posted as a comment on the GitHub issue). Answer here and we'll continue from where it left off.${(src.spec_md || '').trim() ? ' The auto session also drafted a plan, so open the plan viewer to review it alongside the questions.' : ''}`;
   }
 }
 
@@ -6607,13 +6607,13 @@ function buildHeadlessFollowUpQuickReplies(src) {
     case 'spec':
       // #1046: mirrors RECOVERY_PILLS.spec_done — the build pill names the
       // whole spec, not one component of it.
-      replies = ['Build the spec', 'Revise the spec', 'What will this change?'];
+      replies = ['Build the plan', 'Revise the plan', 'What will this change?'];
       break;
     case 'code':
       replies = ['Propose it to the group', 'Make a tweak', 'What did it change?'];
       break;
     case 'spec_code':
-      replies = ['Propose it to the group', 'Revise the spec', 'Make a tweak'];
+      replies = ['Propose it to the group', 'Revise the plan', 'Make a tweak'];
       break;
     default:
       return null;
@@ -7477,7 +7477,7 @@ async function runHeadlessSession({
         const decisionTurnId = headlessTurnId;
         const decisionFallback = specHasQuestions
           ? '_The spec has open questions. Review them before implementation._'
-          : '_Spec drafted. Review it in the spec viewer after starting a session from this auto session._';
+          : '_Plan drafted. Review it in the plan viewer after starting a session from this auto session._';
         const decisionEffect = await runHeadlessMayorEffect({
           pool,
           sessionId: session.id,
@@ -7518,7 +7518,7 @@ async function runHeadlessSession({
             ? mayorText2
             : (specHasQuestions
               ? '_The spec has open questions. Review the Questions section in the spec viewer after starting a session from this auto session._'
-              : '_Spec drafted. Review it in the spec viewer after starting a session from this auto session._');
+              : '_Plan drafted. Review it in the plan viewer after starting a session from this auto session._');
           const messageApplied = await persistHeadlessMayorRow({
             pool,
             sessionId: session.id,
@@ -7593,7 +7593,7 @@ async function runHeadlessSession({
             const buildBilling = await limits.resolveBillingPath(pool, config.dataEncryptionKey, user.id);
             let buildResult;
             if (buildBilling.error) {
-              await sendStatus('Spec drafted; implementation skipped, because the daily budget was reached.');
+              await sendStatus('Plan drafted; implementation skipped, because the daily budget was reached.');
               buildResult = {
                 toolResultText: 'Implementation skipped — the daily LLM budget is exhausted. The spec remains the deliverable; a human will review and build it later.',
                 isError: true,
@@ -7654,10 +7654,10 @@ async function runHeadlessSession({
             headlessTurnId = await checkpointHeadlessWrapUp(pool, session.id, outcome);
           }
           const phase3Fallback = outcome === 'spec_code'
-            ? '_Spec drafted and change committed. Start a session from this auto session to review it and propose it to the group._'
+            ? '_Plan drafted and change committed. Start a session from this auto session to review it and propose it to the group._'
             : outcome === 'question'
               ? '_The spec has open questions. Review the Questions section in the spec viewer after starting a session from this auto session._'
-              : '_Spec drafted, but the implementation attempt did not complete; review the spec in the spec viewer after starting a session from this auto session._';
+              : '_Plan drafted, but the implementation attempt did not complete; review the plan in the plan viewer after starting a session from this auto session._';
           postDispatchBillingAvailable = await resolveHeadlessPayer('phase-3-wrapup');
           const phase3Effect = await runHeadlessMayorEffect({
             pool,
@@ -7697,10 +7697,10 @@ async function runHeadlessSession({
           if (outcome === 'question') questionTextToPost = mayorText3.trim();
           if (!mayorText3.trim()) {
             mayorText3 = outcome === 'spec_code'
-              ? '_Spec drafted and change committed. Start a session from this auto session to review it and propose it to the group._'
+              ? '_Plan drafted and change committed. Start a session from this auto session to review it and propose it to the group._'
               : outcome === 'question'
                 ? '_The spec has open questions. Review the Questions section in the spec viewer after starting a session from this auto session._'
-                : '_Spec drafted, but the implementation attempt did not complete; review the spec in the spec viewer after starting a session from this auto session._';
+                : '_Plan drafted, but the implementation attempt did not complete; review the plan in the plan viewer after starting a session from this auto session._';
           }
           const servedModel3 = mayor3.servedModel || selectedModel;
           const costCents3 = mayor3.usage
@@ -8117,7 +8117,7 @@ async function runRecoveredWrapUp({
         + 'interruptions, delays, or this note itself. Call suggest_replies with 2-3 next steps '
         + 'that NAME what changed here, not generic platform actions — with the one exception in '
         + 'POST-SPEC BUILD PILL: if this turn left a spec and nothing built, the first pill still '
-        + 'says "Build the spec" rather than naming one component of it.',
+        + 'says "Build the plan" rather than naming one component of it.',
     });
 
     const currentSpec = await loadSessionSpec(pool, sessionId);
@@ -8823,7 +8823,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
         outcome = specHasBlockingQuestions(ccText) ? 'question' : 'spec';
         dispatchSummary = publication.hadSpec
           ? `The scout revised the session's spec doc (now ${publication.lineCount} lines). It now lives in the session's spec doc.`
-          : `The scout investigated the repo and drafted a ${publication.lineCount}-line markdown spec. It now lives in the session's spec doc.`;
+          : `The scout investigated the repo and drafted a ${publication.lineCount}-line markdown plan. It now lives in the session's plan doc.`;
       } else {
         outcome = 'question';
         dispatchSummary = apiFailure
@@ -8897,7 +8897,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
             .catch((err) => log.warn('visuals', 'Resumed headless capture failed (non-fatal)', { sessionId: session.id, err: err.message }));
           dispatchSummary = `Commit ${result.sha.substring(0, 8)} pushed to ${session.branch_name}, and a staging preview was built. `
             + 'Headless mode: no PR was opened (it is created on a clone at propose time).'
-            + (session.spec_md ? ' The change implements the spec drafted earlier this run (in the session spec doc).' : '')
+            + (session.spec_md ? ' The change implements the plan drafted earlier this run (in the session plan doc).' : '')
             + (testing.cleanedText ? `\n\nWhat the agent did:\n${testing.cleanedText.slice(0, 2000)}` : '');
         } else {
           const { errMsg, errName, missingKeys } = describeStagingFailure(stagingErr);
@@ -8917,7 +8917,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
           });
           dispatchSummary = `Commit ${result.sha.substring(0, 8)} pushed to ${session.branch_name}. `
             + 'Headless mode: no PR was opened. The staging preview could not be built, but the commit is reviewable: the "Changes ready" card still appears on a clone.'
-            + (session.spec_md ? ' The change implements the spec drafted earlier this run (in the session spec doc).' : '')
+            + (session.spec_md ? ' The change implements the plan drafted earlier this run (in the session plan doc).' : '')
             + (testing.cleanedText ? `\n\nWhat the agent did:\n${testing.cleanedText.slice(0, 2000)}` : '');
         }
       } else {
@@ -8925,7 +8925,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
         dispatchSummary = (result.fatalError
           ? `The coding agent hit an error: ${result.fatalError.substring(0, 200)}`
           : 'The coding agent finished without pushing any changes.')
-          + (session.spec_md ? ' The spec drafted earlier this run is still the reviewable artifact.' : '');
+          + (session.spec_md ? ' The plan drafted earlier this run is still the reviewable artifact.' : '');
       }
     }
     headlessTurnId = await checkpointHeadlessWrapUp(pool, session.id, outcome);
@@ -8946,9 +8946,9 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
     headlessTurnId = await checkpointHeadlessWrapUp(pool, session.id, outcome);
   }
   const fallbackMayorText = outcome === 'spec'
-    ? '_Spec drafted. Review it in the spec viewer after starting a session from this auto session._'
+    ? '_Plan drafted. Review it in the plan viewer after starting a session from this auto session._'
     : outcome === 'spec_code'
-      ? '_Spec drafted and change committed. Start a session from this auto session to open the PR._'
+      ? '_Plan drafted and change committed. Start a session from this auto session to open the PR._'
       : outcome === 'code'
         ? '_Change committed and pushed. Start a session from this auto session to open the PR._'
         : "_The auto session's dispatch didn't finish successfully. See the status above._";
@@ -10005,7 +10005,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
         publication.hadSpec
           ? `The scout revised the session's spec doc (now ${publication.lineCount} lines). `
             + `The user can review it in the dev-chat spec viewer. When they're ready to ship, they'll ask you to dispatch the coding agent.`
-          : `The scout investigated the repo and drafted a ${publication.lineCount}-line markdown spec. `
+          : `The scout investigated the repo and drafted a ${publication.lineCount}-line markdown plan. `
             + `It now lives in the session's spec doc; the user can review it in the dev-chat spec viewer. When they're ready to ship, they'll ask you to dispatch the coding agent.`
       );
     }

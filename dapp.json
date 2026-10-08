@@ -470,7 +470,7 @@
       "group": "AI & coding agents",
       "required": false,
       "default": "true",
-      "description": "When true, an OpenRouter session's chat runs through the Mayor on the session's own OpenRouter model and key: a short plan before the coding agent starts, a spec before a build, and a plain-English wrap-up after, as on a Claude session. Set false to send each message straight to the coding agent instead. Never uses an Anthropic key."
+      "description": "When true, an OpenRouter session's chat runs through the Mayor on the session's own OpenRouter model and key: a short plan before the coding agent starts, a plan before a build, and a plain-English wrap-up after, as on a Claude session. Set false to send each message straight to the coding agent instead. Never uses an Anthropic key."
     },
     {
       "key": "OPENROUTER_MANAGEMENT_API_KEY",
@@ -1596,13 +1596,13 @@
       "name": "A group-shared spec renders in another viewer's spec panel",
       "path": "/?shot=spec-viewer#app/usernode-2d5619/dev/sessions/900830",
       "expectSelector": "#dc-spec-viewer .dc-spec-viewer-tabs",
-      "expectText": "Staging demo shared spec"
+      "expectText": "Staging demo shared plan"
     },
     {
       "name": "An HTML spec opens on its before and after screens in the spec panel",
       "path": "/?shot=spec-viewer#app/usernode-2d5619/dev/sessions/900831",
       "expectSelector": "#dc-spec-viewer .shots-viewer-spec .shots-stage",
-      "expectText": "Staging demo HTML spec"
+      "expectText": "Staging demo HTML plan"
     },
     {
       "name": "Visible own session offers the \"Share chat\" opt-in in its ⋯ menu",

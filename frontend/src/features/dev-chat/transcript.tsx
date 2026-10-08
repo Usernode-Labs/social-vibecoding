@@ -415,7 +415,7 @@ function SpecCard({ r }: { r: Extract<TranscriptRow, { t: 'spec' }> }): ReactNod
           hit. The host outlives every repaint of its contents. */}
       <div
         className="dc-spec-preview-card" data-spec-version={r.version}
-        role="button" tabIndex={0} aria-label="Open spec viewer"
+        role="button" tabIndex={0} aria-label="Open plan viewer"
       >
         <div className="dc-spec-preview-header">
           <span className="dc-spec-preview-title">{r.header}</span>

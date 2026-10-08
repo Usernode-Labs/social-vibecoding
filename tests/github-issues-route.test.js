@@ -892,7 +892,7 @@ test('#3693: the staging spec comment is as long as a real one, so the route cli
     const port = server.address().port;
     const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/900003/comments?demo=1`);
     const body = await res.json();
-    const spec = body.comments.find((c) => /<details><summary>The spec<\/summary>/.test(c.body));
+    const spec = body.comments.find((c) => /<details><summary>The plan<\/summary>/.test(c.body));
     assert.ok(spec, 'the thread carries the bot\'s spec comment');
     assert.match(spec.body, /… \[truncated\]$/, 'clipped, as a real spec is');
     assert.doesNotMatch(spec.body, /<\/details>/, 'with its close cut off');
