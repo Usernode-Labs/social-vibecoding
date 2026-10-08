@@ -139,6 +139,12 @@ function makePool(state) {
       };
     }
 
+    // A release that matched nothing asks whether the id is a phone row
+    // (#4223), held until SMS; the fake store has none.
+    if (sql.includes('SELECT 1 FROM waitlist_signups WHERE id = $1 AND email IS NULL')) {
+      return { rows: [] };
+    }
+
     if (sql.includes('SELECT id FROM users WHERE email = $1')) {
       const [email] = params;
       const u = [...state.users.values()].find((r) => r.email === email);

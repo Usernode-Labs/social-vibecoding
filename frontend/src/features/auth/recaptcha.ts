@@ -81,8 +81,14 @@ let widget: { id: number; resolve: ((token: string | null) => void) | null } | n
 /** A fresh reCAPTCHA token for one phone code request, or null. */
 export async function phoneRecaptchaToken(): Promise<string | null> {
   try {
-    const [siteKey, g] = await Promise.all([readSiteKey(), loadScript()]);
-    if (!siteKey || !g) return null;
+    // Both start at once; with no site key (a server with test numbers
+    // only, services/firebase-phone-auth.js) the request goes now, without
+    // waiting on Google's script.
+    const script = loadScript();
+    const siteKey = await readSiteKey();
+    if (!siteKey) return null;
+    const g = await script;
+    if (!g) return null;
     if (!widget) {
       const box = document.createElement('div');
       box.setAttribute('aria-hidden', 'true');

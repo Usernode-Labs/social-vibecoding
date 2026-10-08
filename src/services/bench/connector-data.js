@@ -69,6 +69,14 @@ async function botOverview(pool, config, query = {}, deps = {}) {
     ratingNote: r.rating_note ? clipText(r.rating_note, 300) : null,
     labelVerdict: r.label_verdict || null,
     replayStages: Array.isArray(r.replayStages) ? r.replayStages : [],
+    // A first version's configuration (services/bot-configs.js), and its
+    // review: rounds used and why it stopped (services/bot-review.js).
+    botConfig: r.bot_config_version_id ? {
+      versionId: Number(r.bot_config_version_id), key: r.bot_config_key || null,
+      label: r.bot_config_label ? clipText(r.bot_config_label, 80) : null, version: num(r.bot_config_version),
+    } : null,
+    reviewRounds: num(r.review_rounds),
+    reviewStop: r.review_stop || null,
     issueUrl: r.issueUrl || null,
     createdAt: iso(r.created_at),
   }));

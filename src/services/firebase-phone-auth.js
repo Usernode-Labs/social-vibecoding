@@ -28,7 +28,7 @@
  *      (https://identitytoolkit.googleapis.com/v1):
  *        accounts:sendVerificationCode  { phoneNumber, recaptchaToken? }
  *              → { sessionInfo }
- *        accounts:verifyPhoneNumber     { sessionInfo, code }
+ *        accounts:signInWithPhoneNumber { sessionInfo, code }
  *              → { idToken }
  *      This leg needs the WEB API KEY, never a service account, and
  *      a web caller's request carries an app-verification token, the
@@ -63,6 +63,30 @@
  * A brand-new account continues to the username step, the same
  * oauth_signup_sessions continuation Apple and Google ride, completed by
  * sign-in-providers.js's provider-agnostic completeUsername.
+ *
+ * TEST NUMBERS, for walking a newcomer's first run. The fictional numbers
+ * the North American plan sets aside, +1 <any area code> 555 0100 to 0199,
+ * are never texted, in any environment; they sign in with one of two codes:
+ *
+ *   PHONE_TEST_CODE (config.js), one fixed code for every test number, for
+ *     a local stack. Never in production: config.js refuses it there and
+ *     testNumbersOn re-checks the environment. With only the code set, phone
+ *     sign-in is offered and any other number is refused; with Firebase set
+ *     up too, other numbers text.
+ *   A one-time code a full admin mints for one number (test-accounts.js
+ *     mintPhoneSignIn; the connector's create_test_phone_sign_in, registered
+ *     for a full admin's connector only; Admin → Test accounts). Works in any
+ *     environment, production included: random, once, within 30 minutes and
+ *     five tries, and only its hash is kept.
+ *
+ * They stand in for Firebase's two legs only: no text is sent, no reCAPTCHA
+ * is checked, and the ID token is minted and checked here. From the claims
+ * on — the spent-once token, the account, the invite, the private
+ * membership — it is the same code a real number runs. An account a test
+ * number MAKES is a test account (test-accounts.js), so it stays out of
+ * outcomes and Journey and retire_test_account removes it, which frees the
+ * number. A one-time code adds its number only to a test account
+ * (linkPhone).
  */
 
 const crypto = require('crypto');
@@ -129,16 +153,112 @@ function notOfferedError() {
   return new PhoneAuthError('not_offered', 'That sign-in is not set up.', 404);
 }
 
-// The offer gate. All four values must be present AND the flag true; the
-// web API key travels in the request URL, so an empty one must never turn
-// the endpoints into guaranteed-502s.
-function offered(config) {
+// Firebase's own gate. All four values must be present AND the flag true;
+// the web API key travels in the request URL, so an empty one must never
+// turn the endpoints into guaranteed-502s.
+function firebaseOffered(config) {
   return !!(config
     && config.firebasePhoneAuthEnabled === true
     && typeof config.firebaseWebApiKey === 'string' && config.firebaseWebApiKey
     && typeof config.firebaseProjectId === 'string' && config.firebaseProjectId
     && typeof config.firebaseServiceAccountJsonB64 === 'string'
     && config.firebaseServiceAccountJsonB64);
+}
+
+// ── Test numbers (header) ───────────────────────────────────────────────
+
+// +1, any area code, 555 0100–0199: reserved for fiction, so no person
+// answers one, and a hundred per area code is a fresh account every round.
+const TEST_NUMBER_RE = /^\+1[2-9][0-9]{2}55501[0-9]{2}$/;
+const TEST_CODE_RE = /^[0-9]{6}$/;
+const TEST_SESSION_PREFIX = 'hr-test-session.';
+const TEST_TOKEN_PREFIX = 'hr-test-token.';
+const TEST_UID_PREFIX = 'test-phone:';
+const TEST_TOKEN_TTL_MS = 5 * 60 * 1000;
+// Signs the test ID tokens. Per process and never stored: a token is minted
+// and spent inside one verify request, so a restart loses nothing, and a
+// client cannot forge one to skip the code on the idToken path.
+const TEST_TOKEN_KEY = crypto.randomBytes(32);
+
+// The same rule config.js applies when it reads PHONE_TEST_CODE, read again
+// from the environment itself, so a config object built anywhere else still
+// cannot turn test numbers on in production.
+function productionEnv(env = process.env) {
+  return env.NODE_ENV === 'production' || env.USERNODE_ENV === 'production';
+}
+
+function testNumbersOn(config) {
+  return !!(config
+    && typeof config.phoneTestCode === 'string'
+    && TEST_CODE_RE.test(config.phoneTestCode)
+    && !productionEnv());
+}
+
+function isTestNumber(phoneNumber) {
+  return typeof phoneNumber === 'string' && TEST_NUMBER_RE.test(phoneNumber);
+}
+
+/** Whether this raw number is one of the test numbers, and they are on. */
+function usesTestNumber(config, rawPhone) {
+  return testNumbersOn(config) && isTestNumber(normalizePhone(rawPhone));
+}
+
+// The offer gate: Firebase set up, or test numbers on.
+function offered(config) {
+  return firebaseOffered(config) || testNumbersOn(config);
+}
+
+function testNumbersOnlyError() {
+  return new PhoneAuthError(
+    'test_numbers_only',
+    'This server signs in test numbers only: +1, any area code, then 555 0100 to 0199.'
+  );
+}
+
+function sameCode(a, b) {
+  const x = Buffer.from(String(a));
+  const y = Buffer.from(String(b));
+  return x.length === y.length && crypto.timingSafeEqual(x, y);
+}
+
+function signTest(body) {
+  return crypto.createHmac('sha256', TEST_TOKEN_KEY).update(body).digest('base64url');
+}
+
+// `mint` is the one-time sign-in (test-accounts.js redeemPhoneSignIn) the
+// code spent, { id, createdBy }, or absent for PHONE_TEST_CODE.
+function mintTestToken(phoneNumber, mint = null, now = Date.now()) {
+  const body = Buffer.from(JSON.stringify({
+    p: phoneNumber,
+    n: crypto.randomBytes(12).toString('base64url'),
+    e: now + TEST_TOKEN_TTL_MS,
+    ...(mint ? { m: mint.id, b: mint.createdBy } : {}),
+  })).toString('base64url');
+  return `${TEST_TOKEN_PREFIX}${body}.${signTest(body)}`;
+}
+
+// The claims a test token carries, or null for anything not minted here,
+// out of date, or naming a number that is not a test number.
+function readTestToken(token, now = Date.now()) {
+  const rest = token.slice(TEST_TOKEN_PREFIX.length);
+  const dot = rest.indexOf('.');
+  if (dot <= 0) return null;
+  const body = rest.slice(0, dot);
+  if (!sameCode(rest.slice(dot + 1), signTest(body))) return null;
+  let data;
+  try {
+    data = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+  } catch {
+    return null;
+  }
+  if (!data || !isTestNumber(data.p) || !(Number(data.e) > now)) return null;
+  const mintId = Number.isSafeInteger(data.m) && data.m > 0 ? data.m : null;
+  return {
+    phoneNumber: data.p,
+    expiresAt: new Date(Number(data.e)),
+    mintId,
+    createdBy: mintId && Number.isSafeInteger(data.b) && data.b > 0 ? data.b : null,
+  };
 }
 
 function assertOffered(config) {
@@ -176,12 +296,15 @@ const RECAPTCHA_REFUSALS = new Set([
  * log and answer 502: the caller cannot fix them by retrying differently,
  * and the message must not leak which config knob is missing.
  */
-function identityToolkitError(data, status) {
+function identityToolkitError(data, status, path = null) {
   const raw = typeof data?.error?.message === 'string' ? data.error.message : '';
   // Firebase writes `CODE : detail` (its web SDK splits on ' : '), so the
   // code is trimmed: untrimmed, every detailed refusal read as unmapped.
   const code = raw.split(':')[0].trim();
-  log.warn('phone-auth', 'Identity Toolkit refused', { status, code });
+  // The path is logged because an answer with no code at all (Google's HTML
+  // 404 for a method that does not exist) is otherwise indistinguishable
+  // from any other unmapped refusal.
+  log.warn('phone-auth', 'Identity Toolkit refused', { path, status, code });
   if (code === 'INVALID_CODE' || code === 'SESSION_EXPIRED'
       || code === 'CODE_EXPIRED' || code === 'INVALID_SESSION_INFO') {
     return new PhoneAuthError('invalid_or_expired_code', 'Invalid or expired code.');
@@ -198,25 +321,33 @@ function identityToolkitError(data, status) {
   return new PhoneAuthError('firebase_unreachable', 'Could not reach the sign-in service. Try again.', 502);
 }
 
+// The bare POST: { ok, status, data }, throwing only when no answer came
+// back at all. identityToolkit below maps a refusal to this API's codes;
+// the admin test send (sendTestCode) reads Firebase's own code instead.
+async function identityToolkitRaw(config, path, body, deps = {}) {
+  const res = await (deps.fetch || fetch)(
+    `${IDENTITY_ENDPOINT}/${path}?key=${encodeURIComponent(config.firebaseWebApiKey)}`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
+    }
+  );
+  const data = await res.json().catch(() => ({}));
+  return { ok: res.ok, status: res.status, data };
+}
+
 async function identityToolkit(config, path, body, deps = {}) {
-  let res;
+  let answer;
   try {
-    res = await (deps.fetch || fetch)(
-      `${IDENTITY_ENDPOINT}/${path}?key=${encodeURIComponent(config.firebaseWebApiKey)}`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', accept: 'application/json' },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
-      }
-    );
+    answer = await identityToolkitRaw(config, path, body, deps);
   } catch (err) {
     log.warn('phone-auth', 'Identity Toolkit unreachable', { path, err: err.message });
     throw new PhoneAuthError('firebase_unreachable', 'Could not reach the sign-in service. Try again.', 502);
   }
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw identityToolkitError(data, res.status);
-  return data;
+  if (!answer.ok) throw identityToolkitError(answer.data, answer.status, path);
+  return answer.data;
 }
 
 /**
@@ -230,6 +361,23 @@ async function requestCode(config, rawPhone, recaptchaToken, deps = {}) {
   if (!phoneNumber) {
     throw new PhoneAuthError('invalid_phone', 'Enter a valid phone number.');
   }
+  if (isTestNumber(phoneNumber)) {
+    // No text, in any environment (no person holds the number): the code is
+    // PHONE_TEST_CODE where that is on, or a one-time code a full admin
+    // minted (test-accounts.js mintPhoneSignIn). The sessionInfo names the
+    // number so the verify leg can check the code and mint its token; it
+    // grants nothing without the code, and the number in it must still be a
+    // test number there.
+    log.info('phone-auth', 'Test number: no text sent', {
+      phone: `…${phoneNumber.slice(-4)}`,
+    });
+    const tag = Buffer.from(phoneNumber).toString('base64url');
+    return {
+      phoneNumber,
+      sessionInfo: `${TEST_SESSION_PREFIX}${tag}.${crypto.randomBytes(12).toString('base64url')}`,
+    };
+  }
+  if (!firebaseOffered(config)) throw testNumbersOnlyError();
   const body = { phoneNumber };
   if (typeof recaptchaToken === 'string' && recaptchaToken
       && recaptchaToken.length <= RECAPTCHA_TOKEN_MAX) {
@@ -244,6 +392,62 @@ async function requestCode(config, rawPhone, recaptchaToken, deps = {}) {
   return { phoneNumber, sessionInfo: data.sessionInfo };
 }
 
+// Firebase's code for a refusal, the part before ' : '. Only ever the
+// upper-case code itself: the free-text detail after it is dropped, and
+// anything that does not look like a code is not echoed back.
+function providerCodeOf(data) {
+  const raw = typeof data?.error?.message === 'string' ? data.error.message : '';
+  const code = raw.split(':')[0].trim();
+  return /^[A-Z][A-Z0-9_]{0,63}$/.test(code) ? code : null;
+}
+
+/**
+ * Admin → SMS delivery's test send (routes/admin.js POST /api/admin/sms/test):
+ * the same Identity Toolkit call requestCode makes, so the same text goes
+ * out by the same path, but answered as a diagnostic rather than a user
+ * error. Never throws for anything Firebase did:
+ *
+ *   { status: 'sent' | 'refused' | 'unreachable' | 'not_offered',
+ *     phoneNumber, providerCode, httpStatus, durationMs }
+ *
+ * `providerCode` is Firebase's own code (INVALID_PHONE_NUMBER, QUOTA_EXCEEDED
+ * …), which identityToolkitError deliberately hides from users and an
+ * operator needs. The sessionInfo is dropped: nobody enters the code. A
+ * malformed number is the one PhoneAuthError (invalid_phone), thrown
+ * before anything is sent, so the route can answer 400.
+ */
+async function sendTestCode(config, rawPhone, recaptchaToken, deps = {}) {
+  const phoneNumber = normalizePhone(rawPhone);
+  if (!phoneNumber) {
+    throw new PhoneAuthError('invalid_phone', 'Enter a valid phone number, starting with + and the country code.', 400);
+  }
+  const base = { phoneNumber, providerCode: null, httpStatus: null, durationMs: 0 };
+  // The test is a real text, so it needs Firebase; test numbers send none.
+  if (!firebaseOffered(config)) return { ...base, status: 'not_offered' };
+  const body = { phoneNumber };
+  if (typeof recaptchaToken === 'string' && recaptchaToken
+      && recaptchaToken.length <= RECAPTCHA_TOKEN_MAX) {
+    body.recaptchaToken = recaptchaToken;
+  }
+  const now = deps.now || Date.now;
+  const started = now();
+  let answer;
+  try {
+    answer = await identityToolkitRaw(config, 'accounts:sendVerificationCode', body, deps);
+  } catch (err) {
+    log.warn('phone-auth', 'Identity Toolkit unreachable', { path: 'test send', err: err.message });
+    return { ...base, status: 'unreachable', durationMs: now() - started };
+  }
+  const durationMs = now() - started;
+  if (!answer.ok) {
+    return { ...base, status: 'refused', providerCode: providerCodeOf(answer.data), httpStatus: answer.status, durationMs };
+  }
+  if (typeof answer.data.sessionInfo !== 'string' || !answer.data.sessionInfo) {
+    return { ...base, status: 'refused', providerCode: 'NO_SESSION_INFO', httpStatus: answer.status, durationMs };
+  }
+  return { ...base, status: 'sent', httpStatus: answer.status, durationMs };
+}
+
 // The site key for the reCAPTCHA a web caller answers before a code is
 // sent: the Firebase project's own (GET recaptchaParams, what Firebase's web
 // SDK asks for), never configured here. Kept for an hour, per API key; a
@@ -253,6 +457,9 @@ const siteKeyCache = new Map();
 
 async function recaptchaSiteKey(config, deps = {}) {
   assertOffered(config);
+  // Test numbers only: nothing is texted, so there is no check to answer.
+  // The sheet reads the empty key as "send the request without a token".
+  if (!firebaseOffered(config)) return '';
   const now = (deps.now || Date.now)();
   const cached = siteKeyCache.get(config.firebaseWebApiKey);
   if (cached && cached.until > now) return cached.siteKey;
@@ -289,7 +496,26 @@ async function exchangeCode(config, rawSessionInfo, rawCode, deps = {}) {
       || !code || code.length > CODE_MAX) {
     throw new PhoneAuthError('invalid_or_expired_code', 'Invalid or expired code.');
   }
-  const data = await identityToolkit(config, 'accounts:verifyPhoneNumber', { sessionInfo, code }, deps);
+  if (sessionInfo.startsWith(TEST_SESSION_PREFIX)) {
+    const tag = sessionInfo.slice(TEST_SESSION_PREFIX.length).split('.')[0];
+    const phoneNumber = Buffer.from(tag, 'base64url').toString('utf8');
+    if (!isTestNumber(phoneNumber)) {
+      throw new PhoneAuthError('invalid_or_expired_code', 'Invalid or expired code.');
+    }
+    if (testNumbersOn(config) && sameCode(code, config.phoneTestCode)) {
+      return { idToken: mintTestToken(phoneNumber) };
+    }
+    // A one-time code a full admin minted for this number, spent here.
+    const mint = deps.pool
+      ? await require('./test-accounts').redeemPhoneSignIn(deps.pool, phoneNumber, code)
+      : null;
+    if (!mint) throw new PhoneAuthError('invalid_or_expired_code', 'Invalid or expired code.');
+    return { idToken: mintTestToken(phoneNumber, mint) };
+  }
+  if (!firebaseOffered(config)) {
+    throw new PhoneAuthError('invalid_or_expired_code', 'Invalid or expired code.');
+  }
+  const data = await identityToolkit(config, 'accounts:signInWithPhoneNumber', { sessionInfo, code }, deps);
   if (typeof data.idToken !== 'string' || !data.idToken
       || data.idToken.length > ID_TOKEN_MAX) {
     log.warn('phone-auth', 'Identity Toolkit sent no idToken');
@@ -353,21 +579,37 @@ async function verifyIdToken(pool, config, rawToken, deps = {}) {
   if (typeof rawToken !== 'string' || !rawToken || rawToken.length > ID_TOKEN_MAX) {
     throw badToken();
   }
-  let payload;
-  try {
-    const verifier = deps.auth || adminAuth(config, deps);
-    payload = await verifier.verifyIdToken(rawToken);
-  } catch (err) {
-    log.warn('phone-auth', 'ID token verification failed', { err: err.message });
-    throw badToken();
+  let uid;
+  let phoneNumber;
+  let expiresAt;
+  let test = null;
+  if (rawToken.startsWith(TEST_TOKEN_PREFIX)) {
+    // Minted by exchangeCode above for a test number and its code: a
+    // one-time admin code in any environment, PHONE_TEST_CODE only where it
+    // is on. The uid's prefix keeps it apart from every Firebase uid.
+    const claims = readTestToken(rawToken);
+    if (!claims || (!claims.mintId && !testNumbersOn(config))) throw badToken();
+    ({ phoneNumber, expiresAt } = claims);
+    uid = `${TEST_UID_PREFIX}${phoneNumber}`;
+    test = { mintId: claims.mintId, createdBy: claims.createdBy };
+  } else {
+    if (!firebaseOffered(config)) throw badToken();
+    let payload;
+    try {
+      const verifier = deps.auth || adminAuth(config, deps);
+      payload = await verifier.verifyIdToken(rawToken);
+    } catch (err) {
+      log.warn('phone-auth', 'ID token verification failed', { err: err.message });
+      throw badToken();
+    }
+    if (payload?.firebase?.sign_in_provider !== 'phone') throw badToken();
+    phoneNumber = normalizePhone(payload.phone_number);
+    if (!phoneNumber) throw badToken();
+    uid = typeof payload.uid === 'string' && payload.uid ? payload.uid
+      : (typeof payload.sub === 'string' ? payload.sub : '');
+    if (!uid || uid.length > UID_MAX) throw badToken();
+    expiresAt = new Date((Number(payload.exp) || Math.floor(Date.now() / 1000) + 3600) * 1000);
   }
-  if (payload?.firebase?.sign_in_provider !== 'phone') throw badToken();
-  const phoneNumber = normalizePhone(payload.phone_number);
-  if (!phoneNumber) throw badToken();
-  const uid = typeof payload.uid === 'string' && payload.uid ? payload.uid
-    : (typeof payload.sub === 'string' ? payload.sub : '');
-  if (!uid || uid.length > UID_MAX) throw badToken();
-  const expiresAt = new Date((Number(payload.exp) || Math.floor(Date.now() / 1000) + 3600) * 1000);
 
   // Spent once, exactly like native_sign_in_tokens: the insert is the
   // claim, the conflict is the replay. The winner's expiry bounds the
@@ -390,7 +632,10 @@ async function verifyIdToken(pool, config, rawToken, deps = {}) {
     log.warn('phone-auth', 'ID token used twice');
     throw badToken();
   }
-  return { uid, phoneNumber };
+  if (!test) return { uid, phoneNumber };
+  return test.mintId
+    ? { uid, phoneNumber, test: true, testMintId: test.mintId, testCreatedBy: test.createdBy }
+    : { uid, phoneNumber, test: true };
 }
 
 /**
@@ -404,6 +649,39 @@ async function cleanupExpired(pool) {
     await pool.query("DELETE FROM oauth_signup_sessions WHERE expires_at < NOW() - INTERVAL '1 hour'");
   } catch (err) {
     log.warn('phone-auth', 'Expired phone sign-in state cleanup failed', { err: err.message });
+  }
+}
+
+/**
+ * An account a test number just made is a test account, fenced the way
+ * test-accounts.js fences the ones an admin makes: marked for good (votes on
+ * a real person's app shown but not counted, no welcome DM, retire_test_account
+ * removes it), off the leaderboards, and left out of Journey. Made with a
+ * one-time code, it is the minting admin's (test_account_created_by), the
+ * code records the account it made, and support_actions gets the row
+ * create_test_account writes. With PHONE_TEST_CODE nobody made it on anyone's
+ * behalf, so test_account_created_by stays NULL.
+ */
+async function markTestAccount(client, userId, claims) {
+  const createdBy = claims.testCreatedBy || null;
+  await client.query(
+    `UPDATE users
+        SET test_account_created_at = NOW(), test_account_created_by = $2,
+            exclude_podium = TRUE, updated_at = NOW()
+      WHERE id = $1`,
+    [userId, createdBy]
+  );
+  const journeyLeftOut = require('./journey-left-out');
+  await journeyLeftOut.addTestInTransaction(client, {
+    userId, note: `Phone test number …${claims.phoneNumber.slice(-4)}`,
+  }, { actorId: createdBy });
+  if (claims.testMintId) {
+    await client.query('UPDATE test_phone_sign_ins SET used_by = $2 WHERE id = $1', [claims.testMintId, userId]);
+    await client.query(
+      `INSERT INTO support_actions (actor_user_id, target_user_id, action, payload)
+       VALUES ($1, $2, 'test_account_create', $3::jsonb)`,
+      [createdBy, userId, JSON.stringify({ via: 'phone_sign_in', phoneLast4: claims.phoneNumber.slice(-4) })]
+    );
   }
 }
 
@@ -464,6 +742,7 @@ async function signIn(pool, claims, { createSession } = {}) {
           }
           throw error;
         }
+        if (claims.test === true) await markTestAccount(client, user.id, claims);
       }
 
       if (user.needs_username_choice === true) {
@@ -505,6 +784,8 @@ async function signIn(pool, claims, { createSession } = {}) {
     }
     throw error;
   }
+  // The Journey list is cached per pool; its new entry committed above.
+  if (result.created && claims.test === true) require('./journey-left-out').forget(pool);
   return result;
 }
 
@@ -582,6 +863,18 @@ async function linkPhone(pool, claims, userId) {
   }
   const inUse = () => new PhoneAuthError('phone_in_use', 'That phone number already has an account.');
   return withTransaction(pool, async (client) => {
+    // A one-time admin code verifies a fictional number, so it may only be
+    // added to a test account: never to a real one, where it would stand in
+    // for a phone that person does not have.
+    if (claims.testMintId) {
+      const { rows: [target] } = await client.query(
+        'SELECT test_account_created_at IS NOT NULL AS test_account FROM users WHERE id = $1',
+        [userId]
+      );
+      if (!target || !target.test_account) {
+        throw new PhoneAuthError('test_number_not_allowed', 'A test number can only be added to a test account.');
+      }
+    }
     const { rows: mine } = await client.query(
       'SELECT firebase_uid FROM user_phone_identities WHERE user_id = $1 FOR UPDATE',
       [userId]
@@ -614,8 +907,13 @@ module.exports = {
   SIGNUP_TTL_MS,
   PhoneAuthError,
   offered,
+  firebaseOffered,
+  testNumbersOn,
+  isTestNumber,
+  usesTestNumber,
   normalizePhone,
   requestCode,
+  sendTestCode,
   recaptchaSiteKey,
   exchangeCode,
   verifyIdToken,

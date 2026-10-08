@@ -425,9 +425,15 @@ test('a bot build on GLM 5.3 Flash runs in Claude Code, and OpenRouter receives 
     ['--mcp-config', fx.browserConfig, '--strict-mcp-config'], 'the build has the in-loop browser');
   const sent = screenshotResultSent(upstream);
   assert.ok(sent, 'the screenshot\'s tool result reached OpenRouter');
-  assert.deepEqual(sent[1], {
-    type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgoSCREENSHOT' },
-  });
+  // GLM is not Anthropic's model: its hosts read a tool result as text, so
+  // the image follows the tool results, a pointer left in its place.
+  assert.deepEqual(sent[1], { type: 'text', text: '[image 1 of this result follows after the tool results]' });
+  const message = upstream.seen.find((r) => r.url.endsWith('/messages')).body.messages.at(-1).content;
+  assert.deepEqual(message.slice(1), [
+    { type: 'text', text: '[image 1 of the mcp__playwright__browser_take_screenshot result (toolu_shot):]' },
+    { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgoSCREENSHOT' } },
+  ]);
+  assert.match(ran.out, /"images":\{"sent":1,"moved":1,"omitted":0\}/, 'and the turn\'s journal counts it');
   assert.equal(upstream.seen[0].body.model, GLM);
   assert.ok(!ran.out.includes(KEY), 'the journal never carries the key');
 });

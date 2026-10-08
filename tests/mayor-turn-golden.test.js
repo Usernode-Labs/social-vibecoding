@@ -1,3 +1,4 @@
+// test:changed: when src/prompts/ (the prompts pinned below are built from these files; scripts/test-changed.js)
 // Golden parity suite for the Mayor turn (#2779).
 //
 // POST /api/sessions/:id/chat runs the whole Mayor turn: the phase-1 model
@@ -21,6 +22,11 @@
 // refactor pass:
 //
 //   UPDATE_GOLDEN=1 node --test tests/mayor-turn-golden.test.js
+//
+// An edit to a prompt under src/prompts/ is such a change: the platform
+// conventions are in every Mayor system prompt and the design guidance in
+// the coding agent's, so their shas move. Refresh the golden in the same
+// commit; the line at the top runs this suite on any such edit.
 //
 // Harness: property overrides installed BEFORE the route is required (the
 // tests/chat-repo-less-turn.test.js pattern), a stateful in-memory pool, a
@@ -343,6 +349,12 @@ prMetadata.applyPrMetadata = async (args) => {
 // ── The route ────────────────────────────────────────────────────────────
 
 const stopRegistry = require('../src/services/stop-registry');
+// #3976: classic sessions are read-only, so POST /api/sessions/:id/chat now
+// refuses every row this suite drives (src/services/classic-sessions.js). The
+// classic turn it pins stays in place until the classic dev chat is deleted,
+// so the suite lifts that one gate, the way it stubs billing;
+// tests/classic-session-read-only.test.js pins the refusal itself.
+require('../src/services/classic-sessions').isClassicSession = () => false;
 const { sessionRoutes } = require('../src/routes/sessions');
 const express = require('express');
 

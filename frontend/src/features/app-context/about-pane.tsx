@@ -6,17 +6,18 @@
  * ── What it says, in the design's order ────────────────────────────────
  *
  *   1. WHO IT IS. A large tile, the name, the tagline, the builders' avatars
- *      and a "<version> · <updated>" pill.
+ *      and how many members its community has ("12 members", #4218).
  *   2. WHAT YOU CAN DO WITH IT (an app): Open — Resume for the app you
  *      parked, and nothing at all for the app already running — and Add to
  *      your apps. HOW BIG IT IS (the platform): apps, members, merged.
- *   3. HOW IT IS BUILT. One sentence, true for THIS app's approval rules
- *      (./about-model.ts says why it is assembled rather than fixed).
+ *   3. HOW IT IS BUILT. One short line, its community builds it together,
+ *      and "How changes work", which opens the Workshop (#4218).
  *   4. WHO BUILDS IT. Contributors, each with what they have merged, each
  *      opening that person's page.
  *   5. MORE. Share, Add to home screen, Code (public on GitHub), Remix
- *      (a fork, to the code; "Remix" to people). A remix also says what
- *      it was remixed from, under its description.
+ *      (a fork, to the code; "Remix" to people), and the version as a plain
+ *      row, "App version: a1b2c3d" (#4218). A remix also says what it was
+ *      remixed from, under its description.
  *
  * ── It is still a PANE, not a sheet ────────────────────────────────────
  *
@@ -47,7 +48,11 @@
  *     errored or waiting on secrets has no page to send anyone to, and a row
  *     that opened a dialog with an empty link would be worse than no row.
  *     Homeroom always has an address — this one — so its Share is always
- *     there, and hands over the platform's own link.
+ *     there, and hands over the platform's own link. Either is hidden while
+ *     the menu still offers a newcomer "Go to Homeroom" (#4216,
+ *     ./about-data.ts offeringGoToHomeroom): Share brings more people into
+ *     the group, which a private member who has not gone to Homeroom yet is
+ *     not handing out.
  *   - Add to home screen is a ROW now, as the design draws it, but it is the
  *     row the product already had: for an app, the per-app install page its
  *     card menu and its Discover page offer (#1508, #2320) — found in
@@ -76,6 +81,7 @@ import {
 
 import { agoStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
+import { navStore } from '../nav/nav-store.js';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { improveStore } from '../improve/improve-store.js';
 import { A2HS_STEPS, detectMobileOs } from '../mobile-install/detect';
@@ -85,16 +91,18 @@ import { AppContext } from './app-context-controller.js';
 import {
   appNote,
   contributorView,
+  membersPillText,
   openLabel,
   platformNote,
   shortVersionOf,
   statCards,
   taglineOf,
-  versionPillText,
+  versionRowText,
   type AppRow,
 } from './about-model';
 import {
   listRowFor,
+  offeringGoToHomeroom,
   useAboutApp,
   useContributors,
   usePlatformAbout,
@@ -192,6 +200,26 @@ function afterDismiss(then: () => void): void {
   void AppContext.dismissForNav().then(then);
 }
 
+/**
+ * "How changes work": the project's Workshop tab, where its voting help
+ * spells out this app's rules. The sheet's own row pattern
+ * (./app-context-sheet.tsx followThenDismiss): pick the tab, write the
+ * address, then close the menu, so the menu's Back record is never spent on
+ * the new page. A modified click is left to the browser.
+ */
+function openWorkshop(e: React.MouseEvent, slug: string): void {
+  if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
+    void AppContext.dismissForNav();
+    return;
+  }
+  e.preventDefault();
+  (window as unknown as { AppView?: { _landOnTab?: (s: string, t: string) => void } })
+    .AppView?._landOnTab?.(slug, 'workshop');
+  const href = `#app/${encodeURIComponent(slug)}/workshop`;
+  if (window.location.hash !== href) window.location.hash = href;
+  void AppContext.dismissForNav();
+}
+
 /** A person's initial in the roster's circle — Discover's contributor disc. */
 function Avatar({ who, size }: { who: string; size: 'sm' | 'xs' }): ReactNode {
   const box = size === 'xs'
@@ -286,6 +314,7 @@ export function AboutPane({ label }: { label: string }): ReactNode {
     slug, target, restricted, repoUrl, canShare, version, iconUrl, iconEmoji, tab, deploying,
   } = useStoreState(improveStore);
   const { app: parked } = useStoreState(parkedStore);
+  const { privateMember } = useStoreState(navStore);
   const platform = target === 'platform';
   const isApp = target === 'app';
 
@@ -324,9 +353,10 @@ export function AboutPane({ label }: { label: string }): ReactNode {
     ? (about?.updatedAt || row?.last_deploy_at || null)
     : (row?.last_deploy_at || row?.created_at || null);
   const updated = updatedAt ? agoStamp(updatedAt) : null;
-  const pill = deploying && !platform
-    ? 'Deploying…'
-    : versionPillText(shortSha || null, updated?.text || null);
+  const versionText = versionRowText(shortSha || null, !!deploying && !platform, platform);
+  // The platform shows its members as a figure card below, so the pill is
+  // an app's.
+  const pill = isApp ? membersPillText(row?.member_count) : null;
   const ready = contributors.state === 'ready' ? contributors.items : [];
   const stack = ready.slice(0, 4).map(contributorView);
   const record = {
@@ -348,6 +378,8 @@ export function AboutPane({ label }: { label: string }): ReactNode {
   // ── More ──────────────────────────────────────────────────────────
   const repo = platform ? (about?.repoUrl || repoUrl) : (repoUrl || row?.repo_url || null);
   const showShare = platform || canShare;
+  // #4216: not while the menu still offers this newcomer "Go to Homeroom".
+  const shareRow = showShare && !offeringGoToHomeroom(!!privateMember);
   const platformA2hs = platform && !!os
     && typeof window !== 'undefined' && !isStandalone() && !isNativeApp();
   const showHomeScreen = platform ? platformA2hs : !!homeScreenItem;
@@ -357,19 +389,19 @@ export function AboutPane({ label }: { label: string }): ReactNode {
   // The platform's rules are its row's, which a cold tab may still be loading
   // (./about-data.ts asks Home for the list): no sentence until they are here,
   // rather than the default rules for a moment and then the platform's own.
-  const note = platform
-    ? (restricted || row ? platformNote(row, !!restricted) : null)
-    : appNote(row);
+  const note = platform ? platformNote(label, !!restricted) : appNote(label);
+  // Where "How changes work" goes: the app's Workshop, or the platform's for
+  // a viewer it is served to.
+  const workshopSlug = slug && !restricted ? slug : null;
   const people = ready.map(contributorView);
 
   return (
     <div id="app-about-pane" className="pb-1">
       {/*
           WHO IT IS. The name is always here, so the pane never opens empty
-          whatever else is missing: an app with no manifest description shows
-          its ADDRESS in the tagline's place — what a URL says, what a support
-          conversation quotes, and the only name two apps called the same thing
-          do not share.
+          whatever else is missing. An app with no manifest description has
+          no line under it: its address stood there once, and read as noise
+          to a newcomer (#4218).
       */}
       <div id="app-about-identity" className="flex items-start gap-3.5 px-5 pt-2 pb-3">
         {platform ? (
@@ -407,11 +439,7 @@ export function AboutPane({ label }: { label: string }): ReactNode {
             <p id="app-about-tagline" className="mt-0.5 line-clamp-3 text-[0.8125rem] leading-snug text-zinc-500 dark:text-zinc-400">
               {tagline}
             </p>
-          ) : (!platform && slug ? (
-            <p className="mt-0.5 text-[0.8125rem] text-zinc-500 dark:text-zinc-400 truncate">
-              {`/app/${slug}`}
-            </p>
-          ) : null)}
+          ) : null}
           {/* A remix says what it was remixed from, under its description:
               the line Discover's page draws under its version, in the same
               amber, opening the original the way a contributor row opens a
@@ -441,9 +469,7 @@ export function AboutPane({ label }: { label: string }): ReactNode {
               ) : null}
               {pill ? (
                 <span
-                  id="app-about-version"
-                  title={[shortSha ? `Version ${shortSha}` : null, updated?.title ? `live since ${updated.title}` : null]
-                    .filter(Boolean).join(', ') || undefined}
+                  id="app-about-members"
                   className="inline-flex items-center rounded-full bg-zinc-100 dark:bg-zinc-800 px-2 py-0.5 text-xs font-medium text-zinc-500 dark:text-zinc-400 whitespace-nowrap"
                 >
                   {pill}
@@ -491,7 +517,7 @@ export function AboutPane({ label }: { label: string }): ReactNode {
             data-added={String(yours)}
             disabled={yours}
             // The design's proportions: "✓ Added" is a compact state; "Add to
-            // Shortcuts" is sized to its words beside Open — a phone's sheet
+            // My apps" is sized to its words beside Open — a phone's sheet
             // has not room for both at half width without truncating it —
             // and takes the whole row when Open is gone.
             className={`inline-flex ${!yours && running ? 'flex-1 basis-0' : 'shrink-0'} min-w-0 items-center justify-center gap-1.5 h-10 px-4 rounded-full text-sm font-semibold whitespace-nowrap `
@@ -516,7 +542,7 @@ export function AboutPane({ label }: { label: string }): ReactNode {
                 <CheckIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
                 <span className="truncate">Added</span>
               </>
-            ) : <span className="truncate">Add to Shortcuts</span>}
+            ) : <span className="truncate">Add to My apps</span>}
           </button>
         </div>
       ) : null}
@@ -547,7 +573,19 @@ export function AboutPane({ label }: { label: string }): ReactNode {
 
       {(isApp || platform) && note ? (
         <p id="app-about-note" className="px-5 pt-1 pb-1 text-[0.8125rem] leading-relaxed text-zinc-600 dark:text-zinc-300">
-          {note}
+          {/* The space rides inside the note's own string: a bare {' '}
+              child is a hydration hazard (tests/shell-build.test.js). */}
+          {workshopSlug ? `${note} ` : note}
+          {workshopSlug ? (
+            <a
+              id="app-about-how"
+              href={`#app/${encodeURIComponent(workshopSlug)}/workshop`}
+              className="font-semibold text-violet-700 dark:text-violet-300 hover:underline underline-offset-2"
+              onClick={(e) => openWorkshop(e, workshopSlug)}
+            >
+              How changes work
+            </a>
+          ) : null}
         </p>
       ) : null}
 
@@ -572,10 +610,10 @@ export function AboutPane({ label }: { label: string }): ReactNode {
         </section>
       ) : null}
 
-      {showShare || showHomeScreen || repo || showFork ? (
+      {shareRow || showHomeScreen || repo || showFork || versionText ? (
         <section id="app-about-more" aria-label="More">
           <h4 className={SECTION}>More</h4>
-          {showShare ? (
+          {shareRow ? (
             <ActionRow
               id="improve-row-share"
               icon={<ShareIcon />}
@@ -637,6 +675,18 @@ export function AboutPane({ label }: { label: string }): ReactNode {
               sub="Make your own copy"
               onClick={() => afterDismiss(() => forkItem.run())}
             />
+          ) : null}
+          {/* THE VERSION, last and plain (#4218): a fact for whoever needs
+              it, not an action, so a line with no glyph and no hover. It
+              kept the id the pill had. */}
+          {versionText ? (
+            <p
+              id="app-about-version"
+              title={updated?.title ? `Live since ${updated.title}` : undefined}
+              className="px-5 min-h-[44px] flex items-center text-sm text-zinc-500 dark:text-zinc-400"
+            >
+              {versionText}
+            </p>
           ) : null}
         </section>
       ) : null}

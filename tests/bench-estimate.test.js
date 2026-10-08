@@ -64,6 +64,52 @@ const catalog = require('../src/services/bench/catalog');
 const glm = { id: 'z-ai/glm-5.3-flash', inputPerMillion: 0.1, outputPerMillion: 0.4 };
 const fresh = { id: 'x/fresh', inputPerMillion: 2, outputPerMillion: 10 };
 
+test('the token budget prices its cached share at the model\'s cache rates, and the prompt rate without them', async () => {
+  // The model picker's documented split: 95% of the input cache reads, 5%
+  // cache writes (model-costs.js DOCUMENTED_CACHE_SHARES).
+  const modelCosts = require('../src/services/model-costs');
+  const budget = catalog.TOKEN_BUDGET.first_version;
+  const glm53 = { id: 'z-ai/glm-5.3-flash', inputPerMillion: 0.15, outputPerMillion: 0.5, cacheReadPerMillion: 0.03, cacheWritePerMillion: null };
+  const reads = budget.input * 0.95;
+  const expected = ((budget.input - reads) * 0.15 + reads * 0.03 + budget.output * 0.5) / 1e6;
+  assert.ok(Math.abs(catalog.budgetTrialCost(glm53, 'first_version') - expected) < 1e-12);
+  // About $0.41 a first version, where pricing every token at the prompt
+  // rate read $1.44; App bench run 7's GLM 5.3 Flash builds spent about
+  // $0.38 at these prices (10.69M input, 10.41M of it cached, 60.1K out).
+  assert.equal(Math.round(catalog.budgetTrialCost(glm53, 'first_version') * 100) / 100, 0.41);
+  assert.equal(Math.round(catalog.budgetTrialCost({ ...glm53, cacheReadPerMillion: null }, 'first_version') * 100) / 100, 1.44);
+  // A model that bills writes has its 5% priced as writes.
+  const sonnet = { id: 'anthropic/claude-sonnet-5.5', inputPerMillion: 2, outputPerMillion: 10, cacheReadPerMillion: 0.2, cacheWritePerMillion: 2.5 };
+  assert.ok(Math.abs(catalog.budgetTrialCost(sonnet, 'build')
+    - modelCosts.tokenCostUsd(
+      { inputPricePerMillion: 2, outputPricePerMillion: 10, cacheReadPricePerMillion: 0.2, cacheWritePricePerMillion: 2.5 },
+      { inputTokens: 6_000_000, cachedInputTokens: 5_700_000, cacheWriteInputTokens: 300_000, outputTokens: 120_000 },
+    )) < 1e-12);
+  // The studio's per-trial estimate is this figure.
+  assert.equal(catalog.estimateTrialCost(glm53, 'first_version', []), catalog.budgetTrialCost(glm53, 'first_version'));
+
+  // The prices come from the stored OpenRouter catalog, cache prices included.
+  const pool = {
+    async query() {
+      return { rows: [{ models: [{
+        id: 'z-ai/glm-5.3-flash', context_length: 1048576,
+        pricing: { prompt: '0.00000015', completion: '0.0000005', input_cache_read: '0.00000003' },
+      }, {
+        id: 'anthropic/claude-sonnet-5.5', context_length: 1000000,
+        pricing: { prompt: '0.000002', completion: '0.00001', input_cache_read: '0.0000002', input_cache_write: '0.0000025' },
+      }] }] };
+    },
+  };
+  const listed = await catalog.listModels(pool, []);
+  const near = (a, b) => a != null && Math.abs(a - b) < 1e-9;
+  const g = catalog.modelInfo(listed, 'z-ai/glm-5.3-flash');
+  assert.ok(near(g.cacheReadPerMillion, 0.03), String(g.cacheReadPerMillion));
+  assert.equal(g.cacheWritePerMillion, null, 'a price the catalog does not list is null, never a false zero');
+  const s = catalog.modelInfo(listed, 'anthropic/claude-sonnet-5.5');
+  assert.ok(near(s.cacheReadPerMillion, 0.2) && near(s.cacheWritePerMillion, 2.5));
+  assert.equal(catalog.modelInfo(listed, 'x/unlisted').cacheReadPerMillion, null);
+});
+
 test('the calibration is the median ratio of real trials to the budget, per stage', () => {
   const history = new Map([
     ['z-ai/glm-5.3-flash|triage', [0.02, 0.03, 0.04]],

@@ -138,7 +138,7 @@ function signInProviderRoutes(config) {
         // A private member signs up with a phone (community-invites.js).
         requirePhone: phoneAuth.offered(config),
       })
-      : (communityInvites.clearInviteCookie(res), null);
+      : await communityInvites.dropCarried(pool, req, res, result.userId);
     if (invite && invite.status === 'joined') await challengeScorer.scoreOnJoin(pool, config);
   }
 

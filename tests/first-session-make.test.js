@@ -113,7 +113,9 @@ test('an account that signs in some other way is asked what to make in the join 
   const island = read(`${DIR}/index.tsx`);
   assert.match(island, /const open = \(\) => setMode\(\(prev\) => \(prev\.kind === 'none' \? \{ kind: 'make' \} : prev\)\);\s+if \(now\) flushSync\(open\);\s+else open\(\);/);
   assert.match(island, /make\(\): boolean \{\s+try \{ sessionStorage\.removeItem\(MAKE_FLAG\); \} catch \{[^}]*\}\s+openMake\(setMode, true\);/);
-  assert.match(island, /if \(!flagged\) return;\s+try \{ sessionStorage\.removeItem\(MAKE_FLAG\); \} catch \{[^}]*\}\s+openMake\(setMode, now\);/);
+  // On a phone, the verified-identity rule's phone step comes first: the
+  // flag waits for it, then opens (tests/verified-identity-shell.test.js).
+  assert.match(island, /if \(!flagged\) return;\s+(?:\/\/[^\n]*\n\s+)*const phone = legacy\(\)\.PhoneFirstRun;\s+if \(now && phone\?\.comesFirst\?\.\(legacy\(\)\.App\?\.user\)\) \{\s+void phone\.settled\(\)\.then\(\(\) => check\(false\)\);\s+return;\s+\}\s+try \{ sessionStorage\.removeItem\(MAKE_FLAG\); \} catch \{[^}]*\}\s+openMake\(setMode, now\);/);
   // From the mount's own check it is an ordinary update: React is mid-effect
   // there and cannot draw synchronously.
   assert.match(island, /if \(legacy\(\)\.App\?\.user\) check\(false\);\s+const onAuthed = \(\) => check\(true\);/);
@@ -156,13 +158,43 @@ test('three examples, the same on the story and the make screen, each a whole st
 
 test('"Make it" makes a private community through the dialog\'s own route', () => {
   const make = read(`${DIR}/make.tsx`);
-  assert.match(make, /fetch\('\/api\/apps', \{/);
+  // The dialog's own request (../dialogs/post-create-app.ts), not a copy of it.
+  assert.match(make, /import \{ deviceTimeZone, postCreateApp \} from '\.\.\/dialogs\/post-create-app';/);
+  assert.match(make, /const reply = await postCreateApp\(\{/);
+  assert.doesNotMatch(make, /fetch\('\/api\/apps'/);
   assert.match(make, /audience: 'invited',\s+brief: brief\.trim\(\),/);
-  assert.match(make, /from: 'first-session',/);
+  // `from` is the door: 'first-session', or 'create' from the Create button.
+  assert.match(make, /from: entry,/);
+  assert.match(make, /export type MakeEntry = 'first-session' \| 'create';/);
+  assert.match(make, /entry = 'first-session'/, 'the first session is the default door');
   assert.match(make, /export const BRIEF_MIN = 10;/);
-  assert.match(read('frontend/src/features/dialogs/create-app.tsx'), /BRIEF_MIN = 10/);
+  assert.equal(require('../src/services/homeroom-bot-dm').MIN_BRIEF_CHARS, 10, 'the server\'s floor');
   for (const words of ['What do you want to make?', 'What should it do?', 'What should we call it?', 'It\'s your group\'s name too. You can change it later.', 'Look around first']) {
     assert.ok(make.includes(words), words);
+  }
+});
+
+// #4174: every project's repository is public on GitHub, and its first
+// request is a public issue holding the description word for word. The make
+// screen says so, quietly, under Make it, from either door.
+test('under Make it, one quiet line says what you write and the code are public on GitHub', () => {
+  const make = loadTsx(`${DIR}/make.tsx`);
+  assert.equal(make.MAKE_PUBLIC_LINE, 'What you write here, and the app’s code, are public on GitHub.');
+  for (const props of [
+    { who: 'Jordan', onMade() {}, onLookAround() {} },
+    { who: 'Jordan', entry: 'create', onMade() {}, onClose() {} },
+  ]) {
+    const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', props);
+    const line = /<p data-make-public="" class="([^"]*)">([^<]*)<\/p>/.exec(html);
+    assert.ok(line, `the line is drawn (${props.entry || 'first-session'})`);
+    assert.equal(line[2], make.MAKE_PUBLIC_LINE);
+    // Fine print: small and muted, never a warning colour.
+    assert.match(line[1], /\btext-\[13px\]/);
+    assert.match(line[1], /\btext-zinc-500\b/);
+    assert.doesNotMatch(line[1], /red-|amber-|font-(semi)?bold/);
+    assert.ok(html.indexOf('data-make-public') > html.indexOf('>Make it</button>'), 'under Make it');
+    const next = props.entry === 'create' ? 'data-make-import-link' : 'Look around first';
+    assert.ok(html.indexOf('data-make-public') < html.indexOf(next), `above ${next}`);
   }
 });
 
@@ -186,7 +218,9 @@ test('"Make it" looks pale only while making: a press with an answer missing goe
     assert.doesNotMatch(line, /\u2014/, 'no em dash');
   }
   const src = read(`${DIR}/make.tsx`);
-  assert.match(src, /disabled=\{busy\}/, 'never disabled for a missing answer');
+  // Pale while making, or at the allowance's limit (the server would refuse
+  // it), never for a missing answer.
+  assert.match(src, /disabled=\{busy \|\| quotaBlocks\}/, 'never disabled for a missing answer');
   assert.doesNotMatch(src, /disabled=\{!valid/);
   // (preventScroll since 5 Oct 2026: the keyboard surface reveals the field, with Make it.)
   assert.match(src, /const gap = missingAnswer\(brief, name\);\s+if \(gap\) \{\s+setMissing\(gap\);\s+\(gap === 'brief' \? briefRef\.current : nameRef\.current\)\?\.focus\(\{ preventScroll: true \}\);\s+return;\s+\}/);
@@ -242,7 +276,9 @@ test('with the keyboard up nothing scrolls under the status bar: the bar stays, 
   // The bar holds the whole mark under the status bar's inset (on a notched
   // phone the mark used to hang 12px out of a 52px box), so what scrolls
   // stops below it.
-  assert.match(src, /<div className=\{`flex h-\[max\(52px,calc\(env\(safe-area-inset-top\)\+32px\)\)\] shrink-0 items-center justify-center pt-\[env\(safe-area-inset-top\)\] \$\{motion\}`\}>/);
+  // (`relative`: from Create, its ✕ sits at the bar's leading edge.)
+  // (#4195: from Create under the platform header, the bar is only the ✕.)
+  assert.match(src, /<div className=\{underHeader \? `relative h-12 shrink-0 \$\{motion\}` : `relative flex h-\[max\(52px,calc\(env\(safe-area-inset-top\)\+32px\)\)\] shrink-0 items-center justify-center pt-\[env\(safe-area-inset-top\)\] \$\{motion\}`\}>/);
   // The scroller's class string is constant.
   assert.match(src, /<div ref=\{scrollerRef\} data-first-session-make-scroll="" className="flex min-h-0 grow flex-col overflow-y-auto">/);
   // #3894's arrival is untouched: the bar and the form still rise in.
@@ -282,6 +318,8 @@ test('typing their own words into "What should it do?" lets go of the example; t
     useCallback(fn) { at++; return fn; },
     useEffect() { at++; },
     useLayoutEffect() { at++; },
+    // The allowance row's store (dialogs/app-allowance.tsx, which Make it reads for its limit).
+    useSyncExternalStore(subscribe, get) { at++; return get(); },
   };
   const { MakeScreen } = loadTsx(`${DIR}/make.tsx`, { stubs: { react: React } });
   const draw = () => { at = 0; return MakeScreen({ who: 'Jordan', onMade() {}, onLookAround() {} }); };
@@ -320,7 +358,7 @@ test('the make screen sends the device\'s time zone with Make it, so the sketch\
   const make = loadTsx(`${DIR}/make.tsx`);
   const zone = make.deviceTimeZone();
   assert.ok(zone === null || (typeof zone === 'string' && zone.length > 0));
-  assert.match(read(`${DIR}/make.tsx`), /from: 'first-session',\s+\/\/[^\n]*\n\s+\.\.\.\(timeZone \? \{ timeZone \} : \{\}\),/);
+  assert.match(read(`${DIR}/make.tsx`), /from: entry,\s+\/\/[^\n]*\n\s+\.\.\.\(timeZone \? \{ timeZone \} : \{\}\),/);
 });
 
 test('after Make it: the build\'s step, then one invite, and the second button says where it goes', () => {
@@ -330,7 +368,10 @@ test('after Make it: the build\'s step, then one invite, and the second button s
   assert.equal(made.buildLine(null, 'creating'), 'Setting it up…');
   assert.equal(made.buildLine(null, 'running'), 'Homeroom bot builds it from your description.');
   const src = read(`${DIR}/made.tsx`);
-  assert.match(src, /\{sent \? 'Go to the Homeroom app' : 'Invite people later'\}/);
+  // The first session's second button: on to the tour (continueLabel).
+  assert.equal(made.continueLabel('first-session', false, 'Page Turners'), 'Invite people later');
+  assert.equal(made.continueLabel('first-session', true, 'Page Turners'), 'Go to the Homeroom app');
+  assert.match(src, /\{continueLabel\(entry, sent, made\.name\)\}/);
   // The note is said to be the first message.
   assert.match(src, /body: JSON\.stringify\(\{ days: LINK_DAYS, maxUses: LINK_USES, note: note\.trim\(\) \|\| null \}\)/);
   // Every link's default, the first one's too: a link lets somebody new
@@ -349,10 +390,12 @@ test('after Make it: the build\'s step, then one invite, and the second button s
     made: { slug: 'page-turners', name: 'Page Turners', emoji: '📚', description: null, example: null, conversationId: 3 },
     me: 'alex', onClose() {}, onSent() {},
   }));
-  assert.match(sheet, />Share link</);
+  // Copy link, and Share link where the device has a share sheet (#4180,
+  // tests/first-session-copy-link.test.js).
+  assert.match(sheet, />Copy link</);
   assert.doesNotMatch(sheet, /username|say yes|goes live/i);
   assert.match(read('frontend/src/features/app-context/invite-pane.tsx'), /joiningRule/, 'the project\'s own pane keeps the rule');
-  assert.match(src, /Your note is also your first message in the group chat\./);
+  assert.match(src, /When you share, your note also goes in the group chat as your first message\./);
   assert.match(src, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(made\.slug\)\}\/messages`/);
   const invites = require('../src/services/community-invites');
   assert.equal(invites.LIMITS.maxDays, 30);
@@ -362,13 +405,13 @@ test('after Make it: the build\'s step, then one invite, and the second button s
 test('the maker\'s tour ends in Homeroom bot\'s chat when it builds for them, and on the hub when not', () => {
   const { makerSteps } = loadTsx(`${DIR}/tour-steps.ts`);
   const withBot = makerSteps({ slug: 'film', name: 'Friday Film Crew', conversationId: 12 });
-  assert.deepEqual(withBot.map((s) => s.screen), ['home', 'app', 'home', 'hub', 'hub', 'bot']);
-  assert.equal(withBot[4].target, '#platform-tab-messages');
-  assert.equal(withBot[4].opensNext, true);
-  assert.equal(withBot[5].last, true);
+  assert.deepEqual(withBot.map((s) => s.screen), ['home', 'app', 'app', 'home', 'hub', 'hub', 'bot']);
+  assert.equal(withBot[5].target, '#platform-tab-messages');
+  assert.equal(withBot[5].opensNext, true);
+  assert.equal(withBot[6].last, true);
   const without = makerSteps({ slug: 'film', name: 'Friday Film Crew', conversationId: null });
-  assert.deepEqual(without.map((s) => s.screen), ['home', 'app', 'home', 'hub']);
-  assert.equal(without[3].last, true);
+  assert.deepEqual(without.map((s) => s.screen), ['home', 'app', 'app', 'home', 'hub']);
+  assert.equal(without[4].last, true);
   const index = read(`${DIR}/index.tsx`);
   assert.match(index, /else if \(screen === 'bot' && conversationId\) window\.location\.hash = `#messages\/\$\{conversationId\}`;/);
 });
@@ -381,7 +424,7 @@ test('the maker\'s tour ends in Homeroom bot\'s chat when it builds for them, an
 test('the maker\'s last step shows the chat with Homeroom bot whole: its header with its messages, the plan\'s buttons clear of the card', () => {
   const { makerSteps, BOT_CHAT_HEADER, BOT_CHAT_MESSAGES } = loadTsx(`${DIR}/tour-steps.ts`);
   const steps = makerSteps({ slug: 'film', name: 'Friday Film Crew', conversationId: 12 });
-  const chat = steps[5];
+  const chat = steps[6];
   assert.equal(chat.title, 'Homeroom bot is planning Friday Film Crew');
   assert.equal(BOT_CHAT_HEADER, '.messages-thread-direct > .messages-thread-header');
   assert.equal(BOT_CHAT_MESSAGES, '.messages-thread-direct > .messages-thread-scroll');
@@ -401,11 +444,11 @@ test('the maker\'s last step shows the chat with Homeroom bot whole: its header 
   // The other steps' targets (the close step cuts out the app screen, with
   // ✕ its press: tests/first-session.test.js), and only this one moves a
   // transcript.
-  assert.deepEqual(steps.slice(0, 5).map((s) => s.target), [
-    '.app-card[data-slug="film"]', '#app-view', '#platform-tab-workshop', '#app-content', '#platform-tab-messages',
+  assert.deepEqual(steps.slice(0, 6).map((s) => s.target), [
+    '.app-card[data-slug="film"]', '#platform-mark-btn', '#app-view', '#platform-tab-workshop', '#app-content', '#platform-tab-messages',
   ]);
-  assert.equal(steps[1].press, '#back-btn');
-  assert.deepEqual(steps.map((s) => !!s.newestBelowCard), [false, false, false, false, false, true]);
+  assert.equal(steps[2].press, '#back-btn');
+  assert.deepEqual(steps.map((s) => !!s.newestBelowCard), [false, false, false, false, false, false, true]);
   // The Messages screen draws what it names: a direct conversation's section,
   // whose first child is its header (none when embedded in a hub, which the
   // bot's chat never is), its scroller, and an <article> per message.

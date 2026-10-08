@@ -163,19 +163,13 @@ test('the browser stores a hand-off and CLEARS on the way back in-chat', () => {
     /row\.venue === null[\s\S]{0,1200}_persistBuildVenue\(null\)/,
     'coming back in-chat clears the stored venue',
   );
-  // The window is generous because #2607 put a short-circuit between the
-  // two: on an UNSENT change there is no row for either call to act on, so
-  // the branch returns before this one. Both calls still belong to the same
-  // branch, which is what this pins.
+  // Both calls belong to the same branch, which is what this pins. (#2607
+  // put an unsent-change short-circuit between them; #4268 deleted it with
+  // the unsent classic change.)
   assert.match(
     DEV_CHAT_SRC,
-    /row\.venue === null[\s\S]{0,3400}_switchToLastUsedPlatformAgent\(\)/,
+    /row\.venue === null[\s\S]{0,2400}_switchToLastUsedPlatformAgent\(\)/,
     'and switches to the backend the user ran last, resolved server-side',
-  );
-  assert.match(
-    DEV_CHAT_SRC,
-    /row\.venue === null[\s\S]{0,2200}if \(DevChat\.isPendingSession\(\)\) \{[\s\S]{0,400}return;/,
-    '#2607: and an unsent change stops short of both, because it has no row',
   );
   for (const kind of ['flow', 'import']) {
     assert.match(
@@ -192,9 +186,9 @@ test('a venue pick that works is silent — in all four states (#1348 follow-up)
   // and the header dropdown names the venue. On-Platform alone popped
   // "This session now uses Homeroom · Claude." over that, so the same act
   // reported itself in one state out of four.
-  // `async` since #2607: a pick on an unsent change creates the session row
-  // first, and that is a round trip.
-  const onPick = DEV_CHAT_SRC.match(/onPick: async \(row\) => \{[\s\S]*?\n      \},\n      onUnavailable/);
+  // Not `async` any more: #2607 made it one so a pick on an unsent change
+  // could create the session row first, and #4268 deleted that change.
+  const onPick = DEV_CHAT_SRC.match(/onPick: \(row\) => \{[\s\S]*?\n      \},\n      onUnavailable/);
   assert.ok(onPick, 'the sheet must have a pick handler');
   assert.doesNotMatch(onPick[0], /PlatformUI\.toast/,
     'no branch of the pick announces itself');

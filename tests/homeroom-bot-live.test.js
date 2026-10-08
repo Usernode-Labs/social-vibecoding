@@ -577,6 +577,9 @@ test('a ready request is built in a session of its own and proposed', async () =
     ok: true, sessionId: 5001, prNumber: 42, branchName: 'homeroom_bot/s5001', sha: 'a'.repeat(40), commits: 1,
     costUsd: 0.05,
     specNote: 'no spec (the spec turn returned nothing); the build worked from the plan',
+    // What each stage cost, on its model (services/stage-costs.js): a spec
+    // turn whose cost is unknown has no line.
+    stageCosts: { build: { usd: 0.05, model: 'z-ai/glm-5.3-flash' } },
   }, 'this harness writes no spec, and the result says so');
 
   const insert = h.calls.queries.find((q) => /INSERT INTO chat_sessions/.test(q.sql));
@@ -756,7 +759,7 @@ test('each verdict says its own thing; a verdict held by a cap says only that it
   h.posts.length = 0;
   assert.equal(await act(h, { verdict: 'ready', buildNote: 'x' }), 'build_queued');
   assert.deepEqual(h.posts, [], 'nothing built and nothing said yet');
-  assert.ok(h.queries.some((q) => /SET live_build_waiting_at = NOW\(\)/.test(q.sql) && q.params[0] === 900));
+  assert.ok(h.queries.some((q) => /SET live_build_waiting_at = COALESCE\(live_build_waiting_at, NOW\(\)\)/.test(q.sql) && q.params[0] === 900));
   // The lane builds it.
   assert.equal(await build(h, { verdict: 'ready', buildNote: 'x' }), 'proposed');
   assert.ok(h.queries.some((q) => /SET build_session_id = \$2, live_build_waiting_at = NULL WHERE id = \$1/.test(q.sql) && q.params[0] === 900 && q.params[1] === 5001),

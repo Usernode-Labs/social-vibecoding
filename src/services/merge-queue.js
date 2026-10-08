@@ -20,7 +20,9 @@
 // produces the same merge commit the sync would have pushed, so the sync is
 // pure cost; and its checks judged its own head against the main of the
 // time, which is the thing the group approved. Being behind main is not a
-// reason to do anything. The DIRECT LANE merges every approved, clean
+// reason to do anything. (The one exception is a preview that will not
+// start, which gives no verdict to judge it on: services/boot-failure-sync.js
+// syncs that proposal itself.) The DIRECT LANE merges every approved, clean
 // candidate in a pass, one exact-sha GitHub call each and no worker turn:
 // checkAndMerge re-measures each head at its integration gate, so a sibling
 // landing a moment earlier is noticed there (a fresh merge-tree, not a stale

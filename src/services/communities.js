@@ -189,6 +189,28 @@ async function privateVoteRefusal(pool, appId, userId) {
   };
 }
 
+/**
+ * A vote on a PUBLIC app from an account the verified-identity rule holds
+ * (schema.sql public_vote_needs_identity: the rule is on, and the voter is
+ * neither verified, by a phone, GitHub and X, or zkPassport, nor let in
+ * before it was switched on). Refused before anything is recorded, so the
+ * Vote button can offer the verification instead of a vote that would not
+ * count; counts_toward_outcome leaves such a vote out of every tally too.
+ * Returns the refusal body, or null when the vote may go ahead.
+ */
+async function identityVoteRefusal(pool, appId, userId) {
+  if (!appId || !userId) return null;
+  const { rows } = await pool.query(
+    'SELECT public_vote_needs_identity($1, $2) AS needs',
+    [userId, appId]
+  );
+  if (rows[0]?.needs !== true) return null;
+  return {
+    error: 'Votes on public apps count from verified accounts. Verify your phone number, or link both GitHub and X in Settings.',
+    code: 'identity_required',
+  };
+}
+
 function joinRequiredBody(app) {
   const name = app.name || app.slug || 'this project';
   return {
@@ -639,6 +661,7 @@ module.exports = {
   AUDIENCES,
   AUDIENCE_LABELS,
   privateVoteRefusal,
+  identityVoteRefusal,
   audienceSql,
   isMember,
   getMembership,

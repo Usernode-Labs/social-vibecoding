@@ -139,6 +139,29 @@ async function listOrphans(pool, { staleMs = ORPHAN_MS, isInFlight = () => false
   });
 }
 
+// Hand every row this process owns to the next harvester, on the way out.
+// A rollout's old Pod heartbeats its runs, and the runs it was harvesting,
+// until moments before the new leader's boot sweep, so listOrphans would not
+// count them as orphans for another ORPHAN_MS, and in that gap the stale
+// sweep started them over (7 Oct 2026). Stamping the heartbeat as long past
+// makes them orphans now; renaming the owner means the heartbeat this
+// process still sends until it exits matches no row. The runs' Jobs go on
+// on the cluster, untouched. Returns how many rows were handed over.
+async function release(pool) {
+  if (!pool) return 0;
+  try {
+    const { rowCount } = await pool.query(
+      `UPDATE check_runs SET owner = $2, heartbeat_at = 'epoch'
+        WHERE owner = $1`,
+      [selfOwner(), `${selfOwner()}:exited`]
+    );
+    return rowCount || 0;
+  } catch (err) {
+    log.warn('check-runs', 'Could not hand the run manifests over (non-fatal)', { err: err.message });
+    return 0;
+  }
+}
+
 // Take a row over. Compare-and-swap on the owner it was seen with, so two
 // harvesters sweeping at once cannot both adopt the same run; the winner then
 // heartbeats it like any live run, so if IT dies mid-harvest the next sweep
@@ -162,5 +185,6 @@ module.exports = {
   finish,
   startHeartbeat,
   listOrphans,
+  release,
   claim,
 };

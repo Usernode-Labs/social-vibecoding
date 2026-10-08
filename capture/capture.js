@@ -522,6 +522,7 @@ function setFrameSink(fn) {
   // failing one because a previous run had recorded it passing.
   _testStatus.clear();
   _retryOf.clear();
+  _diagCount = 0;
 }
 
 function emit(kind, media, status, buf, index, fellback) {
@@ -1211,7 +1212,22 @@ async function assertPresence(page, t) {
         t.expectText
       );
     } catch { found = false; }
-    if (!found) return `Expected text "${t.expectText}" was not found on the page`;
+    if (!found) {
+      // #3978: say what WAS on the page, so the fix turn can tell "the
+      // element moved" from "the page never rendered" without a re-run. One
+      // probe, only on the failure path, and only a string answer counts —
+      // a runner that answers this probe with something else is not a page
+      // this snippet was meant to trust.
+      let pageText = '';
+      try {
+        const answer = await page.evaluate(() => (document.body ? document.body.innerText : ''));
+        if (typeof answer === 'string') pageText = answer;
+      } catch { /* no snippet: the reason still names the missing text */ }
+      const snippet = pageText.trim().replace(/\s+/g, ' ').slice(0, 200);
+      return snippet
+        ? `Expected text "${t.expectText}" was not found on the page; the page text was: "${snippet}"`
+        : `Expected text "${t.expectText}" was not found on the page`;
+    }
   }
   return '';
 }
@@ -1509,6 +1525,83 @@ async function readRenderHealth(page, stylesheets, { recheckMs = RENDER_BLANK_RE
   return { v: 1, stylesheets: sheets, blank: shows === false };
 }
 
+// ── The network changing under the browser ───────────────────────────────
+//
+// Chromium cancels the connections it has in flight with
+// net::ERR_NETWORK_CHANGED when it sees the host's network change. On 7 Oct
+// 2026 six check runs in 22 minutes lost their first page loads to it,
+// within two or three seconds of their pod starting: 19 to 86 checks each,
+// every one a cold load failing at once, on two nodes, while runs either
+// side on the same nodes were clean. One run kept from 14 Sep shows the same.
+// The retry pass covered ten of them; the rest stood as the change's
+// failures, and a run that overlapped a rollout went round again and again.
+//
+// It is never the app's doing, so a group whose cold load meets it starts
+// over once, on a fresh context, before it has reported anything. What
+// changed in the pod is not known yet, so the run also writes down what the
+// pod's network looked like at that moment (emitDiag), which the platform
+// logs.
+const NETWORK_CHANGED_RE = /net::ERR_NETWORK_CHANGED/;
+const NETWORK_CHANGED_RETRY_DELAY_MS = 1000;
+// One run whose every group meets it must not write a frame per group.
+const MAX_DIAG_FRAMES = 3;
+let _diagCount = 0;
+
+function readSmallFile(file, max = 4000) {
+  try { return fs.readFileSync(file, 'utf8').slice(0, max); } catch { return null; }
+}
+
+function fileMtime(file) {
+  try { return fs.statSync(file).mtime.toISOString(); } catch { return null; }
+}
+
+// What the pod's own network looked like, read without privileges: its
+// interfaces' states, its IPv6 addresses with their flags (a tentative one
+// becoming permanent is a change Chromium sees), and when the files its DNS
+// configuration is read from last changed. `uptimeMs` is how long this
+// process, and so the container, had been running.
+function networkSnapshot() {
+  let ifaces = [];
+  try { ifaces = fs.readdirSync('/sys/class/net'); } catch { ifaces = []; }
+  const operstate = {};
+  for (const name of ifaces.slice(0, 8)) {
+    const state = readSmallFile(`/sys/class/net/${name}/operstate`, 40);
+    if (state != null) operstate[name] = state.trim();
+  }
+  const ipv6Disabled = readSmallFile('/proc/sys/net/ipv6/conf/all/disable_ipv6', 8);
+  return {
+    uptimeMs: Math.round(process.uptime() * 1000),
+    operstate,
+    ipv6Disabled: ipv6Disabled == null ? null : ipv6Disabled.trim(),
+    ipv6Addresses: (readSmallFile('/proc/net/if_inet6') || '').split('\n').filter(Boolean).slice(0, 8),
+    resolvConfChangedAt: fileMtime('/etc/resolv.conf'),
+    hostsChangedAt: fileMtime('/etc/hosts'),
+  };
+}
+
+// The document a check loaded, without its query: the checks' URLs carry a
+// session token.
+function documentOf(url) {
+  try {
+    const u = new URL(url);
+    return `${u.origin}${u.pathname}`;
+  } catch {
+    return '';
+  }
+}
+
+// One line, written whole: the frames around it are several writes each, and
+// a line on another stream could land inside one when Kubernetes merges them.
+//   __USERNODE_DIAG__ kind=<kind> <base64 JSON>
+// The platform's frame readers skip any line they do not know.
+function emitDiag(kind, data) {
+  if (_diagCount >= MAX_DIAG_FRAMES) return false;
+  _diagCount += 1;
+  const json = JSON.stringify(data || {});
+  _sink(`__USERNODE_DIAG__ kind=${kind} ${Buffer.from(json, 'utf8').toString('base64')}\n`);
+  return true;
+}
+
 // #47: run the declared tests for ONE route against the staging build.
 // Navigates once, collects console errors / uncaught exceptions / failed
 // loads (the #381 baseline) for that load, then evaluates each check's
@@ -1577,6 +1670,9 @@ async function runTestGroup(browser, group, opts) {
     });
   };
   const consoleSink = makeConsoleErrorSink(pushErr);
+  // Set when a request of the cold load is cancelled because the network
+  // changed (see NETWORK_CHANGED_RE).
+  let networkChanged = false;
   const emitAll = (status, reasonFor) => {
     for (const t of tests) {
       const failureReason = reasonFor(t);
@@ -1592,6 +1688,20 @@ async function runTestGroup(browser, group, opts) {
   let context = null;
   let page;
   let status = 0;
+  // The cold load met a network change before anything was reported: say
+  // what the pod looked like, close this attempt, and run the group again
+  // once on a fresh context. The second attempt's verdict stands, whatever
+  // it is.
+  const startOver = async (stage) => {
+    emitDiag('network-changed', { stage, document: documentOf(lead.url), ...networkSnapshot() });
+    if (page) await page.close().catch(() => {});
+    if (context) await context.close().catch(() => {});
+    page = null;
+    context = null;
+    await sleep(Number.isFinite(o.networkChangedRetryDelayMs)
+      ? o.networkChangedRetryDelayMs : NETWORK_CHANGED_RETRY_DELAY_MS);
+    return runTestGroup(browser, group, { ...o, networkChangedRetry: true });
+  };
   try {
     if (typeof browser.createBrowserContext === 'function') {
       context = await browser.createBrowserContext();
@@ -1661,12 +1771,21 @@ async function runTestGroup(browser, group, opts) {
     const stylesheets = makeStylesheetWatch(lead.url);
     on('response', (resp) => { try { stylesheets.onResponse(resp); } catch { /* not a sheet we can read */ } });
     on('requestfailed', (req) => { try { stylesheets.onRequestFailed(req); } catch { /* ignore */ } });
+    on('requestfailed', (req) => {
+      try {
+        const failure = typeof req.failure === 'function' ? req.failure() : null;
+        if (NETWORK_CHANGED_RE.test((failure && failure.errorText) || '')) networkChanged = true;
+      } catch { /* ignore */ }
+    });
     const renderRecheckMs = Number.isFinite(o.renderRecheckMs) ? o.renderRecheckMs : RENDER_BLANK_RECHECK_MS;
 
     try {
       const resp = await gotoTestDocument(page, lead.url);
       status = resp ? resp.status() : 200;
     } catch (err) {
+      if (!o.networkChangedRetry && NETWORK_CHANGED_RE.test((err && err.message) || '')) {
+        return await startOver('navigation');
+      }
       pushErr('load', `navigation failed: ${err.message}`, lead.url);
       emitAll(0, () => `Page failed to load: ${err.message}`);
       await page.close().catch(() => {});
@@ -1696,6 +1815,15 @@ async function runTestGroup(browser, group, opts) {
         // then wait it out.
         activity.bump();
         await waitForQuiet(activity, { quietMs, maxMs, minMs: Math.min(SETTLE_MIN_MS, maxMs) });
+        // The document loaded but some of what it fetched was cancelled by a
+        // network change (the platform's own scripts, on 7 Oct). Nothing is
+        // reported yet, so this is still the cold load and can start over.
+        if (!o.networkChangedRetry) {
+          await consoleSink.settle();
+          if (networkChanged || consoleErrors.some((e) => NETWORK_CHANGED_RE.test(e.message))) {
+            return await startOver('subresource');
+          }
+        }
       } else {
         await consoleSink.settle();
         cohortFrom = consoleErrors.length;
@@ -2007,21 +2135,35 @@ async function runTests(browser, tests, opts) {
   // Two caps, because a broken change must not become a slow broken change.
   // A quarter of the suite red is the CHANGE, not flakiness, and asking a
   // hundred checks again would triple the run at its least useful moment.
+  //
+  // The checks are asked in batches of RETRY_MAX_CHECKS, and the next batch
+  // only when every check in the last one passed on a retry: then the
+  // failures were the run's, not the change's, and the rest are likely the
+  // same. On 7 Oct one burst failed 19 checks together; the ten asked again
+  // all passed three times out of three, and the nine never asked stood as
+  // the change's failures. A batch with a check that failed every time
+  // stops the pass, because that run is red whatever the rest would say.
   const retries = retryRuns(env);
   const failedPrimaries = retries > 0
     ? list.filter((t) => _testStatus.get(Number(t.index) || 0) === 'fail')
     : [];
   const tooManyRed = failedPrimaries.length > list.length * RETRY_SKIP_FRACTION;
-  if (failedPrimaries.length && !tooManyRed && !hitDeadline) {
-    const asking = failedPrimaries.slice(0, RETRY_MAX_CHECKS);
+  let nextIndex = RETRY_INDEX_BASE;
+  for (let offset = 0;
+    failedPrimaries.length && !tooManyRed && !hitDeadline && offset < failedPrimaries.length;
+    offset += RETRY_MAX_CHECKS) {
+    const asking = failedPrimaries.slice(offset, offset + RETRY_MAX_CHECKS);
     const retryGroups = [];
-    let nextIndex = RETRY_INDEX_BASE;
+    const asked = new Map();
     for (const t of asking) {
+      const indices = [];
       for (let i = 0; i < retries; i += 1) {
         const index = nextIndex; nextIndex += 1;
         _retryOf.set(index, Number(t.index) || 0);
         retryGroups.push([{ ...t, index, solo: true }]);
+        indices.push(index);
       }
+      asked.set(t, indices);
     }
     let rCursor = 0;
     const retryWorker = async () => {
@@ -2037,6 +2179,9 @@ async function runTests(browser, tests, opts) {
     const retryWorkers = [];
     for (let i = 0; i < retryLanes; i += 1) retryWorkers.push(retryWorker());
     await Promise.all(retryWorkers);
+    const allRecovered = [...asked.values()]
+      .every((indices) => indices.some((index) => _testStatus.get(index) === 'pass'));
+    if (!allRecovered) break;
   }
 
   // `ran` and `expected` still count DECLARED checks only. A retry is a
@@ -2144,4 +2289,4 @@ if (require.main === module) {
 // file whose BEHAVIOUR (how many navigations it makes, whether it starts a
 // recording) is the thing under test, and it takes its page from the browser
 // it is handed, so a fake browser exercises it without Chromium.
-module.exports = { stylesheetProblem, makeStylesheetWatch, pageShowsSomethingInPage, readRenderHealth, parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, parseReady, waitForScenarioReady, mediaEnabled, resolveTests, captureTarget, runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf, hashGroupCap, waitForQuiet, makeActivityClock, makeConsoleErrorSink, settleQuietMs, settleMaxMs, assertMaxMs, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS };
+module.exports = { networkSnapshot, documentOf, stylesheetProblem, makeStylesheetWatch, pageShowsSomethingInPage, readRenderHealth, parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, parseReady, waitForScenarioReady, mediaEnabled, resolveTests, captureTarget, runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf, hashGroupCap, waitForQuiet, makeActivityClock, makeConsoleErrorSink, settleQuietMs, settleMaxMs, assertMaxMs, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS };

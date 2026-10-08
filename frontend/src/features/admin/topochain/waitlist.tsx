@@ -101,7 +101,13 @@ const canWrite = () => !!topo()?.canWrite();
 
 type WaitlistRow = {
   id: number;
-  email: string;
+  /** Null on a phone row (#4223): joined from Home with a verified phone, no email. */
+  email: string | null;
+  phone_only?: boolean;
+  /** The phone row's number, its last four digits at most. */
+  phone_last4?: string | null;
+  /** A phone row waiting on outbound SMS (#4096): it cannot be admitted yet. */
+  needs_sms?: boolean;
   confirmed_at?: string | null;
   submitted_at?: string | null;
   released_at?: string | null;
@@ -357,9 +363,11 @@ function WaitlistDetails({ row }: { row: WaitlistRow }) {
       </summary>
       <div className="mt-1 space-y-0.5 text-zinc-600 dark:text-zinc-300">
         {detail('Signed up', fmt(row.submitted_at))}
-        {detail('Address confirmed', row.confirmed_at
-          ? fmt(row.confirmed_at)
-          : 'Never. The link in the join email was not followed.')}
+        {row.phone_only
+          ? detail('Joined with', `A verified phone${row.phone_last4 ? ` ending ${row.phone_last4}` : ''}, no email`)
+          : detail('Address confirmed', row.confirmed_at
+            ? fmt(row.confirmed_at)
+            : 'Never. The link in the join email was not followed.')}
         {detail('Admitted', row.released_at ? fmt(row.released_at) : 'Not yet.')}
         {detail('Invite email', mail)}
         {detail('Invite link used by', row.signals?.invited
@@ -981,6 +989,8 @@ type AdmitOutcome = {
   admitted: number[];
   already_admitted: number[];
   not_found: number[];
+  /** Phone rows skipped: they wait on outbound SMS (#4096). */
+  needs_sms?: number[];
   failed: number[];
 };
 
@@ -1057,6 +1067,8 @@ function admitOutcomeLine(o: AdmitOutcome): string {
   const already = o.already_admitted.length;
   if (already) parts.push(`${already} ${already === 1 ? 'was' : 'were'} already in.`);
   if (o.not_found.length) parts.push(`${o.not_found.length} had been deleted from the waitlist.`);
+  const sms = o.needs_sms?.length || 0;
+  if (sms) parts.push(`${sms} joined by phone and ${sms === 1 ? 'waits' : 'wait'} for texts (#4096).`);
   if (o.failed.length) {
     parts.push(`${o.failed.length} could not be admitted; look the list up again and retry.`);
   }
@@ -1234,12 +1246,29 @@ function BatchAdmitPanel({ onClose, onAdmitted }: { onClose: () => void; onAdmit
   );
 }
 
+// How a row is named in a sentence: its address, or for a phone row its
+// account, since that row has no address to show.
+function signupLabel(w: WaitlistRow): string {
+  if (w.email) return w.email;
+  return w.linked_username ? `@${w.linked_username}` : `signup #${w.id}`;
+}
+
 const WAITLIST_COLUMNS: Column<WaitlistRow>[] = [
   {
     label: 'Signup',
     primary: true,
     tdClass: 'font-mono',
-    cell: (w) => (
+    cell: (w) => (w.phone_only ? (
+      <>
+        {signupLabel(w)}
+        <span
+          className="text-zinc-500 dark:text-zinc-400 text-xs"
+          title="Joined from Home with the account's verified phone number, without an email"
+        >
+          {` Phone${w.phone_last4 ? ` ···${w.phone_last4}` : ''}`}
+        </span>
+      </>
+    ) : (
       <>
         {w.email}
         {w.confirmed_at ? (
@@ -1258,7 +1287,7 @@ const WAITLIST_COLUMNS: Column<WaitlistRow>[] = [
           </span>
         )}
       </>
-    ),
+    )),
   },
   {
     // Where the row is in the one process this screen runs, said in the two
@@ -1431,12 +1460,13 @@ function WaitlistScreen() {
   // "Admit", not "Release". The route, the column and the mail kind keep
   // their names; this is the only place a person reads the word.
   const admitWaitlist = useCallback(async (w: WaitlistRow, reload: () => void) => {
-    if (!canWrite()) return;
+    // A phone row waits on outbound SMS (#4096); its Admit is disabled too.
+    if (!canWrite() || w.needs_sms) return;
     const unconfirmed = !w.confirmed_at
       ? ' This address was never confirmed, so the email may not reach anyone.'
       : '';
     const okd = await topo()._confirm({
-      title: `Admit ${w.email} off the waitlist?`,
+      title: `Admit ${signupLabel(w)} off the waitlist?`,
       message: `They get platform access straight away if they already have an account, `
         + `otherwise the moment they create one. They will be emailed a link to sign in or `
         + `create their account.${unconfirmed} This cannot be undone from here.`,
@@ -1451,7 +1481,7 @@ function WaitlistScreen() {
   const deleteWaitlistEntry = useCallback(async (w: WaitlistRow, reload: () => void) => {
     if (!canWrite()) return;
     const okd = await topo()._confirm({
-      title: `Delete ${w.email} from the waitlist?`,
+      title: `Delete ${signupLabel(w)} from the waitlist?`,
       message: 'This removes the signup and its survey answers entirely. Anyone who used its invite '
         + 'link keeps their own place in line. This cannot be undone.',
       confirmLabel: 'Delete',
@@ -1526,17 +1556,23 @@ function WaitlistScreen() {
             {!w.released_at ? (
               <button
                 data-release-wl={w.id}
-                data-email={w.email}
+                data-email={w.email || undefined}
                 type="button"
                 className={BTN.rowPrimary}
+                disabled={!!w.needs_sms}
                 onClick={() => admitWaitlist(w, reload)}
               >
                 Admit
               </button>
             ) : null}
+            {!w.released_at && w.needs_sms ? (
+              <span data-needs-sms-wl={w.id} className="text-xs text-zinc-500 dark:text-zinc-400">
+                Needs SMS (#4096)
+              </span>
+            ) : null}
             <button
               data-delete-wl={w.id}
-              data-email={w.email}
+              data-email={w.email || undefined}
               type="button"
               className={BTN.rowDanger}
               onClick={() => deleteWaitlistEntry(w, reload)}
@@ -1548,7 +1584,7 @@ function WaitlistScreen() {
         extra={(w) => <WaitlistDetails row={w} />}
         deleteAction={write ? {
           bulkPath: '/api/v4/admin/waitlist/bulk-delete',
-          itemLabel: (w) => w.email,
+          itemLabel: (w) => signupLabel(w),
           confirmTitle: (n) => `Delete ${n} waitlist ${n === 1 ? 'entry' : 'entries'}?`,
           confirmMessage: (n) => `This removes ${n === 1 ? 'this signup' : 'these signups'} and `
             + `${n === 1 ? 'its' : 'their'} survey answers entirely. This cannot be undone.`,

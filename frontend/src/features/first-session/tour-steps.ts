@@ -4,7 +4,7 @@
  * sentence per card: the card names the place, the screen behind it says the
  * rest (#4044, the tour script on the onboarding canvas).
  *
- * Three tours. Starting a community and joining one share their first four
+ * Three tours. Starting a community and joining one share their first five
  * cards, word for word: the project on Home, the project opened (and closed
  * with ✕), where to find it under Communities, and its hub. The maker's ends
  * on the plan in Homeroom bot's chat, which waits there until the tour is
@@ -130,6 +130,25 @@ export const BOTTOM_BARS = '#platform-parked, #platform-tabs';
 export const PLAN_WAITING = '.messages-thread-direct [data-bot-plan="open"]';
 
 /**
+ * The app screen's Suggest step, the same on the invited and maker paths
+ * (request #4225): the Homeroom mark at the top of the app, described rather
+ * than opened, since this tour has no menu-open step of its own (the home
+ * tour's `app-menu` / `menu-actions` do open it). The copy is honest about
+ * what happens to a suggestion: Homeroom bot does not always build it, and
+ * sometimes brings it to the group as a request instead.
+ */
+export const SUGGEST_TEXT = 'It\'s in this menu, in every app. It doesn\'t vanish into a feedback box: Homeroom bot starts building it for you, or brings it to the group, and you can follow along.';
+
+function suggestStep(): TourStep {
+  return {
+    screen: 'app',
+    target: '#platform-mark-btn',
+    title: 'Suggest an improvement',
+    text: SUGGEST_TEXT,
+  };
+}
+
+/**
  * Where a project's first version stands, as its App tab shows it
  * (GET /api/apps/:slug `first_version`; public/js/app-view.js
  * _firstVersionView): Homeroom bot still building it, built and waiting for
@@ -154,8 +173,9 @@ export function hubTitle(name: string): string {
 }
 
 /**
- * The four cards both paths open with, word for word (the tour script on the
- * onboarding canvas): the project on Home; the project opened, the app
+ * The cards both paths open with, word for word (the tour script on the
+ * onboarding canvas): the project on Home; Suggest an improvement (#4225),
+ * on the app screen before ✕; the project opened, the app
  * screen whole with ✕ ringed in it, one card where there were two (#4044:
  * "focus the step on the ✕"); the Communities tab, naming the project
  * instead of "its hub and its group chat"; and the hub, by what is on it
@@ -172,6 +192,7 @@ function sharedSteps(slug: string, name: string): TourStep[] {
       text: 'Open it any time from here.',
       tap: 'Tap it',
     },
+    suggestStep(),
     {
       // `#app-view` holds both halves of the screen, the build's progress
       // (#app-content) and the running app (#app-frame-host), and the top
@@ -206,7 +227,7 @@ function sharedSteps(slug: string, name: string): TourStep[] {
   ];
 }
 
-/** Joining a community: six steps, ending in its Discussion, where the people already are. */
+/** Joining a community: seven steps, ending in its Discussion, where the people already are. */
 export function invitedSteps({ slug, name }: TourProject): TourStep[] {
   return [
     ...sharedSteps(slug, name),
@@ -276,7 +297,7 @@ export function privateSteps({ slug, name }: TourProject): TourStep[] {
 
 /**
  * Starting a community, after "Invite people later" or "Go to the Homeroom
- * app": the same first four cards, then Messages, ending on the plan in
+ * app": the same first five cards, then Messages, ending on the plan in
  * Homeroom bot's chat (when the project has one: the bot builds for this
  * account), and otherwise on the hub. The plan waits there for Build it, and
  * nothing asks for it before the tour ends (decision C): the last card says

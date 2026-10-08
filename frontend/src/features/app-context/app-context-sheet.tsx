@@ -132,6 +132,7 @@ import {
 } from '@/components/ui/icons';
 
 import { AboutPane } from './about-pane';
+import { offeringGoToHomeroom } from './about-data';
 import { InvitePane } from './invite-pane';
 import { useStoreState } from '../../lib/use-store-state';
 import { ImproveQuickActions, UpdateStatus } from '../improve/actions';
@@ -166,6 +167,16 @@ const ROW = 'flex items-center gap-3 px-5 min-h-[44px] text-sm '
  */
 const SECTION_TYPE = 'text-[0.7rem] font-semibold uppercase tracking-wide '
   + 'text-zinc-400 dark:text-zinc-500';
+
+/**
+ * A second pane's way back: the header's back disc (BACK_BTN_CLASS in
+ * ../header/platform-header.tsx, and the Workshop's `.dev-ws-page-back`),
+ * drawn at 36px with the kit's 44pt hit box. `un-touch-target` last, as
+ * there: its ::after grows the hit box, never the disc.
+ */
+const BACK_DISC = 'shrink-0 inline-flex items-center justify-center w-9 h-9 rounded-full'
+  + ' border border-[color:var(--brand-line)] bg-[color:var(--brand-tint)]'
+  + ' text-[color:var(--brand-ink)] un-touch-target';
 
 /** A section label that owns its whole row. */
 const SECTION = 'px-5 pt-4 pb-1 ' + SECTION_TYPE;
@@ -514,20 +525,29 @@ export function AppsSwitcherSheet(): ReactNode {
   // The discussion and invite rows that went with it left the menu in the UI
   // overhaul: the project's channel is on its hub, and invite links are the
   // hub's Invite (#3362).
-  const workshopRowRef = useRef<HTMLAnchorElement | null>(null);
-  useIsomorphicLayoutEffect(() => {
-    for (const el of [workshopRowRef.current]) {
-      if (el && el.classList.contains('hidden') !== !!restricted) {
-        el.classList.toggle('hidden', !!restricted);
-      }
-    }
-  }, [restricted, view]);
+  //
+  // A NEWCOMER WHILE "GO TO HOMEROOM" IS OFFERED (#4216): a private member
+  // who has not used it yet has that one way onward, and the community page
+  // comes after it, so "Go to community" is hidden through the same seam
+  // until they have used it or are let in (./about-data.ts
+  // offeringGoToHomeroom). Hidden, never renamed or dropped: the row is in
+  // the prerender, and its id is the Workshop's.
   // AFTER MOUNT ONLY, for the viewer's own rows below (their agent
   // sessions): the hydrating render must print what the prerender printed
   // whatever the store says by then, or it is React #418 on every route. The
-  // class toggle above is an effect for the same reason.
+  // class toggle below is an effect for the same reason.
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
+  const newcomer = mounted && offeringGoToHomeroom(!!privateMember);
+  const workshopRowRef = useRef<HTMLAnchorElement | null>(null);
+  useIsomorphicLayoutEffect(() => {
+    const hide = !!restricted || newcomer;
+    for (const el of [workshopRowRef.current]) {
+      if (el && el.classList.contains('hidden') !== hide) {
+        el.classList.toggle('hidden', hide);
+      }
+    }
+  }, [restricted, newcomer, view, open]);
 
   // "About Notes", not "About this app". The name is what the viewer is
   // looking at and it is already on the bar above; "this app" is what you
@@ -669,17 +689,26 @@ export function AppsSwitcherSheet(): ReactNode {
               leaves it. On the menu it is the "Apps" label it has always
               been.
           */}
+          {/*
+              THE PLATFORM'S BACK DISC (#4218), not a chevron in the label's
+              small caps: the header's own disc, in its brand ink, at the
+              size the Workshop's page heads draw it one level down (36px),
+              with the kit's 44pt hit box (`un-touch-target`). The name
+              beside it says where it goes back to.
+          */}
           {view !== 'menu' ? (
-            <button
-              id="app-about-back"
-              type="button"
-              className={'flex-1 min-w-0 flex items-center gap-1.5 text-left un-touch-target '
-                + SECTION_TYPE}
-              onClick={() => AppContext.showMenu()}
-            >
-              <ChevronLeftIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
-              <span className="min-w-0 truncate">{appLabel}</span>
-            </button>
+            <div className="flex-1 min-w-0 flex items-center gap-2.5">
+              <button
+                id="app-about-back"
+                type="button"
+                aria-label={`Back to ${appLabel}'s menu`}
+                className={BACK_DISC}
+                onClick={() => AppContext.showMenu()}
+              >
+                <ChevronLeftIcon className="w-[18px] h-[18px]" aria-hidden="true" />
+              </button>
+              <span className={'min-w-0 truncate ' + SECTION_TYPE}>{appLabel}</span>
+            </div>
           ) : (
             /*
                 IT SAID "Apps" while a strip of every app sat under it. With

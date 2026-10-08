@@ -152,6 +152,7 @@ function defaults(deps = {}) {
     buildMayorMessages: deps.buildMayorMessages || require('./messages').buildMayorMessages,
     attachments: deps.attachments || require('../attachments'),
     stripFakeCompletionMarker: deps.stripFakeCompletionMarker || require('./messages').stripFakeCompletionMarker,
+    takeTextualReplies: deps.takeTextualReplies || require('./messages').takeTextualReplies,
     dispatch: deps.dispatch || require('./agent-dispatch'),
     dispatchDeps: deps.dispatchDeps || {},
     compaction: deps.compaction || require('./agent-compaction'),
@@ -539,8 +540,16 @@ async function runAgentTurn({
     });
   };
 
+  // A reply's own words, with any pills it wrote as text (#4125) cut out and
+  // kept as the turn's pills when no real suggest_replies call gave some.
+  const replyText = (raw) => {
+    const { text, replies } = d.takeTextualReplies(d.stripFakeCompletionMarker(raw || '').trim());
+    if (replies && !quickReplies) quickReplies = d.tools.sanitizeQuickReplies({ replies });
+    return text;
+  };
+
   const keepStreamedText = () => {
-    const partial = d.stripFakeCompletionMarker(roundText).trim();
+    const partial = replyText(roundText);
     roundText = '';
     if (partial) visibleText = visibleText ? `${visibleText}\n\n${partial}` : partial;
   };
@@ -748,9 +757,12 @@ async function runAgentTurn({
         });
         wrapCost = costOf(mayor, wrap, d);
         bill(wrapCost);
-        wrapText = d.stripFakeCompletionMarker(wrap.text || '').trim();
+        const written = d.takeTextualReplies(d.stripFakeCompletionMarker(wrap.text || '').trim());
+        wrapText = written.text;
         const repliesUse = (wrap.toolUses || []).find((u) => u.name === SUGGEST_REPLIES);
         wrapReplies = repliesUse ? d.tools.sanitizeQuickReplies(repliesUse.input) : null;
+        // #4125: pills the wrap-up wrote as text, when it made no real call.
+        if (!wrapReplies && written.replies) wrapReplies = d.tools.sanitizeQuickReplies({ replies: written.replies });
       }
     } catch (err) {
       log.warn('agent-mayor', 'Wrap-up failed; using fixed text', { agentSessionId, err: err.message });
@@ -855,7 +867,7 @@ async function runAgentTurn({
       bill(cents);
       phaseOneCost += cents;
       roundText = '';
-      const text = d.stripFakeCompletionMarker(result.text || '').trim();
+      const text = replyText(result.text);
       if (text) visibleText = visibleText ? `${visibleText}\n\n${text}` : text;
       const toolUses = Array.isArray(result.toolUses) ? result.toolUses : [];
       // The turn is ending without a dispatch. A reply that says one is

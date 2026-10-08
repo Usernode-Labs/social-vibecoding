@@ -907,6 +907,24 @@ async function getFileContent(owner, repo, filePath, ref) {
   }
 }
 
+// #4145: every file path in a repo at `ref` (default the repo's default
+// branch), one request through the read client: [{ path, size }], blobs
+// only, and `truncated` when GitHub cut a very large tree short. Null when
+// the repository or ref does not exist; other errors propagate.
+async function listRepoFiles(owner, repo, ref) {
+  const octokit = await getReadOctokit(owner);
+  try {
+    const { data } = await octokit.rest.git.getTree({ owner, repo, tree_sha: ref || 'HEAD', recursive: 'true' });
+    const files = (data.tree || [])
+      .filter((entry) => entry.type === 'blob')
+      .map((entry) => ({ path: entry.path, size: entry.size || 0 }));
+    return { files, truncated: data.truncated === true };
+  } catch (err) {
+    if (err.status === 404 || err.status === 409) return null;
+    throw err;
+  }
+}
+
 // `fromBranch` (default 'main') lets callers fork off an arbitrary existing
 // branch — used by the headless-session clone flow (#155), which branches a
 // user's new dev branch off the auto session's branch so any pushed commits
@@ -1159,11 +1177,14 @@ async function advanceBranchToSha(owner, repo, branchName, sha) {
 // Move a branch to an exact commit whether or not that is a fast-forward.
 //
 // This is deliberately not the module's general ref-update path. It exists
-// for exactly one caller, demo mode's reset (routes/demo-mode.js),
-// which puts a demo app's main back to where it stood before a recorded
-// take. That app is in demo mode, its creator asked, and the commits being
-// discarded are the partner's own demo proposals — the one situation where
-// rewinding main is the point rather than an accident.
+// for two callers. Demo mode's reset (routes/demo-mode.js) puts a demo
+// app's main back to where it stood before a recorded take. That app is in
+// demo mode, its creator asked, and the commits being discarded are the
+// partner's own demo proposals — the one situation where rewinding main is
+// the point rather than an accident. And the Homeroom bot's first-version
+// review (homeroom-bot-live.js rollbackReviewBranch) puts the bot's own
+// session branch, never a default branch, back on the last commit that
+// booted when a review fix broke the app, before anything is proposed.
 async function forceBranchToSha(owner, repo, branchName, sha) {
   const octokit = await getOctokit(owner);
   const { data: ref } = await octokit.request(
@@ -2623,14 +2644,19 @@ async function fetchPublicIssue(owner, repo, number) {
 // Homeroom bot recorded for each comment it posted (homeroom_bot_posts), so
 // the request page can leave out the bot's comments its Homeroom thread
 // already carries. clipIssueComments does not pass it on.
-async function fetchIssueComments(owner, repo, number, { max = ISSUE_COMMENTS_MAX } = {}) {
+//
+// `since` (an ISO time) asks GitHub for the comments updated at or after it
+// only, so a caller looking for a comment it may just have posted reads the
+// recent tail instead of the oldest pages (the workflow's close-and-comment).
+async function fetchIssueComments(owner, repo, number, { max = ISSUE_COMMENTS_MAX, since = null } = {}) {
   const n = Number(number);
   if (!owner || !repo || !Number.isInteger(n) || n <= 0) {
     return { comments: [], truncated: false, note: 'bad issue number' };
   }
 
   let url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`
-    + `/issues/${n}/comments?per_page=${ISSUE_COMMENTS_PER_PAGE}`;
+    + `/issues/${n}/comments?per_page=${ISSUE_COMMENTS_PER_PAGE}`
+    + (since ? `&since=${encodeURIComponent(since)}` : '');
   const collected = [];
   let page = 0;
 
@@ -2798,6 +2824,7 @@ module.exports = {
   pushFiles,
   createRootCommit,
   getFileContent,
+  listRepoFiles,
   createBranch,
   ensureBranchAtSha,
   compareCommitAncestry,

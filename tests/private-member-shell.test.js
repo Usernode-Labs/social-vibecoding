@@ -59,7 +59,7 @@ test('"Go to Homeroom" starts it once; a private member lands in the app instead
   const src = read('frontend/src/features/first-session/index.tsx');
   assert.match(src, /if \(mode\.path === 'private'\) return privateSteps\(project\);/);
   const welcome = src.slice(src.indexOf('welcome(info: FirstSessionInfo): boolean {'), src.indexOf('goHome('));
-  assert.match(welcome, /if \(legacy\(\)\.App\?\.user\?\.privateMember\) \{[\s\S]*enterScreen\('app', info\.slug\);[\s\S]*return true;/);
+  assert.match(welcome, /if \(legacy\(\)\.App\?\.user\?\.privateMember\) \{[\s\S]*legacy\(\)\.App\?\.navigateToApp\?\.\(slug, 'app'\);[\s\S]*return true;/);
   assert.ok(welcome.indexOf('privateMember') < welcome.indexOf("setMode({ kind: 'welcome', info })"), 'before "You\'re in"');
   const goHome = src.slice(src.indexOf('goHome('), src.indexOf('holdWelcome(): boolean'));
   assert.match(goHome, /const first = !app\?\._privateHomeVisited\?\.\(\);\s+app\?\._notePrivateHome\?\.\(\);\s+app\?\.navigateHome\?\.\(\);/);
@@ -124,7 +124,25 @@ test('the waitlist card: join, an email, a code, then On the waitlist with "Want
   const src = read(card);
   // Not in the prerender: nothing until the shell knows who is signed in.
   assert.match(src, /if \(!privateMember \|\| !standing \|\| standing\.state === 'admitted'\) return null;/);
-  for (const p of ["'/api/me/waitlist'", "'/api/me/waitlist/join'", "'/api/me/waitlist/verify'"]) assert.ok(src.includes(p), p);
+  for (const p of ["'/api/me/waitlist'", "'/api/me/waitlist/join'", "'/api/me/waitlist/verify'", "'/api/me/waitlist/join-phone'"]) assert.ok(src.includes(p), p);
+
+  // #4223: a verified phone and no confirmed email joins with the one button,
+  // nothing asked; listed by phone, the news goes by text and an email is optional.
+  const phone = renderComponent(card, 'WaitlistCardBody', {
+    standing: { state: 'none', email: null, accountEmail: null, hasPhone: true, moreToken: null },
+    onListed: () => {},
+  });
+  assert.match(phone, /id="home-waitlist-join"[^>]*>Join the waitlist</);
+  assert.doesNotMatch(phone, /type="email"/);
+  assert.match(src, /onClick=\{\(\) => \(phoneOnly \? void joinByPhone\(\) : setStep\(\{ kind: 'email' \}\)\)\}/);
+  const byPhone = renderComponent(card, 'WaitlistCardBody', {
+    standing: { state: 'listed', email: null, accountEmail: null, hasPhone: true, moreToken: token },
+    onListed: () => {},
+  });
+  assert.match(byPhone, /We’ll text you when it’s your turn\./);
+  assert.match(byPhone, /id="home-waitlist-add-email"[^>]*>Add an email too</);
+  assert.match(byPhone, new RegExp(`href="#more/${token}"`));
+  assert.doesNotMatch(listed, /Add an email too/, 'an email row has nothing to add');
   assert.match(read('frontend/src/features/home/index.tsx'), /<AppsMore \/>\s+<\/section>[\s\S]*<WaitlistCard \/>\s+[\s\S]*<DiscoverSection \/>/);
 });
 
@@ -144,7 +162,8 @@ test('the vote routes refuse a private member on a public app before anything is
   const issueVote = issues.slice(issues.indexOf("router.post('/api/issues/:id/vote'"));
   assert.match(issueVote, /const issue = issueRows\[0\];\s+\/\/ A private member does not vote on a public app \(communities\.js\)\.\s+const privateRefusal = await communities\.privateVoteRefusal\(pool, issue\.app_id, req\.user\?\.id\);/);
   // And every tally and denominator leaves such a vote out (schema.sql).
-  assert.match(read('src/db/schema.sql'), /AND pa\.view_visibility = 'public'\s+\)\s+\$\$;/);
+  // (Followed by the verified-identity clause, tests/verified-identity-shell.test.js.)
+  assert.match(read('src/db/schema.sql'), /AND pa\.view_visibility = 'public'\s+\)\s+AND NOT public_vote_needs_identity\(voter_id, target_app_id\)\s+\$\$;/);
 });
 
 test('the waitlist card\'s routes: a code-mailing join behind the email code\'s limiters, for those still waiting', () => {

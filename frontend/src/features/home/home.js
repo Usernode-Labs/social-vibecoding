@@ -2127,7 +2127,7 @@ const Home = {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || `HTTP ${res.status}`);
       }
-      PlatformUI.toast(desired ? 'Added to Shortcuts' : 'Removed from Shortcuts');
+      PlatformUI.toast(desired ? 'Added to My apps' : 'Removed from My apps');
       if (!desired) await Home._offerLeaveAfterUnpin(app);
     } catch (err) {
       app.is_favorited = prev.is_favorited;
@@ -2293,7 +2293,7 @@ const Home = {
         throw new Error(data.error || `HTTP ${res.status}`);
       }
       if (desired) Home._revealSlug = slug;
-      PlatformUI.toast(desired ? 'Added to Shortcuts' : 'Removed from Shortcuts');
+      PlatformUI.toast(desired ? 'Added to My apps' : 'Removed from My apps');
     } catch (err) {
       Home._revealSlug = null;
       PlatformUI.toast(`Update failed: ${err.message}`);
@@ -2498,9 +2498,9 @@ const Home = {
           ? 'bg-emerald-500 border-emerald-500 text-white'
           : 'bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-600 text-violet-700 dark:text-violet-400 hover:border-violet-400'
       }" data-slug="${app.slug}" data-added="${isAdded}" title="${
-        isAdded ? 'Added. Tap to remove from Shortcuts' : 'Add to Shortcuts'
+        isAdded ? 'Added. Tap to remove from My apps' : 'Add to My apps'
       }" aria-label="${
-        isAdded ? `Remove ${escapeHtml(app.name)} from Shortcuts` : `Add ${escapeHtml(app.name)} to Shortcuts`
+        isAdded ? `Remove ${escapeHtml(app.name)} from My apps` : `Add ${escapeHtml(app.name)} to My apps`
       }" aria-pressed="${isAdded}">${
         isAdded
           ? '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>'
@@ -3626,16 +3626,16 @@ const Home = {
     if (app.is_collaborator) {
       items.push({
         key: 'favorite',
-        label: app.your_apps_hidden ? 'Add to Shortcuts' : 'Remove from Shortcuts',
+        label: app.your_apps_hidden ? 'Add to My apps' : 'Remove from My apps',
         title: app.your_apps_hidden
-          ? 'Show this app in Shortcuts again. You keep your builder access either way.'
-          : 'Hide this app from Shortcuts. It stays live and you keep your builder access.',
+          ? 'Show this app in My apps again. You keep your builder access either way.'
+          : 'Hide this app from My apps. It stays live and you keep your builder access.',
         run: () => Home._menuToggleFavorite(app, !!app.your_apps_hidden),
       });
     } else {
       items.push({
         key: 'favorite',
-        label: app.is_favorited ? 'Remove from Shortcuts' : 'Add to Shortcuts',
+        label: app.is_favorited ? 'Remove from My apps' : 'Add to My apps',
         run: () => Home._menuToggleFavorite(app, !app.is_favorited),
       });
     }

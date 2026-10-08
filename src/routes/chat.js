@@ -14,6 +14,7 @@ const appChat = require('../services/app-chat');
 const groupChannelNotify = require('../services/group-channel-notify');
 const conversationsSvc = require('../services/conversations');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
+const { isDemoNeedsProposal } = require('./workshop-overview');
 const {
   appChatReadLimiter,
   attachmentUploadLimiter,
@@ -202,6 +203,31 @@ function stagingMockGeneralStream(appId) {
   return [...rows.slice(0, at + 1), ...replies, ...rows.slice(at + 1)];
 }
 
+// #4238: Homeroom bot's "I've made the first version" line, as a new
+// project's channel has it (ws.sendFirstVersionMessage), at the end of the
+// general mock, for the app it is read on, so a preview shows the line and
+// its Open button. The newest row (id order is time order), and only in the
+// first page the route answers: the Messages list's preview and a mock
+// permalink read the mock without it.
+const DEMO_FIRST_VERSION_ID = 9902009;
+function stagingMockFirstVersion(appId, app) {
+  if (!app || !app.slug) return null;
+  const dm = require('../services/homeroom-bot-dm');
+  const appName = app.name || app.slug;
+  const open = dm.openAppAction({ slug: app.slug, appName });
+  return {
+    id: DEMO_FIRST_VERSION_ID, user_id: 0, username: dm.BOT_USERNAME,
+    content: `[Mock] ${dm.firstVersionText({ appName, live: true })}`,
+    msg_type: 'message',
+    metadata: { kind: 'first_version', appSlug: app.slug, ...(open ? { actions: [open] } : {}) },
+    thread_type: null, thread_ref: null,
+    created_at: new Date(Date.now() - 30 * 1000).toISOString(),
+    edited_at: null, reactions: [], bookmarked: false,
+    has_unread_notification: false, app_id: appId, posted_via: null,
+    deleted: false, thread: null,
+  };
+}
+
 // The demo topics whose mock transcript IS the fixture: the declared checks
 // read these rows (#1926's folded conflict notices, #2236's via-agent chip on
 // issue 900008's Discussion), so they must not depend on nobody having typed
@@ -222,7 +248,7 @@ function isPinnedDemoThread(thread) {
 
 // What a staging `?demo=1` first page answers with, or null to serve the real
 // rows unchanged. `realRows` is the page the SELECT returned, oldest first.
-function stagingDemoTranscript(appId, thread, realRows) {
+function stagingDemoTranscript(appId, thread, realRows, app = null) {
   // A real message's reply thread is never padded: the one mock reply
   // thread is answered by stagingMockReplyThread before the database is
   // read, and fixture replies under somebody's real message would be a lie.
@@ -235,7 +261,9 @@ function stagingDemoTranscript(appId, thread, realRows) {
     return [...mock, ...realRows.filter((m) => !mockIds.has(m.id))];
   }
   if (realRows.length) return null;
-  return thread ? stagingMockGroupChat(appId, thread) : stagingMockGeneralStream(appId);
+  if (thread) return stagingMockGroupChat(appId, thread);
+  const firstVersion = stagingMockFirstVersion(appId, app);
+  return [...stagingMockGeneralStream(appId), ...(firstVersion ? [firstVersion] : [])];
 }
 
 // #2387: the mock reply thread, as `thread_type=message&thread_ref=<root>`
@@ -255,8 +283,10 @@ function stagingMockReplyThread(appId, rootId) {
 // on a mock row (or a mock reply, which opens on its root) answers the whole
 // mock transcript with its focus; `after` answers what follows. Null when
 // the id is not a mock one, so the real read runs.
-function stagingMockStreamPage(appId, { around = null, after = null } = {}) {
-  const rows = stagingMockGeneralStream(appId);
+function stagingMockStreamPage(appId, { around = null, after = null, app = null } = {}) {
+  // #4238: with the first-version line the first page ends with.
+  const firstVersion = stagingMockFirstVersion(appId, app);
+  const rows = [...stagingMockGeneralStream(appId), ...(firstVersion ? [firstVersion] : [])];
   const ids = new Set(rows.filter((m) => !m.thread_type).map((m) => m.id));
   if (around != null) {
     if (ids.has(around)) {
@@ -288,7 +318,9 @@ function stagingMockStreamPage(appId, { around = null, after = null } = {}) {
 // nothing unread; an unread leaves the mock rows from other people at and
 // after the message — the same definition of "unread" as the real one.
 function stagingMockUnreadCount(appId, messageId, move) {
-  const rows = stagingMockGroupChat(appId, null);
+  // #4238: the first-version line ends the stream the route answers with,
+  // so the cursor reaches it; which app it names does not change the count.
+  const rows = [...stagingMockGroupChat(appId, null), stagingMockFirstVersion(appId, { slug: 'demo' })];
   if (!rows.some((m) => m.id === messageId)) return null;
   if (move === 'read') return 0;
   return rows.filter((m) => m.id >= messageId && m.msg_type === 'message'
@@ -394,6 +426,11 @@ function chatRoutes(config) {
     // be present and valid to select a thread; a malformed pair is a 400
     // rather than silently falling back to general chat.
     const threadType = req.query.thread_type || null;
+    // #4313: a ?demo=1 Needs-you card's thread (a negative id, staging only)
+    // holds nobody's words; answer an empty page rather than refuse the ref.
+    if (threadType === 'session' && isDemoNeedsProposal(req.query.thread_ref)) {
+      return res.json({ messages: [], has_more_before: false, has_more_after: false });
+    }
     const threadRef = req.query.thread_ref != null ? parseThreadRef(req.query.thread_ref) : null;
     if (threadType || req.query.thread_ref != null) {
       if (!THREAD_TYPES.has(threadType) || threadRef == null) {
@@ -432,7 +469,7 @@ function chatRoutes(config) {
         if (mock) return res.json(mock);
       }
       if (demo && !thread && (around != null || after != null)) {
-        const mock = stagingMockStreamPage(appId, { around, after });
+        const mock = stagingMockStreamPage(appId, { around, after, app });
         if (mock) return res.json(mock);
       }
 
@@ -500,7 +537,7 @@ function chatRoutes(config) {
       // has, and answering that with the same rows again would loop the
       // transcript.
       if (demo && before == null && after == null && around == null) {
-        const mock = stagingDemoTranscript(appId, thread, messages);
+        const mock = stagingDemoTranscript(appId, thread, messages, app);
         if (mock) {
           return res.json({ messages: mock, has_more_before: false, has_more_after: false });
         }

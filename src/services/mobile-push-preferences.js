@@ -14,8 +14,10 @@ const CATEGORY_DEFINITIONS = Object.freeze([
     // reply to your message in all but name. #2386: a friend request and its
     // acceptance are one person reaching you directly — this category's
     // promise — so they join it rather than getting a switch of their own.
+    // #3952: being named with @ in a request somebody filed is a mention
+    // like a chat one, so it rides the same switch, beside it.
     // Kept in lockstep with the seed in db/schema.sql.
-    kinds: Object.freeze(['mention', 'reply', 'thread_reply', 'friend_request', 'friend_accept']),
+    kinds: Object.freeze(['mention', 'issue_mention', 'reply', 'thread_reply', 'friend_request', 'friend_accept']),
   }),
   Object.freeze({
     key: 'invitations',
@@ -93,7 +95,10 @@ const CATEGORY_DEFINITIONS = Object.freeze([
     // only: the SERVER is nearing a cap that stops apps being created or
     // sessions starting (services/platform-limit-alerts.js). Only full
     // admins ever receive one, so nobody else's switch is affected.
-    kinds: Object.freeze(['issue_opened', 'app_health', 'platform_limit']),
+    // 'platform_incident' (#4296) is its sibling: errors that should not
+    // happen, as a daily digest or one kind past its hourly line
+    // (services/platform-incident-alerts.js), for the same admins.
+    kinds: Object.freeze(['issue_opened', 'app_health', 'platform_limit', 'platform_incident']),
   }),
   Object.freeze({
     key: 'lightweight_activity',

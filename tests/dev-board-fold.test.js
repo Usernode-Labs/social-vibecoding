@@ -1476,9 +1476,80 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // reads the Overview, which the Studio replaces rather than sits beside, so
   // there is no check on that route to fold into. 843 leaves 27 slots.
   //
+  // 843 → 844: +1 (#3826): the member floor's words on the card. The mock
+  // row whose votes are all in and whose floor is unmet (9000095) has a
+  // route of its own — the proposal page — and the #788 family's checks sit
+  // on other rows (below threshold, floor met, rejecting), so there was
+  // nothing to fold it into. The ceiling went 860 → 880 with it
+  // (services/app-manifest.js), leaving 36 slots.
+  //
+  // 844 → 845: +1 (#3978): the unit-suite row's per-test excerpts under
+  // "Why it failed". It shares the 9000093 route with the failing-check-door
+  // check above, but folding would have flipped that check's own assertion —
+  // its selector pins the door CLOSED (`:not([open])`), and the excerpt body
+  // only exists once the row carries details — so the excerpt reads as a
+  // check of its own on the same route. 845 leaves 35 slots.
+  //
+  // 845 → 840: −7 +2. The create-project dialog is retired: Create opens
+  // "What do you want to make?", which imports a GitHub repo in place, so
+  // its seven checks (#create/options: who it is for, the invite step, how
+  // to start, the template picker, the name step, who approves, the quota
+  // row) went with it. #create/import's check came in, and the quota row's
+  // came back on the make screen (/?shot=create-quota#create). 840 leaves
+  // 40 slots.
+  //
+  // 840 → 732: −109 +1 (#3976). A deprecation, not room-making: classic dev
+  // sessions are read-only now (services/classic-sessions.js), so the checks
+  // that drove the classic dev chat went with the chat they drove. 105 loaded
+  // a classic session's own page (#app/…/dev/sessions/<id> on the 9008xx and
+  // 9904xx fixtures: its composer, drafts and model picker, quick-reply
+  // pills, venue line and sheet, launchpads and the hand-off walkthrough, the
+  // credits banners and card, the session bar, the transcript's failure,
+  // stop, questionnaire and status rows, its Changes-ready card and capture
+  // tiles), three the Messages pane that hosts one (#messages/session/…),
+  // and one the ?conversation=workspace redirect into one. The five
+  // coding-run card checks on 990412 became ONE on the agent-session fixture
+  // (#messages/agent/990801), because that card is the dev chat's `Attached`,
+  // which agent sessions draw too. It could not fold into the three 990801
+  // checks on that route: their selectors leave at most 43 of the runner's
+  // 256 characters, and this one needs 191 of its own. Three groups stay,
+  // because none is the classic chat's own: the spec panel's (900830,
+  // 900831), where a shared spec still opens and whose HTML-spec frames
+  // (lib/spec-html) agent sessions draw; the published chat's (990002), the
+  // reader any change's chat gets; and the retired /dev/sessions/new
+  // address's, which opens an agent session. 732 leaves 148 slots.
+  //
+  // 732 → 733: +1 (#4269): the capture tiles, which #3976 retired with
+  // 990412's Changes-ready card, are read again where they still render for
+  // everyone: a proposal page's hero, on the promoted staging proposal whose
+  // seeded captures cover each state (#app/staging-demo-app/dev/proposals/
+  // 900001). Its three old checks (the routes behind "All N screens", the
+  // phone outline, the empty tile) are ONE now, folded with :has(); no other
+  // check is on that route. The agent session's hand-off walkthrough and its
+  // out-of-credits card stay unchecked: both open only after a tap (the
+  // composer's Build with, a refused send), and no route reaches them
+  // without a screenshot-only parameter. 733 leaves 147 slots.
+  //
+  // 733 → 732: −1 (#4311): the Settings choice of where changes get built
+  // is gone (nothing acted on its value since #4268), so the check that
+  // read its row after the connectors on #settings/connectors went with it.
+  // 732 leaves 148 slots.
+  //
+  // 732 → 733: +1 (#4296): the admin console's Unexpected events section,
+  // a new route (#admin/incidents) with its filters, its links and its read
+  // in one selector; the Homeroom bot's check takes the link to it by :has().
+  // 733 leaves 147 slots.
+  //
+  // 733 → 734: +1 (#4312): a real, shareable `?flow=claude-code|codex` link
+  // on an agent session address now opens Build with on that agent's tab, so
+  // the hand-off walkthrough is reachable from a route again. One check opens
+  // it on 990801 and reads the first step's Link GitHub. The out-of-credits
+  // card still needs a refused send and stays with the unit tests.
+  // 734 leaves 146 slots under the 880 ceiling.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 843);
+  checkCap.assertPinned(DAPP.tests.length, 734);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
@@ -1823,7 +1894,9 @@ test('a press changes the fill and nothing else, and the row is the card minus i
   // pressed open card did not. Opted out the way this stylesheet already
   // opts the segmented pills out, keeping the kit's brightness dim.
   assert.match(CSS, /\.dev-ws-row:active \{ transform: none; \}/);
-  assert.match(CSS, /\.create-mode-pill:active,[\s\S]{0,160}\{\s*transform: none;\s*\}/,
+  // (The create dialog's pills that list began with went with the dialog;
+  // the Members modal's pills keep it.)
+  assert.match(CSS, /\.members-vis-pill:active,[\s\S]{0,160}\{\s*transform: none;\s*\}/,
     'the rule this one follows is still there to follow');
 
   // -- The three lines, and where each starts -------------------------
