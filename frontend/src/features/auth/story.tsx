@@ -4,14 +4,15 @@
  * first session's switch is off, `story_landing` in the waitlist options).
  *
  * A small illustration so the brand carries over, one line of what this is
- * and one of the loop, three examples of what groups make (to show, not to
- * press: the make screen offers them as starting points), then one button.
+ * and one of the loop, the three things groups make (to show, not to press:
+ * the make screen offers them as sentences to finish), then one button.
  * "Get started" and "Sign in" both open the sign-in sheet over this screen;
  * an account made from it is asked what to make next
  * (../first-session/make.tsx).
  */
 
-import { EXAMPLES } from '../first-session/examples';
+import { TEMPLATES } from '../first-session/examples';
+import { TierChart } from '../first-session/tier-chart';
 
 export function Story({ primaryClass, onStart, onSignIn }: {
   primaryClass: string;
@@ -42,9 +43,9 @@ export function Story({ primaryClass, onStart, onSignIn }: {
           What groups make
         </p>
         <ul className="mt-2.5 overflow-hidden rounded-2xl bg-white dark:bg-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)]">
-          {EXAMPLES.map((e) => (
+          {TEMPLATES.map((e) => (
             <li key={e.key} className="flex items-center gap-3 px-3.5 py-2.5 [&+&]:shadow-[inset_0_1px_0_var(--app-sheet-line)]">
-              <span className="app-icon-tile flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-2xl" aria-hidden="true">{e.emoji}</span>
+              <span className="app-icon-tile flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-2xl" aria-hidden="true">{e.chart ? <TierChart /> : e.emoji}</span>
               <span className="min-w-0 flex-1">
                 <span className="block text-[15px] font-semibold text-zinc-900 dark:text-zinc-100">{e.title}</span>
                 <span className="block text-[13px] text-zinc-500 dark:text-zinc-400">{e.line}</span>
