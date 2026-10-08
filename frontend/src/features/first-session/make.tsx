@@ -164,6 +164,14 @@ export function makeEyebrow(entry: MakeEntry, who: string): string {
   return who ? `Hi ${who}!` : 'You\'re in!';
 }
 
+/**
+ * Under Make it, quietly: what is public once it is made (#4174). Every
+ * project's repository is public on GitHub, and its first request is a
+ * public issue holding the description word for word, with the plan as a
+ * comment (services/github.js, services/homeroom-bot-dm.js).
+ */
+export const MAKE_PUBLIC_LINE = 'What you write here, and the app’s code, are public on GitHub.';
+
 /** The import form's heading and line (./import-repo.tsx). */
 export const IMPORT_TITLE = 'Import a GitHub repo';
 export const IMPORT_LINE = 'Bring an app that already exists. Your group builds on it from here.';
@@ -461,6 +469,7 @@ export function MakeScreen({
           >
             {busy ? 'Making it…' : 'Make it'}
           </Button>
+          <p data-make-public="" className="mt-2 text-center text-[13px] leading-snug text-zinc-500 dark:text-zinc-400">{MAKE_PUBLIC_LINE}</p>
           {fromCreate ? (
             // Small, under Make it: the one other way to start a project.
             <p className="mt-3 text-center">
