@@ -101,10 +101,15 @@ external agent (`visible_changes` on the CLI's `proposal_submit_build`). The sha
 - `persona` is who is signed in: `member`, `read_only_admin`, `full_admin`
   (Homeroom controls hidden from read-only admins), or `guest`, a visitor who
   is not signed in. Use `guest` for what signed-out people see: Homeroom's
-  landing and sign-in pages, or a public app's guest view. A hosted build
-  turn's `declare_visible_changes` answers with `warnings` when the persona
-  cannot show the change: a `guest` change on an app whose guests are shown
-  nothing of it (private, or guests unavailable), or a claim about
+  landing and sign-in pages, or a public app's guest view. Two more personas
+  exist for Homeroom's own onboarding screens, both fixture accounts that are
+  still waiting for platform access and pose as a phone (`Pixel 7`):
+  `invited_member`, an invited member of a private community who has never
+  been listed on the waitlist, and `invited_member_listed`, the same account
+  with a waitlist spot joined by email (`services/shots-fixtures.js`). A
+  hosted build turn's `declare_visible_changes` answers with `warnings` when
+  the persona cannot show the change: a `guest` change on an app whose guests
+  are shown nothing of it (private, or guests unavailable), or a claim about
   signed-out visitors declared for a signed-in persona
   (`shots-identities.personaWarnings`). They are warnings, not refusals: a
   change to the sign-in page itself is a real guest change.
@@ -162,7 +167,10 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
      "Suggest this back";
    - for the member: their chat with the Homeroom bot, with an activity card
      whose build waits its turn (working) and a newer card on the same
-     request.
+     request;
+   - for the member: the same chat with a plan answered ("Build it"): the
+     plan card reads Building it with the answer under it, and the bot's
+     thanks sits below over the project's row and its build line.
 
    Each state goes into both copies or neither. A state the base or head
    revision cannot hold is left out of the run, as is one that fails to
@@ -178,9 +186,16 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
    (`src/db/migrate.js`), which each side runs for its own revision: the
    after side has it, and the before side has what the base revision
    already seeded.
+
+   Beside the demo states, every run on Homeroom's own copies also seeds the
+   two invited-member identities above and an invite link for the guest
+   browser: a small private project with its sketch card, whose link never
+   expires and never runs out, made by the full admin (`services/shots-fixtures.js`).
+   The brief's `availableFixtures` carries its `/invite/<token>` path.
 3. **Taking the shots** (`exploring`). The shots agent gets one turn in a
    shots worker. It has four browsers, one per persona (the guest's is not
-   signed in), and the "shots" tools:
+   signed in), plus a phone browser for each invited-member persona a
+   declared change names, and the "shots" tools:
 
    | Tool | What it does |
    | --- | --- |

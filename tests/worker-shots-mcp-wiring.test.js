@@ -175,6 +175,74 @@ test('the guest browser is never signed in, and its optional token never outlive
   assert.match(claudeRunner, /"guest":17895/);
   assert.match(claudeRunner,
     /unset SHOTS_MEMBER_TOKEN SHOTS_ADMIN_TOKEN SHOTS_FULL_ADMIN_TOKEN SHOTS_GUEST_TOKEN\n/);
+  // The declared invited members: their own tokens, listeners, directories,
+  // and unset line, and their persona reported as itself.
+  assert.match(claudeRunner, /: "\$\{SHOTS_INVITED_TOKEN:=\}"/);
+  assert.match(claudeRunner, /: "\$\{SHOTS_INVITED_LISTED_TOKEN:=\}"/);
+  assert.match(claudeRunner, /"invited_member":17896/);
+  assert.match(claudeRunner, /"invited_member_listed":17897/);
+  assert.match(claudeRunner,
+    /unset SHOTS_INVITED_TOKEN SHOTS_INVITED_LISTED_TOKEN\n/);
+  const bootstrapExports = require('../worker/shots-browser-bootstrap.js');
+  for (const persona of ['invited_member', 'invited_member_listed']) {
+    assert.equal(bootstrapExports
+      .failureEvent(new Error('x'), { persona, stage: 'exchange' }).persona, persona);
+  }
+});
+
+test('the declared invited members get phone browsers, and only when SHOTS_PERSONAS names them', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-invited-config-'));
+  try {
+    const withInvited = writeConfig(dir, {
+      SHOTS_PERSONAS: '["invited_member","invited_member_listed"]',
+    }).config;
+    assert.deepEqual(
+      Object.keys(withInvited.mcpServers).filter((name) => name.startsWith('browser_')).sort(),
+      ['browser_admin', 'browser_full_admin', 'browser_guest', 'browser_invited',
+        'browser_invited_listed', 'browser_member']);
+    for (const [server, persona] of [
+      ['browser_invited', 'invited_member'],
+      ['browser_invited_listed', 'invited_member_listed'],
+    ]) {
+      const args = withInvited.mcpServers[server].args;
+      assert.ok(args.includes(path.join(dir, 'state', `${persona}.json`)), server);
+      // These personas pose as the phone the invited member is on.
+      assert.deepEqual(args.slice(args.indexOf('--device'), args.indexOf('--device') + 2),
+        ['--device', 'Pixel 7'], server);
+      assert.ok(args.includes(path.join(dir, 'shots', persona)), `${server} saves into its own directory`);
+      assert.ok(fs.existsSync(path.join(dir, 'shots', persona)), `${persona} directory exists`);
+    }
+    // A persona no change names gets no browser, and the four base browsers
+    // are exactly what runs without the variable get.
+    for (const personas of [undefined, '[]', '["member"]']) {
+      const config = writeConfig(dir, { SHOTS_PERSONAS: personas }).config;
+      assert.deepEqual(
+        Object.keys(config.mcpServers).filter((name) => name.startsWith('browser_')).sort(),
+        ['browser_admin', 'browser_full_admin', 'browser_guest', 'browser_member']);
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a shots turn carries the invited tokens only for their declared personas', () => {
+  const worker = require('../src/services/worker');
+  const shots = (extra = {}) => worker.buildTurnSecretEnv({
+    mode: 'shots', agentBackend: 'claude_code', anthropicProxyJwt: 'p', shotsJwt: 'e',
+    shotsMemberToken: 'm', shotsAdminToken: 'a', shotsFullAdminToken: 'f', ...extra,
+  });
+  assert.equal('SHOTS_INVITED_TOKEN' in shots(), false, 'no invited token, no variable');
+  assert.equal('SHOTS_INVITED_TOKEN' in shots({ shotsInvitedToken: null }), false);
+  assert.equal(shots({ shotsInvitedToken: 'x' }).SHOTS_INVITED_TOKEN, 'x');
+  assert.equal(shots({ shotsInvitedListedToken: 'y' }).SHOTS_INVITED_LISTED_TOKEN, 'y');
+  assert.throws(() => shots({ shotsInvitedToken: '' }), /shotsInvitedToken required/,
+    'an empty value is a bug upstream, not a token');
+  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'worker.js'), 'utf8');
+  // The declared persona set decides the env, the browser set and the MCP
+  // config together: a token rides along only for its own declared persona.
+  assert.match(source, /shotsInvitedToken: shotsTurnPersonas\.includes\('invited_member'\)/);
+  assert.match(source, /shotsInvitedListedToken: shotsTurnPersonas\.includes\('invited_member_listed'\)/);
+  assert.match(source, /SHOTS_PERSONAS: JSON\.stringify\(shotsTurnPersonas\)/);
 });
 
 test('a shots turn carries a guest token only when the platform minted one', () => {

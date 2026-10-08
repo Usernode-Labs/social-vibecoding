@@ -28,6 +28,10 @@ const PERSONAS = Object.freeze({
   read_only_admin: { dir: 'admin', server: 'browser_admin' },
   full_admin: { dir: 'full_admin', server: 'browser_full_admin' },
   guest: { dir: 'guest', server: 'browser_guest' },
+  // The invited members pose as a phone, like their hosted browsers do. A
+  // dry run signs them in from their persona's storage state file.
+  invited_member: { dir: 'invited_member', server: 'browser_invited' },
+  invited_member_listed: { dir: 'invited_member_listed', server: 'browser_invited_listed' },
 });
 // The same MCP browser tools a hosted turn is denied (worker/run-cc.sh).
 const DENIED_BROWSER_TOOLS = ['browser_evaluate', 'browser_run_code', 'browser_file_upload', 'browser_install'];

@@ -221,6 +221,7 @@ function buildTurnSecretEnv({
   anthropicProxyJwt, anthropicApiKey, prodDebugJwt, openrouterApiKey,
   shotsJwt, shotsMemberToken, shotsAdminToken, shotsFullAdminToken,
   shotsGuestToken = null,
+  shotsInvitedToken = null, shotsInvitedListedToken = null,
   homeroomMcpToken = null,
 }) {
   const {
@@ -296,6 +297,15 @@ function buildTurnSecretEnv({
     // token only for a view-public child app (shots-identities.js).
     if (shotsGuestToken != null) {
       env.SHOTS_GUEST_TOKEN = requireNonEmptySecret(shotsGuestToken, 'shotsGuestToken');
+    }
+    // Optional, the same way: the invited members' tokens, present only for
+    // a run whose declared changes name those personas (the orchestrator
+    // mints them per declared persona and passes the persona set along).
+    if (shotsInvitedToken != null) {
+      env.SHOTS_INVITED_TOKEN = requireNonEmptySecret(shotsInvitedToken, 'shotsInvitedToken');
+    }
+    if (shotsInvitedListedToken != null) {
+      env.SHOTS_INVITED_LISTED_TOKEN = requireNonEmptySecret(shotsInvitedListedToken, 'shotsInvitedListedToken');
     }
   }
   if (homeroomMcpToken && HOMEROOM_READ_MODES.has(mode)) env.HOMEROOM_MCP_TOKEN = homeroomMcpToken;
@@ -523,6 +533,11 @@ function safeResultSubtype(value) {
 // resolve() would turn it back into the author default. Any Claude id is
 // accepted there by shape; every other turn stays on the allowlist.
 const SHOTS_AGENT_MODEL_RE = /^claude-[a-z0-9][a-z0-9-]{0,62}$/;
+// The personas beyond the four base browsers (member, read_only_admin,
+// full_admin, guest) that a run can declare: each is a fixture identity
+// (services/shots-fixtures.js) with its own browser, token env and proxy
+// listener, started only when a declared change names it.
+const SHOTS_EXTRA_PERSONAS = new Set(['invited_member', 'invited_member_listed']);
 function claudeTurnModel(mode, model) {
   return mode === 'shots' && SHOTS_AGENT_MODEL_RE.test(String(model || ''))
     ? model : models.resolve(model);
@@ -3164,6 +3179,9 @@ async function execInWorker(sessionId, {
   shotsRunId = null,
   shotsOrigins = null,
   shotsAuthTokens = null,
+  // The declared personas beyond the four base browsers, as an array of
+  // persona names: each gets its own browser and token env, and only these.
+  shotsPersonas = null,
   shotsNavigationHints = null,
   // Record browser video for this turn: only when a declared change is
   // motion a still cannot show.
@@ -3337,8 +3355,19 @@ async function execInWorker(sessionId, {
     if (typeof shotsPlatformAssets !== 'boolean') {
       throw new Error('execInWorker: shots platform assets must be boolean');
     }
+    if (shotsPersonas != null
+        && (!Array.isArray(shotsPersonas)
+          || shotsPersonas.some((persona) => !SHOTS_EXTRA_PERSONAS.has(persona)))) {
+      throw new Error('execInWorker: shots personas must be declared persona names');
+    }
   }
   const useAnthropicProxy = isClaude && !anthropicApiKey;
+  // The declared personas beyond the four base browsers, deduplicated and
+  // known: the token env, the runner's browser set and the MCP config all
+  // follow this one list.
+  const shotsTurnPersonas = Array.isArray(shotsPersonas)
+    ? [...new Set(shotsPersonas)].filter((persona) => SHOTS_EXTRA_PERSONAS.has(persona))
+    : [];
   const measuredTelemetryComponent = llmTelemetry.collectionComponent(telemetryComponent);
   const measuredTelemetryCorrelationId = isClaude && measuredTelemetryComponent
     ? (telemetryCorrelationId || durableTurnId)
@@ -3425,6 +3454,12 @@ async function execInWorker(sessionId, {
       shotsAdminToken: shotsAuthTokens?.read_only_admin,
       shotsFullAdminToken: shotsAuthTokens?.full_admin,
       shotsGuestToken: shotsAuthTokens?.guest ?? null,
+      // The invited members' tokens ride along only for their declared
+      // personas: the env decides whether the runner signs that browser in.
+      shotsInvitedToken: shotsTurnPersonas.includes('invited_member')
+        ? shotsAuthTokens?.invited_member ?? null : null,
+      shotsInvitedListedToken: shotsTurnPersonas.includes('invited_member_listed')
+        ? shotsAuthTokens?.invited_member_listed ?? null : null,
       homeroomMcpToken: homeroomGrant ? homeroomGrant.token : null,
     });
   } catch (err) {
@@ -3447,6 +3482,9 @@ async function execInWorker(sessionId, {
       SHOTS_RECORD_CLIPS: shotsRecordClips ? '1' : '0',
       ...(shotsRecordClips && shotsClipSize ? { SHOTS_CLIP_SIZE: String(shotsClipSize) } : {}),
       SHOTS_PLATFORM_ASSETS: shotsPlatformAssets ? '1' : '0',
+      // The declared personas beyond the four base browsers, so the runner
+      // starts a browser for exactly those and no others.
+      SHOTS_PERSONAS: JSON.stringify(shotsTurnPersonas),
     } : {}),
     ...(isClaude ? {
       MODEL: claudeModel,
@@ -5154,6 +5192,7 @@ module.exports = {
   shotsControlUrl,
   claudeTurnModel,
   buildTurnSecretEnv,
+  SHOTS_EXTRA_PERSONAS,
   // #3296: harness-aware backend resolution and result shape (for tests)
   resolveTurnBackend,
   finalizeHarnessResult,

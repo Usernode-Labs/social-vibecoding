@@ -31,7 +31,22 @@ const recordClips = process.env.SHOTS_RECORD_CLIPS === '1';
 // desktop size is mostly grey); 1280x800 when the platform names none.
 const clipSize = /^[1-9][0-9]{2,3}x[1-9][0-9]{2,3}$/.test(process.env.SHOTS_CLIP_SIZE || '')
   ? process.env.SHOTS_CLIP_SIZE : '1280x800';
-for (const persona of ['member', 'admin', 'full_admin', 'guest']) {
+// Personas beyond the four base browsers, only those a declared change
+// names (SHOTS_PERSONAS, a JSON array). Each gets its own browser; without
+// the env (the image-build verifiers) the config stays exactly the four
+// base browsers. These browsers pose as the phone their persona is on.
+let extraPersonas = [];
+try { extraPersonas = JSON.parse(process.env.SHOTS_PERSONAS || '[]'); } catch { extraPersonas = []; }
+if (!Array.isArray(extraPersonas)) extraPersonas = [];
+const EXTRA_BROWSERS = Object.freeze({
+  invited_member: { persona: 'invited_member', tool: 'browser_invited' },
+  invited_member_listed: { persona: 'invited_member_listed', tool: 'browser_invited_listed' },
+});
+const PHONE_DEVICE = 'Pixel 7';
+const extraBrowserSpecs = extraPersonas
+  .map((persona) => EXTRA_BROWSERS[persona])
+  .filter(Boolean);
+for (const persona of ['member', 'admin', 'full_admin', 'guest', ...extraBrowserSpecs.map((spec) => spec.persona)]) {
   fs.mkdirSync(path.join(shotsDir, persona), { recursive: true, mode: 0o700 });
 }
 // Each persona's browser reaches its own proxy listener, which is how the
@@ -46,7 +61,7 @@ const proxyFor = (persona) => {
   const shared = new URL(proxy);
   return `${shared.protocol}//${shared.hostname}:${personaPort}`;
 };
-const browserArgs = (persona) => {
+const browserArgs = (persona, { device = null } = {}) => {
   const observed = persona === 'read_only_admin' ? 'admin' : persona;
   return [
     '/usr/local/bin/shots-browser-observer.js',
@@ -61,6 +76,7 @@ const browserArgs = (persona) => {
     '--proxy-bypass', '<-loopback>',
     '--timeout-action', '10000', '--timeout-navigation', '30000',
     '--output-dir', path.join(shotsDir, observed),
+    ...(device ? ['--device', device] : []),
     ...(recordClips ? [`--save-video=${clipSize}`] : []),
   ];
 };
@@ -77,6 +93,9 @@ const config = {
     browser_full_admin: { command: 'node', args: browserArgs('full_admin'), env: browserEnv },
     // Not signed in: its storage state is empty (shots-browser-bootstrap.js).
     browser_guest: { command: 'node', args: browserArgs('guest'), env: browserEnv },
+    ...Object.fromEntries(extraBrowserSpecs.map((spec) => [
+      spec.tool, { command: 'node', args: browserArgs(spec.persona, { device: PHONE_DEVICE }), env: browserEnv },
+    ])),
   },
 };
 fs.writeFileSync(output, `${JSON.stringify(config)}\n`, { mode: 0o600 });

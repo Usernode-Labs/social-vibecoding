@@ -32,7 +32,8 @@ test('every surface that declares or reports a change names the same personas', 
   const path = require('node:path');
   const read = (file) => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
   const listed = `[${shots.PERSONAS.map((persona) => `'${persona}'`).join(', ')}]`;
-  assert.deepEqual(shots.PERSONAS, ['member', 'read_only_admin', 'full_admin', 'guest']);
+  assert.deepEqual(shots.PERSONAS, ['member', 'read_only_admin', 'full_admin', 'guest',
+    'invited_member', 'invited_member_listed']);
   for (const file of ['worker/visible-changes-mcp.js', 'src/cli/main.js', 'src/services/mcp-tools.js']) {
     assert.ok(read(file).includes(`persona: z.enum(${listed})`), `${file} lists ${listed}`);
   }

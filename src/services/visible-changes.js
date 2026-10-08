@@ -19,7 +19,14 @@ const MAX_PATH = 512;
 
 const IMPACTS = Object.freeze(['ui', 'motion', 'none']);
 // `guest` is a browser that is not signed in: what a signed-out visitor sees.
-const PERSONAS = Object.freeze(['member', 'read_only_admin', 'full_admin', 'guest']);
+// `invited_member` is a signed-in account waiting for platform access (a
+// private community's invited member, never here yet); `invited_member_listed`
+// is the same account with its waitlist spot listed. Both exist only as
+// shots fixtures (services/shots-fixtures.js).
+const PERSONAS = Object.freeze([
+  'member', 'read_only_admin', 'full_admin', 'guest',
+  'invited_member', 'invited_member_listed',
+]);
 const ANIMATIONS = Object.freeze(['none', 'steps', 'motion']);
 const CONTROLLED_FAILURE_LABEL = 'Controlled test: deliberately block the declared API GET on both revisions.';
 const LOCATOR_KINDS = Object.freeze(['testId', 'role', 'label', 'placeholder', 'text', 'css']);

@@ -397,6 +397,10 @@ function shotsBrief({ run, session, revision, pair, deployment, intent, guestKin
   // at that moment when `un-now` is on its address. Parsed to a fixed shape
   // here, so nothing the author wrote reaches the agent as free text.
   const moment = previewClock.forSession(session);
+  // Who the declared changes name: the browsers the run starts follow this.
+  const declaredPersonas = new Set(
+    (intent?.stories || []).map((story) => story.persona).filter(Boolean)
+  );
   return {
     version: 2,
     runId: run.id,
@@ -419,7 +423,24 @@ function shotsBrief({ run, session, revision, pair, deployment, intent, guestKin
         tool: 'browser_guest',
         who: GUEST_WHO[guestKind] || 'a visitor who is not signed in',
       },
+      // The declared personas beyond the four base browsers get an entry
+      // here, and the run starts a browser for exactly those: an invited
+      // member of the app, signed in from a fixture account and still
+      // waiting for platform access, whose browser poses as a phone.
+      ...(declaredPersonas.has('invited_member') ? {
+        invited_member: {
+          tool: 'browser_invited',
+          who: 'an invited member signed in on a fixture account that is still waiting for platform access, on a phone',
+        },
+      } : {}),
+      ...(declaredPersonas.has('invited_member_listed') ? {
+        invited_member_listed: {
+          tool: 'browser_invited_listed',
+          who: 'an invited member signed in on a fixture account that is still waiting for platform access and is listed on the waitlist, on a phone',
+        },
+      } : {}),
     },
+    declaredPersonas: [...declaredPersonas],
     changedFiles: {
       items: revision.files.slice(0, 200),
       complete: revision.filesComplete && revision.files.length <= 200,
@@ -733,7 +754,7 @@ function recordAgentDiagnostic(metrics, raw) {
   }
   if (raw.signal === 'SIGTERM' || raw.signal === 'SIGINT') event.signal = raw.signal;
   if (['base', 'head', 'hosted', 'outside'].includes(raw.side)) event.side = raw.side;
-  if (['member', 'admin', 'full_admin', 'guest'].includes(raw.persona)) event.persona = raw.persona;
+  if (['member', 'admin', 'full_admin', 'guest', 'invited_member', 'invited_member_listed'].includes(raw.persona)) event.persona = raw.persona;
   if (['intent_start', 'declared_check', 'other'].includes(raw.routeHint)) {
     event.routeHint = raw.routeHint;
   }
@@ -768,7 +789,7 @@ function recordAgentDiagnostic(metrics, raw) {
       || kind === 'browser_call_start' || kind === 'browser_call_pending'
       || kind === 'browser_call_end') {
     event.tool = AGENT_DIAGNOSTIC_TOOLS.has(raw.tool) ? raw.tool : 'other';
-    if (['member', 'admin', 'full_admin', 'guest'].includes(raw.persona)) event.persona = raw.persona;
+    if (['member', 'admin', 'full_admin', 'guest', 'invited_member', 'invited_member_listed'].includes(raw.persona)) event.persona = raw.persona;
     if (['base', 'head', 'outside'].includes(raw.side)) event.side = raw.side;
     if (Number.isSafeInteger(raw.routeOrdinal) && raw.routeOrdinal > 0
         && raw.routeOrdinal <= 1000) event.routeOrdinal = raw.routeOrdinal;
@@ -1110,6 +1131,11 @@ async function executeRun(config, options, injected = {}) {
       ...await deps.identities.mintShotsAuthTokens(pool, app.id),
       ...(guest.token ? { guest: guest.token } : {}),
     };
+    // The declared personas beyond the four base browsers. Their tokens are
+    // already minted above; the worker starts a browser and sets a token env
+    // for exactly the ones a declared change names, and never the others.
+    const shotsPersonas = [...new Set(intent.stories.map((story) => story.persona).filter(Boolean))]
+      .filter((persona) => worker.SHOTS_EXTRA_PERSONAS.has(persona));
     failurePhase = 'persist_exploration';
     stage(failurePhase);
     await deps.state.transitionRun(pool, run.id, 'exploring', {
@@ -1187,6 +1213,7 @@ async function executeRun(config, options, injected = {}) {
           runId: run.id,
           origins: exploration.origins,
           authTokens,
+          personas: shotsPersonas,
           navigationHints,
           recordClips,
           clipSize,

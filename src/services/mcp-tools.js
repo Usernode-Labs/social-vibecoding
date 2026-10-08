@@ -2021,7 +2021,7 @@ function registerTools(server, ctx) {
     claims: z.array(z.object({
       id: z.string(),
       claim: z.string(),
-      persona: z.enum(['member', 'read_only_admin', 'full_admin', 'guest']),
+      persona: z.enum(['member', 'read_only_admin', 'full_admin', 'guest', 'invited_member', 'invited_member_listed']),
       viewports: z.array(z.string()),
       steps: z.array(z.string()),
       baseState: z.enum(['present', 'not_present']),

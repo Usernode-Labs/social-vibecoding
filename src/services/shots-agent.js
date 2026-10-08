@@ -37,8 +37,13 @@ You have two throwaway copies of the app with the same fixture data: the
 before address (without the change) and the after address (with it). Use the
 browser named for each change's persona in the brief: browser_member for
 member, browser_admin for read_only_admin, browser_full_admin for full_admin,
-browser_guest for guest. The guest browser is not signed in: it sees what a
-visitor who is not signed in sees, and the brief says what that is here.
+browser_guest for guest, browser_invited for invited_member,
+browser_invited_listed for invited_member_listed.
+The guest browser is not signed in: it sees what a visitor who is not
+signed in sees, and the brief says what that is here. The invited members'
+browsers are signed in as fixture accounts that are still waiting for
+platform access, and pose as a phone. When the brief names no browser for a
+change's persona, the run has none: skip the change and say so.
 Do not sign in (the guest stays signed out too), expose storage, leave the
 two addresses, or change or add a change.
 
@@ -255,6 +260,9 @@ async function dispatchClaude(config, options, deps) {
     shotsRunId: runId,
     shotsOrigins: origins,
     shotsAuthTokens: authTokens,
+    // The declared personas beyond the four base browsers; the worker starts
+    // a browser and sets a token env for exactly these.
+    shotsPersonas: options.personas || null,
     shotsNavigationHints: options.navigationHints,
     shotsRecordClips: options.recordClips === true,
     ...(options.recordClips === true && options.clipSize ? { shotsClipSize: options.clipSize } : {}),

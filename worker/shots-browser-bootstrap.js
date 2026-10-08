@@ -15,7 +15,10 @@ const { loadTrustedHostedAppOrigins } = require('./shots-hosted-origins');
 
 const reportedPersona = (persona) => (
   persona === 'member' ? 'member' : persona === 'full_admin' ? 'full_admin'
-    : persona === 'guest' ? 'guest' : 'admin'
+    : persona === 'guest' ? 'guest'
+    // The invited members keep their own names: their browsers are separate.
+    : persona === 'invited_member' || persona === 'invited_member_listed' ? persona
+    : 'admin'
 );
 // What the guest browser starts from: no cookie and no storage on any origin.
 const SIGNED_OUT_STATE = '{"cookies":[],"origins":[]}\n';
@@ -104,6 +107,17 @@ async function main(progress) {
     read_only_admin: String(process.env.SHOTS_ADMIN_TOKEN || ''),
     full_admin: String(process.env.SHOTS_FULL_ADMIN_TOKEN || ''),
   };
+  // The declared personas beyond the three required ones sign in only when
+  // this run carries a token for them (services/worker.js sets the env only
+  // for personas a declared change names): a persona no change names must
+  // not cost a browser.
+  for (const [persona, env] of [
+    ['invited_member', 'SHOTS_INVITED_TOKEN'],
+    ['invited_member_listed', 'SHOTS_INVITED_LISTED_TOKEN'],
+  ]) {
+    const token = String(process.env[env] || '');
+    if (token) personas[persona] = token;
+  }
   if (origins.length !== 2 || !outputDir || !proxy || Object.values(personas).some((value) => !value)) {
     throw new Error('Shots browser bootstrap configuration is incomplete.');
   }

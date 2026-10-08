@@ -510,6 +510,23 @@ async function resetPair(config, pair, { onProgress = null } = {}) {
         shotsFixtures.ensureHostedAppFixture(fixtureInputs[side])));
       fixtureProfiles.push(`${shotsFixtures.HOSTED_APP_PROFILE}@${pair.hostedFixtureImageDigest}`);
       availableFixtures.push(hostedApps[0]);
+      // The invited members who are still waiting for platform access, and
+      // the invite link to a small private project the guest browser opens.
+      // Both hang off the full admin above: the members joined its community,
+      // the link is its maker's. Declared personas decide whose browsers
+      // start; the rows are here for every self-app run, as the others are.
+      const invited = await allSettledValues(['base', 'head'].map((side) =>
+        shotsFixtures.ensureInvitedMemberIdentity(fixtureInputs[side], { listed: false })));
+      fixtureProfiles.push(shotsFixtures.INVITED_PROFILE);
+      availableFixtures.push(invited[0]);
+      const invitedListed = await allSettledValues(['base', 'head'].map((side) =>
+        shotsFixtures.ensureInvitedMemberIdentity(fixtureInputs[side], { listed: true })));
+      fixtureProfiles.push(shotsFixtures.INVITED_LISTED_PROFILE);
+      availableFixtures.push(invitedListed[0]);
+      const inviteLinks = await allSettledValues(['base', 'head'].map((side) =>
+        shotsFixtures.ensureInviteLinkIdentity(fixtureInputs[side])));
+      fixtureProfiles.push(shotsFixtures.INVITE_PROFILE);
+      availableFixtures.push(inviteLinks[0]);
       onProgress?.({ stage: 'inspect_shots_fixtures' });
       const ready = await allSettledValues(['base', 'head'].map((side) =>
         shotsFixtures.canCopyMemberAgentSession(fixtureInputs[side])));

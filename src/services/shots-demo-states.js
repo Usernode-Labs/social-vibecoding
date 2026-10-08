@@ -49,6 +49,8 @@ const IDS = Object.freeze({
   // A request number on the platform app, not a row id: its GitHub issues
   // are nowhere near it, so the bot's records on it are the fixture's alone.
   botRequest: 990868,
+  // The plan the member answered ("Build it") and the bot's thanks under it.
+  botPlanRequest: 990869,
 });
 const RESERVED_RANGE = Object.freeze([990840, 990895]);
 
@@ -828,6 +830,178 @@ const STATES = [
       return {
         shows: [{
           state: 'Your chat with Homeroom bot: an activity card on a request of yours whose build is ready and waiting its turn (working), and a newer card on the same request below it. Nothing in it is unread.',
+          path: `/#messages/${IDS.botConversation}`,
+        }],
+      };
+    },
+  },
+  {
+    // The same chat with the plan answered: a plan card the member answered
+    // with "Build it" (its action done, the card reading Building it), and
+    // the bot's thanks under it over the project row and its build line
+    // (homeroom-bot-dm.js decidePlanTap → homeroom-bot-activity.js
+    // cardUnderPlan). The records are what those writers leave: the plan's
+    // run (its look), the plan message, the done action, the thanks card,
+    // and the two direct-message records. The conversation is the one this
+    // member already has with the bot (a member and the bot have exactly
+    // one): made here when the run-card state did not run.
+    id: 'shots-demo-member-bot-plan-thanks-v1',
+    persona: 'member',
+    needs: {
+      users: ['id', 'username', 'password', 'is_synthetic', 'display_name'],
+      conversations: ['id', 'kind', 'created_by', 'status', 'created_at', 'updated_at'],
+      conversation_direct_pairs: ['conversation_id', 'user_low_id', 'user_high_id'],
+      conversation_members: ['conversation_id', 'user_id', 'role', 'status', 'invited_by', 'responded_at',
+        'joined_at', 'last_read_message_id'],
+      conversation_messages: ['id', 'conversation_id', 'sender_id', 'content', 'idempotency_key', 'metadata',
+        'created_at'],
+      homeroom_bot_dm_messages: ['message_id', 'user_id', 'conversation_id', 'app_id', 'issue_number', 'kind',
+        'run_id', 'created_at'],
+      homeroom_bot_requesters: ['app_id', 'issue_number', 'user_id', 'issue_title', 'created_at'],
+      homeroom_bot_runs: ['app_id', 'issue_number', 'mode', 'verdict', 'determined', 'build_note', 'duration_ms',
+        'created_at', 'build_ok', 'proposal_session_id', 'cap_suppressed', 'live_build_waiting_at'],
+      homeroom_bot_dm_actions: ['user_id', 'app_id', 'kind', 'title', 'message_id', 'conversation_id', 'status',
+        'decided_at'],
+    },
+    free: async (client, ctx) => {
+      const taken = await client.query(
+        `SELECT EXISTS (SELECT 1 FROM homeroom_bot_requesters WHERE app_id = $1 AND issue_number = $2)
+             OR EXISTS (SELECT 1 FROM homeroom_bot_runs WHERE app_id = $1 AND issue_number = $2)
+             OR EXISTS (SELECT 1 FROM homeroom_bot_dm_messages WHERE app_id = $1 AND issue_number = $2) AS taken`,
+        [ctx.appId, IDS.botPlanRequest]
+      );
+      if (taken.rows[0].taken) return false;
+      // A member and the bot have exactly one direct conversation. Where one
+      // already exists it must be the fixture's own, or the state is left out
+      // rather than written into a real chat.
+      const bot = (await client.query(
+        'SELECT id FROM users WHERE username = $1 AND is_synthetic = TRUE', [BOT_USERNAME])).rows[0];
+      if (!bot) return true;
+      const pair = await client.query(
+        `SELECT conversation_id FROM conversation_direct_pairs
+          WHERE user_low_id = LEAST($1::int, $2::int) AND user_high_id = GREATEST($1::int, $2::int)`,
+        [ctx.member.id, bot.id]
+      );
+      return pair.rowCount === 0 || Number(pair.rows[0].conversation_id) === IDS.botConversation;
+    },
+    async install(client, ctx) {
+      await client.query(
+        `INSERT INTO users (username, password, is_synthetic, display_name)
+         VALUES ($1, 'staging-demo-not-a-login', TRUE, 'Homeroom bot')
+         ON CONFLICT DO NOTHING`,
+        [BOT_USERNAME]
+      );
+      const bot = (await client.query(
+        'SELECT id FROM users WHERE username = $1 AND is_synthetic = TRUE', [BOT_USERNAME])).rows[0];
+      const app = (await client.query('SELECT name, icon_emoji FROM apps WHERE id = $1', [ctx.appId])).rows[0];
+      if (!bot || !app) throw new Error('The Homeroom bot fixture lost its account or the platform app.');
+      const appName = app.name || ctx.selfAppSlug;
+      const conversationId = IDS.botConversation;
+      const haveConversation = await client.query(
+        'SELECT 1 FROM conversations WHERE id = $1', [conversationId]);
+      if (!haveConversation.rowCount) {
+        // As openAdmittedDirect opens it (conversations.js): both already in.
+        await client.query(
+          `INSERT INTO conversations (id, kind, created_by, status, created_at, updated_at)
+           VALUES ($1, 'direct', $2, 'active', NOW() - INTERVAL '60 minutes', NOW() - INTERVAL '8 minutes')`,
+          [conversationId, bot.id]
+        );
+        await client.query(
+          `INSERT INTO conversation_direct_pairs (conversation_id, user_low_id, user_high_id)
+           VALUES ($1, LEAST($2::int, $3::int), GREATEST($2::int, $3::int))`,
+          [conversationId, bot.id, ctx.member.id]
+        );
+        await client.query(
+          `INSERT INTO conversation_members
+             (conversation_id, user_id, role, status, invited_by, responded_at, joined_at)
+           VALUES ($1, $2, 'member', 'member', $2, NOW() - INTERVAL '60 minutes', NOW() - INTERVAL '60 minutes'),
+                  ($1, $3, 'member', 'member', $2, NOW() - INTERVAL '60 minutes', NOW() - INTERVAL '60 minutes')`,
+          [conversationId, bot.id, ctx.member.id]
+        );
+      }
+      const issueTitle = '[shots fixture] Show the week\'s points on the home card';
+      await client.query(
+        `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, created_at)
+         VALUES ($1, $2, $3, $4, NOW() - INTERVAL '55 minutes')`,
+        [ctx.appId, IDS.botPlanRequest, ctx.member.id, issueTitle]
+      );
+      // The look that wrote the plan and waits its turn with the build (the
+      // same shape the run-card state's run has, on its own request).
+      const run = await client.query(
+        `INSERT INTO homeroom_bot_runs
+           (app_id, issue_number, mode, verdict, determined, build_note, duration_ms, created_at, live_build_waiting_at)
+         VALUES ($1, $2, 'live', 'ready', TRUE, '[shots fixture] Specific enough to build: one number on the home card.',
+                 38000, NOW() - INTERVAL '50 minutes', NOW() - INTERVAL '50 minutes')
+         RETURNING id, created_at`,
+        [ctx.appId, IDS.botPlanRequest]
+      );
+      const runId = Number(run.rows[0].id);
+      // The plan, with the answer the member gave: decided, so the card reads
+      // "Building it" with "Build it" as the answer (decidePlanTap), and its
+      // Build it button is gone everywhere.
+      const action = await client.query(
+        `INSERT INTO homeroom_bot_dm_actions (user_id, app_id, kind, title)
+         VALUES ($1, $2, 'build_plan', $3) RETURNING id`,
+        [ctx.member.id, ctx.appId, `[shots fixture] The plan for ${appName}`]
+      );
+      const planMeta = {
+        kind: 'plan', appSlug: ctx.selfAppSlug, appName, issueNumber: IDS.botPlanRequest, firstVersion: true,
+        plan: {
+          bullets: [
+            'Add the week\'s point total to the home card.',
+            'Show it only once the week has points to show.',
+          ],
+          questions: [],
+        },
+        actionId: Number(action.rows[0].id),
+        status: 'answered', chosen: 'build', answer: 'Build it',
+      };
+      const plan = await client.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content, idempotency_key, metadata, created_at)
+         VALUES ($1, $2, $3, 'shots-fixture-hrbot-plan', $4::jsonb, NOW() - INTERVAL '48 minutes')
+         RETURNING id`,
+        [conversationId, bot.id,
+          `Here's my plan for **${appName}**:\n\n- Add the week's point total to the home card.\n- Show it only once the week has points to show.\n\nTap Build it when it looks right, or Change something.`,
+          JSON.stringify({ homeroomBot: planMeta })]
+      );
+      await client.query(
+        `UPDATE homeroom_bot_dm_actions SET message_id = $2, conversation_id = $3, status = 'done', decided_at = NOW()
+          WHERE id = $1`,
+        [planMeta.actionId, plan.rows[0].id, conversationId]
+      );
+      await client.query(
+        `INSERT INTO homeroom_bot_dm_messages (message_id, user_id, conversation_id, app_id, issue_number, kind, run_id, created_at)
+         VALUES ($1, $2, $3, $4, $5, 'plan', $6, NOW() - INTERVAL '48 minutes')`,
+        [plan.rows[0].id, ctx.member.id, conversationId, ctx.appId, IDS.botPlanRequest, runId]
+      );
+      // The bot's thanks, under the plan, read from the look that wrote it
+      // (cardUnderPlan): the words over the project row and its build line.
+      const thanksMeta = {
+        kind: 'activity', appSlug: ctx.selfAppSlug, appName, issueNumber: IDS.botPlanRequest, issueTitle,
+        firstVersion: true, thanks: true,
+        lookAt: new Date(run.rows[0].created_at).toISOString(),
+        ...(app.icon_emoji ? { appEmoji: String(app.icon_emoji) } : {}),
+      };
+      const thanks = await client.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content, idempotency_key, metadata, created_at)
+         VALUES ($1, $2, $3, 'shots-fixture-hrbot-plan-thanks', $4::jsonb, NOW() - INTERVAL '45 minutes')
+         RETURNING id`,
+        [conversationId, bot.id,
+          `Thanks for answering about the plan. I'll let you know when ${appName} is ready to try.`,
+          JSON.stringify({ homeroomBot: thanksMeta })]
+      );
+      await client.query(
+        `INSERT INTO homeroom_bot_dm_messages (message_id, user_id, conversation_id, app_id, issue_number, kind, created_at)
+         VALUES ($1, $2, $3, $4, $5, 'activity', NOW() - INTERVAL '45 minutes')`,
+        [thanks.rows[0].id, ctx.member.id, conversationId, ctx.appId, IDS.botPlanRequest]
+      );
+      await client.query(
+        'UPDATE conversation_members SET last_read_message_id = $3 WHERE conversation_id = $1 AND user_id = $2',
+        [conversationId, ctx.member.id, thanks.rows[0].id]
+      );
+      return {
+        shows: [{
+          state: 'Your chat with Homeroom bot with a plan answered: the plan card reads Building it with "Build it" as your answer, and the bot\'s thanks sits under it over the project\'s row and its build line.',
           path: `/#messages/${IDS.botConversation}`,
         }],
       };

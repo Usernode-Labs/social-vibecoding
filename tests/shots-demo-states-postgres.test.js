@@ -322,18 +322,45 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   // on the same request; both are read, and nothing went to the bell.
   const viewer = { id: member, username: 'usernode-capture' };
   const { cards } = await botActivity.cardsFor(pool, { user: viewer });
-  assert.equal(cards.length, 2);
-  const [newer, older] = cards;
+  // Three cards now: two on the run-card request, and the bot's thanks under
+  // the answered plan on its own request. Cards read newest message first,
+  // and the thanks was written last.
+  assert.equal(cards.length, 3);
+  const [thanks, newer, older] = cards;
   assert.ok(older.messageId < newer.messageId);
+  assert.ok(newer.messageId < thanks.messageId, 'the thanks card was written after the run-card fixture\'s cards');
   assert.equal(older.state, 'working');
   assert.equal(older.stage, 'build_queued');
   assert.equal(newer.state, 'working', 'the request\'s own progress: its build is waiting its turn');
   assert.equal(older.links.request, `#app/${SLUG}/dev/issues/${demoStates.IDS.botRequest}`);
+  assert.equal(thanks.state, 'working', 'the plan\'s build is waiting its turn under the thanks');
+  assert.equal(thanks.links.request, `#app/${SLUG}/dev/issues/${demoStates.IDS.botPlanRequest}`);
+  // The plan card the member answered with Build it: decided, so its button
+  // is gone everywhere and the card reads Building it (decidePlanTap).
+  const { rows: [plan] } = await pool.query(
+    `SELECT metadata->'homeroomBot' AS meta, content FROM conversation_messages
+      WHERE idempotency_key = 'shots-fixture-hrbot-plan'`);
+  assert.equal(plan.meta.status, 'answered');
+  assert.equal(plan.meta.chosen, 'build');
+  assert.equal(plan.meta.answer, 'Build it');
+  const { rows: [action] } = await pool.query(
+    `SELECT status, decided_at IS NOT NULL AS decided FROM homeroom_bot_dm_actions
+      WHERE message_id = (SELECT id FROM conversation_messages WHERE idempotency_key = 'shots-fixture-hrbot-plan')`);
+  assert.deepEqual(action, { status: 'done', decided: true });
+  // The thanks card's record and its look-at stamp, from the run that wrote
+  // the plan (cardUnderPlan).
+  const { rows: [thanksMeta] } = await pool.query(
+    `SELECT metadata->'homeroomBot' AS meta FROM conversation_messages
+      WHERE idempotency_key = 'shots-fixture-hrbot-plan-thanks'`);
+  assert.equal(thanksMeta.meta.thanks, true);
+  assert.equal(thanksMeta.meta.lookAt != null, true);
   const chats = await conversations.listConversations(pool, viewer);
   const chat = chats.find((conversation) => conversation.id === demoStates.IDS.botConversation);
   assert.equal(chat.homeroomBot, true);
   assert.equal(chat.unreadCount, 0);
-  assert.equal(chat.latestMessage.id, newer.messageId);
+  // The thanks was written last on the shared conversation, so it is the
+  // message the chat list shows, and the read marker sits on it.
+  assert.equal(chat.latestMessage.id, thanks.messageId);
   assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM notifications')).rows[0].n, 0);
 });
 

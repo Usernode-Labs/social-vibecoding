@@ -112,6 +112,10 @@ fi
 # Optional: the guest browser is signed out, and carries a guest token only
 # for a view-public child app (shots-origin-proxy.js).
 : "${SHOTS_GUEST_TOKEN:=}"
+# Optional: the invited members' tokens, set only for a run whose declared
+# changes name those personas (services/worker.js).
+: "${SHOTS_INVITED_TOKEN:=}"
+: "${SHOTS_INVITED_LISTED_TOKEN:=}"
 : "${AGENT_PROVIDER:=anthropic}"
 
 SYSTEM_PROMPT_FLAGS=""
@@ -361,7 +365,7 @@ elif [ "$MODE" = "shots" ]; then
   # Shots turns operate only through platform-seeded MCP servers. Removing
   # every filesystem, shell, web and delegation tool prevents the model from
   # reading browser storage state or inherited process credentials.
-  PERMISSION_FLAGS="--dangerously-skip-permissions --disallowed-tools Bash Edit Write NotebookEdit Read Glob Grep WebFetch WebSearch Task Agent Skill TodoWrite mcp__browser_member__browser_evaluate mcp__browser_member__browser_run_code mcp__browser_member__browser_file_upload mcp__browser_member__browser_install mcp__browser_admin__browser_evaluate mcp__browser_admin__browser_run_code mcp__browser_admin__browser_file_upload mcp__browser_admin__browser_install mcp__browser_full_admin__browser_evaluate mcp__browser_full_admin__browser_run_code mcp__browser_full_admin__browser_file_upload mcp__browser_full_admin__browser_install mcp__browser_guest__browser_evaluate mcp__browser_guest__browser_run_code mcp__browser_guest__browser_file_upload mcp__browser_guest__browser_install"
+  PERMISSION_FLAGS="--dangerously-skip-permissions --disallowed-tools Bash Edit Write NotebookEdit Read Glob Grep WebFetch WebSearch Task Agent Skill TodoWrite mcp__browser_member__browser_evaluate mcp__browser_member__browser_run_code mcp__browser_member__browser_file_upload mcp__browser_member__browser_install mcp__browser_admin__browser_evaluate mcp__browser_admin__browser_run_code mcp__browser_admin__browser_file_upload mcp__browser_admin__browser_install mcp__browser_full_admin__browser_evaluate mcp__browser_full_admin__browser_run_code mcp__browser_full_admin__browser_file_upload mcp__browser_full_admin__browser_install mcp__browser_guest__browser_evaluate mcp__browser_guest__browser_run_code mcp__browser_guest__browser_file_upload mcp__browser_guest__browser_install mcp__browser_invited__browser_evaluate mcp__browser_invited__browser_run_code mcp__browser_invited__browser_file_upload mcp__browser_invited__browser_install mcp__browser_invited_listed__browser_evaluate mcp__browser_invited_listed__browser_run_code mcp__browser_invited_listed__browser_file_upload mcp__browser_invited_listed__browser_install"
 else
   PERMISSION_FLAGS="--dangerously-skip-permissions"
 fi
@@ -424,6 +428,7 @@ if [ "$MODE" = "shots" ]; then
   # them back by name to publish them.
   export SHOTS_DIR="$SHOTS_TMP/shots"
   mkdir -p "$SHOTS_DIR/member" "$SHOTS_DIR/admin" "$SHOTS_DIR/full_admin" "$SHOTS_DIR/guest" \
+    "$SHOTS_DIR/invited_member" "$SHOTS_DIR/invited_member_listed" \
     || die "could not create the shots directories"
   tail -n +1 -s 0.2 -f "$SHOTS_BROWSER_DIAGNOSTIC_FILE" &
   SHOTS_DIAGNOSTIC_TAIL_PID=$!
@@ -433,7 +438,7 @@ if [ "$MODE" = "shots" ]; then
   # that persona's identity on every load (shots-origin-proxy.js). The
   # guest's listener adds the guest token when there is one, and nothing
   # otherwise. The bootstrap and the control plane keep the shared port above.
-  export SHOTS_PROXY_PERSONA_PORTS='{"member":17892,"read_only_admin":17893,"full_admin":17894,"guest":17895}'
+  export SHOTS_PROXY_PERSONA_PORTS='{"member":17892,"read_only_admin":17893,"full_admin":17894,"guest":17895,"invited_member":17896,"invited_member_listed":17897}'
   export SHOTS_PROXY_CONTROL_TOKEN=$(node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))")
   export SHOTS_PROXY_READY="$SHOTS_TMP/proxy.ready"
   export SHOTS_ALLOWED_ORIGINS="[\"$SHOTS_BASE_ORIGIN\",\"$SHOTS_HEAD_ORIGIN\"]"
@@ -454,6 +459,7 @@ if [ "$MODE" = "shots" ]; then
   node /usr/local/bin/shots-browser-bootstrap.js \
     || die "$(head -c 300 "$SHOTS_BOOTSTRAP_FAILURE_FILE" 2>/dev/null | tr -d '\r\n' | grep . || echo 'shots browser authentication failed')"
   unset SHOTS_MEMBER_TOKEN SHOTS_ADMIN_TOKEN SHOTS_FULL_ADMIN_TOKEN SHOTS_GUEST_TOKEN
+  unset SHOTS_INVITED_TOKEN SHOTS_INVITED_LISTED_TOKEN
   BROWSER_MCP_CONFIG="$SHOTS_TMP/mcp.json"
   node /usr/local/bin/write-shots-mcp-config.js "$BROWSER_MCP_CONFIG" \
     || die "could not create shots MCP config"

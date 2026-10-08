@@ -39,6 +39,23 @@ async function mintShotsAuthTokens(pool, appId) {
       usernode_pubkey: null,
       locale: 'en',
     }, appId),
+    // The invited members, minted from the same constants for the same
+    // reason: the matching non-loginable identities exist only in the paired
+    // disposable databases (resetPair inserts them), and the token can only
+    // become a session inside a shots clone, where a private member passes
+    // the platform-access gate (middleware/auth.js isPrivateMember).
+    invited_member: visuals.mintCaptureToken({
+      id: fixtures.INVITED_USER_ID,
+      username: fixtures.INVITED_USERNAME,
+      usernode_pubkey: null,
+      locale: 'en',
+    }, appId),
+    invited_member_listed: visuals.mintCaptureToken({
+      id: fixtures.INVITED_LISTED_USER_ID,
+      username: fixtures.INVITED_LISTED_USERNAME,
+      usernode_pubkey: null,
+      locale: 'en',
+    }, appId),
   };
 }
 
