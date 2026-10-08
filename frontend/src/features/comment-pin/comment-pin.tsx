@@ -210,6 +210,10 @@ function CommentPin({ session, onClose }: { session: Session; onClose: () => voi
       role="dialog"
       aria-modal="true"
       aria-label="Comment on this page"
+      // A press here moves the pin and keeps the comment's own field
+      // focused (its mousedown is prevented), so a tap keeps the keyboard
+      // too (tests/keyboard-dismiss.test.js).
+      data-keep-keyboard=""
       className="fixed inset-0 cursor-crosshair"
       style={{ zIndex: 2147483000 }}
       onKeyDown={onKeyDown}
