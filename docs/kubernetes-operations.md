@@ -435,7 +435,7 @@ An ordinary rolling change, safe in both directions.
 
 ## Workflow worker
 
-`workflow.worker.enabled` (default `true`) deploys `social-vibecoding-workflow`: the
+`workflow.worker.enabled` (default `false`) deploys `social-vibecoding-workflow`: the
 platform image running `node workflow-worker.js`. It runs the workflow runtime's work
 items (deploys, GitHub calls, retirements) and timers, so they no longer share the web
 Pod's memory, CPU and `/tmp`. The web Pods get `WF_LOOPS=worker` and keep the pipeline
@@ -451,17 +451,16 @@ slots, so decisions, projections and the post-commit pushes stay where they were
 - **Quota.** During its own rollout it adds 1 CPU of requests (two Pods at 500m) to
   the platform namespace, beside two platform Pods at 2 CPUs and the migration Job.
   Check the namespace's `requests.cpu` headroom (`kubectl -n social-platform describe
-  resourcequota`) before the release that first deploys it.
+  resourcequota`) before turning it on.
 - **It does nothing until a workflow flag is on.** With every flag off it starts,
   reports healthy and idles.
 
 ### Activation and rollback
 
-It comes with the release that ships it: no infra change. An ordinary rolling change,
-safe in both directions.
+An ordinary rolling change, safe in both directions.
 
-1. **The release.** Argo CD creates the worker and rolls the web Pods with
-   `WF_LOOPS=worker`.
+1. **Set the value.** Set `workflow.worker.enabled: true` in the platform's values in
+   the infra repository. Argo CD creates the worker and rolls the web Pods.
 2. **During the rollout overlap.** The old leader may still run the loops while the
    worker runs its own. Both claim work safely (leased row locks); the same item never
    runs twice at once.
@@ -476,8 +475,7 @@ safe in both directions.
    are still recorded and decided, but their follow-up work and timers wait. Alert on
    the worker's restarts and on work overdue by more than a few minutes.
 
-**Rollback.** Set `workflow.worker.enabled: false` in the platform's values in the infra
-repository. The worker is deleted and the web Pods
+**Rollback.** Set the value back to `false`. The worker is deleted and the web Pods
 lose `WF_LOOPS=worker`, so the leader runs the loops again. Work the worker was running
 is resumed from its checkpoint once its lease lapses.
 

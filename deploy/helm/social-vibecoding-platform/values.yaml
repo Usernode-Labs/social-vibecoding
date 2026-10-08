@@ -62,11 +62,11 @@ platform:
 # The workflow worker: a Deployment of its own, running the platform image
 # with `node workflow-worker.js`, that runs the workflow runtime's work items
 # (deploys, GitHub calls, retirements) and timers, so the web Pods only
-# decide (docs/workflows.md, "Running it"). It only does something while a
-# workflow flag is on. false is the rollback: the leader web Pod runs them.
+# decide (docs/workflows.md, "Running it"). Off: the leader web Pod runs
+# them, as before. It only does something while a workflow flag is on.
 workflow:
   worker:
-    enabled: true
+    enabled: false
     # Correctness never depends on how many run; a second replica only adds
     # capacity (work limits count per process).
     replicas: 1
