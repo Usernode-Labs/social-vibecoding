@@ -2808,6 +2808,55 @@ const App = {
   // we know we might have missed something" rather than a periodic poll.
   _eventsWsHasConnected: false,
 
+  // #4318: a session's live events (`session_event`: the agent's progress,
+  // the Mayor's replies, status rows) reach only its owner's sockets and the
+  // sockets that WATCH it, so a screen showing a session's live transcript
+  // says so on this socket. `_watchedSessions` maps a session id to the set
+  // of reasons it is on screen; the socket watches every id with at least
+  // one, and is told them all again whenever it reconnects. Today the one
+  // reason is DevChat's open session (the session chat and the Mayor chat;
+  // DevChat.currentSession's setter calls setDevChatSession). Lists, boards,
+  // proposal pages and previews need nothing here: checks and preview
+  // events still reach everyone who may view the app.
+  _watchedSessions: new Map(),
+
+  watchSession(sessionId, reason = 'screen') {
+    const id = Number(sessionId);
+    if (!Number.isSafeInteger(id) || id <= 0) return;
+    let reasons = App._watchedSessions.get(id);
+    if (!reasons) {
+      reasons = new Set();
+      App._watchedSessions.set(id, reasons);
+      App._sendSessionWatch('watch_session', id);
+    }
+    reasons.add(reason);
+  },
+
+  unwatchSession(sessionId, reason = 'screen') {
+    const id = Number(sessionId);
+    const reasons = App._watchedSessions.get(id);
+    if (!reasons) return;
+    reasons.delete(reason);
+    if (reasons.size) return;
+    App._watchedSessions.delete(id);
+    App._sendSessionWatch('unwatch_session', id);
+  },
+
+  _devChatWatchedId: null,
+  setDevChatSession(sessionId) {
+    const id = Number(sessionId) > 0 ? Number(sessionId) : null;
+    if (id === App._devChatWatchedId) return;
+    if (App._devChatWatchedId != null) App.unwatchSession(App._devChatWatchedId, 'devchat');
+    App._devChatWatchedId = id;
+    if (id != null) App.watchSession(id, 'devchat');
+  },
+
+  _sendSessionWatch(type, sessionId) {
+    const socket = App.eventsWs;
+    if (!socket || socket.readyState !== 1) return; // re-sent on open
+    try { socket.send(JSON.stringify({ type, sessionId })); } catch { /* closed */ }
+  },
+
   connectEvents() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     // Same staging-iframe token fallback as GroupChat._openSocket — the
@@ -2826,6 +2875,9 @@ const App = {
       // A (re)opened socket proves we're online — clear the offline
       // banner immediately instead of waiting for the slow re-probe loop.
       if (window.Offline) Offline.nudge();
+      // #4318: a new socket watches nothing until told; tell it every
+      // session still on screen before anything else can be missed.
+      for (const id of App._watchedSessions.keys()) App._sendSessionWatch('watch_session', id);
       if (isReconnect) App.resyncCurrentView();
     };
 
