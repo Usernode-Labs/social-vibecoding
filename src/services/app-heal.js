@@ -320,7 +320,13 @@ async function checkAndHealOne(config, pool, app, { probeRunning = false, backgr
     try {
       if (state !== 'not_found') {
         try {
-          await applicationRuntime.restart(config, runtimeRef);
+          // Under the production build lock, so it never restarts an app
+          // a deploy in another process (the workflow worker) has started
+          // since the check above. Not around the rebuild below, which
+          // takes the lock itself.
+          const { withResourceUse } = require('./build-retention-guard');
+          const { PRODUCTION_BUILD_LOCK } = require('./advisory-locks');
+          await withResourceUse(config, PRODUCTION_BUILD_LOCK, app.slug, () => applicationRuntime.restart(config, runtimeRef));
           healAttempts.delete(app.slug);
           return { status: 'restarted', slug: app.slug };
         } catch (err) {

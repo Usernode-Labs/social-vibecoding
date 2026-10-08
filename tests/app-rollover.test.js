@@ -488,3 +488,18 @@ test('concurrency honors the env override and is clamped', () => {
     else process.env.ROLLOVER_CONCURRENCY = prev;
   }
 });
+
+test('the redeploy holds the app\'s production build lock, as a deploy in another process does', async (t) => {
+  const rollover = setup();
+  const locks = [];
+  t.mock.method(require('../src/services/build-retention-guard'), 'withResourceUse', (cfg, classifier, resource, fn) => {
+    locks.push([classifier, resource, fx.respawnCalls.length]);
+    return fn();
+  });
+  fx.apps = [appRow(13, 'locked')];
+  const job = await runSweep(rollover);
+  assert.deepEqual(outcomes(job), { locked: 'rolled' });
+  const { PRODUCTION_BUILD_LOCK } = require('../src/services/advisory-locks');
+  assert.deepEqual(locks, [[PRODUCTION_BUILD_LOCK, 'locked', 0]], 'taken before the respawn');
+  assert.equal(fx.respawnCalls.length, 1);
+});

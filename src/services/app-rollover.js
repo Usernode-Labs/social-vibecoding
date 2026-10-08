@@ -369,9 +369,13 @@ async function rollOne(config, pool, app) {
   // Per-slug serialization: bulk rollover, dev-chat merges, the drift
   // poller and heals all queue behind one another for the same app. This
   // is the race staging.js's serializeRebuild comment documents —
-  // runExistingImage does not take the lock on its own.
+  // runExistingImage does not take the lock on its own. The production
+  // build lock is what serialises it with a deploy in another process (the
+  // workflow worker runs a merge's), as rebuildProduction takes both.
   const staging = require('./staging');
-  return staging.serializeRebuild(app.slug, async () => {
+  const { withResourceUse } = require('./build-retention-guard');
+  const { PRODUCTION_BUILD_LOCK } = require('./advisory-locks');
+  return staging.serializeRebuild(app.slug, () => withResourceUse(config, PRODUCTION_BUILD_LOCK, app.slug, async () => {
     // markStart/markEnd are the only emitters of app_redeploy_status, so
     // this is what makes the version pills spin during a rollover.
     appDeployStatus.markStart(app.slug, { fromSha: app.main_sha || null });
@@ -429,7 +433,7 @@ async function rollOne(config, pool, app) {
     } finally {
       appDeployStatus.markEnd(app.slug, { failed: failedForPill });
     }
-  });
+  }));
 }
 
 // apps.last_failure so the existing "View build log" panel covers rollover

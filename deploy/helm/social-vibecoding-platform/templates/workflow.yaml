@@ -1,8 +1,9 @@
 {{- if and .Values.enabled .Values.platform.enabled .Values.workflow.worker.enabled }}
 # The workflow worker (workflow-worker.js): the platform image running the
 # workflow runtime's work items and timers, with no HTTP app and no
-# Service. Its own component label keeps the platform Service, the PDB and
-# the platform's network policies from selecting it.
+# Service. Its own component label keeps the platform Service and the PDB
+# from selecting it; the platform's network policies select it on purpose
+# (networkpolicy.yaml), since it reaches what the platform reaches.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

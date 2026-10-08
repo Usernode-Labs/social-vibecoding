@@ -34,17 +34,20 @@ function notifySessionState(sessionId) {
 // Written on the same edges that notify, so it follows the set and the
 // operations exactly.
 const { HOLDER, createHolds } = require('./in-flight-record');
-const busyHolds = createHolds('active-workers');
 const BUSY_HOLD_SQL = `INSERT INTO session_busy (session_id, holder) VALUES ($1, $2)
   ON CONFLICT (session_id, holder) DO UPDATE SET heartbeat_at = NOW()`;
 const BUSY_RELEASE_SQL = 'DELETE FROM session_busy WHERE session_id = $1 AND holder = $2';
+const busyHolds = createHolds('active-workers', {
+  write: (pool, id) => pool.query(BUSY_HOLD_SQL, [id, HOLDER]),
+  remove: (pool, id) => pool.query(BUSY_RELEASE_SQL, [id, HOLDER]),
+});
 
 function recordBusy(sessionId) {
   const id = Number(sessionId);
   if (!Number.isInteger(id) || id <= 0) return;
   const busy = activeSessionOperations.has(id) || activeWorkers.has(id) || activeWorkers.has(String(id));
-  if (busy && !busyHolds.held(id)) busyHolds.hold(id, (pool) => pool.query(BUSY_HOLD_SQL, [id, HOLDER]));
-  else if (!busy && busyHolds.held(id)) busyHolds.release(id, (pool) => pool.query(BUSY_RELEASE_SQL, [id, HOLDER]));
+  if (busy && !busyHolds.held(id)) busyHolds.hold(id, null);
+  else if (!busy && busyHolds.held(id)) busyHolds.release(id);
 }
 
 class ActiveWorkerSet extends Set {

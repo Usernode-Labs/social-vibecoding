@@ -73,6 +73,8 @@ function stop(signal) {
   stopping = (async () => {
     await platform.stopWorkflow().catch((err) => log.warn('workflow-worker', 'Stopping the workflow runtime failed', { err: err.message }));
     await mobilePush.stop({ timeoutMs: 5000 }).catch(() => {});
+    // Rows of work it was doing (a deploy), so they do not read as running.
+    await require('./src/services/in-flight-record').releaseAll().catch(() => {});
     await wsBus.stop().catch(() => {});
     await getPool(config).end().catch(() => {});
     healthServer?.close();

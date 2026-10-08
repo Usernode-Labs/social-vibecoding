@@ -129,12 +129,15 @@ export function mergeFollowupsServices({ config, pool, shotsPollMs = 15000 }: De
       async run({ input }): Promise<Json> {
         const gh = github();
         if (!gh.isEnabled()) return { found: [], ids: [] };
-        // Each change goes with the head that was found merged, which the
-        // Included guard compares under the change's lock: an operation on
-        // the change in some other process (an upload, a sync with main) that
-        // moved it since is caught there, where no process's memory is read.
+        // The query skips a change any process is working on (its
+        // session_busy row); this process's own memory is asked too, since
+        // that row is written a moment after the work starts. Each change
+        // goes with the head that was found merged, which the Included guard
+        // compares under the change's lock with its busy row again.
         const changes = legacy('services/included-changes');
-        const { rows } = await pool.query(changes.CANDIDATES_SQL, [input.appId, input.sessionId]);
+        const busyHere = legacy('services/active-workers').isSessionBusy;
+        const { rows: candidates } = await pool.query(changes.CANDIDATES_SQL, [input.appId, input.sessionId]);
+        const rows = candidates.filter((c: { id: number }) => !busyHere(Number(c.id)));
         if (!rows.length) return { found: [], ids: [] };
         const listed = await gh.listPullRequestCommitShas(input.owner, input.repo, input.prNumber);
         const head = legacy('services/pr-vote-revision').reviewedHeadForSession;

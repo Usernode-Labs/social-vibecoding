@@ -277,7 +277,7 @@
     {
       "key": "WF_LOOPS",
       "group": "Proposals & retention",
-      "description": "Where the workflow runtime runs its work items and timers. leader: the platform process that holds the leader lock. worker: the separate workflow worker Deployment, which the Helm chart sets on the platform Pods when it deploys one (workflow.worker.enabled). Unset: leader."
+      "description": "Where the workflow runtime runs its work items and timers. leader: the platform process that holds the leader lock. worker: the separate workflow worker Deployment, which the Helm chart sets on the platform Pods when it deploys one (workflow.worker.enabled); honoured only on Kubernetes outside a staging preview, where a worker can exist. Unset: leader."
     },
     {
       "key": "WF_OWNERSHIP_MODE",

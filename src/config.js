@@ -757,9 +757,10 @@ function load() {
     // 'leader', the web Pod that holds the leader lock (the default), or
     // 'worker', the workflow worker Deployment (workflow-worker.js), which
     // the chart sets on the web Pods when it deploys the worker. Pipeline
-    // slots run on every web Pod either way, and a staging preview, which
-    // never leads, runs everything itself.
-    wfLoops: process.env.WF_LOOPS === 'worker' ? 'worker' : 'leader',
+    // slots run on every web Pod either way. 'worker' is only honoured where
+    // a worker can exist, on Kubernetes outside a staging preview: a preview
+    // and the Docker runtime have none, and run everything themselves.
+    wfLoops: process.env.WF_LOOPS === 'worker' && appRuntime === 'kubernetes' && !staging ? 'worker' : 'leader',
     // What a write to a machine-owned column outside the pipeline does:
     // 'raise' everywhere but production, where it is logged to
     // wf_ownership_violations until no legacy writer is left.

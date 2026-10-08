@@ -176,6 +176,13 @@ for (const scenario of ['respawn', 'rebuild', 'restart-fallback', 'probe-running
       if (scenario === 'restart-fallback') throw new Error('replacement failed');
     });
     t.mock.method(runtime, 'probeHealth', async () => false);
+    // The restart runs under the production build lock (a database lock on
+    // Kubernetes), so a deploy in another process cannot interleave.
+    const locks = [];
+    t.mock.method(require('../src/services/build-retention-guard'), 'withResourceUse', (cfg, classifier, resource, fn) => {
+      locks.push([classifier, resource]);
+      return fn();
+    });
     for (const method of ['getContainerStatus', 'restartContainer', 'startContainer', 'waitForHealthy']) {
       t.mock.method(require('../src/services/docker'), method, () => assert.fail(`Docker ${method} called`));
     }
@@ -186,6 +193,8 @@ for (const scenario of ['respawn', 'rebuild', 'restart-fallback', 'probe-running
       'probe-running': 'restarted', 'missing-repo': 'repo_provisioned' }[scenario]);
     if (scenario !== 'missing-repo') assert.deepEqual(statusCalls, ['sv-app-1-puzzle-chain']);
     assert.equal(restarts, ['restart-fallback', 'probe-running'].includes(scenario) ? 1 : 0);
+    const { PRODUCTION_BUILD_LOCK } = require('../src/services/advisory-locks');
+    assert.deepEqual(locks, restarts ? [[PRODUCTION_BUILD_LOCK, 'puzzle-chain']] : [], 'the restart holds the app\'s build lock');
     if (scenario !== 'probe-running') {
       const update = fx.queries.find(q => /UPDATE apps SET container_id/.test(q.sql));
       assert.match(update.sql, /runtime_kind = \$\d+, runtime_name = \$\d+/);

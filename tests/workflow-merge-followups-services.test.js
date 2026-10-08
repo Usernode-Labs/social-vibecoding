@@ -36,7 +36,7 @@ const realWs = require('../src/services/ws');
 stub('../src/services/ws', { ...realWs, pushIssueUpdate() {} });
 
 const retired = [];
-stub('../src/services/worker', { async retireWorker(id) { retired.push(id); return { deferred: false }; } });
+stub('../src/services/worker', { async retireWorker(id) { retired.push(id); return { deferred: false }; }, isInFlight: () => false });
 
 const { mergeFollowupsServices } = require('../src/workflow/merge-followups/services.ts');
 const { WORK } = require('../src/workflow/merge-followups/machine.ts');
@@ -75,7 +75,7 @@ test('recording a close is part of the work: a database failure there is retried
   assert.deepEqual(records.strict, [true], 'the watch runs strict too');
 });
 
-test('included.find names each change with the head found merged, reading no process\'s memory', async () => {
+test('included.find names each change with the head found merged, and skips one this process is working on', async () => {
   const A = 'a'.repeat(40);
   const B = 'b'.repeat(40);
   pool.rows = [
@@ -91,8 +91,19 @@ test('included.find names each change with the head found merged, reading no pro
   } finally {
     pool.rows = [];
   }
-  const source = require('node:fs').readFileSync(require.resolve('../src/workflow/merge-followups/services.ts'), 'utf8');
-  assert.doesNotMatch(source, /isSessionBusy|active-workers/, 'a busy check in memory sees nothing from another process');
+  // This process's own busy check still applies: the session_busy row is
+  // written a moment after the work starts (CANDIDATES_SQL reads it).
+  const busy = require('../src/services/active-workers');
+  const release = busy.beginSessionOperation(12);
+  try {
+    pool.rows = [{ id: 11, source: 'native', reviewed_head_sha: A, imported_pr_head_sha: null },
+      { id: 12, source: 'imported', reviewed_head_sha: null, imported_pr_head_sha: B }];
+    const out = await handlers[WORK.find].run({ input: { ...base }, key: 'included', attempt: 1, resumeFrom: null, checkpoint: async () => {} });
+    assert.deepEqual(out.found, [{ id: 11, head: A }]);
+  } finally {
+    release();
+    pool.rows = [];
+  }
 });
 
 test('worker retirement waits for a shots run another process is running in the worker', async () => {

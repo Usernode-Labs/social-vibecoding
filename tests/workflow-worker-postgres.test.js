@@ -70,6 +70,36 @@ test('the platform runtime in worker mode', { timeout: 60000 }, async (t) => {
     await platform.stopWorkflow();
   });
 
+  await t.test('the entry point runs: healthy once started, and exits cleanly on SIGTERM', async () => {
+    const { spawn } = require('node:child_process');
+    const child = spawn(process.execPath, [path.join(__dirname, '..', 'workflow-worker.js')], {
+      env: {
+        ...process.env, USERNODE_ENV: 'staging', DATABASE_URL: String(url), SESSION_SECRET: 'worker-test-secret',
+        ADMIN_USERNAME: 'admin', ADMIN_PASSWORD: 'worker-test-password', WF_GOVERNANCE_ENABLED: '1', LOG_LEVEL: 'error',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let output = '';
+    child.stdout.on('data', (d) => { output += d; });
+    child.stderr.on('data', (d) => { output += d; });
+    const exited = new Promise((resolve) => child.on('exit', (code) => resolve(code)));
+    try {
+      let health = null;
+      const started = Date.now();
+      while (!health) {
+        assert.ok(Date.now() - started < 30000, `the worker answers /health\n${output}`);
+        health = await fetch('http://127.0.0.1:8081/health').then(async (r) => (r.status === 200 ? r.json() : null), () => null);
+        if (!health) await sleep(200);
+      }
+      assert.deepEqual(health, { state: 'running', runtime: true });
+      child.kill('SIGTERM');
+      const code = await Promise.race([exited, sleep(15000).then(() => 'timeout')]);
+      assert.equal(code, 0, output);
+    } finally {
+      if (child.exitCode === null) child.kill('SIGKILL');
+    }
+  });
+
   await t.test('a web process applies it, and records the build it booted', async () => {
     await platform.startWorkflow(config, { loops: false });
     const started = Date.now();

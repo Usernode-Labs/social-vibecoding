@@ -6528,6 +6528,19 @@ async function cleanup() {
     });
   }
 
+  // This process's work-in-flight rows (services/in-flight-record.js): a
+  // replaced Pod must not leave sessions reading as busy, or deploys as
+  // running, for the two minutes their heartbeat would. Bounded like the
+  // marks above.
+  if (shutdownPool) {
+    let inFlightTimer = null;
+    await Promise.race([
+      require('./src/services/in-flight-record').releaseAll().catch(() => {}),
+      new Promise((resolve) => { inFlightTimer = setTimeout(resolve, BUILD_SHUTDOWN_MARK_TIMEOUT_MS); }),
+    ]);
+    if (inFlightTimer) clearTimeout(inFlightTimer);
+  }
+
   // Close the pg pool so in-flight queries settle instead of being severed
   // by process.exit(). Bounded: a pool that won't drain must not hold the
   // process past the SIGKILL deadline.

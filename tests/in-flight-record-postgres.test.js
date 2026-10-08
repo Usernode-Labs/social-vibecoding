@@ -96,4 +96,62 @@ test('work in flight, across processes', { timeout: 60000 }, async (t) => {
     assert.deepEqual(await candidates(), [s.id], 'free again');
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM session_busy')).rows[0].n, 0, 'nothing left behind');
   });
+
+  await t.test('a key held again right after its release keeps its row (the release\'s delete never lands last)', async () => {
+    const { rows: [s] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status) VALUES ($1, $2, 'active') RETURNING id`, [app.id, u.id]);
+    const { createHolds, HOLDER } = anotherProcess('../src/services/in-flight-record');
+    const holds = createHolds('test', {
+      write: (p, id) => p.query('INSERT INTO session_busy (session_id, holder) VALUES ($1, $2) ON CONFLICT (session_id, holder) DO UPDATE SET heartbeat_at = NOW()', [id, HOLDER]),
+      remove: (p, id) => p.query('DELETE FROM session_busy WHERE session_id = $1 AND holder = $2', [id, HOLDER]),
+    });
+    const rowThere = async () => (await pool.query('SELECT count(*)::int AS n FROM session_busy WHERE session_id = $1', [s.id])).rows[0].n === 1;
+    for (let i = 0; i < 50; i++) {
+      holds.hold(s.id, null);
+      holds.release(s.id);
+      holds.hold(s.id, null);
+      await holds.settled();
+      assert.ok(holds.held(s.id) && await rowThere(), `round ${i}: held, and its row is there`);
+      holds.release(s.id);
+      await holds.settled();
+      assert.equal(await rowThere(), false, `round ${i}: released`);
+    }
+  });
+
+  await t.test('a process that stops cleanly removes its rows', async () => {
+    const { rows: [s] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status) VALUES ($1, $2, 'active') RETURNING id`, [app.id, u.id]);
+    // One process: both modules on one load of in-flight-record.
+    for (const p of ['../src/services/in-flight-record', '../src/services/active-workers', '../src/services/app-deploy-status']) {
+      delete require.cache[require.resolve(p)];
+    }
+    const web = require('../src/services/active-workers');
+    const deploys = require('../src/services/app-deploy-status');
+    web.activeWorkers.add(s.id);
+    deploys.markStart('shop', {});
+    await settle();
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM session_busy WHERE session_id = $1', [s.id])).rows[0].n, 1);
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM app_deploys')).rows[0].n, 1);
+    await require('../src/services/in-flight-record').releaseAll();
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM session_busy WHERE session_id = $1', [s.id])).rows[0].n, 0);
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM app_deploys')).rows[0].n, 0);
+    web.activeWorkers.delete(s.id);
+  });
+
+  await t.test('the legacy mark of included changes skips a session any process is working on', async () => {
+    const { rows: [carrier] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, pr_number, merge_commit_sha) VALUES ($1, $2, 'merged', 20, $3) RETURNING id`,
+      [app.id, u.id, 'c'.repeat(40)]);
+    const { rows: [busy] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, pr_number) VALUES ($1, $2, 'promoted', 21) RETURNING id`, [app.id, u.id]);
+    const { rows: [free] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, pr_number) VALUES ($1, $2, 'promoted', 22) RETURNING id`, [app.id, u.id]);
+    await pool.query(`INSERT INTO session_busy (session_id, holder) VALUES ($1, 'another-pod')`, [busy.id]);
+    const { MARK_SQL } = require('../src/services/included-changes');
+    const { rows } = await pool.query(MARK_SQL, [carrier.id, [busy.id, free.id]]);
+    assert.deepEqual(rows.map((r) => r.id), [free.id]);
+    // A row its process stopped renewing does not hold it.
+    await pool.query(`UPDATE session_busy SET heartbeat_at = NOW() - interval '3 minutes' WHERE session_id = $1`, [busy.id]);
+    assert.deepEqual((await pool.query(MARK_SQL, [carrier.id, [busy.id]])).rows.map((r) => r.id), [busy.id]);
+  });
 });

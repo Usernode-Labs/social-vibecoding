@@ -675,12 +675,22 @@ test('a stop is published, and another process records it only for a turn it run
     await worker.stopTurn(8200);
     await new Promise((r) => setImmediate(r));  // a publisher-only send is queued
     assert.deepEqual(sent.filter((e) => e.k === 'worker_stop').map((e) => e.d.sessionId), [8200]);
-    // On another process (notePendingStop, from the bus): it runs 8201's turn.
+    // On another process (notePendingStop, from the bus): it runs 8201's
+    // turn, and only knows 8203's container.
+    const { activeWorkers } = require('../src/services/active-workers');
     warmSession(worker, 8201);
-    worker.notePendingStop(8201, 1234);
-    worker.notePendingStop(8202, 1234);
+    warmSession(worker, 8203);
+    activeWorkers.add(8201);
+    try {
+      worker.notePendingStop(8201, 1234);
+      worker.notePendingStop(8202, 1234);
+      worker.notePendingStop(8203, 1234);
+    } finally {
+      activeWorkers.delete(8201);
+    }
     assert.equal(worker.getPendingStop(8201), 1234);
     assert.equal(worker.warmRegistrySnapshot().find((e) => e.sessionId === 8202), undefined, 'no phantom entry');
+    assert.equal(worker.getPendingStop(8203), null, 'no turn running here: nothing to hold up a later one');
   } finally {
     restore();
     bus.startPublisher({ pool: null });

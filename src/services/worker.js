@@ -4232,12 +4232,18 @@ function clearPendingStop(sessionId) {
   _registryUpsert(sid, { stopRequestedAt: null });
 }
 
-// Another process stopped a turn (stopTurn there). If this process runs
-// it, the stop is pending here too; a process that does not run it records
-// nothing, so a stop never outlives a turn it did not reach.
+// Another process stopped a turn (stopTurn there). If this process is
+// running a turn for the session (its chat handler holds the session in
+// activeWorkers, or an exec is in flight), the stop is pending here too. A
+// process that only knows the session's container records nothing, so a
+// stop never outlives a turn it did not reach and never holds up a later
+// one that does not clear it first.
 function notePendingStop(sessionId, at) {
   const sid = Number(sessionId);
-  if (!_warmRegistry.has(sid)) return;
+  const entry = _warmRegistry.get(sid);
+  if (!entry) return;
+  const { activeWorkers } = require('./active-workers');
+  if (!entry.inFlight && !activeWorkers.has(sid) && !activeWorkers.has(String(sid))) return;
   _registryUpsert(sid, { stopRequestedAt: Number(at) || Date.now() });
 }
 

@@ -418,8 +418,8 @@ its checkpoint on the next claim. What it means for the code:
   is reached from work handlers now travels the bus or is read from the database:
   - GitHub's open-issues cache and closed-issue suppressions (`noteIssuesClosed`,
     `unsuppressIssues`, `invalidateIssuesCache` publish `github_issues`);
-  - a turn's pending stop (`worker.stopTurn` publishes `worker_stop`, and the process
-    running the turn records it);
+  - a turn's pending stop (`worker.stopTurn` publishes `worker_stop`, and a process
+    running a turn for that session records it);
   - whether a shots run holds a proposal's worker (`worker.retire` reads `shot_runs`
     and waits for any run not yet finished, planned ones included);
   - the Homeroom bot's wake after a merge (`noteRequestMerged` publishes it, for the
@@ -438,7 +438,13 @@ its checkpoint on the next claim. What it means for the code:
   on: the chat handler's turn window and every `beginSessionOperation`, such as sync with
   main or a CLI hand-off, written by `active-workers.js`). The process holds its row and
   renews it every 30 seconds (`services/in-flight-record.js`); readers count only rows
-  renewed in the last two minutes, so a process that dies stops counting within two.
+  renewed in the last two minutes, so a process that dies stops counting within two,
+  and one that stops cleanly removes its rows first (`releaseAll`). Every write of one
+  row waits for the one before it, so a row taken again right after its release is not
+  removed by the release landing last. The rows are a check, not a lock: the heal
+  pass's restart and the fleet rollover also take the app's production build lock
+  (`PRODUCTION_BUILD_LOCK`), which every production deploy holds, so they never run
+  beside a deploy in another process.
 - **The worker's broadcasts** carry `p: 1`, so a web Pod does not take the worker for
   a peer that hears it (`_isAlone` in `ws-bus.js`), and they are sent one at a time, in
   the order they were made.
@@ -468,7 +474,7 @@ its checkpoint on the next claim. What it means for the code:
 | `WF_SLOTS` | 4 (1 on a staging preview) | the default | Pipeline slots in each process. |
 | `WF_POOL_MAX` | 6 (2 on a staging preview) | the default | Connections in the runtime's own pool, the outcome listener's included. Keep it above `WF_SLOTS`. |
 | `WF_OWNERSHIP_MODE` | `log` in production, `raise` elsewhere | the default | What a write to an owned column from outside the machine does. |
-| `WF_LOOPS` | `leader` | the chart: `worker` on the web Pods when `workflow.worker.enabled` | Where the loops run: the leader web Pod, or the workflow worker. |
+| `WF_LOOPS` | `leader` | the chart: `worker` on the web Pods when `workflow.worker.enabled` | Where the loops run: the leader web Pod, or the workflow worker. `worker` is honoured only on Kubernetes outside a staging preview. |
 
 **Where the variables are set.**
 - **The Helm chart.** A Kubernetes Pod gets only the variables the chart lists, so a

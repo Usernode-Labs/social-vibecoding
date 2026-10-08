@@ -48,7 +48,6 @@ const DEPLOY_STALE_AFTER_MS = 30 * 60 * 1000;
 // markEnd's broadcast repeats what markStart said, and a read in this
 // process still sees them if the database could not be written.
 const _own = new Map();
-const holds = createHolds('app-deploy-status');
 
 const HOLD_SQL = `INSERT INTO app_deploys (app_id, holder, started_at, from_sha)
   SELECT id, $2, $3::timestamptz, $4 FROM apps WHERE slug = $1
@@ -56,6 +55,10 @@ const HOLD_SQL = `INSERT INTO app_deploys (app_id, holder, started_at, from_sha)
     SET started_at = EXCLUDED.started_at, from_sha = EXCLUDED.from_sha, heartbeat_at = NOW()`;
 const RELEASE_SQL = `DELETE FROM app_deploys d USING apps a
   WHERE a.id = d.app_id AND a.slug = $1 AND d.holder = $2`;
+const holds = createHolds('app-deploy-status', {
+  write: (pool, slug, d) => pool.query(HOLD_SQL, [slug, HOLDER, d.startedAt, d.fromSha]),
+  remove: (pool, slug) => pool.query(RELEASE_SQL, [slug, HOLDER]),
+});
 const READ_SQL = `SELECT a.slug, d.started_at, d.from_sha
   FROM app_deploys d JOIN apps a ON a.id = d.app_id
   WHERE a.slug = ANY($1::text[]) AND d.heartbeat_at > NOW() - interval '2 minutes'
@@ -79,7 +82,7 @@ function markStart(slug, opts) {
   const startedAt = new Date().toISOString();
   const fromSha = opts && opts.fromSha ? String(opts.fromSha) : null;
   _own.set(slug, { deploying: true, startedAt, fromSha });
-  holds.hold(slug, (pool) => pool.query(HOLD_SQL, [slug, HOLDER, startedAt, fromSha]));
+  holds.hold(slug, { startedAt, fromSha });
   broadcast({
     type: 'app_redeploy_status',
     appSlug: slug,
@@ -93,7 +96,7 @@ function markEnd(slug, opts) {
   if (!slug) return;
   const prev = _own.get(slug);
   _own.delete(slug);
-  holds.release(slug, (pool) => pool.query(RELEASE_SQL, [slug, HOLDER]));
+  holds.release(slug);
   if (!prev) return;
   // `missingSecrets` is forwarded so the frontend can render a
   // tailored "set ECHO_APP_SECRET_KEY to deploy" toast instead of a
@@ -124,8 +127,9 @@ async function readMany(slugs) {
   const wanted = [...new Set((slugs || []).filter(Boolean).map(String))];
   const out = new Map();
   if (!wanted.length) return out;
+  // The normal pool, outside any preview-lifecycle run's guarded one.
   let pool = null;
-  try { pool = require('../db/pool').getPool(); } catch { /* memory only */ }
+  try { pool = require('./preview-lifecycle').detach(() => require('../db/pool').getPool()); } catch { /* memory only */ }
   if (pool) {
     try {
       const { rows } = await pool.query(READ_SQL, [wanted]);
