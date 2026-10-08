@@ -1008,7 +1008,8 @@ test('the maker\'s tour ends on the plan: "working on it" until it is in the cha
   // The open plan card in the chat with the bot, by the state its view draws.
   assert.equal(PLAN_WAITING, '.messages-thread-direct [data-bot-plan="open"]');
   assert.match(read('frontend/src/features/messages/bot-plan-view.tsx'), /data-bot-plan=\{shown\}/);
-  assert.match(read('frontend/src/features/messages/bot-plan-view.tsx'), /data-bot-plan-build=""\s+onClick=\{\(\) => \{ setBuiltHere\(true\); onBuild\?\.\(picked\); \}\}\s*>Build it<\/button>/);
+  assert.equal(message('messages:bot.plan.build'), 'Build it');
+  assert.match(read('frontend/src/features/messages/bot-plan-view.tsx'), /data-bot-plan-build=""\s+onClick=\{\(\) => \{ setBuiltHere\(true\); onBuild\?\.\(picked\); \}\}\s*>\{t\('messages:bot\.plan\.build'\)\}<\/button>/);
   // Read with the cut-out each frame, so the words change when the plan comes.
   const doc = (planShown) => ({
     querySelectorAll: (sel) => (sel === PLAN_WAITING && planShown

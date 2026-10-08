@@ -16,6 +16,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -32,7 +33,8 @@ function rule(selector) {
 test('the composer offers ONE add control, not a paperclip and a tray', () => {
   const actions = COMPOSER.match(/className="messages-composer-action"/g) || [];
   assert.equal(actions.length, 1, 'exactly one round action button beside the field');
-  assert.match(COMPOSER, /aria-label="Add to message"/);
+  assert.equal(message('messages:composer.addToMessage'), 'Add to message');
+  assert.match(COMPOSER, /aria-label=\{t\('messages:composer\.addToMessage'\)\}/);
   assert.match(COMPOSER, /<PlusIcon aria-hidden="true" \/>/, 'the trigger is the plus');
 });
 
@@ -48,8 +50,10 @@ test('the trigger declares the menu it opens', () => {
 test('both old actions survive, now as named rows', () => {
   // The icons are kept — they are what made the rows recognisable to anyone
   // who had learned the old bar — but each now carries its own word.
-  assert.match(COMPOSER, /<PaperClipIcon aria-hidden="true" \/>\s*<span>Attach files<\/span>/);
-  assert.match(COMPOSER, /<ArrowUpTrayIcon aria-hidden="true" \/>\s*<span>Share item<\/span>/);
+  assert.equal(message('messages:composer.attachFiles'), 'Attach files');
+  assert.match(COMPOSER, /<PaperClipIcon aria-hidden="true" \/>\s*<span>\{t\('messages:composer\.attachFiles'\)\}<\/span>/);
+  assert.equal(message('messages:composer.shareItem'), 'Share item');
+  assert.match(COMPOSER, /<ArrowUpTrayIcon aria-hidden="true" \/>\s*<span>\{t\('messages:composer\.shareItem'\)\}<\/span>/);
   assert.match(COMPOSER, /dialogs\?\.messagesShare\?\.open\(\)/, 'share still opens the same dialog');
   assert.match(COMPOSER, /fileRef\.current\?\.click\(\)/, 'attach still opens the same file input');
 });

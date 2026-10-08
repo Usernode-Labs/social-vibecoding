@@ -110,7 +110,9 @@ test('#3076: the finished dot replaces the icon too, in Recents, the mark\'s Con
   const messages = read('frontend/src/features/messages/index.tsx');
   const mayorRow = messages.slice(messages.indexOf('function MayorSessionRow('), messages.indexOf('function AgentChatThread('));
   assert.match(mayorRow, /<span className="messages-inbox-tile messages-inbox-agent-tile" aria-hidden="true">\s*\{mark\s*\? <AgentActivityIcon activity=\{mark\} className="w-5 h-5" \/>\s*: <SparklesIcon className="w-5 h-5" \/>\}/);
-  assert.match(mayorRow, /\{mark \? <span className="sr-only">\{`, \$\{ACTIVITY_LABEL\[mark\]\.toLowerCase\(\)\}`\}<\/span> : null\}/);
+  assert.equal(message('messages:agent.row.activity.working'), ', working');
+  assert.equal(message('messages:agent.row.activity.done'), ', finished');
+  assert.match(mayorRow, /\{mark \? <span className="sr-only">\{t\(ACTIVITY_SAID\[mark\]\)\}<\/span> : null\}/);
   assert.doesNotMatch(mayorRow, /AgentActivityMark/, 'and no second mark where the unread count goes');
 });
 

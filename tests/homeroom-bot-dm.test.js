@@ -13,6 +13,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -694,7 +695,9 @@ test('the DM screen draws the bot\'s question and badge, and the reply bar names
   assert.match(row, /message\.sender\.bot && \(message\.metadata\?\.homeroomBot\?\.question \|\| message\.metadata\?\.homeroomBot\?\.actions\?\.length\)\s*&& !isTwoQuestions\(message\) && !isReadyMessage\(message\)\s*\? <BotQuestion/);
   assert.match(row, /messages-bot-badge/);
   const composer = read('frontend/src/features/messages/composer.tsx');
-  assert.match(composer, /Your reply is posted on \$\{requestPlace\(reply\.metadata\.homeroomBot\)\}’s public discussion\./);
+  assert.match(composer, /\{postedNote\(reply\.metadata\.homeroomBot, 'reply'\)\}/);
+  assert.equal(message('messages:bot.posted.reply.request', { project: 'Ear Trainer', number: 3 }), 'Your reply is posted on Ear Trainer request #3’s public discussion.');
+  assert.equal(message('messages:bot.posted.reply.firstVersion', { project: 'Ear Trainer' }), 'Your reply is posted on Ear Trainer’s first-version request’s public discussion.');
   const css = read('public/css/app.css');
   for (const cls of ['.messages-bot-badge', '.messages-bot-answers button', '.messages-bot-note', '.messages-bot-default']) {
     assert.ok(css.includes(cls), cls);

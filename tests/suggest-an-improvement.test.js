@@ -18,6 +18,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -77,7 +78,8 @@ test('every door to filing a request says Suggest an improvement', () => {
   assert.match(read('frontend/src/features/home/tour/tour-steps.ts'),
     /id: 'menu-actions',\s*title: 'Suggest an improvement',/, 'the tour names the button by its words');
   assert.match(read('frontend/src/features/messages/index.tsx'),
-    /hint: 'Make an app or suggest an improvement'/, 'Messages\' new-chat menu');
+    /hint: 'messages:inbox\.new\.bot\.hint'/, 'Messages\' new-chat menu');
+  assert.equal(message('messages:inbox.new.bot.hint'), 'Make an app or suggest an improvement');
   assert.match(read('frontend/src/features/dev-board/workshop/hub-cards.tsx'),
     /\{' to suggest an improvement\.'\}/, 'the hub\'s Your work, with nothing in progress');
   assert.match(read('src/services/homeroom-bot-dm.js'),

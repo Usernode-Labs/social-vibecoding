@@ -11,6 +11,8 @@
  * does: a staging preview answers from fixtures and writes nothing.
  */
 
+import { t } from '../../lib/i18n/runtime';
+
 export type FriendState = 'none' | 'outgoing' | 'incoming' | 'friends';
 export type FriendAction = 'request' | 'cancel' | 'accept' | 'decline' | 'unfriend';
 
@@ -90,7 +92,7 @@ async function request(path: string, method = 'GET'): Promise<unknown> {
     const body = (data && typeof data === 'object' ? data : {}) as Record<string, unknown>;
     throw new FriendsApiError(
       response.status,
-      typeof body.error === 'string' ? body.error : `Request failed (${response.status})`,
+      typeof body.error === 'string' ? body.error : t('messages:friends.error.requestFailed', { status: response.status }),
       typeof body.code === 'string' ? body.code : null,
     );
   }
@@ -131,8 +133,8 @@ export async function act(userId: number, action: FriendAction): Promise<FriendS
 export function errorMessage(err: unknown, username: string): string {
   const status = (err as { status?: number } | null)?.status;
   if (err instanceof FriendsApiError && status === 429) return err.message;
-  if (status === 404) return `You can’t add @${username} as a friend right now.`;
-  return 'Couldn’t update this friendship. Check your connection and try again.';
+  if (status === 404) return t('messages:friends.error.cannotAdd', { username });
+  return t('messages:friends.error.updateFailed');
 }
 
 /**

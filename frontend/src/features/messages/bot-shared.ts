@@ -1,3 +1,4 @@
+import { t } from '../../lib/i18n/runtime';
 import type { HomeroomBotActivityOutcome, HomeroomBotJob } from './types';
 
 /*
@@ -21,14 +22,26 @@ type Named = Pick<HomeroomBotJob, 'appName' | 'issueNumber' | 'title' | 'firstVe
 
 /** "Ear Trainer first version", "Ear Trainer #12": what the header's status line names. */
 export function jobName(job: Named): string {
-  if (job.firstVersion) return `${job.appName} first version`;
-  return job.issueNumber ? `${job.appName} #${job.issueNumber}` : job.appName;
+  if (job.firstVersion) return t('messages:bot.job.firstVersion', { project: job.appName });
+  return job.issueNumber ? t('messages:bot.job.request', { project: job.appName, number: job.issueNumber }) : job.appName;
+}
+
+/**
+ * Short independent facts on one status line ("Building · 5m so far"). Each
+ * part is a whole message already; what joins two of them is a message too.
+ */
+export function dotText(parts: readonly (string | null | undefined | false)[]): string {
+  const said = parts.filter((part): part is string => typeof part === 'string' && part !== '');
+  if (!said.length) return '';
+  return said.reduce((first, second) => t('messages:list.dot', { first, second }));
 }
 
 /** A tile's or a card's title: the name, and the request's own title when it has one. */
 export function jobTitle(job: Named): string {
-  const name = jobName(job);
-  return !job.firstVersion && job.title ? `${name}: ${job.title}` : name;
+  if (job.firstVersion || !job.title) return jobName(job);
+  return job.issueNumber
+    ? t('messages:bot.job.requestTitled', { project: job.appName, number: job.issueNumber, title: job.title })
+    : t('messages:bot.job.titled', { project: job.appName, title: job.title });
 }
 
 /**

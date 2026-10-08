@@ -214,7 +214,8 @@ test('Q20: form controls the audit found unnamed have names', () => {
   assert.match(waitlist, /id="waitlist-country"/);
   // Four text boxes that took focus announcing only "edit text".
   assert.match(read('frontend/src/features/messages/message-row.tsx'),
-    /<textarea ref=\{editRef\} aria-label="Edit message"/, 'the message edit box');
+    /<textarea ref=\{editRef\} aria-label=\{t\('messages:row\.editLabel'\)\}/, 'the message edit box');
+  assert.equal(message('messages:row.editLabel'), 'Edit message');
   assert.match(read('frontend/src/features/dev-board/card/dev-card.tsx'),
     /id=\{`dev-\$\{kind\}-title-input`\}\n\s*aria-label=\{session \? 'Proposal title' : 'Request title'\}/,
     'the card title editor, named by kind');

@@ -40,6 +40,8 @@ import { DialogCard, DialogRoot } from '@/components/ui/dialog';
 import { XIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { useDialog } from '../dialogs/use-dialog';
 import { toast } from '../message-actions/clipboard';
 import * as api from './api';
@@ -66,17 +68,23 @@ export interface ShareDestination {
   slug?: string;
 }
 
-const TYPE_WORDS: Record<SharedObjectReference['type'], string> = {
-  app: 'App', issue: 'Request', proposal: 'Proposal', governance: 'Governance proposal', spec: 'Spec',
+/** What an item is called alone, and with its number: message ids. */
+const TYPE_WORDS: Record<SharedObjectReference['type'], { plain: string; numbered: string }> = {
+  app: { plain: 'messages:shareTo.item.app', numbered: 'messages:shareTo.item.app' },
+  issue: { plain: 'messages:shareTo.item.issue', numbered: 'messages:shareTo.item.issueNumbered' },
+  proposal: { plain: 'messages:shareTo.item.proposal', numbered: 'messages:shareTo.item.proposalNumbered' },
+  governance: { plain: 'messages:shareTo.item.governance', numbered: 'messages:shareTo.item.governanceNumbered' },
+  spec: { plain: 'messages:shareTo.item.spec', numbered: 'messages:shareTo.item.specNumbered' },
 };
+const UNKNOWN_TYPE_WORDS = { plain: 'messages:shareTo.item.unknown', numbered: 'messages:shareTo.item.unknownNumbered' };
 
 /** "Request #12", "Proposal #4209": what the card is, when no title came with it. */
 export function itemName(item: SharedObjectReference): string {
-  const word = TYPE_WORDS[item.type] || 'Item';
+  const word = TYPE_WORDS[item.type] || UNKNOWN_TYPE_WORDS;
   const n = item.type === 'issue' ? item.issueNumber
     : item.type === 'governance' ? item.proposalId
       : item.type === 'app' ? null : item.sessionId;
-  return n ? `${word} #${n}` : word;
+  return n ? translate(word.numbered, { number: n }) : translate(word.plain);
 }
 
 /**
@@ -123,17 +131,17 @@ export function shareDestinations(
       const peer = directPeer(conversation, me);
       rows.push({
         key: `c:${conversation.id}`, kind: 'direct', conversation,
-        label: peer ? `@${peer.username}` : conversation.title, detail: 'Direct message',
+        label: peer ? `@${peer.username}` : conversation.title, detail: translate('messages:shareTo.detail.direct'),
       });
     } else if (conversation.kind === 'channel') {
       rows.push({
         key: `c:${conversation.id}`, kind: 'channel', conversation,
-        label: `#${conversation.channelKey || conversation.title}`, detail: 'Everyone on Homeroom',
+        label: `#${conversation.channelKey || conversation.title}`, detail: translate('messages:shareTo.detail.everyone'),
       });
     } else {
       rows.push({
         key: `c:${conversation.id}`, kind: 'group', conversation,
-        label: conversation.title, detail: `Group · ${conversation.memberCount} ${conversation.memberCount === 1 ? 'member' : 'members'}`,
+        label: conversation.title, detail: translate('messages:shareTo.detail.group', { count: conversation.memberCount }),
       });
     }
   }
@@ -141,7 +149,7 @@ export function shareDestinations(
     if (platform && discussion.slug === platform) continue;
     rows.push({
       key: `d:${discussion.slug}`, kind: 'discussion', slug: discussion.slug,
-      label: discussion.name, detail: `#${discussion.channel || discussion.slug} · Discussion`,
+      label: discussion.name, detail: translate('messages:shareTo.detail.discussion', { channel: discussion.channel || discussion.slug }),
     });
   }
   return rows;
@@ -155,9 +163,9 @@ export function shareDestinations(
  */
 export function shareError(err: unknown, choice: Pick<ShareDestination, 'kind' | 'label'>): string {
   const status = Number((err as { status?: unknown } | null)?.status) || 0;
-  if (choice.kind === 'discussion' && status === 404) return `You can’t post in the ${choice.label} discussion.`;
-  if (status === 429) return 'You’re sharing quickly. Wait a minute and try again.';
-  return err instanceof Error && err.message ? err.message : 'Couldn’t share this. Try again.';
+  if (choice.kind === 'discussion' && status === 404) return translate('messages:shareTo.error.cannotPost', { discussion: choice.label });
+  if (status === 429) return translate('messages:shareTo.error.tooFast');
+  return err instanceof Error && err.message ? err.message : translate('messages:shareTo.error.failed');
 }
 
 function matches(row: ShareDestination, query: string): boolean {
@@ -178,6 +186,7 @@ function DestinationTile({ row }: { row: ShareDestination }) {
 }
 
 export function ShareToDialog() {
+  const t = useMessages('messages');
   const snap = useMessagesSnapshot();
   const [item, setItem] = useState<ShareToPayload | null>(null);
   const [query, setQuery] = useState('');
@@ -206,7 +215,8 @@ export function ShareToDialog() {
   const me = typeof window !== 'undefined' ? Number(window.App?.user?.id) || 0 : 0;
   const rows = useMemo(() => (dialog.isOpen
     ? shareDestinations(snap.conversations, snap.discussions, { me, platform: platformSlug() })
-    : []), [dialog.isOpen, snap.conversations, snap.discussions, me]);
+    // `t` changes with the language: the rows' second lines are read from the catalog.
+    : []), [dialog.isOpen, snap.conversations, snap.discussions, me, t]);
   const shown = useMemo(() => rows.filter((row) => matches(row, query)), [rows, query]);
   const choice = rows.find((row) => row.key === chosen) || null;
   const loading = dialog.isOpen && !rows.length && (!snap.listLoaded || !snap.discussionsLoaded);
@@ -224,7 +234,7 @@ export function ShareToDialog() {
         await api.postAppMessage(choice.slug, words ? `${words}\n\n${link}` : link);
       }
       busy.current = false; setSending(false);
-      toast(`Shared to ${choice.label}`);
+      toast(t('messages:shareTo.sharedTo', { destination: choice.label }));
       dialog.close();
     } catch (err) {
       busy.current = false; setSending(false);
@@ -238,8 +248,8 @@ export function ShareToDialog() {
     <DialogRoot id="share-to-dialog" layout="scroll" ref={dialog.rootRef} {...dialog.backdropProps}>
       <DialogCard size="md">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-bold">Share to…</h2>
-          <button type="button" onClick={dialog.close} className="text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 dark:text-zinc-400" aria-label="Close"><XIcon className="w-5 h-5" /></button>
+          <h2 className="text-lg font-bold">{t('messages:shareTo.title')}</h2>
+          <button type="button" onClick={dialog.close} className="text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 dark:text-zinc-400" aria-label={t('core:common.close')}><XIcon className="w-5 h-5" /></button>
         </div>
         {item ? (
           <div className="mb-3 flex items-center gap-3 rounded-lg bg-zinc-100 dark:bg-zinc-800 px-3 py-2" data-share-item="">
@@ -251,13 +261,13 @@ export function ShareToDialog() {
           </div>
         ) : null}
         <label className="block">
-          <span className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1">Send to</span>
-          <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search people, groups and discussions" autoComplete="off" />
+          <span className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1">{t('messages:shareTo.sendTo')}</span>
+          <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('messages:shareTo.searchPlaceholder')} autoComplete="off" />
         </label>
-        <div role="listbox" aria-label="Where to share" data-share-destinations="" className="mt-2 min-h-12 max-h-60 overflow-y-auto">
-          {loading ? <p className="text-xs text-zinc-500 dark:text-zinc-400 px-2 py-3">Loading your chats…</p> : null}
+        <div role="listbox" aria-label={t('messages:shareTo.listName')} data-share-destinations="" className="mt-2 min-h-12 max-h-60 overflow-y-auto">
+          {loading ? <p className="text-xs text-zinc-500 dark:text-zinc-400 px-2 py-3">{t('messages:shareTo.loading')}</p> : null}
           {dialog.isOpen && !loading && !shown.length ? (
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 px-2 py-3">{query.trim() ? 'Nothing matches.' : 'No chats or discussions to share to yet.'}</p>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 px-2 py-3">{query.trim() ? t('messages:shareTo.noMatch') : t('messages:shareTo.empty')}</p>
           ) : null}
           {shown.map((row) => {
             const selected = row.key === chosen;
@@ -277,22 +287,22 @@ export function ShareToDialog() {
                   <span className="block text-sm font-medium truncate">{row.label}</span>
                   <span className="block text-xs text-zinc-500 dark:text-zinc-400 truncate">{row.detail}</span>
                 </span>
-                {selected ? <span className="text-xs font-semibold text-violet-700 dark:text-violet-300">Selected</span> : null}
+                {selected ? <span className="text-xs font-semibold text-violet-700 dark:text-violet-300">{t('messages:shareTo.selected')}</span> : null}
               </button>
             );
           })}
         </div>
         <label className="block mt-3">
-          <span className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1">Add a message (optional)</span>
-          <Textarea value={note} onChange={(event) => setNote(event.target.value.slice(0, 2000))} rows={2} maxLength={2000} placeholder="Say why you’re sharing it" />
+          <span className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1">{t('messages:shareTo.noteLabel')}</span>
+          <Textarea value={note} onChange={(event) => setNote(event.target.value.slice(0, 2000))} rows={2} maxLength={2000} placeholder={t('messages:shareTo.notePlaceholder')} />
         </label>
         {choice?.kind === 'discussion' ? (
-          <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">Posts the link in the {choice.label} discussion. Everyone there sees the card if they can open it.</p>
+          <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">{t('messages:shareTo.discussionNote', { discussion: choice.label })}</p>
         ) : null}
         {error ? <p role="alert" className="mt-3 text-xs text-red-700 dark:text-red-400">{error}</p> : null}
         <div className="mt-5 flex justify-end gap-2">
-          <Button type="button" variant="neutral" ink="neutral" disabled={sending} onClick={dialog.close}>Cancel</Button>
-          <Button type="button" disabled={!item || !choice || sending} onClick={() => void send()}>{sending ? 'Sharing…' : 'Send'}</Button>
+          <Button type="button" variant="neutral" ink="neutral" disabled={sending} onClick={dialog.close}>{t('core:common.cancel')}</Button>
+          <Button type="button" disabled={!item || !choice || sending} onClick={() => void send()}>{sending ? t('messages:shareTo.sharing') : t('messages:shareTo.send')}</Button>
         </div>
       </DialogCard>
     </DialogRoot>

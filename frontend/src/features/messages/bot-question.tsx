@@ -2,6 +2,8 @@ import { useState } from 'react';
 
 import { InfoCircleIcon } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { InviteSheet } from '../first-session/made';
 import type { Made } from '../first-session/make';
 import { AnsweredChoices } from './bot-plan-view';
@@ -62,9 +64,38 @@ export function botMeta(message: ConversationMessage): HomeroomBotMeta | null {
 }
 
 /** "Homeroom request #12", the place an answer is posted. */
-export function requestPlace(meta: HomeroomBotMeta): string {
-  const app = meta.appName || meta.appSlug || 'the project';
-  return meta.firstVersion ? `${app}’s first-version request` : `${app} request #${meta.issueNumber}`;
+/** Where an answer or a reply is posted, one whole sentence per case. */
+const POSTED_NOTES = {
+  answer: {
+    firstVersion: 'messages:bot.posted.answer.firstVersion',
+    firstVersionUnnamed: 'messages:bot.posted.answer.firstVersionUnnamed',
+    request: 'messages:bot.posted.answer.request',
+    requestUnnamed: 'messages:bot.posted.answer.requestUnnamed',
+  },
+  answers: {
+    firstVersion: 'messages:bot.posted.answers.firstVersion',
+    firstVersionUnnamed: 'messages:bot.posted.answers.firstVersionUnnamed',
+    request: 'messages:bot.posted.answers.request',
+    requestUnnamed: 'messages:bot.posted.answers.requestUnnamed',
+  },
+  reply: {
+    firstVersion: 'messages:bot.posted.reply.firstVersion',
+    firstVersionUnnamed: 'messages:bot.posted.reply.firstVersionUnnamed',
+    request: 'messages:bot.posted.reply.request',
+    requestUnnamed: 'messages:bot.posted.reply.requestUnnamed',
+  },
+} as const;
+
+/**
+ * The line that says an answer, a pair of answers or a reply is posted on the
+ * request's public discussion, naming the request it is posted on.
+ */
+export function postedNote(meta: HomeroomBotMeta, what: keyof typeof POSTED_NOTES): string {
+  const ids = POSTED_NOTES[what];
+  const project = meta.appName || meta.appSlug || '';
+  if (meta.firstVersion) return project ? translate(ids.firstVersion, { project }) : translate(ids.firstVersionUnnamed);
+  const number = String(meta.issueNumber);
+  return project ? translate(ids.request, { project, number }) : translate(ids.requestUnnamed, { number });
 }
 
 export function BotQuestion({ message, conversationId, hidePrompts = false }: {
@@ -77,6 +108,7 @@ export function BotQuestion({ message, conversationId, hidePrompts = false }: {
    */
   hidePrompts?: boolean;
 }) {
+  const t = useMessages('messages');
   const meta = botMeta(message);
   // The answer tapped here, until the server's own state comes back.
   const [chosen, setChosen] = useState<string | null>(null);
@@ -99,7 +131,7 @@ export function BotQuestion({ message, conversationId, hidePrompts = false }: {
   return (
     <div className="messages-bot-question" data-bot-question={meta.status || 'open'}>
       {open ? (
-        <div className="messages-bot-answers" role="group" aria-label={offer ? (meta.question || 'File this request?') : 'Suggested answers'}>
+        <div className="messages-bot-answers" role="group" aria-label={offer ? (meta.question || t('messages:bot.question.fileRequest')) : t('messages:bot.question.suggestedAnswers')}>
           {answers.map((answer, index) => (
             <button
               key={answer}
@@ -109,21 +141,21 @@ export function BotQuestion({ message, conversationId, hidePrompts = false }: {
               onClick={() => choose(answer)}
             >
               <span>{answer}</span>
-              {index === 0 && !offer ? <span className="messages-bot-default">suggested</span> : null}
+              {index === 0 && !offer ? <span className="messages-bot-default">{t('messages:bot.question.suggested')}</span> : null}
             </button>
           ))}
-          {offer ? null : <button type="button" className="messages-bot-other" onClick={somethingElse}>Something else</button>}
+          {offer ? null : <button type="button" className="messages-bot-other" onClick={somethingElse}>{t('messages:bot.question.somethingElse')}</button>}
         </div>
       ) : null}
-      {answered && offer ? <p className="messages-bot-answered">{`You chose: ${answered}`}</p> : null}
-      {answered && !offer ? <AnsweredChoices items={[{ question: 'You answered', answer: answered }]} /> : null}
+      {answered && offer ? <p className="messages-bot-answered">{t('messages:bot.question.youChose', { answer: answered })}</p> : null}
+      {answered && !offer ? <AnsweredChoices items={[{ question: t('messages:bot.question.youAnswered'), answer: answered }]} /> : null}
       {(open || chosen) && mirrorsReplies(meta) ? (
         <p className="messages-bot-note">
           <InfoCircleIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-          <span>{`Your answer is posted on ${requestPlace(meta)}’s public discussion, where the group can see it.`}</span>
+          <span>{postedNote(meta, 'answer')}</span>
         </p>
       ) : null}
-      {meta.status === 'closed' && !answered ? <p className="messages-bot-answered">No longer needed.</p> : null}
+      {meta.status === 'closed' && !answered ? <p className="messages-bot-answered">{t('messages:bot.question.closed')}</p> : null}
     </div>
   );
 }
@@ -161,6 +193,7 @@ function BotActions({ message, meta, conversationId, hidePrompts = false }: {
   hidePrompts?: boolean;
 }) {
   // The button pressed here, until the server's own state comes back.
+  const t = useMessages('messages');
   const [pressed, setPressed] = useState<HomeroomBotAction | null>(null);
   // #4231: the invite sheet, opened in place by Invite people.
   const [inviting, setInviting] = useState(false);
@@ -209,7 +242,7 @@ function BotActions({ message, meta, conversationId, hidePrompts = false }: {
   return (
     <div className="messages-bot-question" data-bot-question={meta.status || 'open'}>
       {open ? (
-        <div className="messages-bot-answers" role="group" aria-label={meta.question || (prompts ? 'Questions you can ask' : suggestions ? 'What you can do next' : 'Choices')}>
+        <div className="messages-bot-answers" role="group" aria-label={meta.question || (prompts ? t('messages:bot.actions.questionsYouCanAsk') : suggestions ? t('messages:bot.actions.whatNext') : t('messages:bot.actions.choices'))}>
           {actions.map((action, index) => (
             <button
               key={action.id}
@@ -229,11 +262,11 @@ function BotActions({ message, meta, conversationId, hidePrompts = false }: {
       {posts ? (
         <p className="messages-bot-note">
           <InfoCircleIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-          <span>{`Your answer is posted on ${requestPlace(meta)}’s public discussion, where the group can see it.`}</span>
+          <span>{postedNote(meta, 'answer')}</span>
         </p>
       ) : null}
-      {chosen ? <p className="messages-bot-answered">{chosenAction?.type === 'prompt' && !chosenAction.quote ? `You asked: ${chosen}` : `You chose ${chosen}`}</p> : null}
-      {meta.status === 'closed' && !chosen ? <p className="messages-bot-answered">No longer needed.</p> : null}
+      {chosen ? <p className="messages-bot-answered">{chosenAction?.type === 'prompt' && !chosenAction.quote ? t('messages:bot.actions.youAsked', { question: chosen }) : t('messages:bot.actions.youChose', { choice: chosen })}</p> : null}
+      {meta.status === 'closed' && !chosen ? <p className="messages-bot-answered">{t('messages:bot.actions.closed')}</p> : null}
       {inviting && invite ? (
         <InviteSheet made={invite} me={inviterName()} onClose={() => setInviting(false)} onSent={() => {}} />
       ) : null}

@@ -17,6 +17,8 @@
  * "Waiting for approval from you and @ada".
  */
 
+import { t } from '../../lib/i18n/runtime';
+
 export interface ApprovalNeed {
   /** The reader's own approval counts and is not in yet: listed as "you". */
   you?: boolean;
@@ -41,24 +43,32 @@ export function countOf(value: unknown): number | null {
 /** Pure: "a", "a and b", "a, b and c". */
 export function andWords(items: string[]): string {
   if (items.length <= 1) return items.join('');
-  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+  return t('messages:approval.list.and', { first: commaWords(items.slice(0, -1)), last: items[items.length - 1] });
+}
+
+/** Everyone before the last, as the language on screen separates them. */
+function commaWords(items: string[]): string {
+  return items.reduce((first, second) => t('messages:approval.list.comma', { first, second }));
 }
 
 /** Pure: "a", "a or b", "a, b or c". */
 export function orWords(items: string[]): string {
   if (items.length <= 1) return items.join('');
-  return `${items.slice(0, -1).join(', ')} or ${items[items.length - 1]}`;
+  return t('messages:approval.list.or', { first: commaWords(items.slice(0, -1)), last: items[items.length - 1] });
 }
 
 /** Pure: "one approval", "2 approvals", or with `again` "one more approval", "2 more approvals". */
-export function approvalsWords(count: number, again = false): string {
-  const more = again ? ' more' : '';
-  return count === 1 ? `one${more} approval` : `${count}${more} approvals`;
+export function approvalsWords(count: number, people: string, again = false): string {
+  return again
+    ? t('messages:approval.needsMore', { count, people })
+    : t('messages:approval.needs', { count, people });
 }
 
 /** Pure: whoever is named, then the rest as "2 others" (with "or") or "2 more" (with "and"). */
 function people(names: string[], more: number, joiner: 'and' | 'or'): string {
-  const rest = joiner === 'or' ? `${more} ${more === 1 ? 'other' : 'others'}` : `${more} more`;
+  const rest = joiner === 'or'
+    ? t('messages:approval.list.others', { count: more })
+    : t('messages:approval.list.more', { count: more });
   const all = [...names, ...(more ? [rest] : [])];
   return joiner === 'or' ? orWords(all) : andWords(all);
 }
@@ -72,15 +82,15 @@ function people(names: string[], more: number, joiner: 'and' | 'or'): string {
 export function waitingWords(need: ApprovalNeed): string | null {
   const missing = countOf(need.missing);
   if (missing === 0) return null;
-  const named = [...(need.you ? ['you'] : []), ...(need.names || []).map((name) => `@${name}`)];
+  const named = [...(need.you ? [t('messages:approval.list.you')] : []), ...(need.names || []).map((name) => `@${name}`)];
   const more = Math.max(Math.floor(Number(need.more) || 0), 0);
   const listed = named.length + more;
   if (!listed) return null;
   if (missing !== null && missing < listed) {
     const needed = countOf(need.needed);
-    return `Needs ${approvalsWords(missing, needed !== null && missing < needed)} from ${people(named, more, 'or')}`;
+    return approvalsWords(missing, people(named, more, 'or'), needed !== null && missing < needed);
   }
-  return `Waiting for approval from ${people(named, more, 'and')}`;
+  return t('messages:approval.waiting', { people: people(named, more, 'and') });
 }
 
 /**
@@ -89,12 +99,25 @@ export function waitingWords(need: ApprovalNeed): string | null {
  * needed, "after one more approval from @priya or @mo" when fewer are,
  * "when one more person approves" when nobody is named.
  */
-export function afterYesWords({ missing, names, more = 0 }: { missing: number; names: string[]; more?: number }): string {
+/**
+ * Which of the sentences after "It goes live" applies, and what goes in it.
+ * The sentences themselves are whole catalog entries (./bot-ready.tsx
+ * approvedLine), one per case and per day, so no language has to fit a
+ * clause built here into a sentence built there.
+ */
+export interface AfterYes {
+  who: 'person' | 'people' | 'approvals' | 'anyone';
+  values: Record<string, string | number>;
+}
+
+export function afterYesWords({ missing, names, more = 0 }: { missing: number; names: string[]; more?: number }): AfterYes {
   const named = names.map((name) => `@${name}`);
   const listed = named.length + more;
   if (named.length && listed === missing) {
-    return `when ${people(named, more, 'and')} ${missing === 1 ? 'approves' : 'approve'} too`;
+    return missing === 1
+      ? { who: 'person', values: { username: names[0] } }
+      : { who: 'people', values: { people: people(named, more, 'and') } };
   }
-  if (named.length && listed > missing) return `after ${approvalsWords(missing, true)} from ${people(named, more, 'or')}`;
-  return missing === 1 ? 'when one more person approves' : `when ${missing} more people approve`;
+  if (named.length && listed > missing) return { who: 'approvals', values: { count: missing, people: people(named, more, 'or') } };
+  return { who: 'anyone', values: { count: missing } };
 }

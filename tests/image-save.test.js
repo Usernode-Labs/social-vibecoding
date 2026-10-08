@@ -15,6 +15,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadTsx } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -188,7 +189,10 @@ test('a picture on another site is not offered: the viewer keeps Open original',
 test('the viewer\'s Download is a button that saves, held still on the picture saves too, and a swipe still closes', () => {
   const src = read(VIEWER);
   assert.match(src, /<button\n\s*type="button"\n\s*className=\{`\$\{pill\} disabled:opacity-70`\}\n\s*disabled=\{busy\}[\s\S]*?data-image-viewer-download=""\n\s*onClick=\{download\}/);
-  assert.match(src, /\{busy \? 'Downloading…' : tapAgain \? 'Tap to save' : 'Download'\}/);
+  assert.match(src, /\{busy \? t\('messages:imageViewer\.downloading'\) : tapAgain \? t\('messages:imageViewer\.tapToSave'\) : t\('messages:imageViewer\.download'\)\}/);
+  assert.equal(message('messages:imageViewer.downloading'), 'Downloading…');
+  assert.equal(message('messages:imageViewer.tapToSave'), 'Tap to save');
+  assert.equal(message('messages:imageViewer.download'), 'Download');
   assert.match(src, /void saveImage\(\{ src, name: alt \}\)/);
   assert.match(src, /\) : canSave \? \(/, 'drawn only where there is a road');
   // The hold: still for HOLD_SAVE_MS, cancelled by movement, and the share
@@ -232,6 +236,7 @@ test('a conversation message builds the same line from its picture attachments',
   assert.match(row, /const images = \(message\.attachments \|\| \[\]\)\.filter\(\(att\) => att\.contentType\.startsWith\('image\/'\)\);/);
   assert.match(row, /useCanSaveImage\(images\[0\]\?\.url \|\| ''\);/);
   assert.match(row, /const pictures = downloadableImages\(images\.map\(\(att\) => \(\{ src: att\.url, name: att\.name \}\)\)\);\n\s*if \(pictures\.length\) items\.push\(\{ key: 'download', label: downloadLabel\(pictures\.length\), icon: DownloadIcon, onSelect: \(\) => \{ void saveImages\(pictures\); \} \}\);/);
-  const copyAt = row.indexOf("key: 'copy', label: 'Copy text'");
+  assert.equal(message('messages:row.menu.copyText'), 'Copy text');
+  const copyAt = row.indexOf("key: 'copy', label: t('messages:row.menu.copyText')");
   assert.ok(copyAt > 0 && row.indexOf("key: 'download'") > copyAt, 'right after Copy text');
 });

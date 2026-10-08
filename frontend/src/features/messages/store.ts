@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 
+import { t } from '../../lib/i18n/runtime';
 import { navStore } from '../nav/nav-store.js';
 import * as api from './api';
 import { WORK_CHANGED_EVENT, openAppTarget } from './bot-shared';
@@ -225,7 +226,7 @@ function currentUser(): { id: number; username: string; avatarUrl?: string | nul
   const user = typeof window !== 'undefined' ? window.App?.user : null;
   return {
     id: Number(user?.id) || 0,
-    username: typeof user?.username === 'string' ? user.username : 'You',
+    username: typeof user?.username === 'string' ? user.username : t('messages:store.you'),
     avatarUrl: typeof user?.avatarUrl === 'string' ? user.avatarUrl : null,
   };
 }
@@ -240,9 +241,9 @@ function isAwaitingAcceptance(error: unknown): boolean {
 
 function errorMessage(error: unknown, fallback: string): string {
   if (error instanceof api.MessagesApiError) {
-    if (isAwaitingAcceptance(error)) return 'They need to accept your message request before you can send more.';
-    if (error.status === 404) return 'This conversation is no longer available.';
-    if (error.status === 429) return 'You’re doing that too quickly. Try again in a moment.';
+    if (isAwaitingAcceptance(error)) return t('messages:store.error.awaitingAcceptance');
+    if (error.status === 404) return t('messages:store.error.gone');
+    if (error.status === 429) return t('messages:store.error.tooFast');
     return error.message || fallback;
   }
   return error instanceof Error && error.message ? error.message : fallback;
@@ -439,7 +440,7 @@ export async function loadConversations(force = false): Promise<void> {
       loadingList: false,
       listLoaded: true,
       online: typeof navigator === 'undefined' ? true : navigator.onLine,
-      error: errorMessage(error, 'Couldn’t load your conversations.'),
+      error: errorMessage(error, t('messages:store.error.loadList')),
     });
     resolvePendingChannel();
   }
@@ -627,7 +628,7 @@ export async function loadThread(conversationId: number, force = false, offlineC
       // stood in: no header or composer for a conversation that did not load.
       ...(preserveVisibleThread ? {} : { active: null }),
       loadingThread: false,
-      threadError: errorMessage(error, 'Couldn’t load this conversation.'),
+      threadError: errorMessage(error, t('messages:store.error.loadThread')),
       // A 404 is an answer, not a failure: trying again reads the same one.
       threadGone: error instanceof api.MessagesApiError && error.status === 404 ? 'missing' : null,
     });
@@ -693,7 +694,8 @@ function newestServerId(rows: ConversationMessage[]): number {
 async function refreshActiveAfterMembershipChange(conversationId: number): Promise<void> {
   await loadThread(conversationId, true);
   if (state.route.conversationId !== conversationId) return;
-  if (state.threadError === 'This conversation is no longer available.') {
+  // The reload answered 404: read from state, not from the sentence shown.
+  if (state.threadGone === 'missing') {
     await finishDirectBlock(conversationId);
   }
 }
@@ -716,7 +718,7 @@ export async function loadNewer(): Promise<void> {
     const last = newestMainId(messages);
     if (!page.nextAfter && last && unreadHold !== conversationId) readMainWhenThere(conversationId);
   } catch (error) {
-    publish({ loadingOlder: false, threadError: errorMessage(error, 'Couldn’t load newer messages.') });
+    publish({ loadingOlder: false, threadError: errorMessage(error, t('messages:store.error.loadNewer')) });
   }
 }
 
@@ -743,7 +745,7 @@ export async function loadOlder(): Promise<void> {
       loadingOlder: false,
     });
   } catch (error) {
-    publish({ loadingOlder: false, threadError: errorMessage(error, 'Couldn’t load older messages.') });
+    publish({ loadingOlder: false, threadError: errorMessage(error, t('messages:store.error.loadOlder')) });
   }
 }
 
@@ -946,7 +948,7 @@ export async function loadDiscussion(slug: string): Promise<void> {
   } catch {
     if (state.route.appSlug !== want) { telemetry?.cancel?.(attemptId); return; }
     telemetry?.outcome?.(attemptId, 'failure', { errorCode });
-    publish({ discussionContext: null, discussionError: 'This discussion could not be opened.' });
+    publish({ discussionContext: null, discussionError: t('messages:store.error.discussion') });
   }
 }
 
@@ -1132,7 +1134,7 @@ export function syncChrome(): void {
   if (hub && !(isMobile() && state.route.threadRootId)) {
     app.setBackIcon?.('arrow', hub);
     app.setHeaderTitle?.(state.route.appSlug
-      ? state.discussionContext?.name || 'Channel'
+      ? state.discussionContext?.name || t('messages:store.header.channel')
       : `#${chromeTitle(state.active)}`);
     return;
   }
@@ -1150,7 +1152,7 @@ export function syncChrome(): void {
     app.setBackIcon?.('arrow', state.route.appSlug
       ? `#messages/app/${encodeURIComponent(state.route.appSlug)}`
       : `#messages/${state.route.conversationId}`);
-    app.setHeaderTitle?.('Thread');
+    app.setHeaderTitle?.(t('messages:store.header.thread'));
     return;
   }
   // 'none' ON THE INBOX (#2718 review). This is a second writer over the
@@ -1161,9 +1163,9 @@ export function syncChrome(): void {
   app.setBackIcon?.(thread ? 'arrow' : 'none', thread ? '#messages' : undefined);
   app.setHeaderTitle?.(thread
     ? (state.route.appSlug
-      ? state.discussionContext?.name || 'Discussion'
-      : state.route.agent ? 'Messages' : chromeTitle(state.active))
-    : 'Messages');
+      ? state.discussionContext?.name || t('messages:store.header.discussion')
+      : state.route.agent ? t('messages:store.header.messages') : chromeTitle(state.active))
+    : t('messages:store.header.messages'));
 }
 
 /**
@@ -1173,11 +1175,11 @@ export function syncChrome(): void {
  * so it takes its requester's name instead, as its header and row do.
  */
 function chromeTitle(active: ConversationDetail | null): string {
-  if (!active) return 'Messages';
+  if (!active) return t('messages:store.header.messages');
   if (active.kind === 'direct' && active.membershipStatus === 'invited' && active.requester?.username) {
     return active.requester.username;
   }
-  return active.title || 'Messages';
+  return active.title || t('messages:store.header.messages');
 }
 
 /**
@@ -1237,7 +1239,7 @@ export async function openBot(reference?: StagedObject | null): Promise<void> {
   // (the change page knows both). Anything less is chosen in the Share item
   // dialog, as Share stages one (see share below).
   const attach = !!id && !!reference && stagedComplete(reference);
-  if (attach && id && reference) pendingAttach = { conversationId: id, object: reference, placeholder: ASK_FOR_CHANGES_PLACEHOLDER };
+  if (attach && id && reference) pendingAttach = { conversationId: id, object: reference, placeholder: t(ASK_FOR_CHANGES_PLACEHOLDER) };
   else if (reference) pendingShare = reference;
   const already = !!id && state.route.conversationId === id;
   open(id);
@@ -1248,7 +1250,7 @@ export async function openBot(reference?: StagedObject | null): Promise<void> {
 }
 
 /** What the composer's box asks once Ask for changes has attached a change. */
-export const ASK_FOR_CHANGES_PLACEHOLDER = 'What should change?';
+export const ASK_FOR_CHANGES_PLACEHOLDER = 'messages:store.askForChangesPlaceholder';
 
 /** Pure: whether a staged item names its project and itself, so it can be attached as it is. */
 export function stagedComplete(reference: SharedObjectReference): boolean {
@@ -1667,7 +1669,7 @@ async function deliver(conversationId: number, pending: PendingSend): Promise<vo
     publish({
       online: !offline,
       messages: state.messages.map((item) => item.clientKey === key ? { ...item, pending: false, failed: true } : item),
-      threadError: offline ? 'Message queued. It will retry when you reconnect.' : errorMessage(error, 'Your message wasn’t sent.'),
+      threadError: offline ? t('messages:store.error.queued') : errorMessage(error, t('messages:store.error.send')),
     });
   }
 }
@@ -1701,7 +1703,7 @@ async function deliverToThread(conversationId: number, pending: PendingSend): Pr
         thread: {
           ...thread,
           messages: thread.messages.map((item) => item.clientKey === key ? { ...item, pending: false, failed: true } : item),
-          error: errorMessage(error, 'Your reply wasn’t sent.'),
+          error: errorMessage(error, t('messages:store.error.sendReply')),
         },
       });
     }
@@ -1937,7 +1939,7 @@ export async function loadReplyThread(conversationId: number, rootId: number, fo
     if (request !== replyThreadRequest) return;
     const thread = state.thread;
     publish({
-      thread: thread ? { ...thread, loading: false, error: errorMessage(error, 'Couldn’t load this thread.') } : null,
+      thread: thread ? { ...thread, loading: false, error: errorMessage(error, t('messages:store.error.loadReplies')) } : null,
     });
   }
 }
@@ -1962,7 +1964,7 @@ export async function loadOlderReplies(): Promise<void> {
     });
   } catch (error) {
     const now = state.thread;
-    if (now) publish({ thread: { ...now, loading: false, error: errorMessage(error, 'Couldn’t load earlier replies.') } });
+    if (now) publish({ thread: { ...now, loading: false, error: errorMessage(error, t('messages:store.error.loadEarlierReplies')) } });
   }
 }
 
@@ -2418,6 +2420,9 @@ export function initializeMessagesStore(): () => void {
   const onPresence = () => { notePresence(); };
   for (const type of PRESENCE_EVENTS) window.addEventListener(type, onPresence, presence);
   document.addEventListener('visibilitychange', onPresence);
+  // The header's title is written from here: say it again in the language on screen.
+  const onLanguage = () => { if (state.route.open) syncChrome(); };
+  document.addEventListener('homeroom:language-changed', onLanguage);
   // The store is always mounted, but the endpoint is session-gated. Seed the
   // conversation list as soon as an already-resolved user exists, or wait for
   // the shell's one-shot authenticated boot event on an anonymous document.
@@ -2443,6 +2448,7 @@ export function initializeMessagesStore(): () => void {
     window.removeEventListener('offline', onOffline);
     for (const type of PRESENCE_EVENTS) window.removeEventListener(type, onPresence, presence);
     document.removeEventListener('visibilitychange', onPresence);
+    document.removeEventListener('homeroom:language-changed', onLanguage);
     document.removeEventListener('sv:authed', onAuthed);
   };
 }

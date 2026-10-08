@@ -8,6 +8,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import {
   cardRecord, ensureBotActivity, loadBotActivity, readsAsked, useBotActivity, useBotActivitySync,
 } from './bot-activity-store';
+import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { SPINNING_OUTCOMES, jobTitle } from './bot-shared';
 import { recordObjectOrigin } from './format';
 import type { ConversationMessage, HomeroomBotActivity, HomeroomBotActivityOutcome, HomeroomBotMeta } from './types';
@@ -52,24 +54,24 @@ export function BotActivitySync({ conversationId, newsKey }: { conversationId: n
 
 /** What each ending says, under the card's title. */
 export const ACTIVITY_OUTCOME_LABELS: Record<HomeroomBotActivityOutcome, string> = {
-  question: 'Asked you a question',
-  proposed: 'Built it. Waiting for approval',
-  live: 'Built it. It’s live',
-  closed: 'Built it. The change was closed',
-  blocked: 'Can’t build it as it’s written',
-  build_failed: 'Couldn’t finish building it',
-  person: 'Left it for the group to decide',
-  empty: 'Found nothing to build yet',
-  failed: 'Couldn’t finish looking at it',
-  held: 'Ready, but held back for now',
-  stopped: 'Stopped before it finished',
-  answer: 'Answered on the change',
-  revise: 'Updated the change',
+  question: 'messages:bot.outcome.question',
+  proposed: 'messages:bot.outcome.proposed',
+  live: 'messages:bot.outcome.live',
+  closed: 'messages:bot.outcome.closed',
+  blocked: 'messages:bot.outcome.blocked',
+  build_failed: 'messages:bot.outcome.buildFailed',
+  person: 'messages:bot.outcome.person',
+  empty: 'messages:bot.outcome.empty',
+  failed: 'messages:bot.outcome.failed',
+  held: 'messages:bot.outcome.held',
+  stopped: 'messages:bot.outcome.stopped',
+  answer: 'messages:bot.outcome.answer',
+  revise: 'messages:bot.outcome.revise',
   // #4242: not "waiting for approval" until its ready card has gone out.
-  checking: 'Built it. Checking it before you try it',
-  needs_look: 'Built it, but it needs a look',
+  checking: 'messages:bot.outcome.checking',
+  needs_look: 'messages:bot.outcome.needsLook',
   // #4227: merged, not live yet.
-  going_live: 'Built it. Going live now',
+  going_live: 'messages:bot.outcome.goingLive',
 };
 
 export type ActivityTone = 'done' | 'built' | 'you' | 'ended' | 'trouble';
@@ -91,11 +93,11 @@ export const ACTIVITY_OUTCOME_TONES: Record<HomeroomBotActivityOutcome, Tone> = 
 };
 
 export const TONE_WORDS: Record<Tone, string> = {
-  done: 'Done',
-  built: 'Built',
-  you: 'Needs you',
-  ended: 'Ended',
-  trouble: 'Didn’t finish',
+  done: 'messages:bot.tone.done',
+  built: 'messages:bot.tone.built',
+  you: 'messages:bot.tone.you',
+  ended: 'messages:bot.tone.ended',
+  trouble: 'messages:bot.tone.trouble',
 };
 
 // The tile in the ring's place once the work ended: the ring's 38px, round.
@@ -149,21 +151,33 @@ function capitalized(text: string): string {
 
 /** "4m", "1h 5m", "2d 3h": a span of time, compactly. Null for none. */
 export function spanText(fromIso: string | null, to: Date): string | null {
+  const minutes = spanMinutes(fromIso, to);
+  if (minutes === null) return null;
+  if (minutes < 1) return translate('messages:bot.span.underMinute');
+  if (minutes < 60) return translate('messages:bot.span.minutes', { minutes });
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    return minutes % 60
+      ? translate('messages:bot.span.hoursMinutes', { hours, minutes: minutes % 60 })
+      : translate('messages:bot.span.hours', { hours });
+  }
+  const days = Math.floor(hours / 24);
+  return hours % 24
+    ? translate('messages:bot.span.daysHours', { days, hours: hours % 24 })
+    : translate('messages:bot.span.days', { days });
+}
+
+/** Whole minutes from `fromIso` to `to`, never negative; null without a start. */
+function spanMinutes(fromIso: string | null, to: Date): number | null {
   const from = fromIso ? Date.parse(fromIso) : NaN;
   if (!Number.isFinite(from)) return null;
-  const minutes = Math.max(0, Math.floor((to.getTime() - from) / 60000));
-  if (minutes < 1) return 'under a minute';
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return minutes % 60 ? `${hours}h ${minutes % 60}m` : `${hours}h`;
-  const days = Math.floor(hours / 24);
-  return hours % 24 ? `${days}d ${hours % 24}h` : `${days}d`;
+  return Math.max(0, Math.floor((to.getTime() - from) / 60000));
 }
 
 /** The card's title, as the tray names the same work: "Ear Trainer #12: Sort by date". */
 export function activityTitle(meta: HomeroomBotMeta): string {
   return jobTitle({
-    appName: meta.appName || meta.appSlug || 'A project',
+    appName: meta.appName || meta.appSlug || translate('messages:bot.job.unnamedProject'),
     issueNumber: meta.issueNumber || null,
     title: meta.issueTitle || null,
     firstVersion: !!meta.firstVersion,
@@ -200,15 +214,35 @@ export function clockFrom(card: HomeroomBotActivity): string | null {
  */
 export function waitedText(card: HomeroomBotActivity): string | null {
   if (!card.waitedFor || !card.workedFrom) return null;
-  const waited = spanText(card.startedAt, new Date(card.workedFrom));
-  if (!waited || waited === 'under a minute') return null;
-  return `after waiting ${waited} ${card.waitedFor === 'first_version' ? 'for the first version' : 'for its turn'}`;
+  const minutes = spanMinutes(card.startedAt, new Date(card.workedFrom));
+  if (minutes === null || minutes < 1) return null;
+  return spanText(card.startedAt, new Date(card.workedFrom));
+}
+
+/** "5m so far", with the wait before it when there was one worth saying. */
+function soFarText(card: HomeroomBotActivity, elapsed: string): string {
+  const waited = waitedText(card);
+  if (!waited) return translate('messages:bot.activity.soFar', { duration: elapsed });
+  return card.waitedFor === 'first_version'
+    ? translate('messages:bot.activity.soFarAfterFirstVersion', { duration: elapsed, waited })
+    : translate('messages:bot.activity.soFarAfterTurn', { duration: elapsed, waited });
+}
+
+/** "took 12m", with the wait before it when there was one worth saying. */
+function tookText(card: HomeroomBotActivity, took: string): string {
+  const waited = waitedText(card);
+  if (!waited) return translate('messages:bot.activity.took', { duration: took });
+  return card.waitedFor === 'first_version'
+    ? translate('messages:bot.activity.tookAfterFirstVersion', { duration: took, waited })
+    : translate('messages:bot.activity.tookAfterTurn', { duration: took, waited });
 }
 
 /** "usually 10 to 25 minutes": how long a step usually takes, or null. */
 export function typicalText(range?: { from: number; to: number } | null): string | null {
   if (!range || !(range.to > 0)) return null;
-  return range.from >= range.to ? `usually about ${range.to} minutes` : `usually ${range.from} to ${range.to} minutes`;
+  return range.from >= range.to
+    ? translate('messages:bot.activity.typicalAbout', { count: range.to })
+    : translate('messages:bot.activity.typicalRange', { from: range.from, count: range.to });
 }
 
 // ── The view ──
@@ -252,18 +286,21 @@ const RING_TRACK = 'dark:stroke-zinc-700';
  * (ProgressRing `spinning`), the card's one live cue.
  */
 export function ActivityLead({ step, of, stepName, tone, working = false }: { step?: number | null; of?: number | null; stepName?: string | null; tone?: Tone | null; working?: boolean }) {
+  const t = useMessages('messages');
   if (!tone && step && of) {
     return (
       <ProgressRing
         pct={Math.round((step / of) * 100)}
         label={`${step}/${of}`}
-        title={`Step ${step} of ${of}${stepName ? `: ${stepName}` : ''}`}
+        title={stepName
+          ? t('messages:bot.activity.ringStepNamed', { step, total: of, name: stepName })
+          : t('messages:bot.activity.ringStep', { step, total: of })}
         spinning={working}
         trackClassName={RING_TRACK}
       />
     );
   }
-  if (!tone && working) return <ProgressRing pct={0} title="Working on it" spinning trackClassName={RING_TRACK} />;
+  if (!tone && working) return <ProgressRing pct={0} title={t('messages:bot.activity.ringWorking')} spinning trackClassName={RING_TRACK} />;
   if (tone) return <IconTile size="xs" className={TONE_TILES[tone]}><ToneIcon tone={tone} /></IconTile>;
   return <IconTile size="xs" className={PLAIN_TILE}><ClockIcon aria-hidden="true" /></IconTile>;
 }
@@ -282,10 +319,11 @@ export interface BotActivityCardViewProps {
 
 /** One card, from what was read: a pure render, so a test can draw every state. */
 export function BotActivityCardView({ meta, card, loaded = false, failed = false, onRetry, now }: BotActivityCardViewProps) {
+  const t = useMessages('messages');
   const at = now || new Date();
   const title = activityTitle(meta);
   // B4: their own words lead, and the project moves to the status line.
-  const asked = meta.askedText ? `You asked: ${meta.askedText}` : null;
+  const asked = meta.askedText ? t('messages:bot.activity.youAsked', { request: meta.askedText }) : null;
   const project = asked ? (meta.appName || meta.appSlug || null) : null;
   const working = card?.state === 'working';
   const tone: Tone | null = card && card.state === 'done' && card.outcome ? ACTIVITY_OUTCOME_TONES[card.outcome] : null;
@@ -296,54 +334,56 @@ export function BotActivityCardView({ meta, card, loaded = false, failed = false
   if (card && working) {
     const stepped = card.step && card.of;
     lead = <ActivityLead step={card.step} of={card.of} stepName={card.stepName} working />;
-    eyebrow = stepped ? `Step ${card.step} of ${card.of}${card.stepName ? ` · ${card.stepName}` : ''}` : 'Working on it';
+    eyebrow = stepped
+      ? (card.stepName
+        ? t('messages:bot.activity.eyebrowStepNamed', { step: card.step as number, total: card.of as number, name: card.stepName })
+        : t('messages:bot.activity.eyebrowStep', { step: card.step as number, total: card.of as number }))
+      : t('messages:bot.activity.eyebrowWorking');
     // The work's time, not the wait's (clockFrom), with the wait said apart.
     const elapsed = spanText(clockFrom(card), at);
-    const waited = waitedText(card);
     const usually = typicalText(card.typicalMinutes);
     status = (
       <>
         {project ? <span>{`${project} · `}</span> : null}
-        <span role="status">{capitalized(card.doing || 'working on it')}</span>
+        <span role="status">{card.doing ? capitalized(card.doing) : t('messages:bot.activity.statusWorking')}</span>
         {usually ? <span>{` · ${usually}`}</span> : null}
-        {elapsed ? <span>{` · ${elapsed} so far${waited ? `, ${waited}` : ''}`}</span> : null}
+        {elapsed ? <span>{` · ${soFarText(card, elapsed)}`}</span> : null}
       </>
     );
   } else if (card && tone && card.outcome) {
     // #4227: an ending that is still moving (checked before it is offered,
     // going live) spins, as working does.
     lead = SPINNING_OUTCOMES.has(card.outcome) ? <ActivityLead working /> : <ActivityLead tone={tone} />;
-    eyebrow = TONE_WORDS[tone];
+    eyebrow = t(TONE_WORDS[tone]);
     const took = card.endedAt ? spanText(clockFrom(card), new Date(card.endedAt)) : null;
-    const waited = waitedText(card);
     status = (
       <>
         {project ? <span>{`${project} · `}</span> : null}
-        <span role="status">{ACTIVITY_OUTCOME_LABELS[card.outcome]}</span>
-        {took ? <span>{` · took ${took}${waited ? `, ${waited}` : ''}`}</span> : null}
+        <span role="status">{t(ACTIVITY_OUTCOME_LABELS[card.outcome])}</span>
+        {took ? <span>{` · ${tookText(card, took)}`}</span> : null}
       </>
     );
   } else {
     lead = <ActivityLead />;
-    eyebrow = 'Activity';
+    eyebrow = t('messages:bot.activity.eyebrowUnknown');
     status = failed ? (
       <span role="alert" className="inline-flex flex-wrap items-center gap-2">
-        <span>Couldn’t load how far along this is.</span>
-        <Button type="button" variant="pillNeutral" size="xsText" ink="neutral" onClick={onRetry}>Try again</Button>
+        <span>{t('messages:bot.activity.loadFailed')}</span>
+        <Button type="button" variant="pillNeutral" size="xsText" ink="neutral" onClick={onRetry}>{t('core:common.tryAgain')}</Button>
       </span>
-    ) : loaded ? <span>No progress to show for this one.</span> : null;
+    ) : loaded ? <span>{t('messages:bot.activity.noProgress')}</span> : null;
   }
 
   const links = card ? [
-    card.links.proposal ? <CardLink key="proposal" href={card.links.proposal}>Open change</CardLink> : null,
-    card.links.request ? <CardLink key="request" href={card.links.request}>{meta.firstVersion ? 'Open request' : `Request #${meta.issueNumber}`}</CardLink> : null,
+    card.links.proposal ? <CardLink key="proposal" href={card.links.proposal}>{t('messages:bot.activity.openChange')}</CardLink> : null,
+    card.links.request ? <CardLink key="request" href={card.links.request}>{meta.firstVersion ? t('messages:bot.activity.openRequest') : t('messages:bot.activity.requestNumber', { number: String(meta.issueNumber) })}</CardLink> : null,
   ].filter(Boolean) : [];
 
   return (
     <div
       className="mt-1 flex max-w-[480px] flex-col gap-2.5 rounded-2xl bg-[color:var(--messages-surface)] px-3 py-2.5"
       role="group"
-      aria-label={`Homeroom bot activity: ${title}`}
+      aria-label={t('messages:bot.activity.name', { title })}
       data-bot-activity={card ? card.state : 'pending'}
       {...(card?.outcome ? { 'data-bot-activity-outcome': card.outcome } : {})}
       data-bot-activity-request={meta.appSlug && meta.issueNumber && !meta.firstVersion ? `${meta.appSlug}#${meta.issueNumber}` : undefined}
@@ -393,6 +433,8 @@ function useNow(active: boolean): Date {
  * the words.
  */
 export function BotActivityCard({ message, words = null }: { message: ConversationMessage; words?: ReactNode }) {
+  // Subscribed: the card's title is read from the catalog as it renders.
+  useMessages('messages');
   const snap = useBotActivity();
   // How many reads had been asked for when this card was drawn: one asked
   // for after that knew of it (cardRecord).

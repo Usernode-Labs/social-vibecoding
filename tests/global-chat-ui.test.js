@@ -6,6 +6,7 @@
 // easy to lose in later visual edits.
 
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
@@ -67,12 +68,16 @@ test('the inbox lists resumable chats, and is where one is deleted', () => {
   assert.match(inbox, /const thread: MessagesAgentThread = \{ kind: 'chat', id: chat\.id \};/);
   assert.match(inbox, /href=\{href\}/);
   assert.match(inbox, /data-inbox-agent=\{chat\.id\}/);
-  assert.match(inbox, /chat\.busy \? 'Working…'/);
+  assert.equal(message('messages:inbox.agentChat.working'), 'Working…');
+  assert.match(inbox, /chat\.busy \? t\('messages:inbox\.agentChat\.working'\)/);
   // The DELETE is the one thing that lived nowhere else, so it moved rather
   // than going away with the surface that carried it.
   assert.match(inbox, /removeGlobalChatThread\(chat\.id\)/);
-  assert.match(inbox, /Delete this chat\?/);
-  assert.match(inbox, /\{removing \? 'Deleting…' : 'Delete'\}/);
+  assert.equal(message('messages:inbox.agentChat.deleteConfirm'), 'Delete this chat?');
+  assert.match(inbox, /\{t\('messages:inbox\.agentChat\.deleteConfirm'\)\}/);
+  assert.equal(message('messages:inbox.agentChat.deleting'), 'Deleting…');
+  assert.equal(message('messages:inbox.agentChat.delete'), 'Delete');
+  assert.match(inbox, /\{removing \? t\('messages:inbox\.agentChat\.deleting'\) : t\('messages:inbox\.agentChat\.delete'\)\}/);
   assert.match(inbox, /DraftTrashIcon/);
 });
 test('chat navigation uses the shared screen router instead of a body-wide mode', () => {

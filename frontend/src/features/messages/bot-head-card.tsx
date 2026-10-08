@@ -1,3 +1,4 @@
+import { useMessages } from '../../lib/i18n/react';
 import { appTabSlug } from './bot-shared';
 import { MessageMarkdown, ObjectCard } from './format';
 import { pageOf, sameItem, type HomeroomLink } from './homeroom-links';
@@ -141,6 +142,7 @@ const NO_LINKS: readonly HomeroomLink[] = [];
 
 /** The card the line names, from the best source there is (above). */
 export function BotHeadCard({ head, objects }: { head: BotHead; objects: readonly SharedObjectCard[] }) {
+  const t = useMessages('messages');
   const carried = objects.find((object) => object.available && isHeadCard(head, object)) || null;
   const [read] = useLinkCards(carried || head.kind !== 'request' || !head.link ? NO_LINKS : [head.link]);
   const own: SharedObjectCard = {
@@ -148,9 +150,9 @@ export function BotHeadCard({ head, objects }: { head: BotHead; objects: readonl
     available: true,
     appSlug: head.appSlug || undefined,
     issueNumber: head.issueNumber || undefined,
-    title: head.kind === 'project' ? head.appName : head.title || `Request #${head.issueNumber}`,
-    subtitle: head.kind === 'project' ? 'First version'
-      : head.kind === 'draft' ? `${head.appName} · not filed yet` : head.appName,
+    title: head.kind === 'project' ? head.appName : head.title || t('messages:bot.head.requestNumber', { number: String(head.issueNumber) }),
+    subtitle: head.kind === 'project' ? t('messages:bot.head.firstVersion')
+      : head.kind === 'draft' ? t('messages:bot.head.notFiled', { project: head.appName }) : head.appName,
   };
   const card = carried || read?.card || own;
   const quiet = head.kind === 'request' ? { author: null, state: null } : { author: null };

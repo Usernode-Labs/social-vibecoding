@@ -15,6 +15,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadTsx } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -44,7 +45,8 @@ test('a plain tap opens the viewer; a modified click keeps the link\'s own meani
 
 test('every way out works: close, around the image, a swipe down, Back and Escape', () => {
   // ✕, clear of the notch.
-  assert.match(SRC, /aria-label="Close"\n\s*data-image-viewer-close=""\n\s*onClick=\{\(\) => onCloseRef\.current\(\)\}/);
+  assert.match(SRC, /aria-label=\{t\('core:common\.close'\)\}\n\s*data-image-viewer-close=""\n\s*onClick=\{\(\) => onCloseRef\.current\(\)\}/);
+  assert.equal(message('core:common.close'), 'Close');
   assert.match(SRC, /pt-\[calc\(env\(safe-area-inset-top\)\+12px\)\]/);
   // A tap on the dark around the picture, and only there.
   assert.match(SRC, /onClick=\{\(event\) => \{ if \(event\.target === event\.currentTarget\) onCloseRef\.current\(\); \}\}/);

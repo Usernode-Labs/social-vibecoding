@@ -1,6 +1,9 @@
 import { useMemo, useState, type MouseEvent } from 'react';
 
+import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { messageStamp } from '../../lib/timestamp';
+import { dotText } from './bot-shared';
 import { decorateRefs } from './channels';
 import { findRequestCard, RefCards, revealCard } from './ref-cards';
 import type { ConversationUser, SharedObjectCard } from './types';
@@ -158,11 +161,17 @@ export function UserAvatar({ user, title, size = 'md', shape = 'circle' }: {
   );
 }
 
+// Message ids, read when a card renders so the words follow the language on screen.
 const OBJECT_LABELS: Record<SharedObjectCard['type'], string> = {
   // B4: a code proposal is a change, as the bot and the rest of the shell say.
-  app: 'App', issue: 'Request', proposal: 'Change', governance: 'Governance proposal', spec: 'Spec version',
+  app: 'messages:object.kind.app',
+  issue: 'messages:object.kind.issue',
+  proposal: 'messages:object.kind.proposal',
+  governance: 'messages:object.kind.governance',
+  spec: 'messages:object.kind.spec',
   // #3660: the two pages a pasted Homeroom link can name that are not items.
-  hub: 'Community hub', discussion: 'Discussion',
+  hub: 'messages:object.kind.hub',
+  discussion: 'messages:object.kind.discussion',
 };
 
 /**
@@ -178,15 +187,15 @@ export function pendingObjectLabel(
   object: { type: SharedObjectCard['type']; title?: string | null; issueNumber?: number; proposalId?: number; version?: number },
   card?: SharedObjectCard | null,
 ): string {
-  const kind = OBJECT_LABELS[object.type] || 'Item';
+  const kind = translate(OBJECT_LABELS[object.type] || 'messages:object.kind.unknown');
   if (card && card.available && card.title) {
     const project = card.subtitle && card.subtitle !== card.title ? card.subtitle : null;
     const state = object.type === 'app' ? null : card.state;
-    return [kind, card.title, project, state].filter(Boolean).join(' · ');
+    return dotText([kind, card.title, project, state]);
   }
   const number = object.type === 'issue' ? object.issueNumber : object.type === 'governance' ? object.proposalId : null;
   const named = object.title || (number ? `#${number}` : (object.type === 'spec' && object.version ? `v${object.version}` : null));
-  return [kind, named].filter(Boolean).join(' · ');
+  return dotText([kind, named]);
 }
 
 // The glyph tile a card leads with: the app's diamond for an app and its
@@ -233,8 +242,8 @@ export function recordObjectOrigin(event: MouseEvent<Element>, href: string, inb
  * the text is plainly the card under it.
  */
 export function objectEyebrow(object: Pick<SharedObjectCard, 'type' | 'issueNumber'>): string {
-  if (object.type === 'issue' && object.issueNumber) return `Request #${object.issueNumber}`;
-  return OBJECT_LABELS[object.type];
+  if (object.type === 'issue' && object.issueNumber) return translate('messages:object.requestNumber', { number: object.issueNumber });
+  return translate(OBJECT_LABELS[object.type]);
 }
 
 export function ObjectCard({ object, compact = false, inboxOnly = false }: {
@@ -243,11 +252,12 @@ export function ObjectCard({ object, compact = false, inboxOnly = false }: {
   /** Drawn in an app's discussion: see `recordObjectOrigin`. */
   inboxOnly?: boolean;
 }) {
+  const t = useMessages('messages');
   if (!object.available) {
     return (
       <div className="messages-object-card messages-object-unavailable" aria-disabled="true">
         <span className="messages-object-icon">?</span>
-        <div className="min-w-0"><div className="text-base font-semibold">Unavailable</div><div className="text-sm text-zinc-500 dark:text-zinc-400">You can’t access this item.</div></div>
+        <div className="min-w-0"><div className="text-base font-semibold">{t('messages:object.unavailable.title')}</div><div className="text-sm text-zinc-500 dark:text-zinc-400">{t('messages:object.unavailable.detail')}</div></div>
       </div>
     );
   }
@@ -256,10 +266,10 @@ export function ObjectCard({ object, compact = false, inboxOnly = false }: {
       <span className="messages-object-icon">{objectGlyph(object.type)}</span>
       <div className="min-w-0 flex-1">
         <div className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400 font-semibold">{objectEyebrow(object)}</div>
-        <div className="text-base font-semibold text-zinc-900 dark:text-zinc-100 truncate">{object.title || 'Untitled'}</div>
+        <div className="text-base font-semibold text-zinc-900 dark:text-zinc-100 truncate">{object.title || t('messages:object.untitled')}</div>
         {!compact && (object.subtitle || object.state || object.author) ? (
           <div className="text-sm text-zinc-500 dark:text-zinc-400 truncate">
-            {[object.subtitle, object.state, object.author ? `by ${object.author}` : null].filter(Boolean).join(' · ')}
+            {dotText([object.subtitle, object.state, object.author ? t('messages:object.byAuthor', { author: object.author }) : null])}
           </div>
         ) : null}
       </div>
