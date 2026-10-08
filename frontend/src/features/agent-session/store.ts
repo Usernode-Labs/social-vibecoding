@@ -397,9 +397,9 @@ export function useAgentSessions(): AgentSession[] {
 }
 
 /**
- * Whether the Homeroom menu shows its Agent chats section (Build it yourself
+ * Whether the Homeroom menu shows its Agent chats section (Build it now
  * and your sessions): once the viewer has had an agent session, from any
- * door (the hub's ⋯, a request's Build it yourself, Messages' new chat, the
+ * door (the hub's ⋯, a request's Build it now, Messages' new chat, the
  * filed request's link). A first-time user's menu stays short (first-session
  * run-through, 5 Oct 2026). A listed session counts at once, so the section
  * is there from the moment the first one is created.

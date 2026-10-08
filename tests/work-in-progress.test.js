@@ -173,7 +173,7 @@ test('the mark\'s menu: the app\'s own rows first, then Agent chats, after mount
   const inSection = (id) => section.indexOf(`id="${id}"`);
   assert.ok(inSection('app-menu-sessions') < inSection('improve-row-new-session')
     && inSection('improve-row-new-session') < inSection('app-menu-continue'),
-    'led by Build it yourself, then the sessions');
+    'led by Build it now, then the sessions');
   // "Agent chats" again (5 Oct 2026). It was "Continue", then "Agent
   // sessions", then "More", a plain word for a newcomer, who no longer sees
   // the section at all.

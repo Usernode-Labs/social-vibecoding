@@ -1,6 +1,6 @@
 'use strict';
 
-// The Homeroom menu's Agent chats section (Build it yourself and your agent
+// The Homeroom menu's Agent chats section (Build it now and your agent
 // sessions) is for somebody who has built something themselves.
 //
 // Evan, first-session run-through (5 Oct 2026): show "the more section /
@@ -18,11 +18,11 @@
 //      in the document.
 //   2. THE SECTION. Drawn as "Agent chats" (sentence case, the house style;
 //      SECTION's uppercase transform shows it as AGENT CHATS either way),
-//      led by Build it yourself for a writer, the sessions alone for a
+//      led by Build it now for a writer, the sessions alone for a
 //      read-only viewer. Not in the prerender: the sheet draws it after mount,
 //      and only when the store says so.
 //   3. THE OTHER DOORS are still there for somebody who has none: the hub's
-//      ⋯, a request's Build it yourself, Messages' new chat.
+//      ⋯, a request's Build it now, Messages' new chat.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -153,7 +153,7 @@ test('the first message of a first session shows Agent chats at once, with no re
     const store = loadTsx(STORE);
     await store.loadAgentSessions();
     assert.equal(store.agentChatsShown(store.getAgentSessionState()), false, 'a newcomer');
-    // From another door: a request's Build it yourself opens an unsent
+    // From another door: a request's Build it now opens an unsent
     // conversation (AppView.chooseIssueWork → Improve._startAgentSession).
     store.prepareAgentDraft({ slug: 'notes-ab12', issueNumber: 12, entry: 'issue' });
     await store.openAgentSession({ id: 'new', host: 'screen' });
@@ -210,17 +210,17 @@ test('the server says `started` from the page, or from one EXISTS when the page 
 
 // ── 2. The section ─────────────────────────────────────────────────────
 
-test('Agent chats: the heading, led by Build it yourself for a writer', () => {
+test('Agent chats: the heading, led by Build it now for a writer', () => {
   const sheet = loadTsx(SHEET);
   const html = renderToHtml(createElement(sheet.AgentChats, { readOnly: false, continuing: { rows: [], more: false } }));
   assert.match(html, /^<div id="app-menu-sessions"><div class="[^"]*uppercase[^"]*">Agent chats<\/div><button id="improve-row-new-session" type="button"/,
-    'heading first, Build it yourself right under it');
-  assert.match(html, />Build it yourself</);
+    'heading first, Build it now right under it');
+  assert.match(html, />Build it now</);
   assert.doesNotMatch(html, />More</, 'not "More" any more');
   assert.doesNotMatch(html, /id="app-menu-continue"/, 'no sessions listed: the row stands alone');
 });
 
-test('Agent chats for a read-only viewer: their sessions, and no Build it yourself (unchanged)', () => {
+test('Agent chats for a read-only viewer: their sessions, and no Build it now (unchanged)', () => {
   const sheet = loadTsx(SHEET);
   const continuing = {
     rows: [{ key: 'agent:1', sessionId: 1, href: '#messages/agent/1', title: 'Dark mode', detail: 'In progress', sub: 'Notes · in progress', activity: null }],
@@ -240,7 +240,7 @@ test('the sheet draws Agent chats after mount only, and only when the store says
   assert.match(src, /const showAgentChats = mounted && agentChats;/);
   assert.match(src, /\{showAgentChats \? <AgentChats readOnly=\{!!readOnly\} continuing=\{continuing\} \/> : null\}/);
   assert.equal(src.split('id="app-menu-sessions"').length - 1, 1, 'one section');
-  assert.equal(src.split('id="improve-row-new-session"').length - 1, 1, 'one Build it yourself row');
+  assert.equal(src.split('id="improve-row-new-session"').length - 1, 1, 'one Build it now row');
   // The prerender, whatever the store holds: React reads its server snapshot,
   // and `mounted` is false, so a newcomer's document never carries the
   // section and a hydrating render matches the prerender.
@@ -257,14 +257,14 @@ test('the sheet draws Agent chats after mount only, and only when the store says
 
 test('a newcomer still has every other door to building it themselves', () => {
   const row = read('frontend/src/features/dev-board/actions-row.tsx');
-  assert.match(row, /data-plus="new-change"[\s\S]{0,300}title="Build it yourself"[\s\S]{0,200}Improve\.startSession\(\)/, 'the hub\'s ⋯');
+  assert.match(row, /data-plus="new-change"[\s\S]{0,300}title="Build it now"[\s\S]{0,200}Improve\.startSession\(\)/, 'the hub\'s ⋯');
   const view = read('public/js/app-view.js');
-  assert.match(view, /label: 'Build it yourself',\s*title: 'Start an agent session on this request',\s*act: \{ fn: 'chooseIssueWork', args: \[n\] \}/, 'a request\'s own');
+  assert.match(view, /label: 'Build it now',\s*title: 'Start an agent session on this request',\s*act: \{ fn: 'chooseIssueWork', args: \[n\] \}/, 'a request\'s own');
   assert.match(read('frontend/src/features/messages/index.tsx'),
-    /\{ key: 'agent', label: 'Build it yourself', hint: 'Plan and build a change with a coding agent' \}/, 'Messages\' new chat');
+    /\{ key: 'agent', label: 'Build it now', hint: 'Plan and build a change with a coding agent' \}/, 'Messages\' new chat');
   // The tour no longer points a newcomer at the menu's row.
-  assert.doesNotMatch(read('frontend/src/features/home/tour/tour-steps.ts'), /tap Build it yourself/);
+  assert.doesNotMatch(read('frontend/src/features/home/tour/tour-steps.ts'), /tap Build it now/);
   // Nor do the Workshop's notes: they name the hub's ⋯.
   const workshop = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-  assert.doesNotMatch(workshop, /Build it yourself in the Homeroom menu|Start a new change in the Homeroom menu/);
+  assert.doesNotMatch(workshop, /Build it now in the Homeroom menu|Start a new change in the Homeroom menu/);
 });

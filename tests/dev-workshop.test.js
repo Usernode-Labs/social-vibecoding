@@ -3570,18 +3570,18 @@ test('an empty board still gets the All items pane, and the note names the ⋯ a
   assert.doesNotMatch(status, /Press <span[^>]*>⋯<\/span> on the hub/, 'so on the hub it does not say where');
 });
 
-test('bug g: the empty-board note says what the ⋯ holds, and sends "make one yourself" to its Build it yourself', () => {
+test('bug g: the empty-board note says what the ⋯ holds, and sends "make one yourself" to its Build it now', () => {
   // The second half: "Press + to propose a change or file an issue". The "+"
   // has had no propose row since New change moved to Improve (#1490) and
   // then to the Homeroom menu's New change button — an owner decision
   // (#2740 review) this does not undo. So the note names the "+"'s real rows.
   // "Make one yourself" went to the Homeroom menu's Start a new change, then
-  // to the ⋯'s own Build it yourself once the menu's row showed only for
+  // to the ⋯'s own Build it now once the menu's row showed only for
   // somebody who has had an agent session (first-session run-through, 5 Oct
   // 2026): the ⋯ has it for every writer the note is shown to.
   const ROW = read('frontend/src/features/dev-board/actions-row.tsx');
-  assert.match(ROW, /\{readOnly \? null : \([\s\S]*?data-plus="new-change"[\s\S]*?title="Build it yourself"/,
-    'the ⋯ carries Build it yourself for every writer');
+  assert.match(ROW, /\{readOnly \? null : \([\s\S]*?data-plus="new-change"[\s\S]*?title="Build it now"/,
+    'the ⋯ carries Build it now for every writer');
   const empty = (over) => {
     const AppView = makeAppView();
     seed(AppView);
@@ -3594,7 +3594,7 @@ test('bug g: the empty-board note says what the ⋯ holds, and sends "make one y
   };
   const NOTE = (tail) => new RegExp(`data-ws-empty=""[^>]*>Nothing on the board yet\\. Press <span[^>]*>⋯<\\/span>${tail}<\\/div>`);
   // The ⋯'s own row, named in the same sentence as the ⋯.
-  const START = '; to make one yourself, use Build it yourself there\\.';
+  const START = '; to make one yourself, use Build it now there\\.';
 
   // ALL ITEMS, where no banner offers New change: the whole sentence, and
   // where the ⋯ is, since it is the hub's.
@@ -5132,14 +5132,14 @@ test('#2182: "What you are working on" stays on screen with nothing in it, and s
   assert.ok(html.includes('data-ws-mine=""'), 'the strip is drawn');
   // BUG g: the note sent the viewer to "start something from the + button",
   // and the "+" had no propose row then. It named the Homeroom menu's
-  // Build it yourself (B8), and names the hub's ⋯ one now: the menu's shows
+  // Build it now (B8), and names the hub's ⋯ one now: the menu's shows
   // only for somebody who has had an agent session (first-session
   // run-through, 5 Oct 2026), and the ⋯'s is there for every writer.
   assert.equal(v.mine.bot, false, 'Homeroom bot does not build here');
-  assert.match(html, /data-ws-lane="mine"><p class="[^"]*" data-ws-mine-empty="">You have no work going on\. Pick up an open item in All items, or press ⋯ on the hub and use Build it yourself\.<\/p>/,
+  assert.match(html, /data-ws-lane="mine"><p class="[^"]*" data-ws-mine-empty="">You have no work going on\. Pick up an open item in All items, or press ⋯ on the hub and use Build it now\.<\/p>/,
     'with the note in the lane');
   assert.doesNotMatch(html, /Start a new change in the Homeroom menu/, 'not the row\'s old name');
-  assert.doesNotMatch(html, /Build it yourself in the Homeroom menu/, 'nor a row a newcomer does not have');
+  assert.doesNotMatch(html, /Build it now in the Homeroom menu/, 'nor a row a newcomer does not have');
   assert.doesNotMatch(html, /start something from the \+ button/, 'and not the door that cannot open');
   // A read-only viewer has neither door (no New change, no board writes), so
   // the note states the fact and offers nothing to press.
@@ -5158,7 +5158,7 @@ test('#2182: "What you are working on" stays on screen with nothing in it, and s
   const bot = workshopHtml(AppView, 'workshop');
   assert.match(bot, /data-ws-mine-empty="">You have no work going on\. To change something, tell Homeroom bot, or use Suggest an improvement in the Homeroom menu\.<\/p>/,
     'the bot\'s project points at asking for a change');
-  assert.doesNotMatch(bot, /Pick up an open item|Build it yourself/, 'and not at building it');
+  assert.doesNotMatch(bot, /Pick up an open item|Build it now/, 'and not at building it');
   withDevActions({ readOnly: true }, () => {
     assert.match(workshopHtml(AppView, 'workshop'), /data-ws-mine-empty="">You have no work going on\.<\/p>/,
       'a read-only viewer is still told the fact alone');

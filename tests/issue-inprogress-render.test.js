@@ -347,7 +347,7 @@ test('openInProgressTarget always opens the lifecycle-aware change page', () => 
 function claimLabels(AppView, html) {
   const row = html.match(/<div class="gc-card-actions">([\s\S]*?)<\/div>/);
   const labels = row
-    ? (row[1].match(/>(?:I&#x27;ll work on this|Stop working on this)</g) || []).map((s) => s.slice(1, -1).replace('&#x27;', "'"))
+    ? (row[1].match(/>(?:Claim it|Stop working on this)</g) || []).map((s) => s.slice(1, -1).replace('&#x27;', "'"))
     : [];
   const m = html.match(/data-card-menu="([^"]+)"/);
   const inMenu = m
@@ -360,14 +360,14 @@ function claimLabels(AppView, html) {
   return labels;
 }
 
-test('issue row renders the chip and offers "I\'ll work on this" when the viewer holds no claim', () => {
+test('issue row renders the chip and offers "Claim it" when the viewer holds no claim', () => {
   const AppView = makeAppView();
   const model = AppView._issueCardModel(baseIssue({
     in_progress: { count: 1, users: ['maya'], mine: false, claims: [], sessions: [sess()], target: null },
   }));
   const html = cardHtml(model);
   assert.match(html, /Being worked on · maya/);
-  assert.equal(claimLabels(AppView, html).join('|'), 'I\'ll work on this');
+  assert.equal(claimLabels(AppView, html).join('|'), 'Claim it');
   // #1112: the label no longer promises progress, and no longer repeats the
   // phrase the chip uses for six other states.
   assert.ok(!html.includes('Mark in progress'));
@@ -396,7 +396,7 @@ test('other users\' claims never block the viewer\'s own claim button', () => {
   }));
   const html = cardHtml(model);
   // Claims are per-user and never exclusive.
-  assert.equal(claimLabels(AppView, html).join('|'), 'I\'ll work on this');
+  assert.equal(claimLabels(AppView, html).join('|'), 'Claim it');
 });
 
 test('read-only viewers see the chip but no action buttons', () => {
@@ -406,7 +406,7 @@ test('read-only viewers see the chip but no action buttons', () => {
   }));
   const html = cardHtml(model);
   assert.match(html, /Being worked on · maya/);
-  assert.ok(!html.includes('I&#x27;ll work on this'));
+  assert.ok(!html.includes('Claim it'));
 });
 
 test('admin claim list renders in the topic view (noNav) only, for write-admins only', () => {
@@ -653,7 +653,7 @@ test('#4190: the card: a disabled "Homeroom bot is building…" beside a Claim, 
   const html = cardHtml(model);
   assert.match(html, /disabled[^>]*>Homeroom bot is building…</, 'the primary waits, like a run in flight');
   assert.ok(!hasAction(model, 'chooseIssueWork'), 'no Start work: a second session would build it twice');
-  assert.equal(claimLabels(AppView, html).join('|'), 'I\'ll work on this', 'a person can work on it alongside the bot');
+  assert.equal(claimLabels(AppView, html).join('|'), 'Claim it', 'a person can work on it alongside the bot');
   assert.ok(hasAction(model, 'markIssueInProgress'));
   assert.equal(model.actions.length, 2, 'the disabled primary and the claim');
   assert.match(cardHtml(AppView._issueCardModel(baseIssue({ bot: building({ what: 'reading' }) }))),
@@ -668,12 +668,12 @@ test('#4190: the card: a disabled "Homeroom bot is building…" beside a Claim, 
 
   // Where the face does not carry the toggle, the ⋯ row follows the same rule.
   const rows = (issue) => Array.from(AppView._issueMenuItems(issue, { progressOnFace: false }), (it) => it.label);
-  assert.ok(rows(baseIssue({ bot: building() })).includes('I\'ll work on this'));
-  assert.ok(rows(baseIssue({ bot: building({ what: 'reading' }) })).includes('I\'ll work on this'), 'while it reads, too');
-  assert.ok(rows(baseIssue({ bot: building({ what: 'queued' }) })).includes('I\'ll work on this'), 'and while it waits for a builder');
-  assert.ok(rows(baseIssue()).includes('I\'ll work on this'), 'as on any request');
-  // Still never Build it yourself / Start work beside the bot.
-  assert.ok(!rows(baseIssue({ bot: building() })).includes('Build it yourself'));
+  assert.ok(rows(baseIssue({ bot: building() })).includes('Claim it'));
+  assert.ok(rows(baseIssue({ bot: building({ what: 'reading' }) })).includes('Claim it'), 'while it reads, too');
+  assert.ok(rows(baseIssue({ bot: building({ what: 'queued' }) })).includes('Claim it'), 'and while it waits for a builder');
+  assert.ok(rows(baseIssue()).includes('Claim it'), 'as on any request');
+  // Still never Build it now / Start work beside the bot.
+  assert.ok(!rows(baseIssue({ bot: building() })).includes('Build it now'));
 });
 
 test('#4190: the request page says so in a sentence and offers Claim in its actions', () => {
@@ -687,7 +687,7 @@ test('#4190: the request page says so in a sentence and offers Claim in its acti
 
   const keys = (item) => Array.from(AppView._detailActionsView('issue', item).pills, (p) => p.key);
   const claim = AppView._detailActionsView('issue', issue).pills.find((p) => p.key === 'claim');
-  assert.equal(claim && claim.label, 'I\'ll work on this', 'Claim, in the words it reads everywhere else');
+  assert.equal(claim && claim.label, 'Claim it', 'Claim, in the words it reads everywhere else');
   assert.equal(claim.act.fn, 'markIssueInProgress');
   assert.ok(!/nobody needs to claim/.test(note[1]));
   assert.ok(keys(issue).includes('bounty') && keys(issue).includes('close'), 'the rest of the list stays');

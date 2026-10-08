@@ -362,7 +362,7 @@ const ADDED_IDS = {
   // ── B8: Suggest an improvement answered by Homeroom bot ─────────────────
   'feedback-sent-line': 'B8: the line under the filed-request confirmation\'s heading, worded by the controller: "Your idea is on the board now. Find it on your profile…", or, where Homeroom bot builds it, "Homeroom bot is building it now, usually about 8 minutes…" (#3971).',
   'feedback-sent-chat': 'B8: Open chat, the confirmation\'s main button when Homeroom bot builds the request: the chat where its card is.',
-  'feedback-sent-fix': 'B8: the confirmation\'s small "Build it yourself with a coding agent" link, for somebody who could start a change there.',
+  'feedback-sent-fix': 'B8: the confirmation\'s small "Build it now with a coding agent" link, for somebody who could start a change there.',
   // ── #3971: a first request Homeroom bot builds is a first request ───────
   'feedback-sent-first': '#3971: "Your first request!" inside the bot\'s confirmation. B8 skipped the first-request moment whenever the bot built the request; it comes back here, beside Open chat rather than in place of it. Hidden unless the post was the person\'s first request and the bot builds it.',
   'feedback-sent-first-line': '#3971: that block\'s "You just helped shape <app>." line, named by the controller after the app the request was filed to.',
@@ -795,7 +795,7 @@ const ADDED_IDS = {
   // either: the UI overhaul added them to the prerender, and the
   // first-session run-through (5 Oct 2026) took them out of it. They are
   // the Homeroom menu's Agent chats section (it was "Continue", then "Agent
-  // sessions", then "More") and the Build it yourself row that leads it,
+  // sessions", then "More") and the Build it now row that leads it,
   // same ids, same call. The section is shown only to somebody who has had
   // an agent session, which is their own data, known after mount
   // (app-context-sheet.tsx AgentChats), so the prerender draws nothing

@@ -398,7 +398,7 @@ function SessionRow({ row, index }: { row: ContinueRow; index: number }): ReactN
 
 /**
  * AGENT CHATS (it was "Continue", #2779 follow-up, then "Agent sessions",
- * then "More"), BELOW the app's own rows: Build it yourself and your agent
+ * then "More"), BELOW the app's own rows: Build it now and your agent
  * sessions, on every app, under their own heading. See the comment on
  * `continuing` in the sheet below for the sessions' rules.
  *
@@ -406,7 +406,7 @@ function SessionRow({ row, index }: { row: ContinueRow; index: number }): ReactN
  * run-through, 5 Oct 2026). For a first-time user the menu is the app's own
  * rows and Suggest an improvement, above, which is the front door: the
  * whole section shows only once they have had an agent session, started
- * from any of the other doors (the hub's ⋯, a request's Build it yourself,
+ * from any of the other doors (the hub's ⋯, a request's Build it now,
  * Messages' new chat, the filed request's link). The sheet asks the store
  * (useAgentChatsShown): a session, archived ones included, which the list's
  * read reports, and which the first message of a new one sets, so the
@@ -444,7 +444,7 @@ export function AgentChats({ readOnly, continuing }: {
               is building it yourself, with a coding agent. */}
           <RowBody
             icon={<PlusIcon className="text-violet-600 dark:text-violet-400" />}
-            label="Build it yourself"
+            label="Build it now"
           />
         </button>
       )}

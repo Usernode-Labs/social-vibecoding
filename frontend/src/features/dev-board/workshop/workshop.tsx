@@ -508,7 +508,7 @@ function digestNote(meta: DevWorkshopView['meta'], written: boolean): string {
  * menu (#2740 review), an owner decision this note does not undo. The "+"
  * became the hero's ⋯, on the hub, so the note names what it holds (and, on
  * All items, where it is), and sends "make one yourself" to the ⋯'s own
- * Build it yourself row. It sent it to the Homeroom menu's until that row
+ * Build it now row. It sent it to the Homeroom menu's until that row
  * showed only for people who have built something themselves (first-session
  * run-through, 5 Oct 2026: ../../app-context/app-context-sheet.tsx
  * AgentChats), so a newcomer would have looked for a row they do not have.
@@ -535,7 +535,7 @@ function EmptyNote({ filtered, loadFailed, underStartHere = false, onHub = false
   const { readOnly, canCollaborate } = useDevActions();
   const where = onHub ? '' : ' on the hub';
   const adds = canCollaborate ? ' to suggest an improvement or import a PR' : ' to suggest an improvement';
-  const start = underStartHere ? '.' : '; to make one yourself, use Build it yourself there.';
+  const start = underStartHere ? '.' : '; to make one yourself, use Build it now there.';
   return (
     <div className="text-xs text-zinc-500 dark:text-zinc-400 mb-2" data-ws-empty="">
       {filtered ? (
@@ -4470,7 +4470,7 @@ export function DevWorkshop(): ReactNode {
                 asking for the change, not building it: a newcomer read the
                 developer path here on a project the bot builds (first-session
                 run-through, 5 Oct 2026). Elsewhere the way in is the hub's
-                ⋯, whose Build it yourself (B8) every writer has: the
+                ⋯, whose Build it now (B8) every writer has: the
                 Homeroom menu's shows only once you have had an agent session
                 (../../app-context/app-context-sheet.tsx AgentChats). */}
             {!v.mine.rows.length ? (
@@ -4479,7 +4479,7 @@ export function DevWorkshop(): ReactNode {
                   ? 'You have no work going on.'
                   : v.mine.bot
                     ? 'You have no work going on. To change something, tell Homeroom bot, or use Suggest an improvement in the Homeroom menu.'
-                    : 'You have no work going on. Pick up an open item in All items, or press ⋯ on the hub and use Build it yourself.'}
+                    : 'You have no work going on. Pick up an open item in All items, or press ⋯ on the hub and use Build it now.'}
               </p>
             ) : null}
             {/* THE FIRST THREE on the Workshop tab (#852 review), and the

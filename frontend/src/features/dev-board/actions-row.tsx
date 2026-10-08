@@ -356,7 +356,7 @@ export function DevPlusMenu({
             <PlusRow
               data-plus="new-change"
               icon={<PencilSparklesIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-              title="Build it yourself"
+              title="Build it now"
               sub="With a coding agent, then ask for approval"
               onClick={() => { callAppView('_closePlusMenu'); void Improve.startSession(); }}
             />
