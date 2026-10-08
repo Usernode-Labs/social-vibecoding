@@ -625,6 +625,11 @@ async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, re
     passed = true;
   } catch (err) {
     if (signal?.aborted) throw signal.reason;
+    // A refusal at the Job/Secret create is "no room right now", not a
+    // suite failure: rethrow it so the capture run requeues itself
+    // (services/check-runs.js) instead of this folding the refusal into a
+    // failed outcome row (issue #4317).
+    if (err?.retryLater) throw err;
     readSummary(err.stdout);
     const timedOut = err.killed === true || err.signal === 'SIGTERM' || err.signal === 'SIGKILL';
     const parts = failureOutcomeParts(err.stdout, err.stderr, { timedOut });

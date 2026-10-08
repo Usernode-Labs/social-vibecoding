@@ -342,6 +342,17 @@ function Summary({ s, node, runtimeKind }: { s: StatusData; node: any; runtimeKi
     </SummaryCard>,
     <SummaryCard key="stuck" label="Missing previews" tone={stuckTone}>{`${s.stuckSessions}`}</SummaryCard>,
     <SummaryCard key="prodmissing" label="Prod missing" tone={s.prodMissing > 0 ? 'red' : 'zinc'}>{`${s.prodMissing}`}</SummaryCard>,
+    // The checks queue (issue #4317): how many runs are waiting for a
+    // cluster slot and how long the oldest has waited. Kubernetes runtime
+    // only — the server leaves both null everywhere else.
+    ...(k8s && s.checksQueued != null ? [
+      <SummaryCard key="checksqueue" label="Checks queue" tone={s.checksQueued > 0 ? 'yellow' : 'zinc'}>
+        {`${s.checksQueued} waiting`}
+        {(s.checksQueuedOldestSeconds ?? 0) > 0
+          ? <> <span className="text-zinc-500 dark:text-zinc-400 text-xs">{` · oldest ${fmtDurationSeconds(s.checksQueuedOldestSeconds)}`}</span></>
+          : null}
+      </SummaryCard>,
+    ] : []),
   ];
 
   if (s.globalSpendCents != null) {

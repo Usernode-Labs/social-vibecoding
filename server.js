@@ -1560,6 +1560,12 @@ async function becomeLeader() {
   // the election) is picked up within the orphan window instead of waiting
   // out CHECKS_STALE_MS for the stale sweep to start it over.
   checkHarvest.start(config);
+  // The checks queue's dispatch tick (issue #4317): grants the cluster's
+  // free slots to queued check runs — priority first, then FIFO — and keeps
+  // each waiting run's place in line on its session. Kubernetes capture
+  // runtime only; single-instance deployments start it here the same way
+  // they start the harvest.
+  require('./src/services/check-runs').start(config);
   mainWatch.start(config);
   if (!config.wfMergeFollowupsEnabled) mergeFollowups.start(config);
 

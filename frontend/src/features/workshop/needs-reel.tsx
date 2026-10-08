@@ -57,6 +57,14 @@ export type NeedsFeedItem = {
    * needs (B7, the server's rule for `_cardVoteButtonSpecs`' `approve`).
    */
   approve?: boolean;
+  /**
+   * The change's checks state, when the row carries one: a queued run says
+   * so on the item's facts line ("Checks waiting · 3rd in line"), so a
+   * reviewer opening the feed to decide can see the proposal is not ready
+   * to be judged yet. Null on governance rows and for every other check
+   * state.
+   */
+  checks?: { state: string; phase: string | null; queuePosition: number | null } | null;
   app: { slug: string; name: string; icon_url: string | null; icon_emoji: string | null };
 };
 
@@ -80,6 +88,16 @@ export function plainSummary(md: string | null | undefined): string {
 }
 
 /**
+ * The position in the checks queue as an ordinal: 1st, 2nd, 3rd, 4th, 21st,
+ * 112th. Written here — nothing else on the shell formats one.
+ */
+export function checksQueueOrdinal(n: number): string {
+  const suffixes = ['th', 'st', 'nd', 'rd'];
+  const v = n % 100;
+  return `${n}${suffixes[(v - 20) % 10] || suffixes[v] || suffixes[0]}`;
+}
+
+/**
  * The feed's rows, in the shape a project's Needs you builds its own
  * (app-view.js `_workshopView`'s queue): the card's page, the question and
  * what Yes and No DO, who asked and when, the words, the ask box's address
@@ -99,6 +117,13 @@ export function reelRows(
     const key = `${change ? 'proposal' : 'governance'}:${item.id}`;
     const rev = item.epoch == null ? [] : [item.epoch];
     const summary = plainSummary(item.summary) || null;
+    // The one check state the feed says out loud: a run the platform is
+    // holding until the cluster has room. Not a failure and not a stall —
+    // the item says where the run stands in line, so nobody judges a
+    // change whose checks have not run yet.
+    const checksWaiting = item.checks?.state === 'pending' && item.checks.phase === 'queued'
+      ? `Checks waiting${item.checks.queuePosition ? ` · ${checksQueueOrdinal(item.checks.queuePosition)} in line` : ''}`
+      : null;
     const attrs: Record<string, string> = change ? { 'data-proposal-row': String(item.id) } : { 'data-gov-row': String(item.id) };
     const row: FeedRow = {
       t: 'card',
@@ -138,6 +163,7 @@ export function reelRows(
       thread: { type: change ? 'session' : 'governance', ref: item.id },
       app: item.app,
       tally: { yes: Number(item.yes) || 0, no: Number(item.no) || 0 },
+      checksWaiting,
     };
     return row;
   });

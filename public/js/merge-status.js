@@ -398,6 +398,26 @@
           + 'once it merges cleanly.',
       });
     }
+    if (check === 'pending' && p.check_phase === 'queued') {
+      // The checks queue (services/check-runs.js): more runs are in flight
+      // than the test cluster can hold, so this one waits for a slot. Not
+      // started, so nothing is wrong and no "running for N min" is computed
+      // against it — the number is its place in line, refreshed while it
+      // waits. Same neutral spinner family as "Checks running…".
+      var pos = parseInt(p.check_queue_position, 10);
+      var ordinals = ['th', 'st', 'nd', 'rd'];
+      var ordSuffix = function (n) {
+        var v = n % 100;
+        return ordinals[(v - 20) % 10] || ordinals[v] || ordinals[0];
+      };
+      return descriptor('checks_queued',
+        pos > 0 ? 'Checks waiting · ' + pos + ordSuffix(pos) + ' in line' : 'Checks waiting',
+        'neutral', true, {
+        votes: votes,
+        title: 'More checks are running than the test cluster can hold at once. This run starts '
+          + 'as soon as a slot frees, and the wait never counts against its timeout.',
+      });
+    }
     if (check === 'pending') {
       // A run that has been going a while says for how long, so "pending for
       // twenty minutes" reads as a number rather than as a hang (#3232).

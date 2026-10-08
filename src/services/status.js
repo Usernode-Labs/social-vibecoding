@@ -406,6 +406,18 @@ async function gatherFull(config) {
     };
   } catch { /* pg internals not present — leave null */ }
 
+  // ── The checks queue (issue #4317) ──
+  // How many check runs the platform is holding for a cluster slot, and how
+  // long the oldest has waited — the two figures the admin dashboard reads
+  // to see a busy cluster before it turns into failed checks. Null outside
+  // the Kubernetes capture runtime, where there is no queue.
+  let checksQueue = null;
+  if (runtimeAvailable && config.captureRuntime === 'kubernetes') {
+    try {
+      checksQueue = await require('./check-runs').queueStats(pool);
+    } catch { checksQueue = null; }
+  }
+
   const summary = {
     apps: apps.length,
     prodRunning: appTree.filter((a) => a.prod?.state === 'running').length,
@@ -421,6 +433,8 @@ async function gatherFull(config) {
     workersBootstrapping,
     workersOrphaned: workers.filter((w) => w.orphan).length,
     stuckSessions: stuckSessions.length,
+    checksQueued: checksQueue ? checksQueue.length : null,
+    checksQueuedOldestSeconds: checksQueue ? checksQueue.oldestSeconds : null,
     globalSpendCents,
     globalSpendCap: GLOBAL_DAILY_LIMIT_CENTS,
     // Ramp headlines, mirrored into the summary bar.
@@ -512,6 +526,8 @@ function redact(full, { isAdmin }) {
   const {
     globalSpendCents, globalSpendCap,
     hostMemUsedPct, hostLoadAvg1, dbPoolWaiting,
+    // Operational queue figures: admins only, like the other numbers above.
+    checksQueued, checksQueuedOldestSeconds,
     ...publicSummary
   } = summary || {};
   const { userDailyCents, globalDailyCents, ...publicLimits } = limits || {};

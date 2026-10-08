@@ -33,7 +33,10 @@ function checkRunOverdue(session, { now = Date.now(), staleMs = checksStaleMs() 
   // A deferred verdict is waiting on a conflict, not on a runner
   // (services/check-admission.js): no run is overdue because none was
   // started, and re-driving one would only defer it again.
-  if (session?.check_phase === 'deferred') return false;
+  // A queued run (services/check-runs.js) is waiting on a cluster slot, not
+  // on a runner either: the dispatcher owns it, and re-driving it here
+  // would start a second run for something already in line.
+  if (session?.check_phase === 'deferred' || session?.check_phase === 'queued') return false;
   if (!(session?.checks_commit_sha || session?.handoff_head_sha)) return false;
   const checkedAt = session?.checks_checked_at == null
     ? NaN

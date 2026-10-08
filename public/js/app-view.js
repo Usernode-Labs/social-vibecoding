@@ -12372,7 +12372,9 @@ const AppView = {
     if (s && (s.status === 'active' || s.status === 'paused') && s.check_state
         && typeof window !== 'undefined' && window.MergeStatus) {
       const life = MergeStatus.lifecycle(s);
-      if (life.key === 'checks_running' && s.check_phase) {
+      // A queued run reads its phase copy like a running one: the badge
+      // names the wait ("Waiting for a free slot…"), not a stall.
+      if ((life.key === 'checks_running' || life.key === 'checks_queued') && s.check_phase) {
         const phase = AppView._checksPhaseCopy(s.check_phase);
         return {
           t: 'ms', key: 'state', tone: 'neutral',
@@ -15950,6 +15952,14 @@ const AppView = {
     deferred: {
       title: 'Checks deferred',
       detail: 'The preview is up, but the tests were not run: this proposal conflicts with main, and they would judge a tree that cannot merge. They run once it merges cleanly.',
+    },
+    // Also not a stage of a run: the checks queue (services/check-runs.js)
+    // is holding this one until the test cluster has room. The wait never
+    // counts against the run's timeout, so a long line never becomes a
+    // "ran too long" verdict.
+    queued: {
+      title: 'Waiting for a free slot…',
+      detail: 'The checks are waiting for a free slot on the test cluster. They run as soon as one frees.',
     },
   },
 

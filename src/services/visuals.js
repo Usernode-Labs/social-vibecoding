@@ -1161,6 +1161,7 @@ async function storeChecks(pool, sessionId, commitSha, result, errorDetail = nul
               checks_commit_sha = $3::text,
               checks_checked_at = NOW(),
               check_phase = NULL,
+              check_queue_position = NULL,
               check_error_detail = COALESCE($5, check_error_detail),
               consecutive_check_failures = consecutive_check_failures + 1,
               first_check_failure_at = COALESCE(first_check_failure_at, NOW()),
@@ -1194,6 +1195,7 @@ async function storeChecks(pool, sessionId, commitSha, result, errorDetail = nul
     `UPDATE chat_sessions
        SET check_state = $1, test_results = $2, checks_commit_sha = $3::text, checks_checked_at = NOW(),
            check_phase = NULL,
+           check_queue_position = NULL,
            checks_progress = NULLIF(jsonb_strip_nulls(jsonb_build_object(
              'build', CASE WHEN checks_progress #>> '{build,step}' = 'done'
                            THEN checks_progress -> 'build' END,
@@ -1241,6 +1243,7 @@ async function storeChecksSkipped(
            checks_progress = NULL,
            checks_checked_at = NOW(),
            check_phase = NULL,
+           check_queue_position = NULL,
            check_error_detail = $2,
            consecutive_check_failures = 0,
            first_check_failure_at = NULL,
@@ -1302,6 +1305,7 @@ async function setChecksPending(pool, sessionId, commitSha, phase = null, trigge
            check_phase = $3::text,
            check_trigger = $4::text,
            checks_progress = NULL,
+           check_queue_position = NULL,
            check_next_retry_at = NULL,
            checks_base_sha = COALESCE(
              (SELECT a.main_sha FROM apps a WHERE a.id = chat_sessions.app_id),
@@ -1324,10 +1328,13 @@ async function setChecksPending(pool, sessionId, commitSha, phase = null, trigge
 // The stages a 'pending' run can be in. 'building' and 'testing' are the two
 // halves of a run; 'deferred' is a promoted head that conflicts with main and
 // got its preview but no verdict (services/check-admission.js) — nothing is
-// running for it, and nothing will until the head merges cleanly. Anything
+// running for it, and nothing will until the head merges cleanly. 'queued' is
+// a run the checks queue (services/check-runs.js) is holding until the
+// cluster has room: nothing is running for it either, and the wait never
+// counts against the run's timeout. Anything
 // else (undefined, a typo, a value from a newer writer) collapses to NULL —
 // the card's legacy wording — rather than rendering an unknown caption.
-const CHECK_PHASES = new Set(['building', 'testing', 'deferred']);
+const CHECK_PHASES = new Set(['building', 'testing', 'deferred', 'queued']);
 function normalizeCheckPhase(phase) {
   return CHECK_PHASES.has(phase) ? phase : null;
 }
@@ -1345,12 +1352,34 @@ async function storeChecksDeferred(pool, sessionId, commitSha, detail = null) {
             check_phase = 'deferred',
             checks_checked_at = NOW(),
             checks_progress = NULL,
+            check_queue_position = NULL,
             check_next_retry_at = NULL,
             check_error_detail = $3::text
       WHERE id = $1
         AND status IN ('active', 'paused', 'promoted', 'merging')
         AND (checks_commit_sha IS NULL OR $2::text IS NULL OR checks_commit_sha = $2::text)`,
     [sessionId, commitSha || null, detail ? String(detail).slice(0, 300) : null]
+  );
+  return write.rowCount !== 0;
+}
+
+// The queue's stamp (services/check-runs.js): a run the platform is holding
+// until the cluster has room. Same commit guard as storeChecks — a stamp
+// about a head the row has since left is discarded, so a superseded run's
+// queued stamp never lands on the newer commit. `position` is the run's
+// place in line (1-based) when known; the dispatch tick corrects it, and
+// every phase-stamping path clears the column, so a stale position cannot
+// outlive the wait.
+async function stampChecksQueued(pool, sessionId, commitSha, position = null) {
+  const write = await pool.query(
+    `UPDATE chat_sessions
+        SET check_state = 'pending',
+            check_phase = 'queued',
+            check_queue_position = $3
+      WHERE id = $1
+        AND status IN ('active', 'paused', 'promoted', 'merging')
+        AND (checks_commit_sha IS NULL OR $2::text IS NULL OR checks_commit_sha = $2::text)`,
+    [sessionId, commitSha || null, Number.isInteger(position) ? position : null]
   );
   return write.rowCount !== 0;
 }
@@ -2203,6 +2232,43 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         manifest: { launched: false, trigger: trigger || null, debugRunId, startedAt: runStartedAt },
       });
       stopHeartbeat = checkRuns.startHeartbeat(operation?.cleanupPool || pool, runId);
+      // ── The checks queue (issue #4317) ──
+      // Under the Kubernetes capture runtime the run holds for a cluster
+      // slot before any Job exists: the Jobs are created only by a
+      // dispatched run, so a burst larger than the cluster can run waits
+      // here instead of failing at the quotas or timing out while Pending.
+      // The heartbeat above keeps the row warm the whole wait, and the
+      // operation signal aborts it like any other stage.
+      const queued = await checkRuns.enqueue(operation?.cleanupPool || pool, {
+        runId, sessionId: session.id, commitSha: commitHash || null,
+        priority: session.status === 'promoted' || session.status === 'merging',
+      });
+      if (queued) {
+        const position = await checkRuns.queuedPosition(operation?.cleanupPool || pool, runId)
+          .catch(() => null);
+        await stampChecksQueued(pool, session.id, commitHash, position).catch((err) => {
+          log.warn('visuals', 'stampChecksQueued failed (non-fatal)', { sessionId: session.id, err: err.message });
+        });
+        notifyChecksPending(session.id, commitHash, 'queued', trigger);
+        const dispatched = await checkRuns.awaitDispatch(operation?.cleanupPool || pool, runId, {
+          signal: operation?.signal,
+        });
+        if (!dispatched) {
+          // Superseded by a newer commit's run, or the session moved under
+          // this run while it waited. Exit without a verdict: the commit
+          // guard on every verdict write discards this run's anyway, and
+          // with an operation the throw propagates as plain abandonment.
+          throw new Error('Checks run left the queue without running (superseded)');
+        }
+        // A slot is ours: back to the run as it always was. Re-stamping
+        // 'testing' refreshes checks_checked_at, so the run's own deadline
+        // (and the stale sweeper's) starts when the suite does, not when it
+        // joined the queue.
+        await setChecksPending(pool, session.id, commitHash, 'testing', trigger).catch((err) => {
+          log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message });
+        });
+        notifyChecksPending(session.id, commitHash, 'testing', trigger);
+      }
     }
 
     // Heuristic gate. It classifies a route-less proposal as either
@@ -2667,20 +2733,88 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // one-shot container CONCURRENTLY with the browser checks and adds
     // ~zero wall clock unless it outlasts the whole capture run. The
     // .catch collapses every failure mode to null (no row) — the checks
-    // run must never die because the unit-suite runner did.
-    const unitSuitePromise = shotsOnly ? Promise.resolve(null) : unitSuite.maybeRunUnitSuite({
+    // run must never die because the unit-suite runner did — but a
+    // retry-later refusal is rethrown: that is the launch segment's signal
+    // to requeue, never a suite outcome.
+    const launchUnitSuite = () => shotsOnly ? Promise.resolve(null) : unitSuite.maybeRunUnitSuite({
       config, pool, appId: app.id, sessionId: session.id,
       repoOwner, repoName, ref: gitRef,
       prNumber: Number(session.pr_number) || null,
       onProgress: progress.observeUnit,
       signal: operation?.signal, previewRunId: runId,
     }).catch((err) => {
+      if (err?.retryLater) throw err;
       log.warn('visuals', 'Unit-suite check failed to run (non-fatal)', {
         sessionId: session.id, err: err.message,
       });
       return null;
     });
+    let unitSuitePromise = launchUnitSuite();
     operation?.track(unitSuitePromise);
+
+    // ── Retry-later refusals (issue #4317) ──
+    // A run the cluster refuses — the namespace's quota is full, or no node
+    // could place its Pod past the scheduling grace — goes back in line: it
+    // hands its slot back to the checks queue, waits for a fresh one, and
+    // relaunches. No verdict is ever recorded for a refused run; the two
+    // Job-launching awaits below each retry through here, and any other
+    // error keeps today's behaviour (the catch below records it as the
+    // verdict it always recorded).
+    const handBackToQueue = async (err) => {
+      log.warn('visuals', 'The cluster refused the checks run — requeueing it', {
+        sessionId: session.id, runId, reason: err.message,
+      });
+      // Nothing usable is running for this attempt any more: end its Jobs
+      // (the settled capture's too — its output is already in hand) before
+      // asking for a fresh slot.
+      await kubernetes.cancelPreviewChecks(config, session.id, runId).catch((cancelErr) => {
+        log.warn('visuals', 'Refused run\'s Jobs not cancelled; their TTL will', {
+          sessionId: session.id, runId, err: cancelErr.message,
+        });
+      });
+      await checkRuns.requeue(operation?.cleanupPool || pool, runId).catch((requeueErr) => {
+        log.warn('visuals', 'Requeue after refusal failed (non-fatal)', {
+          sessionId: session.id, runId, err: requeueErr.message,
+        });
+      });
+      await stampChecksQueued(pool, session.id, commitHash).catch((stampErr) => {
+        log.warn('visuals', 'stampChecksQueued failed (non-fatal)', { sessionId: session.id, err: stampErr.message });
+      });
+      notifyChecksPending(session.id, commitHash, 'queued', trigger);
+      const dispatched = await checkRuns.awaitDispatch(operation?.cleanupPool || pool, runId, {
+        signal: operation?.signal,
+      });
+      if (!dispatched) {
+        // Superseded while waiting for the fresh slot: exit quietly, no
+        // verdict — the commit guard on every verdict write discards this
+        // run's anyway.
+        throw new Error('Checks run left the queue without running (superseded)');
+      }
+      await setChecksPending(pool, session.id, commitHash, 'testing', trigger).catch((pendingErr) => {
+        log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: pendingErr.message });
+      });
+      notifyChecksPending(session.id, commitHash, 'testing', trigger);
+    };
+    const runCaptureWithRetry = async () => {
+      try {
+        return await kubernetes.runCaptureJob(config, {
+          onStdoutLine: progressObserver,
+          memory: CAPTURE_MEMORY,
+          cpus: CAPTURE_CPUS,
+          signal: operation?.signal, previewRunId: runId,
+          sessionId: session.id,
+          env: captureEnv,
+          stdinPayload: testsViaStdin ? testsJson : null,
+          timeoutMs: RUN_TIMEOUT_MS,
+          maxBuffer: RUN_MAX_BUFFER,
+          salvagePartial: true,
+        });
+      } catch (err) {
+        if (!err?.retryLater || operation?.signal.aborted) throw err;
+        await handBackToQueue(err);
+        return runCaptureWithRetry();
+      }
+    };
 
     log.info('visuals', 'Starting capture', {
       sessionId: session.id, slug: app.slug, before: media && prodRunning,
@@ -2696,19 +2830,19 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     let runPartial = false;
     let runPartialReason = '';
     const captureStartedAt = Date.now();
-    try {
-      // #47 payload routing: a Linux exec caps any single argv/env string at
-      // 128KB (MAX_ARG_STRLEN). A manifest-scale suite — this repo's own 232
-      // checks, each carrying a tokenized staging URL — exceeds that as one
-      // `-e TESTS=...` string, and the docker spawn dies with E2BIG before
-      // the container starts (that was every self-app proposal fail-closing
-      // to "Checks couldn't run"). Large suites ride the container's stdin
-      // instead (TESTS='@stdin' marker; docker.runOneShot pipes it); small
-      // ones keep the env var, which older capture images also understand.
-      const testsJson = JSON.stringify(tests);
-      const testsViaStdin = testsJson.length > 90 * 1024;
-      let res;
-      const captureEnv = {
+    // #47 payload routing: a Linux exec caps any single argv/env string at
+    // 128KB (MAX_ARG_STRLEN). A manifest-scale suite — this repo's own 232
+    // checks, each carrying a tokenized staging URL — exceeds that as one
+    // `-e TESTS=...` string, and the docker spawn dies with E2BIG before
+    // the container starts (that was every self-app proposal fail-closing
+    // to "Checks couldn't run"). Large suites ride the container's stdin
+    // instead (TESTS='@stdin' marker; docker.runOneShot pipes it); small
+    // ones keep the env var, which older capture images also understand.
+    // Declared here so the capture retry above can reach them.
+    const testsJson = JSON.stringify(tests);
+    const testsViaStdin = testsJson.length > 90 * 1024;
+    let res;
+    const captureEnv = {
           // Multi-target protocol (#270). The container loops over these
           // sequentially and tags each shot frame with its index=. The
           // optional per-target `viewport` (#768) is the resolved pixel
@@ -2773,18 +2907,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         stdout = '';
         res = { partial: false };
       } else if (kubernetesCapture) {
-        ({ stdout, ...res } = await kubernetes.runCaptureJob(config, {
-          onStdoutLine: progressObserver,
-          memory: CAPTURE_MEMORY,
-          cpus: CAPTURE_CPUS,
-          signal: operation?.signal, previewRunId: runId,
-          sessionId: session.id,
-          env: captureEnv,
-          stdinPayload: testsViaStdin ? testsJson : null,
-          timeoutMs: RUN_TIMEOUT_MS,
-          maxBuffer: RUN_MAX_BUFFER,
-          salvagePartial: true,
-        }));
+        ({ stdout, ...res } = await runCaptureWithRetry());
       } else {
         ({ stdout, ...res } = await docker.runOneShot(`usernode-capture-${session.id}`, {
           onStdoutLine: progressObserver,
@@ -2812,14 +2935,6 @@ async function captureForSession(config, session, app, commitHash, stagingResult
           sessionId: session.id, reason: runPartialReason,
         });
       }
-    } finally {
-      if (beforeSessionToken) {
-        await (operation?.cleanupPool || pool).query('DELETE FROM sessions WHERE token = $1', [beforeSessionToken])
-          .catch((err) => log.warn('visuals', 'Capture session-cookie cleanup failed', {
-            sessionId: session.id, err: err.message,
-          }));
-      }
-    }
 
     const captureMs = Date.now() - captureStartedAt;
     traceStep('capture', 'Capture container finished', {
@@ -2832,8 +2947,21 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     await operation?.check();
     // The unit-suite container started before the capture run; by now it
     // has usually been finished for minutes. Its own timeoutMs bounds this
-    // await, and the .catch at launch made rejection impossible.
-    const unitOutcome = await unitSuitePromise;
+    // await, and the .catch at launch made every non-refusal rejection
+    // impossible; a retry-later refusal requeues and relaunches the suite
+    // alone — the capture half is already done, its output in hand.
+    let unitOutcome = null;
+    for (;;) {
+      try {
+        unitOutcome = await unitSuitePromise;
+        break;
+      } catch (err) {
+        if (!err?.retryLater || operation?.signal.aborted) throw err;
+        await handBackToQueue(err);
+        unitSuitePromise = launchUnitSuite();
+        operation?.track(unitSuitePromise);
+      }
+    }
     closeProgress();
     await operation?.check();
 
@@ -2884,6 +3012,16 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       if (stored) notifyChecks(session.id, { state: 'error', results: [] }, commitHash, send);
     } catch { /* nothing more we can do */ }
   } finally {
+    // The capture's transient self-app "before" session cookie goes with the
+    // run, whatever ended it — including a retry-later attempt that handed
+    // its slot back mid-flight (the delete used to sit on the launch
+    // segment's own finally).
+    if (beforeSessionToken) {
+      await (operation?.cleanupPool || pool).query('DELETE FROM sessions WHERE token = $1', [beforeSessionToken])
+        .catch((err) => log.warn('visuals', 'Capture session-cookie cleanup failed', {
+          sessionId: session.id, err: err.message,
+        }));
+    }
     // Close the timing trace whatever happened, so a run never sits at
     // 'running' in the admin view. The total is the figure this exists for:
     // it is what "the checks step got slower" is measured in.

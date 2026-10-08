@@ -98,7 +98,7 @@ async function enrichImportedUnderwaySessions(pool, sessions, viewerUserId, { al
             cs.mergeability_files_complete, cs.freshness_main_sha,
             cs.freshness_merge_base_sha, cs.freshness_behind_by,
             cs.freshness_ahead_by, cs.freshness_checked_at,
-            cs.freshness_error, cs.check_phase, cs.check_trigger, cs.checks_progress,
+            cs.freshness_error, cs.check_phase, cs.check_queue_position, cs.check_trigger, cs.checks_progress,
             cs.platform_env_state, cs.platform_env_detail,
             cs.check_error_detail, cs.requires_explicit_approval,
             (SELECT jsonb_object_agg(
@@ -2373,7 +2373,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                 cs.transcript_shared_at, cs.created_at, cs.source,
                 cs.staging_url, cs.imported_pr_author, cs.imported_pr_head_repo,
                 cs.imported_pr_head_sha, cs.reviewed_head_sha, a.repo_url,
-                cs.check_state, cs.check_phase, cs.check_error_detail,
+                cs.check_state, cs.check_phase, cs.check_queue_position, cs.check_error_detail,
                 cs.test_results, cs.spec_md,
                 cs.agent_backend, cs.agent_model, cs.external_agent, cs.build_venue,
                 -- #2779: a change started from an agent session is listed
@@ -2861,7 +2861,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                   AS can_preview,
                 cs.linked_issues, cs.source, cs.imported_pr_author,
                 cs.agent_backend, cs.agent_model, cs.external_agent, cs.build_venue,
-                cs.check_state, cs.check_phase,
+                cs.check_state, cs.check_phase, cs.check_queue_position,
                 (cs.transcript_shared_at IS NOT NULL) AS transcript_shared,
                 (SELECT COUNT(*)::int FROM chat_session_messages m
                   WHERE m.session_id = cs.id) AS message_count,

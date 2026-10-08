@@ -82,6 +82,14 @@ function isQuotaExceeded(err) {
   return code === 403 && /exceeded quota/i.test(String(err?.message || ''));
 }
 
+// How long a check Pod may sit Unschedulable ("no node fits it right now")
+// before its attempt ends as "try later" rather than as a hang: the run
+// goes back into the platform's queue (services/check-runs.js) and is
+// never recorded as the proposal's verdict. Also the slack added to the
+// Job's cluster-side deadline ceiling, so an abandoned Job still dies on
+// the cluster after a full grace plus one suite-length.
+const CHECKS_PENDING_GRACE_MS = Math.max(0, Number(process.env.CHECKS_PENDING_GRACE_MS) || 120_000);
+
 function dnsName(value, max = 63) {
   const clean = String(value || '')
     .toLowerCase()
@@ -2138,7 +2146,12 @@ async function runCheckJob(config, {
   };
   const checkLabels = { ...labels({ sessionId, environment: unitSuite ? 'worker' : 'capture' }), ...checkSelector };
   const body = { apiVersion: 'batch/v1', kind: 'Job', metadata: { name, namespace, labels: { ...checkLabels } }, spec: {
-    backoffLimit: 0, activeDeadlineSeconds: Math.ceil(timeoutMs / 1000), ttlSecondsAfterFinished: CHECK_JOB_TTL_SECONDS,
+    // The ceiling deadline: the suite-length plus the scheduling grace plus
+    // a minute, so a Job abandoned by its platform process still dies on the
+    // cluster. The real deadline is patched down to one suite-length from
+    // the moment the Pod is first seen Running — Pending time is the
+    // queue's, not the run's (issue #4317).
+    backoffLimit: 0, activeDeadlineSeconds: Math.ceil(timeoutMs / 1000) + Math.ceil(CHECKS_PENDING_GRACE_MS / 1000) + 60, ttlSecondsAfterFinished: CHECK_JOB_TTL_SECONDS,
     template: { metadata: { labels: { ...checkLabels } }, spec: {
       restartPolicy: 'Never', serviceAccountName: cfg.workerServiceAccount,
       automountServiceAccountToken: false, securityContext: nodePodSecurityContext(),
@@ -2172,6 +2185,13 @@ async function runCheckJob(config, {
   const boundedOutput = text => boundedCheckOutput(text, maxBuffer);
   try {
     signal?.throwIfAborted();
+    // A create the namespace's quota refuses is "no room right now", not a
+    // failure: it carries retryLater so the platform requeues the run
+    // instead of recording it as the proposal's verdict (issue #4317).
+    const refuse = (err) => {
+      if (isQuotaExceeded(err)) err.retryLater = true;
+      throw err;
+    };
     if (inputSecretName) {
       inputSecret = await core.createNamespacedSecret({ namespace, body: {
         apiVersion: 'v1', kind: 'Secret',
@@ -2179,13 +2199,14 @@ async function runCheckJob(config, {
         type: 'Opaque', stringData: unitSuite
           ? Object.fromEntries(Object.entries(env || {}).map(([key, value]) => [key, String(value)]))
           : { 'tests.json': String(stdinPayload) },
-      } });
+      } }).catch(refuse);
       inputSecretCreated = true;
     }
     signal?.throwIfAborted();
     // A refused create (the namespace's quota, for one) leaves no Job to own
     // the Secret; the finally below deletes it.
-    const createdJob = await batch.createNamespacedJob({ namespace, body });
+    const createdJob = await batch.createNamespacedJob({ namespace, body }).catch(refuse);
+    const jobCreatedAt = Date.now();
     // A platform restart must not orphan private clone credentials. The Job's
     // TTL also garbage-collects its input Secret if normal cleanup cannot run.
     // The Secret goes first so a Pod never starts without its input, which
@@ -2199,7 +2220,15 @@ async function runCheckJob(config, {
       secret.metadata.ownerReferences = [{ apiVersion: 'batch/v1', kind: 'Job', name, uid: createdJob.metadata.uid }];
       await core.replaceNamespacedSecret({ name: inputSecretName, namespace, body: secret });
     }
-    const deadline = Date.now() + timeoutMs + 15000;
+    // The platform's own wait. Until the Pod is Running, the clock covers
+    // the scheduling grace (the ceiling deadline's shape); from the first
+    // Running observation it is one suite-length, matching the patched
+    // cluster-side deadline below.
+    let deadline = Date.now() + timeoutMs + CHECKS_PENDING_GRACE_MS + 60000;
+    // Set once the Pod is first seen Running: the run's clock starts there.
+    let runningObservedAt = null;
+    // First moment an Unschedulable Pod was observed, for the grace.
+    let unschedulableSince = null;
     // Progress observer state. Two ways to see the container's stdout as it
     // streams: FOLLOW the pod log (one long request; each line reaches the
     // observer as it is printed, the same cadence docker's stdout gives),
@@ -2302,6 +2331,51 @@ async function runCheckJob(config, {
         return { stdout, runtimeName: name };
       }
       tick += 1;
+      // Scheduling watch (issue #4317). Until the Pod is Running, each tick
+      // looks at it once: Running starts the run's own clock (and patches
+      // the Job's deadline down to one suite-length from that moment), and
+      // a Pod the scheduler cannot place for longer than the grace ends the
+      // attempt as "try later" — the platform requeues it, and no verdict
+      // is recorded for a suite that never ran.
+      if (!runningObservedAt) {
+        const pods = await observeCheck(core.listNamespacedPod({ namespace, labelSelector: `job-name=${name}` }), signal).catch(() => null);
+        const pod = pods?.items?.[0];
+        if (pod) {
+          const containerState = pod.status?.containerStatuses?.find((c) => c.name === kind)?.state;
+          const schedCond = pod.status?.conditions?.find((c) => c.type === 'PodScheduled');
+          const unschedulable = pod.status?.phase === 'Pending' && schedCond?.status === 'False'
+            && (schedCond.reason === 'Unschedulable'
+              || pod.status.reason === 'Unschedulable'
+              || containerState?.waiting?.reason === 'Unschedulable');
+          if (pod.status?.phase === 'Running' || containerState?.running) {
+            runningObservedAt = Date.now();
+            unschedulableSince = null;
+            deadline = runningObservedAt + timeoutMs + 15000;
+            // The cluster-side deadline lands one suite-length after the
+            // Running moment: the Job already spent its creation-to-Running
+            // wait, and Pending time must not eat into the suite. The
+            // ceiling above still bounds an abandoned Job.
+            const spentSeconds = Math.ceil((runningObservedAt - jobCreatedAt) / 1000);
+            await batch.patchNamespacedJob({ name, namespace, body: {
+              spec: { activeDeadlineSeconds: spentSeconds + Math.ceil(timeoutMs / 1000) },
+            } }).catch(() => { /* the ceiling still bounds the Job */ });
+          } else if (unschedulable) {
+            if (unschedulableSince == null) unschedulableSince = Date.now();
+            if (Date.now() - unschedulableSince >= CHECKS_PENDING_GRACE_MS) {
+              const err = new Error(`${kind} Job ${name} could not be scheduled — no node has room right now`);
+              err.retryLater = true;
+              err.unschedulable = true;
+              // Nothing ran: end the attempt and give the Job back (its
+              // input Secret goes with it; the finally deletes any remnant).
+              await deleteIfPresent(batch, 'deleteNamespacedJob', name, namespace, { propagationPolicy: 'Background' })
+                .catch(() => { /* the TTL still collects it */ });
+              throw err;
+            }
+          } else {
+            unschedulableSince = null;
+          }
+        }
+      }
       if (!following) await startFollow();
       if (!following && tick % PROGRESS_EVERY_TICKS === 0) await observeProgress();
       await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -2744,7 +2818,7 @@ module.exports = {
   deleteSettledCheckJobs, listCheckLeftovers, deleteCheckLeftover, MANAGED_BY, CHECK_JOB_TTL_SECONDS,
   execInWorker, _getClients: getClients,
   getWorkerStatus, getWorkerContractVersion, getWorkerRuntimeMetadata, deleteWorker, eraseWorker, listWorkers, cloneWorkerVolume,
-  listWorkerVolumes, listPreviews, listShotsRuntimes, isQuotaExceeded,
+  listWorkerVolumes, listPreviews, listShotsRuntimes, isQuotaExceeded, CHECKS_PENDING_GRACE_MS,
   listStatusResources, listNamespaceCapacity, inspectWorkerTermination, getPlatformDeployStatus,
   stopCheckJobs,
   _setClientsForTest: setClientsForTest, _envChecksumForTest: envChecksum,

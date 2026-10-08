@@ -9222,6 +9222,33 @@ CREATE TABLE IF NOT EXISTS check_runs (
 COMMENT ON TABLE check_runs IS 'staging:private';
 CREATE INDEX IF NOT EXISTS idx_check_runs_session ON check_runs (session_id);
 
+-- The checks queue rides on the same row (issue #4317): the platform holds
+-- runs the cluster has no room for instead of letting their Job creation be
+-- refused at the namespace's quotas, or the Job sit Unschedulable until its
+-- own deadline kills it and that wait is read as the proposal's verdict.
+-- NULL everywhere outside the Kubernetes capture runtime; the row is still
+-- written and deleted exactly as before, so the queue adds no lifecycle of
+-- its own. `queue_state`: 'queued' (waiting for a slot), 'dispatched' (a
+-- slot granted, Jobs to be created), 'superseded' (a newer commit's run
+-- took the session's place; never dispatched). `queue_priority` marks a
+-- proposal that was up for a vote (promoted / merging) when it was
+-- enqueued; those are dispatched ahead of drafts. `queue_attempts` counts
+-- refusal-restarts and drives the retry backoff. `queued_at` is the FIFO
+-- order, pushed forward on a requeue by the backoff so a full cluster is
+-- not re-probed in a tight loop.
+ALTER TABLE check_runs ADD COLUMN IF NOT EXISTS queue_state    TEXT;
+ALTER TABLE check_runs ADD COLUMN IF NOT EXISTS queue_priority BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE check_runs ADD COLUMN IF NOT EXISTS queue_attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE check_runs ADD COLUMN IF NOT EXISTS queued_at      TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_check_runs_queue
+  ON check_runs (queued_at) WHERE queue_state = 'queued';
+-- The one queue fact the proposal card, the Needs you feed and the session
+-- payloads read: this session's run's place in line, 1-based, while it
+-- waits. Written by the dispatch tick beside the rows it grants; cleared
+-- everywhere check_phase is cleared.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS check_queue_position INTEGER;
+
+
 -- Renamed from visual_evidence_* when visual evidence became before & after
 -- shots. Guarded so boot is idempotent either way: an existing deployment
 -- renames in place and keeps its rows, a fresh one falls straight through

@@ -490,6 +490,13 @@ export interface DevWorkshopView {
      */
     tally?: { yes: number; no: number } | null;
     /**
+     * The change's checks are waiting for a cluster slot
+     * (services/check-runs.js), as the words a person reads: "Checks
+     * waiting · 3rd in line". Set only while queued; every other check
+     * state keeps the facts line it had.
+     */
+    checksWaiting?: string | null;
+    /**
      * The Description sheet's body: a proposal's summary or an issue's
      * body, rendered and sanitised where it was built (app-view.js). Empty
      * when there is none.

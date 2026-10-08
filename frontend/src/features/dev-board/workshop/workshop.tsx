@@ -1334,6 +1334,10 @@ function factsFor(row: QueueRow, voted: string | null): Fact[] {
     const said = [row.tally.yes ? `${row.tally.yes} yes` : '', row.tally.no ? `${row.tally.no} no` : ''].filter(Boolean).join(' · ');
     if (said) out.push({ key: 'tally', tone: undefined, text: said });
   }
+  // The change's checks are waiting for a cluster slot (needs-reel.tsx):
+  // a fact beside the vote count, so a reviewer deciding sees the checks
+  // have not run yet. Not on the tally key — the two sit side by side.
+  if (row.checksWaiting) out.push({ key: 'checks', tone: 'progress', text: row.checksWaiting });
   for (const b of row.card.badges) {
     if (b.t === 'attr' && (b.field === 'category' || b.field === 'priority') && b.label.text) {
       out.push({ key: b.key, tone: 'info', text: b.label.text });
