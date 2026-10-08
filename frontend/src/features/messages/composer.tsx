@@ -1,6 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 
-import { ArrowUpIcon, ArrowUpTrayIcon, PaperClipIcon, PlusIcon } from '@/components/ui/icons';
+import { ArrowUpIcon, ArrowUpTrayIcon, MicrophoneIcon, PaperClipIcon, PlusIcon } from '@/components/ui/icons';
 import * as api from './api';
 import { channels, draftFor, notifyTyping, replyFor, scopeKey, send, setDraft, setReply, takePendingAttach, takePendingShare, useMessagesSnapshot } from './store';
 import { mirrorsReplies, requestPlace } from './bot-question';
@@ -8,6 +8,7 @@ import type { ConversationUser, MessageAttachment, SharedObjectCard, SharedObjec
 import { fileSize, pendingObjectLabel, senderName } from './format';
 import { plainText } from './plain-text';
 import { useAutoGrow } from '../../lib/use-auto-grow';
+import { useSpeechInput } from '../../lib/speech-input';
 import { DropOverlay, useFileDrag } from '../attachments/file-drag';
 import { refusalSummary } from '../attachments/refusal-summary';
 import { prefixLookup, type PrefixLookup } from '../../lib/prefix-lookup';
@@ -101,9 +102,25 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   // #2386: friends lead the @ list (features/friends/store.ts).
   const friendIds = useFriendIds();
 
+  // #4389: in the Homeroom bot's DM, the message can be said instead of
+  // typed. The hook is called above the early returns, like every other one
+  // here; it writes through `updateValue`, so the 8000 cap, the draft and
+  // the typing ping are exactly a typed message's. The words are only
+  // suggested: they fill the box and the person sends as usual.
+  const speakable = active?.kind === 'direct' && active.homeroomBot === true;
+  const speech = useSpeechInput({
+    onText: updateValue,
+    onError: (kind) => setError(kind === 'blocked'
+      ? 'Homeroom can’t use your microphone. Allow it in your browser’s settings to speak your message.'
+      : 'Couldn’t hear that. Try again, or type your message.'),
+  });
+  const { cancel: cancelSpeech } = speech;
+
   useEffect(() => {
     setValue(draftFor(scope)); setAttachments([]); setObject(null); setPrompt(null); setError('');
-  }, [scope]);
+    // A change of conversation or thread also stops any dictation in flight.
+    cancelSpeech();
+  }, [scope, cancelSpeech]);
 
   // Reply puts the caret here where there is a hardware keyboard, so the
   // next keystroke is the reply (message-actions/focus.ts).
@@ -456,6 +473,8 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   // Send, never scrolls. Every other focus in this feature is
   // `preventScroll` for the same reason.
   function submit() {
+    // A late dictation result must not refill the box the send just emptied.
+    speech.cancel();
     if (uploading || (!value.trim() && !attachments.length && !object)) return;
     setError(''); notifyTyping(false); setPrompt(null);
     const input = { content: value.trim(), attachmentIds: attachments.map((item) => item.id), attachments, object: object ? referenceOf(object) : undefined };
@@ -541,7 +560,14 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
             </div>
           ) : null}
         </div>
-        <textarea ref={inputRef} value={value} onChange={onComposerChange} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (onEmojiKeyDown(event)) return; if (suggestionKeys(event)) return; if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(scope, null); }} onBlur={() => notifyTyping(false)} rows={1} maxLength={8000} placeholder={inThread ? 'Reply in thread…' : (prompt || 'Message…')} aria-label={inThread ? 'Reply in thread' : 'Message'} aria-autocomplete="list" aria-controls={suggestions.length ? listId : undefined} aria-activedescendant={activeOption >= 0 ? optionId(activeOption) : undefined} className="messages-composer-input" />
+        <textarea ref={inputRef} value={value} onChange={onComposerChange} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (onEmojiKeyDown(event)) return; if (suggestionKeys(event)) return; if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(scope, null); }} onBlur={() => notifyTyping(false)} rows={1} maxLength={8000} placeholder={speech.listening ? 'Listening…' : (inThread ? 'Reply in thread…' : (prompt || 'Message…'))} aria-label={inThread ? 'Reply in thread' : 'Message'} aria-autocomplete="list" aria-controls={suggestions.length ? listId : undefined} aria-activedescendant={activeOption >= 0 ? optionId(activeOption) : undefined} className="messages-composer-input" />
+        {/* #4389: say the message instead of typing it. Drawn only in the
+            Homeroom bot's DM, and only where the browser can turn speech into
+            text. `onMouseDown` keeps focus in the field, the same iOS
+            keyboard reason Send carries it. The class string is not exactly
+            "messages-composer-action", so the add-menu test's count of one
+            stays true. */}
+        {speakable && speech.supported ? <button type="button" className="messages-composer-action messages-composer-speak" onMouseDown={(event) => event.preventDefault()} onClick={() => { if (speech.listening) { speech.stop(); } else { setError(''); speech.start(value); } }} aria-pressed={speech.listening} aria-label={speech.listening ? 'Stop speaking' : 'Speak your message'} title={speech.listening ? 'Stop speaking' : 'Speak your message'}><MicrophoneIcon aria-hidden="true" /></button> : null}
         <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={submit} disabled={!!uploading || (!value.trim() && !attachments.length && !object)} className="messages-send" aria-label="Send message"><ArrowUpIcon aria-hidden="true" /></button>
       </div>
       {error ? <p role="alert" className="mt-1 text-xs text-red-700 dark:text-red-400">{error}</p> : null}

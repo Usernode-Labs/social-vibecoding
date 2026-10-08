@@ -874,3 +874,6 @@ export const CupIcon = stroked('CupIcon', [
   'M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V8Z',
   'M7 2v2M11 2v2M15 2v2',
 ]);
+
+/** A microphone — the composer's speak button (#4389). */
+export const MicrophoneIcon = stroked('MicrophoneIcon', 'M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z');
