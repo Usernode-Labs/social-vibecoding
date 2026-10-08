@@ -565,6 +565,38 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     assert.equal((await pool.query(`SELECT count(*)::int AS n FROM wf_events WHERE key = 'k7' AND type LIKE 'Work%ed'`)).rows[0].n, 1);
   });
 
+  await t.test('K7 a stopping process reports work that finished anyway, and nothing for work that ended on the stop', async () => {
+    await create('k7s');
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const started = new Set();
+    // One finishes its step whatever the signal says (a deploy); one gives up on it.
+    handlers['k7s-done'] = async () => { started.add('done'); await gate; return { finished: true }; };
+    handlers['k7s-quit'] = async (ctx) => {
+      if (ctx.attempt > 1) return { resumed: true };
+      started.add('quit');
+      await new Promise((resolve, reject) => ctx.signal.addEventListener('abort', () => reject(ctx.signal.reason), { once: true }));
+    };
+    await route('k7s', 'Work', { keys: ['k7s-done', 'k7s-quit'], workKey: 'k7s-done' });
+    await rt.drain();
+    const r = make({ slots: 1 });
+    await r.start({ loops: true, slots: false });
+    while (started.size < 2) await sleep(20);
+    const stopped = r.stop();
+    release();
+    await stopped;
+    const items = new Map((await pool.query(`SELECT work_key, status FROM wf_work WHERE work_key LIKE 'k7s-%'`)).rows.map((w) => [w.work_key, w.status]));
+    assert.equal(items.get('k7s-done'), 'reported', 'its result is kept, not run again after the lease');
+    assert.equal(items.get('k7s-quit'), 'running', 'nothing reported; the next claim resumes it');
+    await rt.drain();
+    assert.deepEqual((await inst('k7s')).data.results.map((x) => x.slice(0, 2)), [['ok', 'k7s-done']]);
+    // Its lease lapses and the next claim finishes it, so no later test meets it.
+    await sleep(700);
+    await rt.runServices();
+    await rt.drain();
+    assert.equal((await pool.query(`SELECT status FROM wf_work WHERE work_key = 'k7s-quit'`)).rows[0].status, 'settled');
+  });
+
   await t.test('K7 a work item that continues an earlier one starts from its checkpoint', async () => {
     await create('k7c');
     const seen = new Map();
