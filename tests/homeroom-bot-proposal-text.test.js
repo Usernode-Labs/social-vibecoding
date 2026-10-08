@@ -324,6 +324,9 @@ test('a live build a restart interrupted is named and described before recovery 
   const prepare = recovered.indexOf('await live.prepareProposal({');
   assert.ok(prepare > 0, 'the recovery path prepares the proposal too');
   assert.ok(prepare < recovered.indexOf('await live.promoteAsBot('), 'before it promotes');
-  assert.match(recovered, /spec: session\.spec_md \|\| null,\n\s+buildText: plan\.result\.lastResultText, model: session\.agent_model \|\| null,/);
+  // A first version a restart caught in its review is described from the
+  // build's own message, which its review kept (bot-review.js), not from the
+  // fix turn recovery followed.
+  assert.match(recovered, /spec: session\.spec_md \|\| null,\n\s+buildText: reviewing \? \(reviewing\.buildText \|\| ''\) : plan\.result\.lastResultText, model: session\.agent_model \|\| null,/);
   assert.match(recovered, /SELECT cs\.id, cs\.user_id, cs\.status, cs\.branch_name, cs\.spec_md, cs\.agent_model,/);
 });

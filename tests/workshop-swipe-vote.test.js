@@ -172,8 +172,9 @@ test('an upward drag is let go, and a sideways one never also clicks', () => {
 test('the hints are two aria-hidden stamps, drawn only on a swipeable card', () => {
   const item = body(WORKSHOP, 'const FeedItem = memo(function FeedItem(', '\n});\n');
   assert.match(item, /data-ws-swipeable=\{swipe \? '' : undefined\}/);
-  assert.match(item, /\{swipe \? <span className="dev-ws-swipe-hint dev-ws-swipe-yes" aria-hidden="true">Yes<\/span> : null\}/);
-  assert.match(item, /\{swipe \? <span className="dev-ws-swipe-hint dev-ws-swipe-no" aria-hidden="true">No<\/span> : null\}/);
+  // #3977: a Just-you change's are its approval's words (approves(row)).
+  assert.match(item, /\{swipe \? <span className="dev-ws-swipe-hint dev-ws-swipe-yes" aria-hidden="true">\{approves\(row\) \? 'Approve' : 'Yes'\}<\/span> : null\}/);
+  assert.match(item, /\{swipe \? <span className="dev-ws-swipe-hint dev-ws-swipe-no" aria-hidden="true">\{approves\(row\) \? 'Don’t approve' : 'No'\}<\/span> : null\}/);
   // After the caption, so `.dev-ws-item-by + .dev-ws-item-title +
   // .dev-ws-item-summary ~ .dev-ws-item-caption` (a declared check) still
   // matches.

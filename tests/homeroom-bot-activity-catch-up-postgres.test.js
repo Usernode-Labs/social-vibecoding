@@ -263,7 +263,7 @@ test('the Homeroom bot DM gives work already under way its activity card: once, 
     await pool.query('UPDATE homeroom_bot_runs SET build_ok = TRUE, proposal_session_id = $2 WHERE id = $1', [ready.id, session]);
     card = await cardOf(asAda, message.id);
     assert.equal(card.state, 'done');
-    assert.equal(card.outcome, 'proposed');
+    assert.equal(card.outcome, 'checking', '#4242: built, its ready card not out yet');
     assert.equal(card.links.proposal, `#app/seed-swap/dev/proposals/${session}`);
     assert.deepEqual(await catchUp(asAda), { added: 0 }, 'a proposal up for a vote is not work under way');
   });

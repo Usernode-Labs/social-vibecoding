@@ -23,6 +23,14 @@ platform:
   # kill switch; legacy default-root screenshots stay suppressed. This was
   # visualEvidenceV2Enabled before the rename; that key is no longer read.
   shotsEnabled: true
+  # The workflow governance-proposal machine decides governance proposals
+  # (docs/workflows.md). A rolling change is safe in both directions; see
+  # docs/kubernetes-operations.md.
+  workflowGovernanceEnabled: false
+  # The workflow merge-followups machine runs what follows a merge
+  # (docs/workflows.md). A rolling change is safe in both directions; see
+  # docs/kubernetes-operations.md.
+  workflowMergeFollowupsEnabled: false
   replicas: 1
   image:
     repository: ghcr.io/replace-me/social-vibecoding-platform

@@ -9,7 +9,7 @@ import { UserFieldRow, userHandle } from './admin-user-field';
 import { BenchmarkArea, loadBenchSummary } from './admin-homeroom-bench';
 import type { Best, BenchModel } from './admin-homeroom-bench';
 import { RolloutHealth } from './admin-homeroom-bot-health';
-import type { ChatFailure, RolloutHealthData } from './admin-homeroom-bot-health';
+import type { ChatFailure, Incidents, RolloutHealthData } from './admin-homeroom-bot-health';
 
 // Homeroom bot (#admin/homeroom-bot) — #2684, and laid out again in #3710.
 //
@@ -295,6 +295,7 @@ interface Payload {
   workingNow?: Working[];
   dmChat?: DmChat;
   health?: RolloutHealthData;
+  incidents?: Incidents | null;
 }
 
 // Somebody who asked the bot to stop tagging them on one issue.
@@ -1560,7 +1561,7 @@ function HomeroomBotSection() {
           </details>
         </div>
 
-        <RolloutHealth health={payload?.health} failures={payload?.dmChat?.recentFailures} />
+        <RolloutHealth health={payload?.health} failures={payload?.dmChat?.recentFailures} incidents={payload?.incidents} />
 
         <div className={`${AdminUI.card} p-4`}>
           <div className="grid gap-6 md:grid-cols-2">

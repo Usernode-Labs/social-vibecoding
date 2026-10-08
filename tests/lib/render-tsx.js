@@ -36,12 +36,31 @@ const fs = require('node:fs');
 const path = require('node:path');
 const Module = require('node:module');
 const { createCompiledCodeCache } = require('./compiled-code-cache');
+const { createSharedBundleCache } = require('./shared-bundle-cache');
 
 const ROOT = path.join(__dirname, '..', '..');
 const FRONTEND = path.join(ROOT, 'frontend');
 
 const fromFrontend = (spec) => require(require.resolve(spec, { paths: [FRONTEND] }));
 const compiled = createCompiledCodeCache();
+// Bundles other test processes have already built (shared-bundle-cache.js).
+// Kept inside the checkout, beside the dependencies the bundles are built
+// from: git and Docker already ignore it, `npm ci` clears it, and code that
+// test processes evaluate stays behind the same trust boundary as the code
+// under test. TEST_BUNDLE_CACHE=0 turns the sharing off. TEST_BUNDLE_CACHE_DIR
+// moves it, which a suite with throwaway fixture names uses to leave nothing
+// behind.
+const shared = createSharedBundleCache({
+  dir: process.env.TEST_BUNDLE_CACHE_DIR || path.join(ROOT, 'node_modules', '.cache', 'usernode-test-bundles'),
+  enabled: process.env.TEST_BUNDLE_CACHE !== '0',
+});
+
+// A shared entry is only as good as the esbuild that wrote it, so the
+// installed version is part of every key. It is read from package.json:
+// finding a bundle another process built should not cost loading the bundler.
+function sharedKey(kind, key) {
+  return JSON.stringify({ kind, esbuild: fromFrontend('esbuild/package.json').version, key });
+}
 
 // esbuild reports bundled files. Watch their directories too: adding a file
 // can change extension/index resolution without changing an existing input.
@@ -73,12 +92,13 @@ function compilationInputs(files) {
  * exports that import should receive instead. tests/dialog-suspend-exit.test.js
  * uses it to run a hook against a React it can step through by hand — effects
  * included, which renderToStaticMarkup never runs. Only compilation is
- * reused: every call evaluates a fresh module with this call's stub values.
+ * reused, within this process and from the bundles other test processes have
+ * shared: every call evaluates a fresh module with this call's stub values.
  * Use `cache: false` for tests changing resolution outside the tracked input
- * tree (for example, an extended tsconfig in another checkout).
+ * tree (for example, an extended tsconfig in another checkout); it builds
+ * every time and neither reads nor writes a shared bundle.
  */
 function loadTsx(entry, { stubs = {}, cache = true } = {}) {
-  const esbuild = fromFrontend('esbuild');
   const options = {
     absWorkingDir: ROOT,
     entryPoints: [path.join(ROOT, entry)],
@@ -95,13 +115,22 @@ function loadTsx(entry, { stubs = {}, cache = true } = {}) {
     logLevel: 'silent',
     metafile: true,
   };
-  const fn = compiled(JSON.stringify(options), () => {
-    const result = esbuild.buildSync(options);
-    const code = result.outputFiles[0].text;
+  const key = JSON.stringify(options);
+  // esbuild is loaded here and not above: a process that finds every bundle
+  // it needs already built never starts it.
+  const bundle = () => {
+    const result = fromFrontend('esbuild').buildSync(options);
+    return {
+      code: result.outputFiles[0].text,
+      inputs: compilationInputs(Object.keys(result.metafile.inputs).map((file) => path.resolve(ROOT, file))),
+    };
+  };
+  const fn = compiled(key, () => {
+    const { code, inputs } = cache ? shared(sharedKey('bundle', key), bundle) : bundle();
     return {
       value: new Function('exports', 'require', 'module', '__filename', '__dirname', code),
       bytes: Buffer.byteLength(code),
-      inputs: compilationInputs(Object.keys(result.metafile.inputs).map((file) => path.resolve(ROOT, file))),
+      inputs,
     };
   }, { cache });
 
@@ -167,15 +196,20 @@ function renderComponent(entry, exportName, props) {
  * as a sandbox global — which is what `var` at a vm context's top level is.
  */
 function transpileTs(entry) {
-  const esbuild = fromFrontend('esbuild');
   const source = fs.readFileSync(path.join(ROOT, entry), 'utf8');
   const options = {
     loader: 'ts',
     format: 'esm',
     target: 'node22',
   };
-  return compiled(JSON.stringify({ transform: path.join(ROOT, entry), options, source }), () => {
-    const { code } = esbuild.transformSync(source, options);
+  const key = JSON.stringify({ transform: path.join(ROOT, entry), options, source });
+  return compiled(key, () => {
+    // The source is part of the key, so a shared entry has nothing else to
+    // re-check.
+    const { code } = shared(sharedKey('transform', key), () => ({
+      code: fromFrontend('esbuild').transformSync(source, options).code,
+      inputs: [],
+    }));
     return { value: code, bytes: Buffer.byteLength(source) + Buffer.byteLength(code), inputs: [] };
   });
 }

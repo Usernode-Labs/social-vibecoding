@@ -32,6 +32,7 @@ const sessionBus = require('./session-bus');
 const appManifest = require('./app-manifest');
 const checkHistory = require('./check-history');
 const unitSuite = require('./unit-suite');
+const unitSuiteRow = require('./unit-suite-row');
 const contentReview = require('./content-review');
 const smallChange = require('./small-change');
 const assetRouteCheck = require('./asset-route-check');
@@ -715,6 +716,31 @@ function parseTestsDone(stdout) {
   return found;
 }
 
+// What the capture container wrote down about itself while it ran
+// (capture.js emitDiag), one line each:
+//   __USERNODE_DIAG__ kind=<kind> <base64 JSON>
+// Today one kind: 'network-changed', the pod's network state when a cold load
+// was cancelled by a network change and its group started over. Logged, not
+// stored: it is for finding out what changes the network, not a verdict.
+const MAX_DIAGNOSTICS = 5;
+
+function parseDiagnostics(stdout) {
+  const out = [];
+  for (const line of String(stdout || '').split('\n')) {
+    if (!line.startsWith('__USERNODE_DIAG__ ')) continue;
+    const m = line.match(/^__USERNODE_DIAG__ kind=([\w-]+) (\S+)$/);
+    if (!m) continue;
+    let data = {};
+    try {
+      const parsed = JSON.parse(Buffer.from(m[2], 'base64').toString('utf8'));
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) data = parsed;
+    } catch { /* malformed: the kind alone still says something happened */ }
+    out.push({ kind: m[1], data });
+    if (out.length >= MAX_DIAGNOSTICS) break;
+  }
+  return out;
+}
+
 // A suite-level failure happens outside any individual declared check, so
 // there is no __USERNODE_TEST__ payload to carry its explanation. The
 // capture process writes those failures as `capture: fatal ...` on stderr;
@@ -868,6 +894,14 @@ function connectionExhaustionDetail(rows, { origin = '', census = null } = {}) {
 //
 // `options.extraRows` are synthesised blocking rows that did not come from
 // the container at all (today: the over-ceiling guard).
+//
+// The merge-blocking unit-suite row of a suite that never ran
+// (unit-suite.js notRunOutcome), or null.
+function blockingNotRun(extraRows) {
+  return (Array.isArray(extraRows) ? extraRows : [])
+    .find((r) => unitSuiteRow.isNotRunRow(r) && !r.advisory) || null;
+}
+
 function classifyTests(frames, expectedCount, options) {
   const opts = options || {};
   const dispatched = Array.isArray(opts.dispatched) ? opts.dispatched : null;
@@ -900,10 +934,13 @@ function classifyTests(frames, expectedCount, options) {
       return { state: 'error', results: results.concat(extraRows) };
     }
     const all = results.concat(extraRows);
+    // A merge-blocking unit suite that never ran gave no verdict: 'error'.
+    const notRun = blockingNotRun(extraRows);
+    if (notRun) return { state: 'error', results: all, errorDetail: unitSuiteRow.notRunDetail(notRun) };
     // Legacy container rows carry no advisory flag (always blocking);
     // extra rows block only when non-advisory — an ungraduated unit-suite
     // failure shows on the card without closing the gate (#1019 stance).
-    const anyFail = all.some((r) => r.status !== 'pass' && !r.advisory);
+    const anyFail = all.some((r) => r.status !== 'pass' && !r.advisory && !unitSuiteRow.isNotRunRow(r));
     return { state: anyFail ? 'failing' : 'passing', results: all };
   }
 
@@ -1067,7 +1104,24 @@ function classifyTests(frames, expectedCount, options) {
   }
 
   const results = rows.concat(extraRows);
-  const blocking = blockingFailures + extraRows.filter((r) => r && r.status !== 'pass' && !r.advisory).length;
+  const blocking = blockingFailures + extraRows
+    .filter((r) => r && r.status !== 'pass' && !r.advisory && !unitSuiteRow.isNotRunRow(r)).length;
+  // A merge-blocking unit suite that never reached `npm test` (its Job was
+  // refused, its pod stopped in setup) is the same fail-closed case as a
+  // graduated check with no verdict above: 'error', never 'failing'. The
+  // merge stays blocked, storeChecks schedules the error lane's retry, and
+  // no check history moves. Its sentence is the reason the card shows. An
+  // advisory one changes nothing here; its row says why it has no result.
+  const notRun = blockingNotRun(extraRows);
+  if (notRun) {
+    return {
+      state: 'error',
+      results,
+      errorDetail: unitSuiteRow.notRunDetail(notRun),
+      blockingCount: blocking, advisoryCount: advisoryFailures, passingCount: passed,
+      ranCount: rows.length, declaredCount: dispatched.filter((d) => d.repeatOf == null).length,
+    };
+  }
   return {
     state: blocking > 0 ? 'failing' : 'passing',
     results,
@@ -1950,6 +2004,24 @@ function startShotsIfIdle(config, pool, sessionId, commitHash) {
 async function captureForSession(config, session, app, commitHash, stagingResult, opts = {}) {
   const lifecycle = require('./preview-lifecycle');
   if (lifecycle.enabled(config) && !lifecycle.current()) {
+    // A run of this commit still on the cluster, running or finished but not
+    // yet read, is the run this request asks for, and the harvest collects it
+    // (services/check-harvest.js). Starting another under the lifecycle
+    // cancelled it, and took the row the harvest writes through (7 Oct 2026).
+    // Asked before the run is requested: a forced request queues the row,
+    // which aborts the harvest. The lifecycle asks again under its lock. A
+    // request whose inputs changed (`replaceRun`: new capture routes or
+    // shots) is not asked about: it runs forced and cancels that run, as
+    // every same-commit request used to.
+    if (!opts.replaceRun) {
+      const left = await require('./check-harvest').runToCollect(config, getPool(config), session.id, commitHash);
+      if (left) {
+        log.info('visuals', 'A run of this commit is still on the cluster; leaving it to the harvest', {
+          sessionId: session.id, commitHash: commitHash || null, trigger: opts.trigger || null, ...left,
+        });
+        return;
+      }
+    }
     try {
       const completed = await lifecycle.run(config, session, commitHash, 'capture', async (operation, fresh) => {
         const runtime = require('./application-runtime');
@@ -1969,7 +2041,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         await operation.check();
         return captureForSession(config, fresh, app, operation.revision, stagingResult,
           { ...opts, force: opts.force || !!stagingResult });
-      }, { force: opts.force, onError: (err, pool, operation) =>
+      }, { force: opts.force || !!opts.replaceRun, onError: (err, pool, operation) =>
         publishCaptureError(pool, session.id, operation.revision, err, opts.send) });
       if (completed?.state) {
         maybeAutoMergeAfterChecks(config, getPool(config), session, completed.state);
@@ -2108,6 +2180,8 @@ async function captureForSession(config, session, app, commitHash, stagingResult
   const runId = operation?.runId || crypto.randomUUID();
   const harvestable = config.captureRuntime === 'kubernetes';
   let stopHeartbeat = () => {};
+  // True once the verdict is stored: the run's Jobs have nothing left to give.
+  let settledRun = false;
   try {
     const buildTimings = (stagingResult && stagingResult.timings) || null;
     if (buildTimings) {
@@ -2627,6 +2701,12 @@ async function captureForSession(config, session, app, commitHash, stagingResult
           build: buildProgressFromTimings(stagingResult && stagingResult.timings),
         },
       });
+      // This run is now the one the session waits on. The Jobs of its runs
+      // for another commit, still going on the cluster, are read by nobody:
+      // stop them before this run's own Jobs ask for the same capacity.
+      await require('./check-harvest').stopSupersededRuns(config, operation?.cleanupPool || pool, {
+        sessionId: session.id, runId, commitSha: commitHash || null,
+      });
     }
 
     // Repo unit suite (aggregate `npm test` check). Launched BEFORE the
@@ -2818,6 +2898,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       overlappedRollout: startedSoonAfterBoot(runStartedAt),
     });
     traceStatus = settled.traceStatus;
+    settledRun = true;
     return settled.result;
   } catch (err) {
     closeProgress();
@@ -2864,10 +2945,23 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // only re-drive a run something else already replaced.
     stopHeartbeat();
     if (harvestable) await checkRuns.finish(operation?.cleanupPool || pool, runId);
+    // ...and so do its Jobs, once it settled: with the verdict stored and the
+    // manifest gone no harvest will read them, and the Job TTL would hold the
+    // worker namespace's Job slots for another hour. A run that ended any
+    // other way keeps its Jobs for whoever cancels them, and the TTL.
+    if (harvestable && settledRun) releaseCheckJobs(config, session.id, runId);
     _inFlight.delete(key);
     drainQueued(key, session.id, commitHash, traceStatus);
     scheduleShots(config, pool, session.id, commitHash);
   }
+}
+
+// Best-effort and detached: a Job left behind still goes with its TTL.
+function releaseCheckJobs(config, sessionId, runId) {
+  kubernetes.deleteSettledCheckJobs(config, { sessionId, previewRunId: runId })
+    .catch((err) => log.warn('visuals', 'Settled check Jobs not deleted; their TTL will', {
+      sessionId, runId, err: err.message,
+    }));
 }
 
 // The harvester's seat at the in-flight table (services/check-harvest.js).
@@ -3108,6 +3202,14 @@ async function settleCaptureRun(config, pool, run) {
     return { traceStatus, result: { state: 'pending', deferred: true } };
   }
 
+  for (const diag of parseDiagnostics(stdout)) {
+    log.warn('visuals', diag.kind === 'network-changed'
+      ? 'Checks browser saw its network change; the group started over'
+      : 'Checks container diagnostic', {
+      sessionId: session.id, commitHash: commitHash || null, kind: diag.kind, ...diag.data,
+    });
+  }
+
   const parsedTests = parseTests(stdout);
   const checksResult = classifyTests(parsedTests, testsCount, dispatched
     ? { dispatched, sentinel: parseTestsDone(stdout), extraRows }
@@ -3247,7 +3349,8 @@ async function settleCaptureRun(config, pool, run) {
         // The unit-suite row graduates through the same history: its
         // first observed pass flips it from advisory to merge-blocking,
         // and (recordRun's COALESCE) no later failure demotes it.
-        if (unitOutcome) historyRows.push(unitOutcome.history);
+        // A suite that never ran observed nothing, so it records nothing.
+        if (unitOutcome && unitOutcome.history) historyRows.push(unitOutcome.history);
         // The asset-route row graduates the same way (#2315).
         if (assetOutcome) historyRows.push(assetOutcome.history);
         // And the render-health row: advisory until this app's pages have
@@ -3561,6 +3664,13 @@ function notifyVisualsReady(sessionId, visuals, send) {
 // the same lines as they stream past, so "checks running" can say how far
 // along it is. Dedup is by index, exactly as parseTests does, so a retried
 // frame counts once. Nothing here can change a verdict.
+//
+// #4287: a frame from the capture's retry pass is not counted. It is a
+// second opinion on a check that has already run, under its own index from
+// CAPTURE_RETRY_INDEX_BASE up, and counting it took a 732-check run to
+// "744 of 732". The container's own done line counts declared checks only,
+// for the same reason.
+const CAPTURE_RETRY_INDEX_BASE = 1000000; // capture/capture.js RETRY_INDEX_BASE
 function makeChecksProgressTracker(expected) {
   const byIndex = new Map();
   let done = false;
@@ -3575,6 +3685,7 @@ function makeChecksProgressTracker(expected) {
         const st = /\bstatus=(pass|fail)\b/.exec(l);
         if (!m) return false;
         const index = parseInt(m[1], 10);
+        if (index >= CAPTURE_RETRY_INDEX_BASE) return false;
         const status = st && st[1] === 'pass' ? 'pass' : 'fail';
         const before = byIndex.get(index);
         byIndex.set(index, status);
@@ -3906,6 +4017,7 @@ module.exports = {
   storeConsoleCheck,
   parseTests,
   parseTestsDone,
+  parseDiagnostics,
   captureFailureDetail,
   classifyTests,
   unreachableOriginDetail,
@@ -3918,6 +4030,7 @@ module.exports = {
   DEFAULT_CHECKS_SKIPPED_REASON,
   setChecksPending,
   notifyChecksPending, makeChecksProgressTracker, makeChecksProgressState, setChecksProgress, notifyChecksProgress,
+  CAPTURE_RETRY_INDEX_BASE,
   setChecksBuildProgress, notifyChecksBuildProgress, buildProgressFromTimings, BUILD_STEP_KEYS,
   reportPrepareChecks, finishPrepareChecks,
   checksAlreadyDecided,

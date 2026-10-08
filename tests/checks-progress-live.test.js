@@ -123,6 +123,25 @@ test('the tracker dedupes by index, counts pass/fail, and reads the done sentine
   assert.ok(typeof s.updatedAt === 'string');
 });
 
+test('#4287: a retry-pass frame is a second opinion, not another check, so ran never passes expected', () => {
+  // The issue's shape: every declared check ran, four failed, and the
+  // capture asked each of them three more times. Counting those twelve
+  // retry frames read "744 of 732".
+  const t = visuals.makeChecksProgressTracker(732);
+  for (let i = 0; i < 732; i += 1) t.feed(`__USERNODE_TEST__ index=${i} status=${i < 4 ? 'fail' : 'pass'} loadStatus=200`);
+  const base = visuals.CAPTURE_RETRY_INDEX_BASE;
+  for (let i = 0; i < 12; i += 1) {
+    assert.equal(t.feed(`__USERNODE_TEST__ index=${base + i} status=pass loadStatus=200`), false,
+      'a retry frame does not move the bar');
+  }
+  t.feed('__USERNODE_TESTS_DONE__ ran=732 expected=732 deadline=0');
+  const s = t.snapshot();
+  assert.deepEqual([s.ran, s.passed, s.failed, s.expected, s.done], [732, 728, 4, 732, true]);
+  assert.equal(s.reportedRan, undefined, 'the container\'s own count agrees with the bar');
+  // The base is the container's: a retry index starts there and nowhere else.
+  assert.match(read('capture/capture.js'), new RegExp(`const RETRY_INDEX_BASE = ${base};`));
+});
+
 test('setChecksProgress writes only while this run is the pending one', async () => {
   const queries = [];
   const pool = { query: async (sql, params) => { queries.push({ sql, params }); return { rows: [], rowCount: 1 }; } };
@@ -271,7 +290,9 @@ test('maybeRunUnitSuite observes its container and reports once more at the end'
   assert.match(src, /const options = \{\n\s+onStdoutLine: observe,/);
   assert.match(src, /kubernetes\.runUnitSuiteJob\(config, \{ sessionId, \.\.\.options \}\)/);
   assert.match(src, /docker\.runOneShot\(`usernode-unit-suite-\$\{sessionId\}`, options\)/);
-  assert.match(src, /const finalSnap = tracker\.finish\(passed\);\n\s+report\(finalSnap\);/);
+  // The last report also says when the suite never reached `npm test`, so
+  // the card does not call a refused Job "finished with failures".
+  assert.match(src, /const finalSnap = tracker\.finish\(passed, \{ notRun: !!\(notRun \|\| setupFailed\) \}\);\n\s+report\(finalSnap\);/);
   assert.match(src, /echo "\$\{CLONED_SENTINEL\}"\nif \[ -f package-lock\.json \]/, 'the cloned marker precedes npm ci');
   assert.match(src, /\.\.\.\(summary \? \{ summary \} : \{\}\),/, 'the TAP summary rides the row');
 });
@@ -505,6 +526,12 @@ test('the unit suite (npm test) gets its own line, bar and phase copy', () => {
   assert.match(done.sentence, /finished with failures: 2 failed, 10861 passed\./);
   const ok = AppView._unitSuiteProgressView({ phase: 'done', done: true, exitOk: true, ran: 10, passed: 9, skipped: 1, failed: 0, expected: 10 });
   assert.equal(ok.sentence, 'The repo unit suite (npm test) finished: 9 passed, 1 skipped.');
+  // A suite that never reached `npm test` (its Job refused, its setup
+  // stopped) is not one that finished with 0 failures.
+  const notRun = AppView._unitSuiteProgressView({ phase: 'done', done: true, exitOk: false, notRun: true, ran: 0, passed: 0, failed: 0, expected: null });
+  assert.equal(notRun.sub, 'npm test could not run');
+  assert.equal(notRun.sentence, 'The repo unit suite (npm test) could not run, so no test result came back.');
+  assert.equal(notRun.bar.done, true);
   const notes = AppView._checksStatusNotes({
     check_state: 'pending', check_phase: 'testing', checks_checked_at: new Date().toISOString(),
     checks_progress: { ran: 2, passed: 2, failed: 0, expected: 10, unit: { phase: 'running', ran: 5, passed: 5, failed: 0, expected: null } },
@@ -1003,8 +1030,11 @@ test('a submit says WHEN its vote-clearing happens, not just a count', () => {
   // The imported tail: 'on_sync' until something re-pinned the head, then
   // 'now', or 'none' when the re-pin kept the votes (a mechanical move).
   assert.match(pu, /let votesClearing = votesCleared > 0 \? 'on_sync' : 'none';\s*\n\s*if \(applied\) votesClearing = cleared \? 'now' : 'none';/);
-  assert.match(pu, /votesClearing: settled \? 'now' : \(votesCleared > 0 \? 'on_sync' : 'none'\)/);
+  // The native tail: the same three answers, read off the reconcile, which
+  // also says when a mechanical or resolved move kept the votes.
+  assert.match(pu, /let votesClearing = votesCleared > 0 \? 'on_sync' : 'none';\s*\n\s*if \(settled\) votesClearing = cleared \? 'now' : 'none';/);
   const eat = read('src/services/external-agent-tasks.js');
   assert.match(eat, /votesClearing: result\.votesClearing \|\|/);
   assert.match(eat, /votesAtRisk: Number\.isInteger\(result\.votesAtRisk\)/);
+  assert.match(eat, /votesKept: result\.votesKept === true/);
 });

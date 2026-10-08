@@ -41,6 +41,7 @@ const {
 const { TEMPLATES } = require('../src/services/topochain/db-query-templates');
 const { QUERYABLE_TABLES } = require('../src/services/topochain/db-allowlist');
 const scopeMod = require('../src/services/topochain/db-console-scope');
+const schemaInfoMod = require('../src/services/topochain/db-schema-info');
 const consoleRoleMod = require('../src/services/topochain/db-console-role');
 
 // `sql-console.js` holds a reference to this whole module object (`const
@@ -547,9 +548,9 @@ test('db-console-role: buildGrantStatements grants EVERY table in the schema, co
     async query(sql) {
       // The scope now comes from the whole `public` schema rather than a
       // hardcoded table list, so the query is unparameterised and filtered
-      // to base tables.
-      assert.match(sql, /information_schema\.columns/);
-      assert.match(sql, /BASE TABLE/);
+      // to base tables (relkind 'r', or 'p' for a partitioned table).
+      assert.equal(sql, scopeMod.TABLE_INVENTORY_SQL);
+      assert.match(sql, /c\.relkind IN \('r', 'p'\)/);
       return {
         rows: [
           { table: 'seasons', columns: ['id', 'name', 'description'] },
@@ -749,6 +750,10 @@ test('#1130: no credential-SHAPED column name in schema.sql is readable without 
     // and every route that takes one also requires an admin who can write.
     'bench_tasks.label_token',
     'bench_trials.item_token',
+    // The same for a blind pair of two bot configurations' first versions
+    // (services/bot-configs.js): it hides which side is which from the admin
+    // picking, and the pick route also requires an admin who can write.
+    'bot_config_pairs.token',
 
     // Foreign keys TO a credential row. The id is a row number; the secret
     // itself lives in a column that IS denied (or, for user_ai_credentials,
@@ -756,6 +761,7 @@ test('#1130: no credential-SHAPED column name in schema.sql is readable without 
     'cli_auth_audit_events.access_token_id',
     'session_agent_leases.access_token_id',
     'mcp_auth_audit_events.access_token_id',
+    'external_agent_patch_uploads.token_id', // #4264: which upload credential row sent it; the hash is denied
     'agent_turns.credential_id',
     'agent_turns.credential_revision',     // an INTEGER version counter
 
@@ -771,6 +777,7 @@ test('#1130: no credential-SHAPED column name in schema.sql is readable without 
     'chat_sessions.pr_summary_source_body_hash', // digest of the public PR description, not a credential
     'shot_runs.plan_hash',                 // SHA-256 naming the published shots, not authentication material
     'homeroom_bot_run_snapshots.prompt_hash', // #3654: SHA-256 of the bot's prompt text, to group runs by prompt
+    'wf_receipts.payload_hash',            // SHA-256 of a workflow event's type, payload and actor, to recognise a retried request
 
     // Counters and flags.
     'chat_session_messages.token_count',   // an LLM token COUNT
@@ -809,15 +816,14 @@ function handleQuery(sql) {
   if (/^ROLLBACK/i.test(t)) return { rows: [] };
 
   // db-console-scope.js's table inventory — the scope resolution that
-  // both the schema endpoint and the role's grants start from. Matched
-  // BEFORE the plain information_schema.columns branch below, because it
-  // reads that view too (joined against information_schema.tables) and
-  // returns a different row shape: `{ table, columns: [...] }`.
-  if (/BASE TABLE/.test(t) && /array_agg/.test(t)) return { rows: scenario.inventoryRows || [] };
-
-  // GET /sql-query/schema's two introspection queries.
-  if (/pg_class/.test(t) && /reltuples/.test(t)) return { rows: scenario.schemaTableRows || [] };
-  if (/information_schema\.columns/.test(t)) return { rows: scenario.schemaColumnRows || [] };
+  // both the schema endpoint and the role's grants start from — and
+  // GET /sql-query/schema's two introspection queries. All three read
+  // pg_class, so they are told apart by identity rather than by a pattern
+  // they would share; the inventory returns a different row shape:
+  // `{ table, columns: [...] }`.
+  if (sql === scopeMod.TABLE_INVENTORY_SQL) return { rows: scenario.inventoryRows || [] };
+  if (sql === schemaInfoMod.TABLE_INFO_SQL) return { rows: scenario.schemaTableRows || [] };
+  if (sql === schemaInfoMod.COLUMN_INFO_SQL) return { rows: scenario.schemaColumnRows || [] };
 
   // GET /database/export's per-table data query.
   const exportMatch = t.match(/^SELECT .+ FROM (\w+) ORDER BY 1$/i);
@@ -1138,7 +1144,7 @@ test('schema: shape per SPEC, real row estimate (not a lifetime counter), every 
   scenario.schemaColumnRows = [
     { table_name: 'seasons', column_name: 'id', data_type: 'bigint', nullable: false, default_value: null, comment: null, key_type: 'primary' },
     { table_name: 'seasons', column_name: 'name', data_type: 'character varying', nullable: false, default_value: null, comment: null, key_type: null },
-    // A row simulating what the raw information_schema.columns query
+    // A row simulating what the raw column query
     // WOULD return for onchain_accounts' two secret columns — the
     // service itself must filter these out; the mock is not what does
     // the filtering (see db-schema-info.js's `isDeniedColumn`).
@@ -1207,6 +1213,24 @@ test('schema: shape per SPEC, real row estimate (not a lifetime counter), every 
     assert.ok(!onchainAccounts.columns.some((c) => c.name === 'registration_code'));
     assert.ok(onchainAccounts.columns.some((c) => c.name === 'tier'));
   } finally { server.close(); }
+});
+
+test('schema: the browser\'s three catalog queries never read information_schema', () => {
+  // On 7 Oct 2026 two declared checks failed on proposals that did not touch
+  // the console: the column query joined information_schema views that
+  // Postgres re-evaluates per row, and with ~20 previews checking on one
+  // server the list arrived after the checks stopped waiting.
+  // tests/topochain-db-schema-catalog-postgres.test.js proves the catalog
+  // versions return the same rows; this keeps the views from coming back.
+  const queries = {
+    TABLE_INVENTORY_SQL: scopeMod.TABLE_INVENTORY_SQL,
+    TABLE_INFO_SQL: schemaInfoMod.TABLE_INFO_SQL,
+    COLUMN_INFO_SQL: schemaInfoMod.COLUMN_INFO_SQL,
+  };
+  for (const [name, sql] of Object.entries(queries)) {
+    assert.equal(typeof sql, 'string', `${name} is exported`);
+    assert.doesNotMatch(sql, /information_schema/i, `${name} must read pg_catalog, not information_schema`);
+  }
 });
 
 // ── GET /sql-query/templates ─────────────────────────────────────────────

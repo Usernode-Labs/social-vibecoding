@@ -585,9 +585,15 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
       // then two activity cards (tests/homeroom-bot-activity-postgres.test.js).
       // #4046: before the plan, a plan built already with the card under it,
       // and the waiting plan's own card. #4097 follow-up: before the ready
-      // card, a build that did not finish, with its Try again button.
-      assert.equal(messages.length, 12, 'one question, one ask, one offer, a built plan and its card, a plan and its card, two questions, a stuck build, a ready card and two cards, not one per visit');
-      const [question, ask, offer, built, building, planCard, plan, two, stuck, ready, ...cards] = [...messages].sort((a, b) => a.id - b.id);
+      // card, a build that did not finish, with its Try again button. #4231:
+      // then a new project's first version gone live, with Open, Open
+      // community and Invite people.
+      assert.equal(messages.length, 13, 'one question, one ask, one offer, a built plan and its card, a plan and its card, two questions, a stuck build, a first version live, a ready card and two cards, not one per visit');
+      const [question, ask, offer, built, building, planCard, plan, two, stuck, firstLive, ready, ...cards] = [...messages].sort((a, b) => a.id - b.id);
+      assert.equal(firstLive.metadata.homeroomBot.kind, 'merged');
+      assert.equal(firstLive.metadata.homeroomBot.firstVersion, true);
+      assert.deepEqual(firstLive.metadata.homeroomBot.actions.map((a) => a.label), ['Open Staging demo plants', 'Open community', 'Invite people']);
+      assert.match(firstLive.content, /^\*\*Staging demo plants\*\*, its first version\n\nIt's live now\. Open Staging demo plants below to try it\.$/);
       assert.equal(stuck.metadata.homeroomBot.kind, 'build_failed');
       assert.equal(stuck.metadata.homeroomBot.status, 'open');
       assert.deepEqual(stuck.metadata.homeroomBot.actions, [{ id: 'try_again', label: 'Try again', style: 'primary', type: 'prompt', quote: true }]);

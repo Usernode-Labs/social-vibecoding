@@ -96,7 +96,7 @@ const MAX_REQUEST_PAGE = { titles: 200, full: MAX_LIST_ITEMS };
 // and an over-limit write is REFUSED with the limit and the real length
 // named so the caller can split or shorten deliberately.
 const MAX_REQUEST_TITLE_CHARS = 256;    // GitHub's own issue-title limit.
-const MAX_REQUEST_BODY_CHARS = 65536;   // GitHub's own issue-body limit.
+const { GITHUB_ISSUE_BODY_MAX: MAX_REQUEST_BODY_CHARS } = require('./issue-body-limit'); // GitHub's own issue-body limit.
 const MAX_ANSWER_CHARS = 8000;          // MAX_CHAT_LEN in services/ws.js.
 const MAX_CLOSE_REASON_CHARS = 2000;    // MAX_CLOSE_REASON_LENGTH in routes/issues.js.
 // submit_work's `description`: what share-in-progress and update-from-fork
@@ -151,6 +151,9 @@ const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 //                            the whole group reads
 //   prepare_work           — claims the request on the app's board; mints a
 //                            work order that dangles if it is never used
+//   close_work_order       — puts one of the user's own unsubmitted work
+//                            orders away, so an agent holding it can no
+//                            longer submit it (#4266)
 //   start_platform_build   — spends the user's daily Homeroom credits
 //   submit_platform_build  — puts that build to a group vote
 //   update_proposal_issues — changes which requests an existing proposal
@@ -191,6 +194,9 @@ const ACTING_TOOLS = Object.freeze([
   'post_message',
   'propose_close_request',
   'prepare_work',
+  // #4266: the other half of list_my_work_orders. It touches only the
+  // caller's own reservation, but it ends one an agent may still be using.
+  'close_work_order',
   'start_platform_build',
   'submit_platform_build',
   'update_proposal_issues',
@@ -223,10 +229,19 @@ const ACTING_TOOLS = Object.freeze([
   'add_bench_task',
   'edit_bench_task',
   'rate_homeroom_bot_run',
+  // The Homeroom bot's configurations, first versions' and later changes'
+  // (routes/bot-configs.js): admin-only, and none changes an app, but saving
+  // or promoting a version changes what the bot builds with and costs, a
+  // side budget what the comparison spends, and a pick feeds the numbers.
+  'save_bot_config',
+  'set_bot_config_budget',
+  'set_bot_config_role',
+  'submit_bot_config_pick',
   // Test accounts: admin-only. A create mints a new sign-in and a retire
   // deletes an account with the apps it made, so both stay out of the setup
   // hint and the shipped read-only allow rules like every write.
   'create_test_account',
+  'create_test_phone_sign_in',
   'retire_test_account',
 ]);
 
@@ -238,6 +253,21 @@ const ACTING_TOOLS = Object.freeze([
 const MAX_CONVENTIONS_CHARS = 32 * 1024;
 
 const { neutralizeEnvelope } = require('./untrusted-envelope');
+
+// #4345. A positive integer id that also takes its digits as text. A client
+// whose copy of the tool list predates a field has no type for it and sends
+// the value as a string ("1"), which a bare z.number() refuses although the id
+// is exact. The advertised schema is the inner integer (the SDK lists a
+// preprocess by its input), so a client that knows the field still sends a
+// number; anything but plain digits is refused as before.
+const DIGITS_ID_RE = /^\s*[1-9]\d{0,15}\s*$/;
+function positiveIntId() {
+  const { z } = require('zod'); // loaded where registerTools loads it, not at require time
+  return z.preprocess(
+    (value) => (typeof value === 'string' && DIGITS_ID_RE.test(value) ? Number(value) : value),
+    z.number().int().positive()
+  );
+}
 
 function clip(value, max) {
   const text = String(value == null ? '' : value);
@@ -852,6 +882,28 @@ function isoOrNull(value) {
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
+// One work order as list_my_work_orders returns it (#4266), from a row of
+// external-agent-tasks.listHeldWorkOrders. The app's name and the order's
+// title (a request's title, or the first line of somebody's brief) are other
+// people's writing, so both keep the envelope.
+function shapeWorkOrder(w) {
+  return {
+    taskId: Number(w.taskId),
+    appSlug: String(w.appSlug || ''),
+    appName: untrusted(w.appName, MAX_TITLE_CHARS),
+    title: untrusted(w.title, MAX_TITLE_CHARS),
+    requestNumbers: Array.isArray(w.requestNumbers) ? w.requestNumbers.map(Number) : [],
+    createdAt: isoOrNull(w.createdAt),
+    lastActivityAt: isoOrNull(w.lastActivityAt) || isoOrNull(w.createdAt),
+    expiresAt: isoOrNull(w.expiresAt),
+    branch: w.branch ? String(w.branch) : null,
+    agent: w.agent || 'external',
+    revisesProposal: Number(w.revisesProposalId) > 0
+      ? { proposalId: Number(w.revisesProposalId), prNumber: Number(w.revisesPrNumber) > 0 ? Number(w.revisesPrNumber) : null }
+      : null,
+  };
+}
+
 // How much of a build failure to quote. The summarizer upstream
 // (services/deploy-failure.js) already produces a short string; this only
 // bounds a pathological one.
@@ -907,9 +959,27 @@ function failureReasonOf(result) {
 
 function shapeChecks(session) {
   const results = Array.isArray(session.test_results) ? session.test_results : [];
-  const failed = results.filter((t) => t && t.status && t.status !== 'pass');
+  // A unit suite that never reached `npm test` (its Job was refused, its pod
+  // stopped in setup) names no failing test, so it is not listed as one.
+  // When it is why the run errored, `error` below carries its reason.
+  const failed = results.filter((t) => t && t.status && t.status !== 'pass' && !unitSuiteRow.isNotRunRow(t));
   const ranOn = session.checks_commit_sha || null;
   const head = headShaOf(session);
+  // #3978. The unit-suite row's stored per-test excerpts, previewed inline:
+  // fewer tests than the row keeps (the whole excerpt is get_check_output's)
+  // and a tighter per-test clip. Every other row keeps the empty array — the
+  // zod output schema reads the field on every entry, and a conditional one
+  // is what made a whole response fail validation once (#2137).
+  const inlineDetails = (t) => (Array.isArray(t.failureDetails) ? t.failureDetails : [])
+    .slice(0, unitSuiteRow.MAX_INLINE_EXCERPT_TESTS)
+    .map((d) => ({
+      file: (d && d.file) ? untrusted(String(d.file), MAX_TITLE_CHARS) : null,
+      test: (d && d.test) ? untrusted(String(d.test), MAX_TITLE_CHARS) : null,
+      excerpt: (d && d.excerpt) ? untrusted(String(d.excerpt), unitSuiteRow.MAX_INLINE_EXCERPT_CHARS) : null,
+    }));
+  const unitRows = failed.filter(unitSuiteRow.isUnitSuiteRow);
+  const detailsTruncated = unitRows.some((t) => !!t.failureDetailsTruncated
+    || (Array.isArray(t.failureDetails) ? t.failureDetails.length : 0) > unitSuiteRow.MAX_INLINE_EXCERPT_TESTS);
   return {
     state: session.check_state || null,
     phase: session.check_phase || null,
@@ -976,7 +1046,13 @@ function shapeChecks(session) {
       path: t.path ? untrusted(String(t.path), MAX_TITLE_CHARS) : null,
       reason: untrusted(failureReasonOf(t), unitSuiteRow.isUnitSuiteRow(t)
         ? unitSuiteRow.FAILURE_DETAIL_MAX : MAX_FAILURE_REASON_CHARS) || null,
+      // The repo unit suite's row previews its first failing tests' excerpts
+      // here; a declared check's reason IS its diagnosis and stays alone.
+      details: unitSuiteRow.isUnitSuiteRow(t) ? inlineDetails(t) : [],
     })),
+    // True when the row kept more excerpts than the preview shows (or the
+    // run itself was capped): get_check_output returns the whole stored text.
+    detailsTruncated,
     total: results.length,
     error: session.check_error_detail
       ? untrusted(session.check_error_detail, MAX_CHECK_ERROR_CHARS)
@@ -1031,7 +1107,7 @@ function shapeBranch(session) {
     // "submit an update" was the part every agent had to guess.
     updateWith: canPush
       ? 'push to that branch, then call submit_work with proposalId and branch so the votes and checks are reset now rather than on the next sweep'
-      : 'push to a branch in your own fork, then call submit_work with proposalId and that branch — Homeroom moves the proposal onto it; a dev session that is not yet up for a vote can also carry propose: true to be promoted the moment the update lands',
+      : 'push to a branch in your own fork, then call submit_work with proposalId and that branch — Homeroom moves the proposal onto it; or, with no push at all, call submit_work with the taskId of its update work order (prepare_work with proposalId) and a patch, which Homeroom applies on its current commit; a dev session that is not yet up for a vote can also carry propose: true to be promoted the moment the update lands',
   };
 }
 
@@ -1165,12 +1241,46 @@ function deferredNextStep(session, checks, branch) {
     + 'checks then run against the synced head. Do not open a second proposal.';
 }
 
+// #4262. A dev session that is not up for a vote yet: a CLI hand-off made by
+// proposal_start, a card shared with submit_work `share: true`, or a
+// work-order continuation, active or paused. It used to fall into the
+// closed-status sentence ("PR #4258 is paused, so its code is frozen ...
+// anything further is a new change through prepare_work"), which sent an
+// agent to open a second change for work that one call puts up for the vote.
+// Paused is bookkeeping, and the promote route takes a paused session
+// straight to review, so the call named here is the same in both states.
+//
+// `viewerId` is the caller when known: only a session's owner can propose
+// it, so anybody else (an admin reading it) is not handed a call the route
+// would refuse.
+function underwayNextStep(session, branch, viewerId) {
+  const named = proposalRefSentence(session.id, session.pr_number);
+  const where = session.status === 'paused'
+    ? 'it is paused, which only releases its worker: its branch, preview and checks are kept'
+    : 'it is still underway';
+  const owner = Number(session.user_id);
+  if (viewerId != null && Number.isSafeInteger(owner) && owner > 0 && owner !== Number(viewerId)) {
+    return `${named} is a dev session that is not up for a vote yet (${where}). Only the person who started it `
+      + 'can put it up for the vote.';
+  }
+  const push = branch.youCanPush
+    ? `push to ${branch.name || 'its branch'} in your fork`
+    : 'push to a branch in your own fork';
+  return `${named} is a dev session that is not up for a vote yet (${where}). When the user has asked for it `
+    + `to go to the group's vote, call submit_work with proposalId ${session.id} and propose: true and NO branch: `
+    + 'it goes up for the vote as it stands, on the commit it already has, the same act as its "Propose to '
+    + 'group" button, with nothing to push. If Homeroom refuses, for example because nothing has been '
+    + 'submitted to it yet or an agent turn is still moving its branch, it says why. To change its code first, '
+    + `${push} and call submit_work with proposalId ${session.id} and that branch, adding propose: true when the `
+    + 'user wants the vote.';
+}
+
 // What the agent that wrote this code should do about it right now. Branches
 // on the BRANCH HOME, because the same failing check has two different fixes
 // and the platform is the only party that knows which (#1054): a fork-home
 // proposal follows the author's own push, and a bot-owned one moves only when
 // submit_work is called with its id.
-function shapeNextStep(session, checks) {
+function shapeNextStep(session, checks, viewerId = null) {
   const branch = shapeBranch(session);
   // #2136: every sentence below that names this proposal names it by its
   // pull request number first — see proposalRef. The `proposalId N` clauses
@@ -1190,6 +1300,9 @@ function shapeNextStep(session, checks) {
     || (checks.failing && checks.failing.length > 0);
   const isOpen = session.status === 'promoted';
   if (!isOpen) {
+    if (session.status === 'active' || session.status === 'paused') {
+      return underwayNextStep(session, branch, viewerId);
+    }
     return `${proposalRefSentence(session.id, session.pr_number)} is ${session.status || 'no longer open'}, so its `
       + 'code is frozen — anything further is a new change through prepare_work.';
   }
@@ -1217,10 +1330,34 @@ function shapeNextStep(session, checks) {
   }
   // A red run that overlapped a platform rollout is recorded as an error the
   // platform runs again on its own (visuals.js settleCaptureRun). Its failing
-  // rows are the rollout's, not the diff's, so there is nothing to fix yet.
+  // rows are the rollout's, not the diff's, so there is nothing to fix yet,
+  // unless its unit suite failed tests: the rerun is still said, and those
+  // are named beside it (#4265).
   if (rolloutRetry(session)) {
-    return `Checks on ${ref} ran while Homeroom was updating, so they will run again on their own. There is nothing `
-      + 'to fix yet and nothing to push: poll get_proposal for the new verdict.';
+    const rerun = `Checks on ${ref} ran while Homeroom was updating, so they will run again on their own.`;
+    const unit = rolloutUnitFailures(session);
+    if (!unit) return `${rerun} There is nothing to fix yet and nothing to push: poll get_proposal for the new verdict.`;
+    return `${rerun} ${unit} checks.failures has their errors and get_check_output the full output. If they fail `
+      + 'locally too, fix them, push to '
+      + `${branch.youCanPush ? (branch.name || 'this proposal\'s branch') + ' in your own fork' : 'a branch in your OWN fork'}`
+      + ` and call submit_work with proposalId ${session.id} and that branch; otherwise poll get_proposal for the `
+      + 'new verdict. Do not open a second proposal.';
+  }
+  // The run errored because the repo unit suite could not run: its Job was
+  // refused or its setup stopped before any test. Nothing failed, and the
+  // error lane runs the checks again on its own, so "fix the build" would
+  // send the agent after a problem the code does not have.
+  const unitNotRun = unitSuiteRow.notRunError(session);
+  if (unitNotRun) {
+    const again = erroredRunWillRetry(session)
+      ? 'Homeroom runs errored checks again on its own, waiting longer between tries; poll get_proposal for the '
+        + 'new verdict.'
+      : 'Homeroom will not run them again on its own now; recheck_change re-runs them once the cause has cleared.';
+    return `The repo unit suite (npm test) could not run on ${ref}, so there is no verdict yet: `
+      + `${untrusted(unitNotRun, MAX_CHECK_ERROR_CHARS)} No test failed. ${again} Only if that reason points at `
+      + 'this change (installing its dependencies failed on its package.json or lockfile) fix it and push to '
+      + `${branch.youCanPush ? (branch.name || 'this proposal\'s branch') + ' in your own fork' : 'a branch in your OWN fork'}`
+      + ` and call submit_work with proposalId ${session.id} and that branch. Do not open a second proposal.`;
   }
   // An errored run is a failure with no test to point at: the build or the
   // preview broke before the suite could report. Naming that is the difference
@@ -1245,11 +1382,37 @@ function shapeNextStep(session, checks) {
       + `${session.id} and that branch: ${whyYouCannotPush(branch)}. Do not open a second proposal.`;
 }
 
+// Will the error lane run this stored 'error' again on its own? The row is
+// one findStuckCheckSessions picks up, a retry is scheduled, and the streak
+// is under CHECK_MAX_AUTO_RETRIES. A row that does not say answers no, so a
+// rerun is never promised that will not come.
+function erroredRunWillRetry(session) {
+  if (!session || session.check_state !== 'error' || !session.branch_name) return false;
+  const recovery = require('./staging-recovery');
+  if (!recovery.isStuckCheckRecoveryScope(session) || session.check_next_retry_at == null) return false;
+  return (Number(session.consecutive_check_failures) || 0) < recovery.checkMaxAutoRetries();
+}
+
 // The 'error' a red run that overlapped a platform rollout is recorded as:
 // the platform runs it again on its own, so it asks nothing of the author.
 function rolloutRetry(session) {
   return session.check_state === 'error'
     && session.check_error_detail === require('./staging-recovery').ROLLOUT_RETRY_DETAIL;
+}
+
+// The unit suite's own failing tests on such a run, as the sentence both
+// nextSteps add after the rerun note, or null when it recorded none (#4265).
+// The update explains a slow page load; it does not fix a test the code
+// fails, so "nothing to fix yet" would be wrong while these stand.
+function rolloutUnitFailures(session) {
+  const unit = unitSuiteRow.unitSuiteFailures(session.test_results);
+  if (!unit) return null;
+  const first = unit.first
+    .map((f) => untrusted(f.file ? `${f.file}: ${f.test}` : f.test, MAX_TITLE_CHARS))
+    .filter(Boolean);
+  return `That run's unit suite (npm test) also reported ${unit.count} failing test${unit.count === 1 ? '' : 's'}`
+    + `${first.length ? `, including ${first.join('; ')}` : ''}. A rerun will not fix a test the code itself fails, `
+    + 'so look at them now.';
 }
 
 // Why a plain push does not move this proposal, in one clause, for the two
@@ -1270,7 +1433,9 @@ function whyYouCannotPush(branch) {
 // put in a tool response.
 const MAX_CAPTURE_PATHS_REPORTED = 10;
 
-function shapeProposal(session, origin) {
+// `viewerId`, when given, is the caller (#4262): it decides whether an
+// underway session's nextStep names the promote call or says it is not theirs.
+function shapeProposal(session, origin, viewerId = null) {
   const detail = (session.capture_detail && typeof session.capture_detail === 'object')
     ? session.capture_detail : {};
   const capturedPaths = Array.isArray(detail.paths)
@@ -1303,7 +1468,7 @@ function shapeProposal(session, origin) {
     // Where the head lives and who may move it. Everything an agent needs to
     // revise this proposal without guessing.
     branch: shapeBranch(session),
-    nextStep: shapeNextStep(session, checks),
+    nextStep: shapeNextStep(session, checks, viewerId),
     // A true value says capture used the app root because neither an explicit
     // route nor a matching named scenario supplied something more specific.
     captureDefaultedToRoot: detail.media !== false
@@ -1407,9 +1572,9 @@ const CHANGE_NEXT_STEP_WORDS = Object.freeze({
     build: 'Dispatch the coding agent to start it.',
     fixTests: 'Dispatch the coding agent to fix the failing tests. Use recheck_change only when the failure came from outside this change.',
     fixBuild: 'Dispatch the coding agent to fix the build; checks gate merge.',
-    deferred: 'sync_change merges main in (the user confirms it, and it clears any votes).',
+    deferred: 'sync_change merges main in and resolves the conflict once the user confirms it; its votes stand as long as the resolution stays inside the files that conflicted.',
     ready: 'promote_change puts it there once the user confirms.',
-    behind: 'sync_change would clear its votes, so only when needed.',
+    behind: 'that alone needs no sync, and sync_change keeps its votes when main merges in cleanly.',
     closed: 'Further work on it is a new change (start_change).',
   },
   worker_read: {
@@ -1418,16 +1583,16 @@ const CHANGE_NEXT_STEP_WORDS = Object.freeze({
     fixBuild: 'Fix the build in this turn; the checks run again after your push.',
     deferred: 'The Mayor can sync it with main, with the user\'s confirmation.',
     ready: 'the Mayor puts it there once the user confirms.',
-    behind: 'syncing it would clear its votes.',
+    behind: 'that alone needs no sync, and a clean sync with main keeps its votes.',
     closed: 'Further work on it is a new change.',
   },
   external: {
     build: 'Its coding agent runs inside Homeroom, from the change\'s own page.',
     fixTests: 'Its coding agent fixes them from the change\'s own page; recheck_change re-runs the checks when the failure came from outside this change.',
     fixBuild: 'The build needs fixing from the change\'s own page; checks gate merge.',
-    deferred: 'Syncing it with main from its page merges main in and clears any votes.',
+    deferred: 'Syncing it with main from its page merges main in and resolves the conflict; its votes stand as long as the resolution stays inside the files that conflicted.',
     ready: 'its owner puts it there from its page on Homeroom.',
-    behind: 'syncing it with main would clear its votes.',
+    behind: 'that alone needs no sync, and syncing it with main cleanly keeps its votes.',
     closed: 'Further work on it is a new change.',
   },
 });
@@ -1438,6 +1603,11 @@ function changeNextStep(session, checks, live, kind = 'agent_mayor') {
   const status = session.status || null;
   if (status === 'archived') {
     return `${ref} was withdrawn and is closed for good. ${words.closed}`;
+  }
+  // Merged is live once production runs it (chat_sessions.live_at; null
+  // while its deploy is still to come).
+  if (status === 'merged' && session.live_at === null) {
+    return `${ref} merged: the group voted it in, and it is going live now. Nothing to do; call get_change again to see it live.`;
   }
   if (status === 'merged') {
     return `${ref} merged: the group voted it in and it is part of the app now. ${words.closed}`;
@@ -1468,8 +1638,17 @@ function changeNextStep(session, checks, live, kind = 'agent_mayor') {
       : `Checks are running on ${ref}'s current commit. Call get_change again for the verdict.${paused}`;
   }
   if (rolloutRetry(session)) {
+    const unit = rolloutUnitFailures(session);
     return `Checks on ${ref} ran while Homeroom was updating, so they will run again on their own. `
-      + `Nothing to fix yet; call get_change again for the new verdict.${paused}`;
+      + (unit ? `${unit} ${words.fixTests}${paused}`
+        : `Nothing to fix yet; call get_change again for the new verdict.${paused}`);
+  }
+  if (unitSuiteRow.notRunError(session)) {
+    return `The repo unit suite (npm test) could not run on ${ref}, so there is no verdict yet, and no test failed. `
+      + (erroredRunWillRetry(session)
+        ? 'Homeroom runs the checks again on its own; call get_change again for the new verdict.'
+        : 'recheck_change re-runs the checks once the cause has cleared.')
+      + paused;
   }
   if (failing) {
     return checks.state === 'error' && !(checks.failing && checks.failing.length)
@@ -3387,7 +3566,7 @@ function registerTools(server, ctx) {
   // ── get_proposal ─────────────────────────────────────────────────────
   server.registerTool('get_proposal', {
     title: 'Get a proposal',
-    description: "Status of one proposal, by `proposalId` or `prNumber` (the pull request number people see on GitHub); the answer carries both, name it \"PR #2151 (proposal 4223)\". It includes the checks verdict and failing test NAMES, staging preview, vote tally and votes still needed. Checks gate merge: if failing, fix the named tests and submit an UPDATE to this proposal — never a second one. `branch` says how: `branch.home` is 'user_fork' when the proposal follows a branch in the author's own fork (push to it, then call submit_work with proposalId and branch) or 'app_repo' when its head is a branch only Homeroom can write (push to your own fork, then call submit_work with proposalId and that branch — pushing alone moves nothing). `nextStep` says the same in one line; follow it. `shots` holds before/after shots of each declared change on this exact revision: a verified state means the shots agent took them (a still per screen size, plus clips for motion) and people look at them to judge the change; `shotResults` says which changes it skipped and why, which failed (the shots agent did the steps and the after build broke, for example a server error: fix the code), and what a ready change's shots leave out. Pending or failed entries never substitute legacy route captures. `captureRouteSource`, `captureDefaultedToRoot`, and `capturePaths` describe only the backward-compatible legacy capture/check path. `checks.state` 'pending' is NOT a verdict or a reason to push again — read `checks.phase`, `checks.checkedAt`, `checks.stale`, and `baseSha` before writing code; each output field describes itself.",
+    description: "Status of one proposal, by `proposalId` or `prNumber` (the pull request number people see on GitHub); the answer carries both, name it \"PR #2151 (proposal 4223)\". It includes the checks verdict and failing test NAMES with their error excerpts (checks.failures[].details; get_check_output returns the full stored excerpt), staging preview, vote tally and votes still needed. Checks gate merge: if failing, fix the named tests and submit an UPDATE to this proposal — never a second one. `branch` says how: `branch.home` is 'user_fork' when the proposal follows a branch in the author's own fork (push to it, then call submit_work with proposalId and branch) or 'app_repo' when its head is a branch only Homeroom can write (push to your own fork, then call submit_work with proposalId and that branch — pushing alone moves nothing). `nextStep` says the same in one line; follow it. `shots` holds before/after shots of each declared change on this exact revision: a verified state means the shots agent took them (a still per screen size, plus clips for motion) and people look at them to judge the change; `shotResults` says which changes it skipped and why, which failed (the shots agent did the steps and the after build broke, for example a server error: fix the code), and what a ready change's shots leave out. Pending or failed entries never substitute legacy route captures. `captureRouteSource`, `captureDefaultedToRoot`, and `capturePaths` describe only the backward-compatible legacy capture/check path. `checks.state` 'pending' is NOT a verdict or a reason to push again — read `checks.phase`, `checks.checkedAt`, `checks.stale`, and `baseSha` before writing code; each output field describes itself.",
     inputSchema: {
       proposalId: z.number().int().positive().optional()
         .describe('The proposal id, as list_my_proposals, prepare_work and submit_work report it — also the last number in a proposal\'s webPath. Either this or prNumber; this one wins when both are given, and a pair that names two different proposals is refused rather than answered.'),
@@ -3474,9 +3653,21 @@ function registerTools(server, ctx) {
           name: z.string(),
           path: z.string().nullable(),
           reason: z.string().nullable(),
+          details: z.array(z.object({
+            file: z.string().nullable(),
+            test: z.string(),
+            excerpt: z.string().nullable(),
+          })).describe('The repo unit suite row only: its first failing tests, each with the file, the test name '
+            + 'and a clipped excerpt carrying the assertion message and expected/actual. Empty on every other '
+            + 'row — a declared check\'s reason is its diagnosis. When `detailsTruncated` is true, '
+            + 'get_check_output returns the whole stored excerpt.'),
         })).describe('WHY the first few failed — the navigation or assertion error the run recorded, falling back '
           + 'to the first console error. When every entry carries the same reason, that reason is the whole '
           + 'diagnosis and no test needs fixing.'),
+        detailsTruncated: z.boolean()
+          .describe('True when the unit-suite row kept more failing-test excerpts than `failures[].details` '
+            + 'previews (or the run itself was capped). Call get_check_output for the full excerpts; the '
+            + 'grouped file list in the unit row\'s `reason` always names every failing file regardless.'),
         total: z.number()
           .describe('How many tests reported. While pending, 0 means none has reported yet — never that this '
             + 'proposal has no checks.'),
@@ -3587,7 +3778,156 @@ function registerTools(server, ctx) {
         + 'other — list_my_proposals reports both for each of the user\'s open proposals.'
       );
     }
-    return readResult('get_proposal', shapeProposal(session, origin));
+    return readResult('get_proposal', shapeProposal(session, origin, user && user.id));
+  });
+
+  // ── get_check_output ─────────────────────────────────────────────────
+  //
+  // The whole stored output of ONE failing check (#3978). get_proposal's
+  // checks.failures[].reason keeps the diagnosis short — the unit suite's
+  // grouped file list is the only place a fix turn learns which test files
+  // to re-run — and its details preview only the first few tests. This tool
+  // returns what the row stored beyond that: each failing test's excerpt
+  // (assertion message, expected/actual, the first stack lines, the stdout
+  // just before the failure), already clipped and redacted at capture time.
+  // One tool rather than a bigger get_proposal, so a run with many failures
+  // costs its reader one call per check it actually needs, not one giant
+  // answer for all of them.
+  server.registerTool('get_check_output', {
+    title: 'Get failing-check output',
+    description: 'The full stored output of ONE failing check on a proposal. The repo unit suite row returns, for each failing test it kept (up to 10), the file, the test name and a clipped excerpt carrying the assertion message, expected/actual and the first stack lines. A declared dapp.json check returns its recorded reason and console errors with their sources. Use it when get_proposal.checks.detailsTruncated is true or you need more than the first few excerpt previews. Pass proposalId (or prNumber with slug) and optionally check: a failing check\'s name exactly as get_proposal.checks.failures[].name shows it, without the untrusted-content wrapper. Without check: the repo unit suite row when it is failing, else the single failing row; when several fail and none is the unit row, the error names them so you can pick. Read-only.',
+    inputSchema: {
+      proposalId: z.number().int().positive().optional()
+        .describe('The proposal id, as get_proposal reports it.'),
+      prNumber: z.number().int().positive().optional()
+        .describe('The pull request number instead, with slug when the same number could name proposals on more than one app.'),
+      slug: z.string().optional()
+        .describe('The app slug, as returned by list_apps — only to say which app a prNumber belongs to.'),
+      check: z.string().optional()
+        .describe('Which failing check to read: its name as get_proposal.checks.failures[].name shows it. Omit for the '
+          + 'repo unit suite row when it is failing, else the single failing row.'),
+    },
+    outputSchema: {
+      proposalId: z.number()
+        .describe('The proposal id, as get_proposal takes it.'),
+      prNumber: z.number().nullable()
+        .describe('Its pull request number, when it has one.'),
+      check: z.object({
+        name: z.string(),
+        path: z.string().nullable(),
+        status: z.string(),
+        advisory: z.boolean()
+          .describe('True when the row reports but does not block the merge.'),
+      }),
+      reason: z.string().nullable()
+        .describe('The row\'s recorded reason as get_proposal carries it — for the unit suite row, the grouped '
+          + 'list of every failing test FILE with the TAP counters. The excerpts below sit beside it, not in it.'),
+      tests: z.array(z.object({
+        file: z.string().nullable()
+          .describe('The repo-relative test file, from the TAP location line. Null when the runner did not report one.'),
+        test: z.string().nullable(),
+        excerpt: z.string().nullable()
+          .describe('The failing test\'s diagnostic block — error, code, expected/actual, failureType, the first '
+            + 'stack lines — plus the stdout printed just before it. Redacted and clipped at capture time '
+            + '(2 KB per test, 10 tests per run); the names of any tests left out are still in `reason`.'),
+      })).describe('The unit suite row\'s failing tests. Empty on a declared check.'),
+      testsTruncated: z.boolean()
+        .describe('True when the run kept fewer excerpts than it reported failing tests.'),
+      consoleErrors: z.array(z.object({
+        kind: z.string(),
+        message: z.string(),
+        source: z.string().nullable(),
+      })).describe('A declared check\'s console/page errors. Empty on the unit suite row.'),
+    },
+    annotations: readAnnotations,
+  }, async ({ proposalId, prNumber, slug, check }) => {
+    const guard = scopeGuard(READ_SCOPE);
+    if (guard) return guard;
+    const byId = Number.isInteger(proposalId) && proposalId > 0;
+    const byPr = Number.isInteger(prNumber) && prNumber > 0;
+    if (!byId && !byPr) {
+      return toolError(
+        'invalid_request',
+        'Pass proposalId (the id get_proposal reports — the last number in its webPath) or prNumber (its pull '
+        + 'request number, as a person sees it on GitHub), with slug when the same PR number could be a '
+        + 'proposal on more than one of the user\'s apps.'
+      );
+    }
+    if (slug !== undefined && !requireSlug(slug)) {
+      return toolError('invalid_request', 'slug must be a valid app slug — or omit it.');
+    }
+    let id = proposalId;
+    if (!byId) {
+      const resolved = await resolveProposalByPr(prNumber, slug);
+      if (resolved.error) return resolved.error;
+      id = resolved.proposalId;
+    }
+    const result = await callPlatform(baseUrl, accessToken, 'GET', `/api/sessions/${id}`);
+    if (!result.ok) return platformError(result);
+    const session = (result.body && result.body.session) || {};
+    if (byId && byPr && Number(session.pr_number) > 0 && Number(session.pr_number) !== prNumber) {
+      return toolError(
+        'invalid_request',
+        `Proposal ${proposalId} is PR #${Number(session.pr_number)}, not PR #${prNumber}. Pass one key or the `
+        + 'other.'
+      );
+    }
+    const results = Array.isArray(session.test_results) ? session.test_results : [];
+    const failed = results.filter((t) => t && t.status && t.status !== 'pass');
+    if (!failed.length) {
+      return toolError(
+        'no_failing_checks',
+        `No failing check carries output: the run's state is '${session.check_state || 'unknown'}'. Read `
+        + 'get_proposal.checks first — a passing or pending run has nothing for this tool to return.'
+      );
+    }
+    const wanted = typeof check === 'string' ? check.trim() : '';
+    let row = null;
+    if (wanted) {
+      row = failed.find((t) => String(t.name || t.path || '').toLowerCase() === wanted.toLowerCase());
+      if (!row) {
+        return toolError(
+          'unknown_check',
+          `No failing check is named "${wanted.slice(0, MAX_TITLE_CHARS)}". The failing checks are: `
+          + `${failed.slice(0, MAX_LIST_ITEMS).map((t) => `"${String(t.name || t.path || 'unnamed test')}"`).join(', ')}.`
+        );
+      }
+    } else if (failed.some(unitSuiteRow.isUnitSuiteRow)) {
+      row = failed.find(unitSuiteRow.isUnitSuiteRow);
+    } else if (failed.length === 1) {
+      row = failed[0];
+    } else {
+      return toolError(
+        'unknown_check',
+        `Several checks failed and none is the repo unit suite row. Name one: `
+        + `${failed.slice(0, MAX_LIST_ITEMS).map((t) => `"${String(t.name || t.path || 'unnamed test')}"`).join(', ')}.`
+      );
+    }
+    const isUnit = unitSuiteRow.isUnitSuiteRow(row);
+    const stored = Array.isArray(row.failureDetails) ? row.failureDetails : [];
+    const errors = Array.isArray(row.consoleErrors) ? row.consoleErrors : [];
+    return readResult('get_check_output', {
+      proposalId: Number(session.id),
+      prNumber: Number(session.pr_number) > 0 ? Number(session.pr_number) : null,
+      check: {
+        name: untrusted(row.name || row.path || 'unnamed test', MAX_TITLE_CHARS),
+        path: row.path ? untrusted(String(row.path), MAX_TITLE_CHARS) : null,
+        status: String(row.status || 'fail'),
+        advisory: !!row.advisory,
+      },
+      reason: untrusted(failureReasonOf(row), isUnit ? unitSuiteRow.FAILURE_DETAIL_MAX : MAX_FAILURE_REASON_CHARS) || null,
+      tests: (isUnit ? stored : []).slice(0, unitSuiteRow.MAX_UNIT_EXCERPTS).map((d) => ({
+        file: (d && d.file) ? untrusted(String(d.file), MAX_TITLE_CHARS) : null,
+        test: (d && d.test) ? untrusted(String(d.test), MAX_TITLE_CHARS) : null,
+        excerpt: (d && d.excerpt) ? untrusted(String(d.excerpt), unitSuiteRow.MAX_TEST_EXCERPT_CHARS) : null,
+      })),
+      testsTruncated: !!row.failureDetailsTruncated,
+      consoleErrors: (isUnit ? [] : errors).slice(0, MAX_LIST_ITEMS).map((e) => ({
+        kind: (e && typeof e.kind === 'string') ? e.kind : 'console',
+        message: untrusted((e && e.message) || '', MAX_FAILURE_REASON_CHARS) || null,
+        source: (e && e.source) ? untrusted(String(e.source), MAX_TITLE_CHARS) : null,
+      })),
+    });
   });
 
   server.registerTool('update_proposal_description', {
@@ -3784,7 +4124,7 @@ function registerTools(server, ctx) {
   // ── get_change ───────────────────────────────────────────────────────
   server.registerTool('get_change', {
     title: 'Get a change',
-    description: 'Where one of Homeroom\'s own changes stands: a change built inside Homeroom by its coding agent, as opposed to work pushed from a fork. Returns its status, whether a turn or a sync is running right now, its branch, pull request, staging preview, checks (failing test NAMES and why), votes, and a nextStep in plain words: follow it. Takes the change id, which get_proposal and list_my_proposals call proposalId. Name the change by its pull request number first when it has one: "PR #2151 (change 4223)". Read-only.',
+    description: 'Where one of Homeroom\'s own changes stands: a change built inside Homeroom by its coding agent, as opposed to work pushed from a fork. Returns its status, whether a turn or a sync is running right now, its branch, pull request, staging preview, checks (failing test NAMES, why, and their error excerpts — get_check_output reads one in full), votes, and a nextStep in plain words: follow it. Takes the change id, which get_proposal and list_my_proposals call proposalId. Name the change by its pull request number first when it has one: "PR #2151 (change 4223)". Read-only.',
     inputSchema: { changeId: changeIdSchema() },
     outputSchema: {
       ...changeSummarySchema,
@@ -3800,7 +4140,7 @@ function registerTools(server, ctx) {
       prUrl: z.string().nullable(),
       stagingUrl: z.string().nullable(),
       checks: z.unknown()
-        .describe('The checks snapshot, in the same shape get_proposal reports: state, phase, failing names, failures with reasons, stale, error.'),
+        .describe('The checks snapshot, in the same shape get_proposal reports: state, phase, failing names, failures with reasons and their excerpt details, detailsTruncated, stale, error.'),
       yesVotes: z.number().nullable(),
       noVotes: z.number().nullable(),
       votesRequired: z.number().nullable(),
@@ -3844,6 +4184,15 @@ function registerTools(server, ctx) {
         started: false,
         checkState: null,
         nextStep: 'Checks cannot run inside a staging preview of Homeroom itself, so nothing was started.',
+      });
+    }
+    if (body.collecting) {
+      return toolResult({
+        changeId,
+        started: false,
+        checkState: 'pending',
+        nextStep: 'A run of the checks on this commit is still going, so nothing new was started: its verdict '
+          + 'is recorded when it finishes. Call get_change for it.',
       });
     }
     return toolResult({
@@ -3950,7 +4299,7 @@ function registerTools(server, ctx) {
   // ── sync_change ──────────────────────────────────────────────────────
   server.registerTool('sync_change', {
     title: 'Sync a change with main',
-    description: 'Merge the app\'s latest main into one of the user\'s changes, resolving conflicts with the coding agent when there are any: the same act as its "Sync with main" button. This revises the change, so a change that is up for a vote LOSES the votes it has collected. Can take a few minutes; if the call times out, the sync carries on and get_change reports it.',
+    description: 'Merge the app\'s latest main into one of the user\'s changes, resolving conflicts with the coding agent when there are any: the same act as its "Sync with main" button. A change that is up for a vote KEEPS the votes it has collected: a clean merge is plain git and changes nothing anyone approved, and a conflict resolution that edits only the files that conflicted keeps them too, though the checks run again on the merged code. Only a resolution that edits any other file counts as a revision and clears them. Can take a few minutes; if the call times out, the sync carries on and get_change reports it.',
     inputSchema: { changeId: changeIdSchema() },
     outputSchema: {
       changeId: z.number(),
@@ -4403,8 +4752,22 @@ function registerTools(server, ctx) {
       origin,
       restart: restart === true,
       targetProposal,
+      // #4264: a one-time upload command in the work order, for a patch too
+      // big to retype into submit_work. New work only; the service decides.
+      patchUpload: true,
       specs: requestSpecsToBuild,
     });
+    // #4266: at the work-order cap, name the two tools that let the caller see
+    // the work orders holding its slots and put one away, rather than leaving
+    // it to stop and ask the user to free one somewhere it cannot name.
+    // Appended here, not written into the shared refusal, because the
+    // browser walkthrough shows that sentence too.
+    if (!result.ok && result.code === 'at_capacity') {
+      return serviceError({
+        ...result,
+        message: `${result.message} ${connectorLimits.OPEN_WORK_ORDERS_CONNECTOR_HINT}`,
+      });
+    }
     if (!result.ok) return serviceError(result);
 
     // Mark the request as being worked on (#1225). An in-platform session
@@ -4491,6 +4854,9 @@ function registerTools(server, ctx) {
     const revisedPr = result.proposalId && targetProposal && Number(targetProposal.pr_number) > 0
       ? Number(targetProposal.pr_number)
       : null;
+    // #4263: an update work order takes a patch like new work, except on a
+    // proposal whose head is a branch in the author's own fork.
+    const updateByPatch = !!result.proposalId && result.branchHome !== 'user_fork';
     return toolResult({
       taskId: result.taskId,
       appSlug: app.slug,
@@ -4525,7 +4891,10 @@ function registerTools(server, ctx) {
         + (result.proposalId
         ? `This work order REVISES ${proposalRef(result.proposalId, revisedPr)}, and it starts at that proposal's own current `
           + 'commit rather than at the app\'s main branch. Its coding agent submits it with submit_work using '
-          + `proposalId ${result.proposalId} and the branch it pushed — not as a new proposal. Tell the user that `
+          + (updateByPatch
+            ? `taskId ${result.taskId} and its patch (or proposalId ${result.proposalId} and a branch it pushed), which `
+              + 'updates that proposal — not as a new proposal. Tell the user that '
+            : `proposalId ${result.proposalId} and the branch it pushed — not as a new proposal. Tell the user that `)
           + 'submitting it clears the votes that proposal has already collected and asks its reviewers to look '
           + 'again, because that is the part they may not expect. '
         : '')
@@ -4538,10 +4907,11 @@ function registerTools(server, ctx) {
         + 'FIRST inspect the tools available in THIS conversation. If you have repository, filesystem, '
         + 'shell or code-editing tools, YOU are the coding agent: do not render guidance and do not send '
         + 'the user elsewhere. Execute workOrder yourself, implement and test the change here, then call '
-        + (result.proposalId
+        + (result.proposalId && !updateByPatch
           ? `submit_work with proposalId ${result.proposalId} and the branch you pushed. `
           : `submit_work with taskId ${result.taskId} and the patch you produced, or the branch if the work order's `
-            + 'rule sent you to one. That choice is yours: never ask the user to choose between a patch and a branch. ')
+            + (updateByPatch ? `rule sent you to one (with proposalId ${result.proposalId}). ` : 'rule sent you to one. ')
+            + 'That choice is yours: never ask the user to choose between a patch and a branch. ')
         + 'Only if this conversation lacks code-editing tools, render every string in guidance as a '
         + 'numbered list, in order, then reproduce workOrder below it in a fenced code block exactly as '
         + 'returned — no re-wrapping, tidying, summarising, retyping the commit id or appended correction. '
@@ -4554,12 +4924,12 @@ function registerTools(server, ctx) {
   // ── submit_work ──────────────────────────────────────────────────────
   server.registerTool('submit_work', {
     title: 'Submit finished work — a pushed branch, a patch, or an open PR',
-    description: "Turn finished work into a Homeroom proposal: opens the pull request, builds a staging preview, runs the app's checks and puts it to the group's vote. FOUR SHAPES, each complete as written — (1) `taskId` plus `patch`, the default for new work: Homeroom applies the patch at the recorded base commit in the app's own repository and opens the pull request itself, so NO GitHub write access is needed; (2) `taskId` plus the `branch` you actually pushed, any name, if the patch is over about 250 KB or you already push to your fork (your call between (1) and (2), never the user's); (3) `slug` plus `prNumber` for a pull request that is already open; (4) `proposalId` plus `branch` to UPDATE a proposal of the user's that is already up for a vote — for fixing a failing check or acting on review comments — which advances that same proposal onto your new commit instead of opening a second one, and clears the votes it has collected. Shape (4) needs no `slug`: naming the proposal names the app. When shape (4)'s target is a dev SESSION (a work-order continuation that is not yet up for a vote), it also takes `propose: true`: once the update lands, Homeroom promotes the session (see `propose`), so pass it only when the user has asked for the change to go to the vote; landing quietly stays the default. TWO DESTINATIONS: by default work goes up for a VOTE; `share: true` on shape (2) lands it in the app's IN-PROGRESS area instead \u2014 a shared session with a preview, no PR, no vote; the charter has the rule. A task belongs to the USER'S USERNODE ACCOUNT, not to one chat — any session connected as that account, including a coding agent's own connector, can submit it, and doing so is the expected path. Only work from the user's own GitHub account is submitted under their name.",
+    description: "Turn finished work into a Homeroom proposal: opens the pull request, builds a staging preview, runs the app's checks and puts it to the group's vote. FOUR SHAPES, each complete as written — (1) `taskId` plus `patch`, the default for new work: Homeroom applies the patch at the recorded base commit in the app's own repository and opens the pull request itself, so NO GitHub write access is needed; (2) `taskId` plus the `branch` you actually pushed, any name, if the patch is over about 250 KB or you already push to your fork (your call between (1) and (2), never the user's); (3) `slug` plus `prNumber` for an already-open pull request; (4) `proposalId` plus `branch` to UPDATE a proposal of the user's that is already up for a vote, which advances that same proposal onto your new commit instead of opening a second one, and clears the votes it has collected. A task prepare_work made WITH `proposalId` updates that proposal through (1) or (2): its patch is applied on the proposal's current commit, no push needed. Shape (4) needs no `slug`. When shape (4)'s target is a dev SESSION not yet up for a vote, it also takes `propose: true` (see `propose`): Homeroom promotes the session once the update lands, or as it stands with NO `branch` and nothing pushed; pass it only when the user has asked for the vote. TWO DESTINATIONS: by default work goes up for a VOTE; `share: true` on shape (2) lands it in the app's IN-PROGRESS area instead \u2014 a shared session with a preview, no PR, no vote; the charter has the rule. A task belongs to the USER'S USERNODE ACCOUNT, not to one chat — any session connected as that account, including a coding agent's own connector, can submit it, and doing so is the expected path. Only work from the user's own GitHub account is submitted under their name.",
     inputSchema: {
       taskId: z.number().int().positive().optional()
-        .describe('The task id from prepare_work — or printed in the work order text you were handed, which is the usual source when you are the coding agent. It belongs to the user’s Homeroom account, not to the chat that gave it to you, so you can submit it yourself.'),
+        .describe('The task id from prepare_work — or printed in the work order text you were handed, which is the usual source when you are the coding agent. It belongs to the user’s Homeroom account, not to the chat that gave it to you, so you can submit it yourself. A task prepare_work made with `proposalId` is an UPDATE task: whatever you submit with it (a patch or a branch) advances that proposal, never a new one.'),
       proposalId: z.number().int().positive().optional()
-        .describe('The id of one of the user’s own proposals that is already up for a vote, to UPDATE it with the branch you pushed rather than open a new proposal. Homeroom checks the branch is in their own fork and builds on the proposal’s current commit, then moves the proposal onto it — get_proposal reports where a proposal’s head lives and whether you can push to it directly. Every update clears the proposal’s votes and re-runs its checks, so submit a finished change rather than each attempt. The one exception is resubmitting the SAME commit with corrected testingPaths: no code moves, no votes are cleared, and the screenshots are simply re-shot on the routes you name. Cannot be combined with prNumber or patch.'),
+        .describe('The id of one of the user’s own proposals that is already up for a vote, to UPDATE it with the branch you pushed rather than open a new proposal. Homeroom checks the branch is in their own fork and builds on the proposal’s current commit, then moves the proposal onto it — get_proposal reports where a proposal’s head lives and whether you can push to it directly. Every update clears the proposal’s votes and re-runs its checks, so submit a finished change rather than each attempt. The one exception is resubmitting the SAME commit with corrected testingPaths: no code moves, no votes are cleared, and the screenshots are simply re-shot on the routes you name. Cannot be combined with prNumber. To update by PATCH instead of a pushed branch, send `patch` with the taskId of this proposal’s update work order (prepare_work with this proposalId): proposalId may ride along but is not needed, and must name the same proposal.'),
       slug: z.string().optional().describe('The app slug. Needed when submitting an already-open pull request by number, or a branch when you have an open task for the app and lost its id — slug + branch RECOVERS that task, it does not stand in for one, so with no open task call prepare_work first and submit with its taskId. NOT needed alongside proposalId — Homeroom reads the app off the proposal.'),
       prNumber: z.number().int().positive().optional()
         .describe('An already-open pull request to submit instead. It must come from the user’s own fork. This is also the recovery when submitting a branch returns pr_open_failed: open the pull request from the compareUrl that error returns, then call again with slug + prNumber.'),
@@ -4568,14 +4938,21 @@ function registerTools(server, ctx) {
       forkRepo: z.string().optional()
         .describe('The name of the fork you pushed to, if you forked under a name other than the app repository’s. The owner is always the user’s linked GitHub account and is never taken from here.'),
       patch: z.string().optional()
-        .describe('The change as a patch, the default way to submit new work — the output of `git format-patch <baseSha>..HEAD --stdout`, or a plain `git diff`. Homeroom applies it at the task’s recorded base commit, commits it in the app’s own repository and opens the pull request, so you need no GitHub write access at all. Requires taskId. Roughly 250 KB max; push a branch for anything larger, or when you already push to your fork. Patch or branch is your decision: never ask the user to choose.'),
+        .describe('The change as a patch, the default way to submit new work — the output of `git format-patch <baseSha>..HEAD --stdout`, or a plain `git diff`. Homeroom applies it at the task’s recorded base commit, commits it in the app’s own repository and opens the pull request, so you need no GitHub write access at all. Requires taskId. With an UPDATE task’s taskId (prepare_work with proposalId) the base is that proposal’s current commit instead, and the patch advances THAT proposal exactly as a branch update does; it is refused with `branch_moved` when the proposal is no longer at the task’s base commit (or at `expectedHeadSha`, when you pass the commit you rebased onto). After an update lands, the task’s base is its new head, so the next patch is made from there. Roughly 250 KB max; push a branch for anything larger, or when you already push to your fork. Patch or branch is your decision: never ask the user to choose.'),
+      // #4345: added after many clients cached the tool list, so it takes its
+      // digits as a string too.
+      patchUploadId: positiveIntId().optional()
+        .describe('Instead of `patch`: the `uploadId` printed by the upload command in your work order, which sends `git format-patch` output straight to Homeroom so a large patch is never retyped into this call (#4264). Requires a new-work taskId: an update’s patch is sent inline. Homeroom applies the uploaded bytes exactly as it applies `patch`: same base commit, same pull request. Uploads may be up to 1 MB. Refused if that upload was made for another task, or was replaced by a newer upload (submit the newest uploadId). The upload command needs a sandbox that can reach Homeroom; if yours cannot, send `patch` inline.'),
       source: z.enum(['work_order', 'assistant']).optional()
         .describe('Set to "work_order" when you are the coding agent submitting your own finished work, "assistant" when a human relayed it to you. Advisory only.'),
       title: z.string().optional().describe('A short title for the proposal. Defaults to the task description. On a SESSION update (shape 4 targeting a work-order continuation) it is stored and names the pull request created when the session is proposed — with or without propose: true — instead of the "<user>\'s changes" placeholder. On a target that already has a PR it RENAMES it (panel and GitHub; votes untouched) — a same-commit resubmit with just a title is the fix for a wrong auto-generated name, and it works on a fork-tracked proposal too. The answer reports `titleUpdated`, and `titleRejected` when the rename was refused: `imported_pr` means the pull request was opened by a different GitHub account and keeps its own author\'s title.'),
       description: z.string().optional().describe('What changed and why, for the people voting on it. This is the TECHNICAL half — it is filed as the pull request body and shown in the proposal\u2019s collapsed "Technical details" section, so implementation detail belongs here rather than in `summary`. '
-        + `At most ${MAX_PROPOSAL_DESCRIPTION_BYTES} UTF-8 bytes (that many plain ASCII characters; a dash, arrow or accented letter counts 2 to 3): a share or an update (shape 4) longer than that is refused before anything is written, and a new proposal\u2019s pull request body is cut at ${MAX_PROPOSAL_DESCRIPTION_BYTES} characters.`),
+        + `At most ${MAX_PROPOSAL_DESCRIPTION_BYTES} UTF-8 bytes (that many plain ASCII characters; a dash, arrow or accented letter counts 2 to 3): a share or an update longer than that is refused before anything is written, and a new proposal\u2019s pull request body is cut at ${MAX_PROPOSAL_DESCRIPTION_BYTES} characters. `
+        // #4263: what an update does with it, read off proposal-update.js
+        // applyProposedDescription rather than guessed.
+        + 'On an UPDATE it REPLACES the pull request body wholesale; it is not merged with the old one. Only the `Closes #N` lines and the before/after screenshots block are carried over, so send the full description voters should read (the change so far and this revision together), not just what changed this time, or omit it to leave the body exactly as it is. The answer reports `descriptionUpdated`, and `descriptionRejected` when it was not applied: `no_pr_yet` on a session with no pull request (its body is written when it is proposed), `imported_pr` on a pull request another GitHub account opened. A new description sent without `summary` marks the current summary stale, so a later refresh may rewrite it; send `summary` too to keep your words.'),
       summary: z.string().optional()
-        .describe('The USER-FACING half, and the first thing a voter reads: 1-3 short sentences, in plain everyday English, saying what changes for somebody USING the app. No file names, no identifiers, no code, no developer jargon — those belong in `description`. Not every voter is a developer, and a proposal that arrives without this shows them nothing but the technical description. Write what they would notice: what is different on screen, what they can now do, or what stops going wrong. Kept short (about 600 characters) — it is a summary, not a second description. On an UPDATE (shape 4, including a same-commit resubmit) it REPLACES the proposal\u2019s current summary — the way to correct one after it was first submitted. The answer reports `summaryUpdated`, and `summaryRejected` when it was refused.'),
+        .describe('The USER-FACING half, and the first thing a voter reads: 1-3 short sentences, in plain everyday English, saying what changes for somebody USING the app. No file names, no identifiers, no code, no developer jargon — those belong in `description`. Not every voter is a developer, and a proposal that arrives without this shows them nothing but the technical description. Write what they would notice: what is different on screen, what they can now do, or what stops going wrong. Kept short (about 600 characters) — it is a summary, not a second description. On an UPDATE (including a same-commit resubmit) it REPLACES the proposal\u2019s current summary — the way to correct one after it was first submitted. Omitted on an update, the current summary stays visible, but an update that moves the code or replaces the description marks it stale and a later refresh may rewrite it, so send it with every revision. The answer reports `summaryUpdated`, and `summaryRejected` when it was refused.'),
       testingPaths: z.array(z.string()).optional()
         .describe('Routes for the manual “Test this change” link and legacy checks. For before/after shots, describe how a person reaches each change in visibleChanges instead; Homeroom’s shots agent follows those steps on the exact before and after builds. On an UPDATE supplied routes replace the stored routes; omitting them keeps existing routes.'),
       testingSteps: z.string().optional()
@@ -4585,13 +4962,13 @@ function registerTools(server, ctx) {
       visualEvidence: z.unknown().optional()
         .describe('Older name for visibleChanges, still accepted. Send visibleChanges.'),
       expectedHeadSha: z.string().optional()
-        .describe('Only for an update: the proposal’s current commit as you last read it, from get_proposal’s `branch.headSha`. Pass it and Homeroom refuses with `branch_moved` if somebody advanced the proposal while you were working, instead of building on a head you have not seen. Optional — omitted, your branch still has to sit on top of whatever the current head is.'),
+        .describe('Only for an update: the proposal’s current commit as you last read it, from get_proposal’s `branch.headSha`. Pass it and Homeroom refuses with `branch_moved` if somebody advanced the proposal while you were working, instead of building on a head you have not seen. Optional — omitted, your branch still has to sit on top of whatever the current head is. For an update by patch it is the commit the patch was made from, where it is applied; omitted, that is the update task’s base commit.'),
       recheck: z.boolean().optional()
         .describe('Only with proposalId, on the commit already there: re-run the automated checks and legacy capture pipeline. The before/after shots have their own take-again action. No code moves and NO votes are cleared. Use it when the checks verdict is stale for a reason outside this proposal instead of pushing a commit to provoke a run.'),
       share: z.boolean().optional()
-        .describe('Land this work in the app\u2019s IN-PROGRESS area instead of putting it up for a vote (#1347). Homeroom creates a shared dev session on the branch you pushed, builds it a staging preview and shows it on the Dev board beside everyone else\u2019s work underway \u2014 no pull request, no checks gate, no votes cast. Use it while the work is still moving and worth others seeing: a long change, a second opinion, or "here is where I got to". The work order stays OPEN, so keep committing; passing `share: true` again pushes the new commits onto the SAME card rather than making a second one. When it is ready for the group, call submit_work again with proposalId set to the sessionId this returned, the branch, and propose: true. Requires taskId + branch: a patch or an open pull request is a submission for review by construction, and both are refused here, as is `proposalId` \u2014 to push new commits onto a card that already exists, call submit_work with proposalId + branch and no `share`, which is the same operation. Bounded by the same per-user active-session cap the browser\u2019s own "start a session" button obeys, because the preview behind the card is a real container.'),
+        .describe('Land this work in the app\u2019s IN-PROGRESS area instead of putting it up for a vote (#1347). Homeroom creates a shared dev session on the branch you pushed, builds it a staging preview and shows it on the Dev board beside everyone else\u2019s work underway \u2014 no pull request, no checks gate, no votes cast. Use it while the work is still moving and worth others seeing: a long change, a second opinion, or "here is where I got to". The work order stays OPEN, so keep committing; passing `share: true` again pushes the new commits onto the SAME card rather than making a second one. When it is ready for the group, call submit_work again with proposalId set to the sessionId this returned, the branch, and propose: true; if the card already has your last commit, proposalId and propose: true alone promote it, with no push. Requires taskId + branch: a patch or an open pull request is a submission for review by construction, and both are refused here, as is `proposalId` \u2014 to push new commits onto a card that already exists, call submit_work with proposalId + branch and no `share`, which is the same operation. Bounded by the same per-user active-session cap the browser\u2019s own "start a session" button obeys, because the preview behind the card is a real container.'),
       propose: z.boolean().optional()
-        .describe('Only with proposalId, when its target is a dev SESSION (a work-order continuation that is not yet up for a vote): after the update lands, promote the session to a group vote — the same act as the owner\'s "Propose to group" button, reopening the session first when it is paused. Pass it only when the user asked for this change to go to the vote; landing quietly stays the default, because the session is their workspace and they may want more turns on it. Ignored on a proposal that is already up for a vote.'),
+        .describe('Only on an update (proposalId, or an update task\'s taskId), when its target is one of the user\'s own dev SESSIONS that is not yet up for a vote (a CLI hand-off, a shared in-progress card, a work-order continuation): promote it to a group vote, the same act as the owner\'s "Propose to group" button. With `branch` or `patch`, it runs once the update lands, reopening the session first when it is paused. With proposalId and NO `branch` or `patch`, nothing is pushed and nothing else is written: the session goes up for the vote as it stands, on the commit it already has, paused or not. Use that when its code is already final, instead of pushing the same commit to a fork; only proposalId and propose are sent. Refused, with the reason, when it is not the user\'s session, is already up for a vote, merged or closed, or the platform\'s own promote checks say it is not ready (for example nothing submitted yet, or a turn still moving its branch). Pass it only when the user asked for this change to go to the vote; landing quietly stays the default, because the session is their workspace and they may want more turns on it. Ignored on an update to a proposal that is already up for a vote.'),
       agent: z.enum(['claude-code', 'codex', 'external']).optional()
         .describe('Which coding agent wrote it. Inferred from the connected chat product when omitted.'),
     },
@@ -4657,7 +5034,7 @@ function registerTools(server, ctx) {
   }, async ({
     taskId, slug, prNumber, proposalId, branch, forkRepo, patch, source, title, description, summary, agent,
     testingPaths, testingSteps, visibleChanges, visualEvidence,
-    expectedHeadSha, propose, recheck, share,
+    expectedHeadSha, propose, recheck, share, patchUploadId,
   }) => {
     const guard = scopeGuard(WRITE_SCOPE);
     if (guard) return guard;
@@ -4693,12 +5070,128 @@ function registerTools(server, ctx) {
         + 'rebuilds the card\'s preview. To create one, call it with taskId + branch + share.'
       );
     }
-    if (updating && !branch) {
+    // #4262. Shape (4) with `propose: true` and NO branch (nor, since #4263, a
+    // patch): put the user's own dev session up for the vote as it stands.
+    // Before this, promoting a session whose code was already final (PR
+    // #4258, a paused CLI hand-off with passing checks) took a push of the
+    // SAME commit to a fork branch and an update that moved nothing, only so
+    // `propose: true` had an update to ride on, and cloud coding sessions
+    // often refuse that push.
+    //
+    // It is the owner's "Propose to group" button and nothing more: the same
+    // POST /api/sessions/:id/promote the propose-after-update below runs,
+    // under this caller's own token, so the route applies every gate
+    // (ownership, open status, the CLI hand-off's nothing-submitted /
+    // turn-still-running / branch-moved preflight, the promoted-session cap,
+    // a pull request with commits on it). No reopen first: the route takes a
+    // paused session straight to review, as the button does, and a reopen
+    // would spend one of the owner's active slots and can start a sync that
+    // moves the branch under the commit being proposed. Nothing else is
+    // written, so a field only an update applies is refused, not dropped.
+    if (updating && !branch && !patch && propose === true) {
+      const updateOnly = Object.entries({
+        patchUploadId, prNumber, forkRepo, expectedHeadSha, recheck, title, description, summary,
+        testingPaths, testingSteps, visibleChanges: declared,
+      }).filter(([, v]) => v !== undefined && v !== null && v !== false && v !== '').map(([k]) => k);
+      if (updateOnly.length) {
+        return toolError(
+          'invalid_request',
+          `propose: true with no branch puts the session up for the vote as it stands and writes nothing else, so it `
+          + `does not take ${updateOnly.join(', ')}. Send proposalId and propose: true alone, or send those with an `
+          + 'update that carries the branch they belong to.'
+        );
+      }
+      const attempt = await callPlatform(baseUrl, accessToken, 'POST', `/api/sessions/${proposalId}/promote`, {});
+      // Read AFTER the route has decided, never instead of it: the row only
+      // words the answer (which app, which pull request, why it was refused).
+      const read = await callPlatform(baseUrl, accessToken, 'GET', `/api/sessions/${proposalId}`);
+      const row = read.ok && read.body && read.body.session ? read.body.session : null;
+      const named = proposalRefSentence(proposalId, row && row.pr_number);
+      if (!attempt.ok) {
+        if (attempt.networkError) return platformError(attempt);
+        // The session route answers only for the owner (or an admin), so a 404
+        // there, or a row that names somebody else, is the same refusal.
+        if (read.status === 404 || (row && row.user_id != null && Number(row.user_id) !== Number(user.id))) {
+          return toolError('not_your_session',
+            `Proposal ${proposalId} is not a dev session of yours, so it cannot be put up for the vote from here: `
+            + 'only the person who started a session can propose it. Check the id with get_proposal.');
+        }
+        const status = row && row.status;
+        if (status === 'promoted' || status === 'merging') {
+          return toolError('already_proposed', status === 'merging'
+            ? `${named} has already won its vote and is merging, so there is nothing to promote.`
+            : `${named} is already up for the group's vote, so there is nothing to promote. Follow it with get_proposal.`);
+        }
+        if (status === 'merged') {
+          return toolError('already_merged',
+            `${named} has already merged, so there is nothing to put up for a vote. Anything further is a new `
+            + 'change through prepare_work.');
+        }
+        if (status && status !== 'active' && status !== 'paused') {
+          return toolError('session_closed',
+            `${named} is ${status}, so it cannot go up for a vote. Anything further is a new change through `
+            + 'prepare_work.');
+        }
+        // Open and the caller's own: the route's refusal, in its own words
+        // (nothing submitted yet, a turn still running, the promoted cap, no
+        // commits on its branch).
+        return changeRouteError(attempt);
+      }
+      // The same bookkeeping the propose-after-update does: a share's work
+      // order is finished once its card is in front of the group. Advisory.
+      await externalAgentTasks.closeTaskForSession(pool, user.id, proposalId, {
+        source,
+        clientId: clientId || null,
+      });
+      const promotedBody = attempt.body || {};
+      const promotedPr = Number(promotedBody.prNumber) > 0 ? Number(promotedBody.prNumber)
+        : (row && Number(row.pr_number) > 0 ? Number(row.pr_number) : null);
+      const promotedSlug = (row && row.app_slug) || '';
+      return toolResult({
+        proposalId,
+        appSlug: promotedSlug,
+        prNumber: promotedPr,
+        prUrl: typeof promotedBody.prUrl === 'string' ? promotedBody.prUrl : ((row && row.pr_url) || null),
+        externalAgent: externalAgentTasks.normalizeAgent(agent, clientName),
+        headSha: null,
+        votesCleared: null,
+        submittedVia: null,
+        testingPaths: null,
+        testingPathsRejected: null,
+        testingUpdated: null,
+        captureRerun: null,
+        shotsState: null,
+        visibleChangesAccepted: null,
+        visibleChangesRejected: null,
+        shotsRequired: null,
+        shotsNextStep: null,
+        proposed: true,
+        proposeError: null,
+        shared: null,
+        sessionId: null,
+        webPath: promotedSlug ? changeWebPath(origin, promotedSlug, proposalId) : origin,
+        nextStep: `${proposalRefSentence(proposalId, promotedPr)} is now UP FOR THE GROUP'S VOTE as it stood: `
+          + 'nothing was pushed and no code moved. Checks and the staging preview build automatically where '
+          + 'they are not already done; follow them with get_proposal. It ships only if the group votes it in.',
+      });
+    }
+    // #4263: or a patch, with the taskId of the proposal's update work order.
+    if (updating && !branch && !patch) {
       return toolError(
         'invalid_request',
-        'An update needs `branch` too: the branch in the user\'s own fork that carries the new commits. Homeroom '
-        + 'reads it from GitHub, so it has to be pushed first.'
+        'An update needs the new commits: `branch`, the branch in the user\'s own fork that carries them, or '
+        + '`patch` with the taskId of this proposal\'s update work order. Homeroom reads a branch from GitHub, so it '
+        + 'has to be pushed first. To put a dev session up for the vote as it stands, with nothing new to push, '
+        + 'pass propose: true and no branch instead.'
       );
+    }
+    // #4264: an uploaded patch is named by the upload's id, and belongs to the
+    // one task whose work order printed the command.
+    if (patchUploadId !== undefined && !taskId) {
+      return toolError('invalid_request', 'patchUploadId needs the taskId from the work order: an upload belongs to one task.');
+    }
+    if (patchUploadId !== undefined && patch) {
+      return toolError('invalid_request', 'Send the patch inline as `patch` or name the one you uploaded with `patchUploadId`, not both.');
     }
     // Enumerate every accepted shape rather than naming one. An agent that
     // hits this error should learn the surface — the run that produced this
@@ -4819,6 +5312,8 @@ function registerTools(server, ctx) {
       forkRepo,
       expectedHeadSha,
       patch,
+      // #4264: the uploaded patch's id, resolved by the service under the task lock.
+      ...(patchUploadId !== undefined ? { patchUploadId } : {}),
       source,
       agent,
       title,
@@ -4854,8 +5349,11 @@ function registerTools(server, ctx) {
 
     // An UPDATE landed on a proposal that already exists, so there is no
     // "now up for a vote" to report — the interesting facts are the new head,
-    // and that the votes it had collected are gone.
-    if (updating) {
+    // and that the votes it had collected are gone. #4263: an update task's
+    // taskId reaches the same update without a proposalId, and the service
+    // says so, naming the proposal its task recorded.
+    if (updating || result.update === true) {
+      const targetId = updating ? proposalId : result.proposalId;
       const cleared = Number.isFinite(result.votesCleared) ? result.votesCleared : 0;
       const shotOn = result.testingPaths && result.testingPaths.length
         ? ` The screenshots the group votes on are shot on ${result.testingPaths.join(', ')}.`
@@ -4895,12 +5393,12 @@ function registerTools(server, ctx) {
       let proposeError = null;
       if (propose === true && result.targetKind !== 'proposal') {
         const promoteOnce = () => callPlatform(
-          baseUrl, accessToken, 'POST', `/api/sessions/${proposalId}/promote`, {}
+          baseUrl, accessToken, 'POST', `/api/sessions/${targetId}/promote`, {}
         );
         let attempt = result.resumeRequired ? null : await promoteOnce();
         if (!attempt || (!attempt.ok && attempt.status === 404)) {
           const resumed = await callPlatform(
-            baseUrl, accessToken, 'POST', `/api/sessions/${proposalId}/resume`, {}
+            baseUrl, accessToken, 'POST', `/api/sessions/${targetId}/resume`, {}
           );
           attempt = resumed.ok ? await promoteOnce() : resumed;
         }
@@ -4919,7 +5417,7 @@ function registerTools(server, ctx) {
           // this is the first moment the work is genuinely in front of the
           // group. Advisory: it never throws, and a promote that landed is
           // never failed over its own bookkeeping.
-          await externalAgentTasks.closeTaskForSession(pool, user.id, proposalId, {
+          await externalAgentTasks.closeTaskForSession(pool, user.id, targetId, {
             branch,
             submittedVia: result.submittedVia,
             source,
@@ -4945,7 +5443,7 @@ function registerTools(server, ctx) {
       const proposeNote = proposed === true
         ? ` And it is now UP FOR THE GROUP'S VOTE${result.prNumber ? ` as ${proposalRef(result.proposalId, result.prNumber)}` : ''} — checks and the staging preview build automatically; follow them with get_proposal.`
         : proposed === false
-          ? ` The update landed, but putting it up for the vote did not: ${proposeError} The commit is safe on the session — fix the cause and call submit_work again with propose: true (the same commit is fine), or propose it from the session page.`
+          ? ` The update landed, but putting it up for the vote did not: ${proposeError} The commit is safe on the session — fix the cause and call submit_work again with proposalId ${proposalId} and propose: true and no branch (nothing needs pushing again), or propose it from the session page.`
           : (propose === true ? ' propose: true had nothing to do — this target is already up for the group\'s vote.' : '');
       // Only worth a line when a vote is NOT already reporting the name: a
       // proposed session's PR carries the title, and the note above names it.
@@ -4993,14 +5491,28 @@ function registerTools(server, ctx) {
         : result.previewRebuilding
           ? ' Its staging preview is rebuilding now; use get_proposal to follow it.'
           : ' No preview build started for this push.';
-      const landedStep = result.targetKind === 'session'
-        ? 'The shared card now points at your new commit. Nothing is gated on it and no votes are being '
-          + `collected.${buildNote}${shotOn}`
-        : `${named} now points at your new commit.${cleared > 0
+      // A head move services/integration.js classifies as mechanical or
+      // resolved keeps the approvals: the new commit only brings the approved
+      // code up to date with main. Saying the votes were cleared there sends
+      // the author to chase re-reviews nobody was asked for.
+      const atRisk = Number.isInteger(result.votesAtRisk) ? result.votesAtRisk : 0;
+      const votesStep = result.votesKept === true
+        ? `${atRisk > 0
+          ? ` The ${atRisk} vote${atRisk === 1 ? '' : 's'} it had collected still stand`
+          : ' Its votes were not reset'}, because the new commit only brings the approved code up to date with main.`
+          + (result.previewRebuilding
+            ? ' Its checks and staging preview are rebuilding against the merged code; use get_proposal to follow them.'
+            : ' Its passing checks carry over to the merged commit.')
+          + shotOn
+        : `${cleared > 0
           ? ` The ${cleared} vote${cleared === 1 ? '' : 's'} it had collected were cleared, because they were cast on the old code`
           : ' Any votes it had collected were cleared, because they were cast on the old code'}`
           + ' — reviewers have been asked to look again. Checks and the staging preview rebuild automatically; '
           + `use get_proposal to follow them.${shotOn}`;
+      const landedStep = result.targetKind === 'session'
+        ? 'The shared card now points at your new commit. Nothing is gated on it and no votes are being '
+          + `collected.${buildNote}${shotOn}`
+        : `${named} now points at your new commit.${votesStep}`;
 
       return toolResult({
         proposalId: result.proposalId,
@@ -5091,7 +5603,8 @@ function registerTools(server, ctx) {
           + 'Nothing is gated on it and no votes are being collected. Keep committing and call submit_work with '
           + '`share: true` again to push more commits onto this same card. When it is ready for the group, call '
           + `submit_work with proposalId ${result.sessionId}, the branch, and propose: true — that puts THIS card `
-          + 'up for the vote instead of opening a second proposal for the same branch.',
+          + 'up for the vote instead of opening a second proposal for the same branch. If the card already has '
+          + 'your last commit, proposalId and propose: true alone do it, with nothing to push.',
       });
     }
 
@@ -5174,6 +5687,165 @@ function registerTools(server, ctx) {
         + 'Checks and the staging preview build automatically — use get_proposal to follow it. It merges when the group approves it.'
         + testingRouteNote(testing, false)
         + await unlinkedRequestsNote(result),
+    });
+  });
+
+  // ── list_my_work_orders / close_work_order (#4266) ───────────────────
+  //
+  // prepare_work's `at_capacity` used to be a dead end: the cap counts work
+  // orders held open across every app and every session, and nothing here
+  // could say which ones or put one away. One session found all ten slots held
+  // by older work orders from other sessions and had to stop and ask the user.
+  // The list is exactly the set the cap counts (listHeldWorkOrders shares its
+  // WHERE clause), and the close is the same `abandoned` ending prepare_work's
+  // `restart` writes. No expiry is added: a work order still stops counting
+  // after its fourteen days, as before, and otherwise lasts until it is
+  // submitted or put away.
+  const revisedProposalSchema = () => z.object({
+    proposalId: z.number(),
+    prNumber: z.number().nullable(),
+  }).nullable()
+    .describe('The proposal this work order REVISES, for one prepared with proposalId: name it as "PR #2151 (proposal 4223)". Null for a work order that opens a new proposal.');
+
+  server.registerTool('list_my_work_orders', {
+    title: 'List your unsubmitted work orders',
+    description: `List the user's own work orders that were prepared and not yet submitted: exactly the ones that count toward the limit of ${connectorLimits.LIMITS.openTasks} that prepare_work holds open at once, across every app and every chat. Read it when prepare_work answers at_capacity, or before starting more work. Each row has its taskId, the app, the requests it implements, the proposal it revises if it updates one, when it was created, its last activity and when it stops counting by itself, most recently active first. A work order shared as an in-progress card holds no slot and is not listed. A slot comes back when a work order is submitted with submit_work, or put away with close_work_order; check with the user before closing one, since a coding agent may still be building it. Read-only.`,
+    inputSchema: {},
+    outputSchema: {
+      workOrders: z.array(z.object({
+        taskId: z.number()
+          .describe('What close_work_order and submit_work take, and what the work order text prints.'),
+        appSlug: z.string(),
+        appName: z.string(),
+        title: z.string(),
+        requestNumbers: z.array(z.number())
+          .describe('The requests it implements. Empty for a brief with no request behind it.'),
+        createdAt: z.string().nullable(),
+        lastActivityAt: z.string().nullable()
+          .describe('The latest of when it was prepared and when the user last claimed one of its requests: prepare_work asked for it again, claim_request, or a progress note. Nothing else is recorded against a work order, so an agent can be building one without moving this.'),
+        expiresAt: z.string().nullable()
+          .describe('When it stops counting toward the limit by itself if nobody submits or closes it.'),
+        branch: z.string().nullable(),
+        agent: z.enum(['claude-code', 'codex', 'external']),
+        revisesProposal: revisedProposalSchema(),
+      })),
+      count: z.number().describe('How many slots are in use: the number the limit is checked against.'),
+      limit: z.number(),
+      atCapacity: z.boolean().describe('True when prepare_work would refuse new work until one is freed.'),
+      truncated: z.boolean(),
+      nextStep: z.string(),
+    },
+    annotations: readAnnotations,
+  }, async () => {
+    const guard = scopeGuard(READ_SCOPE);
+    if (guard) return guard;
+    let held;
+    try {
+      held = await externalAgentTasks.listHeldWorkOrders(pool, user.id);
+    } catch (err) {
+      log.warn('mcp-tools', 'list_my_work_orders failed', { err: err.message });
+      return toolError('platform_unavailable', 'Homeroom could not read your work orders just now. Try again shortly.', { retryable: true });
+    }
+    const limit = connectorLimits.LIMITS.openTasks;
+    const count = held.length;
+    const atCapacity = count >= limit;
+    return readResult('list_my_work_orders', {
+      workOrders: held.slice(0, MAX_LIST_ITEMS).map(shapeWorkOrder),
+      count,
+      limit,
+      atCapacity,
+      truncated: count > MAX_LIST_ITEMS,
+      nextStep: count === 0
+        ? `The user holds no unsubmitted work orders, so all ${limit} slots are free.`
+        : `${count} of ${limit} work-order slots are in use${atCapacity
+          ? ', which is the limit, so prepare_work refuses new work until one is freed'
+          : ''}. A slot comes back when its work order is submitted with submit_work, or put away with `
+          + 'close_work_order and its taskId. Check with the user before closing one: a coding agent may still '
+          + 'be building it, and once closed it can no longer be submitted. The least recently active are last.',
+    });
+  });
+
+  server.registerTool('close_work_order', {
+    title: 'Close one of your unsubmitted work orders',
+    description: `Put away ONE of the user's own unsubmitted work orders by its taskId, from list_my_work_orders, which frees the slot it holds toward prepare_work's limit of ${connectorLimits.LIMITS.openTasks} straight away. It is the same close prepare_work's restart makes, and it cannot be undone: a coding agent still building that work order can no longer submit it. So check with the user which one to close, unless they already named it. Nothing else changes: no branch, fork or pull request is touched, a proposal it was revising stays up for its vote, and its requests stay claimed by the user (release_request clears a claim). Refused with already_submitted for work already handed in, already_closed for one closed before, already_shared for one shared as an in-progress card, which holds no slot, and unknown_task for an id that is not the user's. To build the same request again later, call prepare_work.`,
+    inputSchema: {
+      taskId: z.number().int().positive()
+        .describe('The work order\'s taskId, as list_my_work_orders and prepare_work report it.'),
+    },
+    outputSchema: {
+      closed: z.boolean(),
+      taskId: z.number(),
+      appSlug: z.string(),
+      appName: z.string(),
+      title: z.string(),
+      requestNumbers: z.array(z.number()),
+      revisesProposal: revisedProposalSchema(),
+      freedSlot: z.boolean()
+        .describe('False only for a work order already past its expiry, which had stopped counting before it was closed.'),
+      openWorkOrders: z.number().nullable()
+        .describe('How many slots the user holds now. Null if the count could not be read after the close.'),
+      limit: z.number(),
+      nextStep: z.string(),
+    },
+    annotations: writeAnnotations,
+  }, async ({ taskId }) => {
+    const guard = scopeGuard(WRITE_SCOPE);
+    if (guard) return guard;
+    if (!Number.isSafeInteger(taskId) || taskId <= 0) {
+      return toolError('invalid_request', 'taskId must be the id of one of your work orders, as list_my_work_orders reports it.');
+    }
+    let result;
+    try {
+      result = await externalAgentTasks.closeWorkOrder(pool, user.id, taskId);
+    } catch (err) {
+      log.warn('mcp-tools', 'close_work_order failed', { taskId, err: err.message });
+      return toolError('platform_unavailable', 'Homeroom could not close that work order just now. Try again shortly.', { retryable: true });
+    }
+    if (!result.ok) {
+      return toolError(result.code, result.message, {
+        ...(result.retryable ? { retryable: true } : {}),
+        ...(result.proposalId ? { proposalId: result.proposalId } : {}),
+        ...(result.sessionId ? { sessionId: result.sessionId } : {}),
+      });
+    }
+
+    // What the caller holds now, from the same list the cap counts. Advisory:
+    // the close has happened, so a failed count is reported as unknown.
+    let openWorkOrders = null;
+    try {
+      openWorkOrders = (await externalAgentTasks.listHeldWorkOrders(pool, user.id)).length;
+    } catch (err) {
+      log.warn('mcp-tools', 'close_work_order recount failed (continuing)', { err: err.message });
+    }
+    const limit = connectorLimits.LIMITS.openTasks;
+    const shaped = shapeWorkOrder(result);
+    const requests = shaped.requestNumbers;
+    const refs = requests.map((n) => `#${n}`).join(', ');
+    const proposal = shaped.revisesProposal;
+    return toolResult({
+      closed: true,
+      taskId: shaped.taskId,
+      appSlug: shaped.appSlug,
+      appName: shaped.appName,
+      title: shaped.title,
+      requestNumbers: requests,
+      revisesProposal: proposal,
+      freedSlot: result.freedSlot === true,
+      openWorkOrders,
+      limit,
+      nextStep: `Work order ${shaped.taskId} is closed`
+        + (result.freedSlot === true
+          ? `, and its slot is free${openWorkOrders === null ? '' : `: the user now holds ${openWorkOrders} of ${limit}`}. `
+          : '. It had already stopped counting toward the limit. ')
+        + (requests.length
+          ? `The user may still be marked as working on request${requests.length === 1 ? '' : 's'} ${refs}; `
+            + 'if they have stopped, release_request clears that. '
+          : '')
+        + (proposal
+          ? `${proposalRefSentence(proposal.proposalId, proposal.prNumber)}, which it was revising, is unchanged and still up for its vote. `
+          : '')
+        + 'Nothing on GitHub was touched. To build the same request again, call prepare_work: it starts from the '
+        + 'app\'s current code.',
     });
   });
 
@@ -6051,6 +6723,34 @@ function registerTools(server, ctx) {
     const sNum = (v) => (Number.isFinite(Number(v)) && v !== null && v !== '' ? Number(v) : 0);
     const sNumOrNull = (v) => (v == null || !Number.isFinite(Number(v)) ? null : Number(v));
     const sData = (value, max = MAX_STUDIO_TEXT) => (value == null ? null : untrusted(JSON.stringify(value, null, 1), max));
+    // A trial's spec, whole up to the platform's own bound (bench/studio.js
+    // TRIAL_SPEC_CHARS): a first version's can draw two full screens.
+    const MAX_TRIAL_SPEC = 120000;
+    const MODEL_ID_OUT_RE = /^[\w./:@+-]{1,160}$/;
+    // A drawn screen's measure (spec-html.js screenStats): numbers only.
+    const screenOut = (sc) => ({
+      size: sc?.size === 'desktop' ? 'desktop' : 'phone', height: sNumOrNull(sc?.height), chars: sNumOrNull(sc?.chars),
+      svgs: sNumOrNull(sc?.svgs), shapes: sNumOrNull(sc?.shapes), overBudget: sc?.overBudget === true,
+    });
+    // What a trial cost, stage by stage (services/stage-costs.js breakdown):
+    // numbers, stage names and model ids, nothing written by a model.
+    const costBreakdownOut = (b) => {
+      if (!b || typeof b !== 'object' || !Array.isArray(b.stages)) return null;
+      return {
+        totalUsd: sNumOrNull(b.totalUsd),
+        stages: b.stages.slice(0, 8).map((x) => ({
+          stage: /^[a-z_]{1,40}$/.test(String(x?.stage || '')) ? String(x.stage) : 'unknown',
+          model: typeof x?.model === 'string' && MODEL_ID_OUT_RE.test(x.model) ? x.model : null,
+          usd: sNumOrNull(x?.usd),
+          ...(x?.inputTokens != null ? { inputTokens: sNumOrNull(x.inputTokens) } : {}),
+          ...(x?.outputTokens != null ? { outputTokens: sNumOrNull(x.outputTokens) } : {}),
+          ...(Array.isArray(x?.screens) ? { screens: x.screens.slice(0, 6).map(screenOut) } : {}),
+          ...(x?.overBudget === true ? { overBudget: true } : {}),
+        })),
+        other: { usd: sNumOrNull(b.other?.usd) },
+        ...(b.note ? { note: String(b.note).slice(0, 200) } : {}),
+      };
+    };
     const studioRefusal = (result, what) => {
       const b = result.body && typeof result.body === 'object' ? result.body : {};
       const code = typeof b.code === 'string' && PLATFORM_CODE_RE.test(b.code) ? b.code : null;
@@ -6095,6 +6795,18 @@ function registerTools(server, ctx) {
       reference: a?.reference ? untrusted(a.reference, 80) : null,
       pack: a?.pack ? { id: sNum(a.pack.id), name: a.pack.name ? untrusted(a.pack.name, 120) : null, version: sNumOrNull(a.pack.version) } : null,
     });
+    // Whether a build could look at its own screens (services/bench/runner.js
+    // buildStage): what its prompt told it, what its model was handed, and the
+    // looks it took in the in-loop browser.
+    const sightShape = z.object({
+      told: z.boolean().nullable(), passed: z.boolean().nullable(),
+      screenshots: z.number(), snapshots: z.number(), navigations: z.number(),
+    });
+    const sightOut = (s) => (s && typeof s === 'object' ? {
+      told: typeof s.told === 'boolean' ? s.told : null,
+      passed: typeof s.passed === 'boolean' ? s.passed : null,
+      screenshots: sNum(s.screenshots), snapshots: sNum(s.snapshots), navigations: sNum(s.navigations),
+    } : null);
     const studioTrialShape = z.object({
       trialId: z.number(), runId: z.number(), taskId: z.number(), ref: z.string().nullable(), appName: z.string().nullable(),
       arm: armShape, armLabel: z.string(), attempt: z.number(), status: z.string(), step: z.string().nullable(),
@@ -6104,14 +6816,14 @@ function registerTools(server, ctx) {
       shots: z.array(z.object({ caption: z.string(), artifactId: z.string().nullable() })),
       code: z.any().nullable(), preview: z.any().nullable(), error: z.string().nullable(),
       final: z.string(), critique: z.string().nullable(), criteria: z.object({ held: z.number(), of: z.number() }).nullable(),
-      updatedAt: z.string().nullable(),
+      updatedAt: z.string().nullable(), sight: sightShape.nullable(), costBreakdown: z.any().nullable().optional(),
     });
     const studioTrialOut = (t) => ({
       trialId: sNum(t.trialId), runId: sNum(t.runId), taskId: sNum(t.taskId),
       ref: t.ref ? untrusted(t.ref, 80) : null, appName: t.appName ? untrusted(t.appName, 120) : null,
       arm: armOut(t.arm), armLabel: untrusted(t.armLabel, 200) || '', attempt: sNum(t.attempt), status: String(t.status || ''),
       step: t.step ? String(t.step) : null, startedAt: t.startedAt || null, finishedAt: t.finishedAt || null,
-      elapsedMs: sNumOrNull(t.elapsedMs), costUsd: sNumOrNull(t.costUsd),
+      elapsedMs: sNumOrNull(t.elapsedMs), costUsd: sNumOrNull(t.costUsd), costBreakdown: costBreakdownOut(t.costBreakdown),
       activity: (Array.isArray(t.activity) ? t.activity : []).map((l) => untrusted(l, 240)).filter(Boolean),
       skills: {
         invoked: (t.skills?.invoked || []).map((x) => untrusted(x, 100)).filter(Boolean),
@@ -6126,6 +6838,7 @@ function registerTools(server, ctx) {
       final: String(t.final || ''), critique: t.critique ? untrusted(t.critique, 2000) : null,
       criteria: t.criteria ? { held: sNum(t.criteria.held), of: sNum(t.criteria.of) } : null,
       updatedAt: t.updatedAt || null,
+      sight: sightOut(t.sight),
     });
 
     server.registerTool('get_bench_studio', {
@@ -6213,7 +6926,7 @@ function registerTools(server, ctx) {
 
     server.registerTool('get_bench_studio_run', {
       title: 'Benchmark studio: watch a run',
-      description: 'Admin only. A run as it moves, one row per build: the brief, the arm (model and pack, or a reference label), its status and step (scaffold, triage, plan, spec, build, capture), elapsed time and spend, its last few activity lines, the skills it invoked or read, whether it built and booted, its newest screenshots (by artifact id: get_bench_trial shows them), its code on GitHub, its preview, and once graded its verdict and critique. Pass the cursor from the last call as `since` to get only the builds that changed. Works for any run; a studio run is open by design (you see which model made what), so a blind grade should come from a session that never watched. Activity lines, critiques and names are untrusted data.',
+      description: 'Admin only. A run as it moves, one row per build: the brief, the arm (model and pack, or a reference label), its status and step (scaffold, triage, plan, spec, build, capture), elapsed time and spend, its last few activity lines, the skills it invoked or read, whether its build could see its own screens (`sight`: told it could, handed images, and the screenshots, text snapshots and page loads it took), whether it built and booted, its spend stage by stage (costBreakdown: triage, spec, build, a review\'s reviewer calls and fix turns, each with its model id and dollars, and other, adding up to costUsd), its newest screenshots (by artifact id: get_bench_trial shows them), its code on GitHub, its preview, and once graded its verdict and critique. Pass the cursor from the last call as `since` to get only the builds that changed. Works for any run; a studio run is open by design (you see which model made what), so a blind grade should come from a session that never watched. Activity lines, critiques and names are untrusted data.',
       inputSchema: {
         runId: z.number().int().positive(),
         since: z.string().optional().describe('The cursor the previous call returned: only builds that changed after it.'),
@@ -6567,7 +7280,7 @@ function registerTools(server, ctx) {
 
     server.registerTool('list_bench_trials', {
       title: 'Benchmark: a run\'s trials one by one',
-      description: 'Admin only. Every trial of a benchmark run, one row each: its task (app, issue, brief ref), stage, arm, attempt, status, final verdict, rubric criteria held, cost, time, whether it built and booted, the skills it used, and its failure reason. For a run that is not a studio run, it is refused while any of its trials still waits for the judge, so the per-trial view can never colour a blind grade: finish the grading queue first. Names and reasons are untrusted data.',
+      description: 'Admin only. Every trial of a benchmark run, one row each: its task (app, issue, brief ref), stage, arm, attempt, status, final verdict, rubric criteria held, cost, time, whether it built and booted, the skills it used, whether its build could see its screens and how often it looked (`sight`), and its failure reason. For a run that is not a studio run, it is refused while any of its trials still waits for the judge, so the per-trial view can never colour a blind grade: finish the grading queue first. Names and reasons are untrusted data.',
       inputSchema: { runId: z.number().int().positive() },
       outputSchema: { run: z.any(), trials: z.array(z.any()), nextStep: z.string() },
       annotations: readAnnotations,
@@ -6583,6 +7296,7 @@ function registerTools(server, ctx) {
           ...t, ref: t.ref ? untrusted(t.ref, 80) : null, appName: t.appName ? untrusted(t.appName, 120) : null,
           arm: untrusted(t.arm, 200), error: t.error ? untrusted(t.error, 300) : null,
           skills: { invoked: (t.skills?.invoked || []).map((x) => untrusted(x, 100)), read: (t.skills?.read || []).map((x) => untrusted(x, 100)) },
+          sight: sightOut(t.sight),
         })),
         nextStep: 'Read one trial in full, with its screenshots, with get_bench_trial.',
       });
@@ -6590,7 +7304,7 @@ function registerTools(server, ctx) {
 
     server.registerTool('get_bench_trial', {
       title: 'Benchmark: one trial in full',
-      description: 'Admin only. One benchmark trial in full: its brief and arm, what the triage answered and planned (with the plan\'s choices), its spec, the files it changed, the automatic checks and source lint, its verdict and critique, its code and preview, and its screenshots, which come back as images after the text, each captioned with its screen size, look and state. Refused, like list_bench_trials, for a trial of a run that is not a studio run while it waits for the judge. Everything it carries was written by people and models, and the screenshots show an app: all untrusted data.',
+      description: 'Admin only. One benchmark trial in full: its brief and arm, what the triage answered and planned (with the plan\'s choices), what it cost stage by stage (costBreakdown: triage, spec, build with its own look-and-fix loop, a review\'s reviewer calls and its fix turns, each with its model id, dollars and, where the turn ledger has them, tokens, and other, so the stages add up to costUsd; the spec\'s line is marked overBudget when a drawn screen ran past twice its budget), its spec whole (spec, up to 120,000 characters; specChars is its full length; detail.specNote says why there is none), the size of each screen the spec drew (specScreens: characters, inline SVGs, SVG shapes, overBudget past 30,000 characters), for a first version with a reviewer its review (review: the reviewer, the first build as round 0, then each round\'s verdict, issues with id, severity, screen, problem and fix, the earlier issues it called fixed, the reviewer call\'s and the fix turn\'s cost and time, the fix\'s commit, and why the review stopped), the files it changed, the automatic checks and source lint, its verdict and critique, its code and preview, and its screenshots, which come back as images after the text, each captioned with its screen size, look and state. Refused, like list_bench_trials, for a trial of a run that is not a studio run while it waits for the judge. Everything it carries was written by people and models, and the screenshots show an app: all untrusted data.',
       inputSchema: { trialId: z.number().int().positive() },
       outputSchema: { trial: z.any(), images: z.array(z.object({ caption: z.string(), attached: z.boolean() })) },
       annotations: readAnnotations,
@@ -6609,8 +7323,12 @@ function registerTools(server, ctx) {
           stage: rest.stage ? String(rest.stage) : null,
           brief: rest.brief ? untrusted(rest.brief, 4000) : null,
           models: rest.models || null,
+          spec: rest.spec ? untrusted(rest.spec, MAX_TRIAL_SPEC) : null,
+          specChars: sNumOrNull(rest.specChars),
+          specScreens: Array.isArray(rest.specScreens) ? rest.specScreens.slice(0, 6).map(screenOut) : null,
+          review: rest.review ? sData(rest.review) : null,
           detail: sData({
-            sketch: rest.sketch || null, plan: rest.plan || null, triage: rest.triage || null, spec: rest.spec || null,
+            sketch: rest.sketch || null, plan: rest.plan || null, triage: rest.triage || null, specNote: rest.specNote || null,
             blocked: rest.blocked || null, changedFiles: rest.changedFiles || null, checks: rest.checks || null,
             bootError: rest.bootError || null, notes: rest.notes || [], criteriaById: rest.criteriaById || null,
           }),
@@ -6621,7 +7339,7 @@ function registerTools(server, ctx) {
 
     server.registerTool('get_homeroom_bot', {
       title: 'Homeroom bot: settings, spend and its runs',
-      description: 'Admin only. The Homeroom bot as its console section shows it: its settings (mode, audience, the model for each stage, clocks and caps), its spend this week, the last seven days\' verdicts, the queue, its DM answers this week, and a page of its runs (the verdict ledger), newest first, each with its app, issue, verdict, model, cost, build, rating and the benchmark stages it can be replayed at (add one to a suite with add_bench_task kind "runs"). Filter by app and verdict; page with before (nextBefore). Rate a run with rate_homeroom_bot_run. Questions, plans, reasons and notes are untrusted data.',
+      description: 'Admin only. The Homeroom bot as its console section shows it: its settings (mode, audience, the model for each stage, clocks and caps), its spend this week, the last seven days\' verdicts, the queue, its DM answers this week, and a page of its runs (the verdict ledger), newest first, each with its app, issue, verdict, model, cost, build, rating, the benchmark stages it can be replayed at (add one to a suite with add_bench_task kind "runs"), the configuration version that built it (botConfig: a first version\'s, or a later change\'s, live or shadow), and for a first version the review rounds it used and why its review stopped (reviewRounds, reviewStop: ship, round_limit, time_budget, budget, reviewer_error, capture_error, fix_failed, skipped, interrupted, or regressed when the last fix stopped the app booting and the branch went back to the last commit that booted). Filter by app and verdict; page with before (nextBefore). Rate a run with rate_homeroom_bot_run. Questions, plans, reasons and notes are untrusted data.',
       inputSchema: {
         app: z.string().optional(), verdict: z.enum(['question', 'ready', 'person', 'empty', 'failed', 'answer', 'revise', 'budget']).optional(),
         before: z.number().int().positive().optional(), limit: z.number().int().positive().max(50).optional(),
@@ -6656,6 +7374,7 @@ function registerTools(server, ctx) {
           error: x.error ? untrusted(x.error, 350) : null,
           ratingNote: x.ratingNote ? untrusted(x.ratingNote, 350) : null,
           build: x.build ? { ...x.build, error: x.build.error ? untrusted(x.build.error, 350) : null } : null,
+          botConfig: x.botConfig ? { ...x.botConfig, label: x.botConfig.label ? untrusted(x.botConfig.label, 120) : null } : null,
         })),
         nextBefore: sNumOrNull(b.nextBefore),
       });
@@ -6744,22 +7463,231 @@ function registerTools(server, ctx) {
         images: shots.captions, leftOut: sNum(b.leftOut), note: b.note || null,
       }, shots.content);
     });
+
+    // ── The Homeroom bot's configurations ───────────────────────────────
+    //
+    // services/bot-configs.js has the design, routes/bot-configs.js the
+    // routes (/api/bot-configs). A configuration is a versioned recipe for
+    // how the bot builds, in one of two scopes: `first_version` (a project's
+    // first version) or `later` (every other build, live or shadow). Each
+    // scope's current one builds, and its side ones are built silently
+    // beside it for comparison. An admin compares them by picking blind
+    // pairs. Every tool's scope defaults to first_version, as before scopes.
+    // Labels and notes are admin-written; briefs, plans, specs, diffs and
+    // screenshots come from people and models: all untrusted data.
+    const modelId = z.string().max(160);
+    const scopeInput = z.enum(['first_version', 'later']).optional();
+    const recipeShape = z.object({
+      models: z.object({ triage: modelId, spec: modelId, build: modelId }),
+      reviewer: z.object({
+        model: modelId, maxRounds: z.number().int().min(0).max(5), budgetMinutes: z.number().int().min(1).max(60),
+      }).nullable(),
+      pack: z.number().int().positive().nullable(),
+    });
+    // A version's numbers as the connector shows them: without how many
+    // pairs wait on it. The picker is this same connector, and the next
+    // pair is the oldest waiting one, so a per-version count says which
+    // configuration the next blind pair is against. The total waiting is
+    // on the list itself.
+    const blindStats = (stats) => {
+      if (!stats || typeof stats !== 'object') return stats;
+      const { pairsWaiting: _w, vsCurrent, ...rest } = stats;
+      if (!vsCurrent || typeof vsCurrent !== 'object') return { ...rest, vsCurrent: vsCurrent ?? null };
+      const { waiting: _vw, ...vs } = vsCurrent;
+      return { ...rest, vsCurrent: vs };
+    };
+    const versionOut = (v) => ({
+      id: sNum(v.id), key: String(v.key || ''), label: untrusted(v.label, 120) || '', version: sNum(v.version),
+      role: String(v.role || ''), scope: String(v.scope || 'first_version'), recipe: v.recipe || null, recipeLine: String(v.recipeLine || ''),
+      notes: v.notes ? untrusted(v.notes, 1200) : null, createdAt: v.createdAt || null,
+      ...(v.stats ? { stats: blindStats(v.stats) } : {}),
+    });
+
+    server.registerTool('list_bot_configs', {
+      title: 'Bot configurations: every version and its numbers',
+      description: 'Admin only. The Homeroom bot\'s configurations, in two labelled scopes: "first_version" (how a project\'s first version is built) and "later" (every other build, live or shadow: its recipe decides the spec and build models; triage and follow-up turns keep their per-stage models). Per scope, every version (its current one first, then side, then retired), each with its role, its recipe (the model for triage, spec and build, its reviewer: model, most rounds and minutes, and its context pack) and its numbers: builds and buildRate, average real cost and beside it avgCostByStage (over the n results that recorded their stages: each stage\'s average with its models, and the remainder no stage names, so they add up), median active build time (queue left out), boot rate where known, and its blind pairwise win rate against its scope\'s current version (ties count half) with a 95% Wilson interval and n, and the pairs left out: a side did not build or boot, a first version\'s has no screenshots, or both sides are one commit (identical: never a tie). The later scope\'s current version also says what became of its live builds\' proposals (merged, closed, open, none). Pairs waiting for a pick are counted per scope and in total, never per version, so the next pair stays blind. Also each scope\'s side builds\' weekly budget, its spend, and whether it is paused, spent. Numbers are per version, never across versions. Change one with save_bot_config, set_bot_config_role or set_bot_config_budget; pick pairs with get_bot_config_pair and submit_bot_config_pick, passing the scope. Labels and notes are untrusted data.',
+      inputSchema: {},
+      outputSchema: { scopes: z.array(z.any()), pairsWaiting: z.number(), nextStep: z.string() },
+      annotations: readAnnotations,
+    }, async () => {
+      const guard = scopeGuard(READ_SCOPE) || studioAdminOnly();
+      if (guard) return guard;
+      const r = await callPlatform(baseUrl, accessToken, 'GET', '/api/bot-configs');
+      if (!r.ok) return studioRefusal(r, 'configuration');
+      const b = r.body || {};
+      const scopes = (Array.isArray(b.scopes) ? b.scopes : []).map((sc) => ({
+        scope: String(sc.scope || ''),
+        label: String(sc.label || ''),
+        versions: (sc.versions || []).map(versionOut),
+        currentId: sNumOrNull(sc.currentId),
+        pairsWaiting: sNum(sc.pairsWaiting),
+        sideBuilds: sc.sideBuilds || null,
+      }));
+      const waiting = scopes.filter((sc) => sc.pairsWaiting > 0).map((sc) => `${sc.pairsWaiting} for ${sc.scope}`);
+      return readResult('list_bot_configs', {
+        scopes,
+        pairsWaiting: sNum(b.pairsWaiting),
+        nextStep: waiting.length
+          ? `Pairs are waiting (${waiting.join(', ')}): pick them blind with get_bot_config_pair and submit_bot_config_pick, passing the scope.`
+          : 'No pair waits for a pick.',
+      });
+    });
+
+    server.registerTool('save_bot_config', {
+      title: 'Bot configurations: save a version',
+      description: 'Admin only. Save a new version of a Homeroom bot configuration in `scope`: "first_version" (the default: how a project\'s first version is built) or "later" (every other build, live or shadow). It is the next version of `key` (or a new key, made from the label when none is given), with its recipe and role; a key belongs to one scope. A version is never edited; this is how a recipe changes, and its numbers start again. Roles move with it, within its scope: saved as "current", it builds every build of its scope from now on and the version current until now becomes a side version (or is retired, when it is this key\'s own earlier version); saved as "side", it is built silently beside each build of its scope for comparison, within that scope\'s side builds\' weekly budget, and this key\'s other side versions are retired. The recipe names an OpenRouter model id for triage, spec and build, a reviewer (model, maxRounds 0 to 5, budgetMinutes 1 to 60) or null, and an App bench context pack id or null. A later recipe\'s reviewer is null (the review is a first version\'s), and its triage model is not run (a later change\'s triage keeps its per-stage model). A version saved as "current" must name only models in the OpenRouter catalog, and its reviewer\'s must read images; when the catalog cannot be read it can only be saved as side. Saving "current" changes what the bot builds with and what it costs: ask the person first, and say the recipe and the scope back. It changes no app.',
+      inputSchema: {
+        key: z.string().max(40).optional(), label: z.string().max(80).optional(), recipe: recipeShape,
+        role: z.enum(['current', 'side', 'retired']), notes: z.string().max(1000).optional(), scope: scopeInput,
+      },
+      outputSchema: { version: z.any(), demoted: z.array(z.any()), nextStep: z.string() },
+      annotations: writeAnnotations,
+    }, async ({ key, label, recipe, role, notes, scope }) => {
+      const guard = scopeGuard(WRITE_SCOPE) || studioAdminOnly();
+      if (guard) return guard;
+      const r = await callPlatform(baseUrl, accessToken, 'POST', '/api/bot-configs', {
+        key, label, recipe, role, notes, scope: scope || 'first_version',
+      });
+      if (!r.ok) return studioRefusal(r, 'configuration or context pack');
+      const b = r.body || {};
+      return toolResult({
+        version: b.version ? versionOut(b.version) : null,
+        demoted: (b.demoted || []).map((d) => ({ id: sNum(d.id), role: String(d.role || '') })),
+        nextStep: 'Saved. list_bot_configs shows it with its numbers.',
+      });
+    });
+
+    server.registerTool('set_bot_config_role', {
+      title: 'Bot configurations: change a version\'s role',
+      description: 'Admin only. Make a configuration version current, side or retired, within its scope: pass `scope` "later" for a later-changes version (the default, "first_version", is refused for one, so say which you mean). Promoting one to current makes it build every build of its scope from now on (every live first version, or every later change, live or shadow), and demotes its scope\'s version current until now to side; it is refused unless every model the version names is in the OpenRouter catalog and its reviewer\'s reads images (and while the catalog cannot be read). The current version itself cannot be made side or retired: promote another one instead. Ask the person before promoting. It changes no app.',
+      inputSchema: { versionId: z.number().int().positive(), role: z.enum(['current', 'side', 'retired']), scope: scopeInput },
+      outputSchema: { version: z.any(), demoted: z.array(z.any()), nextStep: z.string() },
+      annotations: writeAnnotations,
+    }, async ({ versionId, role, scope }) => {
+      const guard = scopeGuard(WRITE_SCOPE) || studioAdminOnly();
+      if (guard) return guard;
+      const r = await callPlatform(baseUrl, accessToken, 'POST', `/api/bot-configs/${Number(versionId)}/role`, {
+        role, scope: scope || 'first_version',
+      });
+      if (!r.ok) return studioRefusal(r, 'configuration version');
+      const b = r.body || {};
+      return toolResult({
+        version: b.version ? versionOut(b.version) : null,
+        demoted: (b.demoted || []).map((d) => ({ id: sNum(d.id), role: String(d.role || '') })),
+        nextStep: 'Done. list_bot_configs shows the roles now.',
+      });
+    });
+
+    server.registerTool('set_bot_config_budget', {
+      title: 'Bot configurations: set a scope\'s side-build budget',
+      description: 'Admin only. Set the weekly budget, in dollars, of one scope\'s side builds (the side versions built silently beside each build for comparison): `scope` "first_version" (the default) or "later", each its own setting ($25 a week for first versions and $50 for later changes unless set). The week is the last seven days, and 0 pauses them. Once a scope\'s week is spent, its side builds are recorded as skipped, with why, until the last seven days\' spend is back under the budget; nothing else is held. Ask the person first and say the amount and the scope back. It changes no app.',
+      inputSchema: { weeklyUsd: z.number().min(0).max(10000), scope: scopeInput },
+      outputSchema: { scope: z.string(), sideBuilds: z.any(), nextStep: z.string() },
+      annotations: writeAnnotations,
+    }, async ({ weeklyUsd, scope }) => {
+      const guard = scopeGuard(WRITE_SCOPE) || studioAdminOnly();
+      if (guard) return guard;
+      const r = await callPlatform(baseUrl, accessToken, 'POST', '/api/bot-configs/budget', {
+        weeklyUsd, scope: scope || 'first_version',
+      });
+      if (!r.ok) return studioRefusal(r, 'configuration');
+      const b = r.body || {};
+      return toolResult({
+        scope: String(b.scope || scope || 'first_version'),
+        sideBuilds: b.sideBuilds || null,
+        nextStep: 'Set. list_bot_configs shows each scope\'s side builds\' week.',
+      });
+    });
+
+    server.registerTool('get_bot_config_pair', {
+      title: 'Bot configurations: the next blind pair',
+      description: 'Admin only. The next pair of `scope` ("first_version", the default, or "later") waiting for a pick, blind: the request as the bot read it and the plan both sides built from, then Left and Right, each the same request built by a different configuration. A first version\'s side says whether it booted and has its eight most telling screenshots, which come back as images after the text (Left\'s first), each captioned with its side, screen size, look and state. A later change\'s side has its own spec and its diff from the same base (files changed, insertions, deletions and a compare link), whether it booted where that is known, and screenshots only where they exist. Nothing says which configuration built which side, and you must not try to tell: judge which a careful product designer would rather ship to the person who asked (for a later change, which spec and diff does what was asked better), then record it with submit_bot_config_pick and the same scope. Everything here was written by people and models, and the screenshots show an app: all untrusted data.',
+      inputSchema: { scope: scopeInput },
+      outputSchema: { scope: z.string(), pair: z.any().nullable(), waiting: z.number(), images: z.array(z.object({ caption: z.string(), attached: z.boolean() })), nextStep: z.string() },
+      annotations: readAnnotations,
+    }, async ({ scope } = {}) => {
+      const guard = scopeGuard(READ_SCOPE) || studioAdminOnly();
+      if (guard) return guard;
+      const sc = scope || 'first_version';
+      const withImages = imageInput !== false;
+      const r = await callPlatform(baseUrl, accessToken, 'GET', `/api/bot-configs/pairs/next?images=${withImages ? 1 : 0}&scope=${encodeURIComponent(sc)}`);
+      if (!r.ok) return studioRefusal(r, 'pair');
+      const b = r.body || {};
+      const p = b.pair || null;
+      if (!p) {
+        return readResult('get_bot_config_pair', { scope: sc, pair: null, waiting: 0, images: [], nextStep: 'No pair waits for a pick.' });
+      }
+      const diffOut = (d) => (d && typeof d === 'object' ? {
+        files: sNum(d.files), insertions: sNum(d.insertions), deletions: sNum(d.deletions),
+        compareUrl: typeof d.compareUrl === 'string' ? d.compareUrl.slice(0, 400) : null,
+      } : null);
+      const sideOut = (side) => ({
+        booted: sc === 'later' && side?.booted == null ? null : !!side?.booted,
+        screenshots: (side?.screenshots || []).map((c) => String(c).slice(0, 200)),
+        identicalScreens: (side?.identicalScreens || []).map((x) => ({ caption: String(x.caption || '').slice(0, 200), sameAs: String(x.sameAs || '').slice(0, 200) })),
+        ...(sc === 'later' ? { spec: side?.spec ? untrusted(side.spec, 6000) : null, diff: diffOut(side?.diff) } : {}),
+      });
+      const label = (side, name) => (withImages ? (side?.images || []) : []).map((img) => ({ ...img, caption: `${name}: ${img.caption}` }));
+      const shots = imageContent([...label(p.left, 'Left'), ...label(p.right, 'Right')], sc === 'later' ? 'one side\'s build of the app' : 'one side\'s first version of the app');
+      return readResult('get_bot_config_pair', {
+        scope: sc,
+        pair: {
+          pairId: String(p.pairId || ''),
+          appName: p.appName ? untrusted(p.appName, 120) : null,
+          brief: p.brief ? untrusted(p.brief, 6000) : null,
+          plan: p.plan ? untrusted(p.plan, 4000) : null,
+          left: sideOut(p.left),
+          right: sideOut(p.right),
+        },
+        waiting: sNum(b.waiting),
+        images: shots.captions,
+        nextStep: sc === 'later'
+          ? 'Read both sides\' specs and diffs (and any screenshots), then call submit_bot_config_pick with this pairId, left, right or tie, and scope "later".'
+          : 'Look at every screenshot of both sides, then call submit_bot_config_pick with this pairId and left, right or tie.',
+      }, shots.content);
+    });
+
+    server.registerTool('submit_bot_config_pick', {
+      title: 'Bot configurations: record a pick',
+      description: 'Admin only. Record which side of a blind pair (from get_bot_config_pair) a careful product designer would rather ship: "left", "right" or "tie", with an optional short note on why, and the pair\'s `scope` ("first_version", the default, or "later"; a pair of the other scope is refused). Once per pair. It feeds each configuration\'s win rate against its scope\'s current one, and changes no app.',
+      inputSchema: { pairId: z.string().min(8).max(64), pick: z.enum(['left', 'right', 'tie']), note: z.string().max(1000).optional(), scope: scopeInput },
+      outputSchema: { recorded: z.boolean(), waiting: z.number(), nextStep: z.string() },
+      annotations: writeAnnotations,
+    }, async ({ pairId, pick, note, scope }) => {
+      const guard = scopeGuard(WRITE_SCOPE) || studioAdminOnly();
+      if (guard) return guard;
+      if (note != null) {
+        const check = checkWriteLength(note, { field: 'note', max: 1000, hint: 'Keep the note to why.' });
+        if (!check.ok) return writeLengthError(check);
+      }
+      const sc = scope || 'first_version';
+      const r = await callPlatform(baseUrl, accessToken, 'POST', `/api/bot-configs/pairs/${encodeURIComponent(String(pairId))}/pick`, { pick, note, scope: sc });
+      if (!r.ok) return studioRefusal(r, 'pair');
+      const waiting = sNum((r.body || {}).waiting);
+      return toolResult({
+        recorded: true, waiting,
+        nextStep: waiting > 0 ? `Recorded. ${waiting} more wait: get_bot_config_pair (scope "${sc}") for the next.` : 'Recorded. No pair of this scope waits now.',
+      });
+    });
   }
 
   // ── Test accounts (full platform admins only) ──────────────────────────
   //
-  // Three tools over routes/test-accounts.js: make a genuinely new account for
-  // first-time-user testing, list the live ones, and retire one with the apps
-  // it made. services/test-accounts.js has the whole design, and the
-  // charter's "test-accounts" section the rules for the session using them.
+  // Four tools over routes/test-accounts.js: make a genuinely new account for
+  // first-time-user testing, mint a one-time phone sign-in for a test number
+  // (the invite's Join sheet signs up with a phone), list the live ones, and
+  // retire one with the apps it made. services/test-accounts.js has the whole
+  // design, and the charter's "test-accounts" section the rules for the
+  // session using them.
   //
   // Admin-only three times over, like the benchmark's: registered only for a
   // connector whose user is a full platform admin, refused in every handler
   // for a user who is not one before any call, and refused by every route
   // they reach (requireAdminWrite), which is the wall that counts. The
-  // password create_test_account returns is the one credential any tool here
-  // hands back: it is minted for a throwaway, flagged account that is fenced
-  // from every real outcome, it is shown once, and the platform keeps only
+  // password create_test_account returns and the code
+  // create_test_phone_sign_in returns are the only credentials any tool here
+  // hands back: each signs in to a throwaway, flagged account that is fenced
+  // from every real outcome, each is shown once, and the platform keeps only
   // its hash.
   if (user && user.canAdminWrite) {
     const testAccountAdminOnly = () => (user && user.canAdminWrite
@@ -6838,6 +7766,48 @@ function registerTools(server, ctx) {
         },
         retireWith: `retire_test_account({ userId: ${userId}, confirm: "RETIRE" })`,
         nextStep: 'Give the person the username and password once, with the sign-in steps. Do not repeat the password later in the conversation. Retire the account when they have finished testing.',
+      });
+    });
+
+    // Registered here, inside the full-admin block, so a connector whose user
+    // is not a full platform admin never sees it; the handler and the route
+    // (requireAdminWrite) refuse anyone else again.
+    server.registerTool('create_test_phone_sign_in', {
+      title: 'Test accounts: a one-time phone sign-in',
+      description: 'Admin only. Get a one-time phone sign-in for first-run testing, in any environment (production included): a fictional test number (+1 415 555 01xx unless you name another +1 … 555 0100–0199 number) and a random six-digit code that works once, within 30 minutes and five tries. It is for the flows that ask for a phone, above all an invite\'s Join sheet: the tester types the number, taps Text me a code (no text is sent to a test number), then types the code. The account it makes is a test account, fenced like one create_test_account makes and retired with retire_test_account, which frees the number. Naming the number of a live test account signs in to that account again. Relay the code ONCE with the number and the steps, and never repeat it later in the conversation. Read get_connector_guidance\'s "test-accounts" section first.',
+      inputSchema: {
+        phoneNumber: z.string().optional().describe('A test number to use: +1, any area code, then 555 0100 to 0199. Omit it for a free +1 415 555 01xx number.'),
+      },
+      outputSchema: {
+        phoneNumber: z.string(),
+        code: z.string(),
+        expiresAt: z.string(),
+        signsInTo: z.string().nullable(),
+        steps: z.array(z.string()),
+        nextStep: z.string(),
+      },
+      annotations: writeAnnotations,
+    }, async ({ phoneNumber }) => {
+      const guard = scopeGuard(WRITE_SCOPE) || testAccountAdminOnly();
+      if (guard) return guard;
+      const r = await callPlatform(baseUrl, accessToken, 'POST', '/api/test-accounts/phone-sign-ins', { phoneNumber });
+      if (!r.ok) return testAccountRefusal(r);
+      const s = (r.body && r.body.signIn) || {};
+      const signsInTo = s.signsInTo ? String(s.signsInTo) : null;
+      return toolResult({
+        phoneNumber: String(s.phoneNumber || ''),
+        code: String(s.code || ''),
+        expiresAt: String(s.expiresAt || ''),
+        signsInTo,
+        steps: [
+          'If the device or browser is signed in, sign out first.',
+          'Open the invite link (or wherever Homeroom asks for a phone number) and enter the number above.',
+          'Tap Text me a code. No text is sent to a test number.',
+          'Enter the code above. It works once, before it expires.',
+        ],
+        nextStep: signsInTo
+          ? `Give the person the number and code once, with the steps. It signs in to the test account @${signsInTo}.`
+          : 'Give the person the number and code once, with the steps. Do not repeat the code later in the conversation. The account it makes is a test account: retire it with retire_test_account when testing is done (list_test_accounts finds it).',
       });
     });
 
@@ -7275,6 +8245,7 @@ module.exports = {
   pageRequests,
   shapeProposal,
   shapeChange,
+  shapeWorkOrder,
   changeNextStep,
   proposalRef,
   shapeChecks,

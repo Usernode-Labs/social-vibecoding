@@ -281,7 +281,7 @@ test('offered inside the built plan while it is being built, and not again once 
   const html = renderToHtml(createElement(PlanCardView, {
     appName: 'Flat 4B', plan, state: 'built', footer: createElement('span', { 'data-footer': '' }, 'after'),
   }));
-  assert.match(html, /You chose Build it<\/p><span data-footer="">after<\/span><\/div>$/, 'a footer is drawn last, inside the card');
+  assert.match(html, /<span>Building it<\/span><\/p><span data-footer="">after<\/span><\/div>$/, 'drawn last, inside the card');
 
   // #4046 (7 October): inside the built plan, its footer, with no line from
   // the bot above it (the hello already said it will message here).

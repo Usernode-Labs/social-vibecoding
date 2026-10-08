@@ -51,6 +51,7 @@ type G = {
   Home?: { _apps?: AppRow[]; _appsLoaded?: boolean; load?: () => Promise<unknown> } & Record<string, any>;
   Browse?: { _apps?: AppRow[] };
   AppView?: { appData?: AppRow | null };
+  App?: { _privateHomeVisited?: () => boolean };
 };
 
 function g(): G {
@@ -62,6 +63,28 @@ function demoQS(): string {
     return new URLSearchParams(window.location.search).get('demo') === '1' ? '?demo=1' : '';
   } catch {
     return '';
+  }
+}
+
+/**
+ * Whether the mark menu is still offering a PRIVATE MEMBER "Go to Homeroom"
+ * as their way on: they came in by an invite link before they were let in,
+ * and have not used it yet on this device (App._privateNoClose,
+ * public/js/app.js). While it is, the menu hides "Go to community" and
+ * About hides Share (#4216): one way onward, and no handing out the app's
+ * address before they have gone to Homeroom. Both come back once they have
+ * used it, or are let in (`privateMember` goes false).
+ *
+ * Read during a render that runs after mount only: the visit is remembered
+ * in this device's storage, which the prerender cannot see. The sheet
+ * renders again on every open, which is when this can have changed.
+ */
+export function offeringGoToHomeroom(privateMember: boolean): boolean {
+  if (!privateMember) return false;
+  try {
+    return !g().App?._privateHomeVisited?.();
+  } catch {
+    return true;
   }
 }
 

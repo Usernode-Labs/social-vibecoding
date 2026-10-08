@@ -92,6 +92,21 @@ test('#22: on a project that is just yours the Yes line is a note; the No side i
   assert.match(fn, /solo=\{!!yes\.solo\}/);
 });
 
+// An approval is only asked on a project that is just yours, so its Yes line
+// is a note even when the caller's `solo` has not caught up: the Needs you
+// sheet reads it from a community lookup that may not have landed, and the
+// staging demo's Just you project reads as public.
+test('an approval\'s Yes line is a note whatever `solo` says; its No side is unchanged', () => {
+  for (const solo of [false, undefined]) {
+    const onYes = picker({ approve: true, solo });
+    assert.match(onYes, /<label class="dev-vote-reason-label" for="dev-vote-reason-7">Add a note, if you like\.<\/label>/, String(solo));
+    assert.doesNotMatch(onYes, /for the group/, String(solo));
+    const onNo = picker({ approve: true, solo, side: 'no' });
+    assert.match(onNo, /What’s not working for you\? One line is plenty\.<\/label>/, String(solo));
+  }
+  assert.match(picker({ approve: false, solo: false }), /Add a line for the group, if you like\./, 'a group vote keeps its wording');
+});
+
 test('withLine false: the switch and the button only, and the send is never off', () => {
   // #2603 left no caller passing false — every vote the group casts carries
   // a line now — but the panel still draws without the box for anything
@@ -126,10 +141,13 @@ test('VoteButton draws the panel once for both homes, opens on Yes, and sends on
   const fn = SRC.slice(SRC.indexOf('export function VoteButton('), SRC.indexOf('export function VotePicker('));
   assert.equal((fn.match(/<VotePicker\b/g) || []).length, 1, 'one VotePicker element');
   assert.equal((fn.match(/\{picker\}/g) || []).length, 2, 'rendered into the popover and into the sheet');
-  assert.match(fn, /createPortal\(\s*<div\s+ref=\{popRef\}\s+className="dev-vote-pop"\s+role="dialog"\s+aria-label="Your vote"\s+data-side=\{side\}/,
+  assert.match(fn, /createPortal\(\s*<div\s+ref=\{popRef\}\s+className="dev-vote-pop"\s+role="dialog"\s+aria-label=\{heading\}\s+data-side=\{side\}/,
     'desktop: the anchored popover, a dialog now that it holds a form');
-  assert.match(fn, /createPortal\(\s*<div className="dev-vote-sheet" role="dialog" aria-label="Your vote" data-vote-sheet="" data-side=\{side\}>\s*\{picker\}\s*<\/div>,\s*sheetEl,/,
+  assert.match(fn, /createPortal\(\s*<div className="dev-vote-sheet" role="dialog" aria-label=\{heading\} data-vote-sheet="" data-side=\{side\}>\s*\{picker\}\s*<\/div>,\s*sheetEl,/,
     'touch: the same panel inside the kit sheet\'s content element');
+  // #3977: both homes are named by the picker's own header, which is "Your
+  // approval" on a solo change whose Yes is the one it needs.
+  assert.match(fn, /const heading = approve \? 'Your approval' : 'Your vote';/);
   assert.match(fn, /aria-haspopup="dialog"/, 'the face says what it opens');
   assert.match(fn, /const startSide = \(\): 'yes' \| 'no' => \(mine === 'no' \? 'no' : 'yes'\);/, 'Yes by default; a viewer who voted No starts from No');
   assert.match(fn, /if \(open \|\| sheetRef\.current\) \{ shut\(\); return; \}\s*setSide\(startSide\(\)\);\s*setLine\(''\);/, 'reset on every open');

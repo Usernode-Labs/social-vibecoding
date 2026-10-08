@@ -57,14 +57,14 @@ test('reads tokens then done, reporting progress cumulatively', async () => {
     frame('token', { text: 'One ' }),
     frame('token', { text: 'two ' }),
     frame('token', { text: 'three.' }),
-    frame('done', { text: 'One two three.', model: 'claude-haiku-4-5' }),
+    frame('done', { text: 'One two three.', model: 'claude-haiku-5-5' }),
   ]);
   const progress = [];
   const out = await readAskStream(body, (s) => progress.push(s));
   // Cumulative, not deltas: the caller renders what it is handed.
   assert.deepEqual(progress, ['One ', 'One two ', 'One two three.']);
   assert.equal(out.text, 'One two three.');
-  assert.equal(out.model, 'claude-haiku-4-5');
+  assert.equal(out.model, 'claude-haiku-5-5');
   assert.equal(out.error, undefined);
 });
 

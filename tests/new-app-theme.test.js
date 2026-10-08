@@ -233,7 +233,7 @@ test('Empty\'s own Tailwind build compiles both looks', (t) => {
   assert.match(css, /:root \{\s*--ground: [\d ]+;/, 'its light value');
   assert.match(css, /\.dark \{\s*--ground: [\d ]+;/,
     'its dark value, keyed off the class the theme script sets, not the OS');
-  assert.match(css, /\.tabular-nums \{/, 'class names built in the demo\'s script compile too');
+  assert.match(css, /\.rounded-2xl \{/, 'class names the screen\'s markup names compile too');
   assert.doesNotMatch(css, /prefers-color-scheme/, 'darkMode stays class-based');
 });
 

@@ -321,7 +321,7 @@ test('a pull to refresh moves only the page under the tabs (pull-to-refresh unde
   const CSS = read('public/css/app.css');
   const APP_VIEW = read('public/js/app-view.js');
   // The project page opts into the kit's two options, and no other pull does.
-  assert.match(APP_VIEW, /PlatformUI\.pullToRefresh\(devScroll, \(\) => AppView\._loadDevFeed\(\), \{\s*pullProperty: '--dev-ptr-pull',\s*topEl: \(\) => devScroll\.querySelector\('\.dev-ws > \.dev-ws-band'\),\s*\}\);/,
+  assert.match(APP_VIEW, /PlatformUI\.pullToRefresh\(devScroll, \(\) => AppView\._loadDevFeed\(\), \{\s*pullProperty: '--dev-ptr-pull',\s*topEl: \(\) => \{\s*const band = devScroll\.querySelector\('\.dev-ws > \.dev-ws-band'\);\s*devScroll\.classList\.toggle\('dev-ws-has-band', !!band\);\s*return band;\s*\},\s*\}\);/,
     'the scroller carries the pull as a property, and the spinner hangs from the band');
   assert.equal((APP_VIEW.match(/pullProperty:/g) || []).length, 1);
   assert.doesNotMatch(read('public/js/app.js'), /pullProperty/, 'Home, Discover and Standings keep the kit\'s own pull');
@@ -329,7 +329,13 @@ test('a pull to refresh moves only the page under the tabs (pull-to-refresh unde
   // still loading) everything in the scroller. No fallback in the var(), so
   // at rest the declaration is invalid at computed-value time and leaves
   // `transform: none`: no stacking context or containing block until a pull.
-  assert.match(CSS, /\n#dev-forum-scroll \.dev-ws > \.dev-ws-band ~ \*,\n#dev-forum-scroll:not\(:has\(\.dev-ws-band\)\) > \* \{\n  transform: translateY\(var\(--dev-ptr-pull\)\);\n\}/);
+  // "No band" is a class the scroller carries (`dev-ws-has-band`, absent),
+  // not `:not(:has(.dev-ws-band))`: asked as `:has()` on the scroller, the
+  // answer could change with any node added to the board, and the browser
+  // re-applied the stylesheet to all of it each time. The pull reads the band
+  // again as it starts (the `topEl` above), so the class is right when used.
+  assert.match(CSS, /\n#dev-forum-scroll \.dev-ws > \.dev-ws-band ~ \*,\n#dev-forum-scroll:not\(\.dev-ws-has-band\) > \* \{\n  transform: translateY\(var\(--dev-ptr-pull\)\);\n\}/);
+  assert.doesNotMatch(CSS, /#dev-forum-scroll:not\(:has\(\.dev-ws-band\)\)\s*>\s*\*\s*\{/);
   assert.doesNotMatch(CSS, /var\(--dev-ptr-pull,/, 'no fallback: a 0px one would transform the tab body at rest');
   // #3514's paint for the gap under the header, and the hook that sized it,
   // are gone with the gap: a pull no longer opens one there.

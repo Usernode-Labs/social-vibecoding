@@ -1,7 +1,7 @@
 import { memo, useRef, useState } from 'react';
 
 import {
-  BookmarkIcon, BookmarkSolidIcon, CopyIcon, DraftTrashIcon, EnvelopeIcon, FlagIcon, LinkIcon, NoSymbolIcon,
+  BookmarkIcon, BookmarkSolidIcon, CopyIcon, DownloadIcon, DraftTrashIcon, EnvelopeIcon, FlagIcon, LinkIcon, NoSymbolIcon,
   PencilSquareIcon, ReplyArrowIcon, ThreadIcon,
 } from '@/components/ui/icons';
 
@@ -27,6 +27,7 @@ import { MessageActionSheet, useLongPress } from '../message-actions/action-shee
 import { absoluteLink, copyToClipboard, toast } from '../message-actions/clipboard';
 import { EmojiPicker } from '../message-actions/emoji-picker';
 import { ImageViewer, openInViewer } from '../image-viewer/image-viewer';
+import { downloadLabel, downloadableImages, saveImages, useCanSaveImage } from '../image-viewer/save-image';
 import { rememberReaction, useRecentReactions } from '../message-actions/recents';
 import { ThreadSummaryChip } from '../message-actions/thread-summary';
 import { useDismiss } from '../message-actions/use-dismiss';
@@ -128,6 +129,11 @@ export const MessageRow = memo(function MessageRow({
   const canThread = live && !inThread && kind !== 'direct';
   const scope = scopeKey(conversationId, inThread ? message.threadRootId : null);
   useDismiss(!!(picker || menu), [bar], () => { setPicker(null); setMenu(null); });
+  // #4055: the message's pictures. In the app, whether its build can save
+  // one is known only once asked; asking re-renders the row so the menu's
+  // Download line can appear.
+  const images = (message.attachments || []).filter((att) => att.contentType.startsWith('image/'));
+  useCanSaveImage(images[0]?.url || '');
   const longPress = useLongPress(() => setSheet(true), { disabled: !live || editing });
 
   async function saveEdit() {
@@ -207,6 +213,9 @@ export const MessageRow = memo(function MessageRow({
   if (message.content) {
     items.push({ key: 'copy', label: 'Copy text', icon: CopyIcon, onSelect: () => { void copyToClipboard(message.content, 'Message text copied'); } });
   }
+  // #4055: its pictures onto the device, whoever sent them.
+  const pictures = downloadableImages(images.map((att) => ({ src: att.url, name: att.name })));
+  if (pictures.length) items.push({ key: 'download', label: downloadLabel(pictures.length), icon: DownloadIcon, onSelect: () => { void saveImages(pictures); } });
   items.push({
     key: 'link', label: 'Copy link to message', icon: LinkIcon,
     onSelect: () => { void copyToClipboard(absoluteLink(messageAddress(conversationId, message.id)), 'Link copied'); },

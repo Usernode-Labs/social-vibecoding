@@ -87,6 +87,7 @@ function agentDetail(session: ContinueAgentSession): string {
   const change = session.activeChange;
   if (!change) return 'Agent session';
   if (change.status === 'promoted') return 'Waiting for approval';
+  if (change.status === 'merging') return 'Going live';
   if (change.status === 'merged') return 'Live';
   return 'In progress';
 }

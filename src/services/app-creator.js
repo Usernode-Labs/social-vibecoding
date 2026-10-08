@@ -147,7 +147,10 @@ async function createApp(config, appRow) {
 
         // repoUrl makes the template name this repo as the app's canonical
         // one (.claude/homeroom-canonical-repo, read by the freshness check).
-        const files = getTemplateFiles(name, slug, dbUrl, repoUrl, { governance: governanceOf(appRow), description: descriptionOf(appRow), template: templateOf(appRow), sketch });
+        const files = getTemplateFiles(name, slug, dbUrl, repoUrl, { governance: governanceOf(appRow), description: descriptionOf(appRow) || appSketch.taglineOf(sketch), template: templateOf(appRow), sketch });
+        // Its description above is the creator's own line, else the card's
+        // tagline (#4235), so the first dapp.json says what the app is for
+        // rather than leaving the hub to quote the creator's prompt.
         await github.pushFiles(botUsername, slug, files, {
           message: `Initialize ${name} from Homeroom template`,
         });

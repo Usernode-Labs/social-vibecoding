@@ -43,8 +43,8 @@ function demoConversations(user) {
         { ...lin, role: 'member', status: 'member', joinedAt: '2026-08-10T10:03:00Z' },
       ],
       memberCount: 3, membershipStatus: 'member', myRole: 'owner', requester: null, peer: null,
-      latestMessage: null, latestSummary: 'I attached the launch checklist.',
-      lastActivityAt: '2026-08-13T12:45:00Z', unreadCount: 0,
+      latestMessage: null, latestSummary: 'How the launch card looks on my phone.',
+      lastActivityAt: '2026-08-13T12:52:00Z', unreadCount: 0,
       canSend: true, canInvite: true, canManage: true,
     },
     {
@@ -146,12 +146,21 @@ function demoMessagesRaw(user, conversationId) {
     }], objects: [],
   }, {
     // #2387: a message its author deleted — the placeholder the transcript
-    // draws in its place. Sender and time stay; nothing it said does. It is
-    // the newest row, and the list's latestSummary above still reads the
-    // checklist because a deleted message is never the latest.
+    // draws in its place. Sender and time stay; nothing it said does.
     id: 9100202, conversationId, sender: ada,
     content: '', createdAt: '2026-08-13T12:50:00Z', editedAt: null, deleted: true,
     reply: null, reactions: [], attachments: [], objects: [], saved: false,
+  }, {
+    // #4055: a picture the viewer sent, beside ada's above, so the preview
+    // shows Download on both your own picture and someone else's.
+    id: 9100203, conversationId, sender: self,
+    content: 'How the launch card looks on my phone.', createdAt: '2026-08-13T12:52:00Z', editedAt: null,
+    reply: null, reactions: [], attachments: [{
+      id: 'cccccccccccccccccccccccccccccccc', name: 'launch-card-phone.png',
+      size: DEMO_SCREENSHOT_PNG.length, contentType: 'image/png', kind: 'image',
+      url: `/api/conversations/${conversationId}/attachments/cccccccccccccccccccccccccccccccc?demo=1`,
+      viewUrl: null,
+    }], objects: [],
   }];
   if (conversationId === 910004) {
     const lin = DEMO_LIN;
@@ -476,6 +485,11 @@ const BOT_DM_BUILT_PLAN_KEY = 'staging-hrbot-plan-built';
 const BOT_DM_STUCK_KEY = 'staging-hrbot-build-failed';
 const BOT_DM_READY_KEY = 'staging-hrbot-ready';
 const BOT_DM_READY_SESSION_ID = 990901;
+// #4231: a new project's first version gone live, with Open, Open community
+// and Invite people. No project stands behind its slug: Open and Open
+// community find nothing, and the invite sheet opens but makes no link.
+const BOT_DM_FIRST_LIVE_KEY = 'staging-hrbot-first-live';
+const BOT_DM_FIRST_LIVE_SLUG = 'staging-demo-plants';
 
 async function ensureBotDmFixture(pool, user) {
   if (process.env.USERNODE_ENV !== 'staging' || !user?.id) return null;
@@ -653,6 +667,22 @@ async function ensureBotDmFixture(pool, user) {
     }, {
       metadata: {
         homeroomBot: { kind: 'build_failed', ...stuck, actions: dm.STUCK_ACTIONS.build_failed, status: 'open' },
+      },
+    });
+    const firstLive = { appName: 'Staging demo plants', issueNumber: 1, firstVersion: true };
+    await conversations.sendMessage(pool, { id: bot.id }, opened.conversationId, {
+      content: dm.mergedText({ line: dm.requestLine(firstLive), appName: firstLive.appName, live: true }),
+      idempotency_key: BOT_DM_FIRST_LIVE_KEY,
+    }, {
+      metadata: {
+        homeroomBot: {
+          kind: 'merged', appSlug: BOT_DM_FIRST_LIVE_SLUG, ...firstLive, live: true,
+          link: `#app/${BOT_DM_FIRST_LIVE_SLUG}`,
+          actions: [
+            dm.openAppAction({ slug: BOT_DM_FIRST_LIVE_SLUG, appName: firstLive.appName }),
+            ...dm.firstLiveActions({ slug: BOT_DM_FIRST_LIVE_SLUG }),
+          ],
+        },
       },
     });
     const ready = { appName: 'Staging demo app', issueNumber: 11, issueTitle: 'Staging demo, grey out finished items' };

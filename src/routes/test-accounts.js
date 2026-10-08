@@ -15,6 +15,7 @@
 //
 // The one-time password rides back in the create response and nowhere else:
 // it is not logged, not stored in plain text, and the response is no-store.
+// A one-time phone sign-in's code is handled the same way.
 
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
@@ -62,6 +63,17 @@ function testAccountRoutes(config) {
     accounts: await testAccounts.list(pool),
     max: testAccounts.MAX_LIVE,
   })));
+
+  // One-time phone sign-in for a test number (services/test-accounts.js
+  // mintPhoneSignIn): the number and its code come back once, no-store, and
+  // the code is kept only as a hash.
+  router.post('/api/test-accounts/phone-sign-ins', requireAdminWrite, testAccountLimiter, sameOriginBrowserOnly, handler('Mint test phone sign-in', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const signIn = await testAccounts.mintPhoneSignIn(pool, {
+      phoneNumber: req.body && req.body.phoneNumber, actorId: req.user.id, config,
+    });
+    return { signIn };
+  }));
 
   router.post('/api/test-accounts/:id/retire', requireAdminWrite, testAccountLimiter, sameOriginBrowserOnly, handler('Retire test account', async (req) => {
     const userId = idParam(req.params.id);

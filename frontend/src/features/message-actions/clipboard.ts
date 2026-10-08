@@ -20,7 +20,8 @@ export async function copyToClipboard(text: string, done = 'Copied'): Promise<bo
   return ok;
 }
 
-function legacyCopy(text: string): boolean {
+/** The hidden textarea alone; also the invite sheet's last resort (first-session/copy-invite.ts). */
+export function legacyCopy(text: string): boolean {
   try {
     const area = document.createElement('textarea');
     area.value = text;
