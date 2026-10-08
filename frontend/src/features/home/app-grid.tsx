@@ -384,6 +384,113 @@ export function AppsEmptyNote() {
   );
 }
 
+/**
+ * One folder tile — the launcher's only non-app kind. The SAME face as
+ * AppCardTile (`.app-card`, the 56px icon box, the `.app-card-title` caption
+ * lane, `data-yours` so the drag recognizer picks it up), and the one new
+ * piece of styling: a two-by-two preview of up to four member icons
+ * (`.app-card-folder-icons`, app.css). Tapping opens the folder's listing;
+ * hold or right-click opens its menu (rename / delete).
+ */
+function FolderTile({ folder, style }: {
+  folder: { id: number; name: string; icons: IconView[]; count: number };
+  style?: string;
+}) {
+  const node = useRef<HTMLDivElement | null>(null);
+  const wireRef = useCallback((el: HTMLDivElement | null) => {
+    node.current = el;
+    if (!el || wired.has(el)) return;
+    wired.add(el);
+    const N = controller();
+    N?._wirePrewarm?.(el);
+  }, []);
+
+  useEffect(() => {
+    if (!node.current) return;
+    return controller()?._wireCardLongPressMenu?.(node.current);
+  }, [folder.id]);
+
+  // The cell attribute, same as AppCardTile: see its note — the attribute
+  // keeps the exact `grid-row` spelling the CSSOM would fold away.
+  useIsomorphicLayoutEffect(() => {
+    const el = node.current;
+    if (!el) return;
+    if (style) el.setAttribute('style', style);
+    else el.removeAttribute('style');
+  }, [style]);
+
+  const preview = [0, 1, 2, 3].map((i) => (folder.icons[i] ? (
+    <div
+      key={i}
+      className="app-icon-tile rounded-lg overflow-hidden flex items-center justify-center font-bold"
+      data-icon={folder.icons[i].kind}
+    >
+      <AppIcon icon={folder.icons[i]} />
+    </div>
+  ) : (
+    <div key={i} className="app-icon-tile rounded-lg" />
+  )));
+
+  return (
+    <div
+      ref={wireRef}
+      className="app-card app-card-folder app-card-draggable touch-pan-y relative rounded-xl transition-colors p-3 flex flex-col items-center text-center gap-1.5 cursor-grab"
+      data-folder-id={String(folder.id)}
+      tabIndex={0}
+      role="button"
+      aria-label={`${folder.name}, ${folder.count} ${folder.count === 1 ? 'app' : 'apps'}`}
+      aria-haspopup="menu"
+      title={`${folder.name}. Hold or right-click for folder actions`}
+      {...(folder.count ? null : { 'data-empty': 'true' })}
+      onPointerDownCapture={(e) => {
+        const N = controller();
+        if (N) N._cardPointerType = e.pointerType;
+      }}
+      onPointerCancel={() => { controller()?.closeCardMenu?.(); }}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        const N = controller();
+        if (!N) return;
+        // Same idempotent toggle the app card uses (#1838): a mouse needs the
+        // same tile's right-click to close it again.
+        if (N._cardPointerType === 'touch') {
+          if (!N._menu) N.openFolderMenu?.(folder.id, e.currentTarget);
+          return;
+        }
+        if ((N._menuAnchor || N._menuAnchorAtPress) === e.currentTarget) {
+          N.closeCardMenu?.();
+          return;
+        }
+        N.openFolderMenu?.(folder.id, e.currentTarget);
+      }}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return;
+        if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
+          e.preventDefault();
+          controller()?.openFolderMenu?.(folder.id, e.currentTarget);
+        } else if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          controller()?._openFolder?.(folder.id);
+        }
+      }}
+      onClick={(e) => {
+        const N = controller();
+        // A drag (or a long-press that opened the menu) ends with the pointer
+        // still on the tile — eat the click, as AppCardTile does.
+        if (N?._suppressClick) { N._suppressClick = false; return; }
+        N?._openFolder?.(folder.id);
+      }}
+    >
+      <div className="relative w-14 h-14 shrink-0">
+        <div className="app-card-folder-icons" aria-hidden="true">{preview}</div>
+      </div>
+      <div className="w-full min-w-0">
+        <div className="app-card-title" title={folder.name}>{folder.name}</div>
+      </div>
+    </div>
+  );
+}
+
 export function AppGrid() {
   const state = useStoreState(gridStore);
   const live = useLiveAppSlugs();
@@ -488,7 +595,41 @@ export function AppGrid() {
         />
       ) : null}
       {empty ? <AppsEmptyNote /> : null}
-      {state.items.map((item) => (
+      {/*
+          THE FOLDER VIEW. The grid gives way, in place, to a listing of the
+          open folder's apps: a back row — ‹ My apps, the name, the count in
+          words — then the member tiles in flow, exactly the search view's
+          shape (no row template, no Create tile, no drag recognizer).
+      */}
+      {state.folder ? (
+        <div className="home-folder-bar col-span-full flex items-center gap-2 pb-1">
+          <button
+            type="button"
+            className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-violet-700 hover:bg-zinc-100 transition-colors dark:text-violet-400 dark:hover:bg-zinc-800"
+            onClick={() => controller()?._closeFolder?.()}
+          >
+            ‹ My apps
+          </button>
+          <span className="min-w-0 flex-1 truncate text-sm font-[550] text-zinc-900 dark:text-zinc-100">
+            {state.folder.name}
+          </span>
+          <span className="text-xs text-zinc-500 dark:text-zinc-400">
+            {`${state.folder.count} ${state.folder.count === 1 ? 'app' : 'apps'}`}
+          </span>
+        </div>
+      ) : null}
+      {state.folder && state.folder.count === 0 ? (
+        <div className="col-span-full flex items-center justify-center px-4 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">
+          No apps in this folder yet
+        </div>
+      ) : null}
+      {state.items.map((item) => (item.kind === 'folder' ? (
+        <FolderTile
+          key={`folder:${item.folder.id}`}
+          folder={item.folder}
+          style={cellStyle(item)}
+        />
+      ) : (
         <AppCardTile
           key={`card:${item.app.slug}`}
           app={item.app}
@@ -496,7 +637,7 @@ export function AppGrid() {
           yours={state.view === 'grid'}
           live={live.includes(item.app.slug)}
         />
-      ))}
+      )))}
       {/*
           "Create an app", the grid's LAST child (./create-tile.tsx). Null
           until Home.render() has painted the launcher — the store's initial

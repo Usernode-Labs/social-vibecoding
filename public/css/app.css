@@ -4405,6 +4405,64 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   opacity: 0.7;
 }
 
+/* ── App folders on the launcher grid ──────────────────────
+   One folder tile beside the app cards: same face, same caption lane, same
+   drag affordance, and one new piece of styling — the two-by-two preview of
+   up to four member icons, drawn inside the tile's own 56px icon box. The
+   member tiles keep .app-icon-tile's treatment (the hairline and the face
+   token come with the class), only smaller; the preview's own surface is
+   the card's, with a faint inset ring, so the group reads as ONE tile.
+   Plain CSS classes: nothing here goes through the Tailwind extractor. */
+.app-card-folder-icons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 3px;
+  width: 100%;
+  height: 100%;
+  padding: 5px;
+  border-radius: 14px;
+  background-color: var(--bg-card);
+  box-shadow: inset 0 0 0 1px var(--border-light);
+}
+.dark .app-card-folder-icons {
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.app-card-folder-icons .app-icon-tile {
+  width: 100%;
+  height: 100%;
+  font-size: 12px;
+  border: none;
+  border-radius: 8px;
+  overflow: hidden;
+  padding: 0;
+}
+/* The folder drop tint: a "Your apps" tile dragged onto a folder tile or an
+   app tile it would fold with. home.js (_markFolderDrop) sets `data-drop` at
+   drag time — an attribute because the card's className is React's, and safe
+   under #app-list only while a drag holds React back. The tint is the grid
+   cells' own (.home-grid-cell--on), so the highlight says the same thing
+   everywhere; refused (a folder drop the app cannot make) is a muted outline,
+   the same answer the widget strip gives. */
+.app-card[data-drop="ok"] {
+  background-color: rgba(31, 134, 255, 0.14);
+  box-shadow: 0 0 0 1px rgba(31, 134, 255, 0.75);
+}
+.app-card[data-drop="refused"] {
+  opacity: 0.7;
+}
+
+/* ── The folder view's back row ────────────────────────────
+   The one new row the open folder draws above its member tiles, in place of
+   the drag affordance the grid rows have: ‹ My apps, the folder's name, and
+   the count in words. Muted hairline-and-text treatment, both modes. */
+.home-folder-bar {
+  min-width: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .app-card[data-drop="ok"] { transition: none; }
+}
+
 /* THE TILE LABEL — iOS-homescreen sized (#951).
    11px on a 13px line, TWO lines, ellipsised on overflow. The old label
    was one 14px/20px line with `truncate`, which cut most real app names
@@ -4894,7 +4952,8 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
 #app-list:not([data-view]) {
   min-height: calc(2 * var(--home-cell-h));
 }
-#app-list[data-view="search"] {
+#app-list[data-view="search"],
+#app-list[data-view="folder"] {
   grid-auto-rows: auto;
 }
 

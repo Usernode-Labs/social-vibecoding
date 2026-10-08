@@ -80,8 +80,13 @@ const HomeLayout = {
 
   // Stable identity for an item, used for dedupe and for "is this the same
   // thing I picked up".
+  //
+  // FOLDER ITEMS answer `folder:<id>`, by the same shape rule the server's
+  // wire format uses ({ type: 'folder', id, col, row }): a folder's identity
+  // is the folder row's id, not a slug.
   idOf(item) {
     if (!item) return '';
+    if (item.type === 'folder') return `folder:${item.id}`;
     return `app:${item.slug}`;
   },
 
@@ -310,8 +315,17 @@ const HomeLayout = {
   //
   // Returns { layout, changed }. `changed` is what the caller uses to decide
   // whether to persist; a clean load must write nothing.
-  repair(layout, cols, present) {
+  //
+  // FOLDERS (`folderIds` — the ids the viewer owns, e.g. [12, 14], optional):
+  // a folder item whose folder still exists is kept (and re-placed when it
+  // overlaps or sits out of bounds, like any tile); one whose folder is GONE
+  // is dropped; and a known folder with NO stored cell — the delete/re-create
+  // churn, or a width that never learned the folder — is re-placed at the
+  // first free cell. Membership itself lives in its own tables and survives
+  // every layout rewrite; only the tile's position is repaired here.
+  repair(layout, cols, present, folderIds) {
     const wanted = new Set(present || []);
+    const folderWanted = new Set((folderIds || []).map((id) => `folder:${id}`));
     const seen = new Set();
     const out = [];
     let changed = false;
@@ -323,7 +337,9 @@ const HomeLayout = {
       // who never opens the home screen never pays for a rewrite.
       if (item && item.type === 'widget') { changed = true; continue; }
       const id = HomeLayout.idOf(item);
-      if (!wanted.has(id) || seen.has(id)) { changed = true; continue; }
+      const isFolder = !!(item && item.type === 'folder');
+      const known = isFolder ? folderWanted.has(id) : wanted.has(id);
+      if (!known || seen.has(id)) { changed = true; continue; }
       seen.add(id);
       const size = HomeLayout.sizeOf(item, cols);
       const taken = HomeLayout.occupancy(out, cols);
@@ -348,6 +364,20 @@ const HomeLayout = {
     for (const id of wanted) {
       if (seen.has(id)) continue;
       const item = { type: 'app', slug: id.slice(4) };
+      const size = HomeLayout.sizeOf(item, cols);
+      const spot = HomeLayout.firstFreeCell(out, size, cols);
+      out.push(spot
+        ? { ...item, col: spot.col, row: spot.row }
+        : { ...item, col: 0, row: HomeLayout.MAX_ROWS });
+      changed = true;
+    }
+
+    // A known folder with no stored cell: re-placed like the apps above.
+    // Placed AFTER them so a folder never claims the top-left corner away
+    // from a real app on a converging load.
+    for (const id of folderWanted) {
+      if (seen.has(id)) continue;
+      const item = { type: 'folder', id: Number(id.slice(7)) };
       const size = HomeLayout.sizeOf(item, cols);
       const spot = HomeLayout.firstFreeCell(out, size, cols);
       out.push(spot
@@ -556,7 +586,9 @@ const HomeLayout = {
   // next load).
   toWire(layout) {
     return HomeLayout.canvasItems(layout).map((it) => (
-      { type: 'app', slug: it.slug, col: it.col, row: it.row }
+      it.type === 'folder'
+        ? { type: 'folder', id: it.id, col: it.col, row: it.row }
+        : { type: 'app', slug: it.slug, col: it.col, row: it.row }
     ));
   },
 };

@@ -7,10 +7,19 @@
 //   GET  /api/home-layout
 //        → { maxCols, maxRows, breakpoints: [4, 5],
 //            layouts: { "4": [item…], "5": [item…] },
-//            widgets: [{ key, title, removable, sizes }] }
-//        item = { type: 'app', slug, col, row } | { type: 'widget', key, col, row }
+//            folders: [{ id, name, apps: [slug…] }] }
+//        item = { type: 'app', slug, col, row }
+//             | { type: 'folder', id, col, row }
+//             | { type: 'widget', key, col, row }  (retired — never returned)
 //   PUT  /api/home-layout   body { cols: 4|5, items: [item…] }
 //        → the same shape, with the written width refreshed from the DB.
+//   POST   /api/home-layout/folders          body { name?, slugs }
+//   PUT    /api/home-layout/folders/:id      body { name }
+//   DELETE /api/home-layout/folders/:id
+//   POST   /api/home-layout/folders/:id/apps      body { slug }
+//   DELETE /api/home-layout/folders/:id/apps/:slug
+//        → folder CRUD: a folder's POSITION lives in user_home_layout above,
+//          its MEMBERSHIP in user_home_folder_items (both in schema.sql).
 //
 // ONE LAYOUT PER COLUMN COUNT. `cols` (4 on a phone, 5 above 640px) is the
 // breakpoint discriminator: an arrangement with intentional holes has no
@@ -99,7 +108,7 @@ async function visibleAppIds(pool, user) {
 // otherwise look like it had nowhere to go).
 async function readLayouts(pool, userId) {
   const { rows } = await pool.query(
-    `SELECT l.cols, l.item_type, l.widget_key, l.grid_col, l.grid_row, a.slug
+    `SELECT l.cols, l.item_type, l.widget_key, l.folder_id, l.grid_col, l.grid_row, a.slug
        FROM user_home_layout l
        LEFT JOIN apps a ON a.id = l.app_id
       WHERE l.user_id = $1
@@ -112,7 +121,12 @@ async function readLayouts(pool, userId) {
     const bucket = layouts[String(r.cols)];
     if (!bucket) continue;
     if (r.item_type === 'widget') continue; // retired — see the note above
-    if (r.slug) {
+    if (r.item_type === 'folder' && r.folder_id != null) {
+      bucket.push({
+        type: 'folder', id: Number(r.folder_id),
+        col: Number(r.grid_col), row: Number(r.grid_row),
+      });
+    } else if (r.slug) {
       bucket.push({
         type: 'app', slug: r.slug,
         col: Number(r.grid_col), row: Number(r.grid_row),
@@ -120,6 +134,42 @@ async function readLayouts(pool, userId) {
     }
   }
   return layouts;
+}
+
+// One folder record per person per folder, with its membership in ADD order.
+// A slug that no longer resolves (its app was deleted; the membership row
+// cascaded away with it) simply isn't there, the same lax stance the layout
+// read takes.
+async function readFolders(pool, userId) {
+  const { rows } = await pool.query(
+    `SELECT f.id, f.name, fi.sort_order, a.slug
+       FROM user_home_folders f
+       LEFT JOIN user_home_folder_items fi ON fi.folder_id = f.id
+       LEFT JOIN apps a ON a.id = fi.app_id
+      WHERE f.user_id = $1
+      ORDER BY f.id, fi.sort_order, fi.added_at, fi.app_id`,
+    [userId]
+  );
+  const byId = new Map();
+  for (const r of rows) {
+    let folder = byId.get(r.id);
+    if (!folder) {
+      folder = { id: Number(r.id), name: String(r.name || ''), apps: [] };
+      byId.set(r.id, folder);
+    }
+    if (r.slug) folder.apps.push(r.slug);
+  }
+  return [...byId.values()];
+}
+
+// The folder ids this viewer owns — the PUT's membership gate for folder
+// items, mirroring visibleAppIds for app items.
+async function visibleFolderIds(pool, userId) {
+  const { rows } = await pool.query(
+    'SELECT id FROM user_home_folders WHERE user_id = $1',
+    [userId]
+  );
+  return new Set(rows.map((r) => Number(r.id)));
 }
 
 // Parse + validate a PUT body's items into rows ready to insert.
@@ -138,12 +188,18 @@ async function readLayouts(pool, userId) {
 // Overlap is still checked against the server's own footprint for an app
 // tile (1x1, the only footprint left), never against sizes the client claims,
 // so the stored layout can't be made self-overlapping by a patched client.
-function parseItems(raw, cols, appIds) {
+// `folderIds` is the set of folder ids this viewer owns; a folder item whose
+// id is not in it is dropped silently, exactly like an invisible app, while a
+// DUPLICATE folder id is a 400 (the client cannot produce one, and one grid
+// cell per folder per width is the stored invariant — see
+// idx_user_home_layout_folder).
+function parseItems(raw, cols, appIds, folderIds) {
   if (!Array.isArray(raw)) return { error: 'items must be an array' };
   if (raw.length > MAX_ITEMS) return { error: 'too many items' };
 
   const out = [];
   const seenApps = new Set();
+  const seenFolders = new Set();
   // Occupancy grid for the overlap check — cols x MAX_ROWS booleans.
   const occupied = new Set();
 
@@ -171,7 +227,17 @@ function parseItems(raw, cols, appIds) {
       if (seenApps.has(appId)) return { error: 'duplicate app' };
       seenApps.add(appId);
       size = [1, 1];
-      record = { item_type: 'app', app_id: appId, widget_key: null, col, row };
+      record = { item_type: 'app', app_id: appId, widget_key: null, folder_id: null, col, row };
+    } else if (entry.type === 'folder') {
+      const id = Number(entry.id);
+      // Not this viewer's folder (or gone — deleting a folder cascades its
+      // position rows, so a live one is always owned): drop it silently,
+      // like an app the viewer can no longer see.
+      if (!folderIds || !folderIds.has(id)) continue;
+      if (seenFolders.has(id)) return { error: 'duplicate folder' };
+      seenFolders.add(id);
+      size = [1, 1];
+      record = { item_type: 'folder', app_id: null, widget_key: null, folder_id: id, col, row };
     } else {
       return { error: 'invalid item type' };
     }
@@ -252,11 +318,17 @@ function homeLayoutRoutes() {
       // by definition, so there is nothing to agree on — and the registry
       // itself is already on GET /api/home-panels, where the blocks' own
       // renderer reads it.
+      //
+      // FOLDERS ride along too. The demo payload stays app-only: it is a
+      // read-only fixture and no folder write is honoured under it, so an
+      // empty folder list is the truth for that viewer's visit.
+      const folders = demo ? [] : await readFolders(pool, req.user.id);
       return res.json({
         maxCols: MAX_COLS,
         maxRows: MAX_ROWS,
         breakpoints: BREAKPOINTS,
         layouts,
+        folders,
         ...(demo ? { demo: true } : {}),
       });
     } catch (err) {
@@ -275,7 +347,8 @@ function homeLayoutRoutes() {
     }
     try {
       const appIds = await visibleAppIds(pool, req.user);
-      const parsed = parseItems(req.body?.items, cols, appIds);
+      const folderIds = await visibleFolderIds(pool, req.user.id);
+      const parsed = parseItems(req.body?.items, cols, appIds, folderIds);
       if (parsed.error) return res.status(400).json({ error: parsed.error });
 
       // Full replace of this width, in one transaction so a concurrent read
@@ -302,9 +375,9 @@ function homeLayoutRoutes() {
         for (const it of parsed.items) {
           await client.query(
             `INSERT INTO user_home_layout
-               (user_id, cols, item_type, app_id, widget_key, grid_col, grid_row, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
-            [req.user.id, cols, it.item_type, it.app_id, it.widget_key, it.col, it.row]
+               (user_id, cols, item_type, app_id, widget_key, folder_id, grid_col, grid_row, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
+            [req.user.id, cols, it.item_type, it.app_id, it.widget_key, it.folder_id, it.col, it.row]
           );
         }
         await client.query('COMMIT');
@@ -316,14 +389,236 @@ function homeLayoutRoutes() {
       }
 
       const layouts = await readLayouts(pool, req.user.id);
+      const folders = await readFolders(pool, req.user.id);
       return res.json({
         maxCols: MAX_COLS,
         maxRows: MAX_ROWS,
         breakpoints: BREAKPOINTS,
         layouts,
+        folders,
       });
     } catch (err) {
       log.error('home-layout', 'PUT /api/home-layout failed', {
+        userId: req.user.id, message: err.message,
+      });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Folder CRUD ────────────────────────────────────────────────────
+  //
+  // Every folder a viewer creates is theirs alone (`user_id` on the row and
+  // on every lookup below), and every write here carries the same limiter
+  // and 401 guard as the layout PUT. Membership validates against the SAME
+  // visibility predicate visibleAppIds applies, so a folder can never carry
+  // an app its owner cannot see.
+
+  function cleanFolderName(raw) {
+    const name = String(raw == null ? '' : raw).trim().slice(0, 60).trim();
+    return name || 'New folder';
+  }
+
+  // The folder row, only when it belongs to this viewer. 404 (not 403) when
+  // it does not, so another person's folder id discloses nothing.
+  async function ownedFolder(client, userId, rawId) {
+    const id = Number(rawId);
+    if (!Number.isInteger(id) || id <= 0) return null;
+    const { rows } = await client.query(
+      'SELECT id, name FROM user_home_folders WHERE id = $1 AND user_id = $2',
+      [id, userId]
+    );
+    return rows[0] || null;
+  }
+
+  async function folderAppSlugs(client, folderId) {
+    const { rows } = await client.query(
+      `SELECT a.slug
+         FROM user_home_folder_items fi
+         JOIN apps a ON a.id = fi.app_id
+        WHERE fi.folder_id = $1
+        ORDER BY fi.sort_order, fi.added_at, fi.app_id`,
+      [folderId]
+    );
+    return rows.map((r) => r.slug);
+  }
+
+  router.post('/api/home-layout/folders', homeLayoutLimiter, async (req, res) => {
+    if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
+    try {
+      const rawSlugs = Array.isArray(req.body?.slugs) ? req.body.slugs : [];
+      if (!rawSlugs.length || rawSlugs.length > MAX_ITEMS) {
+        return res.status(400).json({ error: 'slugs must be a non-empty array' });
+      }
+      const appIds = await visibleAppIds(pool, req.user);
+      const members = [];
+      for (const raw of rawSlugs) {
+        const slug = String(raw || '');
+        const appId = appIds.get(slug);
+        if (appId == null) {
+          return res.status(400).json({ error: 'unknown or invisible app' });
+        }
+        members.push({ slug, appId });
+      }
+      const name = cleanFolderName(req.body?.name);
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const { rows } = await client.query(
+          'INSERT INTO user_home_folders (user_id, name) VALUES ($1, $2) RETURNING id, name',
+          [req.user.id, name]
+        );
+        const folder = rows[0];
+        let order = 0;
+        for (const m of members) {
+          await client.query(
+            `INSERT INTO user_home_folder_items (folder_id, app_id, sort_order)
+             VALUES ($1, $2, $3)`,
+            [folder.id, m.appId, order++]
+          );
+        }
+        await client.query('COMMIT');
+        return res.status(201).json({
+          id: Number(folder.id), name: folder.name,
+          apps: members.map((m) => m.slug),
+        });
+      } catch (txErr) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw txErr;
+      } finally {
+        client.release();
+      }
+    } catch (err) {
+      log.error('home-layout', 'POST /api/home-layout/folders failed', {
+        userId: req.user.id, message: err.message,
+      });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.put('/api/home-layout/folders/:id', homeLayoutLimiter, async (req, res) => {
+    if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
+    try {
+      const name = String(req.body?.name == null ? '' : req.body.name).trim().slice(0, 60).trim();
+      if (!name) return res.status(400).json({ error: 'name required' });
+      const client = await pool.connect();
+      try {
+        const folder = await ownedFolder(client, req.user.id, req.params.id);
+        if (!folder) return res.status(404).json({ error: 'Not found' });
+        await client.query(
+          'UPDATE user_home_folders SET name = $2, updated_at = NOW() WHERE id = $1',
+          [folder.id, name]
+        );
+        return res.json({ id: Number(folder.id), name, apps: await folderAppSlugs(client, folder.id) });
+      } finally {
+        client.release();
+      }
+    } catch (err) {
+      log.error('home-layout', 'PUT /api/home-layout/folders/:id failed', {
+        userId: req.user.id, message: err.message,
+      });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.delete('/api/home-layout/folders/:id', homeLayoutLimiter, async (req, res) => {
+    if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
+    try {
+      const client = await pool.connect();
+      try {
+        const folder = await ownedFolder(client, req.user.id, req.params.id);
+        if (!folder) return res.status(404).json({ error: 'Not found' });
+        // One DELETE: membership rows and any layout position rows cascade
+        // away with the folder (schema.sql), so its apps go back onto the
+        // grid on the next repair.
+        await client.query('DELETE FROM user_home_folders WHERE id = $1', [folder.id]);
+        return res.json({ ok: true });
+      } finally {
+        client.release();
+      }
+    } catch (err) {
+      log.error('home-layout', 'DELETE /api/home-layout/folders/:id failed', {
+        userId: req.user.id, message: err.message,
+      });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/home-layout/folders/:id/apps', homeLayoutLimiter, async (req, res) => {
+    if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
+    try {
+      const slug = String(req.body?.slug || '');
+      const appIds = await visibleAppIds(pool, req.user);
+      const appId = appIds.get(slug);
+      if (appId == null) {
+        return res.status(400).json({ error: 'unknown or invisible app' });
+      }
+      const client = await pool.connect();
+      try {
+        const folder = await ownedFolder(client, req.user.id, req.params.id);
+        if (!folder) return res.status(404).json({ error: 'Not found' });
+        // Appended at max(sort_order) + 1 — the add order. A re-add is a
+        // no-op (the unique pair backs this), so a double drop cannot
+        // duplicate a membership.
+        await client.query(
+          `INSERT INTO user_home_folder_items (folder_id, app_id, sort_order)
+           SELECT $1, $2, COALESCE(MAX(sort_order) + 1, 0)
+             FROM user_home_folder_items WHERE folder_id = $1
+           ON CONFLICT (folder_id, app_id) DO NOTHING`,
+          [folder.id, appId]
+        );
+        return res.json({
+          id: Number(folder.id), name: folder.name,
+          apps: await folderAppSlugs(client, folder.id),
+        });
+      } finally {
+        client.release();
+      }
+    } catch (err) {
+      log.error('home-layout', 'POST /api/home-layout/folders/:id/apps failed', {
+        userId: req.user.id, message: err.message,
+      });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.delete('/api/home-layout/folders/:id/apps/:slug', homeLayoutLimiter, async (req, res) => {
+    if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
+    try {
+      const client = await pool.connect();
+      try {
+        const folder = await ownedFolder(client, req.user.id, req.params.id);
+        if (!folder) return res.status(404).json({ error: 'Not found' });
+        const appIds = await visibleAppIds(pool, req.user);
+        const appId = appIds.get(String(req.params.slug || ''));
+        // An unknown slug is a harmless 200: the end state — not a member —
+        // is already true. An owned-but-invisible app's stale row is still
+        // removed, by id, when one matches.
+        let appIdToDelete = appId;
+        if (appIdToDelete == null) {
+          const { rows } = await client.query(
+            `SELECT fi.app_id
+               FROM user_home_folder_items fi
+               JOIN apps a ON a.id = fi.app_id
+              WHERE fi.folder_id = $1 AND a.slug = $2`,
+            [folder.id, String(req.params.slug || '')]
+          );
+          appIdToDelete = rows.length ? rows[0].app_id : null;
+        }
+        if (appIdToDelete != null) {
+          await client.query(
+            'DELETE FROM user_home_folder_items WHERE folder_id = $1 AND app_id = $2',
+            [folder.id, appIdToDelete]
+          );
+        }
+        return res.json({
+          id: Number(folder.id), name: folder.name,
+          apps: await folderAppSlugs(client, folder.id),
+        });
+      } finally {
+        client.release();
+      }
+    } catch (err) {
+      log.error('home-layout', 'DELETE /api/home-layout/folders/:id/apps/:slug failed', {
         userId: req.user.id, message: err.message,
       });
       return res.status(500).json({ error: 'Internal server error' });

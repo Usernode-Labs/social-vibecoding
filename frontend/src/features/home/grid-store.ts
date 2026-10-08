@@ -89,11 +89,15 @@ export interface HomeAppView {
 }
 
 /**
- * One placed tile. A single shape rather than a union: since the UI overhaul
- * moved the three widgets out to fixed sections, every item on the launcher
- * canvas is an app.
+ * One tile on the launcher canvas. A folder tile is the one non-app kind:
+ * same size as an app tile, carrying the folder's id, name and up to four
+ * member icons for its two-by-two preview (app folders, user_home_folders in
+ * schema.sql).
  */
-export type GridItem = { kind: 'card'; placement: GridPlacement | null; app: HomeAppView };
+export type GridItem = (
+  | { kind: 'card'; placement: GridPlacement | null; app: HomeAppView }
+  | { kind: 'folder'; placement: GridPlacement | null; folder: { id: number; name: string; icons: IconView[] } }
+);
 
 /**
  * The launcher's trailing "Create an app" tile (the prototype's scrHome ends
@@ -126,6 +130,14 @@ export interface HomeGridState {
   /** Search view only: the query that matched nothing, or null. */
   emptyQuery: string | null;
   /**
+   * The open folder's view, or null on the plain grid. Non-null turns
+   * `view` to 'folder': `#app-list` then renders a back row (‹ My apps,
+   * the name, the count) above the member tiles, exactly the search view's
+   * flat shape. Null in INITIAL_GRID, so the prerender and the first client
+   * render are unchanged.
+   */
+  folder: { id: number; name: string; count: number } | null;
+  /**
    * A whole-grid message from the LOAD path — offline with an empty cache, or
    * a failed fetch. It is in the model rather than written into `#app-list`
    * because React owns that subtree: an imperative write here would be a
@@ -148,6 +160,7 @@ export const INITIAL_GRID: HomeGridState = {
   items: [],
   resultsHeading: null,
   emptyQuery: null,
+  folder: null,
   notice: null,
   create: null,
 };

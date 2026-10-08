@@ -49,6 +49,7 @@ const INITIAL_GRID = {
   items: [],
   resultsHeading: null,
   emptyQuery: null,
+  folder: null,
   notice: null,
   create: null,
 };

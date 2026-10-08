@@ -62,9 +62,9 @@ function makeMockPool(state) {
         return { rows: [] };
       }
       if (/INSERT INTO user_home_layout/i.test(sql)) {
-        const [user_id, cols, item_type, app_id, widget_key, grid_col, grid_row] = params;
+        const [user_id, cols, item_type, app_id, widget_key, folder_id, grid_col, grid_row] = params;
         (state.rows = state.rows || []).push({
-          user_id, cols, item_type, app_id, widget_key, grid_col, grid_row,
+          user_id, cols, item_type, app_id, widget_key, folder_id, grid_col, grid_row,
         });
         return { rows: [] };
       }
@@ -80,11 +80,35 @@ function makeMockPool(state) {
       if (sql.includes('FROM apps a')) {
         return { rows: (state.apps || APPS).map((a) => ({ id: a.id, slug: a.slug })) };
       }
+      if (/SELECT id FROM user_home_folders WHERE user_id = \$1/i.test(sql)) {
+        return {
+          rows: (state.folders || [])
+            .filter((f) => f.user_id === params[0])
+            .map((f) => ({ id: f.id })),
+        };
+      }
+      if (sql.includes('FROM user_home_folders f')) {
+        // readFolders: membership rows joined onto the folder row.
+        const rows = (state.folders || [])
+          .filter((f) => f.user_id === params[0])
+          .flatMap((f) => {
+            const members = (state.folderItems || [])
+              .filter((i) => i.folder_id === f.id)
+              .sort((a, b) => a.sort_order - b.sort_order)
+              .map((i) => ({
+                id: f.id, name: f.name, sort_order: i.sort_order,
+                slug: (state.apps || APPS).find((a) => a.id === i.app_id)?.slug || null,
+              }));
+            return members.length ? members : [{ id: f.id, name: f.name, sort_order: null, slug: null }];
+          });
+        return { rows };
+      }
       if (sql.includes('FROM user_home_layout l')) {
         const rows = (state.rows || [])
           .filter((r) => r.user_id === params[0])
           .map((r) => ({
             cols: r.cols, item_type: r.item_type, widget_key: r.widget_key,
+            folder_id: r.folder_id,
             grid_col: r.grid_col, grid_row: r.grid_row,
             slug: (state.apps || APPS).find((a) => a.id === r.app_id)?.slug || null,
           }));
@@ -374,6 +398,70 @@ test('PUT caps the item count', async () => {
 test('PUT is 401 unauthenticated', async () => {
   const { app } = makeApp({});
   assert.equal((await put(app, '/api/home-layout', { cols: 5, items: [] })).status, 401);
+});
+
+// ── Folder tiles on the canvas ────────────────────────────────────────
+
+const F = (id, col, row) => ({ type: 'folder', id, col, row });
+
+// A folder tile is stored as its own row — item_type 'folder', the position
+// only — while the membership lives in user_home_folder_items and survives
+// layout rewrites.
+test('PUT stores a folder tile as a position row and it joins the overlap check', async () => {
+  const { app, state } = makeApp({}, { user: USER });
+  state.folders = [{ id: 5, user_id: USER.id, name: 'Game Corner' }];
+  // A folder tile and an app tile cannot share a cell, exactly like two apps.
+  assert.equal((await put(app, '/api/home-layout',
+    { cols: 5, items: [F(5, 0, 0), A('alpha', 0, 0)] })).status, 400);
+  // Adjacent is fine, and the folder row is stored app_id NULL / widget_key NULL.
+  const { status } = await put(app, '/api/home-layout',
+    { cols: 5, items: [F(5, 0, 0), A('alpha', 1, 0)] });
+  assert.equal(status, 200);
+  assert.deepEqual(state.rows.filter((r) => r.item_type === 'folder'), [
+    { user_id: USER.id, cols: 5, item_type: 'folder', app_id: null, widget_key: null, folder_id: 5, grid_col: 0, grid_row: 0 },
+  ]);
+});
+
+test('PUT drops a folder tile the viewer does not own and rejects a duplicate folder', async () => {
+  const { app, state } = makeApp({}, { user: USER });
+  // Folder 6 belongs to nobody in the fixture — an id guessed or left in a
+  // stale tab — so the tile is dropped the way an unseen app is, and the
+  // rest of the arrangement lands.
+  assert.equal((await put(app, '/api/home-layout',
+    { cols: 5, items: [F(6, 0, 0), A('alpha', 1, 0)] })).status, 200);
+  assert.equal(state.rows.length, 1);
+  assert.equal(state.rows[0].item_type, 'app');
+  // Two tiles for one folder id is a broken client, not a repairable one.
+  state.folders = [{ id: 6, user_id: USER.id, name: 'Snacks' }];
+  assert.equal((await put(app, '/api/home-layout',
+    { cols: 5, items: [F(6, 0, 0), F(6, 1, 0)] })).status, 400);
+});
+
+test('GET carries the folder inventory and folder tiles with their cells', async () => {
+  const { app, state } = makeApp({}, { user: USER });
+  state.folders = [
+    { id: 5, user_id: USER.id, name: 'Game Corner' },
+    { id: 6, user_id: USER.id, name: 'Snacks' },
+  ];
+  state.folderItems = [
+    { folder_id: 5, app_id: 101, sort_order: 0 },
+    { folder_id: 5, app_id: 103, sort_order: 1 },
+    { folder_id: 6, app_id: 102, sort_order: 0 },
+  ];
+  state.rows = [
+    { user_id: USER.id, cols: 5, item_type: 'folder', app_id: null, widget_key: null, folder_id: 5, grid_col: 0, grid_row: 2 },
+    { user_id: USER.id, cols: 5, item_type: 'app', app_id: 102, widget_key: null, folder_id: null, grid_col: 1, grid_row: 0 },
+  ];
+  const { status, body } = await get(app, '/api/home-layout');
+  assert.equal(status, 200);
+  assert.deepEqual(body.folders, [
+    { id: 5, name: 'Game Corner', apps: ['alpha', 'gamma'] },
+    { id: 6, name: 'Snacks', apps: ['beta'] },
+  ]);
+  assert.deepEqual(body.layouts['5'], [
+    { type: 'folder', id: 5, col: 0, row: 2 },
+    { type: 'app', slug: 'beta', col: 1, row: 0 },
+  ]);
 });
 
 // ── Staging demo ──────────────────────────────────────────────────────

@@ -2862,6 +2862,46 @@ ALTER TABLE app_favorites ADD COLUMN IF NOT EXISTS sort_order INTEGER;
 -- src/routes/apps.js).
 ALTER TABLE app_favorites ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT FALSE;
 
+-- Per-user home-screen folders (app folders on the launcher grid). A folder
+-- is one tile on the My apps grid that holds other apps behind it: drag one
+-- app tile onto another to fold them into one, drag more tiles onto it to add
+-- them, and tap it to see and open what is inside. Folders belong to one
+-- person and are visible only to them, exactly like the arrangement itself.
+--
+-- A folder's POSITION is a row in user_home_layout below (item_type
+-- 'folder', folder_id set), so it moves with the same drag machinery; its
+-- MEMBERSHIP lives here and survives layout rewrites. Deleting a folder
+-- cascades its membership and any layout position rows, which is how the
+-- folder's apps go back onto the grid.
+--
+-- Not staging:private, for the same reason the layout table is not: a folder
+-- is a display preference with no sensitive content.
+CREATE TABLE IF NOT EXISTS user_home_folders (
+  id          SERIAL PRIMARY KEY,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  -- User-named; an untitled folder starts as New folder (the client sends
+  -- nothing and this default fills in). Trimmed and capped at 60 characters
+  -- by the route that writes it.
+  name        TEXT NOT NULL DEFAULT 'New folder',
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_user_home_folders_user ON user_home_folders(user_id);
+
+-- One membership row per (folder, app). sort_order is the ADD order — order
+-- inside a folder is the order apps were added — and new items take
+-- max+1. The unique pair makes a re-add a no-op. The app_id index is what
+-- the ON DELETE CASCADE from apps reads.
+CREATE TABLE IF NOT EXISTS user_home_folder_items (
+  folder_id   INTEGER NOT NULL REFERENCES user_home_folders(id) ON DELETE CASCADE,
+  app_id      INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  sort_order  INTEGER NOT NULL DEFAULT 0,
+  added_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT user_home_folder_items_pair UNIQUE (folder_id, app_id)
+);
+CREATE INDEX IF NOT EXISTS idx_user_home_folder_items_app
+  ON user_home_folder_items(app_id);
+
 -- Free-form per-user home-screen layout: where every app tile and widget
 -- sits on the launcher grid, as a real (column, row) CELL rather than a
 -- position in a flow. This is what makes holes possible — an arrangement
@@ -2906,12 +2946,19 @@ CREATE TABLE IF NOT EXISTS user_home_layout (
   item_type   TEXT NOT NULL,
   app_id      INTEGER REFERENCES apps(id) ON DELETE CASCADE,
   widget_key  TEXT,
+  -- Folder items only (item_type 'folder'): which folder sits at this cell.
+  -- The FK cascade is what makes "delete the folder" also vacate its cell.
+  folder_id   INTEGER REFERENCES user_home_folders(id) ON DELETE CASCADE,
   grid_col    SMALLINT NOT NULL,
   grid_row    SMALLINT NOT NULL,
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  -- Three shapes now: an app tile, a folder tile (user_home_folders above),
+  -- and the retired widget row. Exactly one of the three reference columns
+  -- is set on any row.
   CONSTRAINT user_home_layout_kind CHECK (
-    (item_type = 'app' AND app_id IS NOT NULL AND widget_key IS NULL)
-    OR (item_type = 'widget' AND widget_key IS NOT NULL AND app_id IS NULL)
+    (item_type = 'app' AND app_id IS NOT NULL AND widget_key IS NULL AND folder_id IS NULL)
+    OR (item_type = 'widget' AND widget_key IS NOT NULL AND app_id IS NULL AND folder_id IS NULL)
+    OR (item_type = 'folder' AND folder_id IS NOT NULL AND app_id IS NULL AND widget_key IS NULL)
   ),
   CONSTRAINT user_home_layout_cols CHECK (cols IN (4, 5)),
   CONSTRAINT user_home_layout_col CHECK (grid_col >= 0 AND grid_col < cols),
@@ -2921,13 +2968,27 @@ CREATE TABLE IF NOT EXISTS user_home_layout (
   CONSTRAINT user_home_layout_row CHECK (grid_row >= 0 AND grid_row < 8)
 );
 -- One cell per item per width. Partial indexes rather than a composite PK
--- because exactly one of app_id / widget_key is set on any row.
+-- because exactly one of app_id / widget_key / folder_id is set on any row.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_user_home_layout_app
   ON user_home_layout(user_id, cols, app_id) WHERE app_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_user_home_layout_widget
   ON user_home_layout(user_id, cols, widget_key) WHERE widget_key IS NOT NULL;
+-- One position per folder per width (user_home_folders above).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_home_layout_folder
+  ON user_home_layout(user_id, cols, folder_id) WHERE folder_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_user_home_layout_read
   ON user_home_layout(user_id, cols);
+-- Folders arrived after the table: the CREATE TABLE above is a no-op on an
+-- existing database, so the column and the widened CHECK are applied here,
+-- idempotently. The CHECK is dropped and re-added to allow the third shape.
+ALTER TABLE user_home_layout ADD COLUMN IF NOT EXISTS folder_id
+  INTEGER REFERENCES user_home_folders(id) ON DELETE CASCADE;
+ALTER TABLE user_home_layout DROP CONSTRAINT IF EXISTS user_home_layout_kind;
+ALTER TABLE user_home_layout ADD CONSTRAINT user_home_layout_kind CHECK (
+  (item_type = 'app' AND app_id IS NOT NULL AND widget_key IS NULL AND folder_id IS NULL)
+  OR (item_type = 'widget' AND widget_key IS NOT NULL AND app_id IS NULL AND folder_id IS NULL)
+  OR (item_type = 'folder' AND folder_id IS NOT NULL AND app_id IS NULL AND widget_key IS NULL)
+);
 
 -- Admin-curated "Find more apps" row on the home screen. Global (one
 -- ordered list for everyone — no per-user targeting), display-only, and

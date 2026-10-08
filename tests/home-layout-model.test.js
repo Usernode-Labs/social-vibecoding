@@ -362,6 +362,60 @@ test('idOf identifies an app by slug', () => {
   assert.equal(HomeLayout.idOf(null), '');
 });
 
+// ── Folder tiles ──────────────────────────────────────────────────────
+
+const F = (id, col, row) => ({ type: 'folder', id, col, row });
+const folderIdsOf = (layout) => layout.filter((i) => i.type === 'folder').map((i) => i.id);
+
+test('idOf identifies a folder tile by its id', () => {
+  assert.equal(HomeLayout.idOf(F(5, 0, 0)), 'folder:5');
+  assert.deepEqual(HomeLayout.sizeOf(F(5, 0, 0), COLS), [1, 1],
+    'a folder tile is one cell, exactly like an app tile');
+});
+
+test('repair keeps a known folder tile in its stored cell and drops an unknown one', () => {
+  const present = new Set(['app:alpha']);
+  // Folder 5 exists for this viewer: its tile stays exactly where it is.
+  const kept = HomeLayout.repair([A('alpha', 1, 0), F(5, 0, 0)], COLS, present, [5]);
+  assert.equal(kept.changed, false);
+  assert.deepEqual(ids(kept.layout), ['folder:5', 'app:alpha']);
+  // Folder 6 does not: the tile is dropped, the way an unseen app is — and
+  // folder 5, known but with no stored cell here, is re-placed beside alpha.
+  const dropped = HomeLayout.repair([A('alpha', 1, 0), F(6, 0, 0)], COLS, present, [5]);
+  assert.equal(dropped.changed, true);
+  assert.deepEqual(ids(dropped.layout), ['folder:5', 'app:alpha']);
+});
+
+test('repair re-places a known folder that has no stored cell, AFTER the apps', () => {
+  // A folder created while this viewer had no layout stored for the width:
+  // the folder's members are excluded from `present`, so only the folder tile
+  // needs a cell — and it must not claim the top-left from a real app.
+  const result = HomeLayout.repair([A('alpha', 0, 0)], COLS, new Set(['app:alpha']), [5]);
+  assert.equal(result.changed, true);
+  assert.deepEqual(
+    result.layout.map((i) => [i.type, i.col, i.row]),
+    [['app', 0, 0], ['folder', 1, 0]]);
+  assertNoOverlap(result.layout, COLS);
+});
+
+test('repair re-places apps that come back when a folder is deleted', () => {
+  // Folder 5 held alpha; the folder is gone, so alpha is present again with
+  // no cell of its own and repair must find it one.
+  const result = HomeLayout.repair([F(5, 0, 0)], COLS, new Set(['app:alpha']), [5]);
+  assert.deepEqual(
+    result.layout.map((i) => [i.type, i.slug || i.id, i.col, i.row]),
+    [['folder', 5, 0, 0], ['app', 'alpha', 1, 0]],
+    'the folder holds its cell; alpha lands beside it');
+});
+
+test('toWire round-trips folder tiles as ids, and apps as slugs', () => {
+  const layout = [A('alpha', 1, 0), F(5, 0, 0)];
+  assert.deepEqual(HomeLayout.toWire(layout), [
+    { type: 'folder', id: 5, col: 0, row: 0 },
+    { type: 'app', slug: 'alpha', col: 1, row: 0 },
+  ]);
+});
+
 // ── Blank rows (#975) ─────────────────────────────────────────────────
 
 test('an empty row between tiles is half a cell', () => {
