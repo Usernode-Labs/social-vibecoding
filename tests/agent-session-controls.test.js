@@ -104,7 +104,7 @@ test('the walkthrough is the dev chat\'s: its steps over the server\'s status', 
   assert.match(dialog, /\{`Copy instructions and open \$\{label\}`\}/);
   assert.match(dialog, />Paste into the new session\. It starts building straight away\.</);
   assert.match(dialog, /Handed over with the instructions/);
-  assert.match(dialog, /`This chat's spec: "\$\{active\.title\}"`/);
+  assert.match(dialog, /`This chat's plan: "\$\{active\.title\}"`/);
   // The copy fallback: the instructions, open, for copying by hand.
   assert.match(dialog, /<details [^>]*open=\{manual\}>/);
   assert.match(dialog, /Could not copy\. Copy the instructions below by hand/);

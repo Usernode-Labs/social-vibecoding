@@ -62,7 +62,7 @@ const BASE = '/api/admin/homeroom-bot/bench';
 
 type Stage = 'triage' | 'spec' | 'build' | 'followup' | 'checks_fix' | 'dm' | 'first_version' | 'capture';
 const STAGE_LABEL: Record<Stage, string> = {
-  triage: 'Triage', spec: 'Spec', build: 'Build', followup: 'Follow-up', checks_fix: 'Checks fix', dm: 'DM',
+  triage: 'Triage', spec: 'Plan', build: 'Build', followup: 'Follow-up', checks_fix: 'Checks fix', dm: 'DM',
   first_version: 'First version', capture: 'Capture (before)',
 };
 const STAGES: Stage[] = ['triage', 'spec', 'build', 'followup', 'checks_fix', 'dm', 'first_version', 'capture'];

@@ -80,6 +80,7 @@ to expect on the staging preview.`;
   const specBlock = `
 
 ==== CURRENT SPEC DOC (live draft) ====
+In anything the user reads — your replies and the pills you suggest — call this document "the plan"; the word "spec" is only for tool names and these instructions.
 
 ${specIsEmpty ? '(empty — no spec drafted yet)' : currentSpec}
 

@@ -120,7 +120,7 @@ function truncate(value, max) {
 }
 
 const AUTO_SOLVE_BODIES = Object.freeze({
-  spec: 'Spec ready. Review it in the app',
+  spec: 'Plan ready. Review it in the app',
   code: "Code ready. Review and promote when you're happy",
   spec_code: "Spec and code ready. Review and promote when you're happy",
 });
@@ -403,9 +403,9 @@ function buildCopy(kind, context, now) {
     case 'spec_shared':
       return {
         title: withApp(actor
-          ? (quotedTitle ? `@${actor} shared ${quotedTitle} with you` : `@${actor} shared a spec with you`)
-          : 'A spec was shared with you'),
-        body: detail ? `Spec v${detail}. Take a look and leave feedback` : 'Take a look and leave feedback',
+          ? (quotedTitle ? `@${actor} shared ${quotedTitle} with you` : `@${actor} shared a plan with you`)
+          : 'A plan was shared with you'),
+        body: detail ? `Plan v${detail}. Take a look and leave feedback` : 'Take a look and leave feedback',
       };
     case 'session_done':
       return {

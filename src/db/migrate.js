@@ -9511,7 +9511,7 @@ async function seedStagingSharedSpecPanelSession(pool, config) {
   }
 
   const sharedV2 = [
-    '# Staging demo shared spec (v2)',
+    '# Staging demo shared plan (v2)',
     '',
     'This version was shared to the group — any viewer of this session',
     'should see it in the spec panel, share buttons and all owner',
@@ -9595,7 +9595,7 @@ async function seedStagingSharedSpecPanelSession(pool, config) {
   await pool.query(
     `INSERT INTO chat_session_specs (session_id, version, content, built_at, shared_to_group_at)
      VALUES ($1, 2, $2, NOW() - INTERVAL '100 minutes', NOW() - INTERVAL '95 minutes')
-     ON CONFLICT (session_id, version) DO NOTHING`,
+     ON CONFLICT (session_id, version) DO UPDATE SET content = EXCLUDED.content`,
     [specSessionId, sharedV2]
   );
   // Self-heal the share flag on re-runs — the whole fixture hangs off it.
@@ -9645,7 +9645,7 @@ async function seedStagingHtmlSpecSession(pool, config) {
   .sd-left{position:absolute;left:28px;top:28px;width:620px}
 </style>`;
   const html = `<article data-spec-styles="platform" data-spec>
-  <h1>Staging demo HTML spec: the vote card says how many approvals are left</h1>
+  <h1>Staging demo HTML plan: the vote card says how many approvals are left</h1>
   <p>A spec written as HTML. The User-facing tab opens on before and after screens; the Technical tab on a diagram and a table.</p>
   <section data-spec-tab="user">
     <figure data-screens>

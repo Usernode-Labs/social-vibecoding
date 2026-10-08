@@ -293,9 +293,9 @@ test('a failed build still says what it meant to build', async () => {
 test('the GitHub comment says what the spec is for and folds the document away', () => {
   const text = live.specCommentText(SPEC);
   // B6: no approval talk while it builds.
-  assert.match(text, /^Homeroom bot wrote a spec for this request and is building it now\. The change will be linked here when it's ready to try\.\n/);
+  assert.match(text, /^Homeroom bot wrote a plan for this request and is building it now\. The change will be linked here when it's ready to try\.\n/);
   assert.ok(!/approve|proposal/i.test(text.split('<details>')[0]));
-  assert.ok(text.includes(`<details><summary>The spec</summary>\n\n${SPEC}\n\n</details>`));
+  assert.ok(text.includes(`<details><summary>The plan</summary>\n\n${SPEC}\n\n</details>`));
   const long = live.specCommentText('x'.repeat(70_000));
   assert.ok(long.length < 65_536, 'GitHub refuses a comment over 65,536 characters');
   assert.ok(!/—/.test(text));
@@ -311,9 +311,9 @@ test('the thread card is the same spec card a person\'s Share posts', () => {
     totalChars: SPEC.length,
     sharedBy: { id: 77, username: 'homeroom_bot' },
   });
-  assert.match(card.content, /Homeroom bot's spec for this request: "Hourly feed refresh"\. It is building it now\.$/);
+  assert.match(card.content, /Homeroom bot's plan for this request: "Hourly feed refresh"\. It is building it now\.$/);
   assert.match(live.specCard({ sessionId: 5001, version: 3, spec: SPEC, bot: BOT, proposed: true }).content,
-    /The spec this proposal was built from: "Hourly feed refresh"/);
+    /The plan this proposal was built from: "Hourly feed refresh"/);
   assert.equal(live.specTitle('## Only a section\n# Real title'), 'Real title');
   assert.equal(live.specTitle('no title'), null);
 });

@@ -892,7 +892,7 @@ function stagingMockTranscript(sessionId) {
     },
     {
       id: 5, role: 'system', model: null, created_at: t(84),
-      content: 'Spec drafted',
+      content: 'Plan drafted',
       metadata: { specPreview: '# [Mock] Readable cards on narrow screens\n\n- Two-row card layout\n- Actions wrap instead of crushing the title\n', specVersion: 1, specLines: 4 },
     },
     {
@@ -6607,13 +6607,13 @@ function buildHeadlessFollowUpQuickReplies(src) {
     case 'spec':
       // #1046: mirrors RECOVERY_PILLS.spec_done — the build pill names the
       // whole spec, not one component of it.
-      replies = ['Build the spec', 'Revise the spec', 'What will this change?'];
+      replies = ['Build the plan', 'Revise the plan', 'What will this change?'];
       break;
     case 'code':
       replies = ['Propose it to the group', 'Make a tweak', 'What did it change?'];
       break;
     case 'spec_code':
-      replies = ['Propose it to the group', 'Revise the spec', 'Make a tweak'];
+      replies = ['Propose it to the group', 'Revise the plan', 'Make a tweak'];
       break;
     default:
       return null;
@@ -7476,8 +7476,8 @@ async function runHeadlessSession({
         const specHasQuestions = specHasBlockingQuestions(currentSpec);
         const decisionTurnId = headlessTurnId;
         const decisionFallback = specHasQuestions
-          ? '_The spec has open questions. Review them before implementation._'
-          : '_Spec drafted. Review it in the spec viewer after starting a session from this auto session._';
+          ? '_The plan has open questions. Review them before implementation._'
+          : '_Plan drafted. Review it in the plan viewer after starting a session from this auto session._';
         const decisionEffect = await runHeadlessMayorEffect({
           pool,
           sessionId: session.id,
@@ -7517,8 +7517,8 @@ async function runHeadlessSession({
           const finalText = mayorText2.trim()
             ? mayorText2
             : (specHasQuestions
-              ? '_The spec has open questions. Review the Questions section in the spec viewer after starting a session from this auto session._'
-              : '_Spec drafted. Review it in the spec viewer after starting a session from this auto session._');
+              ? '_The plan has open questions. Review the Questions section in the plan viewer after starting a session from this auto session._'
+              : '_Plan drafted. Review it in the plan viewer after starting a session from this auto session._');
           const messageApplied = await persistHeadlessMayorRow({
             pool,
             sessionId: session.id,
@@ -7656,7 +7656,7 @@ async function runHeadlessSession({
           const phase3Fallback = outcome === 'spec_code'
             ? '_Spec drafted and change committed. Start a session from this auto session to review it and propose it to the group._'
             : outcome === 'question'
-              ? '_The spec has open questions. Review the Questions section in the spec viewer after starting a session from this auto session._'
+              ? '_The plan has open questions. Review the Questions section in the plan viewer after starting a session from this auto session._'
               : '_Spec drafted, but the implementation attempt did not complete; review the spec in the spec viewer after starting a session from this auto session._';
           postDispatchBillingAvailable = await resolveHeadlessPayer('phase-3-wrapup');
           const phase3Effect = await runHeadlessMayorEffect({
@@ -7699,7 +7699,7 @@ async function runHeadlessSession({
             mayorText3 = outcome === 'spec_code'
               ? '_Spec drafted and change committed. Start a session from this auto session to review it and propose it to the group._'
               : outcome === 'question'
-                ? '_The spec has open questions. Review the Questions section in the spec viewer after starting a session from this auto session._'
+                ? '_The plan has open questions. Review the Questions section in the plan viewer after starting a session from this auto session._'
                 : '_Spec drafted, but the implementation attempt did not complete; review the spec in the spec viewer after starting a session from this auto session._';
           }
           const servedModel3 = mayor3.servedModel || selectedModel;
@@ -8117,7 +8117,7 @@ async function runRecoveredWrapUp({
         + 'interruptions, delays, or this note itself. Call suggest_replies with 2-3 next steps '
         + 'that NAME what changed here, not generic platform actions — with the one exception in '
         + 'POST-SPEC BUILD PILL: if this turn left a spec and nothing built, the first pill still '
-        + 'says "Build the spec" rather than naming one component of it.',
+        + 'says "Build the plan" rather than naming one component of it.',
     });
 
     const currentSpec = await loadSessionSpec(pool, sessionId);
@@ -8946,9 +8946,9 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
     headlessTurnId = await checkpointHeadlessWrapUp(pool, session.id, outcome);
   }
   const fallbackMayorText = outcome === 'spec'
-    ? '_Spec drafted. Review it in the spec viewer after starting a session from this auto session._'
+    ? '_Plan drafted. Review it in the plan viewer after starting a session from this auto session._'
     : outcome === 'spec_code'
-      ? '_Spec drafted and change committed. Start a session from this auto session to open the PR._'
+      ? '_Plan drafted and change committed. Start a session from this auto session to open the PR._'
       : outcome === 'code'
         ? '_Change committed and pushed. Start a session from this auto session to open the PR._'
         : "_The auto session's dispatch didn't finish successfully. See the status above._";

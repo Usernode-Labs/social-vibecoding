@@ -161,7 +161,7 @@ test('each kind renders its own title and body from send-time context', () => {
       'They can try changes and vote on them from now on'],
     ['spec_shared', { ...CONTEXT, detail: '3' },
       '@alice shared "Fix login redirect loop" with you · MyPage',
-      'Spec v3. Take a look and leave feedback'],
+      'Plan v3. Take a look and leave feedback'],
     ['session_done', CONTEXT,
       'Your build is ready · MyPage',
       '"Fix login redirect loop" finished. Review it while it\'s fresh'],
@@ -207,7 +207,7 @@ test('each kind renders its own title and body from send-time context', () => {
 test('auto-solve outcomes surface urgency in the title, next step in the body', () => {
   const cases = [
     ['spec', 'Auto-solve finished "Fix login redirect loop" · MyPage',
-      'Spec ready. Review it in the app'],
+      'Plan ready. Review it in the app'],
     ['code', 'Auto-solve finished "Fix login redirect loop" · MyPage',
       "Code ready. Review and promote when you're happy"],
     ['spec_code', 'Auto-solve finished "Fix login redirect loop" · MyPage',

@@ -117,7 +117,7 @@ function prepareSpec(text) {
 function specCard({ sessionId, version, markdown, user }) {
   const title = specTitle(markdown);
   return {
-    content: `📋 ${user.username || 'Someone'} posted a spec for this request`
+    content: `📋 ${user.username || 'Someone'} posted a plan for this request`
       + `${title ? `: "${title}"` : ''} (version ${version}).`,
     msgType: 'spec_share',
     metadata: {
@@ -142,15 +142,15 @@ function specCommentText({ username, version, markdown, format, webPath }) {
   const clipped = text.length > MAX_COMMENT_SPEC_CHARS;
   const where = webPath ? ` on Homeroom: ${webPath}` : ' on Homeroom';
   return [
-    `**${username || 'Someone'}** posted a spec for this request (version ${version}).`
+    `**${username || 'Someone'}** posted a plan for this request (version ${version}).`
       + (format === 'html'
-        ? ` Its before/after screens are in the spec card${where}.`
-        : ` It is in the spec card${where}.`),
+        ? ` Its before/after screens are in the plan card${where}.`
+        : ` It is in the plan card${where}.`),
     '',
-    '<details><summary>The spec</summary>',
+    '<details><summary>The plan</summary>',
     '',
     clipped ? text.slice(0, MAX_COMMENT_SPEC_CHARS) : text,
-    ...(clipped ? ['', `[The first ${MAX_COMMENT_SPEC_CHARS} of ${text.length} characters. The whole spec is${where}.]`] : []),
+    ...(clipped ? ['', `[The first ${MAX_COMMENT_SPEC_CHARS} of ${text.length} characters. The whole plan is${where}.]`] : []),
     '',
     '</details>',
   ].join('\n');

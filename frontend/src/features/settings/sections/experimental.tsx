@@ -87,7 +87,7 @@ export function ExperimentalSection() {
       </div>
       <div id="settings-local-agents-section" className="hidden mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
         <SectionHeading title="Local coding agent">
-          Machines running <span className="font-mono">social-vibecoding agent run</span>. While one is attached, that session's spec and coding turns run there on your own Claude subscription instead of on Homeroom. Each turn asks in your terminal before it starts; spec turns are read-only, and after a coding turn Homeroom still opens the pull request, builds the preview and runs the checks. Detaching sends the next turn back to Homeroom.
+          Machines running <span className="font-mono">social-vibecoding agent run</span>. While one is attached, that session's plan and coding turns run there on your own Claude subscription instead of on Homeroom. Each turn asks in your terminal before it starts; plan turns are read-only, and after a coding turn Homeroom still opens the pull request, builds the preview and runs the checks. Detaching sends the next turn back to Homeroom.
         </SectionHeading>
         <div id="settings-local-agents-list" className="space-y-2">
           <LocalAgentsList />

@@ -5789,7 +5789,7 @@ const AppView = {
     const specStandIn = !body.proposalBody && mine && underway && !!item.spec_md;
     if (specStandIn) body.proposalBody = AppView._proposalBodyView({ ...item, pr_body: item.spec_md });
     body.summaryHtml ||= specStandIn
-      ? '<p>No short summary has been added yet. The spec this change is built from is under Details.</p>'
+      ? '<p>No short summary has been added yet. The plan this change is built from is under Details.</p>'
       : body.proposalBody
         ? '<p>No short summary has been added yet. The current description is under Details.</p>'
         : '<p>No change summary has been added yet.</p>';
@@ -10761,7 +10761,7 @@ const AppView = {
       // here; the request's own page draws the spec itself.
       const spec = AppView._botSpecOf(c);
       const specLine = spec
-        ? `<span class="dev-feed-comment-spec">${escapeHtml(spec.title ? `The spec: ${spec.title}` : 'The spec')}</span>`
+        ? `<span class="dev-feed-comment-spec">${escapeHtml(spec.title ? `The plan: ${spec.title}` : 'The plan')}</span>`
         : '';
       return `<div class="dev-feed-comment">
           <span class="dev-feed-comment-main">
@@ -13215,7 +13215,7 @@ const AppView = {
   // spec is drawn as a spec too, ending in the clip's own "… [truncated]".
   _botSpecOf(c) {
     if (!c || !AppView._isBotCommentAuthor(c.author)) return null;
-    const m = /^([\s\S]*?)<details>\s*<summary>\s*The spec\s*<\/summary>([\s\S]*?)(?:<\/details>\s*)?$/
+    const m = /^([\s\S]*?)<details>\s*<summary>\s*The\s+(?:spec|plan)\s*<\/summary>([\s\S]*?)(?:<\/details>\s*)?$/
       .exec(String(c.body || ''));
     if (!m) return null;
     const lines = m[2].split('\n');
@@ -18414,9 +18414,9 @@ const AppView = {
           act: { fn: 'openTopic', args: ['issue', n] },
         };
       }
-      const outcomeNote = h.outcome === 'spec' ? 'it drafted a spec'
+      const outcomeNote = h.outcome === 'spec' ? 'it drafted a plan'
         : h.outcome === 'code' ? 'it pushed a code change'
-          : h.outcome === 'spec_code' ? 'it drafted a spec and pushed a code change'
+          : h.outcome === 'spec_code' ? 'it drafted a plan and pushed a code change'
             : 'it finished a run';
       // #2779: a finished run used to be cloned into a classic dev chat of
       // the viewer's ("Review & start session"). Classic sessions are no

@@ -43,7 +43,7 @@ export const SHARE_TYPES: ReadonlyArray<{ value: SharedObjectType; label: string
   { value: 'issue', label: 'GitHub issue' },
   { value: 'proposal', label: 'Code proposal' },
   { value: 'governance', label: 'Governance proposal' },
-  { value: 'spec', label: 'Spec version' },
+  { value: 'spec', label: 'Plan version' },
 ];
 
 /** The app list's filter chips: "All" first, then the dropdown's two option groups. */
@@ -269,7 +269,7 @@ export function ShareItemDialog() {
           </div>
         </fieldset>
         {type !== 'app' ? <label className="block mb-3"><span className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1">{type === 'issue' ? 'Issue number' : type === 'governance' ? 'Governance proposal ID' : 'Proposal / session ID'}</span><Input inputMode="numeric" pattern="[0-9]*" value={itemId} onChange={(event) => setItemId(event.target.value.replace(/\D/g, '').slice(0, 10))} placeholder="123" /></label> : null}
-        {type === 'spec' ? <label className="block mb-3"><span className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1">Spec version</span><Input inputMode="numeric" pattern="[0-9]*" value={version} onChange={(event) => setVersion(event.target.value.replace(/\D/g, '').slice(0, 10))} placeholder="1" /></label> : null}
+        {type === 'spec' ? <label className="block mb-3"><span className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1">Plan version</span><Input inputMode="numeric" pattern="[0-9]*" value={version} onChange={(event) => setVersion(event.target.value.replace(/\D/g, '').slice(0, 10))} placeholder="1" /></label> : null}
         <p className="text-xs text-zinc-500 dark:text-zinc-400">The server resolves the live title and state. If access is later removed, the card becomes metadata-free and unavailable.</p>
         {error ? <p role="alert" className="mt-3 text-xs text-red-700 dark:text-red-400">{error}</p> : null}
         <div className="mt-5 flex justify-end gap-2"><Button type="button" variant="neutral" ink="neutral" onClick={dialog.close}>Cancel</Button><Button type="button" disabled={!canAttach} onClick={attach}>Attach item</Button></div>

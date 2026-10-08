@@ -765,7 +765,7 @@ test('production comments endpoint never substitutes mocks (empty stays empty)',
 const BOT_THREAD = [
   { id: 3001, user: { login: 'reporter' }, body: 'Dark mode please.', created_at: '2026-10-02T18:20:00Z' },
   { id: 3002, user: { login: 'usernode-bot' }, body: 'Homeroom bot is looking at this request.', created_at: '2026-10-02T18:24:00Z' },
-  { id: 3003, user: { login: 'usernode-bot' }, body: 'Homeroom bot wrote a spec for this request.', created_at: '2026-10-02T18:27:00Z' },
+  { id: 3003, user: { login: 'usernode-bot' }, body: 'Homeroom bot wrote a plan for this request.', created_at: '2026-10-02T18:27:00Z' },
   { id: 3004, user: { login: 'usernode-bot' }, body: 'Thanks for the report.', created_at: '2026-10-02T18:30:00Z' },
 ];
 
@@ -892,7 +892,7 @@ test('#3693: the staging spec comment is as long as a real one, so the route cli
     const port = server.address().port;
     const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/900003/comments?demo=1`);
     const body = await res.json();
-    const spec = body.comments.find((c) => /<details><summary>The spec<\/summary>/.test(c.body));
+    const spec = body.comments.find((c) => /<details><summary>The plan<\/summary>/.test(c.body));
     assert.ok(spec, 'the thread carries the bot\'s spec comment');
     assert.match(spec.body, /… \[truncated\]$/, 'clipped, as a real spec is');
     assert.doesNotMatch(spec.body, /<\/details>/, 'with its close cut off');

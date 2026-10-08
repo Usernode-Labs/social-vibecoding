@@ -146,7 +146,7 @@ const CHARTER_SECTIONS = Object.freeze([
     // description carries its limits at the point of use.
     id: 'specs-on-requests',
     title: 'Specs on a request',
-    text: 'A spec says what a change will do and how, and the group reads it before anything is built. post_spec puts one on an open request: read get_spec_format first, then write one HTML document that leads with before/after screens. It appears as a card in the request\'s discussion, and posting again on the same request adds your next version, so a review round is a revision rather than a new spec. It builds nothing, claims nothing and starts no vote. get_request lists the specs on a request and get_spec reads one. When you build a request that has a spec, build to it, and say in your submission where you departed from it and why; prepare_work names the newest spec in the work order for that reason.',
+    text: 'A spec says what a change will do and how, and the group reads it before anything is built. post_spec puts one on an open request: read get_spec_format first, then write one HTML document that leads with before/after screens. It appears as a card in the request\'s discussion, and posting again on the same request adds your next version, so a review round is a revision rather than a new spec. It builds nothing, claims nothing and starts no vote. get_request lists the specs on a request and get_spec reads one. When you build a request that has a spec, build to it, and say in your submission where you departed from it and why; prepare_work names the newest spec in the work order for that reason. People on Homeroom see a spec as a plan: say "plan" when you talk to them.',
   },
   {
     id: 'work-order-handling',

@@ -1596,13 +1596,13 @@
       "name": "A group-shared spec renders in another viewer's spec panel",
       "path": "/?shot=spec-viewer#app/usernode-2d5619/dev/sessions/900830",
       "expectSelector": "#dc-spec-viewer .dc-spec-viewer-tabs",
-      "expectText": "Staging demo shared spec"
+      "expectText": "Staging demo shared plan"
     },
     {
       "name": "An HTML spec opens on its before and after screens in the spec panel",
       "path": "/?shot=spec-viewer#app/usernode-2d5619/dev/sessions/900831",
       "expectSelector": "#dc-spec-viewer .shots-viewer-spec .shots-stage",
-      "expectText": "Staging demo HTML spec"
+      "expectText": "Staging demo HTML plan"
     },
     {
       "name": "Visible own session offers the \"Share chat\" opt-in in its ⋯ menu",
