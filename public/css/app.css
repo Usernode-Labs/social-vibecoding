@@ -14270,6 +14270,9 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 .dev-vote-btn:hover { background: var(--accent-light); }
 .dev-vote-btn-yes, .dev-vote-btn-yes:hover { background: var(--accent-tint); color: var(--accent); }
 .dev-vote-btn-no, .dev-vote-btn-no:hover { background: var(--state-blocked-bg); color: var(--state-blocked); }
+/* #3984: a vote on its way reads "Sending…" and takes no press until the
+   server answers. */
+.dev-vote-btn[aria-busy="true"] { cursor: progress; opacity: 0.75; }
 /* The picker: body-mounted and fixed, like .dev-card-menu, because the
    kanban columns scroll sideways and would clip it. */
 .dev-vote-pop {

@@ -219,6 +219,11 @@ function RowActions({ view, actions }: {
   view: { id: number };
   actions: { key: string; label: string; primary?: boolean }[];
 }): ReactNode {
+  // #3984: "Still yes" on its way. It is a vote, and on a slow network
+  // nothing showed until the server answered, so a second press looked like
+  // the thing to do. It reads "Sending…" and takes no press until then; the
+  // other row actions are not votes and keep their own behaviour.
+  const [busy, setBusy] = useState(false);
   const buttons = actions.map((a) => (
     // The widget language's filled pill, through the shell's <Button>:
     // the accent one for the row's primary act, the neutral one beside it.
@@ -230,12 +235,19 @@ function RowActions({ view, actions }: {
       size="default"
       ink={a.primary ? 'solid' : 'neutral'}
       className="shrink-0"
+      disabled={a.key === 'still_yes' && busy}
+      aria-busy={a.key === 'still_yes' && busy ? 'true' : undefined}
       onClick={(event) => {
         event.stopPropagation();
-        controller()?._onRowAction(view.id, a.key);
+        if (a.key !== 'still_yes') { controller()?._onRowAction(view.id, a.key); return; }
+        if (busy) return;
+        setBusy(true);
+        Promise.resolve(controller()?._onRowAction(view.id, a.key))
+          .catch(() => false)
+          .then(() => setBusy(false));
       }}
     >
-      {a.label}
+      {a.key === 'still_yes' && busy ? 'Sending…' : a.label}
     </Button>
   ));
   if (actions.length > 1) return <div className="flex items-center gap-2 pl-[3.75rem]">{buttons}</div>;
