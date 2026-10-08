@@ -13096,3 +13096,31 @@ CREATE TRIGGER chat_sessions_wf_merge_owned
         OR OLD.live_at IS DISTINCT FROM NEW.live_at)
   EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=merge-followups/session:',
     'merged_at', 'merge_commit_sha', 'included_in_session_id', 'live_at');
+
+-- #4083: every account without access has a spot on the waitlist, however it
+-- was made. Signups now get one as they are made (waitlist.ensureAccountSignup);
+-- this gives the accounts already waiting without one theirs, once, guarded by
+-- a marker like `onboarding_gate_grandfathered`. Only a confirmed address (the
+-- account proved it), never an admin, a synthetic or a test account, and never
+-- an account that already has a row: a phone row, or one holding the address.
+-- In line from when the account was made; the token is the row's "Want in
+-- sooner?" capability, two v4 UUIDs' worth of randomness.
+INSERT INTO waitlist_signups (email, submitted_at, linked_user_id, confirmed_at, more_token)
+  SELECT LOWER(u.email), COALESCE(u.created_at, NOW()), u.id,
+         COALESCE(u.email_confirmed_at, NOW()),
+         replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '')
+    FROM users u
+   WHERE u.has_platform_access = FALSE
+     AND u.is_admin IS NOT TRUE
+     AND u.is_synthetic = FALSE
+     AND u.test_account_created_at IS NULL
+     AND u.email_confirmed = TRUE
+     AND u.email IS NOT NULL AND u.email <> ''
+     AND NOT EXISTS (SELECT 1 FROM waitlist_signups w WHERE w.linked_user_id = u.id)
+     AND NOT EXISTS (SELECT 1 FROM platform_settings WHERE key = 'waitlist_spots_backfilled')
+ON CONFLICT DO NOTHING;
+
+INSERT INTO platform_settings (key, value, description) VALUES
+  ('waitlist_spots_backfilled', 'true',
+    'Marker: the one-time backfill giving every waiting account a waitlist row (#4083) has run.')
+ON CONFLICT (key) DO NOTHING;

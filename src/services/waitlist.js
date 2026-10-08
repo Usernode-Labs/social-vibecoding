@@ -402,8 +402,11 @@ async function setVerifiedHandle(pool, token, provider, handle) {
 // access: existing users, and anybody an invite link let in, get no skips
 // from being released again. The invite tree writes its own generations and
 // never comes through here.
+//
+// Returns true only when this call is what let the account in, so a caller
+// can say so ("you're in") exactly once; a re-grant returns false.
 async function grantPlatformAccess(pool, userId, { manualRelease = false } = {}) {
-  await pool.query(
+  const result = await pool.query(
     `UPDATE users
         SET has_platform_access = TRUE,
             platform_access_granted_at = COALESCE(platform_access_granted_at, NOW()),
@@ -411,6 +414,7 @@ async function grantPlatformAccess(pool, userId, { manualRelease = false } = {})
       WHERE id = $1 AND has_platform_access = FALSE`,
     [userId, manualRelease === true]
   );
+  return !!(result && result.rowCount > 0);
 }
 
 // Account-creation linkage: point the email's waitlist row (if any) at
@@ -436,6 +440,72 @@ async function linkUserByEmail(pool, { userId, email }) {
   } catch (err) {
     log.error('waitlist', 'linkUserByEmail failed', { userId, message: err.message });
   }
+}
+
+// Every account without access has a spot on the waitlist, however it was
+// made (#4083). An account whose own address is confirmed (an email code, a
+// Google/Apple sign-in, Settings' email code) gets one when no row holds it
+// yet: linked, confirmed, in line from that moment. Run AFTER
+// linkUserByEmail, so an address the waitlist already released (and so let
+// in) gets none; an account that already has a row (an email one, or a phone
+// one) keeps it. The address is the account's own, read here, never one a
+// caller passes. Cheap and idempotent, so a sign-in that runs it again heals
+// a run that failed. Best-effort, like the link: it never fails the sign-in.
+async function ensureAccountSignup(pool, { userId }) {
+  if (!userId) return;
+  try {
+    // No conflict target: both the address's UNIQUE (email) and the
+    // case-folded index count, and either means the address has a row.
+    await pool.query(
+      `INSERT INTO waitlist_signups (email, linked_user_id, confirmed_at, more_token)
+       SELECT LOWER(TRIM(u.email)), u.id, NOW(), $2
+         FROM users u
+        WHERE u.id = $1
+          AND u.has_platform_access = FALSE
+          AND u.is_admin IS NOT TRUE
+          AND u.email_confirmed = TRUE
+          AND u.email IS NOT NULL AND TRIM(u.email) <> ''
+          AND NOT EXISTS (SELECT 1 FROM waitlist_signups w WHERE w.linked_user_id = u.id)
+       ON CONFLICT DO NOTHING`,
+      [userId, crypto.randomBytes(24).toString('hex')]
+    );
+  } catch (err) {
+    log.error('waitlist', 'ensureAccountSignup failed', { userId, message: err.message });
+  }
+}
+
+// A direct grant (POST /api/v4/admin/users/:id/grant-access) lets an account
+// in without Admit. Its waitlist rows are marked released with it, so the
+// queue shows it let in and a later Admit is a re-release that mails nothing.
+// Returns the release to tell them about, in releaseWaitlistSignup's shape
+// (`email` null when the account has no address: the SMS hook's case), or
+// null when one of its rows was already released, whose release already sent
+// the "you're in" mail.
+async function releaseRowsForGrant(pool, userId) {
+  const { rows: users } = await pool.query('SELECT email FROM users WHERE id = $1', [userId]);
+  const accountEmail = normalizeEmail(users[0] && users[0].email);
+  const { rows } = await pool.query(
+    `WITH prev AS (
+        SELECT id, released_at FROM waitlist_signups
+         WHERE linked_user_id = $1
+            OR ($2::varchar IS NOT NULL AND email = $2 AND linked_user_id IS NULL)
+     )
+     UPDATE waitlist_signups w
+        SET released_at = COALESCE(w.released_at, NOW()),
+            linked_user_id = $1
+       FROM prev
+      WHERE w.id = prev.id
+      RETURNING w.id, w.email, (prev.released_at IS NOT NULL) AS was_released`,
+    [userId, accountEmail]
+  );
+  if (rows.some((r) => r.was_released)) return null;
+  const listed = rows.find((r) => r.email) || rows[0] || null;
+  return {
+    id: listed ? listed.id : null,
+    email: accountEmail || (listed && listed.email) || null,
+    linked_user_id: userId,
+    more_token: null,
+  };
 }
 
 // ── Phone rows and outbound SMS (#4223, #4096) ────────────────────────
@@ -545,6 +615,8 @@ module.exports = {
   setVerifiedHandle,
   grantPlatformAccess,
   linkUserByEmail,
+  ensureAccountSignup,
+  releaseRowsForGrant,
   releaseWaitlistSignup,
   WaitlistReleaseError,
   SMS_ISSUE,

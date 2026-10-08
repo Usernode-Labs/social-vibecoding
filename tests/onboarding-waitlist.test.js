@@ -47,6 +47,8 @@ const {
   setVerifiedHandle,
   grantPlatformAccess,
   linkUserByEmail,
+  ensureAccountSignup,
+  releaseRowsForGrant,
   releaseWaitlistSignup,
 } = require('../src/services/waitlist');
 
@@ -105,12 +107,13 @@ function makePool(state) {
     if (sql.includes('SET has_platform_access = TRUE')) {
       const [userId, manualRelease] = params;
       const u = state.users.get(userId);
-      if (u && !u.has_platform_access) {
-        u.has_platform_access = true;
-        u.platform_access_granted_at = u.platform_access_granted_at || new Date();
-        if (manualRelease === true) u.invite_generation = 0;
-      }
-      return { rowCount: u ? 1 : 0, rows: [] };
+      // WHERE has_platform_access = FALSE: only the grant that lets the
+      // account in updates it.
+      if (!u || u.has_platform_access) return { rowCount: 0, rows: [] };
+      u.has_platform_access = true;
+      u.platform_access_granted_at = u.platform_access_granted_at || new Date();
+      if (manualRelease === true) u.invite_generation = 0;
+      return { rowCount: 1, rows: [] };
     }
 
     if (sql.includes('SET linked_user_id = $1 WHERE email = $2')) {
@@ -412,12 +415,93 @@ test('re-granting keeps the original granted_at', async () => {
   const pool = makePool(state);
   const user = addUser(state, { id: 30, email: 'g@example.com' });
 
-  await grantPlatformAccess(pool, 30);
+  assert.equal(await grantPlatformAccess(pool, 30), true, 'the first grant is what let them in');
   const firstGrant = user.platform_access_granted_at;
-  await grantPlatformAccess(pool, 30);
+  assert.equal(await grantPlatformAccess(pool, 30), false, 'a re-grant lets nobody in');
 
   assert.equal(user.has_platform_access, true);
   assert.equal(user.platform_access_granted_at, firstGrant);
+});
+
+// ─── 5b. Every waiting account has a spot; a direct grant releases it (#4083)
+
+function recordingPool(answers = []) {
+  const seen = [];
+  return {
+    seen,
+    async query(sql, params = []) {
+      seen.push({ sql: collapse(sql), params });
+      return answers.length ? answers.shift() : { rows: [], rowCount: 0 };
+    },
+  };
+}
+
+test('ensureAccountSignup gives a waiting account a row for its own confirmed address', async () => {
+  const pool = recordingPool();
+  await ensureAccountSignup(pool, { userId: 50 });
+  assert.equal(pool.seen.length, 1);
+  const { sql, params } = pool.seen[0];
+  assert.match(sql, /^INSERT INTO waitlist_signups \(email, linked_user_id, confirmed_at, more_token\) SELECT LOWER\(TRIM\(u\.email\)\), u\.id, NOW\(\), \$2 FROM users u WHERE u\.id = \$1/);
+  assert.match(sql, /u\.has_platform_access = FALSE/, 'an account already let in gets no row');
+  assert.match(sql, /u\.is_admin IS NOT TRUE/);
+  assert.match(sql, /u\.email_confirmed = TRUE/, 'only an address the account proved');
+  assert.match(sql, /NOT EXISTS \(SELECT 1 FROM waitlist_signups w WHERE w\.linked_user_id = u\.id\)/, 'one row per account');
+  assert.match(sql, /ON CONFLICT DO NOTHING$/, 'an address that already has a row keeps it');
+  assert.equal(params[0], 50);
+  assert.match(params[1], /^[0-9a-f]{48}$/, 'its own "Want in sooner?" token');
+});
+
+test('ensureAccountSignup is a no-op without an account and never throws', async () => {
+  const pool = recordingPool();
+  await ensureAccountSignup(pool, { userId: null });
+  assert.equal(pool.seen.length, 0);
+  await ensureAccountSignup({ query: async () => { throw new Error('down'); } }, { userId: 52 });
+});
+
+test('every path that confirms an account\'s address gives it its spot', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+  // The email code (new or unconfirmed account), Settings' email code, and
+  // every Google/Apple sign-in, outside the created-only block.
+  assert.match(read('src/services/email-signup.js'), /if \(result\.next === 'set-password'\) \{\s+await waitlist\.ensureAccountSignup\(pool, \{ userId: result\.userId \}\);/);
+  assert.match(read('src/services/account-email.js'), /ensureAccountSignup\(pool, \{ userId \}\)/);
+  const providers = read('src/routes/sign-in-providers.js');
+  const after = providers.slice(providers.indexOf('async function afterSignIn'));
+  const spot = after.indexOf('await waitlist.ensureAccountSignup(pool, { userId: result.userId });');
+  assert.ok(spot > after.indexOf("if (state.started_from === 'story')"), 'runs after the created-only block');
+  assert.ok(spot < after.indexOf('const consented'));
+});
+
+test('releaseRowsForGrant releases the account\'s rows and tells its own address', async () => {
+  const pool = recordingPool([
+    { rows: [{ email: 'Mine@Example.com' }] },
+    { rows: [{ id: 9, email: 'listed@example.com', was_released: false }] },
+  ]);
+  const release = await releaseRowsForGrant(pool, 60);
+  assert.deepEqual(release, { id: 9, email: 'mine@example.com', linked_user_id: 60, more_token: null });
+  const update = pool.seen[1];
+  assert.match(update.sql, /SET released_at = COALESCE\(w\.released_at, NOW\(\)\)/);
+  assert.match(update.sql, /WHERE linked_user_id = \$1 OR \(\$2::varchar IS NOT NULL AND email = \$2 AND linked_user_id IS NULL\)/);
+  assert.deepEqual(update.params, [60, 'mine@example.com']);
+});
+
+test('releaseRowsForGrant says nothing to tell when a row was already released', async () => {
+  const pool = recordingPool([
+    { rows: [{ email: 'mine@example.com' }] },
+    { rows: [{ id: 9, email: 'mine@example.com', was_released: true }] },
+  ]);
+  assert.equal(await releaseRowsForGrant(pool, 61), null);
+});
+
+test('releaseRowsForGrant falls back to the row\'s address, then to none', async () => {
+  const listed = recordingPool([
+    { rows: [{ email: null }] },
+    { rows: [{ id: 3, email: 'row@example.com', was_released: false }] },
+  ]);
+  assert.equal((await releaseRowsForGrant(listed, 62)).email, 'row@example.com');
+  const bare = recordingPool([{ rows: [{ email: null }] }, { rows: [] }]);
+  assert.deepEqual(await releaseRowsForGrant(bare, 63), { id: null, email: null, linked_user_id: 63, more_token: null });
 });
 
 // ─── 6. Who a release makes generation 0 of the invite tree ──────────
