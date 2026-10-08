@@ -1143,10 +1143,17 @@ function ChangeHero({ id, card, body, linkedIssues, onIssuesSaved }: {
   return (
     <section className="dev-topic-sheet dev-topic-hero" data-topic-sheet="hero" data-ws-tint={h.tint}>
       <div className="dev-topic-hero-top">
-        {/* B10b: what the page is and where it stands. The pull request it
-            names is in Details. */}
+        {/* What the page is and where it stands. The pull request number is
+            drawn in this row again (#4355), the way the card names its; the
+            Details sheet keeps it too. */}
         <span className="dev-ws-eyebrow dev-topic-hero-eyebrow">
-          {h.status ? `${h.kind} · ${h.status}` : h.kind}
+          {h.ref ? (
+            <>
+              {`${h.kind} · `}
+              {h.ref.href ? <a href={h.ref.href} target="_blank" rel="noopener">{h.ref.s}</a> : <span>{h.ref.s}</span>}
+              {h.status ? <span>{` · ${h.status}`}</span> : null}
+            </>
+          ) : (h.status ? `${h.kind} · ${h.status}` : h.kind)}
         </span>
         {h.age ? <span className="dev-ws-item-of" title={h.age.title}>{h.age.s}</span> : null}
       </div>
