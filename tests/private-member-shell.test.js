@@ -118,7 +118,25 @@ test('the waitlist card: join, an email, a code, then On the waitlist with "Want
   const src = read(card);
   // Not in the prerender: nothing until the shell knows who is signed in.
   assert.match(src, /if \(!privateMember \|\| !standing \|\| standing\.state === 'admitted'\) return null;/);
-  for (const p of ["'/api/me/waitlist'", "'/api/me/waitlist/join'", "'/api/me/waitlist/verify'"]) assert.ok(src.includes(p), p);
+  for (const p of ["'/api/me/waitlist'", "'/api/me/waitlist/join'", "'/api/me/waitlist/verify'", "'/api/me/waitlist/join-phone'"]) assert.ok(src.includes(p), p);
+
+  // #4223: a verified phone and no confirmed email joins with the one button,
+  // nothing asked; listed by phone, the news goes by text and an email is optional.
+  const phone = renderComponent(card, 'WaitlistCardBody', {
+    standing: { state: 'none', email: null, accountEmail: null, hasPhone: true, moreToken: null },
+    onListed: () => {},
+  });
+  assert.match(phone, /id="home-waitlist-join"[^>]*>Join the waitlist</);
+  assert.doesNotMatch(phone, /type="email"/);
+  assert.match(src, /onClick=\{\(\) => \(phoneOnly \? void joinByPhone\(\) : setStep\(\{ kind: 'email' \}\)\)\}/);
+  const byPhone = renderComponent(card, 'WaitlistCardBody', {
+    standing: { state: 'listed', email: null, accountEmail: null, hasPhone: true, moreToken: token },
+    onListed: () => {},
+  });
+  assert.match(byPhone, /We’ll text you when it’s your turn\./);
+  assert.match(byPhone, /id="home-waitlist-add-email"[^>]*>Add an email too</);
+  assert.match(byPhone, new RegExp(`href="#more/${token}"`));
+  assert.doesNotMatch(listed, /Add an email too/, 'an email row has nothing to add');
   assert.match(read('frontend/src/features/home/index.tsx'), /<AppsMore \/>\s+<\/section>[\s\S]*<WaitlistCard \/>\s+[\s\S]*<DiscoverSection \/>/);
 });
 

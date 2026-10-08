@@ -7974,6 +7974,21 @@
     {
       "source": "src/routes/member-waitlist.js",
       "method": "POST",
+      "path": "/api/me/waitlist/join-phone",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.me.waitlist.join.phone.87f4b1bd",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps"
+    },
+    {
+      "source": "src/routes/member-waitlist.js",
+      "method": "POST",
       "path": "/api/me/waitlist/verify",
       "expression": null,
       "status": "mapped",
