@@ -5673,3 +5673,38 @@ test('#4031: the end card keeps its ring when the last vote takes the open count
   assert.equal(endRingTotal(0, 0, 0), 0);
   assert.match(WORKSHOP, /<DoneItem\s+total=\{endRingTotal\(total, votedHere, leftVotes\)\}/, 'the feed draws the end card with it');
 });
+
+test('#4313: the reel\'s vote sheet reads as an approval on a Just-you row', () => {
+  const { tallyLine } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
+  const row = (approve, tally, pill = null) => ({
+    kind: 'vote',
+    card: { pill },
+    tally,
+    yes: approve ? { label: 'Approve', approve: true } : { label: 'Yes' },
+    no: { label: 'No' },
+  });
+
+  // The answer is owed: the card's pill's words, not the group's.
+  assert.equal(tallyLine(row(true, { yes: 0, no: 0 })), 'Waiting for your approval.');
+  // Answered, the rail's words, with the subline's full stop.
+  assert.equal(tallyLine(row(true, { yes: 0, no: 0 }), 'yes'), 'Approved.');
+  assert.equal(tallyLine(row(true, { yes: 0, no: 0 }), 'no'), 'Not approved.');
+  // A nonzero tally keeps the count's words (not reachable on a Just-you
+  // project, but no new state is invented for it).
+  assert.equal(tallyLine(row(true, { yes: 2, no: 1 })), '2 yes and 1 no so far.');
+
+  // Group rows keep the vote's words exactly.
+  assert.equal(tallyLine(row(false, { yes: 0, no: 0 })), 'Nobody has voted yet.');
+  assert.equal(tallyLine(row(false, { yes: 2, no: 1 })), '2 yes and 1 no so far.');
+  assert.equal(tallyLine(row(false, { yes: 0, no: 0 }), 'yes'), 'Nobody has voted yet.',
+    'a group row ignores the viewer\'s own vote');
+
+  // The pill branch is untouched, `voted` or not.
+  const pillRow = row(false, { yes: 0, no: 0 }, { state: { yes: 2, majority: 3, label: 'A rename needs a second look' } });
+  assert.equal(tallyLine(pillRow), '2 of 3 have said yes so far. A rename needs a second look.');
+  assert.equal(tallyLine(pillRow, 'yes'), '2 of 3 have said yes so far. A rename needs a second look.');
+
+  // The sheet draws it from the viewer's own answer.
+  assert.match(WORKSHOP, /<p className="dev-ws-vote-sub">\{tallyLine\(row, voted\)\}<\/p>/,
+    'the sheet passes the viewer\'s answer to the subline');
+});

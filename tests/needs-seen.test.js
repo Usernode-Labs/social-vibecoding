@@ -262,8 +262,21 @@ test('GET /api/workshop/counts says which votes `needs` counts, in the record\'s
   // numbers as a real one does.
   const seen = loadTsx(SEEN_SRC);
   const reel = loadTsx('frontend/src/features/workshop/needs-reel.tsx');
-  const keys = reel.reelRows(route.DEMO_NEEDS_FEED).map(seen.needsRowKey);
-  const slug = 'staging-demo-your-app';
-  assert.deepEqual(route.DEMO_COUNTS[slug].owed, keys);
-  assert.equal(route.DEMO_COUNTS[slug].needs, keys.length);
+  const feed = route.DEMO_NEEDS_FEED;
+  const keys = reel.reelRows(feed).map(seen.needsRowKey);
+  // Every slug that declares `owed` names its OWN rows, grouped by the row's
+  // project (#4313): the your-app trio as before, and the Just-you demo
+  // community's one approval beside it — so each tab's number and its feed
+  // rows tell one story.
+  const bySlug = {};
+  feed.forEach((it, i) => { (bySlug[it.app.slug] ||= []).push(keys[i]); });
+  assert.deepEqual(bySlug['staging-demo-your-app'],
+    ['proposal:-103@0', 'proposal:-104@0', 'governance:-105']);
+  for (const [s, c] of Object.entries(route.DEMO_COUNTS)) {
+    if (!Array.isArray(c.owed)) continue;
+    assert.deepEqual(c.owed, bySlug[s] || [], `${s}'s owed names its own feed rows`);
+    assert.equal(c.needs, (bySlug[s] || []).length, `${s}'s needs matches its own rows`);
+  }
+  assert.deepEqual(route.DEMO_COUNTS['staging-demo-emoji-icon'].owed, ['proposal:-106@0'],
+    'the Just-you demo row is the one owed on staging-demo-emoji-icon');
 });

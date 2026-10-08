@@ -97,12 +97,13 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 // Display-only: nothing in the platform reads these back, and strictly a
 // no-op in production.
 const DEMO_COUNTS = {
-  // `owed` names DEMO_NEEDS_FEED's three, below, so a vote swiped past in
+  // `owed` names DEMO_NEEDS_FEED's four, below, so a vote swiped past in
   // the demo feed takes its count off the row, as a real one does (#3526).
   'staging-demo-your-app': {
     working: 2, needs: 3, owed: ['proposal:-103@0', 'proposal:-104@0', 'governance:-105'],
   },
-  'staging-demo-emoji-icon': { working: 0, needs: 5 },
+  // #4313: the Just-you demo row, so a preview can show the approval wording.
+  'staging-demo-emoji-icon': { working: 0, needs: 1, owed: ['proposal:-106@0'] },
   'staging-demo-image-icon': { working: 1, needs: 0 },
   'staging-demo-long-name': { working: 4, needs: 1 },
 };
@@ -532,7 +533,16 @@ const DEMO_ITEMS = {
 // vote on one is refused, never cast on a real proposal. They come AFTER
 // the real rows (withDemoNeedsFeed), the same "real rows win" rule the
 // counts and items overlays keep, and the demo slug is in no database.
+// #4313: the first row is on the Just-you demo community, approval-waiting
+// (`approve: true`, no votes), so a preview shows the approval wording the
+// reel's rows carry; display-only, like the rest.
 const DEMO_NEEDS_FEED = [
+  {
+    kind: 'proposal', id: -106, title: 'Add a welcome note to the demo’s home screen',
+    summary: 'A demo-only change on a project that is just yours, so a staging preview can show the approval wording. Voting on it is refused.',
+    author: 'staging-demo-partner', number: null, epoch: 0, at: '2026-09-25T09:00:00Z', yes: 0, no: 0, approve: true,
+    app: { slug: 'staging-demo-emoji-icon', name: 'Staging demo emoji icon', icon_url: null, icon_emoji: '🎮' },
+  },
   {
     kind: 'proposal', id: -103, title: 'Sort recipes by rating',
     summary: 'Adds a Rating option to the sort menu, highest first, and remembers the choice per person.',

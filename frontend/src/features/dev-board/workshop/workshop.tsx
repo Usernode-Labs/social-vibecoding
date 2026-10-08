@@ -1421,11 +1421,23 @@ function labelTally(a: { label?: string }): string {
   return m ? m[1] : '';
 }
 
-function tallyLine(row: QueueRow): string {
+/**
+ * The line under the vote question: where the decision stands. `voted` is the
+ * viewer's own answer when the row has one (#4313). A change on a project
+ * that is just yours is approved, not voted on, so while the answer is owed
+ * the line says the card's pill's words rather than the group's; answered, it
+ * says the rail's, with the subline's full stop. A nonzero tally keeps the
+ * count's words in both cases.
+ */
+export function tallyLine(row: QueueRow, voted?: string | null): string {
   const st = row.card.pill ? row.card.pill.state : null;
   if (!st) {
     if (!row.tally) return '';
     const { yes, no } = row.tally;
+    if (approves(row)) {
+      if (voted) return `${answeredWords(row, voted)}.`;
+      if (!yes && !no) return 'Waiting for your approval.';
+    }
     if (!yes && !no) return 'Nobody has voted yet.';
     return `${yes} yes and ${no} no so far.`;
   }
@@ -3118,7 +3130,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
               <div className="dev-ws-sheet-card">
                 <span className="dev-ws-sheet-handle" aria-hidden="true" />
                 <p className="dev-ws-ask-q">{row.ask}</p>
-                <p className="dev-ws-vote-sub">{tallyLine(row)}</p>
+                <p className="dev-ws-vote-sub">{tallyLine(row, voted)}</p>
                 {/* A group decision (a rename, a secret, closing a request)
                     carries no pair here: its votes can apply it on the spot,
                     so it is decided on its own page, which shows the options
