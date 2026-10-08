@@ -464,7 +464,7 @@ export function MakeScreen({
             <XIcon className="h-4 w-4" aria-hidden="true" />
           </button>
         ) : null}
-        {underHeader ? null : <Wordmark className="h-6 w-auto text-[color:var(--brand-ink)]" />}
+        {underHeader ? null : <Wordmark className="h-6 w-auto text-zinc-950 dark:text-white" />}
       </div>
       {/* The scroller the keyboard surface reveals fields in. Its className
           stays constant: nothing here varies it. */}
