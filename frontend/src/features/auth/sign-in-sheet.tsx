@@ -358,7 +358,6 @@ export function RecaptchaNotice() {
       <a href={n.privacy.href} target="_blank" rel="noopener noreferrer" className={link}>{n.privacy.label}</a>
       {n.and}
       <a href={n.terms.href} target="_blank" rel="noopener noreferrer" className={link}>{n.terms.label}</a>
-      {n.tail}
     </p>
   );
 }

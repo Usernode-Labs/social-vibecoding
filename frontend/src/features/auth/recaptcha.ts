@@ -14,8 +14,10 @@
  * it through (public/sw.js, 'bypass').
  *
  * The badge is not shown (`badge: 'inline'` in a see-through box); the
- * sheet carries the notice Google asks for in its place (RECAPTCHA_NOTICE).
- * A challenge, when Google wants one, draws over the page on its own.
+ * sheet carries the short notice Google asks for in its place —
+ * "Protected by reCAPTCHA · Google Privacy Policy · Terms of Service"
+ * (RECAPTCHA_NOTICE). A challenge, when Google wants one, draws over the
+ * page on its own.
  *
  * Never throws: anything that goes wrong is a null token, the request goes
  * without one, and the server answers recaptcha_required, which the sheet
@@ -127,11 +129,14 @@ export async function phoneRecaptchaToken(): Promise<string | null> {
   }
 }
 
-/** Google's own wording for a page that hides the badge. */
+/** The notice Google asks for where the badge is hidden — a fragment, not a
+ * sentence: reCAPTCHA named, Google said once, and both of its policies
+ * linked, joined by a middle dot. Rendered by ./sign-in-sheet.tsx (also for
+ * the waiting room's add-phone card) and ./admin/admin-sms.tsx, and handed
+ * whole to TermsNotice (./waitlist-shared.tsx) on the sheet's phone steps. */
 export const RECAPTCHA_NOTICE = {
-  lead: 'This is protected by reCAPTCHA, and Google’s ',
+  lead: 'Protected by reCAPTCHA · Google ',
   privacy: { label: 'Privacy Policy', href: 'https://policies.google.com/privacy' },
-  and: ' and ',
+  and: ' · ',
   terms: { label: 'Terms of Service', href: 'https://policies.google.com/terms' },
-  tail: ' apply.',
 } as const;

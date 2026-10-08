@@ -402,14 +402,20 @@ export function useSurveyAnswered(token: string | null): boolean {
  * the line names the terms without one, which is also what the prerender
  * draws. Where a step runs reCAPTCHA with its badge hidden (./recaptcha.ts,
  * the sign-in sheet's phone and code steps), `recaptcha` (the sheet hands
- * its RECAPTCHA_NOTICE, for the links) folds in the notice Google asks for
- * in the badge's place: "...and Google's Privacy Policy and Terms of
- * Service (reCAPTCHA)." (#4207).
+ * its RECAPTCHA_NOTICE whole) appends the notice Google asks for in the
+ * badge's place as a quiet fragment after the sentence: "By continuing, you
+ * agree to Homeroom's terms. Protected by reCAPTCHA · Google Privacy Policy
+ * · Terms of Service" (#4207).
  */
 export function TermsNotice({ verb = 'continuing', className = '', recaptcha = null }: {
   verb?: string;
   className?: string;
-  recaptcha?: { privacy: { href: string; label: string }; terms: { href: string; label: string } } | null;
+  recaptcha?: {
+    lead: string;
+    privacy: { href: string; label: string };
+    and: string;
+    terms: { href: string; label: string };
+  } | null;
 }) {
   const link = useWaitlistOptions()?.terms_link || null;
   const linkClass = 'underline underline-offset-2 hover:text-zinc-700 dark:hover:text-zinc-200';
@@ -421,14 +427,15 @@ export function TermsNotice({ verb = 'continuing', className = '', recaptcha = n
       ) : 'terms'}
       {recaptcha ? (
         <>
-          {' and Google\'s '}
+          {'. '}
+          {recaptcha.lead}
           <a href={recaptcha.privacy.href} target="_blank" rel="noopener noreferrer" className={linkClass}>{recaptcha.privacy.label}</a>
-          {' and '}
+          {recaptcha.and}
           <a href={recaptcha.terms.href} target="_blank" rel="noopener noreferrer" className={linkClass}>{recaptcha.terms.label}</a>
-          {' (reCAPTCHA)'}
         </>
-      ) : null}
-      .
+      ) : (
+        '.'
+      )}
     </p>
   );
 }

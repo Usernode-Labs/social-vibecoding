@@ -274,7 +274,6 @@ function SmsSection() {
               <a href={n.privacy.href} target="_blank" rel="noopener noreferrer" className="underline">{n.privacy.label}</a>
               {n.and}
               <a href={n.terms.href} target="_blank" rel="noopener noreferrer" className="underline">{n.terms.label}</a>
-              {n.tail}
             </p>
           </>
         ) : (
