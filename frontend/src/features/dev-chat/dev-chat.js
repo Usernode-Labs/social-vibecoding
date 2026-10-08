@@ -83,7 +83,17 @@ const DevChat = {
   // whose whole history the reader asked for with "Show older".
   sessionsOlder: 0,
   _sessionsAllFor: null,
-  currentSession: null,
+  // The open session. An accessor (#4318) so that every assignment — here,
+  // in app-view.js, or in a test — also tells the events socket which
+  // session's live stream this tab needs (App.setDevChatSession).
+  _currentSession: null,
+  get currentSession() { return this._currentSession; },
+  set currentSession(session) {
+    this._currentSession = session;
+    try {
+      window.App?.setDevChatSession?.(session && session.id != null ? session.id : null);
+    } catch { /* the socket layer is best-effort; the owner still hears it */ }
+  },
   messages: [],
   isStreaming: false,
   selectedModel: loadStoredModel() || 'claude-opus-5-5',

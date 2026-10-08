@@ -212,3 +212,91 @@ test('publish is a no-op with no pool, and never throws', () => {
   assert.doesNotThrow(() => bus.publish('global', null, cyclic));
   assert.equal(pool.calls.length, 0, 'nothing published');
 });
+
+// ── #4318: batches, hellos, and skipping NOTIFY when alone ───────────
+
+test('a batch envelope is replayed item by item, in order', () => {
+  const seen = collect();
+  notify({ i: 'other', k: 'batch', b: [
+    { k: 'session', r: { sessionId: 5 }, d: { type: 'session_event', text: 'a' } },
+    { k: 'session', r: { sessionId: 5 }, o: 1 },
+    { k: 'session', r: { sessionId: 5 }, d: { type: 'session_event', text: 'c' } },
+  ] });
+  assert.deepEqual(seen.map((m) => [m.kind, m.routing.sessionId, m.data && m.data.text, m.oversize]), [
+    ['session', 5, 'a', false],
+    ['session', 5, undefined, true],
+    ['session', 5, 'c', false],
+  ]);
+});
+
+test('a hello is not an event, but it proves a peer exists', () => {
+  const seen = collect();
+  bus._peers.lastPeerAt = -Infinity;
+  notify({ i: 'other', k: 'hello' });
+  assert.equal(seen.length, 0, 'nothing for the sockets');
+  assert.ok(Date.now() - bus._peers.lastPeerAt < 1000, 'the peer is remembered');
+});
+
+test('alone needs a settled listener, no peer heard, and a fresh look that found none', () => {
+  const now = 1_000_000;
+  const alone = { listenerSince: now - bus.PEER_TTL_MS, lastPeerAt: -Infinity, pollAt: now - 1000, pollAlone: true };
+  assert.equal(bus._isAlone(alone, now), true);
+  assert.equal(bus._isAlone({ ...alone, listenerSince: 0 }, now), false, 'not listening: cannot know');
+  assert.equal(bus._isAlone({ ...alone, listenerSince: now - 1000 }, now), false, 'just (re)subscribed');
+  assert.equal(bus._isAlone({ ...alone, lastPeerAt: now - 5000 }, now), false, 'a peer said hello');
+  assert.equal(bus._isAlone({ ...alone, pollAlone: false }, now), false, 'pg_stat_activity saw a listener');
+  assert.equal(bus._isAlone({ ...alone, pollAt: now - bus.PEER_POLL_MS * 3 }, now), false, 'the look is stale');
+});
+
+function withPeers(state, run) {
+  const saved = { ...bus._peers };
+  Object.assign(bus._peers, state);
+  try { return run(); } finally { Object.assign(bus._peers, saved); }
+}
+
+test('an instance that knows it is alone sends no NOTIFY at all', () => {
+  const pool = fakePool();
+  bus.start({ pool, connectionString: null, onMessage: () => {} });
+  const now = Date.now();
+  withPeers({ listenerSince: now - bus.PEER_TTL_MS - 1, lastPeerAt: -Infinity, pollAt: now, pollAlone: true }, () => {
+    bus.publish('global', null, { type: 'app_status' });
+    bus.publishBatched('session:1', 'session', { sessionId: 1 }, { type: 'session_event' });
+  });
+  assert.equal(pool.calls.length, 0);
+  // …and one that is not sure publishes exactly as before.
+  withPeers({ listenerSince: now - bus.PEER_TTL_MS - 1, lastPeerAt: now, pollAt: now, pollAlone: true }, () => {
+    bus.publish('global', null, { type: 'app_status' });
+  });
+  assert.equal(pool.calls.length, 1);
+});
+
+test('publishBatched sends the first event at once and batches the rest of its window', async () => {
+  const pool = fakePool();
+  bus.start({ pool, connectionString: null, onMessage: () => {} });
+  for (let i = 0; i < 10; i++) bus.publishBatched('session:77', 'session', { sessionId: 77 }, { n: i });
+  assert.equal(pool.calls.length, 1, 'the first goes out with no delay');
+  const first = JSON.parse(pool.calls[0].params[1]);
+  assert.equal(first.k, 'session', 'a lone event is an ordinary envelope');
+  assert.deepEqual(first.d, { n: 0 });
+  await new Promise((r) => setTimeout(r, bus.BATCH_WINDOW_MS + 50));
+  assert.equal(pool.calls.length, 2, 'the other nine share one NOTIFY');
+  assert.deepEqual(JSON.parse(pool.calls[1].params[1]).b.map((item) => item.d.n), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  for (const call of pool.calls) assert.ok(Buffer.byteLength(call.params[1], 'utf8') < 8000);
+});
+
+test('a batch never outgrows the NOTIFY budget, and an oversize item still nudges', () => {
+  const pool = fakePool();
+  bus.start({ pool, connectionString: null, onMessage: () => {} });
+  const key = `session:${Math.random()}`;
+  bus.publishBatched(key, 'session', { sessionId: 9 }, { n: 0 });
+  for (let i = 1; i <= 6; i++) bus.publishBatched(key, 'session', { sessionId: 9 }, { n: i, pad: 'x'.repeat(2000) });
+  bus.publishBatched(key, 'session', { sessionId: 9 }, { n: 7, pad: 'y'.repeat(9000) });
+  bus.flushBatches();
+  for (const call of pool.calls) assert.ok(Buffer.byteLength(call.params[1], 'utf8') < 8000);
+  const items = pool.calls.flatMap((call) => {
+    const env = JSON.parse(call.params[1]);
+    return env.k === 'batch' ? env.b : [env];
+  });
+  assert.deepEqual(items.map((item) => (item.o ? 'nudge' : item.d.n)), [0, 1, 2, 3, 4, 5, 6, 'nudge']);
+  assert.deepEqual(items[7].r, { sessionId: 9 }, 'the nudge keeps its audience');
+});
