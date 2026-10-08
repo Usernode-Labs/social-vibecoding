@@ -212,14 +212,21 @@ async function ensureSuite(pool, { actorId = null } = {}) {
 /** The checked-in starter briefs (suites/app-bench-starter.json). */
 function starterBriefs(file = STARTER_FILE) {
   const def = JSON.parse(fs.readFileSync(file, 'utf8'));
-  return (def.briefs || []).map((b) => ({ ref: String(b.ref), appName: String(b.name), brief: String(b.brief) }));
+  return (def.briefs || []).map((b) => ({
+    ref: String(b.ref), appName: String(b.name), brief: String(b.brief), ...(b.template ? { template: String(b.template) } : {}),
+  }));
 }
 
 /**
  * The briefs a launch names, checked: the starter set (`briefSet:
  * "starter"`, optionally narrowed by `refs`), and/or `briefs`, each
- * { name, brief, ref? }, { ref } (a starter brief) or { taskId } (an
- * existing taste task's brief and name).
+ * { name, brief, ref?, template? }, { ref, template? } (a starter brief) or
+ * { taskId } (an existing taste task's brief, name and template).
+ *
+ * `template` is the starter the first commit is scaffolded from
+ * (services/app-templates.js), `empty` when absent, as a new project's is.
+ * The same brief from a game starter and from `empty` is two tasks, so a
+ * run can build both side by side.
  */
 async function resolveBriefs(pool, body = {}) {
   const taste = require('./taste');
@@ -237,13 +244,15 @@ async function resolveBriefs(pool, body = {}) {
       const task = await suites.taskRow(pool, { taskId: Number(raw.taskId) });
       if (!task || !taste.isTasteStage(task.stage)) return httpError(404, `No taste task ${raw.taskId}`);
       const input = taste.inputOf(await snapshots.readSnapshot(pool, task.snapshot_id));
-      items.push({ ref: task.tags?.taste_ref || null, appName: input.appName, brief: input.brief });
+      items.push({ ref: task.tags?.taste_ref || null, appName: input.appName, brief: input.brief, template: input.template });
     } else if (raw && raw.ref && !raw.brief) {
       const b = starter.find((s) => s.ref === String(raw.ref));
       if (!b) return httpError(404, `No starter brief "${raw.ref}"`);
-      items.push(b);
+      items.push(raw.template != null ? { ...b, template: raw.template } : b);
     } else {
-      items.push({ ref: raw?.ref ? String(raw.ref).slice(0, 80) : null, appName: raw?.name ?? raw?.appName, brief: raw?.brief });
+      items.push({
+        ref: raw?.ref ? String(raw.ref).slice(0, 80) : null, appName: raw?.name ?? raw?.appName, brief: raw?.brief, template: raw?.template,
+      });
     }
   }
   if (!items.length) return httpError(400, 'Name at least one brief, or briefSet "starter"');
@@ -251,19 +260,25 @@ async function resolveBriefs(pool, body = {}) {
   const out = [];
   const seen = new Set();
   for (const item of items) {
-    const v = taste.validateInput('first_version', { appName: item.appName, brief: item.brief });
+    const v = taste.validateInput('first_version', { appName: item.appName, brief: item.brief, template: item.template });
     if (!v.ok) return v;
-    const key = studioKey(v.input.appName, v.input.brief);
+    const key = studioKey(v.input.appName, v.input.brief, v.input.template);
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ ref: item.ref || null, appName: v.input.appName, brief: v.input.brief, key });
+    out.push({ ref: item.ref || null, appName: v.input.appName, brief: v.input.brief, template: v.input.template, key });
   }
   return { ok: true, items: out };
 }
 
-/** The key a brief's task is found by: the same name and brief, the same task. Pure. */
-function studioKey(appName, brief) {
-  return crypto.createHash('sha256').update(`${appName}\n${brief}`).digest('hex').slice(0, 32);
+/**
+ * The key a brief's task is found by: the same name, brief and starter, the
+ * same task. The default starter adds nothing, so a brief's task from before
+ * starters were named is still found. Pure.
+ */
+function studioKey(appName, brief, template = null) {
+  const appTemplates = require('../app-templates');
+  const starter = template && template !== appTemplates.DEFAULT_TEMPLATE ? `\n${template}` : '';
+  return crypto.createHash('sha256').update(`${appName}\n${brief}${starter}`).digest('hex').slice(0, 32);
 }
 
 async function taskFor(pool, { suiteId, host, item }) {
@@ -276,7 +291,7 @@ async function taskFor(pool, { suiteId, host, item }) {
   if (have) return { ok: true, task: have };
   const taste = require('./taste');
   const out = await taste.addTask(pool, {
-    suiteId, kind: 'first_version', appSlug: host.slug, appName: item.appName, brief: item.brief, ref: item.ref,
+    suiteId, kind: 'first_version', appSlug: host.slug, appName: item.appName, brief: item.brief, template: item.template, ref: item.ref,
   });
   if (!out.ok) return out;
   await pool.query(
@@ -432,7 +447,7 @@ async function launch(pool, config, body = {}, { actorId = null, deps = {} } = {
     trials: plan.task.length,
     notApplicable: plan.status.filter((s) => s === 'not_applicable').length,
     estimateUsd: Math.round(estimate * 100) / 100,
-    briefs: tasks.map((t) => ({ taskId: t.taskId, ref: t.ref, appName: t.appName })),
+    briefs: tasks.map((t) => ({ taskId: t.taskId, ref: t.ref, appName: t.appName, template: t.template })),
     references: v.references,
     host: { slug: host.app.slug, repoUrl: host.app.repo_url },
   };

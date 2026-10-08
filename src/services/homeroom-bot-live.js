@@ -467,10 +467,35 @@ function specPlanLines(buildNote, firstVersion = false) {
   ];
 }
 
+// A first version that starts from a game starter (services/app-templates.js
+// `bot`), by its id: the scaffold it builds on already plays, so its prompts
+// say what is there and that the creator's game is built by changing it.
+// Null, or any other template, is the empty scaffold: every prompt is as it
+// was.
+function starterOf(starter) {
+  return starter ? require('./app-templates').botStarter(starter) : null;
+}
+
+// Wording of the empty scaffold's, replaced for a starter. Throws when the
+// text it replaces is gone, so a reworded prompt cannot silently keep
+// telling a starter's build that its screen is placeholder.
+function swapWording(text, pairs) {
+  return pairs.reduce((out, [from, to]) => {
+    if (!out.includes(from)) throw new Error(`Starter wording not found: ${from.slice(0, 60)}`);
+    return out.replace(from, to);
+  }, text);
+}
+
 /** What the spec's scope is: a later change's, as small as the request; a first version's, complete, and its design the spec's own. Pure. */
-function specScopeLines(firstVersion = false) {
+function specScopeLines(firstVersion = false, starter = null) {
   if (!firstVersion) return ['- As small as the request: the plan above, no refactoring or extra features.'];
+  const s = starterOf(starter);
   return [
+    ...(s ? [
+      `- Built ON the repository's ${s.title}: ${s.bot.what}. It already works, live, for everyone in the project.`,
+      `  ${s.bot.build} Its CLAUDE.md "Starter template" section says where everything is. In "Technical`,
+      '  implementation", name which of its files change and what is kept; never plan to start over.',
+    ] : []),
     '- A complete first version of what the request asks for, done fully and well, including the small touches that',
     '  make it feel finished. Not a new feature, screen or setting the request does not imply.',
     '- Yours to design. The plan\'s look, layout and scope are the triage\'s first sketch: keep what is good in it,',
@@ -479,10 +504,20 @@ function specScopeLines(firstVersion = false) {
   ];
 }
 
+/** The spec's design brief: a first version's, worded for a game starter when it has one. Pure. */
+function specDesignBrief(firstVersion = false, starter = null) {
+  if (!firstVersion) return SPEC_DESIGN_BRIEF;
+  if (!starterOf(starter)) return FIRST_VERSION_SPEC_DESIGN_BRIEF;
+  return swapWording(FIRST_VERSION_SPEC_DESIGN_BRIEF, [[
+    'the app has no screen of its own yet (the starter template\'s is placeholder), so there is no existing screen for it to look like, and the triage only sketched one.',
+    'the game starter\'s screens (a title screen, then the game filling the screen) work and wear the example game\'s scene (`public/scene.css`), which is a starting point to restyle, not this game\'s look, and the triage only sketched one.',
+  ]]);
+}
+
 function specPrompt({
-  seed, buildNote, firstVersion = false, html = false, platformStyles = false, guidance = null,
+  seed, buildNote, firstVersion = false, html = false, platformStyles = false, guidance = null, starter = null,
 }) {
-  if (html) return specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles, guidance });
+  if (html) return specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles, guidance, starter });
   return [
     seed,
     '',
@@ -504,10 +539,10 @@ function specPrompt({
     '- Titled with what the change DOES, because the proposal is named after it: the way a pull request title',
     '  reads ("Show the reason beside each challenge credit", not "Credits have no reason" or "Spec for issue',
     '  #12"), at most 72 characters, and no issue number: the proposal links the issue on its own.',
-    ...specScopeLines(firstVersion),
+    ...specScopeLines(firstVersion, starter),
     '- Written without em dashes: use a comma, a colon or a full stop. The group reads it, and its "User-facing',
     '  changes" half can become the change\'s description.',
-    `- ${firstVersion ? FIRST_VERSION_SPEC_DESIGN_BRIEF : SPEC_DESIGN_BRIEF}`,
+    `- ${specDesignBrief(firstVersion, starter)}`,
     ...stageGuidanceLines('spec', { firstVersion, guidance }),
     ...requestRulesLines(),
     '',
@@ -535,7 +570,7 @@ function specPrompt({
   ].join('\n');
 }
 
-function specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles, guidance = null }) {
+function specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles, guidance = null, starter = null }) {
   return [
     seed,
     '',
@@ -556,10 +591,10 @@ function specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles, guidanc
     '- Titled with what the change DOES, because the proposal is named after it: the way a pull request title',
     '  reads ("Show the reason beside each challenge credit", not "Credits have no reason" or "Spec for issue',
     '  #12"), at most 72 characters, and no issue number: the proposal links the issue on its own.',
-    ...specScopeLines(firstVersion),
+    ...specScopeLines(firstVersion, starter),
     '- Written without em dashes: use a comma, a colon or a full stop. The group reads it, and its "User-facing',
     '  changes" half can become the change\'s description.',
-    `- ${firstVersion ? FIRST_VERSION_SPEC_DESIGN_BRIEF : SPEC_DESIGN_BRIEF}`,
+    `- ${specDesignBrief(firstVersion, starter)}`,
     ...stageGuidanceLines('spec', { firstVersion, guidance }),
     ...requestRulesLines(),
     '',
@@ -1680,9 +1715,35 @@ const FIRST_VERSION_DESIGN_LINES = Object.freeze([
   '`?demo=1` only, and idempotent, as the platform conventions\' "Staging mock data" says.',
 ]);
 
+/**
+ * A first version's design lines, for a game starter when it has one: what
+ * the repository already is, and that its look, not its game, is placeholder.
+ * Pure.
+ */
+function firstVersionDesignLines(starter = null) {
+  const s = starterOf(starter);
+  if (!s) return FIRST_VERSION_DESIGN_LINES;
+  const lines = swapWording(FIRST_VERSION_DESIGN_LINES.join('\n'), [[
+    'the starter\'s screen and default colours are placeholder, not a look to copy.',
+    'the game starter\'s screens work, but their look is the example game\'s, not a look to copy.',
+  ]]).split('\n');
+  return [
+    '',
+    `This repository starts as Homeroom's ${s.title}: ${s.bot.what}, working and live for everyone in the project.`,
+    `${s.bot.build} Read its CLAUDE.md "Starter template" section first: it says where everything is. Build the`,
+    'creator\'s game by changing it, and never by deleting it to start over; replace the example game\'s rules and',
+    'screen wherever the request differs, and update its checks in dapp.json to what the screen now shows.',
+    ...lines,
+    'A game drawn as a scene of its own keeps its look in `public/scene.css` (its colours named once at its top, the',
+    'canvas\'s at the top of `public/app.js`): restyle that for this game rather than forcing the scene onto the kit\'s',
+    'tokens, which still carry the kit\'s own parts. Keep a title screen and the game filling the screen, and say in',
+    '"## Design" which look is the scene\'s and which is the kit\'s.',
+  ];
+}
+
 function buildPrompt({
   seed, buildNote, spec = null, platformRepo = false, readsImages = false, firstVersion = false, guidance = null,
-  clock = null,
+  clock = null, starter = null,
 }) {
   const time = clock ? clockLines(clock) : [];
   const specBlock = spec
@@ -1707,7 +1768,7 @@ function buildPrompt({
     '',
     planNoteText(buildNote, firstVersion),
     ...specBlock,
-    ...(firstVersion ? FIRST_VERSION_DESIGN_LINES : []),
+    ...(firstVersion ? firstVersionDesignLines(starter) : []),
     ...stageGuidanceLines('build', { firstVersion, guidance }),
     '',
     // The rules every on-platform build works under (services/build-contract.js):
@@ -1932,6 +1993,8 @@ async function draftSpec({
   // a configuration's (recipeHarness); and its reasoning effort, when not
   // the session's own (recipeSpecEffort).
   harness = 'auto', reasoningEffort = null,
+  // The game starter a first version builds on (services/app-templates.js).
+  starter = null,
 }) {
   const { worker, sessions, agentTurn, activeWorkers } = deps;
   const budgetMs = Math.min(turnBudgetMs, specBudgetMs);
@@ -1945,7 +2008,7 @@ async function draftSpec({
   if (typeof timer.unref === 'function') timer.unref();
   activeWorkers.add(session.id);
   const prompt = specPrompt({
-    seed, buildNote, firstVersion, guidance,
+    seed, buildNote, firstVersion, guidance, starter,
     html: specHtml.htmlSpecsEnabledFor(config, session.app_slug),
     platformStyles: specHtml.specStylesFor({ slug: session.app_slug, self_hosted: session.app_self_hosted }) === 'platform',
   });
@@ -2336,8 +2399,9 @@ async function buildAndPropose({
   // nudge, called with the `noChange` the result carries later.
   origin = null, onNoChange = null,
   // #3737: a project's first version, whose spec and build decide and
-  // record its look.
-  firstVersion = false,
+  // record its look; and the game starter it builds on, by template id
+  // (services/app-templates.js `bot`), or null for the empty scaffold.
+  firstVersion = false, starter = null,
   // The App bench studio (services/bench/studio.js): a context pack's
   // guidance for the spec and the build, and a trial's watch of its turns.
   // Production passes neither.
@@ -2510,7 +2574,7 @@ async function buildAndPropose({
     }
     : await draftSpec({
       pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs,
-      model: specModel || model, deps, specBudgetMs, firstVersion, guidance: specGuidance, onProgress,
+      model: specModel || model, deps, specBudgetMs, firstVersion, starter, guidance: specGuidance, onProgress,
       ...(telemetry ? { telemetryComponent: telemetry } : {}),
       ...(harnessOf ? {
         harness: harnessOf(specModel || model, config),
@@ -2576,7 +2640,7 @@ async function buildAndPropose({
   // timer). A nudge runs on what is left of it.
   const turnStartedMs = Date.now();
   const prompt = buildPrompt({
-    seed, buildNote, spec: spec.ok ? spec.specMd : null, platformRepo, readsImages, firstVersion, guidance: buildGuidance,
+    seed, buildNote, spec: spec.ok ? spec.specMd : null, platformRepo, readsImages, firstVersion, starter, guidance: buildGuidance,
     clock: { startedAt: turnStartedMs, budgetMs: turnBudgetMs },
   });
   // What the build was last doing, so a turn stopped on its clock says what
@@ -2915,6 +2979,8 @@ module.exports = {
   specPrompt,
   specPlanLines,
   specScopeLines,
+  specDesignBrief,
+  firstVersionDesignLines,
   splitApprovedPlan,
   planNoteText,
   APPROVED_PLAN_HEAD,

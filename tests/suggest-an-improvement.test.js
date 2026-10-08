@@ -87,7 +87,8 @@ test('every door to filing a request says Suggest an improvement', () => {
 test('a new app\'s starter page and README send its maker to Suggest an improvement', () => {
   const template = read('src/services/template.js');
   assert.match(template, /then <strong class="font-semibold text-fg">Suggest an improvement<\/strong>\./);
-  assert.equal(template.split('then **Suggest an improvement**, and describe').length - 1, 2, 'both READMEs');
+  assert.equal(template.split('then **Suggest an improvement**, and describe').length - 1, 3,
+    'every README: the scaffold\'s, a ready-made app\'s and a game starter\'s');
   // The four starters' own pages said the same; they were deleted with the
   // create dialog (tests/app-templates.test.js).
 });

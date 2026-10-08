@@ -102,6 +102,35 @@ function tierList(id, { plural, one, example, title }) {
   });
 }
 
+// A game starter's checks look at its screen, its rules and the room.
+const GAME_IMPACT = Object.freeze(['public/**', 'api.js', 'game/**']);
+
+/**
+ * A game starter (Evan, 8 October 2026): a working multiplayer game a
+ * project made from one of the make screen's game presets starts from, so
+ * Homeroom bot's first version builds the creator's idea as changes to a
+ * game that already plays, instead of from an empty page. Not `ready`: the
+ * bot still builds the first version (routes/apps.js), told which starter
+ * it is (`bot`, homeroom-bot.js firstVersionNote).
+ *
+ * Every game starter plays in the same game room (app-templates/_game-room,
+ * its `shared` files: who is playing, the lobby, turns, a live tick, saved
+ * results and a leaderboard, over one WebSocket), with its own
+ * game/rules.js and screen. The room's live connection needs `ws`, the one
+ * package a game adds (src/templates/node-app/extra-packages.json).
+ */
+function gameStarter(entry) {
+  return Object.freeze({
+    kind: 'game',
+    shared: '_game-room',
+    dependencies: Object.freeze(['ws']),
+    ...entry,
+    features: Object.freeze(entry.features),
+    tests: Object.freeze(entry.tests),
+    bot: Object.freeze(entry.bot),
+  });
+}
+
 const TEMPLATES = Object.freeze([
   Object.freeze({
     id: 'empty',
@@ -209,6 +238,126 @@ const TEMPLATES = Object.freeze([
       { name: 'Each potluck has its chat', path: '/', expectSelector: '#potlucks [data-potluck] [data-chat] [data-message]' },
     ]),
   }),
+  gameStarter({
+    id: 'game-board',
+    title: 'Board game starter',
+    summary: 'A dice race for the whole project: everyone rolls in turn, a ladder takes you up, a slide takes you back, and the first to the finish wins.',
+    icon: '🎲',
+    features: [
+      '**A title screen with the lobby**: the board lying on the table, the seats around it, and anyone in the project joins; anyone who joined starts the game.',
+      '**The game fills the screen**: the board stretches to fit, everyone\'s piece hops square by square, and the dice tray shows whose turn it is. A six rolls again, and a player who is away has their roll made for them, so a game never waits on an empty seat.',
+      '**A board of 30 squares** with ladders and slides, drawn from the game\'s state, the results over the table at the end, and a leaderboard of wins.',
+      '**Live for everyone**: every roll shows on every screen at once, over one connection per player.',
+    ],
+    tables: null,
+    notes: '- The board (its squares, ladders and slides) is set at the top of `game/rules.js`; the screen draws whatever the game\'s state says, as one SVG.\n- The scene\'s look (the table, the board, the pieces, the die) is `public/scene.css`, the same in both looks.',
+    tests: [
+      {
+        id: 'board.board',
+        name: 'The board shows, from start to finish',
+        path: '/',
+        expectSelector: '#board [data-square="30"]',
+        visual: true,
+        impact: GAME_IMPACT,
+      },
+      { name: 'The lobby lists who is playing', path: '/', expectSelector: '#title #players [data-player]' },
+      { name: 'The leaderboard shows past winners', path: '/', expectSelector: '#leaders [data-leader]' },
+    ],
+    bot: {
+      what: 'a working turn-based board game, a dice race on a board of 30 squares with ladders and slides, with a title screen holding the lobby and the game filling the screen',
+      build: 'Build the creator\'s board game by changing the rules (`game/rules.js`: the board, the moves, how a turn goes, who wins) and the screen (`public/app.js`, `public/index.html`, its look in `public/scene.css`). Keep the game room and the two screens: the title screen with the lobby, and the game filling the screen; turns, playing for somebody who is away, results and the leaderboard already work, live.',
+    },
+  }),
+  gameStarter({
+    id: 'game-space',
+    title: 'Space game starter',
+    summary: 'A live arcade run in space, flown together: pulsars throw storms of sparks in rings, spirals and fans, comet showers sweep down, and every pilot weaves through them collecting stardust.',
+    icon: '🚀',
+    features: [
+      '**A forward-scrolling dodging run**: the stars stream past, pulsars drift in and throw out patterns of sparks, and comet showers leave a gap to fly through. Every half minute is a new sector, with more storms and faster sparks. Nothing is shot: the game is dodging.',
+      '**Flown together, live**: every pilot\'s ship moves on every screen 20 times a second, and your own ship flies on your screen as you steer, with the small hit box a dodging game has. A storm is a few numbers, and every screen works out each spark from them, so hundreds of sparks cost almost nothing to send.',
+      '**A title screen with the hangar**, then the run filling the screen: arrow keys or WASD (Shift to slow down), or drag anywhere on a phone. Anyone can join a run that is on.',
+      '**Scores and a leaderboard**: time flown and stardust collected; a spark costs a shield, and out of shields your ship is out.',
+    ],
+    tables: null,
+    notes: '- The storms (their patterns, how often they come, how fast the sparks fly) are set at the top of `game/rules.js`; `public/app.js` works out where each spark is (`sparkAt`) and draws the field on a canvas.\n- The scene\'s look is `public/scene.css` and the colours at the top of `public/app.js`, night in both looks.',
+    tests: [
+      {
+        id: 'space.field',
+        name: 'The field and the hangar show',
+        path: '/',
+        expectSelector: '#field #field-canvas',
+        visual: true,
+        impact: GAME_IMPACT,
+      },
+      { name: 'Anyone can join the next run', path: '/', expectSelector: '#lobby-actions #join' },
+      { name: 'The leaderboard shows the best runs', path: '/', expectSelector: '#leaders [data-leader]' },
+    ],
+    bot: {
+      what: 'a working live multiplayer arcade game: a forward-scrolling run where ships fly together dodging storms of sparks (rings, spirals, fans, comet showers) and collecting stardust, with shields, sectors, a title screen with the hangar and a leaderboard of runs',
+      build: 'Build the creator\'s arcade game by changing the rules (`game/rules.js`: the storms and their patterns, what scores, when a run ends; the server ticks 20 times a second) and the canvas drawing and controls in `public/app.js`. Keep the game room and its live connection, the title screen and the run filling the screen: the hangar, joining a run, frames to every screen, flying your own ship locally and the leaderboard already work. No weapons or attacking anyone: Homeroom\'s content rules forbid them, so a "shooter" dodges, collects, races or breaks rocks.',
+    },
+  }),
+  gameStarter({
+    id: 'game-blocks',
+    title: '3D blocks starter',
+    summary: 'One 3D block world everyone builds in together, in first person: fly around it, pick a block from the hotbar, build and take blocks away, and see everyone else flying and building as they go.',
+    icon: '🧱',
+    features: [
+      '**First person, full screen**: drawn with three.js (included in the repository, never from a CDN). The mouse looks around, WASD walks, Space and Shift fly up and down, a click builds where the crosshair points and a right-click takes a block away. On a phone: drag to look, a stick to walk, and buttons to fly and build.',
+      '**A hotbar of twelve blocks**: grass, stone, wood, brick, glass and more, chosen with 1 to 9, 0, - and = or the scroll wheel.',
+      '**Live for everyone**: every block placed or removed shows on every screen at once, and so does everyone else, as a blocky figure with their name and the block in their hand.',
+      '**A title screen over the world**, the camera circling it, with who is building now. No lobby: one world, always on, saved as it is built.',
+    ],
+    tables: null,
+    notes: '- The world (its size and how many kinds of block) is set at the top of `game/rules.js`; the blocks\' names and colours, the controls, the camera and the drawing are in `public/app.js`.\n- The scene\'s look is `public/scene.css`, daylight in both looks.\n- `public/vendor/three.module.min.js` is three.js r186, vendored: never edit it (its README says how to update it).',
+    tests: [
+      {
+        id: 'blocks.world',
+        name: 'The block world and the way in show',
+        path: '/',
+        expectSelector: '#world #world-canvas',
+        visual: true,
+        impact: GAME_IMPACT,
+      },
+      { name: 'There are blocks to build with', path: '/', expectSelector: '#hotbar [data-block]' },
+      { name: 'Anyone can enter the world', path: '/', expectSelector: '#title #enter' },
+    ],
+    bot: {
+      what: 'a working live 3D building game in three.js, one shared block world seen in first person, where everyone flies around, picks blocks from a hotbar and places and removes them, with mouse-look, touch controls and everyone shown live',
+      build: 'Build the creator\'s 3D game by changing the rules (`game/rules.js`: what the world holds and what a move does) and the scene in `public/app.js` (three.js, imported from `public/vendor`). Keep the game room and its live connection, the title screen and the first-person controls: saving the world, sending each change to everyone and showing who is where already work.',
+    },
+  }),
+  gameStarter({
+    id: 'game-trivia',
+    title: 'Trivia starter',
+    summary: 'A game show about each other: everyone writes questions about themselves, and the show asks them one by one, against the clock, to see who knows the group best.',
+    icon: '❓',
+    features: [
+      '**A title screen with the contestants**: the show\'s name in lights, the lobby, and the leaderboard.',
+      '**Writing questions is a screen of its own**: anyone writes questions about themselves, with the right answer and up to three wrong ones. Only their author sees the answers before the show asks them.',
+      '**The show fills the screen**: up to eight questions, 20 seconds each, four answer tiles in a quiz show\'s colours and shapes. Quick right answers score more, and a question\'s author scores for everyone who knew. Then the answer shows, with who picked what.',
+      '**Live scores and a leaderboard**: join, start, join a show already on, and see the scores move as answers come in, on every screen at once.',
+    ],
+    tables: '`trivia_questions` (the question bank)',
+    notes: '- The question bank\'s routes are in `api.js`; `prepare` hands the bank to `rules.setup` when a game starts.\n- The scene\'s look (the stage, the marquee, the tiles) is `public/scene.css`, the same in both looks.',
+    tests: [
+      {
+        id: 'trivia.lobby',
+        name: 'The title screen shows who is playing',
+        path: '/',
+        expectSelector: '#players [data-player]',
+        visual: true,
+        impact: GAME_IMPACT,
+      },
+      { name: 'Anyone can write a question about themselves', path: '/', expectSelector: '#builder #question-form [name="text"]' },
+      { name: 'The leaderboard shows past winners', path: '/', expectSelector: '#leaders [data-leader]' },
+    ],
+    bot: {
+      what: 'a working live quiz game show, with a title screen and lobby, a separate screen for writing questions about yourself, and the show filling the screen: questions asked one by one against a clock, four answer tiles, live scores and a leaderboard',
+      build: 'Build the creator\'s quiz or party game by changing the rules (`game/rules.js`: what is asked, how answers score, how a round goes) and the screens, and the question bank in `api.js` if the questions come from somewhere else. Keep the game room and the three screens (title and lobby, writing questions, the show): the clock, hidden answers, live scores and the leaderboard already work.',
+    },
+  }),
 ]);
 
 const TEMPLATE_IDS = Object.freeze(TEMPLATES.map((t) => t.id));
@@ -228,6 +377,16 @@ function isReadyMade(id) {
 /** The template's metadata, or null for an id that is not one. */
 function get(id) {
   return BY_ID.get(id) || null;
+}
+
+/**
+ * A game starter Homeroom bot's first version builds on (an entry with
+ * `bot`: what it is, and what to keep while building the creator's game),
+ * or null: the empty scaffold, a ready-made app, an unknown id.
+ */
+function botStarter(id) {
+  const t = get(id);
+  return t && t.bot ? t : null;
 }
 
 /** The directory a starter's files live in, under STARTERS_DIR. */
@@ -257,20 +416,34 @@ function walk(dir, base = dir, out = []) {
   return out.sort();
 }
 
+// Files copied exactly as they are: a vendored library (the 3D game
+// starter's three.js) is nobody's placeholder.
+const VERBATIM = /^public\/vendor\//;
+
 /**
  * A starter's own files, as `{ path, content }` with the placeholders
- * filled in. `fill` maps a placeholder name (APP_NAME, or one of the
- * entry's own `fill` names) to its text, already escaped for where it
- * lands. Empty for `empty`, which has none.
+ * filled in: its `shared` directory's (the game room every game starter
+ * plays in), then its own, which win where both have a path. `fill` maps
+ * a placeholder name (APP_NAME, or one of the entry's own `fill` names) to
+ * its text, already escaped for where it lands. Empty for `empty`, which
+ * has none.
  */
 function starterFiles(id, fill = {}) {
   if (!isTemplate(id) || id === DEFAULT_TEMPLATE) return [];
-  const dir = path.join(STARTERS_DIR, dirOf(id));
-  return walk(dir).map((rel) => ({
-    path: rel,
-    content: fs.readFileSync(path.join(dir, rel), 'utf8')
-      .replace(/\{\{([A-Z_]+)\}\}/g, (whole, key) => (Object.prototype.hasOwnProperty.call(fill, key) ? fill[key] : whole)),
-  }));
+  const t = get(id);
+  const sources = new Map();
+  for (const name of [...(t.shared ? [t.shared] : []), dirOf(id)]) {
+    const dir = path.join(STARTERS_DIR, name);
+    for (const rel of walk(dir)) sources.set(rel, path.join(dir, rel));
+  }
+  return [...sources.keys()].sort().map((rel) => {
+    const raw = fs.readFileSync(sources.get(rel), 'utf8');
+    return {
+      path: rel,
+      content: VERBATIM.test(rel) ? raw
+        : raw.replace(/\{\{([A-Z_]+)\}\}/g, (whole, key) => (Object.prototype.hasOwnProperty.call(fill, key) ? fill[key] : whole)),
+    };
+  });
 }
 
 module.exports = {
@@ -280,6 +453,7 @@ module.exports = {
   STARTERS_DIR,
   TEMPLATES,
   TEMPLATE_IDS,
+  botStarter,
   dirOf,
   get,
   isReadyMade,

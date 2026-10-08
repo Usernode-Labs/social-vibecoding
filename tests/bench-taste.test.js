@@ -1022,3 +1022,37 @@ test('the only GitHub write a taste trial has is its own bench branch', async ()
   await assert.rejects(async () => gh.createRootCommit('o', 'r', [], {}), /benchmark trials may not/, 'never a bare commit outside the scaffold');
   assert.equal(await gh.createBenchScaffold('o', 'r', 'bench/r1-t2', [], 'm'), 'x');
 });
+
+// Evan, 8 Oct 2026: a first-version task can start from a game starter
+// (services/app-templates.js `kind: 'game'`), so the bench can build the same
+// brief from the starter and from the empty scaffold side by side, from the
+// admin connector's studio (launch_bench_studio) or a classic run.
+test('a first-version task can start from a game starter: its own task, tagged, scaffolded from it, built on it', async () => {
+  const crypto = require('node:crypto');
+  const studio = require('../src/services/bench/studio');
+  const name = 'Block World';
+  const brief = 'A 3D block game where we build whatever we want together, with friends';
+  const v = taste.validateInput('first_version', { appName: name, brief, template: 'game-blocks' });
+  assert.equal(v.ok, true);
+  assert.equal(v.input.template, 'game-blocks');
+  assert.equal(taste.tagsFor('first_version', { slug: 'host' }, v.input, null).template, 'game-blocks', 'a report can slice by it');
+  assert.ok(report.SLICE_KEYS.includes('template'));
+  assert.ok(report.CONNECTOR_SLICE_KEYS.includes('template'));
+  // The empty scaffold keeps the key a brief's task always had; a starter is a task of its own.
+  const legacy = crypto.createHash('sha256').update(`${name}\n${brief}`).digest('hex').slice(0, 32);
+  assert.equal(studio.studioKey(name, brief), legacy);
+  assert.equal(studio.studioKey(name, brief, 'empty'), legacy);
+  assert.notEqual(studio.studioKey(name, brief, 'game-blocks'), legacy);
+  const out = await studio.resolveBriefs(null, { briefs: [
+    { name, brief }, { name, brief, template: 'game-blocks' }, { ref: 'voxel-world', template: 'game-blocks' }, { ref: 'voxel-world' },
+  ] });
+  assert.equal(out.ok, true);
+  assert.deepEqual(out.items.map((i) => i.template), ['empty', 'game-blocks', 'game-blocks', 'empty']);
+  assert.equal(new Set(out.items.map((i) => i.key)).size, 4, 'four tasks, built side by side');
+  const bad = await studio.resolveBriefs(null, { briefs: [{ name, brief, template: 'game-2d' }] });
+  assert.match(bad.error, /Unknown starter template: game-2d/);
+  // Its first commit is the starter, as a live project made from it gets.
+  const files = scaffold.filesFor({ input: { appName: name, template: 'game-blocks' } });
+  for (const p of ['game/room.js', 'game/rules.js', 'public/vendor/three.module.min.js']) assert.ok(files.some((f) => f.path === p), p);
+  assert.ok(files.find((f) => f.path === 'CLAUDE.md').content.includes('## Starter template: 3D blocks starter'));
+});

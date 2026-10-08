@@ -6346,7 +6346,7 @@ function registerTools(server, ctx) {
     const BENCH_CONFIRM_CAP_USD = 100;
     // #3737: `first_version` and `capture` are the taste eval's.
     const BENCH_STAGES = ['triage', 'spec', 'build', 'followup', 'checks_fix', 'dm', 'first_version', 'capture'];
-    const BENCH_SLICE_KEYS = ['verdict', 'repo_size', 'request_type', 'difficulty', 'known_outcome', 'answer_source'];
+    const BENCH_SLICE_KEYS = ['verdict', 'repo_size', 'request_type', 'difficulty', 'known_outcome', 'answer_source', 'template'];
     const MAX_BENCH_NOTE_CHARS = 500;
     const MAX_BENCH_REASON_CHARS = 240;
     const num = (v) => (Number.isFinite(Number(v)) && v !== null && v !== '' ? Number(v) : 0);
@@ -6883,13 +6883,14 @@ function registerTools(server, ctx) {
 
     server.registerTool('launch_bench_studio', {
       title: 'Benchmark studio: launch a run',
-      description: `Admin only. Launch an App bench studio run: each brief's first version built the way a new project's is today (its first commit with the starter and the sketch card, the bot's first-version triage, the plan approved as a creator tapping Build it, the spec and the build, then 16 screenshots), on each model, with each context pack (0 for none), \`repeats\` times, side by side, within capUsd. Briefs: briefSet "starter" (optionally narrowed by refs), and/or briefs as { name, brief } or { ref } or { taskId }. models are OpenRouter ids or "today" (the live bot's own model for each stage). references is how many reference builds per brief you plan to hand in (get_bench_reference_order, then submit_bench_reference). It spends the platform's money, up to capUsd, which is required: ask the person first and say the cap, the models, the packs and the briefs. A cap over $${STUDIO_CONFIRM_CAP_USD} needs confirmLargeCap, passed only after they confirmed that amount.`,
+      description: `Admin only. Launch an App bench studio run: each brief's first version built the way a new project's is today (its first commit with the starter and the sketch card, the bot's first-version triage, the plan approved as a creator tapping Build it, the spec and the build, then 16 screenshots), on each model, with each context pack (0 for none), \`repeats\` times, side by side, within capUsd. Briefs: briefSet "starter" (optionally narrowed by refs), and/or briefs as { name, brief } or { ref } or { taskId }. Each new or starter brief may name a \`template\`: the starter its first commit is scaffolded from, as a new project made from it is (a game starter such as "game-blocks", "game-space", "game-board" or "game-trivia", whose first version is planned, specced and built ON that working game); absent is the empty scaffold. The same brief with and without a template is two tasks, built side by side, so a run compares a starter against starting from nothing (report slice "template"). models are OpenRouter ids or "today" (the live bot's own model for each stage). references is how many reference builds per brief you plan to hand in (get_bench_reference_order, then submit_bench_reference). It spends the platform's money, up to capUsd, which is required: ask the person first and say the cap, the models, the packs and the briefs. A cap over $${STUDIO_CONFIRM_CAP_USD} needs confirmLargeCap, passed only after they confirmed that amount.`,
       inputSchema: {
         briefSet: z.enum(['starter']).optional().describe('The checked-in starter briefs.'),
         refs: z.array(z.string()).max(12).optional().describe('With briefSet: only these starter refs.'),
         briefs: z.array(z.object({
           name: z.string().optional(), brief: z.string().optional(), ref: z.string().optional(), taskId: z.number().int().positive().optional(),
-        })).max(12).optional().describe('New briefs { name, brief }, starter briefs { ref }, or existing taste tasks { taskId }.'),
+          template: z.string().optional(),
+        })).max(12).optional().describe('New briefs { name, brief, template? }, starter briefs { ref, template? }, or existing taste tasks { taskId } (which keep their own template). template is a starter id from services/app-templates.js, such as "game-blocks"; absent is the empty scaffold.'),
         models: z.array(z.string()).min(1).max(5).optional().describe('OpenRouter model ids, or "today" (default ["today"]).'),
         contextPackIds: z.array(z.number().int().min(0)).min(1).max(4).optional().describe('Packs to give the bot; 0 is no pack (default [0]).'),
         references: z.number().int().min(0).max(5).optional().describe('Reference builds you plan per brief (default 0).'),
@@ -6901,7 +6902,7 @@ function registerTools(server, ctx) {
       },
       outputSchema: {
         runId: z.number(), status: z.string(), capUsd: z.number(), trials: z.number(), notApplicable: z.number(), estimateUsd: z.number(),
-        briefs: z.array(z.object({ taskId: z.number(), ref: z.string().nullable(), appName: z.string() })),
+        briefs: z.array(z.object({ taskId: z.number(), ref: z.string().nullable(), appName: z.string(), template: z.string().nullable() })),
         contextPackIds: z.array(z.number()), references: z.number(), nextStep: z.string(),
       },
       annotations: writeAnnotations,
@@ -6933,7 +6934,10 @@ function registerTools(server, ctx) {
       return toolResult({
         runId: sNum(run.id), status: String(run.status || 'queued'), capUsd: sNum(run.capUsd) || capUsd,
         trials: sNum(b.trials), notApplicable: sNum(b.notApplicable), estimateUsd: sNum(b.estimateUsd),
-        briefs: (b.briefs || []).map((x) => ({ taskId: sNum(x.taskId), ref: x.ref ? String(x.ref) : null, appName: untrusted(x.appName, 120) || '' })),
+        briefs: (b.briefs || []).map((x) => ({
+          taskId: sNum(x.taskId), ref: x.ref ? String(x.ref) : null, appName: untrusted(x.appName, 120) || '',
+          template: x.template ? String(x.template) : null,
+        })),
         contextPackIds: (run.contextPackIds || []).map(sNum), references: sNum(b.references),
         nextStep: `Launched studio run ${sNum(run.id)}: ${sNum(b.trials)} builds, about $${sNum(b.estimateUsd)} against a cap of $${sNum(run.capUsd) || capUsd}. Tell the person. Watch it with get_bench_studio_run (pass the cursor it returns as since). For each reference, get_bench_reference_order with the run, the brief's taskId and the pack, start a fresh Claude Code session on it with only the order, and hand the result in with submit_bench_reference.`,
       });
@@ -7248,7 +7252,7 @@ function registerTools(server, ctx) {
 
     server.registerTool('add_bench_task', {
       title: 'Benchmark: add a task',
-      description: 'Admin only. Add a task to an unfrozen benchmark suite. kind "first_version": a brief (appSlug names the app whose repository the trials run in; appName, brief, optional template). kind "capture": an app captured at a commit (appSlug, sha), the before arm. kind "runs": the Homeroom bot runs runIds replayed at `stage` (from get_homeroom_bot\'s runs and their replayStages). kind "pr": a build task from a merged pull request (appSlug, issueNumber, prNumber). It changes no app.',
+      description: 'Admin only. Add a task to an unfrozen benchmark suite. kind "first_version": a brief (appSlug names the app whose repository the trials run in; appName, brief, optional template: the starter its first commit is scaffolded from, such as a game starter like "game-blocks", whose first version is built on that working game). kind "capture": an app captured at a commit (appSlug, sha), the before arm. kind "runs": the Homeroom bot runs runIds replayed at `stage` (from get_homeroom_bot\'s runs and their replayStages). kind "pr": a build task from a merged pull request (appSlug, issueNumber, prNumber). It changes no app.',
       inputSchema: {
         suiteId: z.number().int().positive(),
         kind: z.enum(['first_version', 'capture', 'runs', 'pr']),
