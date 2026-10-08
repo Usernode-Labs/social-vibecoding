@@ -10,7 +10,8 @@
 //     held (creator/admin, or collaborator of an invite-only app; never
 //     for the self-app).
 //   - data-plus="rename" / data-plus="secrets" render for every
-//     non-read-only viewer; data-plus="settings" is gone.
+//     non-read-only viewer; the App settings nesting is gone (#645), and
+//     "Settings & rules" is one row that opens them on top (#4045).
 //   - Read-only viewers still get only the fork row ("Remix").
 //   - Old #app/<slug>/dev/settings deep links normalize to the card list.
 //
@@ -220,8 +221,14 @@ test('_plusMenuShowsMembers mirrors the old drawer-row predicate', () => {
 
 // ── the App settings nesting is gone; rename/secrets are direct items ────
 
-test('"+" menu has direct rename and secrets items, no App settings entry', () => {
-  assert.ok(!FRAME_SRC.includes('data-plus="settings"'), 'nested App settings entry removed');
+test('"+" menu has rename and secrets items in its Settings & rules panel, no App settings entry', () => {
+  // #645 took the App settings nesting out. #4045 (the owner, 7 Oct) folds
+  // the settings behind ONE "Settings & rules" row that opens them on top of
+  // the menu; the rows themselves are still the menu's own.
+  assert.match(FRAME_SRC, /<PlusRow\s+data-plus="settings"\s+group="settings"[\s\S]{0,120}title="Settings &amp; rules"/);
+  assert.ok(FRAME_SRC.indexOf('id="dev-plus-settings"') < FRAME_SRC.indexOf('data-plus="rename"')
+    && FRAME_SRC.indexOf('data-plus="secrets"') < FRAME_SRC.indexOf('data-plus="suggest-back"'),
+    'rename and secrets are inside the settings panel, and Suggest this back and Remix end it (the owner, 7 Oct)');
   assert.ok(FRAME_SRC.includes('data-plus="rename"'), 'rename item present');
   assert.ok(FRAME_SRC.includes('App display name'), 'rename label present');
   assert.ok(FRAME_SRC.includes('data-plus="secrets"'), 'secrets item present');
@@ -334,7 +341,8 @@ test('the ?shot=plus-menu hook waits for a button that now arrives late', () => 
   // found". That is how this reached a gate rather than a test.
   const src = fs.readFileSync(
     path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8');
-  const i = src.indexOf("if (shot === 'plus-menu')");
+  // #4045: `?shot=plus-menu-settings` shares the hook, and opens the settings too.
+  const i = src.indexOf("if (shot === 'plus-menu' || plusMenuSettings)");
   assert.ok(i > 0, 'the hook exists');
   const block = src.slice(i, src.indexOf("if (shot === 'card-menu')", i));
   assert.match(block, /setInterval\(/, 'it retries rather than firing once');
@@ -348,4 +356,22 @@ test('the ?shot=plus-menu hook waits for a button that now arrives late', () => 
   // ...and a human's first real gesture ends it, so a person following one of
   // these links does not get a menu put back under them.
   assert.match(block, /e\.isTrusted\) done\(\)/);
+});
+
+// ── the one lit row (the owner, 8 Oct 2026) ───────────────────────────────
+
+test('"+" menu: Suggest an improvement is the one highlighted row, on desktop and in the phone sheet', () => {
+  // Desktop: a tint behind it and a bold title; every other row is plain.
+  assert.match(FRAME_SRC, /<PlusRow\s+data-plus="issue"\s+lit\s/);
+  assert.equal((FRAME_SRC.match(/^\s+lit$/gm) || []).length, 1, 'exactly one row is lit');
+  assert.match(FRAME_SRC, /const PLUS_ROW_LIT_CLS =[\s\S]*?bg-violet-50 hover:bg-violet-100 dark:bg-violet-900\/30/);
+  assert.match(FRAME_SRC, /const PLUS_TITLE_LIT_CLS = 'block text-sm font-bold /);
+  assert.match(FRAME_SRC, /data-plus-lit=\{lit \? '' : undefined\}/);
+  assert.match(FRAME_SRC, /className=\{\(lit \? PLUS_ROW_LIT_CLS : PLUS_ROW_CLS\) \+ dividerCls\}/);
+  // Phone: the action sheet's row is lit by the kit's own `highlighted`.
+  assert.match(VIEW_SRC, /highlighted: node\.hasAttribute\('data-plus-lit'\),/);
+  const kit = fs.readFileSync(path.join(__dirname, '..', 'public', 'usernode-native', 'v1', 'native.js'), 'utf8');
+  assert.match(kit, /\(action\.highlighted \? ' un-highlighted' : ''\)/);
+  const kitCss = fs.readFileSync(path.join(__dirname, '..', 'public', 'usernode-native', 'v1', 'native.css'), 'utf8');
+  assert.match(kitCss, /\.un-action-btn\.un-highlighted \{\s*font-weight: 700;\s*background: color-mix\(in srgb, var\(--un-accent\) 12%, transparent\);/);
 });

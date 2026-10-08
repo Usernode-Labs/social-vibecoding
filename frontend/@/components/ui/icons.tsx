@@ -647,6 +647,19 @@ export const EllipsisVerticalIcon = ({ id, className, ...rest }: IconProps) => (
 EllipsisVerticalIcon.displayName = 'EllipsisVerticalIcon';
 
 /**
+ * A person's outline, filled: a head over shoulders, on a 24×24 box. The hub's
+ * open seats draw it pale in a circle (community-card.tsx WeekPeople, the
+ * canvas board People). A head and a path, so written out rather than built.
+ */
+export const PersonSilhouetteIcon = ({ id, className, ...rest }: IconProps) => (
+  <svg id={id} className={className} viewBox="0 0 24 24" fill="currentColor" {...rest}>
+    <circle cx="12" cy="9" r="4.6" />
+    <path d="M2.5 24c.9-5.2 4.6-8.4 9.5-8.4s8.6 3.2 9.5 8.4z" />
+  </svg>
+);
+PersonSilhouetteIcon.displayName = 'PersonSilhouetteIcon';
+
+/**
  * The Dev card's ⋯ trigger — three dots on a HORIZONTAL row, in a 20×20 box.
  *
  * Its own component rather than a `stroked` entry for the same reason

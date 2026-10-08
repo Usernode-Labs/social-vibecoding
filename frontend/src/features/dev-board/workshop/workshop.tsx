@@ -82,12 +82,16 @@ import { useWorkshopGroup } from './group-mode-store';
 import { describe as describeCommunity } from '../../workshop/community-scope';
 import { registerLevel } from '../../workshop/tab-ladder';
 import { markNeedsSeen, needsRowKey, unseenNeeds, useNeedsSeen } from '../../workshop/needs-seen';
-import { ApprovalRules, CommunityCard, ShareItCard, canMakePrivate, confirmMakePrivate, useCommunity } from './community-card';
+import {
+  ApprovalRules, CommunityCard, ShareItCard, canLeave, canMakePrivate, canMakePublic, confirmMakePrivate, confirmMakePublic,
+  leaveCommunity, useCommunity,
+} from './community-card';
 import { WorkshopNotices } from './notices';
 import { ChannelCard, FirstVersionCard, NeedsCard, NothingToVote, hubAlone, hubWorkEmpty, owesVote, YourWorkCard } from './hub-cards';
 import { ProjectDiscussion } from './project-discussion';
 import { ProjectBand, type ProjectTabKey } from './project-band';
 import { SinceSummaryCard } from './since-summary-card';
+import { PlanPage } from './plan-page';
 import { PageBack } from './page-back';
 import { readAskStream } from './ask-stream';
 import {
@@ -180,10 +184,10 @@ const EMPTY_SINCE: NonNullable<DevWorkshopView['since']> = {
  */
 export function freshTab(): TabKey | null {
   const tab = callAppView('_workshopTab');
-  return tab === 'status' || tab === 'discussion' || tab === 'workshop' || tab === 'needs' || tab === 'all' ? tab : null;
+  return tab === 'status' || tab === 'discussion' || tab === 'workshop' || tab === 'needs' || tab === 'all' || tab === 'plan' ? tab : null;
 }
 
-/** Where a page's back button goes: All items to the Workshop, the rest to the hub. */
+/** Where a page's back button goes: All items to the Workshop, the rest (the plan, #4074) to the hub. */
 export function pageParent(tab: TabKey): TabKey {
   return tab === 'all' ? 'workshop' : 'status';
 }
@@ -192,6 +196,7 @@ export function pageParent(tab: TabKey): TabKey {
 export function pageTitle(tab: TabKey): string {
   if (tab === 'needs') return 'Needs you';
   if (tab === 'all') return 'All items';
+  if (tab === 'plan') return 'The plan';
   if (tab === 'discussion') return 'Discussion';
   return 'Workshop';
 }
@@ -3880,7 +3885,7 @@ export function DevWorkshop(): ReactNode {
     if (!v.slug) return undefined;
     return registerLevel({
       slug: v.slug,
-      below: () => tabRef.current === 'all',
+      below: () => tabRef.current === 'all' || tabRef.current === 'plan',
       up: () => climbRef.current(),
       host: () => hostRef.current,
     });
@@ -4113,8 +4118,14 @@ export function DevWorkshop(): ReactNode {
   // A project nobody else is in (hubAlone): its hub leaves out the zeros a
   // group's hub says (./hub-cards.tsx NothingToVote, hubWorkEmpty).
   const alone = hubAlone(community);
+  // #4045, decision D: a project's FIRST WEEK (made under seven days ago,
+  // never Homeroom's own), when its hub leaves out what is still empty: the
+  // vote line, an empty Your work, and on the hero the audience line and the
+  // fortnight (./community-card.tsx). The discussion preview stays, and asks
+  // for the first word while it is empty (./hub-cards.tsx ChannelCard).
+  const weekOne = !!(community && community.first_week);
   const workEmpty = hubWorkEmpty({
-    alone, building, startHere, readOnly: !!actions.readOnly, bot: !!(v.mine && v.mine.bot),
+    alone, building, startHere, readOnly: !!actions.readOnly, bot: !!(v.mine && v.mine.bot), firstWeek: weekOne,
   });
 
   /* ── The band, and on All items its back bar ──
@@ -4218,6 +4229,13 @@ export function DevWorkshop(): ReactNode {
               onMakePrivate={canMakePrivate(community)
                 ? () => { void confirmMakePrivate(slug, app.name || community?.name || slug); }
                 : null}
+              // #4045: "Make it public" and Leave are the ⋯'s too, so the
+              // hero's row is what you do with people: Invite.
+              onMakePublic={canMakePublic(community)
+                ? () => { void confirmMakePublic(slug, app.name || community?.name || slug); }
+                : null}
+              onLeave={canLeave(community) ? () => { void leaveCommunity(slug); } : null}
+              appName={community?.name || app.name || slug}
             />
           )}
         />
@@ -4227,7 +4245,9 @@ export function DevWorkshop(): ReactNode {
           description, so a new project's hub says what it is becoming and
           how far along it is, and opens the bot's chat when the bot waits on
           its maker. See ./hub-cards.tsx FirstVersionCard. */}
-      {slug ? <FirstVersionCard slug={slug} data={community} /> : null}
+      {slug ? (
+        <FirstVersionCard slug={slug} data={community} emoji={app.iconEmoji || null} onSeePlan={() => openTab('plan')} />
+      ) : null}
       {/* #2573: ABOVE the empty note, because the two answer different
           questions on the same screen. The note says what the board holds;
           this says what to do about an app nobody has started on, and the
@@ -4259,7 +4279,7 @@ export function DevWorkshop(): ReactNode {
       ) : null}
       {owesVote(v.queue)
         ? <NeedsCard queue={v.queue} slug={slug} canPost={canPost} onOpen={() => openTab('needs')} />
-        : <NothingToVote queue={v.queue} onOpen={() => openTab('needs')} alone={alone} />}
+        : <NothingToVote queue={v.queue} onOpen={() => openTab('needs')} alone={alone || weekOne} />}
       {slug && community?.audience !== 'solo' ? (
         <ChannelCard slug={slug} name={app.name || slug} data={community} compact onOpen={() => openTab('discussion')} />
       ) : null}
@@ -4279,6 +4299,18 @@ export function DevWorkshop(): ReactNode {
       {/* Start a new change was the hub's last line; it is the hero's ⋯
           now (../actions-row.tsx), as well as the Homeroom menu's. */}
       </>
+      ) : null}
+
+      {/* ── THE PLAN, read only, for the people who joined (#4074) ──
+          A page under the Hub, opened by the First version card's "See the
+          plan"; Hub stays lit. See ./plan-page.tsx. */}
+      {tab === 'plan' ? (
+        <PlanPage
+          name={community?.name || app.name || slug}
+          data={community}
+          onBack={() => openTab('status')}
+          onDiscussion={() => openTab('discussion')}
+        />
       ) : null}
 
       {/* ── DISCUSSION: the community's channel, whole ── (./project-discussion.tsx) */}

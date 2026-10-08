@@ -36,6 +36,7 @@ const activeUsers = require('../services/active-users');
 const createOptions = require('../services/create-options');
 const appTemplates = require('../services/app-templates');
 const collabInvites = require('../services/collab-invites');
+const communityInvites = require('../services/community-invites');
 const emailInvites = require('../services/email-invites');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const appActivity = require('../services/app-activity');
@@ -271,11 +272,26 @@ const stagingApps = require('../services/staging-apps');
  *                        person whose description it is and nobody else
  *   conversation_id      their DM with the bot, for theirs alone
  *   session_id           the change, once it is ready to try
+ *   plan                 #4074: the plan waiting for its maker's Build it,
+ *                        read only, for a MEMBER who is not its maker
+ *                        (`member`, the route's own membership read), else
+ *                        null. What the first version will do and each
+ *                        question with its suggested answer: no ids, no
+ *                        other answers, nothing its maker wrote to the bot.
+ *
+ * THE PLAN IS A READ FOR MEMBERS ONLY, a deliberate exception to "membership
+ * gates taking part, not reading" (AGENTS.md; decision G, 6 Oct 2026). It is
+ * the maker's own exchange with Homeroom bot, shared with the people who
+ * joined to build with them, not with everyone who can see a public
+ * project. It is the CURRENT plan: firstVersionState reads the newest plan
+ * card whose Build it is still open (waitingPlan), so after Change something
+ * nobody reads one until the bot has written the new one, and the words
+ * asked for (homeroom_bot_runs.plan_change) are never read.
  *
  * No build time. Evan, 5 Oct 2026: no average build time for a first
  * version, which plans first and waits on its maker's answer.
  */
-function hubFirstVersion(state, viewerId) {
+function hubFirstVersion(state, viewerId, { member = false } = {}) {
   if (!state) return null;
   const mine = viewerId != null && Number(state.userId) === Number(viewerId);
   const ready = !!state.ready;
@@ -290,6 +306,57 @@ function hubFirstVersion(state, viewerId) {
     waits_on: mine && !ready ? (state.plan ? 'plan' : state.question ? 'question' : null) : null,
     conversation_id: mine ? (Number(state.conversationId) || null) : null,
     session_id: Number.isInteger(sessionId) && sessionId > 0 ? sessionId : null,
+    plan: member && !mine && !ready ? sharedPlan(state.plan) : null,
+  };
+}
+
+/** #4074: the plan as members read it (hubFirstVersion), or null. Pure. */
+function sharedPlan(plan) {
+  if (!plan || !Array.isArray(plan.bullets)) return null;
+  const bullets = plan.bullets.filter((b) => typeof b === 'string' && b.trim()).slice(0, 5);
+  if (!bullets.length) return null;
+  const questions = (Array.isArray(plan.questions) ? plan.questions : []).slice(0, 2)
+    .map((q) => ({
+      question: q && typeof q.question === 'string' ? q.question : '',
+      suggested: q && Array.isArray(q.answers) && typeof q.answers[0] === 'string' ? q.answers[0] : null,
+    }))
+    .filter((q) => q.question.trim());
+  return { bullets, questions };
+}
+
+/**
+ * IN ITS FIRST WEEK, A FIRST VERSION THAT WENT LIVE STAYS ON THE HUB (#4045,
+ * decision D), as its card's Live and Open app: firstVersionState answers
+ * null once the bot's proposal merged, and the week's hub has nothing else
+ * that opens the app. The card's shape, with `line: 'live'`, when Homeroom
+ * bot built this project's first version and it merged; null otherwise.
+ */
+async function liveFirstVersion(pool, appId, viewerId) {
+  const { rows } = await pool.query(
+    `SELECT f.user_id, u.username
+       FROM homeroom_bot_first_versions f
+       LEFT JOIN users u ON u.id = f.user_id
+      WHERE f.app_id = $1 AND f.bot_builds = TRUE
+        AND EXISTS (
+          SELECT 1 FROM homeroom_bot_runs r
+            JOIN chat_sessions cs ON cs.id = r.proposal_session_id
+           WHERE r.app_id = f.app_id AND r.issue_number = f.issue_number AND cs.status = 'merged'
+        )`,
+    [appId],
+  );
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    step: null,
+    of: null,
+    line: 'live',
+    ready: false,
+    mine: viewerId != null && Number(row.user_id) === Number(viewerId),
+    creator: row.username || null,
+    waits_on: null,
+    conversation_id: null,
+    session_id: null,
+    plan: null,
   };
 }
 
@@ -3408,7 +3475,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       const showSelfHosted = !!req.user?.isAdmin || !!config.selfAppPublicVoting;
       const { rows: appRows } = await pool.query(
         `SELECT ${appAccess.ACCESS_COLUMNS}, name, repo_url,
-                LEFT(manifest_snapshot->>'description', 280) AS description
+                LEFT(manifest_snapshot->>'description', 280) AS description,
+                (NOT self_hosted AND created_at > NOW() - INTERVAL '7 days') AS first_week
            FROM apps WHERE slug = $1 AND (NOT self_hosted OR $2::boolean)`,
         [req.params.slug, showSelfHosted]
       );
@@ -3499,20 +3567,37 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // that description: the App tab's state (GET /api/apps/:slug
       // `first_version`), for the hub to say beside who it is for.
       // Best-effort: a read that fails is no state, never a failed hub.
+      //
+      // #4045: IN ITS FIRST WEEK (`first_week`: made under seven days ago,
+      // never the platform's own project) the hub leaves out what is still
+      // empty, and a first version that went live stays on it as Live with
+      // Open app (liveFirstVersion). #4074: a member who did not start it
+      // reads the plan while it waits (hubFirstVersion `plan`), on the
+      // membership read above.
+      const firstWeek = !!app.first_week;
       let firstVersion = null;
       if (!app.self_hosted) {
         try {
           const state = await botDm.firstVersionState(pool, app.id, { viewerId: req.user?.id ?? null });
-          firstVersion = hubFirstVersion(state, req.user?.id ?? null);
+          firstVersion = hubFirstVersion(state, req.user?.id ?? null, { member: !!membership?.is_member });
+          if (!firstVersion && firstWeek) firstVersion = await liveFirstVersion(pool, app.id, req.user?.id ?? null);
         } catch (err) {
           log.warn('apps', 'Could not read the first version for the hub', { slug: app.slug, message: err.message });
         }
       }
+      // AN INVITE LINK IS OUT (#4045, 8 Oct 2026): the viewer has a live one
+      // for a project that is still just theirs, so the hub draws their face
+      // with open seats beside it instead of "Just you". Asked only then;
+      // see hasLiveLink for what the records can and cannot say.
+      const inviteLink = membership?.is_member && membership.audience === 'solo' && req.user?.id
+        ? await communityInvites.hasLiveLink(pool, app.id, req.user.id) : false;
       res.json({
         slug: app.slug,
         name: app.name,
         // What the app is, for the page's hero (above).
         description,
+        first_week: firstWeek,
+        invite_link: inviteLink,
         first_version: firstVersion,
         ...membership,
         members,
@@ -3789,7 +3874,7 @@ module.exports = {
   // one resolver, so it is pinned there rather than through a route.
   attachForkLineage,
   appRoutes, sweepStuckCreatingApps, accessFlags, canDeleteApp, compactGlobalChatApp,
-  deleteBlockReason, isCoreApp, hubFirstVersion, firstVersionLinesFor,
+  deleteBlockReason, isCoreApp, hubFirstVersion, firstVersionLinesFor, sharedPlan,
   // #2524: the activity guard and its two bounds, so the contract is
   // unit-testable without standing up the whole app router.
   activitySeconds, ACTIVITY_MAX_PER_POST, ACTIVITY_MAX_PER_DAY,
