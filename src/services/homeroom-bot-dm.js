@@ -3694,8 +3694,9 @@ async function firstVersionApproval(pool, sessionId, viewerId = null) {
  * whether the bot waits on an answer from them, and whether its proposal is
  * up for the vote (ready to try). While it is ready, `approval` is where
  * approval of it stands for that reader (firstVersionApproval above), when
- * that could be read. GET /api/apps/:slug reads it best-effort: a read that
- * fails is no state, never a failed page.
+ * that could be read. While it is built and tested, `chosenPlan` is the plan
+ * its maker chose (chosenPlanOf, #4396). GET /api/apps/:slug reads it
+ * best-effort: a read that fails is no state, never a failed page.
  */
 async function firstVersionState(pool, appId, deps = {}) {
   if (!appId) return null;
@@ -3764,12 +3765,22 @@ async function firstVersionState(pool, appId, deps = {}) {
         return null;
       })
       : null;
+    const where = replanning ? { ...at('reading'), step: progress.stepNumber('plan', true) } : at(found.state.stage, { question });
+    // #4396: the plan its maker chose, while it is built and tested, for
+    // the members waiting on it (routes/apps.js sharedPlan cuts it). Build
+    // it (homeroom-bot.js goAhead) keeps the plan on its run and marks it
+    // `chosen`; nothing is read before the build step or once it is ready.
+    const chosenPlan = !ready && !plan && !replanning
+      && where.step >= progress.FIRST_VERSION_STEPS.indexOf('Building it') + 1
+      ? await chosenPlanOf(pool, row.app_id, row.issue_number).catch(() => null)
+      : null;
     return {
       ...base,
-      ...(replanning ? { ...at('reading'), step: progress.stepNumber('plan', true) } : at(found.state.stage, { question })),
+      ...where,
       question,
       ready,
       ...(plan ? { plan } : {}),
+      ...(chosenPlan ? { chosenPlan } : {}),
       ...(approval ? { approval } : {}),
     };
   }
@@ -3777,6 +3788,25 @@ async function firstVersionState(pool, appId, deps = {}) {
   // has not picked it up yet (filing wakes it, and it reads it next).
   if (found && progress.outcomeOf(found.row)) return null;
   return { ...base, ...at('queued'), question: false, ready: false };
+}
+
+/**
+ * #4396: the plan a first version's maker chose with Build it, the newest
+ * run's that went ahead (goAhead writes `chosen` onto it): { bullets,
+ * questions }, or null. The answers chosen are not read.
+ */
+async function chosenPlanOf(pool, appId, issueNumber) {
+  const { rows: [run] } = await pool.query(
+    `SELECT plan FROM homeroom_bot_runs
+      WHERE app_id = $1 AND issue_number = $2 AND plan ? 'chosen'
+      ORDER BY id DESC LIMIT 1`,
+    [appId, issueNumber],
+  );
+  if (!run || !Array.isArray(run.plan?.bullets)) return null;
+  return {
+    bullets: run.plan.bullets,
+    questions: Array.isArray(run.plan.questions) ? run.plan.questions : [],
+  };
 }
 
 /** The create dialog's suggested one-line description, from the longer one. */

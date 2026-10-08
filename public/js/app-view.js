@@ -2854,7 +2854,10 @@ const AppView = {
   // for the viewer's approval in a group; 'approved', the same once the
   // viewer approved it, waiting on the other member with the group's clock
   // running. Their change id stands for no change, so Try it and See the
-  // change open nothing real. Otherwise it is being built ("Building it").
+  // change open nothing real. 'member' (#4396): being built, as a member
+  // who is not its maker reads it, with "While you wait" (its plan and the
+  // maker's note made up; Say hi to the group has no room behind it).
+  // Otherwise it is being built ("Building it").
   showFirstVersionShot(variant = false) {
     const withPlan = variant === true || variant === 'plan';
     const ready = variant === 'ready' || variant === 'approved';
@@ -2877,6 +2880,19 @@ const AppView = {
         } : {
           sessionId: 990003, mustApprove: true, approved: false, waitingOn: [], more: 0, missing: 1,
           goesLiveAt: new Date(Date.now() + 3 * 86400000).toISOString(), soon: false,
+        },
+      } : variant === 'member' ? {
+        building: true, mine: false, member: true, step: 4, of: 7, line: 'building',
+        creator: 'jordan', ready: false, question: false, conversationId: null,
+        makerNote: 'Help me pick which plants we track first!',
+        memberPlan: {
+          bullets: [
+            'A list of your plants, each with a photo',
+            'Which ones need water today, at the top',
+            'Tap a plant to mark it watered',
+            'A reminder when one has gone dry',
+          ],
+          questions: [{ question: 'How should it remind you?', suggested: 'In the app' }],
         },
       } : withPlan ? {
         // B6: its plan waits for Build it, as the server says it to the
@@ -3182,6 +3198,7 @@ const AppView = {
     // Built and up for approval: no longer "being built" (_firstVersionReadyView).
     if (fv.ready) return AppView._firstVersionReadyView(appData);
     const thumb = AppView._firstVersionThumb(appData);
+    const waiting = AppView._firstVersionWaiting(appData);
     // Their DM, by its id when the record names it (members get neither).
     const chat = fv.mine === true
       ? {
@@ -3203,6 +3220,32 @@ const AppView = {
       lines: ['It opens here when it’s ready.'],
       tourSays: true,
       action: chat,
+      ...(waiting ? { waiting } : {}),
+    };
+  },
+
+  /**
+   * #4396: WHILE YOU WAIT, for a member who is not its maker (`member`, the
+   * server's read; routes/apps.js waitingMemberFields): what
+   * features/app-frame/app-status.tsx WaitingCard needs for its three rows
+   * (Say hi to the group, See the plan, Suggest something) and their sheets.
+   * Null for the maker and for anyone who is not a member.
+   */
+  _firstVersionWaiting(appData) {
+    const fv = appData.first_version || {};
+    if (fv.mine === true || fv.member !== true || !appData.slug) return null;
+    const plan = fv.memberPlan && Array.isArray(fv.memberPlan.bullets) && fv.memberPlan.bullets.length
+      ? {
+        bullets: fv.memberPlan.bullets.filter((b) => typeof b === 'string'),
+        questions: Array.isArray(fv.memberPlan.questions) ? fv.memberPlan.questions : [],
+      }
+      : null;
+    return {
+      slug: appData.slug,
+      name: appData.name || appData.slug,
+      maker: typeof fv.creator === 'string' && fv.creator ? fv.creator : null,
+      makerNote: typeof fv.makerNote === 'string' && fv.makerNote.trim() ? fv.makerNote.trim() : null,
+      plan,
     };
   },
 

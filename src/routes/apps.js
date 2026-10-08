@@ -278,6 +278,9 @@ const stagingApps = require('../services/staging-apps');
  *                        null. What the first version will do and each
  *                        question with its suggested answer: no ids, no
  *                        other answers, nothing its maker wrote to the bot.
+ *                        #4396: once Build it was pressed, the plan chosen
+ *                        (`chosenPlan`), cut the same way, while it is
+ *                        built and tested, until it is ready.
  *
  * THE PLAN IS A READ FOR MEMBERS ONLY, a deliberate exception to "membership
  * gates taking part, not reading" (AGENTS.md; decision G, 6 Oct 2026). It is
@@ -306,7 +309,7 @@ function hubFirstVersion(state, viewerId, { member = false } = {}) {
     waits_on: mine && !ready ? (state.plan ? 'plan' : state.question ? 'question' : null) : null,
     conversation_id: mine ? (Number(state.conversationId) || null) : null,
     session_id: Number.isInteger(sessionId) && sessionId > 0 ? sessionId : null,
-    plan: member && !mine && !ready ? sharedPlan(state.plan) : null,
+    plan: member && !mine && !ready ? sharedPlan(state.plan || state.chosenPlan) : null,
   };
 }
 
@@ -322,6 +325,38 @@ function sharedPlan(plan) {
     }))
     .filter((q) => q.question.trim());
   return { bullets, questions };
+}
+
+/**
+ * #4396: WHILE YOU WAIT. What the App tab's waiting screen offers a member
+ * who is not the maker of a first version that is not ready yet (public/js/
+ * app-view.js _firstVersionView, features/app-frame/app-status.tsx
+ * WaitingCard): `member`, the plan as members read it (sharedPlan, the
+ * hub's own cut) as `memberPlan`, and `makerNote`, the first thing its maker
+ * said in the project's channel (the made screen posts their note there),
+ * in one line. Nothing for anyone else: `{ member: false }`.
+ */
+async function waitingMemberFields(pool, appId, viewerId, state) {
+  if (viewerId == null || !(await communities.isMember(pool, appId, viewerId))) return { member: false };
+  const { rows: [note] } = await pool.query(
+    `SELECT m.content
+       FROM chat_messages m
+      WHERE m.app_id = $1 AND m.user_id = $2
+        AND m.thread_type IS NULL AND m.deleted_at IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM user_blocks blocked
+           WHERE blocked.blocker_id = $3 AND blocked.blocked_user_id = m.user_id
+        )
+      ORDER BY m.created_at ASC, m.id ASC
+      LIMIT 1`,
+    [appId, state.userId, viewerId],
+  );
+  const text = typeof note?.content === 'string' ? note.content.replace(/\s+/g, ' ').trim() : '';
+  return {
+    member: true,
+    memberPlan: sharedPlan(state.plan || state.chosenPlan),
+    makerNote: text ? text.slice(0, 200) : null,
+  };
 }
 
 /**
@@ -1665,6 +1700,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
               conversationId: mine ? state.conversationId : null,
               // B6: the plan it waits on, for its creator to build from here.
               ...(mine && state.plan ? { plan: state.plan } : {}),
+              // #4396: for a member who is not its maker, while it is not
+              // ready, what the App tab's "While you wait" card offers.
+              ...(!mine && !state.ready ? await waitingMemberFields(pool, appRow.id, req.user?.id, state).catch(() => ({ member: false })) : {}),
               // Ready to try: the change, and who it waits on, as this
               // viewer reads it (firstVersionApproval).
               ...(state.ready && state.approval ? { approval: state.approval } : {}),
@@ -3887,7 +3925,7 @@ module.exports = {
   // one resolver, so it is pinned there rather than through a route.
   attachForkLineage,
   appRoutes, sweepStuckCreatingApps, accessFlags, canDeleteApp, compactGlobalChatApp,
-  deleteBlockReason, isCoreApp, hubFirstVersion, firstVersionLinesFor, sharedPlan,
+  deleteBlockReason, isCoreApp, hubFirstVersion, firstVersionLinesFor, sharedPlan, waitingMemberFields,
   // #2524: the activity guard and its two bounds, so the contract is
   // unit-testable without standing up the whole app router.
   activitySeconds, ACTIVITY_MAX_PER_POST, ACTIVITY_MAX_PER_DAY,

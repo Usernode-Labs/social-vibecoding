@@ -688,3 +688,49 @@ test('#15: the screen re-asks the server while it is up, past the service worker
   AppView._stopFirstVersionWatch();
   assert.equal(AppView._firstVersionTimer, null);
 });
+
+// #4396: WHILE YOU WAIT. A member who is not its maker, while the first
+// version is not ready, gets one card under the thumbnail: Say hi to the
+// group, See the plan (when there is one) and Suggest something.
+
+const MEMBER = { mine: false, conversationId: null, member: true, creator: 'ada' };
+const MEMBER_PLAN = { bullets: ['A list of your plants', 'Water reminders', 'A photo per plant'], questions: [] };
+
+test('#4396: a member who is not the maker waits with three things to do', () => {
+  const { AppView } = makeAppView();
+  const v = view(AppView, firstVersionApp({}, { ...MEMBER, step: 4, line: 'building', makerNote: 'Help me name the plants!', memberPlan: MEMBER_PLAN }));
+  assert.deepEqual(v.waiting, {
+    slug: 'plant-pal', name: 'Plant Pal', maker: 'ada', makerNote: 'Help me name the plants!', plan: MEMBER_PLAN,
+  });
+  assert.equal(v.action, null, 'no way into the maker\'s chat');
+  assert.deepEqual(v.lines, ['It opens here when it’s ready.'], 'the line stays, and no promise to tell them');
+  const out = html(v);
+  assert.match(out, /data-build-line="building"[^>]*>.*Building it · usually 10 to 25 min/);
+  assert.match(out, /data-app-first-version-waiting=""/);
+  assert.match(out, /<h2 class="[^"]*uppercase[^"]*">While you wait<\/h2>/);
+  assert.match(out, /data-waiting-row="discussion"[\s\S]*Say hi to the group[\s\S]*ada: “Help me name the plants!”/);
+  assert.match(out, /data-waiting-row="plan"[\s\S]*See the plan[\s\S]*3 things it will do/);
+  assert.match(out, /data-waiting-row="suggest"[\s\S]*Suggest something[\s\S]*Homeroom bot starts on it once it’s live/);
+  assert.equal((out.match(/<button/g) || []).length, 3);
+  // The card, then the line under it.
+  assert.ok(out.indexOf('While you wait') < out.indexOf('It opens here when it’s ready.'));
+  assert.doesNotMatch(out, /let you know|notify/i);
+});
+
+test('#4396: no note says Introduce yourself; no plan, no plan row; planning has no time note', () => {
+  const { AppView } = makeAppView();
+  const out = html(view(AppView, firstVersionApp({}, { ...MEMBER, line: 'plan-member', makerNote: null, memberPlan: null })));
+  assert.match(out, /Say hi to the group[\s\S]*Introduce yourself/);
+  assert.doesNotMatch(out, /See the plan|data-waiting-row="plan"/);
+  assert.doesNotMatch(out, /usually 10 to 25 min/);
+  assert.equal((out.match(/<button/g) || []).length, 2);
+});
+
+test('#4396: the maker, a reader who is not a member, and a ready version get no card', () => {
+  const { AppView } = makeAppView();
+  assert.equal('waiting' in view(AppView, firstVersionApp({}, { member: true })), false, 'the maker');
+  assert.equal('waiting' in view(AppView, firstVersionApp({}, { ...MEMBER, member: false })), false, 'not a member');
+  const out = html(view(AppView, firstVersionApp({}, { ...MEMBER, member: false })));
+  assert.doesNotMatch(out, /While you wait|<button/);
+  assert.doesNotMatch(out, /usually 10 to 25 min/);
+});

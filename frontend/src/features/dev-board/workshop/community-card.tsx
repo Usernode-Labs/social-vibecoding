@@ -108,7 +108,8 @@ export type HubFirstVersion = {
   /** The change, once it is ready to try. */
   session_id: number | null;
   /** #4074: the plan waiting for its maker's Build it, read only, for a
-      member who did not start it (routes/apps.js sharedPlan); else null. */
+      member who did not start it (routes/apps.js sharedPlan); #4396: the
+      plan its maker chose, while it is built and tested; else null. */
   plan?: {
     bullets: string[];
     questions: Array<{ question: string; suggested: string | null }>;
