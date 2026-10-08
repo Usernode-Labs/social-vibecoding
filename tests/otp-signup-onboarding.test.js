@@ -64,7 +64,7 @@ test('the password step says the account is new, and asks for its handle with an
 });
 
 test('the waitlist is named before the waiting room, not by it', () => {
-  assert.match(LOGIN, /'New accounts get a spot on the waitlist\. We let people in a few at a time\.'/);
+  assert.match(LOGIN, /'New accounts get a spot on the waitlist\. We\\u2019re letting people in a few at a time\.'/);
   assert.doesNotMatch(LOGIN, /in the queue|your turn/);
   assert.match(LOGIN, /\{otpSignup\?\.waitlisted \? \(\s+<p id="otp-waitlist-note"/);
 });

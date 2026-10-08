@@ -1265,7 +1265,14 @@ function observeCodingProviderResult(event, ordinal, onProgress, state) {
   const errorMessage = typeof event.errorMessage === 'string'
     ? event.errorMessage.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 300) || null
     : null;
-  if (providerName) state.routedProvider = providerName;
+  if (providerName) {
+    state.routedProvider = providerName;
+    // Every provider the turn's requests went to, in order, not only the
+    // last: whether a build that quits early follows a provider is read
+    // from this (homeroom-bot-live.js turnFacts). A few names at most.
+    const seen = Array.isArray(state.routedProviders) ? state.routedProviders : (state.routedProviders = []);
+    if (!seen.includes(providerName) && seen.length < 8) seen.push(providerName);
+  }
   noteCodingProviderUsage(event.usage, state);
   noteCodingProviderImages(event.images, state);
   const failed = (status != null && status >= 400) || !!errorType || !!errorMessage;
@@ -1448,6 +1455,9 @@ function parseLine(line, onProgress, state) {
       // The agent ended on a line that does not build on the session branch
       // (worker/session-branch.sh): nothing was committed or pushed.
       else if (k === 'branch_mismatch') state.branchMismatch = v === '1';
+      // How many times the stop guard sent the agent back (run-cc.sh,
+      // STOP_GUARD=1 only): telemetry_metrics.stop_hook_blocks.
+      else if (k === 'stop_hook_blocks') state.stopHookBlocks = /^\d+$/.test(v || '') ? parseInt(v, 10) : null;
     }
     state.resultSeen = true;
     const terminalExit = Number.isInteger(state.agentExit) ? state.agentExit : state.ccExit;
@@ -1750,6 +1760,10 @@ function newWatchState() {
     // The build ended off the session branch, on work that does not build
     // on it; the runner committed and pushed nothing (session-branch.sh).
     branchMismatch: false,
+    // Times the stop guard kept the agent from ending a turn that had
+    // changed nothing (worker/build-stop-hook.js). Null for a turn without
+    // the guard, so "none asked for" stays apart from "none needed".
+    stopHookBlocks: null,
     // #361: conflicted file paths from a MODE=sync turn's
     // __USERNODE_RESULT__ line. Defaults empty.
     conflictFiles: [],
@@ -3141,6 +3155,12 @@ async function execInWorker(sessionId, {
   // pushes is what it proposes, or a revision of a proposal up for a vote. A
   // person's dev chat keeps a failed turn's work, as it always has.
   discardFailedTurn = false,
+  // The stop guard: a Claude Code Stop hook (worker/build-stop-hook.js) that
+  // sends the agent back to work, twice at most, when it tries to end a turn
+  // that has changed nothing. The Homeroom bot's build and review-fix turns
+  // ask for it (homeroom-bot-live.js buildTurnRunner); it reaches run-cc.sh
+  // as STOP_GUARD=1 for a build that Claude Code runs, and nothing else.
+  stopGuard = false,
   shotsRunId = null,
   shotsOrigins = null,
   shotsAuthTokens = null,
@@ -3282,7 +3302,9 @@ async function execInWorker(sessionId, {
   if (systemPrompt && !runsClaude) {
     throw new Error('execInWorker: systemPrompt is only supported for Claude turns');
   }
-  if (resumeFallbackPrompt && !isClaude) {
+  // Claude Code makes the fresh run itself when --resume fails (run-cc.sh),
+  // on Anthropic or on OpenRouter; Codex asks the host for one instead.
+  if (resumeFallbackPrompt && !isClaude && !isClaudeOpenRouter) {
     throw new Error('execInWorker: resumeFallbackPrompt is only supported for Claude turns');
   }
   if (resumeFallbackPrompt && mode !== 'build') {
@@ -3466,7 +3488,10 @@ async function execInWorker(sessionId, {
     // the catalog lists as taking files; anything else is a note.
     safeEnv.AGENT_MODEL_SUPPORTS_FILES = agentModelMetadata?.supportsFiles === true ? '1' : '';
     safeEnv.CLAUDE_RESUME_SESSION_ID = resumeSessionId || '';
-    safeEnv.RESUME_FALLBACK_PROMPT_FILE = '';
+    // The Homeroom bot's nudge (homeroom-bot-live.js buildTurnRunner): the
+    // whole build prompt, for the fresh run run-cc.sh makes when the build's
+    // conversation cannot be resumed. Empty for every other turn.
+    safeEnv.RESUME_FALLBACK_PROMPT_FILE = resumeFallbackPrompt ? TURN_RESUME_FALLBACK_PROMPT_PATH : '';
     safeEnv.TURN_UUID = turnUuid || '';
     safeEnv.OPENROUTER_API_BASE = openrouterApiBase || '';
     safeEnv.DISCARD_FAILED_TURN = discardFailedTurn === true ? '1' : '';
@@ -3500,6 +3525,9 @@ async function execInWorker(sessionId, {
     // the (already-validated) base so generation and catalog agree.
     safeEnv.OPENROUTER_API_BASE = openrouterApiBase || '';
   }
+  // Only a Claude Code build has the hook: a scout changes nothing by design,
+  // and the Codex runner has no Stop hook to install.
+  if (stopGuard === true && mode === 'build' && runsClaude) safeEnv.STOP_GUARD = '1';
   const runner = registry.runnerFor(resolvedBackend, resolvedHarness);
  // Journal transport: the turn runs DETACHED from this process. The
   // wrapper below redirects run-cc.sh's combined output to a journal

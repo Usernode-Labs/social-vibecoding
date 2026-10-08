@@ -38,6 +38,7 @@ import { Button } from '@/components/ui/button';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { type BuildLineState, buildLineOf } from '../first-session/build-line';
+import { useTourRunning } from '../first-session/tour-running';
 import { FeaturedCard, sketching, useSketch } from '../first-session/sketch-card';
 import { appStatusStore } from './app-status-store.js';
 
@@ -169,7 +170,23 @@ function actionButton(action: NonNullable<AppStatusView['action']>): ReactNode {
   );
 }
 
-export function AppStatusView_({ view }: { view: AppStatusView }): ReactNode {
+/**
+ * While the first-session tour runs, its last card is what names the plan
+ * (../first-session/tour-running.ts): a plan waiting on its maker shows no
+ * "Review the plan" here, and its line says the bot is working on it. Every
+ * other screen, and this one once the tour ends, is as AppView answers it.
+ */
+export function heldForTour(view: AppStatusView, touring: boolean): AppStatusView {
+  if (!touring || !view.thumb || buildLineOf(view.buildLine) !== 'plan') return view;
+  return {
+    ...view,
+    buildLine: 'working',
+    action: view.action && view.action.key === 'botChat' ? null : view.action,
+  };
+}
+
+export function AppStatusView_({ view: answered }: { view: AppStatusView }): ReactNode {
+  const view = heldForTour(answered, useTourRunning());
   const action = view.action;
   const titled = !!view.lines?.length;
   const thumb = view.thumb || null;
@@ -177,7 +194,7 @@ export function AppStatusView_({ view }: { view: AppStatusView }): ReactNode {
     <div className="flex flex-col items-center justify-center h-full text-zinc-500 dark:text-zinc-400 gap-2 p-4 text-center">
       {view.dot ? <div className={`status-dot ${view.dot}`}></div> : null}
       {thumb ? (
-        <FirstVersionCard key={thumb.slug} thumb={thumb} line={buildLineOf(view.buildLine)} />
+        <FirstVersionCard key={thumb.slug} thumb={thumb} line={view.buildLine === 'working' ? 'working' : buildLineOf(view.buildLine)} />
       ) : (
         <p className={titled ? 'max-w-sm text-base font-semibold text-zinc-900 dark:text-zinc-100' : 'text-sm'}>{view.message}</p>
       )}

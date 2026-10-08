@@ -20,11 +20,11 @@ const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const DIR = 'frontend/src/features/first-session';
 const GC_FORM_SRC = 'frontend/src/features/group-chat/composer.tsx';
 
-test('the invited tour: seven steps, each screen whole or the tap that leads on, ending in Discussion', () => {
-  const { invitedSteps, SUGGEST_TEXT } = loadTsx(`${DIR}/tour-steps.ts`);
+test('the invited tour: nine steps, each screen whole or the tap that leads on, ending in Discussion', () => {
+  const { invitedSteps, MENU_TEXT, SUGGEST_TEXT } = loadTsx(`${DIR}/tour-steps.ts`);
   const steps = invitedSteps({ slug: 'sunday-run-club', name: 'Sunday Run Club' });
-  assert.deepEqual(steps.map((s) => s.screen), ['home', 'app', 'app', 'home', 'hub', 'hub', 'discussion']);
-  assert.deepEqual(steps.map((s) => (s.tap ? 'tap' : 'look')), ['tap', 'look', 'tap', 'tap', 'look', 'tap', 'look']);
+  assert.deepEqual(steps.map((s) => s.screen), ['home', 'app', 'app', 'app', 'app', 'home', 'hub', 'hub', 'discussion']);
+  assert.deepEqual(steps.map((s) => (s.tap ? 'tap' : 'look')), ['tap', 'look', 'tap', 'look', 'tap', 'tap', 'look', 'tap', 'look']);
   assert.equal(steps[0].target, '.app-card[data-slug="sunday-run-club"]');
   assert.equal(steps.filter((s) => s.last).length, 1);
   assert.equal(steps[steps.length - 1].last, true);
@@ -34,8 +34,10 @@ test('the invited tour: seven steps, each screen whole or the tap that leads on,
   // it says the rest. The people using the app decide, not "the group".
   assert.deepEqual(steps.map((s) => [s.title, s.text, s.tap || null]), [
     ['Sunday Run Club is on your Home', 'Open it any time from here.', 'Tap it'],
+    ['Sunday Run Club opens here', 'This is the app your community makes together.', null],
+    ['Suggest an improvement', MENU_TEXT, 'Tap the menu'],
     ['Suggest an improvement', SUGGEST_TEXT, null],
-    ['Sunday Run Club opens here', '✕ takes you back to Home.', 'Tap ✕'],
+    ['✕ takes you back to Home', 'Open Sunday Run Club again from Home any time.', 'Tap ✕'],
     ['You can find Sunday Run Club here', 'Communities lists every community you\'re in.', 'Tap Communities'],
     ['The Sunday Run Club hub', 'The discussion and the app\'s changes are here.', null],
     ['Talk in Discussion', 'Everyone in Sunday Run Club reads it.', 'Tap Discussion'],
@@ -44,10 +46,10 @@ test('the invited tour: seven steps, each screen whole or the tap that leads on,
   assert.doesNotMatch(JSON.stringify(steps), /Homeroom bot (builds|turns)/);
 });
 
-test('starting a community and joining one share their first five cards, word for word', () => {
+test('starting a community and joining one share their first seven cards, word for word', () => {
   const { invitedSteps, makerSteps, SUGGEST_TEXT } = loadTsx(`${DIR}/tour-steps.ts`);
   const project = { slug: 'sunday-run-club', name: 'Sunday Run Club', conversationId: 4 };
-  assert.deepEqual(makerSteps(project).slice(0, 5), invitedSteps(project).slice(0, 5));
+  assert.deepEqual(makerSteps(project).slice(0, 7), invitedSteps(project).slice(0, 7));
   // Never "group" for the people of a community, on any card of any tour.
   // Suggest an improvement's card (#4225, merged on main) still says "brings
   // it to the group": its words are not part of this check until they change.
@@ -59,20 +61,40 @@ test('starting a community and joining one share their first five cards, word fo
 
 // #4225: both paths show where Suggest an improvement lives, inside the app,
 // and say honestly what happens to one: not a feedback box, the bot starts on
-// it or brings it to the group. Described, not pressed: this tour does not
-// open the mark's menu.
-test('the invited and maker tours point at the Homeroom mark for Suggest an improvement', () => {
-  const { invitedSteps, makerSteps, SUGGEST_TEXT } = loadTsx(`${DIR}/tour-steps.ts`);
+// it or brings it to the group. #4390: the app is shown first, then the
+// reader taps the Homeroom mark and the real menu opens, its Suggest button
+// pointed at but not pressed (Next, so no suggestion starts), and ✕ last.
+test('the invited and maker tours open the Homeroom menu for Suggest an improvement, after the app and before ✕', () => {
+  const { invitedSteps, makerSteps, MENU_TEXT, SUGGEST_TEXT, APP_MENU } = loadTsx(`${DIR}/tour-steps.ts`);
+  assert.equal(APP_MENU, '#apps-switcher-sheet');
   for (const steps of [
     invitedSteps({ slug: 'x', name: 'X' }),
     makerSteps({ slug: 'x', name: 'X', conversationId: 5 }),
     makerSteps({ slug: 'x', name: 'X', conversationId: null }),
   ]) {
     const at = steps.findIndex((s) => s.target === '#platform-mark-btn');
-    assert.equal(at, 1, 'on the app screen, before the card that closes it with ✕');
-    assert.equal(steps[at + 1].press, '#back-btn');
-    assert.deepEqual(steps[at], { screen: 'app', target: '#platform-mark-btn', title: 'Suggest an improvement', text: SUGGEST_TEXT });
+    assert.equal(at, 2, 'on the app screen, after the card that shows it');
+    assert.equal(steps[at - 1].target, '#app-view');
+    assert.deepEqual(steps[at], { screen: 'app', target: '#platform-mark-btn', title: 'Suggest an improvement', text: MENU_TEXT, tap: 'Tap the menu' });
+    assert.deepEqual(steps[at + 1], { screen: 'app', target: '#improve-row-feedback', inMenu: true, ringed: true, title: 'Suggest an improvement', text: SUGGEST_TEXT });
+    assert.deepEqual(steps[at + 2], { screen: 'app', target: '#back-btn', title: '✕ takes you back to Home', text: 'Open X again from Home any time.', tap: 'Tap ✕' });
+    assert.equal(steps.filter((s) => s.inMenu).length, 1, 'only the Suggest button\'s step is in the menu');
   }
+  // The button the step points at is the menu's own, always drawn in it.
+  assert.match(read('frontend/src/features/improve/actions.tsx'), /id="improve-row-feedback"/);
+  assert.match(read('frontend/src/features/app-context/app-context-sheet.tsx'), /id="apps-switcher-sheet"/);
+  // The tour opens the menu for that step (Back to it too), closes it when
+  // the reader moves on (Skip too), and is drawn over it: on touch the menu
+  // is a kit sheet at 9991, whose backdrop sat over the card's Next.
+  const src = read(`${DIR}/index.tsx`);
+  assert.match(src, /const inMenu = !!step\.inMenu;\s+useEffect\(\(\) => \{\s+if \(!inMenu\) return undefined;\s+if \(!AppContext\.isOpen\(\)\) AppContext\.open\(\);\s+return \(\) => \{ if \(AppContext\.isOpen\(\)\) void AppContext\.close\(\); \};\s+\}, \[inMenu, index\]\);/);
+  assert.match(src, /className=\{step\.inMenu \? 'pointer-events-none fixed inset-0 z-\[9995\]' : 'pointer-events-none fixed inset-0 z-\[9000\]'\}/);
+  assert.match(src, /\(to < index && !steps\[to\]\.inMenu\)\) enterScreen\(/, 'Back to the menu step stays on the app');
+  // A press on the tour, its Next included, is not an outside click that
+  // shuts the menu under the step pointing into it.
+  const ctx = read('frontend/src/features/app-context/index.tsx');
+  assert.match(ctx, /const FIRST_SESSION_TOUR = '\[data-first-session-tour\]';/);
+  assert.match(ctx, /tour\?\.contains\(t\) \|\| firstSession\?\.contains\(t\)\)\) return;/);
   assert.match(SUGGEST_TEXT, /doesn't vanish into a feedback box/);
   assert.match(SUGGEST_TEXT, /Homeroom bot starts building it for you, or brings it to the group, and you can follow along\./);
   assert.doesNotMatch(SUGGEST_TEXT, /—/);
@@ -92,10 +114,10 @@ test('every id the tour points at is one the shell ships', () => {
   const baseline = JSON.parse(read('tests/baselines/shell-markup.json'));
   const ids = new Set(baseline.ids || []);
   assert.deepEqual(idsNamed(invitedSteps({ slug: 'x', name: 'X' })), [
-    'app-content', 'app-view', 'back-btn', 'gc-form', 'gc-messages', 'platform-header', 'platform-mark-btn', 'platform-parked', 'platform-tab-workshop', 'platform-tabs',
+    'app-content', 'app-view', 'back-btn', 'gc-form', 'gc-messages', 'improve-row-feedback', 'platform-header', 'platform-mark-btn', 'platform-parked', 'platform-tab-workshop', 'platform-tabs',
   ]);
   assert.deepEqual(idsNamed(makerSteps({ slug: 'x', name: 'X', conversationId: 5 })), [
-    'app-content', 'app-view', 'back-btn', 'platform-header', 'platform-mark-btn', 'platform-parked', 'platform-tab-messages', 'platform-tab-workshop', 'platform-tabs',
+    'app-content', 'app-view', 'back-btn', 'improve-row-feedback', 'platform-header', 'platform-mark-btn', 'platform-parked', 'platform-tab-messages', 'platform-tab-workshop', 'platform-tabs',
   ]);
   assert.deepEqual(idsNamed(lookAroundSteps()), ['home-create-tile', 'platform-tab-discover', 'platform-tab-messages', 'platform-tab-workshop']);
   // Home's New project tile is React's, one element, and dapp.json's checks
@@ -120,10 +142,10 @@ test('every id the tour points at is one the shell ships', () => {
 
 test('the Communities, Messages and Discover steps point at the bar\'s own tabs, the same elements on a phone and the rail', () => {
   const { invitedSteps, makerSteps, lookAroundSteps } = loadTsx(`${DIR}/tour-steps.ts`);
-  assert.equal(invitedSteps({ slug: 'x', name: 'X' })[3].target, '#platform-tab-workshop');
+  assert.equal(invitedSteps({ slug: 'x', name: 'X' })[5].target, '#platform-tab-workshop');
   const maker = makerSteps({ slug: 'x', name: 'X', conversationId: 5 });
-  assert.equal(maker[3].target, '#platform-tab-workshop');
-  assert.equal(maker[5].target, '#platform-tab-messages');
+  assert.equal(maker[5].target, '#platform-tab-workshop');
+  assert.equal(maker[7].target, '#platform-tab-messages');
   assert.deepEqual(lookAroundSteps().slice(1).map((s) => s.target), ['#platform-tab-discover', '#platform-tab-workshop', '#platform-tab-messages']);
   // One <a> per tab, its id drawn from its key, inside the one #platform-tabs
   // that app.css lays out as the phone's bottom bar or, from 768px, the rail.
@@ -137,8 +159,8 @@ test('the Communities, Messages and Discover steps point at the bar\'s own tabs,
 
 test('a step draws only its own target, measured before its card is painted', () => {
   const { boxForStep, pressForStep } = loadTsx(`${DIR}/index.tsx`);
-  // 4 of 7 on a 375x812 browser drew its ring round step 3's ✕, at the
-  // header's top-left, over Home's Homeroom logo: the card had moved on and
+  // 4 of 7 (the tour then) on a 375x812 browser drew its ring round step
+  // 3's ✕, at the header's top-left, over Home's Homeroom logo: the card had moved on and
   // the box had not. A box counts only for the step it was measured for.
   const backBtn = { left: 16, top: 36, width: 28, height: 28 };
   assert.equal(boxForStep({ step: 2, box: backBtn }, 3), null);
@@ -180,9 +202,9 @@ test('the ring round a tab on the phone\'s bar stays on the screen', () => {
 // The tour a NEW user sees, on a phone: "What do you want to make?", Make it,
 // then "Invite people later" (or "Go to the Homeroom app") on the made screen
 // starts the maker's path. Homeroom bot builds a new user's project, so it has
-// its chat and all seven steps; no step is skipped on a phone. The card counts
-// them "1 of 7" to "7 of 7": the app and its ✕ are one step (#4044), and
-// #4225's Suggest step comes before it as 2.
+// its chat and all nine steps; no step is skipped on a phone. The card counts
+// them "1 of 9" to "9 of 9": the app shown whole, then #4225's Suggest in its
+// Homeroom menu, then ✕ ringed alone (#4390).
 test('a new user\'s tour, numbered as its card numbers it, with what each step cuts out', () => {
   const { makerSteps, SCREEN_HEADER, BOTTOM_BARS, BOT_CHAT_HEADER, BOT_CHAT_MESSAGES } = loadTsx(`${DIR}/tour-steps.ts`);
   assert.equal(SCREEN_HEADER, '#platform-header');
@@ -193,26 +215,29 @@ test('a new user\'s tour, numbered as its card numbers it, with what each step c
   });
   assert.deepEqual(steps.map(shape), [
     { screen: 'home', target: '.app-card[data-slug="film"]', alongside: undefined, endsAbove: undefined, press: undefined, tap: 'Tap it', title: 'Friday Film Crew is on your Home' },
-    // 2: the Homeroom mark, described: Suggest an improvement is behind it (#4225).
-    { screen: 'app', target: '#platform-mark-btn', alongside: undefined, endsAbove: undefined, press: undefined, tap: undefined, title: 'Suggest an improvement' },
-    // 3: the app screen whole, its header included, ✕ ringed in it.
-    { screen: 'app', target: '#app-view', alongside: SCREEN_HEADER, endsAbove: undefined, press: '#back-btn', tap: 'Tap ✕', title: 'Friday Film Crew opens here' },
+    // 2: the app screen whole, its header included, nothing ringed.
+    { screen: 'app', target: '#app-view', alongside: SCREEN_HEADER, endsAbove: undefined, press: undefined, tap: undefined, title: 'Friday Film Crew opens here' },
+    // 3: the Homeroom mark, tapped: Suggest an improvement is behind it (#4225).
+    { screen: 'app', target: '#platform-mark-btn', alongside: undefined, endsAbove: undefined, press: undefined, tap: 'Tap the menu', title: 'Suggest an improvement' },
+    // 4: the menu it opens, its Suggest button ringed, not pressed.
+    { screen: 'app', target: '#improve-row-feedback', alongside: undefined, endsAbove: undefined, press: undefined, tap: undefined, title: 'Suggest an improvement' },
+    // 5: ✕ alone, ringed.
+    { screen: 'app', target: '#back-btn', alongside: undefined, endsAbove: undefined, press: undefined, tap: 'Tap ✕', title: '✕ takes you back to Home' },
     { screen: 'home', target: '#platform-tab-workshop', alongside: undefined, endsAbove: undefined, press: undefined, tap: 'Tap Communities', title: 'You can find Friday Film Crew here' },
-    // 5: the hub whole, with its header, down to the tab bar.
+    // 7: the hub whole, with its header, down to the tab bar.
     { screen: 'hub', target: '#app-content', alongside: SCREEN_HEADER, endsAbove: BOTTOM_BARS, press: undefined, tap: undefined, title: 'The Friday Film Crew hub' },
     { screen: 'hub', target: '#platform-tab-messages', alongside: undefined, endsAbove: undefined, press: undefined, tap: 'Tap Messages', title: 'Homeroom bot is in Messages' },
-    // 7: the chat with Homeroom bot, with the header over it.
-    { screen: 'bot', target: `${BOT_CHAT_HEADER}, ${BOT_CHAT_MESSAGES}`, alongside: SCREEN_HEADER, endsAbove: undefined, press: undefined, tap: undefined, title: 'Homeroom bot is planning Friday Film Crew' },
+    // 9: the chat with Homeroom bot, with the header over it.
+    { screen: 'bot', target: `${BOT_CHAT_HEADER}, ${BOT_CHAT_MESSAGES}`, alongside: SCREEN_HEADER, endsAbove: undefined, press: undefined, tap: undefined, title: 'Homeroom bot is working on Friday Film Crew' },
   ]);
   // Why go to Messages: Homeroom bot is there, and it makes this app with you
   // (#4183; the owner, 8 October 2026).
-  assert.equal(steps[5].text, 'It makes Friday Film Crew with you. You can always find it here.');
+  assert.equal(steps[7].text, 'It makes Friday Film Crew with you. You can always find it here.');
   // The invited path's app and hub steps are the same cut-outs.
   const { invitedSteps } = loadTsx(`${DIR}/tour-steps.ts`);
   const invited = invitedSteps({ slug: 'film', name: 'Friday Film Crew' });
-  assert.deepEqual(invited[1], steps[1]);
-  assert.deepEqual(invited[2], steps[2]);
-  assert.deepEqual(['target', 'alongside', 'endsAbove'].map((f) => invited[4][f]), ['#app-content', SCREEN_HEADER, BOTTOM_BARS]);
+  for (const at of [1, 2, 3, 4]) assert.deepEqual(invited[at], steps[at]);
+  assert.deepEqual(['target', 'alongside', 'endsAbove'].map((f) => invited[6][f]), ['#app-content', SCREEN_HEADER, BOTTOM_BARS]);
 });
 
 /** A document of fixed boxes, by selector, for as long as `fn` runs. */
@@ -228,7 +253,7 @@ function withBoxes(boxes, fn) {
   try { return fn(); } finally { if (had) globalThis.document = before; else delete globalThis.document; }
 }
 
-test('3, 5 and 7 of 7 cut out their screen with its header: the whole app, the hub down to the tab bar, the bot\'s chat', () => {
+test('2, 7 and 9 of 9 cut out their screen with its header: the whole app, the hub down to the tab bar, the bot\'s chat', () => {
   const { measure, holeFor, aroundBox } = loadTsx(`${DIR}/index.tsx`);
   const { makerSteps, BOT_CHAT_HEADER, BOT_CHAT_MESSAGES } = loadTsx(`${DIR}/tour-steps.ts`);
   const steps = makerSteps({ slug: 'film', name: 'Friday Film Crew', conversationId: 12 });
@@ -240,56 +265,54 @@ test('3, 5 and 7 of 7 cut out their screen with its header: the whole app, the h
   const tabs = { left: 0, top: 754, width: 390, height: 90 };
   const whole = { left: 0, top: 0, width: 390, height: 844 };
 
-  // 3 of 7: the app screen and its header, the whole screen, and ✕ is the
-  // one control ringed and the one a press reaches.
+  // 2 of 9: the app screen and its header, the whole screen, with nothing
+  // ringed in it (#4390: ✕ has a step of its own now).
   const backBtn = { left: 16, top: 55, width: 28, height: 28 };
-  const close = withBoxes({ '#platform-header': header, '#app-view': screen, '#back-btn': backBtn }, () => measure(2, steps[2]));
-  assert.deepEqual(close, { step: 2, box: whole, press: backBtn });
-  const hole = holeFor(close.box, phone, 0);
-  assert.deepEqual(hole, whole, 'runs to the screen\'s edges, with no line of dim round it');
-  const ring = holeFor(close.press, phone);
-  assert.deepEqual(ring, { left: 10, top: 49, width: 40, height: 40 });
-  assert.deepEqual(aroundBox(hole, ring), [
-    { left: 0, top: 0, width: 390, height: 49 },
-    { left: 0, top: 89, width: 390, height: 755 },
-    { left: 0, top: 49, width: 10, height: 40 },
-    { left: 50, top: 49, width: 340, height: 40 },
-  ]);
+  const app = withBoxes({ '#platform-header': header, '#app-view': screen, '#back-btn': backBtn }, () => measure(1, steps[1]));
+  assert.deepEqual(app, { step: 1, box: whole, press: whole });
+  assert.deepEqual(holeFor(app.box, phone, 0), whole, 'runs to the screen\'s edges, with no line of dim round it');
   // Not on the app screen yet: no cut-out (the header alone is not one), so
   // the screen dims whole and the step opens its screen itself.
-  assert.deepEqual(withBoxes({ '#platform-header': header, '#back-btn': backBtn }, () => measure(2, steps[2])), { step: 2, box: null, press: null });
+  assert.deepEqual(withBoxes({ '#platform-header': header, '#back-btn': backBtn }, () => measure(1, steps[1])), { step: 1, box: null, press: null });
 
-  // 5 of 7: the hub and its header, its padded foot meeting the tab bar.
-  const hub = withBoxes({ '#platform-header': header, '#app-content': screen, '#platform-tabs': tabs }, () => measure(4, steps[4]));
+  // 5 of 9: ✕ alone, ringed, and all of it pressable.
+  const close = withBoxes({ '#platform-header': header, '#app-view': screen, '#back-btn': backBtn }, () => measure(4, steps[4]));
+  assert.deepEqual(close, { step: 4, box: backBtn, press: backBtn });
+  const ring = holeFor(close.press, phone);
+  assert.deepEqual(ring, { left: 10, top: 49, width: 40, height: 40 });
+  assert.deepEqual(aroundBox(holeFor(close.box, phone), ring), []);
+
+  // 7 of 9: the hub and its header, its padded foot meeting the tab bar.
+  const hub = withBoxes({ '#platform-header': header, '#app-content': screen, '#platform-tabs': tabs }, () => measure(6, steps[6]));
   assert.deepEqual(hub.box, { left: 0, top: 0, width: 390, height: 748 });
   assert.deepEqual(holeFor(hub.box, phone, 0), { left: 0, top: 0, width: 390, height: 754 });
   // With the app you left on the bar, it stops above that strip too.
   const parked = { left: 8, top: 702, width: 374, height: 52 };
-  const hubParked = withBoxes({ '#platform-header': header, '#app-content': screen, '#platform-tabs': tabs, '#platform-parked': parked }, () => measure(4, steps[4]));
+  const hubParked = withBoxes({ '#platform-header': header, '#app-content': screen, '#platform-tabs': tabs, '#platform-parked': parked }, () => measure(6, steps[6]));
   assert.equal(holeFor(hubParked.box, phone, 0).height, 702);
   // From 768px up the bar is the rail beside the screen, and takes nothing off.
   const wide = withBoxes({
     '#platform-header': { left: 0, top: 0, width: 1280, height: 60 },
     '#app-content': { left: 224, top: 52, width: 1056, height: 748 },
     '#platform-tabs': { left: 0, top: 60, width: 224, height: 740 },
-  }, () => measure(4, steps[4]));
+  }, () => measure(6, steps[6]));
   assert.deepEqual(wide.box, { left: 0, top: 0, width: 1280, height: 800 });
 
-  // 7 of 7: the header over the conversation's own header and messages.
+  // 9 of 9: the header over the conversation's own header and messages.
   const chat = withBoxes({
     '#platform-header': header,
     [BOT_CHAT_HEADER]: { left: 0, top: 91, width: 390, height: 70 },
     [BOT_CHAT_MESSAGES]: { left: 0, top: 161, width: 390, height: 520 },
     '#platform-tabs': tabs,
-  }, () => measure(6, steps[6]));
+  }, () => measure(8, steps[8]));
   assert.deepEqual(chat.box, { left: 0, top: 0, width: 390, height: 681 });
   assert.equal(chat.instead, false, 'no plan in the chat yet');
 
   // A tap step with no `press` rings its whole cut-out, as before, and
   // leaves all of it pressable.
   const tab = { left: 211, top: 756, width: 90, height: 56 };
-  const communities = withBoxes({ '#platform-tab-workshop': tab }, () => measure(3, steps[3]));
-  assert.deepEqual(communities, { step: 3, box: tab, press: tab });
+  const communities = withBoxes({ '#platform-tab-workshop': tab }, () => measure(5, steps[5]));
+  assert.deepEqual(communities, { step: 5, box: tab, press: tab });
   const tabHole = holeFor(communities.box, phone);
   assert.deepEqual(aroundBox(tabHole, holeFor(communities.press, phone)), []);
 
@@ -312,7 +335,7 @@ test('the blue hint on a tap step presses the step\'s own control, and still loo
   const steps = makerSteps({ slug: 'film', name: 'Friday Film Crew', conversationId: 12 });
   // The control it presses is the one the step's watcher waits for.
   assert.deepEqual(steps.filter((s) => s.tap).map(pressOf), [
-    '.app-card[data-slug="film"]', '#back-btn', '#platform-tab-workshop', '#platform-tab-messages',
+    '.app-card[data-slug="film"]', '#platform-mark-btn', '#back-btn', '#platform-tab-workshop', '#platform-tab-messages',
   ]);
 
   // It presses the first one on screen, as a finger would, and nothing else.
@@ -364,7 +387,8 @@ test('the island renders nothing until it is opened, so the prerender is unchang
   // Shown once per account and project, and it says when it will not show.
   assert.match(src, /if \(!info \|\| !info\.slug \|\| seen\(info\.slug\)\) return false;/);
   // The layer lets presses through to the cut-out's own control.
-  assert.match(src, /className="pointer-events-none fixed inset-0 z-\[9000\]"/);
+  // Over the Homeroom menu for the step that points into it (TourStep.inMenu).
+  assert.match(src, /className=\{step\.inMenu \? 'pointer-events-none fixed inset-0 z-\[9995\]' : 'pointer-events-none fixed inset-0 z-\[9000\]'\}/);
 });
 
 test('the Communities tab opens on the project the tour is about', () => {
@@ -445,30 +469,33 @@ test("You're in says that you joined, and shows the community: its app and its p
   assert.ok(youreIn.length > 200, 'YoureIn is found');
   assert.doesNotMatch(youreIn, /How it works|group|Have a look|On Homeroom|You're in, |JoinedPicture|!`|!'/);
   // The Homeroom logo bar, like every first-run screen (owner, 7 October).
-  assert.match(src, /<Wordmark className="h-6 w-auto text-\[color:var\(--brand-ink\)\]" \/>/);
+  assert.match(src, /<Wordmark className="h-6 w-auto text-zinc-950 dark:text-white" \/>/);
   // Its first version still on its way is still handed to the tour.
   assert.match(read('public/js/app.js'), /building: !!standing\.building,/);
 });
 
 // ── First-session run-through, 5 October 2026 ──────────────────────────
 
-test('the App step is one card on both paths, about ✕, and the hub needs no possessive', () => {
+test('the App step shows the app on both paths, ✕ has its own card, and the hub needs no possessive', () => {
   const { invitedSteps, makerSteps, hubTitle } = loadTsx(`${DIR}/tour-steps.ts`);
-  // #4044: the app opens full screen and the card is about ✕ alone. Where the
-  // first version stands is the screen's to say, the same way everywhere
-  // (#4043, #4053), so the card no longer reads it.
+  // #4044: the app opens full screen. #4390: its card says what the app is,
+  // with Next, and ✕ is a card of its own after the menu's. Where the first
+  // version stands is the screen's to say, the same way everywhere (#4043,
+  // #4053), so the card no longer reads it.
   for (const steps of [
     invitedSteps({ slug: 'page-turners', name: 'Page Turners' }),
     makerSteps({ slug: 'page-turners', name: 'Page Turners', conversationId: 3 }),
   ]) {
-    assert.deepEqual([steps[2].screen, steps[2].target, steps[2].press, steps[2].title, steps[2].text],
-      ['app', '#app-view', '#back-btn', 'Page Turners opens here', '✕ takes you back to Home.']);
+    assert.deepEqual([steps[1].screen, steps[1].target, steps[1].press, steps[1].tap, steps[1].title, steps[1].text],
+      ['app', '#app-view', undefined, undefined, 'Page Turners opens here', 'This is the app your community makes together.']);
+    assert.deepEqual([steps[4].screen, steps[4].target, steps[4].tap, steps[4].title, steps[4].text],
+      ['app', '#back-btn', 'Tap ✕', '✕ takes you back to Home', 'Open Page Turners again from Home any time.']);
     assert.equal(steps.some((s) => /being built|ready to try|Close it with/.test(`${s.title} ${s.text}`)), false);
   }
   // "Page Turners's hub": named without the possessive, on both paths.
   assert.equal(hubTitle('Page Turners'), 'The Page Turners hub');
-  assert.equal(invitedSteps({ slug: 'p', name: 'Page Turners' })[4].title, 'The Page Turners hub');
-  assert.equal(makerSteps({ slug: 'p', name: 'Page Turners', conversationId: 3 })[4].title, 'The Page Turners hub');
+  assert.equal(invitedSteps({ slug: 'p', name: 'Page Turners' })[6].title, 'The Page Turners hub');
+  assert.equal(makerSteps({ slug: 'p', name: 'Page Turners', conversationId: 3 })[6].title, 'The Page Turners hub');
   const all = JSON.stringify([
     ...invitedSteps({ slug: 'p', name: 'Page Turners' }),
     ...makerSteps({ slug: 'p', name: 'Page Turners', conversationId: 3 }),
@@ -964,15 +991,17 @@ test('every card sits clear of the tab bar: 20px above it near the foot, under w
   }, header);
 });
 
-test('the maker\'s tour ends on the plan: "planning" until it is in the chat, then how to answer it', () => {
+test('the maker\'s tour ends on the plan: "working on it" until it is in the chat, then how to answer it', () => {
   const { makerSteps, PLAN_WAITING } = loadTsx(`${DIR}/tour-steps.ts`);
   const { measure, wordsFor } = loadTsx(`${DIR}/index.tsx`);
   const last = makerSteps({ slug: 'run', name: 'Sunday Run Club', conversationId: 9 }).at(-1);
   assert.equal(last.last, true);
-  assert.deepEqual([last.title, last.text], ['Homeroom bot is planning Sunday Run Club', 'It messages you here when the plan is ready.']);
+  assert.deepEqual([last.title, last.text], ['Homeroom bot is working on Sunday Run Club', 'It\'ll let you know here when there\'s something to look at.']);
   assert.deepEqual(last.instead, {
-    when: PLAN_WAITING, title: 'Homeroom bot has a plan for you', text: 'Tap Build it when the plan looks right.',
+    when: PLAN_WAITING, title: 'Homeroom bot has a plan for you', text: 'Answer it here: tap Build it, or tell it what to change.',
   });
+  // Nothing before a plan waits says one is ready (requests #4391, #4393).
+  assert.doesNotMatch(`${last.title} ${last.text}`, /plan/i);
   // The open plan card in the chat with the bot, by the state its view draws.
   assert.equal(PLAN_WAITING, '.messages-thread-direct [data-bot-plan="open"]');
   assert.match(read('frontend/src/features/messages/bot-plan-view.tsx'), /data-bot-plan=\{shown\}/);
@@ -992,7 +1021,7 @@ test('the maker\'s tour ends on the plan: "planning" until it is in the chat, th
     globalThis.document = doc(true);
     const plan = measure(5, last);
     assert.equal(plan.instead, true);
-    assert.deepEqual(wordsFor(last, plan, 5), { title: 'Homeroom bot has a plan for you', text: 'Tap Build it when the plan looks right.' });
+    assert.deepEqual(wordsFor(last, plan, 5), { title: 'Homeroom bot has a plan for you', text: 'Answer it here: tap Build it, or tell it what to change.' });
     // Only for the step it was measured for.
     assert.deepEqual(wordsFor(last, plan, 4), { title: last.title, text: last.text });
   } finally {
@@ -1005,6 +1034,30 @@ test('the maker\'s tour ends on the plan: "planning" until it is in the chat, th
   const src = read(`${DIR}/index.tsx`);
   assert.match(src, /const words = wordsFor\(step, measured, index\);/);
   assert.match(src, /\{words\.title\}<\/p>/);
+  // A plan that arrives while the card is already up switches its words: the
+  // frame loop measures every frame and keeps a new reading whenever
+  // `instead` flips, even though no box moved.
+  assert.match(src, /const m = measure\(at, stepRef\.current\);/);
+  assert.match(src, /const key = `\$\{at\}:\$\{boxKey\(m\.box\)\}:\$\{boxKey\(m\.press\)\}:\$\{m\.instead \? 1 : 0\}`;\s*if \(key !== last\) \{ last = key; setMeasured\(m\); \}/);
+});
+
+test('#4391/#4393: the tour says it is running while it is up, so nothing else asks for the plan', () => {
+  const src = read(`${DIR}/index.tsx`);
+  assert.match(src, /useEffect\(\(\) => \{\s*setTourRunning\(true\);\s*return \(\) => setTourRunning\(false\);\s*\}, \[\]\);/);
+  const store = loadTsx(`${DIR}/tour-running.ts`);
+  assert.equal(store.tourRunning(), false);
+  let calls = 0;
+  const off = store.subscribeTourRunning(() => { calls += 1; });
+  store.setTourRunning(true);
+  store.setTourRunning(true);
+  assert.equal(store.tourRunning(), true);
+  store.setTourRunning(false);
+  off();
+  store.setTourRunning(true);
+  store.setTourRunning(false);
+  assert.equal(calls, 2, 'told once per change, and not after unsubscribing');
+  // One flag for every copy of the module (a lazy chunk bundles its own).
+  assert.equal(globalThis[store.TOUR_RUNNING_KEY].running, false);
 });
 
 // Only a brand-new account's first session reaches a tour, so each has a
@@ -1101,9 +1154,9 @@ test('the App tab\'s card says where the app opens, and carries the attribute th
   const { makerSteps, invitedSteps, lookAroundSteps, privateSteps } = loadTsx(`${DIR}/tour-steps.ts`);
   const project = { slug: 'film', name: 'Friday Film Crew', conversationId: 12 };
   for (const steps of [makerSteps(project), invitedSteps(project)]) {
-    assert.deepEqual(steps.map((s) => !!s.saysWhereItOpens), steps.map((s, i) => i === 2));
-    assert.equal(steps[2].screen, 'app');
-    assert.equal(steps[2].title, 'Friday Film Crew opens here');
+    assert.deepEqual(steps.map((s) => !!s.saysWhereItOpens), steps.map((s, i) => i === 1));
+    assert.equal(steps[1].screen, 'app');
+    assert.equal(steps[1].title, 'Friday Film Crew opens here');
   }
   for (const steps of [lookAroundSteps(), privateSteps(project)]) {
     assert.ok(steps.every((s) => !s.saysWhereItOpens));

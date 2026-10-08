@@ -107,12 +107,12 @@ export const TEMPLATES: readonly Template[] = [
     tail: '',
     finish: true,
     choices: [
-      { key: 'board', label: 'Board game', fill: 'a board game where', example: 'everyone owns an island and trades to grow it', name: 'Board Game Night', description: 'A board game' },
+      { key: 'board', label: 'Board game', fill: 'a board game where', example: 'we roll dice and race each other around the board', name: 'Board Game Night', description: 'A board game' },
       { key: 'shooter', label: 'Space shooter', fill: 'an arcade space shooter where', example: 'we fly together against waves of asteroids', name: 'Space Shooter', description: 'An arcade space shooter' },
-      { key: 'blocks', label: '3D blocks', fill: 'a 3D block game where', example: 'we build a city one block a day', name: 'Block World', description: 'A 3D block game' },
+      { key: 'blocks', label: '3D blocks', fill: 'a 3D block game where', example: 'we build whatever we want together', name: 'Block World', description: 'A 3D block game' },
       { key: 'trivia', label: 'Trivia', fill: 'a trivia game where', example: 'every question is about one of us', name: 'Trivia Night', description: 'A trivia game' },
     ],
-    own: { example: 'a card game where everyone bluffs', name: '', description: 'A game' },
+    own: { example: 'a drawing game where one of us draws and everyone guesses', name: '', description: 'A game' },
     note: 'I\'m making us a game. Join and tell me what it needs.',
   },
   {
@@ -129,7 +129,7 @@ export const TEMPLATES: readonly Template[] = [
       { key: 'library', label: 'Shared library', fill: 'shared library', tail: ': what we can borrow, who has it now, and who\'s asking for it next.', name: 'Lending Library', description: 'A lending library', template: 'lending-library', emoji: '📚' },
       { key: 'potlucks', label: 'Potlucks', fill: 'potlucks', tail: ': who\'s bringing what, so we don\'t end up with six salads.', name: 'Potluck Planner', description: 'A potluck planner', template: 'potluck-planner', emoji: '🍲' },
     ],
-    own: { example: 'camping gear', name: '{words} Crew', description: 'An organizer' },
+    own: { example: 'camping gear', name: '{words} List', description: 'An organizer' },
     note: 'I\'m making us an organizer. Join and tell me what it needs.',
   },
 ];

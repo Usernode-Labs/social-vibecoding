@@ -281,7 +281,11 @@ test('a failed build still says what it meant to build', async () => {
   const out = await live.buildAndPropose({ pool: h.pool, deps: h.deps, ...ARGS, propose: false });
   assert.equal(out.ok, false);
   assert.equal(out.specMd, SPEC);
-  assert.equal(out.costUsd, 0.060000000000000005, 'both turns are the build\'s cost');
+  // A build turn that changed nothing is nudged once (buildNudgePrompt),
+  // and the nudge is a build turn too: the spec's, the build's and the
+  // nudge's turns are all the build's cost.
+  assert.equal(out.noChange.nudged, true);
+  assert.equal(out.costUsd, 0.11, 'every turn is the build\'s cost');
 });
 
 // ── What is posted ───────────────────────────────────────────────────────

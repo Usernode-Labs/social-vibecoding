@@ -221,6 +221,19 @@ const EVENT_TYPES = Object.freeze({
   // kind names the incident ('build_interrupted': a bot build a restart or
   // a lost worker cut short; { runId, issueNumber, why, outcome }).
   PLATFORM_INCIDENT: 'platform_incident',
+  // The Homeroom bot's build turns that quit early, and their nudges
+  // (homeroom-bot-live.js recordNoChange), so a weekly query can read the
+  // early-quit rate per OpenRouter provider and how often a nudge saves the
+  // build. Both carry the turn's facts: { lane, runId, trialId,
+  // issueNumber, turn ('build' | 'nudge'), ended, provider, providers,
+  // model, harness, requests, toolCalls, fileEdits, outputTokens, seconds,
+  // recovered }. Never what the agent said: that is kept on its run.
+  //   bot_build_no_change  a build turn that ended cleanly and pushed
+  //                        nothing new; the build's own adds { nudged,
+  //                        notNudged }
+  //   bot_build_nudged     a nudge, once it ended; adds { committed }
+  BOT_BUILD_NO_CHANGE: 'bot_build_no_change',
+  BOT_BUILD_NUDGED: 'bot_build_nudged',
 });
 
 // Record a single analytics event. Fire-and-forget — returns a promise

@@ -169,6 +169,7 @@ test('build commit + push + RESULT are emitted unconditionally, not under any br
   // reports. Assert the phases exist at column 0 (top-level), unguarded.
   assert.match(cc, /\necho "__USERNODE_PHASE__ commit"/);
   assert.match(cc, /\necho "__USERNODE_PHASE__ push"/);
-  // The line may end with the branch_mismatch field (worker/session-branch.sh).
-  assert.match(cc, /\necho "__USERNODE_RESULT__ cc_exit=\$CC_EXIT[^\n]*mode=build(\$BRANCH_MISMATCH_FIELD)?"/);
+  // The line may end with the branch_mismatch field (worker/session-branch.sh)
+  // and the stop guard's stop_hook_blocks field (worker/build-stop-hook.js).
+  assert.match(cc, /\necho "__USERNODE_RESULT__ cc_exit=\$CC_EXIT[^\n]*mode=build(\$BRANCH_MISMATCH_FIELD)?(\$STOP_HOOK_BLOCKS_FIELD)?"/);
 });

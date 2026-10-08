@@ -121,7 +121,6 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   FlagIcon,
-  HomeIcon,
   InfoCircleIcon,
   PlusIcon,
   PlusWideIcon,
@@ -806,6 +805,50 @@ export function AppsSwitcherSheet(): ReactNode {
               nests a mini-app's menu.
           */}
           {/*
+              GO TO HOMEROOM, for a private member only, and only after mount
+              (the store says who is signed in after hydration, so the
+              prerender has no such row). Home, and the first time its tour
+              (features/first-session goHome).
+
+              A CARD, NOT A ROW (#4401): as a plain row among the app's own it
+              was easy to miss, and it is the one door a private member has to
+              the rest of Homeroom. So it leads the list, right under the blue
+              "Suggest an improvement" (which stays the menu's one filled
+              button): a white card in the shell's card shape (20px, one inset
+              hairline), the Homeroom mark as the header's mark button draws
+              it, and the row type, 15 over 13. It sits INSIDE #switcher-nav
+              so `#improve-quick-actions + #switcher-nav` still holds.
+          */}
+          {mounted && privateMember ? (
+            <button
+              id="app-menu-row-homeroom"
+              type="button"
+              className="mx-4 mt-1 mb-2 flex w-[calc(100%_-_2rem)] items-center gap-3 rounded-[20px] px-3.5 py-3 text-left bg-white dark:bg-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
+              onClick={() => {
+                const info = { slug: slug || null, name: name || null };
+                void AppContext.dismissForNav().then(() => {
+                  (window as any).UsernodeReact?.firstSession?.goHome?.(info);
+                });
+              }}
+            >
+              <span className="shrink-0 inline-flex w-10 h-10 rounded-[11px] overflow-hidden bg-zinc-950" aria-hidden="true">
+                <img
+                  src="/brand/homeroom-mark.png"
+                  alt=""
+                  draggable="false"
+                  width={40}
+                  height={40}
+                  className="platform-mark-tile w-10 h-10 rounded-[11px]"
+                />
+              </span>
+              <span className="flex-1 min-w-0">
+                <span className="block truncate text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">Go to Homeroom</span>
+                <span className="block truncate text-[13px] text-zinc-500 dark:text-zinc-400">Your Home, your communities and Homeroom bot</span>
+              </span>
+              <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-300 dark:text-zinc-600" aria-hidden="true" />
+            </button>
+          ) : null}
+          {/*
               GIVE FEEDBACK IS NOT A ROW HERE ANY MORE (#2718 review). It led
               this list, on the reading that it is the thing somebody who is
               not a developer of this app wants while every other row assumes
@@ -923,31 +966,6 @@ export function AppsSwitcherSheet(): ReactNode {
               want it one tap away. Same id, same gate (`showTerminal`, which
               DevConsole publishes), same method.
           */}
-          {/*
-              GO TO HOMEROOM, for a private member only, and only after mount
-              (the store says who is signed in after hydration, so the
-              prerender has no such row). Home, and the first time its tour
-              (features/first-session goHome).
-          */}
-          {mounted && privateMember ? (
-            <button
-              id="app-menu-row-homeroom"
-              type="button"
-              className={`${ROW} w-full text-left`}
-              onClick={() => {
-                const info = { slug: slug || null, name: name || null };
-                void AppContext.dismissForNav().then(() => {
-                  (window as any).UsernodeReact?.firstSession?.goHome?.(info);
-                });
-              }}
-            >
-              <RowBody
-                icon={<HomeIcon />}
-                label="Go to Homeroom"
-                sub="Your Home, your communities and Homeroom bot"
-              />
-            </button>
-          ) : null}
           {showTerminal && !privateMember ? (
             <MenuRow
               id="improve-row-terminal"

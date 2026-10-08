@@ -70,6 +70,7 @@ import { Button } from '@/components/ui/button';
 import { ArrowUpIcon, ChevronDownIcon, ChevronRightIcon } from '@/components/ui/icons';
 import { agoStamp } from '../../../lib/timestamp';
 import { type BuildLineState, buildLineOf } from '../../first-session/build-line';
+import { useTourRunning } from '../../first-session/tour-running';
 import { ThumbRow } from '../../first-session/sketch-card';
 import { swatchFor } from '../../messages/format';
 import { open as openConversation, openBot } from '../../messages/store';
@@ -384,6 +385,11 @@ const ACTION_WORDS: Record<Exclude<FirstVersionAction, 'see'>, string> = {
  * project the bot is not building, or once its first version is live and
  * the project's first week is over.
  *
+ * While the first-session tour runs (../../first-session/tour-running.ts)
+ * there is no Review the plan: the card shows the build line, "Homeroom bot
+ * is working on it", and the tour's last card is what names the plan
+ * (requests #4391, #4393). After the tour, it is as above.
+ *
  * No event marks each step, so while the card is on screen the record is
  * read again every FIRST_VERSION_POLL_MS, as the App tab and the made screen
  * read theirs (AppView._recheckFirstVersion, made.tsx).
@@ -408,9 +414,15 @@ export function FirstVersionCard({ slug, data, emoji = null, onSeePlan }: {
     }, FIRST_VERSION_POLL_MS);
     return () => window.clearInterval(timer);
   }, [building, slug]);
+  // While the first-session tour runs, its last card is what names the plan
+  // (../../first-session/tour-running.ts): no Review the plan here, only the
+  // build line saying the bot is on it.
+  const touring = useTourRunning();
   if (!fv) return null;
-  const line = firstVersionLine(fv);
-  const action = firstVersionAction(fv);
+  const asked = firstVersionAction(fv);
+  const held = touring && asked === 'review';
+  const line: BuildLineState = held ? 'working' : firstVersionLine(fv);
+  const action = held ? null : asked;
   const press = () => {
     if (action === 'review' || action === 'answer') {
       if (fv.conversation_id) openConversation(fv.conversation_id);

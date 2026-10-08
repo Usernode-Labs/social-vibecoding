@@ -204,8 +204,8 @@ test('three templates, the same on the story and the make screen, each a whole s
   assert.equal(game.finish, true);
   assert.equal(firstChoice(game), OWN);
   assert.equal(sentence(game, 'board', '').blank, true, 'a starter still waits for the rest');
-  assert.equal(sentence(game, 'board', 'everyone owns an island').text, 'A new game we build together. For the first version, a board game where everyone owns an island.');
-  assert.equal(sentence(game, OWN, 'a card game where everyone bluffs!').text, 'A new game we build together. For the first version, a card game where everyone bluffs!');
+  assert.equal(sentence(game, 'board', 'we roll dice').text, 'A new game we build together. For the first version, a board game where we roll dice.');
+  assert.equal(sentence(game, OWN, 'a drawing game where one of us draws and everyone guesses!').text, 'A new game we build together. For the first version, a drawing game where one of us draws and everyone guesses!');
   assert.equal(suggestedName(game, OWN, 'a card game'), '', 'their own game is theirs to name');
   assert.equal(suggestedName(game, 'trivia', ''), 'Trivia Night');
   // The organizer: each choice says what it keeps.
@@ -213,7 +213,7 @@ test('three templates, the same on the story and the make screen, each a whole s
   // (What the ready-made chore list does: it sends no nudge.)
   assert.equal(sentence(organizer, 'chores', '').text, 'An app to organize our chores: who\'s on what this week, and whose turn it is next.');
   assert.equal(sentence(organizer, 'library', '').text, 'An app to organize our shared library: what we can borrow, who has it now, and who\'s asking for it next.');
-  assert.equal(suggestedName(organizer, OWN, 'camping gear'), 'Camping Gear Crew');
+  assert.equal(suggestedName(organizer, OWN, 'camping gear'), 'Camping Gear List');
   // The story says the same three, the tier list drawn as a tier list.
   const story = renderComponent('frontend/src/features/auth/story.tsx', 'Story', { primaryClass: 'pill', onStart() {}, onSignIn() {} });
   for (const t of TEMPLATES) assert.ok(story.includes(`>${t.title}<`) && story.includes(`>${t.line}<`), t.key);
@@ -269,27 +269,19 @@ test('a choice that needs no typing makes a ready-made app, with nothing for Hom
   assert.match(src, /\{readyMadeOf\(template, choice\) \? <p data-make-ready="" className=\{HINT\}>\{READY_LINE\}<\/p> : null\}/);
 });
 
-// #4174: every project's repository is public on GitHub, and its first
-// request is a public issue holding the description word for word. The make
-// screen says so, quietly, under Make it, from either door.
-test('under Make it, one quiet line says what you write and the code are public on GitHub', () => {
+// #4384: the make screen no longer says, under Make it, that what you write
+// and the code are public on GitHub (#4174 added that line). The other
+// "public on GitHub" lines (import, visibility, fork, settings) stay.
+test('nothing under Make it says what you write is public on GitHub', () => {
   const make = loadTsx(`${DIR}/make.tsx`);
-  assert.equal(make.MAKE_PUBLIC_LINE, 'What you write here, and the app’s code, are public on GitHub.');
+  assert.equal(make.MAKE_PUBLIC_LINE, undefined);
   for (const props of [
     { who: 'Jordan', onMade() {}, onLookAround() {} },
     { who: 'Jordan', entry: 'create', onMade() {}, onClose() {} },
   ]) {
     const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', props);
-    const line = /<p data-make-public="" class="([^"]*)">([^<]*)<\/p>/.exec(html);
-    assert.ok(line, `the line is drawn (${props.entry || 'first-session'})`);
-    assert.equal(line[2], make.MAKE_PUBLIC_LINE);
-    // Fine print: small and muted, never a warning colour.
-    assert.match(line[1], /\btext-\[13px\]/);
-    assert.match(line[1], /\btext-zinc-500\b/);
-    assert.doesNotMatch(line[1], /red-|amber-|font-(semi)?bold/);
-    assert.ok(html.indexOf('data-make-public') > html.indexOf('>Make it</button>'), 'under Make it');
-    const next = props.entry === 'create' ? 'data-make-import-link' : 'Look around first';
-    assert.ok(html.indexOf('data-make-public') < html.indexOf(next), `above ${next}`);
+    assert.ok(html.includes('>Make it</button>'), `the screen is drawn (${props.entry || 'first-session'})`);
+    assert.doesNotMatch(html, /data-make-public|public on GitHub/);
   }
 });
 
@@ -487,13 +479,13 @@ test('a template fills in the description and the name; words of their own let g
   assert.deepEqual(chips(tree).map((c) => c.props['data-make-choice']), ['own', 'board', 'shooter', 'blocks', 'trivia']);
   assert.equal(chips(tree)[0].props.selected, true);
   assert.equal(words(tree).type, 'textarea');
-  assert.equal(words(tree).props.placeholder, 'For example, a card game where everyone bluffs');
+  assert.equal(words(tree).props.placeholder, 'For example, a drawing game where one of us draws and everyone guesses');
   assert.equal(writeOut(tree), undefined);
   assert.equal(nameField(tree).props.value, '', 'their own game is theirs to name');
   chips(tree)[1].props.onClick();
   tree = draw();
   assert.equal(nameField(tree).props.value, 'Board Game Night');
-  assert.equal(words(tree).props.placeholder, 'For example, everyone owns an island and trades to grow it');
+  assert.equal(words(tree).props.placeholder, 'For example, we roll dice and race each other around the board');
   // Your own idea: the plain box again, and a suggested name goes with the template.
   tiles(tree)[3].props.onClick();
   tree = draw();
@@ -572,13 +564,13 @@ test('after Make it: the build line, then one invite, and the second button says
 test('the maker\'s tour ends in Homeroom bot\'s chat when it builds for them, and on the hub when not', () => {
   const { makerSteps } = loadTsx(`${DIR}/tour-steps.ts`);
   const withBot = makerSteps({ slug: 'film', name: 'Friday Film Crew', conversationId: 12 });
-  assert.deepEqual(withBot.map((s) => s.screen), ['home', 'app', 'app', 'home', 'hub', 'hub', 'bot']);
-  assert.equal(withBot[5].target, '#platform-tab-messages');
-  assert.equal(withBot[5].opensNext, true);
-  assert.equal(withBot[6].last, true);
+  assert.deepEqual(withBot.map((s) => s.screen), ['home', 'app', 'app', 'app', 'app', 'home', 'hub', 'hub', 'bot']);
+  assert.equal(withBot[7].target, '#platform-tab-messages');
+  assert.equal(withBot[7].opensNext, true);
+  assert.equal(withBot[8].last, true);
   const without = makerSteps({ slug: 'film', name: 'Friday Film Crew', conversationId: null });
-  assert.deepEqual(without.map((s) => s.screen), ['home', 'app', 'app', 'home', 'hub']);
-  assert.equal(without[4].last, true);
+  assert.deepEqual(without.map((s) => s.screen), ['home', 'app', 'app', 'app', 'app', 'home', 'hub']);
+  assert.equal(without[6].last, true);
   const index = read(`${DIR}/index.tsx`);
   assert.match(index, /else if \(screen === 'bot' && conversationId\) window\.location\.hash = `#messages\/\$\{conversationId\}`;/);
 });
@@ -591,8 +583,8 @@ test('the maker\'s tour ends in Homeroom bot\'s chat when it builds for them, an
 test('the maker\'s last step shows the chat with Homeroom bot whole: its header with its messages, the plan\'s buttons clear of the card', () => {
   const { makerSteps, BOT_CHAT_HEADER, BOT_CHAT_MESSAGES } = loadTsx(`${DIR}/tour-steps.ts`);
   const steps = makerSteps({ slug: 'film', name: 'Friday Film Crew', conversationId: 12 });
-  const chat = steps[6];
-  assert.equal(chat.title, 'Homeroom bot is planning Friday Film Crew');
+  const chat = steps[8];
+  assert.equal(chat.title, 'Homeroom bot is working on Friday Film Crew');
   assert.equal(BOT_CHAT_HEADER, '.messages-thread-direct > .messages-thread-header');
   assert.equal(BOT_CHAT_MESSAGES, '.messages-thread-direct > .messages-thread-scroll');
   // One cut-out round both (index.tsx targetBox draws a selector list as one box).
@@ -603,19 +595,18 @@ test('the maker\'s last step shows the chat with Homeroom bot whole: its header 
   // plan's title and first lines are never under the card.
   assert.deepEqual(chat.newestBelowCard, { scroller: BOT_CHAT_MESSAGES, rows: 'article.messages-message' });
   assert.deepEqual(chat.place, { below: BOT_CHAT_HEADER });
-  assert.equal(chat.text, 'It messages you here when the plan is ready.');
+  assert.equal(chat.text, 'It\'ll let you know here when there\'s something to look at.');
   // And the platform's top bar over them, as one cut-out (Evan, 5 Oct 2026:
   // "include the header on step 7 also").
   assert.equal(chat.alongside, '#platform-header');
   assert.equal(chat.endsAbove, undefined, 'the transcript ends at the composer, above the tab bar');
-  // The other steps' targets (the close step cuts out the app screen, with
-  // ✕ its press: tests/first-session.test.js), and only this one moves a
-  // transcript.
-  assert.deepEqual(steps.slice(0, 6).map((s) => s.target), [
-    '.app-card[data-slug="film"]', '#platform-mark-btn', '#app-view', '#platform-tab-workshop', '#app-content', '#platform-tab-messages',
+  // The other steps' targets (the app screen whole, then the menu and ✕ on
+  // it: tests/first-session.test.js), and only this one moves a transcript.
+  assert.deepEqual(steps.slice(0, 8).map((s) => s.target), [
+    '.app-card[data-slug="film"]', '#app-view', '#platform-mark-btn', '#improve-row-feedback', '#back-btn', '#platform-tab-workshop', '#app-content', '#platform-tab-messages',
   ]);
-  assert.equal(steps[2].press, '#back-btn');
-  assert.deepEqual(steps.map((s) => !!s.newestBelowCard), [false, false, false, false, false, false, true]);
+  assert.ok(steps.every((s) => !s.press), 'no cut-out rings a control inside a wider one');
+  assert.deepEqual(steps.map((s) => !!s.newestBelowCard), [false, false, false, false, false, false, false, false, true]);
   // The Messages screen draws what it names: a direct conversation's section,
   // whose first child is its header (none when embedded in a hub, which the
   // bot's chat never is), its scroller, and an <article> per message.

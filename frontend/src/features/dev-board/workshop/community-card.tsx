@@ -77,7 +77,7 @@ import { Button } from '@/components/ui/button';
 import { ChevronRightIcon, LockIcon, PersonSilhouetteIcon, PlayIcon, UserGroupIcon, UserIcon } from '@/components/ui/icons';
 import { swatchFor } from '../../messages/format';
 import { offerJoin, registerJoinAnchor } from '../../../lib/join-required';
-import { invitedByLine, joinByInvite, seenByLine, useInviteOffer, type InviteJoin, type InviteOffer } from './invite-offer';
+import { invitedByLine, joinByInvite, useInviteOffer, type InviteJoin, type InviteOffer } from './invite-offer';
 import { hubShot, hubShotPayload } from './hub-shot';
 
 type Audience = 'open' | 'invited' | 'solo';
@@ -833,8 +833,8 @@ export function canMakePrivate(data: Pick<CommunityPayload, 'audience' | 'can_ma
 
 /**
  * WHO INVITED THEM, AND JOIN (#3700): "@maya invited you", their note, one
- * "Join <name>" as the screen's primary button, and "Maya will see that you
- * joined." The confirm's words (./invite-offer.ts), on a page. First in the
+ * "Join <name>" as the screen's primary button, standing alone. The
+ * confirm's words (./invite-offer.ts), on a page. First in the
  * hero of a page an invite link opened, and the body of a private
  * community's invite preview (../../invite-preview). `children` hang under
  * the button: the hero's Join question.
@@ -847,7 +847,6 @@ export function InviteCard({ offer, name, busy, onJoin, joinRef, children }: {
   joinRef?: Ref<HTMLButtonElement>;
   children?: ReactNode;
 }) {
-  const seen = seenByLine(offer);
   return (
     <div className="dev-ws-invite" data-ws-invite="">
       <p className="dev-ws-invite-from" data-ws-invite-from="">{invitedByLine(offer)}</p>
@@ -869,7 +868,6 @@ export function InviteCard({ offer, name, busy, onJoin, joinRef, children }: {
         </Button>
         {children}
       </div>
-      {seen ? <p className="dev-ws-invite-seen" data-ws-invite-seen="">{seen}</p> : null}
     </div>
   );
 }
