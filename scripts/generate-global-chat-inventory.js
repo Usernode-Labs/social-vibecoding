@@ -171,6 +171,12 @@ const REVIEWED_ROUTE_EXEMPTIONS = [
     reason: 'staging empty-state middleware represented by the concrete CLI-token list capability',
   },
   {
+    // #4313: answers only the ?demo=1 Needs-you cards' negative ids on staging.
+    matches: (route) => route.source === 'src/routes/workshop-overview.js'
+      && ['/api/sessions/:id/vote', '/api/sessions/:id/votes'].includes(route.path),
+    reason: 'staging demo-card middleware represented by the concrete session vote capabilities',
+  },
+  {
     matches: (route) => route.source === 'src/routes/mcp-remote.js' && !route.path,
     reason: 'hosted MCP consent or transport endpoint represented by connector Settings capabilities',
   },

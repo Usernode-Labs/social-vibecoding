@@ -1415,14 +1415,29 @@ export function NeedsVoteForm({ row, slug, side, line, boxRef, onSide, onLine, o
   );
 }
 
+/** The vote sheet's line under its question (tallyLine); exported for the render test. */
+export function VoteSub({ row, voted }: { row: QueueRow; voted: string | null }): ReactNode {
+  return <p className="dev-ws-vote-sub">{tallyLine(row, voted)}</p>;
+}
+
 /** "Yes (2/3)" → "2/3": the tally a vote spec's label carries, as the card's picker reads it. */
 function labelTally(a: { label?: string }): string {
   const m = /\(([^)]*)\)\s*$/.exec(a.label || '');
   return m ? m[1] : '';
 }
 
-function tallyLine(row: QueueRow): string {
+/**
+ * #4313: on a project that is just yours (approves) there is nobody else to
+ * count, so the line says whose answer it waits on, and once you have
+ * answered, the answer ("Approved." / "Not approved."). A pill's own word
+ * that is not the wait itself ("Checks failing") still follows it.
+ */
+function tallyLine(row: QueueRow, voted: string | null): string {
   const st = row.card.pill ? row.card.pill.state : null;
+  if (approves(row)) {
+    const said = voted ? `${answeredWords(row, voted)}.` : 'Waiting for your approval.';
+    return st && st.label && !/^Vote\b/.test(st.label) && !SAID_ELSEWHERE.has(st.key) ? `${said} ${st.label}.` : said;
+  }
   if (!st) {
     if (!row.tally) return '';
     const { yes, no } = row.tally;
@@ -1980,6 +1995,16 @@ function wantsEnd(): boolean {
   if (typeof window === 'undefined' || typeof window.location === 'undefined') return false;
   try { return new URLSearchParams(window.location.search).get('shot') === 'needs-end'; } catch { return false; }
 }
+/**
+ * `?shot=needs-approve` (#4313): open the feed on its first item that asks
+ * for your approval (a project that is just yours), with its vote sheet up,
+ * so a declared check can read the sheet's line ("Waiting for your
+ * approval."). Read at mount, like `?shot=needs-end`.
+ */
+function wantsApprove(): boolean {
+  if (typeof window === 'undefined' || typeof window.location === 'undefined') return false;
+  try { return new URLSearchParams(window.location.search).get('shot') === 'needs-approve'; } catch { return false; }
+}
 
 /** "3 proposals", "1 proposal": a count with its noun. */
 function plural(n: number, one: string, many: string): string {
@@ -2344,6 +2369,9 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
   // Still owed the instant scroll to the end card (the effect below): true
   // until the scroller has a height to scroll by.
   const endScrollRef = useRef<boolean>(endOnOpen);
+  // Still owed the `?shot=needs-approve` open (the effect below): true until
+  // a row that approves has landed and the scroller has a height.
+  const approveOpenRef = useRef<boolean>(!endOnOpen && wantsApprove());
   const moreRef = useRef<HTMLButtonElement>(null);
   const commentsRef = useRef<HTMLDivElement>(null);
   const railRef = useRef<HTMLElement>(null);
@@ -2468,6 +2496,28 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
     el.scrollTop = items.length * el.clientHeight;
     el.style.scrollBehavior = '';
   }, [items]);
+
+  /**
+   * The `?shot=needs-approve` open: once the first row that approves has
+   * landed, land on it (instantly, as above) and put its vote sheet up.
+   * Once; after that the re-sync follows the row by key.
+   */
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!approveOpenRef.current || !el || !el.clientHeight) return;
+    const idx = items.findIndex((r) => approves(r));
+    if (idx < 0) return;
+    approveOpenRef.current = false;
+    curKeyRef.current = items[idx].key;
+    setAt(idx);
+    el.style.scrollBehavior = 'auto';
+    el.scrollTop = idx * el.clientHeight;
+    el.style.scrollBehavior = '';
+    setLeaving(null);
+    setSheet('vote');
+    setVoteSide('yes');
+    setVoteLine('');
+  }, [items]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const landOn = (idx: number) => {
     const c = Math.min(Math.max(idx, 0), items.length);
@@ -3118,7 +3168,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
               <div className="dev-ws-sheet-card">
                 <span className="dev-ws-sheet-handle" aria-hidden="true" />
                 <p className="dev-ws-ask-q">{row.ask}</p>
-                <p className="dev-ws-vote-sub">{tallyLine(row)}</p>
+                <VoteSub row={row} voted={voted} />
                 {/* A group decision (a rename, a secret, closing a request)
                     carries no pair here: its votes can apply it on the spot,
                     so it is decided on its own page, which shows the options
