@@ -1,0 +1,10 @@
+{
+  "_about": "Text the remaining-literals report (node scripts/language-inventory.js --literals) leaves out, each with the reason it is not a catalog entry. `everywhere` holds patterns for a whole literal; `files` names a file and either `all: true` or the exact texts in it.",
+  "everywhere": [
+    {
+      "pattern": "^Homeroom$",
+      "why": "The product's name. It is never translated."
+    }
+  ],
+  "files": {}
+}

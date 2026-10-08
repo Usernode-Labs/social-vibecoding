@@ -14,6 +14,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const { loadTsx, renderComponent, renderToHtml, createElement } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -150,9 +151,11 @@ test('the Communities, Messages and Discover steps point at the bar\'s own tabs,
   // One <a> per tab, its id drawn from its key, inside the one #platform-tabs
   // that app.css lays out as the phone's bottom bar or, from 768px, the rail.
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
-  assert.match(bar, /\{ key: 'workshop' as const, label: 'Communities', href: '#communities', Icon: UserGroupIcon \}/);
-  assert.match(bar, /\{ key: 'messages' as const, label: 'Messages', href: '#messages', Icon: ChatIcon \}/);
-  assert.match(bar, /\{ key: 'discover' as const, label: 'Discover', href: '#apps', Icon: SearchIcon \}/);
+  assert.match(bar, /\{ key: 'workshop' as const, label: 'core:tabs\.communities', href: '#communities', Icon: UserGroupIcon \}/);
+  assert.match(bar, /\{ key: 'messages' as const, label: 'core:tabs\.messages', href: '#messages', Icon: ChatIcon \}/);
+  assert.match(bar, /\{ key: 'discover' as const, label: 'core:tabs\.discover', href: '#apps', Icon: SearchIcon \}/);
+  assert.deepEqual(['communities', 'messages', 'discover'].map((tab) => message(`core:tabs.${tab}`)),
+    ['Communities', 'Messages', 'Discover']);
   assert.match(bar, /id=\{`platform-tab-\$\{key\}`\}/);
   assert.equal((bar.match(/id="platform-tabs"/g) || []).length, 1);
 });

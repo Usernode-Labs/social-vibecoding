@@ -22,6 +22,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { getTemplateFiles } = require('../src/services/template');
+const { message } = require('./lib/platform-i18n');
 
 function files() {
   return getTemplateFiles('My App', 'my-app-123', 'pg://x');
@@ -136,8 +137,8 @@ test('the starter copy names the row the Homeroom mark\'s menu really has', () =
     'the menu still has Suggest an improvement');
   assert.match(sheet, /id="improve-row-new-session"[\s\S]{0,600}label="Build it now"/,
     'and the agent-session row is called Build it now');
-  assert.match(read('frontend/src/features/header/platform-mark.tsx'), /aria-label="Homeroom menu"/,
-    'the header control is still the Homeroom mark');
+  assert.match(read('frontend/src/features/header/platform-mark.tsx'), /aria-label=\{t\('core:header\.homeroomMenu'\)\}/);
+  assert.equal(message('core:header.homeroomMenu'), 'Homeroom menu', 'the header control is still the Homeroom mark');
 });
 
 test('CLAUDE.md instructs the agent to remove the template wholesale', () => {

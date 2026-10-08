@@ -56,6 +56,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { renderComponent, loadTsx } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
@@ -118,7 +119,8 @@ test('every step points at a REAL control, and nothing is illustrated', () => {
   // #3567: the Communities tab, whose key and id are still `workshop`.
   assert.deepEqual([...byId.communities.targets], ['#platform-tab-workshop']);
   assert.match(read('frontend/src/features/nav/tab-bar.tsx'),
-    /\{ key: 'workshop' as const, label: 'Communities', href: '#communities'/,
+    /\{ key: 'workshop' as const, label: 'core:tabs\.communities', href: '#communities'/);
+  assert.equal(message('core:tabs.communities'), 'Communities',
     'the tab the step points at is the one labelled Communities');
   // THE MENU ARC: the mark that opens it, then the well inside it that holds
   // both of its actions. The mark is on screen on every route, which is what

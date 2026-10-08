@@ -25,6 +25,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx, createElement, renderToHtml } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const panel = read('frontend/src/features/agent-session/index.tsx');
@@ -121,9 +122,10 @@ test('#3016: an empty message box is sized to its hint, measured without an inpu
 
 test('#3015: the mark says what its green dot means on hover, and keeps its name', () => {
   const mark = read('frontend/src/features/header/platform-mark.tsx');
-  assert.match(mark, /const WORKING_TITLE = 'One of your changes is building';/);
-  assert.match(mark, /title=\{working \? WORKING_TITLE : undefined\}/, 'only while the dot is showing');
-  assert.match(mark, /aria-label="Homeroom menu"/, 'the name the empty board\'s note uses is unchanged');
+  assert.equal(message('core:header.changeBuilding'), 'One of your changes is building');
+  assert.match(mark, /title=\{working \? t\('core:header\.changeBuilding'\) : undefined\}/, 'only while the dot is showing');
+  assert.match(mark, /aria-label=\{t\('core:header\.homeroomMenu'\)\}/);
+  assert.equal(message('core:header.homeroomMenu'), 'Homeroom menu', 'the name the empty board\'s note uses is unchanged');
 });
 
 test('#3075: the menu no longer says it in words; the mark\'s own spinner stays', () => {

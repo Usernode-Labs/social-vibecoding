@@ -22,6 +22,7 @@
 
 import type { MouseEvent } from 'react';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useVisibility } from '../../lib/visibility-store';
 
 const CLS = 'sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-2 focus:z-[100] '
@@ -42,9 +43,10 @@ function skipToNavigation(event: MouseEvent<HTMLAnchorElement>): void {
 
 export function SkipToNavigation() {
   const railOnRoute = useVisibility('platform-tabs', true);
+  const t = useMessages();
   return (
     <a href="#platform-tabs" className={CLS} hidden={!railOnRoute} onClick={skipToNavigation}>
-      Skip to navigation
+      {t('core:rail.skipToNavigation')}
     </a>
   );
 }

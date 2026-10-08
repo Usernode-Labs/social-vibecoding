@@ -23,6 +23,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { createElement, loadTsx, renderToHtml } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -58,12 +59,13 @@ const community = (over = {}) => ({
 });
 
 test('the bar reads Home, Discover, Messages, Communities, you — Messages in the middle', () => {
-  const order = [...TABS.matchAll(/\{ key: '([a-z]+)' as const, label: '([A-Za-z]+)'/g)].map((m) => [m[1], m[2]]);
+  // A tab's label is a message id; the word is what the English catalog holds for it.
+  const order = [...TABS.matchAll(/\{ key: '([a-z]+)' as const, label: '(core:tabs\.[A-Za-z]+)'/g)].map((m) => [m[1], message(m[2])]);
   assert.deepEqual(order.map((o) => o[0]), ['discover', 'messages', 'workshop', 'me'],
     'after Home, whose entry is written across lines');
   assert.deepEqual(order.find((o) => o[0] === 'workshop'), ['workshop', 'Communities'],
     'the key stays `workshop`; the word is Communities');
-  assert.match(TABS, /key: 'workshop' as const, label: 'Communities', href: '#communities', Icon: UserGroupIcon/);
+  assert.match(TABS, /key: 'workshop' as const, label: 'core:tabs\.communities', href: '#communities', Icon: UserGroupIcon/);
   // The channels' count rides the Communities tab, the conversations' the
   // Messages tab, and the Messages store writes both.
   assert.match(TABS, /key === 'workshop' \? \(\s*<TabBadge count=\{communities\} id="platform-tabs-badge-communities"/);

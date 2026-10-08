@@ -10,5 +10,285 @@
   "language.notice.switchToEnglish": {
     "text": "Switch to English",
     "description": "Button on the automatic-language notice. Always shown in English, whatever language is active, so a person who cannot read the picked language can find it."
+  },
+  "tabs.sections": {
+    "text": "Sections",
+    "description": "Accessible name of the main navigation: the tab bar on a phone, the left rail on a desktop."
+  },
+  "tabs.home": {
+    "text": "Home",
+    "description": "Tab in the main navigation: opens the Home screen, the launcher of the person's apps."
+  },
+  "tabs.discover": {
+    "text": "Discover",
+    "description": "Tab in the main navigation: opens the screen for finding apps and communities to join."
+  },
+  "tabs.messages": {
+    "text": "Messages",
+    "description": "Tab in the main navigation: opens the person's conversations with people and agents."
+  },
+  "tabs.communities": {
+    "text": "Communities",
+    "description": "Tab in the main navigation: opens the communities the person belongs to. A community is a group that owns projects."
+  },
+  "tabs.me": {
+    "text": "Me",
+    "description": "Tab in the main navigation, shown only while nobody is signed in: opens the person's own profile. Once signed in the tab shows their username instead."
+  },
+  "tabs.meNamed": {
+    "text": "{{username}}, your profile",
+    "description": "Accessible name of the profile tab when signed in. The tab shows only {{username}}; this adds what the tab is. Keep {{username}} first."
+  },
+  "tabs.communitiesOn": {
+    "text": "Communities, on {{community}}",
+    "description": "Accessible name of the Communities tab while it is showing one community. {{community}} is that community's name. Keep the word for Communities first."
+  },
+  "tabs.votesWaiting_one": {
+    "text": "{{count}} vote waiting on you",
+    "description": "Accessible name of the number badge on the Communities tab: how many proposals are waiting for this person's vote."
+  },
+  "tabs.votesWaiting_other": {
+    "text": "{{count}} votes waiting on you",
+    "description": "Accessible name of the number badge on the Communities tab: how many proposals are waiting for this person's vote."
+  },
+  "tabs.unreadConversations": {
+    "text": "Unread conversations",
+    "description": "Accessible name of the number badge on the Messages tab. The number counts conversations with something unread, not messages."
+  },
+  "tabs.unreadChannels": {
+    "text": "Channels with unread messages",
+    "description": "Accessible name of the number badge on the Communities tab. The number counts community channels that have unread messages."
+  },
+  "tabs.settings": {
+    "text": "Settings",
+    "description": "Accessible name and tooltip of the cog at the foot of the desktop rail: opens Settings."
+  },
+  "rail.hideSidebar": {
+    "text": "Hide sidebar",
+    "description": "Accessible name of the header button that folds the desktop navigation rail away, while the rail is showing."
+  },
+  "rail.showSidebar": {
+    "text": "Show sidebar",
+    "description": "Accessible name of the header button that brings the desktop navigation rail back, while the rail is folded away."
+  },
+  "rail.skipToNavigation": {
+    "text": "Skip to navigation",
+    "description": "Link shown only to keyboard users at the top of the page: moves focus to the main navigation."
+  },
+  "parked.resume": {
+    "text": "Resume",
+    "description": "Label on the strip for an app the person left running: pressing the strip returns to that app as it was left."
+  },
+  "parked.forget": {
+    "text": "Forget {{app}}",
+    "description": "Accessible name of the close button on the strip for an app left running: stops keeping {{app}} open. {{app}} is the app's name."
+  },
+  "recents.heading": {
+    "text": "Recents",
+    "description": "Heading of the list of recently opened apps and conversations in the desktop rail."
+  },
+  "recents.active": {
+    "text": "Active",
+    "description": "Heading of the list of apps that are still running, above Recents in the desktop rail."
+  },
+  "recents.resume": {
+    "text": "Resume",
+    "description": "Small label on the row of a running app in the desktop rail: pressing the row returns to the app as it was left."
+  },
+  "recents.earlier": {
+    "text": "Earlier",
+    "description": "Sub-heading in Recents for rows older than the labelled days (Today, Yesterday, a few days ago)."
+  },
+  "recents.older": {
+    "text": "Older",
+    "description": "Sub-heading in Recents for the oldest rows, shown after the person presses the button that reveals them."
+  },
+  "recents.showLess": {
+    "text": "Show less",
+    "description": "Button under Recents: folds the older rows away again."
+  },
+  "recents.showOlder_one": {
+    "text": "Show {{count}} older",
+    "description": "Button under Recents: reveals the older rows that are folded away. {{count}} is how many rows."
+  },
+  "recents.showOlder_other": {
+    "text": "Show {{count}} older",
+    "description": "Button under Recents: reveals the older rows that are folded away. {{count}} is how many rows."
+  },
+  "recents.day.today": {
+    "text": "Today",
+    "description": "Sub-heading in Recents over the rows last used today."
+  },
+  "recents.day.yesterday": {
+    "text": "Yesterday",
+    "description": "Sub-heading in Recents over the rows last used yesterday."
+  },
+  "recents.day.daysAgo_one": {
+    "text": "{{count}} day ago",
+    "description": "Sub-heading in Recents over the rows last used that many days ago. Shown for 2 to 5 days; one day reads Yesterday instead."
+  },
+  "recents.day.daysAgo_other": {
+    "text": "{{count}} days ago",
+    "description": "Sub-heading in Recents over the rows last used that many days ago. Shown for 2 to 5 days."
+  },
+  "recents.untitledChat": {
+    "text": "Untitled chat",
+    "description": "Name shown in Recents for a conversation with an agent that has no title yet."
+  },
+  "recents.newSession": {
+    "text": "New session",
+    "description": "Name shown in Recents for a working session with an agent that has no title yet."
+  },
+  "recents.row.app": {
+    "text": "App: {{name}}",
+    "description": "Accessible name of a Recents row that opens an app. {{name}} is the app's name."
+  },
+  "recents.row.direct": {
+    "text": "Direct message: {{name}}",
+    "description": "Accessible name of a Recents row that opens a one-to-one conversation. {{name}} is the other person's name."
+  },
+  "recents.row.group": {
+    "text": "Group chat: {{name}}",
+    "description": "Accessible name of a Recents row that opens a group conversation. {{name}} is the group's name."
+  },
+  "recents.row.channel": {
+    "text": "Channel: {{name}}",
+    "description": "Accessible name of a Recents row that opens a community's channel. {{name}} is the channel's name, with its # sign."
+  },
+  "recents.row.agent": {
+    "text": "Agent chat: {{name}}",
+    "description": "Accessible name of a Recents row that opens a conversation with an AI agent. {{name}} is the conversation's title."
+  },
+  "recents.row.working": {
+    "text": "working",
+    "description": "Added to a Recents row's accessible name, after the name, while the agent in that conversation is still working. One item in a list of facts about the row."
+  },
+  "recents.row.finished": {
+    "text": "finished",
+    "description": "Added to a Recents row's accessible name, after the name, when the agent in that conversation finished something the person has not seen. One item in a list of facts about the row."
+  },
+  "recents.row.unread": {
+    "text": "unread",
+    "description": "Added to a Recents row's accessible name, after the name, when the conversation has unread messages. One item in a list of facts about the row."
+  },
+  "liveApp.stillOpen": {
+    "text": "still open",
+    "description": "Added to the accessible name of an app's row or tile, after the app's name, when the app is still loaded and will resume as it was left. One item in a list of facts."
+  },
+  "liveApp.dotTitle": {
+    "text": "Still open",
+    "description": "Tooltip of the small dot on an app that is still loaded and will resume as it was left."
+  },
+  "header.back": {
+    "text": "Back",
+    "description": "Accessible name of the header's back button when it returns to the previous screen."
+  },
+  "header.closeApp": {
+    "text": "Close app",
+    "description": "Accessible name of the header's back button when it closes the app on screen and returns to Home."
+  },
+  "header.home": {
+    "text": "Home",
+    "description": "Accessible name of the header's back button when it leads to the Home screen."
+  },
+  "header.notifications": {
+    "text": "Notifications",
+    "description": "Accessible name of the bell button in the header: opens the list of notifications."
+  },
+  "header.unreadNotifications": {
+    "text": "Unread notifications",
+    "description": "Accessible name of the number badge on the header's bell button."
+  },
+  "header.communitiesSwitch": {
+    "text": "Communities: all of yours, or open one",
+    "description": "Accessible name of the header button on the Communities screen: opens the list for switching between all communities and a single one."
+  },
+  "header.communities": {
+    "text": "Communities",
+    "description": "Title in the header on the screen that lists all of the person's communities."
+  },
+  "header.switchCommunity": {
+    "text": "{{community}}, switch community",
+    "description": "Accessible name of the header button on a community's page: opens the list for switching to another community. {{community}} is the current community's name; keep it first."
+  },
+  "header.homeroomMenu": {
+    "text": "Homeroom menu",
+    "description": "Accessible name of the Homeroom logo button in the header: opens the main menu. Homeroom is the product's name and is not translated."
+  },
+  "header.changeBuilding": {
+    "text": "One of your changes is building",
+    "description": "Tooltip on the Homeroom logo button while a spinner shows on it: a change this person asked for is being built."
+  },
+  "chromeless.openAppLabel": {
+    "text": "Open this app on Homeroom",
+    "description": "Accessible name of the floating pill shown when an app is displayed without Homeroom's own header and tabs: opens the same app inside Homeroom."
+  },
+  "chromeless.open": {
+    "text": "Open in Homeroom",
+    "description": "Text of the floating pill shown when an app is displayed without Homeroom's own header and tabs: opens the same app inside Homeroom."
+  },
+  "banner.viewAsNonAdmin.text": {
+    "text": "Viewing as non-admin (admin UI hidden).",
+    "description": "Banner across the top for an administrator who chose to preview Homeroom as an ordinary member."
+  },
+  "banner.viewAsNonAdmin.switchBack": {
+    "text": "Switch back",
+    "description": "Button in the banner for an administrator previewing as an ordinary member: returns to the administrator view."
+  },
+  "list.pair": {
+    "text": "{{first}}, {{second}}",
+    "description": "How two independent facts are joined when an accessible name lists several, for example \"App: Recipe Box, still open, unread\". {{first}} is everything said so far and {{second}} the next fact. Only the punctuation between them is translated."
+  },
+  "common.cancel": {
+    "text": "Cancel",
+    "description": "Generic button, used only where the control is exactly this and nothing about the place changes its meaning: abandons the dialog or the action in progress and changes nothing."
+  },
+  "common.close": {
+    "text": "Close",
+    "description": "Generic button, used only where the control is exactly this and nothing about the place changes its meaning: closes the dialog, sheet or panel it is on. Also the accessible name of an X button that does this."
+  },
+  "common.back": {
+    "text": "Back",
+    "description": "Generic button, used only where the control is exactly this and nothing about the place changes its meaning: returns to the previous screen or step."
+  },
+  "common.retry": {
+    "text": "Retry",
+    "description": "Generic button, used only where the control is exactly this and nothing about the place changes its meaning: repeats a request that failed."
+  },
+  "common.tryAgain": {
+    "text": "Try again",
+    "description": "Generic button, used only where the control is exactly this and nothing about the place changes its meaning: repeats an action that failed."
+  },
+  "common.save": {
+    "text": "Save",
+    "description": "Generic button, used only where the control is exactly this and nothing about the place changes its meaning: saves the form it is on."
+  },
+  "common.done": {
+    "text": "Done",
+    "description": "Generic button, used only where the control is exactly this and nothing about the place changes its meaning: finishes and closes a dialog or an editing mode when there is nothing left to confirm."
+  },
+  "common.continue": {
+    "text": "Continue",
+    "description": "Generic button, used only where the control is exactly this and nothing about the place changes its meaning: moves to the next step."
+  },
+  "common.ok": {
+    "text": "OK",
+    "description": "Generic button, used only where the control is exactly this and nothing about the place changes its meaning: acknowledges a message and closes it."
+  },
+  "common.copy": {
+    "text": "Copy",
+    "description": "Generic button, used only where the control is exactly this and nothing about the place changes its meaning: copies the text or link beside it to the clipboard."
+  },
+  "common.dismiss": {
+    "text": "Dismiss",
+    "description": "Accessible name of an X button that hides a notice or banner without acting on it. Generic: used only where nothing about the place changes its meaning."
+  },
+  "common.copied": {
+    "text": "Copied",
+    "description": "Generic confirmation shown briefly in place of a Copy button after the text or link was copied to the clipboard."
+  },
+  "common.loading": {
+    "text": "Loading…",
+    "description": "Generic placeholder shown while content is being fetched, where nothing more specific is said about what is loading."
   }
 }

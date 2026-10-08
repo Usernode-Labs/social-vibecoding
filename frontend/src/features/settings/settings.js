@@ -2696,10 +2696,10 @@
         // A newer choice replaced this one, and reports for itself.
         if (!applied) return;
       } catch (err) {
-        return fail(saving ? (err.message || 'Failed to save.') : 'Could not load that language. Try again.');
+        return fail(saving ? (err.message || i18n.t('settings:language.saveFailed')) : i18n.t('settings:language.loadFailed'));
       }
       if (status) {
-        status.textContent = '✓ Saved';
+        status.textContent = i18n.t('settings:language.saved');
         status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-zinc-500', 'dark:text-zinc-400');
         status.classList.add('text-emerald-700', 'dark:text-emerald-400');
       }

@@ -43,6 +43,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const { runModules, makeStoreStub } = require('./helpers/bundle-module');
+const { message } = require('./lib/platform-i18n');
 
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 const APP_JS = read('public/js/app.js');
@@ -160,8 +161,9 @@ test('the anchor renders both glyphs and hides exactly one', () => {
   // and that inventory is a contract (tests/shell-id-inventory.test.js).
   assert.match(HEADER, /className=\{BACK_BTN_CLASS \+ \(mode === 'none' \? ' hidden' : ''\)\}/,
     "the anchor itself hides only on 'none'");
-  assert.match(HEADER, /aria-label=\{backArrow \? 'Back' : backClose \? 'Close app' : 'Home'\}/,
+  assert.match(HEADER, /aria-label=\{backArrow \? t\('core:header\.back'\) : backClose \? t\('core:header\.closeApp'\) : t\('core:header\.home'\)\}/,
     'and the accessible name follows the glyph — three meanings, three names');
+  assert.deepEqual(['back', 'closeApp', 'home'].map((name) => message(`core:header.${name}`)), ['Back', 'Close app', 'Home']);
 });
 
 // ── 4. The ladder inside an app ────────────────────────────────────────

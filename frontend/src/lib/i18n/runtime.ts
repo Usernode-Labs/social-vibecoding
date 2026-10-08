@@ -10,7 +10,7 @@ import { createLanguageRuntime } from './core';
 const runtime = createLanguageRuntime(catalogs);
 
 export const {
-  i18n, t, htmlText, languageName, registerNamespace, ensureNamespace,
+  i18n, t, htmlText, htmlRich, listText, languageName, registerNamespace, ensureNamespace,
   changeLanguage, applySessionLanguage, getLanguage, getPreference,
   getNotice, subscribeNotice, dismissNotice,
 } = runtime;
@@ -30,7 +30,7 @@ export function switchToEnglish(): Promise<boolean> {
 // The legacy modules' adapter. Translate at render time, never at module
 // initialization, and repaint on `homeroom:language-changed`.
 (globalThis as unknown as { PlatformI18n: unknown }).PlatformI18n = {
-  t, htmlText, languageName, getLanguage, getPreference, changeLanguage,
+  t, htmlText, htmlRich, listText, languageName, getLanguage, getPreference, changeLanguage,
   applySessionLanguage, saveAccountLocale,
 };
 

@@ -28,6 +28,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { loadTsx, renderComponent } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (file) => fs.readFileSync(path.join(ROOT, file), 'utf8');
@@ -467,7 +468,8 @@ test('the desktop rail folds by hand, and a phone can never lose its bar', () =>
   assert.match(navStoreSrc, /railOpen: true,/);
   assert.match(toggle, /aria-pressed=\{railOpen \? 'true' : 'false'\}/,
     'the state is on the control, so the label can stay the ACTION');
-  assert.match(toggle, /aria-label=\{railOpen \? 'Hide sidebar' : 'Show sidebar'\}/);
+  assert.match(toggle, /aria-label=\{railOpen \? t\('core:rail\.hideSidebar'\) : t\('core:rail\.showSidebar'\)\}/);
+  assert.deepEqual([message('core:rail.hideSidebar'), message('core:rail.showSidebar')], ['Hide sidebar', 'Show sidebar']);
   assert.match(toggle, /aria-controls="platform-tabs"/);
 
   // IT IS UNSEEN WHERE THE ROUTE HAS NO RAIL — inside an app, chromeless,

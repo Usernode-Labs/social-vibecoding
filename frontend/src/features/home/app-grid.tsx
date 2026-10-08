@@ -62,9 +62,10 @@ import { useCallback, useEffect, useRef } from 'react';
 
 import { LockIcon, UserGroupIcon } from '@/components/ui/icons';
 
+import { listText } from '../../lib/i18n/runtime';
 import { useStoreState } from '../../lib/use-store-state';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
-import { LIVE_APP_LABEL, LiveAppDot, useLiveAppSlugs } from '../app-frame/live-apps';
+import { liveAppLabel, LiveAppDot, useLiveAppSlugs } from '../app-frame/live-apps';
 import { AppsLoadError } from '../apps/load-error';
 import { TileSkeleton } from '../apps/tile-skeleton';
 import { BUILD_LINE_TILE_CARD, buildLineTileClass } from '../first-session/build-line-words.js';
@@ -206,7 +207,7 @@ function AppCardTile({ app, style, yours, live }: {
       data-locked={String(app.locked)}
       tabIndex={0}
       role="button"
-      aria-label={live ? `${app.name}, ${LIVE_APP_LABEL}` : app.name}
+      aria-label={live ? listText([app.name, liveAppLabel()]) : app.name}
       aria-haspopup="menu"
       title={`${app.name}. Hold or right-click for app actions`}
       {...(app.demo ? { 'data-demo': 'true' } : null)}

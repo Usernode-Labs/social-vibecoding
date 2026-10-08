@@ -19,6 +19,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 const { withStateRead } = require('./lib/agent-session-state-read');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
@@ -57,8 +58,10 @@ test('Recents, the mark\'s Continue rows and Messages all draw it', () => {
   const row = read('frontend/src/features/nav/recents-list.tsx');
   assert.match(row, /\{item\.activity\s*\? <AgentActivityIcon activity=\{item\.activity\} className="platform-recent-glyph" \/>\s*: app \? <AppTile app=\{app\} \/> : <Glyph className="platform-recent-glyph" aria-hidden="true" \/>\}/,
     '#3028, #3076: working or finished, the mark takes the icon\'s place');
-  assert.match(row, /aria-label=\{`\$\{KIND_NAMES\[item\.kind\]\}: \$\{item\.label\}\$\{loaded\}\$\{doing\}\$\{unread\}`\}/,
-    'and the row\'s name says it');
+  assert.match(row, /item\.activity \? t\(ACTIVITY_FACT\[item\.activity\]\) : null,/);
+  assert.match(row, /aria-label=\{name\}/, 'and the row\'s name says it');
+  assert.equal(message('core:recents.row.working'), 'working');
+  assert.equal(message('core:recents.row.finished'), 'finished');
 
   const messages = read('frontend/src/features/messages/index.tsx');
   const mayorRow = messages.slice(messages.indexOf('function MayorSessionRow('), messages.indexOf('function AgentChatThread('));

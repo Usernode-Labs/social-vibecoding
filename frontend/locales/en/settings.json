@@ -1,0 +1,26 @@
+{
+  "language.title": {
+    "text": "Language",
+    "description": "Heading of the Language section in Settings."
+  },
+  "language.intro": {
+    "text": "Homeroom's own screens are in English for now. Apps on Homeroom use this as their default language, and may offer their own override.",
+    "description": "Explanation under the Language heading in Settings: what choosing a language does today."
+  },
+  "language.auto": {
+    "text": "Auto: use device language",
+    "description": "First option in the Language list in Settings: follow the language of the phone or browser instead of a fixed choice."
+  },
+  "language.saved": {
+    "text": "✓ Saved",
+    "description": "Status line under the Language list in Settings after the choice was saved. Keep the check mark."
+  },
+  "language.saveFailed": {
+    "text": "Failed to save.",
+    "description": "Status line under the Language list in Settings when the choice could not be saved and the server gave no reason."
+  },
+  "language.loadFailed": {
+    "text": "Could not load that language. Try again.",
+    "description": "Status line under the Language list in Settings when the chosen language's text could not be downloaded."
+  }
+}

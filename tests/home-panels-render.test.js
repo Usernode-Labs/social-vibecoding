@@ -36,6 +36,7 @@ const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const { HOME_SRC: HOME, PANELS_SRC: SRC, PANELS_RAW } = require('./helpers/home-modules');
 const { installPanelsStore } = require('./helpers/home-grid-store');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 const INDEX = read('public/index.html');
 const ISLAND = read('frontend/src/features/home/index.tsx');
 const SW = read('public/sw.js');
@@ -2498,7 +2499,8 @@ test('the Discover section is headed Discover Communities; the tab and the link 
     'the label truncates rather than wraps at 320px, beside the link');
   assert.match(heading, />Browse all apps<\/span>/);
   const bar = fs.readFileSync(path.join(__dirname, '../frontend/src/features/nav/tab-bar.tsx'), 'utf8');
-  assert.match(bar, /key: 'discover' as const, label: 'Discover', href: '#apps'/);
+  assert.match(bar, /key: 'discover' as const, label: 'core:tabs\.discover', href: '#apps'/);
+  assert.equal(message('core:tabs.discover'), 'Discover');
 });
 
 test('Discover’s degenerate states: cards, or the note — never both', () => {

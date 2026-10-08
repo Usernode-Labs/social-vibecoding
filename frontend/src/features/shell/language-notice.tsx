@@ -58,7 +58,7 @@ export function LanguageNotice() {
       style={inset > 0 ? { '--language-notice-inset': `${inset}px` } as CSSProperties : undefined}
       className="flex items-center gap-2 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 py-1.5 pl-4 pr-1.5 text-xs text-zinc-700 dark:text-zinc-300 shadow-lg"
     >
-      <span className="min-w-0">{t('language.notice.showing', { language: notice.name })}</span>
+      <span className="min-w-0">{t('core:language.notice.showing', { language: notice.name })}</span>
       <Button
         id="language-notice-english"
         type="button"
@@ -71,13 +71,13 @@ export function LanguageNotice() {
         // A failed save leaves the language and this notice as they were.
         onClick={() => { void switchToEnglish().catch(() => {}); }}
       >
-        {i18n.getFixedT('en', 'core')('language.notice.switchToEnglish')}
+        {i18n.getFixedT('en', 'core')('core:language.notice.switchToEnglish')}
       </Button>
       <button
         id="language-notice-dismiss"
         type="button"
         onClick={dismissNotice}
-        aria-label={t('language.notice.dismiss')}
+        aria-label={t('core:language.notice.dismiss')}
         className="shrink-0 w-7 h-7 flex items-center justify-center rounded-full text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors un-touch-target"
       >
         <XIcon className="w-4 h-4" aria-hidden="true" />

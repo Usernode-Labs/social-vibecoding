@@ -20,6 +20,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const read = (file) => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
 const APP = read('public/js/app.js');
@@ -367,7 +368,8 @@ test('Home and Discover are reachable from the bar, on every platform screen', (
   assert.match(bar, /key: 'home' as const[\s\S]{0,400}href: '\/'/);
   // A press on the tab says so, and swaps like any other tab's (#2881).
   assert.match(bar, /\.App\?\.navigateHome\?\.\(\{ viaTab: true \}\)/);
-  assert.match(bar, /key: 'discover' as const, label: 'Discover', href: '#apps'/);
+  assert.match(bar, /key: 'discover' as const, label: 'core:tabs\.discover', href: '#apps'/);
+  assert.equal(message('core:tabs.discover'), 'Discover');
   // …and the menu they left carries no platform destination at all.
   const menu = read('frontend/src/features/app-context/app-context-sheet.tsx');
   assert.doesNotMatch(menu, /id="switcher-row-/);
