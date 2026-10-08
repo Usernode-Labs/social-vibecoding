@@ -596,6 +596,8 @@ const TopochainLeaderboard = {
         ? act.data.map((a) => ({
           label: str(a.description || a.activity_type),
           points: str(a.points),
+          // Raw; ./activity-row.tsx formats it in the renderer (#3648).
+          at: a.activity_at || null,
         }))
         : null,
     };

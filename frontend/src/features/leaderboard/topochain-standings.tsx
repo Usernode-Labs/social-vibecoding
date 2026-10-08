@@ -33,6 +33,7 @@ import type { ReactNode } from 'react';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 
 import { useStoreState } from '../../lib/use-store-state';
+import { ActivityRow } from './activity-row';
 import { topochainStandingsStore } from './topochain-standings-store.js';
 import { STANDINGS_UPDATE_NOTE } from './my-standing.js';
 
@@ -103,7 +104,7 @@ type DrillView = {
       canonicalSuccessRate: string | null;
     } | null;
   };
-  activities: Triple & { items: { label: string; points: string }[] | null };
+  activities: Triple & { items: { label: string; points: string; at: string | null }[] | null };
   epoch: Triple & {
     rows: { epoch: string; wonSlots: string; produced: string; successRate: string }[] | null;
   };
@@ -413,10 +414,7 @@ function Activities({ view }: { view: DrillView['activities'] }): ReactNode {
   return (
     <ul className="space-y-1">
       {view.items.map((a, i) => (
-        <li key={i} className="flex items-center justify-between gap-3 text-xs">
-          <span className="text-zinc-600 dark:text-zinc-300">{a.label}</span>
-          <span className="font-mono text-zinc-500 dark:text-zinc-400">{`+${a.points}`}</span>
-        </li>
+        <ActivityRow key={i} text={a.label} points={`+${a.points}`} at={a.at} />
       ))}
     </ul>
   );
