@@ -51,7 +51,8 @@ test('B7: Try it always, Approve when their Yes counts, Change something; one fi
 });
 
 test('B7: the card, drawn in every state', () => {
-  const { ReadyCardView, readyTitle, waitingLine, isReadyMessage, changeLine } = loadTsx('frontend/src/features/messages/bot-ready.tsx');
+  const { ReadyCardView, readyTitle, waitingLine, isReadyMessage, changeLine, requestLine, readyChangeHref } =
+    loadTsx('frontend/src/features/messages/bot-ready.tsx');
   const actions = dm.readyActions({ sessionId: 9, epoch: 2, approve: true });
   const meta = {
     kind: 'proposal', appName: 'Plant Pal', appSlug: 'plant-pal', askedText: 'Add a weekly reminder',
@@ -68,9 +69,24 @@ test('B7: the card, drawn in every state', () => {
   assert.ok(!/Waiting for approval/.test(open), 'a project of one waits on nobody else');
   // #3870: what the change is, under the title: its own title, else its request's.
   assert.ok(!/data-bot-ready-change/.test(open), 'nothing to say beyond what they asked');
-  const titled = draw({ meta: { ...meta, changeTitle: 'Weekly watering reminder', issueTitle: 'Reminders' } });
-  assert.match(titled, /data-bot-ready-change="">Weekly watering reminder</);
-  assert.ok(titled.indexOf('Weekly watering reminder') < titled.indexOf('You asked:'), 'what it is, then what they asked');
+  // #4537: the line names the request the change was built from, and opens
+  // the change's page — the route Try it falls back to.
+  const titled = draw({ meta: { ...meta, issueNumber: 9, changeTitle: 'Weekly watering reminder', issueTitle: 'Reminders' } });
+  assert.match(titled,
+    /href="#app\/plant-pal\/dev\/proposals\/9" data-bot-ready-change="">Request #9: Weekly watering reminder</);
+  assert.ok(titled.indexOf('Request #9: Weekly watering reminder') < titled.indexOf('You asked:'), 'what it is, then what they asked');
+  assert.equal(requestLine({ ...meta, issueNumber: 9, changeTitle: 'Weekly watering reminder' }), 'Request #9: Weekly watering reminder');
+  assert.equal(requestLine({ ...meta, changeTitle: 'Weekly watering reminder' }), 'Weekly watering reminder', 'no request number: #3870\'s line alone');
+  assert.equal(readyChangeHref(meta), '#app/plant-pal/dev/proposals/9');
+  assert.equal(readyChangeHref({ ...meta, appSlug: undefined }), null, 'no project, no link');
+  assert.equal(readyChangeHref({ ...meta, sessionId: undefined }), null, 'no change, no link');
+  // When the change's own title only repeats what they asked, the line keeps
+  // the request number, beside the "You asked:" line that says the words.
+  assert.match(draw({ meta: { ...meta, issueNumber: 9, changeTitle: 'Add a weekly reminder' } }), />Request #9</);
+  assert.equal(changeLine({ ...meta, changeTitle: 'add a weekly reminder.' }), null, 'a title that only repeats what they asked is said once');
+  // A card with a request number but no project names it in plain text.
+  assert.match(draw({ meta: { ...meta, issueNumber: 9, appSlug: undefined } }),
+    /<p class="[^"]*" data-bot-ready-change="">Request #9<\/p>/);
   assert.equal(changeLine({ ...meta, askedText: undefined, issueTitle: 'Reminders' }), 'Reminders');
   assert.equal(changeLine({ ...meta, changeTitle: 'add a weekly reminder.' }), null, 'a title that only repeats what they asked is said once');
   assert.equal(changeLine({ ...meta, askedText: undefined }), null);

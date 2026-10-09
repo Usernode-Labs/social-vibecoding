@@ -28,8 +28,10 @@ import type {
  *   Change something  quotes the card in the composer, for the bot to
  *                     change it (its revise path).
  *
- * Under its title it says what the change is (changeLine): the change's own
- * title, else the request's, then what its person asked, if they did.
+ * Under its title it names the request the change was built from (#4537,
+ * requestLine), and the change itself after it (changeLine): the change's own
+ * title, else the request's, then what its person asked, if they did. When
+ * the card can name its project the line opens the change's page.
  *
  * A change its before & after shots showed part of failing, which the bot
  * could not fix in its own round, says what does not work instead of
@@ -89,6 +91,29 @@ export function changeLine(meta: HomeroomBotMeta): string | null {
   if (!what) return null;
   if (meta.askedText && same(what, meta.askedText)) return null;
   return what;
+}
+
+/**
+ * Pure (#4537): the line under a ready card's title, naming the request the
+ * change was built from: "Request #9: Weekly watering reminder". When the
+ * card carries no request number it is #3870's line alone; when the change's
+ * own title only repeats what they asked, just "Request #9" ("You asked: …"
+ * says the words).
+ */
+export function requestLine(meta: HomeroomBotMeta): string | null {
+  const what = changeLine(meta);
+  if (!meta.issueNumber) return what;
+  return what ? `Request #${meta.issueNumber}: ${what}` : `Request #${meta.issueNumber}`;
+}
+
+/**
+ * Pure (#4537): where a ready card's line under the title opens — the
+ * change's page, the route tryChange falls back to. Null when the card
+ * cannot name it.
+ */
+export function readyChangeHref(meta: HomeroomBotMeta): string | null {
+  if (!meta.appSlug || !meta.sessionId) return null;
+  return `#app/${encodeURIComponent(meta.appSlug)}/dev/proposals/${meta.sessionId}`;
 }
 
 /**
@@ -264,7 +289,11 @@ export function ReadyCardView({
   // message's own update said it, else from what the card was sent with.
   const next = fresh?.goesLive || meta.goesLive || goesLive || goesLiveFromReady(meta.ready);
   const broken = state === 'open' ? brokenLine(meta.ready) : null;
-  const what = changeLine(meta);
+  // What the change is, named by its request (#4537), linked to its page
+  // when the card can name it.
+  const what = requestLine(meta);
+  const whatHref = readyChangeHref(meta);
+  const whatLineClass = 'line-clamp-2 text-[0.8125rem] leading-[1.125rem]';
   const line = readyLine(state, next, now || new Date(Date.now()), locale);
   return (
     <div
@@ -283,7 +312,11 @@ export function ReadyCardView({
         )}
         <div className="min-w-0 flex-1">
           <div className="text-[0.9375rem] font-semibold text-zinc-900 dark:text-zinc-100" data-bot-ready-title="">{readyTitle(meta)}</div>
-          {what ? <p className="line-clamp-2 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400" data-bot-ready-change="">{what}</p> : null}
+          {what && whatHref ? (
+            <a className={`${whatLineClass} text-[color:var(--accent)] underline underline-offset-2`} href={whatHref} data-bot-ready-change="">{what}</a>
+          ) : what ? (
+            <p className={`${whatLineClass} text-zinc-500 dark:text-zinc-400`} data-bot-ready-change="">{what}</p>
+          ) : null}
           {meta.askedText ? <p className="line-clamp-2 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400">{`You asked: ${meta.askedText}`}</p> : null}
           {broken ? <p className="text-[0.8125rem] leading-[1.125rem] text-red-700 dark:text-red-400" data-bot-ready-broken="">{broken}</p> : null}
           {waiting ? <p className="text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400" data-bot-ready-waiting="">{waiting}</p> : null}
