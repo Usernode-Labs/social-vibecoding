@@ -5,6 +5,7 @@ import { InfoCircleIcon } from '@/components/ui/icons';
 import * as api from './api';
 import { ACTIVITY_OUTCOME_LABELS, isActivityMessage, isMovedActivity } from './bot-activity';
 import { ensureBotActivity, useBotActivity } from './bot-activity-store';
+import { changeKey } from './bot-shared';
 import { botMeta, requestPlace } from './bot-question';
 import { AnsweredChoices, PlanCardView, type AnsweredChoice, type PlanCardState, type PlanProgress } from './bot-plan-view';
 import { BotHeadWords, botHead } from './bot-head-card';
@@ -140,13 +141,6 @@ export interface PlanLayout {
 
 export const NO_PLAN_LAYOUT: PlanLayout = { hidden: new Set(), cardOf: new Map(), answersOpen: false };
 
-/** A bot message's request, as "app#number", or null. */
-function requestKey(meta: HomeroomBotMeta): string | null {
-  const app = meta.appSlug || meta.appName;
-  const n = Number(meta.issueNumber);
-  return app && Number.isInteger(n) && n > 0 ? `${app}#${n}` : null;
-}
-
 /**
  * Pure (#4046): how the transcript `messages` draws its plans (see THE PLAN
  * CARRIES ITS REQUEST'S STEP above), by message id. Only the bot's own
@@ -168,7 +162,9 @@ export function planLayout(messages: readonly ConversationMessage[]): PlanLayout
     const meta = botMeta(message);
     if (!meta || message.deleted || !(message.id > 0)) continue;
     if (offersAnswers(message)) answersOpen = true;
-    const key = requestKey(meta);
+    // #4564: the change a message is about, read the same way its change
+    // block is (./bot-shared.ts changeKey), so the two cannot disagree.
+    const key = changeKey(message);
     if (!key) continue;
     if (isPlanMessage(message)) {
       const newest = plans.get(key);
