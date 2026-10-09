@@ -31,10 +31,12 @@ import { createPortal } from 'react-dom';
 
 import { ArrowRightIcon, XIcon } from '@/components/ui/icons';
 
+import { useMessages } from '../../../lib/i18n/react';
 import { callAppView } from '../card/fold';
 import type { TopicRef } from './work-row';
 
 export function TopicSidePanel({ item, onClose }: { item: TopicRef; onClose: () => void }): ReactNode {
+  const t = useMessages('project');
   // Mount the page once the host is in the document, and take it down with
   // the panel (or before the next item's).
   useEffect(() => {
@@ -45,8 +47,8 @@ export function TopicSidePanel({ item, onClose }: { item: TopicRef; onClose: () 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.defaultPrevented) return;
-      const t = e.target as HTMLElement | null;
-      if (t && t.closest('input, textarea, [contenteditable="true"]')) return;
+      const target = e.target as HTMLElement | null;
+      if (target && target.closest('input, textarea, [contenteditable="true"]')) return;
       onClose();
     };
     window.addEventListener('keydown', onKey);
@@ -60,13 +62,13 @@ export function TopicSidePanel({ item, onClose }: { item: TopicRef; onClose: () 
   // Into <body>: the Workshop sits inside the page's frosted layers, whose
   // transforms would make `position: fixed` relative to them.
   return createPortal((
-    <aside className="dev-ws-side" data-ws-side={`${item.kind}:${item.id}`} aria-label="The item's page">
+    <aside className="dev-ws-side" data-ws-side={`${item.kind}:${item.id}`} aria-label={t('project:sidePanel.label')}>
       <div className="dev-ws-side-bar">
-        <button type="button" className="dev-ws-side-btn dev-ws-side-close" aria-label="Close" data-ws-side-close="" onClick={onClose}>
+        <button type="button" className="dev-ws-side-btn dev-ws-side-close" aria-label={t('core:common.close')} data-ws-side-close="" onClick={onClose}>
           <XIcon aria-hidden="true" />
         </button>
         <button type="button" className="dev-ws-side-btn dev-ws-side-full" data-ws-side-full="" onClick={openFull}>
-          Open as a page
+          {t('project:sidePanel.openAsPage')}
           <ArrowRightIcon aria-hidden="true" />
         </button>
       </div>

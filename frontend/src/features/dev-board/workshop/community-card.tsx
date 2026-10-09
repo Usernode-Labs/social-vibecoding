@@ -1364,12 +1364,22 @@ function useApprovers(slug: string, wanted: boolean): string[] | null {
   return approverNames.get(slug) || null;
 }
 
-/** "evan or snait", "evan, snait or maya", "evan and snait"; past three, the first three and "+N". */
+/**
+ * "evan or snait", "evan, snait or maya", "evan and snait"; past three, the
+ * first three and "+N". At most three names are ever written out, so each
+ * shape is a whole message with the names as its parameters.
+ */
 function nameList(names: string[], joiner: 'or' | 'and'): string {
   if (!names.length) return '';
-  if (names.length > 3) return `${names.slice(0, 3).join(', ')} +${names.length - 3}`;
-  if (names.length === 1) return names[0];
-  return `${names.slice(0, -1).join(', ')} ${joiner} ${names[names.length - 1]}`;
+  const [first, second, third] = names;
+  if (names.length > 3) {
+    return translate('project:communityCard.step.names.more', { first, second, third, count: names.length - 3 });
+  }
+  if (names.length === 1) return first;
+  if (names.length === 2) {
+    return translate(joiner === 'or' ? 'project:communityCard.step.names.eitherOfTwo' : 'project:communityCard.step.names.bothOfTwo', { first, second });
+  }
+  return translate(joiner === 'or' ? 'project:communityCard.step.names.anyOfThree' : 'project:communityCard.step.names.allOfThree', { first, second, third });
 }
 
 /** How many faces the middle step shows before "+N" says the rest. */
@@ -1389,32 +1399,44 @@ export function approvalStep(
   const electorate = Math.max(1, Number(approval.electorate) || 1);
   if (viewer?.audience === 'solo' && viewer.is_member
     && Number(approval.electorate) === 1 && Number(approval.required) === 1) {
-    return { who: 'You approve it', names: 'It is just you', wait: '', solo: true };
+    return {
+      who: translate('project:communityCard.step.you'),
+      names: translate('project:communityCard.step.justYou'),
+      wait: '',
+      solo: true,
+    };
   }
   const fixed = approval.approvals_required != null;
   const quiet = !fixed && required > 1;
-  const says = required === 1 ? 'says' : 'say';
   if (approval.policy === 'invited') {
+    // The order is the sentence's: one approver says it whatever was asked for.
     const who = required < electorate
-      ? `${required} of ${electorate} approvers ${says} yes`
-      : electorate === 1 ? 'The approver says yes'
-        : electorate === 2 && required === 2 ? 'Both approvers say yes'
-          : required === electorate ? `All ${electorate} approvers say yes`
-            : `${required} approvers say yes (there ${electorate === 1 ? 'is' : 'are'} ${electorate})`;
+      ? translate('project:communityCard.step.approvers.some', { count: required, total: electorate })
+      : electorate === 1 ? translate('project:communityCard.step.approvers.only')
+        : electorate === 2 && required === 2 ? translate('project:communityCard.step.approvers.both')
+          : required === electorate ? translate('project:communityCard.step.approvers.all', { count: electorate })
+            : translate('project:communityCard.step.approvers.short', { count: electorate, required });
     return {
       who,
       names: approvers ? nameList(approvers, required === 1 ? 'or' : 'and') : '',
-      wait: quiet ? 'Or after a wait, if one says yes and nobody says no' : '',
+      wait: quiet ? translate('project:communityCard.step.approvers.wait') : '',
       solo: false,
     };
   }
   if (fixed) {
-    return { who: `${plural(required, 'member approves', 'members approve')}`, names: '', wait: '', solo: false };
+    return { who: translate('project:communityCard.step.fixed', { count: required }), names: '', wait: '', solo: false };
   }
+  const who = required < electorate
+    ? translate('project:communityCard.step.members.some', { count: required, total: electorate })
+    // Counted by how many there are: that is the number English words differently.
+    : required > electorate ? translate('project:communityCard.step.members.short', { count: electorate, required })
+      : electorate === 1 ? translate('project:communityCard.step.members.only')
+        : electorate === 2 ? translate('project:communityCard.step.members.both')
+          : translate('project:communityCard.step.members.all', { count: electorate });
   return {
-    who: `${whoApproves(required, electorate, 'active member', 'active members').replace(/^./, (c) => c.toUpperCase())} ${says} yes`,
+    who,
     names: '',
-    wait: quiet ? 'Or after a wait, if one approves and nobody objects' : '',
+    wait: quiet ? translate('project:communityCard.step.members.wait') : '',
     solo: false,
   };
 }
@@ -1456,7 +1478,7 @@ export function ApprovalRules({ slug }: { slug: string }) {
       <ol className="dev-ws-rules" data-ws-community-rule="" aria-label={approvalLine(data.approval, data)}>
         <li className="dev-ws-rule-step">
           <span className="dev-ws-rule-tile" aria-hidden="true"><ShieldCheckIcon aria-hidden="true" /></span>
-          <span className="dev-ws-rule-text"><b>Its checks pass</b><span>on a preview of the change</span></span>
+          <span className="dev-ws-rule-text"><b>{t('project:communityCard.step.checks.title')}</b><span>{t('project:communityCard.step.checks.where')}</span></span>
         </li>
         <li className="dev-ws-rule-join" aria-hidden="true" />
         <li className="dev-ws-rule-step" data-ws-rule-people="">
@@ -1466,7 +1488,7 @@ export function ApprovalRules({ slug }: { slug: string }) {
                 {(name || '?').charAt(0).toUpperCase()}
               </span>
             ))}
-            {rest ? <span className="dev-ws-rule-face dev-ws-rule-more">{`+${rest}`}</span> : null}
+            {rest ? <span className="dev-ws-rule-face dev-ws-rule-more">{t('project:communityCard.step.moreFaces', { count: rest })}</span> : null}
             {!people.length && !rest ? (
               <span className="dev-ws-rule-tile"><UserGroupIcon aria-hidden="true" /></span>
             ) : null}
@@ -1480,7 +1502,7 @@ export function ApprovalRules({ slug }: { slug: string }) {
         <li className="dev-ws-rule-join" aria-hidden="true" />
         <li className="dev-ws-rule-step">
           <span className="dev-ws-rule-tile" data-tone="ok" aria-hidden="true"><CheckIcon aria-hidden="true" /></span>
-          <span className="dev-ws-rule-text"><b>It goes live</b><span>for everyone, right away</span></span>
+          <span className="dev-ws-rule-text"><b>{t('project:communityCard.step.live.title')}</b><span>{t('project:communityCard.step.live.who')}</span></span>
         </li>
       </ol>
     </section>

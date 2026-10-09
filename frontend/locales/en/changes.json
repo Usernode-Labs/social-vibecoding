@@ -1419,6 +1419,58 @@
     "text": "Let's take it",
     "description": "Button on a \"Needs you\" card for a request nobody is working on. It answers \"Want to give this one a try?\" and opens the request so the viewer can start work on it."
   },
+  "workshop.row.tag.checksPassed": {
+    "text": "Checks passed",
+    "description": "Small status tag on a row in the lists of a project's Workshop tab (Your work, Since your last visit and a week's page). On a change: all of its automatic checks have passed."
+  },
+  "workshop.row.tag.live": {
+    "text": "Live",
+    "description": "Small status tag on a row in the lists of a project's Workshop tab (Your work, Since your last visit and a week's page). On a change that was approved and is now part of the running project. An adjective."
+  },
+  "workshop.row.tag.waitingForVotes": {
+    "text": "Waiting for votes",
+    "description": "Small status tag on a row in the lists of a project's Workshop tab (Your work, Since your last visit and a week's page). On a request: a change made for it is up for a vote."
+  },
+  "workshop.row.tag.beingWorkedOn": {
+    "text": "Being worked on",
+    "description": "Small status tag on a row in the lists of a project's Workshop tab (Your work, Since your last visit and a week's page). On a request: somebody's change for it is being built right now."
+  },
+  "workshop.row.tag.started": {
+    "text": "Started",
+    "description": "Small status tag on a row in the lists of a project's Workshop tab (Your work, Since your last visit and a week's page). On a request: work on it was begun and is not running at the moment. A past participle describing the request."
+  },
+  "workshop.row.tag.pickedUp": {
+    "text": "Picked up",
+    "description": "Small status tag on a row in the lists of a project's Workshop tab (Your work, Since your last visit and a week's page). On a request: somebody has taken it on and has not started building yet."
+  },
+  "workshop.row.tag.autoSolving": {
+    "text": "Auto-solving",
+    "description": "Small status tag on a row in the lists of a project's Workshop tab (Your work, Since your last visit and a week's page). On a request: Homeroom's agent is working on it by itself, without a person driving."
+  },
+  "workshop.row.tag.needsAnswer": {
+    "text": "Needs an answer",
+    "description": "Small status tag on a row in the lists of a project's Workshop tab (Your work, Since your last visit and a week's page). On a request: the agent working on it has asked a question and waits for somebody to reply."
+  },
+  "workshop.row.tag.draftReady": {
+    "text": "Draft ready",
+    "description": "Small status tag on a row in the lists of a project's Workshop tab (Your work, Since your last visit and a week's page). On a request: the agent has finished a first draft of a change for it, ready to be looked at."
+  },
+  "workshop.row.tag.changeBeingWorkedOn": {
+    "text": "Being worked on",
+    "description": "Small status tag on a row in the lists of a project's Workshop tab (Your work, Since your last visit and a week's page). On a change that is still being made: its agent is working right now."
+  },
+  "workshop.row.tag.changeStarted": {
+    "text": "Started",
+    "description": "Small status tag on a row in the lists of a project's Workshop tab (Your work, Since your last visit and a week's page). On a change that is still being made: it was begun and nothing is running on it at the moment. A past participle describing the change."
+  },
+  "workshop.row.tag.previewReady": {
+    "text": "Preview ready",
+    "description": "Small status tag on a row in the lists of a project's Workshop tab (Your work, Since your last visit and a week's page). On a change that is still being made, beside an eye glyph: a preview build of it can be opened and tried."
+  },
+  "workshop.row.tag.previewReadyVote": {
+    "text": "Preview ready",
+    "description": "Small status tag on a row in the lists of a project's Workshop tab (Your work, Since your last visit and a week's page). On a change that is up for a vote, beside an eye glyph: a preview build of it can be opened and tried before voting."
+  },
   "countdown.daysHours": {
     "text": "~{{days}}d {{hours}}h",
     "description": "Short countdown on a proposal's card showing roughly how long until its voting window ends, for example \"~2d 5h\". {{days}} and {{hours}} are numbers; \"d\" and \"h\" abbreviate days and hours. Keep the leading \"~\" (about)."

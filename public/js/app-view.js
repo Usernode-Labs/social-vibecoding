@@ -9726,7 +9726,8 @@ const AppView = {
   // row is a neutral tile, the title, one line ("Change #4456 · yours · for
   // #4455"), then small tags for what is happening on it and, on a change up
   // for a vote, the vote. Resolved here, like every other card fact, so the
-  // component re-derives nothing: `noun`/`n`/`by` and the rest are joined
+  // component re-derives nothing: `noun` (which word names it: a key, the
+  // word itself is the row's message), `n`, `by` and the rest are joined
   // into the line by workshop/work-row.tsx, which also decides what to leave
   // out where (your own name, on Your work). Tag tones: `run` (in flight),
   // `ok` (live, passed), `warn` (worth knowing), `bad` (stops it), `plain`.
@@ -9747,34 +9748,39 @@ const AppView = {
       : cls === AppView.STATUS_TAG_CLS.soft ? 'warn' : 'bad');
     const checkTags = (p) => {
       for (const s of AppView.statusTagSpecs(p)) tags.push({ label: s.label, tone: tagTone(s.cls) });
-      if (p.check_state === 'passing') tags.push({ label: 'Checks passed', tone: 'ok' });
+      if (p.check_state === 'passing') tags.push({ label: PlatformI18n.t('changes:workshop.row.tag.checksPassed'), tone: 'ok' });
     };
     const preview = !!(card && ((card.rail && card.rail.preview && card.rail.preview.state === 'live')
       || (card.actionPreview && card.actionPreview.state === 'live')));
     const settled = (pill) => {
       if (!pill) return;
-      if (pill.key === 'deployed' || pill.key === 'merged') tags.push({ label: 'Live', tone: 'ok' });
+      if (pill.key === 'deployed' || pill.key === 'merged') tags.push({ label: PlatformI18n.t('changes:workshop.row.tag.live'), tone: 'ok' });
       else tags.push({ label: pill.label, tone: pill.tone === 'blocked' ? 'bad' : pill.spinner ? 'run' : 'plain' });
     };
     const base = {
-      kind: 'change', noun: 'Change', n: null, by: who || '', mine: !!mineBy, category: '',
+      kind: 'change', noun: 'change', n: null, by: who || '', mine: !!mineBy, category: '',
       replies: 0, linked: [], closed: [], stage: 'worked', at: 0, tags, vote: null,
     };
     if (kind === 'issue') {
       const ws = AppView._issueWorkState(it);
       const WORDS = {
-        in_review: 'Waiting for votes', working: 'Being worked on', paused: 'Started', claimed: 'Picked up',
-        auto_solving: 'Auto-solving', answer_needed: 'Needs an answer', draft_ready: 'Draft ready',
+        in_review: 'changes:workshop.row.tag.waitingForVotes',
+        working: 'changes:workshop.row.tag.beingWorkedOn',
+        paused: 'changes:workshop.row.tag.started',
+        claimed: 'changes:workshop.row.tag.pickedUp',
+        auto_solving: 'changes:workshop.row.tag.autoSolving',
+        answer_needed: 'changes:workshop.row.tag.needsAnswer',
+        draft_ready: 'changes:workshop.row.tag.draftReady',
       };
       if (ws) {
         tags.push({
-          label: WORDS[ws.key] || ws.label,
+          label: WORDS[ws.key] ? PlatformI18n.t(WORDS[ws.key]) : ws.label,
           tone: ws.spinner ? 'run' : ws.key === 'answer_needed' ? 'warn' : 'plain',
         });
       }
       const cat = it.category && it.category.top ? AppView._categoryMeta(it.category.top) : null;
       return {
-        ...base, kind: 'request', noun: 'Request', n: Number(it.number) || null,
+        ...base, kind: 'request', noun: 'request', n: Number(it.number) || null,
         category: cat ? cat.label : '', replies: Number(it.chatCount) || 0,
         stage: ws && ws.key !== 'claimed' && ws.key !== 'in_review' ? 'worked' : (ws && ws.key === 'in_review' ? 'vote' : 'request'),
         at: ts(it.createdAt || it.created_at),
@@ -9784,7 +9790,7 @@ const AppView = {
       const closeRow = it.row_type === 'close_issue';
       settled(AppView.statusPillState(it));
       return {
-        ...base, kind: 'live', noun: closeRow ? 'Vote' : 'Change', n: Number(it.pr_number || it.id) || null,
+        ...base, kind: 'live', noun: closeRow ? 'vote' : 'change', n: Number(it.pr_number || it.id) || null,
         closed: nums(it.linked_issues), replies: Number(it.chat_count) || 0, stage: 'live',
         at: ts(it.merged_at || it.closed_at || it.created_at),
       };
@@ -9792,7 +9798,7 @@ const AppView = {
     if (kind === 'gov') {
       const pill = AppView.statusPillState(it, { kind: 'gov' });
       return {
-        ...base, kind: 'vote', noun: 'Vote', n: Number(it.id) || null, replies: Number(it.chat_count) || 0,
+        ...base, kind: 'vote', noun: 'vote', n: Number(it.id) || null, replies: Number(it.chat_count) || 0,
         stage: 'vote', at: ts(it.created_at),
         vote: pill ? { yes: pill.yes, need: pill.majority, ask: it.status === 'open' && !it.my_vote && !AppView.readOnly } : null,
       };
@@ -9808,7 +9814,7 @@ const AppView = {
     }
     if (it.status === 'promoted') {
       checkTags(it);
-      if (preview) tags.push({ label: 'Preview ready', tone: 'plain', glyph: 'eye' });
+      if (preview) tags.push({ label: PlatformI18n.t('changes:workshop.row.tag.previewReadyVote'), tone: 'plain', glyph: 'eye' });
       const pill = AppView.statusPillState(it);
       return {
         ...out, stage: 'vote',
@@ -9816,9 +9822,12 @@ const AppView = {
       };
     }
     const busy = AppView._sessionBusy(it);
-    tags.push({ label: busy ? 'Being worked on' : 'Started', tone: busy ? 'run' : 'plain' });
+    tags.push({
+      label: busy ? PlatformI18n.t('changes:workshop.row.tag.changeBeingWorkedOn') : PlatformI18n.t('changes:workshop.row.tag.changeStarted'),
+      tone: busy ? 'run' : 'plain',
+    });
     if (it.pr_number) checkTags(it);
-    if (preview) tags.push({ label: 'Preview ready', tone: 'plain', glyph: 'eye' });
+    if (preview) tags.push({ label: PlatformI18n.t('changes:workshop.row.tag.previewReady'), tone: 'plain', glyph: 'eye' });
     return { ...out, stage: 'worked' };
   },
 

@@ -36,6 +36,8 @@ import {
   BallotIcon, ChatBubbleTailIcon, CheckIcon, ChevronRightIcon, EyeIcon, PencilSquareIcon,
 } from '@/components/ui/icons';
 
+import { useMessages } from '../../../lib/i18n/react';
+import { t as translate } from '../../../lib/i18n/runtime';
 import { VoteButton } from '../card/dev-card';
 import { openHref, voteSpecs } from '../card/fold';
 import type { DevCardModel, ListRow, RowBrief, RowTag } from '../card/model';
@@ -61,12 +63,24 @@ export function topicRef(card: DevCardModel): TopicRef | null {
   return change ? { kind: 'proposal', id: change } : null;
 }
 
-/** "#4455", "#4455 and #4452", "#1, #2 and #3". */
+/**
+ * "#4455", "#4455 and #4452", "#1, #2 and #3": request numbers as a list,
+ * the way the language on screen writes one. A number is a reference, not
+ * a word, so only what stands between them is a message.
+ */
 function numbers(list: number[]): string {
   const s = list.map((n) => `#${n}`);
   if (s.length < 2) return s.join('');
-  return `${s.slice(0, -1).join(', ')} and ${s[s.length - 1]}`;
+  const lead = s.slice(0, -1).reduce((first, second) => translate('project:workRow.numbers.pair', { first, second }));
+  return translate('project:workRow.numbers.last', { first: lead, last: s[s.length - 1] });
 }
+
+/** What a row is, alone and with its number: "Change", "Change #4456". */
+const NOUN: Record<RowBrief['noun'], { plain: string; numbered: string }> = {
+  change: { plain: 'project:workRow.name.change', numbered: 'project:workRow.name.changeNumbered' },
+  request: { plain: 'project:workRow.name.request', numbered: 'project:workRow.name.requestNumbered' },
+  vote: { plain: 'project:workRow.name.vote', numbered: 'project:workRow.name.voteNumbered' },
+};
 
 /**
  * The row's one line in words. `inMine` is Your work, where a request you
@@ -74,14 +88,19 @@ function numbers(list: number[]): string {
  * requests it is for, which is what tells it apart from them.
  */
 export function rowWords(b: RowBrief, inMine = false): string {
-  const parts: string[] = [b.n ? `${b.noun} #${b.n}` : b.noun];
-  const who = b.mine ? 'yours' : b.by;
+  const noun = NOUN[b.noun] || NOUN.change;
+  const parts: string[] = [b.n ? translate(noun.numbered, { number: b.n }) : translate(noun.plain)];
+  const who = b.mine ? translate('project:workRow.yours') : b.by;
   if (who && !(inMine && b.mine && b.kind === 'request')) parts.push(who);
   if (b.kind === 'request' && b.category) parts.push(b.category);
-  if (b.linked.length && b.kind !== 'live') parts.push(`for ${numbers(b.linked)}`);
-  if (b.closed.length && b.kind === 'live') parts.push(`closed ${numbers(b.closed)}`);
-  if (b.replies) parts.push(`${b.replies} ${b.replies === 1 ? 'reply' : 'replies'}`);
-  return parts.join(' · ');
+  if (b.linked.length && b.kind !== 'live') {
+    parts.push(translate('project:workRow.for', { count: b.linked.length, requests: numbers(b.linked) }));
+  }
+  if (b.closed.length && b.kind === 'live') {
+    parts.push(translate('project:workRow.closed', { count: b.closed.length, requests: numbers(b.closed) }));
+  }
+  if (b.replies) parts.push(translate('project:workRow.replies', { count: b.replies }));
+  return parts.reduce((first, second) => translate('project:workRow.facts.pair', { first, second }));
 }
 
 const TILE: Record<RowBrief['kind'], typeof CheckIcon> = {
@@ -107,14 +126,15 @@ function Votes({ vote, card }: { vote: NonNullable<RowBrief['vote']>; card: DevC
   const need = Math.max(1, vote.need);
   const done = vote.yes >= need;
   const specs = voteSpecs(card);
+  const t = useMessages('project');
   return (
     <span className="dev-ws-wvote" data-ws-vote="">
-      <span className="dev-ws-wvote-bar" data-done={done ? '1' : '0'} role="img" aria-label={`${vote.yes} of ${need} yes`}>
+      <span className="dev-ws-wvote-bar" data-done={done ? '1' : '0'} role="img" aria-label={t('project:workRow.votes.barLabel', { count: need, yes: vote.yes })}>
         {Array.from({ length: Math.min(need, 12) }, (_, i) => (
           <span key={i} className="dev-ws-wvote-cell" data-on={i < vote.yes ? '1' : undefined} />
         ))}
       </span>
-      <span className="dev-ws-wvote-n" data-ask={vote.ask && !done ? '1' : undefined}>{`${vote.yes} of ${need} yes`}</span>
+      <span className="dev-ws-wvote-n" data-ask={vote.ask && !done ? '1' : undefined}>{t('project:workRow.votes.count', { count: need, yes: vote.yes })}</span>
       {specs ? <span className="dev-ws-wvote-btn"><VoteButton yes={specs.yes} no={specs.no} /></span> : null}
     </span>
   );
@@ -129,6 +149,7 @@ export function WorkRow({ row, slug, inMine = false, on = false, onOpen }: {
   /** A plain click on the row: the Workshop opens it beside the list, or lets the link go. */
   onOpen?: (event: MouseEvent<HTMLAnchorElement>, ref: TopicRef) => void;
 }): ReactNode {
+  useMessages('project');
   const b = row.brief;
   if (!b) return null;
   const href = openHref(slug, row.card);

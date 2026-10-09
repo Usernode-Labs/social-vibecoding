@@ -366,7 +366,8 @@ export interface RowTag {
 export interface RowBrief {
   /** The neutral tile's glyph. */
   kind: 'request' | 'change' | 'live' | 'vote';
-  noun: string;
+  /** Which word names it ("Change #4456", "Request"): a key, the row reads the message. */
+  noun: 'change' | 'request' | 'vote';
   n: number | null;
   /** Who made it ('' when nobody is named). */
   by: string;

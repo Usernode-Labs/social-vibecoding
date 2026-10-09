@@ -529,155 +529,291 @@
   },
   "since.title.sinceVisit": {
     "text": "Since your last visit",
-    "description": "Heading of the week-by-week list of what changed, at the end of a project's Workshop tab, for a member who has been here before."
+    "description": "Heading of a section on a project's Workshop tab, for a member who has been here before: the list of what other people did since this person's last visit."
   },
   "since.title.recently": {
     "text": "Recently",
-    "description": "Heading of the week-by-week list of what changed, at the end of a project's Workshop tab, for a first visit or a person who has not joined."
+    "description": "Heading of the same section on a project's Workshop tab for a first visit or a person who has not joined, in place of \"Since your last visit\": what moved lately."
   },
   "since.clear": {
     "text": "Clear",
     "description": "Button beside the \"Since your last visit\" heading on a project's Workshop tab: marks everything in the list as seen, so nothing counts as new. A verb."
   },
+  "since.showAll_one": {
+    "text": "Show all {{count}}",
+    "description": "Button under the first few rows of the Since your last visit list on a project's Workshop tab: shows every row. {{count}} is how many rows there are in all."
+  },
+  "since.showAll_other": {
+    "text": "Show all {{count}}",
+    "description": "Button under the first few rows of the Since your last visit list on a project's Workshop tab: shows every row. {{count}} is how many rows there are in all."
+  },
+  "since.inWeeksBelow": {
+    "text": "What happened is in the weeks below.",
+    "description": "Line in the Recently section of a project's Workshop tab for a person with no earlier visit to compare with: it points to the Week by week list under it."
+  },
   "since.none": {
-    "text": "Nothing has changed since you were last here.",
-    "description": "Line under the \"Since your last visit\" heading on a project's Workshop tab when no item has moved since this person's last visit."
-  },
-  "since.words.nothing": {
-    "text": "nothing has changed",
-    "description": "The whole summary line under the \"Since your last visit\" heading on a project's Workshop tab when the list under it is empty. Shown alone, in lower case."
-  },
-  "since.words.landed_one": {
-    "text": "{{count}} change landed",
-    "description": "One fact in the summary line under the \"Since your last visit\" heading on a project's Workshop tab. The line lists up to three such facts (changes landed, new requests, new proposals), each complete by itself, joined with commas by the shared list message (core:list.pair); none is a clause of another. This one: how many changes were merged and went live. {{count}} is that number."
-  },
-  "since.words.landed_other": {
-    "text": "{{count}} changes landed",
-    "description": "One fact in the summary line under the \"Since your last visit\" heading on a project's Workshop tab. The line lists up to three such facts (changes landed, new requests, new proposals), each complete by itself, joined with commas by the shared list message (core:list.pair); none is a clause of another. This one: how many changes were merged and went live. {{count}} is that number."
+    "text": "Nothing new since you were last here.",
+    "description": "Line in the Since your last visit section of a project's Workshop tab when nobody else has done anything since this person's last visit."
   },
   "since.words.requests_one": {
     "text": "{{count}} new request",
-    "description": "One fact in the summary line under the \"Since your last visit\" heading on a project's Workshop tab. The line lists up to three such facts (changes landed, new requests, new proposals), each complete by itself, joined with commas by the shared list message (core:list.pair); none is a clause of another. This one: how many requests (filed issues) were opened. {{count}} is that number."
+    "description": "One fact in the sentence under the Since your last visit heading on a project's Workshop tab, which counts what other people did since this person was last here, for example \"1 new request, 2 changes live.\" It is one item of a comma-separated list, so it starts in lower case and has no full stop. {{count}} is how many requests were filed."
   },
   "since.words.requests_other": {
     "text": "{{count}} new requests",
-    "description": "One fact in the summary line under the \"Since your last visit\" heading on a project's Workshop tab. The line lists up to three such facts (changes landed, new requests, new proposals), each complete by itself, joined with commas by the shared list message (core:list.pair); none is a clause of another. This one: how many requests (filed issues) were opened. {{count}} is that number."
+    "description": "One fact in the sentence under the Since your last visit heading on a project's Workshop tab, which counts what other people did since this person was last here, for example \"1 new request, 2 changes live.\" It is one item of a comma-separated list, so it starts in lower case and has no full stop. {{count}} is how many requests were filed."
   },
-  "since.words.proposals_one": {
-    "text": "{{count}} new proposal",
-    "description": "One fact in the summary line under the \"Since your last visit\" heading on a project's Workshop tab. The line lists up to three such facts (changes landed, new requests, new proposals), each complete by itself, joined with commas by the shared list message (core:list.pair); none is a clause of another. This one: how many proposals (changes put up for a vote) were made. {{count}} is that number."
+  "since.words.yourVote_one": {
+    "text": "{{count}} change waiting for your vote",
+    "description": "One fact in the sentence under the Since your last visit heading on a project's Workshop tab, which counts what other people did since this person was last here, for example \"1 new request, 2 changes live.\" It is one item of a comma-separated list, so it starts in lower case and has no full stop. {{count}} is how many proposed changes are up for a vote that this person has not voted on yet."
   },
-  "since.words.proposals_other": {
-    "text": "{{count}} new proposals",
-    "description": "One fact in the summary line under the \"Since your last visit\" heading on a project's Workshop tab. The line lists up to three such facts (changes landed, new requests, new proposals), each complete by itself, joined with commas by the shared list message (core:list.pair); none is a clause of another. This one: how many proposals (changes put up for a vote) were made. {{count}} is that number."
+  "since.words.yourVote_other": {
+    "text": "{{count}} changes waiting for your vote",
+    "description": "One fact in the sentence under the Since your last visit heading on a project's Workshop tab, which counts what other people did since this person was last here, for example \"1 new request, 2 changes live.\" It is one item of a comma-separated list, so it starts in lower case and has no full stop. {{count}} is how many proposed changes are up for a vote that this person has not voted on yet."
   },
-  "since.words.moved_one": {
-    "text": "{{count}} thing moved",
-    "description": "The whole summary line under the \"Since your last visit\" heading on a project's Workshop tab, when items changed but none was merged, filed or proposed. {{count}} is how many items changed."
+  "since.words.upForVote_one": {
+    "text": "{{count}} change up for a vote",
+    "description": "One fact in the sentence under the Since your last visit heading on a project's Workshop tab, which counts what other people did since this person was last here, for example \"1 new request, 2 changes live.\" It is one item of a comma-separated list, so it starts in lower case and has no full stop. {{count}} is how many proposed changes are being voted on where this person's vote is not needed."
   },
-  "since.words.moved_other": {
-    "text": "{{count}} things moved",
-    "description": "The whole summary line under the \"Since your last visit\" heading on a project's Workshop tab, when items changed but none was merged, filed or proposed. {{count}} is how many items changed."
+  "since.words.upForVote_other": {
+    "text": "{{count}} changes up for a vote",
+    "description": "One fact in the sentence under the Since your last visit heading on a project's Workshop tab, which counts what other people did since this person was last here, for example \"1 new request, 2 changes live.\" It is one item of a comma-separated list, so it starts in lower case and has no full stop. {{count}} is how many proposed changes are being voted on where this person's vote is not needed."
+  },
+  "since.words.live_one": {
+    "text": "{{count}} change live",
+    "description": "One fact in the sentence under the Since your last visit heading on a project's Workshop tab, which counts what other people did since this person was last here, for example \"1 new request, 2 changes live.\" It is one item of a comma-separated list, so it starts in lower case and has no full stop. {{count}} is how many changes were approved and are now part of the running project."
+  },
+  "since.words.live_other": {
+    "text": "{{count}} changes live",
+    "description": "One fact in the sentence under the Since your last visit heading on a project's Workshop tab, which counts what other people did since this person was last here, for example \"1 new request, 2 changes live.\" It is one item of a comma-separated list, so it starts in lower case and has no full stop. {{count}} is how many changes were approved and are now part of the running project."
+  },
+  "since.words.toVoteOn_one": {
+    "text": "{{count}} proposal to vote on",
+    "description": "One fact in the sentence under the Since your last visit heading on a project's Workshop tab, which counts what other people did since this person was last here, for example \"1 new request, 2 changes live.\" It is one item of a comma-separated list, so it starts in lower case and has no full stop. {{count}} is how many proposals about the project's rules or settings (not changes to its code) are open for a vote."
+  },
+  "since.words.toVoteOn_other": {
+    "text": "{{count}} proposals to vote on",
+    "description": "One fact in the sentence under the Since your last visit heading on a project's Workshop tab, which counts what other people did since this person was last here, for example \"1 new request, 2 changes live.\" It is one item of a comma-separated list, so it starts in lower case and has no full stop. {{count}} is how many proposals about the project's rules or settings (not changes to its code) are open for a vote."
+  },
+  "since.words.beingMade_one": {
+    "text": "{{count}} change being made",
+    "description": "One fact in the sentence under the Since your last visit heading on a project's Workshop tab, which counts what other people did since this person was last here, for example \"1 new request, 2 changes live.\" It is one item of a comma-separated list, so it starts in lower case and has no full stop. {{count}} is how many changes somebody is still working on."
+  },
+  "since.words.beingMade_other": {
+    "text": "{{count}} changes being made",
+    "description": "One fact in the sentence under the Since your last visit heading on a project's Workshop tab, which counts what other people did since this person was last here, for example \"1 new request, 2 changes live.\" It is one item of a comma-separated list, so it starts in lower case and has no full stop. {{count}} is how many changes somebody is still working on."
+  },
+  "since.words.line": {
+    "text": "{{facts}}.",
+    "description": "Closes the sentence under the Since your last visit heading on a project's Workshop tab. {{facts}} is the finished list of counted facts, already joined, for example \"1 new request, 2 changes live\"; this entry adds only the full stop that ends the sentence."
   },
   "since.week.thisWeek": {
     "text": "This week",
-    "description": "Heading of the current week in the week-by-week list of what changed on a project's Workshop tab. Its dates follow it."
+    "description": "Name of the current week, as the bold name of its row in the Week by week list on a project's Workshop tab and as the title of that week's page. Its dates follow it."
   },
   "since.week.rangeLive": {
     "text": "{{start}} → now",
-    "description": "Dates beside the \"This week\" heading in the week-by-week list on a project's Workshop tab: from the week's Monday until now. {{start}} is a short date such as \"Sep 14\"."
+    "description": "The dates of the week still in progress, beside \"This week\" in the Week by week list of a project's Workshop tab and at the top of that week's page. {{start}} is the week's Monday, for example \"Sep 14\". Keep the arrow."
   },
   "since.week.range": {
     "text": "{{start}} – {{end}}",
-    "description": "Dates of a finished week in the week-by-week list on a project's Workshop tab. {{start}} is its Monday and {{end}} its Sunday, each a short date such as \"Aug 25\"."
-  },
-  "since.week.landed_one": {
-    "text": "{{count}} landed",
-    "description": "Small note at the end of a week's heading in the week-by-week list on a project's Workshop tab: how many changes were merged in that week."
-  },
-  "since.week.landed_other": {
-    "text": "{{count}} landed",
-    "description": "Small note at the end of a week's heading in the week-by-week list on a project's Workshop tab: how many changes were merged in that week."
-  },
-  "since.week.landedAtLeast_one": {
-    "text": "{{count}}+ landed",
-    "description": "Small note at the end of a week's heading in the week-by-week list on a project's Workshop tab: at least this many changes were merged in that week. Keep the plus sign after the number."
-  },
-  "since.week.landedAtLeast_other": {
-    "text": "{{count}}+ landed",
-    "description": "Small note at the end of a week's heading in the week-by-week list on a project's Workshop tab: at least this many changes were merged in that week. Keep the plus sign after the number."
-  },
-  "since.week.seenBefore": {
-    "text": "Seen before",
-    "description": "Divider inside a week of the week-by-week list on a project's Workshop tab: the rows under it are ones this person has already seen. The whole label; the number of such rows is drawn beside it in a separate element."
-  },
-  "since.reveal.moreNew_one": {
-    "text": "Show {{count}} more new",
-    "description": "Button under a week's rows in the week-by-week list on a project's Workshop tab: shows the next few rows, all of them new since the last visit."
-  },
-  "since.reveal.moreNew_other": {
-    "text": "Show {{count}} more new",
-    "description": "Button under a week's rows in the week-by-week list on a project's Workshop tab: shows the next few rows, all of them new since the last visit."
-  },
-  "since.reveal.seen_one": {
-    "text": "Show {{count}} you have seen",
-    "description": "Button under a week's heading in the week-by-week list on a project's Workshop tab, when the week has nothing new: shows the first few rows this person has already seen."
-  },
-  "since.reveal.seen_other": {
-    "text": "Show {{count}} you have seen",
-    "description": "Button under a week's heading in the week-by-week list on a project's Workshop tab, when the week has nothing new: shows the first few rows this person has already seen."
-  },
-  "since.reveal.more_one": {
-    "text": "Show {{count}} more",
-    "description": "Button under a week's rows in the week-by-week list on a project's Workshop tab: shows the next few rows of that week."
-  },
-  "since.reveal.more_other": {
-    "text": "Show {{count}} more",
-    "description": "Button under a week's rows in the week-by-week list on a project's Workshop tab: shows the next few rows of that week."
-  },
-  "since.reveal.moreNewLeft_one": {
-    "text": "Show {{count}} more new<0> · {{left}} left</0>",
-    "description": "Button under a week's rows in the week-by-week list on a project's Workshop tab: shows the next {{count}} rows, all new since the last visit. <0></0> is a quieter note saying how many rows of the week are hidden in all ({{left}})."
-  },
-  "since.reveal.moreNewLeft_other": {
-    "text": "Show {{count}} more new<0> · {{left}} left</0>",
-    "description": "Button under a week's rows in the week-by-week list on a project's Workshop tab: shows the next {{count}} rows, all new since the last visit. <0></0> is a quieter note saying how many rows of the week are hidden in all ({{left}})."
-  },
-  "since.reveal.seenLeft_one": {
-    "text": "Show {{count}} you have seen<0> · {{left}} left</0>",
-    "description": "Button under a week's heading in the week-by-week list on a project's Workshop tab, when the week has nothing new: shows the first {{count}} rows this person has already seen. <0></0> is a quieter note saying how many rows of the week are hidden in all ({{left}})."
-  },
-  "since.reveal.seenLeft_other": {
-    "text": "Show {{count}} you have seen<0> · {{left}} left</0>",
-    "description": "Button under a week's heading in the week-by-week list on a project's Workshop tab, when the week has nothing new: shows the first {{count}} rows this person has already seen. <0></0> is a quieter note saying how many rows of the week are hidden in all ({{left}})."
-  },
-  "since.reveal.moreLeft_one": {
-    "text": "Show {{count}} more<0> · {{left}} left</0>",
-    "description": "Button under a week's rows in the week-by-week list on a project's Workshop tab: shows the next {{count}} rows of that week. <0></0> is a quieter note saying how many rows of the week are hidden in all ({{left}})."
-  },
-  "since.reveal.moreLeft_other": {
-    "text": "Show {{count}} more<0> · {{left}} left</0>",
-    "description": "Button under a week's rows in the week-by-week list on a project's Workshop tab: shows the next {{count}} rows of that week. <0></0> is a quieter note saying how many rows of the week are hidden in all ({{left}})."
-  },
-  "since.earlierWeek": {
-    "text": "Show an earlier week",
-    "description": "Button at the end of the week-by-week list on a project's Workshop tab: adds the week before the oldest one shown."
-  },
-  "since.earlierWeekNew_one": {
-    "text": "Show an earlier week<0> · {{count}} new</0>",
-    "description": "Button at the end of the week-by-week list on a project's Workshop tab: adds the week before the oldest one shown. <0></0> is a note saying how many rows in the weeks not yet shown are new since the last visit."
-  },
-  "since.earlierWeekNew_other": {
-    "text": "Show an earlier week<0> · {{count}} new</0>",
-    "description": "Button at the end of the week-by-week list on a project's Workshop tab: adds the week before the oldest one shown. <0></0> is a note saying how many rows in the weeks not yet shown are new since the last visit."
+    "description": "The dates of a finished week, as a row's name or beside it in the Week by week list of a project's Workshop tab and at the top of that week's page. {{start}} is its Monday and {{end}} its Sunday, for example \"Aug 25 – Aug 31\"."
   },
   "since.projectStarted": {
     "text": "This project started the week of {{date}}.",
-    "description": "Note at the very end of the week-by-week list on a project's Workshop tab, once every week is shown. {{date}} is the Monday of the project's first week, a short date such as \"Aug 25\" or \"Aug 25, 2025\"."
+    "description": "Note under the Week by week list on a project's Workshop tab, once every week is shown. {{date}} is the Monday of the project's first week, a short date such as \"Aug 25\" or \"Aug 25, 2025\"."
   },
-  "since.farEnd": {
-    "text": "That is as far back as the list goes.",
-    "description": "Note at the very end of the week-by-week list on a project's Workshop tab, once every loaded week is shown and the project's start date is not known."
+  "weeks.title": {
+    "text": "Week by week",
+    "description": "Heading of the list of past weeks on a project's Workshop tab; each row is one week and opens that week's page."
+  },
+  "weeks.showEarlier": {
+    "text": "Show earlier weeks",
+    "description": "Button under the Week by week list on a project's Workshop tab: adds rows for weeks further back."
+  },
+  "weeks.lastWeek": {
+    "text": "Last week",
+    "description": "Name of the previous calendar week, as the bold name of its row in the Week by week list on a project's Workshop tab and as the title of that week's page."
+  },
+  "weeks.row.fresh_one": {
+    "text": "{{count}} new",
+    "description": "Small mark on a week's row in the Week by week list on a project's Workshop tab. {{count}} is how many things other people did in that week since this person's last visit."
+  },
+  "weeks.row.fresh_other": {
+    "text": "{{count}} new",
+    "description": "Small mark on a week's row in the Week by week list on a project's Workshop tab. {{count}} is how many things other people did in that week since this person's last visit."
+  },
+  "weeks.row.live_one": {
+    "text": "<0>{{count}}</0> live",
+    "description": "Figure at the end of a week's row in the Week by week list on a project's Workshop tab. {{count}} is how many changes went live (were approved and became part of the running project) in that week; the tag makes the number bold."
+  },
+  "weeks.row.live_other": {
+    "text": "<0>{{count}}</0> live",
+    "description": "Figure at the end of a week's row in the Week by week list on a project's Workshop tab. {{count}} is how many changes went live (were approved and became part of the running project) in that week; the tag makes the number bold."
+  },
+  "weeks.row.liveAtLeast_one": {
+    "text": "<0>{{count}}+</0> live",
+    "description": "Figure at the end of a week's row in the Week by week list on a project's Workshop tab, when the count is known to be incomplete. {{count}} is how many changes went live (were approved and became part of the running project) in that week; the tag makes the number bold. Keep the plus sign after it: it means \"at least\"."
+  },
+  "weeks.row.liveAtLeast_other": {
+    "text": "<0>{{count}}+</0> live",
+    "description": "Figure at the end of a week's row in the Week by week list on a project's Workshop tab, when the count is known to be incomplete. {{count}} is how many changes went live (were approved and became part of the running project) in that week; the tag makes the number bold. Keep the plus sign after it: it means \"at least\"."
+  },
+  "weekPage.back": {
+    "text": "Workshop",
+    "description": "Label of the back button at the top of a week's page inside a project's Workshop tab: it names where the button goes, the Workshop tab itself. A noun, the name of the tab."
+  },
+  "weekPage.meta.nowLive_one": {
+    "text": "{{start}} → now · <0>{{count}}</0> live",
+    "description": "Line under the title of this week's page in a project's Workshop tab: the week's dates so far, then how many changes went live. {{start}} is the week's Monday, for example \"Sep 14\". {{count}} is how many changes went live (were approved and became part of the running project) in that week; the tag makes the number bold. Keep the arrow."
+  },
+  "weekPage.meta.nowLive_other": {
+    "text": "{{start}} → now · <0>{{count}}</0> live",
+    "description": "Line under the title of this week's page in a project's Workshop tab: the week's dates so far, then how many changes went live. {{start}} is the week's Monday, for example \"Sep 14\". {{count}} is how many changes went live (were approved and became part of the running project) in that week; the tag makes the number bold. Keep the arrow."
+  },
+  "weekPage.meta.nowLiveAtLeast_one": {
+    "text": "{{start}} → now · <0>{{count}}+</0> live",
+    "description": "Line under the title of this week's page in a project's Workshop tab, when the count is known to be incomplete: the week's dates so far, then how many changes went live. {{start}} is the week's Monday, for example \"Sep 14\". {{count}} is how many changes went live (were approved and became part of the running project) in that week; the tag makes the number bold. Keep the arrow, and the plus sign after the number: it means \"at least\"."
+  },
+  "weekPage.meta.nowLiveAtLeast_other": {
+    "text": "{{start}} → now · <0>{{count}}+</0> live",
+    "description": "Line under the title of this week's page in a project's Workshop tab, when the count is known to be incomplete: the week's dates so far, then how many changes went live. {{start}} is the week's Monday, for example \"Sep 14\". {{count}} is how many changes went live (were approved and became part of the running project) in that week; the tag makes the number bold. Keep the arrow, and the plus sign after the number: it means \"at least\"."
+  },
+  "weekPage.meta.rangeLive_one": {
+    "text": "{{start}} – {{end}} · <0>{{count}}</0> live",
+    "description": "Line under the title of a finished week's page in a project's Workshop tab: the week's dates, then how many changes went live. {{start}} is its Monday and {{end}} its Sunday, for example \"Aug 25 – Aug 31\". {{count}} is how many changes went live (were approved and became part of the running project) in that week; the tag makes the number bold."
+  },
+  "weekPage.meta.rangeLive_other": {
+    "text": "{{start}} – {{end}} · <0>{{count}}</0> live",
+    "description": "Line under the title of a finished week's page in a project's Workshop tab: the week's dates, then how many changes went live. {{start}} is its Monday and {{end}} its Sunday, for example \"Aug 25 – Aug 31\". {{count}} is how many changes went live (were approved and became part of the running project) in that week; the tag makes the number bold."
+  },
+  "weekPage.meta.rangeLiveAtLeast_one": {
+    "text": "{{start}} – {{end}} · <0>{{count}}+</0> live",
+    "description": "Line under the title of a finished week's page in a project's Workshop tab, when the count is known to be incomplete: the week's dates, then how many changes went live. {{start}} is its Monday and {{end}} its Sunday. {{count}} is how many changes went live (were approved and became part of the running project) in that week; the tag makes the number bold. Keep the plus sign after the number: it means \"at least\"."
+  },
+  "weekPage.meta.rangeLiveAtLeast_other": {
+    "text": "{{start}} – {{end}} · <0>{{count}}+</0> live",
+    "description": "Line under the title of a finished week's page in a project's Workshop tab, when the count is known to be incomplete: the week's dates, then how many changes went live. {{start}} is its Monday and {{end}} its Sunday. {{count}} is how many changes went live (were approved and became part of the running project) in that week; the tag makes the number bold. Keep the plus sign after the number: it means \"at least\"."
+  },
+  "weekPage.none": {
+    "text": "Nothing in this week is on the board any more.",
+    "description": "Line on a week's page in a project's Workshop tab when none of that week's requests and changes can be listed any longer. The board is the project's full list of requests and changes."
+  },
+  "weekPage.group.new": {
+    "text": "New since your last visit",
+    "description": "Heading of the first group on a week's page in a project's Workshop tab: what other people did in that week after this person was last here."
+  },
+  "weekPage.group.votes": {
+    "text": "Waiting for votes",
+    "description": "Heading of a group on a week's page in a project's Workshop tab: proposed changes from that week that members are voting on."
+  },
+  "weekPage.group.live": {
+    "text": "Went live",
+    "description": "Heading of a group on a week's page in a project's Workshop tab: changes from that week that were approved and are now part of the running project."
+  },
+  "weekPage.group.requests": {
+    "text": "New requests",
+    "description": "Heading of a group on a week's page in a project's Workshop tab: requests (asks for something to be built or fixed) filed in that week."
+  },
+  "weekPage.group.worked": {
+    "text": "Being worked on",
+    "description": "Heading of a group on a week's page in a project's Workshop tab: requests and changes from that week that somebody is still working on."
+  },
+  "weekPage.group.showAll_one": {
+    "text": "Show all {{count}}",
+    "description": "Button under the first few rows of a group on a week's page in a project's Workshop tab: shows every row of that group. {{count}} is how many rows the group has."
+  },
+  "weekPage.group.showAll_other": {
+    "text": "Show all {{count}}",
+    "description": "Button under the first few rows of a group on a week's page in a project's Workshop tab: shows every row of that group. {{count}} is how many rows the group has."
+  },
+  "sidePanel.label": {
+    "text": "The item's page",
+    "description": "Accessible name of the panel that opens beside the lists on a project's Workshop tab on a wide window: it holds the page of the request, change or vote whose row was pressed."
+  },
+  "sidePanel.openAsPage": {
+    "text": "Open as a page",
+    "description": "Button at the top of the panel beside a project's Workshop lists: closes the panel and opens the same request, change or vote as a full page. Open is a verb."
+  },
+  "workRow.name.change": {
+    "text": "Change",
+    "description": "What a row is, at the start of the line under its title in the lists of a project's Workshop tab (Your work, Since your last visit and a week's page), for example \"Change #4456 · yours · for #4455\". A noun: one proposed change to the project that has no number yet."
+  },
+  "workRow.name.changeNumbered": {
+    "text": "Change #{{number}}",
+    "description": "What a row is, at the start of the line under its title in the lists of a project's Workshop tab (Your work, Since your last visit and a week's page), for example \"Change #4456 · yours · for #4455\". A noun: one proposed change to the project. {{number}} is its number."
+  },
+  "workRow.name.request": {
+    "text": "Request",
+    "description": "What a row is, at the start of the line under its title in the lists of a project's Workshop tab (Your work, Since your last visit and a week's page), for example \"Change #4456 · yours · for #4455\". A noun: something a person asked to have built or fixed, shown without a number."
+  },
+  "workRow.name.requestNumbered": {
+    "text": "Request #{{number}}",
+    "description": "What a row is, at the start of the line under its title in the lists of a project's Workshop tab (Your work, Since your last visit and a week's page), for example \"Change #4456 · yours · for #4455\". A noun: something a person asked to have built or fixed. {{number}} is its number."
+  },
+  "workRow.name.vote": {
+    "text": "Vote",
+    "description": "What a row is, at the start of the line under its title in the lists of a project's Workshop tab (Your work, Since your last visit and a week's page), for example \"Change #4456 · yours · for #4455\". A noun: a proposal about the project's rules or settings that members vote on, shown without a number."
+  },
+  "workRow.name.voteNumbered": {
+    "text": "Vote #{{number}}",
+    "description": "What a row is, at the start of the line under its title in the lists of a project's Workshop tab (Your work, Since your last visit and a week's page), for example \"Change #4456 · yours · for #4455\". A noun: a proposal about the project's rules or settings that members vote on. {{number}} is its number."
+  },
+  "workRow.yours": {
+    "text": "yours",
+    "description": "One fact in the line under a row's title in a project's Workshop lists (\"Change #4456 · yours · for #4455\"): this person made the item. It stands where another person's username would, in lower case."
+  },
+  "workRow.numbers.pair": {
+    "text": "{{first}}, {{second}}",
+    "description": "Joins request numbers into a list in the line under a row's title in a project's Workshop lists, before the last one is added. {{first}} is the numbers so far and {{second}} the next, each written like #4455. Only the separator is translated."
+  },
+  "workRow.numbers.last": {
+    "text": "{{first}} and {{last}}",
+    "description": "Ends a list of request numbers in the line under a row's title in a project's Workshop lists, for example \"#4455 and #4452\" or \"#1, #2 and #3\". {{first}} is every number but the last, already joined, and {{last}} the last one."
+  },
+  "workRow.for_one": {
+    "text": "for {{requests}}",
+    "description": "One fact in the line under a change's title in a project's Workshop lists: the request this change was made for. {{requests}} is that request's number, for example #4455. {{count}} is how many requests there are and only picks the plural form."
+  },
+  "workRow.for_other": {
+    "text": "for {{requests}}",
+    "description": "One fact in the line under a change's title in a project's Workshop lists: the requests this change was made for. {{requests}} is the list of their numbers, for example \"#4455 and #4452\". {{count}} is how many requests there are and only picks the plural form."
+  },
+  "workRow.closed_one": {
+    "text": "closed {{requests}}",
+    "description": "One fact in the line under a live change's title in a project's Workshop lists: the request this change settled when it went live. A past-tense verb; the change closed it. {{requests}} is that request's number, for example #4455. {{count}} is how many requests there are and only picks the plural form."
+  },
+  "workRow.closed_other": {
+    "text": "closed {{requests}}",
+    "description": "One fact in the line under a live change's title in a project's Workshop lists: the requests this change settled when it went live. A past-tense verb; the change closed them. {{requests}} is the list of their numbers, for example \"#4455 and #4452\". {{count}} is how many requests there are and only picks the plural form."
+  },
+  "workRow.replies_one": {
+    "text": "{{count}} reply",
+    "description": "One fact in the line under a row's title in a project's Workshop lists. {{count}} is how many messages the item's discussion has."
+  },
+  "workRow.replies_other": {
+    "text": "{{count}} replies",
+    "description": "One fact in the line under a row's title in a project's Workshop lists. {{count}} is how many messages the item's discussion has."
+  },
+  "workRow.facts.pair": {
+    "text": "{{first}} · {{second}}",
+    "description": "Joins the short independent facts of the line under a row's title in a project's Workshop lists, for example \"Request #4417 · Communities & projects · 3 replies\". {{first}} is everything said so far and {{second}} the next fact. Only the separator between them is translated."
+  },
+  "workRow.votes.barLabel_one": {
+    "text": "{{yes}} of {{count}} yes",
+    "description": "Accessible name of the small segmented bar on a row of a project's Workshop lists for a change or proposal that is up for a vote. {{yes}} is how many Yes votes it has and {{count}} how many it needs."
+  },
+  "workRow.votes.barLabel_other": {
+    "text": "{{yes}} of {{count}} yes",
+    "description": "Accessible name of the small segmented bar on a row of a project's Workshop lists for a change or proposal that is up for a vote. {{yes}} is how many Yes votes it has and {{count}} how many it needs."
+  },
+  "workRow.votes.count_one": {
+    "text": "{{yes}} of {{count}} yes",
+    "description": "Text beside the vote bar on a row of a project's Workshop lists for a change or proposal that is up for a vote. {{yes}} is how many Yes votes it has and {{count}} how many it needs."
+  },
+  "workRow.votes.count_other": {
+    "text": "{{yes}} of {{count}} yes",
+    "description": "Text beside the vote bar on a row of a project's Workshop lists for a change or proposal that is up for a vote. {{yes}} is how many Yes votes it has and {{count}} how many it needs."
   },
   "needsYou.fact.approvals_one": {
     "text": "{{yes}} of {{count}} approval",
@@ -1581,139 +1717,275 @@
   },
   "communityCard.rule.title": {
     "text": "Approval rules",
-    "description": "Heading of a card on a project's Workshop tab that states, in one sentence, how many approvals a change needs before it goes live."
+    "description": "Heading of a section on a project's Workshop tab that draws, as three steps, what has to happen before a change goes live: its checks pass, the people the rule names say yes, it goes live."
   },
   "communityCard.rule.you": {
     "text": "A change goes live when you approve it.",
-    "description": "The approval rule of a project that is just this person's own (audience \"Just you\"): they are its only approver. A change is one proposed change to the project."
+    "description": "The approval rule of a project that is just this person's own (audience \"Just you\"): they are its only approver. Read out by a screen reader as the name of the three-step drawing under Approval rules on the project's Workshop tab. A change is one proposed change to the project."
   },
   "communityCard.rule.fixed_one": {
     "text": "A change goes live once {{count}} member approves it.",
-    "description": "The approval rule of a project whose settings fix the number of approvals a change needs. {{count}} is that number of members."
+    "description": "The approval rule of a project whose settings fix the number of approvals a change needs, read out by a screen reader as the name of the three-step drawing under Approval rules on the project's Workshop tab. {{count}} is that number of members."
   },
   "communityCard.rule.fixed_other": {
     "text": "A change goes live once {{count}} members approve it.",
-    "description": "The approval rule of a project whose settings fix the number of approvals a change needs. {{count}} is that number of members."
+    "description": "The approval rule of a project whose settings fix the number of approvals a change needs, read out by a screen reader as the name of the three-step drawing under Approval rules on the project's Workshop tab. {{count}} is that number of members."
   },
   "communityCard.rule.approvers.some_one": {
     "text": "A change goes live when {{count}} of the {{total}} approvers says yes.",
-    "description": "The approval rule of a project where only invited approvers vote on changes, shown as the one line of the Approval rules card. Used when fewer than all of them are needed: {{count}} is how many must agree (it sets the plural form) and {{total}} how many there are."
+    "description": "The approval rule of a project where only invited approvers vote on changes, read out by a screen reader as the name of the three-step drawing under Approval rules on the project's Workshop tab. Used when fewer than all of them are needed: {{count}} is how many must agree (it sets the plural form) and {{total}} how many there are."
   },
   "communityCard.rule.approvers.some_other": {
     "text": "A change goes live when {{count}} of the {{total}} approvers say yes.",
-    "description": "The approval rule of a project where only invited approvers vote on changes, shown as the one line of the Approval rules card. Used when fewer than all of them are needed: {{count}} is how many must agree (it sets the plural form) and {{total}} how many there are."
+    "description": "The approval rule of a project where only invited approvers vote on changes, read out by a screen reader as the name of the three-step drawing under Approval rules on the project's Workshop tab. Used when fewer than all of them are needed: {{count}} is how many must agree (it sets the plural form) and {{total}} how many there are."
   },
   "communityCard.rule.approvers.someQuiet_one": {
     "text": "A change goes live when {{count}} of the {{total}} approvers says yes, or after a wait if one says yes and nobody says no.",
-    "description": "The approval rule of a project where only invited approvers vote on changes, shown as the one line of the Approval rules card. Used when fewer than all of them are needed: {{count}} is how many must agree (it sets the plural form) and {{total}} how many there are. The ending describes a second way in: after a waiting period, one yes is enough as long as no approver has voted no."
+    "description": "The approval rule of a project where only invited approvers vote on changes, read out by a screen reader as the name of the three-step drawing under Approval rules on the project's Workshop tab. Used when fewer than all of them are needed: {{count}} is how many must agree (it sets the plural form) and {{total}} how many there are. The ending describes a second way in: after a waiting period, one yes is enough as long as no approver has voted no."
   },
   "communityCard.rule.approvers.someQuiet_other": {
     "text": "A change goes live when {{count}} of the {{total}} approvers say yes, or after a wait if one says yes and nobody says no.",
-    "description": "The approval rule of a project where only invited approvers vote on changes, shown as the one line of the Approval rules card. Used when fewer than all of them are needed: {{count}} is how many must agree (it sets the plural form) and {{total}} how many there are. The ending describes a second way in: after a waiting period, one yes is enough as long as no approver has voted no."
+    "description": "The approval rule of a project where only invited approvers vote on changes, read out by a screen reader as the name of the three-step drawing under Approval rules on the project's Workshop tab. Used when fewer than all of them are needed: {{count}} is how many must agree (it sets the plural form) and {{total}} how many there are. The ending describes a second way in: after a waiting period, one yes is enough as long as no approver has voted no."
   },
   "communityCard.rule.approvers.short_one": {
     "text": "A change goes live when {{required}} approvers (there is {{count}}) say yes.",
-    "description": "The approval rule of a project where only invited approvers vote on changes, shown as the one line of the Approval rules card. Used when the project's settings ask for more of them than exist: {{required}} is how many are asked for, always two or more, and {{count}} how many there are (it sets the plural form)."
+    "description": "The approval rule of a project where only invited approvers vote on changes, read out by a screen reader as the name of the three-step drawing under Approval rules on the project's Workshop tab. Used when the project's settings ask for more of them than exist: {{required}} is how many are asked for, always two or more, and {{count}} how many there are (it sets the plural form)."
   },
   "communityCard.rule.approvers.short_other": {
     "text": "A change goes live when {{required}} approvers (there are {{count}}) say yes.",
-    "description": "The approval rule of a project where only invited approvers vote on changes, shown as the one line of the Approval rules card. Used when the project's settings ask for more of them than exist: {{required}} is how many are asked for, always two or more, and {{count}} how many there are (it sets the plural form)."
+    "description": "The approval rule of a project where only invited approvers vote on changes, read out by a screen reader as the name of the three-step drawing under Approval rules on the project's Workshop tab. Used when the project's settings ask for more of them than exist: {{required}} is how many are asked for, always two or more, and {{count}} how many there are (it sets the plural form)."
   },
   "communityCard.rule.approvers.shortQuiet_one": {
     "text": "A change goes live when {{required}} approvers (there is {{count}}) say yes, or after a wait if one says yes and nobody says no.",
-    "description": "The approval rule of a project where only invited approvers vote on changes, shown as the one line of the Approval rules card. Used when the project's settings ask for more of them than exist: {{required}} is how many are asked for, always two or more, and {{count}} how many there are (it sets the plural form). The ending describes a second way in: after a waiting period, one yes is enough as long as no approver has voted no."
+    "description": "The approval rule of a project where only invited approvers vote on changes, read out by a screen reader as the name of the three-step drawing under Approval rules on the project's Workshop tab. Used when the project's settings ask for more of them than exist: {{required}} is how many are asked for, always two or more, and {{count}} how many there are (it sets the plural form). The ending describes a second way in: after a waiting period, one yes is enough as long as no approver has voted no."
   },
   "communityCard.rule.approvers.shortQuiet_other": {
     "text": "A change goes live when {{required}} approvers (there are {{count}}) say yes, or after a wait if one says yes and nobody says no.",
-    "description": "The approval rule of a project where only invited approvers vote on changes, shown as the one line of the Approval rules card. Used when the project's settings ask for more of them than exist: {{required}} is how many are asked for, always two or more, and {{count}} how many there are (it sets the plural form). The ending describes a second way in: after a waiting period, one yes is enough as long as no approver has voted no."
+    "description": "The approval rule of a project where only invited approvers vote on changes, read out by a screen reader as the name of the three-step drawing under Approval rules on the project's Workshop tab. Used when the project's settings ask for more of them than exist: {{required}} is how many are asked for, always two or more, and {{count}} how many there are (it sets the plural form). The ending describes a second way in: after a waiting period, one yes is enough as long as no approver has voted no."
   },
   "communityCard.rule.approvers.only": {
     "text": "A change goes live when the only approver says yes.",
-    "description": "The approval rule of a project where only invited approvers vote on changes, shown as the one line of the Approval rules card. Used when there is exactly one of them."
+    "description": "The approval rule of a project where only invited approvers vote on changes, read out by a screen reader as the name of the three-step drawing under Approval rules on the project's Workshop tab. Used when there is exactly one of them."
   },
   "communityCard.rule.approvers.both": {
     "text": "A change goes live when both approvers say yes.",
-    "description": "The approval rule of a project where only invited approvers vote on changes, shown as the one line of the Approval rules card. Used when there are exactly two of them and both must agree."
+    "description": "The approval rule of a project where only invited approvers vote on changes, read out by a screen reader as the name of the three-step drawing under Approval rules on the project's Workshop tab. Used when there are exactly two of them and both must agree."
   },
   "communityCard.rule.approvers.bothQuiet": {
     "text": "A change goes live when both approvers say yes, or after a wait if one says yes and nobody says no.",
-    "description": "The approval rule of a project where only invited approvers vote on changes, shown as the one line of the Approval rules card. Used when there are exactly two of them and both must agree. The ending describes a second way in: after a waiting period, one yes is enough as long as no approver has voted no."
+    "description": "The approval rule of a project where only invited approvers vote on changes, read out by a screen reader as the name of the three-step drawing under Approval rules on the project's Workshop tab. Used when there are exactly two of them and both must agree. The ending describes a second way in: after a waiting period, one yes is enough as long as no approver has voted no."
   },
   "communityCard.rule.approvers.all_one": {
     "text": "A change goes live when all {{count}} approvers say yes.",
-    "description": "The approval rule of a project where only invited approvers vote on changes, shown as the one line of the Approval rules card. Used when every one of them must agree and there are three or more: {{count}} is how many there are."
+    "description": "The approval rule of a project where only invited approvers vote on changes, read out by a screen reader as the name of the three-step drawing under Approval rules on the project's Workshop tab. Used when every one of them must agree and there are three or more: {{count}} is how many there are."
   },
   "communityCard.rule.approvers.all_other": {
     "text": "A change goes live when all {{count}} approvers say yes.",
-    "description": "The approval rule of a project where only invited approvers vote on changes, shown as the one line of the Approval rules card. Used when every one of them must agree and there are three or more: {{count}} is how many there are."
+    "description": "The approval rule of a project where only invited approvers vote on changes, read out by a screen reader as the name of the three-step drawing under Approval rules on the project's Workshop tab. Used when every one of them must agree and there are three or more: {{count}} is how many there are."
   },
   "communityCard.rule.approvers.allQuiet_one": {
     "text": "A change goes live when all {{count}} approvers say yes, or after a wait if one says yes and nobody says no.",
-    "description": "The approval rule of a project where only invited approvers vote on changes, shown as the one line of the Approval rules card. Used when every one of them must agree and there are three or more: {{count}} is how many there are. The ending describes a second way in: after a waiting period, one yes is enough as long as no approver has voted no."
+    "description": "The approval rule of a project where only invited approvers vote on changes, read out by a screen reader as the name of the three-step drawing under Approval rules on the project's Workshop tab. Used when every one of them must agree and there are three or more: {{count}} is how many there are. The ending describes a second way in: after a waiting period, one yes is enough as long as no approver has voted no."
   },
   "communityCard.rule.approvers.allQuiet_other": {
     "text": "A change goes live when all {{count}} approvers say yes, or after a wait if one says yes and nobody says no.",
-    "description": "The approval rule of a project where only invited approvers vote on changes, shown as the one line of the Approval rules card. Used when every one of them must agree and there are three or more: {{count}} is how many there are. The ending describes a second way in: after a waiting period, one yes is enough as long as no approver has voted no."
+    "description": "The approval rule of a project where only invited approvers vote on changes, read out by a screen reader as the name of the three-step drawing under Approval rules on the project's Workshop tab. Used when every one of them must agree and there are three or more: {{count}} is how many there are. The ending describes a second way in: after a waiting period, one yes is enough as long as no approver has voted no."
   },
   "communityCard.rule.members.some_one": {
     "text": "A change goes live when {{count}} of the {{total}} active members approves it.",
-    "description": "The approval rule of a project where the community's active members vote on changes, shown as the one line of the Approval rules card. Used when fewer than all of them are needed: {{count}} is how many must agree (it sets the plural form) and {{total}} how many there are."
+    "description": "The approval rule of a project where the community's active members vote on changes, read out by a screen reader as the name of the three-step drawing under Approval rules on the project's Workshop tab. Used when fewer than all of them are needed: {{count}} is how many must agree (it sets the plural form) and {{total}} how many there are."
   },
   "communityCard.rule.members.some_other": {
     "text": "A change goes live when {{count}} of the {{total}} active members approve it.",
-    "description": "The approval rule of a project where the community's active members vote on changes, shown as the one line of the Approval rules card. Used when fewer than all of them are needed: {{count}} is how many must agree (it sets the plural form) and {{total}} how many there are."
+    "description": "The approval rule of a project where the community's active members vote on changes, read out by a screen reader as the name of the three-step drawing under Approval rules on the project's Workshop tab. Used when fewer than all of them are needed: {{count}} is how many must agree (it sets the plural form) and {{total}} how many there are."
   },
   "communityCard.rule.members.someQuiet_one": {
     "text": "A change goes live when {{count}} of the {{total}} active members approves it, or after a wait if one approves and nobody objects.",
-    "description": "The approval rule of a project where the community's active members vote on changes, shown as the one line of the Approval rules card. Used when fewer than all of them are needed: {{count}} is how many must agree (it sets the plural form) and {{total}} how many there are. The ending describes a second way in: after a waiting period, one approval is enough as long as no member has voted against."
+    "description": "The approval rule of a project where the community's active members vote on changes, read out by a screen reader as the name of the three-step drawing under Approval rules on the project's Workshop tab. Used when fewer than all of them are needed: {{count}} is how many must agree (it sets the plural form) and {{total}} how many there are. The ending describes a second way in: after a waiting period, one approval is enough as long as no member has voted against."
   },
   "communityCard.rule.members.someQuiet_other": {
     "text": "A change goes live when {{count}} of the {{total}} active members approve it, or after a wait if one approves and nobody objects.",
-    "description": "The approval rule of a project where the community's active members vote on changes, shown as the one line of the Approval rules card. Used when fewer than all of them are needed: {{count}} is how many must agree (it sets the plural form) and {{total}} how many there are. The ending describes a second way in: after a waiting period, one approval is enough as long as no member has voted against."
+    "description": "The approval rule of a project where the community's active members vote on changes, read out by a screen reader as the name of the three-step drawing under Approval rules on the project's Workshop tab. Used when fewer than all of them are needed: {{count}} is how many must agree (it sets the plural form) and {{total}} how many there are. The ending describes a second way in: after a waiting period, one approval is enough as long as no member has voted against."
   },
   "communityCard.rule.members.short_one": {
     "text": "A change goes live when {{required}} active members (there is {{count}}) approve it.",
-    "description": "The approval rule of a project where the community's active members vote on changes, shown as the one line of the Approval rules card. Used when the project's settings ask for more of them than exist: {{required}} is how many are asked for, always two or more, and {{count}} how many there are (it sets the plural form)."
+    "description": "The approval rule of a project where the community's active members vote on changes, read out by a screen reader as the name of the three-step drawing under Approval rules on the project's Workshop tab. Used when the project's settings ask for more of them than exist: {{required}} is how many are asked for, always two or more, and {{count}} how many there are (it sets the plural form)."
   },
   "communityCard.rule.members.short_other": {
     "text": "A change goes live when {{required}} active members (there are {{count}}) approve it.",
-    "description": "The approval rule of a project where the community's active members vote on changes, shown as the one line of the Approval rules card. Used when the project's settings ask for more of them than exist: {{required}} is how many are asked for, always two or more, and {{count}} how many there are (it sets the plural form)."
+    "description": "The approval rule of a project where the community's active members vote on changes, read out by a screen reader as the name of the three-step drawing under Approval rules on the project's Workshop tab. Used when the project's settings ask for more of them than exist: {{required}} is how many are asked for, always two or more, and {{count}} how many there are (it sets the plural form)."
   },
   "communityCard.rule.members.shortQuiet_one": {
     "text": "A change goes live when {{required}} active members (there is {{count}}) approve it, or after a wait if one approves and nobody objects.",
-    "description": "The approval rule of a project where the community's active members vote on changes, shown as the one line of the Approval rules card. Used when the project's settings ask for more of them than exist: {{required}} is how many are asked for, always two or more, and {{count}} how many there are (it sets the plural form). The ending describes a second way in: after a waiting period, one approval is enough as long as no member has voted against."
+    "description": "The approval rule of a project where the community's active members vote on changes, read out by a screen reader as the name of the three-step drawing under Approval rules on the project's Workshop tab. Used when the project's settings ask for more of them than exist: {{required}} is how many are asked for, always two or more, and {{count}} how many there are (it sets the plural form). The ending describes a second way in: after a waiting period, one approval is enough as long as no member has voted against."
   },
   "communityCard.rule.members.shortQuiet_other": {
     "text": "A change goes live when {{required}} active members (there are {{count}}) approve it, or after a wait if one approves and nobody objects.",
-    "description": "The approval rule of a project where the community's active members vote on changes, shown as the one line of the Approval rules card. Used when the project's settings ask for more of them than exist: {{required}} is how many are asked for, always two or more, and {{count}} how many there are (it sets the plural form). The ending describes a second way in: after a waiting period, one approval is enough as long as no member has voted against."
+    "description": "The approval rule of a project where the community's active members vote on changes, read out by a screen reader as the name of the three-step drawing under Approval rules on the project's Workshop tab. Used when the project's settings ask for more of them than exist: {{required}} is how many are asked for, always two or more, and {{count}} how many there are (it sets the plural form). The ending describes a second way in: after a waiting period, one approval is enough as long as no member has voted against."
   },
   "communityCard.rule.members.only": {
     "text": "A change goes live when the only active member approves it.",
-    "description": "The approval rule of a project where the community's active members vote on changes, shown as the one line of the Approval rules card. Used when there is exactly one of them."
+    "description": "The approval rule of a project where the community's active members vote on changes, read out by a screen reader as the name of the three-step drawing under Approval rules on the project's Workshop tab. Used when there is exactly one of them."
   },
   "communityCard.rule.members.both": {
     "text": "A change goes live when both active members approve it.",
-    "description": "The approval rule of a project where the community's active members vote on changes, shown as the one line of the Approval rules card. Used when there are exactly two of them and both must agree."
+    "description": "The approval rule of a project where the community's active members vote on changes, read out by a screen reader as the name of the three-step drawing under Approval rules on the project's Workshop tab. Used when there are exactly two of them and both must agree."
   },
   "communityCard.rule.members.bothQuiet": {
     "text": "A change goes live when both active members approve it, or after a wait if one approves and nobody objects.",
-    "description": "The approval rule of a project where the community's active members vote on changes, shown as the one line of the Approval rules card. Used when there are exactly two of them and both must agree. The ending describes a second way in: after a waiting period, one approval is enough as long as no member has voted against."
+    "description": "The approval rule of a project where the community's active members vote on changes, read out by a screen reader as the name of the three-step drawing under Approval rules on the project's Workshop tab. Used when there are exactly two of them and both must agree. The ending describes a second way in: after a waiting period, one approval is enough as long as no member has voted against."
   },
   "communityCard.rule.members.all_one": {
     "text": "A change goes live when all {{count}} active members approve it.",
-    "description": "The approval rule of a project where the community's active members vote on changes, shown as the one line of the Approval rules card. Used when every one of them must agree and there are three or more: {{count}} is how many there are."
+    "description": "The approval rule of a project where the community's active members vote on changes, read out by a screen reader as the name of the three-step drawing under Approval rules on the project's Workshop tab. Used when every one of them must agree and there are three or more: {{count}} is how many there are."
   },
   "communityCard.rule.members.all_other": {
     "text": "A change goes live when all {{count}} active members approve it.",
-    "description": "The approval rule of a project where the community's active members vote on changes, shown as the one line of the Approval rules card. Used when every one of them must agree and there are three or more: {{count}} is how many there are."
+    "description": "The approval rule of a project where the community's active members vote on changes, read out by a screen reader as the name of the three-step drawing under Approval rules on the project's Workshop tab. Used when every one of them must agree and there are three or more: {{count}} is how many there are."
   },
   "communityCard.rule.members.allQuiet_one": {
     "text": "A change goes live when all {{count}} active members approve it, or after a wait if one approves and nobody objects.",
-    "description": "The approval rule of a project where the community's active members vote on changes, shown as the one line of the Approval rules card. Used when every one of them must agree and there are three or more: {{count}} is how many there are. The ending describes a second way in: after a waiting period, one approval is enough as long as no member has voted against."
+    "description": "The approval rule of a project where the community's active members vote on changes, read out by a screen reader as the name of the three-step drawing under Approval rules on the project's Workshop tab. Used when every one of them must agree and there are three or more: {{count}} is how many there are. The ending describes a second way in: after a waiting period, one approval is enough as long as no member has voted against."
   },
   "communityCard.rule.members.allQuiet_other": {
     "text": "A change goes live when all {{count}} active members approve it, or after a wait if one approves and nobody objects.",
-    "description": "The approval rule of a project where the community's active members vote on changes, shown as the one line of the Approval rules card. Used when every one of them must agree and there are three or more: {{count}} is how many there are. The ending describes a second way in: after a waiting period, one approval is enough as long as no member has voted against."
+    "description": "The approval rule of a project where the community's active members vote on changes, read out by a screen reader as the name of the three-step drawing under Approval rules on the project's Workshop tab. Used when every one of them must agree and there are three or more: {{count}} is how many there are. The ending describes a second way in: after a waiting period, one approval is enough as long as no member has voted against."
+  },
+  "communityCard.step.checks.title": {
+    "text": "Its checks pass",
+    "description": "Bold line of the first step in the Approval rules drawing on a project's Workshop tab. \"Its\" is a proposed change; checks are the automatic tests run on it."
+  },
+  "communityCard.step.checks.where": {
+    "text": "on a preview of the change",
+    "description": "Second line of the first step in the Approval rules drawing on a project's Workshop tab, under \"Its checks pass\": the checks run on a preview build of the proposed change. It continues that line, so it starts in lower case."
+  },
+  "communityCard.step.live.title": {
+    "text": "It goes live",
+    "description": "Bold line of the last step in the Approval rules drawing on a project's Workshop tab. \"It\" is a proposed change, which becomes part of the running project."
+  },
+  "communityCard.step.live.who": {
+    "text": "for everyone, right away",
+    "description": "Second line of the last step in the Approval rules drawing on a project's Workshop tab, under \"It goes live\": everybody who uses the project gets the change immediately. It continues that line, so it starts in lower case."
+  },
+  "communityCard.step.you": {
+    "text": "You approve it",
+    "description": "Bold line of the middle step in the Approval rules drawing on a project's Workshop tab: who has to say yes before a change goes live. Used on a project that is just this person's own: they are its only approver. \"It\" is a proposed change."
+  },
+  "communityCard.step.justYou": {
+    "text": "It is just you",
+    "description": "Line under \"You approve it\" in the Approval rules drawing on a project's Workshop tab, on a project with no other members: it says why this person alone approves."
+  },
+  "communityCard.step.moreFaces_one": {
+    "text": "+{{count}}",
+    "description": "Last circle in the row of member initials on the middle step of the Approval rules drawing on a project's Workshop tab. {{count}} is how many more people can approve than the circles shown. Keep it as short as a plus sign and a number."
+  },
+  "communityCard.step.moreFaces_other": {
+    "text": "+{{count}}",
+    "description": "Last circle in the row of member initials on the middle step of the Approval rules drawing on a project's Workshop tab. {{count}} is how many more people can approve than the circles shown. Keep it as short as a plus sign and a number."
+  },
+  "communityCard.step.fixed_one": {
+    "text": "{{count}} member approves",
+    "description": "Bold line of the middle step in the Approval rules drawing on a project's Workshop tab: who has to say yes before a change goes live. Used on a project whose settings fix the number of approvals a change needs. {{count}} is that number of members."
+  },
+  "communityCard.step.fixed_other": {
+    "text": "{{count}} members approve",
+    "description": "Bold line of the middle step in the Approval rules drawing on a project's Workshop tab: who has to say yes before a change goes live. Used on a project whose settings fix the number of approvals a change needs. {{count}} is that number of members."
+  },
+  "communityCard.step.approvers.some_one": {
+    "text": "{{count}} of {{total}} approvers says yes",
+    "description": "Bold line of the middle step in the Approval rules drawing on a project's Workshop tab: who has to say yes before a change goes live. Used on a project where only invited approvers vote on changes and fewer than all of them are needed: {{count}} is how many must agree (it sets the plural form) and {{total}} how many there are."
+  },
+  "communityCard.step.approvers.some_other": {
+    "text": "{{count}} of {{total}} approvers say yes",
+    "description": "Bold line of the middle step in the Approval rules drawing on a project's Workshop tab: who has to say yes before a change goes live. Used on a project where only invited approvers vote on changes and fewer than all of them are needed: {{count}} is how many must agree (it sets the plural form) and {{total}} how many there are."
+  },
+  "communityCard.step.approvers.only": {
+    "text": "The approver says yes",
+    "description": "Bold line of the middle step in the Approval rules drawing on a project's Workshop tab: who has to say yes before a change goes live. Used on a project where only invited approvers vote on changes and there is exactly one of them."
+  },
+  "communityCard.step.approvers.both": {
+    "text": "Both approvers say yes",
+    "description": "Bold line of the middle step in the Approval rules drawing on a project's Workshop tab: who has to say yes before a change goes live. Used on a project where only invited approvers vote on changes, there are exactly two of them and both must agree."
+  },
+  "communityCard.step.approvers.all_one": {
+    "text": "All {{count}} approvers say yes",
+    "description": "Bold line of the middle step in the Approval rules drawing on a project's Workshop tab: who has to say yes before a change goes live. Used on a project where only invited approvers vote on changes and every one of them must agree: {{count}} is how many there are, three or more."
+  },
+  "communityCard.step.approvers.all_other": {
+    "text": "All {{count}} approvers say yes",
+    "description": "Bold line of the middle step in the Approval rules drawing on a project's Workshop tab: who has to say yes before a change goes live. Used on a project where only invited approvers vote on changes and every one of them must agree: {{count}} is how many there are, three or more."
+  },
+  "communityCard.step.approvers.short_one": {
+    "text": "{{required}} approvers say yes (there is {{count}})",
+    "description": "Bold line of the middle step in the Approval rules drawing on a project's Workshop tab: who has to say yes before a change goes live. Used on a project where only invited approvers vote on changes and the project's settings ask for more of them than exist: {{required}} is how many are asked for, always two or more, and {{count}} how many there are (it sets the plural form)."
+  },
+  "communityCard.step.approvers.short_other": {
+    "text": "{{required}} approvers say yes (there are {{count}})",
+    "description": "Bold line of the middle step in the Approval rules drawing on a project's Workshop tab: who has to say yes before a change goes live. Used on a project where only invited approvers vote on changes and the project's settings ask for more of them than exist: {{required}} is how many are asked for, always two or more, and {{count}} how many there are (it sets the plural form)."
+  },
+  "communityCard.step.approvers.wait": {
+    "text": "Or after a wait, if one says yes and nobody says no",
+    "description": "Smaller line under the middle step of the Approval rules drawing on a project's Workshop tab, on a project where invited approvers vote: a second way in. After a waiting period one yes is enough, as long as no approver has voted no. It follows the line saying who must say yes, and has no full stop."
+  },
+  "communityCard.step.members.some_one": {
+    "text": "{{count}} of the {{total}} active members says yes",
+    "description": "Bold line of the middle step in the Approval rules drawing on a project's Workshop tab: who has to say yes before a change goes live. Used on a project where the community's active members vote on changes and fewer than all of them are needed: {{count}} is how many must agree (it sets the plural form) and {{total}} how many there are."
+  },
+  "communityCard.step.members.some_other": {
+    "text": "{{count}} of the {{total}} active members say yes",
+    "description": "Bold line of the middle step in the Approval rules drawing on a project's Workshop tab: who has to say yes before a change goes live. Used on a project where the community's active members vote on changes and fewer than all of them are needed: {{count}} is how many must agree (it sets the plural form) and {{total}} how many there are."
+  },
+  "communityCard.step.members.short_one": {
+    "text": "{{required}} active members (there is {{count}}) say yes",
+    "description": "Bold line of the middle step in the Approval rules drawing on a project's Workshop tab: who has to say yes before a change goes live. Used on a project where the community's active members vote on changes and more of them are needed than exist: {{required}} is how many are needed, always two or more, and {{count}} how many there are (it sets the plural form)."
+  },
+  "communityCard.step.members.short_other": {
+    "text": "{{required}} active members (there are {{count}}) say yes",
+    "description": "Bold line of the middle step in the Approval rules drawing on a project's Workshop tab: who has to say yes before a change goes live. Used on a project where the community's active members vote on changes and more of them are needed than exist: {{required}} is how many are needed, always two or more, and {{count}} how many there are (it sets the plural form)."
+  },
+  "communityCard.step.members.only": {
+    "text": "The only active member says yes",
+    "description": "Bold line of the middle step in the Approval rules drawing on a project's Workshop tab: who has to say yes before a change goes live. Used on a project where the community's active members vote on changes and there is exactly one of them."
+  },
+  "communityCard.step.members.both": {
+    "text": "Both active members say yes",
+    "description": "Bold line of the middle step in the Approval rules drawing on a project's Workshop tab: who has to say yes before a change goes live. Used on a project where the community's active members vote on changes, there are exactly two of them and both must agree."
+  },
+  "communityCard.step.members.all_one": {
+    "text": "All {{count}} active members say yes",
+    "description": "Bold line of the middle step in the Approval rules drawing on a project's Workshop tab: who has to say yes before a change goes live. Used on a project where the community's active members vote on changes and every one of them must agree: {{count}} is how many there are, three or more."
+  },
+  "communityCard.step.members.all_other": {
+    "text": "All {{count}} active members say yes",
+    "description": "Bold line of the middle step in the Approval rules drawing on a project's Workshop tab: who has to say yes before a change goes live. Used on a project where the community's active members vote on changes and every one of them must agree: {{count}} is how many there are, three or more."
+  },
+  "communityCard.step.members.wait": {
+    "text": "Or after a wait, if one approves and nobody objects",
+    "description": "Smaller line under the middle step of the Approval rules drawing on a project's Workshop tab, on a project where active members vote: a second way in. After a waiting period one approval is enough, as long as no member has voted against. It follows the line saying who must say yes, and has no full stop."
+  },
+  "communityCard.step.names.eitherOfTwo": {
+    "text": "{{first}} or {{second}}",
+    "description": "Line under the middle step of the Approval rules drawing on a project's Workshop tab, naming the project's approvers by username. Used when there are two approvers and one of them saying yes is enough. {{first}} and {{second}} are their usernames."
+  },
+  "communityCard.step.names.bothOfTwo": {
+    "text": "{{first}} and {{second}}",
+    "description": "Line under the middle step of the Approval rules drawing on a project's Workshop tab, naming the project's approvers by username. Used when there are two approvers and more than one must say yes. {{first}} and {{second}} are their usernames."
+  },
+  "communityCard.step.names.anyOfThree": {
+    "text": "{{first}}, {{second}} or {{third}}",
+    "description": "Line under the middle step of the Approval rules drawing on a project's Workshop tab, naming the project's approvers by username. Used when there are three approvers and one of them saying yes is enough. {{first}}, {{second}} and {{third}} are their usernames."
+  },
+  "communityCard.step.names.allOfThree": {
+    "text": "{{first}}, {{second}} and {{third}}",
+    "description": "Line under the middle step of the Approval rules drawing on a project's Workshop tab, naming the project's approvers by username. Used when there are three approvers and more than one must say yes. {{first}}, {{second}} and {{third}} are their usernames."
+  },
+  "communityCard.step.names.more_one": {
+    "text": "{{first}}, {{second}}, {{third}} +{{count}}",
+    "description": "Line under the middle step of the Approval rules drawing on a project's Workshop tab, naming the project's approvers by username. Used when there are more than three: {{first}}, {{second}} and {{third}} are the first three usernames and {{count}} is how many more approvers there are. Keep the plus sign before it."
+  },
+  "communityCard.step.names.more_other": {
+    "text": "{{first}}, {{second}}, {{third}} +{{count}}",
+    "description": "Line under the middle step of the Approval rules drawing on a project's Workshop tab, naming the project's approvers by username. Used when there are more than three: {{first}}, {{second}} and {{third}} are the first three usernames and {{count}} is how many more approvers there are. Keep the plus sign before it."
   },
   "communityCard.audience.justYou": {
     "text": "Just you",
