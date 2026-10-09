@@ -4,12 +4,17 @@ Homeroom's own screens are in English. This directory and
 `frontend/src/lib/i18n/` are what let them be shown in other languages: the
 English source, the runtime that loads a language on demand, and the build
 that turns catalogs into packs. `config.json` lists the languages that ship.
-Today that is English only, and most of the shell's text has not been moved
-into a catalog yet. It moves one surface at a time.
+Today that is English only. The shell's text is in the catalogs here, one
+namespace per surface (`core` and `shell` for what every screen has, then
+`auth`, `home`, `messages`, `project`, `settings` and the rest), so another
+language loads only what the screen on show needs.
 
-User content, an embedded app's own interface and the admin console are
-outside all of this. Apps still receive the person's locale through the bridge
-(`usernode.getUserLocale()`), unchanged.
+Outside all of this: user content, an embedded app's own interface, the admin
+console, sentences the server composes (API errors, push and email text), and
+the few standalone pages that load no shell bundle (the CLI and connector
+consent pages among them). Dates and numbers are still formatted as they
+were; only the words around them are catalog entries. Apps still receive the
+person's locale through the bridge (`usernode.getUserLocale()`), unchanged.
 
 ## The English source
 
