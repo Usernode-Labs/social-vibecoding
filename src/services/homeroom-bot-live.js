@@ -70,6 +70,7 @@ const {
   getConventionSection,
 } = require('./prompts');
 const specHtml = require('./spec-html');
+const specVisibleChanges = require('./spec-visible-changes');
 const stageCosts = require('./stage-costs');
 const { IN_LOOP_BROWSER_GUIDANCE } = require('./in-loop-browser');
 const buildContract = require('./build-contract');
@@ -1536,6 +1537,25 @@ const BUILD_DESCRIPTION_LINES = Object.freeze([
   'block only if you changed nothing.',
 ]);
 
+// #4487: the bot's proposals get before/after shots on the exact builds, as
+// a person's do, and the group relies on them to check a small change that
+// went straight from request to proposal. The build declares what it built,
+// as the dev chat's hosted build does (routes/sessions.js
+// buildHostedCodingWorkflowGuidance); its declaration wins over the one
+// derived from the spec (spec-visible-changes.js). Not asked of a first
+// version, which gets no shots (buildAndPropose).
+const BUILD_VISIBLE_CHANGES_LINES = Object.freeze([
+  '',
+  'Once the change is built and committed, call the provided declare_visible_changes tool once, with the changes',
+  'as you actually built them: one to three, each a claim in plain words a voter would recognise, the real',
+  'startPath and steps that reach it, the persona who sees it, both screen sizes, and hints (data to create',
+  'first, text that shows the state was reached, the element to point at) when you learned them while building.',
+  'Changes that show on the same screen are one declared change. Homeroom\'s shots agent follows each one on the',
+  'exact before and after builds, and the group looks at those shots before it votes. If nothing a person sees',
+  'changes, declare impact "none" with a specific reason; never call a visible change "none" because it is hard',
+  'to reach. If the tool fails, say so in your summary; never claim the changes were recorded when they were not.',
+]);
+
 // A build of the platform's own repository runs its tests the way that
 // repository's AGENTS.md asks every agent to: the suites that pin what it
 // changed, never the whole suite, which the platform runs on every proposal
@@ -1796,6 +1816,7 @@ function buildPrompt({
     '',
     // #3737: the same design guidance the dev chat builds with (#2817).
     getDesignGuidance({ readsImages }),
+    ...(firstVersion ? [] : BUILD_VISIBLE_CHANGES_LINES),
     ...BUILD_DESCRIPTION_LINES,
   ].join('\n');
 }
@@ -2833,6 +2854,19 @@ async function buildAndPropose({
     pool, bot, sessionId: session.id, spec: spec.ok ? spec.specMd : null,
     buildText: result.lastResultText, model,
   });
+  // #4487: its visible changes, so the proposal gets before/after shots on
+  // the exact builds like a person's: the build's own declaration, else the
+  // one its spec lists. A first version has no "before" worth a shot (the
+  // base is the starter) and its screens are reviewed on the build already,
+  // so it declares nothing here and its requester is not kept waiting.
+  if (!firstVersion) {
+    const declared = await specVisibleChanges.recordForBotProposal({
+      pool, config, sessionId: session.id, specHtml: spec.ok ? spec.specHtml || null : null,
+    });
+    if (declared.reason === 'error') {
+      log.warn('homeroom-bot', 'Could not record the visible changes its spec lists', { sessionId: session.id, err: declared.error });
+    }
+  }
   const promoted = await promoteAsBot({
     config, bot, sessionId: session.id, router: deps.votesRouter || null, ceiling: proposalCeiling,
   });
@@ -2994,6 +3028,7 @@ module.exports = {
   specUserFacing,
   buildDescription,
   buildPrompt,
+  BUILD_VISIBLE_CHANGES_LINES,
   clockLines,
   BUILD_SOFT_BUDGET_MS,
   DRAG_TEST_LINES,

@@ -36,7 +36,7 @@ export function AgentFilesSection() {
     <div data-settings-section="agent-files" className="hidden">
       <div id="agent-files-section">
         <SectionHeading title={<>Agent instructions &amp; skills</>}>
-          Personal files the coding agent follows on every build or spec run you start, in any app. Markdown or plain text only, up to 10 of each kind, 48&nbsp;KB per file. Changes apply from your next run.
+          Personal files the coding agent follows on every build or plan run you start, in any app. Markdown or plain text only, up to 10 of each kind, 48&nbsp;KB per file. Changes apply from your next run.
         </SectionHeading>
         <div className="mb-4">
           <div className="flex items-center justify-between mb-1.5">

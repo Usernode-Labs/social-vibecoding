@@ -108,6 +108,28 @@ external agent (`visible_changes` on the CLI's `proposal_submit_build`). The sha
   signed-out visitors declared for a signed-in persona
   (`shots-identities.personaWarnings`). They are warnings, not refusals: a
   change to the sign-in page itself is a real guest change.
+- The same answer says what data the copies hold
+  (`shots-ready-states.declarationAdvice`). `availableStates` names each
+  ready-made state with its personas (the demo states below; none for a
+  child app), and `dataNote` says where anything else comes from:
+  `hints.setup` steps the shots agent takes through the UI on both copies,
+  or the staging seeds (`src/db/migrate.js` for Homeroom, the app's own
+  `IS_STAGING` seed for a child app). A seed the proposal itself adds reaches
+  only the after copy. A warning is added when a declared change's claim,
+  steps or checkpoint name a state that no ready-made state holds (a
+  member's first-session tour, an invited account, the waitlist, an empty
+  state or a new account; on a child app also a change waiting for
+  approval and the rest) and the change has no `hints.setup`. These come
+  from a short list of phrases (`NEEDS`), so ordinary words like "plan" or
+  "invite" alone never warn. The data-state gap was the largest group of
+  changes with no shots (7 of 24 in about 125 merged proposals). These are
+  warnings too: the declaration is recorded either way. `submit_work`'s
+  answer does not carry them.
+- On an app built on Homeroom, no persona is the app's creator or one of
+  its admins (see "Roles in an app built on Homeroom" below). The same
+  response warns about a change declared there for `read_only_admin` or
+  `full_admin`, and about one whose claim, path, focus or checkpoint names
+  a creator, owner or admin screen with no `hints.setup`.
 - `hints` are optional. They pass on what the author learned while building
   (data to create first, text that proves the state was reached, and the
   element to point at), so the shots agent can go straight there. They are
@@ -162,14 +184,27 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
      "Suggest this back";
    - for the member: their chat with the Homeroom bot, with an activity card
      whose build waits its turn (working) and a newer card on the same
-     request.
+     request;
+   - for every persona: request #900017 (the staging mock request nothing
+     else marks), which a change of the member's addresses and which waits
+     for approval: "Waiting for approval · you" to the member, by the
+     member's name to the admins, with no Build it now;
+   - for every persona: the Leaderboard's season standings, where three of
+     the staging seeds' players have a Discord handle and two recorded
+     activities each, so their rows' drill-downs list activities with when
+     each happened;
+   - for the member: in the same chat with the Homeroom bot, the answered
+     plan for a new project's first version, and under it the bot's thanks
+     with the project's card and its build line (Building it). The project
+     has no first-version record, so no Home tile turns a build line for it.
 
    Each state goes into both copies or neither. A state the base or head
    revision cannot hold is left out of the run, as is one that fails to
    write on either side; neither fails the run. Every row is an obviously
    fake `[shots fixture]` row in a reserved id block (990840 to 990895). The
    brief's `availableFixtures` tells the agent each state's persona, what it
-   shows and its path.
+   shows and its path. An author is told the same states by name when they
+   declare a change (see "Declaring a change").
 
    The demo states are written by the deployed platform's own code, not by
    either revision under test. So a proposal cannot use a demo state it adds
@@ -388,6 +423,43 @@ agent.
   phone's. The flag holds for that page and every in-app step after it; a
   later page load without it dismisses the strip again.
 
+## Roles in an app built on Homeroom
+
+Homeroom tells an app who is signed in, never their role in it. The identity
+token carries `{ id, username, usernode_pubkey, locale }` and nothing else
+(`platform-jwt.signAppIdentityToken`); there is no creator or admin claim,
+and no bridge call or app-platform route answers "is this the owner?". The
+member list (`GET /members`) puts the creator first, but it answers only a
+project's members and leaves out the platform's own `usernode-*` accounts.
+`dapp.json`'s `admins` roster and `apps.created_by` decide what someone may
+do on Homeroom (`app-admins.canManageApp`), and the app is not told either.
+The shots copies are signed in as fixture accounts (`usernode-capture`,
+`usernode-capture-admin`, and `usernode-shots-full-admin`, which exists only
+in the copies). To the app all three are ordinary signed-in people.
+
+So a screen an app keeps for particular accounts (its creator's username
+written into the code, an allowlist, "private to this account") refuses every
+browser on the copies. Three runs on one app's Creator Studio (QuestVerse's
+PRs 7 to 9) ended that way, each after the agent had tried all three browsers.
+Nothing is loosened for it, and no real person's identity is ever lent to a
+persona: minting a token for the app's real creator would put that person's
+account, and whatever the app shows only them, into the copies and the
+shots. Instead:
+
+- the brief describes each signed-in browser as the app sees it, and its
+  `appRoles` says that no browser holds a role in the app and that such a
+  refusal means skipping the change at once, with the default outcome,
+  without trying the other browsers (`shots-orchestrator.shotsBrief`);
+- declaring warns the author, as above;
+- `src/prompts/app-conventions.md` ("Who the before & after shots see")
+  tells app authors not to hard-code people into a screen the project
+  works on, and to gate it on something a signed-in person can reach
+  through the app's own UI, named in `hints.setup`.
+
+A role the app grants through its own UI (whoever creates a group manages
+it) is reachable as before, through `hints.setup`. Homeroom's own copies are
+unaffected: there the two administrator personas are its administrators.
+
 ## What people see
 
 The proposal's card shows one screen at a time in a frame that keeps its
@@ -445,6 +517,19 @@ paired clips still play.
 
 ## A change of the Homeroom bot's
 
+The bot's build declares its changes with `declare_visible_changes`, as a dev
+chat's build does (`homeroom-bot-live.buildPrompt`). When it did not, the bot
+records one derived from its HTML spec just before it proposes
+(`spec-visible-changes.recordForBotProposal`): each `<ol data-changes>` item
+becomes a change with the item's words as its claim, its `data-steps` as the
+steps (a first step that is an in-app path becomes `startPath`, else `/`),
+`member` unless every drawn screen names the same other persona, desktop and
+phone, and impact `ui`. The build's own declaration wins. A derivation the
+validator refuses records nothing, and a spec with no changes list is never
+read as impact `none`. A first version declares nothing: its base is the
+starter, so there is no meaningful before, and its screens are already
+reviewed on the build (`bot-review.js`).
+
 The bot offers a change of its own as ready to try only once its shots on
 that exact head have settled (`shots-state.holdsReady`, read by
 `homeroom-bot-dm.changeReadiness`), for at most 45 minutes after its checks
@@ -491,7 +576,8 @@ and its phone browser under `SHOTS_DIR/<persona>_phone`.
 | Shots agent prompt and dispatch | `src/services/shots-agent.js` |
 | Shots bridge (MCP server `shots`) | `worker/shots-mcp.js` |
 | Fixture identities and session copies; demo states for the personas | `src/services/shots-fixtures.js`, `src/services/shots-demo-states.js` |
-| Persona tokens and the guest's (`mintShotsAuthTokens`, `shotsGuestIdentity`) | `src/services/shots-identities.js` |
+| What a declaration is told about the copies' data (`availableStates`, `dataNote`, data warnings) | `src/services/shots-ready-states.js` |
+| Persona tokens and the guest's, and the warnings on declaring (`mintShotsAuthTokens`, `shotsGuestIdentity`, `personaWarnings`) | `src/services/shots-identities.js` |
 | Browser servers (`--output-dir`, `--save-video`, the phone browsers' `--device`) | `worker/write-shots-mcp-config.js` |
 | Every shots page's init script (install strip dismissed unless `shots-install-strip=show`) | `worker/shots-page-init.js` |
 | Egress proxy (origins, public-only egress, platform assets, controlled failures) | `worker/shots-origin-proxy.js` |

@@ -157,7 +157,7 @@ test('a spec_share with no metadata degrades to a system line', () => {
   assert.equal(view.systemText, 'admin shared a spec');
 });
 
-test('View full spec owns its in-flight state, and the module owns the fetch', () => {
+test('View full plan owns its in-flight state, and the module owns the fetch', () => {
   const tsx = read(TRANSCRIPT);
   const row = tsx.slice(tsx.indexOf('function SpecShareRow('), tsx.indexOf('function SpecSnippet('));
   // The button's disabled/label were written onto it by a click delegate on
@@ -183,7 +183,7 @@ test('View full spec owns its in-flight state, and the module owns the fetch', (
   assert.doesNotMatch(gc, /card\.dataset\.specTitle/);
 });
 
-// ── #3495: "View full spec" did nothing in a request's Discussion ─────────
+// ── #3495: "View full plan" did nothing in a request's Discussion ─────────
 //
 // The Homeroom bot posts its spec as this card into a request's thread and
 // into its proposal's, and a person's share can land there too. Both
@@ -240,7 +240,7 @@ function fakeEl() {
   };
 }
 
-test('View full spec opens the panel wherever the slot is, and binds its divider', async () => {
+test('View full plan opens the panel wherever the slot is, and binds its divider', async () => {
   // The topic frame never runs `GroupChat.mount`, which is where the general
   // chat binds the divider; opening the panel binds it instead.
   const panel = fakeEl();

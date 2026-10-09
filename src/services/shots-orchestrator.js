@@ -415,11 +415,39 @@ const INSTALL_STRIP = Object.freeze({
   note: 'Homeroom\'s "Add it to your home screen" strip is dismissed on every page these browsers open. For a change to the strip itself, add param to the start path\'s query (before any #) on both addresses, in the phone browser.',
 });
 
+// Who the signed-in browsers are to an app built on Homeroom. Its identity
+// token says who is signed in ({ id, username, usernode_pubkey, locale }),
+// never a role in the app: there is no creator or admin claim, and no
+// platform call answers "is this the owner?". The two administrator
+// personas are Homeroom's, which the app is never told, and none of the
+// browsers is any of the app's own people. So a screen the app keeps for
+// particular accounts refuses every browser on the copies. Three runs on
+// one app's Creator Studio (QuestVerse's PRs 7 to 9) tried all three
+// browsers before giving up; appRoles says so up front, so the agent skips
+// such a change at once. Fixed words only.
+const CHILD_APP_WHO = Object.freeze({
+  member: 'an ordinary signed-in person with no role in this app',
+  read_only_admin: 'a Homeroom administrator with read-only rights; this app is not told that, so it sees an ordinary signed-in person with no role in it',
+  full_admin: 'a Homeroom administrator that exists only in these two throwaway copies; this app is not told that, so it sees an ordinary signed-in person with no role in it',
+});
+const CHILD_APP_ROLES = Object.freeze({
+  heldByAnyBrowser: false,
+  note: 'No browser here is this app\'s creator, owner or one of its admins: Homeroom tells an app who is '
+    + 'signed in, never their role in it, and these copies sign in only fixture accounts, never the app\'s own '
+    + 'people. So a screen the app keeps for particular accounts (its creator, an allowlist of '
+    + 'usernames or ids, a page private to one account) refuses every browser here. When the after address '
+    + 'refuses a browser that way, call skip_change for that change at once, saying the app keeps that screen '
+    + 'for particular accounts, and do not try the other browsers. A role a signed-in person gets through the '
+    + 'app itself is different: when hints.setup says how to get it, do that first.',
+});
+
 // What the shots agent reads first: the declared changes, the two
 // addresses to shoot, which browser to use for whom, and background it may
 // use to find the screens. Everything from the proposal is marked untrusted.
+// `childApp` is an app built on Homeroom rather than Homeroom itself.
 function shotsBrief({
   run, session, revision, pair, deployment, intent, guestKind = null, homeTile = null, selfApp = false,
+  childApp = false,
 }) {
   const testingPaths = testingPathsForSession(session);
   const phones = new Set(planContract.phonePersonas(intent));
@@ -445,13 +473,15 @@ function shotsBrief({
       after: revision.headSha.slice(0, 12),
     },
     browsers: {
-      member: browser('member', 'an ordinary member'),
-      read_only_admin: browser('read_only_admin', 'an administrator with read-only rights'),
-      full_admin: browser('full_admin',
-        'a full administrator that exists only in these two throwaway copies'),
+      member: browser('member', childApp ? CHILD_APP_WHO.member : 'an ordinary member'),
+      read_only_admin: browser('read_only_admin',
+        childApp ? CHILD_APP_WHO.read_only_admin : 'an administrator with read-only rights'),
+      full_admin: browser('full_admin', childApp ? CHILD_APP_WHO.full_admin
+        : 'a full administrator that exists only in these two throwaway copies'),
       guest: browser('guest', GUEST_WHO[guestKind] || 'a visitor who is not signed in'),
     },
     screenBrowsers: screenBrowsers(intent),
+    ...(childApp ? { appRoles: { ...CHILD_APP_ROLES } } : {}),
     changedFiles: {
       items: revision.files.slice(0, 200),
       complete: revision.filesComplete && revision.files.length <= 200,
@@ -1172,6 +1202,7 @@ async function executeRun(config, options, injected = {}) {
       guestKind: guest.kind,
       homeTile: shotsHomeTile.briefEntry(homeTiles),
       selfApp: app.slug === config.selfAppSlug,
+      childApp: app.slug !== config.selfAppSlug,
     });
     const navigationHints = {
       intentPaths: intent.stories.map((story) => story.intent.startPath),

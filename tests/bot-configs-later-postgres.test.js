@@ -363,4 +363,68 @@ test('the later changes\' configurations against the full PostgreSQL schema', { 
     assert.equal(tr.status, 'cancelled');
     assert.equal(tr.error, 'the build they are compared with was not needed any more');
   });
+
+  await t.test('a build\'s stages come off its session\'s ledger, a restart\'s too; what no stage takes is named under the remainder', async () => {
+    const session = async (issue) => (await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, is_headless, linked_issues)
+       VALUES ($1, $2, $3, 'paused', FALSE, '{}') RETURNING id`, [app.id, botUser.id, `dev/homeroom_bot-${issue}`],
+    )).rows[0].id;
+    const turn = async (sessionId, { cost, component = null, model = GLM, logical = crypto.randomUUID(), attempt = 1 }) => {
+      await pool.query(
+        `INSERT INTO agent_turns (id, session_id, user_id, backend, status, requested_model, estimated_cost_usd, logical_turn_id,
+                                  attempt_number, metadata)
+         VALUES ($1, $2, $3, 'codex_openrouter', 'completed', $4, $5, $6, $7, $8::jsonb)`,
+        [crypto.randomUUID(), sessionId, botUser.id, model, cost, logical, attempt,
+          JSON.stringify(component ? { telemetry_component: component } : {})],
+      );
+      return logical;
+    };
+    const resultOf = async (runId) => (await pool.query(
+      "SELECT cost_usd::float8 AS cost, cost_parts FROM bot_config_results WHERE bot_run_id = $1 AND source = 'live'", [runId],
+    )).rows[0];
+    const stagesOf = (parts) => parts.stages.map((x) => [x.stage, x.model, x.usd]);
+
+    // A shadow build a restart finished names none of its turns: its spec
+    // and build were all `other` before (finishConfiguredShadow passes no
+    // stage costs). The ledger's components name them now.
+    const recovered = await runRow({ issue: 7, mode: 'shadow' });
+    const s1 = await session(7);
+    await turn(s1, { cost: 0.5, component: 'homeroom_bot_spec', model: OPUS });
+    await turn(s1, { cost: 0.3, component: 'homeroom_bot_build' });
+    await turn(s1, { cost: 0.1, component: 'homeroom_bot_build_nudge' });
+    await turn(s1, { cost: 0.05, component: 'homeroom_bot_triage' });
+    await turn(s1, { cost: 0.02 });
+    assert.equal(await configs.finishLive(pool, {
+      botRunId: recovered, version: laterCurrent,
+      built: { ok: false, sessionId: s1, costUsd: 0.97, error: 'the build produced no change to propose (finished after a restart)' },
+    }), true);
+    const r1 = await resultOf(recovered);
+    assert.ok(Math.abs(r1.cost - 1.0) < 1e-9, 'the ledger and the triage');
+    assert.deepEqual(stagesOf(r1.cost_parts), [['triage', GLM, 0.03], ['spec', OPUS, 0.5], ['build', GLM, 0.4]]);
+    assert.equal(r1.cost_parts.other.usd, 0.07);
+    assert.deepEqual(r1.cost_parts.other.of, [{ component: 'homeroom_bot_triage', usd: 0.05 }, { component: 'unnamed', usd: 0.02 }],
+      'what is left says what it is');
+
+    // A build that named its turns keeps them, at what the ledger holds for
+    // them (every attempt), and a kept plan's cost is named too.
+    const named = await runRow({ issue: 8 });
+    const s2 = await session(8);
+    const specId = await turn(s2, { cost: 0.6, model: OPUS });
+    const buildId = await turn(s2, { cost: 0.2 });
+    await turn(s2, { cost: 0.1, logical: buildId, attempt: 2 });
+    assert.equal(await configs.finishLive(pool, {
+      botRunId: named, version: laterCurrent, carriedUsd: 0.4,
+      built: {
+        ok: true, sessionId: s2, sha: 'd'.repeat(40), commits: 1, costUsd: 0.85,
+        stageCosts: { spec: { usd: 0.6, model: OPUS, turnIds: [specId] }, build: { usd: 0.25, model: GLM, turnIds: [buildId] } },
+      },
+    }), true);
+    const r2 = await resultOf(named);
+    assert.ok(Math.abs(r2.cost - (0.9 + 0.4 + 0.03)) < 1e-9);
+    assert.deepEqual(stagesOf(r2.cost_parts), [['triage', GLM, 0.03], ['spec', OPUS, 0.6], ['build', GLM, 0.3]]);
+    assert.deepEqual(r2.cost_parts.other, { usd: 0.4, of: [{ component: 'kept_plan', usd: 0.4 }] });
+
+    const cur = (await configs.listWithStats(pool, { scope: 'later' })).versions[0].stats.avgCostByStage;
+    assert.deepEqual(cur.otherOf.map((o) => o.component), ['kept_plan', 'homeroom_bot_triage', 'unnamed'], 'the averages name the remainder too');
+  });
 });

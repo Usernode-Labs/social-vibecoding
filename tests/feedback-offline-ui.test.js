@@ -137,7 +137,7 @@ test('a captured screenshot survives a failed upload', () => {
   const networkCatch = uploadCatch.slice(uploadCatch.indexOf('} catch {'));
   assert.doesNotMatch(networkCatch, /resetScreenshotState\(\)|removeScreenshot\(shot\)/, 'the blob must be kept for the outbox');
   assert.match(networkCatch, /Saved with your feedback. It'll upload when you're back online/);
-  assert.match(feedbackJs, /const shot = \{ blob, objectUrl: URL\.createObjectURL\(blob\), id: null, uploading: true \};/);
+  assert.match(feedbackJs, /const shot = \{ blob, objectUrl: URL\.createObjectURL\(blob\), id: null, uploading: true, pins \};/);
   // Cleared with the rest of the attachment state, and re-uploaded before an
   // online submit so the promise on screen stays true.
   assert.match(feedbackJs, /for \(const shot of screenshots\.slice\(\)\) discardScreenshot\(shot\);/);

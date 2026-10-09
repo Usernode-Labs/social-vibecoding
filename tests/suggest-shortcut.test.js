@@ -327,11 +327,13 @@ test('the Workshop claims its C, so the two never both open', () => {
   assert.match(ws, /if \(k === 'c' \|\| k === 'C'\) \{ e\.preventDefault\(\); toggleSheet\('comments'\); return; \}/);
 });
 
-test('the bundle installs the shortcut, which loads the comment on the first C', () => {
+test('the bundle installs the shortcut, which loads comment mode on the first C', () => {
   assert.match(read('frontend/src/main.tsx'), /^import '\.\/features\/improve\/suggest-shortcut';$/m);
   const src = read('frontend/src/features/improve/suggest-shortcut.ts');
-  assert.match(src, /import\('\.\.\/comment-pin\/comment-pin'\)\s*\.then\(\(m\) => m\.openCommentPin\(point\)\)\s*\.catch\(\(\) => openSuggest\(\)\)/,
-    'loaded on demand, and the dialog if it cannot load');
+  assert.match(src, /import\('\.\.\/comment-pin\/comment-pin'\)\s*\.then\(\(m\) => m\.toggleCommentMode\(\{ via: 'key' \}\)\)\s*\.catch\(\(\) => openSuggest\(\)\)/,
+    'loaded on demand, on and off, and the dialog if it cannot load');
+  assert.match(src, /^import type \{ OpenOptions \} from '\.\.\/comment-pin\/comment-pin';$/m,
+    'only its type: the mode is never in the shell\'s bundle');
   assert.match(src, /w\.Improve\.giveFeedback\(\)/);
   assert.match(src, /bridge\.suggestShortcut = \{/, 'published for settings.js, which cannot import');
 });
@@ -343,7 +345,8 @@ test('Settings, Experimental has the switch, unchecked as shipped, painted and s
   const html = renderToHtml(createElement(ExperimentalSection));
   assert.match(html,
     /<label[^>]*><input id="suggest-shortcut-enabled" type="checkbox" class="un-switch"\/><span[^>]*>Press C to comment on the page<\/span><\/label>/);
-  assert.match(html, /pressing C drops a pin where your pointer is/);
+  assert.match(html, /Suggest an improvement opens comment mode, and on a computer so does pressing C\./);
+  assert.match(html, /The form is one switch away\./);
   assert.match(html, /Saved on this device only\./);
   assert.ok(html.indexOf('id="suggest-shortcut-enabled"') < html.indexOf('id="settings-local-agents-section"'),
     'inside the Experimental block');
@@ -353,4 +356,59 @@ test('Settings, Experimental has the switch, unchecked as shipped, painted and s
   assert.match(render[0], /getElementById\('suggest-shortcut-enabled'\)/, 'every paint shows the stored value');
   assert.match(render[0], /shortcut\.checked = !!shortcutPref\?\.enabled\(\)/);
   assert.match(settings, /pref\?\.setEnabled\(e\.target\.checked\)/, 'saved on change');
+});
+
+// ── 6. Suggest an improvement opens comment mode (#4289 follow-up) ─────
+
+function modeStorage(entries = {}) {
+  const map = new Map(Object.entries(entries));
+  return {
+    getItem: (k) => (map.has(k) ? map.get(k) : null),
+    setItem: (k, v) => { map.set(k, String(v)); },
+    removeItem: (k) => { map.delete(k); },
+    map,
+  };
+}
+
+test('with the switch on, Suggest an improvement opens comment mode, on a phone too, but not in the side panel', () => {
+  const on = { [shortcut.SUGGEST_SHORTCUT_STORAGE_KEY]: '1' };
+  const page = { document: { documentElement: { classList: { contains: () => false } } } };
+  const panel = { document: { documentElement: { classList: { contains: (c) => c === 'in-side-panel' } } } };
+  assert.equal(shortcut.suggestOpensComment(page, modeStorage(on)), true);
+  assert.equal(shortcut.suggestOpensComment(page, modeStorage()), false, 'the form, with the switch off');
+  assert.equal(shortcut.suggestOpensComment(panel, modeStorage(on)), false, 'the side panel keeps the form');
+  assert.equal(shortcut.suggestOpensComment(null, modeStorage(on)), false, 'no window, no comment mode');
+  assert.equal(shortcut.formOffersComment(page, modeStorage(on)), true);
+  assert.equal(shortcut.formOffersComment(page, modeStorage()), false, 'the form offers nothing with the switch off');
+  assert.equal(shortcut.formOffersComment(panel, modeStorage(on)), false);
+  assert.equal(shortcut.SUGGEST_MODE_STORAGE_KEY, undefined, 'nothing remembers a last way: the switch decides');
+});
+
+test('a plain open of the form goes to comment mode where the switch says so, and nothing else does', () => {
+  const fc = read('frontend/src/features/dialogs/feedback-controller.js');
+  const open = fc.match(/App\.openFeedbackModal = \(opts = \{\}\) => \{[\s\S]*?\n  \};/)[0];
+  assert.match(open, /const plain = !opts\.firstFeedback && !opts\.description && !opts\.screenshotBlob && !opts\.screenshots\s*&& opts\.mode !== 'form';/);
+  assert.match(open, /if \(plain && shortcut\?\.opensComment\?\.\(\)\) \{\s*shortcut\.openComment\(\{ via: 'suggest' \}\);\s*return;/);
+  const src = read('frontend/src/features/improve/suggest-shortcut.ts');
+  assert.match(src, /opensComment: \(\) => suggestOpensComment\(\),/);
+  assert.match(src, /openComment: \(opts\?: OpenOptions\) => openCommentMode\(opts \|\| \{\}\),/);
+  // Comment mode's Form asks for the form by name, past the routing.
+  const mode = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  assert.match(mode, /openFeedbackModal\?\.\(\{ mode: 'form' \}\)/);
+  assert.doesNotMatch(mode, /setSuggestMode/);
+});
+
+test('the form offers comment mode with its draft, and only where the switch is on', () => {
+  const { FeedbackDialog } = loadTsx('frontend/src/features/dialogs/feedback.tsx', {
+    stubs: { './feedback-controller': { Feedback: {}, init() {} } },
+  });
+  const html = renderToHtml(createElement(FeedbackDialog));
+  assert.match(html, /<div class="hidden"><span class="[^"]*" role="radiogroup" aria-label="How to suggest it">/,
+    'shipped hidden: the switch is off until a person turns it on');
+  const src = read('frontend/src/features/dialogs/feedback.tsx');
+  assert.match(src, /setOffersComment\(formOffersComment\(\)\);/, 'read on every open');
+  assert.match(src, /const carry = Feedback\._takeDraft\(\);\s*dialog\.close\(\);/, 'taken, then closed, so no second copy is saved');
+  assert.match(src, /openCommentMode\(\{ via: 'switch', carry: any \? carry : null \}\);/);
+  const fc = read('frontend/src/features/dialogs/feedback-controller.js');
+  assert.match(fc, /Feedback\._takeDraft = \(\) => \{[\s\S]*?feedbackText\.value = '';[\s\S]*?resetScreenshotState\(\);[\s\S]*?return draft;/);
 });
