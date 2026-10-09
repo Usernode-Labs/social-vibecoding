@@ -1079,8 +1079,9 @@ test('since-your-last-visit sits with the other things addressed to you', () => 
   assert.ok(html.indexOf('data-ws-dashboard') < html.indexOf('data-ws-since=""'), 'its own section, under the board');
   assert.ok(!workshopHtml(AppView).includes('data-ws-since=""'), 'and not on the hub any more');
   assert.ok(html.indexOf('data-ws-mine=""') < html.indexOf('data-ws-since=""'));
-  // #4457: SHOWN, as rows, and only what OTHER people did: the heading, its
-  // count, Clear, a sentence, then the same rows Your work draws.
+  // #4457: SHOWN, as rows, what OTHER people did — plus what of YOURS went
+  // live (#4505) —: the heading, its count, Clear, a sentence, then the same
+  // rows Your work draws.
   assert.match(html, /<section class="dev-ws-strip" data-ws-since=""><div class="dev-ws-head" data-ws-since-head=""><span class="dev-ws-head-title">Since your last visit<\/span><span class="dev-ws-head-n">\d+<\/span><button type="button" class="dev-ws-since-clear un-touch-target" data-ws-since-clear="">Clear<\/button><\/div>/);
   assert.match(html, /<p class="dev-ws-since-sum" data-ws-since-sum="">[^<]+\.<\/p><div class="dev-ws-wlist">/);
   assert.ok((html.match(/data-ws-row="since:/g) || []).length >= 1, 'the rows are out');
@@ -1090,8 +1091,9 @@ test('since-your-last-visit sits with the other things addressed to you', () => 
   // Nothing new is ONE line. Clear moves the line to now.
   assert.match(WORKSHOP, /<p className="dev-ws-none" data-ws-since-none="">Nothing new since you were last here\.<\/p>/);
   assert.match(WORKSHOP, /callAppView\('_workshopClearSince', slug, v\.since\.through\)/);
-  // Your own work is not repeated in it.
-  assert.match(WORKSHOP, /\.filter\(\(r\): r is WorkCardRow => r\.t === 'card' && !!r\.brief && !r\.brief\.mine\)/);
+  // Your own work in flight is not repeated in it; what of yours went live
+  // is (#4505).
+  assert.match(WORKSHOP, /\.filter\(\(r\): r is WorkCardRow => r\.t === 'card' && !!r\.brief && \(!r\.brief\.mine \|\| r\.brief\.stage === 'live'\)\)/);
   // The reveals keep their own shape.
   assert.match(CSS, /\.dev-ws-reveal-start \{[^}]*justify-content: flex-start;/);
   assert.match(CSS, /\.dev-ws-reveal \{[^}]*justify-content: center;/);
@@ -1105,6 +1107,30 @@ test('#4457: the sentence over Since your last visit counts the rows under it', 
   assert.equal(sinceSentence([r('change', 'vote', false), r('change', 'vote', false), r('change', 'worked')]),
     '2 changes up for a vote, 1 change being made.');
   assert.equal(sinceSentence([]), '');
+});
+
+test('#4505: a change of yours that went live is drawn in Since your last visit', () => {
+  const store = {};
+  store['workshopSeen:demo-app'] = String(Date.now() - 3.5 * 86400000);
+  const AppView = makeAppView({ localStorage: store });
+  seed(AppView);
+  // The viewer's own merge, inside the since window. The one `seed` carries
+  // is alice's, so this isolates the `mine` half of the filter: in flight it
+  // stays in Your work alone, live it is news here too.
+  AppView._merged = [
+    ...AppView._merged,
+    { id: 79, pr_number: 42, pr_title: 'My landed thing', status: 'merged', username: 'me',
+      created_at: at(1), merged_at: at(1), last_message_at: at(1), row_type: 'pr' },
+  ];
+  AppView._mergedTotal = 2;
+  const html = workshopHtml(AppView, 'workshop');
+  // Drawn as a since row, counted in the head, and named "yours" like Your
+  // work names it — while the seeded one of alice's is there beside it.
+  const rows = html.match(/data-ws-row="since:merged:\d+"/g) || [];
+  assert.deepEqual(rows.sort(), ['data-ws-row="since:merged:78"', 'data-ws-row="since:merged:79"']);
+  // The sentence reads it as a change live, like anybody else's: both
+  // merges count, mine beside alice's.
+  assert.match(html, /data-ws-since-sum="">1 new request, 1 change waiting for your vote, 2 changes live\./);
 });
 
 test('the vote deck is its own tab; the unclaimed suggestion stays with the status', () => {
