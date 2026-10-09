@@ -65,11 +65,17 @@ export function orWords(items: string[]): string {
  */
 export type ApprovalLineForm = 'status' | 'sentence';
 const LINE_IDS = {
-  status: { needs: 'messages:approval.needs', needsMore: 'messages:approval.needsMore', waiting: 'messages:approval.waiting' },
+  status: {
+    needs: 'messages:approval.needs',
+    needsMore: 'messages:approval.needsMore',
+    waiting: 'messages:approval.waiting',
+    waitingYou: 'messages:approval.waitingYou',
+  },
   sentence: {
     needs: 'chat:group.botCard.approval.needs',
     needsMore: 'chat:group.botCard.approval.needsMore',
     waiting: 'chat:group.botCard.approval.waitingFrom',
+    waitingYou: 'chat:group.botCard.approval.waitingFromYou',
   },
 } as const;
 
@@ -80,13 +86,27 @@ export function approvalsWords(count: number, people: string, again = false, for
     : t(LINE_IDS[form].needs, { count, people });
 }
 
+/**
+ * Where a list of people stands in its sentence. The words in the list that
+ * are not account names (the reader, and "2 more" for people not named) are
+ * worded for ONE such place each, because a language with cases needs a
+ * different form after "approval from" than as the subject of "approve":
+ *   from     "Waiting for approval from …", "Needs 2 approvals from …"
+ *   subject  "It goes live when … approve too."
+ */
+type ListPlace = 'fromAll' | 'fromAny' | 'subjectAll';
+
+/** The unnamed rest of a list, in the form its place needs, and how the list is joined. */
+const LIST = {
+  fromAll: { rest: 'messages:approval.list.from.more', joiner: 'and' },
+  fromAny: { rest: 'messages:approval.list.from.others', joiner: 'or' },
+  subjectAll: { rest: 'messages:approval.list.subject.more', joiner: 'and' },
+} as const;
+
 /** Pure: whoever is named, then the rest as "2 others" (with "or") or "2 more" (with "and"). */
-function people(names: string[], more: number, joiner: 'and' | 'or'): string {
-  const rest = joiner === 'or'
-    ? t('messages:approval.list.others', { count: more })
-    : t('messages:approval.list.more', { count: more });
-  const all = [...names, ...(more ? [rest] : [])];
-  return joiner === 'or' ? orWords(all) : andWords(all);
+function people(names: string[], more: number, place: ListPlace): string {
+  const all = [...names, ...(more ? [t(LIST[place].rest, { count: more })] : [])];
+  return LIST[place].joiner === 'or' ? orWords(all) : andWords(all);
 }
 
 /**
@@ -99,15 +119,19 @@ function people(names: string[], more: number, joiner: 'and' | 'or'): string {
 export function waitingWords(need: ApprovalNeed, form: ApprovalLineForm = 'status'): string | null {
   const missing = countOf(need.missing);
   if (missing === 0) return null;
-  const named = [...(need.you ? [t('messages:approval.list.you')] : []), ...(need.names || []).map((name) => `@${name}`)];
+  const others = (need.names || []).map((name) => `@${name}`);
+  // The reader, as an item of a list that follows "from".
+  const named = [...(need.you ? [t('messages:approval.list.from.you')] : []), ...others];
   const more = Math.max(Math.floor(Number(need.more) || 0), 0);
   const listed = named.length + more;
   if (!listed) return null;
   if (missing !== null && missing < listed) {
     const needed = countOf(need.needed);
-    return approvalsWords(missing, people(named, more, 'or'), needed !== null && missing < needed, form);
+    return approvalsWords(missing, people(named, more, 'fromAny'), needed !== null && missing < needed, form);
   }
-  return t(LINE_IDS[form].waiting, { people: people(named, more, 'and') });
+  // Only the reader is left: a whole sentence of its own, with no list in it.
+  if (need.you && !others.length && !more) return t(LINE_IDS[form].waitingYou);
+  return t(LINE_IDS[form].waiting, { people: people(named, more, 'fromAll') });
 }
 
 /**
@@ -133,8 +157,10 @@ export function afterYesWords({ missing, names, more = 0 }: { missing: number; n
   if (named.length && listed === missing) {
     return missing === 1
       ? { who: 'person', values: { username: names[0] } }
-      : { who: 'people', values: { people: people(named, more, 'and') } };
+      // "… when {{people}} approve too": the list is the sentence's subject.
+      : { who: 'people', values: { people: people(named, more, 'subjectAll') } };
   }
-  if (named.length && listed > missing) return { who: 'approvals', values: { count: missing, people: people(named, more, 'or') } };
+  // "… after one more approval from {{people}}": the list follows "from".
+  if (named.length && listed > missing) return { who: 'approvals', values: { count: missing, people: people(named, more, 'fromAny') } };
   return { who: 'anyone', values: { count: missing } };
 }

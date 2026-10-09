@@ -173,3 +173,49 @@ test('the id check finds an id in a namespace nobody defined, and an unknown key
     ['3 typo:probe.label', '4 core:probe.missing', '5 core:probe.alsoMissing']);
   assert.deepEqual(unused, ['core:probe.unused']);
 });
+
+test('a list of approvers words the reader and the unnamed rest for the place the list stands in', async (t) => {
+  const FILE = 'frontend/src/features/messages/approval-words.ts';
+  // English, as it reads today, in both places.
+  {
+    // eslint-disable-next-line global-require
+    const { loadTsx } = require('./lib/render-tsx');
+    const words = loadTsx(FILE);
+    assert.equal(words.waitingWords({ you: true, names: ['ada'], more: 2 }), 'Waiting for approval from you, @ada and 2 more');
+    assert.equal(words.waitingWords({ you: true, names: [] }), 'Waiting for approval from you');
+    assert.equal(words.waitingWords({ you: true, names: [] }, 'sentence'), 'Waiting for approval from you.');
+    assert.equal(words.waitingWords({ you: true, names: ['ada', 'ben'], more: 1, missing: 2 }), 'Needs 2 approvals from you, @ada, @ben or 1 other');
+    assert.deepEqual(words.afterYesWords({ missing: 4, names: ['ada', 'cy'], more: 2 }),
+      { who: 'people', values: { people: '@ada, @cy and 2 more' } });
+    assert.equal(message('messages:bot.ready.approved.people.none', { people: '@ada, @cy and 2 more' }),
+      'You approved it. It goes live when @ada, @cy and 2 more approve too.');
+  }
+  // A language whose words change with their place in the sentence, and
+  // which has a plural form English lacks (`many`, for a million).
+  const { module: words, runtime } = await loadInSpanish(t, FILE, {
+    'messages:approval.waiting': 'Esperando la aprobación de {{people}}',
+    'messages:approval.waitingYou': 'Esperando tu aprobación',
+    'messages:approval.list.from.you': 'ti',
+    'messages:approval.list.from.more_one': '{{count}} persona más',
+    'messages:approval.list.from.more_many': '{{count}} de personas más',
+    'messages:approval.list.from.more_other': '{{count}} personas más',
+    'messages:approval.list.subject.more_one': 'otra persona ({{count}})',
+    'messages:approval.list.subject.more_many': 'otro millón de personas ({{count}})',
+    'messages:approval.list.subject.more_other': 'otras {{count}} personas',
+    'messages:approval.list.and': '{{first}} y {{last}}',
+    'messages:bot.ready.approved.people.none': 'Lo aprobaste. Se publica cuando {{people}} lo aprueben también.',
+  });
+  // After "de": the reader is "ti", the rest is "N personas más".
+  assert.equal(words.waitingWords({ you: true, names: ['ada'], more: 2 }),
+    'Esperando la aprobación de ti, @ada y 2 personas más');
+  assert.equal(words.waitingWords({ you: false, names: ['ada'], more: 1000000 }),
+    'Esperando la aprobación de @ada y 1000000 de personas más', 'the plural form of the language, not of English');
+  // The reader alone: a sentence of its own, where "ti" would be wrong.
+  assert.equal(words.waitingWords({ you: true, names: [] }), 'Esperando tu aprobación');
+  // As the subject of "approve": a different form of the same rest.
+  const after = words.afterYesWords({ missing: 4, names: ['ada', 'cy'], more: 2 });
+  assert.equal(after.values.people, '@ada, @cy y otras 2 personas');
+  assert.equal(runtime.t('messages:bot.ready.approved.people.none', after.values),
+    'Lo aprobaste. Se publica cuando @ada, @cy y otras 2 personas lo aprueben también.');
+  assert.equal(words.afterYesWords({ missing: 2, names: ['ada'], more: 1 }).values.people, '@ada y otra persona (1)');
+});

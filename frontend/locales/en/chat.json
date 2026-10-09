@@ -243,6 +243,10 @@
     "text": "Waiting for approval from {{people}}.",
     "description": "Sentence on Homeroom bot's private card under the person's own chat message, after 'Built: …', saying that every person listed still has to approve the built change. {{people}} is a list joined with \"and\", for example \"you, @ada and 2 more\"."
   },
+  "group.botCard.approval.waitingFromYou": {
+    "text": "Waiting for approval from you.",
+    "description": "Sentence on Homeroom bot's private card under the person's own chat message, after 'Built: …', saying that every person listed still has to approve the built change. Used when the reader's own approval is the only one the change is waiting for. A complete sentence."
+  },
   "group.botCard.approval.waiting": {
     "text": "Waiting for approval.",
     "description": "Sentence on Homeroom bot's private card under the person's own chat message, after 'Built: …': the change still needs approval and nobody in particular is named."

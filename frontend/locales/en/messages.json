@@ -353,35 +353,43 @@
   },
   "approval.list.comma": {
     "text": "{{first}}, {{second}}",
-    "description": "Joins people in a list of who has yet to approve a change, before the final \"and\" or \"or\". {{first}} is the list so far and {{second}} is the next person."
+    "description": "Joins people in a list of who has yet to approve a change, before the final \"and\" or \"or\". {{first}} is the list so far and {{second}} is the next person. The items are account names (@ada), and sometimes the reader or a count of unnamed people, which have entries of their own for each place a list can stand."
   },
   "approval.list.and": {
     "text": "{{first}} and {{last}}",
-    "description": "Ends a list of the people who all have yet to approve a change, as in \"you, @ada and @cy\". {{first}} is everyone before the last item and {{last}} is the last item."
+    "description": "Ends a list of the people who all have yet to approve a change, as in \"you, @ada and @cy\". {{first}} is everyone before the last item and {{last}} is the last item. The items are account names (@ada), and sometimes the reader or a count of unnamed people, which have entries of their own for each place a list can stand."
   },
   "approval.list.or": {
     "text": "{{first}} or {{last}}",
-    "description": "Ends a list of people any one of whom could give a missing approval, as in \"@ada, @ben or 2 others\". {{first}} is everyone before the last item and {{last}} is the last item."
+    "description": "Ends a list of people any one of whom could give a missing approval, as in \"@ada, @ben or 2 others\". {{first}} is everyone before the last item and {{last}} is the last item. The items are account names (@ada), and sometimes the reader or a count of unnamed people, which have entries of their own for each place a list can stand."
   },
-  "approval.list.you": {
+  "approval.list.from.you": {
     "text": "you",
-    "description": "An item in a list of the people whose approval a change is waiting for: the reader themselves. The list follows \"from\", as in \"Waiting for approval from you and @ada\"."
+    "description": "An item in a list of the people whose approval a change is waiting for: the reader themselves. The list follows \"from\" in a sentence such as \"Waiting for approval from you, @ada and 2 more\" or \"Needs 2 approvals from @ada, @ben or 2 others\"; use the form your language needs in that position. When the reader is the only one, a whole sentence is used instead (\"Waiting for approval from you\")."
   },
-  "approval.list.more_one": {
+  "approval.list.from.more_one": {
     "text": "{{count}} more",
-    "description": "Last item in a list of people who all have yet to approve a change: how many further people are not named, as in \"@ada, @cy and 2 more\". {{count}} is that number."
+    "description": "Last item in a list of people who all have yet to approve a change: how many further people are not named. {{count}} is that number. The list follows \"from\" in a sentence such as \"Waiting for approval from you, @ada and 2 more\" or \"Needs 2 approvals from @ada, @ben or 2 others\"; use the form your language needs in that position."
   },
-  "approval.list.more_other": {
+  "approval.list.from.more_other": {
     "text": "{{count}} more",
-    "description": "Last item in a list of people who all have yet to approve a change: how many further people are not named, as in \"@ada, @cy and 2 more\". {{count}} is that number."
+    "description": "Last item in a list of people who all have yet to approve a change: how many further people are not named. {{count}} is that number. The list follows \"from\" in a sentence such as \"Waiting for approval from you, @ada and 2 more\" or \"Needs 2 approvals from @ada, @ben or 2 others\"; use the form your language needs in that position."
   },
-  "approval.list.others_one": {
+  "approval.list.from.others_one": {
     "text": "{{count}} other",
-    "description": "Last item in a list of people any one of whom could approve a change: how many further people are not named, as in \"@ada, @ben or 1 other\". {{count}} is that number."
+    "description": "Last item in a list of people any one of whom could approve a change: how many further people are not named. {{count}} is that number. The list follows \"from\" in a sentence such as \"Waiting for approval from you, @ada and 2 more\" or \"Needs 2 approvals from @ada, @ben or 2 others\"; use the form your language needs in that position."
   },
-  "approval.list.others_other": {
+  "approval.list.from.others_other": {
     "text": "{{count}} others",
-    "description": "Last item in a list of people any one of whom could approve a change: how many further people are not named, as in \"@ada, @ben or 2 others\". {{count}} is that number."
+    "description": "Last item in a list of people any one of whom could approve a change: how many further people are not named. {{count}} is that number. The list follows \"from\" in a sentence such as \"Waiting for approval from you, @ada and 2 more\" or \"Needs 2 approvals from @ada, @ben or 2 others\"; use the form your language needs in that position."
+  },
+  "approval.list.subject.more_one": {
+    "text": "{{count}} more",
+    "description": "Last item in a list of people who all have yet to approve a change: how many further people are not named. {{count}} is that number. The list is the subject of a sentence such as \"It goes live when @ada, @cy and 2 more approve too.\"; use the form your language needs for a subject."
+  },
+  "approval.list.subject.more_other": {
+    "text": "{{count}} more",
+    "description": "Last item in a list of people who all have yet to approve a change: how many further people are not named. {{count}} is that number. The list is the subject of a sentence such as \"It goes live when @ada, @cy and 2 more approve too.\"; use the form your language needs for a subject."
   },
   "approval.needs_one": {
     "text": "Needs one approval from {{people}}",
@@ -401,7 +409,11 @@
   },
   "approval.waiting": {
     "text": "Waiting for approval from {{people}}",
-    "description": "Status line on a change that is ready, when every listed person must approve. {{people}} is a list joined with \"and\", such as \"you, @ada and 2 more\"."
+    "description": "Status line on a change that is ready, when every listed person must approve. {{people}} is a list joined with \"and\": account names such as @ada, possibly the reader (\"you\") first and a count of unnamed people last, each already in the form that follows \"from\". When the reader is the only one, \"Waiting for approval from you\" is used instead."
+  },
+  "approval.waitingYou": {
+    "text": "Waiting for approval from you",
+    "description": "Status line on a change that is ready, when the reader's own approval is the only one it is waiting for. No full stop."
   },
   "bot.job.firstVersion": {
     "text": "{{project}} first version",
