@@ -9638,8 +9638,11 @@ const AppView = {
     // line in words ("snait · 11h ago"): each kind's card dates itself from
     // the same field read here.
     const agoOf = (v) => (v ? AppView._workshopAgo(v) : '');
+    // Your own session's card names nobody (it is yours); the row's line in
+    // words names its maker as every other row does (#4486).
+    const by = who || (kind === 'my-session' && App.user && App.user.username ? App.user.username : '');
     const base = {
-      kind: 'change', noun: 'Change', n: null, by: who || '', mine: !!mineBy, category: '',
+      kind: 'change', noun: 'Change', n: null, by, mine: !!mineBy, category: '',
       replies: 0, linked: [], closed: [], stage: 'worked', at: 0, ago: agoOf(it.created_at), tags, vote: null,
     };
     if (kind === 'issue') {

@@ -4273,18 +4273,18 @@
     },
     {
       "name": "An unfolded card is a card on a sheet",
-      "path": "/?demo=1&ws=all&group=stage&cards=open&shot=feed-comments#app/usernode-2d5619/workshop",
+      "path": "/?demo=1&ws=all&group=stage&cards=open&shot=feed-comments&view=workshop#app/usernode-2d5619/dev",
       "expectSelector": "#dev-workshop .dev-feed-entry > .gc-vote-item"
     },
     {
       "name": "An unfolded issue card shows recent comments with relative ages (#1585)",
-      "path": "/?demo=1&ws=all&group=stage&cards=open&shot=feed-comments#app/usernode-2d5619/workshop",
+      "path": "/?demo=1&ws=all&group=stage&cards=open&shot=feed-comments&view=workshop#app/usernode-2d5619/dev",
       "expectSelector": "#dev-workshop .dev-feed-entry .dev-feed-comments[data-comments-for] .dev-feed-comment-time"
     },
     {
       "id": "dev-board.long-comment-show-more",
       "name": "A long comment in a card's recent comments shows four lines and a Show more (#2556)",
-      "path": "/?demo=1&ws=all&group=stage&cards=open&shot=feed-comments#app/usernode-2d5619/workshop",
+      "path": "/?demo=1&ws=all&group=stage&cards=open&shot=feed-comments&view=workshop#app/usernode-2d5619/dev",
       "expectSelector": "#dev-workshop .dev-feed-entry .dev-feed-comments[data-comments-for] .dev-feed-comment-clamp + button.dev-feed-comment-toggle:not([hidden])",
       "expectText": "Show more",
       "visual": true,
@@ -4478,7 +4478,7 @@
     },
     {
       "name": "#1808: an unfolded card's comment preview stamps each reply and hovers the full instant",
-      "path": "/?demo=1&ws=all&group=stage&cards=open&shot=feed-comments#app/usernode-2d5619/workshop",
+      "path": "/?demo=1&ws=all&group=stage&cards=open&shot=feed-comments&view=workshop#app/usernode-2d5619/dev",
       "expectSelector": "#dev-workshop .dev-feed-entry .dev-feed-comments[data-comments-for] .dev-feed-comment-time[title]"
     },
     {
