@@ -5620,6 +5620,20 @@ const AppView = {
     };
   },
 
+  // ── A merged change of Homeroom itself, waiting for its release ──────
+  // The platform releases at most once every RELEASE_MIN_GAP_MINUTES, so a
+  // change merged into its own app waits for the next release; the server says when
+  // (`release`, services/release-watch.js), and the words are the one
+  // sentence every surface uses (frontend/src/lib/release-eta.ts, published
+  // as window.ReleaseEta): "Merged; goes live in the next release (about 8
+  // minutes)". Null for any other change (a child app's, one still being
+  // merged), and the caller says what it always said.
+  _releaseSentence(item, now = Date.now()) {
+    const words = typeof window !== 'undefined' ? window.ReleaseEta : null;
+    if (!item || !item.release || !words || typeof words.releaseSentence !== 'function') return null;
+    return words.releaseSentence(item.release, now) || null;
+  },
+
   // ── A change that went live inside another one ─────────────────────
   // services/included-changes.js: an open change whose head was one of a
   // merged change's commits went live with it, and is marked merged with
@@ -5745,10 +5759,12 @@ const AppView = {
     // Every step done is merged, which is live only once production runs it
     // (live_at, null until then).
     const goingLive = merged && item.live_at === null;
+    // A merge of Homeroom itself: when the platform's next release carries it.
+    const release = goingLive ? AppView._releaseSentence(item) : null;
     return {
       headline: goingLive ? 'Going live'
         : req ? req.headline : (merged ? (included ? `Live, ${included}` : 'Live') : 'Where it stands'),
-      detail: req ? (req.detail || null) : null,
+      detail: release ? `${release}.` : req ? (req.detail || null) : null,
       done: req ? req.done : null,
       total: req ? req.total : null,
       rows: out,
@@ -6060,10 +6076,14 @@ const AppView = {
     // #4479: the plan it was built from, as the card a request's page hangs
     // under the request (request-head.tsx SpecCard), with the same Read.
     body.plan = AppView._changePlanCard(item, mine && underway);
+    // With no summary and no plan, the description itself is folded under
+    // the line on the page (change-head.tsx, "Description"): the page draws
+    // no Details section for "under Details" to point at.
+    body.descriptionFold = !body.summaryHtml && !body.plan && !!body.proposalBody;
     body.summaryHtml ||= body.plan
       ? '<p>No short summary has been added yet. The plan this change is built from is below.</p>'
       : body.proposalBody
-        ? '<p>No short summary has been added yet. The current description is under Details.</p>'
+        ? '<p>No short summary has been added yet. The current description is below.</p>'
         : '<p>No change summary has been added yet.</p>';
     const md = item.testing_md || '';
     body.testing = { html: md ? AppView._proposalBodyView({ pr_body: md })?.html : null, path: item.testing_path || null };
@@ -6330,10 +6350,16 @@ const AppView = {
         deployed: 'It’s live.', merged: 'It’s live.', deploying: 'It’s going live.', merging: 'It’s going live.',
         delivery_pending: 'It’s going live.', deployment_stalled: 'It’s stuck going live.', delivery_failed: 'It couldn’t go live.',
       };
-      if (!item.included_in_session_id && LIVE[pill.key]) note.push(LIVE[pill.key]);
+      // A merge of Homeroom itself says when its release comes instead:
+      // `release`, which the card words and keeps counting down
+      // (change-head.tsx, frontend/src/lib/release-eta.ts).
+      const release = !item.included_in_session_id && pill.key === 'deploying' && AppView._releaseSentence(item)
+        ? item.release : null;
+      if (!release && !item.included_in_session_id && LIVE[pill.key]) note.push(LIVE[pill.key]);
       return {
         name: 'Votes', figure: 'Voted in', tone: 'done', done: true,
         segments: [{ weight: 1, pct: 100, state: 'done' }], label: 'Votes: voted in', note,
+        ...(release ? { release } : {}),
       };
     }
     const waitsOnMember = AppView._awaitingOtherMember(item);
@@ -9689,7 +9715,10 @@ const AppView = {
     // say less there: the full sentence stays the chip's tooltip and its
     // screen-reader words, and the change's page says it in full.
     const ROW_SHORT = { 'Taking before & after shots': 'Taking shots', 'Preview ready': 'Preview' };
-    const shortly = (tag) => (ROW_SHORT[tag.label] ? { ...tag, short: ROW_SHORT[tag.label] } : tag);
+    // "Checks running… 459" (a run that does not know its total yet) carries
+    // a count, so it is matched on its words' start rather than by name.
+    const shortOf = (label) => ROW_SHORT[label] || (/^Checks running…/.test(label) ? 'Checks…' : '');
+    const shortly = (tag) => (shortOf(tag.label) ? { ...tag, short: shortOf(tag.label) } : tag);
     const checkTags = (p) => {
       for (const s of AppView.statusTagSpecs(p)) {
         // #4486: "Behind main" does not stop a change landing, so it stays
@@ -9706,8 +9735,13 @@ const AppView = {
       || (card.actionPreview && card.actionPreview.state === 'live')));
     const settled = (pill) => {
       if (!pill) return;
-      if (pill.key === 'deployed' || pill.key === 'merged') tags.push({ label: 'Live', tone: 'ok' });
-      else tags.push({ label: pill.label, tone: pill.tone === 'blocked' ? 'bad' : pill.spinner ? 'run' : 'plain' });
+      if (pill.key === 'deployed' || pill.key === 'merged') { tags.push({ label: 'Live', tone: 'ok' }); return; }
+      // A merge of Homeroom itself says when its release comes, on hover.
+      const release = pill.key === 'deploying' ? AppView._releaseSentence(it) : null;
+      tags.push({
+        label: pill.label, tone: pill.tone === 'blocked' ? 'bad' : pill.spinner ? 'run' : 'plain',
+        ...(release ? { title: `${release}.` } : {}),
+      });
     };
     // #4486: the card's own age, as its meta line says it, for the row's
     // line in words ("snait · 11h ago"): each kind's card dates itself from
@@ -13224,6 +13258,18 @@ const AppView = {
           tone: 'blocked',
           text: `${pending} merged ${noun} · deployment stalled`,
           title: 'Production is still running an earlier revision. The release watcher has detected a stalled deployment.',
+        };
+      }
+      // When the platform's next release carries them (_releaseSentence):
+      // "2 merged changes go live in the next release (about 8 minutes)".
+      const words = typeof window !== 'undefined' ? window.ReleaseEta : null;
+      const line = d.release && words && typeof words.releaseCountLine === 'function'
+        ? words.releaseCountLine(d.release, pending) : null;
+      if (line) {
+        return {
+          tone: 'progress',
+          text: line,
+          title: 'Merged changes go live together, in the platform’s next release. Production is still running an earlier revision.',
         };
       }
       return {
@@ -16966,7 +17012,7 @@ const AppView = {
       // Under this many, folding costs a click and saves nothing.
       foldPasses: passCount > AppView.PASS_FOLD_AT,
       advisoryNote: (!failing && advisoryRows.length)
-        ? 'Advisory checks have never been observed passing on this app, so they report without blocking. Fix one and its first pass makes it a permanent guard rail.'
+        ? 'Advisory checks have not yet passed on a change that merged, so they report without blocking. Fix one, and once the fix merges it guards every change after it.'
         : null,
       checkedNote: pr.checks_checked_at ? `Last checked ${relTime(pr.checks_checked_at)}.` : null,
       // #1442 — WHICH main the verdict is a statement about. `stale` above
@@ -19199,8 +19245,13 @@ const AppView = {
       extra.push({ t: 'note', key: 'work', text: workState.note, workState: workState.key });
     }
     // B8: under the bot's button on the request's page, how long it takes.
+    // #4530: or, while the bot is waiting on an answer there, what for.
     if (noNav && !closed && !issue.bot && AppView._botDoor() && !AppView.readOnly) {
-      extra.push({ t: 'note', key: 'bot-door', text: AppView._botDoorHint(AppView._botDoor()) });
+      const waiting = AppView._botWaiting(issue);
+      extra.push({
+        t: 'note', key: 'bot-door',
+        text: waiting ? AppView._botWaitingHint(waiting) : AppView._botDoorHint(AppView._botDoor()),
+      });
     }
     // Topic-view-only admin escape hatch: the live claimer list with a
     // per-claim clear control, so a stuck claim can be removed without SQL.
@@ -19391,6 +19442,18 @@ const AppView = {
     // building it yourself is the first row of its ≡ (_issueMenuItems).
     const door = AppView._botDoor();
     if (door) {
+      // #4530: not while it is waiting on an answer here. Asking read the
+      // request again and posted the same question again (the server now
+      // refuses it, 409 awaiting_reply); answering is what moves it on.
+      const waiting = AppView._botWaiting(issue);
+      if (waiting) {
+        return {
+          key: 'primary', cls: 'gc-vote-btn',
+          label: waiting.kind === 'question' ? 'Answer Homeroom bot\'s question' : 'Reply to Homeroom bot',
+          title: AppView._botWaitingHint(waiting),
+          act: { fn: 'answerBotOnRequest', args: [n, Number(waiting.messageId) || 0, noNav ? 1 : 0] },
+        };
+      }
       return {
         key: 'primary', cls: 'gc-vote-btn', label: 'Ask Homeroom bot to build this',
         title: AppView._botDoorHint(door),
@@ -19478,6 +19541,52 @@ const AppView = {
   },
 
   /**
+   * #4530: the bot's note on this request that nobody has answered yet
+   * (`issue.botAwaits`, routes/issues.js: { kind, messageId }), or null.
+   */
+  _botWaiting(issue) {
+    const w = issue && issue.botAwaits;
+    return w && typeof w === 'object' && ['question', 'person', 'empty'].includes(w.kind) ? w : null;
+  },
+
+  /** #4530: the line under "Answer Homeroom bot's question": what it waits for. */
+  _botWaitingHint(waiting) {
+    if (waiting.kind === 'question') return 'Homeroom bot asked a question here. Answer it, and it reads the request again.';
+    if (waiting.kind === 'person') return 'Homeroom bot said a person needs to decide this one. Reply to it once that is settled, and it reads the request again.';
+    return 'Homeroom bot found nothing to build here yet. Reply to it with more to go on, and it reads the request again.';
+  },
+
+  /**
+   * #4530: "Answer Homeroom bot's question" (or "Reply to Homeroom bot"):
+   * the request's discussion, with a Reply to the bot's note staged in its
+   * composer, so what the person writes is for the bot (homeroom-bot-
+   * addressed.js counts a Reply to its message). From the board it opens
+   * the request first. The note arrives with the discussion's first page,
+   * a moment after the page paints; when it does not (or none is
+   * recorded), the box starts with @homeroom_bot, which counts the same.
+   */
+  async answerBotOnRequest(issueNumber, messageId, onPage) {
+    const n = Number(issueNumber);
+    if (!Number.isInteger(n) || n <= 0) return;
+    if (!onPage) await AppView.openTopic('issue', n);
+    const id = Number(messageId) || 0;
+    const chat = typeof GroupChat !== 'undefined' ? GroupChat : null;
+    const staged = () => !!(chat && chat.replyDraft && Number(chat.replyDraft.refMsgId) === id);
+    for (let i = 0; id > 0 && chat && typeof chat.replyToMessage === 'function' && i < 8; i += 1) {
+      chat.replyToMessage(id, 'thread');
+      if (staged()) return;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    const input = document.getElementById('gc-thread-input');
+    if (!input) return;
+    if (!String(input.value || '').trim()) {
+      input.value = '@homeroom_bot ';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    input.focus();
+  },
+
+  /**
    * B8: "Ask Homeroom bot to build this". It goes first in the bot's queue,
    * paid from the viewer's building time, and its card arrives in the chat
    * of whoever it is for; the page shows the bot on it at the next read.
@@ -19495,6 +19604,9 @@ const AppView = {
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
         PlatformUI.toast(data.error || `Couldn't ask Homeroom bot just now (HTTP ${resp.status}).`);
+        // #4530: it is waiting on an answer this page did not know about:
+        // read again, so the card offers to answer it instead.
+        if (data.code === 'awaiting_reply') AppView.refreshDevData('issue');
         return;
       }
       PlatformUI.toast(data.mine
@@ -21152,9 +21264,13 @@ const AppView = {
         return { ...base, tier: 0, key: 'deployed', label: '✓ Live', tone: 'ok', lock: false, advisory: 0,
           title: 'This change is live in the app.' };
       }
+      // A merge of Homeroom itself waits for the platform's next release:
+      // the pill's title says when (_releaseSentence), where a child app's
+      // says only that the app is still on the version before.
+      const releaseWords = AppView._releaseSentence(p);
       if (p.deployment_state === 'deploying') {
         return { ...base, tier: 0, key: 'deploying', label: 'Going live…', tone: 'progress', spinner: true, lock: false, advisory: 0,
-          title: 'This change was approved. The app is still running the version before it.' };
+          title: releaseWords ? `${releaseWords}.` : 'This change was approved. The app is still running the version before it.' };
       }
       if (p.deployment_state === 'stalled') {
         return { ...base, tier: 0, key: 'deployment_stalled', label: 'Stuck going live', tone: 'blocked', lock: false, advisory: 0,
@@ -21179,7 +21295,7 @@ const AppView = {
       // field reads as it always did.
       if (p.live_at === null) {
         return { ...base, tier: 0, key: 'deploying', label: 'Going live…', tone: 'progress', spinner: true, lock: false, advisory: 0,
-          title: 'This change was approved. The app is still running the version before it.' };
+          title: releaseWords ? `${releaseWords}.` : 'This change was approved. The app is still running the version before it.' };
       }
       return { ...base, tier: 0, key: 'merged', label: '✓ Live', tone: 'ok', lock: false, advisory: 0 };
     }

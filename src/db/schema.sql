@@ -876,6 +876,31 @@ UPDATE app_check_history SET consecutive_passes = 0 WHERE consecutive_passes IS 
 CREATE INDEX IF NOT EXISTS idx_app_check_history_graduated
   ON app_check_history(app_id) WHERE first_passed_at IS NOT NULL;
 
+-- A check blocks every proposal once it has passed on a proposal that
+-- MERGED, not on its first pass anywhere (services/check-history.js). On
+-- 9 Oct 2026 the fix for the Custom domain check (#4576) passed it on its
+-- own preview, and that pass made the check block about fifteen other
+-- proposals, none of which contained the fix, for the hour it waited for a
+-- vote.
+--
+--   merged_pass_at     when a merged proposal that had passed it was folded
+--                      in (settleMergedPasses), or the bootstrap's moment.
+--                      What the graduated set reads.
+--   merged_pass_known  TRUE on every row recordRun or the bootstrap writes.
+--                      NULL only on a row from before this column, which the
+--                      one-time backfill below gives its first pass as its
+--                      merged pass, so nothing gating today stops gating.
+--
+-- The backfill is one-time the way consecutive_passes' is: it matches only
+-- rows whose marker is NULL and gives each a value, and every later write
+-- sets the marker, so on the next boot it matches nothing.
+ALTER TABLE app_check_history ADD COLUMN IF NOT EXISTS merged_pass_at TIMESTAMPTZ;
+ALTER TABLE app_check_history ADD COLUMN IF NOT EXISTS merged_pass_known BOOLEAN;
+UPDATE app_check_history SET merged_pass_at = first_passed_at, merged_pass_known = TRUE
+  WHERE merged_pass_known IS NULL;
+CREATE INDEX IF NOT EXISTS idx_app_check_history_merged
+  ON app_check_history(app_id) WHERE merged_pass_at IS NOT NULL;
+
 -- Group chat messages
 CREATE TABLE IF NOT EXISTS chat_messages (
   id         SERIAL PRIMARY KEY,
@@ -9159,6 +9184,37 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_resolved_epoch IN
 --                           main, so nothing syncs again until main moves.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS boot_failure_sync_head TEXT;
 
+-- A proposal's own passes of checks no merge has made blocking yet
+-- (services/check-history.js). They block its later heads at once, and
+-- everybody's once it merges.
+--
+--   checks_earned_keys        the check keys it has passed that were not
+--                             yet blocking for everybody. NULL: none.
+--   checks_earned_settled_at  when, after it merged, those were folded into
+--                             app_check_history.merged_pass_at. NULL: not
+--                             yet (or it has not merged).
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS checks_earned_keys TEXT[];
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS checks_earned_settled_at TIMESTAMPTZ;
+-- Only the rows still to fold in, so the read every checks run makes is an
+-- index probe on a handful of rows.
+CREATE INDEX IF NOT EXISTS chat_sessions_checks_earned_unsettled_idx
+  ON chat_sessions(app_id) WHERE checks_earned_keys IS NOT NULL AND checks_earned_settled_at IS NULL;
+
+-- The second exception to "behind is not a reason to sync": a promoted
+-- proposal whose only blocking failures are checks main now passes, and
+-- that fail on other open proposals too, is synced by the platform
+-- (services/fixed-check-sync.js). It was main that failed them, so the
+-- proposal's verdict is about code it never had.
+--
+--   fixed_check_sync_head  the head the platform last synced for that
+--                          reason. A head is synced at most once.
+--   fixed_check_sync_keys  every check it was synced for. A check that
+--                          still fails once the proposal contains a main
+--                          that passes it is the proposal's own, and is
+--                          never a reason to sync it again.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS fixed_check_sync_head TEXT;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS fixed_check_sync_keys TEXT[];
+
 -- ── Main watch ─────────────────────────────────────────────────────────
 --
 -- The safety net under direct merges. Each merge lands a tree nobody ran
@@ -9877,6 +9933,21 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS needs_username_choice BOOLEAN NOT NUL
 -- Only the self-hosted row ever carries one; a child app's merges deploy
 -- through rebuildProduction and record their failures on last_failure.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS release_stall JSONB;
+
+-- The release workflow's run for main's tip, as the drift poller last read
+-- it while main was ahead of the running build (services/release-watch.js
+-- recordRun), so every process can say when the next release goes live
+-- ("Merged; goes live in the next release (about 8 minutes)") without asking
+-- GitHub per viewer. Self-hosted row only; NULL when no run was listed (no
+-- run yet, or a token that cannot read Actions) and once the running build
+-- is main again. One JSON record:
+--   sha          main's tip when it was read
+--   status       the run's own status: queued, in_progress, completed, ...
+--   conclusion   success, failure, ... once completed
+--   startedAt    when the run started (ISO), as GitHub says
+--   completedAt  when a completed run finished (ISO)
+--   readAt       when the poller read it (ISO)
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS release_run JSONB;
 
 -- #2684: the Homeroom bot (`homeroom_bot`, a synthetic user) triages open
 -- requests in shadow mode: it reads an issue, its discussion and the app's
@@ -12797,6 +12868,14 @@ ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_caption_at TIMESTAM
 -- from before, or one no queue row started.
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS read_reason TEXT;
 ALTER TABLE homeroom_bot_queue ADD COLUMN IF NOT EXISTS changed_by TEXT;
+-- #4533: why a queued row is waiting, and until when, as the refusal that
+-- left it there said (homeroom-bot.js recordRefusal; 'session_busy' when a
+-- turn was running on its session). A refusal keeps the row and its place,
+-- so without these a follow-up backing off for an hour looked like one next
+-- in line. Read by the console's queue and get_homeroom_bot (queueWait),
+-- and only while wait_until is still ahead.
+ALTER TABLE homeroom_bot_queue ADD COLUMN IF NOT EXISTS wait_reason TEXT;
+ALTER TABLE homeroom_bot_queue ADD COLUMN IF NOT EXISTS wait_until TIMESTAMPTZ;
 
 -- #4449: LIVE, the new app itself taking shape while a first version is
 -- built (services/first-version-live.js). A watcher in the build's worker

@@ -300,7 +300,7 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
     if (unit && (unit.state === 'succeeded' || unit.state === 'failed')) {
       let graduated = false;
       try {
-        graduated = (await checkHistory.loadGraduated(pool, app.id))
+        graduated = (await checkHistory.loadGraduated(pool, app.id, { sessionId }))
           .has(appManifest.checkKey(unitSuite.UNIT_CHECK_NAME, unitSuite.UNIT_CHECK_PATH));
       } catch (err) {
         log.warn('check-harvest', 'Graduation lookup failed — unit row advisory', { ...base, err: err.message });
