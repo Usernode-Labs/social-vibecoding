@@ -24,6 +24,7 @@
  */
 
 import type { ActionSpec, StatusPillState } from '../card/model';
+import type { RequestSpecCard } from './request-model';
 
 
 /** The four tints a note box comes in. Resolved to classes by the component. */
@@ -667,6 +668,11 @@ export interface TopicBody {
   thread?: ChangeThreadView | null;
   /** A proposal's plain-language summary, already rendered. */
   summaryHtml?: string | null;
+  /**
+   * #4479: the plan a change was built from, as the card a request's page
+   * hangs under the request (`AppView._changePlanCard`), or null.
+   */
+  plan?: RequestSpecCard | null;
   /** The previous summary was retained for provenance but no longer describes this revision. */
   summaryStale?: boolean;
   /**

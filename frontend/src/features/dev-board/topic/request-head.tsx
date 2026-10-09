@@ -288,8 +288,12 @@ function RequestStatus({ s, specs }: { s: RequestStatusView; specs: RequestSpecC
   );
 }
 
-/** One spec, at its newest version, as a shared item hangs off a message. */
-function SpecCard({ card }: { card: RequestSpecCard }): ReactNode {
+/**
+ * One spec, at its newest version, as a shared item hangs off a message.
+ * #4479: a change's page hangs the plan it was built from the same way
+ * (./change-head.tsx).
+ */
+export function SpecCard({ card }: { card: RequestSpecCard }): ReactNode {
   const [loading, setLoading] = useState(false);
   return (
     <div className="messages-object-card dev-request-spec" data-request-spec={card.key}>
