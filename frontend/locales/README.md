@@ -120,6 +120,22 @@ from it. So the code never assembles a sentence.
   from the runtime. Never `', '` in code.
 - **A link or emphasis inside a sentence** is numbered tags in one entry:
   `RichMessage` in React, `htmlRich` in a classic script.
+- **A blank in a sentence keeps everything around it.** Where a person's own
+  words go into a sentence (`… {{words}}`), draw the whole message: the
+  catalog's text may stand after the blank as well as before it, the mark
+  shown in the blank and the punctuation that closes the sentence are entries
+  too. Never cut a message at its parameter and drop the rest.
+- **A word that is not a name gets a form per place.** A list of people may
+  be a parameter when its items are account names. The reader ("you") and a
+  count of unnamed people ("2 more") are words, and a language with cases
+  needs a different form after "approval from …" than as the subject of
+  "… approve": one entry per place the list can stand, and a whole sentence
+  where such a word stands alone. The same goes for a stand-in used when a
+  name is not known: give the sentence an unnamed variant, and never pass a
+  pronoun where a username goes.
+- **A message that joins two others places both.** Fill both of its
+  parameters, or cut it at its parameters and put each part where it says;
+  never fill one with an empty string and append the rest in code.
 - **Text the code compares or parses is not text.** Where code read a label
   back (`button.textContent === 'Save'`), make it read state instead.
 - **Names are parameters.** A person's, an app's or a community's name, a
