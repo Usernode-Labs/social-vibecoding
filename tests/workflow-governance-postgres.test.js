@@ -92,8 +92,10 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     },
   });
   const machine = governanceProposal({ dataKey: DATA_KEY, notifiers });
+  // What browsers hear: published in the transition's transaction.
+  const pushed = [];
   const rt = createRuntime({
-    pool, machines: [machine], pollMs: 50,
+    pool, machines: [machine], pollMs: 50, publish: async (q, list) => { pushed.push(...list); },
     services: { 'github.closeIssue': fake('github.closeIssue'), 'app.rebuildProduction': fake('app.rebuildProduction'),
       'governance.checkTarget': fake('governance.checkTarget') },
   });
@@ -146,6 +148,10 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     assert.equal((await vote(i, v1, 'down')).result, 'accepted');
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM issue_votes WHERE issue_id = $1', [i.id])).rows[0].n, 0);
     assert.deepEqual(await lines(i), [`${v1.username} voted down on close proposal for issue #7: “not yet”`]);
+    assert.ok(pushed.some((p) => p.kind === 'room' && p.routing.appId === a.id && p.data.type === 'chat'
+      && p.data.content === `${v1.username} voted down on close proposal for issue #7: “not yet”` && p.data.thread.type === 'governance'),
+    'the vote line, to the app\'s room');
+    assert.ok(notified.some((n) => n.type === 'boardChange' && n.appId === a.id), 'the Workshop\'s board-change kick, once, where it decided');
     await send(i, 'Withdraw', { userId: author.id, username: author.username }, { actor: `user:${author.id}` });
     await rt.drain();
     const late = await vote(i, v2, 'up');
@@ -241,6 +247,8 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     let s = await inst(i);
     assert.equal(s.data.followups.target.status, 'exhausted');
     assert.equal(s.data.followups.target.error, 'github.closeIssue down');
+    const synced = () => pushed.filter((p) => p.data.type === 'issue_update' && p.data.action === 'github_synced' && p.routing.appId === a.id);
+    assert.equal(synced().length, 0, 'nothing closed on GitHub yet, so no list re-reads');
     work.fail.delete('github.closeIssue');
     const retry = await send(i, 'RetryFollowup', { workKey: 'target' }, { source: { kind: 'admin' }, actor: `user:${adminUser.id}` });
     await settle();
@@ -249,6 +257,7 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     const retried = Object.entries(s.data.followups).find(([k]) => k.startsWith('target~'));
     assert.equal(s.data.followups.target.status, 'retried');
     assert.equal(retried[1].status, 'done');
+    assert.equal(synced().length, 1, 'the close on GitHub tells browsers to re-read the issue list, once');
     // The retry resumed from the failed attempts' checkpoint: no second comment.
     const last = work.calls.filter((c) => c.kind === 'github.closeIssue').at(-1);
     assert.equal(last.key, retried[0]);

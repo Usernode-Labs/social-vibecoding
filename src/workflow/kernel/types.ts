@@ -75,12 +75,19 @@ export interface MessageRequest {
 export interface TimerRequest { at: Date; event: { type: string; payload?: Json } }
 export interface Notification { type: string; [field: string]: unknown }
 
+// What browsers should hear. Pushes are published inside the transition's
+// transaction (RuntimeOptions.publish) and reach them only if it commits:
+// every web process relays them, whichever process decided. `kind` and
+// `routing` say who may hear it; `data` is what they get.
+export interface Push { kind: string; routing?: JsonObject; data: JsonObject }
+
 export interface Outcome<S extends State = State> {
   next: S;
   writes?: DomainWrite[];
   work?: WorkRequest[];
   messages?: MessageRequest[];
   timer?: TimerRequest | null;   // undefined keeps the deadline, null clears it
+  push?: Push[];
   notify?: Notification[];
 }
 
@@ -103,7 +110,9 @@ export interface Tx {
 
 export type Decoder = (payload: unknown) => unknown;
 export type Authorize<S extends State, F> = (event: Event<any>, facts: F, state: S) => Check;
-export type WriteHandler = (tx: Tx, write: any, ctx: TransitionContext) => Promise<unknown>;
+// A domain write may add what browsers should hear about the rows it wrote.
+export interface WriteContext extends TransitionContext { push(p: Push): void }
+export type WriteHandler = (tx: Tx, write: any, ctx: WriteContext) => Promise<unknown>;
 export type Notifier = (notification: any) => void | Promise<void>;
 
 // What a machine module writes. Plain objects are authoring syntax only:

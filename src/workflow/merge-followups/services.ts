@@ -1,6 +1,6 @@
 // The merge-followups machine's I/O: work handlers (durable, reported back
-// as events) and notifiers (post-commit pushes and kicks, allowed to be
-// lost). The handlers reuse [main]'s functions; each is safe to run again
+// as events) and notifiers (post-commit kicks, allowed to be lost). What
+// browsers hear is a push the transition publishes (../pushes.ts). The handlers reuse [main]'s functions; each is safe to run again
 // after a crash, which is what a retried work item does.
 
 import type { Json, Pool, WorkHandler } from '../kernel/index.ts';
@@ -150,7 +150,6 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
           });
         }
         gh.invalidateIssuesCache(input.owner, input.repo);
-        legacy('services/ws').pushIssueUpdate({ action: 'github_synced', appSlug: input.appSlug, appId: input.appId, source: 'pr_merged' });
         const out = await legacy('services/issue-close-watcher').watchIssuesClosedAfterMerge({
           owner: input.owner, repo: input.repo, prNumber: input.prNumber, linkedIssues: numbers,
           appSlug: input.appSlug, appId: input.appId, pool, strict: true,
@@ -227,25 +226,15 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
 }
 
 export function mergeFollowupsNotifiers({ config, pool }: Deps): Record<string, (n: any) => Promise<void> | void> {
-  const ws = () => legacy('services/ws');
-  const strip = ({ type, ...rest }: any) => rest;
   return {
-    // The thread lines the transition wrote, broadcast as sendSystemMessage would.
-    async chat(n) {
-      const { rows } = await pool.query(
-        `SELECT id, content, msg_type, metadata, thread_type, thread_ref, created_at
-           FROM chat_messages WHERE app_id = $1 AND metadata->>'wfEvent' = $2 ORDER BY id`,
-        [n.appId, String(n.eventId)]);
-      for (const r of rows) {
-        const { wfEvent, ...metadata } = r.metadata || {};
-        ws().broadcast(n.appId, {
-          type: 'chat', id: r.id, userId: null, username: null, content: r.content, msgType: r.msg_type,
-          ...(Object.keys(metadata).length ? { metadata } : {}),
-          thread: { type: r.thread_type, ref: r.thread_ref }, createdAt: r.created_at,
-        });
-      }
+    // A request board changed: the Workshop re-places its cards.
+    boardChange: (n) => legacy('services/ws').noteBoardChange({ appId: n.appId, appSlug: n.appSlug }),
+    // Everyone with a bell row about the change: their phone's badge count.
+    async badgeSync(n) {
+      const { rows } = await pool.query('SELECT DISTINCT user_id FROM notifications WHERE session_id = $1', [n.sessionId]);
+      const push = legacy('services/mobile-push');
+      for (const r of rows) push.scheduleBadgeSync(r.user_id);
     },
-    voteUpdate: (n) => ws().pushVoteUpdate(strip(n)),
     // The next merge for the app: the queue's drain (backed by the 4-minute
     // eligible-merge sweeper when this kick is lost).
     kickQueue: (n) => legacy('services/conflict-resolver')
@@ -254,23 +243,6 @@ export function mergeFollowupsNotifiers({ config, pool }: Deps): Record<string, 
     nudgeDeployer(n) {
       if (legacy('services/application-runtime').mode(config) === 'kubernetes') return;
       legacy('services/deploy-nudge').nudgeHostDeployer({ sha: n.sha, prNumber: n.prNumber });
-    },
-    appVersion: (n) => ws().broadcastGlobalScoped(
-      { type: 'app_version_changed', appSlug: n.appSlug, sha: n.sha || null, prNumber: n.prNumber || null },
-      { appId: n.appId, appSlug: n.appSlug }),
-    // Everyone with a bell row about the change re-reads their bell.
-    async bell(n) {
-      const { rows } = await pool.query('SELECT DISTINCT user_id FROM notifications WHERE session_id = $1', [n.sessionId]);
-      for (const r of rows) ws().pushNotificationToUser(r.user_id, { type: 'notifications_changed' });
-    },
-    // The author's "your change is live", on their open tabs.
-    async mergedNotification(n) {
-      if (!n.userId) return;
-      const { rows } = await pool.query(
-        `SELECT id, user_id, app_id, session_id, source_user_id, kind, detail, created_at
-           FROM notifications WHERE user_id = $1 AND session_id = $2 AND kind = 'pr_merged' ORDER BY id DESC LIMIT 1`,
-        [n.userId, n.sessionId]);
-      if (rows[0]) await legacy('services/notifications').hydrateAndPush(pool, rows[0]);
     },
   };
 }

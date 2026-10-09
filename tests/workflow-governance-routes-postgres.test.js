@@ -12,7 +12,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
-const { Pool } = require('pg');
+const { Client, Pool } = require('pg');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 
@@ -80,12 +80,21 @@ test('governance routes through the workflow machine', { timeout: 120000 }, asyn
     databaseUrl: String(url), dataEncryptionKey: 'synthetic-key', wfGovernanceEnabled: true,
     wfPoolMax: 4, wfSlots: 2, wfOwnershipMode: 'raise',
   };
+  // What the machine tells browsers arrives on the WebSocket bus's channel,
+  // published in its transaction (platform.ts publishPushes), as every web
+  // process hears it.
+  const heard = [];
+  const listener = new Client({ connectionString: String(url) });
+  await listener.connect();
+  listener.on('notification', (m) => { const e = JSON.parse(m.payload); if (e.i === 'workflow') heard.push(e); });
+  await listener.query('LISTEN usernode_ws');
   const platform = require('../src/workflow/platform.ts');
   const { issueRoutes, resolveSupersededCloseProposals } = require('../src/routes/issues');
   const router = issueRoutes(config);
   const adminRouter = require('../src/routes/admin-workflow').adminWorkflowRoutes(config);
   t.after(async () => {
     await platform.stopWorkflow();
+    await listener.end();
     await pool.end();
     await admin.query(`DROP DATABASE ${dbName}`);
     await admin.end();
@@ -130,7 +139,11 @@ test('governance routes through the workflow machine', { timeout: 120000 }, asyn
     assert.equal(r.body.renamed.applied, true);
     assert.equal(r.body.renamed.newName, 'Renamed by route');
     assert.equal((await status(before)).status, 'closed');
-    assert.ok(pushes.some(([k, d]) => k === 'app' && d.action === 'renamed'), 'the rename was pushed after commit');
+    await until(async () => heard.some((e) => e.k === 'scoped' && e.d.type === 'app_update' && e.d.action === 'renamed'
+      && e.r.appId === app.id), 'browsers hear the rename');
+    assert.ok(heard.some((e) => e.k === 'room' && e.d.type === 'chat' && /App renamed/.test(e.d.content) && e.r.appId === app.id),
+      'and its line, in the app\'s room');
+    assert.ok(heard.some((e) => e.k === 'scoped' && e.d.type === 'issue_update' && e.d.action === 'closed' && e.d.issueId === before.id));
     const again = await call(vote, { params: { id: String(before.id) }, body: { vote: 'up' }, user: await user() });
     assert.deepEqual([again.status, again.body.error], [409, 'Issue is not open']);
   });

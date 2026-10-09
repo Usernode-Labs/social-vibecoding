@@ -37,10 +37,18 @@ const globalClients = new Set(); // Set<{ ws, user }> for /ws/events
 // not sent. The audience still needs to know something moved, so they get the
 // nudge their own reconnect path already handles — `resyncCurrentView` in
 // public/js/app.js — rather than a truncated event.
-function _onBusMessage({ kind, routing, data, oversize }) {
+function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
   const r = routing || {};
   const payload = oversize ? { type: 'resync_hint' } : data;
   if (payload == null) return;
+  // A workflow machine names a notification instead of carrying it: the
+  // relay reads it for the recipient's open tabs, outside the transition
+  // that created it (src/workflow/merge-followups/machine.ts).
+  if (fromWorkflow && kind === 'user' && !oversize && payload.type === 'notification_new'
+      && payload.notificationId != null && !payload.notification) {
+    relayNotification(r.userId, payload.notificationId);
+    return;
+  }
   switch (kind) {
     case 'global':
       deliverGlobal(payload);
@@ -2105,6 +2113,18 @@ function pushSessionUpdate(data) {
   noteBoardChange(data);
 }
 
+// Read only where the recipient has an events socket (what deliverToUser
+// writes to); the notification's access predicates run now, at relay time.
+function relayNotification(userId, notificationId) {
+  if (userId == null || !_pool) return;
+  let here = false;
+  for (const client of globalClients) if (Number(client.user.id) === Number(userId)) { here = true; break; }
+  if (!here) return;
+  require('./notifications').hydrateNotification(_pool, notificationId)
+    .then((shown) => { if (shown) deliverToUser(shown.userId, { type: 'notification_new', notification: shown.notification }); })
+    .catch((err) => log.warn('ws', 'could not read a notification to relay', { notificationId, err: err.message }));
+}
+
 // #1038: live working-state for one session (services/session-state.js).
 // Scoping is the whole point of having a dedicated helper rather than
 // reusing broadcastGlobal: the payload names an app and a session, so an
@@ -2305,4 +2325,4 @@ function pushConversationEvent(memberUserIds, payload, { excludeUserId = null } 
 
 const pushNotificationToUser = pushToUser;
 
-module.exports = { connectedUserIds, disconnectUser, attach, broadcast, _onBusMessage, _onBusListening, broadcastGlobal, broadcastSessionEvent, sessionEventAudience, canWatchSessionRow, SESSION_FANOUT_EVENTS, MAX_WATCHED_SESSIONS_PER_SOCKET, SLOW_CLIENT_MAX_BUFFERED, SLOW_CLIENT_RESUME_BUFFERED, _checkLaggingClients: checkLaggingClients, _sessionMetaCache: sessionMetaCache, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, sendBotMessage, sendFirstVersionMessage, getOnlineUsers, pushAppStatusUpdate, pushAppCreationPhase, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushWorkshopUpdate, onBoardChange, pushToUser, pushConversationEvent, pushNotificationToUser, pushPlatformVersion, getReactionsForMessages, validateThread, handleMessage, admitSocketFrame, SOCKET_RATE_BUDGETS, SOCKET_RATE_WINDOW_MS, MAX_CHAT_LEN };
+module.exports = { noteBoardChange, connectedUserIds, disconnectUser, attach, broadcast, _onBusMessage, _onBusListening, broadcastGlobal, broadcastSessionEvent, sessionEventAudience, canWatchSessionRow, SESSION_FANOUT_EVENTS, MAX_WATCHED_SESSIONS_PER_SOCKET, SLOW_CLIENT_MAX_BUFFERED, SLOW_CLIENT_RESUME_BUFFERED, _checkLaggingClients: checkLaggingClients, _sessionMetaCache: sessionMetaCache, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, sendBotMessage, sendFirstVersionMessage, getOnlineUsers, pushAppStatusUpdate, pushAppCreationPhase, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushWorkshopUpdate, onBoardChange, pushToUser, pushConversationEvent, pushNotificationToUser, pushPlatformVersion, getReactionsForMessages, validateThread, handleMessage, admitSocketFrame, SOCKET_RATE_BUDGETS, SOCKET_RATE_WINDOW_MS, MAX_CHAT_LEN };

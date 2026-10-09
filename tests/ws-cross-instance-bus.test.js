@@ -312,3 +312,23 @@ test('a batch never outgrows the NOTIFY budget, and an oversize item still nudge
   assert.deepEqual(items.map((item) => (item.o ? 'nudge' : item.d.n)), [0, 1, 2, 3, 4, 5, 6, 'nudge']);
   assert.deepEqual(items[7].r, { sessionId: 9 }, 'the nudge keeps its audience');
 });
+
+// A workflow machine's push (src/workflow/platform.ts publishPushes) is
+// published inside its transition's transaction from no instance at all:
+// every instance relays it, the one whose slot decided included, and none
+// counts it as a peer.
+test('a workflow push is delivered by every instance, its decider included, and proves no peer', () => {
+  const seen = collect();
+  bus._peers.lastPeerAt = -Infinity;
+  bus._handleNotification({ channel: bus.CHANNEL, payload: bus.workflowBody('room', { appId: 7 }, { type: 'chat', id: 1 }) });
+  assert.deepEqual(seen, [{ kind: 'room', routing: { appId: 7 }, data: { type: 'chat', id: 1 }, oversize: false, fromWorkflow: true }]);
+  assert.equal(bus._peers.lastPeerAt, -Infinity, 'not a peer');
+});
+
+test('a workflow push over the NOTIFY budget becomes the same nudge, to the same audience', () => {
+  const small = JSON.parse(bus.workflowBody('scoped', { appId: 3, appSlug: 'x' }, { type: 'vote_update' }));
+  assert.deepEqual(small, { i: bus.WORKFLOW_SENDER, k: 'scoped', r: { appId: 3, appSlug: 'x' }, d: { type: 'vote_update' } });
+  const big = bus.workflowBody('scoped', { appId: 3, appSlug: 'x' }, { type: 'vote_update', pad: 'z'.repeat(9000) });
+  assert.ok(Buffer.byteLength(big, 'utf8') < 8000);
+  assert.deepEqual(JSON.parse(big), { i: bus.WORKFLOW_SENDER, k: 'scoped', r: { appId: 3, appSlug: 'x' }, o: 1 });
+});

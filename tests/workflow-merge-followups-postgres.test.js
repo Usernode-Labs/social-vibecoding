@@ -79,6 +79,8 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
 
   const notified = [];
   const notifiers = Object.fromEntries(NOTIFIERS.map((n) => [n, (x) => { notified.push(x); }]));
+  // What browsers hear: published in the transition's transaction.
+  const pushed = [];
   // Fake work: records each call; `results` answers per kind, `fail` makes
   // a kind throw (permanently when asked).
   const work = { calls: [], results: new Map(), fail: new Map(), seen: new Map() };
@@ -95,7 +97,7 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
   });
   const machine = mergeFollowups({ dataKey: DATA_KEY, notifiers });
   const rt = createRuntime({
-    pool, machines: [machine], pollMs: 50,
+    pool, machines: [machine], pollMs: 50, publish: async (q, list) => { pushed.push(...list); },
     services: Object.fromEntries(Object.values(WORK).map((k) => [k, fake(k)])),
   });
   runtimes.push(rt);
@@ -198,7 +200,11 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     const voter = await user();
     const s = await proposal(a, { title: 'Dark mode' });
     await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, 'yes')`, [s.id, voter.id]);
+    // The voter was asked to vote: a bell row about the change.
+    await pool.query(`INSERT INTO notifications (user_id, app_id, session_id, kind) VALUES ($1, $2, $3, 'pr_proposed')`, [voter.id, a.id, s.id]);
     await merge(s);
+    assert.ok(pushed.some((p) => p.kind === 'user' && p.routing.userId === voter.id && p.data.type === 'notifications_changed'),
+      'everyone with a bell row about it re-reads their bell when it merges');
     assert.equal((await row(s.id)).live_at, null);
     assert.equal((await pool.query(`SELECT count(*)::int AS n FROM notifications WHERE session_id = $1 AND kind = 'pr_merged'`, [s.id])).rows[0].n, 0);
     work.results.set(WORK.deliver, { sha: SHA('a') });
@@ -213,7 +219,20 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     assert.ok(kinds.includes(WORK.dm) && kinds.includes(WORK.journey), 'the DM and the journey record follow live');
     const dm = work.calls.find((c) => c.kind === WORK.dm && c.input.sessionId === s.id);
     assert.equal(dm.input.sha, SHA('a'));
-    assert.ok(notified.some((n) => n.type === 'appVersion' && n.appId === a.id));
+    const heard = pushed.filter((p) => p.routing.appId === a.id);
+    assert.ok(heard.some((p) => p.kind === 'scoped' && p.data.type === 'app_version_changed' && p.data.sha === SHA('a')), 'the version pill');
+    assert.ok(heard.some((p) => p.kind === 'room' && p.data.type === 'chat' && p.data.content === live.content && p.data.id > 0
+      && p.data.metadata.merged.votes === '2/3' && !('wfEvent' in p.data.metadata)), 'the line, as the room shows it');
+    assert.ok(pushed.some((p) => p.data.type === 'vote_update' && p.data.sessionId === s.id && p.data.live === true), 'the vote card');
+    // The author's "your change is live", named for the relaying web process to read.
+    const { rows: [n] } = await pool.query(`SELECT id FROM notifications WHERE session_id = $1 AND kind = 'pr_merged'`, [s.id]);
+    const toAuthor = pushed.filter((p) => p.kind === 'user' && p.routing.userId === s.author.id);
+    assert.ok(toAuthor.some((p) => p.data.type === 'notification_new' && p.data.notificationId === n.id && !p.data.notification));
+    // The requests it closed: the issue lists re-read once that work ended.
+    assert.ok(heard.some((p) => p.data.type === 'issue_update' && p.data.action === 'github_synced' && p.data.source === 'pr_merged'));
+    // Kicks into flows not migrated yet, once, where it decided.
+    assert.ok(notified.some((x) => x.type === 'badgeSync' && x.sessionId === s.id), 'the phone badges of everyone with a bell row');
+    assert.ok(notified.some((x) => x.type === 'boardChange' && x.appId === a.id), 'the Workshop re-places the requests it closed');
   });
 
   await t.test('F6: a failed deploy is visible, and a later deploy makes it live', async () => {
