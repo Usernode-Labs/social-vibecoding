@@ -108,6 +108,11 @@ external agent (`visible_changes` on the CLI's `proposal_submit_build`). The sha
   signed-out visitors declared for a signed-in persona
   (`shots-identities.personaWarnings`). They are warnings, not refusals: a
   change to the sign-in page itself is a real guest change.
+- On an app built on Homeroom, no persona is the app's creator or one of
+  its admins (see "Roles in an app built on Homeroom" below). The same
+  response warns about a change declared there for `read_only_admin` or
+  `full_admin`, and about one whose claim, path, focus or checkpoint names
+  a creator, owner or admin screen with no `hints.setup`.
 - `hints` are optional. They pass on what the author learned while building
   (data to create first, text that proves the state was reached, and the
   element to point at), so the shots agent can go straight there. They are
@@ -341,6 +346,43 @@ No gate is loosened for this: the guest gets only what a signed-out request
 already gets, and a preview still never admits guests. The guest token is
 masked with the other tokens and never enters the brief or the trace.
 
+## Roles in an app built on Homeroom
+
+Homeroom tells an app who is signed in, never their role in it. The identity
+token carries `{ id, username, usernode_pubkey, locale }` and nothing else
+(`platform-jwt.signAppIdentityToken`); there is no creator or admin claim,
+and no bridge call or app-platform route answers "is this the owner?". The
+member list (`GET /members`) puts the creator first, but it answers only a
+project's members and leaves out the platform's own `usernode-*` accounts.
+`dapp.json`'s `admins` roster and `apps.created_by` decide what someone may
+do on Homeroom (`app-admins.canManageApp`), and the app is not told either.
+The shots copies are signed in as fixture accounts (`usernode-capture`,
+`usernode-capture-admin`, and `usernode-shots-full-admin`, which exists only
+in the copies). To the app all three are ordinary signed-in people.
+
+So a screen an app keeps for particular accounts (its creator's username
+written into the code, an allowlist, "private to this account") refuses every
+browser on the copies. Three runs on one app's Creator Studio (QuestVerse's
+PRs 7 to 9) ended that way, each after the agent had tried all three browsers.
+Nothing is loosened for it, and no real person's identity is ever lent to a
+persona: minting a token for the app's real creator would put that person's
+account, and whatever the app shows only them, into the copies and the
+shots. Instead:
+
+- the brief describes each signed-in browser as the app sees it, and its
+  `appRoles` says that no browser holds a role in the app and that such a
+  refusal means skipping the change at once, with the default outcome,
+  without trying the other browsers (`shots-orchestrator.shotsBrief`);
+- declaring warns the author, as above;
+- `src/prompts/app-conventions.md` ("Who the before & after shots see")
+  tells app authors not to hard-code people into a screen the project
+  works on, and to gate it on something a signed-in person can reach
+  through the app's own UI, named in `hints.setup`.
+
+A role the app grants through its own UI (whoever creates a group manages
+it) is reachable as before, through `hints.setup`. Homeroom's own copies are
+unaffected: there the two administrator personas are its administrators.
+
 ## What people see
 
 The proposal's card shows one screen at a time in a frame that keeps its
@@ -455,7 +497,7 @@ browser). Each persona's browser saves files under
 | Shots agent prompt and dispatch | `src/services/shots-agent.js` |
 | Shots bridge (MCP server `shots`) | `worker/shots-mcp.js` |
 | Fixture identities and session copies; demo states for the personas | `src/services/shots-fixtures.js`, `src/services/shots-demo-states.js` |
-| Persona tokens and the guest's (`mintShotsAuthTokens`, `shotsGuestIdentity`) | `src/services/shots-identities.js` |
+| Persona tokens and the guest's, and the warnings on declaring (`mintShotsAuthTokens`, `shotsGuestIdentity`, `personaWarnings`) | `src/services/shots-identities.js` |
 | Browser servers (`--output-dir`, `--save-video`) | `worker/write-shots-mcp-config.js` |
 | Egress proxy (origins, public-only egress, platform assets, controlled failures) | `worker/shots-origin-proxy.js` |
 | Where the browser may go, and which shots may be published | `worker/shots-boundary.js` |
