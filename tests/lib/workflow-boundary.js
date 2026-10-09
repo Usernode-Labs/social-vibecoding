@@ -255,6 +255,56 @@ function sqlWrites(text) {
   return out;
 }
 
+// SQL text a template interpolates by name: a module's string constant
+// (`const INVALIDATE_SQL = \`...\``) or a function that returns one template
+// (`function invalidateHeadMoveSql(p) { ... return \`...\`; }`). An UPDATE's
+// SET list built from one is read with the fragment's own columns rather than
+// as "every column". A name defined twice with different text is not resolved.
+function templateText(node, fragments = null) {
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
+  if (ts.isTemplateExpression(node)) return fragments ? withFragments(node, fragments) : [node.head.text, ...node.templateSpans.map((x) => x.literal.text)].join(' $x ');
+  return null;
+}
+function sqlFragments(root, files) {
+  const found = new Map();
+  const add = (name, text) => {
+    if (text == null) return;
+    found.set(name, found.has(name) && found.get(name) !== text ? null : text);
+  };
+  for (const file of files) {
+    const text = read(root, file);
+    if (!/\b(SET|UPDATE)\b|=/.test(text)) continue;
+    const sf = parse(root, file);
+    for (const st of sf.statements) {
+      if (ts.isVariableStatement(st)) {
+        for (const d of st.declarationList.declarations) {
+          if (ts.isIdentifier(d.name) && /^[A-Z][A-Z0-9_]*$/.test(d.name.text) && d.initializer) add(d.name.text, templateText(d.initializer));
+        }
+      }
+      if (ts.isFunctionDeclaration(st) && st.name && st.body) {
+        const last = [...st.body.statements].reverse().find((x) => ts.isReturnStatement(x));
+        if (last && last.expression) add(st.name.text, templateText(last.expression));
+      }
+    }
+  }
+  return found;
+}
+// A template's text, its spans replaced by the fragment they name, else $x.
+function withFragments(node, fragments) {
+  const nameOf = (e) => {
+    if (ts.isIdentifier(e)) return e.text;
+    if (ts.isPropertyAccessExpression(e)) return e.name.text;
+    if (ts.isCallExpression(e)) return nameOf(e.expression);
+    return null;
+  };
+  let out = node.head.text;
+  for (const span of node.templateSpans) {
+    const frag = fragments.get(nameOf(span.expression));
+    out += (frag != null ? ` ${frag} ` : ' $x ') + span.literal.text;
+  }
+  return out;
+}
+
 // Columns machines own, and the triggers that assign columns.
 function readSchema(root) {
   const schema = read(root, 'src/db/schema.sql');
@@ -375,13 +425,15 @@ function boundary(root = REPO, allowed = new Set()) {
   // Other writers of owned columns: SQL anywhere under src/ outside the
   // owning machine's directory, and triggers that assign them.
   const owners = new Map();
-  for (const file of [...listFiles(root, 'src'), ...(fs.existsSync(path.join(root, 'server.js')) ? ['server.js'] : [])]) {
+  const sources = [...listFiles(root, 'src'), ...(fs.existsSync(path.join(root, 'server.js')) ? ['server.js'] : [])];
+  const fragments = sqlFragments(root, sources);
+  for (const file of sources) {
     const text = read(root, file);
     if (!/\bUPDATE\b/i.test(text)) continue;
     const sf = parse(root, file);
     const visit = (n) => {
       if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isTemplateExpression(n)) {
-        const sql = ts.isTemplateExpression(n) ? [n.head.text, ...n.templateSpans.map((x) => x.literal.text)].join(' $x ') : n.text;
+        const sql = ts.isTemplateExpression(n) ? withFragments(n, fragments) : n.text;
         for (const w of sqlWrites(sql)) {
           if (!w.cols) continue;
           for (const o of schema.owned) {

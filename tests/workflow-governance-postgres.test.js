@@ -479,6 +479,36 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     assert.equal((await readFacts(pool, i.id, { type: 'Evaluate', payload: {} }, true, DATA_KEY)).refusal, null);
   });
 
+  await t.test('the writers outside the machine leave the rows it holds alone (wf_holds)', async () => {
+    const a = await app({ approvals: 5 });
+    const author = await user();
+    // A legacy rename the machine holds, and the request board's twin of the same GitHub issue.
+    const held = await issue(a, author, 'rename', { newName: 'Held' }, { twin: 31 });
+    const { rows: [twin] } = await pool.query(
+      `INSERT INTO issues (app_id, title, kind, payload, created_by, github_issue_number)
+       VALUES ($1, 'A request', 'general', '{}', $2, 31) RETURNING *`, [a.id, author.id]);
+    await file(held);
+    const holds = async (key) => (await pool.query('SELECT wf_holds($1, $2) AS h', [MACHINE, key])).rows[0].h;
+    assert.equal(await holds(issueKey(held.id)), true);
+    assert.equal(await holds(issueKey(twin.id)), false, 'nothing enrolled the twin');
+    // A request moved to Homeroom closes its own twin, never the proposal (this
+    // used to fail whole in raise mode, twin included).
+    const move = require('../src/services/homeroom-bot-move');
+    await move.closeNow(pool, { app: { id: a.id, slug: a.slug }, repo: { owner: 'acme', repo: a.slug }, issueNumber: 31,
+      user: { username: 'someone' }, newNumber: 5,
+      deps: { github: { async closeIssue() {} }, ws: { async sendSystemMessage() {}, pushIssueUpdate() {} } } });
+    assert.equal((await row(twin)).status, 'closed');
+    assert.equal((await row(held)).status, 'open', 'decided by its vote');
+    // The rename migration and the revert's sha backfill ask the same question.
+    for (const f of ['src/services/rename-pr.js', 'src/routes/votes.js']) {
+      assert.match(require('node:fs').readFileSync(require.resolve(`../${f}`), 'utf8'), /NOT wf_holds\('(governance-proposal|merge-followups)'/, f);
+    }
+    // With the machine off, it holds nothing.
+    await pool.query(`DELETE FROM wf_settings WHERE key = 'enabled:governance-proposal'`);
+    try { assert.equal(await holds(issueKey(held.id)), false); }
+    finally { await pool.query(`INSERT INTO wf_settings (key, value) VALUES ('enabled:governance-proposal', '1')`); }
+  });
+
   await t.test('G13 an enrolled row is owned: legacy writes are refused, unenrolled rows are not', async () => {
     const a = await app({ approvals: 5 });
     const author = await user();

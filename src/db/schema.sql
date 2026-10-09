@@ -13076,6 +13076,15 @@ CREATE TRIGGER wf_events_writer
 -- clause selects, but only while the machine is switched on: for a change
 -- only the machine may make, whether or not the row is enrolled yet (the
 -- move of a proposal into 'merged' is what enrolls it).
+-- Whether a machine holds this instance and is on: what an `@enrolled=`
+-- guard below checks before it guards a row. Code outside the machine that
+-- must leave such a row alone (a legacy migration, a backfill) asks the same
+-- question in its WHERE clause, so the two cannot disagree.
+CREATE OR REPLACE FUNCTION wf_holds(machine_name TEXT, instance_key TEXT) RETURNS BOOLEAN AS $$
+  SELECT EXISTS (SELECT 1 FROM wf_settings WHERE key = 'enabled:' || machine_name)
+     AND EXISTS (SELECT 1 FROM wf_instances WHERE machine = machine_name AND key = instance_key)
+$$ LANGUAGE sql STABLE;
+
 CREATE OR REPLACE FUNCTION wf_guard_owned_columns() RETURNS TRIGGER AS $$
 DECLARE
   owned TEXT;
@@ -13098,12 +13107,7 @@ BEGIN
     END IF;
   ELSIF TG_ARGV[0] LIKE '@enrolled=%' THEN
     enrolled := substr(TG_ARGV[0], length('@enrolled=') + 1);
-    IF NOT EXISTS (SELECT 1 FROM wf_settings WHERE key = 'enabled:' || split_part(enrolled, '/', 1)) THEN
-      RETURN NEW;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM wf_instances
-                    WHERE machine = split_part(enrolled, '/', 1)
-                      AND key = split_part(enrolled, '/', 2) || (before ->> 'id')) THEN
+    IF NOT wf_holds(split_part(enrolled, '/', 1), split_part(enrolled, '/', 2) || (before ->> 'id')) THEN
       RETURN NEW;
     END IF;
   END IF;

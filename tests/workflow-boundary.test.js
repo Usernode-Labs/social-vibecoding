@@ -33,6 +33,16 @@ async function write(pool) {
 async function noteOnly(pool) { await pool.query("UPDATE things SET note = 'x'"); }
 module.exports = { write, noteOnly };
 `,
+  // A SET list built from a named fragment is read with the fragment's columns.
+  'src/services/fragments.js': `
+const NOTE_SQL = \`note = 'x'\`;
+function noteFor(p) { const keep = 'k'; return \`note = \${p}\`; }
+async function touch(pool) {
+  await pool.query(\`UPDATE things SET \${NOTE_SQL} WHERE id = 1\`);
+  await pool.query(\`UPDATE things SET \${noteFor('$1')} WHERE id = 1\`);
+}
+module.exports = { touch };
+`,
   'src/workflow/legacy.ts': `
 import { createRequire } from 'node:module';
 const load = createRequire(new URL('../', import.meta.url));
@@ -154,5 +164,6 @@ test('notifiers, and other writers of owned columns', () => {
   has(demo, 'ownership | things.status ← src/services/writer.js#write (dynamic SET)');
   has(demo, 'ownership | things.status ← trigger things_fill');
   assert.ok(!demo.some((e) => e.includes('noteOnly')), 'a writer of another column');
+  assert.ok(!demo.some((e) => e.includes('fragments.js')), 'a SET built from named fragments of other columns');
   assert.ok(!demo.some((e) => e.startsWith('ownership | things.note')), 'only owned columns');
 });

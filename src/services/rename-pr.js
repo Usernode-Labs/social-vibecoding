@@ -593,7 +593,11 @@ async function migrateOpenRenameIssues(config, pool) {
          FROM issues i
          JOIN apps a ON a.id = i.app_id
          LEFT JOIN users u ON u.id = i.created_by
-        WHERE i.kind = 'rename' AND i.status = 'open'`
+        WHERE i.kind = 'rename' AND i.status = 'open'
+          -- A legacy rename the governance machine holds while it is on is
+          -- its to decide (it still applies legacy renames); with the
+          -- machine off, the migration drains it as before.
+          AND NOT wf_holds('governance-proposal', 'issue:' || i.id)`
     ));
   } catch (err) {
     // issues table or columns missing on a fresh DB — nothing to migrate.

@@ -28,12 +28,18 @@ let merges: ReturnType<typeof mergeFollowups> | null = null;
 let mergesAdmitted = false;
 let log: Logger | null = null;
 
-// What the ownership triggers read, synced on every boot, flag or not:
+// What the ownership triggers read, synced on every boot:
 // - ownership_mode: 'raise' (tests, staging, local) or 'log' (production,
 //   until no legacy writer is left);
-// - enabled:<machine>: present while the machine's flag is on. With it off
-//   the triggers leave enrolled rows to the legacy writers again, and the
-//   machine closes any instance whose row they closed when it comes back.
+// - enabled:<machine>: the machine's guard. A boot with its flag on sets
+//   it; a boot with its flag off leaves it. The flag is per process and the
+//   guard is the cluster's: an old Pod still running (a rollout, a rollback,
+//   a restart of a Pod from before) must not switch it off under the Pods
+//   that run the machine. It goes only when an admin turns it off
+//   (turnGuardOff, Admin → Workflows) once no process runs the machine.
+//   With it off, the triggers leave enrolled rows to the legacy writers
+//   again, and the machine closes any instance whose row they closed when
+//   it comes back.
 async function setSetting(pool: Pool, key: string, value: string | null): Promise<void> {
   if (value === null) {
     await pool.query('DELETE FROM wf_settings WHERE key = $1', [key]);
@@ -44,10 +50,35 @@ async function setSetting(pool: Pool, key: string, value: string | null): Promis
   }
 }
 
+// Each machine's flag in this process's configuration.
+const FLAGS = new Map<string, { flag: string; on: (config: any) => boolean }>([
+  [MACHINE, { flag: 'WF_GOVERNANCE_ENABLED', on: (c) => !!c.wfGovernanceEnabled }],
+  [MERGE, { flag: 'WF_MERGE_FOLLOWUPS_ENABLED', on: (c) => !!c.wfMergeFollowupsEnabled }],
+]);
+
 export async function syncSettings(pool: Pool, config: any): Promise<void> {
   await setSetting(pool, 'ownership_mode', config.wfOwnershipMode === 'log' ? 'log' : null);
-  await setSetting(pool, `enabled:${MACHINE}`, config.wfGovernanceEnabled ? '1' : null);
-  await setSetting(pool, `enabled:${MERGE}`, config.wfMergeFollowupsEnabled ? '1' : null);
+  for (const [name, { on }] of FLAGS) if (on(config)) await setSetting(pool, `enabled:${name}`, '1');
+}
+
+// Each machine's guard, and whether this process's flag runs it: the admin
+// view shows a guard on while the flag is off here (every process's flag
+// may be off by now, after a rollback).
+export async function guards(pool: Pool, config: any): Promise<{ machine: string; flag: string; on: boolean; flagHere: boolean }[]> {
+  const { rows } = await pool.query(`SELECT key FROM wf_settings WHERE key LIKE 'enabled:%'`);
+  const set = new Set(rows.map((r: { key: string }) => r.key));
+  return [...FLAGS].map(([name, f]) => ({ machine: name, flag: f.flag, on: set.has(`enabled:${name}`), flagHere: f.on(config) }));
+}
+
+// An admin turns a machine's guard off, once its flag is off everywhere
+// (here at least: a process whose flag is on would set it again at its
+// next boot, and runs the machine meanwhile).
+export async function turnGuardOff(pool: Pool, config: any, name: string, admin: { id: number }): Promise<void> {
+  const f = FLAGS.get(name);
+  if (!f) throw new AdminActionError(400, `${name} is not a workflow machine`);
+  if (f.on(config)) throw new AdminActionError(409, `${f.flag} is on in this process: turn the flag off first`);
+  await setSetting(pool, `enabled:${name}`, null);
+  (log || legacy('services/logger')).warn('workflow', 'A machine\'s ownership guard was turned off', { machine: name, adminId: admin.id });
 }
 
 // Merges merge-followups accepted before its flag went off still finish

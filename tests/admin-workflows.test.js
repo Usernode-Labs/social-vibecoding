@@ -69,6 +69,23 @@ test('the problems panel lists each kind of problem, and says when nothing is st
   assert.doesNotMatch(html, /Nothing is stuck/);
 });
 
+test('a guard left on while its flag is off here is a problem; one its flag runs here is not', () => {
+  const empty = { flagged: [], overdueDeadlines: [], work: [], ownershipViolations: [] };
+  const html = render('Problems', { onOpen() {}, overview: { problems: empty, guards: [
+    { machine: 'governance-proposal', flag: 'WF_GOVERNANCE_ENABLED', on: true, flagHere: false },
+    { machine: 'merge-followups', flag: 'WF_MERGE_FOLLOWUPS_ENABLED', on: true, flagHere: true },
+  ] } });
+  assert.match(html, /data-wf-problem="guard"/);
+  assert.match(html, /guard on, flag off here/);
+  assert.match(html, /WF_GOVERNANCE_ENABLED is off in this process/);
+  assert.doesNotMatch(html, /merge-followups/, 'its flag runs it here');
+  assert.doesNotMatch(html, /Nothing is stuck/);
+  const fine = render('Problems', { onOpen() {}, overview: { problems: empty, guards: [
+    { machine: 'governance-proposal', flag: 'WF_GOVERNANCE_ENABLED', on: false, flagHere: false },
+  ] } });
+  assert.match(fine, /Nothing is stuck\./);
+});
+
 test('the timeline shows result, reason, transition, source, cause and what an event emitted', () => {
   const html = render('Timeline', {
     onOpen() {},

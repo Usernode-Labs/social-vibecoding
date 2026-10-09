@@ -325,6 +325,15 @@ A machine is a folder under `src/workflow/<machine>/`:
 | `facts.ts` | Its reads. |
 | `services.ts` | Its work handlers. |
 
+**Its decisions' own code lives in `src/workflow/rules/`** when the code not migrated yet
+uses it too: the merge gate and the electorate, the governance kinds, platform variables and
+the encryption helper, the merged line's credits, bounties, notification preferences and the
+merged notification. Each is one copy: the old module imports it back under its old name
+(`services/governance.js` re-exports `computeGate`). A file in `rules/` imports only `node:`
+built-ins and other `rules/` files, because old modules `require` it at load. It is held to a
+transition's limits (no state, timers, hooks or outside I/O), and a function that throws
+where its old copy swallowed keeps a never-throw wrapper on the old side.
+
 `src/workflow/governance-proposal/` is the reference. The definition is a plain object
 that `defineMachine` validates once and turns into `Map`s:
 
@@ -401,7 +410,12 @@ append and answer with the outcome.
 separate workflow Pod.
 
 - **Every process** records its flags in `wf_settings` at boot (`startWorkflow` in
-  `server.js`). With a flag on, it also starts the runtime on its own pool
+  `server.js`): a flag that is on turns its machine's ownership guard on
+  (`enabled:<machine>`). A flag that is off leaves the guard as it is. The flag is per
+  process and the guard is the cluster's, so a Pod still running with the flag off (the
+  old one in a rollout, a rollback, a restart) never switches it off under the Pods that
+  run the machine. Once no process runs it, an admin turns it off in Admin → Workflows,
+  which lists a guard that is on while the flag is off. With a flag on, it also starts the runtime on its own pool
   (`application_name` `homeroom-workflow`), listens for outcomes so routes can wait for
   them, and runs pipeline slots. A Pod that is not the leader (the new one, during a
   rollout) therefore applies its own events at once instead of answering `202`. With
@@ -445,7 +459,10 @@ between it and the code not migrated yet:
 - each notifier still declared;
 - each table a work handler's own code writes;
 - each other writer of a column the machine owns: SQL anywhere under `src/` that
-  updates it, and triggers that assign it (schema.sql's ownership triggers).
+  updates it, and triggers that assign it (schema.sql's ownership triggers). A SET list
+  built from a named fragment (`${INVALIDATE_SQL}`, `${invalidateHeadMoveSql(…)}`) is read
+  with the fragment's own columns; one built from an array is "dynamic", counted as
+  writing every owned column.
 
 It reads only the text, never what lies behind a call: the two-process and restart
 tests (below) show that. Transitions are held to the strictest form of it: a step moves
@@ -563,6 +580,18 @@ A new machine brings the same two layers:
 | `governance-proposal` | `issue:<id>`, for the five governance kinds (rename, secret change, close issue, maintenance campaign, featured illustration) | `open` → `applied` / `refused` / `withdrawn` / `superseded` | Behind `WF_GOVERNANCE_ENABLED` |
 | `merge-followups` | `session:<id>`, for each merged proposal and each change that went live inside one | `delivering` → `live`, or `deploy_failed` → `live` | Behind `WF_MERGE_FOLLOWUPS_ENABLED` |
 
+### governance-proposal
+
+A governance proposal from filing to its outcome (`src/workflow/governance-proposal/`):
+votes, the gate (`rules/governance-gate.ts`, the same rule every merge path uses), the
+vote window and a 10-minute backstop as the instance's timer, then the kind's own change
+in the transaction that closes it. What talks to the outside is durable work: GitHub's
+close and comment (`github.closeIssue`), the production rebuild a secret change needs
+(`app.rebuildProduction`), the target check of a close proposal, and a passed maintenance
+campaign's fan-out (`campaign.run`). The campaign also holds a lease of its own
+(`fleet-maintenance.runCampaign`), so the leader's resume or an admin's retry never drives
+it at the same time.
+
 ### merge-followups
 
 What a merged pull request still has to do once GitHub has merged it
@@ -593,6 +622,16 @@ What a merged pull request still has to do once GitHub has merged it
   - Until then the change reads merged and going live.
 - **A failed deploy** ends in `deploy_failed`, said in the thread. Any later deploy that
   contains the change makes it live, and so does **Retry delivery** in Admin → Workflows.
+
+- **What a merge leaves alone.** `worker.retire` waits while the change's shots run is
+  still heard from (its `shot_runs` row, heartbeated; `facts.ts liveShotsRun`), asking
+  again two minutes later (`notBefore`). A change is carried only if, under its own lock,
+  its head is still the one the carrier listed and no turn, shots run or checks run is
+  working on it.
+- **Every web process's issue lists.** GitHub's open-issues list is cached per process,
+  with the requests just closed hidden from it. A merge and its close work publish an
+  `issues_closed` push, which every web process applies to its own copy (`ws.js`); no
+  browser receives it.
 
 **Planned order:**
 1. **Previews and required checks.**

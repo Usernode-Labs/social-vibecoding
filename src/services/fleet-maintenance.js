@@ -653,8 +653,8 @@ async function runCampaign(config, pool, campaignId) {
       }
       const row = rows[0];
       const app = { id: row.app_id, slug: row.slug, name: row.name, repo_url: row.repo_url };
-      // The row's result is written only by the driver that claimed it.
-      const finish = (sql, params) => pool.query(`${sql} AND runner_id = $${params.length + 1} AND state = 'running'`, [...params, runner]);
+      // The row's result is written only by the driver that claimed it
+      // (runner_id = $3, still 'running').
 
       try {
         const out = await runAppChange({
@@ -669,11 +669,11 @@ async function runCampaign(config, pool, campaignId) {
         });
 
         if (out.skipped) {
-          await finish(
+          await pool.query(
             `UPDATE maintenance_campaign_apps
                 SET state = 'skipped', error = $2, updated_at = NOW()
-              WHERE id = $1`,
-            [row.row_id, String(out.reason || '').slice(0, 2000)]
+              WHERE id = $1 AND runner_id = $3 AND state = 'running'`,
+            [row.row_id, String(out.reason || '').slice(0, 2000), runner]
           );
           log.info('fleet-maintenance', 'Campaign app skipped', {
             campaignId, slug: app.slug, reason: out.reason,
@@ -691,21 +691,21 @@ async function runCampaign(config, pool, campaignId) {
           config, pool, campaign, app, files: out.files, summary: out.summary, platformUserId,
         });
         if (!exemplarSummary && out.summary) exemplarSummary = out.summary;
-        await finish(
+        await pool.query(
           `UPDATE maintenance_campaign_apps
               SET state = 'pr_open', session_id = $2, error = NULL, updated_at = NOW()
-            WHERE id = $1`,
-          [row.row_id, opened.sessionId]
+            WHERE id = $1 AND runner_id = $3 AND state = 'running'`,
+          [row.row_id, opened.sessionId, runner]
         );
       } catch (err) {
         log.warn('fleet-maintenance', 'Campaign app failed', {
           campaignId, slug: app.slug, err: err.message,
         });
-        await finish(
+        await pool.query(
           `UPDATE maintenance_campaign_apps
               SET state = 'failed', error = $2, updated_at = NOW()
-            WHERE id = $1`,
-          [row.row_id, String(err.message || err).slice(0, 2000)]
+            WHERE id = $1 AND runner_id = $3 AND state = 'running'`,
+          [row.row_id, String(err.message || err).slice(0, 2000), runner]
         ).catch(() => {});
       }
     }

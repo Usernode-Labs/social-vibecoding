@@ -244,8 +244,10 @@ async function closeNow(pool, { app, repo, issueNumber, user, newNumber, deps = 
     log.warn('homeroom-bot-move', 'Could not close a moved request', { app: app.slug, issueNumber: n, err: err.message });
     return { ok: false };
   }
+  // The request's own twin rows: a governance proposal that names the same
+  // number is decided by its vote (and its machine), not by a move.
   await pool.query(
-    `UPDATE issues SET status = 'closed' WHERE app_id = $1 AND github_issue_number = $2 AND status = 'open'`,
+    `UPDATE issues SET status = 'closed' WHERE app_id = $1 AND github_issue_number = $2 AND status = 'open' AND kind = 'general'`,
     [app.id, n],
   ).catch(() => {});
   await ws.sendSystemMessage(pool, app.id, `${user.username} moved this request to Homeroom as #${newNumber} and closed it here`,

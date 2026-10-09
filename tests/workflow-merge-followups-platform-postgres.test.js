@@ -203,8 +203,16 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     await platform.startWorkflow(off, { loops: true });
     assert.equal(platform.workflowRunning(), true, 'it runs to finish what it accepted');
     assert.equal(platform.mergeFollowupsEnabled(), false, 'but takes no new merges');
-    const { rows } = await pool.query(`SELECT key FROM wf_settings WHERE key = 'enabled:merge-followups'`);
-    assert.equal(rows.length, 0, 'the legacy merge path may move rows into merged again');
+    // The guard stays: a process booting with its flag off cannot tell that
+    // no other one runs the machine. An admin turns it off (not while the
+    // flag is on here).
+    const guard = async () => (await pool.query(`SELECT key FROM wf_settings WHERE key = 'enabled:merge-followups'`)).rows.length;
+    assert.equal(await guard(), 1, 'a flag-off boot leaves the guard on');
+    await assert.rejects(platform.turnGuardOff(pool, config, 'merge-followups', { id: 1 }), /WF_MERGE_FOLLOWUPS_ENABLED is on in this process/);
+    assert.deepEqual((await platform.guards(pool, off)).find((g) => g.machine === 'merge-followups'),
+      { machine: 'merge-followups', flag: 'WF_MERGE_FOLLOWUPS_ENABLED', on: true, flagHere: false });
+    await platform.turnGuardOff(pool, off, 'merge-followups', { id: 1 });
+    assert.equal(await guard(), 0, 'the legacy merge path may move rows into merged again');
     await until(async () => (await state(s)) === 'live', 'the accepted merge finished');
     // And every follow-up of it, the DM and journey record that follow live included.
     await quiet();

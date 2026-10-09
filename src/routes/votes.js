@@ -7518,9 +7518,13 @@ async function checkAndOpenRevert(config, pool, session, decider) {
             { owner: bOwner, repo: bRepo, pull_number: session.pr_number }
           );
           if (pr.merged && pr.merge_commit_sha) {
+            // Not on a row the merge-followups machine holds while it is
+            // on: the column is the machine's (it recorded the merge as it
+            // saw it); the revert reads the sha from here all the same.
             await pool.query(
               `UPDATE chat_sessions SET merge_commit_sha = $2
-               WHERE id = $1 AND merge_commit_sha IS NULL`,
+               WHERE id = $1 AND merge_commit_sha IS NULL
+                 AND NOT wf_holds('merge-followups', 'session:' || $1::text)`,
               [session.id, pr.merge_commit_sha]
             );
             session.merge_commit_sha = pr.merge_commit_sha;
