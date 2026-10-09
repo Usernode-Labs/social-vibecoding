@@ -286,7 +286,9 @@ test('the same five tabs stand up at desktop, and the band goes away', () => {
   // RESERVES, and goes to 0 while it is folded or peeking. One number for
   // both drew a 17px sliver — padding and a border around a zero-width
   // column — the first time the rail was peeked over a folded desktop.
-  assert.match(css, /--platform-rail-full: 224px;/, 'the rail has a width');
+  // #4417: 76px, the strip: the sections as an icon over a label, the five
+  // recent apps, you at the foot; the section's column beside it.
+  assert.match(css, /--platform-rail-full: 76px;/, 'the strip has a width');
   assert.match(block, /--platform-rail-w: var\(--platform-rail-full\);/,
     'and reserves it while it is up');
   assert.match(block, /--platform-tabs-h: var\(--platform-safe-bottom\);/,
@@ -303,7 +305,8 @@ test('the same five tabs stand up at desktop, and the band goes away', () => {
   // The auto margin is on the rule drawn above Me (#2800), which Me follows.
   assert.match(block, /\.platform-tabs::after \{[^}]*order: 1;[^}]*margin: auto 4px 6px;/,
     'Me is the rail\'s foot: the four above are places, this is the reader');
-  assert.match(block, /#platform-tab-me \{\s*\n\s*order: 2;/, 'and Me comes after the rule');
+  assert.match(block, /\.platform-rail-settings \{\s*\n\s*order: 2;\s*\}\s*#platform-tab-me \{\s*\n\s*order: 3;/,
+    'and your settings, then you, come after the rule');
   // A GUTTER AFTER THE RAIL, MIRRORED ON THE FAR EDGE (#2718 review). The
   // rail's hairline was the content's left margin, so a card began where the
   // rail ended while the page had air on the right and none on the left — a
@@ -332,8 +335,8 @@ test('the same five tabs stand up at desktop, and the band goes away', () => {
   // the answer to that question.
   assert.match(block,
     /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-peek\):not\(\.platform-tabs-folded\)\) #app-view \{\s*padding-left: calc\(var\(--platform-rail-w, 0px\) \+ var\(--platform-gutter\)\);/);
-  // The parked strip is the rail's footer, and its pill becomes a caption
-  // because four things do not fit across 224px.
+  // The parked strip is the rail's footer (hidden on the desktop, where the
+  // strip's apps are the way back), and its pill becomes a caption.
   assert.match(block, /\.platform-parked \{[\s\S]{0,300}width: var\(--platform-rail-full\);/);
   assert.match(block, /\.platform-parked-pill \{[\s\S]{0,200}order: -1;/);
 });
@@ -577,8 +580,8 @@ test('the reservation is keyed off the bar\'s own hidden class', () => {
   // to `--platform-bar-h`.
   assert.match(css, /\nbody \{\n(?:  \/\*[^]*?\*\/\n)?  --platform-bar-h: 0px;/);
   assert.match(css, /--platform-tabs-h: 0px;/);
-  assert.match(css, /--platform-rail-w: 0px;\n  --platform-gutter: 0px;\n\}/,
-    'and the rail costs a phone no width at all, nor the gutter beside it');
+  assert.match(css, /--platform-rail-w: 0px;\n(?:  \/\*[^]*?\*\/\n)?  --platform-column-w: 0px;\n  --platform-gutter: 0px;\n\}/,
+    'and the strip costs a phone no width at all, nor its column, nor the gutter beside it');
   assert.match(css,
     /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-peek\)\):has\(#platform-parked:not\(\.hidden\)\) \{\s*--platform-tabs-h: calc\(52px \+ 56px \+ var\(--platform-tabs-inset, 0px\)\);/,
     'the strip adds its own band, and only while the bar is there to sit on '
@@ -645,7 +648,7 @@ test('a tab label has room for its descenders', () => {
     'a unitless multiplier is the one value correct at both sizes');
 });
 
-test('the Messages count is the quiet one: grey on the phone, at the row\'s end on the rail (#2912)', () => {
+test('the Messages count is the quiet one: grey, on the glyph\'s corner on the phone and the strip (#2912, #4417)', () => {
   // Unread messages are counted in the bell as well, so a second RED count on
   // the Messages tab said the same thing twice in the loudest colour on the
   // screen. The bell keeps the red (#notifications-badge is not touched);
@@ -658,21 +661,18 @@ test('the Messages count is the quiet one: grey on the phone, at the row\'s end 
   assert.match(phone[0], /position: absolute;\s*top: -3px;\s*left: calc\(100% - 7px\);/,
     'and it keeps its place on the glyph\'s corner');
 
-  // On the rail the count moves to the row's far end, where Recents draws its
-  // unread dots, as a pill in the rail's own muted ink. The glyph's wrapper
-  // dissolves so the badge is an item of the row, back in the flow, so the
-  // label can shrink before it but never run under it.
+  // #4417: the desktop strip is an icon over a label, as the phone's bar is,
+  // so the count stays on the glyph's corner there too: the wrapper is its
+  // anchor at every width now (it dissolved into a row on the 224px rail),
+  // nudged a pixel for the strip's tighter cell.
   const at = css.indexOf('@media (min-width: 768px) {\n  /* THE BAND AT THE FOOT GOES AWAY');
   const block = css.slice(at, css.indexOf('\n}\n', css.indexOf('.platform-parked-pill {', at)));
-  assert.match(block, /\n {2}\.platform-tab-mark \{\s*display: contents;\s*\}/,
-    'the wrapper dissolves on the rail and only there');
-  const rail = block.match(/\n {2}\.platform-tab-badge \{[^}]*\}/);
-  assert.ok(rail, 'the rail restyles the badge inside the desktop block');
-  for (const decl of [
-    /position: static;/, /order: 1;/, /flex: none;/, /margin-left: auto;/,
-    /background: color-mix\(in srgb, var\(--text-muted\) 16%, transparent\);/,
-    /color: var\(--text-muted\);/,
-  ]) assert.match(rail[0], decl);
+  assert.doesNotMatch(block, /\n {2}\.platform-tab-mark \{\s*display: contents;\s*\}/,
+    'the wrapper stays the badge\'s anchor on the strip');
+  const strip = block.match(/\n {2}\.platform-tab-badge \{[^}]*\}/);
+  assert.ok(strip, 'the strip places the badge inside the desktop block');
+  assert.match(strip[0], /top: -4px;\s*left: calc\(100% - 9px\);/);
+  assert.doesNotMatch(strip[0], /position: static|margin-left: auto/, 'never a row\'s-end pill');
 
   // THE MARKUP DOES NOT MOVE, which is what lets the phone keep its anchor
   // and the declared checks keep finding the badge inside the Messages tab.
@@ -971,4 +971,143 @@ test('a plain press on another tab lights it and slides first; the router answer
   assert.match(go, /window\.location\.assign\(href\);/);
   // The router lighting the pressed tab answers the press.
   assert.match(src, /if \(!pending\.current \|\| pending\.current\.key !== tab\) return;\s*pending\.current\.cancel\(\);\s*pending\.current = null;\s*setPressed\(null\);/);
+});
+
+// ── #4417: the desktop strip ────────────────────────────────────────────
+//
+// The 224px rail of rows and Recents (#2802) is a 76px strip: the four
+// sections as an icon over a label, a line, the five apps used most
+// recently, then you at the foot. The conversations Recents listed are
+// Messages' own list, which is the section column on Messages. These are
+// the strip's, and the app-ordering cases that moved here from the retired
+// tests/nav-recents.test.js.
+
+const STRIP = 'frontend/src/features/nav/strip-apps.tsx';
+const stripApp = (slug, at, extra = {}) => ({
+  slug, name: slug[0].toUpperCase() + slug.slice(1), iconUrl: null, iconEmoji: null, at, ...extra,
+});
+
+test('the strip: the sections as an icon over a label, the five recent apps, then you at the foot', () => {
+  const at = css.indexOf('@media (min-width: 768px) {\n  /* THE BAND AT THE FOOT GOES AWAY');
+  const block = css.slice(at, css.indexOf('\n}\n', css.indexOf('.platform-parked-pill {', at)));
+  const tab = block.match(/\n {2}\.platform-tab \{[^}]*\}/)[0];
+  assert.match(tab, /flex-direction: column;/, 'an icon over a label, not a row');
+  assert.match(tab, /height: 58px;/);
+  assert.match(tab, /font-size: 10\.5px;/, 'a label, as on the phone\'s bar');
+  // Recents are gone; the apps sit between the sections and you.
+  const bar = read('frontend/src/features/nav/tab-bar.tsx');
+  assert.doesNotMatch(bar, /RecentsList|recents-list/);
+  assert.match(bar, /key === 'me' \? <StripApps key="apps" \/> : null,/);
+  for (const gone of ['frontend/src/features/nav/recents.ts', 'frontend/src/features/nav/recents-list.tsx', 'tests/nav-recents.test.js']) {
+    assert.ok(!fs.existsSync(path.join(ROOT, gone)), `${gone} is retired with Recents`);
+  }
+  assert.doesNotMatch(css, /\.platform-recents?\b/, 'and its styles with it');
+  assert.match(block, /\.platform-strip-apps:not\(\.hidden\) \{\s*display: flex;[^}]*border-top: 1px solid var\(--app-sheet-line\);/,
+    'a line between the sections and the apps');
+  // The phone's bar is unchanged: five equal cells, no apps.
+  assert.match(css, /\.platform-strip-apps,\n\.platform-section-column \{\n  display: none;\n\}/);
+});
+
+test('five recent apps, newest first, once each; the app on screen leads before it was ever left', () => {
+  const { stripApps, STRIP_APPS } = loadTsx(STRIP);
+  assert.equal(STRIP_APPS, 5);
+  const apps = [
+    stripApp('notes', '2026-09-20T10:00:00Z'), stripApp('chess', '2026-09-20T12:00:00Z'),
+    stripApp('run', '2026-09-20T11:00:00Z'), stripApp('plant', '2026-09-19T10:00:00Z'),
+    stripApp('trade', '2026-09-18T10:00:00Z'), stripApp('old', '2026-09-01T10:00:00Z'),
+  ];
+  assert.deepEqual(stripApps(apps).map((a) => a.slug), ['chess', 'run', 'notes', 'plant', 'trade'],
+    'newest first, cut at five');
+  assert.deepEqual(stripApps(apps, stripApp('fresh', null)).map((a) => a.slug), ['fresh', 'chess', 'run', 'notes', 'plant']);
+  assert.deepEqual(stripApps(apps, apps[3]).map((a) => a.slug), ['plant', 'chess', 'run', 'notes', 'trade'], 'listed once');
+  // The apps still running behind the one on screen come next, whatever
+  // their clock, named by the stored list or else by their slug.
+  assert.deepEqual(stripApps(apps, null, ['old', 'gone']).map((a) => [a.slug, a.name]),
+    [['old', 'Old'], ['gone', 'gone'], ['chess', 'Chess'], ['run', 'Run'], ['notes', 'Notes']]);
+  assert.deepEqual(stripApps([]), []);
+});
+
+test('the still-open dot only on the apps kept alive, said aloud; the app on screen lit', () => {
+  const src = read(STRIP);
+  assert.match(src, /const live = useLiveAppSlugs\(\);/, 'read off the frame store\'s kept frames');
+  assert.match(src, /\{running \? <LiveAppDot className="platform-strip-live" \/> : null\}/);
+  assert.match(src, /\{running \? <span className="sr-only">\{`, \$\{LIVE_APP_LABEL\}`\}<\/span> : null\}/);
+  assert.match(src, /aria-current=\{lit \? 'page' : undefined\}/);
+  // Nothing before mount: the prerender ships the root empty and hidden.
+  const html = renderComponent(STRIP, 'StripApps', {});
+  assert.equal(html, '<div id="platform-strip-apps" class="platform-strip-apps hidden" role="group" aria-label="Recent apps"></div>');
+  // A closed app shrinks into its tile, and a resumed one grows out of it.
+  const motion = read('frontend/src/features/nav/resume-motion.ts');
+  assert.match(motion, /doc\.querySelectorAll\('#platform-strip-apps a\.platform-strip-app\[data-strip-app\]'\)/);
+});
+
+test('#3096: an app is lit only while it is the screen on show', () => {
+  const { currentAppOnScreen } = loadTsx(STRIP);
+  const lit = (screen, tab, frameSlug = 'notes') => currentAppOnScreen({ frameSlug, screen, tab });
+  assert.equal(lit('app-view', null), 'notes', 'in the app');
+  for (const [screen, tab] of [
+    ['messages-screen', 'messages'], ['browse-screen', 'discover'], ['workshop-screen', 'workshop'],
+    ['profile-screen', 'me'], ['settings-screen', 'me'], ['home-screen', 'home'],
+  ]) assert.equal(lit(screen, tab), null, `${screen} lights no app`);
+  assert.equal(lit('app-view', 'workshop'), null, 'the app\'s Workshop');
+  assert.equal(lit(null, null), null);
+  assert.equal(lit('app-view', null, ''), null, 'no frame mounted');
+});
+
+test('blocking forgets only that app from Resume and the persisted recent apps', () => {
+  const previousWindow = global.window;
+  const storage = new Map();
+  global.window = { localStorage: {
+    getItem: (key) => storage.get(key) || null,
+    setItem: (key, value) => storage.set(key, value),
+    removeItem: (key) => storage.delete(key),
+  } };
+  try {
+    const { parkedStore } = loadTsx('frontend/src/features/nav/mount.ts');
+    const nav = window.UsernodeReact.nav;
+    nav.setViewer('ana');
+    nav.park({ slug: 'allowed', name: 'Allowed' });
+    nav.park({ slug: 'blocked', name: 'Blocked' });
+    nav.forget('blocked');
+    assert.equal(parkedStore.get().app, null);
+    const recents = () => JSON.parse(storage.get('usernode_recent_apps_v1'));
+    assert.equal(recents().owner, 'ana');
+    assert.deepEqual(recents().apps.map((app) => app.slug), ['allowed']);
+  } finally {
+    if (previousWindow === undefined) delete global.window;
+    else global.window = previousWindow;
+  }
+});
+
+test('recent apps are remembered per account, and an app appears once, at the front', () => {
+  const storage = new Map();
+  global.window = {
+    localStorage: {
+      getItem: (k) => (storage.has(k) ? storage.get(k) : null),
+      setItem: (k, v) => storage.set(k, String(v)),
+      removeItem: (k) => storage.delete(k),
+    },
+  };
+  try {
+    const mod = loadTsx('frontend/src/features/nav/recent-apps-store.js');
+    mod.rememberRecentApp({ slug: 'a', name: 'A' }, 'ana', '2026-09-20T01:00:00Z');
+    mod.rememberRecentApp({ slug: 'b', name: 'B' }, 'ana', '2026-09-20T02:00:00Z');
+    mod.rememberRecentApp({ slug: 'a', name: 'A' }, 'ana', '2026-09-20T03:00:00Z');
+    assert.deepEqual(mod.recentAppsStore.get().apps.map((a) => a.slug), ['a', 'b']);
+    assert.deepEqual(mod.readRecentApps('ana').map((a) => a.slug), ['a', 'b']);
+    assert.deepEqual(mod.readRecentApps('bo'), [], 'another account sees none of it');
+  } finally {
+    delete global.window;
+  }
+  const mount = read('frontend/src/features/nav/mount.ts');
+  assert.match(mount, /if \(app && app\.slug\) rememberRecentApp\(app, navStore\.get\(\)\.viewer\);/);
+});
+
+test('#2795, #2798: the peeked strip is the frosted one and fades; a blue hover on the tabs and the apps', () => {
+  const peek = css.slice(css.indexOf('  .platform-tabs.platform-tabs-peek {'));
+  const rule = peek.slice(0, peek.indexOf('}'));
+  assert.match(rule, /background-color: var\(--dc-sheet-solid\);/);
+  assert.match(rule, /transition: opacity 200ms ease-in;/);
+  assert.match(css,
+    /@media \(hover: hover\) \{\s*\.platform-tab:not\(\[aria-current="page"\]\):hover,\s*\.platform-strip-app:not\(\[aria-current="page"\]\):hover \{\s*background: color-mix\(in srgb, var\(--lit-tint\) 55%, transparent\);/);
 });

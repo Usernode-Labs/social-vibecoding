@@ -419,7 +419,11 @@ function TopicChannel({ slug, data, topic, readOnly, onPlace }: {
       if (!newest || newest <= posted) return;
       posted = newest;
       try {
-        const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/messages/read`, {
+        // `?demo=1`: a staging demo channel's rows are mock ones, which only
+        // the demo branch of the route knows (src/routes/chat.js).
+        let demo = '';
+        try { demo = new URLSearchParams(window.location.search).get('demo') === '1' ? '?demo=1' : ''; } catch { demo = ''; }
+        const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/messages/read${demo}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ message_id: newest, thread_type: 'category', thread_ref: ref }),

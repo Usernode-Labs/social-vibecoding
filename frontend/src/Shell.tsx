@@ -84,7 +84,7 @@ import { AppContextIsland } from './features/app-context';
 import { LeaderboardScreen } from './features/leaderboard';
 import { PlatformHeader } from './features/header/platform-header';
 import { MessagesScreen } from './features/messages';
-import { ParkedStrip, PlatformTabs, SkipToNavigation } from './features/nav';
+import { ParkedStrip, PlatformTabs, SectionColumn, SkipToNavigation } from './features/nav';
 import { SidePanel } from './features/side-panel';
 import { GlobalChatScreen } from './features/global-chat';
 import { AgentSessionScreen } from './features/agent-session';
@@ -476,6 +476,14 @@ export function Shell() {
       */}
       <Island name="ParkedStrip"><ParkedStrip /></Island>
       <Island name="PlatformTabs"><PlatformTabs /></Island>
+      {/*
+          #4417: #platform-section-column, the column beside the desktop
+          strip that belongs to the section on screen: a project's places
+          under Communities (features/nav/section-column.tsx). New markup,
+          shipped hidden and empty; never drawn on a phone, where the places
+          are the tray behind the page's place bar.
+      */}
+      <Island name="SectionColumn"><SectionColumn /></Island>
       {/*
           #notifications-panel (the bell dropdown) and #work-drawer-panel (the
           header-cog "your work" drawer) both used to be islands here — same

@@ -251,10 +251,18 @@ function isPinnedDemoThread(thread) {
 // talking about the topic, so the channel, its head line and its composer
 // are reviewable before anybody has said a word there. Its own ids, above
 // the rest of the mock's, and the topic's own thread on every row.
+// The ids stagingMockTopicChannel gives its rows: a `?demo=1` read cursor
+// moved onto one is the demo's, and answers without touching the database.
+const TOPIC_MOCK_FIRST_ID = 9902031;
+const TOPIC_MOCK_ROWS = 3;
+function isTopicMockId(id) {
+  return id >= TOPIC_MOCK_FIRST_ID && id < TOPIC_MOCK_FIRST_ID + TOPIC_MOCK_ROWS;
+}
+
 function stagingMockTopicChannel(appId, thread) {
   const now = Date.now();
   const row = (offset, minutesBack, username, content) => ({
-    id: 9902031 + offset, user_id: 0, username, content,
+    id: TOPIC_MOCK_FIRST_ID + offset, user_id: 0, username, content,
     msg_type: 'message', metadata: {},
     thread_type: thread.type, thread_ref: thread.ref,
     created_at: new Date(now - minutesBack * 60 * 1000).toISOString(),
@@ -1016,6 +1024,10 @@ function chatRoutes(config) {
         const ref = parseThreadRef(body.thread_ref);
         if (body.thread_type !== appChat.CATEGORY_THREAD || ref == null) {
           return res.status(400).json({ error: 'Invalid thread_type/thread_ref' });
+        }
+        // A staging `?demo=1` topic channel's rows are mock ones.
+        if (IS_STAGING && req.query.demo === '1' && isTopicMockId(messageId)) {
+          return res.json({ unread_count: 0 });
         }
         const moved = await appChat.moveCategoryCursor(pool, {
           appId: app.id, categoryId: ref, userId: req.user.id, messageId, unread: move === 'unread',

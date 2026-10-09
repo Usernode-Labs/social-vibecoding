@@ -5,8 +5,9 @@
 //   1. A SPINNER while its turn runs (the lease is held, which covers a scout
 //      or a build the turn dispatched), and a GREEN DOT once a turn finished
 //      after the owner last read the conversation. Nothing otherwise.
-//   2. The same mark in Recents, the platform mark's Continue rows and
-//      Messages, from the same two fields the server sends (busy, doneUnseen).
+//   2. The same mark in the platform mark's Continue rows and Messages, from
+//      the same two fields the server sends (busy, doneUnseen). (The rail's
+//      Recents drew it too, until #4417 retired Recents.)
 //   3. The lists follow it live: a turn starting or ending, or the
 //      conversation being read in another tab, pushes `agent_session_changed`
 //      to the owner, and the list is read again (once per burst). Reading the
@@ -41,24 +42,7 @@ test('working is a spinner, finished-unseen a green dot, and nothing else is mar
   assert.equal(renderToHtml(createElement(AgentActivityMark, { activity: null })), '');
 });
 
-test('Recents, the mark\'s Continue rows and Messages all draw it', () => {
-  const recents = loadTsx('frontend/src/features/nav/recents.ts');
-  const items = recents.buildRecents({
-    apps: [], conversations: [], discussions: [], agents: [],
-    agentSessions: [
-      { id: 1, title: 'Busy', status: 'open', lastActivityAt: '2026-09-24T12:00:00Z', busy: true },
-      { id: 2, title: 'Done', status: 'open', lastActivityAt: '2026-09-24T11:00:00Z', doneUnseen: true },
-      { id: 3, title: 'Idle', status: 'open', lastActivityAt: '2026-09-24T10:00:00Z' },
-    ],
-  });
-  assert.deepEqual(items.map((i) => [i.key, i.activity]), [
-    ['agent-session:1', 'working'], ['agent-session:2', 'done'], ['agent-session:3', null],
-  ]);
-  const row = read('frontend/src/features/nav/recents-list.tsx');
-  assert.match(row, /\{item\.activity\s*\? <AgentActivityIcon activity=\{item\.activity\} className="platform-recent-glyph" \/>\s*: app \? <AppTile app=\{app\} \/> : <Glyph className="platform-recent-glyph" aria-hidden="true" \/>\}/,
-    '#3028, #3076: working or finished, the mark takes the icon\'s place');
-  assert.match(row, /aria-label=\{`\$\{KIND_NAMES\[item\.kind\]\}: \$\{item\.label\}\$\{loaded\}\$\{doing\}\$\{unread\}`\}/,
-    'and the row\'s name says it');
+test('the mark\'s Continue rows and Messages both draw it', () => {
 
   const messages = read('frontend/src/features/messages/index.tsx');
   const mayorRow = messages.slice(messages.indexOf('function MayorSessionRow('), messages.indexOf('function AgentChatThread('));
@@ -69,8 +53,8 @@ test('Recents, the mark\'s Continue rows and Messages all draw it', () => {
 test('#3028: while a session works, its spinner replaces the row\'s icon rather than sitting beside it', () => {
   const { createElement, renderToHtml } = require('./lib/render-tsx');
   const { AgentWorkingIcon } = loadTsx('frontend/src/features/agent-session/activity-mark.tsx');
-  const icon = renderToHtml(createElement(AgentWorkingIcon, { className: 'platform-recent-glyph' }));
-  assert.match(icon, /^<svg class="animate-spin text-violet-600 dark:text-violet-400 platform-recent-glyph"[^>]*aria-hidden="true" data-agent-activity="working"/,
+  const icon = renderToHtml(createElement(AgentWorkingIcon, { className: 'row-glyph' }));
+  assert.match(icon, /^<svg class="animate-spin text-violet-600 dark:text-violet-400 row-glyph"[^>]*aria-hidden="true" data-agent-activity="working"/,
     'the same spinner, at the slot\'s size, decoration only');
 
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
@@ -81,19 +65,14 @@ test('#3028: while a session works, its spinner replaces the row\'s icon rather 
     'the slot sizes the spinner like the icon it replaces');
 });
 
-test('#3076: the finished dot replaces the icon too, in Recents, the mark\'s Continue rows and Messages', () => {
+test('#3076: the finished dot replaces the icon too, in the mark\'s Continue rows and Messages', () => {
   const { AgentDoneIcon, AgentActivityIcon } = loadTsx('frontend/src/features/agent-session/activity-mark.tsx');
-  const dot = renderToHtml(createElement(AgentDoneIcon, { className: 'platform-recent-glyph' }));
-  assert.match(dot, /^<span aria-hidden="true" data-agent-activity="done" class="inline-flex shrink-0 items-center justify-center platform-recent-glyph"><span class="h-2 w-2 rounded-full bg-green-500"><\/span><\/span>$/,
+  const dot = renderToHtml(createElement(AgentDoneIcon, { className: 'row-glyph' }));
+  assert.match(dot, /^<span aria-hidden="true" data-agent-activity="done" class="inline-flex shrink-0 items-center justify-center row-glyph"><span class="h-2 w-2 rounded-full bg-green-500"><\/span><\/span>$/,
     'the live-app dot\'s green, centred in the slot it takes, decoration only');
   assert.match(renderToHtml(createElement(AgentActivityIcon, { activity: 'working', className: 'x' })), /^<svg class="animate-spin[^"]* x"/);
   assert.match(renderToHtml(createElement(AgentActivityIcon, { activity: 'done' })), /data-agent-activity="done"/);
   assert.equal(renderToHtml(createElement(AgentActivityIcon, { activity: null })), '');
-
-  // Recents: one mark where the icon was, and nothing more before the name.
-  const row = read('frontend/src/features/nav/recents-list.tsx');
-  const body = row.slice(row.indexOf('function RecentRow('), row.indexOf('export function RecentsByDay('));
-  assert.doesNotMatch(body, /AgentActivityMark|platform-recent-activity/, 'no second mark beside the icon');
 
   // The menu's rows: the same, and the state in words.
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');

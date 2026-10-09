@@ -226,7 +226,7 @@ test('the screen reads the stream in two places only, and past replies keep thei
 test('the readers outside the conversation read the list of sessions, not the snapshot', () => {
   for (const file of [
     'frontend/src/features/messages/index.tsx',
-    'frontend/src/features/nav/recents-list.tsx',
+    // (#4417: the rail's Recents, a third reader, is retired.)
     'frontend/src/features/app-context/app-context-sheet.tsx',
   ]) {
     const src = read(file);

@@ -4,7 +4,7 @@
  * The last few apps opened stay running in hidden frames (./app-frame-store.js,
  * `kept`), so resuming one is instant and shows it exactly as it was left. The
  * dot is how the viewer can tell which apps those are: it sits on the app's
- * tile on Home and on its row in the rail's Recents, and it goes the moment
+ * tile on Home and on the desktop strip (../nav/strip-apps.tsx), and it goes the moment
  * the frame does — evicted as least recently used, dropped for a new build, or
  * at sign-out.
  *
@@ -27,7 +27,7 @@ export function useLiveAppSlugs(): string[] {
  * its Workshop, or hidden behind any other screen the viewer went to without
  * backing out to Home. Only leaving for Home retires it into the kept frames
  * and clears this, so it is NOT "the app on screen" — the rail asks the
- * router for that (../nav/recents.ts currentAppOnScreen, #3096). Starts null,
+ * router for that (../nav/strip-apps.tsx currentAppOnScreen, #3096). Starts null,
  * as the prerender did.
  */
 export function useCurrentAppSlug(): string | null {
