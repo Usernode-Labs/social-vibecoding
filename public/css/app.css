@@ -22199,10 +22199,11 @@ html.in-side-panel body {
 @media (prefers-reduced-motion: reduce) { .checks-chip-bar-fill { transition: none; } }
 /* A change's vote (#4486): the card's own status bar with its own words
    ("0 of 1 approval"), as long as its words plus the 56px the thin bar it
-   replaced took, then the card's Vote button, at the right end of the tags
-   line. When the tags leave no room the pair wraps to the next line, still
-   at its right end (`margin-left: auto`). Only Vote takes a click: a tap on
-   the bar is a tap on the row. */
+   replaced took, then the card's Vote button, at the far end of the row's
+   tags line on every width, a phone's too (#4485: it no longer takes a line
+   of its own). When the tags leave no room the pair wraps to the next line,
+   still at its far end (`margin-left: auto`). Only Vote takes a click: a tap
+   on the bar is a tap on the row. */
 .dev-ws-wvote {
   position: relative; z-index: 1; margin-left: auto; display: inline-flex; align-items: center; gap: 8px;
   pointer-events: none;
@@ -22462,9 +22463,5 @@ html.in-side-panel body {
   .dev-ws-rule-join { flex: 0 0 12px; width: 2px; height: 12px; margin: 3px 0 3px 17px; }
   .dev-ws-wrow { gap: 10px; }
   .dev-ws-wrow-tile { width: 30px; height: 30px; border-radius: 9px; }
-  /* The bar and Vote take their own line on a phone, the bar at its words'
-     width and Vote at the right end. */
-  .dev-ws-wvote { margin-left: 0; width: 100%; }
-  .dev-ws-wvote-btn { margin-left: auto; }
   .dev-ws-week-line { font-size: 13.5px; }
 }

@@ -9656,14 +9656,14 @@ const AppView = {
     return row;
   },
 
-  // #4457: what the Workshop tab's rows say about an item, in words — the
-  // row is a neutral tile, the title, one line ("Change #4456 · yours · for
-  // #4455"), then small tags for what is happening on it and, on a change up
-  // for a vote, the vote. Resolved here, like every other card fact, so the
-  // component re-derives nothing: `noun`/`n`/`by` and the rest are joined
-  // into the line by workshop/work-row.tsx, which also decides what to leave
-  // out where (your own name, on Your work). Tag tones: `run` (in flight),
-  // `ok` (live, passed), `warn` (worth knowing), `bad` (stops it), `plain`.
+  // #4457: what the Workshop's rows say about an item, in words — the row
+  // is the title, one line in the board's words ("PR #4456 · evan · for
+  // #4455 · 4m ago", #4486), then small tags for what is happening on it
+  // and, on a change up for a vote, the vote. Resolved here, like every
+  // other card fact, so the component re-derives nothing: `noun`/`n`/`by`
+  // and the rest are joined into the line by workshop/work-row.tsx. Tag
+  // tones: `run` (in flight), `ok` (live, passed), `warn` (worth knowing),
+  // `bad` (stops it), `plain`.
   _workshopBrief(kind, item, card) {
     const it = item || {};
     const meId = App.user && App.user.id;
@@ -9718,7 +9718,7 @@ const AppView = {
       kind: 'change', noun: 'Change', n: null, by, mine: !!mineBy,
       // #4538: Homeroom bot built this change from a request made for the
       // viewer, so Your work lists it — while `mine` stays "the viewer made
-      // it", so the line keeps saying Homeroom bot and never "yours".
+      // it", so the line keeps naming Homeroom bot as its maker.
       requested: kind === 'proposal' && it.requested_by_me === true && !mineBy,
       category: '',
       replies: 0, linked: [], closed: [], stage: 'worked', at: 0, ago: agoOf(it.created_at), tags, vote: null,

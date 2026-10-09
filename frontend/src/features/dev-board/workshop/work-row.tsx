@@ -18,8 +18,12 @@
  *     width first, then the card's coloured category chip and its 💬 count
  *     (dev-card.tsx's own pieces, unchanged), then small tags for what is
  *     happening on it ("Picked up · zura", "Checks passed",
- *     AppView._workshopBrief), and on the Workshop tab a change's bar and
- *     Vote at the line's right end;
+ *     AppView._workshopBrief), and on the Workshop tab a change's status
+ *     pill and Vote at the line's far end. #4485: the vote shares the tags' line on
+ *     every width, a phone's too, rather than taking a line of its own (it
+ *     wraps only when the line has no room), so the longest tags say less
+ *     on a row ("Taking shots", "Preview"; the full words are their tooltip
+ *     and what a screen reader says);
  *   - ☰, the card's own menu trigger with the card's own key, so
  *     `_toggleCardMenu`, the touch action sheet and every item in it work
  *     unchanged;
@@ -103,7 +107,9 @@ function numberWords(b: RowBrief): string {
  * "PR #4456 · evan · for #4452 and #4455 · 4m ago", "#4417 · evan · 8h ago",
  * "PR #4454 · evan · closed #4453 · 1h ago". The category and the replies
  * are the coloured chip and the 💬 count on the tags line, so they are not
- * said here too.
+ * said here too. It names the maker everywhere, Your work included, where
+ * #4485 had dropped "yours": the board's words say who, not whose, and a
+ * change Homeroom bot built from your request (#4538) says Homeroom bot.
  */
 export function rowWords(b: RowBrief): string {
   const parts: string[] = [numberWords(b)];
@@ -138,7 +144,7 @@ function Tag({ t }: { t: RowTag }): ReactNode {
  * A change's vote on the Workshop tab (#4486): the card's own status pill,
  * with its own words ("0 of 1 approval"), at its words' width plus the 56px
  * the thin bar it replaces took (app.css `.dev-ws-wvote-state`), and the
- * card's own Vote button, at the right end of the tags line.
+ * card's own Vote button, at the far end of the tags line (#4485).
  */
 function Votes({ card }: { card: DevCardModel }): ReactNode {
   const s = card.pill?.state || null;

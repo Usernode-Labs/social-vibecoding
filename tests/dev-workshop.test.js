@@ -2068,9 +2068,10 @@ test('#4538: a change Homeroom bot built from your request is Your work, still b
   const html = workshopHtml(AppView, 'workshop');
   const lane = html.split('data-ws-lane="mine"')[1] || '';
   // The row names the bot as its maker and the request it is for — never
-  // "yours", because the bot made it.
+  // "yours", because the bot made it. #4486: in the board's words, with its
+  // PR number and its age.
   assert.match(lane, /Dark mode toggle/);
-  assert.match(lane, /Change #212 · Homeroom bot · for #208/);
+  assert.match(lane, /<span class="dev-ws-wrow-sub">PR #212 · Homeroom bot · for #208 · [^<]+ ago<\/span>/);
   assert.ok(!lane.includes('yours'), 'the bot made it, so the line does not say yours');
   // The other bot change keeps working as somebody's owed vote.
   assert.match(workshopHtml(AppView, 'needs'), /Theirs by the bot/,
@@ -2160,6 +2161,11 @@ test('#4457: Your work is rows in words, and a request your change addresses is 
   assert.equal(rowWords({ ...plain(claimed.brief), by: 'evan', category: 'Bug', replies: 3, ago: '8h ago' }), '#12 · evan · 8h ago');
   assert.equal(rowWords({ ...b, kind: 'live', linked: [], closed: [4453], n: 4454, ago: '1h ago' }), 'PR #4454 · evan · closed #4453 · 1h ago');
   assert.equal(rowWords({ ...b, kind: 'vote', noun: 'Vote', linked: [], n: 7 }), 'Vote #7 · evan');
+  // #4485 took "yours" off Your work; the board's words never say it at all:
+  // a row of yours names you as its maker, as every other row names its own.
+  assert.equal(b.mine, true);
+  assert.doesNotMatch(rowWords(b), /yours/);
+  assert.doesNotMatch(rowWords({ ...plain(claimed.brief), mine: true, by: 'evan' }), /yours/);
 
   // Drawn: one hairline list, the row a link to the item's page, no card
   // chrome — no edge, no coloured glyph, no @ chip, no 💬, no fold.
@@ -2168,11 +2174,12 @@ test('#4457: Your work is rows in words, and a request your change addresses is 
   assert.match(lane, /<div class="dev-ws-wlist"><div class="dev-ws-wrow" data-ws-row="mine:/);
   assert.match(lane, /<a class="dev-ws-wrow-link" href="#app\/demo-app\/dev\/proposals\/51">Bottom tabs<\/a><span class="dev-ws-wrow-sub">Change(?: · [^<·]+)? · for #12 · [^<]+ ago<\/span><span class="dev-ws-wrow-status"><span class="dev-ws-tag" data-tone="plain" title="[^"]+"><svg[\s\S]*?<\/svg>Only you<\/span><span class="dev-ws-tag" data-tone="plain">Started<\/span><\/span><\/span>/,
     'a private session says Only you, with a lock (#4486)');
+  assert.ok(!/<span class="dev-ws-wrow-sub">[^<]*yours/.test(lane), 'no "yours" on Your work (#4485)');
   assert.ok(!/data-edge=|dev-card-icon|dev-fold-mark|aria-expanded|data-issue-row|data-session-chip/.test(lane),
     'none of the card\'s chrome, and none of the hooks the Board\'s handler opens a card on');
 });
 
-test('#4457, #4486: a change up for a vote keeps its vote on the row: the card\'s bar with its own words, and its Vote', () => {
+test('#4457, #4485, #4486: a change up for a vote keeps its vote at the end of the tags\' line: the card\'s bar with its own words, and its Vote', () => {
   const { WorkRow } = loadTsx('frontend/src/features/dev-board/workshop/work-row.tsx');
   const AppView = makeAppView();
   seed(AppView);
@@ -2195,8 +2202,13 @@ test('#4457, #4486: a change up for a vote keeps its vote on the row: the card\'
     'the bar, then Vote');
   assert.ok(!/dev-ws-wvote-bar|dev-ws-wvote-n|dev-ws-wvote-cell/.test(html), 'no thin bar, no count beside it');
   assert.match(CSS, /\.dev-ws-wvote-state \{ flex: none; padding: 0 calc\(10px \+ 56px\) 0 10px; \}/);
-  // #4485: the longest tags say less on a row, the full words their tooltip
-  // and what a screen reader reads.
+  // #4485: the vote shares the tags' line, at its far end, on every width:
+  // no phone rule gives it a line of its own (it wraps only when the line
+  // has no room). So the longest tags say less on a row, the full words
+  // their tooltip and what a screen reader reads.
+  assert.match(html, /<span class="dev-ws-tag" data-tone="plain"><svg[^>]*>.*?<\/svg>Preview ready<\/span><span class="dev-ws-wvote" data-ws-vote="">/, 'a tag without short words draws its label, and the vote follows the tags on their line');
+  assert.match(CSS, /\.dev-ws-wvote \{\s*position: relative; z-index: 1; margin-left: auto;/);
+  assert.doesNotMatch(CSS.replace(/\/\*[\s\S]*?\*\//g, ' '), /\.dev-ws-wvote \{ margin-left: 0; width: 100%; \}/, 'no line of its own on a phone');
   const short = { ...brief, tags: [{ label: 'Taking before & after shots', short: 'Taking shots', tone: 'run' }, { label: 'Preview ready', short: 'Preview', tone: 'plain', glyph: 'eye' }] };
   const shortHtml = renderToHtml(createElement(WorkRow, { row: { ...row, brief: short }, slug: 'demo-app' }));
   assert.match(shortHtml, /<span class="dev-ws-tag" data-tone="run" title="Taking before &amp; after shots"><span class="dc-status-spinner-arc" aria-hidden="true"><\/span><span aria-hidden="true">Taking shots<\/span><span class="sr-only">Taking before &amp; after shots<\/span><\/span>/);
