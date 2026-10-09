@@ -767,6 +767,10 @@
     "text": "Open {{name}}'s details",
     "description": "Accessible name of a row in the Standings table: pressing it shows that participant's activities. \"Open\" is a verb. {{name}} is the participant's name."
   },
+  "standings.openDetailsAnonymous": {
+    "text": "Open Anonymous's details",
+    "description": "Accessible name of a row in the Standings table: pressing it shows that participant's activities. \"Open\" is a verb. Used for a person with no display name, who is listed as \"Anonymous\"."
+  },
   "standings.page_one": {
     "text": "Page {{page}} of {{pages}} · {{count}} total",
     "description": "Under the Standings table: which page is shown, how many pages there are, and how many participants in all."
@@ -1026,6 +1030,10 @@
   "kudos.row.by": {
     "text": "by @{{username}}",
     "description": "Under a change's title in the Kudos tab's lists: who made it. Keep the @ before the username."
+  },
+  "kudos.row.byUnknown": {
+    "text": "by @unknown",
+    "description": "Under a change's title in the Kudos tab's lists: who made it. Keep the @ before the username. Used when the author is not known; \"@unknown\" is written as the row has always shown it."
   },
   "kudos.row.byDeleted": {
     "text": "by @deleted user",

@@ -1007,7 +1007,11 @@ const Browse = {
   // right — so the platform's two ranked people-lists read as one system. A
   // <button> so it is keyboard-focusable like those rows are. Pure.
   contributorRowView(c, rank) {
+    // `who` is also the row's key (data-username, openContributor), so the
+    // missing-name value stays this literal; `unnamed` tells the tooltip to
+    // use its own wording instead of taking it as a username.
     const who = (c && c.username) || 'unknown';
+    const unnamed = !(c && c.username);
     const merged = parseInt(c && c.merged_count, 10) || 0;
     const votes = parseInt(c && c.votes_count, 10) || 0;
     // Role first (it says what they ARE on this app), then the vote count.
@@ -1019,6 +1023,7 @@ const Browse = {
     if (votes > 0) bits.push(PlatformI18n.t('discover:detail.contributor.votes', { count: votes }));
     return {
       who,
+      unnamed,
       rank,
       initial: (who[0] || '?').toUpperCase(),
       merged,

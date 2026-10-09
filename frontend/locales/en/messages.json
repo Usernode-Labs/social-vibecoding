@@ -419,17 +419,33 @@
     "text": "{{project}} first version",
     "description": "Name of a piece of work Homeroom bot is doing: building the first version of a project. {{project}} is the project's name."
   },
+  "bot.job.firstVersionUnnamed": {
+    "text": "A project first version",
+    "description": "Name of a piece of work Homeroom bot is doing: building the first version of a project. Used when the project cannot be named; \"A project\" is written as the line has always shown it."
+  },
   "bot.job.request": {
     "text": "{{project}} #{{number}}",
     "description": "Name of a piece of work Homeroom bot is doing: a numbered request in a project. {{project}} is the project's name and {{number}} is the request number; keep the # before the number."
+  },
+  "bot.job.requestUnnamed": {
+    "text": "A project #{{number}}",
+    "description": "Name of a piece of work Homeroom bot is doing: a numbered request in a project. Used when the project cannot be named; \"A project\" is written as the line has always shown it. {{number}} is the request's number; keep the #."
   },
   "bot.job.requestTitled": {
     "text": "{{project}} #{{number}}: {{title}}",
     "description": "Full name of a piece of work Homeroom bot is doing. {{project}} is the project's name, {{number}} the request number (keep the #) and {{title}} the request's title as its author wrote it."
   },
+  "bot.job.requestTitledUnnamed": {
+    "text": "A project #{{number}}: {{title}}",
+    "description": "Full name of a piece of work Homeroom bot is doing. Used when the project cannot be named; \"A project\" is written as the line has always shown it. {{number}} is the request's number and {{title}} its title."
+  },
   "bot.job.titled": {
     "text": "{{project}}: {{title}}",
     "description": "Full name of a piece of work Homeroom bot is doing when the request has no number. {{project}} is the project's name and {{title}} the request's title as its author wrote it."
+  },
+  "bot.job.titledUnnamed": {
+    "text": "A project: {{title}}",
+    "description": "Full name of a piece of work Homeroom bot is doing when the request has no number. Used when the project cannot be named; \"A project\" is written as the line has always shown it. {{title}} is the title of the work."
   },
   "bot.job.unnamedProject": {
     "text": "A project",

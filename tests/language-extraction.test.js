@@ -355,3 +355,58 @@ test('a machine with no name is a label where it stands alone and a wording of i
   const named = renderToHtml(createElement(chrome.RunnerControlsView, { kind: 'past', label: 'ada-laptop' }));
   assert.match(named, /title="Последний ход выполнен на ada-laptop\."/);
 });
+
+test('a stand-in for a missing name never reaches a sentence as the name, wherever it was made', async (t) => {
+  // Each of these stand-ins is made in one file and used in another. English
+  // is unchanged: the unnamed message is the named one with the stand-in in it.
+  const rest = { number: 7, title: 'Fix the header' };
+  for (const [named, unnamed, standIn] of [
+    ['project:modals.aiConsent.title', 'project:modals.aiConsent.titleUnnamed', { app: message('changes:dialog.llm.fallbackApp') }],
+    ['messages:bot.job.firstVersion', 'messages:bot.job.firstVersionUnnamed', { project: message('messages:bot.job.unnamedProject') }],
+    ['messages:bot.job.request', 'messages:bot.job.requestUnnamed', { project: message('messages:bot.job.unnamedProject') }],
+    ['messages:bot.job.requestTitled', 'messages:bot.job.requestTitledUnnamed', { project: message('messages:bot.job.unnamedProject') }],
+    ['messages:bot.job.titled', 'messages:bot.job.titledUnnamed', { project: message('messages:bot.job.unnamedProject') }],
+    ['leaderboard:standings.openDetails', 'leaderboard:standings.openDetailsAnonymous', { name: message('leaderboard:standings.anonymous') }],
+    ['leaderboard:kudos.row.by', 'leaderboard:kudos.row.byUnknown', { username: message('leaderboard:kudos.unknownUser') }],
+    ['session:transcript.attachment.title', 'session:transcript.attachment.titleUnnamed', { filename: message('session:transcript.attachment.unnamed') }],
+    ['discover:detail.contributor.viewChanges', 'discover:detail.contributor.viewChangesUnnamed', { username: 'unknown' }],
+  ]) {
+    assert.equal(message(unnamed, rest), message(named, { ...rest, ...standIn }), unnamed);
+  }
+
+  // The bot's job names, in a language where a project's name and "a project"
+  // do not sit in the sentence the same way.
+  const { module: bot } = await loadInSpanish(t, 'frontend/src/features/messages/bot-shared.ts', {
+    'messages:bot.job.unnamedProject': 'Un proyecto',
+    'messages:bot.job.firstVersion': 'Primera versión de {{project}}',
+    'messages:bot.job.firstVersionUnnamed': 'Primera versión de un proyecto',
+    'messages:bot.job.request': '{{project}} n.º {{number}}',
+    'messages:bot.job.requestUnnamed': 'Un proyecto, n.º {{number}}',
+    'messages:bot.job.requestTitled': '{{project}} n.º {{number}}: {{title}}',
+    'messages:bot.job.requestTitledUnnamed': 'Un proyecto, n.º {{number}}: {{title}}',
+    'messages:bot.job.titled': '{{project}}: {{title}}',
+    'messages:bot.job.titledUnnamed': 'Un proyecto: {{title}}',
+  });
+  const unnamed = { appName: 'Un proyecto', appUnnamed: true, issueNumber: null, title: '', firstVersion: false };
+  assert.equal(bot.jobName({ ...unnamed, firstVersion: true }), 'Primera versión de un proyecto');
+  assert.equal(bot.jobName({ ...unnamed, issueNumber: 7 }), 'Un proyecto, n.º 7');
+  assert.equal(bot.jobName(unnamed), 'Un proyecto', 'alone, the stand-in is a label');
+  assert.equal(bot.jobTitle({ ...unnamed, issueNumber: 7, title: 'Cabecera' }), 'Un proyecto, n.º 7: Cabecera');
+  assert.equal(bot.jobTitle({ ...unnamed, title: 'Cabecera' }), 'Un proyecto: Cabecera');
+  assert.equal(bot.jobName({ appName: 'Recetas', issueNumber: null, title: '', firstVersion: true }), 'Primera versión de Recetas');
+  assert.equal(bot.jobTitle({ appName: 'Recetas', issueNumber: 7, title: 'Cabecera', firstVersion: false }), 'Recetas n.º 7: Cabecera');
+
+  // The flag is set where the stand-in is chosen, and read where the sentence is.
+  const read = (file) => require('node:fs').readFileSync(require('node:path').join(__dirname, '..', file), 'utf8');
+  assert.match(read('public/js/app-view.js'), /appUnnamed: !realAppName,/);
+  assert.match(read('frontend/src/features/dev-board/modals/llm-consent-modal.tsx'), /view\.appUnnamed \? t\('project:modals\.aiConsent\.titleUnnamed'\)/);
+  assert.match(read('frontend/src/features/messages/bot-activity.tsx'), /appUnnamed: !\(meta\.appName \|\| meta\.appSlug\),/);
+  assert.match(read('frontend/src/features/leaderboard/topochain-leaderboard.js'), /anonymous: !str\(r\.display_name\),/);
+  assert.match(read('frontend/src/features/leaderboard/topochain-standings.tsx'), /row\.anonymous \? t\('leaderboard:standings\.openDetailsAnonymous'\)/);
+  assert.match(read('frontend/src/features/leaderboard/leaderboard.js'), /authorUnknown: !row\.author_username,/);
+  assert.match(read('frontend/src/features/leaderboard/kudos-pane.tsx'), /row\.authorUnknown \? t\('leaderboard:kudos\.row\.byUnknown'\)/);
+  assert.match(read('public/js/session-transcript.js'), /htmlText\('session:transcript\.attachment\.titleUnnamed'\)/);
+  assert.match(read('frontend/src/features/apps/browse-detail.tsx'), /row\.unnamed \? t\('discover:detail\.contributor\.viewChangesUnnamed'\)/);
+  assert.equal(message('discover:detail.contributor.unknownHandle'), '@unknown', 'the row shows what it always showed');
+  assert.match(read('frontend/src/features/apps/browse-detail.tsx'), /row\.unnamed \? t\('discover:detail\.contributor\.unknownHandle'\) : `@\$\{row\.who\}`/);
+});

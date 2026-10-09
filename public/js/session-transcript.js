@@ -86,7 +86,9 @@
       const size = humanSize(a && a.sizeBytes);
       const icon = a && a.kind === 'image' ? '🖼' : '📎';
       return '<span class="dc-msg-att-chip st-att-chip" title="'
-        + PlatformI18n.htmlText('session:transcript.attachment.title', { filename: filename })
+        + (a && a.filename
+          ? PlatformI18n.htmlText('session:transcript.attachment.title', { filename: filename })
+          : PlatformI18n.htmlText('session:transcript.attachment.titleUnnamed'))
         + '"><span aria-hidden="true">' + icon + '</span>'
         + '<span class="dc-attach-name">' + name + '</span>'
         + (size ? '<span class="dc-attach-size">' + esc(size) + '</span>' : '')

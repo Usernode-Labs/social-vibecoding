@@ -178,6 +178,7 @@ function spanMinutes(fromIso: string | null, to: Date): number | null {
 export function activityTitle(meta: HomeroomBotMeta): string {
   return jobTitle({
     appName: meta.appName || meta.appSlug || translate('messages:bot.job.unnamedProject'),
+    appUnnamed: !(meta.appName || meta.appSlug),
     issueNumber: meta.issueNumber || null,
     title: meta.issueTitle || null,
     firstVersion: !!meta.firstVersion,

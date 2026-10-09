@@ -44,6 +44,8 @@ type RowView = {
   rank: string;
   nonPodium: boolean;
   user: string;
+  /** No display name: `user` is the "Anonymous" stand-in. */
+  anonymous?: boolean;
   points: string;
   extra: string;
   blocks: string;
@@ -263,7 +265,7 @@ function StandingsTable(
               className="tc-lb-row border-b border-zinc-100 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-violet-500 focus-visible:bg-zinc-50 dark:focus-visible:bg-zinc-800/60"
               data-row-index={row.index}
               tabIndex={0}
-              aria-label={t('leaderboard:standings.openDetails', { name: row.user })}
+              aria-label={row.anonymous ? t('leaderboard:standings.openDetailsAnonymous') : t('leaderboard:standings.openDetails', { name: row.user })}
               onClick={() => controller()?._openRowAt(row.index)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {

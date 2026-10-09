@@ -93,6 +93,8 @@ type PrRow = {
   rank: number;
   title: string;
   author: string;
+  /** `author` is the stand-in for an author nobody can name. */
+  authorUnknown?: boolean;
   appName: string;
   badge: Badge;
   slug: string;
@@ -419,7 +421,7 @@ function PrRows({ rows }: { rows: PrRow[] }): ReactNode {
             <div className={ROW_TITLE}>{row.title}</div>
             <div className={ROW_META}>
               <StatusBadge badge={row.badge} />
-              <span>{t('leaderboard:kudos.row.by', { username: row.author })}</span>
+              <span>{row.authorUnknown ? t('leaderboard:kudos.row.byUnknown') : t('leaderboard:kudos.row.by', { username: row.author })}</span>
               <Dot />
               <span>{row.appName}</span>
             </div>

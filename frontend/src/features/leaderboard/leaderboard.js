@@ -842,6 +842,7 @@ const Leaderboard = {
       rank: i + 1,
       title: row.pr_title || PlatformI18n.t('leaderboard:kudos.untitledChange'),
       author: row.author_username || PlatformI18n.t('leaderboard:kudos.unknownUser'),
+      authorUnknown: !row.author_username,
       appName: row.app_name || row.app_slug || PlatformI18n.t('leaderboard:kudos.unnamedApp'),
       // The Top-PRs strip has no 'archived' case — an archived PR is not on
       // this board at all — so it reads the same table minus that row.

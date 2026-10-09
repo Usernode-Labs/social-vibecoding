@@ -435,6 +435,14 @@
     "text": "View @{{username}}’s changes",
     "description": "Tooltip of a person's row in the contributors card on an app's page: opens that person's page. {{username}} is their username; keep the @ in front of it. \"Changes\" is a noun."
   },
+  "detail.contributor.viewChangesUnnamed": {
+    "text": "View @unknown’s changes",
+    "description": "Tooltip of a person's row in the contributors card on an app's page: opens that person's page. Used for a contributor whose username is not known; \"@unknown\" is written as the tooltip has always shown it."
+  },
+  "detail.contributor.unknownHandle": {
+    "text": "@unknown",
+    "description": "Shown where a username would be, on a row in the contributors card on an app's page, for a contributor whose username is not known. Stands alone; keep it short."
+  },
   "detail.contributor.creator": {
     "text": "Creator",
     "description": "Small grey word under a contributor's username on an app's page: this person created the app."

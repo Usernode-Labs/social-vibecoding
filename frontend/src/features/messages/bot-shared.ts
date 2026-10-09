@@ -18,10 +18,19 @@ export const WORK_CHANGED_EVENT = 'homeroom-bot-work-changed';
  */
 export const SPINNING_OUTCOMES: ReadonlySet<HomeroomBotActivityOutcome> = new Set(['checking', 'going_live']);
 
-type Named = Pick<HomeroomBotJob, 'appName' | 'issueNumber' | 'title' | 'firstVersion'>;
+/**
+ * `appUnnamed`: `appName` is the stand-in for a project nobody can name. The
+ * names below then use their unnamed wording, and never take the stand-in as
+ * a project's name.
+ */
+type Named = Pick<HomeroomBotJob, 'appName' | 'issueNumber' | 'title' | 'firstVersion'> & { appUnnamed?: boolean };
 
 /** "Ear Trainer first version", "Ear Trainer #12": what the header's status line names. */
 export function jobName(job: Named): string {
+  if (job.appUnnamed) {
+    if (job.firstVersion) return t('messages:bot.job.firstVersionUnnamed');
+    return job.issueNumber ? t('messages:bot.job.requestUnnamed', { number: job.issueNumber }) : job.appName;
+  }
   if (job.firstVersion) return t('messages:bot.job.firstVersion', { project: job.appName });
   return job.issueNumber ? t('messages:bot.job.request', { project: job.appName, number: job.issueNumber }) : job.appName;
 }
@@ -39,6 +48,11 @@ export function dotText(parts: readonly (string | null | undefined | false)[]): 
 /** A tile's or a card's title: the name, and the request's own title when it has one. */
 export function jobTitle(job: Named): string {
   if (job.firstVersion || !job.title) return jobName(job);
+  if (job.appUnnamed) {
+    return job.issueNumber
+      ? t('messages:bot.job.requestTitledUnnamed', { number: job.issueNumber, title: job.title })
+      : t('messages:bot.job.titledUnnamed', { title: job.title });
+  }
   return job.issueNumber
     ? t('messages:bot.job.requestTitled', { project: job.appName, number: job.issueNumber, title: job.title })
     : t('messages:bot.job.titled', { project: job.appName, title: job.title });

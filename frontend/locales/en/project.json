@@ -4071,6 +4071,10 @@
     "text": "Allow {{app}} to use AI?",
     "description": "Title of the dialog shown when an app asks to make AI requests paid from the person's own AI budget. {{app}} is the app's name."
   },
+  "modals.aiConsent.titleUnnamed": {
+    "text": "Allow This app to use AI?",
+    "description": "Title of the dialog shown when an app asks to make AI requests paid from the person's own AI budget. Used when the app's name is not known; \"This app\" is written as the dialog has always shown it."
+  },
   "modals.aiConsent.purposeQuote": {
     "text": "“{{purpose}}”",
     "description": "The app's own stated reason for wanting AI, shown in italics under the dialog's title. {{purpose}} is that reason, written by the app's author; only the quotation marks around it are translated."

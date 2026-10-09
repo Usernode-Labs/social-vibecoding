@@ -1111,6 +1111,10 @@
     "text": "{{filename}} (attachments aren't shared, only their names)",
     "description": "Tooltip on a file chip under a message in a shared agent-session transcript: readers see the file's name but cannot open it. {{filename}} is the attached file's name."
   },
+  "transcript.attachment.titleUnnamed": {
+    "text": "file (attachments aren't shared, only their names)",
+    "description": "Tooltip on a file chip under a message in a shared agent-session transcript: readers see the file's name but cannot open it. Used when the attachment has no name; \"file\" is written as the tooltip has always shown it."
+  },
   "transcript.activity.stepsAndSummary_one": {
     "text": "Agent activity ({{count}} steps) and summary",
     "description": "Label of a collapsed section in a shared agent-session transcript that holds the coding agent's progress log and its own summary of the turn. {{count}} is the number of log lines."

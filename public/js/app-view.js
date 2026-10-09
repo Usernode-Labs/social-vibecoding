@@ -27119,6 +27119,8 @@ const AppView = {
 
       react.mountLlmConsentModal(root, {
         appName,
+        // The title is a sentence: with no real name it has its own wording.
+        appUnnamed: !realAppName,
         purpose: info.llm?.purpose ? String(info.llm.purpose) : null,
         intro: byokOnly
           ? (realAppName

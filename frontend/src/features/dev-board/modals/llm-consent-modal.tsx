@@ -42,7 +42,7 @@ export function LlmConsentCard({ view }: { view: LlmConsentModalView }): ReactNo
   return (
     <DialogCard size="md" relative>
       <h2 className="text-lg font-bold mb-2 text-zinc-900 dark:text-zinc-100">
-        {t('project:modals.aiConsent.title', { app: view.appName })}
+        {view.appUnnamed ? t('project:modals.aiConsent.titleUnnamed') : t('project:modals.aiConsent.title', { app: view.appName })}
       </h2>
       {view.purpose ? (
         <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-3 italic">{t('project:modals.aiConsent.purposeQuote', { purpose: view.purpose })}</p>

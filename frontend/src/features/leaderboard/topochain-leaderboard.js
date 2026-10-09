@@ -405,6 +405,8 @@ const TopochainLeaderboard = {
       // The server resolves a name for every account it can (#2394); a row
       // it still cannot name says so rather than showing only its points.
       user: str(r.display_name) || PlatformI18n.t('leaderboard:standings.anonymous'),
+      // Nobody to name: the row's sentence has an unnamed wording.
+      anonymous: !str(r.display_name),
       points: str(r.total_points),
       extra: str(r.extra_points),
       blocks: str(r.event_total_produced_blocks),

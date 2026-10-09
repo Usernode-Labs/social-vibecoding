@@ -42,6 +42,8 @@ import { AppIconContent, AppIconLink, AppPills, appIconKind, hasAppPills } from 
 
 type ContributorRowView = {
   who: string;
+  /** No username is known: `who` is the stand-in, not a name to put in a sentence. */
+  unnamed?: boolean;
   rank: number;
   initial: string;
   merged: number;
@@ -121,7 +123,7 @@ function ContributorRow({ row }: { row: ContributorRowView }): ReactNode {
       chevron={false}
       className="browse-contrib-row transition-colors hover:bg-zinc-500/5"
       data-username={row.who}
-      tooltip={t('discover:detail.contributor.viewChanges', { username: row.who })}
+      tooltip={row.unnamed ? t('discover:detail.contributor.viewChangesUnnamed') : t('discover:detail.contributor.viewChanges', { username: row.who })}
       onClick={() => controller()?.openContributor(row.who)}
       // Rank and disc travel together as ONE leading element, so the 12px
       // between them survives the row's own 16px gap.
@@ -131,7 +133,7 @@ function ContributorRow({ row }: { row: ContributorRowView }): ReactNode {
           <div className="w-8 h-8 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 flex items-center justify-center font-semibold text-xs">{row.initial}</div>
         </div>
       )}
-      title={`@${row.who}`}
+      title={row.unnamed ? t('discover:detail.contributor.unknownHandle') : `@${row.who}`}
       // A handle is not a headline: medium, as the connectors list sets it.
       titleClassName="font-medium"
       subtitle={row.meta}
