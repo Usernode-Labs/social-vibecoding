@@ -2228,8 +2228,9 @@ test('#4457: a row opens its page beside the list on a wide window, and that pag
   // The panel hosts the SAME page: the host the full page's frame renders,
   // keyed by the item, filled by AppView exactly as the full page is.
   assert.match(PANEL, /<div key=\{`\$\{item\.kind\}:\$\{item\.id\}`\} id="dev-topic-thread" className="dev-ws-side-page" \/>/);
-  assert.match(PANEL, /callAppView\('openTopicInPanel', item\.kind, item\.id\)/);
-  assert.match(PANEL, /return \(\) => \{ callAppView\('closeTopicPanel', item\.kind, item\.id\); \};/);
+  // #4629: the open waits for a microtask — a flushSync inside the effect
+  // body is dropped, and mountThread then wired nothing to the composer.
+  assert.match(PANEL, /let live = true;\s*queueMicrotask\(\(\) => \{ if \(live\) void callAppView\('openTopicInPanel', item\.kind, item\.id\); \}\);\s*return \(\) => \{ live = false; callAppView\('closeTopicPanel', item\.kind, item\.id\); \};/);
   assert.match(PANEL, /callAppView\('openTopic', item\.kind, item\.id\)/, 'Open as a page is the page\'s own route');
   const open = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf('async openTopicInPanel(kind, id) {'), APP_VIEW_SRC.indexOf('closeTopicPanel(kind, id) {'));
   assert.match(open, /AppView\._devTopic = \{ kind, id \};/);

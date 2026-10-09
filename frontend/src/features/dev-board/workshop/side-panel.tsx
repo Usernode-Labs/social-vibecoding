@@ -37,9 +37,20 @@ import type { TopicRef } from './work-row';
 export function TopicSidePanel({ item, onClose }: { item: TopicRef; onClose: () => void }): ReactNode {
   // Mount the page once the host is in the document, and take it down with
   // the panel (or before the next item's).
+  //
+  // IN A MICROTASK, the defer actions-row.tsx already gives the kanban
+  // filter bar: the mount publishes through a `flushSync`
+  // (lib/legacy-portals.tsx), which React drops while it is still
+  // committing — and an effect body is inside the commit. mountThread then
+  // reads its container before the shell is in the DOM, finds no
+  // `#gc-thread-input`, and skips the whole composer wiring (submit, the
+  // draft, Enter, attachments and the three autocomplete controllers), so
+  // typing @, # or : in the panel's Reply box opened nothing (#4629).
+  // From the microtask the flushSync runs and the composer is wired.
   useEffect(() => {
-    void callAppView('openTopicInPanel', item.kind, item.id);
-    return () => { callAppView('closeTopicPanel', item.kind, item.id); };
+    let live = true;
+    queueMicrotask(() => { if (live) void callAppView('openTopicInPanel', item.kind, item.id); });
+    return () => { live = false; callAppView('closeTopicPanel', item.kind, item.id); };
   }, [item.kind, item.id]);
   // Escape closes it, as it closes a sheet.
   useEffect(() => {
