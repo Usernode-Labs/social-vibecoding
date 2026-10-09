@@ -2558,6 +2558,9 @@ END $$;
 -- #2387 adds 'thread_reply': somebody replied in an app-chat reply thread
 -- you started or replied in; chat_message_id is the new reply, whose
 -- thread_ref is the thread's root message.
+-- #4535 adds 'issue_thread_reply': somebody posted in a request's
+-- discussion thread you filed or posted in; chat_message_id is the new
+-- message, thread_ref the request's number and `detail` that number too.
 -- #3181 adds 'session_stalled': a dev-session turn ended without finishing
 -- (an error, a timeout, a lost worker, or a system pause mid-turn);
 -- session_id points to the session, like 'session_done'.
@@ -5347,6 +5350,9 @@ INSERT INTO mobile_push_kind_categories (kind, category, default_enabled) VALUES
   -- #2387: a reply in an app-chat reply thread you started or joined. A
   -- direct interaction like a reply to your message, so the same category.
   ('thread_reply', 'direct_interactions', TRUE),
+  -- #4535: a message in a request's discussion you filed or posted in.
+  -- A reply in the same sense, so the same category beside thread_reply.
+  ('issue_thread_reply', 'direct_interactions', TRUE),
   -- #2386: a friend request and its acceptance are one person reaching you
   -- directly, which is what this category already promises.
   ('friend_request', 'direct_interactions', TRUE),
@@ -5421,7 +5427,8 @@ ON CONFLICT (kind) DO UPDATE
       default_enabled = EXCLUDED.default_enabled;
 DELETE FROM mobile_push_kind_categories
  WHERE kind NOT IN (
-   'mention', 'issue_mention', 'reply', 'thread_reply', 'collab_invite', 'collab_invite_accepted',
+   'mention', 'issue_mention', 'reply', 'thread_reply', 'issue_thread_reply',
+   'collab_invite', 'collab_invite_accepted',
    'approver_invite', 'approver_invite_accepted', 'spec_shared',
    'session_done', 'test_alert', 'auto_solve_done', 'stale_pr', 'check_failed',
    'pr_proposed', 'reaction', 'kudos',

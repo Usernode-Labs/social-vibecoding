@@ -45,6 +45,9 @@ const CURRENT_KINDS = [
   // #2387: a reply in an app-chat reply thread you started or joined. A
   // direct interaction, beside mention and reply.
   'thread_reply',
+  // #4535: a message in a request's discussion you filed or posted in. A
+  // direct interaction beside thread_reply, the same sense of reply.
+  'issue_thread_reply',
   // #2386's two: a friend request and its acceptance — one person reaching
   // you directly, so they join direct_interactions.
   'friend_request', 'friend_accept',
