@@ -193,6 +193,80 @@ test('drawer-row-members handler reaches openMembersModal through the window gat
   assert.equal(islandOpens, 1, 'and it opened the dialog through the island');
 });
 
+// ── the approvals-section deep open (#4527) ──────────────────────────────
+//
+// The Workshop tab's Approval rules Edit button opens the dialog with
+// `{ section: 'approvals' }`: once the rosters have settled, _load brings
+// #members-governance-section into view. A plain open — the shape every
+// existing caller uses — must behave exactly as before: no scroll.
+
+// A DOM stub deep enough for _scrollGovSectionIntoView's walk: a chain of
+// elements with rects, and one scrollable ancestor in it.
+function domEl(id, opts = {}) {
+  const el = makeEl(opts.classes || []);
+  el.id = id;
+  el.scrollHeight = opts.scrollHeight || 100;
+  el.clientHeight = opts.clientHeight || 100;
+  el.scrollTop = 0;
+  el.parentElement = opts.parent || null;
+  const top = opts.top != null ? opts.top : 0;
+  el.getBoundingClientRect = () => ({ top });
+  return el;
+}
+
+const GOV_APPDATA = {
+  collab_visibility: 'public', view_visibility: 'public',
+  can_manage: true, repo_url: 'https://github.com/x/y',
+};
+
+test('an open that asks for the approvals section scrolls it into view', async () => {
+  // The dialog root is the scrollable ancestor the walk finds; the section
+  // sits below its fold, so the shift is the rect difference.
+  const root = domEl('root', { scrollHeight: 900, clientHeight: 500, top: 0 });
+  const card = domEl('card', { parent: root, top: 40 });
+  const section = domEl('members-governance-section', { parent: card, top: 480 });
+  const h = makeHarness({
+    'members-modal': makeEl(['hidden']),
+    'members-governance-section': section,
+  });
+  h.AppView.appData = GOV_APPDATA;
+  // No island registered: the fallback _load(opts) path is what runs, and
+  // that is also what the island calls back into from onOpen.
+  await h.AppView.openMembersModal({ section: 'approvals' });
+  assert.equal(root.scrollTop, 480, 'the dialog root scrolled the section into view');
+  assert.equal(typeof h.AppView.openMembersModal, 'function', 'the entry point survived the open');
+});
+
+test('a plain open scrolls nothing, and a hidden section is not chased', async () => {
+  const root = domEl('root', { scrollHeight: 900, clientHeight: 500, top: 0 });
+  const card = domEl('card', { parent: root, top: 40 });
+  const section = domEl('members-governance-section', { parent: card, top: 480 });
+  const h = makeHarness({
+    'members-modal': makeEl(['hidden']),
+    'members-governance-section': section,
+  });
+  h.AppView.appData = GOV_APPDATA;
+  await h.AppView.openMembersModal();
+  assert.equal(root.scrollTop, 0, 'no options, no scroll — the dialog opens at its top as today');
+  // A viewer who cannot manage the app: the section stays hidden on this
+  // open, and the ask for it is not chased.
+  h.AppView.appData = { ...GOV_APPDATA, can_manage: false };
+  section.classList.add('hidden');
+  await h.AppView.openMembersModal({ section: 'approvals' });
+  assert.equal(root.scrollTop, 0, 'a hidden section is not scrolled to');
+});
+
+test('the entry point forwards an options bag to the island, and none when called bare', () => {
+  const h = makeHarness({});
+  const bags = [];
+  h.sandbox.UsernodeReact = { dialogs: { members: { open: (opts) => bags.push(opts) } } };
+  h.AppView.appData = GOV_APPDATA;
+  h.AppView.openMembersModal({ section: 'approvals' });
+  h.AppView.openMembersModal();
+  assert.deepEqual(bags, [{ section: 'approvals' }, undefined],
+    'the payload rides through to the island; a bare call passes none');
+});
+
 // ── revealModal: synchronous reveal + open-time stamp ────────────────────
 
 test('revealModal reveals synchronously (panel always appears) and stamps open time', () => {

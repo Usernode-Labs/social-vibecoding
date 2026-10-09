@@ -440,12 +440,14 @@ test('share: fills the URL through resolveDevHost and flashes the copy button', 
 test('members: the island owns the lifecycle, the controller owns the card', () => {
   const src = dialog('members.tsx');
   const ctl = dialog('members-controller.js');
-  assert.match(src, /onOpen: \(\) => \{ void Members\._load\(\); \}/);
+  assert.match(src, /onOpen: \(opts\) => \{ void Members\._load\(opts\); \}/);
   assert.match(src, /onClose: \(\) => Members\._reset\(\)/);
   // The controller's open/close became forwards to the island, so every
-  // AppView call site reaches the same lifecycle.
+  // AppView call site reaches the same lifecycle — payload included
+  // (#4527): the Approval rules Edit button opens it on the approvals
+  // section, every other caller passes none.
   assert.match(ctl, /function dialogController\(\)/);
-  assert.match(ctl, /AppView\.openMembersModal = \(\) => \{[\s\S]*island\.open\(\)/);
+  assert.match(ctl, /AppView\.openMembersModal = \(opts\) => \{[\s\S]*island\.open\(opts\)/);
   // The prerender pass evaluates this module in Node, so every window touch is
   // guarded and the publication happens from init(), not at import time.
   assert.match(ctl, /export function init\(\) \{\n\s*if \(typeof window === 'undefined'\) return;/);

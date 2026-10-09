@@ -78,7 +78,7 @@ const MembersDialog = {
 
   _inviteDebounce: null,
 
-  async _load() {
+  async _load(opts) {
     const appData = AppView.appData;
     const modal = document.getElementById('members-modal');
     if (!modal) return;
@@ -184,10 +184,43 @@ const MembersDialog = {
     AppView._hideAppAdminSuggestions();
     AppView._setAppAdminsStatus('', false);
     await AppView.loadAppAdmins();
+    // The Workshop tab's Approval rules Edit button (#4527) asks for this
+    // section by name: once the rosters have settled and every section's
+    // visibility is decided, bring the Proposal approvals block into view.
+    // Everything else that opens the dialog passes no options and lands at
+    // its top, as it always has.
+    if (opts && opts.section === 'approvals') MembersDialog._scrollGovSectionIntoView();
   },
 
-  // The entry point every legacy caller uses (the Dev "+" menu item, and
-  // the invite-accepted path inside this file). Forwards to the island so
+  // Bring #members-governance-section into view for the open that asked for
+  // it (#4527). useStaticModal lifts the card out of #members-modal into the
+  // kit's shell, so `scrollIntoView` is not the tool: it would scroll
+  // whatever ancestor it finds first, including the page behind the modal.
+  // Instead walk up from the section to its nearest scrollable ancestor —
+  // the dialog root's own overflow, or the kit shell's — and shift that
+  // container's scrollTop by the rect difference, so the page never moves.
+  // The walk stops before the document itself: if nothing in the dialog
+  // scrolls (the whole card already fits), the section is visible and no
+  // scroll happens at all.
+  _scrollGovSectionIntoView() {
+    const section = document.getElementById('members-governance-section');
+    if (!section || section.classList.contains('hidden')) return;
+    let node = section;
+    let scroller = null;
+    while (node && typeof node.getBoundingClientRect === 'function' && node !== document.body) {
+      if (node.scrollHeight > node.clientHeight) { scroller = node; break; }
+      node = node.parentElement || null;
+    }
+    if (!scroller || typeof scroller.getBoundingClientRect !== 'function') return;
+    const delta = section.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+    if (delta) scroller.scrollTop = (scroller.scrollTop || 0) + delta;
+  },
+
+  // The entry point every legacy caller uses (the Dev "+" menu item, the
+  // invite-accepted path inside this file, and #4527's Edit button on the
+  // Approval rules card, which passes `{ section: 'approvals' }`). The
+  // payload is optional end to end: callers passing nothing keep today's
+  // behaviour exactly. Forwards to the island so
   // React state stays the source of truth; the fallback keeps the dialog
   // usable if something calls it before hydration.
   hideMembersModal() {
@@ -1201,10 +1234,10 @@ export function init() {
   Object.assign(AppView, MembersDialog);
   // The entry point is the one name that must NOT be the moved method: it
   // forwards to the island instead of loading in place.
-  AppView.openMembersModal = () => {
+  AppView.openMembersModal = (opts) => {
     const island = dialogController();
-    if (island) { island.open(); return; }
-    return MembersDialog._load();
+    if (island) { island.open(opts); return; }
+    return MembersDialog._load(opts);
   };
 }
 

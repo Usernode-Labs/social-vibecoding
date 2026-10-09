@@ -4506,6 +4506,10 @@ test('#4457: Week by week opens on two weeks, and Show earlier weeks adds rows t
     assert.match(stripped, new RegExp(`\\.${cls} \\{`), `.${cls} has a rule`);
   }
   assert.match(stripped, /\.dev-ws-since-clear \{[^}]*margin-left: auto;/, 'Clear at the far end of the heading row');
+  // #4527: the people step carries the faces and the longest sentence, so it
+  // grows to twice each outer step's share and the count reads as one line.
+  assert.match(stripped, /\.dev-ws-rule-step\[data-ws-rule-people\] \{ flex-grow: 2; \}/,
+    'the people step takes the larger share of the row');
 });
 
 test('the since-list and week checks reach their states through URLs that give the page a last visit', () => {

@@ -37,8 +37,12 @@ import { init as initMembers, MembersDialog as Members } from './members-control
 import { useDialog } from './use-dialog';
 
 export function MembersDialog() {
-  const dialog = useDialog('members', {
-    onOpen: () => { void Members._load(); },
+  // The payload is optional (#4527): the Workshop tab's Approval rules Edit
+  // button opens the dialog with `{ section: 'approvals' }`, and _load
+  // brings that section into view once the rosters have settled. Every
+  // other caller opens with no payload, exactly as before.
+  const dialog = useDialog<{ section?: 'approvals' }>('members', {
+    onOpen: (opts) => { void Members._load(opts); },
     onClose: () => Members._reset(),
   });
 

@@ -1373,6 +1373,14 @@ export function approvalStep(
  * and "+N" for the rest of the electorate; on a project that is just you,
  * yours. The wait rule adds a line under it. The steps run across a wide
  * card and stack on a phone and beside the Workshop's side panel (app.css).
+ *
+ * WHO MAY EDIT IT, at the heading row's far end (#4527): whoever can manage
+ * the project (`can_manage`, the same field "Make it public" reads — the
+ * creator, a declared app admin or a platform admin), because changing the
+ * rule is a governance proposal and those are proposed from the Members &
+ * approvals dialog's Proposal approvals section. The button opens that
+ * dialog there; everyone else reads the card with no action on it, the way
+ * "See all" ends the All items heading for the actions a card carries.
  */
 export function ApprovalRules({ slug }: { slug: string }) {
   const data = useCommunity(slug);
@@ -1391,6 +1399,16 @@ export function ApprovalRules({ slug }: { slug: string }) {
     <section className="dev-ws-strip" data-ws-approval-rules="">
       <div className="dev-ws-head">
         <span className="dev-ws-head-title">Approval rules</span>
+        {data.can_manage ? (
+          <button
+            type="button"
+            className="dev-ws-hub-open dev-ws-head-end un-touch-target"
+            data-ws-rules-edit=""
+            onClick={() => { (window as any).AppView?.openMembersModal?.({ section: 'approvals' }); }}
+          >
+            Edit
+          </button>
+        ) : null}
       </div>
       <ol className="dev-ws-rules" data-ws-community-rule="" aria-label={approvalLine(data.approval, data)}>
         <li className="dev-ws-rule-step">

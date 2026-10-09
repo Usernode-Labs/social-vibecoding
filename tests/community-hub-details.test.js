@@ -272,6 +272,40 @@ test('#4457: the approval rule is drawn as three steps: its checks pass, who say
   assert.equal(typeof ApprovalRules, 'function');
 });
 
+test('#4527: the Approval rules card gains an Edit button for a manager, and none for anyone else', async () => {
+  const card = loadTsx(CARD);
+  const rules = { policy: 'anyone', approvals_required: null, electorate: 11, required: 4 };
+  const manager = community({ can_manage: true, approval: rules });
+  const plain = community({ slug: 'meadow', can_manage: false, approval: rules });
+  const prev = globalThis.fetch;
+  globalThis.fetch = async (url) => ({
+    ok: true,
+    json: async () => (String(url).includes('/meadow/') ? plain : manager),
+  });
+  try {
+    await card.reloadCommunity('garden');
+    const managed = renderToHtml(createElement(card.ApprovalRules, { slug: 'garden' }));
+    assert.match(managed,
+      /<button type="button" class="dev-ws-hub-open dev-ws-head-end un-touch-target" data-ws-rules-edit="">Edit<\/button>/,
+      'Edit ends the heading row, styled like the See all action');
+    // The three steps, their joins and the words are unchanged either way.
+    assert.match(managed, /<b>Its checks pass<\/b><span>on a preview of the change<\/span>/);
+    assert.match(managed, /data-ws-rule-people=""/);
+    assert.match(managed, /<b>It goes live<\/b><span>for everyone, right away<\/span>/);
+    await card.reloadCommunity('meadow');
+    const read = renderToHtml(createElement(card.ApprovalRules, { slug: 'meadow' }));
+    assert.doesNotMatch(read, /data-ws-rules-edit=""/, 'no Edit for a viewer who cannot manage');
+    assert.match(read, /<b>Its checks pass<\/b>/, 'the card still draws for them, with no action');
+  } finally {
+    globalThis.fetch = prev;
+  }
+  // The click asks AppView to open the Members & approvals dialog on its
+  // Proposal approvals section, the same guarded window read openInviteLinks
+  // uses — and nothing else about the drawing changes.
+  const src = CARD_SRC.slice(CARD_SRC.indexOf('export function ApprovalRules('));
+  assert.match(src, /\(window as any\)\.AppView\?\.openMembersModal\?\.\(\{ section: 'approvals' \}\)/);
+});
+
 test('a person who has not joined sees "Recently" over the same rows', () => {
   assert.match(LANDER, /const outsider = !!community && !community\.is_member;/);
   // A first visit, with no last visit to be since, reads "Recently" too.
