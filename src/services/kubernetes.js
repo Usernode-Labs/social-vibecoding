@@ -6,6 +6,7 @@ const log = require('./logger');
 const { collectPodDiagnostics, conditionDetails, boundedText } = require('./kubernetes-diagnostics');
 const { waitForWorkerBootstrap } = require('./kubernetes-worker-bootstrap');
 const buildkit = require('./kubernetes-buildkit');
+const { watchDeployment } = require('./kubernetes-deployment-watch');
 
 // The client is 967 ES modules: about a quarter of a second and 70 MB to
 // load. Most processes that load this file never reach the cluster (341 of
@@ -1155,7 +1156,7 @@ async function deployApplication(config, {
   }
   try {
     await waitForDeployment(namespace, name, {
-      generation: deployed?.metadata?.generation,
+      generation: deployed?.metadata?.generation, uid: deployed?.metadata?.uid,
       terminalPodFilter: { imageRef, environmentChecksum: envChecksum(env), container: 'app' },
     });
   } catch (err) {
@@ -1210,50 +1211,100 @@ function terminalPodFailureDetails(pods, { imageRef, environmentChecksum, contai
   return details;
 }
 
+function deploymentReady(deployment, generation) {
+  const desired = deployment.spec?.replicas ?? 1;
+  const status = deployment.status || {};
+  return !deployment.metadata?.deletionTimestamp && desired > 0
+    && status.observedGeneration >= Math.max(generation, deployment.metadata?.generation)
+    && status.updatedReplicas === desired && status.replicas === desired
+    && status.readyReplicas >= desired && status.availableReplicas >= desired;
+}
+
 async function waitForDeployment(namespace, name, {
-  timeoutMs = 5 * 60 * 1000, generation = 0, terminalPodFilter = null,
+  timeoutMs = 5 * 60 * 1000, generation = 0, uid = null, terminalPodFilter = null,
 } = {}) {
   const deadline = Date.now() + timeoutMs;
-  const { apps, core } = getClients();
+  const api = getClients();
+  const { apps, core } = api;
   let rolloutDetails = '';
-  while (Date.now() < deadline) {
-    const deployment = await apps.readNamespacedDeployment({ name, namespace });
-    const desired = deployment.spec?.replicas ?? 1;
-    const status = deployment.status || {};
-    rolloutDetails = boundedText(conditionDetails(status.conditions).join('\n'), 4096);
-    // An available OLD replica keeps serving during a rolling update. Wait
-    // for the controller to observe our write, replace every old replica,
-    // and make the updated replicas ready and available before publishing it.
-    if (!deployment.metadata.deletionTimestamp && desired > 0
-        && status.observedGeneration >= Math.max(generation, deployment.metadata.generation)
-        && status.updatedReplicas === desired && status.replicas === desired
-        && status.readyReplicas >= desired && status.availableReplicas >= desired) return deployment;
-    // A Pod rejected before its process starts will never become healthy, so
-    // waiting the whole rollout budget only turns a precise configuration
-    // error into a five-minute "spinning up" delay. This read is best-effort:
-    // transient API errors keep the ordinary rollout waiter in control.
-    if (terminalPodFilter && typeof core?.listNamespacedPod === 'function') {
-      try {
-        const pods = await core.listNamespacedPod({ namespace,
-          labelSelector: `social.usernode.io/runtime-name=${name}` });
-        const terminal = terminalPodFailureDetails(pods.items, terminalPodFilter);
-        if (terminal.length) {
-          const detail = terminal.join('\n');
-          const err = new Error(`Deployment ${namespace}/${name} cannot start: ${terminal[0]}`);
-          err.rolloutDetails = rolloutDetails;
-          err.terminalPodDetails = boundedText(detail, 4096);
-          err.terminalPodFailure = true;
-          throw err;
+  let watcher;
+  let watchAttempted = false;
+  let wake;
+  let wakePending = false;
+  let nextDiagnosisAt = 0;
+  const notify = () => { wakePending = true; wake?.(); };
+  const stopWatch = () => { watcher?.abort(); watcher = null; };
+  try {
+    while (Date.now() < deadline) {
+      const deployment = await apps.readNamespacedDeployment({ name, namespace });
+      uid ||= deployment.metadata?.uid;
+      const sameDeployment = !uid || deployment.metadata?.uid === uid;
+      const status = deployment.status || {};
+      rolloutDetails = boundedText(conditionDetails(status.conditions).join('\n'), 4096);
+      // Watch events only wake us; this authoritative read retains the full
+      // completion contract and cannot publish a stale/backlogged ready event.
+      if (sameDeployment && deploymentReady(deployment, generation)) return deployment;
+      if (!watchAttempted) {
+        watchAttempted = true;
+        const resourceVersion = deployment.metadata?.resourceVersion;
+        const startWatch = api.watchDeployment || (api.kc && ((options, event, done) =>
+          watchDeployment(api.kc, options, event, done)));
+        if (sameDeployment && uid && resourceVersion && startWatch) {
+          let finishedSynchronously = false;
+          const event = (type, object) => {
+            if (type === 'ERROR' || type === 'DELETED') { finishedSynchronously = true; stopWatch(); return; }
+            if ((type !== 'ADDED' && type !== 'MODIFIED') || object?.metadata?.uid !== uid
+                || object.metadata.name !== name || object.metadata.namespace !== namespace
+                || object.metadata.resourceVersion === resourceVersion
+                || !deploymentReady(object, generation)) return;
+            // One early confirmation per wait: a misleading event cannot make
+            // us hammer the API. Subsequent observation uses ordinary polling.
+            stopWatch();
+            notify();
+          };
+          const done = () => { finishedSynchronously = true; stopWatch(); };
+          try {
+            watcher = startWatch({ namespace, name, resourceVersion,
+              timeoutMs: Math.max(1, deadline - Date.now()) }, event, done);
+            if (finishedSynchronously || wakePending) stopWatch();
+          } catch { stopWatch(); }
         }
-      } catch (err) {
-        if (err.terminalPodFailure) throw err;
       }
+      // A Pod rejected before its process starts will never become healthy, so
+      // waiting the whole rollout budget only turns a precise configuration
+      // error into a five-minute "spinning up" delay. This read is best-effort:
+      // transient API errors keep the ordinary rollout waiter in control.
+      if (Date.now() >= nextDiagnosisAt && terminalPodFilter && typeof core?.listNamespacedPod === 'function') {
+        nextDiagnosisAt = Date.now() + ROLLOUT_POLL_MS;
+        try {
+          const pods = await core.listNamespacedPod({ namespace,
+            labelSelector: `social.usernode.io/runtime-name=${name}` });
+          const terminal = terminalPodFailureDetails(pods.items, terminalPodFilter);
+          if (terminal.length) {
+            const detail = terminal.join('\n');
+            const err = new Error(`Deployment ${namespace}/${name} cannot start: ${terminal[0]}`);
+            err.rolloutDetails = rolloutDetails;
+            err.terminalPodDetails = boundedText(detail, 4096);
+            err.terminalPodFailure = true;
+            throw err;
+          }
+        } catch (err) {
+          if (err.terminalPodFailure) throw err;
+        }
+      }
+      if (!wakePending) {
+        await new Promise(resolve => {
+          const timer = setTimeout(finish, Math.max(0, Math.min(ROLLOUT_POLL_MS, deadline - Date.now())));
+          function finish() { clearTimeout(timer); wake = null; resolve(); }
+          wake = finish;
+        });
+      }
+      wakePending = false;
     }
-    await new Promise((resolve) => setTimeout(resolve, ROLLOUT_POLL_MS));
-  }
-  const err = new Error(`Timed out waiting for Deployment ${namespace}/${name}`);
-  err.rolloutDetails = rolloutDetails;
-  throw err;
+    const err = new Error(`Timed out waiting for Deployment ${namespace}/${name}`);
+    err.rolloutDetails = rolloutDetails;
+    throw err;
+  } finally { stopWatch(); }
 }
 
 async function getApplicationStatus(config, runtimeName) {
@@ -1413,7 +1464,7 @@ async function restartApplication(config, runtimeName) {
   deployment.spec.template.metadata.annotations ||= {};
   deployment.spec.template.metadata.annotations['social.usernode.io/restarted-at'] = new Date().toISOString();
   const restarted = await getClients().apps.replaceNamespacedDeployment({ name: runtimeName, namespace, body: deployment });
-  return waitForDeployment(namespace, runtimeName, { generation: restarted?.metadata?.generation });
+  return waitForDeployment(namespace, runtimeName, { generation: restarted?.metadata?.generation, uid: restarted?.metadata?.uid });
 }
 
 async function deleteApplication(config, runtimeName) {
@@ -2877,6 +2928,7 @@ module.exports = {
   _clientsLogApiForTest: clientsLogApi,
   _buildPhasesFromPodForTest: buildPhasesFromPod,
   _deploymentStateForTest: deploymentState,
+  _waitForDeploymentForTest: waitForDeployment,
   _terminalPodFailureDetailsForTest: terminalPodFailureDetails,
   _normalizeDeploymentForTest: normalizeDeployment,
   _quantityNumberForTest: quantityNumber,
