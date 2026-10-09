@@ -472,12 +472,26 @@ test('comment mode opens on demand into a host of its own, once, and C asks it t
   assert.match(src, /if \(inUse \+ d\.images\.length >= MAX_PICTURES\) return \{ pictures: d\.pictures, picture: null \};/);
   // Kudos is one line that says who it is for.
   assert.match(src, />Kudos for whoever solves it</);
-  // The bar: moved by its handle (four arrows, a move cursor) and kept on the device; it never hides on its own.
-  assert.match(src, /const BAR_KEY = 'usernode:comment-bar';/);
+  // The bar: moved by its handle (four arrows, a move cursor); it starts at
+  // the foot every time (#4541, the device no longer keeps where it was left)
+  // and never hides on its own.
+  assert.doesNotMatch(src, /usernode:comment-bar|savedBarAt|saveBarAt/, 'no saved bar position');
+  assert.match(src, /const \[barAt, setBarAt\] = useState<Point \| null>\(null\);/);
   assert.match(src, /<ArrowsMoveIcon className="h-4 w-4" \/>/);
   assert.match(src, /cursor-move touch-none/);
-  assert.match(src, /onDoubleClick=\{\(\) => \{ setBarAt\(null\); saveBarAt\(null\); \}\}/);
+  assert.match(src, /onDoubleClick=\{\(\) => \{ setBarAt\(null\); \}\}/);
   assert.doesNotMatch(src, /DUCK_AFTER_MS|ducked|onBarEnter/, 'resting the pointer on the bar never hides it');
+  // One label that says what to do (#4541): not the mode's name plus a second hint.
+  assert.match(src, /'Tap anywhere to suggest an improvement'/);
+  assert.doesNotMatch(src, />Comment mode</);
+  assert.doesNotMatch(src, /Click anything to comment on it/);
+  assert.match(src, /aria-label="Comment mode"/, 'the bar keeps its screen-reader name');
+  // A first-use note, once per device, that says how it works and that the
+  // Form switch goes back to the form (#4541).
+  assert.match(src, /const INTRO_KEY = 'usernode:comment-intro-seen';/);
+  assert.match(src, /How comment mode works/);
+  assert.match(src, />Got it</);
+  assert.match(src, /Prefer the form\? Tap Form to switch back at any time\./);
   // A finger: a tap is a comment, a drag scrolls.
   assert.match(src, /if \(!t\.moved\) place\(\{ x: e\.clientX, y: e\.clientY \}\);/);
   // The form is called the form.
