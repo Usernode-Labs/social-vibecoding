@@ -5097,6 +5097,8 @@ const AppView = {
         // The lead, and on a change Homeroom bot built the rest of its
         // summary one tap down (`_summaryParts`).
         ...AppView._changeSummaryView(item),
+        // #4490: the author's diagram leads the page, above its description.
+        diagram: item && item.diagram && typeof item.diagram === 'object' ? item.diagram : null,
         summaryStale: !!(item.pr_summary_stale && typeof item.pr_summary_md === 'string' && item.pr_summary_md.trim()),
         // #1370's "Full proposal details" disclosure, between the generated
         // summary and the detail block, exactly where it was inserted.
@@ -9856,6 +9858,47 @@ const AppView = {
     return part ? part.s : '';
   },
 
+  // #4490: a row's picture fields when it has no shots. A change carries its
+  // author's diagram (validated by the server, read again where it is drawn)
+  // and "What it touches"; a group decision carries the few facts its own
+  // diagram is drawn from, named one by one as the Communities feed names
+  // them (routes/workshop-overview.js decisionFacts): a secret change's key
+  // and action, never a value.
+  _workshopPicture(kind, item) {
+    if (!item || typeof item !== 'object') return {};
+    if (kind === 'gov') {
+      const facts = AppView._decisionFacts(item);
+      return facts ? { decision: facts } : {};
+    }
+    const out = {};
+    if (item.diagram && typeof item.diagram === 'object') {
+      out.diagram = item.diagram;
+      out.diagramSource = item.diagram_source || 'author';
+    }
+    if (item.touches && typeof item.touches === 'object') out.touches = item.touches;
+    const detail = item.shots_detail && typeof item.shots_detail === 'object' ? item.shots_detail : null;
+    if (detail && detail.intent && detail.intent.impact === 'none') out.nothingVisible = true;
+    return out;
+  },
+
+  _decisionFacts(item) {
+    const p = item && item.payload && typeof item.payload === 'object' ? item.payload : {};
+    const str = (v) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 200) : null);
+    if (item.kind === 'rename') {
+      return str(p.newName)
+        ? { kind: 'rename', newName: str(p.newName), fromName: (AppView.appData && str(AppView.appData.name)) || null }
+        : null;
+    }
+    if (item.kind === 'close_issue') {
+      const n = Number(p.issueNumber);
+      return { kind: 'close_issue', issueNumber: Number.isInteger(n) && n > 0 ? n : null, issueTitle: str(p.issueTitle), reason: str(p.reason) };
+    }
+    if (item.kind === 'secret_change') {
+      return str(p.key) ? { kind: 'secret_change', key: str(p.key), action: p.action === 'delete' ? 'delete' : 'set' } : null;
+    }
+    return null;
+  },
+
   // The first before/after capture pair, as the Needs-you feed's picture.
   // `visuals` is the server shape visualsTilesHtml reads — the grouped form
   // or the legacy flat one — and this keeps only what the feed draws: one
@@ -11015,6 +11058,10 @@ const AppView = {
         visuals: kind === 'proposal'
           ? AppView._workshopVisuals(item && item.visuals, item && item.shots)
           : (kind === 'session' && item && item.shots ? AppView._workshopVisuals(null, item.shots) : null),
+        // #4490: the picture when there are no shots (lib/diagram, drawn and
+        // validated there): the author's diagram, a group decision's facts,
+        // and "What it touches" with whether nothing on screen changes.
+        ...AppView._workshopPicture(kind, item),
       };
       return kind ? AppView._attachRowConversation(row, kind, item) : row;
     };

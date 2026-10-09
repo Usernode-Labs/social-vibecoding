@@ -1605,6 +1605,9 @@ const BUILD_VISIBLE_CHANGES_LINES = Object.freeze([
   'exact before and after builds, and the group looks at those shots before it votes. If nothing a person sees',
   'changes, declare impact "none" with a specific reason; never call a visible change "none" because it is hard',
   'to reach. If the tool fails, say so in your summary; never claim the changes were recorded when they were not.',
+  'When the change is a rename, a changed flow, a data or settings change, or a measured improvement, also call',
+  'declare_diagram once with that kind (rename, flow, changes or numbers), in plain words; Homeroom draws it on the',
+  'change\'s card when it has no before and after shots. Mermaid is only for a change you declared with impact "none".',
 ]);
 
 // A build of the platform's own repository runs its tests the way that

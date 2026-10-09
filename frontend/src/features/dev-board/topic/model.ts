@@ -669,6 +669,11 @@ export interface TopicBody {
   /** A proposal's plain-language summary, already rendered. */
   summaryHtml?: string | null;
   /**
+   * #4490: the diagram its author sent (services/diagram.js), which leads
+   * the change's page. Untyped here; lib/diagram reads it defensively.
+   */
+  diagram?: unknown;
+  /**
    * #4479: the plan a change was built from, as the card a request's page
    * hangs under the request (`AppView._changePlanCard`), or null.
    */

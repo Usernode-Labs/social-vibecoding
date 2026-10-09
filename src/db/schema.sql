@@ -13270,3 +13270,16 @@ BEGIN
       CHECK (hostname ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$');
   END IF;
 END $$;
+
+-- #4490: a picture on every Needs-you card. `pr_diagram` is the change's
+-- diagram as its author (submit_work `diagram`, a hosted build's
+-- declare_diagram) sent it, validated by services/diagram.js: one of four
+-- fixed kinds, or Mermaid source on a change declared as having nothing to
+-- see. Data, never markup; Homeroom draws it. `pr_diagram_source` says who
+-- supplied it ('author'). `pr_touches` is "What it touches", derived from the
+-- files at `pr_touches_sha` by services/proposal-touches.js and refreshed when
+-- the head moves.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_diagram JSONB;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_diagram_source TEXT;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_touches JSONB;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_touches_sha TEXT;
