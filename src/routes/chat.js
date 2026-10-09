@@ -26,7 +26,8 @@ const {
 // #194's topic threads, plus #2387's reply threads ('message', ref = the
 // root chat_messages.id). services/ws.js validateThread is the write-side
 // twin of this set and checks each ref against the database.
-const THREAD_TYPES = new Set(['issue', 'session', 'governance', appChat.MESSAGE_THREAD]);
+// #4417: 'category' is a topic's channel (services/app-chat.js).
+const THREAD_TYPES = new Set(['issue', 'session', 'governance', appChat.MESSAGE_THREAD, appChat.CATEGORY_THREAD]);
 const MAX_THREAD_REF = 2147483647; // PostgreSQL INTEGER
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
@@ -246,6 +247,28 @@ function isPinnedDemoThread(thread) {
   return !!thread && PINNED_DEMO_THREADS.has(`${thread.type}:${thread.ref}`);
 }
 
+// #4417: an empty topic channel on a `?demo=1` preview: three people
+// talking about the topic, so the channel, its head line and its composer
+// are reviewable before anybody has said a word there. Its own ids, above
+// the rest of the mock's, and the topic's own thread on every row.
+function stagingMockTopicChannel(appId, thread) {
+  const now = Date.now();
+  const row = (offset, minutesBack, username, content) => ({
+    id: 9902031 + offset, user_id: 0, username, content,
+    msg_type: 'message', metadata: {},
+    thread_type: thread.type, thread_ref: thread.ref,
+    created_at: new Date(now - minutesBack * 60 * 1000).toISOString(),
+    edited_at: null, reactions: [], bookmarked: false,
+    has_unread_notification: false, app_id: appId, posted_via: null,
+    deleted: false, thread: null,
+  });
+  return [
+    row(0, 95, 'staging-demo-user', '[Mock] A topic is a lasting conversation about one part of the project. This is where it happens.'),
+    row(1, 40, 'staging-tester', '[Mock] And a request made from a message here is filed under this topic.'),
+    row(2, 5, 'staging-demo-user', '[Mock] So the requests about this part, and the talk about them, are in one place.'),
+  ];
+}
+
 // What a staging `?demo=1` first page answers with, or null to serve the real
 // rows unchanged. `realRows` is the page the SELECT returned, oldest first.
 function stagingDemoTranscript(appId, thread, realRows, app = null) {
@@ -261,6 +284,7 @@ function stagingDemoTranscript(appId, thread, realRows, app = null) {
     return [...mock, ...realRows.filter((m) => !mockIds.has(m.id))];
   }
   if (realRows.length) return null;
+  if (thread && thread.type === appChat.CATEGORY_THREAD) return stagingMockTopicChannel(appId, thread);
   if (thread) return stagingMockGroupChat(appId, thread);
   const firstVersion = stagingMockFirstVersion(appId, app);
   return [...stagingMockGeneralStream(appId), ...(firstVersion ? [firstVersion] : [])];
@@ -481,6 +505,13 @@ function chatRoutes(config) {
         rootRow = await appChat.findThreadRoot(pool, appId, thread.ref, viewerId);
         if (!rootRow) return res.status(404).json({ error: 'Message not found' });
       }
+      // #4417: a topic's channel is readable whatever its state (a retired
+      // one is history, read-only), and only a topic of THIS app is one.
+      let topicChannel = null;
+      if (thread && thread.type === appChat.CATEGORY_THREAD) {
+        topicChannel = await require('../services/places').findTopic(pool, appId, thread.ref);
+        if (!topicChannel) return res.status(404).json({ error: 'Channel not found' });
+      }
 
       const stream = { appId, thread, viewerId };
       let rows;
@@ -526,7 +557,7 @@ function chatRoutes(config) {
         }
       }
 
-      const messages = await hydrateRows(rows, { appId, viewerId, general: !thread });
+      const messages = await hydrateRows(rows, { appId, viewerId, general: !thread || !!topicChannel });
       const root = rootRow
         ? (await hydrateRows([rootRow], { appId, viewerId, general: true }))[0]
         : null;
@@ -554,6 +585,15 @@ function chatRoutes(config) {
         const read = await appChat.readPosition(pool, appId, viewerId);
         if (read) body.read = { last_read_message_id: read.lastReadMessageId, unread_count: read.unreadCount };
       }
+      // #4417: a topic channel's first page says the same about its own
+      // cursor, and whether it still takes posts.
+      if (topicChannel) {
+        body.channel = { state: topicChannel.topic_state || 'live' };
+        if (before == null && after == null && around == null) {
+          const read = await appChat.categoryReadPosition(pool, appId, thread.ref, viewerId);
+          if (read) body.read = { last_read_message_id: read.lastReadMessageId, unread_count: read.unreadCount };
+        }
+      }
       res.json(body);
     } catch (err) {
       log.error('chat', 'Failed to load messages', { message: err.message });
@@ -568,7 +608,12 @@ function chatRoutes(config) {
     const direction = order === 'ASC' ? 'ASC' : 'DESC';
     const params = [appId];
     let where = 'm.app_id = $1';
-    if (thread) {
+    const topic = !!thread && thread.type === appChat.CATEGORY_THREAD;
+    let topicIndex = null;
+    if (topic) {
+      params.push(thread.ref);
+      topicIndex = params.length;
+    } else if (thread) {
       params.push(thread.type, thread.ref);
       where += ' AND m.thread_type = $2 AND m.thread_ref = $3';
     }
@@ -581,10 +626,33 @@ function chatRoutes(config) {
     // The general stream (#2387 follow-up): its own messages, and the live
     // replies of its reply threads, which the transcript draws as a line each
     // where they landed. A deleted reply leaves no line; neither does a reply
-    // under a root by somebody the viewer blocked.
+    // under a root by somebody the viewer blocked. #4417: only the replies
+    // whose root is IN the general stream: a reply thread can start in a
+    // topic's channel now, and its replies are drawn there.
     if (!thread) {
       where += ` AND (m.thread_type IS NULL OR (
         m.thread_type = 'message' AND m.deleted_at IS NULL
+        AND EXISTS (
+          SELECT 1 FROM chat_messages general_root
+           WHERE general_root.id = m.thread_ref AND general_root.thread_type IS NULL
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM chat_messages hidden_root
+            JOIN user_blocks hb ON hb.blocked_user_id = hidden_root.user_id
+           WHERE hidden_root.id = m.thread_ref AND hb.blocker_id = $${viewerIndex}
+        )))`;
+    }
+    // #4417: a topic's channel is the general stream's shape one level down:
+    // its own messages, and the live replies of reply threads that start in
+    // it, under the same blocking rule.
+    if (topic) {
+      where += ` AND ((m.thread_type = 'category' AND m.thread_ref = $${topicIndex}) OR (
+        m.thread_type = 'message' AND m.deleted_at IS NULL
+        AND EXISTS (
+          SELECT 1 FROM chat_messages topic_root
+           WHERE topic_root.id = m.thread_ref AND topic_root.app_id = m.app_id
+             AND topic_root.thread_type = 'category' AND topic_root.thread_ref = $${topicIndex}
+        )
         AND NOT EXISTS (
           SELECT 1 FROM chat_messages hidden_root
             JOIN user_blocks hb ON hb.blocked_user_id = hidden_root.user_id
@@ -633,9 +701,16 @@ function chatRoutes(config) {
       ? target.thread_type === thread.type && Number(target.thread_ref) === thread.ref
       : target.thread_type == null;
     if (inStream) return { anchorId: target.id, messageId: target.id, threadRef: replyRoot };
-    if (!thread && replyRoot) {
+    // A reply, read from the stream its root is in: the general one, or
+    // (#4417) a topic's channel.
+    const topic = !!thread && thread.type === appChat.CATEGORY_THREAD;
+    if ((!thread || topic) && replyRoot) {
       const root = await appChat.findThreadRoot(pool, appId, replyRoot, viewerId);
       if (!root) return null;
+      const rootHere = topic
+        ? root.thread_type === appChat.CATEGORY_THREAD && Number(root.thread_ref) === thread.ref
+        : root.thread_type == null;
+      if (!rootHere) return null;
       return { anchorId: root.id, messageId: target.id, threadRef: root.id };
     }
     return null;
@@ -753,7 +828,9 @@ function chatRoutes(config) {
     if (general && messages.length) {
       try {
         const summaries = await appChat.threadSummaries(
-          pool, appId, messages.filter((m) => m.thread_type == null).map((m) => m.id), viewerId
+          pool, appId,
+          messages.filter((m) => m.thread_type == null || m.thread_type === appChat.CATEGORY_THREAD).map((m) => m.id),
+          viewerId
         );
         for (const m of messages) m.thread = summaries.get(Number(m.id)) || null;
       } catch (err) {
@@ -818,6 +895,9 @@ function chatRoutes(config) {
         }
         if (result?.code === 'channel_moved') {
           return res.status(409).json({ error: communities.CHANNEL_MOVED, code: 'channel_moved' });
+        }
+        if (result?.code === 'topic_closed') {
+          return res.status(409).json({ error: require('../services/ws').TOPIC_CLOSED_MESSAGE, code: 'topic_closed' });
         }
         log.error('chat', 'Canonical chat write returned no result', {
           slug: req.params.slug, code: result?.code,
@@ -927,6 +1007,21 @@ function chatRoutes(config) {
       const messageId = parseThreadRef(req.body && req.body.message_id);
       if (messageId == null) {
         return res.status(400).json({ error: 'A positive integer message_id is required' });
+      }
+      // #4417: `thread_type: 'category'` and its `thread_ref` move a topic
+      // channel's own cursor instead (app_category_chat_reads). The bell's
+      // small-group row is about the general stream, so it is left alone.
+      const body = req.body || {};
+      if (body.thread_type != null || body.thread_ref != null) {
+        const ref = parseThreadRef(body.thread_ref);
+        if (body.thread_type !== appChat.CATEGORY_THREAD || ref == null) {
+          return res.status(400).json({ error: 'Invalid thread_type/thread_ref' });
+        }
+        const moved = await appChat.moveCategoryCursor(pool, {
+          appId: app.id, categoryId: ref, userId: req.user.id, messageId, unread: move === 'unread',
+        });
+        if (!moved.ok) return res.status(404).json({ error: 'Message not found' });
+        return res.json({ unread_count: moved.unread_count });
       }
       if (IS_STAGING && req.query.demo === '1') {
         const mock = stagingMockUnreadCount(app.id, messageId, move);

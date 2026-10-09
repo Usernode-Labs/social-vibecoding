@@ -1917,6 +1917,11 @@ function notificationHref(row) {
   if (!row.thread_type && row.chat_message_id != null) {
     return `#messages/app/${slug}/m/${Number(row.chat_message_id)}`;
   }
+  // #4417: a message in one of the project's topic channels opens that
+  // channel, on the message (the router takes it to the channel's place).
+  if (row.thread_type === 'category' && row.thread_ref != null && row.chat_message_id != null) {
+    return `#messages/app/${slug}/c/${Number(row.thread_ref)}/m/${Number(row.chat_message_id)}`;
+  }
   return null;
 }
 

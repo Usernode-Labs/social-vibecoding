@@ -1644,6 +1644,11 @@ async function seedSelfApp(pool, config) {
     // proposal-approval settings actually apply.
     await appManifest.reconcileAppGovernance(pool, selfRows[0], manifest)
       .catch((err) => log.warn('db', 'Self-app governance reconcile failed', { err: err.message }));
+    // And the `topics` array (#4417), for the same reason: the self-app
+    // never runs rebuildProduction, so a merged topics PR's new topic,
+    // rename, merge or archive applies on the post-deploy boot.
+    await appManifest.reconcileAppTopics(pool, selfRows[0], manifest)
+      .catch((err) => log.warn('db', 'Self-app topics reconcile failed', { err: err.message }));
     // And the `platform_env` block: the declarations cache that backs the
     // admin console's Platform variables section and the pre-merge check.
     // Only the self-app has one — a child dapp's manifest may carry the

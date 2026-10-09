@@ -3169,6 +3169,21 @@
     },
     {
       "source": "src/routes/apps.js",
+      "method": "POST",
+      "path": "/api/apps/:slug/topics-pr",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "issues.post.apps.item.topics.pr.ee768d0e",
+      "domain": "issues",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "issue",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#app/:slug/workshop"
+    },
+    {
+      "source": "src/routes/apps.js",
       "method": "GET",
       "path": "/api/apps/:slug/domain",
       "expression": null,

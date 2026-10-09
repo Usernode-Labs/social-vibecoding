@@ -5,6 +5,36 @@
     "image": "public/apple-touch-icon.png",
     "color": "#37477b"
   },
+  "topics": [
+    {
+      "id": "onboarding",
+      "handle": "onboarding",
+      "name": "Onboarding",
+      "icon": "🚪",
+      "about": "Signing up and the first week"
+    },
+    {
+      "id": "homeroom-bot",
+      "handle": "homeroom-bot",
+      "name": "Homeroom bot",
+      "icon": "🤖",
+      "about": "How it plans, builds and answers"
+    },
+    {
+      "id": "proposal-pipeline",
+      "handle": "proposal-pipeline",
+      "name": "Proposal pipeline",
+      "icon": "🚦",
+      "about": "From request to merge: proposals, checks, votes and merging"
+    },
+    {
+      "id": "infra",
+      "handle": "infra",
+      "name": "Infra",
+      "icon": "🛠️",
+      "about": "Builds, staging, deploys and the servers the apps run on"
+    }
+  ],
   "secrets": [
     {
       "key": "GITHUB_APP_ID",

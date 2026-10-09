@@ -16,6 +16,8 @@ const pendingSecrets = require('../services/pending-secrets');
 const appManifest = require('../services/app-manifest');
 const { ADMIN_MUTATION_LOCK } = require('../services/advisory-locks');
 const renamePr = require('../services/rename-pr');
+const topicsPr = require('../services/topics-pr');
+const places = require('../services/places');
 const staging = require('../services/staging');
 const { drainGuard } = require('../services/lifecycle');
 const deployFailure = require('../services/deploy-failure');
@@ -3335,6 +3337,65 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
+  // #4417: propose a change to the project's TOPICS — a new one, a rename,
+  // a merge or an archive. They live in dapp.json's `topics` array, so the
+  // change is a manifest PR with its promoted vote session, the same
+  // lifecycle as a rename (services/topics-pr.js). Applies once it merges:
+  // the rebuild's reconcileAppTopics, or the platform's own boot.
+  //
+  // Body: { op: 'add', name, handle?, about?, icon? }
+  //     | { op: 'rename', id, name?, handle?, about?, icon? }
+  //     | { op: 'merge', id, into } | { op: 'archive', id }
+  //
+  // Proposing is taking part, so it is for members (requireAppMembership,
+  // 403 join_required), and for people who may build here (collab). The
+  // platform's own app is allowed: its dapp.json is the platform repo's.
+  router.post('/api/apps/:slug/topics-pr', drainGuard, issueCreateLimiter, communities.requireAppMembership(pool), async (req, res) => {
+    let change;
+    try {
+      change = topicsPr.parseChange(req.body);
+    } catch (err) {
+      return res.status(err.status || 400).json({ error: err.message });
+    }
+    try {
+      const { rows } = await pool.query('SELECT * FROM apps WHERE slug = $1', [req.params.slug]);
+      const app = rows[0];
+      if (!app || !(await appAccess.checkAppAccess(pool, app, req.user, 'view'))) {
+        return res.status(404).json({ error: 'App not found' });
+      }
+      if (!(await appAccess.checkAppAccess(pool, app, req.user, 'collab'))) {
+        return res.status(403).json({ error: 'Only people who can build here can propose a change to its topics' });
+      }
+      if (!github.isEnabled() || !process.env.GITHUB_BOT_TOKEN) {
+        return res.status(503).json({
+          error: 'Topic changes need GitHub configured on the platform (GITHUB_BOT_TOKEN).',
+        });
+      }
+      if (!app.repo_url) {
+        return res.status(400).json({ error: 'App has no GitHub repository to open a PR against' });
+      }
+      if (!(app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/)) {
+        return res.status(400).json({ error: 'Could not parse the app repository URL' });
+      }
+      const result = await topicsPr.createTopicsPR(
+        config, pool, app, change, { id: req.user.id, username: req.user.username }
+      );
+      res.status(201).json({
+        ok: true,
+        sessionId: result.sessionId,
+        prNumber: result.prNumber,
+        prUrl: result.prUrl,
+        title: result.title,
+      });
+    } catch (err) {
+      if (err instanceof topicsPr.TopicsPrError) {
+        return res.status(err.status || 400).json({ error: err.message });
+      }
+      log.error('apps', 'Topics PR failed', { slug: req.params.slug, message: err.message });
+      res.status(500).json({ error: err.message || 'Internal server error' });
+    }
+  });
+
   // ── App-host authorize hop ─────────────────────────────────────────
   //
   // Platform session cookies are host-only (deliberately: child apps run
@@ -3903,6 +3964,23 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // see hasLiveLink for what the records can and cannot say.
       const inviteLink = membership?.is_member && membership.audience === 'solo' && req.user?.id
         ? await communityInvites.hasLiveLink(pool, app.id, req.user.id) : false;
+      // #4417: THE PLACES. The page is navigated by one list — Hub, Needs
+      // you, Workshop, then #general and the project's topics — and this is
+      // what the list says beside each: the votes owed, and per channel its
+      // name, what it is for, whether it is live, how many requests it holds
+      // and how much in it is unread for this viewer. Best-effort: a list
+      // that cannot be read is #general alone, never a failed hub.
+      let placesPayload = null;
+      try {
+        placesPayload = await places.placesFor(pool, app, req.user, {
+          general: channel,
+          member: !!membership?.is_member,
+          showSelfHosted,
+        });
+        placesPayload.proposals = membership?.is_member ? await topicsPr.openTopicsPrs(pool, app.id) : [];
+      } catch (err) {
+        log.warn('apps', 'Could not read the places for the hub', { slug: app.slug, message: err.message });
+      }
       res.json({
         slug: app.slug,
         name: app.name,
@@ -3914,6 +3992,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         ...membership,
         members,
         channel,
+        places: placesPayload,
         activity,
         can_manage: !!canManage,
         audience_change: pendingAudience ? {

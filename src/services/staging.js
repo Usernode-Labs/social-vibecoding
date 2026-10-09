@@ -1128,6 +1128,12 @@ async function rebuildProductionInner(config, app, options = {}) {
     // explicit [] clears the roster. Best-effort.
     await appManifest.reconcileAppAdmins(prodPool, app, manifest)
       .catch((err) => log.warn('staging', 'Admins reconcile failed', { app: app.slug, err: err.message }));
+    // And the manifest's `topics` array (#4417), after the name, visibility
+    // and governance: a merged topics PR (a new topic, a rename, a merge, an
+    // archive) applies here, on the rebuild its merge triggered. An absent
+    // block is a no-op. Best-effort.
+    await appManifest.reconcileAppTopics(prodPool, app, manifest)
+      .catch((err) => log.warn('staging', 'Topics reconcile failed', { app: app.slug, err: err.message }));
     // And the manifest's `screenshot.deviceScaleFactor` (issue #360): a
     // merged PR that toggles the capture density applies here on the
     // rebuild it triggered. readScreenshot defaults to 2×, so this keeps

@@ -380,6 +380,11 @@ async function finalizeDeployInner(config, { appId, name, slug, tempDir, dbUrl, 
     await appManifest.reconcileAppAdmins(pool, { id: appId, slug }, manifest)
       .catch((err) => log.warn('app-creator', 'Admins reconcile failed', { appId, err: err.message }));
 
+    // And the manifest's `topics` array (#4417): an imported repo that
+    // names topics starts with them. No-op when the block is absent.
+    await appManifest.reconcileAppTopics(pool, { id: appId, slug }, manifest)
+      .catch((err) => log.warn('app-creator', 'Topics reconcile failed', { appId, err: err.message }));
+
     // And the manifest's `screenshot.deviceScaleFactor` (issue #360):
     // persist the density the before/after preview shots are captured at
     // onto apps.screenshot_device_scale so the capture orchestrator can
