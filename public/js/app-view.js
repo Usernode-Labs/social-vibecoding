@@ -7290,6 +7290,16 @@ const AppView = {
     return true;
   },
 
+  // The item a clicked row stands for: the row at its index in the current
+  // list when that row still reads the same, else the row of that label. A
+  // list that changed after the rows were drawn would otherwise hand the
+  // click to its neighbour ("Change assignee…" opening the category picker).
+  _cardMenuRowItem(list, idx, label) {
+    const at = list[idx];
+    if (label == null || (at && at.label === label)) return at;
+    return list.find((x) => x.label === label) || at;
+  },
+
   _closeCardMenu() {
     const open = AppView._openCardMenu;
     AppView._openCardMenu = null;
@@ -7342,7 +7352,9 @@ const AppView = {
       // menu now survives repaints (see _reanchorCardMenu), so a captured
       // closure could act on a row the board has already replaced.
       const live = AppView._cardMenuItems(key, own);
-      const it = (live.length ? live : items)[parseInt(btn.dataset.menuIdx, 10)];
+      const label = btn.querySelector && btn.querySelector('.dev-card-menu-label');
+      const it = AppView._cardMenuRowItem(live.length ? live : items,
+        parseInt(btn.dataset.menuIdx, 10), label ? label.textContent : null);
       AppView._closeCardMenu();
       if (it && it.act) {
         // Mark the dispatch so a popover this row opens isn't dismissed by
@@ -7356,6 +7368,15 @@ const AppView = {
     // scroll listener in _cardMenuInit compares against it.
     const at = trigger.getBoundingClientRect();
     AppView._openCardMenu = { key, el: menu, trigger, own, at: { top: at.top, left: at.left } };
+    // Mounting the rows lets React run the board's pending effects first, and
+    // a card's fold (dev-card.tsx useFoldedActions) can move a pill into this
+    // list right then, before the menu counted as open for
+    // _setFoldedCardActions to redraw it. So draw it again if it moved.
+    const now = AppView._cardMenuItems(key, own);
+    if (now.length !== items.length || now.some((x, i) => x.label !== items[i].label)) {
+      AppView._fillCardMenu(menu, now);
+      AppView._positionCardMenu(menu, trigger);
+    }
     const first = menu.querySelector('[data-menu-idx]:not([disabled])');
     if (first && first.focus) first.focus();
   },

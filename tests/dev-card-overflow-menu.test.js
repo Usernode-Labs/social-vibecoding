@@ -851,3 +851,22 @@ test('a pill folded while its card’s menu is open redraws that menu', () => {
   assert.equal(drawn.length, 1);
   AppView._openCardMenu = null;
 });
+
+// The fold can also land WHILE the menu opens: mounting its rows lets React
+// run the board's pending effects, before the menu counts as open. A click
+// is resolved by the row's own label, so a row drawn from the older list
+// still acts as itself.
+test('a clicked ⋯ row acts as the row it reads, whatever moved under it', () => {
+  const AppView = makeAppView();
+  const row = (label) => ({ label, act: () => {} });
+  const drawnList = [row('Claim it'), row('Set category…'), row('Change assignee…')];
+  const live = [row('Build it now'), ...drawnList];
+  assert.equal(AppView._cardMenuRowItem(live, 2, 'Change assignee…').label, 'Change assignee…', 'found by its label, not its old index');
+  assert.equal(AppView._cardMenuRowItem(live, 3, 'Change assignee…'), live[3], 'the index when it still reads the same');
+  assert.equal(AppView._cardMenuRowItem(live, 1, null), live[1], 'no label to go by: the index');
+  assert.equal(AppView._cardMenuRowItem(live, 1, 'Gone'), live[1], 'a label no longer listed: the index');
+  const toggle = SRC.slice(SRC.indexOf('  _toggleCardMenu(trigger) {'), SRC.indexOf('  _fillCardMenu(menu, items) {'));
+  assert.match(toggle, /AppView\._openCardMenu = \{ key, el: menu, trigger, own, at: \{ top: at\.top, left: at\.left \} \};\s*\/\/[\s\S]*?const now = AppView\._cardMenuItems\(key, own\);\s*if \(now\.length !== items\.length \|\| now\.some\(\(x, i\) => x\.label !== items\[i\]\.label\)\) \{\s*AppView\._fillCardMenu\(menu, now\);/,
+    'drawn again once open when the list moved while it opened');
+  assert.match(toggle, /const it = AppView\._cardMenuRowItem\(live\.length \? live : items,\s*parseInt\(btn\.dataset\.menuIdx, 10\), label \? label\.textContent : null\);/);
+});
