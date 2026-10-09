@@ -38,22 +38,28 @@ const platform = () => require('../workflow/platform.ts');
 // Who holds an activity: this process, as the machine records it.
 const HOLDER = `${os.hostname()}:${process.pid}:${crypto.randomUUID().slice(0, 8)}`;
 
-// What each kind of activity also covers when one of its own steps asks.
-const COVERS = new Map([
-  ['chat', new Set(['chat'])],
-  ['turn', new Set(['turn', 'operation', 'hold'])],
-  ['operation', new Set(['operation'])],
-  ['hold', new Set(['hold'])],
-  ['destroy', new Set(['destroy'])],
-]);
+// A step joins the activity it runs inside only when it is of the same
+// kind: a sync with main's own turn, the Mayor's dispatch running the coding
+// turn. A step of another kind (a branch move inside a turn, a screenshot
+// run's hold started from a turn's tail) is an activity of its own, with the
+// one it runs inside as its parent, which never keeps it out: what it
+// claims then lasts as long as it does, not as long as its parent.
+
+// The longest an activity is renewed: one its code never ended stops
+// blocking the session after this, and says so in the log.
+const MAX_LIFETIME_MS = 12 * 60 * 60 * 1000;
 
 class SessionBusyError extends Error {
   constructor(reason, sessionId) {
     super(reason === 'unavailable'
       ? 'Session activity could not be checked; try again'
-      : `Session ${sessionId} is busy (${reason})`);
+      : reason === 'busy_turn'
+        ? `Session ${sessionId} is busy: a turn is already in flight`
+        : `Session ${sessionId} is busy (${reason})`);
     this.name = 'SessionBusyError';
-    this.code = 'session_busy';
+    // Refused by a turn: the code a turn already in flight in this process
+    // gives (worker.js execInWorker), which callers already handle.
+    this.code = reason === 'busy_turn' ? 'TURN_IN_FLIGHT' : 'session_busy';
     this.reason = reason;
     // busy_turn → 'turn'; 'retiring', 'unavailable' as they are.
     this.blockedBy = String(reason).replace(/^busy_/, '');
@@ -99,6 +105,7 @@ function makeHandle({ id, sessionId, kind, label, turnId, parentHandle, leaseMs,
   const abort = new AbortController();
   const h = {
     id, sessionId, kind, label, turnId, parentHandle,
+    startedAt: Date.now(),
     refs: 1,
     ended: false,
     lost: false,
@@ -122,6 +129,16 @@ function makeHandle({ id, sessionId, kind, label, turnId, parentHandle, leaseMs,
 
 async function renew(h) {
   if (h.ended || h.lost) return;
+  if (Date.now() - h.startedAt > MAX_LIFETIME_MS) {
+    // Its code never ended it: stop keeping the session from everyone else.
+    h.lost = true;
+    clearInterval(h.timer);
+    log.error('session-activity', 'An activity was never ended; its lease is left to run out', {
+      sessionId: h.sessionId, activityId: h.id, kind: h.kind, label: h.label,
+    });
+    h._abort.abort(new SessionBusyError('lease_lost', h.sessionId));
+    return;
+  }
   let r;
   try {
     r = await platform().renewActivity(h.id);
@@ -147,11 +164,13 @@ async function renew(h) {
 // is not lost.
 function deliverStop(h, stop) {
   h.stop = stop;
-  if (!stopHandler || h.stopDelivered === stop.at || h.stopDelivering) return;
+  // Each Stop is numbered (a forced one after a first is a second Stop).
+  const n = stop.n ?? stop.at;
+  if (!stopHandler || h.stopDelivered === n || h.stopDelivering) return;
   h.stopDelivering = true;
   Promise.resolve()
     .then(() => stopHandler(h.sessionId, stop))
-    .then((applied) => { if (applied) h.stopDelivered = stop.at; })
+    .then((applied) => { if (applied) h.stopDelivered = n; })
     .catch((err) => log.warn('session-activity', 'Forwarded stop failed', { sessionId: h.sessionId, err: err.message }))
     .finally(() => { h.stopDelivering = false; });
 }
@@ -192,10 +211,10 @@ async function release(h, outcome) {
 }
 
 // Ask for an activity. Resolves the handle, or throws SessionBusyError.
-async function acquire(sessionId, kind, { label = null, turnId = null } = {}) {
+async function acquire(sessionId, kind, { label = null, turnId = null, stoppable = false } = {}) {
   const id = Number(sessionId);
   const inside = current(id);
-  if (inside && COVERS.get(inside.kind)?.has(kind)) {
+  if (inside && inside.kind === kind) {
     inside.refs += 1;
     return { handle: inside, joined: true };
   }
@@ -204,7 +223,7 @@ async function acquire(sessionId, kind, { label = null, turnId = null } = {}) {
   let outcome;
   try {
     outcome = await platform().requestActivity({
-      sessionId: id, activityId, kind, holder: HOLDER, label, turnId, parent: inside ? inside.id : null,
+      sessionId: id, activityId, kind, holder: HOLDER, label, turnId, parent: inside ? inside.id : null, stoppable,
     });
   } catch (err) {
     log.warn('session-activity', 'Asking for an activity failed', { sessionId: id, kind, err: err.message });
@@ -220,7 +239,8 @@ async function acquire(sessionId, kind, { label = null, turnId = null } = {}) {
   }
   const reply = outcome.reply || {};
   const handle = makeHandle({
-    id: activityId, sessionId: id, kind, label, turnId, parentHandle: inside,
+    // The whole chain it runs inside, other sessions' activities included.
+    id: activityId, sessionId: id, kind, label, turnId, parentHandle: scope.getStore() || null,
     leaseMs: reply.leaseMs || 90000, renewMs: reply.renewMs || 15000,
   });
   handles.set(activityId, handle);
@@ -269,6 +289,12 @@ async function begin(sessionId, kind, opts = {}) {
       return release(handle, outcome);
     },
   };
+}
+
+// Run `fn` outside every activity: for work started from inside one that
+// lives on its own (fire-and-forget), so it is never taken for a step.
+function detached(fn) {
+  return scope.exit(fn);
 }
 
 // For a gate that answers "busy" itself: { activity } (null with the flag
@@ -365,6 +391,7 @@ module.exports = {
   run,
   begin,
   tryBegin,
+  detached,
   read,
   busyIds,
   isBusy,

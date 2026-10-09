@@ -4208,7 +4208,7 @@ function buildRecoveryStopHandle({ sessionId, containerName, activeTurn, broadca
 // once that holder has ended it or its lease ran out.
 async function resumeDetachedTurn(args) {
   return require('./src/services/session-activity').run(args.sessionId, 'turn', {
-    label: 'recovered turn', turnId: turnLifecycle.turnIdentity(args.activeTurn),
+    label: 'recovered turn', turnId: turnLifecycle.turnIdentity(args.activeTurn), stoppable: true,
   }, () => resumeDetachedTurnHeld(args));
 }
 
@@ -6432,11 +6432,17 @@ async function cleanup() {
   const retentionStop = require('./src/services/build-retention').stop();
   const checkRetentionStop = require('./src/services/check-retention').stop();
   const scorerStop = require('./src/services/topochain/challenge-scorer').stop();
-  // The workflow runtime stops after the drain below, not now: the turns
-  // and operations finishing during it end their session activities
-  // through it (services/session-activity.js). Its own running work
-  // reports nothing once stopped and is reclaimed when its lease runs out.
-  let workflowStop = Promise.resolve();
+  // With the session-activity machine on, the workflow runtime stops after
+  // the drain below, not now: the turns and operations finishing during it
+  // end their session activities through it (services/session-activity.js).
+  // Its own running work reports nothing once stopped and is reclaimed when
+  // its lease runs out.
+  // With the session-activity machine off nothing ends through it, and the
+  // runtime stops at once, as before.
+  let workflowStop = require('./src/services/session-activity').wanted()
+    ? Promise.resolve()
+    : require('./src/workflow/platform.ts').stopWorkflow()
+      .catch((err) => log.warn('server', 'Stopping the workflow runtime failed', { err: err.message }));
   // Stop claiming push jobs immediately. The bounded drain runs in
   // parallel with HTTP/session draining and is awaited before pool close.
   const pushStop = mobilePush.stop({ timeoutMs: DRAIN_TIMEOUT_MS }).catch((err) => {
@@ -6548,10 +6554,12 @@ async function cleanup() {
   // What this process still holds on any session ends with it. A detached
   // turn whose container keeps running stays busy through its journal until
   // the next process adopts it.
-  await require('./src/services/session-activity').endAll()
-    .catch((err) => log.warn('server', 'Ending session activities failed', { err: err.message }));
-  workflowStop = require('./src/workflow/platform.ts').stopWorkflow()
-    .catch((err) => log.warn('server', 'Stopping the workflow runtime failed', { err: err.message }));
+  if (require('./src/services/session-activity').wanted()) {
+    await require('./src/services/session-activity').endAll()
+      .catch((err) => log.warn('server', 'Ending session activities failed', { err: err.message }));
+    workflowStop = require('./src/workflow/platform.ts').stopWorkflow()
+      .catch((err) => log.warn('server', 'Stopping the workflow runtime failed', { err: err.message }));
+  }
 
   // A planned replay is hosted by this server process. If it is still active
   // when the drain expires, record the actual shutdown now so its owner can

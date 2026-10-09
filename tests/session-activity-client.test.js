@@ -62,12 +62,11 @@ test('with the flag off, nothing is asked and nothing refuses', async () => {
   assert.deepEqual(calls, []);
 });
 
-test('an activity asks once; its own steps join it, and it ends once when the last part ends', async () => {
+test('an activity asks once; its own steps of the same kind join it, and it ends once when the last part ends', async () => {
   reset();
   activity.configure({ wfSessionActivityEnabled: true });
   await activity.run(7, 'turn', { label: 'sync with main' }, async () => {
     await activity.run(7, 'turn', { label: 'its own turn' }, async () => {});
-    await activity.run(7, 'operation', { label: 'a branch move inside it' }, async () => {});
     assert.equal(ended().length, 0, 'still running');
   });
   assert.equal(requested().length, 1);
@@ -75,13 +74,16 @@ test('an activity asks once; its own steps join it, and it ends once when the la
   assert.equal(ended()[0].outcome, 'done');
 });
 
-test('a step the activity does not cover asks, with the activity as its parent', async () => {
+test('a step of another kind is an activity of its own, with the one it runs inside as its parent', async () => {
   reset();
-  await activity.run(8, 'hold', { label: 'before & after shots' }, async (hold) => {
-    await activity.run(8, 'turn', { label: 'the shots turn' }, async () => {});
-    assert.equal(requested()[1].parent, hold.id);
+  let pipeline = null;
+  await activity.run(8, 'turn', { label: 'sync with main' }, async (turn) => {
+    // A hand-off pipeline the sync starts, and leaves running.
+    pipeline = await activity.begin(8, 'operation', { label: 'handoff pipeline' });
+    assert.equal(requested()[1].parent, turn.id);
   });
-  assert.equal(requested().length, 2);
+  assert.equal(ended().length, 1, 'the sync ended; its pipeline did not keep its turn on');
+  await pipeline.end();
   assert.equal(ended().length, 2);
 });
 
@@ -99,7 +101,9 @@ test('a refusal throws before the work runs, saying what is in the way', async (
   answers.push({ status: 'rejected', reason: 'busy_hold' });
   let ran = false;
   await assert.rejects(activity.run(11, 'turn', {}, async () => { ran = true; }),
-    (err) => err instanceof activity.SessionBusyError && err.blockedBy === 'hold' && err.retainActiveTurn === true);
+    (err) => err instanceof activity.SessionBusyError && err.blockedBy === 'hold' && err.code === 'session_busy' && err.retainActiveTurn === true);
+  answers.push({ status: 'rejected', reason: 'busy_turn' });
+  await assert.rejects(activity.begin(11, 'turn'), (err) => err.code === 'TURN_IN_FLIGHT', 'the code a turn in flight here gives');
   assert.equal(ran, false);
   const gate = await activity.tryBegin(11, 'turn').catch((e) => e);
   assert.ok(gate.activity, 'granted once nothing is in the way');
@@ -145,7 +149,7 @@ test('a Stop reaches the activity this process holds, and comes again at the nex
   let land = false;
   activity.setStopHandler(async (sessionId, stop) => { delivered.push(sessionId); return land; });
   const turn = await activity.begin(15, 'turn');
-  const stop = { at: new Date().toISOString(), by: { id: 1, username: 'ana', canAdminWrite: false } };
+  const stop = { at: new Date().toISOString(), n: 1, by: { id: 1, username: 'ana', canAdminWrite: false } };
   assert.equal(activity.stopArrived({ sessionId: 15, activityId: 'not-ours', stop }), false);
   assert.equal(activity.stopArrived({ sessionId: 15, activityId: turn.handle.id, stop }), true);
   await new Promise((r) => setTimeout(r, 5));
@@ -157,6 +161,10 @@ test('a Stop reaches the activity this process holds, and comes again at the nex
   const after = delivered.length;
   await new Promise((r) => setTimeout(r, 60));
   assert.equal(delivered.length, after, 'not again once it landed');
+  // A forced Stop after it is a new one, delivered too.
+  activity.stopArrived({ sessionId: 15, activityId: turn.handle.id, stop: { ...stop, n: 2, force: true } });
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(delivered.length, after + 1);
   activity.setStopHandler(null);
   await turn.end();
 });

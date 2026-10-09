@@ -442,7 +442,12 @@ function anthropicProxyRoutes(config) {
       try { mode = workerMod ? workerMod.getActiveTurnMode(sessionId) : null; } catch { mode = null; }
       if (mode) return mode === 'sync';
       try {
-        const { rows } = await pool.query(`SELECT active_turn->>'mode' AS mode FROM chat_sessions WHERE id = $1`, [sessionId]);
+        // A turn still running or about to resume (turn-lifecycle.js
+        // RECOVERABLE_PHASES), never a stale record's mode.
+        const { rows } = await pool.query(
+          `SELECT active_turn->>'mode' AS mode FROM chat_sessions
+            WHERE id = $1 AND COALESCE(active_turn->>'phase', 'executing') = ANY($2::text[])`,
+          [sessionId, [...require('../services/turn-lifecycle').RECOVERABLE_PHASES]]);
         return rows[0]?.mode === 'sync';
       } catch { return false; }
     })();

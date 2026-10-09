@@ -2012,7 +2012,9 @@ async function draftSpec({
   const { worker, sessions, agentTurn, activeWorkers } = deps;
   // One activity on the session (services/session-activity.js): with the
   // session-activity machine on, it is refused while another process uses it.
-  const sessionUse = await sessionActivity.begin(session.id, 'turn', { label: 'bot spec draft' });
+  const gate = await sessionActivity.tryBegin(session.id, 'turn', { label: 'bot spec draft' });
+  if (gate.refused) return { ok: false, costUsd: null, error: `the spec turn did not run (${gate.refused.message})` };
+  const sessionUse = gate.activity;
   sessionUse?.enter();
   const budgetMs = Math.min(turnBudgetMs, specBudgetMs);
   const progress = lastActivity();
@@ -2319,7 +2321,9 @@ function buildTurnRunner({
     // A turn may go on the ledger under a name of its own (the nudge).
     // One activity on the session (services/session-activity.js): with the
     // session-activity machine on, it is refused while another process uses it.
-    const sessionUse = await sessionActivity.begin(session.id, 'turn', { label: 'bot build turn' });
+    const gate = await sessionActivity.tryBegin(session.id, 'turn', { label: 'bot build turn' });
+    if (gate.refused) return { routed: { error: `dispatch: ${gate.refused.message}` }, stopped: false };
+    const sessionUse = gate.activity;
     sessionUse?.enter();
     const telemetry = turnTelemetry || runnerTelemetry;
     let turnStopped = false;

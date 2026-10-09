@@ -3856,14 +3856,15 @@ function getActiveTurnMode(sessionId) {
 // never fail the API call that incurred it.
 //
 // The proxy call can land on a process that does not run the turn (any
-// web process serves it). That process has no turn of its own to tally:
-// the spend goes to the turn's durable record only, under the turn the
-// journal names, and the owner reads it back when its turn ends
-// (reconcileTurnByok) (B5).
+// web process serves it), or on the owner of a turn resumed after a
+// restart, which keeps no turn id in memory. Then the spend goes to the
+// turn's durable record under the turn the journal names, and the owner
+// reads it back when its turn ends (reconcileTurnByok) (B5).
 function noteTurnByokSpend(sessionId, cents) {
   const sid = Number(sessionId);
   if (!(cents > 0)) return;
   const meta = _warmRegistry.get(sid);
+  _registryUpsert(sid, { turnByokCents: ((meta && meta.turnByokCents) || 0) + cents });
   const pool = _getPoolSafe();
   const activeTurnId = meta?.activeTurnId || null;
   if (!activeTurnId) {
@@ -3877,7 +3878,6 @@ function noteTurnByokSpend(sessionId, cents) {
       });
     return;
   }
-  _registryUpsert(sid, { turnByokCents: ((meta && meta.turnByokCents) || 0) + cents });
   if (pool) {
     turnLifecycle.incrementByokCents(pool, {
       sessionId: sid,

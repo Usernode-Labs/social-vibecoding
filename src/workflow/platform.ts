@@ -398,11 +398,11 @@ const ACTIVITY_SOURCE = { kind: 'system' as const, name: 'session-activity' };
 // not answer in time) is for the caller to cancel with endActivity.
 export async function requestActivity(a: {
   sessionId: number; activityId: string; kind: ActivityKind; holder: string;
-  label?: string | null; turnId?: string | null; parent?: string | null; waitMs?: number;
+  label?: string | null; turnId?: string | null; parent?: string | null; stoppable?: boolean; waitMs?: number;
 }): Promise<EventOutcome> {
   return runtime!.appendAndWait(SESSIONS, activityKey(a.sessionId), { type: 'Requested', payload: {
     sessionId: a.sessionId, activityId: a.activityId, kind: a.kind, holder: a.holder,
-    label: a.label ?? null, turnId: a.turnId ?? null, parent: a.parent ?? null,
+    label: a.label ?? null, turnId: a.turnId ?? null, parent: a.parent ?? null, stoppable: !!a.stoppable,
   } }, { requestKey: `activity:${a.activityId}`, source: ACTIVITY_SOURCE, waitMs: a.waitMs ?? 5000 });
 }
 

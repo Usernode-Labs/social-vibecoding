@@ -467,9 +467,8 @@ async function waitForSessionIdle(pool, sessionId, {
   timeoutMs = 120_000,
   recoveryTimeoutMs = timeoutMs,
   workerService = worker,
-  // What uses the session besides a turn's journal and this process's
-  // worker: an operation here, and with the session-activity machine on,
-  // a turn or operation in any process (B7). Injected for tests.
+  // A turn the session-activity machine granted, in any process, besides a
+  // turn's journal and this process's worker (B7). Injected for tests.
   busyElsewhere = defaultBusyElsewhere,
   intervalMs = 500,
   now = Date.now,
@@ -556,14 +555,14 @@ async function waitForSessionIdle(pool, sessionId, {
   }
 }
 
-// A sync with main, a hand-off pipeline or another operation in this
-// process (active-workers.js), or a turn or operation the session-activity
-// machine granted anywhere. The run's own hold is neither.
+// A turn the session-activity machine granted in any process (with it on):
+// a sync with main still starting its worker, a turn before it records its
+// journal, the turn the run was started from (B7). Operations do not count:
+// a hand-off pipeline starts the shots itself, and does not use the worker.
 async function defaultBusyElsewhere(sessionId) {
   const id = Number(sessionId);
-  if (require('./active-workers').hasSessionOperation(id)) return true;
   const live = (await sessionActivity.read([id])).get(id) || [];
-  return live.some((a) => a.kind === 'turn' || a.kind === 'operation');
+  return live.some((a) => a.kind === 'turn');
 }
 
 function errorCode(error) {

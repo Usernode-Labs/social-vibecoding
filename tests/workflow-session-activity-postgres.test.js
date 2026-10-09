@@ -63,6 +63,7 @@ test('session-activity machine against the full PostgreSQL schema', { timeout: 1
     const activityId = crypto.randomUUID();
     const id = await rt.append(MACHINE, sessionKey(sessionId), { type: 'Requested', payload: {
       sessionId, activityId, kind, holder: extra.holder || 'proc-a', label: null, turnId: extra.turnId ?? null, parent: extra.parent ?? null,
+      stoppable: extra.stoppable ?? (kind === 'turn' || kind === 'chat'),
     } }, { requestKey: `activity:${activityId}`, source: { kind: 'system' } });
     await rt.drain();
     const { rows: [e] } = await pool.query('SELECT result, reason FROM wf_events WHERE id = $1', [id]);
@@ -140,6 +141,15 @@ test('session-activity machine against the full PostgreSQL schema', { timeout: 1
     assert.equal((await ask(s, 'destroy', { turnId: 'turn-1' })).granted, true, 'the watchdog reaping a turn nobody holds');
   });
 
+  await t.test("a turn continuing the journal's turn is not kept out by a screenshot run waiting for it", async () => {
+    const s = await session();
+    await turnLifecycle.persistNewTurn(pool, s, { turnId: 'turn-r', mode: 'chat', phase: 'tail_pending' });
+    const hold = await ask(s, 'hold');
+    assert.equal(hold.granted, true);
+    assert.equal((await ask(s, 'turn')).reason, 'busy_hold', 'a new turn waits for the run');
+    assert.equal((await ask(s, 'turn', { turnId: 'turn-r' })).granted, true, 'recovery of the turn the run waits for');
+  });
+
   await t.test('a journal that runs nothing does not count', async () => {
     const s = await session();
     await turnLifecycle.persistNewTurn(pool, s, { turnId: 'turn-q', mode: 'chat', phase: 'quarantined' });
@@ -164,6 +174,14 @@ test('session-activity machine against the full PostgreSQL schema', { timeout: 1
     const renewal = await renewLease(pool, turn.activityId);
     assert.equal(renewal.held, true);
     assert.equal(renewal.stop.by.username, 'sa_owner', 'a missed push is caught at the next renewal');
+    assert.equal(renewal.stop.n, 1);
+    // A forced Stop after the first is a Stop of its own, keeping when the first was.
+    await rt.append(MACHINE, sessionKey(s), { type: 'StopRequested', payload: {
+      sessionId: s, by: { id: owner.id, username: 'sa_owner', canAdminWrite: false }, force: true, immediate: false, expectedTurnId: null,
+    } }, { requestKey: 'stop-1b', source: { kind: 'route' } });
+    await rt.drain();
+    const again = await renewLease(pool, turn.activityId);
+    assert.deepEqual([again.stop.n, again.stop.force, again.stop.at], [2, true, renewal.stop.at]);
     const seen = await readActivities(pool, [s]);
     assert.deepEqual(seen.get(s), [{ id: turn.activityId, kind: 'turn', stopping: true }]);
     const none = await session();
@@ -172,6 +190,14 @@ test('session-activity machine against the full PostgreSQL schema', { timeout: 1
     } }, { requestKey: 'stop-2', source: { kind: 'route' } });
     await rt.drain();
     assert.equal((await pool.query('SELECT result FROM wf_events WHERE id = $1', [nid])).rows[0].result, 'rejected', 'no turn: the route falls back on the journal');
+    // A turn with no stop handle where it runs (a sync with main) is not sent one.
+    const sync = await session();
+    await ask(sync, 'turn', { stoppable: false });
+    const sid = await rt.append(MACHINE, sessionKey(sync), { type: 'StopRequested', payload: {
+      sessionId: sync, by: { id: owner.id, username: 'sa_owner', canAdminWrite: false }, force: false, immediate: false, expectedTurnId: null,
+    } }, { requestKey: 'stop-3', source: { kind: 'route' } });
+    await rt.drain();
+    assert.equal((await pool.query('SELECT reason FROM wf_events WHERE id = $1', [sid])).rows[0].reason, 'no_turn');
   });
 
   const retire = async (s, by = 'merge') => {

@@ -466,7 +466,9 @@ test('the agent-session first Stop goes straight to a hard kill, including a rec
         immediate: true, force: true, expectedTurnId: 'turn-xyz' });
       assert.equal(answer.status, 200);
       assert.equal(answer.body.stopped, true);
-      assert.deepEqual(calls, [['kill', SESSION_ID, { force: true }]]);
+      // Without a handle the turn is not this process's: the kill records no
+      // pending stop here (B5); with one, it does.
+      assert.deepEqual(calls, [['kill', SESSION_ID, { force: true, recordPending: withHandle }]]);
       assert.ok(capturedQueries.some((q) => /stopRequestedAt/.test(q.sql)));
     } finally {
       workerMod.stopTurn = original.stop; workerMod.isWorkerExecuting = original.probe;
@@ -486,7 +488,7 @@ test('a failed immediate kill escalates automatically and keeps ownership if ter
   try {
     await assert.rejects(requestSessionStop({ pool: poolMod.getPool(), user: OWNER, sessionId: SESSION_ID,
       immediate: true, force: true, expectedTurnId: 'turn-xyz' }), /Could not confirm/);
-    assert.deepEqual(calls, [['kill', { force: true }], ['evict']]);
+    assert.deepEqual(calls, [['kill', { force: true, recordPending: false }], ['evict']]);
     assert.equal(activeWorkers.has(SESSION_ID), true);
   } finally {
     workerMod.stopTurn = original.stop; workerMod.isWorkerExecuting = original.probe; workerMod.evictWorker = original.evict;

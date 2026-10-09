@@ -381,7 +381,7 @@ async function runMayorTurn(ctx, deps) {
   // (services/session-activity.js). It keeps nothing out; it is how a Stop
   // that lands on another process finds this one, from the first phase on.
   // A turn it cannot record still runs: only that forwarding is lost.
-  const chatActivity = await sessionActivity.begin(session.id, 'chat', { label: 'chat turn' }).catch(() => null);
+  const chatActivity = await sessionActivity.begin(session.id, 'chat', { label: 'chat turn', stoppable: true }).catch(() => null);
   chatActivity?.enter();
 
   try {
@@ -447,7 +447,7 @@ async function runMayorTurn(ctx, deps) {
 
       // Claimed atomically across processes by the session-activity
       // machine when it runs, as well as in this process's memory.
-      const dispatchGate = await sessionActivity.tryBegin(session.id, 'turn', { label: 'coding turn' });
+      const dispatchGate = await sessionActivity.tryBegin(session.id, 'turn', { label: 'coding turn', stoppable: true });
       if (dispatchGate.refused || isSessionBusy(session.id)) {
         dispatchGate.activity?.end();
         const live = workerProgress.get(session.id);
@@ -1411,7 +1411,7 @@ async function runMayorTurn(ctx, deps) {
     // gating on container-status would reject every scout/build
     // for ~10 min after the first dispatch finishes (warm idle is
     // not busy).
-    const dispatchGate = await sessionActivity.tryBegin(session.id, 'turn', { label: 'coding turn' });
+    const dispatchGate = await sessionActivity.tryBegin(session.id, 'turn', { label: 'coding turn', stoppable: true });
     if (dispatchGate.refused || isSessionBusy(session.id)) {
       dispatchGate.activity?.end();
       const live = workerProgress.get(session.id);

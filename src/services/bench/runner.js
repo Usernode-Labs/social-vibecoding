@@ -259,7 +259,9 @@ async function runTurn({
   session.agent_model = model;
   // One activity on the session (services/session-activity.js): with the
   // session-activity machine on, it is refused while another process uses it.
-  const sessionUse = await sessionActivity.begin(session.id, 'turn', { label: 'bench turn' });
+  const gate = await sessionActivity.tryBegin(session.id, 'turn', { label: 'bench turn' });
+  if (gate.refused) return { routed: { error: `worker: ${gate.refused.message}` }, result: {}, stopped: false, infra: true, costUsd: null, usage: {} };
+  const sessionUse = gate.activity;
   sessionUse?.enter();
   activeWorkers.add(session.id);
   let stopped = false;

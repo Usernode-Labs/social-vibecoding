@@ -56,7 +56,8 @@ export const blockedBy = (requested: Kind, existing: Kind) => BLOCKED_BY.get(req
 // ── States ──────────────────────────────────────────────────────────────
 
 export interface StopRequest {
-  at: string;
+  at: string;          // the first Stop for this turn
+  n: number;           // which Stop this is (a forced one follows a first)
   by: { id: number; username: string; canAdminWrite: boolean };
   force: boolean;
   immediate: boolean;
@@ -69,6 +70,9 @@ export interface Activity {
   label: string | null;
   turnId: string | null;
   parent: string | null;
+  // Whether it has a stop handle where it runs (the Mayor's turn, its
+  // dispatch, an agent build, a recovered turn): what a Stop is sent to.
+  stoppable: boolean;
   grantedAt: string;
   stop: StopRequest | null;
 }
@@ -116,6 +120,7 @@ const EVENTS = {
       label: optText(p?.label),
       turnId: optText(p?.turnId),
       parent: p?.parent == null ? null : uuid(p.parent, 'parent'),
+      stoppable: p?.stoppable === true,
     };
   },
   // Its holder is done with it (or gave up waiting for the answer).
@@ -151,8 +156,13 @@ const live = (d: Data, f: Facts) => d.activities.filter((a) => f.live.has(a.id))
 // own (recovery, a retry, a wrap-up) must not be refused by it. One naming
 // the journal's turn is not kept out by it either (the watchdog reaping it).
 function blocker(d: Data, f: Facts, p: { kind: Kind; parent: string | null; turnId: string | null; activityId: string }): Kind | null {
+  // A turn that continues the journal's running turn (recovery, a retry)
+  // is not kept out by a hold: the screenshot run holding the worker waits
+  // for exactly that turn to end.
+  const continuesJournal = p.kind === 'turn' && !!p.turnId && f.journal?.live && f.journal.turnId === p.turnId;
   for (const a of live(d, f)) {
     if (a.id === p.parent || a.id === p.activityId) continue;
+    if (continuesJournal && a.kind === 'hold') continue;
     if (blockedBy(p.kind, a.kind)) return a.kind;
   }
   if (f.journal?.live && p.kind !== 'turn' && f.journal.turnId !== p.turnId && blockedBy(p.kind, 'turn')) return 'turn';
@@ -193,7 +203,7 @@ const requested = {
     const parent = p.parent && live(d, f).some((a) => a.id === p.parent) ? p.parent : null;
     const activities = [...live(d, f), {
       id: p.activityId, kind: p.kind, holder: p.holder, label: p.label, turnId: p.turnId, parent,
-      grantedAt: ctx.now.toISOString(), stop: null,
+      stoppable: p.stoppable, grantedAt: ctx.now.toISOString(), stop: null,
     }];
     return { next: { name: 'in_use', data: { ...d, activities } } };
   },
@@ -210,17 +220,18 @@ const ended = {
   },
 };
 
-// A Stop goes to the holder of the session's live turn: the push reaches
-// every process, and only the holder acts on it (services/session-activity.js).
-// Without a live turn activity there is nothing here to tell; the route
-// falls back on the journal's durable stop stamp, which recovery reads.
+// A Stop goes to the holder of the session's live stoppable activity (one
+// with a stop handle where it runs): the push reaches every process, and
+// only the holder acts on it (services/session-activity.js). Without one
+// there is nothing here to tell; the route falls back on the journal's
+// durable stop stamp, which recovery reads, as on [main].
 const stopRequested = {
   guard: (s: SAState, e: Event<any>, f: Facts): Check =>
     (s.name !== NONE && turnFor(live((s as Open).data, f), e.payload.expectedTurnId) ? ok() : reject('no_turn')),
   to: (s: SAState, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<SAState> => {
     const d = (s as Open).data;
     const turn = turnFor(live(d, f), e.payload.expectedTurnId)!;
-    const stop: StopRequest = { at: turn.stop?.at || ctx.now.toISOString(), by: e.payload.by, force: e.payload.force,
+    const stop: StopRequest = { at: turn.stop?.at || ctx.now.toISOString(), n: (turn.stop?.n ?? 0) + 1, by: e.payload.by, force: e.payload.force,
       immediate: e.payload.immediate, expectedTurnId: e.payload.expectedTurnId };
     const activities = live(d, f).map((a) => (a.id === turn.id ? { ...a, stop } : a));
     const push: Push = { kind: 'session_stop', routing: { holder: turn.holder }, data: { sessionId: d.sessionId, activityId: turn.id, stop: { ...stop } } };
@@ -228,7 +239,7 @@ const stopRequested = {
   },
 };
 function turnFor(activities: Activity[], expectedTurnId: string | null): Activity | undefined {
-  const turns = activities.filter((a) => a.kind === 'turn' || a.kind === 'chat');
+  const turns = activities.filter((a) => a.stoppable);
   return (expectedTurnId && turns.find((a) => a.turnId === expectedTurnId))
     || turns.filter((a) => a.kind === 'turn').pop() || turns[turns.length - 1];
 }

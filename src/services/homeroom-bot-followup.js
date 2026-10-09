@@ -509,7 +509,9 @@ async function runFollowUpTurn({
 
   // One activity on the session (services/session-activity.js): with the
   // session-activity machine on, it is refused while another process uses it.
-  const sessionUse = await sessionActivity.begin(session.id, 'turn', { label: 'bot follow-up turn' });
+  const gate = await sessionActivity.tryBegin(session.id, 'turn', { label: 'bot follow-up turn' });
+  if (gate.refused) return { routed: { error: `worker: ${gate.refused.message}` }, result: {}, stopped: false, costUsd: null, infra: true };
+  const sessionUse = gate.activity;
   sessionUse?.enter();
   let stopped = false;
   let stopping = null;

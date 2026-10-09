@@ -5005,6 +5005,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const result = await syncMainSvc.runSyncMain(config, pool, sessionId, { sessionRow: session });
       res.json(result);
     } catch (err) {
+      // Refused by what another process runs on the session
+      // (session-activity.js): the same answer as one running here.
+      if (err instanceof sessionActivity.SessionBusyError) {
+        return res.status(409).json({
+          error: 'Claude is still working in this session. Wait for the turn to finish before syncing.',
+          busy: true,
+        });
+      }
       log.error('sessions', 'sync-main failed', { sessionId, err: err.message });
       res.status(500).json({ error: err.message || 'Internal server error' });
     }
@@ -10593,6 +10601,16 @@ async function requestSessionStop({ pool, sessionId, user, force = false, immedi
     // click of its own, as a stop and not as a failure (B3). Only when no
     // process holds a live turn does this one act on the turn's journal.
     if (!forwarded && (action === 'no_active_turn' || action === 'force_orphan')) {
+      // Stamped first, as every stop is: if the process running the turn
+      // dies before it acts, recovery still reads that a stop was asked.
+      if (sessionActivity.wanted()) {
+        const durable = await turnLifecycle.loadActiveTurn(pool, sessionId).catch(() => null);
+        if (durable && (durable.turnId || durable.journal)) {
+          await turnLifecycle.markStopRequested(pool, {
+            sessionId, turnId: durable.turnId || null, journal: durable.journal || null, by: user.username,
+          }).catch((err) => log.warn('sessions', 'Durable stop stamp failed', { sessionId, err: err.message }));
+        }
+      }
       const sent = await sessionActivity.forwardStop(sessionId, {
         by: { id: user.id, username: user.username, canAdminWrite: user.canAdminWrite === true },
         force: forceRequested, immediate, expectedTurnId,
@@ -10909,14 +10927,15 @@ async function forceStopSession(pool, sessionId, username, handle, { immediate =
   if (immediate) {
     // No initial probe, TERM grace period, retry timer or second button.
     // The worker confirms its process tree is gone in the same command.
-    const killed = await worker.stopTurn(sessionId, { force: true }).catch(() => false);
+    // Without a handle the turn is not this process's: no pending stop here (B5).
+    const killed = await worker.stopTurn(sessionId, { force: true, recordPending: !!handle }).catch(() => false);
     // A root-only idle probe cannot rule out a surviving tool child after
     // an incomplete tree kill. Without confirmation, evict the whole worker.
     executing = killed ? false : null;
   } else {
     executing = await worker.isWorkerExecuting(containerName);
     if (executing !== false) {
-      await worker.stopTurn(sessionId).catch(() => {});
+      await worker.stopTurn(sessionId, { recordPending: !!handle }).catch(() => {});
       await sleepMs(stopPolicy.STOP_PROBE_INTERVAL_MS);
       executing = await worker.isWorkerExecuting(containerName);
     }

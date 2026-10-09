@@ -295,7 +295,7 @@ async function runDispatch({
   // with the session-activity machine on, it is claimed here, atomically
   // across processes, and the model switch and the coding turn below run
   // inside it rather than asking again.
-  const gate = await d.sessionActivity.tryBegin(changeId, 'turn', { label: 'agent build' });
+  const gate = await d.sessionActivity.tryBegin(changeId, 'turn', { label: 'agent build', stoppable: true });
   if (gate.refused) return refusal(gate.refused.blockedBy === 'hold' ? SHOTS_BUSY_TEXT : BUSY_TEXT);
   gate.activity?.enter();
   const endGate = () => gate.activity?.end();

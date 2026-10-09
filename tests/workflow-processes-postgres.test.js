@@ -280,7 +280,7 @@ test('workflow machines in a process of their own, and through its crash', { tim
     const s = await proposal(a);
     const first = await sessionActivity.begin(s.id, 'turn', { label: 'coding turn' });
     await assert.rejects(sessionActivity.begin(s.id, 'turn', { label: 'second turn' }),
-      (err) => err.code === 'session_busy' && err.blockedBy === 'turn', 'refused, saying what is in the way');
+      (err) => err.code === 'TURN_IN_FLIGHT' && err.blockedBy === 'turn', 'refused, as a turn already in flight here is');
     // The process holding it dies without ending it: its renewals stop and
     // its lease runs out (time passing, as expireLeases does for work).
     clearInterval(first.handle.timer);
@@ -295,7 +295,7 @@ test('workflow machines in a process of their own, and through its crash', { tim
     const s = await proposal(a);
     const stops = [];
     sessionActivity.setStopHandler(async (sessionId, stop) => { stops.push({ sessionId, by: stop.by.username }); return true; });
-    const turn = await sessionActivity.begin(s.id, 'turn', { label: 'coding turn' });
+    const turn = await sessionActivity.begin(s.id, 'turn', { label: 'coding turn', stoppable: true });
     try {
       // Another process (here, the machine's push relayed by every web
       // process) asks for it: the bus carries it to this one's handle.
