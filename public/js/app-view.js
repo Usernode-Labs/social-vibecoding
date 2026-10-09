@@ -9714,6 +9714,17 @@ const AppView = {
   // screen only reachable by interacting needs a URL: the declared checks
   // select against it and the proposal screenshots are shot from it.
   WORKSHOP_TABS: ['status', 'discussion', 'workshop', 'needs', 'all', 'plan'],
+  // #4417: the page is navigated by its PLACES now — the three pages, then
+  // its channels — and a topic's channel is a place too: `c:<handle>`
+  // (frontend/src/features/dev-board/workshop/places.ts). It is remembered,
+  // stamped on history entries and linked with `?ws=` exactly as a tab is.
+  // The handle is checked for shape only; a channel the project no longer
+  // has opens on the hub when the page has read its places.
+  WORKSHOP_CHANNEL_RE: /^c:[a-z][a-z0-9-]{0,39}$/,
+  _isWorkshopPlace(key) {
+    return AppView.WORKSHOP_TABS.indexOf(key) !== -1
+      || (typeof key === 'string' && AppView.WORKSHOP_CHANNEL_RE.test(key));
+  },
   _workshopModels() {
     const src = (typeof DevChat !== 'undefined' && DevChat && DevChat.MODELS) || null;
     if (!src || typeof src !== 'object') return { list: [], selected: null };
@@ -9739,7 +9750,7 @@ const AppView = {
       // the All items tab — the other half of the answer is the grouping, in
       // _readWorkshopGroupOverride above. An explicit `?ws=` wins, because that
       // is the parameter still being offered.
-      AppView._workshopTabUrlOverride = AppView.WORKSHOP_TABS.indexOf(v) !== -1
+      AppView._workshopTabUrlOverride = AppView._isWorkshopPlace(v)
         ? v
         : (AppView._retiredBoardLink() ? 'all' : null);
     } catch { AppView._workshopTabUrlOverride = null; }
@@ -9750,7 +9761,7 @@ const AppView = {
   // transient exactly as `?ws=` is, and a tap on another tab clears it through
   // _setWorkshopTab.
   _overrideWorkshopTab(tab) {
-    if (AppView.WORKSHOP_TABS.indexOf(tab) === -1) return;
+    if (!AppView._isWorkshopPlace(tab)) return;
     AppView._workshopTabUrlOverride = tab;
   },
   /**
@@ -9770,7 +9781,7 @@ const AppView = {
       const stored = window.localStorage.getItem(AppView.WORKSHOP_TAB_KEY);
       // A remembered page (Needs you, All items) reopens as itself, with its
       // way back to the tab it hangs off above it.
-      if (AppView.WORKSHOP_TABS.indexOf(stored) !== -1 && stored !== 'plan') return stored;
+      if (AppView._isWorkshopPlace(stored) && stored !== 'plan') return stored;
       // A viewer who last left the Dev screen on the Board gets the tab those
       // columns live in, for the same reason _getWorkshopGroup gives them the
       // pane: migrating the retired mode without carrying what it MEANT would
@@ -9917,7 +9928,7 @@ const AppView = {
 
   _setWorkshopTab(key) {
     // The plan is gone once it is built, so the page reopens on the hub.
-    const next = AppView.WORKSHOP_TABS.indexOf(key) !== -1 && key !== 'plan' ? key : 'status';
+    const next = AppView._isWorkshopPlace(key) && key !== 'plan' ? key : 'status';
     // An explicit tap retires the URL override, exactly as `_setWorkshopGroup`
     // does — otherwise `?ws=` would keep winning over every later press.
     AppView._workshopTabUrlOverride = null;
@@ -9975,14 +9986,14 @@ const AppView = {
   _workshopTabStamp(state) {
     const raw = state && typeof state === 'object' ? state[AppView.WORKSHOP_TAB_STATE_KEY] : null;
     if (!raw || typeof raw !== 'object' || typeof raw.slug !== 'string' || !raw.slug) return null;
-    if (AppView.WORKSHOP_TABS.indexOf(raw.tab) === -1) return null;
-    const from = AppView.WORKSHOP_TABS.indexOf(raw.from) !== -1 ? raw.from : null;
+    if (!AppView._isWorkshopPlace(raw.tab)) return null;
+    const from = AppView._isWorkshopPlace(raw.from) ? raw.from : null;
     return { slug: raw.slug, tab: raw.tab, from };
   },
   // Write `tab` onto the entry the page is standing on, keeping whatever else
   // that entry's state carries (a dismissible surface's marker included).
   _stampWorkshopTab(slug, tab) {
-    if (!AppView._onProjectPage(slug) || AppView.WORKSHOP_TABS.indexOf(tab) === -1) return false;
+    if (!AppView._onProjectPage(slug) || !AppView._isWorkshopPlace(tab)) return false;
     try {
       const prev = window.history.state && typeof window.history.state === 'object' ? window.history.state : {};
       const had = AppView._workshopTabStamp(prev);
@@ -9997,9 +10008,9 @@ const AppView = {
   // A press on the page: stamp the entry being left with `from`, then push
   // one for `to`. Nothing when the tab does not change, or off the page.
   _pushWorkshopTab(slug, from, to) {
-    if (!slug || from === to || AppView.WORKSHOP_TABS.indexOf(to) === -1) return false;
+    if (!slug || from === to || !AppView._isWorkshopPlace(to)) return false;
     if (!AppView._onProjectPage(slug)) return false;
-    const left = AppView.WORKSHOP_TABS.indexOf(from) !== -1 ? from : null;
+    const left = AppView._isWorkshopPlace(from) ? from : null;
     try {
       if (left) AppView._stampWorkshopTab(slug, left);
       window.history.pushState({
@@ -10041,7 +10052,7 @@ const AppView = {
   // the page mounts on it), and told to a page already up as a TRAVERSAL, so
   // the page switches without pushing an entry of its own.
   _showHistoryWorkshopTab(slug, tab) {
-    if (AppView.WORKSHOP_TABS.indexOf(tab) === -1) return;
+    if (!AppView._isWorkshopPlace(tab)) return;
     AppView._setWorkshopTab(tab);
     try {
       window.dispatchEvent(new CustomEvent('usernode:workshop-tab', { detail: { slug: slug || null, tab, traversal: true } }));
@@ -10065,7 +10076,7 @@ const AppView = {
    * it saves it at its top.
    */
   _landOnTab(slug, tab) {
-    const key = AppView.WORKSHOP_TABS.indexOf(tab) !== -1 ? tab : 'status';
+    const key = AppView._isWorkshopPlace(tab) ? tab : 'status';
     AppView._setWorkshopTab(key);
     try {
       window.dispatchEvent(new CustomEvent('usernode:workshop-tab', { detail: { slug: slug || null, tab: key } }));
@@ -10986,6 +10997,10 @@ const AppView = {
       counts: { open: 0, underway: 0, review: 0, shipped: 0, fresh: 0 },
       lanes: laneOrder.map((l) => ({ key: l.key, title: l.title, rows: [], more: 0 })),
       ...(ungrouped ? { ungrouped: true } : {}),
+      // #4417: one of the project's topics: By category draws it under
+      // Topics, with a way into its channel (`handle`).
+      ...(def.topic && typeof def.topic.handle === 'string'
+        ? { topic: { key: String(def.topic.key || def.id), handle: def.topic.handle } } : {}),
       _people: new Map(),
     });
     const finish = (t) => {
@@ -11025,7 +11040,11 @@ const AppView = {
         if (lane.rows.length < AppView.WORKSHOP_LANE_MAX) lane.rows.push(e.row);
         else lane.more += 1;
       }
-      const drawnOf = themes.filter((t) => t.lanes.some((l) => l.rows.length)).map(finish);
+      // A TOPIC is drawn with nothing in it yet (#4417): it is a place to
+      // talk as well as a grouping, and its card is the way to its channel.
+      // Not while a search or a filter narrows the list, where an empty card
+      // would read as a match.
+      const drawnOf = themes.filter((t) => (t.topic && !filtering) || t.lanes.some((l) => l.rows.length)).map(finish);
       if (rest.lanes.some((l) => l.rows.length)) {
         if (tData) {
           const restCount = rest.lanes.reduce((n, l) => n + l.rows.length + l.more, 0);

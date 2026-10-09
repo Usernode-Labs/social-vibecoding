@@ -3582,7 +3582,8 @@ test('the tabs are a band in the community\'s colour, not the old pill: nothing 
   // Discussion, Needs you, Workshop) as a band under the coloured header,
   // with an underline rather than a marker; All items is the Workshop's page.
   assert.doesNotMatch(WORKSHOP, /useTabMarker|data-ws-tab-marker|role="tablist" aria-label="Workshop sections"/);
-  assert.match(WORKSHOP, /<ProjectBand\s+tab=\{tab\}\s+owed=\{owed\}/);
+  // #4417: a topic's channel lights Discussion, #general's, until the places list.
+  assert.match(WORKSHOP, /<ProjectBand\s+tab=\{isChannelPlace\(tab\) \? 'discussion' : \(tab as ProjectTabKey\)\}\s+owed=\{owed\}/);
   assert.match(WORKSHOP, /<div className="dev-ws-tabs dev-ws-pagebar" data-ws-pagebar="">/,
     'All items\' back bar keeps the strip\'s box');
   const band = read('frontend/src/features/dev-board/workshop/project-band.tsx');
@@ -4302,7 +4303,7 @@ test('Needs you is a fitted screen on a phone, in the page-scrolling layout too'
   // `min-height: 0`.
   // Discussion is the second fitted tab (#852 review): the channel's pane
   // rests its composer on the foot of the reading area the same way.
-  assert.match(CSS, /#dev-workshop > \.dev-ws\[data-ws-tab="needs"\],\s*#dev-workshop > \.dev-ws\[data-ws-tab="discussion"\] \{ min-height: 0; \}/);
+  assert.match(CSS, /#dev-workshop > \.dev-ws\[data-ws-tab="needs"\],\s*#dev-workshop > \.dev-ws\[data-ws-tab="discussion"\],\s*#dev-workshop > \.dev-ws\[data-ws-tab\^="c:"\] \{ min-height: 0; \}/);
   // ONLY those tabs: the others are meant to grow and scroll inside
   // #dev-forum-scroll, and `.dev-ws-tabbody` is not a scroller itself, so
   // shrinking them would clip what they hold rather than make it reachable.
@@ -4654,7 +4655,7 @@ test('the growing tabs keep the tab-bar clearance at the foot of the scroller (#
   // app.css at 390x844: the last card 13px past the bar's top edge before,
   // 51px clear of it after.
   // Not the fitted tabs, Needs you and Discussion (#852 review).
-  const rule = /#dev-body:has\(> #dev-workshop > \.dev-ws:not\(\[data-ws-tab="needs"\]\):not\(\[data-ws-tab="discussion"\]\)\),\s*#dev-workshop:has\(> \.dev-ws:not\(\[data-ws-tab="needs"\]\):not\(\[data-ws-tab="discussion"\]\)\) \{ flex-shrink: 0; \}/;
+  const rule = /#dev-body:has\(> #dev-workshop > \.dev-ws:not\(\[data-ws-tab="needs"\]\):not\(\[data-ws-tab="discussion"\]\):not\(\[data-ws-tab\^="c:"\]\)\),\s*#dev-workshop:has\(> \.dev-ws:not\(\[data-ws-tab="needs"\]\):not\(\[data-ws-tab="discussion"\]\):not\(\[data-ws-tab\^="c:"\]\)\) \{ flex-shrink: 0; \}/;
   assert.match(CSS, rule, 'the two links above a growing tab do not shrink');
   // It lands AFTER the chain it overrides, so equal-or-higher specificity and
   // source order both favour it.

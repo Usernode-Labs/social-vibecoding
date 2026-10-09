@@ -399,7 +399,11 @@ test('the app chat chips the same channels, as a link and not as a drawer ref', 
   const gc = read('public/js/group-chat.js');
   assert.match(gc, /window\.UsernodeReact\?\.messages\?\.channels\?\.\(\)/, 'it reads the Messages store\'s directory');
   assert.match(gc, /link\.className = 'gc-channel-ref';/);
-  assert.match(gc, /`#messages\/channel\/\$\{seg\.handle\}`/);
+  assert.match(gc, /return \{ href: `#messages\/channel\/\$\{handle\}`, handle, topic: false \};/);
+  // #4417: inside a project, its topics' handles (and the ones they had
+  // before a rename) come first, and link to the topic's channel there.
+  assert.match(gc, /window\.UsernodeReact\?\.places\?\.topicHandles\?\.\(slug\)/);
+  assert.match(gc, /href: `#app\/\$\{encodeURIComponent\(slug\)\}\/dev\/c\/\$\{topic\}`, handle: topic, topic: true/);
   assert.doesNotMatch(gc, /gc-ref gc-ref-channel/, 'never `.gc-ref`, which the chat sends to the activity drawer');
   const app = read('public/js/app.js');
   assert.match(app, /parts\[1\] === 'channel'[\s\S]{0,160}openChannel\?\.\(parts\[2\] \|\| ''\)/);

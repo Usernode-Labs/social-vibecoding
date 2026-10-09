@@ -1376,6 +1376,10 @@ async function handleMessage(pool, client, msg) {
           threadRoot = {
             id: Number(root.id), username: root.username || null,
             content: root.deleted_at ? '' : appChat.snippet(root.content), deleted: !!root.deleted_at,
+            // #4417: where the root is: the general stream (null), or one of
+            // the project's topic channels, whose stream draws the reply.
+            thread_type: root.thread_type || null,
+            thread_ref: root.thread_ref == null ? null : Number(root.thread_ref),
           };
         }
       }

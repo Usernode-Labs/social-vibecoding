@@ -375,3 +375,22 @@ test('"+" menu: Suggest an improvement is the one highlighted row, on desktop an
   const kitCss = fs.readFileSync(path.join(__dirname, '..', 'public', 'usernode-native', 'v1', 'native.css'), 'utf8');
   assert.match(kitCss, /\.un-action-btn\.un-highlighted \{\s*font-weight: 700;\s*background: color-mix\(in srgb, var\(--un-accent\) 12%, transparent\);/);
 });
+
+// ── #4417: Topics, in Settings & rules ────────────────────────────────
+
+test('Settings & rules has a Topics row that opens the Topics dialog', () => {
+  const settings = FRAME_SRC.indexOf('id="dev-plus-settings"');
+  const at = FRAME_SRC.indexOf('data-plus="topics"');
+  assert.ok(settings > -1 && at > settings, 'the row is inside the Settings & rules panel');
+  assert.ok(at > FRAME_SRC.indexOf('data-plus="rename"') && at < FRAME_SRC.indexOf('data-plus="secrets"'),
+    'beside the other change that is a proposal against dapp.json, the display name');
+  const row = FRAME_SRC.slice(at, FRAME_SRC.indexOf('/>', FRAME_SRC.indexOf('onClick', at)));
+  assert.match(row, /title="Topics"/);
+  // Its own onClick, so it works however the menu was wired (a row the menu
+  // wired before it rendered would otherwise be dead), and it closes the menu
+  // before the dialog goes up.
+  assert.match(row, /callAppView\('_closePlusMenu'\);\s*window\.UsernodeReact\?\.dialogs\?\.topics\?\.open\(\{ slug: window\.AppView\?\.appData\?\.slug \}\)/);
+  const dialog = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'dialogs', 'topics.tsx'), 'utf8');
+  assert.match(dialog, /useDialog<\{ slug\?: string \}>\('topics'/, 'the dialog answers to that name');
+  assert.match(dialog, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/topics-pr`/, 'and each change it makes is a topics PR');
+});

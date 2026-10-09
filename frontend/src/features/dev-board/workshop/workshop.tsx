@@ -42,9 +42,10 @@
  * link on the open card.
  */
 
-import { memo, useCallback, useEffect, useInsertionEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from 'react';
+import { Fragment, memo, useCallback, useEffect, useInsertionEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { SectionHeader } from '@/components/ui/grouped-list';
 import {
   ArrowUpIcon,
   BallotIcon,
@@ -90,6 +91,7 @@ import { WorkshopNotices } from './notices';
 import { ChannelCard, FirstVersionCard, NeedsCard, NothingToVote, hubAlone, hubWorkEmpty, owesVote, YourWorkCard } from './hub-cards';
 import { ProjectDiscussion } from './project-discussion';
 import { ProjectBand, type ProjectTabKey } from './project-band';
+import { channelPlace, isChannelPlace, isPlaceKey, placeHandle, placeHref, type PlaceKey } from './places';
 import { SinceSummaryCard } from './since-summary-card';
 import { PlanPage } from './plan-page';
 import { PageBack } from './page-back';
@@ -108,7 +110,8 @@ import {
 } from './swipe-vote';
 
 export type SortKey = 'people' | 'activity' | 'open';
-type TabKey = ProjectTabKey;
+// #4417: the page's places — a channel is `c:<handle>` (./places.ts).
+type TabKey = PlaceKey;
 
 /** Since your last visit, on the Workshop tab: its first rows, the rest behind "Show all N" (#4457). */
 export const SINCE_FIRST = 5;
@@ -151,20 +154,26 @@ const EMPTY_SINCE: NonNullable<DevWorkshopView['since']> = {
  */
 export function freshTab(): TabKey | null {
   const tab = callAppView('_workshopTab');
-  return tab === 'status' || tab === 'discussion' || tab === 'workshop' || tab === 'needs' || tab === 'all' || tab === 'plan' ? tab : null;
+  return isPlaceKey(tab) ? tab : null;
 }
 
-/** Where a page's back button goes: All items to the Workshop, the rest (the plan, #4074) to the hub. */
+/**
+ * Where a page's back button goes: All items to the Workshop, the rest (the
+ * plan, #4074) to the hub. A channel, Needs you and the Workshop go to the
+ * hub too (#4417: the places list's "up a level").
+ */
 export function pageParent(tab: TabKey): TabKey {
   return tab === 'all' ? 'workshop' : 'status';
 }
 
-/** A page's own title. */
+/** A page's own title. A channel is its handle (`#general`, `#onboarding`). */
 export function pageTitle(tab: TabKey): string {
   if (tab === 'needs') return 'Needs you';
   if (tab === 'all') return 'All items';
   if (tab === 'plan') return 'The plan';
-  if (tab === 'discussion') return 'Discussion';
+  const handle = placeHandle(tab);
+  if (handle) return `#${handle}`;
+  if (tab === 'status') return 'Hub';
   return 'Workshop';
 }
 
@@ -287,7 +296,7 @@ function Faces({ people }: { people: string[] }): ReactNode {
 }
 
 function ThemeCard({
-  theme, slug, canPost, open, onToggle, openKey, onToggleRow,
+  theme, slug, canPost, open, onToggle, openKey, onToggleRow, onChannel,
 }: {
   theme: WorkshopTheme;
   slug: string;
@@ -296,6 +305,8 @@ function ThemeCard({
   onToggle: () => void;
   openKey: string | null;
   onToggleRow: (key: string) => void;
+  /** #4417: open a topic's channel on this page. */
+  onChannel?: (place: TabKey) => void;
 }): ReactNode {
   const c = theme.counts;
   const openItems = c.open + c.underway + c.review;
@@ -371,7 +382,34 @@ function ThemeCard({
         <div className="dev-ws-theme-counts">{chips}</div>
         <div className="dev-ws-theme-foot">
           <Faces people={theme.people} />
-          <span className="flex-1 min-w-0 truncate">{foot}</span>
+          {/* #4417: A TOPIC'S FOOT IS ITS DOOR. The card is a category, and
+              its channel is where the requests in it are talked about, so
+              the foot's line gives way to "Discuss in #name". A link of its
+              own inside the card's head: a press on it opens the channel
+              and leaves the card shut. */}
+          {theme.topic ? (
+            <>
+              <span className="flex-1 min-w-0 truncate"></span>
+              <a
+                className="dev-ws-link dev-ws-topic-link"
+                data-ws-topic-channel={theme.topic.handle}
+                href={placeHref(slug, channelPlace(theme.topic.handle))}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const nav = (window as unknown as { NavLink?: { isNativeClick?: (ev: unknown) => boolean } }).NavLink;
+                  if (nav?.isNativeClick?.(e)) return;
+                  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0 || !onChannel) return;
+                  e.preventDefault();
+                  onChannel(channelPlace(theme.topic?.handle));
+                }}
+                onKeyDown={(e) => e.stopPropagation()}
+              >
+                {`Discuss in #${theme.topic.handle} ›`}
+              </a>
+            </>
+          ) : (
+            <span className="flex-1 min-w-0 truncate">{foot}</span>
+          )}
           <ChevronRightIcon className="dev-ws-chev" aria-hidden="true" />
         </div>
       </div>
@@ -587,12 +625,15 @@ function StartHereBanner(): ReactNode {
 
 function sortThemes(themes: WorkshopTheme[], key: SortKey): WorkshopTheme[] {
   const list = themes.slice();
-  const real = list.filter((t) => !t.ungrouped);
+  // #4417: the project's topics lead, in dapp.json's order (the server's),
+  // whatever the sort: they are the categories the group set itself.
+  const topics = list.filter((t) => t.topic && !t.ungrouped);
+  const real = list.filter((t) => !t.ungrouped && !t.topic);
   const tail = list.filter((t) => t.ungrouped);
   if (key === 'people') real.sort((a, b) => (b.people.length - a.people.length) || (b.lastActive - a.lastActive));
   if (key === 'activity') real.sort((a, b) => (b.lastActive - a.lastActive) || (b.people.length - a.people.length));
   if (key === 'open') real.sort((a, b) => (b.counts.open - a.counts.open) || (b.lastActive - a.lastActive));
-  return real.concat(tail);
+  return topics.concat(real, tail);
 }
 
 // THE ORDER HOLDS BETWEEN SORTS. The list was re-sorted on every refetch, so
@@ -610,7 +651,9 @@ export function orderThemesStable(held: HeldThemeOrder, themes: WorkshopTheme[],
   const kept = held.ids.map((id) => byId.get(id)).filter((t): t is WorkshopTheme => !!t);
   const keptIds = new Set(kept.map((t) => t.id));
   const all = kept.concat(sorted.filter((t) => !keptIds.has(t.id)));
-  return all.filter((t) => !t.ungrouped).concat(all.filter((t) => t.ungrouped));
+  // The topics keep their own order at the head (sortThemes), held or not.
+  const topics = themes.filter((t) => t.topic && !t.ungrouped);
+  return topics.concat(all.filter((t) => !t.ungrouped && !t.topic), all.filter((t) => t.ungrouped));
 }
 function useStableThemeOrder(themes: WorkshopTheme[], key: SortKey): WorkshopTheme[] {
   const held = useRef<HeldThemeOrder>(null);
@@ -3988,7 +4031,7 @@ export function DevWorkshop(): ReactNode {
      back from anywhere down the list. */
   const band = (
     <ProjectBand
-      tab={tab}
+      tab={isChannelPlace(tab) ? 'discussion' : (tab as ProjectTabKey)}
       owed={owed}
       // #2915: not while All items is up, where the search box says so.
       filtered={!!v.meta.filtered && tab !== 'all'}
@@ -4174,8 +4217,14 @@ export function DevWorkshop(): ReactNode {
       ) : null}
 
       {/* ── DISCUSSION: the community's channel, whole ── (./project-discussion.tsx) */}
-      {tab === 'discussion' ? (
-        <ProjectDiscussion slug={slug} name={app.name || community?.name || slug} data={community} />
+      {isChannelPlace(tab) ? (
+        <ProjectDiscussion
+          slug={slug}
+          name={app.name || community?.name || slug}
+          data={community}
+          channel={placeHandle(tab)}
+          onPlace={openTab}
+        />
       ) : null}
 
       {/* ── THE WORKSHOP TAB: what is open, how a change gets in, your work,
@@ -4553,18 +4602,32 @@ export function DevWorkshop(): ReactNode {
               ))}
             </div>
           </div>
+          {/* #4417: TOPICS, THEN OTHER CATEGORIES. A project's topics are the
+              categories its members set, each with a channel, so they lead
+              under a heading of their own, in dapp.json's order; whatever
+              else the board is grouped into follows under its own. A project
+              with no topics draws its categories as it always did, with no
+              heading at all. */}
           <div className="dev-ws-themes" ref={themesRef}>
-            {themes.map((t) => (
-              <ThemeCard
-                key={t.id}
-                theme={t}
-                slug={slug}
-                canPost={canPost}
-                open={isOpen(t.id)}
-                onToggle={() => toggleTheme(t.id)}
-                openKey={openRows[t.id] || null}
-                onToggleRow={(key) => toggleRow(t.id, key)}
-              />
+            {themes.some((t) => t.topic) ? (
+              <SectionHeader className="pt-3" data-ws-themes-head="topics">Topics</SectionHeader>
+            ) : null}
+            {themes.map((t, i) => (
+              <Fragment key={t.id}>
+                {themes.some((x) => x.topic) && !t.topic && (i === 0 || themes[i - 1].topic) ? (
+                  <SectionHeader className="pt-3" data-ws-themes-head="other">Other categories</SectionHeader>
+                ) : null}
+                <ThemeCard
+                  theme={t}
+                  slug={slug}
+                  canPost={canPost}
+                  open={isOpen(t.id)}
+                  onToggle={() => toggleTheme(t.id)}
+                  openKey={openRows[t.id] || null}
+                  onToggleRow={(key) => toggleRow(t.id, key)}
+                  onChannel={openTab}
+                />
+              </Fragment>
             ))}
           </div>
           {/* Four honest states for the fallback, because the first cut said

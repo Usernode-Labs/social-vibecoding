@@ -78,7 +78,10 @@ test('a project page is four tabs, Hub, Discussion, Needs you and Workshop, with
     [['status', 'Hub'], ['discussion', 'Discussion'], ['needs', 'Needs you'], ['workshop', 'Workshop']]);
   assert.equal(band.litTab('all'), 'workshop', 'the Workshop tab stays lit over All items');
   assert.equal(pageParent('all'), 'workshop', 'All items goes back to the Workshop');
-  assert.deepEqual(['needs', 'workshop', 'all', 'discussion'].map(pageTitle), ['Needs you', 'Workshop', 'All items', 'Discussion']);
+  // #4417: a channel's page is called by its handle: #general (was
+  // Discussion), and a topic's channel by its own.
+  assert.deepEqual(['needs', 'workshop', 'all', 'discussion', 'c:onboarding'].map(pageTitle),
+    ['Needs you', 'Workshop', 'All items', '#general', '#onboarding']);
   // The band on every page; All items adds its way back under it.
   assert.match(LANDER, /const pageBar = tab === 'all' \? \(/);
   assert.match(LANDER, /<PageBack\s+label="Workshop"\s+title=\{pageTitle\(tab\)\}\s+onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}/);
@@ -90,7 +93,7 @@ test('a project page is four tabs, Hub, Discussion, Needs you and Workshop, with
   // two messages (or Share it, for Just you), and your work. One column at
   // every width. Start a new change ended it until #852's review moved it
   // into the hero's ⋯ (tests/improve-action-deduplication.test.js).
-  const hub = LANDER.slice(LANDER.indexOf("{tab === 'status' ? ("), LANDER.indexOf("{tab === 'discussion' ? ("));
+  const hub = LANDER.slice(LANDER.indexOf("{tab === 'status' ? ("), LANDER.indexOf("{isChannelPlace(tab) ? ("));
   const order = ['<CommunityCard', '<FirstVersionCard', '<SinceSummaryCard', '<NeedsCard', '<ChannelCard', '<ShareItCard', '<YourWorkCard'].map((x) => hub.indexOf(x));
   assert.ok(order.every((n) => n >= 0), `all seven on the hub: ${JSON.stringify(order)}`);
   assert.deepEqual([...order].sort((a, b) => a - b), order, 'hero, first version, summary, Needs you, discussion, Share it, your work');
@@ -112,8 +115,8 @@ test('a project page is four tabs, Hub, Discussion, Needs you and Workshop, with
     'your work for any signed-in viewer, with work or without (#3489), unless a project nobody else is in has nothing to say there');
   assert.doesNotMatch(hub, /<WorkshopDoor|dev-ws-hub-side|data-ws-since=""/, 'no Workshop door, no second column, and the since list is the Workshop\'s');
   assert.doesNotMatch(read('public/css/app.css'), /dev-ws-hub-side/);
-  // Discussion is the channel whole.
-  assert.match(LANDER, /\{tab === 'discussion' \? \(\s*<ProjectDiscussion slug=\{slug\}/);
+  // Discussion is the channel whole; #4417: and so is each topic's channel.
+  assert.match(LANDER, /\{isChannelPlace\(tab\) \? \(\s*<ProjectDiscussion\s+slug=\{slug\}/);
   // The Workshop tab, in the owner's order (5 Oct 2026): All items with See
   // all, the approval rules, your work (its first three, #852 review), then
   // the since list by week.
@@ -143,8 +146,10 @@ test('a project page is four tabs, Hub, Discussion, Needs you and Workshop, with
   // visited and never reopened on.
   const av = read('public/js/app-view.js');
   assert.match(av, /WORKSHOP_TABS: \['status', 'discussion', 'workshop', 'needs', 'all', 'plan'\],/);
-  assert.match(av, /const next = AppView\.WORKSHOP_TABS\.indexOf\(key\) !== -1 && key !== 'plan' \? key : 'status';/);
-  assert.match(av, /if \(AppView\.WORKSHOP_TABS\.indexOf\(stored\) !== -1 && stored !== 'plan'\) return stored;/);
+  // #4417: and so is a topic's channel, `c:<handle>`, a place like the others.
+  assert.match(av, /_isWorkshopPlace\(key\) \{\n\s*return AppView\.WORKSHOP_TABS\.indexOf\(key\) !== -1\n\s*\|\| \(typeof key === 'string' && AppView\.WORKSHOP_CHANNEL_RE\.test\(key\)\);/);
+  assert.match(av, /const next = AppView\._isWorkshopPlace\(key\) && key !== 'plan' \? key : 'status';/);
+  assert.match(av, /if \(AppView\._isWorkshopPlace\(stored\) && stored !== 'plan'\) return stored;/);
   const { litTab } = loadTsx('frontend/src/features/dev-board/workshop/project-band.tsx');
   assert.equal(litTab('plan'), 'status', 'Hub stays lit over the plan');
   assert.equal(litTab('all'), 'workshop');
@@ -278,8 +283,9 @@ test('#852 review: a project\'s own Discussion is a fitted pane, and Homeroom\'s
   // taken twice.
   const CSS = read('public/css/app.css');
   assert.doesNotMatch(CSS, /\.dev-ws-discussion \{[^}]*calc\(100dvh - 210px\)/);
-  assert.match(CSS, /#dev-workshop > \.dev-ws\[data-ws-tab="discussion"\] \{ min-height: 0; \}/);
-  assert.match(CSS, /html\[data-browser-scroller\] \.dev-ws\[data-ws-tab="discussion"\] \{\s*height: var\(--ws-fit\);/);
+  assert.match(CSS, /#dev-workshop > \.dev-ws\[data-ws-tab="discussion"\],\s*#dev-workshop > \.dev-ws\[data-ws-tab\^="c:"\] \{ min-height: 0; \}/);
+  // #4417: a topic's channel (`c:<handle>`) is fitted the same way as #general.
+  assert.match(CSS, /html\[data-browser-scroller\] \.dev-ws\[data-ws-tab="discussion"\],\s*html\[data-browser-scroller\] \.dev-ws\[data-ws-tab\^="c:"\] \{\s*height: var\(--ws-fit\);/);
   assert.match(CSS, /\.dev-ws-discussion \.platform-safe-bar \{ padding-bottom: 0\.5rem !important; \}/);
 });
 
@@ -375,7 +381,7 @@ test('#3520: a short growing tab keeps one pixel to scroll, so the installed app
   const at = CSS.indexOf('@media (max-width: 699.98px) and (pointer: coarse) {\n  html:not([data-browser-scroller]) #dev-forum-scroll:has(');
   assert.ok(at > -1, 'a phone block for the scroller holding a growing tab');
   const block = CSS.slice(at, CSS.indexOf('\n}\n', at) + 3);
-  const growing = '#dev-forum-scroll:has\\(> #dev-body > #dev-workshop > \\.dev-ws:not\\(\\[data-ws-tab="needs"\\]\\):not\\(\\[data-ws-tab="discussion"\\]\\)\\)';
+  const growing = '#dev-forum-scroll:has\\(> #dev-body > #dev-workshop > \\.dev-ws:not\\(\\[data-ws-tab="needs"\\]\\):not\\(\\[data-ws-tab="discussion"\\]\\):not\\(\\[data-ws-tab\\^="c:"\\]\\)\\)';
   // Only where the scroller is the element, not the document (a phone
   // browser pages the document, and the pixel would lengthen the page), and
   // not the two fitted tabs, which scroll inside themselves.

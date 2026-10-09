@@ -1018,3 +1018,46 @@ test('#3270: the controller reads the Needs you feed alongside, and survives los
     global.fetch = priorFetch;
   }
 });
+
+// ── #4417: By category leads with the project's topics ────────────────
+
+test('By category: Topics, then Other categories, each topic with a door to its channel', () => {
+  const WS = 'frontend/src/features/dev-board/workshop/workshop.tsx';
+  const { orderThemesStable } = loadTsx(WS);
+  const theme = (id, people, extra = {}) => ({
+    id, people: Array.from({ length: people }, (_, i) => `u${i}`), lastActive: 0, counts: { open: 0 }, ...extra,
+  });
+  const topic = (id, people) => theme(id, people, { topic: { key: id, handle: id } });
+  // The topics lead in the server's order (dapp.json's), whatever the sort;
+  // the other categories sort among themselves; "Not yet grouped" stays last.
+  const themes = [topic('onboarding', 1), theme('a', 2), topic('infra', 9), theme('b', 7), theme('z', 0, { ungrouped: true })];
+  assert.deepEqual(orderThemesStable(null, themes, 'people').map((t) => t.id), ['onboarding', 'infra', 'b', 'a', 'z']);
+  const held = { key: 'people', ids: ['b', 'a', 'infra', 'onboarding', 'z'] };
+  assert.deepEqual(orderThemesStable(held, themes, 'people').map((t) => t.id).slice(0, 2), ['onboarding', 'infra'],
+    'a held order never moves a topic down');
+
+  const src = read(WS);
+  // Two headings, and only when the project has topics: one without draws
+  // its categories as it always did.
+  assert.match(src, /\{themes\.some\(\(t\) => t\.topic\) \? \(\s*<SectionHeader className="pt-3" data-ws-themes-head="topics">Topics<\/SectionHeader>/);
+  assert.match(src, /themes\.some\(\(x\) => x\.topic\) && !t\.topic && \(i === 0 \|\| themes\[i - 1\]\.topic\) \? \(\s*<SectionHeader className="pt-3" data-ws-themes-head="other">Other categories<\/SectionHeader>/);
+  // A topic card's foot is "Discuss in #name ›": an anchor with the channel's
+  // own address, which opens it on the page and leaves the card shut.
+  assert.match(src, /className="dev-ws-link dev-ws-topic-link"\s*data-ws-topic-channel=\{theme\.topic\.handle\}\s*href=\{placeHref\(slug, channelPlace\(theme\.topic\.handle\)\)\}/);
+  assert.match(src, /\{`Discuss in #\$\{theme\.topic\.handle\} ›`\}/);
+  assert.match(src, /e\.stopPropagation\(\);/);
+});
+
+test('the Topics dialog: handles from names, and each row says its channel and its count', () => {
+  const { handleFromName, topicRowLine } = loadTsx('frontend/src/features/dialogs/topics.tsx');
+  assert.equal(handleFromName('Homeroom bot'), 'homeroom-bot');
+  assert.equal(handleFromName('  Proposal  pipeline! '), 'proposal-pipeline');
+  assert.equal(handleFromName('3D printing'), 'd-printing', 'a handle starts with a letter');
+  assert.equal(handleFromName('Café'), 'cafe');
+  const t = { kind: 'topic', key: 'onboarding', handle: 'onboarding', state: 'live', requests: 9 };
+  assert.equal(topicRowLine(t), '#onboarding · 9 requests');
+  assert.equal(topicRowLine({ ...t, requests: 1 }), '#onboarding · 1 request');
+  assert.equal(topicRowLine({ ...t, state: 'archived' }), '#onboarding · archived');
+  assert.equal(topicRowLine({ ...t, handle: 'signup', state: 'merged', merged_into: 'onboarding' }, [t]),
+    '#signup · merged into #onboarding');
+});

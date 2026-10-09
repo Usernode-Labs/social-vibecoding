@@ -490,6 +490,25 @@ export interface TranscriptLead {
    * absent with nothing unread.
    */
   unread?: { lastReadId: number; count: number } | null;
+  /**
+   * #4417: cards the history draws BY TIME, the way a date divider is drawn,
+   * rather than as rows of the stream: in a topic's channel, one for each
+   * topic merged into it, at the moment the merge applied. Drawn from the
+   * merge itself (app_category_registry), never from a message, so nothing
+   * was posted for them. Null or absent on every other transcript.
+   */
+  markers?: TranscriptMarker[] | null;
+}
+
+/** #4417: one card drawn in a history at a moment (see TranscriptLead.markers). */
+export interface TranscriptMarker {
+  /** Stable across publishes, for React's key. */
+  key: string;
+  /** ISO: where in the history it is drawn. */
+  at: string;
+  kind: 'merged-topic';
+  /** The topic that was merged in. */
+  from: { handle: string; name: string; icon: string };
 }
 
 export interface TranscriptView {

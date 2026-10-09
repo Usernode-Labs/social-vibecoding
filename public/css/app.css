@@ -16746,7 +16746,8 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    so shrinking them to the viewport would clip what they hold rather than
    make it reachable. */
 #dev-workshop > .dev-ws[data-ws-tab="needs"],
-#dev-workshop > .dev-ws[data-ws-tab="discussion"] { min-height: 0; }
+#dev-workshop > .dev-ws[data-ws-tab="discussion"],
+#dev-workshop > .dev-ws[data-ws-tab^="c:"] { min-height: 0; }
 /* …AND ON THE TWO TABS THAT GROW, THE LINKS ABOVE MUST NOT SHRINK (#3053).
    `min-height: 0` on #dev-body and #dev-workshop is what lets Needs you be
    bounded; on Current status and All items it let both shrink to the
@@ -16758,8 +16759,8 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    to scroll it clear. Native layout only — in the browser layout the
    scroller is auto-height and nothing shrinks. `flex-shrink: 0` keeps the
    grow (the lander still fills a short tab) and gives the padding back. */
-#dev-body:has(> #dev-workshop > .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab="discussion"])),
-#dev-workshop:has(> .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab="discussion"])) { flex-shrink: 0; }
+#dev-body:has(> #dev-workshop > .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab="discussion"]):not([data-ws-tab^="c:"])),
+#dev-workshop:has(> .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab="discussion"]):not([data-ws-tab^="c:"])) { flex-shrink: 0; }
 html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 /* ── A SHORT TAB STILL HAS SOMETHING TO SCROLL (#3520) ──────────────────
    "Unable to over scroll down on hub page (but can on workshop)", in the
@@ -16809,10 +16810,10 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    (`data-browser-scroller`) and the pixel would lengthen the page. Not Needs
    you or Discussion either: those are fitted on purpose and scroll inside. */
 @media (max-width: 699.98px) and (pointer: coarse) {
-  html:not([data-browser-scroller]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab="discussion"])) {
+  html:not([data-browser-scroller]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab="discussion"]):not([data-ws-tab^="c:"])) {
     position: relative;
   }
-  html:not([data-browser-scroller]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab="discussion"]))::after {
+  html:not([data-browser-scroller]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab="discussion"]):not([data-ws-tab^="c:"]))::after {
     content: '';
     position: absolute; left: 0; bottom: -1px;
     width: 1px; height: 1px;
@@ -18668,7 +18669,8 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
    bottom as it does in Messages, so on a phone it spans the band's width:
    the screen's, by cancelling the same 4px of `#dev-body` the band does
    (#3499), not 12. */
-html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
+html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"],
+html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
   height: var(--ws-fit);
   min-height: var(--ws-fit);
 }
@@ -18746,6 +18748,52 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
   .dev-ws-discussion-threaded { flex-direction: row; }
   .dev-ws-discussion-threaded > .dev-ws-discussion-host { min-width: 0; }
   .dev-ws-discussion-threaded > .messages-reply-pane { margin-left: 8px; }
+}
+/* A TOPIC'S CHANNEL (#4417, project-discussion.tsx TopicChannel). The same
+   fitted pane as #general, with one line above the room: what the topic is
+   for, and how many requests are filed under it as a link to them
+   (topic-head.tsx). 13px muted, like every fact under a title; the link is
+   the accent, because it is an action. A retired topic's line says what
+   became of it, and the room under it takes no messages. */
+.dev-ws-topic-head {
+  margin: 0 0 8px; padding: 0 4px;
+  font-size: 13px; line-height: 18px; color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+.dev-ws-topic-head-link { color: var(--accent); text-decoration: none; white-space: nowrap; }
+.dev-ws-topic-head-link:hover { text-decoration: underline; }
+/* "Discuss in #name ›" at the foot of a topic's card in By category. */
+.dev-ws-topic-link { display: inline-block; margin-top: 6px; font-size: 13px; font-weight: 600; }
+/* AFTER A MERGE, A CARD MARKS IT (merged-topic-card.tsx): a row in the
+   survivor's history where the merge applied, drawn like a date divider
+   rather than a message: no author, no bubble, a hairline box on the room. */
+.dev-ws-merged-card {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin: 10px 12px; padding: 9px 12px; border-radius: 12px;
+  border: 1px solid var(--messages-hair, var(--border-light));
+  font-size: 13px; line-height: 18px; color: var(--text-muted);
+}
+.dev-ws-merged-card-text { min-width: 0; overflow-wrap: anywhere; }
+.dev-ws-merged-card-link { flex-shrink: 0; color: var(--accent); font-weight: 600; text-decoration: none; }
+.dev-ws-merged-card-link:hover { text-decoration: underline; }
+/* The Topics dialog (features/dialogs/topics.tsx): a row's ⋯, and the three
+   changes it offers, as a row of quiet pills under it. */
+.topics-row-more {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 36px; height: 36px; flex-shrink: 0; border-radius: 999px;
+  font-size: 18px; line-height: 1; color: var(--text-muted);
+}
+.topics-row-more:hover, .topics-row-more[aria-expanded="true"] { background: var(--bg-secondary); }
+.topics-row-actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 16px 12px 64px; }
+.topics-row-actions > button {
+  min-height: 32px; padding: 0 12px; border-radius: 999px;
+  font-size: 13px; font-weight: 600;
+  background: var(--bg-secondary); color: var(--text-primary);
+}
+.topics-into {
+  width: 100%; min-height: 40px; padding: 0 10px; border-radius: 10px;
+  border: 1px solid var(--border-light); background: transparent;
+  font-size: 15px; color: var(--text-primary);
 }
 .dev-ws-hero-spark-bar-quiet.dev-ws-hero-spark-bar-on { background: var(--text-muted); }
 .dev-ws-hero-spark-tip {
