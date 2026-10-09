@@ -170,7 +170,7 @@ export function GeneralChat({ readOnly, notice, maxLength }: GeneralChatProps) {
           className="gc-spec-resizer"
           role="separator"
           aria-orientation="vertical"
-          aria-label="Resize spec panel"
+          aria-label="Resize plan panel"
         />
         <div id="gc-spec-side-panel" className="gc-spec-side-panel" />
       </div>

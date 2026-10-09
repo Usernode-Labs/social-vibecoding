@@ -129,7 +129,7 @@ test('a coding-agent run is one card named for the agent that ran, and a drafted
   assert.equal(run.status, 'done');
   assert.equal(run.agent, 'Codex · glm-5.3-flash', 'an OpenRouter change runs Codex, and says so');
   assert.deepEqual(run.log, ['Reading src/feed.js', 'Drafting the spec']);
-  assert.equal(transcript.runHeading(run), 'Wrote the spec');
+  assert.equal(transcript.runHeading(run), 'Wrote the plan');
   assert.equal(transcript.durationLabel(run.durationMs), '1m 21s');
   assert.ok(!JSON.stringify(scout).includes('Claude Code progress'));
   assert.deepEqual([spec.changeId, spec.version, spec.lines], [12, 2, 93]);
@@ -203,11 +203,11 @@ test('the screen draws a run as the dev chat\'s run card and a spec as a card th
       : createElement(api.SpecCard, { item }))).join('');
     assert.match(html, /class="dc-cc-attached"/, 'the dev chat\'s own run card');
     assert.match(html, /data-agent-session-run="done"/);
-    assert.match(html, /Wrote the spec/);
+    assert.match(html, /Wrote the plan/);
     assert.match(html, /Codex · glm-5\.3-flash/, 'captioned with the agent that ran');
     assert.doesNotMatch(html, /Claude Code progress|Scout reading the codebase/, 'no loose lines');
     assert.match(html, /class="dc-spec-preview-card"[^>]*data-agent-session-spec="2"/);
-    assert.match(html, /Spec v2 · 93 lines/);
+    assert.match(html, /Plan v2 · 93 lines/);
 
     // The card opens the version it names, over the conversation.
     await api.openSpec(12, 2);

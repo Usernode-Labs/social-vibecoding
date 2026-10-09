@@ -2420,7 +2420,7 @@ function usage() {
     '  social-vibecoding api <GET|POST|PUT|PATCH|DELETE> <path> [--profile <name>] [--data <json>]',
     '  social-vibecoding proposal push --session <id> --commit <sha> [--repo <path>] [--profile <name>]',
     '  social-vibecoding agent run --session <id> [--repo <path>] [--label <name>] [--model <name>] [--once]',
-    '      takes both spec (read-only) and coding turns; each one asks in this terminal first',
+    '      takes both plan (read-only) and coding turns; each one asks in this terminal first',
     '  social-vibecoding agent status [--profile <name>]',
     '  social-vibecoding agent detach --lease <id> [--profile <name>]',
     '  social-vibecoding codex setup [--profile <name>] [--forward-env-token]',

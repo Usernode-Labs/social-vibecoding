@@ -119,7 +119,7 @@ function TabButton({ tab, active, label }: {
 }
 
 function Body({ body }: { body: SpecBody }): ReactNode {
-  if (body.kind === 'loading') return <div className={MUTED_BLOCK}>Loading spec…</div>;
+  if (body.kind === 'loading') return <div className={MUTED_BLOCK}>Loading plan…</div>;
   if (body.kind === 'empty') return <div className={MUTED_BLOCK}>{body.copy}</div>;
   if (body.kind === 'plain') {
     return <MarkdownBody className="dc-spec-viewer-body" html={body.html} />;
@@ -134,7 +134,7 @@ function Body({ body }: { body: SpecBody }): ReactNode {
           />
         )
         : null}
-      <div className="dc-spec-viewer-tabs" role="tablist" aria-label="Spec sections">
+      <div className="dc-spec-viewer-tabs" role="tablist" aria-label="Plan sections">
         <TabButton tab="user" active={body.tab} label="User-facing" />
         <TabButton tab="tech" active={body.tab} label="Technical" />
       </div>
@@ -161,14 +161,14 @@ function CopyButton({ action, raw }: { action: SpecAction; raw: string }): React
     return (
       <button
         className="dc-spec-action-btn dc-spec-copy-btn" disabled
-        title="No spec to copy yet"
+        title="No plan to copy yet"
       >Copy markdown</button>
     );
   }
   return (
     <button
       id="dc-spec-viewer-copy" className="dc-spec-action-btn dc-spec-copy-btn"
-      title="Copy the whole spec (both sections) as markdown"
+      title="Copy the whole plan (both sections) as markdown"
       onClick={async () => {
         const ok = await ui()?.copyText?.(raw);
         setLabel(ok ? 'Copied!' : 'Copy failed');
@@ -186,7 +186,7 @@ function GroupShareButton(
   if (action.kind === 'blank') {
     return (
       <button
-        className="dc-spec-action-btn" disabled title="No spec version to share yet"
+        className="dc-spec-action-btn" disabled title="No plan version to share yet"
       >Share to group</button>
     );
   }
@@ -195,7 +195,7 @@ function GroupShareButton(
       id="dc-spec-viewer-share" className="dc-spec-action-btn" disabled={action.shared}
       title={action.shared
         ? 'Already shared to group chat'
-        : 'Post a card linking to this spec in the group chat'}
+        : 'Post a card linking to this plan in the group chat'}
       onClick={() => controller()?._shareSpecVersion?.(version)}
     >{action.shared ? 'Shared' : 'Share to group'}</button>
   );
@@ -323,14 +323,14 @@ function UserShareButton(
   if (action.kind === 'blank') {
     return (
       <button
-        className="dc-spec-action-btn" disabled title="No spec version to share yet"
+        className="dc-spec-action-btn" disabled title="No plan version to share yet"
       >Share to user</button>
     );
   }
   return (
     <button
       ref={pop.btnRef} id="dc-spec-viewer-share-user" className="dc-spec-action-btn"
-      title="Privately share this spec version with one person"
+      title="Privately share this plan version with one person"
       aria-haspopup="dialog" aria-expanded={pop.open} aria-controls="dc-spec-share-pop"
       onClick={pop.toggle}
     >{pop.label}</button>
@@ -346,7 +346,7 @@ function SharePopoverCard({ pop }: { pop: SharePopover }): ReactNode {
   return (
     <div
       ref={pop.popRef} id="dc-spec-share-pop" className={pop.open ? POP.on : POP.off}
-      role="dialog" aria-label="Share this spec with one person"
+      role="dialog" aria-label="Share this plan with one person"
     >
       <input
         ref={pop.inputRef} id="dc-spec-share-input" className="dc-spec-share-input"
@@ -404,7 +404,7 @@ export function SpecViewerView({ s }: { s: SpecViewerState }): ReactNode {
         <GroupShareButton action={s.groupShare} version={s.version} />
         <button
           id="dc-spec-viewer-close" className="dc-spec-viewer-close"
-          aria-label="Close spec viewer"
+          aria-label="Close plan viewer"
           onClick={() => controller()?.closeSpecViewer?.()}
         >×</button>
         {owner ? <SharePopoverCard pop={pop} /> : null}

@@ -70,8 +70,8 @@ const PAST_TITLE = (label: string) =>
   `The last turn ran on ${label}. That machine has detached, so the next turn runs on Homeroom.`;
 
 const LIVE_TITLE = (label: string) =>
-  `Spec and coding turns in this session run on ${label}, using its own Claude subscription. `
-  + 'A spec turn is read-only; after a coding turn Homeroom still opens the PR, builds the '
+  `Plan and coding turns in this session run on ${label}, using its own Claude subscription. `
+  + 'A plan turn is read-only; after a coding turn Homeroom still opens the PR, builds the '
   + 'preview and runs the checks.';
 
 export function RunnerControlsView({ kind, label }: RunnerState) {

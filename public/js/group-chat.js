@@ -1982,7 +1982,7 @@ const GroupChat = {
       return {
         source: 'spec', refMsgId: id,
         author: row.dataset.sharedBy || null,
-        snippet: row.dataset.specTitle || 'Spec',
+        snippet: row.dataset.specTitle || 'Plan',
       };
     }
     // #2390: a proposal event (submitted / went live) is a platform message
@@ -2358,7 +2358,7 @@ const GroupChat = {
       snippet = `\u{1F4CE} ${meta.attachments[0].filename || meta.attachments[0].name || 'file'}`;
     }
     const quote = kind === 'spec_share'
-      ? { source: 'spec', refMsgId: n, author: msg.username || null, snippet: (meta.specShare && meta.specShare.title) || 'Spec' }
+      ? { source: 'spec', refMsgId: n, author: msg.username || null, snippet: (meta.specShare && meta.specShare.title) || 'Plan' }
       : { source: 'message', refMsgId: n, author: msg.username || null, snippet };
     GroupChat.setQuote(quote, surface === 'thread' ? 'thread' : 'main');
   },
@@ -4037,12 +4037,12 @@ const GroupChat = {
     // 02:41 PM", exactly like one built this June.
     const built = GroupChat._stamp(meta.builtAt).text || null;
     return {
-      title: meta.title || `Spec v${meta.version}`,
+      title: meta.title || `Plan v${meta.version}`,
       // The preview title the panel header shows while the fetch is in
       // flight. It was a `data-spec-title` attribute the click delegate read
       // back off the card; it is a field now, so nothing has to round-trip
       // through the DOM to find it.
-      previewTitle: meta.title || `spec v${meta.version}`,
+      previewTitle: meta.title || `plan v${meta.version}`,
       sharedBy: meta.sharedBy?.username || msg.username || 'Someone',
       version: meta.version,
       built,
@@ -4071,7 +4071,7 @@ const GroupChat = {
   // older share that predates `metadata.specShare.title`.
   async openSharedSpec(sessionId, version, previewTitle) {
     if (!sessionId || !version) return;
-    const title = previewTitle || `Spec v${version}`;
+    const title = previewTitle || `Plan v${version}`;
     // Persist the open state so a refresh re-opens this same spec
     // automatically. Per-app keying ensures switching apps doesn't drag this
     // open state along with you.
@@ -4092,8 +4092,8 @@ const GroupChat = {
           title,
           version,
           content: resp.status === 404
-            ? 'This spec is no longer available. The sharer may have deleted the session.'
-            : `Failed to load spec (HTTP ${resp.status}).`,
+            ? 'This plan is no longer available. The sharer may have deleted the session.'
+            : `Failed to load plan (HTTP ${resp.status}).`,
           isError: true,
         });
         return;
@@ -4102,7 +4102,7 @@ const GroupChat = {
       GroupChat._showSpecPanel({
         title,
         version,
-        content: data.spec.content || '(empty spec)',
+        content: data.spec.content || '(empty plan)',
         html: data.spec.content_html || null,
         builtAt: data.spec.built_at,
         prNumber: data.spec.pr_number,
@@ -4394,7 +4394,7 @@ const GroupChat = {
     if (!saved) return;
 
     const { sessionId, version, title } = saved;
-    const previewTitle = title || `Spec v${version}`;
+    const previewTitle = title || `Plan v${version}`;
 
     // Show the panel header right away (skeleton body) so the user
     // sees something immediately while the spec content loads.
@@ -4417,8 +4417,8 @@ const GroupChat = {
           title: previewTitle,
           version,
           content: resp.status === 404
-            ? 'This spec is no longer available. The sharer may have deleted the session.'
-            : `Failed to load spec (HTTP ${resp.status}).`,
+            ? 'This plan is no longer available. The sharer may have deleted the session.'
+            : `Failed to load plan (HTTP ${resp.status}).`,
           isError: true,
         });
         return;
@@ -4428,7 +4428,7 @@ const GroupChat = {
       GroupChat._showSpecPanel({
         title: previewTitle,
         version,
-        content: data.spec.content || '(empty spec)',
+        content: data.spec.content || '(empty plan)',
         html: data.spec.content_html || null,
         builtAt: data.spec.built_at,
         prNumber: data.spec.pr_number,

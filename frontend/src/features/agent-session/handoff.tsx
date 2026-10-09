@@ -327,8 +327,8 @@ export function HandoffPanel({ agent, onClose }: { agent: HandoffAgent; onClose:
             <p className="font-semibold">Handed over with the instructions</p>
             <p className="mt-0.5 text-[13px] leading-snug text-zinc-600 dark:text-zinc-300">
               {status?.specCarried && active?.title
-                ? `This chat's spec: "${active.title}"`
-                : status?.specCarried ? 'This chat\'s spec' : `No spec yet, so ${label} will ask what to build.`}
+                ? `This chat's plan: "${active.title}"`
+                : status?.specCarried ? 'This chat\'s plan' : `No plan yet, so ${label} will ask what to build.`}
             </p>
           </div>
           <a

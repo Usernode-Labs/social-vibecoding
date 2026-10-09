@@ -107,7 +107,7 @@ test('a spec_share row renders a CARD, not an empty host', () => {
   assert.match(html, /Shared by <strong>admin<\/strong>/);
   assert.match(html, /v2/);
   assert.match(html, /PR #77/);
-  assert.match(html, /View full spec/);
+  assert.match(html, /View full plan/);
   // The host it replaced is gone from the tree entirely.
   assert.doesNotMatch(read(TRANSCRIPT), /data-gc-spec-share=\{/);
 });
@@ -116,8 +116,8 @@ test('an older share with no title falls back to the version label', () => {
   // `metadata.specShare.title` is set by the share endpoint only when the
   // content starts with an H1; shares that predate it have none.
   const html = card(shareMsg({ title: undefined }));
-  assert.match(html, /gc-spec-card-title">Spec v2</);
-  assert.match(html, /data-spec-title="spec v2"/, 'and the panel preview follows it');
+  assert.match(html, /gc-spec-card-title">Plan v2</);
+  assert.match(html, /data-spec-title="plan v2"/, 'and the panel preview follows it');
 });
 
 test('the optional parts are omitted, not drawn empty', () => {
@@ -165,7 +165,7 @@ test('View full spec owns its in-flight state, and the module owns the fetch', (
   // own state now, bracketing the module's promise.
   assert.match(row, /const \[loading, setLoading\] = useState\(false\)/);
   assert.match(row, /disabled=\{loading\}/);
-  assert.match(row, /\{loading \? 'Loading…' : 'View full spec'\}/);
+  assert.match(row, /\{loading \? 'Loading…' : 'View full plan'\}/);
   assert.match(row, /openSharedSpec\?\.\(spec\.sessionId, spec\.version, spec\.previewTitle\)/);
 
   // …and everything that is not markup stayed put: the per-app open state,
@@ -174,8 +174,8 @@ test('View full spec owns its in-flight state, and the module owns the fetch', (
   const open = gc.slice(gc.indexOf('  async openSharedSpec('), gc.indexOf('  _specPanelRaw:'));
   assert.match(open, /_writeSpecPanelOpen\(GroupChat\.appSlug/);
   assert.match(open, /\/api\/sessions\/\$\{sessionId\}\/specs\/\$\{version\}/);
-  assert.match(open, /This spec is no longer available/);
-  assert.match(open, /Failed to load spec \(HTTP \$\{resp\.status\}\)/);
+  assert.match(open, /This plan is no longer available/);
+  assert.match(open, /Failed to load plan \(HTTP \$\{resp\.status\}\)/);
   assert.match(open, /Error: \$\{err\.message\}/);
   // The delegate that used to do all this is gone, along with the DOM
   // round-trip it needed to find the card's title.

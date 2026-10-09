@@ -361,8 +361,8 @@ test('_specViewerView gates the owner-only affordances on _ownsSession', () => {
   assert.ok(/userShare = !isOwner \? \{ kind: 'absent' \}/.test(render),
     'user-share button is owner-only');
   assert.ok(render.includes('isOwner && isLatest && !isEmpty'), 'build hint is owner-only');
-  assert.ok(render.includes('No spec has been shared for this session yet.'), 'non-owner empty copy');
-  assert.ok(render.includes('No spec yet. Ask the AI to draft one.'), 'owner empty copy kept');
+  assert.ok(render.includes('No plan has been shared for this session yet.'), 'non-owner empty copy');
+  assert.ok(render.includes('No plan yet. Ask the AI to draft one.'), 'owner empty copy kept');
   // And the component renders nothing at all for an `absent` action.
   const tsx = read('frontend', 'src', 'features', 'dev-chat', 'spec-viewer.tsx');
   assert.ok((tsx.match(/if \(action\.kind === 'absent'\) return null;/g) || []).length === 2,
