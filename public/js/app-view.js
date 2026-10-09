@@ -25179,7 +25179,14 @@ const AppView = {
         + 'padding-top:env(safe-area-inset-top,0px);'
         + 'padding-right:env(safe-area-inset-right,0px);'
         + 'padding-bottom:env(safe-area-inset-bottom,0px);'
-        + 'padding-left:env(safe-area-inset-left,0px);';
+        + 'padding-left:env(safe-area-inset-left,0px);'
+        // #4545: the MAX bottom inset. On an installed edge-to-edge Android
+        // app Chrome can report `safe-area-inset-bottom` as 0 (or late) while
+        // `safe-area-max-inset-bottom` (Chrome 135+) carries the system
+        // navigation bar's full height — the same split #2755 already solved
+        // for the shell's own tab bar in app.css. Browsers without the
+        // variable fall back to 0px, leaving behaviour unchanged.
+        + 'margin-bottom:env(safe-area-max-inset-bottom,0px);';
       document.body.appendChild(probe);
       AppView._safeAreaProbe = probe;
     }
@@ -25194,10 +25201,50 @@ const AppView = {
         right: px(cs.paddingRight),
         bottom: px(cs.paddingBottom),
         left: px(cs.paddingLeft),
+        maxBottom: px(cs.marginBottom),
       };
     } catch {
       return AppView._zeroInsets();
     }
+  },
+
+  // TRUE only on Android in an installed (standalone / fullscreen) context:
+  // the same two conditions the #2755 CSS rule gates on. `un-android` is set
+  // by the kit's native.js at first paint; iOS never gets it, and a browser
+  // tab is not standalone (there the max value is the collapsed browser
+  // chin, and reserving it would double the gap).
+  _isAndroidStandalone() {
+    if (typeof document === 'undefined' || typeof window === 'undefined'
+      || typeof window.matchMedia !== 'function') {
+      return false;
+    }
+    const docEl = document.documentElement;
+    if (!docEl || !docEl.classList || !docEl.classList.contains('un-android')) return false;
+    try {
+      return window.matchMedia('(display-mode: standalone), (display-mode: fullscreen)').matches;
+    } catch {
+      return false;
+    }
+  },
+
+  // PURE. The bottom inset the ROOT page holds — the JS twin of the #2755
+  // rule on `html.un-android` in app.css, which the tab bar reads but the
+  // probe never did, so frames were forwarded a 0 bottom inset under an
+  // Android navigation bar (#4545). Only an installed Android app takes the
+  // max: iOS's env() is already right, and a browser tab's max is the chin.
+  // The keyboard guard: the kit pads frames by `--un-kb-inset`, measured
+  // from the layout viewport's bottom edge, which already includes the
+  // nav-bar strip — counting both would push an app's composer up twice.
+  // Junk or negative input counts as 0, never negative.
+  _rootBottomInset(input) {
+    const opts = input || {};
+    const px = (v) => {
+      const n = Number(v);
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    };
+    const bottom = px(opts.bottom);
+    if (!opts.androidStandalone || px(opts.keyboard) > 0) return bottom;
+    return Math.max(bottom, px(opts.maxBottom));
   },
 
   // PURE. Which part of each raw inset still lies under the frame.
@@ -25390,11 +25437,21 @@ const AppView = {
     // page insets. Skip it; the next real layout re-broadcasts.
     if (!rect.width || !rect.height) return null;
     const viewport = { width: window.innerWidth, height: window.innerHeight };
-    const insets = AppView._frameInsets(AppView._readRootInsets(), rect, viewport);
+    // The keyboard is read once and used twice: beside the edges below, and
+    // in the root-bottom decision (#4545) as its guard.
+    const keyboard = AppView._keyboardInset();
+    const raw = AppView._readRootInsets();
+    raw.bottom = AppView._rootBottomInset({
+      bottom: raw.bottom,
+      maxBottom: raw.maxBottom,
+      androidStandalone: AppView._isAndroidStandalone(),
+      keyboard,
+    });
+    const insets = AppView._frameInsets(raw, rect, viewport);
     // `keyboard` rides alongside the four edges rather than inside `bottom`:
     // they mean different things (one is a notch, the other is transient
     // occlusion) and apps consume them separately.
-    insets.keyboard = AppView._frameKeyboardInset(rect, viewport, AppView._keyboardInset());
+    insets.keyboard = AppView._frameKeyboardInset(rect, viewport, keyboard);
     return insets;
   },
 
