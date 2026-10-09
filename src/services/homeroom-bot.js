@@ -5690,8 +5690,11 @@ async function runFollowUp(pool, config, {
     // too, so the reply can fix them (followup.failingNowLines). Whether or
     // not a fix turn already looked at this head.
     const failingNow = await failingChecksNow(pool, session.id);
+    // #4612: while the turn may still revise, it is offered the plan format
+    // its updated plan is written in (the spec turn's own two choices).
     const prompt = followup.followUpPrompt({
       seed, proposalBlock, spec, prNumber: session.pr_number, replies, canRevise, design, checks: failingNow,
+      planFormat: canRevise ? live.followUpPlanFormat({ config, app }) : '',
     });
     snapshot = {
       stage: 'followup', appId: app.id, issueNumber,
@@ -5834,6 +5837,27 @@ async function runFollowUp(pool, config, {
   // options with the number of sounds" when it merged.
   if (moved && parsed?.title) await renameRevised({ pool, github, repo, session, title: parsed.title, app });
 
+  // #4612: a revision that changed what the plan describes publishes the
+  // updated plan as the next numbered version, through the same path the
+  // first plan went through. A plan the turn wrote that does not read as
+  // one (a fragment, a BLOCKED line, an API error) publishes nothing: the
+  // revision goes on, the old card stays, and the reason is logged. A
+  // version that could not be stored publishes nothing either.
+  let planVersion = null;
+  let planRead = null;
+  if (moved && parsed?.planChanged) {
+    planRead = live.readSpec(followup.planOutOf(result.lastResultText));
+    if (planRead.ok) {
+      planVersion = await live.publishSpec({
+        pool, sessions, session, specMd: planRead.specMd, specHtml: planRead.specHtml, model, revised: true,
+      });
+    } else {
+      log.warn('homeroom-bot', 'A follow-up revised the change, but its updated plan was not readable; the old card stays', {
+        app: app.slug, issueNumber, sessionId: session.id, error: planRead.error,
+      });
+    }
+  }
+
   const askAnswers = action === 'ask' ? suggestedAnswers(parsed?.answers) : null;
   runId = await insertRun(pool, {
     ...billingOf(item, runMode),
@@ -5857,7 +5881,7 @@ async function runFollowUp(pool, config, {
   const proposalUrl = deps.domain ? live.proposalLink(deps.domain, app.slug, session.id, session.pr_number) : null;
   const text = action === 'revise'
     ? followup.revisedText({
-      summary: parsed?.summary, reply: parsed?.reply, prNumber, link: proposalUrl,
+      summary: parsed?.summary, reply: parsed?.reply, prNumber, link: proposalUrl, planVersion,
     })
     : action === 'ask' ? followup.askText({ reply, prNumber })
       : action === 'person' ? followup.personText({ reply, prNumber })
@@ -5874,6 +5898,25 @@ async function runFollowUp(pool, config, {
     ? { msgType: 'vote', metadata: { vote: { sessionId: session.id, prNumber } } } : {};
   await say(`followup_${action}`, text, postedAt, { ...card, ...(dm ? { dm } : {}) })
     .catch((err) => log.warn('homeroom-bot', 'Follow-up post failed', { err: err.message }));
+  // #4612: the updated plan's card in the change's discussion, where the
+  // first card leads, then the plan on the issue folded away as the first
+  // was. Its GitHub comment's created_at counts as seen, so the bot never
+  // reads its own comment as a change. Each step is wrapped and logged, as
+  // the spec post a build makes is.
+  if (planVersion) {
+    await live.postSpecOnProposal({
+      pool, ws: deps.ws, app, bot, sessionId: session.id, version: planVersion, spec: planRead.specMd, revised: true,
+    }).catch((err) => log.warn('homeroom-bot', 'Could not post the updated plan on the proposal', {
+      app: app.slug, issueNumber, sessionId: session.id, err: err.message,
+    }));
+    await live.postRevisedSpecComment({
+      pool, github, app, repo, issueNumber, runId, spec: planRead.specMd, version: planVersion,
+    })
+      .then((posted) => { if (posted?.githubCreatedAt) postedAt.push(posted.githubCreatedAt); })
+      .catch((err) => log.warn('homeroom-bot', 'Could not post the updated plan on the issue', {
+        app: app.slug, issueNumber, err: err.message,
+      }));
+  }
   await live.advanceSeen({
     pool, github, threadContext, app, repo, issueNumber, runId, since: seedReadAt, postedAt,
     proposalSessionId: session.id,

@@ -318,6 +318,54 @@ test('the thread card is the same spec card a person\'s Share posts', () => {
   assert.equal(live.specTitle('no title'), null);
 });
 
+// #4612: the card a revision's updated plan posts beside the first one.
+test('a revised plan card says it is the plan updated, at its version; the metadata is unchanged', () => {
+  const revised = live.specCard({ sessionId: 5001, version: 4, spec: SPEC, bot: BOT, proposed: true, revised: true });
+  assert.equal(revised.content, '📋 The plan, updated for this change (version 4): "Hourly feed refresh".');
+  assert.deepEqual(revised.metadata, live.specCard({ sessionId: 5001, version: 4, spec: SPEC, bot: BOT, proposed: true }).metadata,
+    'same metadata as the first card, at the same version');
+  assert.equal(revised.msgType, 'spec_share');
+  // No title, still readable.
+  assert.equal(live.specCard({ sessionId: 5001, version: 4, spec: 'no title', bot: BOT, proposed: true, revised: true }).content,
+    '📋 The plan, updated for this change (version 4).');
+});
+
+test('an updated plan is a GitHub comment inside a collapsed "The plan" section, clipped the same way', () => {
+  const text = live.revisedSpecCommentText(SPEC, 2);
+  assert.match(text, /^Homeroom bot updated the plan for this change to match \(version 2\)\.\n\n<details><summary>The plan<\/summary>/);
+  assert.ok(text.includes(`\n\n${SPEC}\n\n</details>`));
+  const long = live.revisedSpecCommentText('x'.repeat(70_000), 2);
+  assert.ok(long.length < 65_536, 'GitHub refuses a comment over 65,536 characters');
+  assert.equal(long.split('x').length - 1, live.MAX_SPEC_COMMENT_CHARS, 'clipped at MAX_SPEC_COMMENT_CHARS');
+});
+
+test('publishSpec passes hadSpec for a revision and not for a first publication', async () => {
+  const seen = [];
+  const sessions = { async persistScoutPublication(args) { seen.push(args); return { specVersion: 5 }; } };
+  const version = await live.publishSpec({ pool: {}, sessions, session: { id: 5001 }, specMd: SPEC, model: 'm', revised: true });
+  assert.equal(version, 5);
+  assert.equal(seen[0].hadSpec, true, 'the transcript says the plan was revised');
+  await live.publishSpec({ pool: {}, sessions, session: { id: 5001 }, specMd: SPEC, model: 'm' });
+  assert.equal(seen[1].hadSpec, false, 'the build\'s first publication keeps hadSpec: false');
+  assert.equal(seen[1].contentHtml, undefined, 'a markdown spec carries no HTML');
+});
+
+test('followUpPlanFormat is the spec turn\'s format, HTML where the app takes one', () => {
+  const md = live.followUpPlanFormat({ config: {}, app: APP });
+  assert.match(md, /^PLAN FORMAT: write the updated plan as ONE markdown document/);
+  assert.match(md, /"# " title line/);
+  assert.match(md, /"## User-facing changes" then/);
+  assert.match(md, /"## Technical implementation"/);
+  assert.match(md, /without em dashes/);
+
+  const html = live.followUpPlanFormat({ config: { htmlSpecApps: [APP.slug] }, app: APP });
+  assert.match(html, /HTML SPEC FORMAT/);
+  assert.match(html, /<article data-spec>/);
+  assert.match(html, /native UI kit stylesheet only/, 'an app that is not the platform\'s draws with the kit');
+  // No app or no config: still the markdown shape, never a throw.
+  assert.match(live.followUpPlanFormat({}), /^PLAN FORMAT:/);
+});
+
 test('live.post puts the card in the thread and the full spec on GitHub', async () => {
   const sent = [];
   const comments = [];

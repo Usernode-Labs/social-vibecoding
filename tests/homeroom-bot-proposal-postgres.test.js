@@ -200,3 +200,71 @@ test('a bot proposal is named by its spec and led by its own description', { tim
     assert.match(votes, /`SELECT content FROM chat_session_messages\n\s+WHERE session_id = \$1 AND role = 'user'\n\s+ORDER BY id DESC LIMIT 1`/);
   });
 });
+
+// #4612: the path a follow-up's updated plan takes when it is stored, run
+// against the real schema: persistScoutPublication's MAX(version)+1 row,
+// chat_sessions.spec_md carrying the newest plan, and the share mark.
+test('publishSpec stores each revision as the next numbered version, and the share makes it readable', { timeout: 180000 }, async (t) => {
+  const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
+  try { await admin.query('SELECT 1'); } catch (err) {
+    await admin.end();
+    if (process.env.TEST_DATABASE_URL) throw err;
+    t.skip('PostgreSQL unavailable; set TEST_DATABASE_URL to require this check');
+    return;
+  }
+  const name = `hbot_plan_versions_${crypto.randomBytes(6).toString('hex')}`;
+  await admin.query(`CREATE DATABASE ${name}`);
+  const url = new URL(DSN); url.pathname = `/${name}`;
+  const pool = new Pool({ connectionString: String(url), max: 4 });
+  const sessions = require('../src/routes/sessions');
+  t.after(async () => {
+    await pool.end();
+    await admin.query(`DROP DATABASE ${name}`);
+    await admin.end();
+  });
+  await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
+
+  const bot = (await pool.query(
+    `INSERT INTO users (username, password, is_synthetic) VALUES ('homeroom_bot', 'x', TRUE) RETURNING id`,
+  )).rows[0];
+  const app = (await pool.query(
+    `INSERT INTO apps (name, slug, status, repo_url) VALUES ('Todo', 'todo', 'running', 'https://github.com/usernode-bot/todo') RETURNING id`,
+  )).rows[0];
+  const { rows: [s] } = await pool.query(
+    `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, is_headless, session_title)
+     VALUES ($1, $2, 'dev/homeroom_bot-1', 'promoted', FALSE, 'A change') RETURNING id`,
+    [app.id, bot.id],
+  );
+
+  const v1 = await live.publishSpec({ pool, sessions, session: { id: s.id }, specMd: SPEC, model: 'z-ai/glm-5.3-flash' });
+  assert.equal(v1, 1, 'the first version on the session is 1');
+  const v2 = await live.publishSpec({
+    pool, sessions, session: { id: s.id }, specMd: SPEC, model: 'z-ai/glm-5.3-flash', revised: true,
+  });
+  assert.equal(v2, 2, 'a revised plan is MAX(version)+1: version 2, beside version 1');
+  const rows = (await pool.query(
+    'SELECT version, content, shared_to_group_at FROM chat_session_specs WHERE session_id = $1 ORDER BY version',
+    [s.id],
+  )).rows;
+  assert.deepEqual(rows.map((r) => [r.version, r.content]), [[1, SPEC], [2, SPEC]]);
+  assert.equal(rows[1].shared_to_group_at, null, 'a version is private until it is shared');
+  const specMd = (await pool.query('SELECT spec_md FROM chat_sessions WHERE id = $1', [s.id])).rows[0].spec_md;
+  assert.equal(specMd, SPEC, 'the session carries the newest plan');
+
+  const card = (await pool.query(
+    `SELECT content FROM chat_session_messages WHERE session_id = $1 AND metadata ? 'specPreview' ORDER BY id`,
+    [s.id],
+  )).rows.map((r) => r.content);
+  assert.equal(card.length, 2, 'each publication leaves its transcript card');
+  assert.match(card[0], /Scout drafted a/);
+  assert.match(card[1], /Scout revised the plan/, 'a revision\'s line says so');
+
+  await live.shareSpecVersion(pool, s.id, 2);
+  const shared = (await pool.query(
+    'SELECT shared_to_group_at FROM chat_session_specs WHERE session_id = $1 AND version = 2', [s.id],
+  )).rows[0];
+  assert.ok(shared.shared_to_group_at, 'readable by everyone who sees the card');
+  assert.equal((await pool.query(
+    'SELECT shared_to_group_at FROM chat_session_specs WHERE session_id = $1 AND version = 1', [s.id],
+  )).rows[0].shared_to_group_at, null, 'version 1 stays as it was');
+});

@@ -148,6 +148,7 @@ function specLines(spec) {
  */
 function followUpPrompt({
   seed, proposalBlock = '', spec = '', prNumber = null, replies = [], canRevise = true, design = '', checks = null,
+  planFormat = '',
 }) {
   // B4: never a PR number: the model's own words echo it back to people.
   void prNumber;
@@ -176,6 +177,11 @@ function followUpPrompt({
   if (canRevise) {
     lines.push(
       '- "revise": they asked for a clear change to this proposal. Make that change, and only that change, in this working tree. Follow the repository\'s own agent instructions, keep it small, and run the tests that cover it. Do not commit or push yourself: your working tree is committed and pushed to the proposal for you, which clears its votes so the group looks again. When the change alters what the proposal does, give it a new `title` that says what it does now (its name on the vote; the old one stays otherwise).',
+      // #4612: a revision that changed what the plan says publishes the
+      // updated plan beside the first card, as the next numbered version.
+      ...(planFormat ? [
+        '  When the revision changes what the change does for people, so the spec above no longer describes it, write the whole updated plan in your message before the JSON block, following the plan format below, and set `"plan": true`. A code fix, a test fix or a tweak the spec still describes keeps `"plan": false`, and writes no plan.',
+      ] : []),
     );
   } else {
     lines.push(
@@ -186,9 +192,17 @@ function followUpPrompt({
     '- "person": what they want is a decision for a person (taste, policy, something outside this app), or it would change what the proposal is. Say so and why. Change no files.',
     '',
     ...(canRevise && design ? [design, ''] : []),
+    ...(canRevise && planFormat ? [
+      // #4612: the format an updated plan is written in, after the design
+      // guidance and before the reply format.
+      'When you set `"plan": true`, the text before your JSON block is the updated plan the group reads instead of the spec above. Follow this format exactly:',
+      '',
+      planFormat,
+      '',
+    ] : []),
     'Write `reply`, `answers`, `summary` and `title` in plain words, without em dashes: use a comma, a colon or a full stop.',
     `END YOUR REPLY WITH EXACTLY ONE fenced JSON block, and nothing after it:`,
-    `{"action": ${actions}, "reply": "what to post back to them, in plain language", "answers": ["for ask only: your suggested default first", "another answer"], "summary": "for revise only: one sentence on what you changed", "title": "for revise only, when what the proposal does changed: its new short title", "stop_mentioning": ["name of each person who asked the bot to stop tagging them"], "resume_mentioning": ["name of each person who asked to be tagged again"]}`,
+    `{"action": ${actions}, "reply": "what to post back to them, in plain language", "answers": ["for ask only: your suggested default first", "another answer"], "summary": "for revise only: one sentence on what you changed", "title": "for revise only, when what the proposal does changed: its new short title"${canRevise && planFormat ? ', "plan": "for revise only: true when you wrote an updated plan above"' : ''}, "stop_mentioning": ["name of each person who asked the bot to stop tagging them"], "resume_mentioning": ["name of each person who asked to be tagged again"]}`,
     '',
     '`stop_mentioning`: the names, exactly as the replies show them, of anybody who asked the Homeroom bot itself to stop tagging, messaging or notifying them. Only a person asking for themselves, and only about the bot, not about the app\'s own notifications. Usually empty. `resume_mentioning`: anybody who, after asking the bot to stop, asked to be tagged again; list a person in whichever they asked for most recently, never both. If that is all a reply says, "answer" with a short acknowledgement.',
   );
@@ -229,21 +243,28 @@ function failingNowLines(checks, canRevise = true) {
   ];
 }
 
-/** The action is the LAST fenced JSON block, as with a triage verdict. */
-function parseFollowUp(text) {
+/**
+ * The action block of a follow-up's reply: the LAST fenced block that parses
+ * as an action JSON, or, with no fenced block, the bare {...} between the
+ * first `{` and the last `}`. A reply that is an action but says nothing is
+ * skipped, as parseFollowUp always has. { obj, action, reply, before },
+ * where `before` is the text ahead of the block, the place a revise turn was
+ * told to write its updated plan (#4612). null when none parses. Pure.
+ */
+function lastActionJson(text) {
   const raw = String(text || '');
   const candidates = [];
   let m;
-  while ((m = FENCE_RE.exec(raw)) !== null) candidates.push(m[1]);
+  while ((m = FENCE_RE.exec(raw)) !== null) candidates.push({ block: m[1], at: m.index });
   FENCE_RE.lastIndex = 0;
   if (!candidates.length) {
     const first = raw.indexOf('{');
     const last = raw.lastIndexOf('}');
-    if (first !== -1 && last > first) candidates.push(raw.slice(first, last + 1));
+    if (first !== -1 && last > first) candidates.push({ block: raw.slice(first, last + 1), at: first });
   }
   for (let i = candidates.length - 1; i >= 0; i -= 1) {
     let obj;
-    try { obj = JSON.parse(candidates[i]); } catch { continue; }
+    try { obj = JSON.parse(candidates[i].block); } catch { continue; }
     if (!obj || typeof obj !== 'object') continue;
     const action = typeof obj.action === 'string' ? obj.action.trim().toLowerCase() : '';
     if (!ACTIONS.includes(action)) continue;
@@ -251,24 +272,44 @@ function parseFollowUp(text) {
     // name): without em dashes, whatever the model wrote (em-dashes.js).
     const reply = clipText(withoutEmDashes(String(obj.reply || '')), 3000);
     if (!reply) continue;
-    // #3767: a revision that changed what the proposal does names it again.
-    const title = action === 'revise'
-      ? clipText(withoutEmDashes(String(obj.title || '').replace(/\s+/g, ' ')).replace(/[:.]+$/, ''), MAX_TITLE_CHARS)
-      : '';
-    return {
-      action, reply, summary: clipText(withoutEmDashes(String(obj.summary || '')), 600) || null,
-      ...(title.length >= 3 ? { title } : {}),
-      // #3624: an ask's suggested answers, as a triage question's.
-      ...(action === 'ask' ? {
-        answers: Array.isArray(obj.answers)
-          ? obj.answers.filter((a) => typeof a === 'string').map((a) => clipText(withoutEmDashes(a), 200)).filter(Boolean).slice(0, 6)
-          : [],
-      } : {}),
-      stopMentioning: parseStopMentioning(obj.stop_mentioning),
-      resumeMentioning: parseStopMentioning(obj.resume_mentioning),
-    };
+    return { obj, action, reply, before: raw.slice(0, candidates[i].at) };
   }
   return null;
+}
+
+/** The action is the LAST fenced JSON block, as with a triage verdict. */
+function parseFollowUp(text) {
+  const found = lastActionJson(text);
+  if (!found) return null;
+  const { obj, action, reply } = found;
+  // #3767: a revision that changed what the proposal does names it again.
+  const title = action === 'revise'
+    ? clipText(withoutEmDashes(String(obj.title || '').replace(/\s+/g, ' ')).replace(/[:.]+$/, ''), MAX_TITLE_CHARS)
+    : '';
+  return {
+    action, reply, summary: clipText(withoutEmDashes(String(obj.summary || '')), 600) || null,
+    ...(title.length >= 3 ? { title } : {}),
+    // #3624: an ask's suggested answers, as a triage question's.
+    ...(action === 'ask' ? {
+      answers: Array.isArray(obj.answers)
+        ? obj.answers.filter((a) => typeof a === 'string').map((a) => clipText(withoutEmDashes(a), 200)).filter(Boolean).slice(0, 6)
+        : [],
+    } : {}),
+    // #4612: a revise's own word on whether the plan changed with it.
+    ...(action === 'revise' ? { planChanged: obj.plan === true } : {}),
+    stopMentioning: parseStopMentioning(obj.stop_mentioning),
+    resumeMentioning: parseStopMentioning(obj.resume_mentioning),
+  };
+}
+
+/**
+ * #4612: the updated plan a revise turn wrote ahead of its action block,
+ * read from the same block parseFollowUp does, so the plan and the action
+ * always come from the same reading. '' when nothing comes before it.
+ */
+function planOutOf(text) {
+  const found = lastActionJson(text);
+  return found ? found.before.trim() : '';
 }
 
 // ── What it says ─────────────────────────────────────────────────────────
@@ -295,9 +336,16 @@ function personText({ reply }) {
 }
 
 // The change's card goes with it (homeroom-bot.js followUp), so no address.
-function revisedText({ summary, reply }) {
+// #4612: `planVersion`, when the revision also published an updated plan,
+// adds the line that points at its card in the change's discussion, before
+// the approvals line.
+function revisedText({ summary, reply, planVersion = null }) {
   const lines = [`Homeroom bot updated this change: ${clipText(summary || reply, 600)}`];
   if (summary && reply && reply !== summary) lines.push('', clipText(reply, 2000));
+  const version = Number(planVersion);
+  if (Number.isFinite(version) && version > 0) {
+    lines.push('', `Its plan is updated to match: version ${version} is in the change's discussion.`);
+  }
   lines.push('', 'Earlier approvals were cleared, so it needs a fresh look.');
   return lines.join('\n');
 }
@@ -802,6 +850,8 @@ module.exports = {
   newReplies,
   followUpPrompt,
   parseFollowUp,
+  lastActionJson,
+  planOutOf,
   answerText,
   askText,
   personText,

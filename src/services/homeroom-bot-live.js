@@ -959,10 +959,13 @@ function planCommentText({ spec, questions = [] }) {
  * The spec as a thread message: the same spec card a person's "Share"
  * posts (metadata.specShare), opening the version the build worked from.
  */
-function specCard({ sessionId, version, spec, bot, proposed = false, approved = false, asking = false }) {
+function specCard({ sessionId, version, spec, bot, proposed = false, approved = false, asking = false, revised = false }) {
   const title = specTitle(spec);
   const content = proposed
-    ? `📋 The plan this proposal was built from${title ? `: "${title}"` : ''}.`
+    ? (revised
+      // #4612: the card a revision's updated plan posts beside the first one.
+      ? `📋 The plan, updated for this change (version ${Number(version)})${title ? `: "${title}"` : ''}.`
+      : `📋 The plan this proposal was built from${title ? `: "${title}"` : ''}.`)
     : asking ? `📋 Homeroom bot's plan for this request${title ? `: "${title}"` : ''}, with its before and after screens. `
       + `It builds nothing until the person who asked says so: ${PLAN_REPLY_HINT}`
       : approved ? `📋 Homeroom bot is building the plan that was approved${title ? `: "${title}"` : ''}.`
@@ -987,6 +990,47 @@ function specCard({ sessionId, version, spec, bot, proposed = false, approved = 
 }
 
 /**
+ * #4612: an updated plan as a GitHub comment: said once that it updates the
+ * change's plan to match, then the document folded away as the first plan
+ * was. Nobody is @mentioned here.
+ */
+function revisedSpecCommentText(spec, version) {
+  return [
+    `Homeroom bot updated the plan for this change to match (version ${Number(version)}).`,
+    '',
+    '<details><summary>The plan</summary>',
+    '',
+    clipText(spec, MAX_SPEC_COMMENT_CHARS),
+    '',
+    '</details>',
+  ].join('\n');
+}
+
+/**
+ * #4612: the updated plan on the issue: the GitHub comment only, and
+ * nobody tagged (the change's discussion carries the card). Its
+ * created_at comes back so the bot never reads its own comment as a
+ * change, as live.post returns it.
+ */
+async function postRevisedSpecComment({ pool, github, app, repo, issueNumber, runId = null, spec, version }) {
+  const { rows } = await pool.query(
+    `INSERT INTO homeroom_bot_posts (app_id, issue_number, run_id, kind)
+     VALUES ($1, $2, $3, 'spec')
+     ON CONFLICT (app_id, issue_number) WHERE kind = 'looking' DO NOTHING
+     RETURNING id`,
+    [app.id, Number(issueNumber), runId, 'spec'],
+  );
+  if (!rows.length) return null;
+  try {
+    const comment = await github.createIssueComment(repo.owner, repo.repo, Number(issueNumber), revisedSpecCommentText(spec, version));
+    return comment?.created_at ? { githubCreatedAt: comment.created_at } : null;
+  } catch (err) {
+    log.warn('homeroom-bot', 'GitHub comment failed (continuing)', { app: app.slug, issueNumber, kind: 'spec', err: err.message });
+    return null;
+  }
+}
+
+/**
  * Make the spec version readable by everyone who can see the card: a
  * version is private to its session's owner until it is shared, exactly as
  * the share route marks it.
@@ -1000,14 +1044,43 @@ async function shareSpecVersion(pool, sessionId, version) {
 }
 
 /** The spec card in the proposal's own discussion, once it is up. */
-async function postSpecOnProposal({ pool, ws, app, bot, sessionId, version, spec }) {
+async function postSpecOnProposal({ pool, ws, app, bot, sessionId, version, spec, revised = false }) {
   if (!spec || !version || !sessionId) return null;
   await shareSpecVersion(pool, sessionId, version);
-  const card = specCard({ sessionId, version, spec, bot, proposed: true });
+  const card = specCard({ sessionId, version, spec, bot, proposed: true, revised });
   return ws.sendBotMessage(pool, app.id, {
     user: bot, content: card.content, metadata: card.metadata,
     thread: { type: 'session', ref: Number(sessionId) }, msgType: card.msgType,
   });
+}
+
+/**
+ * #4612: the plan format a follow-up revise turn writes its updated plan
+ * in: the two choices the spec turn makes (draftSpec). An HTML-spec app
+ * gets the HTML contract with the two-halves, title and no-em-dash lines of
+ * specHtmlPrompt; every other app gets the markdown spec's shape. Pure.
+ */
+function followUpPlanFormat({ config, app } = {}) {
+  const slug = app?.slug || null;
+  if (specHtml.htmlSpecsEnabledFor(config, slug)) {
+    const platformStyles = specHtml.specStylesFor({ slug, self_hosted: app?.self_hosted }) === 'platform';
+    return [
+      specHtmlContract(platformStyles),
+      '',
+      'The "user" section stands for "## User-facing changes" and the "tech" section for "## Technical implementation".',
+      'Titled with what the change DOES, because the change is named after it: at most 72 characters, and no issue number.',
+      'Written without em dashes: use a comma, a colon or a full stop.',
+      'Your message carries the WHOLE document, <article data-spec> through </article>, ahead of its JSON block.',
+    ].join('\n');
+  }
+  return [
+    'PLAN FORMAT: write the updated plan as ONE markdown document, not wrapped in a code fence.',
+    'Start with a "# " title line: what the change DOES, the way a pull request title reads, at most 72 characters,',
+    'and no issue number. Then two halves under these exact H2 headings, in this order: "## User-facing changes" then',
+    '"## Technical implementation". "User-facing changes" is for a non-developer: what people will see and do',
+    'differently, no file paths or code. "Technical implementation" holds the files, data, edge cases and tests.',
+    'Written without em dashes: use a comma, a colon or a full stop.',
+  ].join('\n');
 }
 
 // ── Who filed the issue ──────────────────────────────────────────────────
@@ -2534,10 +2607,13 @@ function buildTurnRunner({
  * session's own transcript. Resolves the version, or null when it could not
  * be stored (the build goes on from the spec either way).
  */
-async function publishSpec({ pool, sessions, session, specMd, specHtml: html = null, model }) {
+async function publishSpec({ pool, sessions, session, specMd, specHtml: html = null, model, revised = false }) {
   try {
     const published = await sessions.persistScoutPublication({
-      pool, sessionId: session.id, content: specMd, ...(html ? { contentHtml: html } : {}), hadSpec: false,
+      pool, sessionId: session.id, content: specMd, ...(html ? { contentHtml: html } : {}),
+      // #4612: a revision's updated plan is stored as a revision of the
+      // plan in the transcript, not a first draft.
+      hadSpec: !!revised,
       agentBackend: 'codex_openrouter', agentModel: model,
     });
     return published?.specVersion ?? null;
@@ -3259,6 +3335,10 @@ module.exports = {
   blockedText,
   shareSpecVersion,
   postSpecOnProposal,
+  publishSpec,
+  postRevisedSpecComment,
+  revisedSpecCommentText,
+  followUpPlanFormat,
   SPEC_TURN_MAX_MS,
   readSpec,
   specShaped,
