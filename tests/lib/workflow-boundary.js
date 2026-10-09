@@ -259,21 +259,27 @@ function sqlWrites(text) {
 // (`const INVALIDATE_SQL = \`...\``) or a function that returns one template
 // (`function invalidateHeadMoveSql(p) { ... return \`...\`; }`). An UPDATE's
 // SET list built from one is read with the fragment's own columns rather than
-// as "every column". A name defined twice with different text is not resolved.
-function templateText(node, fragments = null) {
+// as "every column", but only where the name can only mean that fragment:
+// defined in the same file or in a module the file requires or imports, and
+// not declared anywhere else in the file (a local of the same name is not
+// the fragment). Anything else stays "dynamic", counted as every column.
+function templateText(node) {
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
-  if (ts.isTemplateExpression(node)) return fragments ? withFragments(node, fragments) : [node.head.text, ...node.templateSpans.map((x) => x.literal.text)].join(' $x ');
+  if (ts.isTemplateExpression(node)) return [node.head.text, ...node.templateSpans.map((x) => x.literal.text)].join(' $x ');
   return null;
 }
 function sqlFragments(root, files) {
-  const found = new Map();
+  const found = new Map();   // name -> Map(file -> text)
   const add = (name, text) => {
     if (text == null) return;
-    found.set(name, found.has(name) && found.get(name) !== text ? null : text);
+    if (!found.has(name)) found.set(name, new Map());
+    found.get(name).set(currentFile, text);
   };
+  let currentFile = null;
   for (const file of files) {
     const text = read(root, file);
     if (!/\b(SET|UPDATE)\b|=/.test(text)) continue;
+    currentFile = file;
     const sf = parse(root, file);
     for (const st of sf.statements) {
       if (ts.isVariableStatement(st)) {
@@ -289,17 +295,57 @@ function sqlFragments(root, files) {
   }
   return found;
 }
+// What one file can mean by a fragment's name: the modules it requires or
+// imports, and the names it declares locally other than as a top-level
+// fragment or a binding from one of those modules.
+function fragmentScope(root, file, sf) {
+  const modules = new Set([file]);
+  const locals = new Set();
+  const fromModule = (init) => {
+    let e = init;
+    while (e && (ts.isPropertyAccessExpression(e) || ts.isParenthesizedExpression(e))) e = e.expression;
+    return !!e && ts.isCallExpression(e) && ts.isIdentifier(e.expression) && e.expression.text === 'require';
+  };
+  const visit = (n) => {
+    if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === 'require'
+      && n.arguments[0] && ts.isStringLiteralLike(n.arguments[0])) {
+      const m = resolve(root, file, n.arguments[0].text, false);
+      if (m) modules.add(m);
+    }
+    if (ts.isImportDeclaration(n) && ts.isStringLiteral(n.moduleSpecifier)) {
+      const m = resolve(root, file, n.moduleSpecifier.text, false);
+      if (m) modules.add(m);
+    }
+    const top = n.parent && ts.isVariableDeclarationList(n.parent) && n.parent.parent && ts.isVariableStatement(n.parent.parent)
+      && n.parent.parent.parent === sf;
+    if (ts.isVariableDeclaration(n) && !(top && ts.isIdentifier(n.name) && n.initializer && (templateText(n.initializer) != null || fromModule(n.initializer)))
+      && !(n.initializer && fromModule(n.initializer))) {
+      const names = ts.isIdentifier(n.name) ? [n.name.text] : [];
+      for (const x of names) locals.add(x);
+    }
+    if (ts.isParameter(n) && ts.isIdentifier(n.name)) locals.add(n.name.text);
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return { modules, locals };
+}
+
 // A template's text, its spans replaced by the fragment they name, else $x.
-function withFragments(node, fragments) {
+function withFragments(node, fragments, scope) {
   const nameOf = (e) => {
     if (ts.isIdentifier(e)) return e.text;
     if (ts.isPropertyAccessExpression(e)) return e.name.text;
     if (ts.isCallExpression(e)) return nameOf(e.expression);
     return null;
   };
+  const fragment = (name) => {
+    if (!name || !scope || scope.locals.has(name)) return null;
+    const texts = [...(fragments.get(name) || new Map())].filter(([file]) => scope.modules.has(file)).map(([, t]) => t);
+    return texts.length && texts.every((t) => t === texts[0]) ? texts[0] : null;
+  };
   let out = node.head.text;
   for (const span of node.templateSpans) {
-    const frag = fragments.get(nameOf(span.expression));
+    const frag = fragment(nameOf(span.expression));
     out += (frag != null ? ` ${frag} ` : ' $x ') + span.literal.text;
   }
   return out;
@@ -431,9 +477,10 @@ function boundary(root = REPO, allowed = new Set()) {
     const text = read(root, file);
     if (!/\bUPDATE\b/i.test(text)) continue;
     const sf = parse(root, file);
+    const scope = fragmentScope(root, file, sf);
     const visit = (n) => {
       if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isTemplateExpression(n)) {
-        const sql = ts.isTemplateExpression(n) ? withFragments(n, fragments) : n.text;
+        const sql = ts.isTemplateExpression(n) ? withFragments(n, fragments, scope) : n.text;
         for (const w of sqlWrites(sql)) {
           if (!w.cols) continue;
           for (const o of schema.owned) {

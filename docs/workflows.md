@@ -415,7 +415,10 @@ separate workflow Pod.
   as it is: the flag is per process and the guard is the cluster's, so a Pod still running
   with the flag off (the old one in a rollout, a rollback, a restart) never switches it off
   under the Pods that run the machine. Once no process runs it, an admin turns it off in
-  Admin → Workflows, which lists a guard that is on while the flag is off. In `raise` mode
+  Admin → Workflows, which lists a guard that is on while the flag is off. That action
+  checks only the flag of the process serving it. Turned off while another Pod still runs
+  the machine, legacy writes to that machine's rows are neither refused nor logged until
+  that Pod's next boot turns the guard on again. In `raise` mode
   (development, previews, tests: one process) a flag-off boot turns it off. A rollback to
   code from before this rule deletes it, as that code did. With a flag on, it also starts the runtime on its own pool
   (`application_name` `homeroom-workflow`), listens for outcomes so routes can wait for

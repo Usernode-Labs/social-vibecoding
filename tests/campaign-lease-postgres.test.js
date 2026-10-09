@@ -73,7 +73,7 @@ test('maintenance campaigns: one driver at a time, whichever process calls', { t
     throw new Error(`timed out waiting for ${what}`);
   };
 
-  await t.test('a second driver, in this process or another, does not take a campaign another one drives', async () => {
+  await t.test('a second driver does not take a campaign another one drives (the lease is in the database, so the process does not matter)', async () => {
     const id = await campaign();
     model.gate = gate();
     const first = fleet.runCampaign({}, pool, id);

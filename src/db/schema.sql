@@ -13089,7 +13089,11 @@ COMMENT ON TABLE wf_work_attempts IS 'staging:private';
 -- 'ownership_mode' is 'raise' (the default when absent) or 'log'; in log
 -- mode a write to an owned legacy column without the writer marker is
 -- allowed and recorded in wf_ownership_violations instead of refused.
--- 'enabled:<machine>' exists while that machine's flag is on.
+-- 'enabled:<machine>' is the machine's ownership guard: a boot with the
+-- machine's flag on writes it. In 'log' mode (production, where Pods
+-- overlap) a boot with the flag off leaves it, and an admin removes it
+-- (Admin → Workflows) once no process runs the machine; in 'raise' mode a
+-- flag-off boot removes it.
 CREATE TABLE IF NOT EXISTS wf_settings (
   key        TEXT PRIMARY KEY,
   value      TEXT NOT NULL,
@@ -13153,10 +13157,10 @@ CREATE TRIGGER wf_events_writer
 --
 -- A first argument '@enrolled=<machine>/<key prefix>' limits the guard to
 -- rows whose instance exists (key = prefix || id), and only while the
--- machine is switched on (wf_settings 'enabled:<machine>', written at boot
--- from its flag). A machine rolled out behind a flag owns a row from the
--- moment it enrolls it; the legacy writers keep the rows it has not, and
--- every row again while the flag is off.
+-- machine's guard is on (wf_settings 'enabled:<machine>', see wf_settings
+-- above; wf_holds asks the same question). A machine rolled out behind a
+-- flag owns a row from the moment it enrolls it; the legacy writers keep
+-- the rows it has not, and every row again once its guard is off.
 --
 -- A first argument '@enabled=<machine>' guards every row the trigger's WHEN
 -- clause selects, but only while the machine is switched on: for a change

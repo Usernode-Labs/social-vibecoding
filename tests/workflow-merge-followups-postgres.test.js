@@ -514,7 +514,7 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     assert.equal((await row(idle.id)).included_in_session_id, carrier.id, 'the idle one is carried');
   });
 
-  await t.test('the bell settles what the decision answered, and tells exactly the people it settled', async () => {
+  await t.test('the bell settles what the decision answered, and tells the people it settled and everyone with a row about the change', async () => {
     const a = await app();
     const [digested, asked, read] = [await user(), await user(), await user()];
     const s = await proposal(a, { status: 'promoted' });
@@ -546,7 +546,7 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     assert.deepEqual(ended.data, { numbers: [5], open: [9] }, 'what the work closed, and what it found still open, in every process');
   });
 
-  await t.test('a process without the data key fails the merge transition instead of discarding held values', async () => {
+  await t.test('the merge's secret apply without the data key throws (failing its transition) instead of discarding held values', async () => {
     const { applyInTransaction } = require('../src/workflow/rules/pending-secret-apply.ts');
     const a = await app();
     const s = await proposal(a);

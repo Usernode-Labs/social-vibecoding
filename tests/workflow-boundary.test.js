@@ -43,6 +43,25 @@ async function touch(pool) {
 }
 module.exports = { touch };
 `,
+  // The same name, meaning something else: a local built at run time, and a
+  // file that does not import the fragment. Both stay "dynamic".
+  'src/services/shadow.js': `
+async function rewrite(pool, cols) {
+  const NOTE_SQL = cols.join(', ');
+  await pool.query(\`UPDATE things SET \${NOTE_SQL} WHERE id = 1\`);
+}
+module.exports = { rewrite };
+`,
+  'src/services/stranger.js': `
+async function guess(pool) { await pool.query(\`UPDATE things SET \${NOTE_SQL} WHERE id = 1\`); }
+module.exports = { guess };
+`,
+  'src/services/importer.js': `
+const { touch } = require('./fragments');
+const fragments = require('./fragments');
+async function again(pool) { await pool.query(\`UPDATE things SET \${fragments.NOTE_SQL} WHERE id = 2\`); }
+module.exports = { again, touch };
+`,
   'src/workflow/legacy.ts': `
 import { createRequire } from 'node:module';
 const load = createRequire(new URL('../', import.meta.url));
@@ -165,5 +184,8 @@ test('notifiers, and other writers of owned columns', () => {
   has(demo, 'ownership | things.status ← trigger things_fill');
   assert.ok(!demo.some((e) => e.includes('noteOnly')), 'a writer of another column');
   assert.ok(!demo.some((e) => e.includes('fragments.js')), 'a SET built from named fragments of other columns');
+  assert.ok(!demo.some((e) => e.includes('importer.js')), 'a fragment of a module the file requires');
+  has(demo, 'ownership | things.status ← src/services/shadow.js#rewrite (dynamic SET)');      // a local of the same name
+  has(demo, 'ownership | things.status ← src/services/stranger.js#guess (dynamic SET)');     // not imported
   assert.ok(!demo.some((e) => e.startsWith('ownership | things.note')), 'only owned columns');
 });
