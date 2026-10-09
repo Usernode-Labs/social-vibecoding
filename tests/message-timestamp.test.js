@@ -396,9 +396,11 @@ test('#1808: the topic page keeps no formatter of its own, and draws no Activity
   // lists are gone with the tabs: the card's meta line carries the created
   // stamp and the Checks row's "Last run" the other, both through the one
   // helper. What stays pinned is that neither file grew a formatter back.
-  const CONVERSATION = 'frontend/src/features/dev-board/topic/conversation.tsx';
+  // #4455: the conversation is the change page's own thread now
+  // (topic/change-head.tsx draws its root post).
+  const CHANGE = 'frontend/src/features/dev-board/topic/change-head.tsx';
   const HEAD = 'frontend/src/features/dev-board/topic/topic-head.tsx';
-  for (const rel of [CONVERSATION, HEAD]) {
+  for (const rel of [CHANGE, HEAD]) {
     const src = read(rel);
     assert.doesNotMatch(src, /toLocaleString/, `${rel} keeps no formatter of its own`);
     assert.doesNotMatch(src, /\.activity\b/, `${rel} draws no Activity list`);

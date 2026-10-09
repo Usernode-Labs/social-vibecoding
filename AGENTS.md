@@ -479,6 +479,9 @@ carry most of them.
 
   A state that is already done gets no fill. "Joined" is grey with a check;
   a filled green pill made the settled thing the loudest thing on screen.
+  A finished progress bar may be green (`--state-ok`, with a green check and
+  figure, as a change page's Votes and Testing cards are): there the end is
+  the good news, while a bar still moving is drawn in `--lit-ink`.
 - **Say it in words or a very obvious glyph, and let zero say nothing.** A
   count on a row is a phrase ("2 in progress · 3 to vote") or a number
   beside a glyph so obvious that nobody needs a legend to read it, like

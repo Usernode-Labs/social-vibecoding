@@ -3691,7 +3691,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       if (req.path.endsWith('/details') && process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
         const mock = stagingMockSharedSessions().find((s) => s.id === Number(req.params.id))
           || stagingMockOwnSessions(req.user.id, config.selfAppSlug).find((s) => s.id === Number(req.params.id));
-        if (mock) return res.set('Cache-Control', 'no-store').json({ session: mock });
+        if (mock) {
+          return res.set('Cache-Control', 'no-store').json({
+            session: { ...mock, checks_estimate: require('../services/checks-estimate').DEMO_ESTIMATE },
+          });
+        }
       }
       const { rows } = await pool.query(
         `SELECT cs.id, cs.user_id, cs.status, cs.shared_at, cs.transcript_shared_at, cs.session_title, cs.pr_title,
@@ -3702,7 +3706,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                 cs.source, cs.imported_pr_head_sha, cs.reviewed_head_sha,
                 cs.shots_state, cs.shots_run_id,
                 cs.shots_detail, cs.shots_updated_at,
-                a.slug AS app_slug
+                cs.app_id, a.slug AS app_slug
            FROM chat_sessions cs
            JOIN apps a ON a.id = cs.app_id
           WHERE cs.id = $1`,
@@ -3733,6 +3737,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           ? await require('../services/shots-view')
             .getForSession(pool, detail, detail.app_slug)
           : null;
+        // #4452: how long testing usually takes on this app.
+        detail.checks_estimate = await require('../services/checks-estimate').forApp(pool, session.app_id);
       }
       // `?results=failing`: the change page's own read, which lists passing
       // checks only when their fold is opened (services/list-test-results.js).

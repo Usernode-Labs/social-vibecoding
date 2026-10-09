@@ -768,16 +768,16 @@ test('a request with a change waiting for approval offers no Build it now, on th
   assert.ok(!rows(addressed).includes('Build it now'));
 });
 
-test('"Waiting for approval" is a filled chip; the other states keep their tint', () => {
+test('"Waiting for approval" is a quiet grey tint, never a filled chip', () => {
   const AppView = makeAppView();
   const ip = (over) => ({ count: 1, users: ['maya'], peopleTotal: 1, mine: false, claims: [], sessions: [], target: null, ...over });
   const review = AppView._inProgressChipSpec(baseIssue({ in_progress: ip({ sessions: [sess({ status: 'promoted' })] }) }));
-  assert.match(review.cls, /\bbg-violet-600 text-white\b/);
-  assert.ok(!/bg-violet-500\/10/.test(review.cls));
+  assert.match(review.cls, /\bbg-zinc-500\/10 text-zinc-500 dark:text-zinc-400\b/);
+  assert.ok(!/text-white|bg-violet-600|bg-violet-500\b/.test(review.cls), 'no solid fill');
   const mine = AppView._inProgressChipSpec(baseIssue({ in_progress: ip({ sessions: [sess({ status: 'promoted', mine: true })] }) }));
   assert.equal(mine.label, 'Waiting for approval · you');
-  assert.match(mine.cls, /\bbg-violet-600 text-white\b/, 'the "· you" variant too');
+  assert.match(mine.cls, /\bbg-zinc-500\/10\b/, 'the "· you" variant too');
+  assert.ok(!/text-white/.test(mine.cls));
   const working = AppView._inProgressChipSpec(baseIssue({ in_progress: ip({ sessions: [sess()] }) }));
-  assert.ok(!/bg-violet-600/.test(working.cls));
   assert.match(working.cls, /bg-sky-500\/10/);
 });

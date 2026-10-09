@@ -77,6 +77,7 @@ import { openAppTarget } from '../messages/bot-shared';
 import { setUserBlocked } from '../messages/store';
 import { firstUnreadId, transcriptRow } from '../messages/unread-anchor';
 import { displayName, openRequestSpec, replyCount, requestStream } from '../dev-board/topic/request-model';
+import { changeLine, changeReplyCount, changeStream } from '../dev-board/topic/change-model';
 import { MessageActionBar, MessageMenu, placementFor, type MenuItem } from '../message-actions/action-bar';
 import { MessageActionSheet, useLongPress } from '../message-actions/action-sheet';
 import { absoluteLink, copyToClipboard, toast } from '../message-actions/clipboard';
@@ -891,6 +892,8 @@ export function Transcript({ source = 'main' }: { source?: string }) {
   if (!state.ready || !view) return null;
   // #4453: a request's page draws its own stream.
   if (source !== 'main' && view.lead.language === 'request') return <RequestRows view={view} />;
+  // #4455: so does a change's page.
+  if (source !== 'main' && view.lead.language === 'change') return <ChangeRows view={view} />;
   return <TranscriptRows view={view} source={source} />;
 }
 
@@ -1089,6 +1092,98 @@ export function RequestRows({ view }: { view: TranscriptView }) {
       ) : null}
       {images.viewer}
       <div className="dev-request-stream" {...images.scope}>{drawn}</div>
+    </>
+  );
+}
+
+/**
+ * #4455: something that happened to a change, as one quiet line in its
+ * page's stream (../dev-board/topic/change-model.ts `changeLine` words it):
+ * the request page's own line (`.dev-request-event`), so the two pages read
+ * alike. `.gc-msg-system` keeps the module's row hooks.
+ */
+const ChangeEvent = memo(function ChangeEvent({ msg }: { msg: TranscriptMessage }) {
+  const line = changeLine(msg);
+  if (!line) return null;
+  const sessionId = Number(msg.event?.sessionId || msg.voteRef?.sessionId || controller()?.activeThread?.ref || 0);
+  return (
+    <div className="gc-msg-system dev-request-event" data-msg-id={msg.id ?? ''} data-change-event={line.kind}>
+      <span className="dev-request-event-glyph" aria-hidden="true">{line.glyph}</span>
+      <span className="dev-request-event-text">
+        {line.actor ? <b>{line.actor}</b> : null}
+        {line.text}
+        {line.reason ? <span className="dev-change-event-reason">{`: “${line.reason}”`}</span> : null}
+        {msg.repeat && msg.repeat > 1 ? (
+          <span className="gc-msg-system-repeat" title={`Posted ${msg.repeat} times in a row; this is the latest`}>{` · ×${msg.repeat}`}</span>
+        ) : null}
+        {line.tryIt && sessionId ? (
+          <>{' · '}<button type="button" className="dev-request-event-link" onClick={() => (window as any).AppView?._tryChangePreview?.(sessionId)}>Try it</button></>
+        ) : null}
+        {msg.time ? <span className="dev-request-event-time" title={msg.timeTitle}>{` · ${msg.time}`}</span> : null}
+      </span>
+    </div>
+  );
+});
+
+/**
+ * #4455: a change's stream. Under the change (the topic head, drawn above
+ * this host) comes "N replies", then every reply and every thing that
+ * happened in the order it happened: a person's message is the Messages
+ * row, a vote, the ask for approval, the preview being ready or a notice is
+ * one line. While nobody else can see the change, the stream is the one
+ * line that says so (`lead.change.closed`).
+ */
+export function ChangeRows({ view }: { view: TranscriptView }) {
+  const rows = useMemo(() => changeStream(foldRepeats(view.messages)), [view.messages]);
+  const count = changeReplyCount(rows);
+  const lead = view.lead.change;
+  const loaded = !!lead?.loaded;
+  if (lead?.closed) {
+    return (
+      <>
+        <div className="messages-reply-count" data-change-replies="0"><span>No replies yet</span></div>
+        <p className="dev-change-closed-note">{lead.closed}</p>
+      </>
+    );
+  }
+  const drawn: ReactNode[] = [];
+  let previous: TranscriptMessage | null = null;
+  rows.forEach((msg, i) => {
+    const key = msg.id != null ? `m${msg.id}` : `i${i}`;
+    if (msg.kind === 'message') {
+      const grouped = !!previous && previous.kind === 'message' && !msg.deleted && !previous.deleted
+        && !!msg.at && !!previous.at
+        && groupsWithPrevious(
+          { author: previous.username, at: previous.at },
+          { author: msg.username, at: msg.at, reply: !!msg.quote },
+        );
+      drawn.push(<MessageRow key={key} msg={msg} grouped={grouped} surface="thread" />);
+    } else {
+      drawn.push(<ChangeEvent key={key} msg={msg} />);
+    }
+    previous = msg;
+  });
+  return (
+    <>
+      <div className="messages-reply-count" data-change-replies={count}>
+        <span>{count ? `${count} ${count === 1 ? 'reply' : 'replies'}` : loaded ? 'No replies yet' : 'Loading replies…'}</span>
+      </div>
+      {view.lead.earlier ? (
+        <div className="text-center py-1">
+          <button type="button" id="gc-thread-earlier" className="messages-load-older" onClick={() => controller()?.loadThreadHistoryForOpen?.()}>
+            Load earlier replies
+          </button>
+        </div>
+      ) : null}
+      {view.lead.error ? (
+        <div role="alert" className="gc-history-error flex items-center gap-2 px-4 py-2 text-xs text-zinc-500 dark:text-zinc-400">
+          <span>{view.lead.error}</span>
+          <Button type="button" variant="neutral" size="xsText" ink="neutral" onClick={() => controller()?.loadThreadHistoryForOpen?.()}>
+            Try again
+          </Button>
+        </div>
+      ) : null}
+      <div className="dev-request-stream dev-change-stream">{drawn}</div>
     </>
   );
 }

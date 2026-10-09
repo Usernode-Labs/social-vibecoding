@@ -121,8 +121,6 @@ const { topochainIngestRoutes } = require('./src/routes/topochain/ingest');
 const { topochainMobileRoutes } = require('./src/routes/topochain/mobile');
 const { topochainAdminRoutes } = require('./src/routes/topochain/admin');
 const github = require('./src/services/github');
-const llm = require('./src/services/llm');
-const llmTelemetry = require('./src/services/llm-telemetry');
 const worker = require('./src/services/worker');
 const activeWorkersSvc = require('./src/services/active-workers');
 const turnWatchdog = require('./src/services/turn-watchdog');
@@ -556,7 +554,9 @@ app.use(reportShareRoutes(config));
 // and the HMAC token in the link is the whole of the access check.
 app.use(require('./src/routes/activity-mail').activityMailRoutes(config));
 app.use(require('./src/routes/mail-tracking').mailTrackingRoutes(config));
-require('./src/services/activity-mail').init(config);
+// The configuration every process that runs the workflow machines sets up
+// (src/workflow/setup.ts): activity mail, the account-deletion guard on workers.
+require('./src/workflow/setup.ts').configureWorkflowProcess(config);
 
 // App-stored user files (#752). Public for the same reason as app-icons:
 // app pages load them with plain <img> tags from their own subdomains.
@@ -611,8 +611,6 @@ app.use(['/api/admin', '/api/v4/admin'], require('./src/middleware/same-site-bro
 app.use(require('./src/middleware/moderation').moderationGuard(config));
 app.use(require('./src/routes/moderation').moderationRoutes(config));
 app.use(require('./src/routes/app-blocks').appBlockRoutes(config));
-worker.setAccountDeletionGuard(sessionId => require('./src/services/account-deletion-cleanup')
-  .assertWorkerAllowed(getPool(config), sessionId));
 app.use(require('./src/services/account-deletion-runtime').trackResponse);
 app.use(require('./src/routes/account-deletion').accountDeletionRoutes(config));
 app.use(cliBrowserRoutes(config));
@@ -1668,13 +1666,9 @@ async function start() {
     migration = await withMigrationLock(getPool(config), () => migrate(config));
   }
   const servicesStartedAt = Date.now();
-  await mobilePush.initialize(config);
-  await github.init(config);
-  // Configure the collection kill switch even on deployments with no
-  // Anthropic client. OpenRouter/local coding runs are initialized by their
-  // own paths and still need the provider-neutral collector.
-  llmTelemetry.init(config);
-  await llm.init(config);
+  // The clients every process that runs the workflow machines makes
+  // (src/workflow/setup.ts): the push sender, GitHub, the model.
+  await require('./src/workflow/setup.ts').startWorkflowClients(config);
   // The workflow runtime (src/workflow/platform.ts): every process appends
   // and waits for outcomes; the loops start in becomeLeader(), or here on a
   // staging preview, which never stands for election but must still decide.

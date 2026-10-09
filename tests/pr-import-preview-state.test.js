@@ -315,7 +315,8 @@ test('dapp.json asserts the text the new pills render', () => {
   }
   const texts = mine.map((t) => t.expectText).filter(Boolean);
   assert.ok(texts.some((t) => /Preview building/.test(t)), 'building pill checked');
-  assert.ok(texts.some((t) => /Preview unavailable/.test(t)), 'unavailable chip checked');
+  // #4455: a change's page says it in its Testing card, beside the retry.
+  assert.ok(texts.some((t) => /Preview unavailable|The preview didn’t start/.test(t)), 'unavailable chip checked');
 });
 
 // ── the sweeper and check-status guards (server.js) ────────────────────

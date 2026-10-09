@@ -116,7 +116,10 @@ test('the unsubscribe route is mounted before sign-in, and the column defaults o
   const at = server.indexOf("require('./src/routes/activity-mail').activityMailRoutes(config)");
   assert.ok(at > 0, 'mounted');
   assert.ok(at < server.indexOf('app.use(authMiddleware(config))'), 'before authMiddleware');
-  assert.match(server, /require\('\.\/src\/services\/activity-mail'\)\.init\(config\)/);
+  // Initialised with the configuration every process running the workflow
+  // machines sets up (src/workflow/setup.ts), which server.js runs at load.
+  assert.match(server, /require\('\.\/src\/workflow\/setup\.ts'\)\.configureWorkflowProcess\(config\)/);
+  assert.match(read('src/workflow/setup.ts'), /legacy\('services\/activity-mail'\)\.init\(config\)/);
   assert.match(read('src/db/schema.sql'), /ALTER TABLE users ADD COLUMN IF NOT EXISTS activity_email BOOLEAN NOT NULL DEFAULT TRUE;/);
   const route = read('src/routes/activity-mail.js');
   assert.match(route, /router\.get\('\/mail\/unsubscribe'/);

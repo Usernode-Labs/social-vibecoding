@@ -117,16 +117,22 @@ const Kudos = {
     // useFoldedActions, `data-thanks`), so the button carries the whole
     // line as its name and tooltip at every face.
     const line = thanks ? `Thank ${thanks} for putting this up` : '';
+    // #4455: on a change page's Addresses row (`opts.thread`) the thanks is
+    // "👏 Thank snait" (app.css hides the tail there), and the count pill
+    // says nothing while it is zero: the wrap is left out of the row until
+    // it is not.
+    const thread = !!opts.thread;
     const face = thanks
       ? `<span aria-hidden="true">\u{1F44F}</span><span class="dev-thanks-label">Thank ${escapeHtml(thanks)}<span class="dev-thanks-tail"> for putting this up</span></span><span data-kudos-count class="hidden">${count}</span>`
       : `<span aria-hidden="true">\u{1F44F}</span>
           <span data-kudos-count>${count}</span>`;
+    const quiet = thread && !thanks && count === 0;
 
     // Wrap in a relatively-positioned span so the popover can absolute-
     // position against it. Clicks and hover are bound by Kudos.attach()
     // (called by app-view after innerHTML render).
     return `
-      <span class="kudos-wrap relative inline-block" data-kudos-session="${pr.id}" data-kudos-variant="${thanks ? 'thanks' : 'count'}">
+      <span class="kudos-wrap relative inline-block${thread ? ' dev-change-thanks' : ''}" data-kudos-session="${pr.id}" data-kudos-variant="${thanks ? 'thanks' : 'count'}"${quiet ? ' hidden' : ''}>
         <button class="${sizeCls}${thanks ? ' dev-thanks-pill' : ''}${activeCls}${disabledCls}" ${disabled ? 'disabled' : ''}${thanks ? ` aria-label="${escapeAttr(line)}" title="${escapeAttr(line)}"` : tipAttr}
                 data-kudos-action="give" data-kudos-session-id="${pr.id}"${locked ? ' data-kudos-locked="1"' : ''}>
           ${face}

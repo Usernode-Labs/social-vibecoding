@@ -10,7 +10,7 @@
 import { NONE, WORK_EVENTS, assertJson, canonicalHash, isIgnored, isRejection } from './machine.ts';
 import type { Machine, WorkResultPayload } from './machine.ts';
 import type {
-  Event, Json, Logger, Notification, Outcome, Pool, PoolClient, State, TransitionContext, Tx,
+  Event, Json, Logger, Notification, Outcome, Pool, PoolClient, Push, Queryable, State, TransitionContext, Tx,
 } from './types.ts';
 
 export interface PipelineOptions {
@@ -20,6 +20,9 @@ export interface PipelineOptions {
   lockTimeoutMs: number;
   statementTimeoutMs: number;
   stallAfter: number;     // consecutive timeouts before the instance is flagged stalled
+  // Publishes an accepted event's pushes on the transition's connection,
+  // before its COMMIT (a NOTIFY is delivered only if the transaction commits).
+  publish?: (q: Queryable, pushes: Push[]) => Promise<void>;
 }
 
 // Lock and statement timeouts, serialisation failures and deadlocks are
@@ -219,7 +222,7 @@ async function processOne(opts: PipelineOptions, names: string[], versions: numb
     }
     let notifications: Notification[];
     try {
-      notifications = await applyEvent(client, machine, row);
+      notifications = await applyEvent(client, machine, row, opts.publish);
       await client.query('COMMIT');
     } catch (err) {
       // Nothing of the event's transaction survives, the machine's writes
@@ -348,7 +351,8 @@ const RECORD_FAULT = `
 
 const json = (v: Json | undefined) => (v == null ? null : JSON.stringify(v));
 
-async function applyEvent(client: PoolClient, machine: Machine<any, any>, row: Picked): Promise<Notification[]> {
+async function applyEvent(client: PoolClient, machine: Machine<any, any>, row: Picked,
+  publish?: PipelineOptions['publish']): Promise<Notification[]> {
   const eventId = Number(row.id);
   const inst = row.instance;
   // A '(none)' row is left by a creating event that timed out or faulted.
@@ -428,15 +432,27 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, row: P
   // receipt and the event's result in one statement. All in one transaction.
   const next = version + 1;
   const after = { ...ctx, version: next };
+  const pushes: Push[] = [];
+  // A push is what a browser receives, as JSON: it is serialised as the
+  // socket would (a Date is its ISO string, undefined is left out).
+  const pushed = (p: Push) => {
+    if (!p || typeof p.kind !== 'string' || !p.data || typeof p.data !== 'object') {
+      throw new Error(`${machine.name}: a push needs a kind and data`);
+    }
+    pushes.push(JSON.parse(JSON.stringify({ kind: p.kind, routing: p.routing ?? null, data: p.data })));
+  };
+  for (const p of outcome.push || []) pushed(p);
+  const writeCtx = Object.freeze({ ...after, push: pushed });
   for (const write of outcome.writes || []) {
     const handler = machine.writes.get(write.type);
     if (!handler) throw new Error(`${machine.name}: no write handler ${write.type}`);
-    await handler(tx, write, after);
+    await handler(tx, write, writeCtx);
   }
   if (machine.project) await machine.project(tx, state, outcome.next, after);
   const reply = (machine.reply ? await machine.reply(tx, event, outcome.next, after, facts) : undefined) ?? null;
   if (tx.poisoned) throw tx.poisoned;
   assertJson(reply);
+  if (pushes.length && publish) await publish(client, pushes);
   const work = [];
   for (const w of outcome.work || []) {
     assertJson(w.input);
@@ -475,6 +491,7 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, row: P
       work, messages,
       timer: timer === undefined ? undefined : timer && { at: timer.at.toISOString(), type: timer.event.type },
       notify: (outcome.notify || []).map((n) => n.type),
+      push: pushes.length ? pushes.map((p) => `${p.kind}:${String(p.data.type ?? '')}`) : undefined,
     }),
     json(reply),
   ]);

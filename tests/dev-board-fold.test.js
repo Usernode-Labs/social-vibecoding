@@ -1574,11 +1574,18 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // reaches. The since list's two checks were rewritten in place on their
   // routes (its rows and Week by week; the quiet visit's one line), and the
   // approval rules' check now reads the drawn steps.
-  // 736 leaves 144 slots.
+  //
+  // 735 → 731: −4 (#4455): a change's page is the same Messages thread. The
+  // Workshop chip's check (#2916) is folded into the one that reads the
+  // sheet's anatomy; the Discussion's sender check into its event line's;
+  // and the two that read the retired action band and Discussion sheet on
+  // 900801 into its title-pencil check. The rest were rewritten in place.
+  //
+  // 736 + (−4) → 732: both changes land together; 732 leaves 148 slots.
   //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 736);
+  checkCap.assertPinned(DAPP.tests.length, 732);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

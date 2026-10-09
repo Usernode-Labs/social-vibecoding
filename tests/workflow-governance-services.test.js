@@ -23,8 +23,6 @@ const gh = {
 };
 const id = require.resolve('../src/services/github');
 require.cache[id] = { id, filename: id, loaded: true, exports: gh, paths: [] };
-const wsId = require.resolve('../src/services/ws');
-require.cache[wsId] = { id: wsId, filename: wsId, loaded: true, exports: { pushIssueUpdate: (d) => calls.push(['push', d.action]) }, paths: [] };
 
 const { governanceServices } = require('../src/workflow/governance-proposal/services.ts');
 const services = governanceServices({ config: {}, pool: { query: async () => ({ rows: [] }) } });
@@ -36,11 +34,13 @@ function ctx(input, resumeFrom = null) {
 
 const MARKER = 'homeroom-governance:issue:5:close';
 
+// It pushes nothing itself: the transition that applies its result tells
+// browsers to re-read (tests/workflow-governance-postgres.test.js).
 test('github.closeIssue closes, checkpoints, comments with its marker, and busts the cache', async () => {
   calls.length = 0;
   const { saved, ctx: c } = ctx({ owner: 'a', repo: 'b', number: 7, comment: 'Closed.', marker: MARKER, bustCache: true, appId: 1, appSlug: 's' });
   assert.deepEqual(await services['github.closeIssue'].run(c), { closed: true });
-  assert.deepEqual(calls, [['close', 7], ['comment', 7, `Closed.\n\n<!-- ${MARKER} -->`], ['note'], ['bust'], ['push', 'github_synced']]);
+  assert.deepEqual(calls, [['close', 7], ['comment', 7, `Closed.\n\n<!-- ${MARKER} -->`], ['note'], ['bust']]);
   assert.equal(saved.length, 3);
   assert.deepEqual([saved[0], saved[2]], [{ closed: true }, { closed: true, commented: true }]);
   assert.ok(!Number.isNaN(Date.parse(saved[1].commenting)), 'records when it started posting');

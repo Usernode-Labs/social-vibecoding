@@ -1216,7 +1216,11 @@ const AppView = {
           const scope = kind
             ? document.getElementById('dev-body')
             : (document.querySelector('.dev-kanban-col-active') || document.getElementById('dev-body'));
-          (scope || document.getElementById('gc-thread-head'))?.querySelector(want)?.click();
+          // #4453/#4455: a request's or a change's page keeps its ⋯ in the
+          // thread sheet's header (`#gc-thread-bar`), not in the head.
+          const head = document.querySelector(`#gc-thread-bar ${want.split(', ').join(', #gc-thread-bar ')}`)
+            ? document.getElementById('gc-thread-bar') : document.getElementById('gc-thread-head');
+          (scope || head)?.querySelector(want)?.click();
         }, 300);
       }
       // #1585's check asserts that a feed issue row previews its recent
@@ -4913,20 +4917,8 @@ const AppView = {
     if (!head) return;
     // Closed / merged away mid-view: keep the last render readable.
     if (!item) return;
-    // #gc-thread-head is TWO nodes: the thread panel's empty slot (the host
-    // this paint mounts an issue's or a governance topic's head into) and the
-    // change page's (mountChangePage), which React renders WITH its own
-    // TopicHead inside. Opening an issue from a change page leaves the change
-    // page in #dev-topic-thread until _mountTopicThread swaps it, after the
-    // `await _loadDevData()` in _renderTopicSubView. A repaint inside that
-    // window (a thread badge, a session-state push, a roster load) would adopt
-    // the change page's head: mountLegacyPortal's first-mount replaceChildren()
-    // pulls another portal's DOM out from under React, and the publish below
-    // then removeChild()s a node that is gone — a NotFoundError caught by the
-    // `portal:dev-topic-thread` island, which then renders nothing, so the
-    // issue's discussion never appears. _renderTopicSubView paints this topic
-    // itself right after the swap, so skipping here loses nothing.
-    if (!changePage && head.closest && head.closest('.dev-change-overview')) return;
+    // #4455: every topic's head, a change's included, is the thread panel's
+    // `#gc-thread-head` (thread-shell.tsx), mounted per paint below.
 
     // #665: while the inline title editor is open, skip the repaint — the
     // publish below remounts the head, which discards the editor and any
@@ -4959,9 +4951,9 @@ const AppView = {
       // Mounted per paint, into the host the thread panel owns. The store
       // flushes synchronously, so the head is in the DOM for the loads below
       // — exactly as it was after the innerHTML assignment this replaced.
-      // Change pages own their whole card, including the conversation tabs.
-      // Only issue/governance topics still live inside a thread's header host.
-      if (!changePage) react.mountTopicHead(head);
+      // #4455: a change's page lives in the thread's header host too, as an
+      // issue's and a governance topic's do.
+      react.mountTopicHead(head);
       react.publishTopicHead({ card, body, item: t.kind === 'session' || t.kind === 'proposal' ? item : null });
     }
     // The Explore pills read `aiEnabledStore` now, so the DOM pass that used
@@ -5092,7 +5084,7 @@ const AppView = {
     if (body.changeId) {
       body.hero = AppView._topicHeroView(t.kind, item);
       body.steps = AppView._topicStepsView(item, card, body);
-      body.tested = AppView._testedLine(item);
+      body.thread = AppView._changeThreadView(t.kind, item, card, body);
     }
     body.aboutTitle = { issue: 'About this request', proposal: 'About this change', session: 'About this change', gov: 'About this proposal' }[t.kind] || 'About';
     return { card, body };
@@ -5368,7 +5360,7 @@ const AppView = {
     // compact card so filtering shortcuts here cannot change the board.
     const gh = kind === 'issue' ? item.htmlUrl : item.pr_url;
     const shortcuts = ['View checks', 'Re-run checks', 'Open public discussion',
-      'Continue building', 'Open session', 'Ask for approval', 'View PR on GitHub',
+      'Continue building', 'Ask for approval',
       'Retry preview', 'Before/after screenshots', 'Before & after'];
     const menu = [...(AppView._cardMenus[card.rail.menuKey] || [])]
       .filter((a) => !body.changeId || !shortcuts.some((label) =>
@@ -5378,63 +5370,68 @@ const AppView = {
     }
     card.actions = (card.actions || []).filter((a) => a.key !== 'vis');
     if (body.changeId) {
-      // A change page's band carries what a reader most often does next,
-      // left to right — Explore in dev chat, kudos, the Build door, Share —
-      // with Preview and the menu at its right end. What the line cannot
-      // fit folds into the menu (card/dev-card.tsx, useFoldedActions), so
-      // the menu keeps only the rest: the attribute pickers, Withdraw,
-      // Admin merge, GitHub.
-      const onBand = [];
+      // #4455: a change's page is a thread, and it has no action band: the
+      // Vote and Preview buttons are its Votes and Testing cards', Thank is
+      // on the Addresses row, and everything else is a row of the sheet
+      // header's ⋯ (here). So the rows the band used to carry come back to
+      // the menu: asking Homeroom bot for changes, the Build door, editing
+      // the requests it addresses, the shots' details and a retake, the
+      // change's tags, and the pull request on GitHub.
       const proposal = kind === 'proposal';
-      // B8: on a change Homeroom bot built, asking it for changes leads the
-      // band, and exploring it in a coding agent is the ⋯'s
-      // (_proposalMenuItems keeps that row).
-      const botBuilt = proposal && AppView._botBuilt(item);
-      if (botBuilt && !AppView.readOnly) {
-        onBand.push({
-          key: 'ask-bot', cls: 'gc-vote-btn', label: 'Ask for changes',
+      const ro = AppView.readOnly;
+      const rows = [];
+      if (proposal && AppView._botBuilt(item) && !ro) {
+        rows.push({
+          label: 'Ask for changes', icon: 'generate',
           title: 'Ask Homeroom bot to change this, in your chat with it',
-          act: { fn: 'askBotForChanges', args: [item.id, item.session_title || item.pr_title || null] },
+          act: () => AppView.askBotForChanges(item.id, item.session_title || item.pr_title || null),
         });
       }
-      if (proposal && !botBuilt && AppView._showExplorePill(item) && !AppView.readOnly) {
-        // `explore` is what the band draws (the gc-explore-chat-btn pill);
-        // `act` is what the pill becomes when the band folds it into ⋯.
-        onBand.push({
-          key: 'explore', label: 'Explore in a coding agent', title: AppView.EXPLORE_CHAT_TITLE, explore: item.id,
-          act: { fn: 'exploreProposalInDevChat', args: [item.id, null] },
-        });
-      }
-      if (proposal && AppView._kudosOffered(item) && !AppView.readOnly) onBand.push({ key: 'kudos', label: '', kudos: item.id });
       if (body.build) {
-        onBand.push({
-          key: 'build', cls: 'gc-vote-btn', label: body.build.label,
+        rows.push({
+          label: body.build.label, icon: 'session',
           title: body.build.kind === 'owner'
             ? 'Open the agent session behind this change'
             : 'Read the agent session that built this change',
-          act: { fn: 'openChangeWorkspace', args: [item.id] },
+          act: () => AppView.openChangeWorkspace(item.id),
+        });
+        // The Build door is the owner's way into their session already.
+        for (let i = menu.length - 1; i >= 0; i -= 1) if (menu[i].label === 'Open session') menu.splice(i, 1);
+      }
+      if (body.canEditIssues) {
+        const linked = (item.linked_issues || []).length;
+        rows.push({
+          label: linked ? 'Edit requests' : 'Add a request', icon: 'edit',
+          title: 'Change which requests this change addresses',
+          act: () => window.dispatchEvent(new CustomEvent('change-issues-edit', { detail: Number(item.id) })),
         });
       }
-      if (proposal && !AppView.readOnly) {
-        onBand.push({
-          key: 'share', cls: 'gc-vote-btn', label: 'Share',
-          title: 'Share this proposal to a chat or a discussion',
-          act: { fn: '_shareCardToMessages', args: [{
-            type: 'proposal', sessionId: item.id, title: item.session_title || item.pr_title || null,
-          }] },
+      const shots = item.shots && typeof item.shots === 'object' ? item.shots : null;
+      if (shots && shots.state === 'verified') {
+        rows.push({
+          label: 'Shot details', icon: 'details',
+          title: 'How each change was reached, at which screen sizes, and on which builds',
+          act: () => AppView.openTechnicalDetails(item.id, 'shots'),
         });
       }
-      // The rows the band now carries leave the menu. The ⋯ is where the
-      // band's pills fold on a narrow screen, and a trigger over no rows is a
-      // dead button; Details is always one of its rows on a change page
-      // (below), so it never opens empty.
-      const shareRow = menu.find((a) => a.icon === 'share') || null;
-      for (let i = menu.length - 1; i >= 0; i -= 1) if (['explore', 'kudos'].includes(menu[i].icon)) menu.splice(i, 1);
-      if (shareRow) menu.splice(menu.indexOf(shareRow), 1);
-      card.actions = [
-        ...(card.actions || []).filter((a) => a.explore == null && a.kudos == null),
-        ...onBand,
-      ];
+      const mine = !!(App.user && Number(item.user_id) === Number(App.user.id));
+      const manager = !!(App.user && App.user.canAdminWrite) || !!(AppView._proposalsCtx && AppView._proposalsCtx.isAppAdmin);
+      const shotsRunning = shots && ['provisioning', 'exploring', 'replaying', 'reviewing'].includes(String(shots.state));
+      if (shots && !ro && (mine || manager) && !shotsRunning && shots.state !== 'not_required') {
+        rows.push({
+          label: 'Take the shots again', icon: 'visuals',
+          title: 'Take the before & after shots again on this exact build',
+          act: () => AppView.rerunShots(item.id, null),
+        });
+      }
+      if (!['merged', 'closed'].includes(item.status)) rows.push(...AppView._attrMenuItems('proposal', item.id, item));
+      // Thank is on the page (the Addresses row); Explore and Share stay rows.
+      for (let i = menu.length - 1; i >= 0; i -= 1) if (menu[i].icon === 'kudos') menu.splice(i, 1);
+      menu.push(...rows);
+      if (gh && !menu.some((a) => a.label === 'View PR on GitHub')) {
+        menu.push({ label: 'View PR on GitHub', icon: 'github', title: gh, act: () => window.open(gh, '_blank', 'noopener') });
+      }
+      card.actions = (card.actions || []).filter((a) => a.explore == null && a.kudos == null);
     }
     // B10b: the technical half is one tap down. The pull request and its
     // GitHub link, the steps with their checks, and the description (or the
@@ -6124,34 +6121,339 @@ const AppView = {
     window.dispatchEvent(new CustomEvent('change-details-open', { detail: part ? { id: Number(id), part } : Number(id) }));
   },
 
-  // B10b: the one Tested line a change page shows, in place of the steps
-  // list and its checks: what testing found, in words, from the latest run.
-  // A tap opens Details at the Checks part. Nothing before the first run.
-  // Checks that passed never read "All checks passed" over a declared change
-  // the before & after shots agent tried and found broken (its
-  // `shotResults` status 'failed'): a page that renders is not a button
-  // that works.
-  _testedLine(item) {
-    const state = item && item.check_state;
-    if (!state) return null;
-    const broken = (state === 'passing' || state === 'skipped') ? AppView._shotsBrokenCount(item.shots) : 0;
+  // ── #4455: a change's page, drawn as a Messages reply thread ─────────
+  //
+  // The change is the thread's root post (topic/change-head.tsx): who put
+  // it up, when and what built it, its title, its summary as a quote, the
+  // requests it addresses and the thanks, then where it stands as two cards
+  // one above the other (Votes, then Testing), then its before and after.
+  // Its replies and everything that happened to it are the thread's stream.
+  // This is the root post's model; the card and body above stay what the
+  // Details sheet and the ⋯ read.
+  _changeThreadView(kind, item, card, body) {
+    const n = parseInt(item.pr_number, 10) || 0;
+    const top = item.category && item.category.top;
+    const placed = top ? null : AppView._placedCategoryFor('proposal', item.id);
+    const meta = top ? AppView._categoryMeta(top) : null;
+    let category = meta ? meta.label : (placed ? placed.name : (top || null));
+    if (category) category = category.charAt(0).toUpperCase() + category.slice(1);
+    const hero = body.hero || {};
+    const author = hero.author || 'someone';
+    const at = item.created_at || null;
+    const stamp = at && typeof GroupChat !== 'undefined' && GroupChat._stamp
+      ? GroupChat._stamp(at) : (at ? relStamp(at) : { text: '', title: '' });
+    // What built it, in two words: the coding agent an outside change names.
+    const agent = AppView.externalAgentName(item.external_agent);
+    return {
+      number: n || null,
+      category,
+      author,
+      at,
+      time: stamp.text,
+      timeTitle: stamp.title,
+      via: agent ? `via ${agent}` : (item.source === 'imported' ? 'via GitHub' : null),
+      votes: AppView._changeVotesView(item, card),
+      testing: AppView._changeTestingView(item),
+      shots: AppView._changeShotsView(kind, item),
+      thanks: !AppView.readOnly && AppView._kudosOffered(item) && !['active', 'paused'].includes(item.status),
+    };
+  },
+
+  // "evan", "evan and maya", "evan, maya and ash".
+  _nameList(names) {
+    const list = (names || []).filter(Boolean);
+    if (list.length <= 1) return list.join('');
+    return `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`;
+  },
+
+  // A bar of `parts` equal parts, `filled` of them done: one part per yes a
+  // vote needs, or one continuous bar past a dozen.
+  _changeVoteSegments(filled, parts, state) {
+    const total = Math.max(1, parts);
+    if (total > 12) return [{ weight: 1, pct: Math.max(0, Math.min(100, (filled / total) * 100)), state }];
+    return Array.from({ length: total }, (_, i) => ({ weight: 1, pct: i < filled ? 100 : 0, state }));
+  },
+
+  // The Votes card: its figure ("Needs 1 more yes", in the accent when the
+  // viewer can give it, or "1 of 1 yes"), one part of the bar per yes it
+  // needs, and one line under it: who can give it, any yes a newer push
+  // retired (services/vote-revision.js), and, while testing has not passed,
+  // that it goes live once it does. Its button is the Vote button.
+  _changeVotesView(item, card) {
+    const underway = ['active', 'paused'].includes(item.status);
+    const mine = !!(App.user && Number(item.user_id) === Number(App.user.id));
+    if (underway) {
+      const submission = AppView.changeSubmissionState(item);
+      return {
+        name: 'Votes', figure: 'Not up for a vote yet', tone: 'muted', done: false,
+        segments: [{ weight: 1, pct: 0, state: 'moving' }],
+        label: 'Votes: not up for a vote yet',
+        note: [mine ? submission.note : 'Its author has not asked for approval yet.'].filter(Boolean),
+      };
+    }
+    if (item.status === 'closed') {
+      return {
+        name: 'Votes', figure: 'Closed', tone: 'muted', done: false,
+        segments: [{ weight: 1, pct: 0, state: 'moving' }], label: 'Votes: closed',
+        note: ['This change was closed without going live.'],
+      };
+    }
+    const pill = (card && card.pill && card.pill.state) || AppView.statusPillState(item, {}) || {};
+    const yes = Number(pill.yes) || 0;
+    const maj = Math.max(1, Number(pill.majority) || 1);
+    const roster = AppView._voteRoster[item.id];
+    const ready = roster && roster.phase === 'ready' ? roster : null;
+    const note = [];
+    if (item.status === 'merged' || item.status === 'merging') {
+      const said = ready && ready.yesNames && ready.yesNames.length
+        ? `${AppView._nameList(ready.yesNames)} said yes.` : null;
+      if (said) note.push(said);
+      // Where the rollout is, in the pill's own states.
+      const LIVE = {
+        deployed: 'It’s live.', merged: 'It’s live.', deploying: 'It’s going live.', merging: 'It’s going live.',
+        delivery_pending: 'It’s going live.', deployment_stalled: 'It’s stuck going live.', delivery_failed: 'It couldn’t go live.',
+      };
+      if (!item.included_in_session_id && LIVE[pill.key]) note.push(LIVE[pill.key]);
+      return {
+        name: 'Votes', figure: 'Voted in', tone: 'done', done: true,
+        segments: [{ weight: 1, pct: 100, state: 'done' }], label: 'Votes: voted in', note,
+      };
+    }
+    const waitsOnMember = AppView._awaitingOtherMember(item);
+    const reached = yes >= maj && !waitsOnMember;
+    const canVote = !AppView.readOnly && !item.my_vote && item.status === 'promoted';
+    let figure;
+    let tone;
+    if (pill.key === 'reject_countdown') { figure = pill.label; tone = 'bad'; }
+    else if (pill.key === 'contested') { figure = 'Needs a conversation'; tone = 'warn'; }
+    else if (pill.key === 'merge_countdown') { figure = pill.label; tone = reached ? 'done' : 'ask'; }
+    else if (yes >= maj && waitsOnMember) {
+      figure = canVote && item.approval_policy !== 'invited' ? 'Needs your yes' : 'Needs another member’s yes';
+      tone = canVote ? 'ask' : 'warn';
+    } else if (reached) { figure = `${yes} of ${maj} yes`; tone = 'done'; }
+    else if (pill.key === 'needs_vote' && AppView._approveSolo(item)) { figure = 'Waiting for your approval'; tone = 'ask'; }
+    else { figure = `Needs ${maj - yes} more yes`; tone = canVote ? 'ask' : 'muted'; }
+    if (reached && ready && ready.yesNames && ready.yesNames.length) {
+      note.push(`${AppView._nameList(ready.yesNames)} said yes.`);
+    } else if (!reached) {
+      const approvers = ready && Number(ready.approvers) > 0 ? Number(ready.approvers) : 0;
+      const members = Number((AppView._proposalsCtx || {}).activeUsers) || 0;
+      if (approvers) note.push(`Any of the ${approvers} approver${approvers === 1 ? '' : 's'} can give it.`);
+      else if (members > 1) note.push(`Any of the ${members} members can give it.`);
+    }
+    // A countdown or a contest says what happens next, in a few words.
+    if (pill.key === 'merge_countdown') note.push('It goes live when the countdown ends, unless someone objects.');
+    else if (pill.key === 'reject_countdown') note.push('It will be set aside when the countdown ends, unless someone speaks up.');
+    else if (pill.key === 'contested') note.push('Enough people objected that it needs a straight majority of yes votes.');
+    const earlierYes = ready && Array.isArray(ready.earlierYes) ? ready.earlierYes : [];
+    const earlierNo = ready && Array.isArray(ready.earlierNo) ? ready.earlierNo : [];
+    if (earlierYes.length) note.push(`${AppView._nameList(earlierYes)}’s yes was on an earlier version.`);
+    if (earlierNo.length) note.push(`${AppView._nameList(earlierNo)}’s no was on an earlier version.`);
+    if (pill.awaitsOtherYes && !(yes >= maj && waitsOnMember)) note.push('Needs a Yes from another member before it can go live.');
+    else if (pill.lock && pill.lockTitle) note.push(/[.!?]$/.test(pill.lockTitle) ? pill.lockTitle : `${pill.lockTitle}.`);
+    // #695: yeses from people who are not approvers count for nothing here.
+    if (Number(pill.advisory) > 0) {
+      const n = Number(pill.advisory);
+      note.push(`${n} more ${n === 1 ? 'yes is' : 'yeses are'} advisory, from people who aren’t approvers.`);
+    }
+    const was = AppView.thresholdWasNote(item, maj);
+    if (was) note.push(`${was}.`);
+    if (reached && item.check_state !== 'passing' && item.check_state !== 'skipped') {
+      note.push(item.check_state === 'failing' ? 'It goes live once a fix passes testing.' : 'It goes live once testing passes.');
+    }
+    const fill = Math.min(yes, maj);
+    return {
+      name: 'Votes', figure, tone, done: tone === 'done',
+      segments: AppView._changeVoteSegments(fill, maj, tone === 'done' ? 'done' : 'moving'),
+      label: `Votes: ${yes} of ${maj} yes`,
+      note,
+    };
+  },
+
+  // "a third done": how far the checks are, in words.
+  _fractionWords(f) {
+    if (f < 0.12) return 'just started';
+    if (f < 0.3) return 'a quarter done';
+    if (f < 0.42) return 'a third done';
+    if (f < 0.58) return 'half done';
+    if (f < 0.71) return 'two thirds done';
+    if (f < 0.88) return 'three quarters done';
+    return 'almost done';
+  },
+
+  // "3 min", "under a minute".
+  _minutes(ms) {
+    const m = Math.round(ms / 60000);
+    return m < 1 ? 'under a minute' : `${m} min`;
+  },
+
+  // #4452 — the Testing card: the preview build and both kinds of checks
+  // (the declared checks and the unit suite) as ONE bar, split by how long
+  // each part usually takes on this project (`checks_estimate`, the median
+  // of its recent finished runs, services/checks-estimate.js), with the time
+  // left as its figure and where it is in the line under it. The position is
+  // what the run already streams into `checks_progress`: the build's steps,
+  // then the checks' ran / expected and the unit suite's. A finished run is
+  // full and green; one that found a problem says so, with its re-run.
+  _changeTestingView(item) {
+    const BUILD_KEYS = ['source_fetch', 'image_build', 'clone', 'health', 'prepare_checks'];
+    const p = item.checks_progress && typeof item.checks_progress === 'object' ? item.checks_progress : null;
+    const est = item.checks_estimate && Number(item.checks_estimate.buildMs) > 0 && Number(item.checks_estimate.checksMs) > 0
+      ? item.checks_estimate : null;
+    const cs = item.check_state || null;
+    const phase = item.check_phase || null;
+    const actions = [];
+    // Only a run that failed or broke offers its re-run.
+    const recheck = () => AppView._recheckAction(item);
+    const previewFailed = !item.staging_url && !!item.staging_error && item.status !== 'merged';
+    const full = (state) => [{ weight: 1, pct: 100, state }];
+    // What the finished run cost, in the card's own words.
+    const cost = () => {
+      const b = p && p.build && p.build.step === 'done' ? p.build : null;
+      const buildMs = b ? (Array.isArray(b.steps) ? b.steps.reduce((t, st) => t + (Number(st && st.ms) || 0), 0) : 0) || Number(b.totalMs) || 0 : 0;
+      const checksMs = p && Number(p.checksMs) > 0 ? Number(p.checksMs) : 0;
+      if (buildMs && checksMs) {
+        // "Preview built in 3 min, checked in 9.": the second unit is the first's.
+        const second = buildMs >= 60000 && checksMs >= 60000
+          ? String(Math.round(checksMs / 60000)) : AppView._minutes(checksMs);
+        return `Preview built in ${AppView._minutes(buildMs)}, checked in ${second}.`;
+      }
+      if (checksMs) return `Checked in ${AppView._minutes(checksMs)}.`;
+      return null;
+    };
+    if (previewFailed) {
+      if (!AppView.readOnly) actions.push({ key: 'retry-preview', cls: 'gc-vote-btn', label: 'Retry preview', act: { fn: 'swapToStagingForSession', args: [item.id, ''] } });
+      return {
+        name: 'Testing', figure: 'The preview didn’t start', tone: 'bad', done: false, segments: full('bad'),
+        label: 'Testing: the preview did not start',
+        note: [String(item.staging_error).slice(0, 280)], actions, details: true,
+      };
+    }
+    const broken = (cs === 'passing' || cs === 'skipped') ? AppView._shotsBrokenCount(item.shots) : 0;
     if (broken) {
-      return { state: 'failed', text: broken === 1 ? 'Tested · One thing isn’t working' : `Tested · ${broken} things aren’t working` };
+      return {
+        name: 'Testing', figure: broken === 1 ? 'One thing isn’t working' : `${broken} things aren’t working`, tone: 'bad', done: false,
+        segments: full('bad'), label: 'Testing: the checks passed, but the shots found something broken',
+        note: ['The checks passed, but the shots agent tried this change and the app broke.'], actions, details: true,
+      };
     }
-    if (state === 'passing') return { state: 'passed', text: 'Tested · All checks passed' };
-    if (state === 'pending') {
-      // A run waiting for a checks slot says so, with its place in line
-      // ("Waiting for a checks slot (2 ahead)"). This is the one line about
-      // the checks the change page shows without opening Details, and a long
-      // wait that read "Testing it…" would look like a stuck run.
-      return item.check_phase === 'queued'
-        ? { state: 'running', text: AppView._checksPhaseCopy('queued', item).title }
-        : { state: 'running', text: 'Testing it…' };
+    if (cs === 'passing') {
+      const superseded = AppView._freshnessOf(item).baseVerdict === 'superseded';
+      return {
+        name: 'Tested', figure: 'All checks passed', tone: 'done', done: true, segments: full('done'),
+        label: 'Tested: all checks passed',
+        note: [cost(), superseded ? 'They passed on an older main.' : null].filter(Boolean), actions,
+      };
     }
-    if (state === 'failing') return { state: 'failed', text: 'Testing found a problem' };
-    if (state === 'skipped') return { state: 'skipped', text: 'Not tested' };
-    if (AppView._checksWillRetry(item)) return { state: 'running', text: 'Testing will run again' };
-    return { state: 'broken', text: 'Testing couldn’t finish' };
+    if (cs === 'skipped') {
+      return { name: 'Testing', figure: 'Not tested', tone: 'muted', done: false, segments: full('idle'), label: 'Testing: not tested', note: ['Its checks were skipped.'], actions };
+    }
+    if (cs === 'failing') {
+      const v = AppView._checksVerdictView(item);
+      const failed = v ? v.failures.length : 0;
+      const rerun = recheck();
+      if (rerun) actions.push(rerun);
+      return {
+        name: 'Testing', figure: 'Found a problem', tone: 'bad', done: false, segments: full('bad'),
+        label: 'Testing: found a problem',
+        note: [failed ? `${failed} check${failed === 1 ? '' : 's'} failed.` : 'A check failed.'], actions, details: true,
+      };
+    }
+    if (cs && cs !== 'pending') {
+      // An error: the run itself broke, or will run again by itself.
+      if (AppView._checksWillRetry(item)) {
+        return { name: 'Testing', figure: 'Running again soon', tone: 'muted', done: false, segments: [{ weight: 1, pct: 0, state: 'moving' }], label: 'Testing: will run again', note: ['Testing will run again by itself.'], actions };
+      }
+      const rerun = recheck();
+      if (rerun) actions.push(rerun);
+      return {
+        name: 'Testing', figure: 'Couldn’t finish', tone: 'bad', done: false, segments: full('bad'),
+        label: 'Testing: could not finish',
+        note: [item.check_error_detail ? String(item.check_error_detail).slice(0, 280) : 'The staging build or the test run itself broke.'],
+        actions, details: true,
+      };
+    }
+    const building = !!item.staging_building || (!item.staging_url && !cs && !!p);
+    if (!cs && !building && !p) {
+      return { name: 'Testing', figure: 'Not started', tone: 'muted', done: false, segments: [{ weight: 1, pct: 0, state: 'moving' }], label: 'Testing: not started', note: ['Testing starts once its preview is built.'], actions };
+    }
+    if (phase === 'queued' || phase === 'deferred') {
+      return {
+        name: 'Testing', figure: phase === 'queued' ? 'Waiting for a slot' : 'Waiting', tone: 'muted', done: false,
+        segments: [{ weight: est ? est.buildMs : 1, pct: 100, state: 'moving' }, { weight: est ? est.checksMs : 3, pct: 0, state: 'moving' }],
+        label: 'Testing: waiting', note: [AppView._checksPhaseCopy(phase, item).title], actions,
+      };
+    }
+    // Where the run is: how much of the build, then how much of the checks.
+    const b = p && p.build && typeof p.build === 'object' ? p.build : null;
+    const doneSteps = b && Array.isArray(b.steps) ? b.steps.filter((st) => st && BUILD_KEYS.includes(st.key)).length : 0;
+    let buildFrac;
+    if (b && b.step === 'done') buildFrac = 1;
+    else if (b) buildFrac = Math.min(0.95, (doneSteps + 0.5) / BUILD_KEYS.length);
+    else buildFrac = phase === 'testing' ? 1 : 0;
+    const fracs = [];
+    if (p && Number.isInteger(p.expected) && p.expected > 0) fracs.push(Math.min(1, (Number(p.ran) || 0) / p.expected));
+    const u = p && p.unit && typeof p.unit === 'object' ? p.unit : null;
+    if (u) {
+      if (u.done) fracs.push(1);
+      else if (Number(u.expected) > 0) fracs.push(Math.min(1, (Number(u.ran) || 0) / Number(u.expected)));
+      else fracs.push(0);
+    }
+    const checksFrac = buildFrac < 1 ? 0 : (fracs.length ? fracs.reduce((t, f) => t + f, 0) / fracs.length : 0);
+    const where = buildFrac < 1
+      ? `Building the preview, step ${Math.min(BUILD_KEYS.length, doneSteps + 1)} of ${BUILD_KEYS.length}.`
+      : `Preview built, checks ${AppView._fractionWords(checksFrac)}.`;
+    if (est) {
+      const left = (1 - buildFrac) * est.buildMs + (1 - checksFrac) * est.checksMs;
+      const usual = Math.max(1, Math.round((est.buildMs + est.checksMs) / 60000));
+      return {
+        name: 'Testing',
+        figure: left < 60000 ? 'under a minute left' : `about ${Math.round(left / 60000)} min left`,
+        tone: 'muted', done: false,
+        segments: [
+          { weight: est.buildMs, pct: Math.round(buildFrac * 100), state: buildFrac >= 1 ? 'done' : 'moving' },
+          { weight: est.checksMs, pct: Math.round(checksFrac * 100), state: 'moving' },
+        ],
+        label: `Testing: ${where} About ${Math.max(1, Math.round(left / 60000))} minutes left.`,
+        note: [`${where} Usually about ${usual} minute${usual === 1 ? '' : 's'} here.`], actions,
+      };
+    }
+    return {
+      name: 'Testing', figure: buildFrac < 1 ? 'Building the preview' : 'Checking it', tone: 'muted', done: false,
+      segments: [
+        { weight: 1, pct: Math.round(buildFrac * 100), state: buildFrac >= 1 ? 'done' : 'moving' },
+        { weight: 3, pct: Math.round(checksFrac * 100), state: 'moving' },
+      ],
+      label: `Testing: ${where}`, note: [where], actions,
+    };
+  },
+
+  // The Before and after card: the shots in the viewer specs use, once they
+  // are taken; until then one line inside the card that says so; a run
+  // that failed or was waived says that instead. Nothing when the change
+  // shows nothing (no shots and no captures, or none needed).
+  _changeShotsView(kind, item) {
+    const shots = item.shots && typeof item.shots === 'object' ? item.shots : null;
+    if (!shots) {
+      const legacy = (kind === 'proposal' || item.source === 'imported') ? AppView.visualsTilesHtml(item.visuals) : '';
+      return legacy ? { state: 'legacy', html: legacy, line: null } : null;
+    }
+    const view = AppView._shotsView(shots);
+    if (!view || view.state === 'not_required') return null;
+    if (view.verified) {
+      const html = AppView.shotsHtml(shots, { sessionId: item.id, thread: true });
+      return html ? { state: 'verified', html, line: null } : null;
+    }
+    const running = !view.notStarted && (['planned', 'provisioning', 'exploring', 'replaying', 'reviewing'].includes(view.state) || view.retrying);
+    if (running) return { state: view.state, html: '', line: 'Taking the shots. They show up here when they are ready.', waiting: true };
+    return { state: view.state, html: '', line: view.sentence, waiting: false };
+  },
+
+  // "The preview is ready · Try it", in a change's stream.
+  _tryChangePreview(id) {
+    const item = AppView._changeItems.get(Number(id)) || AppView._findTopicItem();
+    if (!item || Number(item.id) !== Number(id)) return;
+    AppView.swapToStagingForSession(item.id, item.staging_url || '');
   },
 
   _canEditDescription(item) {
@@ -7101,7 +7403,9 @@ const AppView = {
         const have = wrap.getAttribute('data-kudos-variant') || 'count';
         if (want === have) return;
       }
-      host.innerHTML = Kudos.renderButton(pr, { compact: true });
+      // #4455: a change page's Addresses row says "👏 Thank snait", and no
+      // count while it is zero (Kudos.renderButton's `thread` face).
+      host.innerHTML = Kudos.renderButton(pr, { compact: true, thread: host.getAttribute('data-kudos-face') === 'thread' });
     });
     Kudos.attach(scope);
   },
@@ -7136,15 +7440,31 @@ const AppView = {
     const t = AppView._devTopic;
     const slot = document.getElementById('dev-topic-thread');
     if (!t || !slot) return;
+    if (typeof GroupChat === 'undefined' || !GroupChat.mountThread) return;
+    // #4455: a change's page is a Messages reply thread too, the change its
+    // root post (features/dev-board/topic/change-head.tsx), every notice a
+    // line in its stream. A change nobody else can see yet has no
+    // discussion: the stream says so, and its thread is not read.
     if (t.kind === 'session' || t.kind === 'proposal') {
-      if (typeof GroupChat !== 'undefined') GroupChat.unmountThread();
-      // The full change page owns separate discussion/workspace hosts. It
-      // mounts the group thread only when the change is publicly visible.
-      AppView._reactDevBoard()?.publishTopicHead({ card: null, body: null, item: null });
-      AppView._reactDevBoard()?.mountChangePage(slot);
+      const item = AppView._findTopicItem();
+      const closed = item && ['active', 'paused'].includes(item.status) && !item.shared_at
+        ? 'Only you can see this change. Share it with the group to start a discussion.' : null;
+      GroupChat.mountThread({
+        type: 'session',
+        ref: t.id,
+        container: slot,
+        fullHeight: true,
+        withHeader: true,
+        language: 'change',
+        placeholder: 'Reply…',
+        readOnly: AppView.readOnly || !!closed,
+        ...(closed ? { closed, notice: 'Share this change to start a discussion.' } : {}),
+        ...(AppView.readOnly && !closed
+          ? { notice: "You're viewing this app's dev space read-only. Only collaborators can post." }
+          : {}),
+      });
       return;
     }
-    if (typeof GroupChat === 'undefined' || !GroupChat.mountThread) return;
     // 'session' (a shared in-flight dev session) uses the same 'session'
     // thread namespace as promoted proposals — the thread key is the
     // chat_sessions id either way, which is exactly what makes comments
@@ -17167,6 +17487,11 @@ const AppView = {
         // The same people by name, which the Discussion reads to mark their
         // vote lines (GroupChat._votedOnEarlierVersion).
         earlierVoters: [...earlierYes, ...earlierNo],
+        // #4455: the change page's Votes card names them in its line.
+        earlierYes,
+        earlierNo,
+        yesNames: Array.isArray(data.yes) ? data.yes.slice() : [],
+        approvers: Array.isArray(data.approvers) ? data.approvers.length : 0,
       });
     } catch {
       publish({ phase: 'hidden' });
@@ -17817,7 +18142,8 @@ const AppView = {
     if (chip) return chip;
     const card = document.querySelector(targetType === 'issue'
       ? `[data-ref-issue="${targetRef}"]`
-      : `[data-proposal-row="${targetRef}"], [data-shared-session-row="${targetRef}"]`);
+      // #4455: on a change's own page, its root post.
+      : `[data-proposal-row="${targetRef}"], [data-shared-session-row="${targetRef}"], [data-change-root="${targetRef}"]`);
     if (!card) return null;
     return {
       dataset: { attrField: field, attrTargetType: targetType, attrTargetRef: String(targetRef) },
@@ -21090,7 +21416,9 @@ const AppView = {
     return value.charAt(0).toUpperCase() + value.slice(1);
   },
 
-  _shotsViewerHtml({ key, screens, sideBySide = false, autoSide = false, zoom = false, className = '' } = {}) {
+  // `barLead` (#4455): markup at the start of each screen's toolbar — a
+  // change page's card puts its title there, beside the switch.
+  _shotsViewerHtml({ key, screens, sideBySide = false, autoSide = false, zoom = false, className = '', barLead = '' } = {}) {
     const esc = escapeHtml;
     const attr = escapeAttr;
     const list = Array.isArray(screens) ? screens.slice(0, 6) : [];
@@ -21133,7 +21461,7 @@ const AppView = {
         ? `<span class="shots-seg shots-seg-zoom" aria-hidden="true"><label for="${zoomId('close')}" class="shots-seg-btn shots-seg-close" title="Close-up">${closeIcon}<span class="shots-seg-label">Close-up</span></label><label for="${zoomId('whole')}" class="shots-seg-btn shots-seg-whole" title="Whole screen">${wholeIcon}<span class="shots-seg-label">Whole screen</span></label></span>`
         : '';
       return `<figure class="shots-view" data-shots-screen="${attr(screen.viewport)}" data-shots-viewport="${attr(screen.viewport)}">
-        <div class="shots-bar"><span class="shots-seg shots-seg-side" aria-hidden="true"><label for="${sideId('before')}" class="shots-seg-btn shots-seg-before">Before</label><label for="${sideId('after')}" class="shots-seg-btn shots-seg-after">After</label>${both}</span>${sizeSwitch}${zoomSwitch}${stepping ? stepper(screenIndex) : ''}</div>
+        <div class="shots-bar">${barLead}<span class="shots-seg shots-seg-side" aria-hidden="true"><label for="${sideId('before')}" class="shots-seg-btn shots-seg-before">Before</label><label for="${sideId('after')}" class="shots-seg-btn shots-seg-after">After</label>${both}</span>${sizeSwitch}${zoomSwitch}${stepping ? stepper(screenIndex) : ''}</div>
         <div class="shots-stage">
           ${screen.afterHtml || ''}
           ${screen.beforeHtml || ''}
@@ -21153,8 +21481,18 @@ const AppView = {
     return `<div class="shots-viewer${className ? ` ${attr(className)}` : ''}">${sidePicks}${zoomPicks}${screenPicks}<div class="shots-views${list.length === 1 ? ' shots-views-one' : ''}">${views.join('')}</div></div>`;
   },
 
+  // #4455: two more readings for a change's page. `thread` is its Before
+  // and after card: the viewer specs use (side by side when there is room),
+  // the title in the switch's row, each change's claim and what the shots
+  // leave out, and nothing else. `details` is what that card moved into
+  // Details (Shot details): how each change is reached, at which screen
+  // sizes and as whom, and the builds the shots were taken on. Both are for
+  // a verified run only.
   shotsHtml(shots, opts = {}) {
     if (!shots || typeof shots !== 'object') return '';
+    const thread = !!opts.thread;
+    const detailsOnly = !!opts.details;
+    if ((thread || detailsOnly) && String(shots.state || '') !== 'verified') return '';
     const sessionId = Number(opts.sessionId);
     const claims = Array.isArray(shots.claims) ? shots.claims.slice(0, 3) : [];
     const artifacts = Array.isArray(shots.artifacts) ? shots.artifacts : [];
@@ -21333,8 +21671,9 @@ const AppView = {
       };
       const changes = onScreen.map((claim) => {
         const n = numberOf(claim.id);
+        const flow = thread ? '' : flowOf(claim);
         return `<li class="shots-change" data-shots-n="${n}" data-shots-change="${attr(claim.id || '')}"><span class="shots-change-n">${n}</span>
-            <div class="min-w-0 flex-1"><strong class="text-sm leading-snug">${esc(claim.claim || '')}</strong>${flowOf(claim) ? `<div class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">${flowOf(claim)}</div>` : ''}${noteOf(claim)}${clipsOf(claim, [screen.viewport])}</div></li>`;
+            <div class="min-w-0 flex-1"><strong class="text-sm leading-snug">${esc(claim.claim || '')}</strong>${flow ? `<div class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">${flow}</div>` : ''}${noteOf(claim)}${clipsOf(claim, [screen.viewport])}</div></li>`;
       }).join('');
       // A dashed outline or line needs its words the first time it shows.
       const shown = drawn.base + drawn.head;
@@ -21351,7 +21690,7 @@ const AppView = {
         beforeHtml: side('base', before, absent ? 'Before, not there yet' : 'Before'),
         afterChip: 'After',
         beforeChip: absent ? 'Before · not there yet' : 'Before',
-        notesHtml: `${changes ? `<ol class="shots-changes">${changes}</ol>` : ''}${keys ? `<div class="shots-keys">${keys}</div>` : ''}<div class="shots-view-meta">${esc(sizeName(screen.viewport))}${dims} · seen as ${esc(who)}</div>`,
+        notesHtml: `${changes ? `<ol class="shots-changes">${changes}</ol>` : ''}${keys ? `<div class="shots-keys">${keys}</div>` : ''}${thread ? '' : `<div class="shots-view-meta">${esc(sizeName(screen.viewport))}${dims} · seen as ${esc(who)}</div>`}`,
       };
     });
 
@@ -21380,12 +21719,12 @@ const AppView = {
       const unseen = viewports.filter((viewport) => !shownAt.has(`${claim.id}|${viewport}`));
       const clips = clipsOf(claim, unseen);
       if (unseen.length < viewports.length && !clips) return '';
-      const flow = flowOf(claim);
+      const flow = thread ? '' : flowOf(claim);
       return `<li data-shots-story="${attr(claim.id || '')}" data-shots-shot-status="ready" class="shots-claim">
         <span class="shots-claim-n">${n}</span>
         <div class="min-w-0 flex-1">
           <strong class="text-sm leading-snug">${esc(claim.claim || '')}</strong>
-          <div class="mt-0.5 text-[0.68rem] text-zinc-500 dark:text-zinc-400">${esc(viewports.join(', '))} · ${esc(persona(claim))}</div>
+          ${thread ? '' : `<div class="mt-0.5 text-[0.68rem] text-zinc-500 dark:text-zinc-400">${esc(viewports.join(', '))} · ${esc(persona(claim))}</div>`}
           ${flow ? `<div class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${flow}</div>` : ''}
           ${noteOf(claim)}
           ${clips}
@@ -21398,7 +21737,22 @@ const AppView = {
     const lookCopy = artifacts.some((artifact) => artifact?.variant === 'animation')
       ? 'Look at the shots and clips to decide whether they show the change.'
       : 'Look at the shots to decide whether they show the change.';
-    const viewer = AppView._shotsViewerHtml({ key, screens: screenParts });
+    if (detailsOnly) {
+      // Shot details (#4455): the steps and sizes the card leaves out.
+      const rows = claims.map((claim) => {
+        const flow = flowOf(claim);
+        return `<li class="dev-shot-details-claim" data-shots-detail="${attr(claim.id || '')}"><strong>${esc(claim.claim || '')}</strong>
+          <div class="dev-shot-details-meta">${esc(viewportsOf(claim).map(sizeName).join(', '))} · seen as a ${esc(persona(claim))}</div>
+          ${flow ? `<div class="dev-shot-details-flow">${flow}</div>` : ''}</li>`;
+      }).join('');
+      return `${rows ? `<ol class="dev-shot-details-claims">${rows}</ol>` : ''}<p class="dev-shot-details-builds">Taken on the exact before and after builds of this change: ${provenance}<span>shots <code>${esc(String(shots.planHash || '').slice(0, 12) || 'unknown')}</code></span></p>`;
+    }
+    const viewer = AppView._shotsViewerHtml(thread
+      ? { key, screens: screenParts, sideBySide: true, autoSide: true, className: 'shots-viewer-spec dev-change-viewer', barLead: '<span class="dev-change-card-name">Before and after</span>' }
+      : { key, screens: screenParts });
+    if (thread) {
+      return `<section data-shots="1" data-shots-state="verified" aria-label="Before and after" class="dev-change-shots-body">${viewer}${items.length ? `<ol class="shots-claims">${items.join('')}</ol>` : ''}</section>`;
+    }
     // Ready shots can be taken again too: after better steps or hints, or to
     // outline a run from before outlines were worked out. The route lets only
     // the author or an app manager do it.
@@ -22067,11 +22421,11 @@ const AppView = {
   // The work-state chip's SPEC. A chip whose state names a linked session
   // is a button that opens it; every other state is an inert span.
   //
-  // "Waiting for approval" (with or without "· you") is the one state that
-  // is filled rather than tinted: it is what the request is waiting on, and
-  // it stands in for the Build it now it hides (_issuePrimaryActionSpec).
-  _WORK_REVIEW_CLS: 'bg-violet-600 text-white dark:bg-violet-500 dark:text-white',
-  _WORK_REVIEW_HOVER: 'hover:bg-violet-700 dark:hover:bg-violet-600',
+  // "Waiting for approval" (with or without "· you") is drawn quietly, in
+  // the muted grey tint: it says where the request stands, and a solid
+  // filled chip made a settled state the loudest thing on the card.
+  _WORK_REVIEW_CLS: 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400',
+  _WORK_REVIEW_HOVER: 'hover:bg-zinc-500/20',
   _inProgressChipSpec(issue) {
     const st = AppView._issueWorkState(issue);
     if (!st) return null;

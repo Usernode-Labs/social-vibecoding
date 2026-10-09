@@ -9,9 +9,11 @@
 
 import { NONE, defineMachine, ok, reject } from '../kernel/index.ts';
 import type {
-  Check, DomainWrite, Event, Json, Machine, Notification, Outcome, TransitionContext, Tx, WorkRequest, WorkResultPayload,
+  Check, DomainWrite, Event, Json, Machine, Notification, Outcome, Push, TransitionContext, Tx, WorkRequest,
+  WorkResultPayload, WriteContext,
 } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
+import { appVersion, chatLine, issueUpdate, toUser, voteUpdate as votePush } from '../pushes.ts';
 import { readFacts } from './facts.ts';
 import type { Facts } from './facts.ts';
 
@@ -34,7 +36,10 @@ export const WORK = Object.freeze({
   journey: 'journey.changeLive',
 });
 
-export const NOTIFIERS = ['chat', 'voteUpdate', 'kickQueue', 'nudgeDeployer', 'appVersion', 'bell', 'mergedNotification'] as const;
+// Post-commit kicks into flows not migrated yet. What browsers hear is a
+// push, published with the transition (thread lines, the vote card, the
+// version pill, the bell).
+export const NOTIFIERS = ['kickQueue', 'nudgeDeployer', 'boardChange', 'badgeSync'] as const;
 
 // ── States ──────────────────────────────────────────────────────────────
 
@@ -160,8 +165,8 @@ function failureLine(d: Data, message: string): string {
 
 const chat = (e: Event<any>, appId: number, sessionId: number, content: string, metadata: Json = null): DomainWrite =>
   ({ type: 'chat', eventId: e.id, appId, thread: { type: 'session', ref: sessionId }, content, metadata });
-const voteUpdate = (d: Data, extra: object): Notification =>
-  ({ type: 'voteUpdate', sessionId: d.sessionId, appSlug: d.appSlug, appId: d.appId, merged: true, merging: false, selfHosted: d.selfHosted, ...extra });
+const voteUpdate = (d: Data, extra: Record<string, Json>): Push =>
+  votePush({ sessionId: d.sessionId, appSlug: d.appSlug, appId: d.appId, merged: true, merging: false, selfHosted: d.selfHosted, ...extra });
 
 // Every work item is a follow-up the admin view can read.
 function track(data: Data, work: WorkRequest[]): Data {
@@ -170,17 +175,14 @@ function track(data: Data, work: WorkRequest[]): Data {
   return { ...data, followups };
 }
 
-interface Extra { writes?: DomainWrite[]; work?: WorkRequest[]; messages?: Outcome['messages']; notify?: Notification[] }
+interface Extra {
+  writes?: DomainWrite[]; work?: WorkRequest[]; messages?: Outcome['messages']; push?: Push[]; notify?: Notification[];
+}
 
-// Writes that can add thread lines; their lines are broadcast after commit.
-const LINES = new Set(['chat', 'secrets', 'bounties', 'mergedLine']);
-
+// The writes that add thread lines push them with the rows they inserted.
 function outcome(name: Going['name'], data: Data, x: Extra = {}): Outcome<MFState> {
   const work = x.work || [];
-  const notify = [...(x.notify || [])];
-  const lined = (x.writes || []).find((w) => LINES.has(w.type));
-  if (lined) notify.push({ type: 'chat', appId: data.appId, eventId: lined.eventId });
-  return { next: { name, data: track(data, work) }, writes: x.writes, work, messages: x.messages, notify };
+  return { next: { name, data: track(data, work) }, writes: x.writes, work, messages: x.messages, push: x.push, notify: x.notify };
 }
 
 const carrierRef = (d: Data): CarrierRef => ({ sessionId: d.sessionId, prNumber: d.prNumber, prTitle: d.prTitle });
@@ -198,10 +200,9 @@ function toLive(e: Event<any>, data: Data, deliveredSha: string | null, ctx: Tra
   const messages = [...(x.messages || []), ...d.included.map((id) => ({
     to: { machine: MACHINE, key: sessionKey(id) }, event: { type: 'CarrierDelivered', payload: { sha: deliveredSha } },
   }))];
-  const notify = [...(x.notify || []), voteUpdate(d, { live: true }),
-    { type: 'mergedNotification', sessionId: d.sessionId, userId: d.authorId }];
-  if (d.role === 'merge') notify.push({ type: 'appVersion', appId: d.appId, appSlug: d.appSlug, sha: deliveredSha, prNumber: d.prNumber });
-  return outcome('live', d, { writes, work, messages, notify });
+  const push = [...(x.push || []), voteUpdate(d, { live: true })];
+  if (d.role === 'merge') push.push(appVersion({ appId: d.appId, appSlug: d.appSlug, sha: deliveredSha, prNumber: d.prNumber }));
+  return outcome('live', d, { writes, work, messages, push, notify: x.notify });
 }
 
 function lineInput(d: Data) {
@@ -216,7 +217,7 @@ function toFailed(e: Event<any>, data: Data, message: string, x: Extra = {}): Ou
   const messages = [...(x.messages || []), ...d.included.map((id) => ({
     to: { machine: MACHINE, key: sessionKey(id) }, event: { type: 'CarrierDeployFailed', payload: { message } },
   }))];
-  return outcome('deploy_failed', d, { ...x, writes, messages, notify: [...(x.notify || []), voteUpdate(d, { deployFailed: true })] });
+  return outcome('deploy_failed', d, { ...x, writes, messages, push: [...(x.push || []), voteUpdate(d, { deployFailed: true })] });
 }
 
 function deliverWork(d: Data, f: Facts | null): WorkRequest {
@@ -276,12 +277,12 @@ function merged(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFStat
     work.push({ kind: WORK.find, key: 'included', input: { sessionId: d.sessionId, appId: d.appId, prNumber: d.prNumber, ...d.repo } });
   }
   if (d.mergeSha) work.push({ kind: WORK.mainCheck, key: 'main-check', input: { appId: d.appId, sessionId: d.sessionId, prNumber: d.prNumber, mergeSha: d.mergeSha } });
-  const notify: Notification[] = [voteUpdate(d, {}), { type: 'kickQueue', appId: d.appId, excludeSessionId: d.sessionId },
-    { type: 'bell', sessionId: d.sessionId }];
+  const notify: Notification[] = [{ type: 'kickQueue', appId: d.appId, excludeSessionId: d.sessionId },
+    { type: 'badgeSync', sessionId: d.sessionId }];
   if (app.selfHosted) notify.push({ type: 'nudgeDeployer', sha: d.mergeSha, prNumber: d.prNumber });
   const x: Extra = {
     writes: [{ type: 'secrets', eventId: e.id, sessionId: d.sessionId, appId: d.appId }, ...settleWrites(e, d, s)],
-    work, notify,
+    work, notify, push: [voteUpdate(d, {})],
   };
   // The platform's own release reports itself when it boots, to the merges
   // waiting then. A merge recorded after such a boot (recovery finding it
@@ -341,7 +342,8 @@ function included(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFSt
     writes: [...settleWrites(e, d, s), chat(e, d.appId, d.sessionId, changes.threadLine(legacyRow(d), legacyRow(ref), { live }),
       { included: { sessionId: d.sessionId, inSessionId: ref.sessionId, inPrNumber: ref.prNumber } })],
     work,
-    notify: [voteUpdate(d, { includedIn: ref.sessionId }), { type: 'bell', sessionId: d.sessionId }],
+    push: [voteUpdate(d, { includedIn: ref.sessionId })],
+    notify: [{ type: 'badgeSync', sessionId: d.sessionId }],
   };
   if (p.carrierState === 'live') return toLive(e, d, p.deliveredSha, ctx, x);
   if (p.carrierState === 'deploy_failed') return toFailed(e, d, 'the change that carried it did not deploy', { ...x });
@@ -377,6 +379,14 @@ function workResult(status: Followup['status']) {
             carrierState: s.name, deliveredSha: d.deliveredSha,
           } },
         })) };
+      }
+      // The requests it closed: the open-issues lists re-read. (The handler
+      // used to say so midway; it is said when the work ends.)
+      // Only when it ran: GitHub off skips it, as [main]'s merge did.
+      if (p.kind === WORK.issues && status === 'done' && !(result as { skipped?: string }).skipped
+        && !(prev.input as { closeOnly?: boolean } | null)?.closeOnly) {
+        return { next: { name: s.name, data: d }, push: [issueUpdate({ action: 'github_synced', appSlug: d.appSlug, appId: d.appId, source: 'pr_merged' })],
+          notify: [{ type: 'boardChange', appId: d.appId, appSlug: d.appSlug }] };
       }
       return { next: { name: s.name, data: d } };
     },
@@ -525,18 +535,23 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
       },
     },
     writes: {
-      chat: writeChat,
+      chat: (tx, w, ctx) => writeChat(tx, w, ctx),
       event: async (tx, w) => tx.query(
         `INSERT INTO events (user_id, app_id, session_id, event_type, metadata) VALUES ($1, $2, $3, $4, $5::jsonb)`,
         [w.userId ?? null, w.appId, w.sessionId, w.eventType, JSON.stringify(w.metadata || {})]),
-      secrets: (tx, w) => writeSecrets(tx, w, deps.dataKey),
+      secrets: (tx, w, ctx) => writeSecrets(tx, w, deps.dataKey, ctx),
       bounties: writeBounties,
       agentNote: async (tx, w) => {
         if (!w.agentSessionId) return;
         await legacy('services/agent-sessions').noteChangeClosed(tx,
           { change: { id: w.sessionId, agent_session_id: w.agentSessionId, pr_number: w.prNumber }, outcome: 'merged' });
       },
-      bell: (tx, w) => legacy('services/notifications').settleDecidedChange(tx, w.sessionId, { status: 'merged', push: false }),
+      // Everyone with a bell row about the change re-reads their bell.
+      bell: async (tx, w, ctx) => {
+        await legacy('services/notifications').settleDecidedChange(tx, w.sessionId, { status: 'merged', push: false });
+        const { rows } = await tx.query('SELECT DISTINCT user_id FROM notifications WHERE session_id = $1', [w.sessionId]);
+        for (const r of rows) ctx.push(toUser(r.user_id, { type: 'notifications_changed' }));
+      },
       mergedLine: writeMergedLine,
       mergedNotification: writeMergedNotification,
     },
@@ -564,22 +579,23 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
 
 // ── Domain writes ───────────────────────────────────────────────────────
 
-// A thread line, marked with its event so the chat notifier broadcasts it.
-async function writeChat(tx: Tx, w: any) {
-  await tx.query(
+// A thread line, marked with its event, pushed to the app's room.
+async function writeChat(tx: Tx, w: any, ctx: WriteContext) {
+  const { rows: [row] } = await tx.query(
     `INSERT INTO chat_messages (app_id, content, msg_type, metadata, thread_type, thread_ref)
-     VALUES ($1, $2, 'system', $3, $4, $5)`,
+     VALUES ($1, $2, 'system', $3, $4, $5) RETURNING id, app_id, content, msg_type, metadata, thread_type, thread_ref, created_at`,
     [w.appId, w.content, JSON.stringify({ ...(w.metadata || {}), wfEvent: w.eventId }), w.thread.type, w.thread.ref]);
+  ctx.push(chatLine(row));
 }
-const line = (tx: Tx, eventId: number, appId: number, sessionId: number, content: string, metadata: Json = null) =>
-  writeChat(tx, { eventId, appId, content, metadata, thread: { type: 'session', ref: sessionId } });
+const line = (tx: Tx, ctx: WriteContext, eventId: number, appId: number, sessionId: number, content: string, metadata: Json = null) =>
+  writeChat(tx, { eventId, appId, content, metadata, thread: { type: 'session', ref: sessionId } }, ctx);
 
 // The values this proposal declared, written with the merge.
-async function writeSecrets(tx: Tx, w: any, dataKey: string) {
+async function writeSecrets(tx: Tx, w: any, dataKey: string, ctx: WriteContext) {
   const { applied, refused } = await legacy('services/pending-secrets').applyInTransaction(tx, { sessionId: w.sessionId, dataKey });
   for (const a of applied) {
     if (!a.hadValue) continue;
-    await line(tx, w.eventId, w.appId, w.sessionId, a.scope === 'platform'
+    await line(tx, ctx, w.eventId, w.appId, w.sessionId, a.scope === 'platform'
       ? `Platform variable "${a.key}" was declared and set by this proposal; takes effect on the platform's next deploy.`
       : `Secret "${a.key}" was declared and set by this proposal; redeploying…`);
     if (a.scope === 'platform') {
@@ -589,13 +605,13 @@ async function writeSecrets(tx: Tx, w: any, dataKey: string) {
     }
   }
   for (const r of refused) {
-    await line(tx, w.eventId, w.appId, w.sessionId, `Couldn't apply the value declared with this proposal for ${r.key}: ${r.reason}`);
+    await line(tx, ctx, w.eventId, w.appId, w.sessionId, `Couldn't apply the value declared with this proposal for ${r.key}: ${r.reason}`);
   }
 }
 
 // Bounties on the requests it closes go to its author, with their events
 // and lines in the same transaction.
-async function writeBounties(tx: Tx, w: any) {
+async function writeBounties(tx: Tx, w: any, ctx: WriteContext) {
   const votes = legacy('routes/votes');
   for (const n of w.numbers as number[]) {
     const { awarded } = await votes.resolveIssueBounty(tx, { appId: w.appId, sessionId: w.sessionId, awardeeUserId: w.userId, issueNumber: n });
@@ -604,14 +620,14 @@ async function writeBounties(tx: Tx, w: any) {
       `INSERT INTO events (user_id, app_id, session_id, event_type, metadata) VALUES ($1, $2, $3, 'bounty_awarded', $4::jsonb)`,
       [w.userId ?? null, w.appId, w.sessionId, JSON.stringify({ issueNumber: n, prNumber: w.prNumber, count: awarded.length })]);
     const recipient = w.userId ? `<@${w.userId}>` : 'the author';
-    await line(tx, w.eventId, w.appId, w.sessionId,
+    await line(tx, ctx, w.eventId, w.appId, w.sessionId,
       `Bounty on issue #${n} (${awarded.length} kudos) awarded to ${recipient} for PR #${w.prNumber || w.sessionId}`);
   }
 }
 
 // "<title> is live (PR #n). Built by …, backed by … (yes/active votes)",
 // with the names as metadata, as [main]'s merge wrote it.
-async function writeMergedLine(tx: Tx, w: any) {
+async function writeMergedLine(tx: Tx, w: any, ctx: WriteContext) {
   const votes = legacy('routes/votes');
   const session = { id: w.sessionId, app_id: w.appId, user_id: w.userId };
   const credits = w.force ? null : await votes.mergeCredits(tx, session, { before: w.mergedAt });
@@ -625,11 +641,12 @@ async function writeMergedLine(tx: Tx, w: any) {
     sessionId: w.sessionId, prNumber: w.prNumber || null, title: w.prTitle || '', author: credits.author || '',
     backers: credits.backers, shapers: credits.shapers, votes: `${yes}/${active}`,
   } } : null;
-  await line(tx, w.eventId, w.appId, w.sessionId, content, metadata);
+  await line(tx, ctx, w.eventId, w.appId, w.sessionId, content, metadata);
 }
 
-// The author's "your change is live", once (the push trigger rings it).
-async function writeMergedNotification(tx: Tx, w: any) {
+// The author's "your change is live", once (the push trigger rings it), and
+// on their open tabs.
+async function writeMergedNotification(tx: Tx, w: any, ctx: WriteContext) {
   if (!w.userId) return;
   let credits: string | null = null;
   if (w.includedIn) {
@@ -639,7 +656,13 @@ async function writeMergedNotification(tx: Tx, w: any) {
     const c = await votes.mergeCredits(tx, { id: w.sessionId, app_id: w.appId, user_id: w.userId }, { before: w.mergedAt });
     credits = votes.creditsSentence(c, { withAuthor: false }) || null;
   }
-  await legacy('services/notifications').createPrMergedNotification(tx, {
+  const created = await legacy('services/notifications').createPrMergedNotification(tx, {
     userId: w.userId, appId: w.appId, sessionId: w.sessionId, forced: !!w.force, credits,
   });
+  // Named, not carried: the relaying web process reads the row for the
+  // author's tabs (ws.js relayNotification), so the bell's query never runs
+  // in, or holds up, the transition that makes the change live.
+  for (const row of created || []) {
+    ctx.push(toUser(Number(row.user_id), { type: 'notification_new', notificationId: Number(row.id) }));
+  }
 }

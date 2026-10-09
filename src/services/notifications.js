@@ -1055,48 +1055,54 @@ async function notifyManagedOpenRouterReviewAdmins(pool, args) {
 async function hydrateAndPush(pool, row) {
   if (!row || !row.id) return;
   try {
-    const { rows } = await pool.query(
-      `SELECT n.id, n.kind, n.user_id, n.read_at, n.created_at,
-              n.app_id, a.slug AS app_slug, a.name AS app_name,
-              n.chat_message_id,
-              cm.content AS message_content,
-              cm.thread_type, cm.thread_ref,
-              n.session_id,
-              cs.session_title, cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
-              cs.agent_session_id,
-              n.conversation_id, c.kind AS conversation_kind,
-              c.title AS conversation_title,
-              n.conversation_message_id,
-              conversation_message.content AS conversation_message_content,
-              conversation_message.thread_root_id AS conversation_thread_root_id,
-              su.username AS source_username,
-              n.source_user_id,
-              ${FRIEND_REQUEST_PENDING_SQL} AS friend_request_pending,
-              n.detail,
-              pv.reason AS vote_reason,
-              ${LIVE_ROW_COLUMNS_SQL}
-       FROM notifications n
-       LEFT JOIN apps a ON a.id = n.app_id
-       LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
-       LEFT JOIN chat_sessions cs ON cs.id = n.session_id
-       LEFT JOIN conversations c ON c.id = n.conversation_id
-       LEFT JOIN conversation_messages conversation_message
-         ON conversation_message.id = n.conversation_message_id
-       LEFT JOIN users su ON su.id = n.source_user_id
-       LEFT JOIN pr_votes pv ON pv.session_id = n.session_id AND pv.user_id = n.source_user_id
-       ${FILED_MESSAGE_JOIN_SQL}
-       WHERE n.id = $1 AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}`,
-      [row.id]
-    );
-    if (!rows.length) return;
+    const hydrated = await hydrateNotification(pool, row.id);
+    if (!hydrated) return;
     const { pushNotificationToUser } = require('./ws');
-    pushNotificationToUser(rows[0].user_id, {
-      type: 'notification_new',
-      notification: serialize(rows[0]),
-    });
+    pushNotificationToUser(hydrated.userId, { type: 'notification_new', notification: hydrated.notification });
   } catch (err) {
     log.warn('notifications', 'hydrateAndPush failed', { id: row.id, err: err.message });
   }
+}
+
+// One notification as the bell reads it, and whose it is, or null when the
+// viewer may no longer see it. One read: a workflow transition calls it in
+// its transaction and publishes the push itself.
+async function hydrateNotification(q, id) {
+  const { rows } = await q.query(
+    `SELECT n.id, n.kind, n.user_id, n.read_at, n.created_at,
+            n.app_id, a.slug AS app_slug, a.name AS app_name,
+            n.chat_message_id,
+            cm.content AS message_content,
+            cm.thread_type, cm.thread_ref,
+            n.session_id,
+            cs.session_title, cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
+            cs.agent_session_id,
+            n.conversation_id, c.kind AS conversation_kind,
+            c.title AS conversation_title,
+            n.conversation_message_id,
+            conversation_message.content AS conversation_message_content,
+            conversation_message.thread_root_id AS conversation_thread_root_id,
+            su.username AS source_username,
+            n.source_user_id,
+            ${FRIEND_REQUEST_PENDING_SQL} AS friend_request_pending,
+            n.detail,
+            pv.reason AS vote_reason,
+            ${LIVE_ROW_COLUMNS_SQL}
+     FROM notifications n
+     LEFT JOIN apps a ON a.id = n.app_id
+     LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
+     LEFT JOIN chat_sessions cs ON cs.id = n.session_id
+     LEFT JOIN conversations c ON c.id = n.conversation_id
+     LEFT JOIN conversation_messages conversation_message
+       ON conversation_message.id = n.conversation_message_id
+     LEFT JOIN users su ON su.id = n.source_user_id
+     LEFT JOIN pr_votes pv ON pv.session_id = n.session_id AND pv.user_id = n.source_user_id
+     ${FILED_MESSAGE_JOIN_SQL}
+     WHERE n.id = $1 AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}`,
+    [id]
+  );
+  if (!rows.length) return null;
+  return { userId: rows[0].user_id, notification: serialize(rows[0]) };
 }
 
 // PR-proposed (vote-request) notification. Fired when a session is
@@ -2023,6 +2029,7 @@ module.exports = {
   createManagedOpenRouterReviewNotifications,
   notifyManagedOpenRouterReviewAdmins,
   hydrateAndPush,
+  hydrateNotification,
   createPrProposedNotifications,
   createChangeReadyNotifications,
   createAppDeleteAttemptNotifications,

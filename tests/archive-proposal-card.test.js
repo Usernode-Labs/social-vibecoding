@@ -235,7 +235,7 @@ function explorePillId(state) {
   return pill ? pill.explore : null;
 }
 
-test("topic head for another user's proposal puts Explore on the card's band, not in More", () => {
+test("topic head for another user's proposal offers Explore as a row of the sheet's ⋯ (#4455)", () => {
   const { AppView, els, published, headHtml } = makeTopicHarness(ME);
   els['gc-thread-head'] = fakeHead();
   AppView._devTopic = { kind: 'proposal', id: 7 };
@@ -244,14 +244,11 @@ test("topic head for another user's proposal puts Explore on the card's band, no
   AppView._renderTopicHead();
 
   const html = headHtml();
-  // The change page's band carries what a reader most often does next,
-  // Explore first (card/dev-card.tsx draws the `explore` action as the
-  // gc-explore-chat-btn pill), so the ⋯ menu no longer repeats it.
-  assert.match(html, /gc-explore-chat-btn[^>]*data-proposal-id="7"/, 'Explore is a pill on the band');
+  // #4455: a change's page is a thread with no action band; everything
+  // that is not Vote or Preview is a row of the sheet header's ⋯.
+  assert.doesNotMatch(html, /gc-explore-chat-btn/, 'no band pill');
   const menu = AppView._cardMenus[published.at(-1).card.rail.menuKey];
-  assert.equal(menu.filter((a) => a.icon === 'explore').length, 0, 'and is not repeated in ⋯');
-  const band = published.at(-1).card.actions.find((a) => a.explore != null);
-  assert.equal(band && band.explore, 7, 'the band pill carries the session it opens');
+  assert.equal(menu.filter((a) => a.icon === 'explore').length, 1, 'Explore is one ⋯ row');
   assert.doesNotMatch(html, /id="proposal-ask-ai"/, 'the retired standalone is gone');
   assert.equal(explorePillId(published[published.length - 1]), 7,
     'the pill carries the session it opens — a painted-but-inert pill is a '
@@ -275,7 +272,7 @@ test("topic head for the viewer's OWN proposal shows no AI button", () => {
   assert.equal(explorePillId(published[published.length - 1]), null);
 });
 
-test("topic head for the viewer's OWN IMPORTED proposal puts Explore on the band (#1045)", () => {
+test("topic head for the viewer's OWN IMPORTED proposal offers Explore in the ⋯ (#1045, #4455)", () => {
   // The head has no delegated handler, so it must both PAINT the pill and
   // bind it — a head whose gate disagrees with the card leaves an inert
   // button. This is the case that regressed: mine && imported.
@@ -287,10 +284,9 @@ test("topic head for the viewer's OWN IMPORTED proposal puts Explore on the band
   AppView._renderTopicHead();
 
   const last = published[published.length - 1];
-  assert.match(headHtml(), /gc-explore-chat-btn[^>]*data-proposal-id="7"/, 'Explore is a pill on the band');
-  assert.equal(AppView._cardMenus[last.card.rail.menuKey].filter((a) => a.icon === 'explore').length, 0,
-    'and is not repeated in ⋯');
-  assert.equal((last.card.actions.find((a) => a.explore != null) || {}).explore, 7, 'the band pill is wired');
+  assert.doesNotMatch(headHtml(), /gc-explore-chat-btn/, 'no band pill');
+  assert.equal(AppView._cardMenus[last.card.rail.menuKey].filter((a) => a.icon === 'explore').length, 1,
+    'Explore is one ⋯ row');
   assert.ok(!last.body.actions.pills.some((p) => p.key === 'session'),
     'still no Open session (#687)');
   assert.equal(explorePillId(last), 7, 'and the pill knows which session to open');

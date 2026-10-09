@@ -131,6 +131,9 @@ async function finish(opts: ServiceOptions, w: Claimed, report: Report): Promise
 
 // Run one claimed item to completion. A lost lease aborts the handler's
 // signal and nothing is reported; the next claim resumes from the checkpoint.
+// A process stopping aborts it too, and a handler that ended on that signal
+// (it threw) reports nothing either; one that finished its work anyway
+// reports it, rather than have it run again after the lease lapses.
 export async function execute(opts: ServiceOptions, w: Claimed, stopping?: AbortSignal): Promise<void> {
   const h = opts.handlers.get(w.kind)!;
   const maxAttempts = h.maxAttempts ?? DEFAULTS.maxAttempts;
@@ -144,15 +147,16 @@ export async function execute(opts: ServiceOptions, w: Claimed, stopping?: Abort
   const onStop = () => abort.abort(new LeaseLost());
   stopping?.addEventListener('abort', onStop, { once: true });
   const live = `id = $1 AND claim_id = $2 AND status = 'running' AND lease_until > now()`;
+  let leaseLost = false;
   const renew = async (sql: string, values: unknown[]) => {
     const { rowCount } = await opts.pool.query(sql, values);
-    if (!rowCount) { abort.abort(new LeaseLost()); throw new LeaseLost(); }
+    if (!rowCount) { leaseLost = true; abort.abort(new LeaseLost()); throw new LeaseLost(); }
   };
   const heartbeat = setInterval(() => {
     renew(`UPDATE wf_work SET lease_until = now() + make_interval(secs => $3::float8 / 1000) WHERE ${live}`,
       [w.id, w.claim_id, leaseMs]).catch(() => {});
   }, Math.max(50, Math.floor(leaseMs / 3)));
-  let report: Report;
+  let report: Report | null;
   try {
     const value = await h.run({
       workId: w.id, kind: w.kind, key: w.work_key, input: w.input, attempt: w.attempt_count,
@@ -168,14 +172,15 @@ export async function execute(opts: ServiceOptions, w: Claimed, stopping?: Abort
     assertJson(result);
     report = { outcome: 'succeeded', result };
   } catch (err) {
-    if ((err as { permanent?: boolean })?.permanent) report = { outcome: 'failed', error: errorJson(err) };
+    if (abort.signal.aborted) report = null;
+    else if ((err as { permanent?: boolean })?.permanent) report = { outcome: 'failed', error: errorJson(err) };
     else if (w.attempt_count >= maxAttempts) report = { outcome: 'exhausted', error: errorJson(err) };
     else report = { outcome: 'retry', error: errorJson(err), delayMs: (h.backoffMs || defaultBackoff)(w.attempt_count) };
   } finally {
     clearInterval(heartbeat);
     stopping?.removeEventListener('abort', onStop);
   }
-  if (abort.signal.aborted) return;
+  if (leaseLost || !report) return;
   if (!await finish(opts, w, report)) {
     opts.log.warn('workflow', 'work lease lost before reporting', { kind: w.kind, workId: w.id });
   }
