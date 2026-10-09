@@ -513,10 +513,81 @@ function screenStats(text) {
     });
 }
 
+// ── The change list ────────────────────────────────────────────────────
+//
+// The screens figure's <ol data-changes> list, read whole: each entry's
+// number, its data-steps navigation trail and its plain-language text, and
+// the sizes the spec drew its screens at. Read for the bot's spec-derived
+// before/after declaration (homeroom-bot-live.js #4487). Tolerant like the
+// projection: an author who strays from the dialect gets an empty list, an
+// entry with what could be read of it, never an exception. Pure.
+function changeList(html) {
+  const doc = typeof html === 'string'
+    ? (extractHtmlSpec(html) ?? stripHtmlWrapperFence(html).trim())
+    : '';
+  if (!doc) return { changes: [], viewports: [] };
+  const changes = [];
+  const viewports = [];
+  const seenSizes = new Set();
+  let inChanges = 0;
+  let change = null;
+  const kept = () => ({
+    n: String(change.n || '').trim(),
+    steps: cleanInline(change.steps).trim(),
+    text: cleanInline(change.text).trim(),
+  });
+  for (const tok of tokenize(doc)) {
+    if (tok.type === 'raw') {
+      if (tok.name === 'template' && 'data-screen' in tok.attrs) {
+        const g = screenGeometry(tok.attrs);
+        if (!seenSizes.has(g.kind)) {
+          seenSizes.add(g.kind);
+          viewports.push({ kind: g.kind, width: g.width, height: g.height });
+        }
+      }
+      continue;
+    }
+    if (change) {
+      if (tok.type === 'text') {
+        change.text += cleanInline(decodeEntities(tok.text));
+      } else if (tok.type === 'close' && tok.name === 'li') {
+        changes.push(kept());
+        change = null;
+      } else if (tok.type === 'open' && tok.name === 'li' && inChanges) {
+        // The dialect never nests entries; an <li> opened inside one still
+        // open keeps what was collected and starts the next entry.
+        changes.push(kept());
+        change = {
+          n: tok.attrs['data-change'] || '',
+          steps: tok.attrs['data-steps'] || '',
+          text: '',
+        };
+      }
+      continue;
+    }
+    if (tok.type === 'open') {
+      if (tok.name === 'ol' && 'data-changes' in (tok.attrs || {})) inChanges += 1;
+      else if (tok.name === 'li' && inChanges) {
+        change = {
+          n: tok.attrs['data-change'] || '',
+          steps: tok.attrs['data-steps'] || '',
+          text: '',
+        };
+      }
+      continue;
+    }
+    // close: the change list's own </ol>; a nested list's closes only while
+    // an entry is open, and land in its text instead.
+    if (tok.name === 'ol' && inChanges && !change) inChanges -= 1;
+  }
+  return { changes, viewports };
+}
+
 module.exports = {
   MAX_SPEC_HTML_CHARS,
   SCREEN_SIZES,
   SCREEN_CHAR_BUDGET,
+  changeList,
   isHtmlSpec,
   extractHtmlSpec,
   stripInvisible,

@@ -14,6 +14,7 @@ const assert = require('node:assert/strict');
 const {
   isHtmlSpec,
   normalizeSpecOutput,
+  changeList,
   screenGeometry,
   specHtmlToMarkdown,
   stripHtmlWrapperFence,
@@ -178,4 +179,47 @@ test('screenStats measures each drawn screen and flags one past twice its budget
   assert.ok(normalizeSpecOutput(painting).html.includes('M0 0L1 1'), 'measured, never cut');
   assert.deepEqual(screenStats('# A markdown spec'), []);
   assert.deepEqual(screenStats(null), []);
+});
+
+// ── The change list, for the bot's shot declarations (#4487) ────────────
+// The proposal steps (the <ol data-changes> entries) and the drawn screen
+// sizes are what a proposal without a build declaration is shot from. The
+// reader hands them over as plain data: the entry's own words, its
+// data-steps trail verbatim, and each drawn size once, in document order.
+
+test('changeList reads the proposal steps and the drawn screen sizes', () => {
+  const { changes, viewports } = changeList(SPEC);
+  assert.deepEqual(changes, [
+    { n: '1', steps: 'Dev board → a proposal', text: 'The vote card says how many more approvals it needs' },
+    { n: '2', steps: '', text: 'It names who approved' },
+  ]);
+  assert.deepEqual(viewports, [
+    { kind: 'desktop', width: 1280, height: 800 },
+    { kind: 'phone', width: 390, height: 844 },
+  ]);
+});
+
+test('changeList keeps each drawn size once and carries inline text through', () => {
+  const doc = `<article data-spec><figure data-screens>
+    <ol data-changes><li data-change="1" data-steps="Home → Detail">A <strong>louder</strong> &amp; clearer title</li></ol>
+    <template data-screen data-size="desktop"><div>one</div></template>
+    <template data-screen data-size="desktop"><div>two, not counted again</div></template>
+  </figure></article>`;
+  const { changes, viewports } = changeList(doc);
+  assert.deepEqual(changes, [{ n: '1', steps: 'Home → Detail', text: 'A louder & clearer title' }]);
+  assert.deepEqual(viewports, [{ kind: 'desktop', width: 1280, height: 800 }]);
+});
+
+test('changeList answers nothing for a spec without a change list, and never throws', () => {
+  assert.deepEqual(changeList('# A markdown spec'), { changes: [], viewports: [] });
+  assert.deepEqual(changeList(null), { changes: [], viewports: [] });
+  assert.deepEqual(changeList(''), { changes: [], viewports: [] });
+});
+
+test('changeList reads a document wrapped in a markdown fence, like the stored spec', () => {
+  const wrapped = '```html\n<article data-spec><figure data-screens><ol data-changes>'
+    + '<li data-change="1" data-steps="Home">Shown on the home screen</li>'
+    + '</ol></figure></article>\n```';
+  const { changes } = changeList(wrapped);
+  assert.deepEqual(changes, [{ n: '1', steps: 'Home', text: 'Shown on the home screen' }]);
 });

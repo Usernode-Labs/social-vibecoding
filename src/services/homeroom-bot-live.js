@@ -70,6 +70,7 @@ const {
   getConventionSection,
 } = require('./prompts');
 const specHtml = require('./spec-html');
+const visibleChangesContract = require('./visible-changes');
 const stageCosts = require('./stage-costs');
 const { IN_LOOP_BROWSER_GUIDANCE } = require('./in-loop-browser');
 const buildContract = require('./build-contract');
@@ -1464,13 +1465,113 @@ async function openBotProposal(pool, botId, appId, issueNumber) {
 
 // ── Proposing ────────────────────────────────────────────────────────────
 
+// #4487: a person's proposal gets before/after shots because its build
+// declared what a person will see (declare_visible_changes). A bot proposal
+// used to go up with nothing recorded, so its shots run stopped at "no
+// declared change recorded" and voters read only the spec's text and drawn
+// screens. An HTML bot spec already lists its visible changes and the steps
+// to reach them (<ol data-changes data-steps>, spec-html.js changeList):
+// that list becomes the version-1 declaration recorded at promote time when
+// the build itself declared nothing. The spec's dialect carries no route, so
+// each story starts at the app's own home ("/") and the data-steps trail
+// carries the navigation, passed through verbatim: an entry is never
+// rewritten into steps it does not have.
+
+/** The rationale the spec-derived declaration carries: where it came from. Pure. */
+const SPEC_DECLARED_RATIONALE = 'Declared from the plan\'s before-and-after change list.';
+
+/**
+ * The version-1 declaration an HTML spec's change list maps to, or null
+ * when it has none. Each list entry becomes one story: its text is the
+ * claim, the checkpoint and the focus (they all say what a person sees),
+ * and its data-steps trail is the one step. Screens drawn at a size make
+ * that size a viewport, the same desktop and phone the shots run records
+ * at; a spec that drew none gets the desktop. An entry with no text or no
+ * steps is skipped rather than guessed into a declaration, as is one whose
+ * steps do not fit the contract's single-line bound. Pure.
+ */
+function visibleChangesFromSpec(html) {
+  const { changes, viewports } = specHtml.changeList(html);
+  if (!changes.length) return null;
+  const screens = (viewports.length
+    ? viewports
+    : [{ kind: 'desktop', ...specHtml.SCREEN_SIZES.desktop }])
+    .slice(0, visibleChangesContract.MAX_VIEWPORTS)
+    .map((s) => ({ name: s.kind, width: s.width, height: s.height }));
+  const stories = [];
+  for (const entry of changes) {
+    if (stories.length >= visibleChangesContract.MAX_STORIES) break;
+    const text = String(entry?.text || '').trim();
+    const steps = String(entry?.steps || '').trim();
+    if (!text || !steps || steps.length > 200) continue;
+    // The id names the story's place in the declaration, not the spec's
+    // change number: it must always be a unique slug.
+    const n = stories.length + 1;
+    stories.push({
+      id: `change-${n}`,
+      claim: text.slice(0, visibleChangesContract.MAX_TEXT),
+      persona: 'member',
+      viewports: screens,
+      intent: {
+        startPath: '/',
+        steps: [steps],
+        checkpoint: text.slice(0, 500),
+        focus: text.slice(0, 200),
+      },
+    });
+  }
+  if (!stories.length) return null;
+  return {
+    version: visibleChangesContract.PLAN_VERSION,
+    impact: 'ui',
+    rationale: SPEC_DECLARED_RATIONALE,
+    stories,
+  };
+}
+
+/**
+ * The version-1 declaration this build's proposal is promoted with, or
+ * null. A build that called declare_visible_changes already has its
+ * declaration on the session, and that one wins; the spec's change list is
+ * only the fallback for a build that never did. `specHtmlDoc` is the spec's
+ * HTML the build worked from when it is in hand; otherwise the session's
+ * stored spec_html is read, which also covers a build a restart finished.
+ * The result is parsed through the one contract, so only a declaration that
+ * fits it is passed on. Never throws.
+ */
+async function visibleChangesForPromotion(pool, sessionId, specHtmlDoc = null) {
+  try {
+    const { rows } = await pool.query(
+      'SELECT shots_state, spec_html FROM chat_sessions WHERE id = $1',
+      [Number(sessionId)],
+    );
+    // Any recorded state is a declaration the build made: never replace it.
+    if (rows[0]?.shots_state) return null;
+    const derived = visibleChangesFromSpec(specHtmlDoc || rows[0]?.spec_html || null);
+    if (!derived) return null;
+    const checked = visibleChangesContract.safeParseIntent(derived);
+    if (!checked.ok) {
+      log.warn('homeroom-bot', 'The spec-derived declaration does not fit the contract; proposing without one', {
+        sessionId: Number(sessionId), errors: checked.errors,
+      });
+      return null;
+    }
+    return checked.value;
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not derive the proposal\'s declared changes; proposing without them', {
+      sessionId: Number(sessionId), err: err.message,
+    });
+    return null;
+  }
+}
+
 let votesRouter = null;
 
 /**
  * Run POST /api/sessions/:id/promote as the bot, in-process. Resolves the
  * status and JSON the route answered with; never throws.
  */
-function promoteAsBot({ config, bot, sessionId, router = null, ceiling = null }) {
+function promoteAsBot({ config, bot, sessionId, router = null, ceiling = null, visibleChanges = null }) {
   const target = router || (votesRouter ||= require('../routes/votes').voteRoutes(config));
   const url = `/api/sessions/${Number(sessionId)}/promote`;
   return new Promise((resolve) => {
@@ -1479,7 +1580,12 @@ function promoteAsBot({ config, bot, sessionId, router = null, ceiling = null })
     const done = (value) => { if (!settled) { settled = true; resolve(value); } };
     const req = {
       method: 'POST', url, originalUrl: url, baseUrl: '', path: url,
-      headers: {}, query: {}, params: {}, body: {}, cookies: {},
+      headers: {}, query: {}, params: {},
+      // The version-1 declaration the promote route records when the build
+      // itself declared none (#4487). Empty when there is none or the build
+      // declared its own.
+      body: visibleChanges ? { visibleChanges } : {},
+      cookies: {},
       // The marker app-access and the membership gate honour for the bot's
       // own session only: it proposes on apps in its live list whether or
       // not it is a collaborator or member there. Never an admin.
@@ -1535,6 +1641,30 @@ const BUILD_DESCRIPTION_LINES = Object.freeze([
   'test results: those belong in the summary above it. No em dashes: use a comma, a colon or a full stop. Skip the',
   'block only if you changed nothing.',
 ]);
+
+// #4487: the bot's proposals get before/after shots like everybody else's.
+// The worker's declare_visible_changes MCP tool records what a person will
+// see, and Homeroom's shots agent follows each declared change on the exact
+// builds. Said the way the dev chat's hosted-worker lifecycle says it to a
+// build (external-agent-tasks.js), with what differs here said plainly: a
+// build that never calls the tool is not left with nothing, because the
+// spec's drawn change list is recorded for the proposal instead — but only
+// an HTML spec has one, so the fallback line is said only there. Pure.
+function declareVisibleChangesLines({ htmlSpec = false } = {}) {
+  return [
+    '',
+    'Before you finish, declare what a person will see change, for the proposal\'s before/after shots: call the',
+    'provided declare_visible_changes MCP tool once, with one to three concrete changes you reached in the running',
+    'local app, each as a person reading the proposal would say it, with the steps a person follows to reach it,',
+    'what is on screen when it shows and the part of the screen that changed, or impact "none" with a short reason',
+    'when nothing visible changes. Declare only a state you actually reached; report an unreachable one in your',
+    'final message instead of guessing its steps. If the tool fails, say so in your final message and finish anyway,',
+    ...(htmlSpec
+      ? ['and never claim a declaration was recorded when it was not: the change list the spec drew is recorded for',
+         'the proposal instead, and the shots run follows it.']
+      : ['and never claim a declaration was recorded when it was not.']),
+  ];
+}
 
 // A build of the platform's own repository runs its tests the way that
 // repository's AGENTS.md asks every agent to: the suites that pin what it
@@ -1754,7 +1884,7 @@ function firstVersionDesignLines(starter = null) {
 
 function buildPrompt({
   seed, buildNote, spec = null, platformRepo = false, readsImages = false, firstVersion = false, guidance = null,
-  clock = null, starter = null,
+  clock = null, starter = null, htmlSpec = false,
 }) {
   const time = clock ? clockLines(clock) : [];
   const specBlock = spec
@@ -1796,6 +1926,7 @@ function buildPrompt({
     '',
     // #3737: the same design guidance the dev chat builds with (#2817).
     getDesignGuidance({ readsImages }),
+    ...declareVisibleChangesLines({ htmlSpec }),
     ...BUILD_DESCRIPTION_LINES,
   ].join('\n');
 }
@@ -2674,6 +2805,7 @@ async function buildAndPropose({
   const prompt = buildPrompt({
     seed, buildNote, spec: spec.ok ? spec.specMd : null, platformRepo, readsImages, firstVersion, starter, guidance: buildGuidance,
     clock: { startedAt: turnStartedMs, budgetMs: turnBudgetMs },
+    htmlSpec: !!(spec.ok && spec.specHtml),
   });
   // What the build was last doing, so a turn stopped on its clock says what
   // it was waiting on (#3385): 12 of the first 18 shadow failures were
@@ -2833,8 +2965,16 @@ async function buildAndPropose({
     pool, bot, sessionId: session.id, spec: spec.ok ? spec.specMd : null,
     buildText: result.lastResultText, model,
   });
+  // #4487: what the shots run follows. The build's own declaration wins;
+  // the spec's change list is only the fallback for a build that never
+  // declared one. Best-effort either way: a proposal goes up without one
+  // rather than not going up.
+  const declaredChanges = await visibleChangesForPromotion(
+    pool, session.id, spec.ok ? (spec.specHtml || null) : null,
+  );
   const promoted = await promoteAsBot({
     config, bot, sessionId: session.id, router: deps.votesRouter || null, ceiling: proposalCeiling,
+    ...(declaredChanges ? { visibleChanges: declaredChanges } : {}),
   });
   if (promoted.status !== 200 || !promoted.body?.ok) {
     const why = promoted.body?.error || promoted.body?.message || `promotion answered ${promoted.status}`;
@@ -2989,6 +3129,10 @@ module.exports = {
   botUsernameOf,
   openBotProposal,
   promoteAsBot,
+  visibleChangesFromSpec,
+  visibleChangesForPromotion,
+  declareVisibleChangesLines,
+  SPEC_DECLARED_RATIONALE,
   prepareProposal,
   proposalTitle,
   specUserFacing,

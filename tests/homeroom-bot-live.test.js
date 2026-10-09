@@ -1039,3 +1039,90 @@ test('#3426: a request with a screenshot tells each bot turn to look at it, and 
   assert.match(BOT_SRC, /seed, live\.screenshotNote\(seed\)\.join\('\\n'\)\.trim\(\), triagePrompt\(\)/, 'and the triage');
   assert.ok(!live.buildPrompt({ seed: 'Issue #3', buildNote: 'x' }).includes('Download each one'));
 });
+
+// ── Shots for the bot's proposals (#4487) ────────────────────────────────
+// A bot proposal is shot from the change list its spec drew, unless the
+// build turn declared its own through the tool. The spec steps pass through
+// verbatim; an entry without words or steps is skipped; a spec with no
+// change list declares nothing at all.
+
+const SPEC_CHANGES = `<article data-spec><figure data-screens>
+  <ol data-changes>
+    <li data-change="1" data-steps="Dev board → a proposal">The vote card says how many more approvals it needs</li>
+    <li data-change="2">No steps, so no shot</li>
+    <li data-change="3" data-steps="Home → Settings">A claim and a trail</li>
+  </ol>
+  <template data-screen data-size="desktop"><div>one</div></template>
+  <template data-screen data-size="phone"><div>two</div></template>
+</figure></article>`;
+
+test('the spec change list becomes a version-1 declaration the contract accepts', (t) => {
+  const contract = require('../src/services/visible-changes');
+  const declared = live.visibleChangesFromSpec(SPEC_CHANGES);
+  assert.equal(declared.version, 1);
+  assert.equal(declared.impact, 'ui');
+  assert.equal(declared.rationale, live.SPEC_DECLARED_RATIONALE);
+  assert.equal(declared.stories.length, 2, 'the entry without steps is skipped');
+  const [first, second] = declared.stories;
+  assert.equal(first.id, 'change-1');
+  assert.equal(first.claim, 'The vote card says how many more approvals it needs');
+  assert.equal(first.persona, 'member');
+  assert.deepEqual(first.viewports, [{ name: 'desktop', width: 1280, height: 800 }, { name: 'phone', width: 390, height: 844 }]);
+  assert.equal(first.intent.startPath, '/');
+  assert.deepEqual(first.intent.steps, ['Dev board → a proposal'], 'steps pass through verbatim');
+  assert.equal(first.intent.checkpoint, first.claim);
+  assert.equal(first.intent.focus, first.claim);
+  assert.equal(second.id, 'change-2', 'ids count the kept entries, not the spec\'s numbers');
+  assert.deepEqual(second.intent.steps, ['Home → Settings']);
+  const checked = contract.safeParseIntent(declared);
+  assert.equal(checked.ok, true, JSON.stringify(checked.errors || null));
+});
+
+test('the declaration never exceeds three stories, and a spec without a change list declares nothing', () => {
+  const entries = Array.from({ length: 5 }, (_, i) => `<li data-change="${i + 1}" data-steps="Home">Change ${i + 1}</li>`).join('');
+  const five = live.visibleChangesFromSpec(`<article data-spec><figure data-screens><ol data-changes>${entries}</ol></figure></article>`);
+  assert.equal(five.stories.length, 3);
+  const none = live.visibleChangesFromSpec('<article data-spec><p>No change list here</p></article>');
+  assert.equal(none, null);
+  assert.equal(live.visibleChangesFromSpec(null), null);
+});
+
+test('the spec-derived declaration is the fallback only: a build that declared wins', async () => {
+  const queries = [];
+  const pool = {
+    async query(sql, params) {
+      queries.push({ sql: String(sql), params });
+      if (/FROM chat_sessions WHERE id = \$1/.test(String(sql))) {
+        return { rows: [pool.row] };
+      }
+      throw new Error(`unexpected query: ${String(sql).slice(0, 80)}`);
+    },
+  };
+  // The build declared (any recorded state, including not_required): the bot passes nothing.
+  pool.row = { shots_state: 'planned', spec_html: SPEC_CHANGES };
+  assert.equal(await live.visibleChangesForPromotion(pool, 5001, null), null);
+  pool.row = { shots_state: 'not_required', spec_html: SPEC_CHANGES };
+  assert.equal(await live.visibleChangesForPromotion(pool, 5001, null), null);
+  // No build declaration: the spec's list is read, in-memory first, then the stored column.
+  pool.row = { shots_state: null, spec_html: null };
+  const fromMemory = await live.visibleChangesForPromotion(pool, 5001, SPEC_CHANGES);
+  assert.equal(fromMemory.impact, 'ui');
+  assert.equal(fromMemory.stories.length, 2);
+  pool.row = { shots_state: null, spec_html: SPEC_CHANGES };
+  const fromColumn = await live.visibleChangesForPromotion(pool, 5001, null);
+  assert.deepEqual(fromColumn, fromMemory, 'a recovery build reads the stored spec');
+  // Nothing to read at all: no declaration, not a guessed one.
+  pool.row = { shots_state: null, spec_html: null };
+  assert.equal(await live.visibleChangesForPromotion(pool, 5001, null), null);
+  // A failed read never blocks a promotion.
+  assert.equal(await live.visibleChangesForPromotion({ async query() { throw new Error('down'); } }, 5001, null), null);
+});
+
+test('the build prompt asks for declare_visible_changes, and knows the spec list is its fallback', () => {
+  const base = live.buildPrompt({ seed: 'Issue #3', buildNote: 'x' });
+  assert.match(base, /declare_visible_changes/);
+  assert.match(base, /impact "none"/);
+  assert.ok(!base.includes('the change list the spec drew'), 'a markdown spec has no change list to fall back on');
+  const withHtml = live.buildPrompt({ seed: 'Issue #3', buildNote: 'x', htmlSpec: true });
+  assert.match(withHtml, /the change list the spec drew is recorded for/);
+});

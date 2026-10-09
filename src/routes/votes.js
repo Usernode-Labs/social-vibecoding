@@ -2731,6 +2731,29 @@ function voteRoutes(config) {
           });
         }
       }
+      // #4487: a proposal may arrive with the changes a person will see declared
+      // on its body — the Homeroom bot passes the version-1 declaration it
+      // derived from its spec's change list when its build never called
+      // declare_visible_changes. Recorded once the promotion is real,
+      // best-effort: a declaration that does not fit the contract never
+      // blocks the vote, and a failure logged here is exactly what the shots
+      // run would otherwise stop at (missing_intent).
+      if (config.shots?.collect) {
+        const declared = visibleChangesContract.declaredChanges(req.body);
+        if (declared !== undefined) {
+          try {
+            const recorded = await shotsState.recordIntent(pool, session.id, declared);
+            log.info('votes', 'Recorded the declared visible changes from the promote', {
+              sessionId: session.id, state: recorded.state, unchanged: recorded.unchanged === true,
+            });
+          } catch (err) {
+            log.warn('votes', 'Could not record the declared visible changes (promoting anyway)', {
+              sessionId: session.id, code: err.code || null, err: err.message,
+            });
+          }
+        }
+      }
+
       if (promotedHeadSha) {
         if (imported) session.imported_pr_head_sha = promotedHeadSha;
         else session.reviewed_head_sha = promotedHeadSha;
