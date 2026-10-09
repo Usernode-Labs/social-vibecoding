@@ -124,7 +124,25 @@ const MY_SESSIONS_WHERE = `cs.user_id = $1
        AND cs.status IN ('active', 'paused')
        AND cs.is_headless = FALSE`;
 
-const MY_PROPOSALS_WHERE = `cs.user_id = $1
+// A change the Homeroom bot built from a request YOU filed is your work in
+// flight too (#4538), though the session row names the bot as its author:
+// the OR asks the same two reads the bot's own queue names a request's
+// person by (services/homeroom-bot.js liveCandidates) — the requester
+// recorded when it was filed, or, failing that, the platform filer on the
+// request itself. A NULL created_from_issue_number matches neither (`=
+// NULL` is false), and both routes refuse an anonymous caller outright, so
+// $1 is never NULL here. The parentheses keep the status filter outside the
+// OR; the same EXISTS shaped as a per-row flag ride on /promoted
+// (src/routes/votes.js), which is where the strip's rows come from.
+const MY_PROPOSALS_WHERE = `(cs.user_id = $1
+       OR EXISTS (SELECT 1 FROM homeroom_bot_requesters r
+                   WHERE r.app_id = cs.app_id
+                     AND r.issue_number = cs.created_from_issue_number
+                     AND r.user_id = $1)
+       OR EXISTS (SELECT 1 FROM issues i
+                   WHERE i.app_id = cs.app_id
+                     AND i.github_issue_number = cs.created_from_issue_number
+                     AND i.created_by = $1))
        AND cs.status IN ('promoted', 'merging')`;
 
 const MY_GOVERNANCE_WHERE = `i.status = 'open'

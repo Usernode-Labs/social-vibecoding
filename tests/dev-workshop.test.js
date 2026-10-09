@@ -2032,6 +2032,46 @@ test('the viewer\u2019s own work in flight leads the lander', () => {
   assert.equal(AppView._workshopView().mine.count, 3, 'a search does not hide your own work (the two, and the third session above)');
 });
 
+test('#4538: a change the bot built from your request sits in Your work', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  // Two changes the bot built (the bot is the author on the row, the way
+  // /promoted carries it): one from a request the viewer filed, one from
+  // somebody else's. The server decides mine-ness — `built_from_my_request`
+  // on the row — so the browser reads the flag rather than re-deriving it.
+  AppView._proposals = [
+    { id: 63, pr_number: 63, pr_title: 'Rename the sort menu', status: 'promoted',
+      username: 'homeroom_bot', user_id: 7, created_at: at(0.5), promoted_at: at(0.5),
+      last_message_at: at(0.5), linked_issues: [20], my_vote: null, built_from_my_request: true },
+    { id: 64, pr_number: 64, pr_title: 'Another person\'s request', status: 'promoted',
+      username: 'homeroom_bot', user_id: 7, created_at: at(0.75), promoted_at: at(0.75),
+      last_message_at: at(0.75), linked_issues: [], my_vote: null },
+  ];
+  const v = AppView._workshopView();
+  assert.ok(plain(v.mine.rows).some((r) => r.key === 'mine:proposal:63'), 'built from your request: your work');
+  assert.ok(!plain(v.mine.rows).some((r) => r.key === 'mine:proposal:64'),
+    "built from somebody else's request: not yours");
+  // While it sits in Your work it leaves Needs your vote, the way your own
+  // proposals already do — the strip's dedup against the vote pane.
+  assert.ok(!plain(v.votes.rows).some((r) => r.key.includes('proposal:63')), 'not owed a vote twice');
+  // The row's own words: mine off-strip ("yours", not the bot's name) and
+  // nameless on the strip, as Your work draws every row.
+  const brief = plain(v.mine.rows.find((r) => r.key === 'mine:proposal:63').brief);
+  assert.equal(brief.mine, true);
+  const { rowWords } = loadTsx('frontend/src/features/dev-board/workshop/work-row.tsx');
+  assert.ok(rowWords(brief, false).includes('yours'), 'off-strip the row reads "yours"');
+  assert.ok(!rowWords(brief, false).includes('homeroom_bot'), 'never the bot\'s name on a row of yours');
+  assert.ok(!rowWords(brief, true).includes('yours'), 'Your work names no author on its own rows');
+
+  // Rendered: the strip holds it, and the Hub's Your work card does too.
+  const html = workshopHtml(AppView, 'workshop');
+  assert.match(html, /data-ws-row="mine:proposal:63"/);
+  assert.match(html, /data-ws-lane="mine"/);
+  const hub = workshopHtml(AppView, 'status');
+  assert.match(hub, /data-ws-mine-card=""/);
+  assert.match(hub, /data-ws-row="mine:proposal:63"/);
+});
+
 test('#2496: an issue you are working on joins "What you are working on"', () => {
   const AppView = makeAppView();
   seed(AppView);

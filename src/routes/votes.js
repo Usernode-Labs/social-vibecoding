@@ -4222,6 +4222,26 @@ function voteRoutes(config) {
            -- "the author must update this branch in their fork" about a
            -- branch in the app's own repository (#2100).
            cs.imported_pr_head_repo,
+           -- #4538: the request the Homeroom bot built this change from, and
+           -- whether it was YOURS. The bot opens its build session under its
+           -- own account, so its user_id names the bot on every row it made
+           -- and the strip's own test (user_id = viewer) never fires; but the
+           -- session carries the request it came from, and the platform
+           -- records who a request is for (services/homeroom-bot.js
+           -- liveCandidates names the person the same two ways): the
+           -- requester recorded when it was filed, or, failing that, the
+           -- platform filer on the request itself. A NULL issue number and an
+           -- anonymous viewer match neither. The client reads the flag to sit
+           -- the row in Your work; the card keeps naming the bot.
+           cs.created_from_issue_number,
+           (EXISTS (SELECT 1 FROM homeroom_bot_requesters r
+                     WHERE r.app_id = cs.app_id
+                       AND r.issue_number = cs.created_from_issue_number
+                       AND r.user_id = $2)
+             OR EXISTS (SELECT 1 FROM issues i
+                     WHERE i.app_id = cs.app_id
+                       AND i.github_issue_number = cs.created_from_issue_number
+                       AND i.created_by = $2)) AS built_from_my_request,
            -- #967: which external coding agent wrote it, when the proposal
            -- came in through the hosted MCP connector ('claude-code' |
            -- 'codex' | 'external'). NULL for everything else. Drives the

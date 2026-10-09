@@ -9662,6 +9662,9 @@ const AppView = {
     const who = AppView._devCardAuthor(kind === 'my-session' || kind === 'shared-session' ? 'session' : kind, it);
     const mineBy = kind === 'my-session'
       || (meId != null && (String(it.user_id) === String(meId) || String(it.created_by) === String(meId)))
+      // #4538: built from a request you filed (the server's answer, carried
+      // on the /promoted row) — the row is yours even though the bot made it.
+      || it.built_from_my_request === true
       || (!!who && !!App.user && who === App.user.username);
     const nums = (arr) => AppView._sanitizeIssueNumbers(Array.isArray(arr) ? arr : []);
     const tags = [];
@@ -10899,8 +10902,14 @@ const AppView = {
     const mineItems = [
       ...mineOf(buckets.inProgress, (e) => e.kind === 'my-session')
         .map((e) => ({ kind: 'my-session', item: e.item })),
+      // #4538: a change the Homeroom bot built from a request YOU filed is
+      // your work in flight too, though the session names the bot as its
+      // author. The server decided (built_from_my_request on the /promoted
+      // row), so the browser reads the flag rather than re-deriving it from
+      // a board request list it may only hold a page of. Its card keeps
+      // naming the bot; only the lists change.
       ...mineOf(buckets.inReview, (x) => x.kind === 'proposal' && meId != null
-        && String(x.item.user_id) === String(meId))
+        && (String(x.item.user_id) === String(meId) || x.item.built_from_my_request === true))
         .map((x) => ({ kind: 'proposal', item: x.item })),
       // #2227: a governance proposal you opened — a propose-to-close, a
       // rename, a secret change — is your work in flight exactly as a code

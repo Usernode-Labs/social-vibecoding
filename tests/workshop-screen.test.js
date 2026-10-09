@@ -165,8 +165,10 @@ test('every hand-written copy of the governance kinds still agrees with the cons
 test('every predicate names the viewer, and the route refuses one it has not got', async () => {
   const sql = route.COUNTS_SQL;
   // Five populations, each gated on $1. Without this the anonymous case is
-  // not a smaller answer, it is the whole platform's.
-  assert.equal((sql.match(/\$1/g) || []).length, 8,
+  // not a smaller answer, it is the whole platform's. #4538: my proposals
+  // grew two more viewer reads — the requester and the filer a change built
+  // from your request is asked for by — still gated on the viewer.
+  assert.equal((sql.match(/\$1/g) || []).length, 10,
     'the viewer appears in every CTE predicate and in the collaborator join');
 
   // The refusal itself, driven rather than grepped: `getPool` is called once

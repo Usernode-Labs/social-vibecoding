@@ -592,6 +592,64 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     assert.equal((await read()).find((f) => f.title === 'Sunday reminder').approve, undefined);
   });
 
+  await t.test('#4538: a bot change built from YOUR request counts as your work in flight', async () => {
+    const overview = require('../src/routes/workshop-overview');
+    const me = await user();
+    const bot = await user();
+    const other = await user();
+    const garden = await app({ createdBy: bot.id });
+    // Four changes the bot built, the way /promoted carries them: the bot is
+    // the author on every row, and the session carries the request it came
+    // from. One is mine through the requester record the bot keeps when a
+    // request is filed; one through the platform filer on the request
+    // itself (the bot's record missing, as on an older request); one from
+    // SOMEBODY ELSE's request; and one with no request at all.
+    const build = async (title, issueNumber, ago) => (await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, pr_title, pr_number,
+                                  created_from_issue_number, last_activity_at)
+       VALUES ($1, $2, 'promoted', $3, 9, $4, NOW() - $5::interval) RETURNING id`,
+      [garden.id, bot.id, title, issueNumber, ago])).rows[0].id;
+    const fromMine = await build('From my request', 501, '1 hour');
+    const fromBoard = await build('From the board\'s request', 502, '2 hours');
+    const fromOther = await build('From another person\'s request', 503, '3 hours');
+    await build('No request behind it', null, '4 hours');
+    await pool.query('INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id) VALUES ($1, 501, $2)',
+      [garden.id, me.id]);
+    await pool.query('INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id) VALUES ($1, 503, $2)',
+      [garden.id, other.id]);
+    // The board's own row for request 502: filed through the platform, by me.
+    await pool.query(
+      `INSERT INTO issues (app_id, github_issue_number, title, kind, created_by)
+       VALUES ($1, 502, 'Tidy the planting bed', 'general', $2)`,
+      [garden.id, me.id]);
+    const working = async (viewer) => {
+      const counts = (await pool.query(overview.COUNTS_SQL, [viewer.id, false, false])).rows
+        .find((r) => r.slug === garden.slug);
+      const items = overview.groupItems(
+        (await pool.query(overview.ITEMS_SQL, [viewer.id, false, false, overview.ITEMS_PER_APP, overview.ITEMS_TOTAL])).rows
+      )[garden.slug] || { working: [], needs: [] };
+      return { counts: counts ? counts.working : 0, titles: items.working.map((i) => i.title) };
+    };
+    // The strip's number and its list agree, because both read the same
+    // WHERE body; each of my two shows, the other two do not.
+    assert.deepEqual(await working(me), {
+      counts: 2, titles: ['From my request', 'From the board\'s request'],
+    });
+    // For the person whose request the third was built from, it is theirs
+    // and mine are not.
+    assert.deepEqual(await working(other), {
+      counts: 1, titles: ['From another person\'s request'],
+    });
+    // The bot itself keeps every row through plain authorship (the session's
+    // user_id), unchanged by this: the flag only ever ADDS a viewer.
+    assert.deepEqual((await working(bot)).counts, 4);
+    // A change with no request behind it, and one built from a stranger's
+    // request, are never mine through their author alone.
+    const stranger = await user();
+    assert.deepEqual((await working(stranger)).counts, 0);
+    assert.ok(fromMine && fromBoard && fromOther, 'the fixtures built');
+  });
+
   await t.test('an app suspended by moderation leaves the Messages and Workshop lists, admins included', async () => {
     const overview = require('../src/routes/workshop-overview');
     const { DISCUSSIONS_SQL } = require('../src/routes/messages-overview');
