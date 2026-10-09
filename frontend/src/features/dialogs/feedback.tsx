@@ -27,9 +27,11 @@
  * the prerendered public/index.html that the hand-written shell never had.
  */
 
+import { useState } from 'react';
+
 import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
-import { CameraIcon, PaperclipIcon, PhotoIcon, VideoCameraIcon } from '@/components/ui/icons';
+import { CameraIcon, ChatIcon, DescriptionIcon, PaperclipIcon, PhotoIcon, VideoCameraIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -38,6 +40,7 @@ import { HostDropOverlay } from '../attachments/file-drag';
 import { FEEDBACK_DESCRIPTION_MAX } from '../../lib/issue-body-limit';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { returnKeyHandler } from '../../lib/return-to-next';
+import { formOffersComment, openCommentMode } from '../improve/suggest-shortcut';
 import { Feedback, init as initFeedback } from './feedback-controller';
 import { useDialog } from './use-dialog';
 
@@ -62,6 +65,16 @@ interface OpenOptions {
    */
   description?: string;
   screenshotBlob?: Blob;
+  /**
+   * Comment mode handing a box over (features/comment-pin/post.ts
+   * `handOverOptions`): its pictures, the page's with its pin beside it as
+   * data (#4482), the title the box showed, and its Kudos.
+   */
+  screenshots?: Array<{ blob: Blob; pin?: { x: number; y: number; note: string } }>;
+  title?: string;
+  bounty?: boolean;
+  /** 'form': this form, even where "Suggest an improvement" would open comment mode. */
+  mode?: 'form';
   firstFeedback?: { userId: number; appSlug: string | null; issueNumber: number; canFix: boolean };
 }
 
@@ -77,10 +90,26 @@ function feedbackLocked(): boolean {
 }
 
 export function FeedbackDialog() {
+  // Experimental (#4289): the form's switch to comment mode, offered where
+  // the device's switch is on, on a computer. Read on every open, since the
+  // setting lives on the device and can change between opens.
+  const [offersComment, setOffersComment] = useState(false);
   const dialog = useDialog<OpenOptions>('feedback', {
-    onOpen: (opts) => Feedback._open(opts || {}),
+    onOpen: (opts) => {
+      setOffersComment(formOffersComment());
+      Feedback._open(opts || {});
+    },
     onClose: () => Feedback._reset(),
   });
+  // Comment mode instead, taking the form's draft: the words wait for the
+  // first click on the page, and the pictures, title, Kudos and destination
+  // go into that comment's box.
+  const toComment = () => {
+    const carry = Feedback._takeDraft();
+    dialog.close();
+    const any = carry.text.trim() || carry.title || carry.images.length || carry.bounty;
+    openCommentMode({ via: 'switch', carry: any ? carry : null });
+  };
 
   // Was the middle of `App.bindEvents`. Layout effect, so the header's
   // speech-bubble button and the ?shot=feedback deep link are both live
@@ -121,6 +150,38 @@ export function FeedbackDialog() {
         <p className="mt-0.5 mb-4 text-sm text-zinc-600 dark:text-zinc-400">
           Members can see it, vote on it and pick it up.
         </p>
+        {/* Experimental (#4289): this form, or comment mode, where a click on
+            the page is the comment. React's own node, which the controller
+            never writes; hidden in the prerendered shell (the class, as the
+            rest of this card is), since the switch is off until a person
+            turns it on. The way chosen here is the way
+            "Suggest an improvement" opens next time. */}
+        <div className={offersComment ? '-mt-1 mb-4 flex items-center gap-2' : 'hidden'}>
+          <span className="inline-flex gap-0.5 rounded-full bg-zinc-100 p-[3px] dark:bg-zinc-800" role="radiogroup" aria-label="How to suggest it">
+            <button
+              type="button"
+              role="radio"
+              aria-checked="true"
+              title="The detailed form"
+              className="inline-flex h-7 items-center gap-1.5 rounded-full bg-white pl-2 pr-2.5 text-[13px] font-semibold text-zinc-900 shadow-sm ring-1 ring-black/5 dark:bg-zinc-700 dark:text-white"
+            >
+              <DescriptionIcon className="h-4 w-4" />
+              Detailed
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked="false"
+              title="Comment on the page"
+              onClick={toComment}
+              className="inline-flex h-7 items-center gap-1.5 rounded-full pl-2 pr-2.5 text-[13px] font-semibold text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
+            >
+              <ChatIcon className="h-4 w-4" />
+              Comment
+            </button>
+          </span>
+          <span className="text-xs text-zinc-500 dark:text-zinc-400">Click on the page to comment</span>
+        </div>
         {/*
             Target toggle: file this feedback against the app being viewed
             or against the Homeroom platform. The "This app" button

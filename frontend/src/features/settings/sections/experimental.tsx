@@ -31,10 +31,12 @@ import { LocalAgentsList } from '../local-agents-list';
  *
  * #4289 Press C to comment on the page (default OFF) is the one switch
  * here kept on the DEVICE, not the account: a keyboard shortcut belongs to
- * the keyboard in front of you. C drops a pin where the pointer is
- * (../../comment-pin/). ../../improve/suggest-shortcut.ts owns it
- * (localStorage) and publishes window.UsernodeReact.suggestShortcut, which
- * settings.js paints and saves the switch through.
+ * the keyboard in front of you. C turns on comment mode, where every click
+ * leaves a comment (../../comment-pin/), and Suggest an improvement can
+ * switch between it and the detailed form, opening whichever was used last.
+ * ../../improve/suggest-settings.ts keeps both (localStorage), and
+ * ../../improve/suggest-shortcut.ts publishes window.UsernodeReact.suggestShortcut,
+ * which settings.js paints and saves the switch through.
  *
  * #907 Local coding agent lives in the same pane (not the CLI section) because
  * it is a preview of the same feature the dev chat's "Run on" selector
@@ -81,7 +83,7 @@ export function ExperimentalSection() {
             Press C to comment on the page
           </SwitchRow>
           <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
-            On a computer, pressing C drops a pin where your pointer is. Type what should change and press Enter: it's posted as a suggestion, with a screenshot of the page that shows your pin. It does nothing while you're typing or have text selected, or when the screen or app you're in uses C for something of its own. Saved on this device only.
+            On a computer, press C to turn on comment mode. Click anything, say what should change and press Enter: each comment is posted as its own suggestion, with a screenshot of the page and your pin on it. Leave as many as you like, then press Done. Suggest an improvement can switch between comments and the detailed form, and opens whichever you used last. C does nothing while you're typing or have text selected, or when the screen or app you're in uses C for something of its own. Saved on this device only.
           </p>
         </div>
       </div>

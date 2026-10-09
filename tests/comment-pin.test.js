@@ -1,18 +1,22 @@
 'use strict';
 
-// The C comment (#4289 follow-up): a pin where the pointer is, a box beside
-// it, and Enter posts a request with a screenshot that shows the pin.
-// frontend/src/features/comment-pin/; the key itself is
-// tests/suggest-shortcut.test.js.
+// Comment mode (#4289 and its follow-ups): C, or "Suggest an improvement"
+// when it was used last, turns on a layer where every click leaves a
+// comment, each posted as its own request with a screenshot of the page and
+// its pin beside it as data (#4482). frontend/src/features/comment-pin/; the
+// key and the remembered way in are tests/suggest-shortcut.test.js.
 //
 // What is pinned, and each is a way it can be quietly wrong:
 //
-//   1. THE LAYOUT. The box on screen and the bubble drawn into the picture
-//      sit beside the pin by one rule, inside the viewport, and the words
-//      wrap the same way at any length.
-//   2. POSTING. The same two requests the dialog makes; a refusal with a
+//   1. THE LAYOUT. The box and an open marker's card sit beside their pins by
+//      one rule, inside the viewport.
+//   2. POSTING. The dialog's requests: every picture, then the request naming
+//      them, with the box's title, Kudos and the page's pin; a refusal with a
 //      reason stays in the box; offline, a network failure or a server error
-//      hands the comment to the dialog, words, picture and destination.
+//      hands the comment to the dialog, words, title, pictures, pin, Kudos
+//      and destination.
+//   2b. THE PIN AS DATA. The server writes the pin onto its picture's link by
+//      the same rule the request's page reads it back with.
 //   3. THE APP'S PICTURE. The bridge draws the app only for the platform's
 //      own origin (platform.json, https only), answers that origin alone,
 //      draws what is on screen at its scroll position, and puts the app's
@@ -46,19 +50,6 @@ test('the box sits right of the pin and below it, flipping at the edges and stay
   assert.deepEqual(picture.placeBeside({ x: 100, y: 650 }, size, vp), { x: 114, y: 476 }, 'flips up at the bottom');
   const tiny = picture.placeBeside({ x: 150, y: 80 }, size, { width: 320, height: 200 });
   assert.ok(tiny.x >= 8 && tiny.x + 300 <= 312 && tiny.y >= 8 && tiny.y + 160 <= 192, 'clamped when neither side fits');
-});
-
-test('the words wrap to the bubble, keep their line breaks, and end in an ellipsis past six lines', () => {
-  const measure = (s) => s.length * 10; // ten pixels a character
-  assert.deepEqual(picture.wrapLines('one two three four', 100, measure), ['one two', 'three four']);
-  assert.deepEqual(picture.wrapLines('one two three four', 90, measure), ['one two', 'three', 'four']);
-  assert.deepEqual(picture.wrapLines('first\nsecond', 200, measure), ['first', 'second']);
-  assert.deepEqual(picture.wrapLines('abcdefghijklmnop', 50, measure), ['abcde', 'fghij', 'klmno', 'p'], 'a long word breaks');
-  const long = picture.wrapLines(Array.from({ length: 40 }, (_, i) => `w${i}`).join(' '), 60, measure, 3);
-  assert.equal(long.length, 3);
-  assert.match(long[2], /…$/);
-  assert.ok(long.every((l) => measure(l) <= 60), 'no line is wider than the bubble');
-  assert.deepEqual(picture.wrapLines('', 100, measure), ['']);
 });
 
 test('the picture is the screen\'s own pixels, up to 2x, and never past 3000 on its long side', () => {
@@ -105,7 +96,7 @@ test('a comment is the dialog\'s two requests: the picture, then the request nam
   { status: 200, body: { url: 'u', homeroomBot: { botWillBuild: true } } },
 ], async (calls) => {
   const out = await post.postComment(base);
-  assert.deepEqual(out, { ok: true, botWillBuild: true });
+  assert.deepEqual(out, { ok: true, botWillBuild: true, url: 'u', title: '', bounty: null });
   assert.equal(calls[0].url, '/api/feedback/screenshot');
   assert.equal(calls[0].init.headers['Content-Type'], 'application/octet-stream');
   assert.equal(calls[0].init.body, blob);
@@ -128,8 +119,54 @@ test('a picture the server will not take does not cost the words', () => withFet
   { status: 400, body: { error: 'Not a PNG or JPEG' } },
   { status: 200, body: {} },
 ], async (calls) => {
-  assert.deepEqual(await post.postComment(base), { ok: true, botWillBuild: false });
+  assert.deepEqual(await post.postComment(base), { ok: true, botWillBuild: false, url: '', title: '', bounty: null });
   assert.equal(JSON.parse(calls[1].init.body).screenshotIds, undefined);
+}));
+
+const imageA = new Blob([new Uint8Array([0xff, 0xd8, 0xff])], { type: 'image/jpeg' });
+const imageB = new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1])], { type: 'image/png' });
+const full = {
+  ...base,
+  pin: { x: 0.25, y: 0.5 },
+  images: [imageA, imageB],
+  title: '  Bigger Join button  ',
+  bounty: true,
+  text: 'Make the Join   button\nbigger',
+};
+
+test('the box posts every picture first, then its title, Kudos and the page\'s pin beside its picture', () => withFetch([
+  { status: 200, body: { id: 'a'.repeat(32) } },
+  { status: 200, body: { id: 'b'.repeat(32) } },
+  { status: 200, body: { id: 'c'.repeat(32) } },
+  { status: 200, body: { url: 'https://github.com/o/r/issues/4490', title: 'Bigger Join button', bounty: { placed: true, remaining: 4 } } },
+], async (calls) => {
+  const out = await post.postComment(full);
+  assert.deepEqual(out, {
+    ok: true, botWillBuild: false, url: 'https://github.com/o/r/issues/4490', title: 'Bigger Join button',
+    bounty: { placed: true, remaining: 4, error: undefined },
+  });
+  assert.deepEqual(calls.slice(0, 3).map((c) => c.init.body), [blob, imageA, imageB], 'the page first, then the person\'s own');
+  assert.deepEqual(JSON.parse(calls[3].init.body), {
+    description: 'Make the Join   button\nbigger\n\nPinned with C in the app at /.',
+    target: 'app', appSlug: 'demo', title: 'Bigger Join button', bounty: true,
+    screenshotIds: ['a'.repeat(32), 'b'.repeat(32), 'c'.repeat(32)],
+    screenshotPins: [{ id: 'a'.repeat(32), x: 0.25, y: 0.5, note: 'Make the Join button bigger' }],
+  });
+  assert.equal(post.numberFromUrl(out.url), 4490);
+  assert.equal(post.numberFromUrl(''), null);
+}));
+
+test('no more than three pictures, and a pin only on a picture the server took', () => withFetch([
+  { status: 400, body: { error: 'Screenshot too large' } },
+  { status: 200, body: { id: 'b'.repeat(32) } },
+  { status: 200, body: { id: 'c'.repeat(32) } },
+  { status: 200, body: {} },
+], async (calls) => {
+  await post.postComment({ ...full, images: [imageA, imageB, imageA] });
+  assert.equal(calls.length, 4, 'the fourth image is never sent');
+  const body = JSON.parse(calls[3].init.body);
+  assert.deepEqual(body.screenshotIds, ['b'.repeat(32), 'c'.repeat(32)]);
+  assert.equal(body.screenshotPins, undefined, 'the page was refused, so there is nothing to pin');
 }));
 
 test('a refusal with a reason stays in the box; failures hand the comment to the dialog', async () => {
@@ -147,22 +184,92 @@ test('a refusal with a reason stays in the box; failures hand the comment to the
   });
 });
 
-test('handing over opens the dialog with the words, the picture and the chosen destination', () => {
+test('handing over opens the dialog with the words, the pictures, the pin, the title, Kudos and the destination', () => {
   const prev = globalThis.window;
   let got = null;
   globalThis.window = { App: { openFeedbackModal: (opts) => { got = opts; } } };
   try {
     post.handOver({ ...base, target: 'platform' });
+    assert.deepEqual(got, { target: 'platform', description: 'Make it bigger\n\nPinned with C in the app at /.', screenshots: [{ blob }] });
+    post.handOver(full);
   } finally {
     globalThis.window = prev;
   }
-  assert.deepEqual(got, { target: 'platform', description: 'Make it bigger\n\nPinned with C in the app at /.', screenshotBlob: blob });
+  assert.deepEqual(got, {
+    target: 'app',
+    description: 'Make the Join   button\nbigger\n\nPinned with C in the app at /.',
+    screenshots: [{ blob, pin: { x: 0.25, y: 0.5, note: 'Make the Join button bigger' } }, { blob: imageA }, { blob: imageB }],
+    title: 'Bigger Join button',
+    bounty: true,
+  });
 
   const fc = read('frontend/src/features/dialogs/feedback-controller.js');
   assert.match(fc, /if \(opts\.target === 'platform'\) setFeedbackTarget\('platform'\);/);
   assert.match(fc, /feedbackText\.value = typed \? `\$\{typed\}\\n\\n\$\{opts\.description\}` : opts\.description;/,
     'added after anything already typed, never over it');
-  assert.match(fc, /opts\.screenshotBlob instanceof Blob\s*\n\s*&& screenshots\.length < MAX_SCREENSHOTS\) \{\s*void attachScreenshotBlob\(opts\.screenshotBlob\);/);
+  assert.match(fc, /void attachScreenshotBlob\(handed\.blob, handed\.pin \|\| null\);/, 'each picture, its pin beside it');
+  assert.match(fc, /feedbackTitle\.value = opts\.title\.trim\(\)\.slice\(0, 200\);\s*titleDirty = true;/,
+    'the title the box showed is kept, not dropped as a stale suggestion');
+  assert.match(fc, /if \(opts\.bounty === true && !bountyCheckbox\.disabled\) bountyCheckbox\.checked = true;/);
+  // The form sends the pin beside the picture it was handed with.
+  assert.match(fc, /const pinned = screenshots\.find\(\(shot\) => shot\.id && shot\.pin\);\s*if \(pinned\) \{\s*body\.screenshotPins = \[\{ id: pinned\.id, x: pinned\.pin\.x, y: pinned\.pin\.y, note: String\(pinned\.pin\.note \|\| ''\) \}\];/);
+});
+
+// ── 2b. The pin as data (#4482) ───────────────────────────────────────
+
+const pinData = loadTsx('frontend/src/features/comment-pin/pin-data.ts');
+const feedbackRoute = require('../src/routes/feedback.js');
+
+test('the server writes the pin onto its picture\'s link by the rule the page reads it back with', () => {
+  const notes = [
+    'Make it bigger',
+    'Join (the button) & the #list, 100% wider! *really*',
+    'Préférences: “quotes” and 日本語 and 🏃‍♀️',
+    '  spaced\n\n  out  ',
+    'x'.repeat(400),
+    '日本語'.repeat(120),
+    '',
+  ];
+  for (const note of notes) {
+    const pin = { x: 0.123456, y: 0.98765, note };
+    assert.equal(feedbackRoute.pinFragment(pin), pinData.pinFragment(pin), `the same fragment for ${JSON.stringify(note.slice(0, 20))}`);
+    const back = pinData.readPin(`https://app.onhomeroom.com/issue-images/${'a'.repeat(32)}${feedbackRoute.pinFragment(pin)}`);
+    assert.deepEqual(back, { x: 0.1235, y: 0.9877, note: pinData.fitNote(note) });
+    assert.ok(feedbackRoute.pinFragment(pin).length <= 40 + pinData.NOTE_ENCODED_MAX, 'inside the body\'s reserve');
+    assert.doesNotMatch(feedbackRoute.pinFragment(pin), /[()\s]/, 'safe inside Markdown\'s parentheses');
+  }
+  assert.equal(pinData.readPin('https://x/issue-images/abc'), null);
+  assert.equal(pinData.readPin('https://x/issue-images/abc#pin=1.2,0.5'), null);
+  assert.equal(pinData.readPin('https://x/issue-images/abc#pin=-0.1,0.5'), null);
+  assert.equal(pinData.readPin('https://x/issue-images/abc#pin=a,b'), null);
+});
+
+test('a post may pin one of its own screenshots, on the picture, with words', () => {
+  const id = 'a'.repeat(32);
+  const ok = feedbackRoute.parseScreenshotPins({ screenshotPins: [{ id, x: 0, y: 1, note: 'Here' }] }, [id]);
+  assert.equal(ok.ok, true);
+  assert.deepEqual([...ok.pins], [[id, { x: 0, y: 1, note: 'Here' }]]);
+  assert.deepEqual(feedbackRoute.parseScreenshotPins({}, [id]), { ok: true, pins: new Map() });
+  const refuse = (pins, ids = [id]) => feedbackRoute.parseScreenshotPins({ screenshotPins: pins }, ids).ok;
+  assert.equal(refuse('nope'), false);
+  assert.equal(refuse([{ id: 'b'.repeat(32), x: 0.5, y: 0.5 }]), false, 'not one of the attached screenshots');
+  assert.equal(refuse([{ id, x: 1.5, y: 0.5 }]), false, 'off the picture');
+  assert.equal(refuse([{ id, x: Number.NaN, y: 0.5 }]), false);
+  assert.equal(refuse([{ id, x: '0.5', y: 0.5 }]), false);
+  assert.equal(refuse([{ id, x: 0.5, y: 0.5, note: 7 }]), false);
+  assert.equal(refuse([{ id, x: 0.5, y: 0.5 }, { id, x: 0.2, y: 0.2 }]), false, 'one pin per request');
+  assert.equal(feedbackRoute.MAX_PINS_PER_ISSUE, 1);
+
+  const one = feedbackRoute.buildScreenshotsEmbed([id], 'app.onhomeroom.com', ok.pins);
+  assert.equal(one, `\n\n**Screenshot:**\n![Screenshot](https://app.onhomeroom.com/issue-images/${id}#pin=0,1&note=Here)`);
+  const two = feedbackRoute.buildScreenshotsEmbed(['c'.repeat(32), id], 'app.onhomeroom.com', ok.pins);
+  assert.match(two, new RegExp(`!\\[Screenshot 1\\]\\(https://app\\.onhomeroom\\.com/issue-images/${'c'.repeat(32)}\\)`), 'only the pinned one carries it');
+  assert.match(two, new RegExp(`!\\[Screenshot 2\\]\\(https://app\\.onhomeroom\\.com/issue-images/${id}#pin=0,1&note=Here\\)`));
+  assert.equal(feedbackRoute.buildScreenshotsEmbed([id], 'd'), feedbackRoute.buildScreenshotEmbed(id, 'd'), 'no pins, the lines as they were');
+  const route = read('src/routes/feedback.js');
+  assert.match(route, /const parsedPins = parseScreenshotPins\(req\.body, screenshotIds\);\s*if \(!parsedPins\.ok\) return res\.status\(400\)/,
+    'checked before anything is filed');
+  assert.match(route, /buildScreenshotsEmbed\(screenshotIds, require\('\.\.\/services\/caddy'\)\.USERNODE_DOMAIN, parsedPins\.pins\)/);
 });
 
 // ── 3. The app's picture ──────────────────────────────────────────────
@@ -293,11 +400,19 @@ test('the drawing library is the pinned copy, recorded in the vendor README, ser
   assert.match(SNAPSHOT, /var LIB_SRC = "\/usernode-bridge\/v1\/snapdom\.js";/);
 });
 
-test('the comment opens on demand into a host of its own, and stands in the way of a second C', () => {
+test('comment mode opens on demand into a host of its own, once, and C asks it to leave', () => {
   const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
-  assert.match(src, /mountLegacyPortal\(host, createElement\(CommentPin,/);
-  assert.match(src, /role="dialog"\s+aria-modal="true"/, 'the shortcut\'s "a dialog is up" rule keeps C from stacking a second one');
-  assert.match(src, /if \(open \|\| typeof document === 'undefined'\) return;/);
+  assert.match(src, /mountLegacyPortal\(host, createElement\(CommentMode,/);
+  assert.match(src, /if \(openHost \|\| typeof document === 'undefined'\) return;/, 'never a second layer');
+  assert.match(src, /if \(openHost\) \{\s*if \(controller\) controller\.exit\(\);/, 'C again is Done');
+  // Done keeps words nobody has posted: it asks first.
+  assert.match(src, /const unposted = draft \? !draft\.sending && !!draft\.text\.trim\(\) : !!carry\?\.text\?\.trim\(\);\s*if \(unposted\) \{\s*setConfirmExit\(true\);/);
+  // The box is a dialog while it is up, so a C typed elsewhere stacks nothing on it.
+  assert.match(src, /id="comment-pin-box"\s+role="dialog"/);
+  // Each picture is drawn without the layer: no marker is ever in one.
+  assert.match(src, /const promise = takeBase\(\{\s*host,/);
+  // Posted clean, the pin beside it.
+  assert.match(src, /pin: picture \? d\.picture\.pin : null,/);
   // The dialog's rule for when a request can go to the app, read the same way.
   assert.match(src, /!\/github\\\.com\\\/\[\^\/\]\+\\\/\[\^\/\]\+\/\.test\(data\.repo_url \|\| ''\) \|\| data\.self_hosted/);
   assert.match(read('frontend/src/features/dialogs/feedback-controller.js'), /const hasRepo = \/github\\\.com\\\/\[\^\/\]\+\\\/\[\^\/\]\+\/\.test\(repoUrl\);/);

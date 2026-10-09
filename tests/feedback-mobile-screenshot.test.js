@@ -21,7 +21,8 @@ test('feedback offers native capture and a Photos fallback', () => {
 });
 
 test('all image sources converge on the existing attachment path', () => {
-  assert.match(controller, /const attachScreenshotBlob = async \(blob\) =>/);
+  // #4482: comment mode's hand-over passes the page's pin beside its picture.
+  assert.match(controller, /const attachScreenshotBlob = async \(blob, pin = null\) =>/);
   assert.equal(
     (controller.match(/await attachScreenshotBlob\(blob\)/g) || []).length,
     2,

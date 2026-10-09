@@ -52,9 +52,10 @@ function validateScreenshotUpload(data) {
 }
 
 // Pure (exported for tests): the exact markdown suffix appended to the
-// issue body for an attached screenshot.
-function buildScreenshotEmbed(id, domain) {
-  return `\n\n**Screenshot:**\n![Screenshot](https://${domain}/issue-images/${id})`;
+// issue body for an attached screenshot. `fragment` is its pin's (#4482,
+// pinFragment below), or nothing.
+function buildScreenshotEmbed(id, domain, fragment = '') {
+  return `\n\n**Screenshot:**\n![Screenshot](https://${domain}/issue-images/${id}${fragment})`;
 }
 
 // #3027: how many images one feedback submit may carry ("one before saving
@@ -100,12 +101,81 @@ function parseScreenshotIds(body) {
 // Pure (exported for tests): the issue-body suffix for every attached image.
 // One image keeps the exact pre-#3027 line, so an issue with one screenshot
 // reads as it always has; several are numbered under one heading, in the
-// order they were attached.
-function buildScreenshotsEmbed(ids, domain) {
+// order they were attached. `pins` (#4482) maps an id to its pin; that
+// image's link carries it as its fragment.
+function buildScreenshotsEmbed(ids, domain, pins = null) {
   if (!Array.isArray(ids) || ids.length === 0) return '';
-  if (ids.length === 1) return buildScreenshotEmbed(ids[0], domain);
-  const lines = ids.map((id, i) => `![Screenshot ${i + 1}](https://${domain}/issue-images/${id})`);
+  const fragment = (id) => (pins && pins.has(id) ? pinFragment(pins.get(id)) : '');
+  if (ids.length === 1) return buildScreenshotEmbed(ids[0], domain, fragment(ids[0]));
+  const lines = ids.map((id, i) => `![Screenshot ${i + 1}](https://${domain}/issue-images/${id}${fragment(id)})`);
   return `\n\n**Screenshots:**\n${lines.join('\n')}`;
+}
+
+// #4482: a C comment's pin, kept as data on its screenshot instead of drawn
+// into it, so the request's page can show the page clean or with the comment
+// on it. It rides on the image's link as the URL's fragment,
+//
+//   ![Screenshot](https://<domain>/issue-images/<id>#pin=0.4213,0.318&note=Make%20it%20bigger)
+//
+// which never reaches a server: GitHub's image proxy, the coding agents and
+// GET /issue-images/:id all see the plain picture, and the comment's words
+// and where line are in the body for them. The same rule as
+// frontend/src/features/comment-pin/pin-data.ts `pinFragment`, which reads it
+// back; tests/comment-pin.test.js holds the two together.
+//
+// A post carries `screenshotPins: [{ id, x, y, note }]`, at most one (a
+// comment has one pin, and its note is what the body's reserve has room
+// for, FEEDBACK_BODY_RESERVE): `id` one of the attached screenshotIds, `x`
+// and `y` fractions of the picture, `note` the comment's words.
+const MAX_PINS_PER_ISSUE = 1;
+const PIN_NOTE_MAX = 280;
+const PIN_NOTE_ENCODED_MAX = 800;
+
+function encodePinNote(s) {
+  return encodeURIComponent(s).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+}
+
+function fitPinNote(text) {
+  const chars = Array.from(String(text || '').replace(/\s+/g, ' ').trim());
+  let note = chars.length > PIN_NOTE_MAX ? `${chars.slice(0, PIN_NOTE_MAX - 1).join('').trimEnd()}\u2026` : chars.join('');
+  while (note && encodePinNote(note).length > PIN_NOTE_ENCODED_MAX) {
+    note = `${Array.from(note).slice(0, -2).join('').trimEnd()}\u2026`;
+  }
+  return note;
+}
+
+// Pure (exported for tests): the fragment for a pin, `#` included.
+function pinFragment(pin) {
+  const round4 = (n) => Math.round(Math.max(0, Math.min(1, n)) * 10000) / 10000;
+  const note = fitPinNote(pin.note);
+  return `#pin=${round4(pin.x)},${round4(pin.y)}${note ? `&note=${encodePinNote(note)}` : ''}`;
+}
+
+// Pure (exported for tests): the pins a POST /api/feedback body puts on its
+// screenshots. Returns { ok: true, pins } (a Map of id to { x, y, note },
+// empty when there are none) or { ok: false, error }.
+function parseScreenshotPins(body, screenshotIds) {
+  const raw = (body || {}).screenshotPins;
+  const pins = new Map();
+  if (raw === undefined || raw === null) return { ok: true, pins };
+  if (!Array.isArray(raw)) return { ok: false, error: 'screenshotPins must be an array' };
+  if (raw.length > MAX_PINS_PER_ISSUE) return { ok: false, error: 'A request carries one pin' };
+  const ids = new Set(screenshotIds || []);
+  for (const p of raw) {
+    if (!p || typeof p !== 'object' || !ids.has(p.id)) {
+      return { ok: false, error: 'A pin must be on an attached screenshot' };
+    }
+    const inside = (n) => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 1;
+    if (!inside(p.x) || !inside(p.y)) return { ok: false, error: 'A pin must be on the picture' };
+    if (p.note !== undefined && p.note !== null && typeof p.note !== 'string') {
+      return { ok: false, error: 'A pin note must be text' };
+    }
+    if (typeof p.note === 'string' && p.note.length > FEEDBACK_DESCRIPTION_MAX) {
+      return { ok: false, error: 'A pin note is too long' };
+    }
+    pins.set(p.id, { x: p.x, y: p.y, note: p.note || '' });
+  }
+  return { ok: true, pins };
 }
 
 // #3940: feedback-modal video attachments. Same shape as the screenshots
@@ -628,6 +698,9 @@ function feedbackRoutes(config) {
     const parsedShots = parseScreenshotIds(req.body);
     if (!parsedShots.ok) return res.status(400).json({ error: parsedShots.error });
     const screenshotIds = parsedShots.ids;
+    // #4482: and the pin a C comment keeps on its screenshot, as data.
+    const parsedPins = parseScreenshotPins(req.body, screenshotIds);
+    if (!parsedPins.ok) return res.status(400).json({ error: parsedPins.error });
     if (screenshotIds.length) {
       try {
         const { rows } = await pool.query(
@@ -834,7 +907,7 @@ function feedbackRoutes(config) {
       // the public /issue-images/:id URL GitHub's camo proxy, the in-app
       // topic view, and the coding agents can all fetch. Appended after
       // the description-length validation, so it never eats user budget.
-      const screenshotSuffix = buildScreenshotsEmbed(screenshotIds, require('../services/caddy').USERNODE_DOMAIN);
+      const screenshotSuffix = buildScreenshotsEmbed(screenshotIds, require('../services/caddy').USERNODE_DOMAIN, parsedPins.pins);
       // #3940: the clip's embed link, after the screenshots (the body's
       // reading order: what happened, then the stills, then the moving
       // picture).
@@ -1060,6 +1133,10 @@ module.exports = {
   parseScreenshotIds,
   buildScreenshotsEmbed,
   MAX_SCREENSHOTS_PER_ISSUE,
+  // #4482: a comment's pin as data on its screenshot — tests/comment-pin.test.js.
+  parseScreenshotPins,
+  pinFragment,
+  MAX_PINS_PER_ISSUE,
   // #3940: video attachments — tests/feedback-video.test.js.
   validateVideoUpload,
   buildVideoEmbed,
