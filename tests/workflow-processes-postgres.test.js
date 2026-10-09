@@ -157,6 +157,27 @@ test('workflow machines in a process of their own, and through its crash', { tim
     assert.deepEqual(got, want, 'the same end as without the crash: closed once, commented once');
   });
 
+  await t.test('governance: a withdrawal and an admin apply from the web side, decided in the workflow process', async () => {
+    const a = await app();
+    const withdrawn = await closeProposal(a, 43);
+    await platform.fileProposal(withdrawn.id, a.id);
+    const reply = await platform.withdrawProposal({ ...withdrawn, status: 'open' }, author);
+    assert.equal(reply.status, 200, JSON.stringify(reply.body));
+    await procs.until(async () => (await instance('governance-proposal', govKey(withdrawn)))?.state === 'withdrawn', 'withdrawn');
+    assert.equal((await pool.query('SELECT status FROM issues WHERE id = $1', [withdrawn.id])).rows[0].status, 'closed');
+    const { rows: [adminUser] } = await pool.query(
+      `INSERT INTO users (username, password, is_admin, has_platform_access) VALUES ('proc_admin', 'x', TRUE, TRUE) RETURNING id, username`);
+    const forced = await closeProposal(a, 44);
+    await platform.fileProposal(forced.id, a.id);
+    const applied = await platform.adminApplyProposal({ ...forced, status: 'open' }, adminUser);
+    assert.equal(applied.status, 200, JSON.stringify(applied.body));
+    // A close proposal applies once its target check answers, then closes the issue on GitHub.
+    await procs.until(async () => (await instance('governance-proposal', govKey(forced)))?.data?.followups?.target?.status === 'done',
+      'the forced close done on GitHub');
+    assert.equal((await instance('governance-proposal', govKey(forced))).state, 'applied');
+    assert.equal((await procs.effects(pool, 'github.close')).filter((c) => c.data.number === 44).length, 1);
+  });
+
   // ── Merge follow-ups: a merge goes live ─────────────────────────────
   const mergeKey = (s) => `session:${s.id}`;
   async function mergeGoesLive({ crashAt } = {}) {
@@ -201,6 +222,51 @@ test('workflow machines in a process of their own, and through its crash', { tim
     assert.equal(again.processes, 2, 'the check the crash interrupted was finished by the next process');
     assert.deepEqual(again.row, live.row);
     assert.deepEqual(again.lines, live.lines, 'the same thread as without the crash');
+  });
+
+  // ── Merge follow-ups: a change carried by another merge ─────────────
+  async function carriedGoesLive({ crashAt } = {}) {
+    const a = await app({ selfHosted: true });
+    const carrier = await proposal(a);
+    const { rows: [carried] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, pr_number, pr_title, reviewed_head_sha)
+       VALUES ($1, $2, 'promoted', $3, 'Carried', $4) RETURNING *`, [a.id, author.id, ++seq, SHA('3')]);
+    await pool.query(`INSERT INTO wf_test_effects (kind, data) VALUES ('github.prCommits', $1)`,
+      [JSON.stringify({ number: carrier.pr_number, shas: [SHA('3')] })]);
+    if (crashAt) await procs.arm(pool, crashAt);
+    await platform.mergeConfirmed({ sessionId: carrier.id, appId: a.id, mergeSha: SHA('4'), force: false, tally: { yes: 1, required: 1, active: 1 } });
+    if (crashAt) {
+      await procs.reached(pool, crashAt);
+      await workflow.kill();
+      await procs.expireLeases(pool);
+      await startWorkflow();
+    }
+    await procs.until(async () => (await instance('merge-followups', mergeKey(carried)))?.data?.followups?.['close-pr']?.status === 'done',
+      'the carried change\'s pull request closed');
+    // Its carrier's release boots with the merge commit: both go live.
+    await platform.productionDeployed(a.id, SHA('4'));
+    await procs.until(async () => (await instance('merge-followups', mergeKey(carried)))?.state === 'live', 'the carried change live');
+    return {
+      row: (await pool.query('SELECT status, included_in_session_id = $2 AS carried, live_at IS NOT NULL AS live FROM chat_sessions WHERE id = $1',
+        [carried.id, carrier.id])).rows[0],
+      closes: (await procs.effects(pool, 'github.closePR')).filter((c) => c.data.number === carried.pr_number).length,
+      comments: (await procs.effects(pool, 'github.comment')).filter((c) => c.data.number === carried.pr_number).length,
+      processes: await ranIn('merge-followups', mergeKey(carried), 'github.closePullRequest'),
+    };
+  }
+
+  let carriedLive;
+  await t.test('merge follow-ups: a change carried by another merge is closed and goes live with it, in the workflow process', async () => {
+    carriedLive = await carriedGoesLive();
+    assert.deepEqual(carriedLive.row, { status: 'merged', carried: true, live: true });
+    assert.deepEqual([carriedLive.closes, carriedLive.comments, carriedLive.processes], [1, 1, 1]);
+  });
+
+  await t.test('merge follow-ups, restarted: killed after GitHub created the carried change\'s closing comment', async () => {
+    const again = await carriedGoesLive({ crashAt: 'github.comment.created' });
+    assert.equal(again.processes, 2, 'the close the crash interrupted was finished by the next process');
+    assert.deepEqual(again.row, carriedLive.row);
+    assert.deepEqual([again.closes, again.comments], [1, 1], 'closed once, commented once');
   });
 
   // ── Known dependencies on the web process's memory ──────────────────
