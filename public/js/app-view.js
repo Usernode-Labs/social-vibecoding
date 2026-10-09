@@ -4156,6 +4156,15 @@ const AppView = {
     // target so incoming thread messages turn into badge bumps.
     if (typeof GroupChat !== 'undefined' && GroupChat.unmountThread) GroupChat.unmountThread();
     if (subTab !== 'topic') { AppView._devTopic = null; AppView._devTopicInPanel = false; }
+    // #4480: a topic PAGE replaces the Workshop, so whatever its side panel
+    // held is no longer the panel's. A link inside the panel (a change's
+    // "Addresses #N" chip, a plan's request) lands here with the panel still
+    // mounted, its host detached but not yet swept; the sweep comes at the
+    // page's first portal mount, inside GroupChat.mountThread, and the
+    // panel's cleanup used to unmount the thread that had just been made
+    // active. The page drew its head and composer with no replies and no
+    // plan cards until a reload.
+    else AppView._devTopicInPanel = false;
 
     // The topic sub-view used to be an `innerHTML` template, so it had to
     // retire whatever interim root the previous surface had left on
@@ -4227,8 +4236,10 @@ const AppView = {
       return;
     }
 
-    // Full-screen topic (issue / proposal / governance) discussion.
-    if (subTab === 'topic' && ref && ref.kind && ref.id) {
+    // Full-screen topic (issue / proposal / governance) discussion. A change
+    // addressed by its pull request's number (#4367) has no id yet: the topic
+    // view looks it up.
+    if (subTab === 'topic' && ref && ref.kind && (ref.id || (ref.kind === 'proposal' && ref.pr))) {
       // #2487: a cold topic deep link starts with the display-only header
       // snapshot from whichever app this browser visited last. Unlike the
       // forum, chat and owner-session branches, this branch never replaced
@@ -4554,7 +4565,25 @@ const AppView = {
   },
 
   async _renderTopicSubView(content, ref) {
-    AppView._devTopic = { kind: ref.kind, id: ref.id };
+    // #4367: `dev/changes/<N>` names a change by its pull request's number.
+    // Look up the session it is, with the page's skeleton up; a number this
+    // app has no change for is the same miss as a bad session id.
+    if (ref.kind === 'proposal' && !ref.id && ref.pr) {
+      const pending = { kind: 'proposal', id: null, pr: ref.pr };
+      AppView._devTopic = pending;
+      AppView._reactDevBoard()?.mountTopicSubView(content);
+      const id = await AppView._sessionIdForChange(ref.pr);
+      if (AppView._devTopic !== pending || !document.getElementById('dev-topic-thread')) return;
+      if (!id) {
+        if (App._abandonWorkshopResume?.()) return;
+        App.switchTab('dev');
+        return;
+      }
+      ref = { kind: 'proposal', id, pr: ref.pr };
+    }
+    AppView._devTopic = ref.pr
+      ? { kind: ref.kind, id: ref.id, pr: ref.pr }
+      : { kind: ref.kind, id: ref.id };
     // #2847: arriving at a proposal's page (card tap, deep link, notification
     // row) is the viewer seeing it — clear its "New proposal" nudge.
     if (ref.kind === 'proposal' || ref.kind === 'session') {
@@ -4687,6 +4716,9 @@ const AppView = {
         finish();
         return true;
       }
+      // #4367: an old `dev/proposals/<id>` address of a change that has a
+      // pull request becomes `dev/changes/<N>`, in place (no Back entry).
+      if (ref.kind === 'proposal') AppView._canonicalizeChangeAddress(item);
       // #363: mount the thread FIRST so its header slot (#gc-thread-head)
       // exists, then paint the topic card/body into it.
       if (!threadMounted) {
@@ -4771,6 +4803,45 @@ const AppView = {
     // Resolves after the first paint or the fallback, so openTopic's
     // awaiting callers (submitImportPr and friends) keep their contract.
     await settled;
+  },
+
+  // #4367: the session a change's pull request number names on this app, or
+  // null — from the server, which applies the proposal page's own visibility.
+  async _sessionIdForChange(pr) {
+    const slug = App.currentApp || AppView.appData?.slug;
+    if (!slug || !pr) return null;
+    try {
+      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/changes/${Number(pr)}${AppView._demoQS()}`);
+      if (!res.ok) return null;
+      const data = await res.json();
+      const id = Number(data && data.sessionId);
+      return Number.isInteger(id) && id > 0 ? id : null;
+    } catch {
+      return null;
+    }
+  },
+
+  // #4367: once the open change is known to have a pull request, its address
+  // is `dev/changes/<N>`. Replaces the history entry — an old link is the
+  // same page, not somewhere to go Back to. Only an address that is this
+  // topic's `dev/proposals/<id>` is rewritten.
+  _canonicalizeChangeAddress(item) {
+    const t = AppView._devTopic;
+    const pr = Number(item && item.pr_number);
+    if (!t || t.kind !== 'proposal' || !item || item.id !== t.id
+        || !Number.isInteger(pr) || pr <= 0) return false;
+    t.pr = pr;
+    if (App.embeddedPanel || App.currentTab !== 'dev' || App.currentSubTab !== 'topic') return false;
+    const route = location.hash
+      ? location.hash.replace(/^#/, '').split('?')[0]
+      : location.pathname.replace(/^\/+/, '');
+    if (!new RegExp(`/dev/proposals/${t.id}$`).test(route)) return false;
+    const url = App._appUrl(App.currentApp, 'dev', t, 'topic');
+    try {
+      history.replaceState(null, '', url);
+    } catch (_) { return false; }
+    App._noteWorkshopView?.(url);
+    return true;
   },
 
   _findTopicItem() {
@@ -5206,6 +5277,7 @@ const AppView = {
     // the builders above already made (topic/topic-head.tsx draws them).
     if (body.changeId) {
       body.hero = AppView._topicHeroView(t.kind, item);
+      if (body.plan && body.hero.author) body.plan.by = body.hero.author;
       body.steps = AppView._topicStepsView(item, card, body);
       body.thread = AppView._changeThreadView(t.kind, item, card, body);
     }
@@ -5237,7 +5309,7 @@ const AppView = {
       sessionId: ref.sessionId,
       label: n ? `#${n}` : 'Change',
       title: ref.title || (n ? `Pull request #${n}` : `Change ${ref.sessionId}`),
-      href: `#app/${slug}/dev/proposals/${ref.sessionId}`,
+      href: n ? `#app/${slug}/dev/changes/${n}` : `#app/${slug}/dev/proposals/${ref.sessionId}`,
     };
   },
 
@@ -5681,7 +5753,7 @@ const AppView = {
       sessionId: id,
       label: n ? `#${n}` : 'Change',
       title: item.included_in_pr_title || (n ? `Pull request #${n}` : `Change ${id}`),
-      href: `#app/${slug}/dev/proposals/${id}`,
+      href: n ? `#app/${slug}/dev/changes/${n}` : `#app/${slug}/dev/proposals/${id}`,
     };
   },
 
@@ -6094,8 +6166,11 @@ const AppView = {
     // returns it to the owner of an underway change only.
     const specStandIn = !body.proposalBody && mine && underway && !!item.spec_md;
     if (specStandIn) body.proposalBody = AppView._proposalBodyView({ ...item, pr_body: item.spec_md });
-    body.summaryHtml ||= specStandIn
-      ? '<p>No short summary has been added yet. The plan this change is built from is under Details.</p>'
+    // #4479: the plan it was built from, as the card a request's page hangs
+    // under the request (request-head.tsx SpecCard), with the same Read.
+    body.plan = AppView._changePlanCard(item, mine && underway);
+    body.summaryHtml ||= body.plan
+      ? '<p>No short summary has been added yet. The plan this change is built from is below.</p>'
       : body.proposalBody
         ? '<p>No short summary has been added yet. The current description is under Details.</p>'
         : '<p>No change summary has been added yet.</p>';
@@ -6242,6 +6317,34 @@ const AppView = {
   // Tested line).
   openTechnicalDetails(id, part = null) {
     window.dispatchEvent(new CustomEvent('change-details-open', { detail: part ? { id: Number(id), part } : Number(id) }));
+  },
+
+  // #4479: a change's plan card, in request-model.ts's RequestSpecCard
+  // shape, or null when it was not built from a plan this viewer may read.
+  // `plan` is the newest readable version (/details and the proposal read);
+  // an owner's live draft with no numbered version yet is read as text.
+  _changePlanCard(item, ownDraft) {
+    const plan = item && item.plan;
+    const version = plan && Number(plan.version) > 0 ? Number(plan.version) : null;
+    const draft = ownDraft && String(item.spec_md || '').trim() ? String(item.spec_md) : null;
+    if (!version && !draft) return null;
+    const title = item.pr_title || item.session_title || 'The plan';
+    const at = (version ? plan.at : null) || null;
+    const stamp = at && typeof GroupChat !== 'undefined' && GroupChat._stamp
+      ? GroupChat._stamp(at) : (at ? relStamp(at) : { text: '', title: '' });
+    return {
+      key: `c${item.id}`,
+      title,
+      version,
+      // The change's author, as its hero names them (set once it is built).
+      by: item.username || 'someone',
+      at,
+      time: stamp.text,
+      timeTitle: stamp.title,
+      read: version
+        ? { kind: 'shared', sessionId: Number(item.id), version, previewTitle: title }
+        : { kind: 'text', title, markdown: draft, html: '' },
+    };
   },
 
   // ── #4455: a change's page, drawn as a Messages reply thread ─────────
@@ -7637,7 +7740,9 @@ const AppView = {
     AppView._editingIssueTitle = null;
     AppView._editingSessionTitle = null;
     if (typeof App !== 'undefined' && App.switchTab) {
-      return App.switchTab('dev', { kind, id }, 'topic');
+      // #4367: a change with a pull request opens at `dev/changes/<N>`.
+      const pr = kind === 'proposal' ? Number(AppView._findItem('proposal', id)?.pr_number) : 0;
+      return App.switchTab('dev', Number.isInteger(pr) && pr > 0 ? { kind, id, pr } : { kind, id }, 'topic');
     }
   },
 
@@ -7686,8 +7791,12 @@ const AppView = {
     await new Promise((resolve) => setTimeout(resolve, 0));
     if (current()) AppView._renderTopicHead();
   },
-  closeTopicPanel() {
+  // `kind`/`id` name the panel's own item: a panel closing after its page
+  // gave way to another topic (#4480) leaves that topic's thread alone.
+  closeTopicPanel(kind, id) {
     if (!AppView._devTopicInPanel) return;
+    const t = AppView._devTopic;
+    if (kind && id && (!t || t.kind !== kind || t.id !== id)) return;
     AppView._devTopicInPanel = false;
     if (typeof GroupChat !== 'undefined' && GroupChat.unmountThread) GroupChat.unmountThread();
     if (typeof App === 'undefined' || App.currentSubTab !== 'topic') AppView._devTopic = null;
@@ -9686,7 +9795,11 @@ const AppView = {
     const tagTone = (cls) => (cls === AppView.STATUS_TAG_CLS.running ? 'run'
       : cls === AppView.STATUS_TAG_CLS.soft ? 'warn' : 'bad');
     const checkTags = (p) => {
-      for (const s of AppView.statusTagSpecs(p)) tags.push({ label: s.label, tone: tagTone(s.cls) });
+      for (const s of AppView.statusTagSpecs(p)) {
+        tags.push(s.progress
+          ? { label: s.label, tone: tagTone(s.cls), title: s.title, progress: s.progress }
+          : { label: s.label, tone: tagTone(s.cls) });
+      }
       if (p.check_state === 'passing') tags.push({ label: 'Checks passed', tone: 'ok' });
     };
     const preview = !!(card && ((card.rail && card.rail.preview && card.rail.preview.state === 'live')
@@ -20807,6 +20920,21 @@ const AppView = {
   //
   // Ordering is blockReasons' own severity order, then the in-flight states,
   // so the first tag on the line is the most serious thing wrong with it.
+  // #4499: the checks chip's bar — how many of the run's checks are done,
+  // out of how many — or null while the run does not know its total yet.
+  // `text` is the count in words, for the tooltip and the bar's name.
+  _checksChipProgress(live) {
+    const bar = live && live.bar;
+    if (!bar || !bar.expected) return null;
+    const done = Math.min(bar.ran, bar.expected);
+    return { done, total: bar.expected, text: `${done} of ${bar.expected} checks done` };
+  },
+  // The same bar as markup, for the chips still drawn as strings.
+  checksChipBarHtml(progress) {
+    if (!progress || !progress.total) return '';
+    const pct = Math.round((progress.done / progress.total) * 100);
+    return `<span class="checks-chip-bar" role="progressbar" aria-valuemin="0" aria-valuemax="${progress.total}" aria-valuenow="${progress.done}" aria-label="${progress.text}"><span class="checks-chip-bar-fill" style="width:${pct}%"></span></span>`;
+  },
   STATUS_TAG_CLS: {
     blocking: 'dev-badge bg-red-500/10 text-red-700 dark:text-red-400',
     soft: 'dev-badge bg-amber-500/10 text-amber-800 dark:text-amber-400',
@@ -20866,17 +20994,21 @@ const AppView = {
       });
     } else if (p.check_state === 'pending'
         || (!p.check_state && p.status === 'promoted' && !p.console_check_state)) {
-      // Checks in flight. The live counts ride the label exactly as they did
-      // in the bar: a board of cards should say how far each run is, not just
-      // that it is running.
+      // Checks in flight. A board of cards should say how far each run is,
+      // not just that it is running: #4499 draws that as a thin bar inside
+      // the chip ("Checks" and the bar) once the run knows its total, with
+      // the exact count in the tooltip and the bar's accessible name. Before
+      // the total is known the words carry it, as they always did.
       const live = p.check_state === 'pending' ? AppView._checksProgressView(p) : null;
-      const count = live && live.bar.expected ? ` ${live.bar.ran}/${live.bar.expected}` : (live && live.bar.ran ? ` ${live.bar.ran}` : '');
+      const progress = AppView._checksChipProgress(live);
+      const count = !progress && live && live.bar.ran ? ` ${live.bar.ran}` : '';
+      const why = 'Automated tests are still running on the staging build. Merge is blocked until they pass.';
       out.push({
         t: 'chip', key: 'tag-checks-running', cls: AppView.STATUS_TAG_CLS.running,
-        label: p.check_state === 'pending' ? `Checks running…${count}` : 'Checks starting…',
-        spinner: true, meta: true,
+        label: p.check_state !== 'pending' ? 'Checks starting…' : progress ? 'Checks' : `Checks running…${count}`,
+        spinner: true, meta: true, progress: progress || undefined,
         data: { 'data-status-tag': 'checks-running' },
-        title: 'Automated tests are still running on the staging build. Merge is blocked until they pass.',
+        title: progress ? `${progress.text}. ${why}` : why,
       });
     }
     return out;
@@ -21394,9 +21526,14 @@ const AppView = {
     // 'pending' (or anything else): tests are still running. #405: grey
     // (gc-checks-running-badge), not amber, so a not-yet-started check is
     // visibly distinct from the amber in-flight merge stages.
+    // #4499: once the run knows its total, a bar inside the chip says how
+    // far it is; the exact count is the tooltip and the bar's name.
     const live = state === 'pending' ? AppView._checksProgressView(pr) : null;
-    const count = live && live.bar.expected ? ` ${live.bar.ran}/${live.bar.expected}` : (live && live.bar.ran ? ` ${live.bar.ran}` : '');
-    return `<span class="gc-checks-running-badge" title="Automated tests are still running on the staging build. Merge is blocked until they pass."><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Checks running…${count}</span>`;
+    const progress = AppView._checksChipProgress(live);
+    const count = !progress && live && live.bar.ran ? ` ${live.bar.ran}` : '';
+    const why = 'Automated tests are still running on the staging build. Merge is blocked until they pass.';
+    const label = progress ? 'Checks' : `Checks running…${count}`;
+    return `<span class="gc-checks-running-badge" title="${progress ? `${progress.text}. ${why}` : why}"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>${label}${AppView.checksChipBarHtml(progress)}</span>`;
   },
 
   // #2380: claim-first, exact-revision before & after shots. The server already

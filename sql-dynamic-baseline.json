@@ -481,6 +481,13 @@
     {
       "source": "src/routes/sessions.js",
       "kind": "structural-template",
+      "fingerprint": "ba8110c429c6037d85c2",
+      "count": 1,
+      "preview": "`SELECT s.version, s.built_at FROM chat_session_specs s WHERE s.session_id = $1 AND ($2::int = $3::int OR ${specVersionSharedVisibilitySql('s', '$3')}) ORDER BY"
+    },
+    {
+      "source": "src/routes/sessions.js",
+      "kind": "structural-template",
       "fingerprint": "e16f1722cca1c2b80269",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET last_activity_at = NOW()${userOpened ? ', notify_on_done = FALSE' : ''} WHERE id = $1`"
@@ -1090,7 +1097,7 @@
     {
       "source": "src/services/homeroom-bot-progress.js",
       "kind": "structural-template",
-      "fingerprint": "70b2e1a76ca67c4838db",
+      "fingerprint": "eee0d0058ae8c27e0b96",
       "count": 1,
       "preview": "`SELECT cs.id, cs.app_id, a.slug, CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'merging' ELSE cs.status END AS status, cs.check_state, cs.check_ph"
     },

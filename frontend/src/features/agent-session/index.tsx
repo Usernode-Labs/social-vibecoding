@@ -29,6 +29,7 @@ import {
 } from '@/components/ui/icons';
 
 import { useInnerHtml } from '../../lib/html';
+import { changeHref as changeLink } from '../../lib/change-href';
 import { renderSpecHtml, useSpecFrames, type SpecHtmlDoc } from '../../lib/spec-html';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -755,7 +756,7 @@ export function PreviewCardView({ item, change, wide, action, busy }: {
   }
   const checks = checksSummary(change?.checkState, change?.checkFailing, change?.checkSkipReason);
   const changeHref = change && change.appSlug && item.changeId != null
-    ? `#app/${encodeURIComponent(change.appSlug)}/dev/proposals/${item.changeId}`
+    ? changeLink(change.appSlug, item.changeId, prNumber)
     : null;
   const inVote = change && (change.status === 'promoted' || change.status === 'merging');
   const merged = change && change.status === 'merged';
@@ -2166,7 +2167,7 @@ export function ChangesDrawer({ session }: { session: AgentSession }) {
               {active.appSlug ? (
                 <a
                   className="rounded-full bg-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-800 hover:bg-zinc-300 dark:bg-zinc-700 dark:text-zinc-100"
-                  href={`#app/${encodeURIComponent(active.appSlug)}/dev/proposals/${active.id}`}
+                  href={changeLink(active.appSlug, active.id, active.prNumber)}
                 >
                   Proposal page
                 </a>

@@ -334,7 +334,8 @@ test('"revise" that pushed nothing is a failure, said plainly, and nothing is re
   // The requester hears it in their DM, with the change's card; the record goes with it to be read, never quoted.
   assert.deepEqual(h.calls.posts[0].dm, {
     reason: 'the turn produced no change', canRevise: true, sessionId: 5001,
-    link: live.proposalLink('app.onhomeroom.com', APP.slug, 5001),
+    // #4367: the change has PR #25, so its link goes by that number.
+    link: live.proposalLink('app.onhomeroom.com', APP.slug, 5001, 25),
   });
 });
 

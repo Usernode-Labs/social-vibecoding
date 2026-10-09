@@ -5216,62 +5216,6 @@ async function sayBuildLost(pool, settings, run, deps = {}) {
 }
 
 /**
- * The admin's "build every open ready request": queue the latest verdict
- * of every issue whose latest verdict is ready and that has not been built,
- * queued or skipped. The issue's state is read at build time, so a closed
- * one is skipped then rather than fetched for here.
- */
-const BACKFILL_SQL = `SELECT DISTINCT ON (r.app_id, r.issue_number)
-         r.id, r.app_id, r.issue_number, r.verdict, r.build_queued_at, r.build_ok, r.build_error,
-         a.slug, a.repo_url
-    FROM homeroom_bot_runs r
-    JOIN apps a ON a.id = r.app_id
-   WHERE r.verdict IN ('question', 'ready', 'person', 'empty')
-     AND a.status = 'running' AND a.repo_url IS NOT NULL
-   ORDER BY r.app_id, r.issue_number, r.id DESC`;
-
-async function queueShadowBackfill(pool, config = {}) {
-  const settings = await readSettings(pool);
-  if (!settings.shadowBuilds) {
-    return { ok: false, status: 409, error: 'Turn shadow builds on first.' };
-  }
-  const { rows } = await pool.query(BACKFILL_SQL);
-  const left = { live: 0, platform: 0, paused: 0 };
-  const ids = [];
-  for (const r of rows) {
-    // A ready verdict a setting kept from being built at the time (its run
-    // says so) is one to build now, as one with no note is.
-    if (r.verdict !== 'ready' || r.build_queued_at || r.build_ok != null || (r.build_error && !skippedAtTriage(r.build_error))) continue;
-    const why = shadowBuildSkipReason(settings, { slug: r.slug, repo_url: r.repo_url }, config);
-    if (why === SHADOW_SKIP.live) { left.live += 1; continue; }
-    if (why === SHADOW_SKIP.platform) { left.platform += 1; continue; }
-    if (why === SHADOW_SKIP.paused) { left.paused += 1; continue; }
-    if (why) continue;
-    ids.push(r.id);
-  }
-  let queued = [];
-  if (ids.length) {
-    ({ rows: queued } = await pool.query(
-      `UPDATE homeroom_bot_runs SET build_queued_at = NOW(), build_error = NULL
-        WHERE id = ANY($1::int[]) AND build_queued_at IS NULL AND build_ok IS NULL
-        RETURNING id, app_id`,
-      [ids],
-    ));
-  }
-  if (queued.length) {
-    wakeBuilds();
-    publishWake({ builds: true });
-  }
-  log.info('homeroom-bot', 'Shadow build backfill queued', { queued: queued.length, left });
-  return {
-    ok: true,
-    queued: queued.length,
-    apps: new Set(queued.map((r) => r.app_id)).size,
-    left,
-  };
-}
-
-/**
  * The lane as the dashboard shows it: counts, and what is building now.
  * Only the lane's own builds: every one was queued, and a live build, whose
  * outcome is recorded in the same columns (#3509), never is.
@@ -5563,7 +5507,7 @@ async function runFollowUp(pool, config, {
     // What happened in plain words, and how to start it again; the record
     // (`why`) stays on the run and in the line above (followup.revisionFailedText).
     // The requester hears it in their DM too, with the change's card.
-    const proposalUrl = deps.domain ? live.proposalLink(deps.domain, app.slug, session.id) : null;
+    const proposalUrl = deps.domain ? live.proposalLink(deps.domain, app.slug, session.id, session.pr_number) : null;
     await say('followup_failed', followup.revisionFailedText({ why, canRevise }), postedAt, {
       dm: { reason: why, canRevise, sessionId: session.id, link: proposalUrl },
     })
@@ -5604,7 +5548,7 @@ async function runFollowUp(pool, config, {
   });
 
   const prNumber = session.pr_number;
-  const proposalUrl = deps.domain ? live.proposalLink(deps.domain, app.slug, session.id) : null;
+  const proposalUrl = deps.domain ? live.proposalLink(deps.domain, app.slug, session.id, session.pr_number) : null;
   const text = action === 'revise'
     ? followup.revisedText({
       summary: parsed?.summary, reply: parsed?.reply, prNumber, link: proposalUrl,
@@ -5927,7 +5871,7 @@ async function runChecksFix(pool, config, {
     // checks are shown; not on the issue, whose people asked for the change,
     // not for its checks. The reconcile has already said the votes were
     // cleared there.
-    const link = deps.domain ? live.proposalLink(deps.domain, app.slug, session.id) : null;
+    const link = deps.domain ? live.proposalLink(deps.domain, app.slug, session.id, session.pr_number) : null;
     await live.postOnProposal({
       pool, ws: deps.ws, app, issueNumber, runId, kind: 'checks_revise', bot, sessionId: session.id,
       text: followup.checksRevisedText({
@@ -6060,7 +6004,7 @@ async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, sa
     ).catch(() => {});
     // The vote-card metadata the promote route's own activity rows carry,
     // so the issue's thread shows the live proposal card, not only a link.
-    const link = live.proposalLink(domain, app.slug, built.sessionId);
+    const link = live.proposalLink(domain, app.slug, built.sessionId, built.prNumber);
     await say('proposal', live.proposalText({ link, prNumber: built.prNumber }), {
       msgType: 'vote', metadata: { vote: { sessionId: built.sessionId, prNumber: built.prNumber } },
       dm: { link, prNumber: built.prNumber, sessionId: built.sessionId },
@@ -8759,42 +8703,6 @@ async function rateRun(pool, { id, rating, note, labelVerdict, actorId }) {
 }
 
 /**
- * Every issue whose latest verdict is a question, triaged again: how the
- * bar for asking is compared, old verdict against new, in the export. Shadow
- * apps only: on a live app the question was posted, and a new verdict would
- * act (build, or post again) on the strength of a comparison.
- */
-const LATEST_VERDICTS_SQL = `SELECT DISTINCT ON (r.app_id, r.issue_number)
-         r.app_id, r.issue_number, r.verdict, a.slug
-    FROM homeroom_bot_runs r
-    JOIN apps a ON a.id = r.app_id
-   WHERE r.verdict IN ('question', 'ready', 'person', 'empty')
-     AND a.status = 'running' AND a.repo_url IS NOT NULL
-   ORDER BY r.app_id, r.issue_number, r.id DESC`;
-
-async function retriageQuestions(pool, { actorId = null } = {}) {
-  const settings = await readSettings(pool);
-  const { rows } = await pool.query(LATEST_VERDICTS_SQL);
-  const questions = rows.filter((r) => r.verdict === 'question');
-  const picked = questions.filter((r) => !live.isLiveFor({ ...settings, mode: 'shadow' }, { slug: r.slug }));
-  if (picked.length) {
-    await pool.query(
-      `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason, requested_by)
-       SELECT app_id, issue_number, 0, 'retriage', $3
-         FROM UNNEST($1::int[], $2::int[]) AS q(app_id, issue_number)
-       ON CONFLICT (app_id, issue_number) DO UPDATE
-         SET priority = 0, reason = 'retriage', requested_by = EXCLUDED.requested_by,
-             started_at = NULL, enqueued_at = NOW()`,
-      [picked.map((r) => r.app_id), picked.map((r) => r.issue_number), actorId],
-    );
-  }
-  log.info('homeroom-bot', 'Questions queued to be triaged again', {
-    queued: picked.length, live: questions.length - picked.length,
-  });
-  return { ok: true, queued: picked.length, live: questions.length - picked.length };
-}
-
-/**
  * "Triage this app again" (#3480): every open issue on a live app, as if it
  * had just been posted. An app added to the live list was triaged in shadow
  * before, and the refresh queues only what changed since its last verdict,
@@ -8976,7 +8884,6 @@ module.exports = {
   headShaOf,
   INFRA_ERRORS,
   isLiveLaneSaturated,
-  retriageQuestions,
   mentionOptOutList,
   removeMentionOptOut,
   wake,
@@ -9059,7 +8966,6 @@ module.exports = {
   drainBuilds,
   queueShadowBuild,
   supersedeQueuedBuilds,
-  queueShadowBackfill,
   buildLaneSummary,
   shadowBuildSkipReason,
   laterSideSkipReason,

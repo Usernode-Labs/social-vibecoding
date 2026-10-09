@@ -3971,9 +3971,9 @@
       "expectText": "Verdict"
     },
     {
-      "name": "Homeroom bot dashboard says it works for everyone on every app but the paused ones (#2684, #3710), beside its shadow build lane, who asked not to be tagged (#3347), and how much it works on at once (#3624)",
+      "name": "Homeroom bot dashboard says it works for everyone on every app but the paused ones (#2684, #3710), beside its side builds, who asked not to be tagged (#3347), and how much it works on at once (#3624)",
       "path": "/#admin/homeroom-bot",
-      "expectSelector": "#admin-homeroom-bot:has(#admin-homeroom-bot-build-lane):has(#admin-homeroom-bot-optouts):has(#admin-homeroom-bot-live-at-once):has(#admin-homeroom-bot-per-person) #admin-homeroom-bot-intro",
+      "expectSelector": "#admin-homeroom-bot:has(#admin-homeroom-bot-side-builds):has(#admin-homeroom-bot-optouts):has(#admin-homeroom-bot-live-at-once):has(#admin-homeroom-bot-per-person) #admin-homeroom-bot-intro",
       "expectText": "acts on every app but the"
     },
     {

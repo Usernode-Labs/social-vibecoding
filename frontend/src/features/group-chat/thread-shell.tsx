@@ -64,8 +64,10 @@ import { ComposerForm, ComposerSlots, StatusLine } from './composer';
 const SAFE_BAR = 'platform-safe-bar';
 
 /**
- * How near the bottom a thread counts as followed: a live reply sticks to it
- * within 80px (`_handleThreadIncoming` in public/js/group-chat.js).
+ * How near the bottom a thread counts as followed: a live reply, the reader's
+ * own included, sticks to it within 80px, and so does the composer growing
+ * (`THREAD_FOLLOW_PX`, `_handleThreadIncoming` and `_attachThreadFollow` in
+ * public/js/group-chat.js).
  */
 export const THREAD_FOLLOW_PX = 80;
 

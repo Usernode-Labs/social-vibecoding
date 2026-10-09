@@ -4,8 +4,7 @@
 // schema: the claim (slots dealt to apps in turns, oldest first, an idle
 // slot filled by an app already building, paused apps waiting,
 // never more than the free slots), the release of a build an earlier process
-// never finished, the supersede, the backfill's "latest verdict is ready"
-// and the dashboard's counts. The bot acts for real on every app but a paused
+// never finished, the supersede and the dashboard's counts. The bot acts for real on every app but a paused
 // one, so the lane builds only on a staging copy (live.liveScope), which is
 // what this runs as. The builds themselves are stubbed; everything
 // the lane asks of the database runs through the real planner, in a
@@ -259,34 +258,6 @@ test('the shadow-build lane against the full PostgreSQL schema', { timeout: 1800
     await pool.query('UPDATE homeroom_bot_runs SET build_queued_at = NULL, build_at = NULL WHERE id = $1', [started]);
   });
 
-  await t.test('the backfill queues the latest ready verdict of each issue once, and leaves the platform out', async () => {
-    // Only the finished builds of the subtests above stay: what they left
-    // queued or unbuilt would be backfilled too, rightly, and blur the count.
-    await pool.query('DELETE FROM homeroom_bot_runs WHERE build_ok IS NULL');
-    const readyThenQuestion = await run(notes, 50);
-    await run(notes, 50, { verdict: 'question' });
-    const readyAfterFailure = await run(notes, 51);
-    await run(notes, 51, { verdict: 'failed' });
-    const plain = await run(todo, 52);
-    const platformReady = await run(platform, 53);
-    const pausedReady = await run(paused, 54);
-
-    const out = await bot.queueShadowBackfill(pool, {});
-    assert.equal(out.ok, true);
-    const queued = (await pool.query(
-      `SELECT id FROM homeroom_bot_runs WHERE build_queued_at IS NOT NULL AND build_at IS NULL AND build_ok IS NULL ORDER BY id`,
-    )).rows.map((r) => r.id);
-    assert.deepEqual(queued, [readyAfterFailure, plain]);
-    assert.equal(out.queued, 2);
-    assert.deepEqual(out.left, { live: 0, platform: 1, paused: 1 });
-    assert.equal((await row(readyThenQuestion)).build_queued_at, null, 'its latest verdict is a question');
-    assert.equal((await row(platformReady)).build_queued_at, null);
-    assert.equal((await row(pausedReady)).build_queued_at, null);
-
-    const again = await bot.queueShadowBackfill(pool, {});
-    assert.equal(again.queued, 0, 'queued once');
-  });
-
   await t.test('"Triage this app again" queues every open issue of a live app, oldest first, as the loop takes new ones (#3480)', async () => {
     const shop = await app('shop', 'https://github.com/usernode-bot/shop');
     const issues = [
@@ -343,6 +314,11 @@ test('the shadow-build lane against the full PostgreSQL schema', { timeout: 1800
   });
 
   await t.test('the dashboard counts and the export read the lane columns', async () => {
+    // What waits in the lane is set here: only the finished builds of the
+    // subtests above stay, and two are queued, one per app.
+    await pool.query('DELETE FROM homeroom_bot_runs WHERE build_ok IS NULL');
+    await run(notes, 51, { queuedAgo: 60 });
+    await run(todo, 52, { queuedAgo: 60 });
     const summary = await bot.buildLaneSummary(pool);
     assert.equal(summary.queued, 2);
     assert.equal(summary.built, 3);

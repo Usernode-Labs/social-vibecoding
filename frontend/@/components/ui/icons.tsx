@@ -524,6 +524,14 @@ export const ArrowsPointingOutIcon = stroked('ArrowsPointingOutIcon', 'M15 3h6v6
 export const ArrowsPointingInIcon = stroked('ArrowsPointingInIcon', 'M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7');
 
 /**
+ * FOUR ARROWS out from the centre (✥) — a handle that moves what it is on.
+ *
+ * The comment bar's grip wears it beside a move cursor, so "drag me" reads at
+ * a glance where the ⋮ it replaced read as a menu.
+ */
+export const ArrowsMoveIcon = stroked('ArrowsMoveIcon', 'M12 3v18M3 12h18M9 6l3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3');
+
+/**
  * A NEWSPAPER — the Activity row and screen.
  *
  * The Figma board names this slot `lucide/newspaper`, and the glyph is right:

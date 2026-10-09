@@ -340,13 +340,15 @@ test('both spec read routes consume the ONE shared visibility fragment', () => {
     'the fragment helper exists'
   );
   // One interpolation per route: the version-list route (viewer is $2)
-  // and the single-version route (viewer is $3). If either inlines its
-  // own copy of the predicate again, this count drifts and the gates can
-  // diverge — the exact bug class this refactor removes.
+  // and the single-version route (viewer is $3), plus the change page's
+  // plan card (changePlanFor, #4479), which names the version Read opens.
+  // If any inlines its own copy of the predicate again, this count drifts
+  // and the gates can diverge — the exact bug class this refactor removes.
   const callSites = src.match(/\$\{specVersionSharedVisibilitySql\(/g) || [];
-  assert.equal(callSites.length, 2, 'exactly two interpolation call sites');
+  assert.equal(callSites.length, 3, 'exactly three interpolation call sites');
   assert.ok(src.includes("specVersionSharedVisibilitySql('s', '$2')"), 'list route call site');
   assert.ok(src.includes("specVersionSharedVisibilitySql('s', '$3')"), 'single-version route call site');
+  assert.ok(src.includes("async function changePlanFor("), 'plan card call site');
 });
 
 test('_specViewerView gates the owner-only affordances on _ownsSession', () => {

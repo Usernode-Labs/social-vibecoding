@@ -40,6 +40,9 @@ const GroupChat = {
   // is destroyed on every tab switch, but GroupChat state persists for as
   // long as we stay inside the same app).
   _lockedToBottom: true,
+  // The open thread's own: whether its reader is at the newest line, from
+  // where they last scrolled it (`_attachThreadFollow`).
+  _threadPinned: false,
   _savedScrollTop: null,
   _didInitialScroll: false,
 
@@ -597,7 +600,7 @@ const GroupChat = {
         if (msg.thread && msg.thread.type) {
           GroupChat._handleThreadIncoming(msg);
           if (msg.thread.type === 'message' && !GroupChat.messages.some((m) => String(m.id) === String(msg.id))) {
-            const shouldStick = GroupChat._lockedToBottom || GroupChat._isOwnMessage(msg);
+            const shouldStick = GroupChat._lockedToBottom;
             GroupChat.messages.push(msg);
             if (GroupChat._streamLoaded && !GroupChat._streamStale) GroupChat._syncedMax = Math.max(GroupChat._syncedMax, Number(msg.id) || -Infinity);
             GroupChat.appendMessage(msg);
@@ -608,9 +611,11 @@ const GroupChat = {
         // A catch-up read (#4177) can bring in a message a moment before its
         // own broadcast arrives.
         if (GroupChat.messages.some((m) => String(m.id) === String(msg.id))) break;
-        // #2389: your own message always brings you to the bottom, even when
-        // you had scrolled up — you just sent it, so you expect to see it.
-        const shouldStick = GroupChat._lockedToBottom || GroupChat._isOwnMessage(msg);
+        // #4511: your own message follows you to the bottom when you were
+        // at it or near it, as anyone's does. A reader who had scrolled up
+        // into the history is left where they are reading, even by their own
+        // send. (#2389 made a send always jump; that is retired.)
+        const shouldStick = GroupChat._lockedToBottom;
         GroupChat.messages.push(msg);
         // #4177: a live message extends the gap-free span of a loaded stream,
         // unless a gap is pending, in which case it is past the gap and proves
@@ -702,10 +707,13 @@ const GroupChat = {
       if (el && scroll) {
         // #363: only stick to the newest message when the reader is already
         // near the bottom — otherwise a live message would yank someone who
-        // has scrolled up to read the topic body or older replies.
-        const nearBottom =
-          scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80
-          || GroupChat._isOwnMessage(msg);
+        // has scrolled up to read the topic body or older replies. #4511:
+        // the reader's own send too; measured before it is drawn.
+        const nearBottom = GroupChat._threadPinned
+          || scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < GroupChat.THREAD_FOLLOW_PX;
+        // And pinned from here, so a row drawn after this returns (a request
+        // page's render is batched) or growing later (an image) is followed.
+        if (nearBottom) GroupChat._threadPinned = true;
         // Appended to the MODEL. #gc-thread-messages is the same React
         // transcript #gc-messages is (mounted with the 'thread' key a few
         // methods down), so the insertAdjacentHTML this replaces was legacy
@@ -1238,6 +1246,9 @@ const GroupChat = {
         { navBar: false },
       );
     }
+    // #4513: a new thread starts unpinned; `renderThread` says where it opens.
+    GroupChat._threadPinned = false;
+    GroupChat._attachThreadFollow(GroupChat._threadScrollEl());
 
     // Full general-chat interaction set on the thread list: tap-to-quote,
     // long-press / hover reactions, quote-jump, reference chips.
@@ -1251,6 +1262,14 @@ const GroupChat = {
 
     const form = container.querySelector('#gc-thread-form');
     const input = container.querySelector('#gc-thread-input');
+    // #4517: the shell is React's now, so moving from one topic's page to
+    // another's in the same host keeps the SAME form and input nodes. Every
+    // listener below closes over this mount's `{ type, ref }`, and the ones
+    // an earlier mount bound were still on those nodes — the oldest ran first
+    // and sent the message to the topic opened earlier, emptying the input
+    // before this mount's own handler could see it. Each mount drops the
+    // previous mount's listeners before it binds its own.
+    const signal = GroupChat._rewireThreadComposer();
     if (form && input) {
       const saved = GroupChat.getDraft(slug, threadKey);
       if (saved) input.value = saved;
@@ -1273,12 +1292,12 @@ const GroupChat = {
       form.addEventListener('submit', (e) => {
         e.preventDefault();
         submitThread();
-      });
+      }, { signal });
       input.addEventListener('input', () => {
         GroupChat.setDraft(slug, input.value, threadKey);
         GroupChat._autoGrowTextarea(input);
         GroupChat.sendTyping({ type, ref });
-      });
+      }, { signal });
       // Multi-line submit semantics, same as the general composer: Enter
       // sends, Shift+Enter inserts a newline, touch keyboards always insert
       // a newline (Send button sends) — and ⌘/Ctrl+Enter sends anywhere
@@ -1292,10 +1311,10 @@ const GroupChat = {
           e.preventDefault();
           submitThread();
         }
-      });
+      }, { signal });
       // #694: paperclip / paste / drag-and-drop attachment wiring for
       // this thread's composer.
-      GroupChat.setupAttachments({ type, ref });
+      GroupChat.setupAttachments({ type, ref }, signal);
       // #87/#130 parity with the general composer: @mention, #/PR#
       // reference and `:emoji` autocomplete on the thread input.
       if (typeof MentionAutocomplete !== 'undefined') {
@@ -1315,7 +1334,7 @@ const GroupChat = {
           e.preventDefault();
           GroupChat.clearQuote();
         }
-      });
+      }, { signal });
     }
 
     GroupChat.renderThread();
@@ -1338,7 +1357,21 @@ const GroupChat = {
     // general composer (replyDraft is global).
     if (GroupChat.activeThread && GroupChat.replyDraft) GroupChat.clearQuote();
     GroupChat.activeThread = null;
+    // #4517: nothing typed into a left thread's composer may still post to it.
+    GroupChat._threadComposerWiring?.abort();
+    GroupChat._threadComposerWiring = null;
     clearTimeout(GroupChat._threadTypingTimer);
+  },
+
+  // #4517: the thread composer's listeners belong to ONE mount, the topic it
+  // was mounted for. The form and input outlive a mount (React keeps them
+  // across topics), so each mount aborts the last one's listeners here and
+  // binds its own with the signal this returns.
+  _threadComposerWiring: null,
+  _rewireThreadComposer() {
+    GroupChat._threadComposerWiring?.abort();
+    GroupChat._threadComposerWiring = new AbortController();
+    return GroupChat._threadComposerWiring.signal;
   },
 
   async loadThreadHistory(type, ref) {
@@ -1783,6 +1816,66 @@ const GroupChat = {
       || document.getElementById('gc-thread-messages');
   },
 
+  // How near the bottom a thread counts as followed (thread-shell.tsx's
+  // THREAD_FOLLOW_PX, which its jump-to-latest button uses too).
+  THREAD_FOLLOW_PX: 80,
+
+  // #4513: an open thread's reader at the newest line stays there.
+  //
+  // The composer is a sibling below the scroller, so typing a second line
+  // grows it and takes that height from the scroller: the bottom of the
+  // stream went under the composer, and the thread no longer read as
+  // followed. The general chat's ResizeObserver (`attachScrollHandlers`)
+  // always put its own scroller back; a thread had none.
+  //
+  // So `_threadPinned` is kept from the reader's scroll events, and while it
+  // holds, any change of size of the scroller (the composer growing or
+  // shrinking, the keyboard) or of what it holds (the topic card, the rows,
+  // an image loading) puts it back at the bottom. A reader up in the history
+  // is never moved. The keyboard's own scrolls are held as the general
+  // chat's are (lib/keyboard-hold.ts).
+  _attachThreadFollow(scroll) {
+    if (!scroll || scroll._gcFollowBound) return;
+    scroll._gcFollowBound = true;
+    const follow = () => {
+      if (GroupChat._threadPinned && GroupChat._threadScrollEl() === scroll) {
+        scroll.scrollTop = scroll.scrollHeight;
+      }
+    };
+    const hold = window.UsernodeKeyboardHold
+      ? window.UsernodeKeyboardHold.attach(scroll, {
+        pinned: () => !!GroupChat._threadPinned,
+        follow,
+      })
+      : null;
+    scroll.addEventListener('scroll', () => {
+      if (GroupChat._threadScrollEl() !== scroll) return;
+      if (hold && hold.holding()) {
+        if (scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight > 1) follow();
+        return;
+      }
+      GroupChat._threadPinned =
+        scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < GroupChat.THREAD_FOLLOW_PX;
+    }, { passive: true });
+    if (typeof ResizeObserver === 'undefined') return;
+    // A short thread fits with room to spare, so nobody scrolled it and the
+    // flag never came on; when the composer then takes height from it, its
+    // newest line is what must stay in view.
+    let last = { client: scroll.clientHeight, content: scroll.scrollHeight };
+    const ro = new ResizeObserver(() => {
+      if (GroupChat._threadScrollEl() !== scroll) return;
+      if (scroll.clientHeight < last.client && last.content - last.client <= 1) {
+        GroupChat._threadPinned = true;
+      }
+      follow();
+      last = { client: scroll.clientHeight, content: scroll.scrollHeight };
+    });
+    ro.observe(scroll);
+    // The topic card and the messages host, in the fill layouts. The boxed
+    // one scrolls the messages host itself.
+    for (const child of Array.from(scroll.children)) ro.observe(child);
+  },
+
   // Paint the active thread's cached messages into #gc-thread-messages.
   renderThread(opts) {
     const a = GroupChat.activeThread;
@@ -1866,8 +1959,10 @@ const GroupChat = {
       // #363: open a topic at the TOP so its card/body reads first; the user
       // scrolls down into the discussion (general chat lands at the bottom).
       scroll.scrollTop = 0;
+      GroupChat._threadPinned = false;
     } else {
       scroll.scrollTop = scroll.scrollHeight;
+      GroupChat._threadPinned = true;
     }
   },
 
@@ -3223,8 +3318,10 @@ const GroupChat = {
   // Wire the paperclip button, hidden file input, clipboard paste, and
   // drag-and-drop for one composer. `thread` null = the general composer
   // (ids gc-*), else the thread composer (ids gc-thread-*). Idempotent
-  // per mount — both composers are fresh DOM on every (re)render.
-  setupAttachments(thread) {
+  // per mount: the thread composer's nodes survive a remount (#4517), so its
+  // caller passes the mount's `signal` and the previous mount's listeners,
+  // which carry the previous topic's scope, are gone before these bind.
+  setupAttachments(thread, signal) {
     const t = thread || null;
     const btn = document.getElementById(t ? 'gc-thread-attach-btn' : 'gc-attach-btn');
     const fileInput = document.getElementById(t ? 'gc-thread-file-input' : 'gc-file-input');
@@ -3236,11 +3333,12 @@ const GroupChat = {
     GroupChat.pendingAttachments = GroupChat.pendingAttachments.filter((a) => a.scope === key);
     GroupChat._renderAttachStrip(t);
 
-    btn.addEventListener('click', () => fileInput.click());
+    const opts = signal ? { signal } : undefined;
+    btn.addEventListener('click', () => fileInput.click(), opts);
     fileInput.addEventListener('change', () => {
       if (fileInput.files?.length) GroupChat._addFiles(fileInput.files, t);
       fileInput.value = '';
-    });
+    }, opts);
 
     // Paste an image straight from the clipboard (screenshots).
     const textarea = document.getElementById(t ? 'gc-thread-input' : 'gc-input');
@@ -3267,7 +3365,7 @@ const GroupChat = {
           e.preventDefault();
           GroupChat._addFiles(files, t);
         }
-      });
+      }, opts);
     }
 
     // Drag-and-drop onto the message area or the composer.
@@ -3277,13 +3375,13 @@ const GroupChat = {
     ];
     for (const el of dropEls) {
       if (!el) continue;
-      el.addEventListener('dragover', (e) => { e.preventDefault(); });
+      el.addEventListener('dragover', (e) => { e.preventDefault(); }, opts);
       el.addEventListener('drop', (e) => {
         if (e.dataTransfer?.files?.length) {
           e.preventDefault();
           GroupChat._addFiles(e.dataTransfer.files, t);
         }
-      });
+      }, opts);
     }
     GroupChat._wireDropZone(dropEls, t);
   },
@@ -3939,8 +4037,11 @@ const GroupChat = {
       || GroupChat.appSlug;
     const id = sessionId || (pr && pr.id != null ? String(pr.id) : '');
     if (!slug || !id) return null;
+    // #4367: the change's pull request number, when the PR resolved is it.
+    const prNumber = pr && pr.pr_number != null && String(pr.id) === String(id)
+      ? Number(pr.pr_number) || null : null;
     return (typeof App !== 'undefined' && App._appUrl)
-      ? App._appUrl(slug, 'dev', { kind: 'proposal', id: Number(id) }, 'topic')
+      ? App._appUrl(slug, 'dev', { kind: 'proposal', id: Number(id), ...(prNumber ? { pr: prNumber } : {}) }, 'topic')
       : `/app/${encodeURIComponent(slug)}/dev/proposals/${id}`;
   },
 

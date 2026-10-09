@@ -4253,6 +4253,15 @@ const App = {
     return `/${App._routeSearch(null)}${hash || ''}`;
   },
 
+  // A change's pull request number from an address segment or ref, or null
+  // (#4367: `dev/changes/<N>`). Digits only — never a guess at an id.
+  _changeNumber(value) {
+    const raw = String(value == null ? '' : value);
+    if (!/^\d{1,9}$/.test(raw)) return null;
+    const n = parseInt(raw, 10);
+    return n > 0 ? n : null;
+  },
+
   // One serializer for cold links, ordinary navigation, Back/Forward, and
   // legacy-hash normalisation. Keeping all app-route spellings here is what
   // prevents a copied address and the screen it restores from drifting.
@@ -4268,6 +4277,10 @@ const App = {
         suffix = `/dev/sessions/${norm.ref}`;
       } else if (norm.subTab === 'chat') {
         suffix = '/dev/chat';
+      } else if (norm.subTab === 'topic' && norm.ref && norm.ref.kind === 'proposal'
+          && norm.ref.pr) {
+        // #4367: a change with a pull request is addressed by its number.
+        suffix = `/dev/changes/${norm.ref.pr}`;
       } else if (norm.subTab === 'topic' && norm.ref && norm.ref.id) {
         const seg = norm.ref.kind === 'issue' ? 'issues'
           : norm.ref.kind === 'proposal' ? 'proposals'
@@ -5251,6 +5264,9 @@ const App = {
           } else if (sec === 'proposals' && parts[4]) {
             subTab = 'topic';
             ref = { kind: 'proposal', id: parseInt(parts[4]) || null };
+          } else if (sec === 'changes' && App._changeNumber(parts[4])) {
+            subTab = 'topic'; // #4367: by PR number; the topic view finds the session
+            ref = { kind: 'proposal', id: null, pr: App._changeNumber(parts[4]) };
           } else if (sec === 'governance' && parts[4]) {
             subTab = 'topic';
             ref = { kind: 'gov', id: parseInt(parts[4]) || null };
@@ -7653,6 +7669,12 @@ const App = {
         } else if (ref == null && App.currentSubTab === 'topic'
             && typeof AppView !== 'undefined' && AppView._devTopic) {
           ref = AppView._devTopic;
+        } else if (ref && ref.kind === 'proposal' && !ref.pr && App.currentSubTab === 'topic'
+            && typeof AppView !== 'undefined' && AppView._devTopic?.kind === 'proposal'
+            && AppView._devTopic.id === ref.id && AppView._devTopic.pr) {
+          // #4367: the page has found the change's PR number since this ref
+          // was made; its address is dev/changes/<N>.
+          ref = AppView._devTopic;
         }
         if (!boardView && App.currentSubTab === 'forum') {
           boardView = typeof AppView !== 'undefined' && AppView._getViewMode
@@ -7702,6 +7724,8 @@ const App = {
       if (segs[0] === 'app' && (segs[2] === 'workshop' || segs[2] === 'activity' || segs[2] === 'board')) {
         segs.splice(2, 1, 'dev');
       }
+      // #4367: dev/changes/<N> is the same screen as dev/proposals/<id>.
+      if (segs[0] === 'app' && segs[2] === 'dev' && segs[3] === 'changes') segs[3] = 'proposals';
       if (segs[0] === 'app' && segs[2] === 'dev') {
         return SUB_SCREENS.has(segs[3])
           ? segs.slice(0, 4).join('/')
@@ -8555,7 +8579,12 @@ const App = {
     // legacy issues/proposals sub-tab vocabulary — opens that topic
     // full-screen; everything else lands on the card list.
     let fref = null;
-    if (ref && typeof ref === 'object' && ref.kind && ref.id) {
+    if (ref && typeof ref === 'object' && ref.kind === 'proposal'
+        && App._changeNumber(ref.pr)) {
+      // #4367: a proposal ref may carry its PR number — alone, before the
+      // page has looked up the session it names.
+      fref = { kind: 'proposal', id: ref.id || null, pr: App._changeNumber(ref.pr) };
+    } else if (ref && typeof ref === 'object' && ref.kind && ref.id) {
       fref = { kind: ref.kind, id: ref.id };
     } else if (ref != null && subTab === 'issues') {
       const id = parseInt(ref, 10);

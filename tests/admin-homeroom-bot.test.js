@@ -544,9 +544,10 @@ test('every app is Live or Paused, paused first, and the rest behind a toggle (#
 
 test('how much the bot works on at once is set here, and what runs now is listed (#3624 stage 2)', async () => {
   const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
-  for (const id of ['admin-homeroom-bot-live-at-once', 'admin-homeroom-bot-per-person', 'admin-homeroom-bot-concurrency']) {
+  for (const id of ['admin-homeroom-bot-live-at-once', 'admin-homeroom-bot-per-person']) {
     assert.ok(tsx.includes(`id="${id}"`), id);
   }
+  assert.ok(!tsx.includes('id="admin-homeroom-bot-concurrency"'), 'no Shadow apps at once: no app is a shadow app');
   assert.match(tsx, /onChange=\{\(v\) => setField\('liveAtOnce', v\)\}/);
   assert.match(tsx, /onChange=\{\(v\) => setField\('perPerson', v\)\}/);
   assert.match(tsx, /onChange=\{\(e\) => setField\('dmChat', e\.target\.checked\)\}/);

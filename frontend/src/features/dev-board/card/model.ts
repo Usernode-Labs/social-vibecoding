@@ -177,7 +177,7 @@ export type BadgeSpec =
    *  `meta` rides the META LINE with the priority/assignee/category tags
    *  instead of the facts row — see metaLineNodes. The status tags set it, so
    *  the status row is left to the vote and its button alone. */
-  | { t: 'chip'; key: string; cls: string; label: string; title?: string; spinner?: boolean; meta?: boolean; data?: Record<string, string> }
+  | { t: 'chip'; key: string; cls: string; label: string; title?: string; spinner?: boolean; meta?: boolean; progress?: ChecksProgress; data?: Record<string, string> }
   /** The same chip with a click — the work-state chip that opens its target. */
   | { t: 'chipBtn'; key: string; cls: string; hover: string; label: string; title?: string; spinner?: boolean; data?: Record<string, string>; act: ActionRef }
   /** 💬 N. Always rendered, hidden at 0, so a live bump has a target. */
@@ -352,10 +352,23 @@ export interface FeedThreadRef {
 }
 
 /** One small tag on a Workshop row: what is happening on the item. */
+/**
+ * How far a check run is (#4499): drawn as a thin bar inside the checks
+ * chip. `text` is the count in words ("619 of 732 checks done"), the bar's
+ * accessible name. Absent while the run does not know its total.
+ */
+export interface ChecksProgress {
+  done: number;
+  total: number;
+  text: string;
+}
+
 export interface RowTag {
   label: string;
   tone: 'plain' | 'run' | 'ok' | 'warn' | 'bad';
   glyph?: 'eye';
+  title?: string;
+  progress?: ChecksProgress;
 }
 
 /**

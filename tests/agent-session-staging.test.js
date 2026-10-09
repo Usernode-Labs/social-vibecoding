@@ -108,7 +108,7 @@ test('the card: its actions for each state, and nothing on a superseded one', ()
   assert.doesNotMatch(live, /PR #14/, 'B10d: no pull request number');
   assert.match(live, /data-agent-session-checks="failing"[^>]*>2 checks failing</);
   assert.match(live, /<button[^>]*data-agent-session-preview-open[^>]*>Open preview<\/button>/, 'wide: a button, for the side pane');
-  assert.match(live, /href="#app\/notes\/dev\/proposals\/50"[^>]*>Open draft change</, 'the change\'s own page, while it is a draft');
+  assert.match(live, /href="#app\/notes\/dev\/changes\/14"[^>]*>Open draft change</, 'the change\'s own page, while it is a draft');
   assert.match(live, /data-agent-session-preview-propose[^>]*>Propose to group</);
 
   // Narrow (a phone, the side panel): the same button, and never a bare new

@@ -9774,7 +9774,9 @@ const DevChat = {
         ? `proposed to the group (PR #${session.pr_number})`
         : `merged (PR #${session.pr_number})`,
       cardHref: slug && session.id != null
-        ? `#app/${slug}/dev/proposals/${session.id}`
+        ? (Number(session.pr_number) > 0
+          ? `#app/${slug}/dev/changes/${Number(session.pr_number)}`
+          : `#app/${slug}/dev/proposals/${session.id}`)
         : null,
     };
   },

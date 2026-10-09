@@ -173,12 +173,12 @@ test('a change that went live inside another one says so and links to it', () =>
   assert.match(details, /Live, included in #8/);
   assert.deepEqual(plain(v.body.includedIn), {
     heading: 'Went live as part of', state: 'merged', sessionId: 6288, label: '#8',
-    title: 'Fix mark as done in Jordan’s first version', href: '#app/example/dev/proposals/6288',
+    title: 'Fix mark as done in Jordan’s first version', href: '#app/example/dev/changes/8',
   });
   const box = page.slice(page.indexOf('data-topic-part="included-in"'));
   assert.ok(page.includes('aria-label="The change this one went live in"'));
   assert.match(box, /<h4 class="dev-topic-h">Went live as part of<\/h4>/);
-  assert.match(box, /href="#app\/example\/dev\/proposals\/6288"[^>]*data-included-in="6288"/);
+  assert.match(box, /href="#app\/example\/dev\/changes\/8"[^>]*data-included-in="6288"/);
   assert.match(box, />#8<\/span><span[^>]*>Fix mark as done in Jordan’s first version<\/span>/);
   // No vote, and no claim of a rollout of its own.
   assert.doesNotMatch(page, /data-vote-choice|Waiting for approval|It’s live\./);

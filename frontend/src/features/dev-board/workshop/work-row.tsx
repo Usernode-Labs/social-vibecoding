@@ -36,7 +36,7 @@ import {
   BallotIcon, ChatBubbleTailIcon, CheckIcon, ChevronRightIcon, EyeIcon, PencilSquareIcon,
 } from '@/components/ui/icons';
 
-import { VoteButton } from '../card/dev-card';
+import { ChecksBar, VoteButton } from '../card/dev-card';
 import { openHref, voteSpecs } from '../card/fold';
 import type { DevCardModel, ListRow, RowBrief, RowTag } from '../card/model';
 
@@ -93,11 +93,12 @@ const TILE: Record<RowBrief['kind'], typeof CheckIcon> = {
 
 function Tag({ t }: { t: RowTag }): ReactNode {
   return (
-    <span className="dev-ws-tag" data-tone={t.tone}>
+    <span className="dev-ws-tag" data-tone={t.tone} title={t.title}>
       {t.tone === 'run' ? <span className="dc-status-spinner-arc" aria-hidden="true" /> : null}
       {t.tone === 'ok' ? <CheckIcon aria-hidden="true" /> : null}
       {t.glyph === 'eye' ? <EyeIcon aria-hidden="true" /> : null}
       {t.label}
+      {t.progress ? <ChecksBar progress={t.progress} /> : null}
     </span>
   );
 }
