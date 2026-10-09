@@ -2410,6 +2410,33 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
 
 // ── An offer, and the tap that decides it ─────────────────────────────────
 
+// An offer's metadata: its question and its buttons (offerActions).
+function confirmMeta(kind, { app, name, actionId, question }) {
+  return {
+    kind: 'confirm', appSlug: app.slug, appName: name, actionId, question,
+    // `answers` for a client that predates `actions`.
+    answers: [...OFFER_ANSWERS[kind]], actions: offerActions(kind), status: 'open', mirrors: false,
+  };
+}
+
+// #4525: an offer to propose closing a request, as its message says it and
+// as its metadata carries it. The before & after shots demo state of one
+// waiting for an answer writes the same (shots-demo-states.js).
+function closeOfferText({ name, issueNumber, text = null, title, why = null }) {
+  return [
+    text || `Want me to open a vote on closing request #${issueNumber}? It closes only if its group votes for it.`,
+    '',
+    `**${name}** · request #${issueNumber}: ${clip(title, 140)}`,
+    ...(why ? ['', `Why: ${clip(why, 600)}`] : []),
+  ].join('\n');
+}
+
+function closeOfferMeta({ app, name, actionId, issueNumber }) {
+  return confirmMeta('close_request', {
+    app, name, actionId, question: `Propose closing request #${issueNumber} on ${name}?`,
+  });
+}
+
 async function offer(pool, { bot, user, conversationId, message, text, offer: o, deps }) {
   const dm = dmModule(deps);
   const name = o.app.name || o.app.slug;
@@ -2432,12 +2459,7 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
   const body = move
     ? moveSvc.moveOfferText({ name, issueNumber: o.issueNumber, text, title: o.title, why: o.details })
     : close
-    ? [
-      text || `Want me to open a vote on closing request #${o.issueNumber}? It closes only if its group votes for it.`,
-      '',
-      `**${name}** · request #${o.issueNumber}: ${clip(o.title, 140)}`,
-      ...(o.details ? ['', `Why: ${clip(o.details, 600)}`] : []),
-    ].join('\n')
+    ? closeOfferText({ name, issueNumber: o.issueNumber, text, title: o.title, why: o.details })
     : withdraw
     ? [
       text || `Want me to withdraw this proposal on ${name}?`,
@@ -2463,14 +2485,12 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
     // The proposal it would withdraw, to open before deciding.
     objects: withdraw ? [{ type: 'proposal', appId: Number(o.app.id), sessionId: Number(o.sessionId) }]
       : move || close ? [{ type: 'issue', appId: Number(o.app.id), issueNumber: Number(o.issueNumber) }] : null,
-    metadata: move ? moveSvc.moveOfferMeta({ app: o.app, actionId: action.id }) : {
-      kind: 'confirm', appSlug: o.app.slug, appName: name, actionId: action.id,
-      question: withdraw ? `Withdraw this proposal on ${name}?`
-        : close ? `Propose closing request #${o.issueNumber} on ${name}?`
-        : `File this as a request on ${name}?`,
-      // `answers` for a client that predates `actions`.
-      answers: [...OFFER_ANSWERS[kind]], actions: offerActions(kind), status: 'open', mirrors: false,
-    },
+    metadata: move ? moveSvc.moveOfferMeta({ app: o.app, actionId: action.id })
+      : close ? closeOfferMeta({ app: o.app, name, actionId: action.id, issueNumber: o.issueNumber })
+      : confirmMeta(kind, {
+        app: o.app, name, actionId: action.id,
+        question: withdraw ? `Withdraw this proposal on ${name}?` : `File this as a request on ${name}?`,
+      }),
   });
   if (sent?.messageId) {
     await pool.query('UPDATE homeroom_bot_dm_actions SET message_id = $2 WHERE id = $1', [action.id, sent.messageId]);
@@ -3819,6 +3839,8 @@ module.exports = {
   decideOffer,
   decideOfferTap,
   offerActions,
+  closeOfferText,
+  closeOfferMeta,
   decideTyped,
   typedDecision,
   fileRequest,
