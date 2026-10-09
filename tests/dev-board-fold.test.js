@@ -1788,8 +1788,8 @@ test('the tags ride the meta line beside the number, on the open card and the fo
   assert.match(card, /<div class="dev-card-badges dev-card-status" data-empty="1">/, 'and nothing left in the band');
   const folded = kanbanHtml(makeAppView());
   const row = folded.slice(folded.indexOf('data-issue-row="1575"'), folded.indexOf('data-proposal-row="34"'));
-  assert.match(row, /<span class="dev-ws-row-meta"><a href="[^"]*"[^>]*>#1575<\/a><button(?=[^>]*attr-chip)[^>]*data-attr-field="assignee"/,
-    'and on the row, after the number');
+  assert.match(row, /<span class="dev-ws-row-meta"><a href="[^"]*"[^>]*>#1575<\/a> · <span[^>]*>\d+[mhd] ago<\/span><button(?=[^>]*attr-chip)[^>]*data-attr-field="assignee"/,
+    'and on the row, after the number and how long ago it was asked');
   assert.ok(!/dev-ws-row-band[\s\S]*?attr-chip/.test(row), 'never in the row’s state band');
   // The meta line may wrap for them: the one-line clamp is gone.
   const m = CSS.indexOf('\n:is(.dev-card-dense, .dev-card-topic) .dev-card-meta {');

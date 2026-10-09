@@ -18803,6 +18803,10 @@ const AppView = {
       { t: 'link', href, s: `#${n}`, cls: 'font-mono text-violet-700 hover:underline dark:text-violet-400' },
     ];
     if (issue.created_by_username) meta.push({ t: 'text', s: issue.created_by_username });
+    // How long ago it was asked, in the same "3h ago" form the Done
+    // column's cards use (_mergedCardModel).
+    const age = AppView._agePart(issue.createdAt || issue.created_at);
+    if (age) meta.push(age);
     if (issue.bounty_count) {
       meta.push({
         t: 'span', cls: 'text-amber-800 dark:text-amber-300', title: 'Kudos pledged on this request',
