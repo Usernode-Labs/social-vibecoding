@@ -31,7 +31,8 @@
  * The offer gate is fail-closed: any of the four Firebase values missing
  * (config.js) leaves every endpoint here answering 404 not_offered, and
  * the waitlist options route advertises the flow as absent — unless
- * PHONE_TEST_CODE turns test numbers on, on a stack that is not production
+ * PHONE_TEST_CODE turns test numbers on, on a stack that is not production,
+ * or SHOTS_PHONE_TEST_CODE does on a before & after shots copy
  * (services/firebase-phone-auth.js, TEST NUMBERS).
  *
  * Like the OAuth finish route, verify and finish mint sessions, so they

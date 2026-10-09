@@ -33,6 +33,44 @@ test('only the Homeroom self-app shots runtime bypasses the server app cap', () 
   assert.deepEqual(environment.shotsCapacityEnv(config, { slug: 'another-app' }), {});
 });
 
+test('only Homeroom\'s own pair gets a phone sign-in code, one per pair, six digits', () => {
+  const config = { selfAppSlug: 'usernode-2d5619' };
+  assert.deepEqual(environment.shotsPhoneSignInEnv(config, { slug: 'usernode-2d5619' }, '048213'), {
+    SHOTS_PHONE_TEST_CODE: '048213',
+  });
+  assert.deepEqual(environment.shotsPhoneSignInEnv(config, { slug: 'another-app' }, '048213'), {},
+    'a child app has no phone sign-in');
+  for (const bad of [null, '', '4821', 'abcdef', '1234567']) {
+    assert.deepEqual(environment.shotsPhoneSignInEnv(config, { slug: 'usernode-2d5619' }, bad), {}, String(bad));
+  }
+  const pair = { app: { slug: 'usernode-2d5619' } };
+  const code = environment.pairPhoneTestCode(config, pair);
+  assert.match(code, /^[0-9]{6}$/);
+  assert.equal(environment.pairPhoneTestCode(config, pair), code, 'every reset of the pair keeps it');
+  assert.equal(pair.phoneTestCode, code);
+  assert.equal(environment.pairPhoneTestCode(config, { app: { slug: 'another-app' } }), null);
+  const codes = new Set(Array.from({ length: 20 }, () =>
+    environment.pairPhoneTestCode(config, { app: { slug: 'usernode-2d5619' } })));
+  assert.ok(codes.size > 1, 'each pair makes its own');
+});
+
+test('an ordinary staging preview is never given the phone code, and no dapp.json can give it one', () => {
+  const appManifest = require('../src/services/app-manifest');
+  const appSecrets = require('../src/services/app-secrets');
+  const stagingEnv = require('../src/services/staging-env');
+  // The platform-owned half of every preview's env (staging.js) carries none.
+  assert.equal('SHOTS_PHONE_TEST_CODE' in stagingEnv.platformStagingEnv({ id: 1 }, {}), false);
+  // A manifest declaring it, with a default, is refused like every reserved
+  // key, so the merged env a preview (or a shots side) starts from has none.
+  assert.ok(appManifest.RESERVED_KEYS.has('SHOTS_PHONE_TEST_CODE'));
+  const secrets = appManifest.readSecrets({
+    secrets: [{ key: 'SHOTS_PHONE_TEST_CODE', default: '123456' }, { key: 'OTHER', default: 'x' }],
+  });
+  assert.deepEqual(secrets.map((entry) => entry.key), ['OTHER']);
+  const merged = appSecrets.mergeForDeploy({ secrets }, {}, {}, { forStaging: true });
+  assert.equal('SHOTS_PHONE_TEST_CODE' in merged.env, false);
+});
+
 test('only canonical HTTPS GitHub repositories are accepted', () => {
   assert.deepEqual(environment.repoParts('https://github.com/Usernode-Labs/example.git'), {
     owner: 'Usernode-Labs', repo: 'example',
@@ -82,11 +120,13 @@ test('each paired reset serializes clones and adds the same member and full-admi
   };
   const order = [];
   const deployedEnvs = [];
+  const deployedLabels = [];
   let cloneActive = false;
   try {
     runtime.remove = async () => {};
     runtime.deploy = async (_config, spec) => {
       deployedEnvs.push(spec.env);
+      deployedLabels.push(spec.labels);
       return { runtimeName: spec.runtimeName };
     };
     runtime.appOrigin = (_config, deployment) => `http://${deployment.runtimeName}`;
@@ -163,6 +203,20 @@ test('each paired reset serializes clones and adds the same member and full-admi
     const pairedEnvs = deployedEnvs.filter((env) => env.DATABASE_URL);
     assert.equal(pairedEnvs.length, 2);
     assert.ok(pairedEnvs.every((env) => env.MAX_APPS === '0'));
+    // Phone sign-in's test numbers: one random code, the same on both sides,
+    // handed on for the brief and kept out of the env fingerprint label.
+    const [baseCode, headCode] = pairedEnvs.map((env) => env.SHOTS_PHONE_TEST_CODE);
+    assert.match(baseCode, /^[0-9]{6}$/);
+    assert.equal(headCode, baseCode, 'the same code on both sides of the pair');
+    assert.equal(deployment.phoneTestCode, baseCode);
+    assert.equal(pair.phoneTestCode, baseCode, 'kept on the pair for a later reset');
+    const stagingEnv = require('../src/services/staging-env');
+    const pairedLabels = deployedLabels.filter((labels) => labels?.[environment.SHOTS_SIDE_LABEL] !== 'hosted-app');
+    assert.equal(pairedLabels.length, 2);
+    for (const labels of pairedLabels) {
+      assert.equal(labels[stagingEnv.LABEL_ENV_FP], stagingEnv.envFingerprint({ MAX_APPS: '0' }),
+        'the label describes the env without the code');
+    }
     assert.ok(progress.includes('seed_shots_identities'));
     assert.ok(progress.includes('deploy_hosted_app_fixture'));
     assert.ok(progress.includes('seed_hosted_app_fixture'));
@@ -183,6 +237,46 @@ test('each paired reset serializes clones and adds the same member and full-admi
     demoStates.inspectDemoStates = original.inspectDemo;
     demoStates.installDemoStates = original.installDemo;
     fixtures.copyFullAdminAgentSession = original.copyAdmin;
+  }
+});
+
+test('a child app\'s pair gets no phone sign-in code', async () => {
+  const original = {
+    remove: runtime.remove, deploy: runtime.deploy, appOrigin: runtime.appOrigin,
+    clone: dbManager.cloneFromPreparedSource, connectionUrl: dbManager.connectionUrl,
+  };
+  const runId = '3'.repeat(32);
+  const slug = 'family-chores';
+  const pair = {
+    app: { slug }, runId, sessionId: 43,
+    preparedSource: { fingerprint: 'source-fingerprint' },
+    sides: Object.fromEntries(['base', 'head'].map((side) => [side, {
+      dbName: dbManager.shotsDbName(slug, runId, side), runtimeName: `shots-${side}`,
+      sha: side === 'base' ? 'a'.repeat(40) : 'b'.repeat(40),
+      imageRef: `image-${side}`, imageDigest: `digest-${side}`, env: { USERNODE_ENV: 'staging' },
+    }])),
+  };
+  const deployedEnvs = [];
+  try {
+    runtime.remove = async () => {};
+    runtime.deploy = async (_config, spec) => {
+      deployedEnvs.push(spec.env);
+      return { runtimeName: spec.runtimeName };
+    };
+    runtime.appOrigin = (_config, deployment) => `http://${deployment.runtimeName}`;
+    dbManager.cloneFromPreparedSource = async () => ({ password: 'disposable' });
+    dbManager.connectionUrl = (dbName) => `postgres://fixture@db/${dbName}`;
+    const deployment = await environment.resetPair({ selfAppSlug: 'usernode-2d5619' }, pair);
+    assert.equal(deployedEnvs.length, 2);
+    assert.ok(deployedEnvs.every((env) => !('SHOTS_PHONE_TEST_CODE' in env) && !('MAX_APPS' in env)));
+    assert.equal(deployment.phoneTestCode, null);
+    assert.equal('phoneTestCode' in pair, false);
+  } finally {
+    runtime.remove = original.remove;
+    runtime.deploy = original.deploy;
+    runtime.appOrigin = original.appOrigin;
+    dbManager.cloneFromPreparedSource = original.clone;
+    dbManager.connectionUrl = original.connectionUrl;
   }
 });
 

@@ -925,9 +925,59 @@ test('the brief names the declared changes, both addresses and revisions, and no
     assert.doesNotMatch(JSON.stringify(brief),
       /secret\.jwt|fixture-session-secret|fixture-db-password|evidence_(?:base|head)_db|sha256:(?:base|head)/);
     assert.equal('previewAt' in brief, false, 'no declared moment, no previewAt');
+    assert.equal('phoneSignIn' in brief, false, 'no phone code for the pair, no phoneSignIn');
   } finally {
     fs.rmSync(checkout, { recursive: true, force: true });
   }
+});
+
+test('Homeroom\'s own copies hand the agent the run\'s phone code in its brief, and nothing stored keeps it', async () => {
+  // The copies offer phone sign-in with the fictional test numbers and a
+  // code made for the run (shots-environment.js shotsPhoneSignInEnv). The
+  // agent needs the code to walk a Join sheet's phone step to its end; the
+  // proposal, the trace and the agent's worker env never get it.
+  const CODE = '482913';
+  let brief = null;
+  let dispatchTokens = null;
+  const fixture = setup({
+    dispatch: async (options) => {
+      dispatchTokens = options.authTokens;
+      const control = controlFor(options);
+      brief = control.getContext();
+      saveStills(control, 'invite-suggestions');
+      control.noteChange({
+        change: 'invite-suggestions',
+        note: 'Signed in with +1 415 555 0142 and 482 913; the username step is left out.',
+      });
+      control.skipChange({ change: 'invite-empty', reason: `The code ${CODE} worked but the empty state never showed.` });
+      return {
+        backend: 'claude_code',
+        result: { lastResultText: `Used code ${CODE} and 482-913 on both copies.`, exitCode: 0 },
+      };
+    },
+  });
+  fixture.run.intent = twoChangeIntent();
+  fixture.dependencies.environment.resetPair = async () => ({
+    origins: { ...ORIGINS }, ...provenance, phoneTestCode: CODE,
+  });
+  const result = await execute(fixture);
+  assert.equal(result.state, 'verified');
+  assert.equal(brief.phoneSignIn.code, CODE);
+  assert.equal(brief.phoneSignIn.textSent, false);
+  assert.match(brief.phoneSignIn.numbers, /\+1, any area code, then 555 0100 to 0199/);
+  assert.match(brief.phoneSignIn.use, /No text is sent/);
+  assert.match(brief.phoneSignIn.use, /only on the before and after addresses, never anywhere else/);
+  assert.match(brief.phoneSignIn.use, /Never write the code in a note or a skip reason/);
+  assert.deepEqual(dispatchTokens, TOKENS, 'the code is no sign-in token: the worker env never carries it');
+
+  assert.doesNotMatch(JSON.stringify(fixture.transitions), /482[ -]?913/, 'no durable record keeps the code');
+  const verified = fixture.transitions.at(-1).patch;
+  const stories = Object.fromEntries(verified.hardVerdict.stories.map((story) => [story.id, story]));
+  assert.equal(stories['invite-suggestions'].note,
+    'Signed in with +1 415 555 0142 and ****; the username step is left out.',
+    'what the proposal shows is masked, the test number kept');
+  assert.equal(stories['invite-empty'].reason, 'The code **** worked but the empty state never showed.');
+  assert.equal(verified.traceSummary.agentFinalResponses[0].excerpt, 'Used code **** and **** on both copies.');
 });
 
 test('each side\'s home tile reaches the run: described in the brief, served from its own dapp.json', async (t) => {

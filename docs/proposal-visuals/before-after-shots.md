@@ -178,13 +178,17 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
    (`src/db/migrate.js`), which each side runs for its own revision: the
    after side has it, and the before side has what the base revision
    already seeded.
+
+   Homeroom's own copies also offer phone sign-in, with the fictional test
+   numbers and a code made for the run (see "Phone sign-in on Homeroom's
+   copies" below).
 3. **Taking the shots** (`exploring`). The shots agent gets one turn in a
    shots worker. It has four browsers, one per persona (the guest's is not
    signed in), and the "shots" tools:
 
    | Tool | What it does |
    | --- | --- |
-   | `get_brief` | The declared changes, before/after addresses, which browser to use for whom, changed files and progress so far |
+   | `get_brief` | The declared changes, before/after addresses, which browser to use for whom, changed files and progress so far; on Homeroom's own copies, how phone sign-in works there (`phoneSignIn`) |
    | `save_shot` | Publishes PNGs the browser saved with `browser_take_screenshot`, several per call, each for a change, screen, side and kind; one screenshot can be listed for several changes |
    | `save_clip` | Publishes the clip that the change's browser recorded most recently |
    | `note_change` | Records what a change's shots leave out of its claim, shown beside them |
@@ -341,6 +345,56 @@ No gate is loosened for this: the guest gets only what a signed-out request
 already gets, and a preview still never admits guests. The guest token is
 masked with the other tokens and never enters the brief or the trace.
 
+## Phone sign-in on Homeroom's copies
+
+An invite's Join sheet starts with a phone step wherever phone sign-in is
+offered, as it is in production. The copies have no Firebase, and the
+fictional test numbers that stand in for it (`PHONE_TEST_CODE`,
+`services/firebase-phone-auth.js`, "TEST NUMBERS") are refused wherever
+`NODE_ENV` is `production`, which the platform image sets. So the copies
+never offered phone sign-in, and four runs could not shoot a change to the
+phone step (proposals 4326, 4330, 4419 and 4427): the guest opened an invite
+link, pressed Join and got only the email step.
+
+Homeroom's own pair now turns the test numbers on, the same shots-only way
+it gets `MAX_APPS=0`:
+
+- The deployed platform makes a random six-digit code for each run and puts
+  it on both copies of the pair as `SHOTS_PHONE_TEST_CODE`
+  (`shots-environment.shotsPhoneSignInEnv`), and on nothing else. A child
+  app's pair gets nothing: it has no phone sign-in.
+- A server honours `SHOTS_PHONE_TEST_CODE` only where `USERNODE_ENV` is
+  exactly `staging`, as the copies run (`config.shotsPhoneTestCodeFrom`).
+  `USERNODE_ENV=production` refuses it whatever `NODE_ENV` says.
+  `firebase-phone-auth.testNumbersAllowed` checks the environment again, so
+  a config object built anywhere else cannot turn test numbers on in
+  production, and where `NODE_ENV` is `production` it takes only the code
+  the environment itself carries.
+- `app-manifest.js` reserves the name, so no `dapp.json` can put it on an
+  ordinary staging preview. `PHONE_TEST_CODE` means what it did: a local
+  stack's fixed code, refused where `NODE_ENV` or `USERNODE_ENV` is
+  `production`.
+- The brief's `phoneSignIn` gives the agent the numbers (+1, any area code,
+  then 555 0100 to 0199), the code, and how to use them: no text is sent,
+  only on the pair's two addresses, a fresh number for each screen size and
+  the same one on both sides. Following a change through a phone step
+  (signing in, joining or adding a phone) to its end is the one exception to
+  the agent's "do not sign in".
+
+It is safe because the copies are internal-only and torn down when the run
+ends, the numbers are fictional (no person answers one, and nothing is ever
+texted), an account one makes is a test account in that copy's throwaway
+database, and the code is good for one run. It is never stored: the brief
+lives only in the run's in-memory control, the agent's skip reasons, notes
+and final words are masked of it before they are kept, the copy's boot line
+says only "(set)", and the runtime's env fingerprint label leaves it out. A
+shot can show it typed into the code field, but by the time a shot is
+published both copies are gone.
+
+Since phone sign-in is offered on both copies alike, every screen that asks
+whether it is (the signed-out pages, the waiting room, "Verify your
+account") shows its phone variant on both sides, as production does.
+
 ## What people see
 
 The proposal's card shows one screen at a time in a frame that keeps its
@@ -443,6 +497,7 @@ browser). Each persona's browser saves files under
 | Shots bridge (MCP server `shots`) | `worker/shots-mcp.js` |
 | Fixture identities and session copies; demo states for the personas | `src/services/shots-fixtures.js`, `src/services/shots-demo-states.js` |
 | Persona tokens and the guest's (`mintShotsAuthTokens`, `shotsGuestIdentity`) | `src/services/shots-identities.js` |
+| Phone sign-in on Homeroom's copies (`shotsPhoneSignInEnv`, `shotsPhoneTestCodeFrom`, `testNumbersAllowed`) | `src/services/shots-environment.js`, `src/config.js`, `src/services/firebase-phone-auth.js` |
 | Browser servers (`--output-dir`, `--save-video`) | `worker/write-shots-mcp-config.js` |
 | Egress proxy (origins, public-only egress, platform assets, controlled failures) | `worker/shots-origin-proxy.js` |
 | Where the browser may go, and which shots may be published | `worker/shots-boundary.js` |

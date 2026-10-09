@@ -503,6 +503,11 @@ const RESERVED_KEYS = new Set([
   // for the same reason as the rest: a manifest that shadowed it could
   // point an app's "Open in Homeroom" links at a host of its choosing.
   'USERNODE_PLATFORM_ORIGIN',
+  // Turns phone sign-in's test numbers on (config.js
+  // shotsPhoneTestCodeFrom). Only the platform puts it on a before & after
+  // shots copy (services/shots-environment.js); a manifest that set it would
+  // turn them on for an ordinary staging preview.
+  'SHOTS_PHONE_TEST_CODE',
 ]);
 
 // Reserved prefixes for the LLM-proxy (issue #34), app-storage (#752),

@@ -26,12 +26,25 @@ function cloneJson(value) {
   return value == null ? value : JSON.parse(JSON.stringify(value));
 }
 
+// The run's phone sign-in code (the brief's phoneSignIn.code, on Homeroom's
+// own copies), masked wherever the agent wrote it: six digits on their own,
+// or with a space or a dash between them ("482 913"). Below the length the
+// log redaction masks literals at, so it gets its own pattern.
+function maskPhoneTestCode(text, code) {
+  if (typeof text !== 'string' || !/^[0-9]{6}$/.test(String(code || ''))) return text;
+  const digits = new RegExp(`(?<![0-9])${[...String(code)].join('[ -]?')}(?![0-9])`, 'g');
+  return text.replace(digits, '****');
+}
+
 class RunControl {
   constructor({ runId, sessionId, intent, context, expiresAt, homeTiles = null }) {
     this.runId = runId;
     this.sessionId = Number(sessionId);
     this.intent = planContract.parseIntent(intent);
     this.context = cloneJson(context);
+    // The brief hands the agent this code; what the agent writes for people
+    // (a skip reason, a note) is shown on the proposal, so it never keeps it.
+    this.phoneTestCode = this.context?.phoneSignIn?.code || null;
     // Each side's tile on Homeroom's home screen, served on that side's
     // address (services/shots-home-tile.js). Kept out of the brief, which
     // only describes them: an icon image is up to 256 KB.
@@ -133,7 +146,7 @@ class RunControl {
   skipChange({ change = null, reason, outcome = null } = {}) {
     try {
       this.assertOpen();
-      const text = shots.reason(reason);
+      const text = maskPhoneTestCode(shots.reason(reason), this.phoneTestCode);
       const broke = shots.outcome(outcome) === 'failed';
       const said = broke ? { outcome: 'failed' } : {};
       if (change == null || change === '') {
@@ -159,7 +172,7 @@ class RunControl {
     try {
       this.assertOpen();
       const story = this.declaredChange(change);
-      this.notes.set(story.id, shots.note(note));
+      this.notes.set(story.id, maskPhoneTestCode(shots.note(note), this.phoneTestCode));
       return { noted: story.id, progress: this.progress() };
     } catch (error) {
       this.lastToolFailure = { operation: 'note-change', error };
@@ -224,6 +237,7 @@ function clearForTests() {
 module.exports = {
   ShotsControlError,
   RunControl,
+  maskPhoneTestCode,
   registerRun,
   forRequest,
   _clearForTests: clearForTests,

@@ -137,6 +137,13 @@ test('the shots agent prompt asks for before/after shots and leaves judgement to
   // sign-in or landing page can be the very state a change shows.
   assert.match(prompt, /The guest browser is not signed in/);
   assert.match(prompt, /Do not sign in \(the guest stays signed out too\)/);
+  // The one exception: phone sign-in on Homeroom's own copies, with a test
+  // number and the run's code from the brief (shots-orchestrator.js
+  // phoneSignInBrief), so a Join sheet's phone step can be followed through.
+  assert.match(prompt, /The one exception is phone sign-in:\s+when the brief has phoneSignIn/);
+  assert.match(prompt, /a phone step\s+\(signing in, joining, or adding a phone\)/);
+  assert.match(prompt, /with a\s+test number and phoneSignIn\.code, on the two addresses only, as\s+phoneSignIn\.use says/);
+  assert.match(prompt, /sign it out again before a change that needs it signed out/);
   assert.match(prompt, /For a guest change, a sign-in or landing\s+page can be the very state the checkpoint describes/);
   assert.match(prompt, /Call browser_resize with that width and height/);
   assert.match(prompt, /browser_take_screenshot with a filename/);

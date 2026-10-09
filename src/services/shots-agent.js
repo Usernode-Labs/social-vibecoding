@@ -40,7 +40,12 @@ member, browser_admin for read_only_admin, browser_full_admin for full_admin,
 browser_guest for guest. The guest browser is not signed in: it sees what a
 visitor who is not signed in sees, and the brief says what that is here.
 Do not sign in (the guest stays signed out too), expose storage, leave the
-two addresses, or change or add a change.
+two addresses, or change or add a change. The one exception is phone sign-in:
+when the brief has phoneSignIn, a change whose steps go through a phone step
+(signing in, joining, or adding a phone) can be followed to its end with a
+test number and phoneSignIn.code, on the two addresses only, as
+phoneSignIn.use says. Signing in leaves that browser signed in on that
+address, so sign it out again before a change that needs it signed out.
 
 For each declared change and each of its screen sizes (viewports):
 1. Call browser_resize with that width and height. Then open the start path

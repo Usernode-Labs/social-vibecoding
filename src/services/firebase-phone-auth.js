@@ -73,6 +73,15 @@
  *     testNumbersOn re-checks the environment. With only the code set, phone
  *     sign-in is offered and any other number is refused; with Firebase set
  *     up too, other numbers text.
+ *     The one exception to "never where NODE_ENV is production" is a before
+ *     & after shots copy of Homeroom (docs/proposal-visuals/
+ *     before-after-shots.md). It runs the production image, so the code
+ *     arrives as SHOTS_PHONE_TEST_CODE instead: a random code per run, put
+ *     only on that run's two internal-only, throwaway copies by the deployed
+ *     platform (shots-environment.js), and honoured only where USERNODE_ENV
+ *     is 'staging' (config.js shotsPhoneTestCodeFrom). testNumbersAllowed
+ *     re-checks that too, so a USERNODE_ENV=production server never turns
+ *     test numbers on, whatever its config object carries.
  *   A one-time code a full admin mints for one number (test-accounts.js
  *     mintPhoneSignIn; the connector's create_test_phone_sign_in, registered
  *     for a full admin's connector only; Admin → Test accounts). Works in any
@@ -94,6 +103,7 @@ const bcrypt = require('bcrypt');
 const log = require('./logger');
 const { parseServiceAccount } = require('./mobile-push-provider');
 const emailSignup = require('./email-signup');
+const { shotsPhoneTestCodeFrom } = require('../config');
 
 const IDENTITY_ENDPOINT = 'https://identitytoolkit.googleapis.com/v1';
 const ADMIN_APP_NAME = 'social-phone-auth';
@@ -185,18 +195,24 @@ const TEST_TOKEN_TTL_MS = 5 * 60 * 1000;
 // client cannot forge one to skip the code on the idToken path.
 const TEST_TOKEN_KEY = crypto.randomBytes(32);
 
-// The same rule config.js applies when it reads PHONE_TEST_CODE, read again
-// from the environment itself, so a config object built anywhere else still
-// cannot turn test numbers on in production.
-function productionEnv(env = process.env) {
-  return env.NODE_ENV === 'production' || env.USERNODE_ENV === 'production';
+// The same rules config.js applies when it reads PHONE_TEST_CODE and
+// SHOTS_PHONE_TEST_CODE, read again from the environment itself, so a config
+// object built anywhere else still cannot turn test numbers on in production.
+// USERNODE_ENV=production: never. NODE_ENV=production, which the platform
+// image sets wherever it runs: only on a shots copy (USERNODE_ENV=staging),
+// and only with the very code the platform gave that copy.
+function testNumbersAllowed(config, env = process.env) {
+  if (env.USERNODE_ENV === 'production') return false;
+  if (env.NODE_ENV !== 'production') return true;
+  const shots = shotsPhoneTestCodeFrom(env).code;
+  return !!shots && sameCode(config.phoneTestCode, shots);
 }
 
 function testNumbersOn(config) {
   return !!(config
     && typeof config.phoneTestCode === 'string'
     && TEST_CODE_RE.test(config.phoneTestCode)
-    && !productionEnv());
+    && testNumbersAllowed(config));
 }
 
 function isTestNumber(phoneNumber) {
@@ -928,6 +944,7 @@ module.exports = {
   PhoneAuthError,
   offered,
   firebaseOffered,
+  testNumbersAllowed,
   testNumbersOn,
   isTestNumber,
   usesTestNumber,

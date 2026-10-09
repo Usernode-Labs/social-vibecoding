@@ -238,6 +238,32 @@ test('a note on what a change\'s shots leave out is kept with the ready change',
     { code: 'shots_turn_finished', status: 409 });
 });
 
+test('the brief\'s phone sign-in code never reaches a note or a skip reason', () => {
+  // Homeroom's own copies hand the agent the run's code (the brief's
+  // phoneSignIn); a note or a reason is shown on the proposal.
+  const context = { addresses: { before: 'http://base.test', after: 'http://head.test' },
+    phoneSignIn: { code: '048213' } };
+  const run = control({ intent: threeChanges(), context });
+  assert.equal(run.getContext().phoneSignIn.code, '048213', 'the agent reads it in its brief');
+  shootBothSides(run, 'invite-suggestions');
+  run.noteChange({ change: 'invite-suggestions', note: 'Typed 048213 for +1 415 555 0142; the next step is left out.' });
+  run.skipChange({ change: 'member-count', reason: 'Code 048 213 and 048-213 both went to a blank page.' });
+  run.skipChange({ reason: 'Everything else needs 048213.' });
+  const stories = run.summary().stories;
+  assert.equal(stories.find((story) => story.id === 'invite-suggestions').note,
+    'Typed **** for +1 415 555 0142; the next step is left out.');
+  assert.equal(stories.find((story) => story.id === 'member-count').reason,
+    'Code **** and **** both went to a blank page.');
+  assert.doesNotMatch(JSON.stringify(stories), /048[ -]?213/);
+
+  // Only that code, standing on its own.
+  const { maskPhoneTestCode } = controlPlane;
+  assert.equal(maskPhoneTestCode('ids 10482130 and 0482131 stay', '048213'), 'ids 10482130 and 0482131 stay');
+  assert.equal(maskPhoneTestCode('code 048213.', '048213'), 'code ****.');
+  assert.equal(maskPhoneTestCode('code 048213', null), 'code 048213', 'no code for the run, nothing to mask');
+  assert.equal(maskPhoneTestCode('code 048213', 'abc'), 'code 048213');
+});
+
 test('the last refused tool call is kept for the owner\'s diagnostics', () => {
   const run = control();
   assert.equal(run.lastToolFailure, null);
