@@ -319,6 +319,16 @@ function buildCopy(kind, context, now) {
         title: withApp(`@${actor} replied in a thread`),
         body: message,
       };
+    // #4535: somebody posted in a request's discussion you filed or posted
+    // in. `detail` is the request's number, so the title says which one;
+    // without it, "a request". The reply itself is the body.
+    case 'issue_thread_reply': {
+      const issue = /^\d+$/.test(detail) ? `request #${detail}` : 'a request';
+      return actor && {
+        title: withApp(`@${actor} replied on ${issue}`),
+        body: message,
+      };
+    }
     // A person's message in a small private group's discussion
     // (services/group-channel-notify.js). Only a fresh row rings, so this is
     // nearly always the one message; `detail` counts the messages folded in

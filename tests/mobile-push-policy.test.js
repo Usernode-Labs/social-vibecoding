@@ -141,6 +141,14 @@ test('each kind renders its own title and body from send-time context', () => {
     ['thread_reply', CONTEXT,
       '@alice replied in a thread · MyPage',
       'hey can you look at the header'],
+    // #4535: a message in a request's discussion you filed or posted in.
+    // The title names the request from `detail`; the reply is the body.
+    ['issue_thread_reply', { ...CONTEXT, detail: '4417' },
+      '@alice replied on request #4417 · MyPage',
+      'hey can you look at the header'],
+    ['issue_thread_reply', CONTEXT,
+      '@alice replied on a request · MyPage',
+      'hey can you look at the header'],
     ['reaction', { ...CONTEXT, detail: '👍' },
       '@alice reacted 👍 to your message · MyPage',
       'You said: hey can you look at the header'],

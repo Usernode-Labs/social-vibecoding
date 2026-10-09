@@ -1069,7 +1069,7 @@ const Notifications = {
       // a same-value hash assignment fires no `hashchange`, so clicking a
       // notification for the app/tab already on screen wouldn't re-render.
       // openAppTab always renders (and keeps the URL in sync internally).
-      const chatKinds = new Set(['mention', 'reply', 'reaction', 'thread_reply']);
+      const chatKinds = new Set(['mention', 'reply', 'reaction', 'thread_reply', 'issue_thread_reply']);
       // #2387: a message in a REPLY thread (thread_type 'message', its ref
       // the thread's first message) opens that thread beside the channel,
       // at the address the server worked out for the row — which the router
@@ -2886,7 +2886,13 @@ function rowView(n) {
       n.kind === 'mention' ? 'Mentioned you'
         : n.kind === 'reply' ? 'Replied to you'
           // #2387: somebody answered in a reply thread you started or joined.
-          : n.kind === 'thread_reply' ? 'Replied in thread' : 'Posted',
+          : n.kind === 'thread_reply' ? 'Replied in thread'
+            // #4535: somebody posted in a request's discussion you filed or
+            // posted in; `detail` is the request's number.
+            : n.kind === 'issue_thread_reply'
+              ? (/^\d+$/.test(String(n.detail || ''))
+                ? `Replied on request #${n.detail}` : 'Replied on a request')
+              : 'Posted',
       (n.messageContent || '').slice(0, 140),
     ),
   };

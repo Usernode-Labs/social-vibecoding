@@ -16,8 +16,10 @@ const CATEGORY_DEFINITIONS = Object.freeze([
     // promise — so they join it rather than getting a switch of their own.
     // #3952: being named with @ in a request somebody filed is a mention
     // like a chat one, so it rides the same switch, beside it.
+    // #4535: a message in a request's discussion you posted in or filed is a
+    // reply in the same sense, so it rides it too, beside `thread_reply`.
     // Kept in lockstep with the seed in db/schema.sql.
-    kinds: Object.freeze(['mention', 'issue_mention', 'reply', 'thread_reply', 'friend_request', 'friend_accept']),
+    kinds: Object.freeze(['mention', 'issue_mention', 'reply', 'thread_reply', 'issue_thread_reply', 'friend_request', 'friend_accept']),
   }),
   Object.freeze({
     key: 'invitations',
