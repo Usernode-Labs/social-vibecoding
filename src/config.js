@@ -747,11 +747,20 @@ function load() {
     // announcements) to the merge-followups machine, and a change reads
     // live only once production runs it. Off by default.
     wfMergeFollowupsEnabled: ['1', 'true'].includes(process.env.WF_MERGE_FOLLOWUPS_ENABLED),
+    // With WF_SESSION_ACTIVITY_ENABLED on, whatever uses a chat session (a
+    // turn, a branch move, a build, a screenshot run's hold, a pause) asks
+    // the session-activity machine first, as well as checking this
+    // process's memory, and a Stop reaches the turn in whichever process
+    // runs it. Off by default.
+    wfSessionActivityEnabled: ['1', 'true'].includes(process.env.WF_SESSION_ACTIVITY_ENABLED),
     // Its own pool, so pipeline slots and the outcome listener never take
     // request connections, and how many slots each process runs. A staging
     // preview shares one Postgres server with the fleet: one slot, and a
-    // pool of two (the outcome listener and one working connection).
-    wfPoolMax: parseInt(process.env.WF_POOL_MAX || (IS_STAGING() ? '2' : '6'), 10),
+    // pool of two (the outcome listener and one working connection), one
+    // more when every turn start asks the session-activity machine.
+    wfPoolMax: parseInt(process.env.WF_POOL_MAX || (IS_STAGING()
+      ? (['1', 'true'].includes(process.env.WF_SESSION_ACTIVITY_ENABLED) ? '3' : '2')
+      : (['1', 'true'].includes(process.env.WF_SESSION_ACTIVITY_ENABLED) ? '8' : '6')), 10),
     wfSlots: parseInt(process.env.WF_SLOTS || (IS_STAGING() ? '1' : '4'), 10),
     // What a write to a machine-owned column outside the pipeline does:
     // 'raise' everywhere but production, where it is logged to

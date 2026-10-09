@@ -1,0 +1,318 @@
+'use strict';
+
+// The web side of the session-activity machine
+// (src/workflow/session-activity/): whatever uses a chat session asks first,
+// and holds what it was granted for as long as it runs.
+//
+//   await sessionActivity.run(sessionId, 'turn', { label }, async (activity) => { ... });
+//
+// With WF_SESSION_ACTIVITY_ENABLED off this only calls `fn`, and the
+// in-memory registries (active-workers.js, worker.js) decide as on [main].
+// With it on, the machine is asked as well, so another process's activity
+// refuses this one, and a refusal throws SessionBusyError before `fn` runs.
+//
+// One activity per thing, not per step. A step of an activity this process
+// is running on the same session (a sync with main's own turn, the Mayor's
+// dispatch running the coding turn) joins it instead of asking again, so an
+// activity never refuses itself; the activity lasts until every part of it
+// has ended. What `fn` calls, awaited or not, is part of it
+// (AsyncLocalStorage). A step the activity does not cover asks with the
+// activity as its parent: a screenshot run's turn inside its hold.
+//
+// The holder renews the activity's lease while it runs. A holder whose
+// renewals keep failing stops counting on it (`alive()`, `signal`) before
+// the lease can run out, and one whose lease ran out is told so.
+//
+// What this module keeps in memory is this process's own handles (their
+// renewal timers and abort signals), like the kernel's running work items:
+// nothing another process needs, and nothing a restart has to restore,
+// since a lease that is not renewed runs out.
+
+const os = require('os');
+const crypto = require('crypto');
+const { AsyncLocalStorage } = require('async_hooks');
+const log = require('./logger');
+
+const platform = () => require('../workflow/platform.ts');
+
+// Who holds an activity: this process, as the machine records it.
+const HOLDER = `${os.hostname()}:${process.pid}:${crypto.randomUUID().slice(0, 8)}`;
+
+// What each kind of activity also covers when one of its own steps asks.
+const COVERS = new Map([
+  ['turn', new Set(['turn', 'branch', 'build', 'hold'])],
+  ['branch', new Set(['branch', 'build'])],
+  ['build', new Set(['build'])],
+  ['hold', new Set(['hold'])],
+  ['destroy', new Set(['destroy'])],
+]);
+
+class SessionBusyError extends Error {
+  constructor(reason, sessionId) {
+    super(reason === 'unavailable'
+      ? 'Session activity could not be checked; try again'
+      : `Session ${sessionId} is busy (${reason})`);
+    this.name = 'SessionBusyError';
+    this.code = 'session_busy';
+    this.reason = reason;
+    // busy_turn → 'turn'; 'retiring', 'unavailable' as they are.
+    this.blockedBy = String(reason).replace(/^busy_/, '');
+    this.sessionId = Number(sessionId);
+  }
+}
+
+const scope = new AsyncLocalStorage();
+// activityId -> handle, this process's own.
+const handles = new Map();
+let stopHandler = null;
+
+function wanted() {
+  try { return platform().sessionActivityWanted(); } catch { return false; }
+}
+function enabled() {
+  try { return platform().sessionActivityEnabled(); } catch { return false; }
+}
+
+function touch(sessionId) {
+  try { require('./session-state').touch(sessionId); } catch { /* best effort */ }
+}
+
+// The activity this code runs inside for `sessionId`, if any (innermost).
+function current(sessionId) {
+  for (let h = scope.getStore(); h; h = h.parentHandle) {
+    if (h.sessionId === Number(sessionId) && !h.ended) return h;
+  }
+  return null;
+}
+
+function makeHandle({ id, sessionId, kind, label, turnId, parentHandle, leaseMs, renewMs }) {
+  const abort = new AbortController();
+  const h = {
+    id, sessionId, kind, label, turnId, parentHandle,
+    refs: 1,
+    ended: false,
+    lost: false,
+    lastRenewedAt: Date.now(),
+    leaseMs,
+    signal: abort.signal,
+    stop: null,
+    stopDelivered: null,
+    // Whether this holder may still act on its grant: its lease can not
+    // have run out yet. A renewal a quarter of the lease late counts as
+    // gone, so the holder stops before anyone else could be granted.
+    alive() {
+      return !h.ended && !h.lost && Date.now() - h.lastRenewedAt < h.leaseMs - renewMs;
+    },
+    _abort: abort,
+  };
+  h.timer = setInterval(() => { renew(h).catch(() => {}); }, renewMs);
+  h.timer.unref?.();
+  return h;
+}
+
+async function renew(h) {
+  if (h.ended || h.lost) return;
+  let r;
+  try {
+    r = await platform().renewActivity(h.id);
+  } catch (err) {
+    log.warn('session-activity', 'Lease renewal failed', { sessionId: h.sessionId, activityId: h.id, err: err.message });
+    if (!h.alive()) h._abort.abort(new SessionBusyError('lease_lost', h.sessionId));
+    return;
+  }
+  if (!r.held) {
+    h.lost = true;
+    clearInterval(h.timer);
+    log.warn('session-activity', 'Activity lease ran out while it was running', { sessionId: h.sessionId, activityId: h.id, kind: h.kind });
+    h._abort.abort(new SessionBusyError('lease_lost', h.sessionId));
+    return;
+  }
+  h.lastRenewedAt = Date.now();
+  if (r.stop) deliverStop(h, r.stop);
+}
+
+// A Stop the machine sent this process's turn: run the local stop for it
+// (routes/sessions.js registers how). Until it lands, every renewal tries
+// again, so a Stop that arrives before the turn registered its stop handle
+// is not lost.
+function deliverStop(h, stop) {
+  h.stop = stop;
+  if (!stopHandler || h.stopDelivered === stop.at || h.stopDelivering) return;
+  h.stopDelivering = true;
+  Promise.resolve()
+    .then(() => stopHandler(h.sessionId, stop))
+    .then((applied) => { if (applied) h.stopDelivered = stop.at; })
+    .catch((err) => log.warn('session-activity', 'Forwarded stop failed', { sessionId: h.sessionId, err: err.message }))
+    .finally(() => { h.stopDelivering = false; });
+}
+
+// The push that carries a Stop to the process holding the turn
+// (services/ws.js, bus kind `session_stop`). Every process hears it.
+function stopArrived({ sessionId, activityId, stop } = {}) {
+  const h = handles.get(activityId);
+  if (!h || h.ended || h.sessionId !== Number(sessionId) || !stop) return false;
+  deliverStop(h, stop);
+  return true;
+}
+
+function setStopHandler(fn) {
+  stopHandler = typeof fn === 'function' ? fn : null;
+}
+
+async function release(h, outcome) {
+  h.refs -= 1;
+  if (h.refs > 0 || h.ended) return;
+  h.ended = true;
+  clearInterval(h.timer);
+  handles.delete(h.id);
+  if (!h.lost) {
+    // Lost or not, a lease that is not renewed runs out; ending it says so now.
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        await platform().endActivity(h.sessionId, h.id, outcome);
+        break;
+      } catch (err) {
+        if (attempt === 3) log.warn('session-activity', 'Could not end an activity; its lease will run out', { sessionId: h.sessionId, activityId: h.id, err: err.message });
+        else await new Promise((r) => setTimeout(r, 200 * attempt));
+      }
+    }
+  }
+  touch(h.sessionId);
+}
+
+// Ask for an activity. Resolves the handle, or throws SessionBusyError.
+async function acquire(sessionId, kind, { label = null, turnId = null } = {}) {
+  const id = Number(sessionId);
+  const inside = current(id);
+  if (inside && COVERS.get(inside.kind)?.has(kind)) {
+    inside.refs += 1;
+    return { handle: inside, joined: true };
+  }
+  if (!enabled()) throw new SessionBusyError('unavailable', id);
+  const activityId = crypto.randomUUID();
+  let outcome;
+  try {
+    outcome = await platform().requestActivity({
+      sessionId: id, activityId, kind, holder: HOLDER, label, turnId, parent: inside ? inside.id : null,
+    });
+  } catch (err) {
+    log.warn('session-activity', 'Asking for an activity failed', { sessionId: id, kind, err: err.message });
+    throw new SessionBusyError('unavailable', id);
+  }
+  if (outcome.status === 'rejected') throw new SessionBusyError(outcome.reason || 'busy', id);
+  if (outcome.status !== 'accepted' && outcome.status !== 'replayed') {
+    // Not answered in time, or the machine faulted: refuse, and cancel the
+    // request in case it is granted later.
+    if (outcome.status === 'pending') platform().endActivity(id, activityId, 'cancelled').catch(() => {});
+    log.warn('session-activity', 'Activity request not answered', { sessionId: id, kind, status: outcome.status });
+    throw new SessionBusyError('unavailable', id);
+  }
+  const reply = outcome.reply || {};
+  const handle = makeHandle({
+    id: activityId, sessionId: id, kind, label, turnId, parentHandle: inside,
+    leaseMs: reply.leaseMs || 90000, renewMs: reply.renewMs || 15000,
+  });
+  handles.set(activityId, handle);
+  touch(id);
+  return { handle, joined: false };
+}
+
+// Run `fn` as an activity of `kind` on the session (see the header).
+// `fn` gets the handle, or null with the flag off.
+async function run(sessionId, kind, opts, fn) {
+  if (typeof opts === 'function') { fn = opts; opts = {}; }
+  if (!wanted()) return fn(null);
+  const { handle } = await acquire(sessionId, kind, opts || {});
+  let outcome = 'done';
+  try {
+    return await scope.run(handle, () => fn(handle));
+  } catch (err) {
+    outcome = 'failed';
+    throw err;
+  } finally {
+    await release(handle, outcome);
+  }
+}
+
+// For an activity whose start and end are not one call: the caller ends it.
+// Resolves an object with enter() and end(), or null with the flag off.
+// enter() makes what the caller runs next part of the activity; it has to
+// be called by the caller itself (AsyncLocalStorage is per call chain).
+async function begin(sessionId, kind, opts = {}) {
+  if (!wanted()) return null;
+  const { handle } = await acquire(sessionId, kind, opts);
+  let done = false;
+  return {
+    handle,
+    enter: () => scope.enterWith(handle),
+    end: (outcome = 'done') => {
+      if (done) return Promise.resolve();
+      done = true;
+      return release(handle, outcome);
+    },
+  };
+}
+
+// What every process reads: the sessions with a live activity, and whether
+// a stop is on its way to their turn. Empty with the flag off.
+async function read(sessionIds) {
+  const ids = [...new Set((sessionIds || []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+  if (!ids.length || !wanted() || !enabled()) return new Map();
+  try {
+    return await platform().readSessionActivities(ids);
+  } catch (err) {
+    log.warn('session-activity', 'Reading session activity failed', { err: err.message });
+    return new Map();
+  }
+}
+
+async function isBusy(sessionId) {
+  return (await read([sessionId])).has(Number(sessionId));
+}
+
+// The worker can go once nothing uses the session (the machine waits), or
+// with the flag off as [main] did: now, unless this process holds it.
+async function retire(sessionId, by) {
+  if (wanted() && enabled()) {
+    await platform().retireSession(Number(sessionId), by);
+    return { deferred: 'session-activity' };
+  }
+  return require('./worker').retireWorker(sessionId);
+}
+
+// A Stop for a turn this process does not run. Resolves true when the
+// machine sent it to the process that runs it.
+async function forwardStop(sessionId, stop) {
+  if (!wanted() || !enabled()) return false;
+  try {
+    const outcome = await platform().stopSessionTurn(Number(sessionId), stop);
+    return outcome.status === 'accepted' && !!outcome.reply?.holder;
+  } catch (err) {
+    log.warn('session-activity', 'Forwarding a stop failed', { sessionId, err: err.message });
+    return false;
+  }
+}
+
+// Shutdown: this process's activities, after the drain.
+function heldCount() {
+  return handles.size;
+}
+async function endAll(outcome = 'shutdown') {
+  await Promise.all([...handles.values()].map((h) => { h.refs = 1; return release(h, outcome); }));
+}
+
+module.exports = {
+  HOLDER,
+  SessionBusyError,
+  run,
+  begin,
+  read,
+  isBusy,
+  retire,
+  forwardStop,
+  stopArrived,
+  setStopHandler,
+  heldCount,
+  endAll,
+  wanted,
+};

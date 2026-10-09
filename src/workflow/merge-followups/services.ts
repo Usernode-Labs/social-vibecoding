@@ -8,9 +8,15 @@ import { legacy } from '../legacy.ts';
 import { backoff, closeAndComment, gone, permanent } from '../github-work.ts';
 import { WORK } from './machine.ts';
 
-interface Deps { config: any; pool: Pool }
+interface Deps {
+  config: any;
+  pool: Pool;
+  // The worker's retirement: the session-activity machine's when it runs
+  // here (platform.ts), so it waits for whatever still uses the session.
+  retire: (sessionId: number) => Promise<{ deferred: boolean | string }>;
+}
 
-export function mergeFollowupsServices({ config, pool }: Deps): Record<string, WorkHandler> {
+export function mergeFollowupsServices({ config, pool, retire }: Deps): Record<string, WorkHandler> {
   const github = () => legacy('services/github');
   const session = async (id: number) => (await pool.query(
     `SELECT cs.*, a.slug AS app_slug, a.repo_url FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`,
@@ -92,8 +98,8 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
       maxAttempts: 5,
       backoffMs: backoff,
       async run({ input }): Promise<Json> {
-        const result = await legacy('services/worker').retireWorker(input.sessionId);
-        return { deferred: !!result?.deferred };
+        const result = await retire(input.sessionId);
+        return { deferred: result.deferred };
       },
     },
 
