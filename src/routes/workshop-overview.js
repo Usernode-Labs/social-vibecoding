@@ -26,7 +26,10 @@
 //       GET /api/me/active-sessions returns and the board keeps as
 //       `_mySessions` (its `my-session` entries in the Underway lane).
 //     · their proposals in review, `promoted` or `merging`: the
-//       GET /api/apps/:slug/promoted rows whose `user_id` is theirs.
+//       GET /api/apps/:slug/promoted rows whose `user_id` is theirs — plus,
+//       since #4538, the ones Homeroom bot built from a request made for
+//       them (botRequestedBySql, MY_PROPOSALS_WHERE below). They still owe
+//       their vote on such a change, so NEEDS counts it too.
 //     · their open governance proposals: the GET /api/apps/:slug/issues
 //       rows whose `created_by` is theirs.
 //     The three statuses are disjoint, so nothing is counted twice.
@@ -72,6 +75,7 @@ const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const { currentVotePredicateSql, countedVotePredicateSql } = require('../services/pr-vote-revision');
+const { botRequestedBySql } = require('../services/bot-requested-by');
 const { governanceKindsSql } = require('../services/governance-kinds');
 const communities = require('../services/communities');
 const governance = require('../services/governance');
@@ -124,7 +128,15 @@ const MY_SESSIONS_WHERE = `cs.user_id = $1
        AND cs.status IN ('active', 'paused')
        AND cs.is_headless = FALSE`;
 
-const MY_PROPOSALS_WHERE = `cs.user_id = $1
+// #4538: a change Homeroom bot built from a request made for the viewer is
+// that viewer's work in flight too, even though `cs.user_id` is the bot's —
+// they asked for it and they are waiting on it. The bot-request predicate is
+// the shared fragment (services/bot-requested-by.js), the same one the
+// /promoted payload reads, so the strip and the counts cannot disagree.
+// OWED_PROPOSALS_WHERE is unchanged: the bot's change still counts as a vote
+// owed (the bot is not the viewer, and the viewer may still vote on it).
+const MY_PROPOSALS_WHERE = `(cs.user_id = $1
+       OR ${botRequestedBySql('cs', '$1')})
        AND cs.status IN ('promoted', 'merging')`;
 
 const MY_GOVERNANCE_WHERE = `i.status = 'open'
