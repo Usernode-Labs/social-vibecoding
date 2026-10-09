@@ -2119,8 +2119,12 @@ const DevChat = {
     if (DevChat._isOpenRouterSession()) return { kind: 'none', label: '' };
     const agent = DevChat._localAgent;
     if (!agent && DevChat._runner !== 'local') return { kind: 'none', label: '' };
-    const label = agent?.label || DevChat._runnerLabel || PlatformI18n.t('devchat:runner.yourMachine');
-    return { kind: agent ? 'live' : 'past', label };
+    // A machine's own name, or none. The stand-in is for where the label is
+    // shown alone; `unnamed` tells the tooltips to use their own wording
+    // instead of taking the stand-in as a name.
+    const name = agent?.label || DevChat._runnerLabel || '';
+    const label = name || PlatformI18n.t('devchat:runner.yourMachine');
+    return { kind: agent ? 'live' : 'past', label, unnamed: !name };
   },
 
   // Release the lease from the browser. This is the escape hatch for the

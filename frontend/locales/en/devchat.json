@@ -239,6 +239,10 @@
     "text": "The last turn ran on {{machine}}. That machine has detached, so the next turn runs on Homeroom.",
     "description": "Tooltip on the 'Last turn' chip above the dev chat message box. {{machine}} is the name of the person's own computer that ran the coding agent's last request and has since disconnected."
   },
+  "runner.pastTitleUnnamed": {
+    "text": "The last turn ran on your machine. That machine has detached, so the next turn runs on Homeroom.",
+    "description": "Tooltip on the 'Last turn' chip above the dev chat message box. Used when the person's own computer has no name; it is called \"your machine\", as the tooltip has always read. A 'turn' is one request to the coding agent."
+  },
   "runner.lastTurn": {
     "text": "Last turn: {{machine}}",
     "description": "Chip above the dev chat message box: the coding agent's last request ran on the person's own computer. {{machine}} is that computer's name."
@@ -250,6 +254,10 @@
   "runner.liveTitle": {
     "text": "Spec and coding turns in this session run on {{machine}}, using its own Claude subscription. A spec turn is read-only; after a coding turn Homeroom still opens the PR, builds the preview and runs the checks.",
     "description": "Tooltip on the 'Running on your machine' chip above the dev chat message box. {{machine}} is the name of the person's own computer. A 'turn' is one request to the coding agent; a spec is the written plan for a change; PR is short for pull request."
+  },
+  "runner.liveTitleUnnamed": {
+    "text": "Spec and coding turns in this session run on your machine, using its own Claude subscription. A spec turn is read-only; after a coding turn Homeroom still opens the PR, builds the preview and runs the checks.",
+    "description": "Tooltip on the 'Running on your machine' chip above the dev chat message box. Used when the person's own computer has no name; it is called \"your machine\", as the tooltip has always read. A 'turn' is one request to the coding agent."
   },
   "runner.onYourMachine": {
     "text": "Running on your machine",
@@ -1157,7 +1165,7 @@
   },
   "runner.yourMachine": {
     "text": "your machine",
-    "description": "Stands in for the name of the person's own computer in the dev chat's 'Last turn: …' chip and its tooltips when the computer has no name. Lower case: it appears inside those lines."
+    "description": "Stands where the name of the person's own computer is shown on its own above the dev chat message box, when the computer has no name: in the 'Last turn: …' chip and as the option in the 'Run on:' dropdown. Shown alone, as a label; lower case in English. The tooltips have unnamed wordings of their own."
   },
   "runner.handBack.confirm": {
     "text": "Hand coding turns back to Homeroom?\n\n{{machine}} stops receiving turns for this session. Anything it already committed stays on the branch.",

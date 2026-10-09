@@ -316,3 +316,42 @@ test('the Workshop summary\'s two-count sentences read as before, with a plural 
   assert.match(describe, /fact\.categories', \{ count: d\.themes \}/);
   assert.match(describe, /fact\.unclaimed', \{ count: d\.unclaimed \}/);
 });
+
+test('a machine with no name is a label where it stands alone and a wording of its own inside a sentence', async (t) => {
+  const FILE = 'frontend/src/features/dev-chat/composer-chrome.tsx';
+  // English, as it has always read.
+  {
+    // eslint-disable-next-line global-require
+    const { loadTsx } = require('./lib/render-tsx');
+    const { RunnerControlsView } = loadTsx(FILE);
+    const past = renderToHtml(createElement(RunnerControlsView, { kind: 'past', label: 'your machine', unnamed: true }));
+    assert.match(past, /title="The last turn ran on your machine\. That machine has detached, so the next turn runs on Homeroom\."/);
+    assert.match(past, />Last turn: your machine<\/span>/);
+    const live = renderToHtml(createElement(RunnerControlsView, { kind: 'live', label: 'your machine', unnamed: true }));
+    assert.match(live, /<option value="local"[^>]*>your machine<\/option>/);
+    assert.match(live, /title="Spec and coding turns in this session run on your machine, using its own Claude subscription\./);
+    const named = renderToHtml(createElement(RunnerControlsView, { kind: 'past', label: 'ada-laptop' }));
+    assert.match(named, /title="The last turn ran on ada-laptop\. /);
+    for (const id of ['pastTitle', 'liveTitle']) {
+      assert.equal(message(`devchat:runner.${id}Unnamed`), message(`devchat:runner.${id}`, { machine: 'your machine' }), id);
+    }
+  }
+  // A language where the machine takes a different form after a preposition.
+  const { module: chrome } = await loadInSpanish(t, FILE, {
+    'devchat:runner.yourMachine': 'ваша машина',
+    'devchat:runner.lastTurn': 'Последний ход: {{machine}}',
+    'devchat:runner.pastTitle': 'Последний ход выполнен на {{machine}}.',
+    'devchat:runner.pastTitleUnnamed': 'Последний ход выполнен на вашей машине.',
+    'devchat:runner.liveTitle': 'Ходы выполняются на {{machine}}.',
+    'devchat:runner.liveTitleUnnamed': 'Ходы выполняются на вашей машине.',
+  });
+  const past = renderToHtml(createElement(chrome.RunnerControlsView, { kind: 'past', label: 'ваша машина', unnamed: true }));
+  assert.match(past, />Последний ход: ваша машина<\/span>/, 'alone, the stand-in is a label');
+  assert.match(past, /title="Последний ход выполнен на вашей машине\."/, 'in the sentence, the unnamed wording has its own form');
+  assert.doesNotMatch(past, /на ваша машина/);
+  const live = renderToHtml(createElement(chrome.RunnerControlsView, { kind: 'live', label: 'ваша машина', unnamed: true }));
+  assert.match(live, /title="Ходы выполняются на вашей машине\."/);
+  assert.match(live, /<option value="local"[^>]*>ваша машина<\/option>/);
+  const named = renderToHtml(createElement(chrome.RunnerControlsView, { kind: 'past', label: 'ada-laptop' }));
+  assert.match(named, /title="Последний ход выполнен на ada-laptop\."/);
+});

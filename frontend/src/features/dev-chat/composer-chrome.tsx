@@ -67,12 +67,12 @@ export function QuickRepliesBar() {
   );
 }
 
-export function RunnerControlsView({ kind, label }: RunnerState) {
+export function RunnerControlsView({ kind, label, unnamed }: RunnerState) {
   const t = useMessages('devchat');
   if (kind === 'none') return null;
   if (kind === 'past') {
     return (
-      <span className="dc-runner-chip dc-runner-chip-past" title={t('devchat:runner.pastTitle', { machine: label })}>
+      <span className="dc-runner-chip dc-runner-chip-past" title={unnamed ? t('devchat:runner.pastTitleUnnamed') : t('devchat:runner.pastTitle', { machine: label })}>
         {t('devchat:runner.lastTurn', { machine: label })}
       </span>
     );
@@ -102,7 +102,7 @@ export function RunnerControlsView({ kind, label }: RunnerState) {
         <option value="local">{label}</option>
         <option value="platform">Homeroom</option>
       </select>
-      <span className="dc-runner-chip" title={t('devchat:runner.liveTitle', { machine: label })}>{t('devchat:runner.onYourMachine')}</span>
+      <span className="dc-runner-chip" title={unnamed ? t('devchat:runner.liveTitleUnnamed') : t('devchat:runner.liveTitle', { machine: label })}>{t('devchat:runner.onYourMachine')}</span>
     </>
   );
 }
