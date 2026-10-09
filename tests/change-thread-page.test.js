@@ -122,10 +122,15 @@ test('the shell draws a change page as the request page’s sheet, with Messages
   assert.match(html, /^<div class="dev-request dev-change platform-kb-column"><div id="gc-thread-back" class="dev-request-back"><\/div><section class="dev-request-sheet dc-lift dc-lift-session" aria-label="Change"><div id="gc-thread-bar" class="dev-request-bar"><\/div>/);
   assert.match(html, /<div id="gc-thread-head"><\/div><div id="gc-thread-messages"><\/div>/);
   assert.match(html, /class="messages-composer messages-composer-thread platform-safe-bar"/);
+  // #4553: the disc stands in its own band between the scroller and the
+  // status line, so it never covers the change's gate cards or their buttons.
+  assert.match(html, /<\/div><div class="relative z-10 shrink-0 h-11" data-transcript-overlay="foot">[\s\S]*?data-jump-latest=""[\s\S]*?<\/div><div id="gc-thread-typing" class="px-4 text-xs text-zinc-500 dark:text-zinc-400 h-5 shrink-0"><\/div>/,
+    'the change page\'s disc is docked in a reserved band, not floating over the sheet\'s cards');
   const request = renderComponent(SHELL, 'ThreadShell', {
     fill: true, withHeader: true, readOnly: false, notice: '', placeholder: 'Reply…', maxLength: 4000, request: true,
   });
   assert.match(request, /^<div class="dev-request platform-kb-column">[\s\S]*aria-label="Request"/, 'the request page is unchanged');
+  assert.match(request, /<div class="relative z-10 shrink-0 h-11" data-transcript-overlay="foot">/, 'the request page gets the same docked band');
 });
 
 test('group-chat.js carries the change language from the mount to the shell and the transcript', () => {

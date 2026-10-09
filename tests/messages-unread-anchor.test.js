@@ -671,6 +671,10 @@ test('Jump to latest alone: hidden until the reader is up the transcript, and a 
   assert.match(html, /^<div class="relative z-10 h-0 shrink-0" data-transcript-overlay="foot"><div class="pointer-events-none absolute inset-x-0 flex justify-center px-4 bottom-3"><button type="button" inert="" data-jump-latest=""/);
   assert.match(html, /aria-label="Jump to latest" title="Jump to latest"/);
 
+  const docked = renderToHtml(createElement(loadTsx('frontend/src/features/messages/jump-to-latest.tsx').JumpToLatest, { scroller: { current: null }, docked: true }));
+  assert.match(docked, /^<div class="relative z-10 shrink-0 h-11" data-transcript-overlay="foot"><div class="pointer-events-none absolute inset-x-0 flex justify-center px-4 bottom-1"><button type="button" inert="" data-jump-latest=""/,
+    'docked: the disc stands in a reserved 44px band instead of floating over the scroller\'s foot');
+
   assert.match(THREAD, /<\/div>\s*<JumpToLatest scroller=\{scroller\} \/>\s*<MessageComposer threadRootId=\{rootId\} \/>/, 'a reply thread beside a conversation');
 });
 

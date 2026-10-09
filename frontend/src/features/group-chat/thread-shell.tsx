@@ -158,7 +158,10 @@ function RequestShell(props: ThreadShellProps) {
           <div id="gc-thread-head" />
           <div id="gc-thread-messages" />
         </div>
-        <JumpToLatest scroller={scroll} slack={THREAD_FOLLOW_PX} />
+        {/* Docked (#4553): the sheet's foot holds the change's own gate cards
+            and their buttons, which a floating disc would cover. The topic
+            layout below keeps the disc floating over plain chat rows. */}
+        <JumpToLatest scroller={scroll} slack={THREAD_FOLLOW_PX} docked />
         <StatusLine scope="thread" className="px-4 text-xs text-zinc-500 dark:text-zinc-400 h-5 shrink-0" />
         <Composer {...props} />
       </section>

@@ -20,18 +20,24 @@ import { jumpLabel, useUnreadAffordances, type UnreadRow } from './unread-anchor
 const NO_LINE: RefObject<HTMLElement | null> = { current: null };
 const NO_ROWS: readonly UnreadRow[] = [];
 
-export function JumpToLatest({ scroller, slack, rows = NO_ROWS }: {
+export function JumpToLatest({ scroller, slack, rows = NO_ROWS, docked = false }: {
   scroller: RefObject<HTMLElement | null>;
   /** The allowance the transcript follows new messages within. */
   slack?: number;
   /** The transcript's messages, oldest first, when the caller has them: the dot counts what arrives. */
   rows?: readonly UnreadRow[];
+  /**
+   * Reserve a band of its own instead of floating over the scroller's foot
+   * (#4553): for a sheet whose foot holds its own cards and buttons, which a
+   * floating disc would cover.
+   */
+  docked?: boolean;
 }) {
   const { view, toLatest } = useUnreadAffordances(scroller, NO_LINE, {
     conversation: null, markKey: '', lineAt: null, rows, slack, watchContent: true,
   });
   return (
-    <TranscriptOverlay edge="foot">
+    <TranscriptOverlay edge="foot" reserve={docked}>
       <JumpToLatestButton shown={view.jump} dot={view.arrived > 0} aria-label={jumpLabel(view.arrived)} title="Jump to latest" onClick={toLatest} />
     </TranscriptOverlay>
   );

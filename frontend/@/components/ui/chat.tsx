@@ -197,11 +197,19 @@ const FLOAT_MOTION = 'transition-[opacity,transform] duration-200 ease-out motio
  * bot's tray hangs from its own. The scroller keeps its size and its class
  * string, and nothing is drawn inside it. The box passes taps through; the
  * control inside takes its own.
+ *
+ * `reserve` gives the foot a strip of its own instead of floating the
+ * control up over the scroller's last rows (#4553): the box becomes a 44px
+ * band and the foot disc sits fully inside it. For a foot that holds a
+ * surface with its own controls — the change and request sheets' gate cards —
+ * which a floating disc would cover. The height is permanent, shown or not:
+ * growing and collapsing it with the control would shift the page and, at
+ * some scroll positions, loop the control in and out of its own shown rule.
  */
-export function TranscriptOverlay({ edge, children }: { edge: 'top' | 'foot'; children?: React.ReactNode }) {
+export function TranscriptOverlay({ edge, reserve = false, children }: { edge: 'top' | 'foot'; reserve?: boolean; children?: React.ReactNode }) {
   return (
-    <div className="relative z-10 h-0 shrink-0" data-transcript-overlay={edge}>
-      <div className={cn('pointer-events-none absolute inset-x-0 flex justify-center px-4', edge === 'top' ? 'top-2' : 'bottom-3')}>
+    <div className={reserve ? 'relative z-10 shrink-0 h-11' : 'relative z-10 h-0 shrink-0'} data-transcript-overlay={edge}>
+      <div className={cn('pointer-events-none absolute inset-x-0 flex justify-center px-4', edge === 'top' ? 'top-2' : reserve ? 'bottom-1' : 'bottom-3')}>
         {children}
       </div>
     </div>
