@@ -468,8 +468,9 @@ test('while setup gates the rest the progress is the First challenges group’s 
   pane._renderGrid();
   grid = gridOf(store);
   // QA 2026-09-24 Q17: the tab's tally names its scope as an event, since
-  // Home's and the profile's "done in Season 2" count the whole season.
-  assert.deepEqual({ ...grid.progress }, { done: 2, total: 3, caption: 'done in this event · Season 2' },
+  // Home's and the profile's "done in Season 2" count the whole season — but
+  // it no longer names the event itself, whose name is the season's own.
+  assert.deepEqual({ ...grid.progress }, { done: 2, total: 3, caption: 'done in this event' },
     'the tally counts finished cards across groups, not a finished tail of the grid');
   assert.deepEqual(keysOf(grid), ['week', 'setup'], 'the finished First challenges follows what is left to do');
   assert.equal('notice' in grid, false, 'unlocked, there is no notice');

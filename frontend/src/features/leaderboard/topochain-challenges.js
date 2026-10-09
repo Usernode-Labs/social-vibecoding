@@ -976,18 +976,21 @@ const TopochainChallenges = {
   // can land after the grid does. The onChange redraw in open() fills it in
   // then, and until it has, the caption is plain "done".
   //
-  // THE EVENT SAYS IT IS AN EVENT (QA 2026-09-24 Q17). This tally is one
+  // THE TALLY SAYS IT IS AN EVENT'S, NOT WHICH ONE. This tally is one
   // event's challenges, while Home's and the profile's are the whole
-  // season's; production names its season event after the season ("Season
-  // 1"), so "done in Season 1" here and "done in Season 1" on Home were two
-  // different counts under one label. The event's tally reads "done in this
-  // event · <name>" now. A named scope ("First challenges") is unchanged.
+  // season's, so the caption keeps "done in this event". It used to append
+  // the event's name, but production names its season event after the
+  // season ("Season 2"), and the season's name is not what this line is
+  // for (QA 2026-09-24 Q17 recorded the earlier append). A named scope
+  // ("First challenges") still names its scope. The event's name can land
+  // after the grid does; the blank-name guard below keeps the caption
+  // plain "done" until it has, exactly as before.
   _progressView(done, total, scope) {
     if (scope) return { done, total, caption: `done in ${scope}` };
     const ctx = window.TopochainEventContext;
     const ev = ctx && typeof ctx.selectedEvent === 'function' ? ctx.selectedEvent() : null;
     const name = ev ? TopochainChallenges.str(ev.name).trim() : '';
-    return { done, total, caption: name ? `done in this event · ${name}` : 'done' };
+    return { done, total, caption: name ? 'done in this event' : 'done' };
   },
 
   // The card's rail: which of the three states a challenge is in, the one
