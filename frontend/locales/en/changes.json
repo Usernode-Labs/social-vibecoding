@@ -2749,7 +2749,7 @@
   },
   "remedy.leadThenRest": {
     "text": "{{lead}} {{rest}}",
-    "description": "Joins the first sentence of a proposal's conflict note to the sentence that follows it. {{lead}} is a whole sentence and {{rest}} the next one. Only the space between them is translated."
+    "description": "How the two sentences of a proposal's conflict note are put together. {{lead}} is a complete sentence about what Homeroom does on its own, and {{rest}} is a complete sentence about what a person can do (it may contain words in bold). Both are placed exactly where they stand here, so a language may reorder them or change what stands between them."
   },
   "remedy.lead.mayNotRun": {
     "text": "Automatic resolution may not run for this proposal.",

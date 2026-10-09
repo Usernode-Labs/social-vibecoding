@@ -16202,6 +16202,28 @@ const AppView = {
     return parts;
   },
 
+  // `changes:remedy.leadThenRest` ("{{lead}} {{rest}}") as a list of parts:
+  // the lead sentence and the rest's own parts, each where the message puts
+  // its parameter, with the message's own text between and around them.
+  // Neighbouring plain text from the message and the lead is one string, as
+  // a ledger line's parts have always been; the rest's parts stay as given.
+  _joinLeadAndRest(lead, rest) {
+    const joiner = PlatformI18n.t('changes:remedy.leadThenRest', {
+      interpolation: { prefix: '[[unused:', suffix: ']]' },
+    });
+    const parts = [];
+    let text = '';
+    const flush = () => { if (text) { parts.push(text); text = ''; } };
+    for (const token of joiner.split(/({{\s*(?:lead|rest)\s*}})/)) {
+      const slot = /^{{\s*(lead|rest)\s*}}$/.exec(token);
+      if (!slot) text += token;
+      else if (slot[1] === 'lead') text += lead;
+      else { flush(); parts.push(...rest); }
+    }
+    flush();
+    return parts;
+  },
+
   _conflictRemedy(pr, mode) {
     // A sentence that names the author, or its own wording for an author
     // whose name is not known.
@@ -16250,9 +16272,11 @@ const AppView = {
     } else {
       rest = byCreator('changes:remedy.rest.fork', 'changes:remedy.rest.forkUnnamed');
     }
-    // The lead is a whole sentence; the message that joins it to the next
-    // one supplies the space between them.
-    const parts = lead ? [PlatformI18n.t('changes:remedy.leadThenRest', { lead, rest: '' }), ...rest] : rest;
+    // The lead is a whole sentence and so is the rest (which carries bold
+    // runs, so it stays a list of parts). The message that joins them says
+    // where each goes and what stands between: both are placed where the
+    // catalog puts `{{lead}}` and `{{rest}}`, never appended after it.
+    const parts = lead ? AppView._joinLeadAndRest(lead, rest) : rest;
     // The pill's plain-text detail. A native row keeps the sentence the pill
     // has always carried; an imported one gets the note's sentence, since
     // that is the first time the pill has had anything true to say about it.
