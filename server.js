@@ -4709,11 +4709,18 @@ async function resumeDetachedTurnInner({
   // noteTailMilestone throws invalid_turn_transition, the tail aborts with
   // the turn retained, and the retained-recovery timer replays the whole
   // tail every minute forever (session 3180: 13+ identical resume attempts,
-  // each re-running the finalize narration). Only the mid-exec case needs
-  // the stamp — an interrupted TAIL is already 'tail_pending' and re-stamping
+  // each re-running the finalize narration). A record still in
+  // 'dispatch_pending' needs it too, for the same reason: its replay is over
+  // as well, whether or not the agent ever started (change 7490, 9 Oct 2026:
+  // a follow-up a pending stop skipped left its record there, and recovery
+  // retried "milestone attempted from dispatch_pending" through five
+  // restarts while the proposal read as running). Only those two phases are
+  // stamped — an interrupted TAIL is already 'tail_pending' and re-stamping
   // would clobber its milestone map with the seed. A failed stamp propagates
   // to the caller's retain/quarantine triage like any other recovery error.
-  if (turnLifecycle.phaseOf(recoveryActiveTurn) === turnLifecycle.PHASE_EXECUTING) {
+  const replayedPhase = turnLifecycle.phaseOf(recoveryActiveTurn);
+  if (replayedPhase === turnLifecycle.PHASE_EXECUTING
+    || replayedPhase === turnLifecycle.PHASE_DISPATCH_PENDING) {
     await worker.markTurnTail(sessionId, {
       sha: result.sha || null,
       pushOk: result.pushOk === true,

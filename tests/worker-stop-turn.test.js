@@ -378,6 +378,53 @@ test('a pending stop makes execInWorker skip the dispatch entirely', async () =>
   } finally { restore(); }
 });
 
+// Change 7490 (9 Oct 2026): attempt registration (startCodexAttempt) writes
+// the turn's record in dispatch_pending BEFORE execInWorker. The pending-stop
+// gate returned ahead of the try/finally that releases a turn, so a skipped
+// dispatch left that record behind; the Homeroom bot's follow-ups never
+// finish turns themselves, and the proposal read as running for good.
+test('a skipped dispatch releases the record registered for it', async () => {
+  const { worker, activeTurns, restore } = loadWorker();
+  try {
+    warmSession(worker, 8104);
+    activeTurns.set(8104, { turnId: 'registered-8104', phase: 'dispatch_pending', journal: '/home/node/.claude/turn-a.log' });
+    await worker.stopTurn(8104);
+
+    const state = await worker.execInWorker(8104, {
+      ...DISPATCH_ARGS, agentBackend: 'codex_openrouter', logicalTurnId: 'registered-8104',
+    });
+
+    assert.equal(state.exitCode, 143, 'still skipped, with the killed-turn shape');
+    assert.equal(activeTurns.has(8104), false, 'and its record is cleared, as a finished turn\'s is');
+    assert.equal(await worker.finishTurn(8104, { turnId: 'registered-8104' }), true,
+      'a caller that finishes the turn itself finds nothing left, and that is fine');
+  } finally { restore(); }
+});
+
+test('a skipped dispatch hands a tail-holding caller its record, and never touches another turn\'s', async () => {
+  const { worker, activeTurns, restore } = loadWorker();
+  try {
+    warmSession(worker, 8105);
+    activeTurns.set(8105, { turnId: 'registered-8105', phase: 'dispatch_pending' });
+    await worker.stopTurn(8105);
+    await worker.execInWorker(8105, {
+      ...DISPATCH_ARGS, agentBackend: 'codex_openrouter', logicalTurnId: 'registered-8105', holdTurnRecord: true,
+    });
+    assert.equal(activeTurns.get(8105)?.phase, 'tail_pending', 'handed to the tail, as the finally would');
+
+    // A record that is not this attempt's, or has moved past dispatch, stays.
+    warmSession(worker, 8106);
+    activeTurns.set(8106, { turnId: 'someone-else', phase: 'dispatch_pending' });
+    await worker.stopTurn(8106);
+    await worker.execInWorker(8106, { ...DISPATCH_ARGS, agentBackend: 'codex_openrouter', logicalTurnId: 'mine-8106' });
+    assert.deepEqual(activeTurns.get(8106), { turnId: 'someone-else', phase: 'dispatch_pending' });
+
+    activeTurns.set(8106, { turnId: 'mine-8106', phase: 'executing' });
+    assert.equal(await worker.releaseSkippedDispatch(8106, 'mine-8106'), false, 'executing is not a skipped dispatch');
+    assert.equal(activeTurns.get(8106).phase, 'executing');
+  } finally { restore(); }
+});
+
 test('a skipped legacy dispatch does not invent a durable turn owner', async () => {
   const { worker, calls, restore } = loadWorker();
   try {

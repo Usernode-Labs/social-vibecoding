@@ -757,6 +757,17 @@ async function runFollowUpTurn({
     }
     return { routed: { error: `worker: ${err.message}` }, result: {}, stopped: false, costUsd: null, infra: true };
   }
+  // A stop stays pending on the proposal's session after the turn it
+  // stopped has ended, and the worker skips every dispatch until a new turn
+  // clears it (#937). Nothing here cleared it, so the reply queued behind a
+  // follow-up its budget stopped was skipped the moment it started (change
+  // 7490, 9 Oct 2026: a person's second message, three seconds after the
+  // first turn ran out of time). This turn is that new turn, as a read's is
+  // (#4579). Safe here: turnRunningOn just found nothing running on the
+  // session, so a stop pending now was aimed at a turn that is over; and it
+  // is cleared before this turn's clock and its stop are wired up, so a stop
+  // aimed at this turn is never the one erased.
+  if (!worker.isInFlight?.(session.id)) worker.clearPendingStop?.(session.id);
   // A fresh model conversation (#3035's reason): the saved thread is the
   // build that made the proposal, and the prompt carries everything since.
   await pool.query('UPDATE chat_sessions SET agent_thread_id = NULL WHERE id = $1', [session.id]).catch(() => {});
