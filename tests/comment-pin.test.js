@@ -472,10 +472,12 @@ test('comment mode opens on demand into a host of its own, once, and C asks it t
   assert.match(src, /if \(inUse \+ d\.images\.length >= MAX_PICTURES\) return \{ pictures: d\.pictures, picture: null \};/);
   // Kudos is one line that says who it is for.
   assert.match(src, />Kudos for whoever solves it</);
-  // The bar: moved by its handle and kept on the device; out of the way after a rest, not a pass.
+  // The bar: moved by its handle (four arrows, a move cursor) and kept on the device; it never hides on its own.
   assert.match(src, /const BAR_KEY = 'usernode:comment-bar';/);
-  assert.match(src, /const DUCK_AFTER_MS = 280;/);
-  assert.match(src, /if \(e\.pointerType !== 'mouse' \|\| drag\.current \|\| confirm\) return;/, 'a finger never makes it duck');
+  assert.match(src, /<ArrowsMoveIcon className="h-4 w-4" \/>/);
+  assert.match(src, /cursor-move touch-none/);
+  assert.match(src, /onDoubleClick=\{\(\) => \{ setBarAt\(null\); saveBarAt\(null\); \}\}/);
+  assert.doesNotMatch(src, /DUCK_AFTER_MS|ducked|onBarEnter/, 'resting the pointer on the bar never hides it');
   // A finger: a tap is a comment, a drag scrolls.
   assert.match(src, /if \(!t\.moved\) place\(\{ x: e\.clientX, y: e\.clientY \}\);/);
   // The form is called the form.
