@@ -1343,7 +1343,12 @@ function classifyIssue({ issue, threadLastAt = null, busy = false, lastRun = nul
       }
       return { eligible: false, reason: 'unchanged', threadSeenAt };
     }
-    return { eligible: true, reason: 'changed', priority: 2, threadSeenAt };
+    // What moved past the last read: the GitHub issue (any comment, edit or
+    // label moves its updated_at) or a person's message on Homeroom. Kept
+    // on the run as its read_reason, so a request read again and again says
+    // why.
+    const changedBy = toMs(threadLastAt) > lastSeenMs && toMs(threadLastAt) >= toMs(issue.updatedAt) ? 'discussion' : 'github';
+    return { eligible: true, reason: 'changed', priority: 2, threadSeenAt, changedBy };
   }
   return { eligible: true, reason: 'new', priority: 1, threadSeenAt };
 }
@@ -1641,17 +1646,20 @@ async function refreshApp(pool, app, {
   const byNumber = new Map(issues.map((issue) => [Number(issue.number), issue]));
   for (const item of eligible) {
     const { rows: queued } = await pool.query(
-      `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason, thread_seen_at)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason, thread_seen_at, changed_by)
+       VALUES ($1, $2, $3, $4, $5, $7)
        ON CONFLICT (app_id, issue_number) DO UPDATE
          SET priority = LEAST(homeroom_bot_queue.priority, EXCLUDED.priority),
              thread_seen_at = EXCLUDED.thread_seen_at,
              reason = CASE WHEN homeroom_bot_queue.priority = 0
                              OR homeroom_bot_queue.reason = ANY($6::text[])
-                           THEN homeroom_bot_queue.reason ELSE EXCLUDED.reason END
+                           THEN homeroom_bot_queue.reason ELSE EXCLUDED.reason END,
+             changed_by = CASE WHEN homeroom_bot_queue.priority = 0
+                                 OR homeroom_bot_queue.reason = ANY($6::text[])
+                               THEN homeroom_bot_queue.changed_by ELSE EXCLUDED.changed_by END
        WHERE homeroom_bot_queue.started_at IS NULL
        RETURNING id, (xmax = 0) AS inserted`,
-      [app.id, item.n, item.priority, item.reason, item.threadSeenAt, SELF_QUEUED_REASONS],
+      [app.id, item.n, item.priority, item.reason, item.threadSeenAt, SELF_QUEUED_REASONS, item.changedBy || null],
     );
     out.queued += 1;
     // A new request on a live app: the person it is for gets its card now,
@@ -1786,6 +1794,7 @@ async function recordThrownTriage(pool, { app, item, settings, err }) {
   try {
     await insertRun(pool, {
       ...billingOf(item, live.isLiveFor(settings, app) ? 'live' : settings.mode),
+      readReason: readReasonOf(item),
       appId: app.id, issueNumber: item.issue_number,
       mode: live.isLiveFor(settings, app) ? 'live' : settings.mode,
       verdict: 'failed', error: `threw: ${err?.message || err}`,
@@ -1819,7 +1828,7 @@ async function nextBatch(pool, { batchSize, excludeAppIds = [], pausedApps = [],
     'SELECT id, slug, name, repo_url, self_hosted FROM apps WHERE id = $1', [appId],
   );
   const { rows: items } = await pool.query(
-    `SELECT id, app_id, issue_number, priority, reason, thread_seen_at, requested_by
+    `SELECT id, app_id, issue_number, priority, reason, thread_seen_at, requested_by, changed_by
        FROM homeroom_bot_queue
       WHERE app_id = $1 AND started_at IS NULL
       ORDER BY priority, enqueued_at
@@ -2160,14 +2169,27 @@ function billingOf(item, runMode) {
   };
 }
 
+/**
+ * What started a read, kept on its run (read_reason): its queue row's
+ * reason, and for a change what moved past the last read (classifyIssue's
+ * changedBy, carried on the row as changed_by), as 'changed:github' or
+ * 'changed:discussion'. Null with no reason.
+ */
+function readReasonOf(item) {
+  const reason = String(item?.reason || '').trim();
+  if (!reason) return null;
+  const by = reason === 'changed' && item?.changed_by ? `:${item.changed_by}` : '';
+  return clip(`${reason}${by}`, 80);
+}
+
 async function insertRun(pool, run) {
   const { rows } = await pool.query(
     `INSERT INTO homeroom_bot_runs
        (app_id, issue_number, session_id, mode, verdict, determined, missing_fact, question,
         question_default, build_note, reason, cap_suppressed, thread_seen_at, model, cost_usd,
         input_tokens, output_tokens, duration_ms, error, budget_stop, proposal_session_id,
-        checks_head_sha, charged, payer_user_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
+        checks_head_sha, charged, payer_user_id, read_reason)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
      RETURNING id`,
     [run.appId, run.issueNumber, run.sessionId || null, run.mode, run.verdict,
       run.determined ?? null, run.missingFact || null, run.question || null,
@@ -2180,7 +2202,10 @@ async function insertRun(pool, run) {
       run.checksHeadSha || null,
       // Whose week it counts toward, if anybody's (billingOf): a shadow run
       // never does.
-      run.charged ?? run.mode === 'live', run.payerUserId || null],
+      run.charged ?? run.mode === 'live', run.payerUserId || null,
+      // What started this read (readReasonOf), so a request read again and
+      // again says why.
+      run.readReason || null],
   );
   const id = rows[0]?.id || null;
   // #3624: a question's suggested answers, beside the row rather than in
@@ -2836,6 +2861,7 @@ async function runTriage(pool, config, {
     // row (#3122); the retry is still logged below.
     const id = infra && isRepeatFault(error) ? null : await insertRun(pool, {
       ...billingOf(item, runMode),
+      readReason: readReasonOf(item),
       appId: app.id, issueNumber, mode: runMode, verdict: 'failed', error,
       threadSeenAt: item.thread_seen_at || null, model,
       durationMs: Date.now() - startedMs, ...extra,
@@ -2869,7 +2895,7 @@ async function runTriage(pool, config, {
   // they get here (`claimed`). The row's thread_seen_at is read back with
   // the claim: the refresh may have moved it on since the batch was loaded.
   const claim = await pool.query(
-    'UPDATE homeroom_bot_queue SET started_at = NOW() WHERE id = $1 AND (started_at IS NULL OR $2::boolean) RETURNING thread_seen_at',
+    'UPDATE homeroom_bot_queue SET started_at = NOW() WHERE id = $1 AND (started_at IS NULL OR $2::boolean) RETURNING thread_seen_at, changed_by',
     [item.id, !!item.claimed],
   );
   if (claim.rowCount === 0) {
@@ -2879,6 +2905,8 @@ async function runTriage(pool, config, {
   if (claim.rows?.[0]?.thread_seen_at) {
     item = { ...item, thread_seen_at: latestOf(item.thread_seen_at, claim.rows[0].thread_seen_at) };
   }
+  // And what moved, for the run's read_reason (readReasonOf).
+  if (claim.rows?.[0]?.changed_by) item = { ...item, changed_by: claim.rows[0].changed_by };
 
   const fetched = await github.fetchPublicIssue(repo.owner, repo.repo, issueNumber);
   const issue = fetched?.issue || null;
@@ -3365,6 +3393,7 @@ async function runTriage(pool, config, {
     const retried = String(item.reason || '') === 'budget_retry';
     const id = await insertRun(pool, {
       ...billingOf(item, runMode),
+      readReason: readReasonOf(item),
       appId: app.id, issueNumber, sessionId: session.id, mode: runMode, verdict: 'failed',
       error: `budget: ${budgetHit}`, budgetStop: budgetHit,
       threadSeenAt: item.thread_seen_at || null, model,
@@ -3470,6 +3499,7 @@ async function runTriage(pool, config, {
   if (parsed.platform && (await platformAppSlugs(pool)).includes(app.slug)) parsed = { ...parsed, platform: false };
   const runId = await insertRun(pool, {
     ...billingOf(item, runMode),
+    readReason: readReasonOf(item),
     appId: app.id, issueNumber, sessionId: session.id, mode: runMode,
     verdict: parsed.verdict, determined: parsed.determined, missingFact: parsed.missingFact,
     question: parsed.question, questionDefault: parsed.questionDefault, questionAnswers: parsed.questionAnswers,
@@ -3532,13 +3562,27 @@ async function runTriage(pool, config, {
     } catch (err) {
       log.error('homeroom-bot', 'Acting on a live verdict failed', { app: app.slug, issueNumber, err: err.message });
     }
-  } else if (parsed.verdict === 'ready' && shadowBuildsApply(settings, app, config)) {
-    // Queued, not built here: the build lane runs it beside triage, so the
-    // rest of this app's batch is not held up behind a worker.
+  } else if (parsed.verdict === 'ready') {
+    const skip = shadowBuildSkipReason(settings, app, config);
     try {
-      if (await queueShadowBuild(pool, runId)) acted = 'shadow_queued';
+      if (!skip) {
+        // Queued, not built here: the build lane runs it beside triage, so
+        // the rest of this app's batch is not held up behind a worker.
+        if (await queueShadowBuild(pool, runId)) acted = 'shadow_queued';
+      } else {
+        // Not built, and the run says why (the console's "Not shadow
+        // built"). Fifty ready verdicts in the week to 2026-10-09 had no
+        // build and nothing on the run to say why.
+        await pool.query(
+          `UPDATE homeroom_bot_runs SET build_error = $2
+            WHERE id = $1 AND build_ok IS NULL AND build_queued_at IS NULL`,
+          [runId, clip(`skipped: ${skip}`, MAX_ERROR_CHARS)],
+        );
+      }
     } catch (err) {
-      log.error('homeroom-bot', 'Queueing a shadow build failed', { app: app.slug, issueNumber, err: err.message });
+      log.error('homeroom-bot', skip ? 'Recording why a ready verdict is not shadow built failed' : 'Queueing a shadow build failed', {
+        app: app.slug, issueNumber, err: err.message,
+      });
     }
   }
   return { ran: true, verdict: parsed.verdict, runId, ...(acted ? { acted } : {}) };
@@ -3602,13 +3646,28 @@ function isPlatformRepo(app, config = {}) {
  * repository everybody's proposals are made against.
  */
 function shadowBuildSkipReason(settings, app, config = {}) {
-  if (!settings?.shadowBuilds) return 'shadow builds are off';
-  if (live.isLiveFor(settings, app)) return 'the app is live now';
-  if (!settings.shadowBuildPlatform && isPlatformRepo(app, config)) {
-    return "the platform's own repository is left out";
-  }
-  if ((settings.pausedApps || []).includes(app?.slug)) return 'the app is paused';
+  if (!settings?.shadowBuilds) return SHADOW_SKIP.off;
+  if (live.isLiveFor(settings, app)) return SHADOW_SKIP.live;
+  if (!settings.shadowBuildPlatform && isPlatformRepo(app, config)) return SHADOW_SKIP.platform;
+  if ((settings.pausedApps || []).includes(app?.slug)) return SHADOW_SKIP.paused;
   return null;
+}
+const SHADOW_SKIP = Object.freeze({
+  off: 'shadow builds are off',
+  live: 'the app is live now',
+  platform: "the platform's own repository is left out",
+  paused: 'the app is paused',
+});
+
+/**
+ * Whether a run's build_error is the note triage left when a setting kept
+ * its ready verdict from being built (runTriage: "skipped: <why>"). That is
+ * a build that may still be made once the setting changes, unlike a skip
+ * the lane recorded (the issue closed, the app went away).
+ */
+function skippedAtTriage(buildError) {
+  const m = /^skipped: (.*)$/.exec(String(buildError || ''));
+  return !!m && Object.values(SHADOW_SKIP).includes(m[1]);
 }
 
 /**
@@ -3643,10 +3702,6 @@ function buildBudgets(app, config, turnBudgetMs, { firstVersion = false } = {}) 
   const factor = isPlatformRepo(app, config) ? PLATFORM_BUILD_TIME_FACTOR
     : firstVersion ? FIRST_VERSION_BUILD_TIME_FACTOR : 1;
   return { turnBudgetMs: turnBudgetMs * factor, specBudgetMs: live.SPEC_TURN_MAX_MS * factor };
-}
-
-function shadowBuildsApply(settings, app, config = {}) {
-  return shadowBuildSkipReason(settings, app, config) === null;
 }
 
 /**
@@ -5303,18 +5358,20 @@ async function queueShadowBackfill(pool, config = {}) {
   const left = { live: 0, platform: 0, paused: 0 };
   const ids = [];
   for (const r of rows) {
-    if (r.verdict !== 'ready' || r.build_queued_at || r.build_ok != null || r.build_error) continue;
+    // A ready verdict a setting kept from being built at the time (its run
+    // says so) is one to build now, as one with no note is.
+    if (r.verdict !== 'ready' || r.build_queued_at || r.build_ok != null || (r.build_error && !skippedAtTriage(r.build_error))) continue;
     const why = shadowBuildSkipReason(settings, { slug: r.slug, repo_url: r.repo_url }, config);
-    if (why === 'the app is live now') { left.live += 1; continue; }
-    if (why === "the platform's own repository is left out") { left.platform += 1; continue; }
-    if (why === 'the app is paused') { left.paused += 1; continue; }
+    if (why === SHADOW_SKIP.live) { left.live += 1; continue; }
+    if (why === SHADOW_SKIP.platform) { left.platform += 1; continue; }
+    if (why === SHADOW_SKIP.paused) { left.paused += 1; continue; }
     if (why) continue;
     ids.push(r.id);
   }
   let queued = [];
   if (ids.length) {
     ({ rows: queued } = await pool.query(
-      `UPDATE homeroom_bot_runs SET build_queued_at = NOW()
+      `UPDATE homeroom_bot_runs SET build_queued_at = NOW(), build_error = NULL
         WHERE id = ANY($1::int[]) AND build_queued_at IS NULL AND build_ok IS NULL
         RETURNING id, app_id`,
       [ids],
@@ -5611,6 +5668,7 @@ async function runFollowUp(pool, config, {
         ? 'its change could not be pushed' : 'the turn produced no change';
     runId = await insertRun(pool, {
       ...billingOf(item, runMode),
+      readReason: readReasonOf(item),
       appId: app.id, issueNumber, mode: runMode, verdict: 'failed', error: `revise: ${why}`,
       reason: parsed.reply, threadSeenAt: item.thread_seen_at || null, model,
       durationMs: Date.now() - startedMs, proposalSessionId: session.id, ...spent,
@@ -5648,6 +5706,7 @@ async function runFollowUp(pool, config, {
   const askAnswers = action === 'ask' ? suggestedAnswers(parsed?.answers) : null;
   runId = await insertRun(pool, {
     ...billingOf(item, runMode),
+    readReason: readReasonOf(item),
     appId: app.id, issueNumber, mode: runMode, verdict: followup.VERDICT_FOR[action],
     question: action === 'ask' ? reply : null,
     questionAnswers: askAnswers,
@@ -5866,6 +5925,7 @@ async function runChecksFix(pool, config, {
   const handOff = async ({ why, verdict, extra = {} }) => {
     runId = await insertRun(pool, {
       ...billingOf(item, runMode),
+      readReason: readReasonOf(item),
       appId: app.id, issueNumber, mode: runMode, verdict,
       reason: why, error: verdict === 'failed' ? `checks: ${why}` : null,
       threadSeenAt, model, durationMs: Date.now() - startedMs,
@@ -5973,6 +6033,7 @@ async function runChecksFix(pool, config, {
     const summary = parsed?.summary || parsed?.reply || 'It updated the change so its checks pass.';
     runId = await insertRun(pool, {
       ...billingOf(item, runMode),
+      readReason: readReasonOf(item),
       appId: app.id, issueNumber, mode: runMode, verdict: 'revise',
       reason: parsed?.reply || summary, buildNote: summary,
       threadSeenAt, model, durationMs: Date.now() - startedMs,
@@ -7018,7 +7079,7 @@ async function liveCandidates(pool, {
   if (live.scopeIsEmpty(scope)) return [];
   const { rows } = await pool.query(
     `SELECT q.id, q.app_id, q.issue_number, q.priority, q.reason, q.thread_seen_at, q.requested_by,
-            q.payer_user_id,
+            q.payer_user_id, q.changed_by,
             COALESCE(r.user_id, i.created_by) AS person_id,
             fu.id AS follow_up_session_id
        FROM homeroom_bot_queue q
@@ -8138,7 +8199,7 @@ const RUNS_SQL = `SELECT r.id, r.issue_number, r.mode, r.verdict, r.determined, 
             r.question_answers, dm.dm_sent_at, dm.dm_answered_at, r.checks_head_sha,
             r.label_verdict, r.build_model,
             r.bot_config_version_id, bc.key AS bot_config_key, bc.label AS bot_config_label,
-            bc.version AS bot_config_version, r.review_rounds, r.review_stop,
+            bc.version AS bot_config_version, r.review_rounds, r.review_stop, r.read_reason,
             a.slug AS app_slug, a.name AS app_name, a.repo_url, u.username AS rated_by
        FROM homeroom_bot_runs r
        JOIN apps a ON a.id = r.app_id
@@ -8205,6 +8266,8 @@ const EXPORT_COLUMNS = Object.freeze([
   'checks_head_sha',
   // #3654: the verdict a labeller says was right, and the build's model.
   'label_verdict', 'build_model',
+  // What started the read ('new', 'changed:github', 'retry_failed', …).
+  'read_reason',
 ]);
 
 /** A question's suggested answers as one cell: "Yes | No | Later". */
@@ -8947,6 +9010,8 @@ module.exports = {
   personKeyOf,
   enqueueFront,
   billingOf,
+  readReasonOf,
+  skippedAtTriage,
   liveCandidates,
   // A project's first version goes first.
   FIRST_VERSION_PENDING_SQL,

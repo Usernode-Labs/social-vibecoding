@@ -133,7 +133,7 @@ test('a spec is written first, read-only, stored as the session\'s spec doc, pos
 });
 
 test('a spec starts at its title: what the model said before it is dropped (#3385)', async () => {
-  const chatty = harness({ spec: `All the code I need is verified. Writing the spec now.\n\n${SPEC}` });
+  const chatty = harness({ spec: `All the code I need is verified. Writing the plan now.\n\n${SPEC}` });
   const out = await live.buildAndPropose({ pool: chatty.pool, deps: chatty.deps, ...ARGS, onSpec: chatty.onSpec });
   assert.equal(out.specMd, SPEC);
   assert.equal(chatty.calls.published[0].content, SPEC, 'stored, and so posted, from the title on');

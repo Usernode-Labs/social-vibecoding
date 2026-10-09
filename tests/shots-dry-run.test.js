@@ -9,7 +9,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const {
-  PERSONAS, parseArgs, contactSheet, agentEnv, watchAgentStream, browserServer,
+  PERSONAS, PHONE_DEVICE, parseArgs, contactSheet, agentEnv, watchAgentStream, browserServer,
 } = require('../scripts/shots-dry-run');
 const fixtures = require('./fixtures/shots');
 
@@ -53,6 +53,17 @@ test('every declared persona has a browser, and the guest\'s always starts signe
     assert.ok(args('member').includes(path.join(stateDir, 'member.json')));
     assert.equal(args('guest').includes('--storage-state'), false, 'a guest.json is never loaded');
     assert.equal(args('guest')[args('guest').indexOf('--output-dir') + 1], path.join('/tmp/shots', 'guest'));
+    // A phone screen's browser has the persona's sign-in and presents as the
+    // same phone a hosted turn's does, saving beside the persona's directory.
+    const phone = browserServer(options, 'read_only_admin', '/tmp/shots', '390x844', { phone: true }).args;
+    assert.equal(phone[1], 'admin_phone');
+    assert.equal(phone[phone.indexOf('--device') + 1], PHONE_DEVICE);
+    assert.ok(phone.includes(path.join(stateDir, 'read_only_admin.json')));
+    assert.equal(phone[phone.indexOf('--output-dir') + 1], path.join('/tmp/shots', 'admin_phone'));
+    assert.ok(phone.includes('--save-video=390x844'));
+    assert.equal(args('member').includes('--device'), false);
+    const worker = fs.readFileSync(path.join(__dirname, '..', 'worker', 'write-shots-mcp-config.js'), 'utf8');
+    assert.ok(worker.includes(`const PHONE_DEVICE = '${PHONE_DEVICE}';`), 'the dry run presents as the worker\'s phone');
   } finally {
     fs.rmSync(stateDir, { recursive: true, force: true });
   }

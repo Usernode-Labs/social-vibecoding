@@ -545,15 +545,17 @@ const SHOTS_DIAGNOSTIC_PHASES = new Set([
   'shots_mcp_ready', 'claude', 'agent', 'done',
 ]);
 
+// Each persona's browser server, and its phone browser (`_phone`).
+const SHOTS_BROWSER_SERVER = /^browser_(member|admin|full_admin|guest)(_phone)?$/;
+// The personas a shots turn may give a phone browser (visible-changes.PERSONAS).
+const SHOTS_PERSONAS = new Set(['member', 'read_only_admin', 'full_admin', 'guest']);
+
 function shotsDiagnosticTool(name) {
   const parts = String(name || '').split(/__|[./]/);
   const tool = parts.at(-1);
   if (!SHOTS_DIAGNOSTIC_TOOLS.has(tool)) return { tool: 'other' };
-  const server = parts.includes('browser_member') ? 'member'
-    : parts.includes('browser_full_admin') ? 'full_admin'
-      : parts.includes('browser_admin') ? 'admin'
-        : parts.includes('browser_guest') ? 'guest' : null;
-  return { tool, ...(server ? { persona: server } : {}) };
+  const server = parts.map((part) => SHOTS_BROWSER_SERVER.exec(part)).find(Boolean);
+  return { tool, ...(server ? { persona: server[1], ...(server[2] ? { phone: true } : {}) } : {}) };
 }
 
 function shotsNavigationTarget(state, input) {
@@ -624,6 +626,7 @@ function observeShotsTool(state, { phase, id, name, input = null, failed = false
     kind: 'tool_end',
     sequence: prior?.sequence || null,
     ...(prior ? { tool: prior.tool, ...(prior.persona ? { persona: prior.persona } : {}),
+      ...(prior.phone ? { phone: true } : {}),
       ...(prior.side ? { side: prior.side } : {}),
       ...(prior.routeOrdinal ? { routeOrdinal: prior.routeOrdinal } : {}),
       ...(prior.routeHint ? { routeHint: prior.routeHint } : {}),
@@ -1071,6 +1074,10 @@ function applyStreamEvent(event, onProgress, state) {
       browserAdminToolCount: mcpToolCount(systemEvent.tools, 'browser_admin'),
       browserFullAdminToolCount: mcpToolCount(systemEvent.tools, 'browser_full_admin'),
       browserGuestToolCount: mcpToolCount(systemEvent.tools, 'browser_guest'),
+      // Every phone browser's together: a turn has one per persona that needs it.
+      browserPhoneToolCount: collectionCount(systemEvent.tools) == null ? null
+        : ['member', 'admin', 'full_admin', 'guest'].reduce((sum, persona) => (
+          sum + mcpToolCount(systemEvent.tools, `browser_${persona}_phone`)), 0),
     });
   }
   if (event.type === 'assistant' && event.message?.content) {
@@ -3170,7 +3177,12 @@ async function execInWorker(sessionId, {
   shotsRecordClips = false,
   // The size clips are recorded at, WIDTHxHEIGHT: the motion screens' own,
   // so a phone clip is not a phone in the corner of a desktop-sized frame.
+  // The phone browsers record at the phone motion screens' size.
   shotsClipSize = null,
+  shotsPhoneClipSize = null,
+  // The personas that get a phone browser beside their desktop one: those
+  // with a phone screen (visible-changes.phonePersonas).
+  shotsPhonePersonas = [],
   // The app under test is a child app: the shots proxy serves its
   // /usernode-bridge|native|tailwind/ requests from the platform, as the
   // production edge does. The platform's own pairs serve their own.
@@ -3331,8 +3343,14 @@ async function execInWorker(sessionId, {
     if (typeof shotsRecordClips !== 'boolean') {
       throw new Error('execInWorker: shots clip recording must be boolean');
     }
-    if (shotsClipSize != null && !/^[1-9][0-9]{2,3}x[1-9][0-9]{2,3}$/.test(String(shotsClipSize))) {
-      throw new Error('execInWorker: shots clip size must be WIDTHxHEIGHT');
+    for (const size of [shotsClipSize, shotsPhoneClipSize]) {
+      if (size != null && !/^[1-9][0-9]{2,3}x[1-9][0-9]{2,3}$/.test(String(size))) {
+        throw new Error('execInWorker: shots clip size must be WIDTHxHEIGHT');
+      }
+    }
+    if (!Array.isArray(shotsPhonePersonas)
+        || !shotsPhonePersonas.every((persona) => SHOTS_PERSONAS.has(persona))) {
+      throw new Error('execInWorker: shots phone personas must be a list of personas');
     }
     if (typeof shotsPlatformAssets !== 'boolean') {
       throw new Error('execInWorker: shots platform assets must be boolean');
@@ -3446,6 +3464,8 @@ async function execInWorker(sessionId, {
       SHOTS_NAVIGATION_HINTS: JSON.stringify(shotsNavigationHints || {}),
       SHOTS_RECORD_CLIPS: shotsRecordClips ? '1' : '0',
       ...(shotsRecordClips && shotsClipSize ? { SHOTS_CLIP_SIZE: String(shotsClipSize) } : {}),
+      ...(shotsRecordClips && shotsPhoneClipSize ? { SHOTS_PHONE_CLIP_SIZE: String(shotsPhoneClipSize) } : {}),
+      SHOTS_PHONE_PERSONAS: JSON.stringify([...new Set(shotsPhonePersonas)]),
       SHOTS_PLATFORM_ASSETS: shotsPlatformAssets ? '1' : '0',
     } : {}),
     ...(isClaude ? {
@@ -3478,6 +3498,13 @@ async function execInWorker(sessionId, {
     safeEnv.AGENT_MODEL = agentModel || '';
     safeEnv.AGENT_MODEL_MAX_OUTPUT_TOKENS = agentModelMetadata?.maxOutputTokens != null
       ? String(agentModelMetadata.maxOutputTokens)
+      : '';
+    // The catalog's context window, which the adapter hands Claude Code with
+    // the window it compacts at (claudeChildEnv): an OpenRouter model is one
+    // Claude Code does not know, and without them a build resent its whole
+    // history, up to 1.2 MB, on every request.
+    safeEnv.AGENT_MODEL_CONTEXT_WINDOW = agentModelMetadata?.contextWindow != null
+      ? String(agentModelMetadata.contextWindow)
       : '';
     // The thinking level, which the adapter sends as output_config.effort.
     safeEnv.AGENT_REASONING_EFFORT = agentReasoningEffort || '';

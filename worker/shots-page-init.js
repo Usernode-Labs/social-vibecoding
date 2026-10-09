@@ -17,10 +17,24 @@
 // before the page reads it gives both sides the first visit the declared
 // checks' fresh browsers see; `?shot=since-visit` still draws the list.
 //
+// A change to the strip itself must still be shootable (4420, 4321): a page
+// opened with `?shots-install-strip=show` has the dismissal taken away
+// instead, so the phone browser, whose user agent the strip shows for, shows
+// it. The brief's installStrip tells the shots agent (shots-orchestrator.js).
+// The dismissal lasts the tab's session, so the flag holds for the page it
+// was opened with and every in-app step after it; a later page load without
+// it dismisses the strip again.
+//
 // Top-level pages only: a hosted app runs in a frame of the shell, and the
 // frame is the app being photographed, so its storage is left as it is.
 try {
-  if (window.top === window) sessionStorage.setItem('mobileInstallBannerDismissed', '1');
+  if (window.top === window) {
+    if (/[?&]shots-install-strip=show(?:&|$)/.test(window.location?.search || '')) {
+      sessionStorage.removeItem('mobileInstallBannerDismissed');
+    } else {
+      sessionStorage.setItem('mobileInstallBannerDismissed', '1');
+    }
+  }
 } catch {
   /* An opaque origin (about:blank) has no storage; there is no banner there. */
 }

@@ -20,8 +20,8 @@
  * publishes, since the specs are posted in it).
  */
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { FormEvent, ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { FormEvent, MouseEvent as ReactMouseEvent, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 import { useInnerHtml } from '../../../lib/html';
@@ -33,6 +33,7 @@ import { CheckIcon, ChevronDownIcon, EllipsisHorizontalIcon } from '@/components
 import { Textarea } from '@/components/ui/textarea';
 import { swatchFor } from '../../group-chat/swatch';
 import { useInlineImageViewer } from '../../image-viewer/image-viewer';
+import { suggestShortcutEnabled } from '../../improve/suggest-settings';
 import { TitleContent } from '../card/dev-card';
 import type { RequestStatusView, RequestView } from './model';
 import {
@@ -43,6 +44,7 @@ import {
   requestThreadStore,
   type RequestSpecCard,
 } from './request-model';
+import { requestShots, togglePinShot } from './request-shots';
 import { TopicBack } from './topic-back';
 import { saveIssueBody } from './topic-head';
 
@@ -98,10 +100,21 @@ function reducedMotion(): boolean {
  * animating the text's height between the fold and its full length; reduced
  * motion snaps. Whether there is anything to fold is measured, so a short
  * request has no control under it.
+ *
+ * Its screenshots (./request-shots.ts): a picture that carries a C
+ * comment's pin shows the comment over it, with a button to hide it (#4482);
+ * and with the experimental C switch on for this device, the screenshots
+ * leave the fold and are always shown under it (#4481). The switch is read
+ * once, when the words mount.
  */
 export function RequestWords({ html }: { html: string }): ReactNode {
   const text = useRef<HTMLDivElement>(null);
-  const inner = useInnerHtml(html);
+  const [lift] = useState(() => suggestShortcutEnabled());
+  const { words, shots } = useMemo(() => requestShots(html, { lift }), [html, lift]);
+  // Memoised on the strings, so a re-render keeps the nodes, and with them
+  // a comment someone hid.
+  const inner = useInnerHtml(words);
+  const shotsInner = useInnerHtml(shots);
   // `open` is what the clamp says; `shown` is what the button says, which
   // turns with the press rather than when the text has finished moving.
   const [open, setOpen] = useState(false);
@@ -113,7 +126,7 @@ export function RequestWords({ html }: { html: string }): ReactNode {
     if (!el || open) return;
     // Clamped, it is shorter than its content exactly when it folds something.
     setFolds(el.scrollHeight > el.clientHeight + 1);
-  }, [html, open]);
+  }, [words, open]);
   const toggle = () => {
     const el = text.current;
     if (!el || moving.current) return;
@@ -147,15 +160,20 @@ export function RequestWords({ html }: { html: string }): ReactNode {
     // Settles even where the transition never runs (a hidden tab).
     timer = window.setTimeout(() => done(), FOLD_MS + 80);
   };
-  if (!html) return null;
+  // A picture's "Hide comment" is markup in the words, so its press is
+  // taken here; claiming it keeps the image viewer's scope from acting on it.
+  const togglePin = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (togglePinShot(event.target, event.currentTarget)) event.preventDefault();
+  };
+  if (!words && !shots) return null;
   return (
-    <div className="dev-request-ask">
+    <div className="dev-request-ask" onClick={togglePin}>
       {/* DevChat.renderMarkdown's output, sanitised where it is built. The
           clamp class is React's; the fold writes the node's height only for
           the length of the animation, and puts the clamp back as it ends so
           React's next render agrees with the DOM. */}
-      <div ref={text} className={`dev-request-ask-text${open ? '' : ' line-clamp-4'}`} data-request-words="" dangerouslySetInnerHTML={inner} />
-      {folds || open ? (
+      {words ? <div ref={text} className={`dev-request-ask-text${open ? '' : ' line-clamp-4'}`} data-request-words="" dangerouslySetInnerHTML={inner} /> : null}
+      {words && (folds || open) ? (
         <button
           type="button"
           className="dev-ws-reveal dev-ws-reveal-start touch-target-32 dev-request-more"
@@ -166,6 +184,7 @@ export function RequestWords({ html }: { html: string }): ReactNode {
           {shown ? 'Show less' : 'Show more'}
         </button>
       ) : null}
+      {shots ? <div className="dev-request-shots" data-request-shots="" dangerouslySetInnerHTML={shotsInner} /> : null}
     </div>
   );
 }

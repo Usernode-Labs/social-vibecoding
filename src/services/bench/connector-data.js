@@ -61,9 +61,16 @@ async function botOverview(pool, config, query = {}, deps = {}) {
     reason: r.reason ? clipText(r.reason, 300) : null,
     error: r.error ? clipText(r.error, 300) : null,
     budgetStop: r.budget_stop || null,
-    build: r.build_ok == null && !r.build_branch ? null : {
+    // What started this read: the queue row's reason, and for a change what
+    // moved (homeroom-bot.js readReasonOf).
+    readReason: READ_REASON_RE.test(String(r.read_reason || '')) ? r.read_reason : null,
+    // Its build wherever it got to: a ready verdict queued, building,
+    // built or failed, or never built and why (skipped, superseded). A run
+    // with none of those has no build.
+    build: buildStateOf(r) == null ? null : {
+      state: buildStateOf(r),
       ok: r.build_ok, branch: r.build_branch || null, sha: r.build_sha || null, commits: num(r.build_commits),
-      error: r.build_error ? clipText(r.build_error, 300) : null, at: iso(r.build_at),
+      error: r.build_error ? clipText(r.build_error, 300) : null, at: iso(r.build_at), queuedAt: iso(r.build_queued_at),
     },
     rating: r.rating || null,
     ratingNote: r.rating_note ? clipText(r.rating_note, 300) : null,
@@ -113,10 +120,42 @@ async function botOverview(pool, config, query = {}, deps = {}) {
       turns: num(p.dmChat.turns), failed: num(p.dmChat.failed), recovered: num(p.dmChat.recovered),
       people: num(p.dmChat.people), costUsd: num(p.dmChat.costUsd),
     } : null,
+    // The build lane: what is queued and building now, and its last pass
+    // (why a queued build is waiting: the budget, a platform fault, …).
+    buildLane: p.builds ? {
+      queued: num(p.builds.queued) || 0,
+      building: num(p.builds.building) || 0,
+      lastPass: p.builds.lane ? {
+        at: p.builds.lane.at || null, started: num(p.builds.lane.started), inFlight: num(p.builds.lane.inFlight),
+        paused: CODE_RE.test(String(p.builds.lane.paused || '')) ? p.builds.lane.paused : null,
+        detail: p.builds.lane.detail ? clipText(p.builds.lane.detail, 200) : null,
+      } : null,
+      fault: p.builds.fault ? { error: clipText(p.builds.fault.error || '', 200) || null, retryAt: p.builds.fault.retryAt || null } : null,
+    } : null,
     runs,
     filters: { app: f.app, verdict: query.verdict && VERDICTS.includes(query.verdict) ? query.verdict : null },
     nextBefore: runs.length === f.limit ? runs[runs.length - 1].id : null,
   };
+}
+
+// A run's read reason: a queue reason, and for a change what moved.
+const READ_REASON_RE = /^[a-z][a-z0-9_]{0,63}(?::[a-z]{1,20})?$/;
+
+/**
+ * Where a run's build got to: 'built', 'failed', 'building', 'queued',
+ * 'superseded' (a later verdict on the same issue replaced it), 'not_built'
+ * (skipped, with why in its error), 'started' (a branch and nothing else
+ * yet), or null for a run with no build at all.
+ * Pure.
+ */
+function buildStateOf(r) {
+  if (r.build_ok === true) return 'built';
+  if (r.build_ok === false) return 'failed';
+  if (r.build_at) return 'building';
+  if (r.build_queued_at) return 'queued';
+  if (r.build_error) return /^superseded/.test(String(r.build_error)) ? 'superseded' : 'not_built';
+  if (r.build_branch) return 'started';
+  return null;
 }
 
 /** A person's rating of one bot run (the console's Rate), recorded under the connector's admin. */
@@ -268,6 +307,7 @@ module.exports = {
   MAX_SHOT_IMAGES,
   botFilters,
   botOverview,
+  buildStateOf,
   rateRun,
   recentShots,
   shotStats,

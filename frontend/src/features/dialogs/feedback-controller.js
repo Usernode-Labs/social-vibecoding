@@ -118,6 +118,8 @@ export const Feedback = {
   // the island's legacy `{ fromDev }` payload in the public signature.
   _open: (_opts = {}) => {},
   _reset: () => {},
+  /** @returns {{ text: string, title: string, images: Blob[], bounty: boolean, target: 'app' | 'platform' | null }} */
+  _takeDraft: () => ({ text: '', title: '', images: [], bounty: false, target: null }),
 };
 
 let wired = false;
@@ -973,7 +975,24 @@ export function init() {
       removeBtn.className = 'rounded-full w-12 h-12 flex shrink-0 items-center justify-center text-xs bg-zinc-200 dark:bg-zinc-700 hover:bg-zinc-300 dark:hover:bg-zinc-600 transition-colors';
       removeBtn.textContent = '✕';
       removeBtn.addEventListener('click', () => removeScreenshot(shot));
-      item.appendChild(img);
+      // #4482: comments handed over from comment mode keep their pins beside
+      // their picture, as data; the thumbnail shows them over the picture.
+      if (shot.pins && shot.pins.length) {
+        const frame = document.createElement('span');
+        frame.className = 'relative inline-block shrink-0';
+        frame.appendChild(img);
+        for (const pin of shot.pins) {
+          const dot = document.createElement('span');
+          dot.className = 'absolute h-2.5 w-2.5 -translate-y-full rounded-[50%_50%_50%_0] bg-violet-600 shadow-[0_0_0_1.5px_#fff]';
+          dot.style.left = `${pin.x * 100}%`;
+          dot.style.top = `${pin.y * 100}%`;
+          dot.setAttribute('aria-hidden', 'true');
+          frame.appendChild(dot);
+        }
+        item.appendChild(frame);
+      } else {
+        item.appendChild(img);
+      }
       item.appendChild(stateEl);
       item.appendChild(removeBtn);
       screenshotPreview.appendChild(item);
@@ -986,13 +1005,14 @@ export function init() {
       body: blob,
     });
 
-    const attachScreenshotBlob = async (blob) => {
+    const attachScreenshotBlob = async (blob, pins = null) => {
       // Never a fourth: every caller checks the room first, and this is the
       // backstop behind them.
       if (screenshots.length >= MAX_SCREENSHOTS) return;
       // Thumbnail immediately; upload in the background with Submit blocked
-      // (screenshotUploading) until the id lands.
-      const shot = { blob, objectUrl: URL.createObjectURL(blob), id: null, uploading: true };
+      // (screenshotUploading) until the id lands. `pins` (#4482) are comment
+      // mode's, each { x, y, n, note }, sent beside the picture at submit.
+      const shot = { blob, objectUrl: URL.createObjectURL(blob), id: null, uploading: true, pins };
       screenshots.push(shot);
       renderScreenshotThumb(shot);
       paintScreenshotActions();
@@ -1965,6 +1985,13 @@ export function init() {
         // the embed lines and links every row to the filed issue.
         const shotIds = screenshotIds();
         if (shotIds.length) body.screenshotIds = shotIds;
+        // #4482: comments handed over keep their pins beside their pictures,
+        // which the server writes onto each picture's link.
+        const pinned = screenshots.filter((shot) => shot.id && shot.pins && shot.pins.length)
+          .flatMap((shot) => shot.pins.map((pin) => ({
+            id: shot.id, x: pin.x, y: pin.y, ...(pin.n ? { n: pin.n } : {}), note: String(pin.note || ''),
+          })));
+        if (pinned.length) body.screenshotPins = pinned;
         // #3940: and the uploaded clip.
         if (video && video.id) body.videoId = video.id;
         // #685: collect the app's state snapshot at submit time (fresh
@@ -2242,6 +2269,23 @@ export function init() {
           && screenshots.length < MAX_SCREENSHOTS) {
         void attachScreenshotBlob(opts.screenshotBlob);
       }
+      // Comment mode handing a box over (features/comment-pin/post.ts
+      // handOverOptions): its pictures, the pages' with their pins beside them
+      // (#4482), the title the box showed, and its Kudos. A title the person
+      // saw and kept is theirs, so it is not dropped as a stale suggestion.
+      if (Array.isArray(opts.screenshots)) {
+        for (const handed of opts.screenshots) {
+          if (screenshots.length >= MAX_SCREENSHOTS) break;
+          if (typeof Blob !== 'undefined' && handed && handed.blob instanceof Blob) {
+            void attachScreenshotBlob(handed.blob, Array.isArray(handed.pins) ? handed.pins : null);
+          }
+        }
+      }
+      if (typeof opts.title === 'string' && opts.title.trim() && !feedbackTitle.value.trim()) {
+        feedbackTitle.value = opts.title.trim().slice(0, 200);
+        titleDirty = true;
+      }
+      if (opts.bounty === true && !bountyCheckbox.disabled) bountyCheckbox.checked = true;
 
       // #1054: the outbox state — the offline hint, the "Save for later"
       // button label, and anything already waiting to send. Painted last so
@@ -2397,6 +2441,32 @@ export function init() {
         if (Number(pending.userId) === Number(App.user?.id)) App.openFeedbackModal({ firstFeedback: pending });
       }, 0);
     };
+    // The form's draft, taken for its switch to comment mode (feedback.tsx):
+    // the words, a title the person wrote, the pictures (their bytes; comment
+    // mode uploads them with its own), the Kudos and a destination the person
+    // chose. TAKEN, not copied: the composer is emptied, so the close that
+    // follows saves no draft (#2796) to come back as a second copy. Comment
+    // mode asks before it drops words nobody has posted.
+    Feedback._takeDraft = () => {
+      const chosen = feedbackTargetApp.getAttribute('aria-checked') === 'true'
+        ? 'app'
+        : feedbackTargetPlatform.getAttribute('aria-checked') === 'true' ? 'platform' : null;
+      const draft = {
+        text: feedbackText.readOnly ? '' : feedbackText.value,
+        title: titleDirty ? feedbackTitle.value.trim() : '',
+        images: screenshots.map((shot) => shot.blob).filter(Boolean),
+        bounty: !!(bountyCheckbox.checked && !bountyCheckbox.disabled),
+        target: chosen,
+      };
+      if (!feedbackText.readOnly) {
+        feedbackText.value = '';
+        feedbackTitle.value = '';
+        titleDirty = false;
+        resetScreenshotState();
+        bountyCheckbox.checked = false;
+      }
+      return draft;
+    };
     feedbackBtn.addEventListener('click', submitFeedback);
     // cmd+enter / ctrl+enter inside the textarea submits — fixes #34.
     // Textareas swallow Enter by default (it inserts a newline), so we
@@ -2422,7 +2492,21 @@ export function init() {
   // above, the Dev "+" menu's "File an issue" item, and `App._applyFeedbackShot`
   // for the ?shot=feedback deep links. Forwards to the island so React state
   // stays the source of truth.
+  //
+  // Experimental (#4289's comment mode): where the device's switch is on, a
+  // plain open is comment mode instead (features/improve/suggest-shortcut.ts
+  // decides, `opensComment`), and this form is one switch away from it. Not
+  // an open that carries something for the form (a handed-over comment, the
+  // first-request moment) or that asks for the form by name (`mode: 'form'`,
+  // comment mode's Form).
   App.openFeedbackModal = (opts = {}) => {
+    const shortcut = window.UsernodeReact?.suggestShortcut;
+    const plain = !opts.firstFeedback && !opts.description && !opts.screenshotBlob && !opts.screenshots
+      && opts.mode !== 'form';
+    if (plain && shortcut?.opensComment?.()) {
+      shortcut.openComment({ via: 'suggest' });
+      return;
+    }
     const island = dialogController();
     if (island) { island.open(opts); return; }
     Feedback._open(opts);

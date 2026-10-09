@@ -236,6 +236,51 @@ test('nothing is queued when it is off, not ready, the app is paused, or it is t
   }
 });
 
+test('a run records what started its read: its queue reason, and for a change what moved', async (t) => {
+  const h = triage();
+  const query = h.pool.query;
+  h.pool.query = async (sql, params) => {
+    if (/UPDATE homeroom_bot_queue SET started_at = NOW\(\)/.test(String(sql))) {
+      h.calls.queries.push({ s: String(sql), params });
+      return { rows: [{ thread_seen_at: null, changed_by: 'github' }], rowCount: 1 };
+    }
+    return query(sql, params);
+  };
+  const real = live.buildAndPropose;
+  t.after(() => { live.buildAndPropose = real; });
+  live.buildAndPropose = async () => ({ ok: true });
+  await bot.runTriage(h.pool, {}, { bot: BOT, app: APP, item: { ...ITEM, reason: 'changed' }, mode: 'shadow', settings: h.settings, deps: h.deps });
+  const insert = h.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
+  assert.match(insert.s, /payer_user_id, read_reason\)/);
+  assert.equal(insert.params[insert.params.length - 1], 'changed:github', 'the issue itself moved since the last read');
+  assert.equal(bot.readReasonOf({ reason: 'changed', changed_by: 'discussion' }), 'changed:discussion');
+  assert.equal(bot.readReasonOf({ reason: 'retry_failed', changed_by: 'github' }), 'retry_failed', 'only a change says what changed');
+  assert.equal(bot.readReasonOf({ reason: 'changed' }), 'changed', 'a row queued before changed_by');
+  assert.equal(bot.readReasonOf({}), null);
+});
+
+test('a ready verdict that is not built says why on its run; a verdict that is not ready says nothing', async (t) => {
+  const skippedFor = (h) => h.calls.queries.find((q) => /UPDATE homeroom_bot_runs SET build_error = \$2/.test(q.s));
+  const cases = [
+    [triage({ settings: { ...ON, shadowBuilds: false } }), APP, 'skipped: shadow builds are off'],
+    [triage({ settings: { ...ON, pausedApps: ['todo'] } }), APP, 'skipped: the app is paused'],
+    [triage({ app: PLATFORM }), PLATFORM, "skipped: the platform's own repository is left out"],
+  ];
+  for (const [h, app, said] of cases) {
+    await runWith(t, h, app);
+    const skipped = skippedFor(h);
+    assert.ok(skipped, said);
+    assert.deepEqual(skipped.params, [900, said]);
+    assert.match(skipped.s, /WHERE id = \$1 AND build_ok IS NULL AND build_queued_at IS NULL/, 'never over a build that happened');
+  }
+  const queued = triage();
+  await runWith(t, queued);
+  assert.equal(skippedFor(queued), undefined, 'a queued build has nothing to explain');
+  const person = triage({ verdictText: PERSON });
+  await runWith(t, person);
+  assert.equal(skippedFor(person), undefined, 'only a ready verdict is a build that did not happen');
+});
+
 // ── One queued build ─────────────────────────────────────────────────────
 
 function lane({ issueState = 'open', built = null, app = APP, settings = ON, firstVersion = false } = {}) {
@@ -484,7 +529,7 @@ function backfillPool(rows, settings = { shadowBuilds: 'on', platform: 'off', li
         };
       }
       if (/SELECT DISTINCT ON \(r\.app_id, r\.issue_number\)/.test(s)) return { rows };
-      if (/UPDATE homeroom_bot_runs SET build_queued_at = NOW\(\)\s+WHERE id = ANY/.test(s)) {
+      if (/UPDATE homeroom_bot_runs SET build_queued_at = NOW\(\), build_error = NULL\s+WHERE id = ANY/.test(s)) {
         return { rows: params[0].map((id) => ({ id, app_id: rows.find((r) => r.id === id).app_id })) };
       }
       return { rows: [] };
@@ -507,12 +552,19 @@ test('the backfill queues each issue whose LATEST verdict is ready and has no bu
     latest(6, { build_error: 'skipped: the issue is no longer open' }),
     latest(7, { slug: 'usernode-2d5619', repo_url: PLATFORM.repo_url, app_id: 1 }),
     latest(8, { slug: 'live-one', app_id: 11 }),
+    // Ready while shadow builds were off: triage said so on the run, and it
+    // is built now as one with no note would be.
+    latest(9, { build_error: 'skipped: shadow builds are off' }),
   ], { shadowBuilds: 'on', platform: 'off', live: '["live-one"]' });
   const out = await bot.queueShadowBackfill(pool, {});
-  assert.deepEqual(out, { ok: true, queued: 2, apps: 2, left: { live: 1, platform: 1, paused: 0 } });
+  assert.deepEqual(out, { ok: true, queued: 3, apps: 2, left: { live: 1, platform: 1, paused: 0 } });
   const upd = pool.seen.find((q) => /WHERE id = ANY\(\$1::int\[\]\)/.test(q.s));
-  assert.deepEqual(upd.params, [[1, 2]]);
+  assert.deepEqual(upd.params, [[1, 2, 9]]);
   assert.match(upd.s, /AND build_queued_at IS NULL AND build_ok IS NULL/, 'a race with triage cannot queue one twice');
+  assert.match(upd.s, /SET build_queued_at = NOW\(\), build_error = NULL/, 'and the note that it was not built goes');
+  assert.equal(bot.skippedAtTriage("skipped: the platform's own repository is left out"), true);
+  assert.equal(bot.skippedAtTriage('skipped: the issue is no longer open'), false, 'the lane\'s own skip stays skipped');
+  assert.equal(bot.skippedAtTriage(null), false);
   const sql = pool.seen.find((q) => /SELECT DISTINCT ON \(r\.app_id, r\.issue_number\)/.test(q.s)).s;
   assert.match(sql, /ORDER BY r\.app_id, r\.issue_number, r\.id DESC/, 'the latest verdict per issue');
   assert.match(sql, /r\.verdict IN \('question', 'ready', 'person', 'empty'\)/, 'a later failed run does not hide a ready verdict');

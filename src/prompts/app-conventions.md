@@ -710,7 +710,7 @@ Two related notes on `path:` form:
 ### Who the before & after shots see
 
 The shots agent signs in as the persona each declared change names, on
-throwaway copies of the app. Three things it cannot do by itself, which
+throwaway copies of the app. Four things it cannot do by itself, which
 account for most changes that end up with no shots:
 
 - **It has no role in your app.** `member` is an ordinary signed-in member:
@@ -721,6 +721,23 @@ account for most changes that end up with no shots:
   whoever opens the preview in seed data (see "Never seed the visitor"
   above). If no in-app path reaches it, declare what a member does see and
   say in the claim what the shots will leave out.
+- **No persona is your app's creator or one of its admins.** Homeroom tells
+  your app who is signed in, never their role in it: `req.user` has no
+  creator or admin field, and no platform call answers "is this the
+  owner?". `read_only_admin` and `full_admin` are Homeroom's own
+  administrators, which your app is not told; it sees them as ordinary
+  signed-in people (only on Homeroom's own proposals are they its
+  administrators). So a screen your code keeps for particular accounts (a
+  username or id written into it, an allowlist, "private to this account")
+  refuses every shots browser, and its changes are skipped. It refuses every
+  other voter who opens the preview too. Do not hard-code people into a
+  screen the project works on: gate it on something a signed-in person can
+  reach through the app's own UI (whoever creates a story edits it) and name
+  that way in `hints.setup`. When a screen must stay with particular people,
+  declare what a member sees and say in the claim what the shots leave out.
+  The response to `declare_visible_changes` warns when a change is declared
+  for an administrator persona, or names a creator, owner or admin screen
+  with no `hints.setup`.
 - **It cannot sign out.** A change that signed-out visitors see is declared
   with persona `guest`. A private app shows a guest only what it shows a
   signed-out visitor outside Homeroom, usually a sign-in page, so declare a
