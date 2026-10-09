@@ -1008,6 +1008,17 @@ const HomePanels = {
       && Number(panel.all_total) > 0;
     const total = hasAll ? Number(panel.all_total) : open;
     if (!total) return null;
+    // The points line (#4565), carried into the summary on both branches: the
+    // server's pair already covers the scope the branch names (the gate's
+    // First challenges while it is closed, the season's whole set after).
+    // Absent (an older payload) or nothing on offer, no line.
+    const pointsTotal = Number(panel && panel.points_total);
+    const points = Number.isFinite(pointsTotal) && pointsTotal > 0
+      ? {
+        earned: Math.max(0, Math.min(pointsTotal, Math.floor(Number(panel.points_earned) || 0))),
+        total: pointsTotal,
+      }
+      : null;
     const gate = panel.onboarding;
     if (gate && !gate.unlocked && Number(gate.total) > 0) {
       const t = Number(gate.total);
@@ -1015,6 +1026,7 @@ const HomePanels = {
         done: Math.max(0, Math.min(t, Number(gate.completed) || 0)),
         total: t,
         caption: 'done in First challenges',
+        ...(points ? { points } : {}),
       };
     }
     const name = panel.season && typeof panel.season.name === 'string'
@@ -1023,6 +1035,7 @@ const HomePanels = {
       done: Math.max(0, Math.min(total, Number(hasAll ? panel.all_done : panel.done) || 0)),
       total,
       caption: name ? `done in ${name}` : 'done',
+      ...(points ? { points } : {}),
     };
   },
 

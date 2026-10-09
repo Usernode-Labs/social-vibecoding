@@ -807,6 +807,42 @@ test('QA 2026-09-24 Q17: the season progress counts the whole season, as the pro
     'setup still gates the scope while it is closed');
 });
 
+// POINTS (#4565): the season summary carries the points figures the server
+// totals over the same scope the count reads. An older payload without them
+// draws exactly what it drew, and nothing on offer is no line either.
+test('#4565: the season view carries the points figures, or nothing new', () => {
+  const { HP } = makeHomePanels({ slots: [] });
+  const season = { id: 1, name: 'Season 1' };
+  const figures = { total: 6, done: 2, all_total: 15, all_done: 4,
+    points_total: 2000, points_earned: 1000 };
+  const withPoints = HP.challengesView(panel({ season, ...figures }));
+  assert.deepEqual({ ...withPoints.season, points: { ...withPoints.season.points } },
+    { done: 4, total: 15, caption: 'done in Season 1', points: { earned: 1000, total: 2000 } });
+  const expanded = HP.seasonView(panel({ season, ...figures }));
+  assert.deepEqual({ ...expanded, points: { ...expanded.points } },
+    { done: 4, total: 15, caption: 'done in Season 1', points: { earned: 1000, total: 2000 } },
+    'expanding the block does not change it');
+  const gated = HP.seasonView(panel({
+    season, ...figures, onboarding: { unlocked: false, total: 3, completed: 1 },
+  }));
+  assert.deepEqual({ ...gated, points: { ...gated.points } }, {
+    done: 1, total: 3, caption: 'done in First challenges', points: { earned: 1000, total: 2000 },
+  }, 'the points ride the same scope the count does');
+  const older = HP.challengesView(panel({ season, total: 6, done: 2, all_total: 15, all_done: 4 }));
+  assert.deepEqual({ ...older.season }, { done: 4, total: 15, caption: 'done in Season 1' },
+    'an older payload without the figures draws nothing new');
+  const none = HP.challengesView(panel({
+    season, total: 6, done: 2, all_total: 15, all_done: 4, points_total: null, points_earned: null,
+  }));
+  assert.deepEqual({ ...none.season }, { done: 4, total: 15, caption: 'done in Season 1' },
+    'no numeric reward anywhere: no line, not "0 of 0 pts"');
+  const over = HP.challengesView(panel({
+    season, total: 6, done: 2, all_total: 15, all_done: 4, points_total: 2000, points_earned: 2500,
+  }));
+  assert.deepEqual({ ...over.season.points }, { earned: 2000, total: 2000 },
+    'a repeatable challenge\'s extra credit never reads "2,500 of 2,000"');
+});
+
 test('the season progress names its scope, and leaves deadlines to the cards and their headers', () => {
   const ends = new Date(Date.now() + 71 * 3600000).toISOString();
   const { HP } = makeHomePanels({ slots: [] });

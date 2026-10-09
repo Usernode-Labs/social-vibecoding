@@ -654,7 +654,9 @@ test('the challenges grid summarises and groups the completed set', () => {
   // QA 2026-09-24 Q17: an event's tally says it is an event's; the event's
   // own name stays out of the words (issue #4528).
   assert.match(chJs, /caption: name \? 'done in this event' : 'done'/, 'and states the tally in words');
-  assert.match(chJs, /progress: TopochainChallenges\._progressView\(doneCount, ordered\.length\)/,
+  // #4565: the tally also carries the points figures, so the shaping call
+  // hands it the challenge list its scope is made of.
+  assert.match(chJs, /progress: TopochainChallenges\._progressView\(doneCount, ordered\.length, null, ordered\)/,
     'which is what the summary line carries');
   assert.match(chTsx, /<SeasonProgress id="tc-se-challenge-summary"/,
     'drawn by the component Home shares');
