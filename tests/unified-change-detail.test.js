@@ -21,6 +21,8 @@ function context(user = { id: 42, username: 'Builder' }, extra = {}) {
   }
   vm.runInContext('globalThis.av = AppView', c);
   c.av.appData = { slug: 'example', can_collaborate: true };
+  // #4524: the board lists answer only for the app they were loaded for.
+  c.av._devDataSlug = 'example';
   c.av._ghIssues = [{ number: 1993, title: 'Wait for authentication before opening previews' }];
   return c.av;
 }

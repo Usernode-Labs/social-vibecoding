@@ -52,6 +52,10 @@ const ACTIONS = Object.freeze(new Set([
   // is the phone's permission refused, cancelled is "Not now". A guardrail
   // of the first-session plan: how often pushes are denied.
   'push_permission',
+  // A request/proposal/governance page opened from a link (#4524): the
+  // measure the fast-open work reports against. Keep identical with the
+  // client's ACTIONS.
+  'topic_load',
 ]));
 const KINDS = Object.freeze(new Set([
   'screen_visit', 'action_attempt', 'action_outcome', 'repeated_action',

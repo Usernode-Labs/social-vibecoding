@@ -447,6 +447,9 @@ test('a verdict is one targeted read of the open proposal, and keeps the roster'
   const AppView = makeAppView();
   AppView._devTopic = { kind: 'proposal', id: 9 };
   const row = { id: 9, status: 'promoted', check_state: 'pending' };
+  // #4524: the lists answer only for the app they were loaded for; this one
+  // is loaded for the open app.
+  AppView._devDataSlug = 'app';
   AppView._proposals = [row];
   const ready = { phase: 'ready' };
   AppView._voteRoster[9] = ready;
