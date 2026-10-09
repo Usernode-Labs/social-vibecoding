@@ -280,6 +280,123 @@ test('the bridge applies the forwarded keyboard inside the frame', () => {
     'the comment asserting the frame sees the keyboard itself must be gone');
 });
 
+// ── 2b. The nav bar an installed Android app can hide (#4545) ────────
+//
+// On an installed edge-to-edge Android app (3-button navigation) Chrome can
+// report the top-level `env(safe-area-inset-bottom)` as 0 — or late — while
+// `env(safe-area-max-inset-bottom)` (Chrome 135+) carries the navigation
+// bar's full height. The shell's own tab bar already takes the larger of
+// the two (app.css's #2755 rule); the frame forwarding did not, so an app's
+// composer sat under the bar. The fix: `_rootBottomInset` replaces the raw
+// bottom before `_frameInsets` clamps it, gated on the same two conditions
+// the CSS rule gates on.
+
+test('_rootBottomInset: installed Android, inset 0, nav bar 48 → 48', () => {
+  // The reported case: the composer was forwarded a 0 and sat under the bar.
+  assert.equal(AppView._rootBottomInset(
+    { bottom: 0, maxBottom: 48, androidStandalone: true, keyboard: 0 }), 48);
+  // A 0 where the max is 0 too stays 0 — nothing invented.
+  assert.equal(AppView._rootBottomInset(
+    { bottom: 0, maxBottom: 0, androidStandalone: true, keyboard: 0 }), 0);
+});
+
+test('_rootBottomInset: takes the larger of the two when both are real', () => {
+  // A late-reported bar must not shrink the inset, and where env() is
+  // already right the max changes nothing.
+  assert.equal(AppView._rootBottomInset(
+    { bottom: 34, maxBottom: 48, androidStandalone: true, keyboard: 0 }), 48);
+  assert.equal(AppView._rootBottomInset(
+    { bottom: 48, maxBottom: 48, androidStandalone: true, keyboard: 0 }), 48);
+  assert.equal(AppView._rootBottomInset(
+    { bottom: 56, maxBottom: 48, androidStandalone: true, keyboard: 0 }), 56);
+});
+
+test('_rootBottomInset: outside installed Android, env() wins', () => {
+  // In a browser tab the max variable is the height the browser chin grows
+  // to when it collapses — reserving it while the chin is still up would
+  // stack content on a strip the browser already keeps clear. The gate is
+  // the same `androidStandalone` the #2755 CSS rule keys on; false OR
+  // undefined (an older caller, or a probe read that hit the catch) both
+  // forward `bottom` even when the max is larger.
+  assert.equal(AppView._rootBottomInset(
+    { bottom: 0, maxBottom: 48, androidStandalone: false, keyboard: 0 }), 0);
+  assert.equal(AppView._rootBottomInset(
+    { bottom: 34, maxBottom: 48, keyboard: 0 }), 34);
+  assert.equal(AppView._rootBottomInset(
+    { bottom: 34, maxBottom: 48, androidStandalone: false }), 34);
+});
+
+test('_rootBottomInset: keyboard open, only env() counts', () => {
+  // The kit pads frames by --un-kb-inset, measured from the layout
+  // viewport's bottom edge, which already includes the strip the nav bar
+  // sits in. Taking the max as well would lift a composer twice.
+  assert.equal(AppView._rootBottomInset(
+    { bottom: 0, maxBottom: 48, androidStandalone: true, keyboard: 360 }), 0);
+  assert.equal(AppView._rootBottomInset(
+    { bottom: 34, maxBottom: 48, androidStandalone: true, keyboard: 360 }), 34);
+});
+
+test('_rootBottomInset: junk or negative input counts as 0', () => {
+  // NaN, undefined, negatives and no input at all all return 0 — never a
+  // negative px in a CSS custom property.
+  assert.equal(AppView._rootBottomInset(
+    { bottom: NaN, maxBottom: 48, androidStandalone: true, keyboard: 0 }), 48);
+  assert.equal(AppView._rootBottomInset(
+    { bottom: 0, maxBottom: NaN, androidStandalone: true, keyboard: 0 }), 0);
+  assert.equal(AppView._rootBottomInset(
+    { bottom: -20, maxBottom: -48, androidStandalone: true, keyboard: 0 }), 0);
+  assert.equal(AppView._rootBottomInset(
+    { bottom: undefined, maxBottom: undefined, androidStandalone: true }), 0);
+  assert.equal(AppView._rootBottomInset(), 0);
+  assert.equal(AppView._rootBottomInset(null), 0);
+});
+
+test('the probe reads the max inset beside the four env() values', () => {
+  const fn = APP_VIEW.slice(
+    APP_VIEW.indexOf('_readRootInsets() {'),
+    APP_VIEW.indexOf('_frameInsets(raw, rect, viewport) {')
+  );
+  assert.match(fn, /margin-bottom:env\(safe-area-max-inset-bottom,0px\)/,
+    'the probe must carry the max variable with a 0px fallback');
+  assert.match(fn, /maxBottom: px\(cs\.marginBottom\)/,
+    'and read it back beside the four insets');
+});
+
+test('the detector gates on the same two conditions the #2755 CSS rule does', () => {
+  const fn = APP_VIEW.slice(
+    APP_VIEW.indexOf('_isAndroidStandalone() {'),
+    APP_VIEW.indexOf('_rootBottomInset(input) {')
+  );
+  assert.match(fn, /classList\.contains\('un-android'\)/,
+    'the kit\'s platform class, which native.js sets at first paint');
+  assert.match(fn,
+    /matchMedia\('\(display-mode: standalone\), \(display-mode: fullscreen\)\'/,
+    'the same display modes the CSS media query lists');
+  assert.match(fn, /typeof window\.matchMedia !== 'function'/,
+    'a browser without matchMedia falls back to "no"');
+  // And the CSS rule itself still exists to agree with.
+  assert.match(APP_CSS, /@media \(display-mode: standalone\), \(display-mode: fullscreen\)\s*\{\s*html\.un-android,/,
+    'the #2755 rule the detector mirrors');
+});
+
+test('safeAreaForFrame replaces the root bottom before clipping', () => {
+  const fn = APP_VIEW.slice(
+    APP_VIEW.indexOf('safeAreaForFrame(id) {'),
+    APP_VIEW.indexOf('broadcastSafeArea() {')
+  );
+  assert.match(fn, /const keyboard = AppView\._keyboardInset\(\);/,
+    'the keyboard is read once');
+  assert.ok(fn.match(/_keyboardInset\(\)/g).length === 1,
+    'and exactly once — a second read could disagree with the first');
+  assert.ok(
+    fn.indexOf('_rootBottomInset') < fn.indexOf('_frameInsets(raw, rect, viewport)'),
+    'the raw bottom is replaced BEFORE _frameInsets clamps to the frame rect, '
+    + 'so a frame not reaching the bottom edge still clamps to 0');
+  assert.match(fn, /maxBottom: raw\.maxBottom/);
+  assert.match(fn, /insets\.keyboard = AppView\._frameKeyboardInset\(rect, viewport, keyboard\)/,
+    'the frame keyboard rides on the same single read');
+});
+
 test('_frameInsets: a frame ending above the unsafe strip gets 0 bottom', () => {
   // A docked staging panel / any frame that stops short of the home
   // indicator: the shell's own layout already cleared it.

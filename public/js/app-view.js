@@ -25179,7 +25179,11 @@ const AppView = {
         + 'padding-top:env(safe-area-inset-top,0px);'
         + 'padding-right:env(safe-area-inset-right,0px);'
         + 'padding-bottom:env(safe-area-inset-bottom,0px);'
-        + 'padding-left:env(safe-area-inset-left,0px);';
+        + 'padding-left:env(safe-area-inset-left,0px);'
+        // #4545: Chrome 135+ reports the navigation bar's full height here
+        // even where the inset above reads 0. A browser without the
+        // variable resolves the 0px fallback, so nothing moves there.
+        + 'margin-bottom:env(safe-area-max-inset-bottom,0px);';
       document.body.appendChild(probe);
       AppView._safeAreaProbe = probe;
     }
@@ -25194,6 +25198,7 @@ const AppView = {
         right: px(cs.paddingRight),
         bottom: px(cs.paddingBottom),
         left: px(cs.paddingLeft),
+        maxBottom: px(cs.marginBottom),
       };
     } catch {
       return AppView._zeroInsets();
@@ -25301,6 +25306,60 @@ const AppView = {
     });
   },
 
+  // ── The nav bar an installed Android app can hide (#4545) ───────────
+  //
+  // On an installed edge-to-edge Android app (3-button navigation), Chrome
+  // can report the top-level `env(safe-area-inset-bottom)` as 0 — or late —
+  // while `env(safe-area-max-inset-bottom)` (Chrome 135+) carries the
+  // navigation bar's full height. app.css already takes the larger of the
+  // two for the SHELL's own chrome (the #2755 rule, gated on `html.un-android`
+  // and the standalone/fullscreen display modes), but the probe forwarded
+  // the raw inset, so an app frame was told 0 and its bottom chrome sat
+  // under the bar. These two helpers restate the CSS rule's conditions so
+  // the forwarded value agrees with the one the shell acts on.
+
+  // True exactly when the #2755 CSS rule applies: the kit's `un-android`
+  // class (native.js puts it on <html> at first paint) AND the page is
+  // drawn standalone or fullscreen. `matchMedia` missing or throwing is
+  // "no", the same direction the CSS falls back in.
+  _isAndroidStandalone() {
+    if (typeof document === 'undefined' || typeof window === 'undefined'
+      || typeof window.matchMedia !== 'function') {
+      return false;
+    }
+    try {
+      const docEl = document.documentElement;
+      if (!docEl || !docEl.classList || !docEl.classList.contains('un-android')) {
+        return false;
+      }
+      return !!window.matchMedia('(display-mode: standalone), (display-mode: fullscreen)').matches;
+    } catch {
+      return false;
+    }
+  },
+
+  // Pure. The root bottom inset an app frame is told about. A value counts
+  // only when finite and positive, so junk and negatives become 0, never
+  // negative. Under the same two conditions the #2755 CSS rule gates on,
+  // the max variable may carry the real bar height where the inset reads 0
+  // (or late), so the larger of the two wins; everywhere else the inset is
+  // forwarded unchanged. No input at all returns 0.
+  //
+  // The keyboard is the exception, not a third candidate: with the keyboard
+  // open the kit pads frames by `--un-kb-inset`, measured from the layout
+  // viewport's bottom edge — which already includes the strip the nav bar
+  // sits in. Taking the max as well would lift a composer twice.
+  _rootBottomInset(input) {
+    if (!input) return 0;
+    const count = (v) => (Number.isFinite(v) && v > 0 ? v : 0);
+    const bottom = count(input.bottom);
+    const maxBottom = count(input.maxBottom);
+    if (input.androidStandalone && count(input.keyboard) === 0) {
+      return Math.max(bottom, maxBottom);
+    }
+    return bottom;
+  },
+
   _frameInsets(raw, rect, viewport) {
     const zero = AppView._zeroInsets();
     if (!raw || !rect || !viewport) return zero;
@@ -25390,11 +25449,24 @@ const AppView = {
     // page insets. Skip it; the next real layout re-broadcasts.
     if (!rect.width || !rect.height) return null;
     const viewport = { width: window.innerWidth, height: window.innerHeight };
-    const insets = AppView._frameInsets(AppView._readRootInsets(), rect, viewport);
+    // #4545: on an installed Android app the raw bottom inset can read 0
+    // while the max variable carries the nav bar's height — read the
+    // keyboard once and replace the RAW page inset BEFORE `_frameInsets`
+    // clamps to the frame rect, so a frame that does not reach the screen's
+    // bottom edge still clamps to 0.
+    const keyboard = AppView._keyboardInset();
+    const raw = AppView._readRootInsets();
+    raw.bottom = AppView._rootBottomInset({
+      bottom: raw.bottom,
+      maxBottom: raw.maxBottom,
+      androidStandalone: AppView._isAndroidStandalone(),
+      keyboard,
+    });
+    const insets = AppView._frameInsets(raw, rect, viewport);
     // `keyboard` rides alongside the four edges rather than inside `bottom`:
     // they mean different things (one is a notch, the other is transient
     // occlusion) and apps consume them separately.
-    insets.keyboard = AppView._frameKeyboardInset(rect, viewport, AppView._keyboardInset());
+    insets.keyboard = AppView._frameKeyboardInset(rect, viewport, keyboard);
     return insets;
   },
 
