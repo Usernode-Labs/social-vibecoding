@@ -475,12 +475,14 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   // for. Every later send used to come back "Not sent · Retry", and the
   // Retry could never work.
   const awaiting = !inThread && !!active.awaitingAcceptance;
+  // The peer when it has a username, else the first invited member, as before
+  // the flag was read: whose name it is decides whose flag applies.
   const waitingUser = awaiting
-    ? (active.peer?.username ? active.peer : active.members.find((member) => member.status === 'invited' && member.username)) || null
+    ? (active.peer?.username ? active.peer : active.members.find((member) => member.status === 'invited')) || null
     : null;
   const waitingOn = waitingUser?.username || '';
   // The person's username did not come with the row: the two lines say so in their own words.
-  const waitingUnknown = !!waitingUser?.unnamed;
+  const waitingUnknown = !!waitingOn && !!waitingUser?.unnamed;
   if (awaiting && (!active.canSend || snap.messages.length > 0)) {
     return (
       <div className="messages-composer messages-composer-awaiting platform-safe-bar" data-awaiting-acceptance="">

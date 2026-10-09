@@ -77,7 +77,7 @@ import {
   useMessagesSnapshot,
   openBot,
 } from './store';
-import type { Typist } from './store';
+import { typingLine } from './typing-line';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { PageBackButton } from '../dev-board/workshop/page-back';
 import { generalHubBack, openChannelHub, usePlatformSlug } from './channel-hub';
@@ -1633,20 +1633,6 @@ function AgentSessionThread({ slug, id }: { slug: string; id: number }) {
   );
 }
 
-/**
- * "ada is typing…", "ada, sam are typing…". A typist whose username did not
- * come with the row is a stand-in, and the line then has its own wording
- * instead of taking that word as a name.
- */
-function typingLine(t: ReturnType<typeof useMessages>, typing: readonly Typist[]): string {
-  if (!typing.length) return '';
-  const [first, second] = typing;
-  if (typing.length === 1) return first.unnamed ? t('messages:thread.typingOneUnknown') : t('messages:thread.typingOne', { name: first.name });
-  if (first.unnamed && second.unnamed) return t('messages:thread.typingTwoUnknown');
-  if (first.unnamed) return t('messages:thread.typingTwoFirstUnknown', { second: second.name });
-  if (second.unnamed) return t('messages:thread.typingTwoSecondUnknown', { first: first.name });
-  return t('messages:thread.typingTwo', { first: first.name, second: second.name });
-}
 
 /**
  * The open conversation. `embedded` is the copy a community's page mounts

@@ -34,6 +34,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { loadTsx } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const github = require('../src/services/github');
 const sharedObjects = require('../src/services/shared-objects');
@@ -244,14 +245,21 @@ test('a typist is kept by user id, and "no username" comes and goes with that pe
   typing(NAMELESS.id, true);
   typing(REAL.id, true);
   assert.deepEqual(line(), [[11, 'unknown', true], [12, 'unknown', false]]);
+  // What the line says. Before typists were kept by id the two collapsed into
+  // one name, and either of them stopping cleared the line for both.
+  const { typingLine } = loadTsx('frontend/src/features/messages/typing-line.ts');
+  const said = () => typingLine(message, h.state().typing[42]);
+  assert.equal(said(), 'unknown, unknown are typing…');
   // A renewal keeps the place and the flag.
   typing(NAMELESS.id, true);
   assert.deepEqual(line(), [[11, 'unknown', true], [12, 'unknown', false]]);
   // The nameless member stops: the flag goes with them.
   typing(NAMELESS.id, false);
   assert.deepEqual(line(), [[12, 'unknown', false]]);
+  assert.equal(said(), 'unknown is typing…', 'one person stopping does not clear another person\'s line');
   typing(REAL.id, false);
   assert.deepEqual(line(), []);
+  assert.equal(said(), '');
   // Later the real account types alone: named, though a nameless member typed before.
   typing(REAL.id, true);
   assert.deepEqual(line(), [[12, 'unknown', false]]);
@@ -266,8 +274,9 @@ test('a typist is kept by user id, and "no username" comes and goes with that pe
   typing(REAL.id, true);
   assert.deepEqual(line(), [[13, 'ada', false], [12, 'unknown', false]]);
   // The line reads the flag carried with each typist, never the word.
-  const index = read('frontend/src/features/messages/index.tsx');
-  assert.match(index, /if \(typing\.length === 1\) return first\.unnamed \? t\('messages:thread\.typingOneUnknown'\) : t\('messages:thread\.typingOne', \{ name: first\.name \}\);/);
+  const lineSource = read('frontend/src/features/messages/typing-line.ts');
+  assert.match(lineSource, /if \(typing\.length === 1\) return first\.unnamed \? t\('messages:thread\.typingOneUnknown'\) : t\('messages:thread\.typingOne', \{ name: first\.name \}\);/);
+  assert.match(read('frontend/src/features/messages/index.tsx'), /\{typingLine\(t, typing\)\}/);
   assert.doesNotMatch(read('frontend/src/features/messages/store.ts'), /unnamedTypists/);
 });
 
