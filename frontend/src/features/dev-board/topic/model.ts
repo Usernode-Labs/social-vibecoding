@@ -562,6 +562,13 @@ export interface ChangeGateView {
   actions?: ActionSpec[];
   /** Testing only: a "See what failed" door into Details. */
   details?: boolean;
+  /**
+   * Votes only, on a merge of Homeroom itself that is not live yet: the
+   * server's `release` block, which the card words after the note and keeps
+   * counting down ("Merged; goes live in the next release (about 8
+   * minutes)", frontend/src/lib/release-eta.ts).
+   */
+  release?: unknown;
 }
 
 /** #4455: what a change's page says about the change itself, as the thread's root post. */

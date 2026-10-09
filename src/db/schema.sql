@@ -9878,6 +9878,21 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS needs_username_choice BOOLEAN NOT NUL
 -- through rebuildProduction and record their failures on last_failure.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS release_stall JSONB;
 
+-- The release workflow's run for main's tip, as the drift poller last read
+-- it while main was ahead of the running build (services/release-watch.js
+-- recordRun), so every process can say when the next release goes live
+-- ("Merged; goes live in the next release (about 8 minutes)") without asking
+-- GitHub per viewer. Self-hosted row only; NULL when no run was listed (no
+-- run yet, or a token that cannot read Actions) and once the running build
+-- is main again. One JSON record:
+--   sha          main's tip when it was read
+--   status       the run's own status: queued, in_progress, completed, ...
+--   conclusion   success, failure, ... once completed
+--   startedAt    when the run started (ISO), as GitHub says
+--   completedAt  when a completed run finished (ISO)
+--   readAt       when the poller read it (ISO)
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS release_run JSONB;
+
 -- #2684: the Homeroom bot (`homeroom_bot`, a synthetic user) triages open
 -- requests in shadow mode: it reads an issue, its discussion and the app's
 -- repository in a read-only scout turn and records ONE verdict per issue —
