@@ -1211,7 +1211,7 @@ function stagingMockProposals(viewer) {
 // prod-cloned DB. Caveat: these mock rows have NO backing chat_messages,
 // so opening one shows an empty (but still postable) thread — useful for
 // the card affordance + badge, not for existing-comment display.
-function stagingMockMerged() {
+function stagingMockMerged(viewer) {
   const daysAgo = (d) => new Date(Date.now() - d * 86400 * 1000).toISOString();
   const mk = (id, prNumber, title, days, chat) => ({
     id,
@@ -1304,6 +1304,14 @@ function stagingMockMerged() {
     0,
     3
   );
+  // #4505: an owned merged outcome for the existing staging demo. One
+  // labelled mock belongs to the signed-in viewer, so catch-up can show
+  // "yours" after it leaves ongoing work. Both list and detail use the same
+  // owner; without a complete viewer the historical sample author remains.
+  if (viewer?.id != null && viewer.username) {
+    autoMerged.user_id = viewer.id;
+    autoMerged.username = viewer.username;
+  }
   // #639: a COMPLETED proposal whose chips were inherited from its origin
   // issue (#900006, seeded medium / maya-builder). Confirms priority/assignee
   // stay visible (read-only) in the Done column after "close done", not just
@@ -4833,7 +4841,7 @@ function voteRoutes(config) {
         // independent sequences, so a bare id isn't unique in the stream.
         const key = (r) => `${r.row_type || 'pr'}:${r.id}`;
         const have = new Set(rows.map(key));
-        const injected = stagingMockMerged().map((m) => ({ ...m, row_type: 'pr' }))
+        const injected = stagingMockMerged(req.user).map((m) => ({ ...m, row_type: 'pr' }))
           .concat(stagingMockCompletedCloseIssues())
           .filter((m) => !have.has(key(m)));
         // #1788: make room for the mocks BEFORE merging them in, rather than
@@ -5055,7 +5063,7 @@ function voteRoutes(config) {
       // reached the first page (ids ~9100021+) and confirm it opens on
       // demand. Strictly a no-op in production (gated on IS_STAGING).
       if (!proposal && IS_STAGING && req.query.demo === '1') {
-        proposal = stagingMockMerged().find((m) => m.id === id)
+        proposal = stagingMockMerged(req.user).find((m) => m.id === id)
           || stagingMockProposals().find((m) => m.id === id)
           || stagingDemoNeedsProposal(id, req.params.slug)
           || null;

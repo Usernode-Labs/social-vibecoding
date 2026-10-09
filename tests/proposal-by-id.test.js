@@ -148,13 +148,13 @@ function findRoute(routes, method, path) {
   return routes.find((r) => r.method === method && r.path === path);
 }
 
-async function callById(routes, { slug = 'demo', id, query = {} }) {
+async function callById(routes, { slug = 'demo', id, query = {}, user = { id: 1 } }) {
   const route = findRoute(routes, 'get', '/api/apps/:slug/proposals/:id');
   assert.ok(route, 'proposals/:id route registered');
   let payload = null;
   let statusCode = 200;
   await route.handler(
-    { params: { slug, id: String(id) }, user: { id: 1 }, query },
+    { params: { slug, id: String(id) }, user, query },
     { json(p) { payload = p; }, status(c) { statusCode = c; return { json(p) { payload = p; } }; } }
   );
   return { payload, statusCode };
@@ -208,6 +208,35 @@ test('IS_STAGING + ?demo=1 resolves a mock merged id not in the DB', async () =>
   assert.equal(statusCode, 200);
   assert.equal(payload.proposal.id, 9100024);
   assert.equal(payload.proposal.status, 'merged');
+});
+
+test('#4505: the existing staging merged sample has the same viewer owner in list and detail', async () => {
+  const viewer = { id: 777, username: 'sample-member' };
+  const { routes } = loadVotes({ row: null, staging: true });
+  const detail = await callById(routes, { id: 9100000, query: { demo: '1' }, user: viewer });
+  assert.equal(detail.statusCode, 200);
+  assert.equal(detail.payload.proposal.user_id, viewer.id);
+  assert.equal(detail.payload.proposal.username, viewer.username);
+  assert.match(detail.payload.proposal.pr_title, /^\[Mock\]/);
+  const route = findRoute(routes, 'get', '/api/apps/:slug/merged');
+  let payload, statusCode = 200;
+  await route.handler({ params: { slug: 'demo' }, user: viewer, query: { demo: '1' } }, {
+    json(p) { payload = p; }, status(c) { statusCode = c; return this; },
+  });
+  assert.equal(statusCode, 200, JSON.stringify(payload));
+  const sample = payload.merged.find((row) => row.id === 9100000);
+  assert.equal(sample.user_id, detail.payload.proposal.user_id);
+  assert.equal(sample.username, detail.payload.proposal.username);
+  assert.equal(sample.deployment_state, 'pending');
+  assert.equal(payload.merged.find((row) => row.id === 9100001).username, 'staging-tester');
+  const incomplete = await callById(routes, { id: 9100000, query: { demo: '1' }, user: { id: 777 } });
+  assert.equal(incomplete.payload.proposal.user_id, 0);
+  assert.equal(incomplete.payload.proposal.username, 'staging-tester');
+  const regular = await callById(routes, { id: 9100000, user: viewer });
+  assert.equal(regular.statusCode, 404, 'normal staging does not fabricate the sample');
+  const production = loadVotes({ row: null, staging: false });
+  assert.equal((await callById(production.routes, { id: 9100000, query: { demo: '1' }, user: viewer })).statusCode, 404,
+    'production never fabricates a viewer-owned sample');
 });
 
 test('IS_STAGING + ?demo=1 resolves a mock promoted id too', async () => {
