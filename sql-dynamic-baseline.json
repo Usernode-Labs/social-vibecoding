@@ -376,7 +376,7 @@
     {
       "source": "src/routes/home-panels.js",
       "kind": "structural-template",
-      "fingerprint": "6e15f5a9e6dc781720b1",
+      "fingerprint": "e5bba89d6db4a92d4162",
       "count": 1,
       "preview": "`SELECT COUNT(*) FILTER (WHERE ${scopeFilter})::int AS total, ${allTotalSql} AS all_total, ${allDoneSql} AS all_done, COUNT(*) FILTER ( WHERE ${scopeFilter} AND"
     },
