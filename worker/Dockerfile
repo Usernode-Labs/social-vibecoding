@@ -13,6 +13,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git curl wget ca-certificates unzip python3 make g++ \
   && rm -rf /var/lib/apt/lists/*
 
+# ── The shots browser's system font (#4087) ────────────────────────────
+# The shell asks for Tailwind's font-sans stack (ui-sans-serif, system-ui,
+# sans-serif). On a Mac that is San Francisco with real weights; on bookworm
+# slim it fell to a face with no bold weights, so every heading, label and
+# button in the before/after shots came out regular, in another typeface.
+# fonts-inter ships Inter in every static weight (Thin to Black), and
+# fonts-local.conf points system-ui, -apple-system, BlinkMacSystemFont,
+# ui-sans-serif and sans-serif at it. Sits before the cache-bust ARG below.
+COPY fonts-local.conf /etc/fonts/local.conf
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    fontconfig fonts-inter \
+  && rm -rf /var/lib/apt/lists/* \
+  && fc-cache -f \
+  && fc-match system-ui:weight=205 | grep -q 'Inter-ExtraBold'
+
 # ── Local Postgres for in-loop builds and repository SQL checks ────────
 # INLOOP_DATABASE_URL (src/services/in-loop-browser.js) points at
 # postgres://postgres:postgres@127.0.0.1:5432/inloop — a server that must

@@ -52,6 +52,30 @@ test('Dockerfile smoke-tests a headless Chromium launch at image build time, as 
   assert.ok(userNodeIdx !== -1 && smokeIdx > userNodeIdx, 'smoke test runs as node');
 });
 
+// #4087: the shots browser renders the shell's system-ui stack with a font
+// that has real weights, not a regular-only fallback.
+test('Dockerfile gives the browser a system-ui font with real weights (Inter)', () => {
+  const df = read('Dockerfile');
+  assert.match(df, /install -y --no-install-recommends \\\n\s+fontconfig fonts-inter/);
+  assert.match(df, /COPY fonts-local\.conf \/etc\/fonts\/local\.conf/);
+  assert.match(df, /fc-cache -f/);
+  // the image build fails if an 800 heading would not land on Inter ExtraBold
+  assert.match(df, /fc-match system-ui:weight=205 \| grep -q 'Inter-ExtraBold'/);
+  // before the daily cache-bust layer, so it stays cached
+  assert.ok(df.indexOf('fonts-inter') < df.indexOf('ARG CLAUDE_CODE_CACHE_BUST'));
+
+  const conf = read('fonts-local.conf');
+  for (const family of ['system-ui', '-apple-system', 'BlinkMacSystemFont', 'ui-sans-serif']) {
+    assert.match(conf, new RegExp(`<test name="family" qual="any"><string>${family}</string></test>\\s*` +
+      '<edit name="family" mode="assign" binding="strong"><string>Inter</string></edit>'));
+  }
+  assert.match(conf, /<family>sans-serif<\/family>\s*<prefer><family>Inter<\/family><\/prefer>/);
+  // fontconfig rejects the whole file on a malformed comment ("--" inside one)
+  for (const comment of conf.match(/<!--([\s\S]*?)-->/g) || []) {
+    assert.doesNotMatch(comment.slice(4, -3), /--/);
+  }
+});
+
 // ── worker-run.sh: seed the MCP config at bootstrap ──────────────────────
 
 test('worker-run.sh seeds the Playwright MCP config alongside the .claude.json restore', () => {
