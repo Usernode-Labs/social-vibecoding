@@ -149,8 +149,9 @@ test('the landing: the story in place of the pitch unless switched off, for nobo
 // waits for.
 test('the story: label, headline, "For example" and the three examples, "Get started", then Sign in', () => {
   const html = renderComponent('frontend/src/features/auth/story.tsx', 'Story', { primaryClass: 'pill', onStart() {}, onSignIn() {} });
-  // Each row: its emoji (the tier list draws a chart, no text), title and line.
-  const TEMPLATE_ROWS = loadTsx(`${DIR}/examples.ts`).TEMPLATES.flatMap((t) => (t.chart ? [t.title, t.line] : [t.emoji, t.title, t.line]));
+  // Each row: its drawn mark (no text), title and line. Every template is
+  // drawn now, so no 🎮 or 📋 text is rendered either.
+  const TEMPLATE_ROWS = loadTsx(`${DIR}/examples.ts`).TEMPLATES.flatMap((t) => [t.title, t.line]);
   const text = html.replace(/<[^>]+>/g, '\n').split('\n').map((t) => t.trim()).filter(Boolean)
     .map((t) => t.replace(/&#x27;/g, "'"));
   assert.deepEqual(text, [
@@ -213,10 +214,16 @@ test('three templates, the same on the story and the make screen, each a whole s
   assert.equal(sentence(organizer, 'chores', '').text, 'An app to organize our chores: who\'s on what this week, and whose turn it is next.');
   assert.equal(sentence(organizer, 'library', '').text, 'An app to organize our shared library: what we can borrow, who has it now, and who\'s asking for it next.');
   assert.equal(suggestedName(organizer, OWN, 'camping gear'), 'Camping Gear List');
-  // The story says the same three, the tier list drawn as a tier list.
+  // The story says the same three, each drawn: the tier list as a tier
+  // list, the game as a controller, the organizer as a checklist.
+  assert.deepEqual(TEMPLATES.map((t) => t.mark), ['tier', 'game', 'organizer']);
   const story = renderComponent('frontend/src/features/auth/story.tsx', 'Story', { primaryClass: 'pill', onStart() {}, onSignIn() {} });
   for (const t of TEMPLATES) assert.ok(story.includes(`>${t.title}<`) && story.includes(`>${t.line}<`), t.key);
   assert.match(story, /data-tier-chart=""/);
+  assert.match(story, /data-game-mark=""/);
+  assert.match(story, /data-organizer-mark=""/);
+  // The make screen's tiles draw the same marks.
+  assert.match(read(`${DIR}/make.tsx`), /<ExampleMark mark=\{t\.mark\} \/>/);
 });
 
 test('"Make it" makes a private community through the dialog\'s own route', () => {
