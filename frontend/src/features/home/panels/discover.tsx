@@ -28,7 +28,7 @@
  * flow into a single continuous rail under the one "Discover" heading.
  *
  * What did NOT change: the ORDER. Curated first (by `featured_order`), then
- * popular (by active users) — exactly the sequence the two rails drew in,
+ * popular (public communities you have not joined, by members) — exactly the sequence the two rails drew in,
  * concatenated. `discoverView` still derives the two lists separately and
  * both counts are still stamped on the article, because they describe the
  * block's composition and dapp.json selects on them; only the rendering is
