@@ -239,10 +239,48 @@ const Notifications = {
   // then reuse the existing click router and mark-read behavior. The exact
   // endpoint is ownership-scoped and intentionally returns no route from the
   // untrusted push payload.
+  //
+  // #4524: route from the copy of the feed the device already holds. The
+  // exact lookup below used to be the FIRST thing a cold-boot tap awaited,
+  // and its no-store cache mode makes the service worker hand it straight to
+  // the network — a full round trip before the tap could route, even while
+  // the boot's own list refresh for the same URL was in flight. Now the list
+  // read comes first as an ordinary cacheable read, which joins that boot
+  // request through the worker's in-flight sharing and, once the list is on
+  // the boot lane, answers from the cached copy in single-digit
+  // milliseconds. Only when the list answer still lacks the id does the
+  // exact lookup run — by then the rare path (an id older than the cached
+  // page), and it stays authoritative. A thrown list read is an answer that
+  // lacks the id, not an answer that contradicts one, so it falls through to
+  // the exact lookup too; a thrown exact lookup propagates, because the
+  // tap's retry ladder in social-push.js is the right answer to a network
+  // that failed and because it lets the tap's telemetry call the outcome
+  // `network` rather than `not_found`.
   async openById(rawId) {
     const id = Number(rawId);
     if (!Number.isSafeInteger(id) || id <= 0 || id > 2147483647) return false;
     let item = Notifications.items.find((candidate) => candidate.id === id);
+    if (!item) {
+      try {
+        // Same demo forwarding as refresh(), so the URL is byte-identical to
+        // the boot list read this one joins on a warm boot.
+        const demo = new URLSearchParams(location.search).get('demo') === '1' ? '&demo=1' : '';
+        const res = await fetch(`/api/notifications?limit=100${demo}`);
+        if (res.ok) {
+          const data = await res.json();
+          const list = Array.isArray(data.notifications) ? data.notifications : [];
+          const listed = list.find((candidate) => candidate && candidate.id === id);
+          if (listed) {
+            item = listed;
+            if (!Notifications.items.some((candidate) => candidate.id === id)) {
+              Notifications.items.unshift(item);
+            }
+          }
+        }
+      } catch (err) {
+        // No answer is not a wrong answer: let the exact lookup decide.
+      }
+    }
     if (!item) {
       try {
         const res = await fetch(`/api/notifications/${id}`, {
@@ -256,7 +294,7 @@ const Notifications = {
         Notifications.items.unshift(item);
       } catch (err) {
         console.warn('[notifications] exact lookup failed', err);
-        return false;
+        throw err;
       }
     }
     try {

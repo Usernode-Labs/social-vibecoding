@@ -1097,7 +1097,77 @@ test('settings consumes live native push state', () => {
   assert.match(settingsSource, /this\._publishUsernode\(\);/);
 });
 
-test('opaque id lookup reuses the existing notification click router', async () => {
+test('opaque id lookup routes from the list answer with no second request', async () => {
+  const requests = [];
+  const routes = [];
+  const sandbox = {
+    console: { warn() {} },
+    Date,
+    Promise,
+    URLSearchParams,
+    setTimeout,
+    clearTimeout,
+    location: { search: '', hash: '' },
+    localStorage: { getItem() { return null; }, setItem() {} },
+    document: {
+      title: 'Social',
+      addEventListener() {},
+      getElementById() { return null; },
+    },
+    App: {
+      user: { id: 7 },
+      openAppTab(slug, tab, options) { routes.push({ slug, tab, options }); },
+    },
+    async fetch(url, options) {
+      requests.push({ url, options: options || {} });
+      if (url === '/api/notifications?limit=100') {
+        return {
+          ok: true,
+          async json() {
+            return {
+              notifications: [{
+                id: 42,
+                kind: 'session_done',
+                readAt: null,
+                appSlug: 'example',
+                sessionId: 9,
+              }],
+              pendingInvites: [],
+              unread: 1,
+            };
+          },
+        };
+      }
+      return { ok: true, async json() { return { unread: 0 }; } };
+    },
+  };
+  sandbox.window = sandbox;
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  runNotifications(sandbox);
+  sandbox.Notifications.unread = 1;
+
+  const opened = await sandbox.Notifications.openById(42);
+  await settle();
+
+  assert.equal(opened, true);
+  assert.equal(routes.length, 1);
+  assert.equal(routes[0].slug, 'example');
+  assert.equal(routes[0].tab, 'dev');
+  assert.equal(routes[0].options.subTab, 'topic');
+  assert.equal(routes[0].options.ref.kind, 'proposal');
+  assert.equal(routes[0].options.ref.id, 9);
+  // #4524: the list read is an ordinary cacheable fetch (it joins the boot
+  // refresh through the service worker's in-flight sharing), the id routes
+  // from its answer, and no exact lookup is paid at all. The read receipt
+  // still goes out after the routing, as it did.
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].url, '/api/notifications?limit=100');
+  assert.equal(requests[0].options.cache, undefined);
+  assert.equal(requests[1].url, '/api/notifications/read');
+});
+
+test('the no-store exact lookup runs only when the list answer lacks the id', async () => {
   const requests = [];
   const routes = [];
   const sandbox = {
@@ -1136,7 +1206,7 @@ test('opaque id lookup reuses the existing notification click router', async () 
           },
         };
       }
-      return { ok: true, async json() { return { unread: 0 }; } };
+      return { ok: true, async json() { return { notifications: [], unread: 0 }; } };
     },
   };
   sandbox.window = sandbox;
@@ -1151,13 +1221,78 @@ test('opaque id lookup reuses the existing notification click router', async () 
   assert.equal(opened, true);
   assert.equal(routes.length, 1);
   assert.equal(routes[0].slug, 'example');
-  assert.equal(routes[0].tab, 'dev');
-  assert.equal(routes[0].options.subTab, 'topic');
-  assert.equal(routes[0].options.ref.kind, 'proposal');
-  assert.equal(routes[0].options.ref.id, 9);
-  assert.equal(requests[0].url, '/api/notifications/42');
-  assert.equal(requests[0].options.cache, 'no-store');
-  assert.equal(requests[1].url, '/api/notifications/read');
+  // The list answer is still asked first; only its miss falls through to the
+  // exact lookup, which keeps its no-store cache mode — it is the
+  // authoritative answer for an id older than the cached page.
+  assert.equal(requests[0].url, '/api/notifications?limit=100');
+  assert.equal(requests[1].url, '/api/notifications/42');
+  assert.equal(requests[1].options.cache, 'no-store');
+  assert.equal(requests[2].url, '/api/notifications/read');
+});
+
+test('a push tap reports its routing chain to the tap telemetry', async () => {
+  const tap = [];
+  const loaded = loadCoordinator({ claims: [{ notificationId: 50 }] });
+  loaded.sandbox.UITelemetry = {
+    attempt(action, context) {
+      tap.push(['attempt', action, context && context.screen]);
+      return `attempt-${tap.length}`;
+    },
+    outcome(attemptId, outcomeCode, detail) {
+      tap.push(['outcome', attemptId, outcomeCode, detail && detail.errorCode]);
+    },
+  };
+
+  await loaded.sandbox.SocialPush.drainPending();
+
+  // attempt before the bridge claim, outcome only once the route resolved.
+  assert.deepEqual(tap, [
+    ['attempt', 'push_tap_route', 'shell_boot'],
+    ['outcome', 'attempt-1', 'success', undefined],
+  ]);
+  assert.deepEqual(
+    loaded.calls.filter(([name]) => ['claim', 'open', 'ack'].includes(name)),
+    [['claim'], ['open', 50], ['ack', 50]]
+  );
+});
+
+test('a tap whose id resolves to nothing reports not_found, a throwing lookup reports network', async () => {
+  const tap = [];
+  const loaded = loadCoordinator({
+    claims: [{ notificationId: 51 }],
+    openImpl(id) { if (id === 51) throw new Error('lookup failed'); return true; },
+  });
+  loaded.sandbox.UITelemetry = {
+    attempt(action, context) {
+      tap.push(['attempt', action]);
+      return `attempt-${tap.length}`;
+    },
+    outcome(attemptId, outcomeCode, detail) {
+      tap.push(['outcome', outcomeCode, detail && detail.errorCode]);
+    },
+  };
+
+  // The drain swallows the throw (and schedules its retry); the tap's
+  // attempt is still closed with the network outcome before it rethrows.
+  assert.equal(await loaded.sandbox.SocialPush.drainPending(), false);
+
+  assert.deepEqual(tap, [
+    ['attempt', 'push_tap_route'],
+    ['outcome', 'failure', 'network'],
+  ]);
+
+  const missed = loadCoordinator({
+    claims: [{ notificationId: 52 }],
+    openImpl() { return false; },
+  });
+  missed.sandbox.UITelemetry = {
+    attempt() { return 'attempt-miss'; },
+    outcome(attemptId, outcomeCode, detail) {
+      tap.push(['outcome', attemptId, outcomeCode, detail && detail.errorCode]);
+    },
+  };
+  await missed.sandbox.SocialPush.drainPending();
+  assert.deepEqual(tap[2], ['outcome', 'attempt-miss', 'failure', 'not_found']);
 });
 
 test('native invalidation refresh bypasses the service-worker API cache',

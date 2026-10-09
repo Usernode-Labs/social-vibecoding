@@ -565,10 +565,13 @@ test('the boot session wait stays just past the API deadline', () => {
 test('the boot reads answer from cache immediately; everything else waits', () => {
   const O = 'https://example.test';
   // The exact list is what has no slug in it: the launcher (the app list, its
-  // layout, the home panels) and the viewer's own running sessions, which the
-  // dev board renders as its "In progress" rows.
+  // layout, the home panels), the viewer's own running sessions, which the
+  // dev board renders as its "In progress" rows — and #4524's notification
+  // feed, whose list read a push tap must route through before it can open
+  // anything at all.
   assert.deepEqual(BOOT_READ_PATHS, [
     '/api/apps', '/api/home-layout', '/api/home-panels', '/api/me/active-sessions',
+    '/api/notifications',
   ]);
   assert.equal(BOOT_API_TIMEOUT_MS, 0, 'a cached copy is served on this tick');
   for (const p of BOOT_READ_PATHS) {
@@ -597,15 +600,32 @@ test('the boot reads answer from cache immediately; everything else waits', () =
       `${p} with a query string is the same read`);
   }
 
+  // #4524: the single-item topic fetches a notification deep link falls back
+  // to when the card it names sits outside the cached board lists. The three
+  // patterns are anchored at both ends, so they admit the one card read and
+  // nothing wider.
+  for (const p of [
+    '/api/apps/usernode-2d5619/github-issues/30',
+    '/api/apps/usernode-2d5619/proposals/198250',
+    '/api/apps/usernode-2d5619/governance/7',
+  ]) {
+    assert.equal(apiTimeoutFor(`${O}${p}`, O), BOOT_API_TIMEOUT_MS, p);
+    assert.equal(apiTimeoutFor(`${O}${p}?demo=1`, O), BOOT_API_TIMEOUT_MS,
+      `${p} with a query string is the same read`);
+    assert.equal(apiTimeoutFor(`${O}${p}/comments`, O), API_TIMEOUT_MS,
+      `${p} with a tail keeps the ordinary deadline`);
+  }
+
   // What stays on the patient deadline. `/messages` is the one that matters:
   // it is paginated, so a scroll-back mints a new key per page and none of
-  // them is a screen's standing state. The patterns are anchored at both
-  // ends, and this is what proves it.
+  // them is a screen's standing state. The single-card topic reads on the
+  // same records (`/promoted/9`, `/issues/12/comments`) stay here too — only
+  // the three fetches a deep link awaits joined the lane. The patterns are
+  // anchored at both ends, and this is what proves it.
   for (const p of [
     '/api/apps/usernode-2d5619/messages',
     '/api/apps/usernode-2d5619/promoted/9',
     '/api/apps/usernode-2d5619/issues/12/comments',
-    '/api/notifications',
     '/api/conversations',
     '/api/home-layouts',
     // Never. It gates the whole boot and its cached copy can be

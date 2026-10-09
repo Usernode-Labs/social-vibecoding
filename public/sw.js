@@ -185,6 +185,14 @@ const BOOT_READ_PATHS = [
   // The dev board's "In progress" rows. Global rather than per-app, so it
   // belongs to the exact list even though the board is what waits on it.
   '/api/me/active-sessions',
+  // #4524: the notification feed itself. A push tap resolves its opaque id
+  // through this list before it can route at all, and on a cold boot the tap
+  // used to pay a full round trip for it on a no-store exact lookup even
+  // while this same read was already in flight for the boot. On the lane a
+  // warm cache answers on this tick and the network answer corrects behind
+  // the page like every boot read; the staleness trade is the bell's unread
+  // picture being last-known for a moment, which the correction repaints.
+  '/api/notifications',
 ];
 
 // Per-app reads with a slug in the path, so an exact match cannot express
@@ -198,6 +206,15 @@ const BOOT_READ_PATHS = [
 const BOOT_READ_PATTERNS = [
   /^\/api\/apps\/[^/]+$/,
   /^\/api\/apps\/[^/]+\/(?:github-issues|issues|promoted|merged|board-order|sessions|shared-sessions|topic-categories)$/,
+  // #4524: the single-item topic fetches a notification deep link falls back
+  // to when the card it names sits outside the board's cached lists —
+  // AppView._fetchIssueByNumber, _fetchProposalById and _fetchGovProposalById.
+  // A deep link onto one card used to pay an awaited round trip for it even
+  // with the whole board warm. Anchored and one segment wide like the rest,
+  // so the comments reads on the same cards keep their ordinary deadline.
+  /^\/api\/apps\/[^/]+\/github-issues\/\d+$/,
+  /^\/api\/apps\/[^/]+\/proposals\/\d+$/,
+  /^\/api\/apps\/[^/]+\/governance\/\d+$/,
 ];
 
 const BOOT_API_TIMEOUT_MS = 0;

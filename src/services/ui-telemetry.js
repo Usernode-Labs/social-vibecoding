@@ -52,6 +52,10 @@ const ACTIONS = Object.freeze(new Set([
   // is the phone's permission refused, cancelled is "Not now". A guardrail
   // of the first-session plan: how often pushes are denied.
   'push_permission',
+  // #4524: a push tap's routing chain, from the bridge claim to the screen
+  // it names starting to route. The number a slow-open report is read
+  // against; the navigation itself is already labelled via 'nudged'.
+  'push_tap_route',
 ]));
 const KINDS = Object.freeze(new Set([
   'screen_visit', 'action_attempt', 'action_outcome', 'repeated_action',

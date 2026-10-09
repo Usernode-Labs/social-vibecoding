@@ -28,6 +28,9 @@
     'shell_boot', 'app_detail_load', 'app_discussion_load',
     'feedback_submit', 'content_report_submit', 'change_create', 'preview_open',
     'push_permission',
+    // #4524: a push tap's routing chain, from the bridge claim to the screen
+    // it names starting to route (social-push.js _drainOnce).
+    'push_tap_route',
   ]);
   const OUTCOMES = new Set(['success', 'failure', 'cancelled']);
   const ERRORS = new Set([

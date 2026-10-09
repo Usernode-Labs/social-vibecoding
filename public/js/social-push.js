@@ -382,13 +382,53 @@
           !SocialPush._foregroundPageActive || !currentSession() ||
           !await SocialPush.isSupported()) return false;
       if (!currentSession()) return false;
+      // #4524: measure the tap's own routing chain — from the bridge claim to
+      // the screen it names starting to route. This is the number the next
+      // slow-open report is read against; the navigation that follows is
+      // already labelled `nudged` by Notifications._onItemClick's markNextVia.
+      // The telemetry module may be absent or still collection-disabled
+      // (unverified session), so both ends are best-effort.
+      let tapRoute = null;
+      try {
+        tapRoute = window.UITelemetry?.attempt?.('push_tap_route',
+          { screen: 'shell_boot' }) || null;
+      } catch (_) { /* best effort */ }
+      const endTapRoute = (code, errorCode) => {
+        if (tapRoute == null) return;
+        try { window.UITelemetry?.outcome?.(tapRoute, code, { errorCode }); } catch (_) {}
+      };
       const claim = await window.usernode.claimPendingSocialNotification();
-      if (!currentSession()) return false;
-      if (claim == null) return true;
+      if (!currentSession()) {
+        // The session admission moved under the claim; the tap is re-claimed
+        // by the next admitted drain, so this attempt ends here.
+        endTapRoute('cancelled');
+        return false;
+      }
+      if (claim == null) {
+        // Nothing to route: drains also run from boot and reconnect events
+        // that carry no tap. Closed rather than left to linger in the
+        // attempts map; the drain's own outcome is still true.
+        endTapRoute('cancelled');
+        return true;
+      }
       const notificationId = SocialPush._notificationId(claim);
-      if (notificationId == null) return false;
-      const opened = await Notifications.openById(notificationId);
-      if (!opened || !currentSession()) return false;
+      if (notificationId == null) {
+        endTapRoute('failure', 'not_found');
+        return false;
+      }
+      let opened;
+      try {
+        opened = await Notifications.openById(notificationId);
+      } catch (err) {
+        endTapRoute('failure', 'network');
+        throw err;
+      }
+      if (!opened) {
+        endTapRoute('failure', 'not_found');
+        return false;
+      }
+      endTapRoute('success');
+      if (!currentSession()) return false;
       return await window.usernode.ackPendingSocialNotification(
         notificationId
       ) === true;

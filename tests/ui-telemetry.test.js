@@ -73,6 +73,35 @@ test('collector accepts only the fixed content-free vocabulary', () => {
   /errorCode is only valid for failures/);
 });
 
+test('a push tap route attempt passes ingest on both ends (#4524)', () => {
+  const attemptId = id('attempt');
+  const parsed = telemetry.parseBatch(batch([
+    event({ kind: 'action_attempt', action: 'push_tap_route', screen: 'shell_boot', attemptId }),
+    event({ kind: 'action_outcome', action: 'push_tap_route', screen: 'shell_boot', attemptId,
+      outcome: 'success', durationMs: 180, sequence: 2 }),
+  ]));
+  assert.deepEqual(parsed.events.map((e) => [e.kind, e.action, e.outcome || null]), [
+    ['action_attempt', 'push_tap_route', null],
+    ['action_outcome', 'push_tap_route', 'success'],
+  ]);
+  const missed = telemetry.parseBatch(batch([
+    event({ kind: 'action_outcome', action: 'push_tap_route', screen: 'shell_boot', attemptId,
+      outcome: 'failure', errorCode: 'not_found', durationMs: 900, sequence: 2 }),
+  ]));
+  assert.equal(missed.events[0].errorCode, 'not_found');
+  const network = telemetry.parseBatch(batch([
+    event({ kind: 'action_outcome', action: 'push_tap_route', screen: 'shell_boot', attemptId,
+      outcome: 'failure', errorCode: 'network', durationMs: 900, sequence: 2 }),
+  ]));
+  assert.equal(network.events[0].errorCode, 'network');
+  // The client's attempt() gate and the server's ingest must move together:
+  // a set that accepts one and not the other silently drops every event.
+  const h = clientHarness({});
+  h.api.setUser(7);
+  assert.equal(typeof h.api.attempt('push_tap_route', { screen: 'shell_boot' }), 'string',
+    'the client emits the action once the collection gate allows it');
+});
+
 test('navigation vocabulary: named screens, a via only on navigation, hidden is a bare mark', () => {
   const parsed = telemetry.parseBatch(batch([
     event({ screen: 'home', via: 'own' }),
