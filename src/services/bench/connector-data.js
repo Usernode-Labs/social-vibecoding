@@ -37,7 +37,7 @@ function botFilters(q = {}) {
 
 /**
  * The Homeroom bot as its console section shows it: its settings (models per
- * stage, mode, audience, clocks and caps), its spend this week, the last
+ * stage, mode, the paused apps, clocks and caps), its spend this week, the last
  * seven days' verdicts, the queue, and a page of its runs (the verdict
  * ledger), newest first, with each run's replayable benchmark stages.
  */
@@ -91,7 +91,8 @@ async function botOverview(pool, config, query = {}, deps = {}) {
     ok: true,
     settings: {
       mode: s.mode || null,
-      audience: s.audience || null,
+      pausedApps: Array.isArray(s.pausedApps) ? s.pausedApps : [],
+      everyoneSince: s.everyoneSince || null,
       models: p.bot?.models || null,
       defaultModel: p.defaultModel || null,
       turnSeconds: num(s.turnSeconds),

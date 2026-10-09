@@ -23,7 +23,10 @@ test('the bot overview carries the console\'s fields it names, and nothing else'
     async adminPayload(_pool, _config, f) {
       asked = f;
       return {
-        settings: { mode: 'live', audience: 'all', turnSeconds: 600, concurrency: 2, secretThing: 'never' },
+        settings: {
+          mode: 'live', audience: 'list', pausedApps: ['quiet'], everyoneSince: '2026-10-09T15:00:00.000Z',
+          turnSeconds: 600, concurrency: 2, secretThing: 'never',
+        },
         bot: { models: { triage: 'a/b' }, weeklyLimitCents: 5000, weeklySpentCents: 1200, hasIncludedKey: true, apiKey: 'sk-never' },
         defaultModel: 'a/b',
         totals: { question: 2 },
@@ -40,6 +43,9 @@ test('the bot overview carries the console\'s fields it names, and nothing else'
   assert.equal(asked.app, 'bread');
   assert.equal(out.settings.mode, 'live');
   assert.equal(out.settings.secretThing, undefined);
+  assert.equal(out.settings.audience, undefined, 'the retired audience is not carried');
+  assert.deepEqual(out.settings.pausedApps, ['quiet'], 'what the bot leaves alone, now that every app is live');
+  assert.equal(out.settings.everyoneSince, '2026-10-09T15:00:00.000Z');
   assert.equal(out.spend.apiKey, undefined);
   assert.equal(out.runs[0].costUsd, 0.12);
   assert.equal(out.runs[0].question.length, 400, 'a question is clipped');

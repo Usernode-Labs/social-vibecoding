@@ -101,9 +101,7 @@ test('the made screen reads the waiting plan off the real GET /api/apps/:slug, f
     `INSERT INTO platform_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
     [key, value],
   );
-  await set('homeroom_bot_dm_users', JSON.stringify([alex.username]));
   await set('homeroom_bot_mode', 'live');
-  await set('homeroom_bot_live_apps', JSON.stringify([app.slug]));
   await pool.query(
     `INSERT INTO homeroom_bot_first_versions (app_id, user_id, brief, bot_builds, status, issue_number)
      VALUES ($1, $2, 'A book club that meets monthly', TRUE, 'filed', 1)`,

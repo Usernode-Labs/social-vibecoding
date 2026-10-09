@@ -363,9 +363,7 @@ test('Page Turners, read as it stands: the ready card after each Yes and after t
       `INSERT INTO platform_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
       [key, value],
     );
-    await set('homeroom_bot_dm_users', JSON.stringify([alex.username, priya.username]));
     await set('homeroom_bot_mode', 'live');
-    await set('homeroom_bot_live_apps', JSON.stringify(['page-turners']));
     const { rows: [inserted] } = await pool.query(
       `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility, repo_url)
        VALUES ('Page Turners', 'page-turners', 'running', $1, 'private', 'private', 'https://github.com/usernode-bot/page-turners')
@@ -480,7 +478,9 @@ test('Page Turners, read as it stands: the ready card after each Yes and after t
       );
       const filed = await activity.startCard(pool, {
         app, issueNumber: 2, bot, jobKey: Number(queued.id), filed: true, settings,
-        requester: { userId: priya.id, username: priya.username, issueTitle: 'Books we have read', firstVersion: false, askedText: 'Keep a list' },
+        requester: {
+          userId: priya.id, username: priya.username, hasPlatformAccess: true, issueTitle: 'Books we have read', firstVersion: false, askedText: 'Keep a list',
+        },
       });
       assert.ok(filed?.messageId, 'her card, sent when she filed it');
       await pool.query('UPDATE homeroom_bot_dm_messages SET created_at = $2 WHERE message_id = $1', [filed.messageId, at('11:10')]);

@@ -85,11 +85,11 @@ test('the Homeroom bot DM\'s activity cards: one per piece of work, read from it
   routePool = pool;
 
   let seq = 0;
-  async function user(prefix, { synthetic = false } = {}) {
+  async function user(prefix, { synthetic = false, access = true } = {}) {
     const { rows } = await pool.query(
       `INSERT INTO users (username, password, has_platform_access, is_synthetic)
-       VALUES ($1, 'x', TRUE, $2) RETURNING id, username`,
-      [synthetic ? prefix : `${prefix}_${++seq}`, synthetic],
+       VALUES ($1, 'x', $3, $2) RETURNING id, username, has_platform_access AS "hasPlatformAccess"`,
+      [synthetic ? prefix : `${prefix}_${++seq}`, synthetic, access],
     );
     return rows[0];
   }
@@ -114,13 +114,13 @@ test('the Homeroom bot DM\'s activity cards: one per piece of work, read from it
   const bot = await user('homeroom_bot', { synthetic: true });
   const ada = await user('ada');
   const sam = await user('sam');
-  const lee = await user('lee');
+  // Homeroom has not let Lee in yet: the bot works for everyone with
+  // platform access, so not for him.
+  const lee = await user('lee', { access: false });
   const seeds = await project('seed-swap', ada);
   const samsApp = await project('sam-shop', sam);
   const hidden = await project('hidden-lab', sam, { visibility: 'private' });
   await setting('homeroom_bot_mode', 'shadow');
-  await setting('homeroom_bot_dm_users', JSON.stringify([ada.username, sam.username]));
-  await setting('homeroom_bot_live_apps', JSON.stringify(['seed-swap', 'sam-shop', 'hidden-lab']));
   const settings = await homeroomBot.readSettings(pool);
 
   await pool.query(
@@ -129,7 +129,9 @@ test('the Homeroom bot DM\'s activity cards: one per piece of work, read from it
        ($2, 9, $5, 'Sam''s secret'), ($3, 2, $4, 'Hidden thing'), ($1, 6, $6, 'Lee''s idea')`,
     [seeds.id, samsApp.id, hidden.id, ada.id, sam.id, lee.id],
   );
-  const requester = (who, title) => ({ userId: who.id, username: who.username, issueTitle: title, firstVersion: false });
+  const requester = (who, title) => ({
+    userId: who.id, username: who.username, issueTitle: title, firstVersion: false, hasPlatformAccess: who.hasPlatformAccess,
+  });
   async function claim(app, issueNumber) {
     const { rows: [row] } = await pool.query(
       `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason, started_at)
@@ -146,8 +148,8 @@ test('the Homeroom bot DM\'s activity cards: one per piece of work, read from it
     );
     return row.id;
   }
-  const asAda = { id: ada.id, username: ada.username, isAdmin: false };
-  const asSam = { id: sam.id, username: sam.username, isAdmin: false };
+  const asAda = { id: ada.id, username: ada.username, isAdmin: false, hasPlatformAccess: true };
+  const asSam = { id: sam.id, username: sam.username, isAdmin: false, hasPlatformAccess: true };
   const cardsOf = async (who) => (await activity.cardsFor(pool, { user: who, settings })).cards;
   const byId = async (who, id) => (await cardsOf(who)).find((card) => card.messageId === id);
 

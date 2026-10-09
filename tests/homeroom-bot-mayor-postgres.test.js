@@ -126,7 +126,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
   async function user(prefix, { synthetic = false } = {}) {
     const { rows } = await pool.query(
       `INSERT INTO users (username, password, has_platform_access, is_synthetic)
-       VALUES ($1, 'x', TRUE, $2) RETURNING id, username`,
+       VALUES ($1, 'x', TRUE, $2) RETURNING id, username, has_platform_access AS "hasPlatformAccess"`,
       [synthetic ? prefix : `${prefix}_${++seq}`, synthetic],
     );
     return rows[0];
@@ -158,9 +158,9 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
   const seeds = await project('seed-swap', ada);
   const notes = await project('note-board', ada);
   const samsApp = await project('sam-shop', sam);
+  // The bot is on, for everyone with platform access, on every app but a
+  // paused one.
   await setting('homeroom_bot_mode', 'shadow');
-  await setting('homeroom_bot_dm_users', JSON.stringify([ada.username, sam.username]));
-  await setting('homeroom_bot_live_apps', JSON.stringify(['seed-swap', 'note-board', 'sam-shop']));
   const opened = await conversations.ensureAdmittedDirect(pool, bot.id, ada.id);
   const settings = await homeroomBot.readSettings(pool);
 
@@ -242,8 +242,8 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     );
     assert.ok(!rows.some((r) => /content|text|reply/.test(r.column_name)), 'no column holds what was said');
     const s = await homeroomBot.readSettings(pool);
-    assert.equal(s.liveAtOnce, 6);
-    assert.equal(s.perPerson, 2);
+    assert.equal(s.liveAtOnce, 12);
+    assert.equal(s.perPerson, 3);
     assert.equal(s.dmChat, true);
   });
 
@@ -296,9 +296,9 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.equal(later.requests.find((r) => r.number === 3 && r.project === 'seed-swap').status, 'step 3 of 6: building it');
 
     // A project the bot is not on: it says so, rather than seeming idle.
-    const off = await mayor.myWork(pool, { userId: ada.id, settings: { ...settings, liveApps: ['seed-swap'] } });
+    const off = await mayor.myWork(pool, { userId: ada.id, settings: { ...settings, pausedApps: ['note-board'] } });
     assert.equal(off.requests.find((r) => r.project === 'note-board').botBuildsHere, false);
-    const projects = await mayor.myProjects(pool, { user: ada, settings: { ...settings, liveApps: ['seed-swap'] } });
+    const projects = await mayor.myProjects(pool, { user: ada, settings: { ...settings, pausedApps: ['note-board'] } });
     assert.deepEqual(projects.projects.map((p) => `${p.project}:${p.botBuildsHere}`).sort(), ['note-board:false', 'seed-swap:true']);
   });
 
@@ -676,7 +676,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.equal(building.messageId, ack.id);
     assert.equal(await dm.untaggedRequester(pool, { appId: notes.id, issueNumber: n, bot, told: building }), ada.username);
     const held = await dm.noteOverAllowance(pool, {
-      settings: { ...settings, userWeeklyCents: 100 }, requester: { userId: ada.id, username: ada.username }, app: notes, issueNumber: n, bot,
+      settings: { ...settings, userWeeklyCents: 100 }, requester: { userId: ada.id, username: ada.username, hasPlatformAccess: true }, app: notes, issueNumber: n, bot,
     });
     assert.equal((await read(held)).reply.id, ask.id);
     const { rows: [built] } = await pool.query(
@@ -1394,11 +1394,11 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.match(capped.error, new RegExp(`^You have already changed this proposal ${followup.MAX_REVISIONS} times, as many as you may on your own, so you cannot change it again\\. Nothing was sent or queued\\.`));
     await pool.query('DELETE FROM homeroom_bot_runs WHERE id = ANY($1::int[])', [revisions.map((r) => r.id)]);
 
-    // A project the bot is not working on, or has paused: nobody would pick it up.
-    const off = await ask({ settings: { ...settings, liveApps: ['seed-swap'] } });
+    // The bot switched off, or the project paused: nobody would pick it up.
+    const off = await ask({ settings: { ...settings, mode: 'off' } });
     assert.match(off.error, /^You are not working on Note board right now, so nobody would pick the change up\. Nothing was sent\.$/);
     const paused = await ask({ settings: { ...settings, pausedApps: ['note-board'] } });
-    assert.match(paused.error, /^You are not working on Note board right now/);
+    assert.match(paused.error, /^You are not working on Note board right now, so nobody would pick the change up\. Nothing was sent\.$/);
 
     // Approved, or closed: there is nothing to change any more.
     await pool.query(`UPDATE chat_sessions SET status = 'merging' WHERE id = $1`, [proposal.id]);
@@ -1542,7 +1542,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     // Already built and up for a vote: changed with revise_proposal instead.
     assert.match((await mayor.startRequest(pool, ctx(), { project: 'note-board', number: 5 })).error, /its proposal is up for the group's vote\. To change it, use revise_proposal/);
     // Not a project it builds on.
-    assert.match((await mayor.startRequest(pool, ctx({ settings: { ...settings, liveApps: ['seed-swap'] } }), { project: 'note-board', number: 6 })).error,
+    assert.match((await mayor.startRequest(pool, ctx({ settings: { ...settings, pausedApps: ['note-board'] } }), { project: 'note-board', number: 6 })).error,
       /^You do not build on Note board/);
     assert.match((await mayor.startRequest(pool, ctx(), { project: 'note-board', number: 999 })).error, /^Note board has no request #999\./);
     assert.match((await mayor.startRequest(pool, ctx({ started: 'x' }), { project: 'note-board', number: 6 })).error, /^One start per turn\.$/);
@@ -1625,7 +1625,9 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     );
     await pool.query('INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, started_at) VALUES ($1, 77, 1, NOW())', [side.id]);
     await pool.query(`INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict) VALUES ($1, 77, 'shadow', 'person')`, [side.id]);
-    const work = await mayor.myWork(pool, { userId: ada.id, settings, deps: { domain: 'app.test' } });
+    // Every app but a paused one is live: the side project is paused, so
+    // its queue is the background lane's.
+    const work = await mayor.myWork(pool, { userId: ada.id, settings: { ...settings, pausedApps: ['side-project'] }, deps: { domain: 'app.test' } });
     assert.ok(!work.requests.some((r) => r.project === 'side-project'), 'a request only ever read in the background is not hers to hear about');
     await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1', [side.id]);
   });

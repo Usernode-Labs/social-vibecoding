@@ -77,7 +77,6 @@ function startDeps({ holds = new Map(), holdsThrow = false } = {}) {
   const asked = [];
   const pool = { async query() { return { rows: [] }; } };
   const dm = {
-    isDmUser: dmSvc.isDmUser,
     hasBot: dmSvc.hasBot,
     requestLine: dmSvc.requestLine,
     async requestStart() { return null; },
@@ -91,12 +90,12 @@ function startDeps({ holds = new Map(), holdsThrow = false } = {}) {
     },
     heldForFirstVersion: bot.heldForFirstVersion,
   };
-  return { pool, dm, botSvc, sent, asked, settings: { dmUsers: ['sam'] } };
+  return { pool, dm, botSvc, sent, asked, settings: { mode: 'shadow' } };
 }
 
 const app = { id: 11, slug: 'flat-4b-chores', name: 'Flat 4B Chores' };
 const homeroomBot = { id: 1, username: 'homeroom_bot' };
-const sam = { userId: 8, username: 'sam', issueTitle: 'Bin day reminder', firstVersion: false };
+const sam = { userId: 8, username: 'sam', hasPlatformAccess: true, issueTitle: 'Bin day reminder', firstVersion: false };
 
 test('a queued or filed card asks whether the project\'s first version holds the request', async () => {
   const held = startDeps({ holds: new Map([[11, 1]]) });
@@ -132,7 +131,7 @@ test('a queued or filed card asks whether the project\'s first version holds the
   // The first version's own card, and a look that started, never ask.
   const own = startDeps({ holds: new Map([[11, 1]]) });
   await activity.startCard(own.pool, {
-    app, issueNumber: 1, requester: { ...sam, firstVersion: true }, bot: homeroomBot, jobKey: 45, settings: { dmUsers: ['sam'] }, queued: true,
+    app, issueNumber: 1, requester: { ...sam, firstVersion: true }, bot: homeroomBot, jobKey: 45, settings: own.settings, queued: true,
     deps: { dm: own.dm, botSvc: own.botSvc },
   });
   const started = startDeps({ holds: new Map([[11, 1]]) });

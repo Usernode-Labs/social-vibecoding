@@ -71,14 +71,14 @@ function assignedFields(src, header, target) {
 test('the façade\'s state has the same fields and defaults as settings.js', () => {
   const facade = literalKeys(facadeJs, facadeJs.indexOf('const state = '));
   const real = literalKeys(settingsJs, settingsJs.indexOf('    state: {'));
-  assert.ok(real.length >= 10, `settings.js state literal parsed (${real.length} fields)`);
+  assert.ok(real.length >= 8, `settings.js state literal parsed (${real.length} fields)`);
   assert.deepEqual(facade, real, 'facade.js `state` must mirror settings.js `state` field for field');
 });
 
 test('the façade\'s refresh() assigns exactly the fields settings.js\'s refresh() assigns', () => {
   const facade = assignedFields(facadeJs, '  async refresh() {', 'state');
   const real = assignedFields(settingsJs, '    async refresh() {', 'this\\.state');
-  assert.ok(real.length >= 10, `settings.js refresh parsed (${real.length} assignments)`);
+  assert.ok(real.length >= 8, `settings.js refresh parsed (${real.length} assignments)`);
   assert.deepEqual(facade, real);
   // And primes the CLI-auth memo from the same payload, like the original.
   assert.match(facadeJs, /Promise\.resolve\(u\.cliAuthEnabled !== false\)/);

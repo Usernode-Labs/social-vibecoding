@@ -112,13 +112,15 @@ test('B9: asking from the chat, against the full PostgreSQL schema', { timeout: 
     await admin.end();
   });
   await pool.query(read('src/db/schema.sql'));
-  const user = async (username, synthetic = false) => (await pool.query(
-    `INSERT INTO users (username, password, has_platform_access, is_synthetic) VALUES ($1, 'x', TRUE, $2) RETURNING id, username`,
-    [username, synthetic],
+  const user = async (username, synthetic = false, access = true) => (await pool.query(
+    `INSERT INTO users (username, password, has_platform_access, is_synthetic) VALUES ($1, 'x', $3, $2) RETURNING id, username`,
+    [username, synthetic, access],
   )).rows[0];
   await user('homeroom_bot', true);
   const ben = await user('ben');
-  const ada = await user('ada');
+  // Ada is a member, but Homeroom has not let her in yet: the bot works for
+  // everyone with platform access, so not for her.
+  const ada = await user('ada', false, false);
   const { rows: [inserted] } = await pool.query(
     `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility, repo_url)
      VALUES ('Supper Club', 'supper-club', 'running', $1, 'private', 'private', 'https://github.com/example/supper-club')
@@ -134,9 +136,7 @@ test('B9: asking from the chat, against the full PostgreSQL schema', { timeout: 
     `INSERT INTO platform_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
     [key, value],
   );
-  await set('homeroom_bot_dm_users', JSON.stringify(['ben']));
   await set('homeroom_bot_mode', 'live');
-  await set('homeroom_bot_live_apps', JSON.stringify(['supper-club']));
 
   let nextIssue = 40;
   const created = [];
@@ -198,7 +198,7 @@ test('B9: asking from the chat, against the full PostgreSQL schema', { timeout: 
     // His cards come back after a reload; Ada sees none of them.
     const mine = await botChat.myRequests(pool, { app, user: { id: ben.id, username: 'ben', hasPlatformAccess: true } });
     assert.deepEqual([mine.bot, mine.builds, mine.cards.length, mine.cards[0].messageId], [true, true, 1, id]);
-    const hers = await botChat.myRequests(pool, { app, user: { id: ada.id, username: 'ada', hasPlatformAccess: true } });
+    const hers = await botChat.myRequests(pool, { app, user: { id: ada.id, username: 'ada', hasPlatformAccess: false } });
     assert.deepEqual([hers.bot, hers.cards.length], [false, 0]);
   });
 

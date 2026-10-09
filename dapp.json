@@ -3971,10 +3971,10 @@
       "expectText": "Verdict"
     },
     {
-      "name": "Homeroom bot dashboard says what it does on Live and Shadow apps (#2684, #3710), beside its shadow build lane, who asked not to be tagged (#3347), and how much it works on at once (#3624)",
+      "name": "Homeroom bot dashboard says it works for everyone on every app but the paused ones (#2684, #3710), beside its shadow build lane, who asked not to be tagged (#3347), and how much it works on at once (#3624)",
       "path": "/#admin/homeroom-bot",
       "expectSelector": "#admin-homeroom-bot:has(#admin-homeroom-bot-build-lane):has(#admin-homeroom-bot-optouts):has(#admin-homeroom-bot-live-at-once):has(#admin-homeroom-bot-per-person) #admin-homeroom-bot-intro",
-      "expectText": "On Shadow apps it only records what it would do"
+      "expectText": "acts on every app but the"
     },
     {
       "name": "Homeroom bot Benchmark opens on its Overview: the places with their counts, what is happening now, which model each stage should use on the default suite, and the taste eval's latest scores (#3654, #3737)",

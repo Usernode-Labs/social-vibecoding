@@ -147,7 +147,7 @@ test('triage records the ask before the verdict is posted, so that very post lea
   };
   const out = await bot.runTriage(pool, {}, {
     bot: { id: 77, username: 'homeroom_bot' }, app: { id: 9, slug: 'todo', repo_url: 'https://github.com/o/r' },
-    item: { id: 1, issue_number: 12 }, mode: 'shadow', settings: { mode: 'shadow', liveApps: [], turnSeconds: 60 }, deps,
+    item: { id: 1, issue_number: 12 }, mode: 'shadow', settings: { mode: 'shadow', turnSeconds: 60 }, deps,
   });
   assert.equal(out.verdict, 'person');
   assert.deepEqual(order, [['run'], ['asks', ['maya'], ['sam'], 900]]);

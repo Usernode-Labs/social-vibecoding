@@ -2,13 +2,13 @@
 
 // #3624 stage 2: how much the Homeroom bot works on at once.
 //
-// Live work (an app it acts on for real, or a project it builds for
-// somebody) is started one issue at a time: never two on one app (the bot
-// has one session per app) unless one is a follow-up on its own proposal
-// (#3703, below), at most `perPerson` for one person, at most `liveAtOnce`
-// in all. Shadow triage of every other app runs in slots of its
-// own. And a pass does not wait for the work it starts, so a long build on
-// one app never holds up an answer on another.
+// Live work (every app but a paused one) is started one issue at a time:
+// never two on one app (the bot has one session per app) unless one is a
+// follow-up on its own proposal (#3703, below), at most `perPerson` for one
+// person, at most `liveAtOnce` in all. Shadow triage, where nothing is live
+// (a staging copy), runs in slots of its own. And a pass does not wait for
+// the work it starts, so a long build on one app never holds up an answer on
+// another.
 //
 // Run with: node --test tests/homeroom-bot-at-once.test.js
 
@@ -79,6 +79,7 @@ function loopPool({ settings, candidates = [], apps = [], waiting = [] }) {
   return pool;
 }
 
+// Every app but a paused one is live, so these need no setting to be.
 const LIVE = ['a1', 'a2', 'a3', 'a4'];
 const APPS = LIVE.map((slug, i) => ({ id: 101 + i, slug, name: slug, repo_url: `https://github.com/o/${slug}`, self_hosted: false }));
 
@@ -86,7 +87,6 @@ test('runOnce starts live work and returns without waiting for it; a finished sl
   bot._resetForTests();
   const settings = [
     { key: bot.KEY_MODE, value: 'shadow' },
-    { key: bot.KEY_LIVE_APPS, value: JSON.stringify(LIVE) },
     { key: bot.KEY_PER_PERSON, value: '2' },
     { key: bot.KEY_LIVE_AT_ONCE, value: '6' },
   ];
@@ -128,7 +128,6 @@ test('a pass only fills free slots: what runs keeps its app and its person\'s pl
   bot._resetForTests();
   const settings = [
     { key: bot.KEY_MODE, value: 'shadow' },
-    { key: bot.KEY_LIVE_APPS, value: JSON.stringify(LIVE) },
     { key: bot.KEY_PER_PERSON, value: '2' },
     { key: bot.KEY_LIVE_AT_ONCE, value: '2' },
   ];
@@ -156,7 +155,7 @@ test('shadow triage runs in its own lane and never takes an app the bot acts on'
   const heads = [];
   const settings = [
     { key: bot.KEY_MODE, value: 'shadow' },
-    { key: bot.KEY_LIVE_APPS, value: JSON.stringify(['a1']) },
+    { key: bot.KEY_PAUSED_APPS, value: '["quiet"]' },
   ];
   const pool = loopPool({ settings });
   const real = pool.query.bind(pool);
@@ -164,25 +163,30 @@ test('shadow triage runs in its own lane and never takes an app the bot acts on'
     if (/FROM homeroom_bot_queue q JOIN apps/.test(String(sql))) heads.push(params);
     return real(sql, params);
   };
-  await bot.runOnce(pool, {}, {
-    github: { isEnabled: () => true, async fetchPublicIssues() { return { issues: [] }; } },
-    worker: { async listWorkerVolumes() { return []; } },
-  });
-  assert.ok(heads.length, 'the background lane looked for a batch');
-  assert.deepEqual(heads[0][2], ['a1'], 'with the live apps left out');
-
-  // A staging copy never acts, so every app is the background lane's.
   const env = process.env.USERNODE_ENV;
-  process.env.USERNODE_ENV = 'staging';
-  heads.length = 0;
-  pool.log.length = 0;
-  bot._resetForTests();
+  delete process.env.USERNODE_ENV;
   try {
     await bot.runOnce(pool, {}, {
       github: { isEnabled: () => true, async fetchPublicIssues() { return { issues: [] }; } },
       worker: { async listWorkerVolumes() { return []; } },
     });
-    assert.deepEqual(heads[0][2], []);
+    assert.ok(heads.length, 'the background lane looked for a batch');
+    // Every app but a paused one is live, so every live app is left out
+    // ($4/$5: all of them but the paused), and the paused one is left out
+    // as paused ($2): nothing is the background lane's.
+    assert.deepEqual(heads[0].slice(1), [['quiet'], [], true, ['quiet']], 'with the live apps left out');
+    assert.ok(pool.log.some((l) => /AS person_id/.test(l.s) && /WHERE q\.started_at IS NULL/.test(l.s)), 'the live lane reads');
+
+    // A staging copy never acts, so every app is the background lane's.
+    process.env.USERNODE_ENV = 'staging';
+    heads.length = 0;
+    pool.log.length = 0;
+    bot._resetForTests();
+    await bot.runOnce(pool, {}, {
+      github: { isEnabled: () => true, async fetchPublicIssues() { return { issues: [] }; } },
+      worker: { async listWorkerVolumes() { return []; } },
+    });
+    assert.deepEqual(heads[0].slice(1), [['quiet'], [], false, []], 'only a paused app left out');
     assert.ok(!pool.log.some((l) => /AS person_id/.test(l.s) && /WHERE q\.started_at IS NULL/.test(l.s)), 'no live lane at all');
   } finally {
     if (env === undefined) delete process.env.USERNODE_ENV; else process.env.USERNODE_ENV = env;
@@ -194,7 +198,6 @@ test('a row still being worked on is not handed back by the stale-claim sweep', 
   bot._resetForTests();
   const settings = [
     { key: bot.KEY_MODE, value: 'shadow' },
-    { key: bot.KEY_LIVE_APPS, value: JSON.stringify(LIVE) },
   ];
   const pool = loopPool({ settings, candidates: [row(9, 101, 7)], apps: APPS });
   let release;
@@ -280,7 +283,8 @@ test('the live queue reads which rows are follow-ups, lets only them past a busy
     liveSlugs: ['a1'], excludeAppIds: [103], busyAppIds: [101], botId: 77, pausedApps: [], excludeFollowUps: ['101:5'],
   });
   const { s, params } = asked[0];
-  // The last two are the everyone audience's (live.liveScope): not here.
+  // The last two are a scope's every-app flag and what it leaves out
+  // (live.liveScope): a bare list of slugs is just those apps.
   assert.deepEqual(params, [['a1'], [103], [], 200, [101], 77, ['101:5'], 7, false, []]);
   // Plant Pal #1 and #3: a request whose live build waits or runs is read
   // once that build ends, whatever queued it.
@@ -301,7 +305,6 @@ test('a reply on the bot\'s proposal starts while another request builds on the 
   bot._resetForTests();
   const settings = [
     { key: bot.KEY_MODE, value: 'shadow' },
-    { key: bot.KEY_LIVE_APPS, value: JSON.stringify(LIVE) },
     { key: bot.KEY_PER_PERSON, value: '2' },
     { key: bot.KEY_LIVE_AT_ONCE, value: '6' },
   ];
@@ -339,7 +342,6 @@ test('when live work ends, the next pass reads its app again, so a reply sent me
   bot._resetForTests();
   const settings = [
     { key: bot.KEY_MODE, value: 'shadow' },
-    { key: bot.KEY_LIVE_APPS, value: JSON.stringify(LIVE) },
   ];
   const pool = loopPool({ settings, candidates: [row(1, 102, 7)], apps: APPS });
   let release;
@@ -376,7 +378,6 @@ test('a row started as a follow-up whose proposal has gone is handed back untouc
   bot._resetForTests();
   const settings = [
     { key: bot.KEY_MODE, value: 'shadow' },
-    { key: bot.KEY_LIVE_APPS, value: JSON.stringify(LIVE) },
   ];
   const pool = loopPool({ settings, candidates: [followUp(4, 103, 7)], apps: APPS });
   const deps = {
@@ -432,7 +433,6 @@ test('a project\'s next request is read while its build runs, and its builds go 
   bot._resetForTests();
   const settings = [
     { key: bot.KEY_MODE, value: 'shadow' },
-    { key: bot.KEY_LIVE_APPS, value: JSON.stringify(LIVE) },
     { key: bot.KEY_PER_PERSON, value: '3' },
     { key: bot.KEY_LIVE_AT_ONCE, value: '6' },
   ];
@@ -570,7 +570,6 @@ test('a spent weekly budget holds builds waiting their turn too, and their peopl
   bot._resetForTests();
   const settings = [
     { key: bot.KEY_MODE, value: 'shadow' },
-    { key: bot.KEY_LIVE_APPS, value: JSON.stringify(LIVE) },
     { key: bot.KEY_PER_PERSON, value: '3' },
     { key: bot.KEY_LIVE_AT_ONCE, value: '6' },
   ];
@@ -602,7 +601,6 @@ test('a budget that runs out for another reason pauses without telling anybody i
   bot._resetForTests();
   const settings = [
     { key: bot.KEY_MODE, value: 'shadow' },
-    { key: bot.KEY_LIVE_APPS, value: JSON.stringify(LIVE) },
   ];
   const pool = loopPool({ settings, apps: APPS, waiting: [waitingBuild(900, 101, 1, 7)] });
   const told = [];

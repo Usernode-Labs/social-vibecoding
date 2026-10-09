@@ -383,9 +383,7 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
     `INSERT INTO platform_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
     [key, value],
   );
-  await set('homeroom_bot_dm_users', JSON.stringify(['maya']));
   await set('homeroom_bot_mode', 'live');
-  await set('homeroom_bot_live_apps', JSON.stringify(['chores']));
   await pool.query(
     `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, first_version, asked_text)
      VALUES ($1, 12, $2, 'Add a leaderboard', FALSE, 'A weekly leaderboard')`,

@@ -120,7 +120,7 @@ test('B4: their words and the credit, against the full PostgreSQL schema', { tim
   await t.test('her card carries her words', async () => {
     const opened = await require('../src/services/conversations').ensureAdmittedDirect(pool, bot.id, maya.id);
     assert.ok(opened);
-    const settings = { audience: 'everyone', dmUsers: [], mode: 'live' };
+    const settings = { mode: 'live' };
     const sent = await require('../src/services/homeroom-bot-activity').startCard(pool, {
       app, issueNumber: 4, requester: await dm.requesterOf(pool, app.id, 4), bot, jobKey: 'words-1', settings,
     });

@@ -81,7 +81,6 @@ function parseCreate(body) {
   return {
     username,
     platformAccess: flag(b.platformAccess, true, 'platformAccess'),
-    homeroomBotDm: flag(b.homeroomBotDm, false, 'homeroomBotDm'),
     welcomeDm: flag(b.welcomeDm, false, 'welcomeDm'),
     note,
   };
@@ -90,11 +89,12 @@ function parseCreate(body) {
 /**
  * Make one test account as full admin `actorId`. Everything that decides
  * what the account is commits together: the row, its access, its Journey
- * entry, the audit row and its bot DM place. Only the included OpenRouter key
+ * entry and the audit row. (The Homeroom bot works for it as for anybody let
+ * in.) Only the included OpenRouter key
  * is made after the commit, as sign-up makes it, because it calls out.
  *
  * Returns { userId, username, password, needsUsernameChoice, platformAccess,
- * homeroomBotDm, welcomeDm, note }. The password is in nothing else.
+ * welcomeDm, note }. The password is in nothing else.
  */
 async function create(pool, body, { actorId, config = {} } = {}) {
   if (!Number.isSafeInteger(actorId) || actorId <= 0) fail(403, 'forbidden', 'A full administrator is required.');
@@ -142,22 +142,12 @@ async function create(pool, body, { actorId, config = {} } = {}) {
       await journeyLeftOut.addTestInTransaction(client, {
         userId: user.id, note: input.note || 'Test account (create_test_account)',
       }, { actorId });
-      if (input.homeroomBotDm) {
-        const homeroomBot = require('./homeroom-bot');
-        const dm = await homeroomBot.setDmMember(client, user.username, true, actorId);
-        if (!dm.ok) {
-          fail(409, dm.error === 'full' ? 'bot_dm_full' : 'bot_dm_unavailable', dm.error === 'full'
-            ? `The Homeroom bot's DM list is full (${dm.max} people). Make the account without homeroomBotDm, or free a place first.`
-            : 'The Homeroom bot\'s DM list could not be updated. Try again.');
-        }
-      }
       await client.query(
         `INSERT INTO support_actions (actor_user_id, target_user_id, action, reason, payload)
          VALUES ($1, $2, 'test_account_create', $3, $4::jsonb)`,
         [actorId, user.id, input.note || null, JSON.stringify({
           usernameChosen: !!input.username,
           platformAccess: input.platformAccess,
-          homeroomBotDm: input.homeroomBotDm,
           welcomeDm: input.welcomeDm,
         })]
       );
@@ -177,7 +167,7 @@ async function create(pool, body, { actorId, config = {} } = {}) {
 
   log.info('test-accounts', 'Test account created', {
     userId: created.id, by: actorId, usernameChosen: !!input.username,
-    platformAccess: input.platformAccess, homeroomBotDm: input.homeroomBotDm, welcomeDm: input.welcomeDm,
+    platformAccess: input.platformAccess, welcomeDm: input.welcomeDm,
   });
   return {
     userId: created.id,
@@ -185,7 +175,6 @@ async function create(pool, body, { actorId, config = {} } = {}) {
     password,
     needsUsernameChoice: !input.username,
     platformAccess: input.platformAccess,
-    homeroomBotDm: input.homeroomBotDm,
     welcomeDm: input.welcomeDm,
     note: input.note || null,
   };
@@ -229,8 +218,7 @@ async function list(pool) {
  * Retire one test account as full admin `actorId`: take down every app it
  * created (the same teardown DELETE /api/apps/:slug runs), then delete the
  * account through the ordinary admin deletion, which anonymises the row,
- * revokes its sessions and native credentials, withdraws its open votes and
- * takes it off the bot's DM list (the username trigger in schema.sql).
+ * revokes its sessions and native credentials and withdraws its open votes.
  *
  * Refuses any account that is not a test account. If an app cannot be taken
  * down it stops there and reports what it had removed: the account is never
@@ -272,9 +260,6 @@ async function retire(pool, { userId, confirmation }, { actorId, config = {} } =
     }
   }
 
-  // Read only to say so in the answer: the deletion's username trigger is
-  // what takes the entry off.
-  const onBotDm = await isOnBotDmList(pool, user.username);
   const accountDeletion = require('./account-deletion');
   let deletion;
   try {
@@ -297,7 +282,6 @@ async function retire(pool, { userId, confirmation }, { actorId, config = {} } =
     userId,
     username: user.username,
     appsDeleted: removedApps,
-    homeroomBotDm: onBotDm,
     deletionId: deletion.deletionId,
   };
 }
@@ -335,18 +319,6 @@ async function onFirstRun(db, userId, at = new Date()) {
     return rows[0]?.first_run === true;
   } catch (err) {
     log.warn('test-accounts', 'Could not read whether a test account is on its first run', { userId: id, err: err.message });
-    return false;
-  }
-}
-
-async function isOnBotDmList(pool, username) {
-  const { rows } = await pool.query(
-    "SELECT value FROM platform_settings WHERE key = 'homeroom_bot_dm_users'"
-  );
-  try {
-    const members = JSON.parse(rows[0] ? rows[0].value : '[]');
-    return Array.isArray(members) && members.includes(String(username).toLowerCase());
-  } catch {
     return false;
   }
 }

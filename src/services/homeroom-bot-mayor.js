@@ -7,7 +7,7 @@
 // request they are answering. Nothing read what they wrote, so "what are
 // you working on?" was posted on a request as an answer.
 //
-// Now a message to the bot, from somebody on its DM list, is read by a
+// Now a message to the bot, from somebody it works for, is read by a
 // cheap model (the bot's own, GLM 5.3 Flash by default, on the bot's
 // included OpenRouter key) with tools over the bot's OWN records for that
 // person. It can:
@@ -366,6 +366,8 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '- Each project has a board of requests (features and bugs) and a group of members. A change to a project is a',
     '  proposal: a branch with a staging preview to try, automated checks that must pass, and a vote by the',
     '  project\'s group. It merges and goes live only when the group approves it and its checks pass.',
+    '- To invite friends to a project, they open its page and tap Invite (or Invite people under Share it). It',
+    '  makes a link to share, and anybody who opens it joins the project, somebody new to Homeroom included.',
     '- You build only on the projects you are switched on for, which botBuildsHere in my_work and my_projects says',
     '  (it may be every project, or a few). On any other project their requests wait for the group, or for someone',
     '  to start a change; say so when they ask why nothing is happening.',

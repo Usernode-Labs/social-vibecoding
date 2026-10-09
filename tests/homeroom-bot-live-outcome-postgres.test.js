@@ -71,8 +71,9 @@ test('a live build always records its outcome, against the full PostgreSQL schem
     `INSERT INTO platform_settings (key, value) VALUES ($1, $2)
      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [key, value],
   );
+  // The bot acts on every app but a paused one: the quiet app is paused.
   await setting('homeroom_bot_mode', 'shadow');
-  await setting('homeroom_bot_live_apps', JSON.stringify(['recipebot']));
+  await setting('homeroom_bot_paused_apps', JSON.stringify(['quiet-app']));
   const { rows: [botUser] } = await pool.query(
     `INSERT INTO users (username, password, is_synthetic) VALUES ('homeroom_bot', 'x', TRUE) RETURNING id, username`,
   );
@@ -81,7 +82,7 @@ test('a live build always records its outcome, against the full PostgreSQL schem
     [slug, `https://github.com/usernode-bot/${slug}`],
   )).rows[0];
   const recipebot = await app('recipebot');
-  const quiet = await app('quiet-app'); // not live
+  const quiet = await app('quiet-app'); // paused, so not live
 
   const session = async (appRow, { status = 'active', activeTurn = null } = {}) => (await pool.query(
     `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, is_headless, linked_issues, active_turn)

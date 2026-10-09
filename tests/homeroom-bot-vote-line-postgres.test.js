@@ -118,9 +118,9 @@ test('voteLineTarget and handVoteLine against the full PostgreSQL schema', { tim
   )).rows[0];
   const plantPal = await app('plant-pal');
   const quiet = await app('quiet-app');
+  // The bot works on every project but a paused one: the quiet app is paused.
   await setting('homeroom_bot_mode', 'shadow');
-  await setting('homeroom_bot_dm_users', JSON.stringify(['maya', 'sam']));
-  await setting('homeroom_bot_live_apps', JSON.stringify(['plant-pal']));
+  await setting('homeroom_bot_paused_apps', JSON.stringify(['quiet-app']));
   const change = async ({ appId = plantPal.id, by = bot.id, status = 'promoted', issues = '{1}', headless = false } = {}) => (await pool.query(
     `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, session_title, promoted_at, linked_issues, is_headless)
      VALUES ($1, $2, $3, $4, 'Sunday reminder', NOW(), $5, $6) RETURNING id`,
@@ -147,12 +147,12 @@ test('voteLineTarget and handVoteLine against the full PostgreSQL schema', { tim
     await none(await change({ status: 'closed' }), 'closed');
     await none(await change({ issues: '{}' }), 'answers no request, so there is no follow-up to run');
     await none(await change({ headless: true }), 'a headless session');
-    await none(await change({ appId: quiet.id }), 'a project the bot does not work on');
+    await none(await change({ appId: quiet.id }), 'a project the bot does not work on (paused)');
     await none(0, 'no change at all');
     // Paused: the bot keeps away from the project for now.
-    await setting('homeroom_bot_paused_apps', JSON.stringify(['plant-pal']));
+    await setting('homeroom_bot_paused_apps', JSON.stringify(['quiet-app', 'plant-pal']));
     await none(botChange, 'a paused project');
-    await pool.query('DELETE FROM platform_settings WHERE key = $1', ['homeroom_bot_paused_apps']);
+    await setting('homeroom_bot_paused_apps', JSON.stringify(['quiet-app']));
     // Off: nobody would pick it up.
     await setting('homeroom_bot_mode', 'off');
     await none(botChange, 'the bot is off');

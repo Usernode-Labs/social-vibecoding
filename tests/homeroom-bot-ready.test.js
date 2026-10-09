@@ -258,7 +258,6 @@ test('B7: who approves, who is told, and the card, against the full PostgreSQL s
     `INSERT INTO platform_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
     [key, value],
   );
-  await set('homeroom_bot_dm_users', JSON.stringify(['maya', 'ben']));
   await set('homeroom_bot_mode', 'live');
   const project = async (slug, label, { view = 'private', members = [] } = {}) => {
     const { rows: [inserted] } = await pool.query(

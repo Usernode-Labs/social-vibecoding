@@ -129,20 +129,15 @@ test('B5: its name and its one hello, against the full PostgreSQL schema', { tim
   const conversations = require('../src/services/conversations');
   const dm = require('../src/services/homeroom-bot-dm');
   const activity = require('../src/services/homeroom-bot-activity');
-  const user = async (username, synthetic = false) => (await pool.query(
-    `INSERT INTO users (username, password, has_platform_access, is_synthetic) VALUES ($1, 'x', TRUE, $2) RETURNING id, username`,
-    [username, synthetic],
+  const user = async (username, synthetic = false, access = true) => (await pool.query(
+    `INSERT INTO users (username, password, has_platform_access, is_synthetic) VALUES ($1, 'x', $3, $2) RETURNING id, username`,
+    [username, synthetic, access],
   )).rows[0];
   const bot = await user('homeroom_bot', true);
   await pool.query(schema); // boot names it
   const maya = await user('maya');
   const ben = await user('ben');
   const old = await user('old_friend');
-  await pool.query(
-    `INSERT INTO platform_settings (key, value) VALUES ('homeroom_bot_dm_users', $1)
-     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
-    [JSON.stringify(['maya', 'ben', 'old_friend'])],
-  );
   const project = async (slug, label, owner) => {
     const { rows: [inserted] } = await pool.query(
       `INSERT INTO apps (name, slug, status, created_by) VALUES ($1, $2, 'running', $3) RETURNING id`,
@@ -153,7 +148,7 @@ test('B5: its name and its one hello, against the full PostgreSQL schema', { tim
   const plantPal = await project('plant-pal', 'Plant Pal', maya);
   const herbs = await project('herbs', 'Herbs', maya);
   const supper = await project('supper-club', 'Supper Club', maya);
-  const settings = { audience: 'list', dmUsers: ['maya', 'ben', 'old_friend'], mode: 'live' };
+  const settings = { mode: 'live' };
 
   await t.test('the bot is "Homeroom bot" to whoever reads it; its handle is unchanged', async () => {
     const { rows: [named] } = await pool.query('SELECT username, display_name FROM users WHERE id = $1', [bot.id]);
@@ -253,14 +248,11 @@ test('B5: its name and its one hello, against the full PostgreSQL schema', { tim
 
   await t.test('WP-F: somebody who joins by a link hears hello once, only when the bot builds for them and is on', async () => {
     const tess = await user('tess');
-    const zed = await user('zed');
+    // Not let in yet: the bot does not build for them (hasBot).
+    const zed = await user('zed', false, false);
     const mode = (value) => pool.query(
       `INSERT INTO platform_settings (key, value) VALUES ('homeroom_bot_mode', $1)
        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [value]);
-    const list = (names) => pool.query(
-      `INSERT INTO platform_settings (key, value) VALUES ('homeroom_bot_dm_users', $1)
-       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [JSON.stringify(names)]);
-    await list(['maya', 'ben', 'old_friend', 'tess']);
     await mode('off');
     assert.equal(await dm.greetJoiner(pool, { user: tess, app: supper }), null, 'switched off: no hello it cannot keep');
     await mode('live');
@@ -277,7 +269,6 @@ test('B5: its name and its one hello, against the full PostgreSQL schema', { tim
     const { rows: [hello] } = await pool.query('SELECT kind, message_id FROM homeroom_bot_hellos WHERE user_id = $1', [tess.id]);
     assert.deepEqual(hello, { kind: 'joiner', message_id: sent.messageId });
     assert.equal(await dm.greetJoiner(pool, { user: tess, app: herbs }), null, 'once, ever');
-    await list(['maya', 'ben', 'old_friend']);
     await mode('off');
     // Redeeming a link is what greets them.
     assert.match(read('src/services/community-invites.js'),

@@ -39,6 +39,12 @@ test('the prompt keeps the model to the tools, plain words and Homeroom\'s conte
   assert.match(prompt, /HOW HOMEROOM WORKS\n- Each project has a board of requests/);
   // Whoever has the bot (a list, or everyone): botBuildsHere says where it builds.
   assert.match(prompt, /You build only on the projects you are switched on for, which botBuildsHere in my_work and my_projects says/);
+  // The welcome and the maker's hello both offer "How do I invite friends?".
+  assert.match(prompt, /- To invite friends to a project, they open its page and tap Invite \(or Invite people under Share it\)\. It\n  makes a link to share, and anybody who opens it joins the project, somebody new to Homeroom included\./);
+  const card = read('frontend/src/features/dev-board/workshop/community-card.tsx');
+  assert.match(card, /onClick=\{openInviteLinks\}\s*>\s*Invite\s*<\/Button>/, 'the buttons it names are called that');
+  assert.match(card, /onClick=\{openInviteLinks\}\s*>\s*Invite people\s*<\/Button>/);
+  assert.match(card, /<span className="dev-ws-head-title">Share it<\/span>/);
   assert.doesNotMatch(prompt, /an admin has turned you on for/);
   assert.match(prompt, /suggestive or mature themes, nudity, weapons, simulated gambling and loot boxes too/);
   assert.match(prompt, /To read what a request says, use get_request; what people said about it, get_discussion/);

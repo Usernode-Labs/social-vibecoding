@@ -3,9 +3,9 @@
 // #3624: the Homeroom bot in a DM, without a database.
 //
 // The contract pieces: a triage question and a follow-up ask carry their
-// suggested answers (the default first); the settings hold the DM list and
-// the per-person weekly allowance; a project the bot builds for somebody on
-// the list is live; the bot's posts on a request carry `dm` to its
+// suggested answers (the default first); the settings hold the per-person
+// weekly allowance; the bot works for anybody let in, and a project it builds
+// for somebody is live; the bot's posts on a request carry `dm` to its
 // requester's DM; what the DM says is plain and has no em dash; a request
 // is held when its requester's allowance is spent; the create dialog sends
 // the longer description; and the DM draws a question's answers with the
@@ -68,61 +68,62 @@ test('a follow-up ask carries answers too; its other actions keep their shape', 
 
 // ── Settings ─────────────────────────────────────────────────────────────
 
-test('the DM list is lower-cased usernames, and the per-person allowance defaults to $50', () => {
+test('the per-person allowance defaults to $50, and there is no DM list to read', () => {
   const s = bot.parseSettings([
-    { key: 'homeroom_bot_dm_users', value: JSON.stringify(['Evan', 'evan', 'bad name!', 7, 'ada_2']) },
+    { key: 'homeroom_bot_dm_users', value: JSON.stringify(['Evan', 'ada_2']) },
   ]);
-  assert.deepEqual(s.dmUsers, ['evan', 'ada_2']);
+  assert.equal(Object.hasOwn(s, 'dmUsers'), false, 'a row left over from the list is not read');
   assert.equal(s.userWeeklyCents, 5000);
   assert.equal(bot.parseSettings([{ key: 'homeroom_bot_user_weekly_cents', value: '-3' }]).userWeeklyCents, 0);
 });
 
-test('an admin sets the DM list and the allowance; anything else is refused', () => {
+test('an admin sets the allowance; a DM list is no longer a setting; anything else is refused', () => {
   const ok = bot.validateSettingsPatch({ dmUsers: ['@Evan', 'ada'], userWeeklyCents: 2000 });
   assert.equal(ok.ok, true);
   assert.deepEqual(ok.updates, [
-    ['homeroom_bot_dm_users', '["evan","ada"]'],
     ['homeroom_bot_user_weekly_cents', '2000'],
-  ]);
-  assert.equal(bot.validateSettingsPatch({ dmUsers: 'evan' }).ok, false);
-  assert.equal(bot.validateSettingsPatch({ dmUsers: ['no spaces'] }).ok, false);
-  assert.equal(bot.validateSettingsPatch({ dmUsers: Array.from({ length: 51 }, (_, i) => `u${i}`) }).ok, false);
+  ], 'the list is not written');
+  assert.deepEqual(bot.validateSettingsPatch({ dmUsers: ['evan'] }), { ok: false, error: 'Nothing to update' });
   assert.equal(bot.validateSettingsPatch({ userWeeklyCents: 1.5 }).ok, false);
   assert.equal(bot.validateSettingsPatch({ userWeeklyCents: -1 }).ok, false);
 });
 
-test('a project the bot builds for somebody on the list is live, like the live list; never on staging', () => {
-  const settings = { mode: 'shadow', liveApps: ['rss'], firstVersionApps: ['chore-wheel'] };
-  assert.equal(live.isLiveFor(settings, { slug: 'chore-wheel' }), true);
-  assert.equal(live.isLiveFor(settings, { slug: 'rss' }), true);
-  assert.equal(live.isLiveFor(settings, { slug: 'other' }), false);
-  assert.equal(live.isLiveFor({ ...settings, mode: 'off' }, { slug: 'chore-wheel' }), false);
+test('a project the bot builds for somebody is live, as every app but a paused one is; never on staging', () => {
   const env = process.env.USERNODE_ENV;
-  process.env.USERNODE_ENV = 'staging';
-  try { assert.equal(live.isLiveFor(settings, { slug: 'chore-wheel' }), false); } finally {
+  delete process.env.USERNODE_ENV;
+  try {
+    const settings = { mode: 'shadow', pausedApps: ['quiet'] };
+    assert.equal(live.isLiveFor(settings, { slug: 'chore-wheel' }), true);
+    assert.equal(live.isLiveFor(settings, { slug: 'other' }), true, 'no list to be on');
+    assert.equal(live.isLiveFor(settings, { slug: 'quiet' }), false, 'paused');
+    assert.equal(live.isLiveFor({ ...settings, mode: 'off' }, { slug: 'chore-wheel' }), false);
+    process.env.USERNODE_ENV = 'staging';
+    assert.equal(live.isLiveFor(settings, { slug: 'chore-wheel' }), false);
+  } finally {
     if (env === undefined) delete process.env.USERNODE_ENV; else process.env.USERNODE_ENV = env;
   }
 });
 
-test('the bot talks in a DM only to people on the list', () => {
-  assert.equal(dm.isDmUser({ mode: 'shadow', dmUsers: ['evan'] }, 'Evan'), true);
-  assert.equal(dm.isDmUser({ mode: 'off', dmUsers: ['evan'] }, 'evan'), true,
-    'the list is the gate; Mode decides whether the bot works, not who it talks to');
-  assert.equal(dm.isDmUser({ mode: 'shadow', dmUsers: [] }, 'evan'), false);
+test('the bot talks in a DM to anybody let in, whatever its Mode', () => {
+  const evan = { username: 'Evan', hasPlatformAccess: true };
+  assert.equal(dm.hasBot({ mode: 'shadow' }, evan), true);
+  assert.equal(dm.hasBot({ mode: 'off' }, evan), true,
+    'Mode decides whether the bot works, not who it talks to');
+  assert.equal(dm.hasBot({ mode: 'shadow' }, { username: 'evan' }), false, 'not let in yet');
+  assert.equal(dm.isDmUser, undefined, 'the list check is gone');
 });
 
-test('hasBot: the list is the gate, until everyone with platform access has the bot', () => {
-  const list = { mode: 'shadow', dmUsers: ['evan'] };
-  const evan = { username: 'Evan', hasPlatformAccess: true };
+test('hasBot: everyone with platform access has the bot', () => {
+  const settings = { mode: 'shadow', dmUsers: ['evan'] };
   const ada = { username: 'ada', hasPlatformAccess: true };
-  assert.equal(dm.hasBot(list, evan), true);
-  assert.equal(dm.hasBot(list, ada), false, 'not on the list');
-  const everyone = { mode: 'shadow', audience: 'everyone', dmUsers: [] };
-  assert.equal(dm.hasBot(everyone, ada), true, 'an empty list silences nobody');
-  assert.equal(dm.hasBot(everyone, { username: 'waiting', hasPlatformAccess: false }), false, 'still on the waitlist');
-  assert.equal(dm.hasBot(everyone, { username: 'boss', hasPlatformAccess: false, isAdmin: true }), true, 'an admin always has access');
-  assert.equal(dm.hasBot(everyone, { username: 'homeroom_bot', hasPlatformAccess: true, isSynthetic: true }), false);
-  assert.equal(dm.hasBot(everyone, null), false);
+  assert.equal(dm.hasBot(settings, ada), true, 'a list left in the settings silences nobody');
+  assert.equal(dm.hasBot(settings, { username: 'evan', hasPlatformAccess: false }), false, 'nor lets anybody in');
+  assert.equal(dm.hasBot(settings, { username: 'waiting', hasPlatformAccess: false }), false, 'still on the waitlist');
+  assert.equal(dm.hasBot(settings, { username: 'boss', hasPlatformAccess: false, isAdmin: true }), true, 'an admin always has access');
+  assert.equal(dm.hasBot(settings, { username: 'member', privateMember: true }), true, 'a private member may use the platform');
+  assert.equal(dm.hasBot(settings, { username: 'homeroom_bot', hasPlatformAccess: true, isSynthetic: true }), false);
+  assert.equal(dm.hasBot(settings, null), false);
+  assert.equal(dm.hasBot(settings, { hasPlatformAccess: true }), false, 'nobody without a username');
   assert.equal(dm.hasBot(null, ada), false);
 });
 
@@ -432,7 +433,7 @@ test('a request whose requester spent the week\'s allowance is held, said once, 
   const out = await bot.runTriage(pool, {}, {
     bot: { id: 2 }, app: { id: 1, slug: 'seed-swap', repo_url: 'https://github.com/o/r' },
     item: { id: 31, issue_number: 7 }, mode: 'shadow',
-    settings: { mode: 'shadow', liveApps: ['seed-swap'], userWeeklyCents: 100 }, deps,
+    settings: { mode: 'shadow', userWeeklyCents: 100 }, deps,
   });
   assert.deepEqual(out, { ran: false, reason: 'user_allowance' });
   assert.equal(held.length, 1);
@@ -451,7 +452,7 @@ test('a request whose requester spent the week\'s allowance is held, said once, 
   const free = await bot.runTriage(pool, {}, {
     bot: { id: 2 }, app: { id: 1, slug: 'seed-swap', repo_url: 'https://github.com/o/r' },
     item: { id: 32, issue_number: 7, reason: 'restart' }, mode: 'shadow',
-    settings: { mode: 'shadow', liveApps: ['seed-swap'], userWeeklyCents: 100 }, deps,
+    settings: { mode: 'shadow', userWeeklyCents: 100 }, deps,
   }).catch(() => null);
   assert.notDeepEqual(free, { ran: false, reason: 'user_allowance' });
   assert.equal(held.length, 0);
@@ -514,16 +515,20 @@ test('the short description is suggested for everyone making a project, and ever
   const create = routes.slice(routes.indexOf("router.post('/api/apps', "));
   assert.match(create, /if \(!repoUrlNormalized && !readyMade && homeroomBotDm\.normalizeBrief\(req\.body\.brief\)\) \{[\s\S]{0,200}startFirstVersion\(pool, config, \{/);
   // #3624: an import, a ready-made app or a project with no description is
-  // recorded for the bot instead (live when its maker is on the DM list), and
-  // so is a fork.
+  // recorded for the bot instead (so an import's backlog waits), and so is a
+  // fork.
   assert.match(create, /\} else \{\s*try \{\s*await homeroomBotDm\.noteProjectMade\(pool, \{\s*app: appRow, user: req\.user, origin: repoUrlNormalized \? 'import' : 'blank',/);
   const fork = routes.slice(routes.indexOf("router.post('/api/apps/:slug/fork'"), routes.indexOf("router.get('/api/apps/:slug'"));
   assert.match(fork, /noteProjectMade\(pool, \{ app: appRow, user: req\.user, origin: 'fork' \}\)[\s\S]{0,200}\}\s*forkApp\(config, appRow, sourceApp\)/);
-  // The bot's live list and its wake are only for a first version it builds,
-  // or a project somebody on the list made with nothing to build first.
+  // Every project is live, so nothing reads who made which any more; what
+  // was made without a description is recorded only for somebody the bot
+  // works for, and an import's record is what holds its backlog back.
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'homeroom-bot-dm.js'), 'utf8');
-  assert.match(src, /FROM homeroom_bot_first_versions WHERE bot_builds\s+UNION ALL\s+SELECT app_id, user_id, origin, created_at FROM homeroom_bot_dm_projects/);
-  assert.match(src, /WHERE LOWER\(u\.username\) = ANY\(\$1::text\[\]\)/);
+  assert.doesNotMatch(src, /function projectsMadeFor|function firstVersionAppSlugs/);
+  const made = src.slice(src.indexOf('async function noteProjectMade('), src.indexOf('// ── Sending'));
+  assert.match(made, /if \(!hasBot\(settings, user\)\) return false;\n  const \{ rowCount \} = await pool\.query\(\n    `INSERT INTO homeroom_bot_dm_projects \(app_id, user_id, origin\) VALUES \(\$1, \$2, \$3\)/);
+  assert.match(made, /SELECT created_at FROM homeroom_bot_dm_projects WHERE app_id = \$1 AND origin = 'import'/);
+  // The bot's wake is only for a first version it builds.
   assert.match(src, /if \(botBuilds\) settingsModule\(\)\.noteIssueActivity\(/);
   assert.match(src, /if \(final && botBuilds\) \{/, 'no DM about a request the bot never took on');
   // A sweep the bot's mode does not gate, on the leader.
@@ -804,11 +809,11 @@ test('two answers in one DM keep one typing line up until the last is sent', asy
   assert.deepEqual(typing(), [true, false]);
 });
 
-test('a message from somebody on the list is answered while the bot types; anybody else\'s is not', async (t) => {
+test('a message from somebody let in is answered while the bot types; anybody else\'s is not', async (t) => {
   const { ws, typing } = typingHarness(t);
   const pool = {
     async query(sql) {
-      if (/FROM platform_settings/.test(sql)) return { rows: [{ key: 'homeroom_bot_dm_users', value: '["ada"]' }] };
+      if (/FROM platform_settings/.test(sql)) return { rows: [{ key: 'homeroom_bot_mode', value: 'shadow' }] };
       if (/FROM conversation_direct_pairs/.test(sql)) return { rows: [{ '?column?': 1 }] };
       return { rows: [] };
     },
@@ -820,7 +825,7 @@ test('a message from somebody on the list is answered while the bot types; anybo
     async runDmTurn(_pool, _config, args) { await settle(); seen.push(typing().slice()); return { turn: args.message.id }; },
   };
   const out = await dm.noteUserMessage(pool, {}, {
-    user: { id: 9, username: 'ada' }, conversationId: 45, message: { id: 70, content: 'what are you working on?' },
+    user: { id: 9, username: 'ada', hasPlatformAccess: true }, conversationId: 45, message: { id: 70, content: 'what are you working on?' },
     deps: { bot, mayor, ws },
   });
   assert.deepEqual(out, { turn: 70 });
@@ -832,7 +837,7 @@ test('a message from somebody on the list is answered while the bot types; anybo
   conversations.ensureAdmittedDirect = async () => null;
   t.after(() => { conversations.ensureAdmittedDirect = realOpen; });
   await dm.noteUserMessage(pool, {}, {
-    user: { id: 11, username: 'sam' }, conversationId: 46, message: { id: 71, content: 'hi' },
+    user: { id: 11, username: 'sam', hasPlatformAccess: false }, conversationId: 46, message: { id: 71, content: 'hi' },
     deps: { bot, mayor, ws },
   });
   assert.deepEqual(typing(), [true, false], 'the bot does not type to somebody it does not answer');

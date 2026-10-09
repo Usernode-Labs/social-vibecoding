@@ -1,7 +1,7 @@
 'use strict';
 
-// #3146: the Homeroom bot, live — on the apps named in the
-// `homeroom_bot_live_apps` setting, and nowhere else.
+// #3146: the Homeroom bot, live: on every app but a paused one, for
+// everyone (liveScope). It started on a list of apps.
 //
 // Slice 1 (homeroom-bot.js) triages every open request and records a verdict
 // that nobody sees. On a live app the verdict is ACTED on:
@@ -100,15 +100,13 @@ function isStaging() {
  * The apps the bot acts on for real, in this process, as one value every
  * caller (and every query) reads the same way:
  *
- *   - `{ all: false, slugs }`: today's list audience: the apps in the live
- *     list, and (#3624) the projects it is building for somebody it talks
- *     to in a DM (settings.firstVersionApps, homeroom-bot-dm.js);
- *   - `{ all: true, except }`: the `everyone` audience (homeroom-bot.js
- *     KEY_AUDIENCE): every app but a paused one and the platform's own,
- *     which has a switch of its own (settings.livePlatform). Named by what
- *     it leaves out, so no query is handed a list of every app's slug.
+ *   - `{ all: true, except }`: every app but a paused one, the platform's
+ *     own included. Named by what it leaves out, so no query is handed a
+ *     list of every app's slug;
+ *   - `{ all: false, slugs: [] }`: nothing at all, with the bot off or on a
+ *     staging copy.
  *
- * Off, or on a staging copy, it is nothing at all.
+ * `slugs` stays for a caller that names its own apps (liveCandidates).
  */
 function liveScope(settings) {
   if (!settings || settings.mode === 'off' || isStaging()) return { all: false, slugs: [], except: [] };
@@ -122,14 +120,8 @@ function liveScope(settings) {
  */
 function appsScope(settings) {
   if (!settings) return { all: false, slugs: [], except: [] };
-  if (settings.audience === 'everyone') {
-    const paused = Array.isArray(settings.pausedApps) ? settings.pausedApps : [];
-    const platform = settings.livePlatform ? [] : (Array.isArray(settings.platformSlugs) ? settings.platformSlugs : []);
-    return { all: true, slugs: [], except: [...new Set([...paused, ...platform])] };
-  }
-  const live = Array.isArray(settings.liveApps) ? settings.liveApps : [];
-  const built = Array.isArray(settings.firstVersionApps) ? settings.firstVersionApps : [];
-  return { all: false, slugs: [...new Set([...live, ...built])], except: [] };
+  const paused = Array.isArray(settings.pausedApps) ? settings.pausedApps : [];
+  return { all: true, slugs: [], except: [...new Set(paused)] };
 }
 
 /** Pure: whether a scope from liveScope takes in any app at all. */

@@ -88,22 +88,22 @@ test('create_test_account hands back the account once, with sign-in steps on thi
     body: {
       account: {
         userId: 1234, username: 'member_3f9a1c', password: 'one-time-Secret_1',
-        needsUsernameChoice: true, platformAccess: true, homeroomBotDm: true, welcomeDm: false,
+        needsUsernameChoice: true, platformAccess: true, welcomeDm: false,
       },
     },
   }));
   const { handlers } = register({ user: { ...ADMIN }, origin: 'https://staging.homeroom.example' });
-  const out = await handlers.get('create_test_account')({ homeroomBotDm: true, note: 'Plant Pal first run' });
+  const out = await handlers.get('create_test_account')({ welcomeDm: false, note: 'Plant Pal first run' });
   assert.equal(calls.length, 1);
   assert.equal(calls[0].method, 'POST');
   assert.equal(calls[0].url, 'http://platform.internal/api/test-accounts');
-  assert.deepEqual(calls[0].body, { homeroomBotDm: true, note: 'Plant Pal first run' });
+  assert.deepEqual(calls[0].body, { welcomeDm: false, note: 'Plant Pal first run' });
   const sc = out.structuredContent;
   assert.equal(sc.userId, 1234);
   assert.equal(sc.username, 'member_3f9a1c');
   assert.equal(sc.password, 'one-time-Secret_1');
   assert.equal(sc.needsUsernameChoice, true);
-  assert.equal(sc.homeroomBotDm, true);
+  assert.equal(Object.hasOwn(sc, 'homeroomBotDm'), false, 'the bot works for any account let in: nothing to report');
   assert.equal(sc.signIn.url, 'https://staging.homeroom.example/#login');
   assert.match(sc.signIn.steps[0], /sign out first/);
   assert.equal(sc.retireWith, 'retire_test_account({ userId: 1234, confirm: "RETIRE" })');
@@ -157,7 +157,7 @@ test('the route\'s refusals reach the session with their own codes', async (t) =
 
 test('retire_test_account needs confirm "RETIRE" before any call, and reports what it removed', async (t) => {
   const calls = stubFetch(t, () => ({
-    body: { retired: { userId: 7, username: 'tester_7', appsDeleted: ['plant-pal-1'], homeroomBotDm: true } },
+    body: { retired: { userId: 7, username: 'tester_7', appsDeleted: ['plant-pal-1'] } },
   }));
   const { handlers } = register({ user: { ...ADMIN } });
   for (const confirm of [undefined, 'retire', 'DELETE', '']) {
@@ -171,7 +171,6 @@ test('retire_test_account needs confirm "RETIRE" before any call, and reports wh
   assert.equal(calls[0].url, 'http://platform.internal/api/test-accounts/7/retire');
   assert.deepEqual(calls[0].body, { confirm: 'RETIRE' });
   assert.deepEqual(out.structuredContent.appsDeleted, ['plant-pal-1']);
-  assert.equal(out.structuredContent.homeroomBotDm, true);
 });
 
 test('list_test_accounts returns the live accounts, with the note inside the untrusted envelope', async (t) => {
