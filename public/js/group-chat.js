@@ -196,6 +196,42 @@ const GroupChat = {
   activeThread: null,       // { type, ref } | null — the mounted thread
   _threadTypingTimer: null,
 
+  // ── #4417 follow-up: the channel the general pane shows ─────────────
+  //
+  // Null is the app's own general stream. A project's TOPIC channel
+  // (`{ type: 'category', ref }`, dev-board/workshop/project-discussion.tsx
+  // TopicChannel) is the general stream one level down, as the server reads
+  // it (src/routes/chat.js selectStream): its own messages, and the replies
+  // of the reply threads that start in it. So it is the same pane, read and
+  // written by the same paths, and its messages open their reply threads
+  // beside it as #general's do. Only the scope differs: every read names
+  // the channel, every send and typing frame carries it, and the socket's
+  // frames are sorted by it (`_isChannel`).
+  _channel: null,
+
+  // The channel a mount names (`app.channel`), normalised, or null.
+  _channelOf(app) {
+    const c = app && app.channel;
+    const ref = c ? Number(c.ref) : NaN;
+    if (!c || c.type !== 'category' || !Number.isSafeInteger(ref) || ref <= 0 || ref > 2147483647) return null;
+    const markers = Array.isArray(c.markers) && c.markers.length ? c.markers : null;
+    return { type: 'category', ref, ...(markers ? { markers } : {}) };
+  },
+
+  // Is `scope` the stream the general pane shows? A frame's `thread`, or a
+  // reply root's own place (`{ type: root.thread_type, ref: root.thread_ref }`);
+  // no type is the app's general stream.
+  _isChannel(scope) {
+    const c = GroupChat._channel;
+    if (!scope || !scope.type) return !c;
+    return !!c && scope.type === c.type && Number(scope.ref) === c.ref;
+  },
+
+  // The open channel's ref, or null for the general stream.
+  _channelRef() {
+    return GroupChat._channel ? GroupChat._channel.ref : null;
+  },
+
   threadKey(type, ref) {
     return `${type}:${ref}`;
   },
@@ -257,6 +293,8 @@ const GroupChat = {
    */
   mount(appSlug, app) {
     GroupChat._app = (app && app.slug === appSlug) ? app : null;
+    // #4417 follow-up: the channel this mount shows (null: the general stream).
+    const channel = GroupChat._channelOf(GroupChat._app);
     // Side-panel hooks: bind the draggable divider on every mount
     // (the handle DOM element is recreated on each tab render, so
     // there's no stale binding to worry about) and restore any
@@ -273,6 +311,16 @@ const GroupChat = {
     // dead socket until the user refreshed. Treat anything past
     // OPEN as "no socket" and reconnect.
     const liveWs = GroupChat.ws && GroupChat.ws.readyState <= 1; // CONNECTING(0) or OPEN(1)
+    // #4417 follow-up: another channel of the same app (#general and a
+    // topic, or two topics): the socket stays, and the stream starts over
+    // from it (`_showChannel` publishes the pane, as render() below does).
+    const here = GroupChat.appSlug === appSlug && liveWs;
+    if (here && (channel ? channel.ref : null) !== GroupChat._channelRef()) {
+      GroupChat._showChannel(channel);
+      return;
+    }
+    // The same channel: the cards it draws by time may have moved.
+    if (here && channel) GroupChat._channel = channel;
     if (GroupChat.appSlug === appSlug && liveWs) {
       GroupChat.render();
       // #4177: a catch-up still owed (the last one failed) runs on the way in;
@@ -289,12 +337,42 @@ const GroupChat = {
       setTimeout(() => { if (GroupChat.appSlug === appSlug) void GroupChat.markRead(); }, 0);
       return;
     }
-    GroupChat.connect(appSlug);
+    GroupChat.connect(appSlug, channel);
   },
 
-  connect(appSlug) {
+  // #4417 follow-up: the general pane moves to another channel of the app
+  // whose socket is up. The socket and the thread caches stay; the stream
+  // starts over as a newly opened app's does, read from that channel, and a
+  // read still on the wire for the one it leaves is dropped as it lands
+  // (`_historyLoad`, `_latestLoad`).
+  _showChannel(channel) {
+    GroupChat._historyLoad = null;
+    GroupChat._resetStreamCatchUp();
+    GroupChat._channel = channel || null;
+    GroupChat.messages = [];
+    GroupChat.oldestMessageId = null;
+    GroupChat.hasMore = true;
+    GroupChat._historyFailed = false;
+    GroupChat._lockedToBottom = true;
+    GroupChat._savedScrollTop = null;
+    GroupChat._didInitialScroll = false;
+    GroupChat._readUpTo = 0;
+    GroupChat._unreadHold = null;
+    GroupChat._unreadMark = null;
+    GroupChat._unreadOpened = false;
+    GroupChat.typingUsers.clear();
+    // A quote staged in the pane's composer was about the channel it left.
+    if (GroupChat.replyDraft && GroupChat.replyDraftScope !== 'thread') GroupChat.clearQuote();
+    GroupChat.render();
+    GroupChat.attachScrollHandlers();
+    void GroupChat.loadHistory();
+  },
+
+  connect(appSlug, channel = null) {
     GroupChat.disconnect();
     GroupChat.appSlug = appSlug;
+    // #4417 follow-up: the channel the general stream is (null: the app's own).
+    GroupChat._channel = channel || null;
     GroupChat.messages = [];
     GroupChat.threads = new Map();
     // B9: another project's cards and door are not this one's.
@@ -502,9 +580,16 @@ const GroupChat = {
     const events = GroupChat._openLiveLog(GroupChat.messages);
     let ok = false;
     try {
-      const url = GroupChat.oldestMessageId
-        ? `/api/apps/${GroupChat.appSlug}/messages?before=${GroupChat.oldestMessageId}&limit=50`
-        : `/api/apps/${GroupChat.appSlug}/messages?limit=50${GroupChat._demoParam()}`;
+      // #4417 follow-up: a topic's channel reads its own stream, by the
+      // same addresses its pages had as a thread (`_firstPageUrl`).
+      const channel = GroupChat._channel;
+      const url = channel
+        ? (GroupChat.oldestMessageId
+          ? `${GroupChat._threadQuery(GroupChat.appSlug, channel)}&limit=50&before=${GroupChat.oldestMessageId}`
+          : GroupChat._firstPageUrl(GroupChat.appSlug, null))
+        : GroupChat.oldestMessageId
+          ? `/api/apps/${GroupChat.appSlug}/messages?before=${GroupChat.oldestMessageId}&limit=50`
+          : `/api/apps/${GroupChat.appSlug}/messages?limit=50${GroupChat._demoParam()}`;
 
       // Preserve scroll anchor when prepending older history so the viewport
       // doesn't jump to the top.
@@ -597,13 +682,21 @@ const GroupChat = {
         // chat-count badge on their issue/proposal row. #2387 follow-up:
         // except a REPLY thread's, which also lands in the general stream,
         // drawn there as a line where it happened.
-        if (msg.thread && msg.thread.type) {
+        // #4417 follow-up: a topic's channel, open in the general pane, is
+        // that pane's stream (`_isChannel`): its messages take the general
+        // path below, and the app's own general stream's do not.
+        const ownStream = msg.thread && msg.thread.type
+          ? msg.thread.type === 'category' && GroupChat._isChannel(msg.thread)
+          : GroupChat._isChannel(null);
+        if (msg.thread && msg.thread.type && !ownStream) {
           GroupChat._handleThreadIncoming(msg);
           // #4417: a reply under a message of one of the project's TOPIC
           // channels is that channel's (its root says where it is), so it
           // is drawn there, never in the general stream.
-          const rootElsewhere = !!(msg.threadRoot && msg.threadRoot.thread_type);
-          if (msg.thread.type === 'message' && !rootElsewhere
+          const root = msg.threadRoot || null;
+          const rootHere = GroupChat._isChannel(root && root.thread_type
+            ? { type: root.thread_type, ref: root.thread_ref } : null);
+          if (msg.thread.type === 'message' && rootHere
               && !GroupChat.messages.some((m) => String(m.id) === String(msg.id))) {
             const shouldStick = GroupChat._lockedToBottom;
             GroupChat.messages.push(msg);
@@ -613,6 +706,8 @@ const GroupChat = {
           }
           break;
         }
+        // The app's general stream, while a topic's channel is the pane's.
+        if (!ownStream) break;
         // A catch-up read (#4177) can bring in a message a moment before its
         // own broadcast arrives.
         if (GroupChat.messages.some((m) => String(m.id) === String(msg.id))) break;
@@ -677,13 +772,19 @@ const GroupChat = {
       case 'typing': {
         // #194: thread typing renders inside the mounted thread only;
         // general typing keeps the original #gc-typing slot.
-        if (msg.thread && msg.thread.type) {
+        // #4417 follow-up: a topic's channel open in the general pane types
+        // into the pane's slot, and the app's general stream then does not.
+        const inPane = msg.thread && msg.thread.type
+          ? msg.thread.type === 'category' && GroupChat._isChannel(msg.thread)
+          : GroupChat._isChannel(null);
+        if (msg.thread && msg.thread.type && !inPane) {
           const a = GroupChat.activeThread;
           if (a && a.type === msg.thread.type && Number(a.ref) === Number(msg.thread.ref)) {
             GroupChat._renderThreadTyping(msg.username);
           }
           break;
         }
+        if (!inPane) break;
         GroupChat.typingUsers.set(msg.userId, msg.username);
         GroupChat.renderTyping();
         setTimeout(() => {
@@ -796,6 +897,9 @@ const GroupChat = {
     // #2387: only a quote staged in THIS composer rides along — with a reply
     // thread open beside the channel, the other composer's belongs to it.
     const sendScope = payload.thread ? 'thread' : 'general';
+    // #4417 follow-up: the pane's composer posts to the channel it shows.
+    const channel = GroupChat._channel;
+    if (!payload.thread && channel) payload.thread = { type: channel.type, ref: channel.ref };
     const quote = !GroupChat.replyDraftScope || GroupChat.replyDraftScope === sendScope
       ? GroupChat.replyDraft : null;
     if (quote) {
@@ -886,8 +990,10 @@ const GroupChat = {
     if (!GroupChat.ws || GroupChat.ws.readyState !== 1) return;
     if (GroupChat.typingTimeout) return;
     const payload = { type: 'typing' };
-    if (thread && thread.type && thread.ref) {
-      payload.thread = { type: thread.type, ref: Number(thread.ref) };
+    // #4417 follow-up: the pane's composer types in the channel it shows.
+    const scope = (thread && thread.type && thread.ref) ? thread : GroupChat._channel;
+    if (scope) {
+      payload.thread = { type: scope.type, ref: Number(scope.ref) };
     }
     GroupChat.ws.send(JSON.stringify(payload));
     GroupChat.typingTimeout = setTimeout(() => { GroupChat.typingTimeout = null; }, 2000);
@@ -967,7 +1073,9 @@ const GroupChat = {
       // under it draws it; `thread` on a row is the server's summary, not the
       // live frame's `{ type, ref }` scope, which never reaches a general row.
       thread: GroupChat._threadSummaryView(msg),
-      canThread: !threadType && !deleted && (kind === 'message' || kind === 'spec_share'),
+      // #4417 follow-up: a message of a topic's channel starts one too, as
+      // #general's do; the transcript offers it in the pane's rows alone.
+      canThread: (!threadType || threadType === 'category') && !deleted && (kind === 'message' || kind === 'spec_share'),
       threadRoot: !!msg._threadRoot,
       // #2387 follow-up: a reply-thread reply, which the general transcript
       // draws as a line where it landed (TranscriptRows); `thread_root` on a
@@ -1006,8 +1114,10 @@ const GroupChat = {
         targetId: q.refMsgId == null ? null : Number(q.refMsgId),
       } : null,
       // Set by a jump-to-original and cleared 1.5s later; never true on a
-      // freshly built row.
-      flash: false,
+      // freshly built row but the one a reveal is marking (`_revealFlash`),
+      // which a whole publish in those 1.5s (a channel's bot cards landing
+      // just after its first page) would otherwise take straight back off.
+      flash: GroupChat._revealFlashing(msg.id),
       reactions: (deleted ? [] : (msg.reactions || [])).map((r) => {
         const users = Array.isArray(r.users) ? r.users : [];
         return { emoji: r.emoji, count: r.count, users, mine: !!(me && users.includes(me)) };
@@ -1093,19 +1203,24 @@ const GroupChat = {
     // AppView.renderDevChatTab on every tab switch, so the previous mount is
     // pointing at a detached node by now.
     GroupChat._react()?.mountTranscript(container);
+    // #4417 follow-up: a topic's channel says so when it is empty, as it did
+    // when it was drawn as a thread, rather than with the app's quiet card;
+    // and it draws its merged topics' cards by time.
+    const channel = GroupChat._channel;
     GroupChat._react()?.publishTranscript(
       GroupChat.messages.map(GroupChat._messageView),
       'main',
       {
         earlier: false,
-        placeholder: null,
+        placeholder: channel && GroupChat._streamLoaded ? 'Nothing said here yet.' : null,
         error: GroupChat._historyFailed ? 'Couldn’t load messages.' : null,
+        ...(channel && channel.markers ? { markers: channel.markers, moreBefore: !!GroupChat.hasMore } : {}),
         // The quiet card's three facts (features/group-chat/quiet-card.tsx).
         // Whether the card SHOWS is the transcript's call — it knows whether a
         // person's message is among the rows, including one that lands live —
         // but "paged back to the beginning", "can this viewer post" and the
         // app's name are this module's to know.
-        quiet: GroupChat._historyFailed ? null : {
+        quiet: GroupChat._historyFailed || channel ? null : {
           exhausted: !GroupChat.hasMore,
           canPost: !GroupChat._readOnly(),
           appName: GroupChat._appName()
@@ -1186,7 +1301,9 @@ const GroupChat = {
 
     const liveWs = GroupChat.ws && GroupChat.ws.readyState <= 1;
     if (!(GroupChat.appSlug === slug && liveWs)) {
-      GroupChat.connect(slug);
+      // #4417 follow-up: a reconnect of the same app keeps the channel its
+      // pane shows (a reply thread opened beside a topic's channel).
+      GroupChat.connect(slug, GroupChat.appSlug === slug ? GroupChat._channel : null);
     }
     // `language: 'chat'` was the change page's Discussion (bubbles, and every
     // notice as a message) until #4455 made that page a thread of its own
@@ -1363,10 +1480,18 @@ const GroupChat = {
 
   // #4417: the cards a topic's channel draws by time changed while it is
   // open (a merge applied): redraw it with them, where the reader is.
+  // #4417 follow-up: and the topic's channel in the general pane, the same.
   setThreadMarkers(type, ref, markers) {
+    const next = Array.isArray(markers) && markers.length ? markers : null;
+    const c = GroupChat._channel;
+    if (c && c.type === type && c.ref === Number(ref)) {
+      if (JSON.stringify(c.markers || null) === JSON.stringify(next)) return;
+      if (next) c.markers = next; else delete c.markers;
+      GroupChat.render();
+      return;
+    }
     const a = GroupChat.activeThread;
     if (!a || a.type !== type || Number(a.ref) !== Number(ref)) return;
-    const next = Array.isArray(markers) && markers.length ? markers : null;
     if (JSON.stringify(a.markers || null) === JSON.stringify(next)) return;
     if (next) a.markers = next; else delete a.markers;
     GroupChat.renderThread({ keepScroll: true });
@@ -1519,9 +1644,12 @@ const GroupChat = {
     return `/api/apps/${slug}/messages?thread_type=${encodeURIComponent(thread.type)}`
       + `&thread_ref=${encodeURIComponent(thread.ref)}`;
   },
+  // #4417 follow-up: no thread is the general pane's stream, which is a
+  // topic's channel while one is open there (`_channel`).
   _firstPageUrl(slug, thread) {
-    return thread
-      ? `${GroupChat._threadQuery(slug, thread)}&limit=50${GroupChat._demoParam()}`
+    const scope = thread || GroupChat._channel;
+    return scope
+      ? `${GroupChat._threadQuery(slug, scope)}&limit=50${GroupChat._demoParam()}`
       : `/api/apps/${slug}/messages?limit=50${GroupChat._demoParam()}`;
   },
 
@@ -1804,8 +1932,13 @@ const GroupChat = {
       if (u.searchParams.has('before')) continue;
       const type = u.searchParams.get('thread_type');
       // The general stream, even one whose first page came back empty: that
-      // page may be the stale copy being corrected.
-      if (!type) { void GroupChat._refreshLatest(null); continue; }
+      // page may be the stale copy being corrected. #4417 follow-up: the
+      // general pane's stream is a topic's channel while one is open there.
+      if (GroupChat._isChannel(type ? { type, ref: u.searchParams.get('thread_ref') } : null)) {
+        void GroupChat._refreshLatest(null);
+        continue;
+      }
+      if (!type) continue;
       const key = GroupChat.threadKey(type, u.searchParams.get('thread_ref'));
       GroupChat._resyncThread(key, GroupChat.threads.get(key));
     }
@@ -2490,14 +2623,48 @@ const GroupChat = {
   // Only for the general stream and its reply threads, which is what the
   // address can find: a message in an issue's or a proposal's discussion is
   // not in the channel, and its link would open the channel at the bottom.
+  //
+  // #4417 follow-up: a message of a topic's channel, or a reply in one of
+  // its reply threads, is that channel's: `#messages/app/<slug>/c/<topic>/m/<id>`,
+  // the address its notification has, which opens the channel on it.
   messageAddress(id) {
     const slug = GroupChat.appSlug;
     if (!slug) return null;
     let msg = null;
     GroupChat._eachCopy(id, (m) => { if (!msg) msg = m; });
     const type = msg && (msg.thread_type || (msg.thread && msg.thread.type) || null);
-    if (!msg || (type && type !== 'message')) return null;
+    if (!msg || (type && type !== 'message' && type !== 'category')) return null;
+    const topic = GroupChat._topicOf(msg);
+    if (topic) return `#messages/app/${encodeURIComponent(slug)}/c/${topic}/m/${Number(id)}`;
+    if (type === 'category') return null;
     return `#messages/app/${encodeURIComponent(slug)}/m/${Number(id)}`;
+  },
+
+  // #4417 follow-up: the topic channel `msg` is in (its own, or its reply
+  // thread's first message's), or null for the general stream. A reply's
+  // root says where it is on a live frame (`threadRoot`) and in its open
+  // thread (`root`); a root held in the pane's stream is the pane's.
+  _topicOf(msg) {
+    if (!msg) return null;
+    const type = msg.thread_type || (msg.thread && msg.thread.type) || null;
+    const ref = Number(msg.thread_type ? msg.thread_ref : (msg.thread && msg.thread.ref));
+    if (type === 'category') return Number.isSafeInteger(ref) && ref > 0 ? ref : null;
+    if (type !== 'message' || !Number.isSafeInteger(ref) || ref <= 0) return null;
+    const open = GroupChat.threads.get(GroupChat.threadKey('message', ref));
+    for (const root of [msg.threadRoot, open && open.root]) {
+      if (root && root.thread_type !== undefined) {
+        return root.thread_type === 'category' ? (Number(root.thread_ref) || null) : null;
+      }
+    }
+    const held = GroupChat.messages.some((m) => Number(m && m.id) === ref && GroupChat._ownRow(m));
+    return held ? GroupChat._channelRef() : null;
+  },
+
+  // The address of a reply thread under `rootId`, beside the channel the
+  // pane shows (#4417 follow-up: a topic's, or the app's general stream).
+  _threadAddress(slug, rootId) {
+    const topic = GroupChat._channelRef();
+    return `#messages/app/${encodeURIComponent(slug)}${topic ? `/c/${topic}` : ''}/thread/${Number(rootId)}`;
   },
 
   // Open the reply thread under a general-chat message, beside the channel.
@@ -2506,22 +2673,26 @@ const GroupChat = {
   // that page, and leaving for Messages to read a thread was leaving the
   // community for a page apart from it. Anywhere else (Homeroom's archived
   // app chat, in Messages) it is the thread's Messages address.
+  // #4417 follow-up: a topic's channel, in the general pane on its project's
+  // page, opens its reply threads beside it the same way.
   openReplyThread(id) {
     const slug = GroupChat.appSlug;
     if (!slug || !id) return;
     if (GroupChat._openThreadInPage(slug, id)) return;
-    location.hash = `#messages/app/${encodeURIComponent(slug)}/thread/${Number(id)}`;
+    location.hash = `#messages/app/${encodeURIComponent(slug)}${GroupChat._channel ? `/c/${GroupChat._channel.ref}` : ''}/thread/${Number(id)}`;
   },
 
   // Is `slug`'s channel on screen in its project page's Discussion tab
   // (features/dev-board/workshop/project-discussion.tsx)? Then open the
-  // reply thread under `rootId` there and say so.
+  // reply thread under `rootId` there and say so. The target names the
+  // topic whose channel it is (#4417 follow-up), so only that channel's
+  // place takes it.
   _openThreadInPage(slug, rootId) {
     const container = document.getElementById('gc-messages');
     const tab = container && container.closest && container.closest('[data-ws-discussion]');
     if (!tab || tab.getAttribute('data-discussion-app') !== slug) return false;
     if (typeof AppView === 'undefined' || !AppView._stashDiscussionTarget) return false;
-    AppView._stashDiscussionTarget(slug, { threadRootId: Number(rootId) });
+    AppView._stashDiscussionTarget(slug, { threadRootId: Number(rootId), topicRef: GroupChat._channelRef() });
     return true;
   },
 
@@ -2630,21 +2801,47 @@ const GroupChat = {
     if (document.visibilityState === 'hidden' || !document.getElementById('gc-messages')) return;
     // The general stream's own newest message: its thread replies drawn in
     // it (#2387 follow-up) are no position for the channel's read cursor.
+    // #4417 follow-up: nor, in a topic's channel, are they for its own.
     const newest = GroupChat.messages.reduce((top, m) => (
-      m && !m.thread_type && !(m.thread && m.thread.type) ? Math.max(top, Number(m.id) || 0) : top
+      m && GroupChat._ownRow(m) ? Math.max(top, Number(m.id) || 0) : top
     ), 0);
     if (!newest || newest <= (GroupChat._readUpTo || 0) || GroupChat._unreadHold === slug) return;
     GroupChat._readUpTo = newest;
+    const channel = GroupChat._channel;
     try {
       // `?demo=1`: a staging demo stream's newest rows are mock ones, which
       // only the demo branch of the route knows (src/routes/chat.js).
-      await fetch(`/api/apps/${encodeURIComponent(slug)}/messages/read${GroupChat._specDemoQS()}`, {
+      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/messages/read${GroupChat._specDemoQS()}`, {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ message_id: newest }),
+        body: JSON.stringify({ message_id: newest, ...GroupChat._cursorScope(channel) }),
       });
-      window.UsernodeReact?.messages?.refresh?.();
+      // A topic's channel counts its unread in the project's places list
+      // (dev-board/workshop/place-store.ts); #general in Messages' list.
+      if (channel) {
+        if (res && res.ok) window.UsernodeReact?.places?.channelRead?.(slug, channel.ref);
+      } else {
+        window.UsernodeReact?.messages?.refresh?.();
+      }
+      // Drained, so the request ends: an answer nobody reads stays open in
+      // the browser, and a page that reads its channel never went idle.
+      if (res && typeof res.text === 'function') void res.text().catch(() => {});
     } catch (_) { /* the next open reads it again */ }
+  },
+
+  // #4417 follow-up: is `m` one of the pane's own messages (not a reply
+  // drawn in it)? A loaded row says where it is in `thread_type`, a live
+  // frame in `thread` (a loaded row's `thread` is its reply summary).
+  _ownRow(m) {
+    const type = m.thread_type || (m.thread && m.thread.type) || null;
+    const ref = m.thread_type ? m.thread_ref : (m.thread && m.thread.ref);
+    return type ? type === 'category' && GroupChat._isChannel({ type, ref }) : GroupChat._isChannel(null);
+  },
+
+  // The read routes' scope for a topic's channel (src/routes/chat.js
+  // moveReadCursor), or nothing for the general stream.
+  _cursorScope(channel) {
+    return channel ? { thread_type: channel.type, thread_ref: channel.ref } : {};
   },
 
   // The channel's pane closed (#2387). "Mark unread" holds only while the
@@ -2663,17 +2860,20 @@ const GroupChat = {
   async markUnread(id) {
     const slug = GroupChat.appSlug;
     if (!slug || !id) return;
+    // #4417 follow-up: in a topic's channel, its own cursor.
+    const channel = GroupChat._channel;
     const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/messages/unread${GroupChat._specDemoQS()}`, {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ message_id: Number(id) }),
+      body: JSON.stringify({ message_id: Number(id), ...GroupChat._cursorScope(channel) }),
     });
     if (!res.ok) throw new Error(`Mark unread failed (${res.status})`);
     // Stays unread while it is still the open channel: reading it again the
     // moment it was marked would undo the act.
     GroupChat._unreadHold = slug;
     GroupChat._readUpTo = 0;
-    window.UsernodeReact?.messages?.refresh?.();
+    if (channel) window.UsernodeReact?.places?.channelRead?.(slug, channel.ref, true);
+    else window.UsernodeReact?.messages?.refresh?.();
   },
 
   _paintBookmark(messageId, on) {
@@ -4690,10 +4890,15 @@ const GroupChat = {
   _pendingReveal: null,
   REVEAL_TTL_MS: 20000,
 
-  revealMessage(appSlug, messageId) {
+  // #4417 follow-up: `topicRef` names one of the project's topic channels,
+  // whose pane must be the one showing (a notification for a message in it,
+  // project-discussion.tsx TopicChannel); none is the app's general stream.
+  revealMessage(appSlug, messageId, topicRef = null) {
     const id = Number(messageId);
     if (!appSlug || !Number.isSafeInteger(id) || id <= 0) return;
-    GroupChat._pendingReveal = { slug: appSlug, id, at: Date.now() };
+    const ref = Number(topicRef);
+    const channel = Number.isSafeInteger(ref) && ref > 0 ? ref : null;
+    GroupChat._pendingReveal = { slug: appSlug, id, at: Date.now(), ...(channel ? { channel } : {}) };
     // Now, only when the stream on screen is that discussion's pane — in
     // Messages, or its project page's Discussion tab, which carries the same
     // attribute: anywhere else the click is about to move the reader there,
@@ -4713,6 +4918,8 @@ const GroupChat = {
       return false;
     }
     if (GroupChat.appSlug !== want.slug || !GroupChat._didInitialScroll) return false;
+    // #4417 follow-up: a topic channel's message, for that channel's pane.
+    if ((want.channel || null) !== GroupChat._channelRef()) return false;
     const container = document.getElementById('gc-messages');
     if (!container) return false;
     // A reply in a reply thread (#2387 follow-up): the general stream holds
@@ -4725,7 +4932,7 @@ const GroupChat = {
       GroupChat._pendingReveal = null;
       if (Number.isSafeInteger(root) && root > 0
           && !GroupChat._openThreadInPage(want.slug, root)) {
-        const address = `#messages/app/${encodeURIComponent(want.slug)}/thread/${root}`;
+        const address = GroupChat._threadAddress(want.slug, root);
         const messages = window.UsernodeReact?.messages;
         if (messages?.openAddress) messages.openAddress(address);
         else window.location.hash = address;
@@ -4760,9 +4967,19 @@ const GroupChat = {
     const at = row.getBoundingClientRect();
     container.scrollTop += (at.top - box.top) - (box.height - at.height) / 2;
     GroupChat._savedScrollTop = container.scrollTop;
+    GroupChat._revealFlash = { id: want.id, until: Date.now() + 1500 };
     GroupChat._react()?.patchTranscriptMessage(want.id, { flash: true });
     setTimeout(() => GroupChat._react()?.patchTranscriptMessage(want.id, { flash: false }), 1500);
     return true;
+  },
+
+  // The message a reveal is marking, and until when (#4417 follow-up: a
+  // notification's message, in #general or a topic's channel). Its row is
+  // built flashed while the mark lasts.
+  _revealFlash: null,
+  _revealFlashing(id) {
+    const f = GroupChat._revealFlash;
+    return !!f && id != null && Number(id) === f.id && Date.now() < f.until;
   },
 
   // Where a message link's message is (#2387), when the first page did not
@@ -4776,8 +4993,12 @@ const GroupChat = {
     const slug = want.slug;
     const live = () => GroupChat._pendingReveal === want && GroupChat.appSlug === slug;
     try {
+      // #4417 follow-up: looked for in the channel the pane shows.
+      const channel = GroupChat._channel;
+      const scope = channel
+        ? `&thread_type=${encodeURIComponent(channel.type)}&thread_ref=${encodeURIComponent(channel.ref)}` : '';
       const res = await fetch(
-        `/api/apps/${encodeURIComponent(slug)}/messages?around=${want.id}&limit=1${GroupChat._demoParam()}`
+        `/api/apps/${encodeURIComponent(slug)}/messages?around=${want.id}&limit=1${scope}${GroupChat._demoParam()}`
       );
       if (!live()) return;
       if (!res.ok) { GroupChat._pendingReveal = null; return; }
@@ -4787,7 +5008,7 @@ const GroupChat = {
         GroupChat._pendingReveal = null;
         // On the project page, beside the channel there (#3653).
         if (GroupChat._openThreadInPage(slug, root)) return;
-        const address = `#messages/app/${encodeURIComponent(slug)}/thread/${root}`;
+        const address = GroupChat._threadAddress(slug, root);
         const messages = window.UsernodeReact?.messages;
         if (messages?.openAddress) messages.openAddress(address);
         else window.location.hash = address;

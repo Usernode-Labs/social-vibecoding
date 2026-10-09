@@ -43,14 +43,21 @@ const FOUR = [
   { id: 'infra', handle: 'infra', name: 'Infra', icon: '\u{1F6E0}️', about: 'Builds, staging, deploys and the servers the apps run on' },
 ];
 
+// Homeroom's own topics: the four it started with, then #project-workflows
+// (from #4417's discussion: how work moves before it is a proposal).
+const HOMEROOM = [
+  ...FOUR,
+  { id: 'project-workflows', handle: 'project-workflows', name: 'Project workflows', icon: '\u{1F9ED}', about: 'How work moves before it\'s a proposal: request types, triage, discussion and decisions' },
+];
+
 // ── 1. Validation ────────────────────────────────────────────────────────
 
-test('the platform\'s own dapp.json starts with the four topics, valid, in this order', () => {
+test('the platform\'s own dapp.json holds Homeroom\'s topics, valid, in this order', () => {
   const manifest = JSON.parse(fs.readFileSync(require.resolve('../dapp.json'), 'utf8'));
-  assert.deepEqual(manifest.topics, FOUR);
+  assert.deepEqual(manifest.topics, HOMEROOM);
   assert.deepEqual(appManifest.validateTopics(manifest.topics).errors, []);
   assert.deepEqual(appManifest.read(require('node:path').join(__dirname, '..')).topics.map((t) => [t.id, t.state]),
-    FOUR.map((t) => [t.id, 'live']));
+    HOMEROOM.map((t) => [t.id, 'live']));
 });
 
 test('a topic\'s id and handle: 2 to 32 lowercase letters, digits and hyphens, a letter first, never general or a built-in', () => {

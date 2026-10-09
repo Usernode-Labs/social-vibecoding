@@ -8602,7 +8602,9 @@ const AppView = {
   },
 
   /**
-   * @param {{host?: Element|null, slug?: string, name?: string, readOnly?: boolean}} [ctx]
+   * @param {{host?: Element|null, slug?: string, name?: string, readOnly?: boolean,
+   *   channel?: {type: 'category', ref: number, markers?: object[]}|null,
+   *   placeholder?: string, notice?: string}} [ctx]
    *
    * TWO CALLERS, TWO SURFACES (#2718 review). The app view's own chat
    * sub-view calls it with nothing and everything comes from AppView.appData,
@@ -8633,8 +8635,17 @@ const AppView = {
     const archived = (ctx && ctx.slug)
       ? !!ctx.archived
       : !!(AppView.appData && AppView.appData.self_hosted);
+    // #4417 follow-up: a TOPIC'S CHANNEL is this same pane, scoped to the
+    // topic's stream (`channel`, GroupChat._channel): the project page's
+    // TopicChannel mounts it as #general's place mounts the app's own, with
+    // the composer's words and the read-only line for that channel.
     const app = (ctx && ctx.slug)
-      ? { slug: ctx.slug, name: ctx.name || ctx.slug, readOnly: !!ctx.readOnly || archived }
+      ? {
+        slug: ctx.slug,
+        name: ctx.name || ctx.slug,
+        readOnly: !!ctx.readOnly || archived,
+        ...(ctx.channel ? { channel: ctx.channel } : {}),
+      }
       : (AppView.appData
         ? { slug: AppView.appData.slug, name: AppView.appData.name, readOnly: !!AppView.readOnly || archived }
         : null);
@@ -8663,8 +8674,9 @@ const AppView = {
       readOnly: !!(app && app.readOnly),
       notice: archived
         ? 'This was Homeroom\u2019s project discussion. It is read-only now: Homeroom\u2019s channel is #general.'
-        : null,
+        : ((ctx && ctx.notice) || null),
       maxLength: typeof GC_MAX_MESSAGE_LEN !== 'undefined' ? GC_MAX_MESSAGE_LEN : 8000,
+      ...(ctx && ctx.placeholder ? { placeholder: ctx.placeholder } : {}),
     });
 
     // Kit polish: fixed-shell keyboard avoidance on the general-chat
@@ -10501,6 +10513,8 @@ const AppView = {
    * the room (dev-board/workshop/project-discussion.tsx): `threadRootId`
    * opens that reply thread beside the room, `focusMessageId` brings that
    * message into view, `conversationId` names #general on Homeroom's page.
+   * #4417 follow-up: `topicRef` names one of the project's topic channels
+   * (its registry row), whose place alone takes it; none is #general's.
    * One target at a time, for one project, and only for the TTL below: a
    * page opened much later is not moved by a door it never saw. `from` is
    * the address the door was, for the one door that may have to go back to
@@ -10520,6 +10534,7 @@ const AppView = {
       threadRootId: id(t.threadRootId),
       focusMessageId: id(t.focusMessageId),
       conversationId: id(t.conversationId),
+      topicRef: id(t.topicRef),
       from: typeof t.from === 'string' && t.from ? t.from : null,
       at: Date.now(),
     };

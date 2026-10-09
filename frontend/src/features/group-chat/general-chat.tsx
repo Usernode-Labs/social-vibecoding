@@ -116,9 +116,14 @@ export interface GeneralChatProps {
   notice?: string | null;
   /** GC_MAX_MESSAGE_LEN, passed through so the module owns the number. */
   maxLength: number;
+  /**
+   * #4417 follow-up: what the empty box says, when it is not the app's own
+   * stream: a topic's channel says "Message #handle".
+   */
+  placeholder?: string;
 }
 
-export function GeneralChat({ readOnly, notice, maxLength }: GeneralChatProps) {
+export function GeneralChat({ readOnly, notice, maxLength, placeholder }: GeneralChatProps) {
   const messages = useRef<HTMLDivElement>(null);
   return (
     <div className="flex flex-col h-full min-h-0 dc-lift dc-lift-session">
@@ -158,7 +163,7 @@ export function GeneralChat({ readOnly, notice, maxLength }: GeneralChatProps) {
                 <ComposerForm
                   scope="general"
                   fill
-                  placeholder="Type a message..."
+                  placeholder={placeholder || 'Type a message...'}
                   maxLength={maxLength}
                 />
               </>

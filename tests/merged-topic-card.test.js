@@ -73,6 +73,17 @@ test('a merge newer than every loaded row comes after them; one older waits for 
   assert.doesNotMatch(paged, /data-merged-topic="old"/, 'older history not loaded yet: the card is not guessed at');
   const whole = renderRows({ messages: rows, lead: { earlier: false, placeholder: null, markers: [old] } });
   assert.ok(whole.indexOf('data-merged-topic="old"') < whole.indexOf('one'), 'the whole history is here: it leads');
+
+  // #4417 follow-up: the channel is #general's pane now, which pages back as
+  // the reader scrolls up rather than with "Load earlier": it says the same
+  // with `moreBefore` (GroupChat.render).
+  const main = (lead) => renderToHtml(createElement(loadTsx(TRANSCRIPT).TranscriptRows, {
+    view: { messages: rows, lead: { earlier: false, placeholder: null, markers: [old], ...lead } }, source: 'main',
+  }));
+  assert.doesNotMatch(main({ moreBefore: true }), /data-merged-topic="old"/);
+  const all = main({ moreBefore: false });
+  assert.ok(all.indexOf('data-merged-topic="old"') < all.indexOf('one'));
+  assert.match(read('public/js/group-chat.js'), /\.\.\.\(channel && channel\.markers \? \{ markers: channel\.markers, moreBefore: !!GroupChat\.hasMore \} : \{\}\),/);
 });
 
 test('the cards come from the registry: merged topics, oldest merge first', () => {

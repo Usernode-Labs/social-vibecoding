@@ -1454,11 +1454,18 @@ async function handleMessage(pool, client, msg) {
         });
         for (const r of replyRows) directlyNotified.add(Number(r.user_id));
         if (replyRows.length) {
+          // #4417 follow-up: root_thread_type/_ref say where a reply thread starts
+          // (notifications.THREAD_ROOT_COLUMNS_SQL, spelled out so this read stays
+          // static SQL), so a row about a reply in a topic's thread opens beside it.
           const { rows: hydrated } = await pool.query(
             `SELECT n.id, n.kind, n.read_at, n.created_at,
                     n.app_id, a.slug AS app_slug, a.name AS app_name,
                     n.chat_message_id, cm.content AS message_content,
                     cm.thread_type, cm.thread_ref,
+                    (SELECT thread_root.thread_type FROM chat_messages thread_root
+                      WHERE cm.thread_type = 'message' AND thread_root.id = cm.thread_ref) AS root_thread_type,
+                    (SELECT thread_root.thread_ref FROM chat_messages thread_root
+                      WHERE cm.thread_type = 'message' AND thread_root.id = cm.thread_ref) AS root_thread_ref,
                     n.session_id, cs.pr_title, cs.pr_number,
                     su.username AS source_username, n.user_id
              FROM notifications n
@@ -1504,11 +1511,18 @@ async function handleMessage(pool, client, msg) {
           // serialize() works for both fresh and history rows — kudos
           // added session_id / pr_title / pr_number on top of the
           // original mention shape.
+          // #4417 follow-up: root_thread_type/_ref say where a reply thread starts
+          // (notifications.THREAD_ROOT_COLUMNS_SQL, spelled out so this read stays
+          // static SQL), so a row about a reply in a topic's thread opens beside it.
           const { rows: hydrated } = await pool.query(
             `SELECT n.id, n.kind, n.read_at, n.created_at,
                     n.app_id, a.slug AS app_slug, a.name AS app_name,
                     n.chat_message_id, cm.content AS message_content,
                     cm.thread_type, cm.thread_ref,
+                    (SELECT thread_root.thread_type FROM chat_messages thread_root
+                      WHERE cm.thread_type = 'message' AND thread_root.id = cm.thread_ref) AS root_thread_type,
+                    (SELECT thread_root.thread_ref FROM chat_messages thread_root
+                      WHERE cm.thread_type = 'message' AND thread_root.id = cm.thread_ref) AS root_thread_ref,
                     n.session_id, cs.pr_title, cs.pr_number,
                     su.username AS source_username, n.user_id
              FROM notifications n
@@ -1782,11 +1796,18 @@ async function handleMessage(pool, client, msg) {
             emoji,
           });
           if (notifRows.length) {
+            // #4417 follow-up: root_thread_type/_ref say where a reply thread starts
+            // (notifications.THREAD_ROOT_COLUMNS_SQL, spelled out so this read stays
+            // static SQL), so a row about a reply in a topic's thread opens beside it.
             const { rows: hydrated } = await pool.query(
               `SELECT n.id, n.kind, n.read_at, n.created_at,
                       n.app_id, a.slug AS app_slug, a.name AS app_name,
                       n.chat_message_id, cm.content AS message_content,
                       cm.thread_type, cm.thread_ref,
+                      (SELECT thread_root.thread_type FROM chat_messages thread_root
+                        WHERE cm.thread_type = 'message' AND thread_root.id = cm.thread_ref) AS root_thread_type,
+                      (SELECT thread_root.thread_ref FROM chat_messages thread_root
+                        WHERE cm.thread_type = 'message' AND thread_root.id = cm.thread_ref) AS root_thread_ref,
                       n.session_id, cs.pr_title, cs.pr_number,
                       su.username AS source_username, n.user_id, n.detail
                FROM notifications n

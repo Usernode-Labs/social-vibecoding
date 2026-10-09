@@ -239,7 +239,68 @@ test('a channel\'s own address opens the page on it, and every old address keeps
   assert.ok(app.indexOf('App._placeAddress(parts);') < app.indexOf("if (parts[0] === 'app' && parts[1]) {"));
   // A notification's address for a topic message opens that topic's channel.
   assert.match(app, /const topicRef = rest && rest\[0\] === 'c' \? App\._numericSegment\(rest\[1\]\) : null;/);
-  assert.match(read(`${DIR}/place-store.ts`), /export async function openTopicRef\(slug: string, ref: number\)/);
+  // #4417 follow-up: with the place in the channel the address names (m/<id>, thread/<root>).
+  assert.match(app, /void topics\(slug, topicRef, App\._messagesExtras\(rest\.slice\(2\)\)\);/);
+  assert.match(read(`${DIR}/place-store.ts`), /export async function openTopicRef\(slug: string, ref: number, target: ChannelTarget \| null = null\)/);
+});
+
+// #4417 follow-up: a notification's address names a place IN the channel —
+// `m/<id>`, a message to bring into view and mark, or `thread/<root>`, a reply
+// thread to open beside it — and the door hands it to that topic's place the
+// way #general's door hands #general hers (AppView._stashDiscussionTarget),
+// named for the topic so only its place takes it.
+test('a topic\'s door carries the place in the channel its address names, for that topic alone', async () => {
+  let record = { places: PLACES_PAYLOAD };
+  const reloads = [];
+  const store = loadTsx(`${DIR}/place-store.ts`, {
+    stubs: {
+      './community-card': {
+        cachedCommunity: () => record,
+        communityInflight: () => false,
+        reloadCommunity: async (slug) => { reloads.push(slug); },
+      },
+    },
+  });
+  const had = Object.prototype.hasOwnProperty.call(globalThis, 'window');
+  const was = globalThis.window;
+  const stashed = [];
+  const landed = [];
+  const replaced = [];
+  globalThis.window = {
+    location: { hash: '', replace: (to) => replaced.push(to) },
+    AppView: {
+      _stashDiscussionTarget: (slug, t) => stashed.push([slug, t]),
+      _landOnTab: (slug, key) => landed.push([slug, key]),
+    },
+    App: { _hubHref: (slug) => `#app/${slug}/workshop` },
+  };
+  try {
+    await store.openTopicRef('homeroom', 12, { focusMessageId: 5552 });
+    assert.deepEqual(stashed, [['homeroom', { focusMessageId: 5552, threadRootId: null, topicRef: 12 }]]);
+    assert.deepEqual(landed, [['homeroom', 'c:homeroom-bot']], 'the topic\'s place, by its handle now');
+    assert.deepEqual(replaced, ['#app/homeroom/workshop'], 'replacing the address it came from');
+    await store.openTopicRef('homeroom', 14, { threadRootId: 70 });
+    assert.deepEqual(stashed.at(-1), ['homeroom', { focusMessageId: null, threadRootId: 70, topicRef: 14 }]);
+    // An address naming no place in it opens the channel at its newest, as before.
+    await store.openTopicRef('homeroom', 11, {});
+    await store.openTopicRef('homeroom', 11);
+    assert.equal(stashed.length, 2);
+    // A row the record does not know is #general's place, with nothing for it to take.
+    await store.openTopicRef('homeroom', 99, { focusMessageId: 1 });
+    assert.equal(stashed.length, 2);
+    assert.deepEqual(landed.at(-1), ['homeroom', 'discussion']);
+    // A topic's read: its count in the list is the record's, read again only when it showed one.
+    reloads.length = 0;
+    store.channelRead('homeroom', 12);
+    assert.deepEqual(reloads, [], '#homeroom-bot showed none');
+    store.channelRead('homeroom', 11);
+    store.channelRead('homeroom', 12, true);
+    assert.deepEqual(reloads, ['homeroom', 'homeroom'], '#onboarding showed 3; a "Mark unread" always');
+  } finally {
+    if (had) globalThis.window = was; else delete globalThis.window;
+  }
+  // The bridge the group chat calls.
+  assert.match(read(`${DIR}/place-store.ts`), /w\.UsernodeReact\.places = \{ topicHandles, openPlace, openTopicRef, channelRead \};/);
 });
 
 test('a topic\'s line: what it is for and its requests, nothing for none, and what became of a retired one', () => {

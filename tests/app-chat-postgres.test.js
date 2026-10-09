@@ -300,6 +300,52 @@ test('app channels against the full schema', { timeout: 120000 }, async (t) => {
     assert.equal((await notificationsFor(carol, 'thread_reply')).filter((n) => !n.read_at).length, 0);
   });
 
+  // #4417 follow-up: a reply thread can start in one of the project's topic
+  // channels. Its replies notify exactly as #general's do, and every row
+  // about one, read back or pushed live, opens the thread beside the topic's
+  // channel (notifications.THREAD_ROOT_COLUMNS_SQL), not beside #general.
+  await t.test('a reply thread under a topic message notifies as #general\'s does, and opens beside the topic', async () => {
+    const notifications = require('../src/services/notifications');
+    const { rows: [topic] } = await pool.query(
+      `INSERT INTO app_category_registry (app_id, category_key, label, origin, topic_handle, topic_state, pinned_at)
+       VALUES ($1, 'kitchen', 'Kitchen', 'topic', 'kitchen', 'live', NOW()) RETURNING id`,
+      [chan.id]
+    );
+    const topicRoot = (await post(alice, chan, 'Which knives do we keep?', { thread: { type: 'category', ref: topic.id } })).message.id;
+    const href = `#messages/app/ta-chan/c/${topic.id}/thread/${topicRoot}`;
+    const pushedFor = (messageId) => frames
+      .filter((f) => f.kind === 'user' && f.data?.type === 'notification_new' && f.data.notification.chatMessageId === messageId)
+      .map((f) => [f.data.notification.kind, f.data.notification.href]);
+    frames.length = 0;
+    const reply = (await post(carol, chan, 'The small one.', { thread: { type: 'message', ref: topicRoot } })).message.id;
+    // The root's author hears of it, as for a #general root…
+    const [row] = (await notifications.listForUser(pool, alice.id, { kinds: ['thread_reply'] }))
+      .filter((n) => Number(n.chat_message_id) === reply);
+    assert.ok(row, 'alice, who started the thread, is told');
+    // …and the row opens the thread beside the topic's channel: listed, by
+    // id (a native push's read), and pushed live.
+    assert.equal(notifications.serialize(row).href, href);
+    assert.equal(notifications.serialize(await notifications.getForUser(pool, alice.id, row.id)).href, href);
+    assert.deepEqual(pushedFor(reply), [['thread_reply', href]]);
+    // A quote reply in the thread (carol's 'reply', hydrated by the socket's
+    // own read) and the thread's own row for alice: the same address.
+    frames.length = 0;
+    const quoted = (await post(bob, chan, 'Agreed, the small one.', {
+      thread: { type: 'message', ref: topicRoot }, quote: { source: 'message', refMsgId: reply },
+    })).message.id;
+    assert.deepEqual(pushedFor(quoted).sort(), [['reply', href], ['thread_reply', href]]);
+    // A message in the topic itself opens the channel on it (#4417).
+    frames.length = 0;
+    const inTopic = (await post(bob, chan, 'And the bread knife?', {
+      thread: { type: 'category', ref: topic.id }, quote: { source: 'message', refMsgId: topicRoot },
+    })).message.id;
+    assert.deepEqual(pushedFor(inTopic), [['reply', `#messages/app/ta-chan/c/${topic.id}/m/${inTopic}`]]);
+    // A #general root's thread keeps its own address (the subtest above).
+    const general = (await notifications.listForUser(pool, alice.id, { kinds: ['thread_reply'] }))
+      .find((n) => Number(n.thread_ref) === rootId);
+    assert.equal(notifications.serialize(general).href, `#messages/app/ta-chan/thread/${rootId}`);
+  });
+
   // #4535: a message in a request's discussion thread notifies the
   // request's filer and everyone who posted before, with no @mention
   // needed — the same exclusions a reply thread's fan-out makes.

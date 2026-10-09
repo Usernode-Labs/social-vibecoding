@@ -505,6 +505,13 @@ export interface TranscriptLead {
    * was posted for them. Null or absent on every other transcript.
    */
   markers?: TranscriptMarker[] | null;
+  /**
+   * #4417 follow-up: the general pane holds a topic's channel and has older
+   * history it has not loaded yet. It pages back as the reader scrolls up,
+   * with no "Load earlier" control (`earlier`), so this says the same to the
+   * markers: one older than every loaded row waits for that page.
+   */
+  moreBefore?: boolean;
 }
 
 /** #4417: one card drawn in a history at a moment (see TranscriptLead.markers). */

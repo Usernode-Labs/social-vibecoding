@@ -191,6 +191,18 @@ const LIVE_ROW_COLUMNS_SQL = `CASE WHEN cs.status = 'merged' AND cs.live_at IS N
 // joiner's first message (to their invite's maker) and a group's discussion
 // (channel_message, to the rest of the group; its message is the newest one
 // folded in).
+// #4417 follow-up: where a REPLY THREAD's first message is, for a row about
+// a message in one (`cm`, a 'message' thread whose ref is that first
+// message): the general stream (NULL) or one of the project's topic
+// channels ('category', its ref the topic), so notificationHref opens the
+// thread beside the channel it starts in. NULLs for every other row. The
+// socket's own live-alert reads (services/ws.js) spell the same two columns
+// out, so they stay static SQL.
+const THREAD_ROOT_COLUMNS_SQL = `(SELECT thread_root.thread_type FROM chat_messages thread_root
+              WHERE cm.thread_type = 'message' AND thread_root.id = cm.thread_ref) AS root_thread_type,
+            (SELECT thread_root.thread_ref FROM chat_messages thread_root
+              WHERE cm.thread_type = 'message' AND thread_root.id = cm.thread_ref) AS root_thread_ref`;
+
 const FILED_MESSAGE_JOIN_SQL = `LEFT JOIN chat_bot_requests bot_request
        ON n.kind IN ('first_message', 'channel_message') AND bot_request.chat_message_id = n.chat_message_id
       AND bot_request.kind IN ('filed', 'group', 'revise') AND bot_request.issue_number IS NOT NULL`;
@@ -1164,6 +1176,7 @@ async function hydrateNotification(q, id) {
             n.chat_message_id,
             cm.content AS message_content,
             cm.thread_type, cm.thread_ref,
+            ${THREAD_ROOT_COLUMNS_SQL},
             n.session_id,
             cs.session_title, cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
             cs.agent_session_id,
@@ -1538,6 +1551,7 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
             n.chat_message_id,
             cm.content AS message_content,
             cm.thread_type, cm.thread_ref,
+            ${THREAD_ROOT_COLUMNS_SQL},
             n.session_id,
             cs.session_title, cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
             cs.agent_session_id,
@@ -1582,6 +1596,7 @@ async function getForUser(pool, userId, id) {
             n.chat_message_id,
             cm.content AS message_content,
             cm.thread_type, cm.thread_ref,
+            ${THREAD_ROOT_COLUMNS_SQL},
             n.session_id,
             cs.session_title, cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
             cs.agent_session_id,
@@ -2007,6 +2022,11 @@ function notificationHref(row) {
   if (!row || !APP_CHAT_MESSAGE_KINDS.has(row.kind) || !row.app_slug) return null;
   const slug = encodeURIComponent(row.app_slug);
   if (row.thread_type === 'message' && row.thread_ref != null) {
+    // #4417 follow-up: a reply thread that starts in one of the project's
+    // topic channels opens beside that channel (THREAD_ROOT_COLUMNS_SQL).
+    if (row.root_thread_type === 'category' && row.root_thread_ref != null) {
+      return `#messages/app/${slug}/c/${Number(row.root_thread_ref)}/thread/${Number(row.thread_ref)}`;
+    }
     return `#messages/app/${slug}/thread/${Number(row.thread_ref)}`;
   }
   if (!row.thread_type && row.chat_message_id != null) {
@@ -2162,6 +2182,7 @@ module.exports = {
   CONVERSATION_NOTIFICATION_KINDS,
   APP_CHAT_MESSAGE_KINDS,
   notificationHref,
+  THREAD_ROOT_COLUMNS_SQL,
   FRIEND_NOTIFICATION_KINDS,
   serialize,
 };
