@@ -1452,6 +1452,16 @@ async function botUsernameOf(github) {
   }
 }
 
+// #4530: how long after the bot's own comment GitHub may stamp the issue's
+// updated_at and still be taken for that comment's stamp. GitHub moves it a
+// moment after the comment's created_at (a second or so), so recording the
+// comment's own time left the issue newer than what the bot had seen, and
+// the next refresh read the bot's own note as a change ('changed:github'):
+// homestead #35 got the same person note three times in nine minutes, with
+// nobody else writing. A later stamp is somebody else's doing (an edit, a
+// label) and is left to be read.
+const OWN_STAMP_SLACK_MS = 60 * 1000;
+
 /**
  * Record what the bot has now seen of this issue, so its own GitHub comment
  * does not read as a change on the next refresh — unless somebody else
@@ -1464,8 +1474,16 @@ async function advanceSeen({
   const times = (postedAt || []).filter(Boolean).map((t) => Date.parse(t)).filter(Number.isFinite);
   if (!runId || !times.length) return { advanced: false, reason: 'nothing_posted' };
   const sinceMs = Date.parse(since);
-  const [{ comments = [] } = {}, thread, login, proposalThread] = await Promise.all([
-    github.fetchIssueComments(repo.owner, repo.repo, issueNumber).catch(() => ({ comments: [] })),
+  // #4530: the issue as GitHub has it now (no cache), for the updated_at its
+  // own comment moved. Read BEFORE the comments: a person's comment that
+  // moved that time is then in the list read after it, and counts below as
+  // somebody else writing. A client without the read (a test's) records the
+  // comment's own time, as before.
+  const fresh = typeof github.fetchPublicIssue === 'function'
+    ? await github.fetchPublicIssue(repo.owner, repo.repo, issueNumber, { fresh: true }).catch(() => null)
+    : null;
+  const [commentRead = {}, thread, login, proposalThread] = await Promise.all([
+    github.fetchIssueComments(repo.owner, repo.repo, issueNumber).catch(() => ({ comments: [], note: 'fetch failed' })),
     threadContext.loadIssueThread(pool, app.id, issueNumber),
     botUsernameOf(github),
     // #3264: on a follow-up, the proposal's own discussion is a third place
@@ -1474,6 +1492,7 @@ async function advanceSeen({
       ? threadContext.loadProposalThread(pool, app.id, proposalSessionId)
       : Promise.resolve({ messages: [] }),
   ]);
+  const comments = commentRead.comments || [];
   const botLogin = String(login || '').toLowerCase();
   const newer = (at) => Number.isFinite(Date.parse(at)) && Date.parse(at) > sinceMs;
   // A comment this run posted is the bot's own whatever the login lookup
@@ -1491,7 +1510,17 @@ async function advanceSeen({
     });
     return { advanced: false, reason: 'someone_replied' };
   }
-  const seen = new Date(Math.max(...times)).toISOString();
+  // Nobody else wrote since the run read the thread, so every comment since
+  // is the bot's own: the issue's updated_at, when it is only the stamp of
+  // those (within OWN_STAMP_SLACK_MS of the last), is what it has seen.
+  // Only when the whole comment list was read: one cut short, or not read
+  // at all, may be missing the person whose comment moved it.
+  const ownMs = Math.max(...times);
+  const stampMs = Date.parse(fresh?.issue?.updatedAt);
+  const stamped = Number.isFinite(sinceMs) && Number.isFinite(stampMs)
+    && !commentRead.note && !commentRead.truncated
+    && stampMs > ownMs && stampMs - ownMs <= OWN_STAMP_SLACK_MS;
+  const seen = new Date(stamped ? stampMs : ownMs).toISOString();
   await pool.query(
     `UPDATE homeroom_bot_runs
         SET thread_seen_at = GREATEST(COALESCE(thread_seen_at, $2::timestamptz), $2::timestamptz),
@@ -1609,6 +1638,9 @@ const BUILD_VISIBLE_CHANGES_LINES = Object.freeze([
   'exact before and after builds, and the group looks at those shots before it votes. If nothing a person sees',
   'changes, declare impact "none" with a specific reason; never call a visible change "none" because it is hard',
   'to reach. If the tool fails, say so in your summary; never claim the changes were recorded when they were not.',
+  'When the change is a rename, a changed flow, a data or settings change, or a measured improvement, also call',
+  'declare_diagram once with that kind (rename, flow, changes or numbers), in plain words; Homeroom draws it on the',
+  'change\'s card when it has no before and after shots. Mermaid is only for a change you declared with impact "none".',
   'The before and after copies have no model key, so nothing on them answers with a model: Homeroom bot only says',
   'it cannot reach its model there, and an app\'s own AI features get no answer. Never make a step ask Homeroom bot',
   '(or any AI feature) for something and wait for its reply. Start from a state that already holds the reply: a',
@@ -2570,10 +2602,17 @@ async function buildAndPropose({
   }
   // The caller's durable link to this session, written before any turn runs:
   // a restart mid-turn leaves the worker running, and restart recovery finds
-  // the run it belongs to through this (#3401).
+  // the run it belongs to through this (#3401). It is the build's claim on
+  // its run too: a reason it resolves (a string) is the run refusing the
+  // link, because another build of it linked its session first
+  // (homeroom-bot.js buildLive). That build is the run's; this one ends below,
+  // before its branch, its worker and its plan, with `lostClaim` on the
+  // result. A link that could not be written is logged and the build goes on.
+  let claimRefused = null;
   if (onSession) {
     try {
-      await onSession(session);
+      const refused = await onSession(session);
+      if (typeof refused === 'string' && refused) claimRefused = refused;
     } catch (err) {
       log.warn('homeroom-bot', 'Could not link the build session to its run', { sessionId: session.id, err: err.message });
     }
@@ -2633,6 +2672,11 @@ async function buildAndPropose({
       return null;
     }
   };
+  // Its run is another build's (onSession, above): nothing more is spent on
+  // this one, and its session is put away as a skip's is.
+  if (claimRefused) {
+    return { ...(await fail(claimRefused)), skipped: claimRefused, lostClaim: true, costUsd: null };
+  }
 
   let branchName;
   try {
@@ -3114,6 +3158,7 @@ module.exports = {
   postOnProposal,
   threadCopiedCommentIds,
   advanceSeen,
+  OWN_STAMP_SLACK_MS,
   botUsernameOf,
   openBotProposal,
   promoteAsBot,

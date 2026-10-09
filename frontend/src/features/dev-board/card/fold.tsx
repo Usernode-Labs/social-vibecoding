@@ -59,7 +59,7 @@ import { FoldMarkIcon } from '@/components/ui/icons';
 
 import { Badge, CardIcon, DevCard, edgeFor, metaLineNodes, VoteButton } from './dev-card';
 import { FeedThread } from './feed-thread';
-import type { ActionSpec, BadgeSpec, DevCardModel, ListRow } from './model';
+import type { ActionSpec, BadgeSpec, DevCardModel, ListRow, StatusPillState } from './model';
 
 export type CardRow = Extract<ListRow, { t: 'card' }>;
 
@@ -91,7 +91,7 @@ const ITEM_HOOKS = [
   'data-shared-session-row', 'data-session-chip', 'data-discussion-row',
 ];
 
-function itemHooks(card: DevCardModel): Record<string, string> {
+export function itemHooks(card: DevCardModel): Record<string, string> {
   const a = card.attrs || {};
   const out: Record<string, string> = {};
   for (const k of ITEM_HOOKS) if (a[k] != null) out[k] = String(a[k]);
@@ -164,22 +164,43 @@ export function tagsOf(card: DevCardModel): BadgeSpec[] {
   return (card.badges || []).filter((b) => b && b.t === 'attr');
 }
 
-export function RowBand({ card, trailing }: { card: DevCardModel; trailing?: ReactNode }): ReactNode {
+/**
+ * The card's status pill as the row draws it: the bar's own words in the
+ * bar's own tone ("0 of 1 approval", "✓ Live", "Merge conflict"), from the
+ * card's `statusPillState`, so its words and tones follow the card's
+ * precedence unchanged. The board's row draws it across the row in
+ * `RowBand`; the Workshop tab's row and a live row draw it on their tags
+ * line at its words' width (#4486, workshop/work-row.tsx).
+ */
+export function StatePill({ s, className }: { s: StatusPillState; className?: string }): ReactNode {
+  return (
+    <span className={`dev-ws-row-state dev-ws-row-state-${s.tone}${className ? ` ${className}` : ''}`} title={s.title}>{s.label}</span>
+  );
+}
+
+export function RowBand({ card, trailing, chips: withChips = true }: {
+  card: DevCardModel;
+  trailing?: ReactNode;
+  /**
+   * The card's state chips after the bar. The board's row (#4486) passes
+   * false: what those chips say is the row's tags (`_workshopBrief`), on the
+   * line above, so the band is the bar and Vote alone.
+   */
+  chips?: boolean;
+}): ReactNode {
   const s = card.pill?.state || null;
   // The state chips only: the tags and the linked-issue chips are the meta
   // line's (metaLineNodes), on the row as on the card.
   // `meta` chips (the status tags) ride the row's META line, which is
   // metaLineNodes' — the same seam as the card. The band is the bar, the
   // remaining state chips and the vote.
-  const chips = (card.badges || [])
+  const chips = withChips ? (card.badges || [])
     .filter((b) => b && b.t !== 'attr' && b.t !== 'issueChip' && !(b.t === 'chip' && b.meta))
-    .slice(0, ROW_BADGE_MAX);
+    .slice(0, ROW_BADGE_MAX) : [];
   if (!s && !chips.length && !trailing) return null;
   return (
     <span className="dev-ws-row-band">
-      {s ? (
-        <span className={`dev-ws-row-state dev-ws-row-state-${s.tone}`} title={s.title}>{s.label}</span>
-      ) : null}
+      {s ? <StatePill s={s} /> : null}
       {chips.map((b) => <Badge key={b.key} b={flatBadge(b)} />)}
       {trailing ? <span className="dev-ws-row-trailing" onClick={(e) => e.stopPropagation()}>{trailing}</span> : null}
     </span>

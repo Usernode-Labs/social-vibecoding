@@ -317,7 +317,15 @@ function entryOfRuns(runs) {
     && (withProposal.proposal_status === 'merged' || CLOSED_PROPOSAL.has(withProposal.proposal_status))) {
     lead = withProposal;
   }
-  const outcome = outcomeOf(lead);
+  let outcome = outcomeOf(lead);
+  // #4539: the request itself was closed while its newest run still waited
+  // on its person (a plan waiting for Build it, or a question still open):
+  // the work stopped, which is History's news, not Needs you. Its earlier
+  // runs keep their own words (runOf).
+  if (newest.request_closed === true
+    && (outcome === 'question' || (!outcome && lead.awaiting_go_at))) {
+    outcome = 'stopped';
+  }
   // The newest run, still going, is not one of its earlier runs either.
   const going = outcomeOf(newest) ? null : newest;
   const proposalRow = withProposal && OPENABLE_PROPOSAL.has(withProposal.proposal_status) ? withProposal : null;
@@ -440,6 +448,13 @@ async function pastRuns(pool, { userId, limit = RUN_LIMIT }) {
   const { rows } = await pool.query(
     `SELECT r.id, r.issue_number, r.verdict, r.build_ok, r.build_error, r.cap_suppressed,
             r.proposal_session_id, cs.pr_number AS proposal_pr_number, r.created_at,
+            r.awaiting_go_at,
+            -- #4539: the request's own state, newest row by id (issues is not
+            -- unique on (app_id, github_issue_number), so a join could
+            -- duplicate rows). Null reads as not closed.
+            (SELECT ri.status = 'closed' FROM issues ri
+              WHERE ri.app_id = r.app_id AND ri.github_issue_number = r.issue_number
+              ORDER BY ri.id DESC LIMIT 1) AS request_closed,
             (r.plan IS NOT NULL AND r.plan->'chosen' IS NULL AND r.build_ok IS FALSE
               AND r.build_session_id IS NULL AND r.proposal_session_id IS NULL) AS plan_only,
             -- Merged but not live yet (live_at) reads as merging: going live.
@@ -516,10 +531,38 @@ async function workFor(pool, { user, settings = null, deps = {} }) {
     ...entries.map((item) => ({ appSlug: item.project })),
     ...rows.map((row) => ({ appSlug: row.slug })),
   ]);
-  return withIcons(arrange(
-    entries.filter((item) => allowed.has(item.project)),
-    rows.filter((row) => allowed.has(row.slug)),
-  ), allowed);
+  const shown = entries.filter((item) => allowed.has(item.project));
+  const work = withIcons(arrange(shown, rows.filter((row) => allowed.has(row.slug))), allowed);
+  await withReleases(pool, work, shown);
+  return work;
+}
+
+/**
+ * A change of the bot's merged into the platform's own app and not live yet
+ * waits for the platform's next release (services/release-watch.js), and
+ * its entry says when (`release`, which bot-work.tsx words): an entry of Now
+ * going live (its progress entry names the proposal), and one of History or
+ * Needs you whose news is that it is going live. Any other change is left
+ * out of the answer, and its entry says "going live" as it did. One read,
+ * only when an entry is going live.
+ */
+async function withReleases(pool, work, entries) {
+  const going = new Map();
+  const proposalOf = new Map(entries
+    .filter((item) => item.stage === 'merging' && Number(item.proposal?.proposal))
+    .map((item) => [keyOf(item.project, item.number), Number(item.proposal.proposal)]));
+  for (const job of work.now) {
+    if (job.phase === 'merging' && proposalOf.has(job.key)) going.set(job, proposalOf.get(job.key));
+  }
+  for (const job of [...work.needsYou, ...work.history]) {
+    if (job.outcome === 'going_live' && job.proposalId) going.set(job, job.proposalId);
+  }
+  if (!going.size) return;
+  const releases = await require('./release-watch').releasesFor(pool, [...going.values()]);
+  for (const [job, sessionId] of going) {
+    const release = releases.get(sessionId);
+    if (release) job.release = release;
+  }
 }
 
 /**

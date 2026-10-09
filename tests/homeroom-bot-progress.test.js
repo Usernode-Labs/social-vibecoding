@@ -258,6 +258,33 @@ test('a ready request waiting for its build slot says so, and what it waits for'
   assert.match(tray, /build_queued: 'queued',/, 'the tray draws it as waiting its turn');
 });
 
+// #4539: a request closed while its plan waited for Build it, or while the
+// question about it was still open, no longer waits on the person: the
+// answer read from the records says it was not built because the request
+// was closed. Its stage is null, so the tray moves it out of Needs you.
+test('#4539: on a closed request the plan and the question stop waiting, and the outcome names the closure', () => {
+  // The plan is ready and waits for Build it.
+  const waiting = { mode: 'live', verdict: 'ready', build_ok: null, run_at: ago(50), plan_waiting_at: ago(49) };
+  assert.deepEqual(stage({ ...waiting }), {
+    stage: 'plan', since: ago(49), waitingOn: 'them', doing: 'the plan is ready and waits for Build it',
+  });
+  assert.equal(stage({ ...waiting, request_closed: true }), null, 'closed: the plan is not in progress any more');
+  // The question the bot asked about it stops waiting too.
+  assert.equal(stage({ question_at: ago(9), request_closed: true }), null);
+  // With a proposal still open, only the question yields: the proposal's
+  // own state is what shows.
+  assert.equal(stage({ proposal_status: 'promoted', check_state: 'passing', proposal_at: ago(20), question_at: ago(9) }).stage, 'question');
+  assert.equal(stage({ proposal_status: 'promoted', check_state: 'passing', proposal_at: ago(20), question_at: ago(9), request_closed: true }).stage,
+    'vote', 'the closed request\'s open proposal still shows its state');
+  // A build already begun, or held back by a limit, is unchanged.
+  assert.equal(stage({ ...waiting, request_closed: true, build_session_id: 7, build_status: 'active', build_started_at: ago(40) }).stage,
+    'planning', 'a build under way builds on');
+  assert.equal(stage({ ...waiting, request_closed: true, cap_suppressed: 'proposals_per_app' }).stage, 'held');
+  // What it came to, for finishedLately and the DM's answer.
+  assert.equal(progress.outcomeOf({ ...waiting, request_closed: true }), 'not built: the request was closed');
+  assert.equal(progress.outcomeOf({ ...waiting }), null, 'open: nothing has come of it yet');
+});
+
 // WP1 (#10): a second build of one request was invisible to the bot's
 // answers, which read the request's newest look and newest proposal only.
 // The PostgreSQL side is tests/homeroom-bot-activity-postgres.test.js.

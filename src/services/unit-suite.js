@@ -905,7 +905,7 @@ async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, re
   // hiccup can only under-block, never wrongly block.
   let graduated = false;
   try {
-    graduated = (await checkHistory.loadGraduated(pool, appId)).has(checkKey);
+    graduated = (await checkHistory.loadGraduated(pool, appId, { sessionId })).has(checkKey);
   } catch (err) {
     log.warn('unit-suite', 'Graduation lookup failed — treating as advisory', {
       sessionId, appId, err: err.message,

@@ -586,15 +586,25 @@ async function cardsOf(pool, { appId, user, rows, builds = true, typical = true,
       });
     }
   }
+  const sessionOf = (row) => states.get(Number(row.chat_message_id))?.session_id ?? row.session_id ?? null;
+  // Approved and merged into the platform's own app, not live yet: it waits
+  // for the platform's next release (services/release-watch.js), and the
+  // card says when ("Merged; goes live in the next release (about 8
+  // minutes)"). Any other approved change is left out of the answer and its
+  // card says "It's going live", as before. One read, only for those.
+  const approved = rows.filter((row) => stageOfRow(row) === 'approved' && sessionOf(row)).map((row) => Number(sessionOf(row)));
+  const releases = approved.length ? await require('./release-watch').releasesFor(pool, approved) : new Map();
   return rows.map((row) => {
     const id = Number(row.chat_message_id);
     const stateRow = states.get(id);
     const stage = stageOfRow(row);
-    const sessionId = stateRow?.session_id ?? row.session_id ?? null;
+    const sessionId = sessionOf(row);
+    const release = stage === 'approved' && sessionId ? releases.get(Number(sessionId)) : null;
     const state = stage ? {
       stage,
       ...(sessionId ? { sessionId: Number(sessionId) } : {}),
       ...(approvals.get(id) || {}),
+      ...(release ? { release } : {}),
     } : null;
     return cardOf(row, {
       builds: row.kind === 'group' ? false : builds,
@@ -995,18 +1005,21 @@ async function personRow(pool, userId) {
  * a person, it is asked; anything else is nothing here. Never throws.
  */
 async function noteChatMessage(pool, config, { appId, userId, messageId, content, thread = null, postedVia = null, deps = {} }) {
+  // Outside the try, so the catch can name the app: it never throws.
+  let app = null;
   try {
     if (thread || postedVia === 'agent' || !appId || !userId) return null;
     const mentioned = mentionsBot(content);
     // WP-C: an unmentioned message is read only for somebody new (maybeOffer).
     if (!mentioned && (wordCount(content) < OFFER_MIN_WORDS || !await isNewcomer(pool, appId, userId))) return null;
     // The room's socket knows little of either: read what filing needs.
-    const [app, user] = await Promise.all([appRow(pool, appId), personRow(pool, userId)]);
+    let user;
+    [app, user] = await Promise.all([appRow(pool, appId), personRow(pool, userId)]);
     if (!app || !user) return null;
     if (!mentioned) return await maybeOffer(pool, { app, user, messageId, content, deps });
     return await askFromMessage(pool, config, { app, user, messageId, content, deps });
   } catch (err) {
-    log.warn('homeroom-bot-chat', 'Could not hand a chat message to Homeroom bot', { app: app?.slug, messageId, err: err.message });
+    log.warn('homeroom-bot-chat', 'Could not hand a chat message to Homeroom bot', { app: app?.slug || appId, messageId, err: err.message });
     return null;
   }
 }

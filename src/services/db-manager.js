@@ -340,6 +340,16 @@ function isSyntaxError(err) {
   return err?.code === '42601' || /\bERROR:\s+syntax error at or near/.test(String(err?.message || ''));
 }
 
+// A copy whose template is gone (SQLSTATE 3D000): the shared staging template
+// can be dropped and renamed away by a refresh running in another process
+// between the freshness read and this copy. Every other failure — refused,
+// in use, timed out — is a real problem and still surfaces as it does.
+function isMissingTemplateError(err) {
+  if (!err) return false;
+  if (err.code === '3D000') return true;
+  return /template database ".*" does not exist/.test(String(err.message || ''));
+}
+
 // FORCE (PostgreSQL 13 and later; the platform runs 17) cuts sessions off and
 // keeps new ones out while it drops, which closes the gap a reconnect slipped
 // through. An older server rejects the option and gets the plain statement.
@@ -705,6 +715,32 @@ async function readTemplateRefreshedAt(templateDb) {
   return Number.isFinite(t) ? t : null;
 }
 
+// The direct path's steps, verbatim, into `targetDb`: a bare database from
+// template0, a dump/restore of the live source, both ownership reassigns and
+// the two redaction passes. The caller owns the role, the stamp, the lock
+// and the swap. Returns the exclusion list.
+async function buildRedactedCopy(sourceDb, targetDb, ownerRole) {
+  if (!SAFE_IDENT.test(targetDb) || !SAFE_IDENT.test(ownerRole)) {
+    throw new Error(`buildRedactedCopy: unsafe identifiers ${sourceDb}/${targetDb}/${ownerRole}`);
+  }
+  await execInDb(`CREATE DATABASE ${targetDb} TEMPLATE template0 OWNER ${ownerRole}`);
+
+  const excludeData = await privateDataExclusions(sourceDb);
+  await dumpRestore(sourceDb, targetDb, excludeData);
+  const sourceRole = ownerRoleName(sourceDb);
+  if (SAFE_IDENT.test(sourceRole)) {
+    await reassignUserObjectsTo(targetDb, sourceRole, ownerRole).catch((err) => {
+      log.warn('db-manager', 'template reassign from source-role failed', { targetDb, sourceRole, err: err.message });
+    });
+  }
+  await reassignUserObjectsTo(targetDb, adminUser(), ownerRole).catch((err) => {
+    log.warn('db-manager', 'template reassign from superuser failed', { targetDb, err: err.message });
+  });
+  await truncatePrivateTables(targetDb);
+  await scrubPrivateColumns(targetDb);
+  return excludeData;
+}
+
 // Rebuild the template from the live source, then swap it in.
 async function refreshStagingTemplate(sourceDb) {
   const templateDb = stagingTemplateDbName(sourceDb);
@@ -722,22 +758,7 @@ async function refreshStagingTemplate(sourceDb) {
       CREATE ROLE ${templateRole} NOLOGIN;
     END IF;
   END $$;`);
-  await execInDb(`CREATE DATABASE ${next} TEMPLATE template0 OWNER ${templateRole}`);
-
-  // The direct path's steps, verbatim, into `next`.
-  const excludeData = await privateDataExclusions(sourceDb);
-  await dumpRestore(sourceDb, next, excludeData);
-  const sourceRole = ownerRoleName(sourceDb);
-  if (SAFE_IDENT.test(sourceRole)) {
-    await reassignUserObjectsTo(next, sourceRole, templateRole).catch((err) => {
-      log.warn('db-manager', 'template reassign from source-role failed', { next, sourceRole, err: err.message });
-    });
-  }
-  await reassignUserObjectsTo(next, adminUser(), templateRole).catch((err) => {
-    log.warn('db-manager', 'template reassign from superuser failed', { next, err: err.message });
-  });
-  await truncatePrivateTables(next);
-  await scrubPrivateColumns(next);
+  const excludeData = await buildRedactedCopy(sourceDb, next, templateRole);
 
   await execInDb(`REVOKE CONNECT ON DATABASE ${next} FROM PUBLIC`);
   const stamp = new Date().toISOString();
@@ -887,26 +908,78 @@ async function prepareStagingCloneSource(sourceDb, { sourceId } = {}) {
     throw new Error('prepareStagingCloneSource: staging templates are disabled');
   }
   return withTemplateLock(sourceDb, async () => {
-    const ensured = await ensureStagingTemplate(sourceDb);
-    const sharedTemplate = ensured.template;
-    const refreshedAtMs = await readTemplateRefreshedAt(sharedTemplate);
-    if (refreshedAtMs === null) throw new Error('prepareStagingCloneSource: template has no refresh provenance');
+    // The template and its stamp, read again. A missing template rebuilds
+    // here; a template with no provenance is a real problem and throws.
+    const readProvenance = async () => {
+      const ensured = await ensureStagingTemplate(sourceDb);
+      const template = ensured.template;
+      const refreshedAtMs = await readTemplateRefreshedAt(template);
+      if (refreshedAtMs === null) throw new Error('prepareStagingCloneSource: template has no refresh provenance');
+      return { template, refreshedAtMs };
+    };
 
     const preparedDb = preparedCloneSourceName(sourceDb, sourceId);
     const preparedRole = ownerRoleName(preparedDb);
-    const sharedRole = ownerRoleName(sharedTemplate);
+    const provenance = await readProvenance();
+    let sharedTemplate = provenance.template;
+    let refreshedAtMs = provenance.refreshedAtMs;
     await dropDatabase(preparedDb, { strict: true });
     await execInDb(`CREATE ROLE ${preparedRole} NOLOGIN`);
     try {
-      // The copy and the ownership pass get the paired clones' own ceiling
-      // (cloneFromPreparedSource): under load the copy alone can outlast the
-      // 30-second default, and a timeout here fails the whole shots run.
-      await createFromTemplate(sharedTemplate, preparedDb, preparedRole, {
+      let copied = false;
+      let builtDirectly = false;
+      // The copy and the ownership pass get the paired clones' own
+      // ceiling (cloneFromPreparedSource): under load the copy alone
+      // can outlast the 30-second default, and a timeout here fails
+      // the whole shots run.
+      const copyFromShared = () => createFromTemplate(sharedTemplate, preparedDb, preparedRole, {
         timeoutMs: PREPARED_SOURCE_TIMEOUT_MS, attempts: dbRetry.DB_RETRY_ATTEMPTS,
       });
-      await withDatabaseConnection(preparedDb, async (execute) => {
-        await reassignUserObjectsTo(preparedDb, sharedRole, preparedRole, execute);
-      }, { queryTimeoutMs: PREPARED_SOURCE_TIMEOUT_MS });
+      const buildDirectly = async (why) => {
+        log.warn('db-manager', 'Preparing the shots clone source directly from the live source', {
+          sourceDb, sharedTemplate, preparedDb, why,
+        });
+        // The direct build's objects already belong to preparedRole, so
+        // the shared-role reassign below is skipped and the stamp reads
+        // as fresh now: this copy is as fresh as the moment it was built.
+        await buildRedactedCopy(sourceDb, preparedDb, preparedRole);
+        builtDirectly = true;
+        refreshedAtMs = Date.now();
+      };
+      for (let attempt = 1; attempt <= 2 && !copied; attempt++) {
+        try {
+          await copyFromShared();
+          copied = true;
+        } catch (err) {
+          if (!isMissingTemplateError(err)) throw err;
+          // A refresh running in another process dropped the shared
+          // template between the freshness read and this copy. Drop the
+          // half-made copy (the role stays), rebuild the template and
+          // try once more; if it still will not copy, build the prepared
+          // source directly so the run takes the slower path instead of
+          // failing.
+          await dropDisposableDatabase(preparedDb);
+          if (attempt > 1) {
+            await buildDirectly('rebuilt template still missing');
+          } else {
+            log.warn('db-manager', 'Staging template vanished during the shots copy — rebuilding it and copying again', {
+              sourceDb, sharedTemplate, preparedDb, err: err.message,
+            });
+            try {
+              const reEnsured = await readProvenance();
+              sharedTemplate = reEnsured.template;
+              refreshedAtMs = reEnsured.refreshedAtMs;
+            } catch (ensureErr) {
+              await buildDirectly(`re-ensure failed: ${ensureErr.message}`);
+            }
+          }
+        }
+      }
+      if (!builtDirectly) {
+        await withDatabaseConnection(preparedDb, async (execute) => {
+          await reassignUserObjectsTo(preparedDb, ownerRoleName(sharedTemplate), preparedRole, execute);
+        }, { queryTimeoutMs: PREPARED_SOURCE_TIMEOUT_MS });
+      }
       await execInDb(`REVOKE CONNECT ON DATABASE ${preparedDb} FROM PUBLIC`);
       const fingerprint = crypto.createHash('sha256')
         .update(`${sourceDb}\n${sharedTemplate}\n${new Date(refreshedAtMs).toISOString()}\n${preparedDb}`)
@@ -1267,15 +1340,52 @@ async function execInTarget(dbName, sql, opts = {}) {
   }
   args.push('-c', sql);
 
-  const { stdout, stderr } = await execFileAsync('psql', args, {
-    timeout: Math.max(30_000, Math.min(120_000, Number(opts.timeoutMs) || 30_000)),
-    env: postgresEnv(dbName),
-  });
+  const timeoutMs = Math.max(30_000, Math.min(120_000, Number(opts.timeoutMs) || 30_000));
+  let ran;
+  try {
+    ran = await execFileAsync('psql', args, { timeout: timeoutMs, env: postgresEnv(dbName) });
+  } catch (err) {
+    throw psqlFailure(err, { sql, timeoutMs });
+  }
+  const { stdout, stderr } = ran;
 
   if (stderr && !stderr.includes('NOTICE')) {
     throw new Error(stderr);
   }
   return stdout;
+}
+
+const PASSWORD_LITERAL = /\bPASSWORD\s+'(?:[^']|'')*'/gi;
+const maskPasswords = (text) => (typeof text === 'string'
+  ? text.replace(PASSWORD_LITERAL, 'PASSWORD \'[redacted]\'') : text);
+
+// What a failed psql run says. Node's message is "Command failed: psql
+// <args>" and then psql's stderr, which carries Postgres's own error
+// ("ERROR: source database … is being accessed by other users"), so that one
+// is kept as it is. A run cut off at its time limit has no stderr: its
+// message ended at the command, and the before & after shots gallery showed
+// exactly that for two copies on 2026-10-09 (a CREATE DATABASE … TEMPLATE
+// past its 90 seconds, a DROP DATABASE … WITH (FORCE) past its 30), with
+// nothing saying time ran out. Killing psql does not cancel the statement,
+// which may still be running on the server. A password in the statement
+// (CREATE ROLE … PASSWORD) is masked everywhere the error carries it, its
+// stack included: the message reaches logs and the shots failure people read. The error's own
+// fields (code, signal, stderr) stay, for db-retry's reading of them.
+function psqlFailure(err, { sql, timeoutMs }) {
+  if (!err || typeof err !== 'object') return err;
+  const timedOut = err.killed === true && err.code !== 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER';
+  if (timedOut) {
+    const said = typeof err.stderr === 'string' && err.stderr.trim() ? `\n${err.stderr.trim()}` : '';
+    err.message = `No answer from Postgres within ${Math.round(timeoutMs / 1000)} seconds, psql's time limit, so `
+      + `psql was stopped and the statement may still be running on the server: ${sql}${said}`;
+  } else if (!err.code && err.signal) {
+    err.message = `psql was stopped by ${err.signal} before Postgres answered: ${sql}`;
+  }
+  err.message = maskPasswords(err.message);
+  for (const field of ['cmd', 'stderr', 'stack']) {
+    if (typeof err[field] === 'string') err[field] = maskPasswords(err[field]);
+  }
+  return err;
 }
 
 // Which tables' DATA can be skipped by the clone's pg_dump — i.e. exactly
@@ -1828,6 +1938,7 @@ module.exports = {
   STAGING_TEMPLATE_MAX_AGE_MS,
   STAGING_TEMPLATE_HARD_MAX_AGE_MS,
   _templateIdleForTest: templateIdle,
+  _psqlFailureForTest: psqlFailure,
   // Per-app database storage cap (#2253).
   parseDatabaseSizes,
   listAppDatabaseSizes,

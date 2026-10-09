@@ -298,6 +298,128 @@ test('app channels against the full schema', { timeout: 120000 }, async (t) => {
     assert.equal((await notificationsFor(carol, 'thread_reply')).filter((n) => !n.read_at).length, 0);
   });
 
+  // #4535: a message in a request's discussion thread notifies the
+  // request's filer and everyone who posted before, with no @mention
+  // needed — the same exclusions a reply thread's fan-out makes.
+  await t.test('a request discussion reply notifies the filer and earlier posters', async () => {
+    // The earlier subtest muted "Replies to you" for bob here; unmute, and
+    // give the app a repo_url so feedback reports can match by owner/repo.
+    await pool.query('DELETE FROM notification_preferences WHERE user_id = $1 AND app_id = $2', [bob.id, chan.id]);
+    await pool.query('UPDATE apps SET repo_url = $2 WHERE id = $1', [chan.id, 'https://github.com/ta-owner/ta-repo']);
+    const { rows: issueRows } = await pool.query(
+      `INSERT INTO issues (app_id, github_issue_number, title, created_by)
+       VALUES ($1, 4417, 'Topics behave like channels', $2) RETURNING id`,
+      [chan.id, alice.id]
+    );
+    assert.ok(issueRows[0].id);
+    const issueThread = { type: 'issue', ref: 4417 };
+
+    // Filers known only through the other two records: one through the
+    // feedback pin (matched on owner/repo, app_id null), one through the
+    // bot's requester row.
+    const gina = await user('ta_gina');
+    const hank = await user('ta_hank');
+    await pool.query(
+      `INSERT INTO feedback_reports (user_id, target, issue_owner, issue_repo, issue_number, title, description)
+       VALUES ($1, 'platform', 'TA-OWNER', 'ta-repo', 4417, 'Topics', 'Topics behave like channels')`,
+      [gina.id]
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title)
+       VALUES ($1, 4417, $2, 'Topics behave like channels')`,
+      [chan.id, hank.id]
+    );
+
+    // A synthetic earlier poster (the bot, written directly as its status
+    // line) is in the thread from the start.
+    const eve = await user('ta_eve');
+    const frank = await user('ta_frank');
+    await pool.query('UPDATE users SET is_synthetic = TRUE WHERE id = $1', [frank.id]);
+    await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref)
+       VALUES ($1, $2, 'status line', 'message', 'issue', 4417)`,
+      [chan.id, frank.id]
+    );
+
+    // bob posts first: alice (the filer), gina and hank are notified.
+    const first = await post(bob, chan, 'They are like IRC channels, right?', { thread: issueThread });
+    assert.equal(first.ok, true);
+    const bobFirst = first.message.id;
+    const aliceRows = await notificationsFor(alice, 'issue_thread_reply');
+    assert.deepEqual(aliceRows.map((n) => n.chat_message_id), [bobFirst]);
+    assert.deepEqual(aliceRows.map((n) => Number(n.detail)), [4417]);
+    assert.deepEqual((await notificationsFor(gina, 'issue_thread_reply')).map((n) => n.chat_message_id), [bobFirst],
+      'the filer through the feedback pin is notified');
+    assert.deepEqual((await notificationsFor(hank, 'issue_thread_reply')).map((n) => n.chat_message_id), [bobFirst],
+      'the filer through the bot requester row is notified');
+
+    // carol posts, naming alice with @: alice gets only the mention row for
+    // that message; bob gets the discussion row. The synthetic poster is
+    // never a recipient, and the sender is never notified.
+    const second = await post(carol, chan, 'Yes. @ta_alice look?', { thread: issueThread });
+    assert.deepEqual((await notificationsFor(alice, 'issue_thread_reply')).map((n) => n.chat_message_id), [bobFirst],
+      'a mention wins, never two rows for one message');
+    assert.equal((await notificationsFor(alice, 'mention').then((rows) => rows.filter((n) => n.chat_message_id === second.message.id))).length, 1);
+    assert.deepEqual((await notificationsFor(bob, 'issue_thread_reply')).map((n) => n.chat_message_id), [second.message.id]);
+    assert.equal((await notificationsFor(carol, 'issue_thread_reply')).length, 0, 'the sender is never notified');
+    assert.equal((await notificationsFor(frank, 'issue_thread_reply')).length, 0, 'a synthetic poster is not notified');
+
+    // alice (the filer) posts: nobody is notified about it — she is the
+    // sender, and she already has her mention row.
+    await post(alice, chan, 'Thanks both.', { thread: issueThread });
+    assert.deepEqual((await notificationsFor(alice, 'issue_thread_reply')).map((n) => n.chat_message_id), [bobFirst]);
+
+    // An earlier poster whose only post is deleted steps out of the thread.
+    const gone = await post(eve, chan, 'gone soon', { thread: issueThread });
+    await pool.query('UPDATE chat_messages SET deleted_at = NOW() WHERE id = $1', [gone.message.id]);
+    assert.equal((await notificationsFor(eve, 'issue_thread_reply')).length, 0);
+
+    // A blocked pair: dave posts earlier, then blocks carol, so carol's
+    // next post rings nobody for him — the row is checked both ways.
+    const davesPost = await post(dave, chan, 'They are.', { thread: issueThread });
+    assert.equal((await notificationsFor(eve, 'issue_thread_reply')).filter((n) => n.chat_message_id === davesPost.message.id).length, 0,
+      'a deleted post leaves its author out');
+    await pool.query('INSERT INTO user_blocks (blocker_id, blocked_user_id) VALUES ($1, $2)', [dave.id, carol.id]);
+    const third = await post(carol, chan, 'Agreed.', { thread: issueThread });
+    assert.equal((await notificationsFor(dave, 'issue_thread_reply')).filter((n) => n.chat_message_id === third.message.id).length, 0,
+      'a blocked pair is not notified about each other');
+    await pool.query('DELETE FROM user_blocks WHERE blocker_id = $1 AND blocked_user_id = $2', [dave.id, carol.id]);
+
+    // "Replies to you", switched off for this app, silences the kind.
+    await pool.query(
+      `INSERT INTO notification_preferences (user_id, app_id, category, enabled)
+       VALUES ($1, $2, 'thread_replies', FALSE)`,
+      [hank.id, chan.id]
+    );
+    const fourth = await post(carol, chan, 'More on channels.', { thread: issueThread });
+    assert.equal((await notificationsFor(hank, 'issue_thread_reply')).filter((n) => n.chat_message_id === fourth.message.id).length, 0,
+      'hank muted replies here');
+    await pool.query('DELETE FROM notification_preferences WHERE user_id = $1 AND app_id = $2', [hank.id, chan.id]);
+
+    // A request opened directly on GitHub has no filer on record: only its
+    // earlier posters are notified.
+    const ghThread = { type: 'issue', ref: 5000 };
+    const ghFirst = await post(gina, chan, 'First here.', { thread: ghThread });
+    const ghSecond = await post(bob, chan, 'Second here.', { thread: ghThread });
+    assert.equal((await notificationsFor(gina, 'issue_thread_reply')).filter((n) => n.chat_message_id === ghSecond.message.id).length, 1,
+      'an earlier poster on a GitHub-filed request is still notified');
+    for (const who of [alice, hank]) {
+      assert.equal((await notificationsFor(who, 'issue_thread_reply')).filter((n) => n.chat_message_id === ghSecond.message.id).length, 0,
+        'no filer row exists, so the filer is not notified');
+    }
+
+    // Push: the kind is in the closed registry, so the outbox trigger runs.
+    const { rows: policy } = await pool.query(
+      `SELECT category, default_enabled FROM mobile_push_kind_categories WHERE kind = 'issue_thread_reply'`
+    );
+    assert.deepEqual(policy, [{ category: 'direct_interactions', default_enabled: true }]);
+
+    // Posting anywhere in the project clears the rows, the same way it
+    // clears mentions and replies.
+    await post(alice, chan, 'Reading the discussion.');
+    assert.equal((await notificationsFor(alice, 'issue_thread_reply')).filter((n) => !n.read_at).length, 0);
+  });
+
   await t.test('a viewer who blocked a replier gets their own thread summary', async () => {
     await pool.query('INSERT INTO user_blocks (blocker_id, blocked_user_id) VALUES ($1, $2)', [alice.id, dave.id]);
     frames.length = 0;

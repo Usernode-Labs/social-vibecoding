@@ -1302,6 +1302,7 @@ const UI_ACTION_LABELS: Record<string, string> = {
   change_create: 'Start a change',
   preview_open: 'Open preview',
   push_permission: 'Allow notifications',
+  topic_load: 'Open request or proposal page',
 };
 
 const UI_SCREEN_LABELS: Record<string, string> = {

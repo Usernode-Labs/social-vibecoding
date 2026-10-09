@@ -12,7 +12,9 @@
 //     rolled back and written on the next attempt, while the other session
 //     carries on;
 //   - a database that is not a disposable shots or template one is refused,
-//     and its sessions are left alone.
+//     and its sessions are left alone;
+//   - a template that is not there fails with the exact text and SQLSTATE
+//     the shots copy's rebuild-and-retry keys on.
 // Every database here is a throwaway with a random name. Skipped when no
 // server is reachable, and required when TEST_DATABASE_URL is set, the same
 // contract as tests/communities-postgres.test.js.
@@ -205,6 +207,25 @@ test('a fixture write that loses a real deadlock is written on the next attempt'
     [shotsFixtures.FULL_ADMIN_USER_ID]);
   assert.deepEqual(rows[0], { is_admin: true, has_platform_access: true });
   assert.equal((await setup.query('SELECT count(*)::int AS n FROM app_collaborators')).rows[0].n, 1);
+});
+
+test('a missing template fails with the text and SQLSTATE the shots copy\'s rebuild-and-retry keys on', { timeout: 30_000 }, async (t) => {
+  const pg = await server(t);
+  if (!pg) return;
+  const psql = await psqlRunner(t);
+  if (!psql) return;
+  const missing = `app_p3dbr_${token()}_stgtmpl`;
+  const target = `app_p3dbr_${token()}_evsrc_${crypto.randomBytes(6).toString('hex')}`;
+  pg.made.push(target);
+  // Through psql, whose errors carry Postgres's text: the message the
+  // recovery in prepareStagingCloneSource matches.
+  await assert.rejects(dbManager.createFromTemplate(missing, target, pg.owner, { execute: psql }),
+    (error) => /template database ".*" does not exist/.test(error.message));
+  assert.equal(await pg.exists(target), false, 'a refused copy made nothing');
+  // Through pg, whose errors carry the SQLSTATE: the other half of the match.
+  let code = null;
+  try { await pg.admin.query(`CREATE DATABASE ${target} TEMPLATE ${missing}`); } catch (err) { code = err.code; }
+  assert.equal(code, '3D000');
 });
 
 test('a database that is not a disposable shots or template one is refused, its sessions left alone', { timeout: 30_000 }, async (t) => {

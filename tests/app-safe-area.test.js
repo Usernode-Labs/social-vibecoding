@@ -397,6 +397,104 @@ test('the probe reads env() through computed padding, once', () => {
   assert.match(fn, /!probe\.isConnected/, 'reuse the probe across reads');
 });
 
+// ── 4. The Android navigation bar (#4545) ────────────────────────────
+//
+// Inside a cross-origin frame env() is 0, so the shell probes and forwards.
+// On an installed edge-to-edge Android app Chrome can report
+// safe-area-inset-bottom as 0 while safe-area-max-inset-bottom carries the
+// navigation bar's height — the split #2755 already solved for the shell's
+// own tab bar in CSS, which the probe never got. The probe reads the max
+// inset too, and the root bottom is max(the two) on an installed Android
+// app only.
+
+test('_rootBottomInset: installed Android, inset 0, nav bar 48 → 48', () => {
+  // maragung's screenshot: the composer under the 3-button bar, because the
+  // forwarded bottom inset was 0.
+  assert.equal(AppView._rootBottomInset({
+    bottom: 0, maxBottom: 48, androidStandalone: true, keyboard: 0,
+  }), 48);
+});
+
+test('_rootBottomInset: takes the larger of the two when both are real', () => {
+  assert.equal(AppView._rootBottomInset({
+    bottom: 34, maxBottom: 48, androidStandalone: true, keyboard: 0,
+  }), 48, 'Chrome reporting the bar late must not shrink the inset');
+  assert.equal(AppView._rootBottomInset({
+    bottom: 48, maxBottom: 34, androidStandalone: true, keyboard: 0,
+  }), 48, 'where env() is already right, max changes nothing');
+});
+
+test('_rootBottomInset: outside installed Android, env() wins', () => {
+  // iOS: env() is correct there and un-android never lands on it. A browser
+  // tab: the max value is the collapsed chin, and reserving it would stack
+  // a second gap on a strip the browser already keeps clear (#2755's rule).
+  for (const androidStandalone of [false, undefined]) {
+    assert.equal(AppView._rootBottomInset({
+      bottom: 0, maxBottom: 48, androidStandalone, keyboard: 0,
+    }), 0, 'the 0 env() reports is forwarded as 0');
+    assert.equal(AppView._rootBottomInset({
+      bottom: 34, maxBottom: 48, androidStandalone, keyboard: 0,
+    }), 34, 'even when the max is larger');
+  }
+});
+
+test('_rootBottomInset: the keyboard is open, only env() counts', () => {
+  // The kit pads frames by --un-kb-inset, measured from the layout
+  // viewport's bottom edge, which already includes the nav-bar strip on
+  // Android. Counting both pushes a composer up twice.
+  assert.equal(AppView._rootBottomInset({
+    bottom: 0, maxBottom: 48, androidStandalone: true, keyboard: 360,
+  }), 0);
+});
+
+test('_rootBottomInset: junk or negative input counts as 0, never negative', () => {
+  assert.equal(AppView._rootBottomInset({
+    bottom: NaN, maxBottom: -12, androidStandalone: true, keyboard: 0,
+  }), 0, 'a browser without the max variable falls back to 0px');
+  assert.equal(AppView._rootBottomInset({
+    bottom: undefined, maxBottom: undefined, androidStandalone: false, keyboard: undefined,
+  }), 0);
+  assert.equal(AppView._rootBottomInset(), 0, 'no input at all is still 0');
+});
+
+test('the probe reads the max inset, and the detector gates like the CSS', () => {
+  const probeFn = APP_VIEW.slice(
+    APP_VIEW.indexOf('_readRootInsets() {'),
+    APP_VIEW.indexOf('_frameInsets(raw, rect, viewport) {')
+  );
+  assert.match(probeFn, /margin-bottom:env\(safe-area-max-inset-bottom,0px\)/,
+    'the probe must read safe-area-max-inset-bottom, with a 0px fallback');
+  assert.match(probeFn, /maxBottom: px\(cs\.marginBottom\)/,
+    'the max value is returned beside the four insets');
+
+  const detectFn = APP_VIEW.slice(
+    APP_VIEW.indexOf('_isAndroidStandalone() {'),
+    APP_VIEW.indexOf('_rootBottomInset(input) {')
+  );
+  assert.match(detectFn, /classList\.contains\('un-android'\)/,
+    'the kit\'s device class is the Android gate (native.js, first paint)');
+  assert.match(detectFn,
+    /\(display-mode: standalone\), \(display-mode: fullscreen\)/,
+    'the same two display modes the #2755 CSS rule gates on');
+  assert.match(detectFn, /typeof window\.matchMedia !== 'function'/,
+    'a browser without matchMedia must fall back to the old value');
+});
+
+test('safeAreaForFrame replaces the root bottom before clipping to the frame', () => {
+  const fn = APP_VIEW.slice(
+    APP_VIEW.indexOf('safeAreaForFrame(id) {'),
+    APP_VIEW.indexOf('// Post the current insets into every owned frame')
+  );
+  assert.match(fn, /_rootBottomInset\(\{/,
+    'the forwarded bottom must pass through the #4545 decision');
+  assert.match(fn, /raw\.bottom = AppView\._rootBottomInset/,
+    'the replacement happens on the raw page inset, before _frameInsets '
+    + 'clips it to the frame rect — so a frame short of the bottom still gets 0');
+  const keyboardReads = fn.match(/AppView\._keyboardInset\(\)/g) || [];
+  assert.equal(keyboardReads.length, 1,
+    'the keyboard inset is read once and used for both jobs');
+});
+
 test('viewport changes re-broadcast', () => {
   const tail = APP_VIEW.slice(APP_VIEW.lastIndexOf("window.addEventListener('message'"));
   for (const ev of ['resize', 'orientationchange']) {

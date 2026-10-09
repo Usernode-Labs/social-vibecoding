@@ -57,7 +57,10 @@ function loadDbManager({ templateComment = null, failOn = null, maxAge = null, p
       return Promise.reject(failure.error(sql));
     }
     if (/shobj_description/.test(sql)) {
-      return Promise.resolve({ stdout: templateComment ? `${templateComment}\n` : '\n', stderr: '' });
+      // A function form is read afresh per query, so one test can see the
+      // template fresh and then gone.
+      const comment = typeof templateComment === 'function' ? templateComment() : templateComment;
+      return Promise.resolve({ stdout: comment ? `${comment}\n` : '\n', stderr: '' });
     }
     if (/SELECT EXISTS/.test(sql)) return Promise.resolve({ stdout: 'f\n', stderr: '' });
     if (/col_description/.test(sql)) return Promise.resolve({ stdout: privateColumns.join('\n'), stderr: '' });
@@ -506,6 +509,92 @@ test('a copy that is refused every time fails with Postgres\'s own message, and 
       'three attempts, no more');
     const after = sqls(calls).slice(sqls(calls).findLastIndex((sql) => sql.startsWith('CREATE DATABASE')));
     assert.ok(after.includes(`DROP ROLE IF EXISTS ${prepared}_owner`), 'the half-made source and its role are cleaned up');
+  } finally { restore(); }
+});
+
+test('the shared template vanishes before the shots copy: it is rebuilt and the copy runs again', async () => {
+  // Reads: ensure → fresh; provenance → fresh; the copy then fails with
+  // Postgres's missing-template error; the re-ensure reads no template
+  // (empty), rebuilds it; the provenance read is fresh again.
+  let read = 0;
+  const templateComment = () => (++read === 3 ? '' : fresh());
+  const failures = [{
+    match: /^CREATE DATABASE app_demo_evsrc_[0-9a-f]{12} TEMPLATE app_demo_stgtmpl OWNER/,
+    times: 1,
+    error: (sql) => psqlError(sql, 'template database "app_demo_stgtmpl" does not exist'),
+  }];
+  const { dbManager, calls, restore } = loadDbManager({ templateComment, failures });
+  try {
+    const prepared = await dbManager.prepareStagingCloneSource('app_demo', { sourceId: 'shots-run-vanished' });
+    assert.match(prepared.fingerprint, /^[0-9a-f]{64}$/);
+    const s = sqls(calls);
+    const built = s.findIndex((sql) => sql === 'CREATE DATABASE app_demo_stgtmpl_next TEMPLATE template0 OWNER app_demo_stgtmpl_owner');
+    const swapped = s.findIndex((sql) => sql === 'ALTER DATABASE app_demo_stgtmpl_next RENAME TO app_demo_stgtmpl');
+    const copies = s.map((sql, i) => [sql, i]).filter(([sql]) => sql.startsWith(`CREATE DATABASE ${prepared.templateDb} TEMPLATE`));
+    assert.equal(copies.length, 2, 'the copy ran again after the rebuild');
+    assert.ok(copies[0][1] < built && built < swapped && swapped < copies[1][1],
+      'the template is rebuilt into _next, swapped in by rename, and only then copied');
+    assert.ok(dumps(calls).length >= 1 && restores(calls).some((c) => c.args.includes('app_demo_stgtmpl_next')),
+      'the rebuild goes through the direct path\'s own dump/restore');
+    assert.ok(s.some((sql) => sql.startsWith(`COMMENT ON DATABASE ${prepared.templateDb} IS 'shots-clone-source source=app_demo refreshed_at=`)),
+      'the prepared source is stamped');
+    assert.ok(s.some((sql) => sql === `ALTER DATABASE ${prepared.templateDb} WITH ALLOW_CONNECTIONS false`), 'and locked');
+  } finally { restore(); }
+});
+
+test('the rebuilt template keeps missing: the shots source is built directly from the live source', async () => {
+  let read = 0;
+  const templateComment = () => (++read === 3 ? '' : fresh());
+  const failures = [{
+    match: /^CREATE DATABASE app_demo_evsrc_[0-9a-f]{12} TEMPLATE app_demo_stgtmpl OWNER/,
+    times: Infinity,
+    error: (sql) => psqlError(sql, 'template database "app_demo_stgtmpl" does not exist'),
+  }];
+  const { dbManager, calls, connections, restore } = loadDbManager({
+    templateComment, failures, privateTables: ['public.private_data'],
+  });
+  try {
+    const prepared = await dbManager.prepareStagingCloneSource('app_demo', { sourceId: 'shots-run-direct' });
+    assert.match(prepared.fingerprint, /^[0-9a-f]{64}$/);
+    assert.ok(Math.abs(Date.parse(prepared.refreshedAt) - Date.now()) < 60_000,
+      'a direct build is as fresh as the moment it was made');
+    const s = sqls(calls);
+    const copies = s.filter((sql) => sql.startsWith(`CREATE DATABASE ${prepared.templateDb} TEMPLATE app_demo_stgtmpl`));
+    assert.equal(copies.length, 2, 'the shared template was tried once more after the rebuild, then given up on');
+    // Order over the raw call stream: a TRUNCATE also ran on the rebuild's
+    // _next, so the prepared source's own steps are told apart by its db.
+    const stepAt = (pred) => calls.findIndex((c) => ['psql', 'pg'].includes(c.cmd) && pred(c.sql, c.db));
+    const direct = stepAt((sql) => sql === `CREATE DATABASE ${prepared.templateDb} TEMPLATE template0 OWNER ${prepared.templateDb}_owner`);
+    assert.ok(direct > -1, 'the prepared source is created from template0 instead');
+    assert.ok(restores(calls).some((c) => c.args.includes(prepared.templateDb)), 'and restored from the live source');
+    const truncateAt = stepAt((sql, db) => db === prepared.templateDb && /^TRUNCATE public\.private_data/.test(sql));
+    const locked = stepAt((sql) => sql === `ALTER DATABASE ${prepared.templateDb} WITH ALLOW_CONNECTIONS false`);
+    assert.ok(direct < truncateAt && truncateAt < locked, 'the redaction passes run on it before it is locked');
+    assert.ok(connections.every((c) => c.db !== prepared.templateDb),
+      'no shared-role ownership pass runs on a direct build');
+  } finally { restore(); }
+});
+
+test('a rebuild that itself fails falls back to the direct build too', async () => {
+  let read = 0;
+  const templateComment = () => (++read === 3 ? '' : fresh());
+  const failures = [{
+    match: /^CREATE DATABASE app_demo_evsrc_[0-9a-f]{12} TEMPLATE app_demo_stgtmpl OWNER/,
+    times: 1,
+    error: (sql) => psqlError(sql, 'template database "app_demo_stgtmpl" does not exist'),
+  }, {
+    match: /^CREATE DATABASE app_demo_stgtmpl_next TEMPLATE template0/,
+    times: Infinity,
+    error: (sql) => psqlError(sql, 'source database "app_demo" is being accessed by other users'),
+  }];
+  const { dbManager, calls, restore } = loadDbManager({ templateComment, failures });
+  try {
+    const prepared = await dbManager.prepareStagingCloneSource('app_demo', { sourceId: 'shots-run-rebuild-fails' });
+    const s = sqls(calls);
+    assert.ok(s.some((sql) => sql === `CREATE DATABASE ${prepared.templateDb} TEMPLATE template0 OWNER ${prepared.templateDb}_owner`),
+      'the prepared source is built directly when the template cannot be rebuilt either');
+    assert.ok(restores(calls).some((c) => c.args.includes(prepared.templateDb)));
+    assert.ok(s.some((sql) => sql === `ALTER DATABASE ${prepared.templateDb} WITH ALLOW_CONNECTIONS false`), 'and it is still finished and locked');
   } finally { restore(); }
 });
 

@@ -285,3 +285,169 @@ test('an answer for a prefix no longer under the caret is dropped; a 429 is not 
   await limited.runTimers();
   assert.equal(calls.filter((u) => u.endsWith('?q=zz')).length, 2);
 });
+
+// ── #4571: the menu belongs to the box being typed in ───────────────────
+//
+// The side panel's thread composer mounts through the same
+// GroupChat.mountThread the full change page takes, so all three controllers
+// are attached to it — but whichever composer attached LAST owned the
+// singleton `_input`, and every event handler read that one's value and
+// caret. With the panel open beside a tab that mounts a composer after it
+// (the Discussion tab, Messages, another thread), typing `@` in the panel
+// read a detached or hidden box and no menu opened.
+//
+// EmojiAutocomplete already retargets per event (`own()`); Mention and Ref
+// now do the same. These tests load a controller in a `vm` the way
+// loadMentionAutocomplete does and drive fake inputs whose listeners are
+// fired by hand, so what is under test is which box an event came from.
+
+function loadAutocomplete(name, { fetchImpl = async () => ok([]) } = {}) {
+  const vm = require('node:vm');
+  const start = gcJs.indexOf(`const ${name} = {`);
+  const end = gcJs.indexOf('\n};\n', start);
+  const src = gcJs.slice(start, end + 3);
+  const timers = [];
+  const doc = { activeElement: null };
+  const mkInput = (id) => {
+    const handlers = {};
+    const el = {
+      id,
+      value: '',
+      selectionStart: 0,
+      selectionEnd: 0,
+      addEventListener(type, fn) { (handlers[type] = handlers[type] || []).push(fn); },
+      fire(type, event) { for (const fn of handlers[type] || []) fn(event || {}); },
+      getAttribute: () => null,
+      setSelectionRange(pos) { el.selectionStart = el.selectionEnd = pos; },
+      focus() { doc.activeElement = el; },
+    };
+    return el;
+  };
+  const threadInput = mkInput('thread');
+  const generalInput = mkInput('general');
+  const ctx = {
+    fetch: fetchImpl,
+    document: doc,
+    setTimeout: (fn) => { timers.push(fn); return timers.length; },
+    clearTimeout: (id) => { if (id) timers[id - 1] = null; },
+    Map, Set, RegExp, Date, Array, encodeURIComponent,
+  };
+  vm.createContext(ctx);
+  const AC = vm.runInContext(`${src}\n${name}`, ctx);
+  const shown = [];
+  AC._render = () => { AC._open = true; shown.push(Array.from(AC._items, (item) => (typeof item === 'object' ? { ...item } : item))); };
+  // Record which box the singleton pointed at each time an OPEN menu was
+  // closed, so a test can see the close happened BEFORE the retarget took
+  // the input over. (close() also runs as a no-op from _sync after a
+  // retarget; those are not logged.)
+  const realClose = AC.close;
+  const closeLog = [];
+  AC.close = () => { if (AC._open) closeLog.push(AC._input); realClose.call(AC); };
+  const type = (input, text) => {
+    input.value = text;
+    input.setSelectionRange(text.length);
+    input.fire('input');
+  };
+  return { AC, threadInput, generalInput, shown, closeLog, doc, type };
+}
+
+test('an earlier-attached input still opens its own @ menu (#4571)', () => {
+  const { AC, threadInput, generalInput, shown, type } = loadAutocomplete('MentionAutocomplete');
+  AC._cacheBySlug.set('a', { users: ['alice', 'alan'], fetchedAt: Date.now() });
+  AC._cacheBySlug.set('b', { users: ['zoe'], fetchedAt: Date.now() });
+  // The side panel's thread composer attached first; a page tab's composer
+  // attached after it and took the singleton over.
+  AC.attach(threadInput, 'a');
+  AC.attach(generalInput, 'b');
+
+  // Typing `@al` in the earlier-attached thread box.
+  type(threadInput, '@al');
+
+  assert.equal(AC._input, threadInput, 'the menu answers for the box typed in');
+  assert.equal(AC._slug, 'a');
+  assert.equal(AC._open, true, 'the menu opened');
+  assert.deepEqual(shown.at(-1), ['alice', 'alan'], 'slug a’s candidates, not slug b’s');
+});
+
+test('an earlier-attached input still opens its own # menu (#4571)', () => {
+  const { AC, threadInput, generalInput, shown, type } = loadAutocomplete('RefAutocomplete');
+  AC._cacheBySlug.set('a', {
+    prs: [{ number: 12, title: 'Fix the header', kind: 'pr' }],
+    issues: [{ number: 1, title: 'Bug', kind: 'issue' }],
+    fetchedAt: Date.now(),
+  });
+  AC._cacheBySlug.set('b', {
+    prs: [{ number: 77, title: 'Other project', kind: 'pr' }],
+    issues: [],
+    fetchedAt: Date.now(),
+  });
+  AC.attach(threadInput, 'a');
+  AC.attach(generalInput, 'b');
+
+  type(threadInput, '#1');
+
+  assert.equal(AC._input, threadInput);
+  assert.equal(AC._slug, 'a');
+  assert.equal(AC._open, true, 'the menu opened');
+  assert.deepEqual(shown.at(-1), [
+    { number: 1, title: 'Bug', kind: 'issue' },
+    { number: 12, title: 'Fix the header', kind: 'pr' },
+  ], 'slug a’s items, not slug b’s');
+});
+
+test('switching boxes closes the other one’s open menu before retargeting (#4571)', () => {
+  const { AC, threadInput, generalInput, closeLog, type } = loadAutocomplete('MentionAutocomplete');
+  AC._cacheBySlug.set('a', { users: ['alice'], fetchedAt: Date.now() });
+  AC._cacheBySlug.set('b', { users: ['zoe'], fetchedAt: Date.now() });
+  AC.attach(threadInput, 'a');
+  AC.attach(generalInput, 'b');
+  type(threadInput, '@al');
+  assert.equal(AC._open, true);
+
+  // Now typing in the other box: the menu closes first — while it still
+  // belongs to the thread box — and then the singleton retargets.
+  type(generalInput, 'hello');
+
+  assert.equal(closeLog.at(-1), threadInput, 'close() ran before the retarget');
+  assert.equal(AC._open, false, 'the other box’s menu is closed');
+  assert.equal(AC._input, generalInput);
+  assert.equal(AC._slug, 'b');
+});
+
+test('focusing a box warms that box’s project (#4571)', async () => {
+  const calls = [];
+  let resolveFetch;
+  const { AC, threadInput, generalInput } = loadAutocomplete('MentionAutocomplete', {
+    fetchImpl: (url) => {
+      calls.push(url);
+      return new Promise((resolve) => { resolveFetch = resolve; });
+    },
+  });
+  AC.attach(threadInput, 'a');
+  AC.attach(generalInput, 'b');
+
+  threadInput.fire('focus');
+  assert.deepEqual(calls, ['/api/apps/a/mention-suggestions'],
+    'the focus warms the focused box’s project, not the last-attached one’s');
+  resolveFetch(ok(['alice']));
+  await new Promise(setImmediate);
+  assert.deepEqual([...AC._cacheBySlug.get('a').users], ['alice']);
+});
+
+test('the panel path keeps all three controllers; both menus retarget (#4571)', () => {
+  // The side panel's thread host mounts through GroupChat.mountThread
+  // (AppView.openTopicInPanel → _mountTopicThread), so the panel needs no
+  // wiring of its own — the pin is that the shared path still attaches all
+  // three to the thread input.
+  assert.match(gcJs, /MentionAutocomplete\.attach\(input, slug\);\s*\}\s*if \(typeof RefAutocomplete !== 'undefined'\) \{\s*RefAutocomplete\.attach\(input, slug\);\s*\}\s*\/\/ `:th` emoji shortcodes[\s\S]{0,200}?EmojiAutocomplete\.attach\(input\);/);
+  for (const [name, prop] of [['MentionAutocomplete', '_gcMentionSlug'], ['RefAutocomplete', '_gcRefSlug']]) {
+    const start = gcJs.indexOf(`const ${name} = {`);
+    const body = gcJs.slice(start, gcJs.indexOf('\n};\n', start));
+    assert.match(body, new RegExp(`input\\.${prop} = slug;`),
+      `${name} remembers the slug on the element`);
+    assert.match(body, new RegExp(`${name}\\.close\\(\\);\\s*${name}\\._input = input;\\s*${name}\\._slug = input\\.${prop};`),
+      `${name} retargets the menu to the box an event came from`);
+    assert.doesNotMatch(body, /_input === input\) [A-Za-z]+Autocomplete\._loadCandidates/,
+      `${name}'s focus handler warms unconditionally (the guard would skip a box the last attach moved past)`);
+  }
+});

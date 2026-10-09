@@ -143,7 +143,13 @@ export const APP_CATEGORY_DEFINITIONS: readonly Category[] = Object.freeze([
     // started or joined in this app's chat. That is this category's promise
     // word for word — a reply to your message on this app — so the one
     // switch governs both, and createThreadReplyNotifications checks it.
-    kinds: Object.freeze(['reply', 'thread_reply']),
+    //
+    // #4535 adds `issue_thread_reply`: somebody posted in a request's
+    // discussion after you did, or answered the request you filed. The same
+    // promise, so the same switch governs it too
+    // (createIssueThreadNotifications checks it) — one place to turn the
+    // conversation follow-ups off.
+    kinds: Object.freeze(['reply', 'thread_reply', 'issue_thread_reply']),
   }),
   Object.freeze({
     key: 'proposal_votes',

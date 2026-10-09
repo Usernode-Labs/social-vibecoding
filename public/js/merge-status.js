@@ -371,8 +371,8 @@
     }
     // 5b — checks blocked the merge (a test broke).
     if (check === 'failing') {
-      // BLOCKING failures only. Advisory rows are checks that have never
-      // been observed passing on this app — they report but do not block,
+      // BLOCKING failures only. Advisory rows are checks that have not yet
+      // passed on a change that merged — they report but do not block,
       // so counting them here would tell a reviewer the merge is held up by
       // failures that are not holding it up. Rows written before advisory
       // existed carry no flag and count, which is the old behaviour.

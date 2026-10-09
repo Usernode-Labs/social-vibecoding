@@ -144,9 +144,10 @@ async function migrate(config) {
   await seedStagingViewOnlyAdmin(pool);
   await seedStagingWalletUsers(pool);
   await seedStagingEmailCodeAccounts(pool);
-  // #4405: must run AFTER seedStagingEmailCodeAccounts (the check sign-in
-  // account it makes an app admin is seeded there) and AFTER
-  // seedStagingReadonlyDevTab (its live domain hangs off that app).
+  // #4405: must run AFTER seedCaptureAdminUser and
+  // seedStagingEmailCodeAccounts (the two accounts it makes app admins are
+  // seeded there) and AFTER seedStagingReadonlyDevTab (its live domain hangs
+  // off that app).
   await seedStagingCustomDomains(pool);
   await seedStagingPublicApiContributors(pool);
   await seedStagingVisuals(pool);
@@ -5933,12 +5934,18 @@ async function seedStagingMembersPanel(pool) {
 // nothing can act on them.
 //
 // The project the dialog is photographed on, `staging-demo-custom-domain`,
-// is managed by the check sign-in account (an app admin of it, the way
-// seedStagingAppAdminsPanel gives its roster app admins): the Custom domain
-// row shows only to whoever manages a project, and the declared checks sign
-// in as that account. It is a public, running project owned by the demo
-// user, so it changes nothing about what the account has made. Its claim is
-// still waiting for DNS, with the sentence the sweep would have recorded.
+// is managed by the account the declared checks sign in as (an app admin of
+// it, the way seedStagingAppAdminsPanel gives its roster app admins): the
+// Custom domain row shows only to whoever manages a project. That account
+// is `usernode-capture-admin` (selectCaptureTokens in services/visuals.js),
+// a VIEW-ONLY admin, so its admin rank never grants can_manage; only this
+// app_admins row does. The fixture once granted the email-code sign-in
+// account instead, which no check signs in as, and the ⋯ menu's Custom
+// domain check failed on every proposal. That account keeps its grant, so
+// a tester signing in with the documented password sees the row too. It is
+// a public, running project owned by the demo user, so it changes nothing
+// about what either account has made. Its claim is still waiting for DNS,
+// with the sentence the sweep would have recorded.
 // The read-only demo app carries a LIVE one, so Share there offers the
 // custom address with the Homeroom address named under it.
 async function seedStagingCustomDomains(pool) {
@@ -5949,12 +5956,13 @@ async function seedStagingCustomDomains(pool) {
                          repo_url, admin_usernames)
        VALUES (900140, 'Staging demo custom domain', 'staging-demo-custom-domain', 'running',
                'public', 'public', 900001, 'https://github.com/staging-demo/staging-demo-custom-domain',
-               ARRAY['staging-code-signin@usernode.test'])
+               ARRAY['usernode-capture-admin', 'staging-code-signin@usernode.test'])
        ON CONFLICT DO NOTHING`
     );
     await pool.query(
       `INSERT INTO app_admins (app_id, user_id)
-       SELECT 900140, id FROM users WHERE username = 'staging-code-signin@usernode.test'
+       SELECT 900140, id FROM users
+        WHERE username IN ('usernode-capture-admin', 'staging-code-signin@usernode.test')
        ON CONFLICT (app_id, user_id) DO NOTHING`
     );
     await pool.query(
@@ -11218,9 +11226,9 @@ async function seedStagingChecksAdvisoryCard(pool, config) {
     'passing', passingResults, '445566778899aabbccddeeff0011223344556677'
   );
 
-  // Matching history: the 40 passes and the blocking failure have all been
-  // observed passing at some point (so they gate), the advisory ones never
-  // have (first_passed_at NULL). Without these rows the cards would claim a
+  // Matching history: the 40 passes and the blocking failure have all
+  // passed on a change that merged (so they gate: merged_pass_at), the
+  // advisory ones never have. Without these rows the cards would claim a
   // graduation state the Dev-side data doesn't back up.
   const crypto = require('crypto');
   const key = (name, p) => crypto.createHash('sha256').update(`${name}\n${p}`).digest('hex');
@@ -11228,8 +11236,10 @@ async function seedStagingChecksAdvisoryCard(pool, config) {
   for (const r of graduated) {
     await pool.query(
       `INSERT INTO app_check_history
-         (app_id, check_key, check_name, check_path, first_passed_at, last_passed_at, last_seen_at, pass_count)
-       VALUES ($1, $2, $3, $4, NOW() - INTERVAL '30 days', NOW() - INTERVAL '1 day', NOW(), 12)
+         (app_id, check_key, check_name, check_path, first_passed_at, last_passed_at, last_seen_at, pass_count,
+          merged_pass_at, merged_pass_known)
+       VALUES ($1, $2, $3, $4, NOW() - INTERVAL '30 days', NOW() - INTERVAL '1 day', NOW(), 12,
+               NOW() - INTERVAL '30 days', TRUE)
        ON CONFLICT (app_id, check_key) DO NOTHING`,
       [appId, key(r.name, r.path), r.name, r.path]
     );
@@ -11237,8 +11247,8 @@ async function seedStagingChecksAdvisoryCard(pool, config) {
   for (const r of advisoryFailures) {
     await pool.query(
       `INSERT INTO app_check_history
-         (app_id, check_key, check_name, check_path, last_failed_at, last_seen_at, fail_count)
-       VALUES ($1, $2, $3, $4, NOW() - INTERVAL '1 day', NOW(), 5)
+         (app_id, check_key, check_name, check_path, last_failed_at, last_seen_at, fail_count, merged_pass_known)
+       VALUES ($1, $2, $3, $4, NOW() - INTERVAL '1 day', NOW(), 5, TRUE)
        ON CONFLICT (app_id, check_key) DO NOTHING`,
       [appId, key(r.name, r.path), r.name, r.path]
     );

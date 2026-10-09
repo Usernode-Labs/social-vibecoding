@@ -272,6 +272,10 @@ function leftOverQueue(row) {
 function stageOf(input, { now = new Date() } = {}) {
   const row = leftOverQueue(input) ? { ...input, queue_id: null, started_at: null, enqueued_at: null, queue_reason: null } : input;
   const proposalOpen = row.proposal_status === 'promoted' || row.proposal_status === 'merging';
+  // #4539: the request itself was closed. Its waiting plan and the open
+  // question about it no longer wait on the person, and the ready plan reads
+  // as not in progress; a proposal still open shows its own state.
+  const closed = row.request_closed === true;
   const it = row.first_version ? 'the description' : 'the request';
   if (proposalOpen) {
     if (row.started_at) {
@@ -287,7 +291,7 @@ function stageOf(input, { now = new Date() } = {}) {
         ? { stage: 'fix_queued', since: row.enqueued_at, doing: 'waiting for a free builder to fix what its tests found' }
         : { stage: 'followup_queued', since: row.enqueued_at, doing: 'waiting for a free builder to follow up on the newest replies on the change' };
     }
-    if (row.question_at) {
+    if (row.question_at && !closed) {
       return { stage: 'question', since: row.question_at, doing: 'waiting for an answer to the question asked', waitingOn: 'them' };
     }
     if (row.proposal_status === 'merging') {
@@ -305,7 +309,7 @@ function stageOf(input, { now = new Date() } = {}) {
   if (row.started_at) {
     return { stage: 'reading', since: row.started_at, doing: `reading ${it} to decide whether to ask a question or build it`, limit: 'reading' };
   }
-  if (row.question_at) {
+  if (row.question_at && !closed) {
     return { stage: 'question', since: row.question_at, doing: 'waiting for an answer to the question asked', waitingOn: 'them' };
   }
   // The newest look decided to build it, and nothing has finished it yet.
@@ -320,7 +324,10 @@ function stageOf(input, { now = new Date() } = {}) {
       };
     }
     // B6: a first version's plan, sent to its creator, waits for Build it.
+    // #4539: not on a closed request — it stops waiting, and reads as not
+    // built because the request was closed (outcomeOf).
     if (row.plan_waiting_at && !row.build_waiting_at && !row.build_session_id) {
+      if (closed) return null;
       return {
         stage: 'plan', since: row.plan_waiting_at, waitingOn: 'them',
         doing: 'the plan is ready and waits for Build it',
@@ -374,6 +381,12 @@ function outcomeOf(row) {
   if (row.proposal_status === 'merged') return 'approved and live';
   if (row.proposal_status === 'closed') return 'the change was closed without going live';
   if (row.mode !== 'live') return null;
+  // #4539: the request was closed while its plan still waited for Build it:
+  // it was not built because the request was closed.
+  if (row.request_closed === true && row.verdict === 'ready' && row.build_ok == null
+    && row.plan_waiting_at && !row.build_session_id) {
+    return 'not built: the request was closed';
+  }
   if (row.build_ok === false && /^skipped:/.test(String(row.build_error || ''))) {
     return `not built: ${String(row.build_error).replace(/^skipped:\s*/, '').slice(0, 200)}`;
   }
@@ -468,6 +481,13 @@ async function requestRows(pool, userId) {
             cs.check_state, cs.check_phase,
             cs.checks_progress, cs.checks_checked_at AS checks_at, cs.test_results,
             COALESCE(cs.promoted_at, cs.created_at) AS proposal_at, cs.live_at AS merged_at,
+            -- #4539: the request's own state, newest row by id (issues is not
+            -- unique on (app_id, github_issue_number), so a join could
+            -- duplicate rows). Null: no mirrored issue, or a first version
+            -- before its request is filed. Null reads as not closed.
+            (SELECT ri.status = 'closed' FROM issues ri
+              WHERE ri.app_id = m.app_id AND ri.github_issue_number = m.issue_number
+              ORDER BY ri.id DESC LIMIT 1) AS request_closed,
             oq.created_at AS question_at
        FROM mine m
        JOIN apps a ON a.id = m.app_id

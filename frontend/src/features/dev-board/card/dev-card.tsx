@@ -455,6 +455,28 @@ export function Badge({ b }: { b: BadgeSpec }): ReactNode {
 }
 
 /**
+ * The meta line's category chip, alone: the coloured chip the card draws
+ * among its tags (a button that opens the category vote), unchanged. The
+ * Workshop's row draws it first on its tags line (#4486, work-row.tsx).
+ * Null where the card carries none: an item nobody has filed under a
+ * category, a session, or a row under a By category heading, whose card
+ * model leaves it out (AppView._workshopView).
+ */
+export function CategoryChip({ card }: { card: DevCardModel }): ReactNode {
+  const b = (card.badges || []).find((x) => x && x.t === 'attr' && x.field === 'category');
+  return b ? <Badge b={b} /> : null;
+}
+
+/**
+ * The meta line's 💬 count, alone, drawn only when there is one, as the meta
+ * line draws it (metaLineNodes).
+ */
+export function ChatCount({ card }: { card: DevCardModel }): ReactNode {
+  const count = card.chatCount || 0;
+  return count > 0 ? <Badge b={{ t: 'chat', key: 'chat', count }} /> : null;
+}
+
+/**
  * The status band caps the STATE chips at four; the pill, the linkage and the
  * 💬 count ride outside the cap (`_cardBadgesHtml`'s contract, transcribed
  * with the markup it governed). The tags — priority, assignee, category —

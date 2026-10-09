@@ -120,6 +120,19 @@ test('a mention inside a topic thread still opens that topic, where the message 
   assert.deepEqual(nav(calls), [['openAppTab', 'garden-ab12', 'dev', { subTab: 'topic', ref: { kind: 'issue', id: 44 } }]]);
 });
 
+// #4535: a message in a request's discussion opens that request's
+// discussion, and the row names the request it talks about.
+test('a request discussion reply opens the request and names it', () => {
+  const { N, calls } = load();
+  N.items = [row({ kind: 'issue_thread_reply', chatMessageId: 9, threadType: 'issue', threadRef: '44', detail: '44' })];
+  N._onItemClick(1);
+  assert.deepEqual(nav(calls), [['openAppTab', 'garden-ab12', 'dev', { subTab: 'topic', ref: { kind: 'issue', id: 44 } }]]);
+  const views = N._rowView({ ...N.items[0], createdAt: new Date().toISOString() });
+  assert.equal(views.label, 'Replied on request #44');
+  assert.equal(N._rowView({ ...N.items[0], detail: null, createdAt: new Date().toISOString() }).label,
+    'Replied on a request', 'without a number on record, the row still names the kind of thing');
+});
+
 test('the other rows that landed on the app chat land on the discussion too', () => {
   // The weekly card is a chat message; an app-health or a deletion-attempt
   // row has no page of its own and fell through to the chat. Its address is

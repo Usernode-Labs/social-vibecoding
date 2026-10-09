@@ -366,7 +366,8 @@ export interface ChecksProgress {
 export interface RowTag {
   label: string;
   tone: 'plain' | 'run' | 'ok' | 'warn' | 'bad';
-  glyph?: 'eye';
+  /** `lock`: only the viewer can see it ("Only you", "Spec draft · only you", #4486). */
+  glyph?: 'eye' | 'lock';
   /** #4485: the fewer words the row draws ("Taking shots"); `label` stays
    *  the chip's tooltip and what a screen reader says. */
   short?: string;
@@ -400,6 +401,11 @@ export interface RowBrief {
   stage: 'request' | 'worked' | 'vote' | 'live';
   /** When it was made (epoch ms; 0 when unknown). */
   at: number;
+  /**
+   * The card's own age, as its meta line says it ("11h ago"), for the row's
+   * line in words (#4486). '' when the card names no time.
+   */
+  ago: string;
   tags: RowTag[];
   /** One part per Yes it needs; `ask` when this viewer's vote is wanted. */
   vote: { yes: number; need: number; ask: boolean } | null;
@@ -551,6 +557,21 @@ export interface DevWorkshopView {
      * when there is none.
      */
     descriptionHtml?: string;
+    /**
+     * #4490: the picture a change shows when it has no before & after shots,
+     * in this order: its author's diagram (services/diagram.js, drawn by
+     * lib/diagram), a group decision's own facts drawn the same way, then
+     * "What it touches" (services/proposal-touches.js). Each is untyped
+     * here and read defensively where it is drawn.
+     */
+    diagram?: unknown;
+    /** Who supplied `diagram`: its author. */
+    diagramSource?: string | null;
+    /** A group decision's facts its diagram is drawn from (lib/diagram/decision.ts). */
+    decision?: unknown;
+    touches?: unknown;
+    /** The author declared that nothing on screen changes (visible changes impact "none"). */
+    nothingVisible?: boolean;
     /**
      * The item's picture: the first before/after capture pair the checks
      * shot, one still per side. Null when there is none, and the feed then

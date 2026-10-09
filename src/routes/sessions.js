@@ -5898,6 +5898,20 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     const durableStop = turnLifecycle.stopRequestOf(durableTurn);
     const stopping = stopHandleNow ? !!stopHandleNow.stopped : !!durableStop;
 
+    // #4533: what the running turn is and since when, off its record, for
+    // get_change: a busy change said nothing of what held it (PR #4533's
+    // checks fix waited an hour behind one). Its mode ('build', 'scout',
+    // 'sync', 'shots'), or the Homeroom bot's follow-up its mark names
+    // ('homeroom_bot_checks_fix', 'homeroom_bot_reply').
+    let turn = null;
+    if (durableTurn) {
+      const mark = require('../services/homeroom-bot-followup').turnMarkOf(durableTurn);
+      turn = {
+        startedAt: durableTurn.startedAt || null,
+        kind: mark ? `homeroom_bot_${mark.followUp}` : (durableTurn.mode || null),
+      };
+    }
+
     // #937: WHEN the stop was requested, so a reloading client (or a second
     // tab joining mid-stop) rebuilds its escalation ladder at the right
     // rung instead of restarting a calm "Stopping…" that never escalates.
@@ -5986,14 +6000,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     // fallback read this the same way the resolving banner reads
     // `resolving`.
     // Keys: busy, progress, phase, stopping, stopRequestedAt, stoppable,
-    // estimate
+    // estimate, turn ({ startedAt, kind } | null, #4533)
     // (+ resolving, sync, status, and `delivery` when asked for, #3177).
     // `estimate` is { text, remainingSeconds,
     // estimatedAt } | null — see workerProgress.setEstimate /
     // clearEstimate. `stopRequestedAt` is epoch ms | null (#937) and drives
     // the client's stop-escalation ladder across reloads.
     res.json({
-      busy, progress, phase, stopping, stopRequestedAt, stoppable, estimate,
+      busy, progress, phase, stopping, stopRequestedAt, stoppable, estimate, turn,
       spend: busy ? workerProgress.get(sessionId)?.spend || null : null,
       agentBackend: progressAgentBackend,
       agentModel: progressAgentModel,
@@ -11267,6 +11281,10 @@ function buildHostedCodingWorkflowGuidance({ runLocally = false } = {}) {
   tool with concrete reviewer-facing claims and real user flows (or impact
   "none" with a specific reason for a non-visual change). If the tool fails,
   report the failure; never claim that intent was recorded when it was not.
+- When the change is a rename, a changed flow, a data or settings change, or
+  a measured improvement, also call declare_diagram once with that kind; it
+  is drawn on the change's card when it has no before/after shots. Mermaid
+  is only for a change declared with impact "none".
 - Implement the change, run focused checks, commit it on the existing session
   branch, and finish the turn. The Homeroom harness handles push, pull request
   creation, staging, checks, and scheduling the paired shots run after
@@ -13580,3 +13598,11 @@ const MAYOR_TURN_DEPS = Object.freeze({
 });
 
 module.exports = { requestSessionStop, changePlanFor, MAYOR_TURN_DEPS, canViewSession, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, captureSpecOutput, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, OPENROUTER_PLATFORM_ISSUE_GUIDANCE, DISPATCHED_TURN_INSTRUCTIONS, DEV_CHAT_SUMMARY_RULE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+// #4524: the topic page's fast open asks GET /api/apps/:slug/proposals/:id
+// for its item beside the board load, and production serves an active or
+// paused session there when it is the viewer's own or shared. The demo rows
+// the generators above make live only in the session lists' responses, so
+// the single proposal route resolves them through these same generators
+// (see its staging fallback in routes/votes.js).
+module.exports.stagingMockOwnSessions = stagingMockOwnSessions;
+module.exports.stagingMockSharedSessions = stagingMockSharedSessions;

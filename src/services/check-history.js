@@ -18,17 +18,33 @@
 //     to pass or its own author's proposal is blocked. That is the cheapest
 //     moment to find out a check is wrong or grossly flaky, and the person
 //     it inconveniences is the one who can fix it.
-//   * observed passing at least once → BLOCKING.
-//   * seen, never passed             → ADVISORY. It runs, its failures show
-//     on the card, and it blocks nobody.
+//   * passed on a proposal that MERGED → BLOCKING for every proposal.
+//   * passed on this proposal          → BLOCKING for this proposal only.
+//   * seen, never passed on main       → ADVISORY. It runs, its failures
+//     show on the card, and it blocks nobody.
 //
 // That last case is a backlog, not a policy. The manifest reader used to
 // keep only the first 12 declared checks, so this repo's 229 tail checks
 // had never executed; turning them all on at once with blocking power would
 // have blocked the very next proposal on hundreds of failures it did not
 // cause. A check in that state is unfinished, and it earns its gate by
-// passing once. Nothing NEW can enter that state, because a new check has
-// to pass its first runs to land at all.
+// passing on a change that lands. Nothing NEW can enter that state, because
+// a new check has to pass its first runs to land at all.
+//
+// WHY "MERGED", and not "passed anywhere" as it was (9 Oct 2026). The
+// Custom domain check (#4405) failed on every proposal from the day it
+// landed, because its fixture made the wrong account the project's
+// manager. The fix (#4576) passed it on its own preview at 18:40, and that
+// one pass made the check block every other proposal at once, though none
+// of them contained the fix and it had not merged: about fifteen proposals,
+// some already approved, were stuck behind a check they could not pass for
+// the hour the fix waited for its vote. A pass on an unmerged proposal says
+// the check can pass with that proposal's code, which is not main's. So a
+// proposal's passes count for itself at once (its later pushes cannot
+// quietly regress what it already passed: chat_sessions.checks_earned_keys)
+// and for everybody once it merges (settleMergedPasses, which stamps
+// merged_pass_at). services/fixed-check-sync.js then brings the proposals
+// still failing a check that main now passes up to date.
 //
 // `consecutive_passes` no longer decides any of this. Its job is the FLAKY
 // tag: a check that has failed and then passed carries one, and sheds it
@@ -83,15 +99,58 @@ const NEW_CHECK_RUNS = 3;
 // its own gate.
 const MAX_NEW_CHECK_REPEATS = 40;
 
-// Every check this app has ever been seen passing. One query per checks
-// run; a few hundred rows is nothing.
-async function loadGraduated(pool, appId) {
+// A proposal's own session id, when it is one. Main watch runs the unit
+// suite under a string id ('main-12'), which has no row to read or write.
+function proposalId(sessionId) {
+  const id = Number(sessionId);
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
+// Fold the passes of every merged proposal not yet folded into the app's
+// history: each check one of them earned now blocks everybody. Done here,
+// on the read, rather than by each of the merge's paths (routes/votes.js
+// finalizeMerge, the merge-followups machine, a stacked change included in
+// another), so no way of landing can forget it. Claims each merged row
+// once (checks_earned_settled_at) in the same statement, and COALESCE keeps
+// the first merge's stamp. Never throws; a failure leaves the rows for the
+// next read.
+async function settleMergedPasses(pool, appId) {
+  if (!pool || !appId) return 0;
+  try {
+    const { rowCount } = await pool.query(
+      `WITH merged AS (
+         UPDATE chat_sessions
+            SET checks_earned_settled_at = NOW()
+          WHERE app_id = $1 AND status = 'merged'
+            AND checks_earned_keys IS NOT NULL
+            AND checks_earned_settled_at IS NULL
+         RETURNING checks_earned_keys
+       )
+       UPDATE app_check_history h
+          SET merged_pass_at = COALESCE(h.merged_pass_at, NOW())
+         FROM (SELECT DISTINCT unnest(checks_earned_keys) AS check_key FROM merged) m
+        WHERE h.app_id = $1 AND h.check_key = m.check_key`,
+      [appId]
+    );
+    return rowCount || 0;
+  } catch (err) {
+    log.warn('check-history', 'Settling merged passes failed (non-fatal)', { appId, err: err.message });
+    return 0;
+  }
+}
+
+// The checks that block for this run: every check a merged proposal has
+// passed, and every check `sessionId` itself has passed on an earlier head.
+// One query per checks run, plus one for the proposal's own; a few hundred
+// rows is nothing.
+async function loadGraduated(pool, appId, { sessionId = null } = {}) {
   const out = new Set();
   if (!pool || !appId) return out;
+  await settleMergedPasses(pool, appId);
   try {
     const { rows } = await pool.query(
       `SELECT check_key FROM app_check_history
-        WHERE app_id = $1 AND first_passed_at IS NOT NULL`,
+        WHERE app_id = $1 AND merged_pass_at IS NOT NULL`,
       [appId]
     );
     for (const r of rows) out.add(r.check_key);
@@ -103,6 +162,21 @@ async function loadGraduated(pool, appId) {
     log.warn('check-history', 'Graduated-set load failed — treating all checks as advisory', {
       appId, err: err.message,
     });
+    return out;
+  }
+  const own = proposalId(sessionId);
+  if (own) {
+    try {
+      const { rows } = await pool.query(
+        'SELECT checks_earned_keys FROM chat_sessions WHERE id = $1 AND app_id = $2',
+        [own, appId]
+      );
+      for (const key of rows[0]?.checks_earned_keys || []) out.add(key);
+    } catch (err) {
+      // The app-wide set still stands; only this proposal's own passes are
+      // missing, which can under-block it this once and never over-block.
+      log.warn('check-history', 'Own passes load failed (non-fatal)', { appId, sessionId: own, err: err.message });
+    }
   }
   return out;
 }
@@ -147,14 +221,16 @@ async function bootstrapIfEmpty(pool, appId, declaredTests) {
       const base = params.length;
       params.push(appManifest.checkKey(t.name, t.path), String(t.name || ''), String(t.path || ''));
       // At the threshold, not at one: this row exists to REPRODUCE the
-      // gating set of build zero, so it has to be blocking immediately.
-      values.push(`($1, $${base + 1}, $${base + 2}, $${base + 3}, NOW(), NOW(), NOW(), ${GRADUATION_PASSES})`);
+      // gating set of build zero, so it has to be blocking immediately,
+      // for every proposal (merged_pass_at), as main's gate was.
+      values.push(`($1, $${base + 1}, $${base + 2}, $${base + 3}, NOW(), NOW(), NOW(), ${GRADUATION_PASSES}, NOW(), TRUE)`);
     }
     if (!values.length) return 0;
     await pool.query(
       `INSERT INTO app_check_history
          (app_id, check_key, check_name, check_path,
-          first_passed_at, last_passed_at, last_seen_at, consecutive_passes)
+          first_passed_at, last_passed_at, last_seen_at, consecutive_passes,
+          merged_pass_at, merged_pass_known)
        VALUES ${values.join(', ')}
        ON CONFLICT (app_id, check_key) DO NOTHING`,
       params
@@ -173,11 +249,16 @@ async function bootstrapIfEmpty(pool, appId, declaredTests) {
 //
 // `first_passed_at` is stamped with COALESCE so it only ever records the
 // FIRST pass; `last_failed_at` never clears it. That asymmetry is the
-// no-demotion rule expressed in SQL.
+// no-demotion rule expressed in SQL. It is the first pass ANYWHERE, kept
+// for the record; what gates is merged_pass_at (settleMergedPasses).
+//
+// With `sessionId`, the checks this run passed that no merge has made
+// blocking yet are added to that proposal's own checks_earned_keys: they
+// block its later heads, and everybody's once it merges.
 //
 // Called only after storeChecks() reports it actually wrote — a run whose
 // snapshot was discarded as stale must not move history either.
-async function recordRun(pool, appId, rows) {
+async function recordRun(pool, appId, rows, { sessionId = null } = {}) {
   if (!pool || !appId || !Array.isArray(rows) || !rows.length) return 0;
   const capped = rows.slice(0, MAX_ROWS_PER_RUN);
   try {
@@ -219,7 +300,7 @@ async function recordRun(pool, appId, rows) {
       `INSERT INTO app_check_history AS h
          (app_id, check_key, check_name, check_path,
           first_passed_at, last_passed_at, last_failed_at, last_seen_at,
-          pass_count, fail_count, consecutive_passes)
+          pass_count, fail_count, consecutive_passes, merged_pass_known)
        SELECT v.app_id, v.check_key, v.check_name, v.check_path,
               CASE WHEN v.passes > 0 THEN NOW() ELSE NULL END,
               CASE WHEN v.passes > 0 THEN NOW() ELSE NULL END,
@@ -229,12 +310,17 @@ async function recordRun(pool, appId, rows) {
               v.fails,
               -- One failure anywhere in the run ends the streak, however
               -- many passes came with it.
-              CASE WHEN v.fails > 0 THEN 0 ELSE v.passes END
+              CASE WHEN v.fails > 0 THEN 0 ELSE v.passes END,
+              -- Written explicitly, so the schema's one-time backfill of
+              -- merged_pass_at (which reads a NULL here as "from before
+              -- the merged rule") never reaches a row made under it.
+              TRUE
          FROM (VALUES ${values.join(', ')})
               AS v(app_id, check_key, check_name, check_path, passes, fails)
        ON CONFLICT (app_id, check_key) DO UPDATE SET
          check_name = EXCLUDED.check_name,
          check_path = EXCLUDED.check_path,
+         merged_pass_known = TRUE,
          -- COALESCE, so the first observed pass is the one that sticks and
          -- a later failure can never un-graduate the check.
          first_passed_at = COALESCE(h.first_passed_at, EXCLUDED.first_passed_at),
@@ -252,6 +338,29 @@ async function recordRun(pool, appId, rows) {
            ELSE 0 END`,
       params
     );
+    const own = proposalId(sessionId);
+    const passed = capped
+      .filter((r) => r && r.checkKey && (Number.isInteger(r.passes) ? r.passes > 0 : !!r.passed))
+      .map((r) => String(r.checkKey));
+    if (own && passed.length) {
+      // Only what a merge has not already made blocking for everybody, so
+      // the list stays the handful of new or backlog checks, not the suite.
+      // A row already folded in after its merge is left alone.
+      await pool.query(
+        `UPDATE chat_sessions cs
+            SET checks_earned_keys = NULLIF(ARRAY(
+                  SELECT DISTINCT k
+                    FROM unnest(COALESCE(cs.checks_earned_keys, '{}'::text[]) || $3::text[]) AS k
+                   WHERE NOT EXISTS (
+                     SELECT 1 FROM app_check_history h
+                      WHERE h.app_id = $2 AND h.check_key = k AND h.merged_pass_at IS NOT NULL)
+                   ORDER BY k), '{}'::text[])
+          WHERE cs.id = $1 AND cs.app_id = $2 AND cs.checks_earned_settled_at IS NULL`,
+        [own, appId, passed]
+      ).catch((err) => log.warn('check-history', 'Own passes record failed (non-fatal)', {
+        appId, sessionId: own, err: err.message,
+      }));
+    }
     await pool.query(
       `DELETE FROM app_check_history
         WHERE app_id = $1 AND last_seen_at < NOW() - make_interval(days => $2)`,
@@ -325,6 +434,7 @@ async function loadFlakeRates(pool, appId) {
 
 module.exports = {
   loadGraduated,
+  settleMergedPasses,
   loadSeen,
   loadFlakeRates,
   GRADUATION_PASSES,
