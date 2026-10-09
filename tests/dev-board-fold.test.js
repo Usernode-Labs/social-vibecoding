@@ -1,20 +1,23 @@
-// The Board's columns fold their cards (#1787).
+// The Board's columns drew every card at full size — head, meta line,
+// status band, action band, ⋯ — which is what made a busy board busy. #1787
+// folded them; #4486 goes further: the board's items are the Workshop's
+// one-line rows now, and a row opens its page in the panel beside the board
+// rather than unfolding in place. The fold itself survives where a card is
+// still drawn — `?cards=open` renders every card at full size exactly as
+// the fold left it, and the Workshop's themes lanes still fold. This file
+// pins:
 //
-// The four kanban columns drew every card at full size — head, meta line,
-// status band, action band, ⋯ — which is what made a busy board busy. They
-// draw the Workshop's one-line row now and unfold the one you tap into the
-// dense card, in place, through the same fold the Workshop uses
-// (frontend/src/features/dev-board/card/fold.tsx). This file pins:
-//
-//   * every card row renders folded, carrying the item's data-*-row hook;
+//   * every board item renders as one of the Workshop's rows, naming its
+//     item for the panel opener (#4486) — DELIBERATE, replacing the pins on
+//     the folded row the board used to draw;
 //   * `?cards=open` renders every card at full size, hooks intact — the
 //     board as it was, and the state the checks that read a card's anatomy
 //     run in;
-//   * the column owns which card is open, one per column;
+//   * the board holds no fold state; the cards it draws it draws open;
 //   * the delegated #dev-body open handler stands aside inside a fold;
-//   * `?shot=board-unfold` taps the first folded row for the capture;
+//   * `?shot=board-unfold` taps the first row for the capture;
 //   * the declared checks that reach into a board card's anatomy carry
-//     `cards=open`, and two pin the fold itself.
+//     `cards=open`, and the open card's fold mark is pinned.
 //
 // Run with: node --test tests/dev-board-fold.test.js
 
@@ -88,7 +91,7 @@ function makeAppView({ search = '' } = {}) {
 const cardRowsOf = (view) => view.cols.reduce((n, c) => n + c.rows.filter((r) => r.t === 'card').length, 0);
 const count = (html, re) => (html.match(re) || []).length;
 
-test('every board card draws folded: one row per card, no card face, the item’s hook on the row', () => {
+test('every board item draws as the Workshop’s row: one row per item, no card, the item named for the panel (#4486)', () => {
   const AppView = makeAppView();
   const view = AppView._kanbanView();
   const cards = cardRowsOf(view);
@@ -96,23 +99,22 @@ test('every board card draws folded: one row per card, no card face, the item’
   assert.equal(view.unfolded, false);
 
   const html = kanbanHtml(AppView);
-  assert.equal(count(html, /class="dev-ws-rowwrap"/g), cards, 'one fold wrapper per card');
-  assert.equal(count(html, /class="dev-ws-rowwrap dev-ws-rowwrap-open"/g), 0, 'and none of them open');
-  assert.ok(!html.includes('gc-vote-item'), 'no card face is drawn while everything is folded');
-  assert.equal(count(html, /class="dev-ws-row hover:bg-zinc-50 dark:hover:bg-zinc-800"[^>]*aria-expanded="false"/g), cards,
-    'each row is a closed disclosure wearing the card’s own hover');
-  // The hooks the checks and the lookups name an item by ride on the row.
-  assert.match(html, /class="dev-ws-row[^"]*"[^>]*data-ws-row="issue:1575"[^>]*data-issue-row="1575"/);
-  assert.match(html, /class="dev-ws-row[^"]*"[^>]*data-ws-row="proposal:34"[^>]*data-proposal-row="34"/);
-  // And the row keeps the card's edge and number, as on the Workshop — the
-  // number as the card's own link, from the card's own meta line.
-  assert.match(html, /class="dev-ws-row[^"]*"[^>]*data-edge="[a-z]+"[^>]*data-ws-row="issue:1575"/);
-  assert.match(html, /<span class="dev-ws-row-meta"><a href="[^"]*"[^>]*class="font-mono[^"]*"[^>]*>#1575<\/a>/);
-  assert.match(html, /<span class="dev-ws-row-meta"><a href="[^"]*"[^>]*class="font-mono[^"]*"[^>]*>PR#1540<\/a> · evan · /,
-    'number · author · when, dotted as the card writes them');
-  // The proposal's vote rides on its row's LAST line, at the right end, as
-  // the Workshop's rows carry it and as the card's bar puts it.
-  assert.match(html, /data-ws-row="proposal:34"[\s\S]*?<span class="dev-ws-row-band">[\s\S]*?<span class="dev-ws-row-trailing"><button [^>]*class="dev-vote-btn"/);
+  // DELIBERATE (#4486): the board no longer draws the fold — no wrapper, no
+  // disclosure row, no card face. Each item is one of the Workshop's rows
+  // (#4457), and the row opens its page beside the board.
+  assert.equal(count(html, /class="dev-ws-rowwrap/g), 0, 'no fold wrapper is drawn');
+  assert.ok(!html.includes('gc-vote-item'), 'no card face is drawn while the board is rows');
+  assert.equal(count(html, /class="dev-ws-wrow"/g), cards, 'one row per item');
+  // The row names its item for the panel opener — the hook the declared
+  // checks were re-pointed to when the cards' own hooks left the board.
+  assert.match(html, /class="dev-ws-wrow" data-ws-row="issue:1575" data-ws-kind="request" data-ws-open="issue:1575"/);
+  assert.match(html, /data-ws-row="proposal:34" data-ws-kind="change" data-ws-open="proposal:34"/);
+  // The row's title is the item's own link.
+  assert.match(html, /<a class="dev-ws-wrow-link" href="#app\/demo-app\/dev\/issues\/1575">/);
+  // The proposal's vote rides its row's status line, as the Workshop's rows
+  // carry it, with the row's ☰ beside it.
+  assert.match(html, /data-ws-row="proposal:34"[\s\S]*?<span class="dev-ws-wvote" data-ws-vote="">[\s\S]*?<button type="button" class="dev-vote-btn"/);
+  assert.match(html, /data-ws-row="proposal:34"[\s\S]*?data-card-menu="proposal:34"/);
 });
 
 test('?cards=open draws every card at full size, hooks intact: the board as it was', () => {
@@ -178,12 +180,16 @@ test('the view carries what the open card needs, and reads ?cards=open per build
   assert.equal(typeof bare._cardsOpen(), 'boolean');
 });
 
-test('the column owns which card is open, one per column, through the shared fold', () => {
-  // State in the component, not the view model: the WS-driven republishes
-  // that repaint the board must not fold what somebody has open.
-  assert.match(KANBAN, /const \[openKey, setOpenKey\] = useState<string \| null>\(null\);/);
-  assert.match(KANBAN, /open: unfolded \|\| openKey === row\.key,/);
-  assert.match(KANBAN, /onToggle: \(\) => setOpenKey\(\(k\) => \(k === row\.key \? null : row\.key\)\),/);
+test('the board holds no fold state; the cards it draws it draws open, through the shared fold (#4486)', () => {
+  // DELIBERATE (#4486): a row on the board opens its page beside the board;
+  // nothing unfolds in place, so the component holds no open-card state —
+  // the WS-driven republishes cannot fold what somebody has open because
+  // nothing is open there to fold.
+  assert.ok(!/useState/.test(KANBAN), 'no fold state in the board component');
+  // `?cards=open` is the one state that draws cards: every row is handed to
+  // the shared fold OPEN, seated in the action band, with no session line.
+  assert.match(KANBAN, /open: true,/);
+  assert.match(KANBAN, /onToggle: \(\) => \{\},/);
   assert.match(KANBAN, /slug=\{v\.slug \|\| ''\}/);
   assert.match(KANBAN, /unfolded=\{!!v\.unfolded\}/);
   assert.match(KANBAN, /detail: 'actions',/, 'the Board seats Open card in the action band');
@@ -302,16 +308,17 @@ test('?shot=board-unfold taps the first folded row, through the real event path'
 });
 
 test('the fold mark: the same two chevrons at both sizes, stretched open on the card, and the button that folds it', () => {
-  // Folded: every row wears the closed mark — decoration, on a row that is
-  // itself the disclosure control — as the row's last child.
+  // DELIBERATE (#4486): the board's rows open their page instead of folding,
+  // so the default board draws no closed mark at all — the closed mark
+  // survives on the surfaces that still fold (the Workshop's themes lanes).
   const closed = makeAppView();
   const cards = cardRowsOf(closed._kanbanView());
   const html = kanbanHtml(closed);
   const esc = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const GLYPH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
     + '<path class="dev-fold-top" d="M8.25 9L12 5.25 15.75 9"></path><path class="dev-fold-bar" d="M12 5.5v13"></path><path class="dev-fold-bottom" d="M8.25 15L12 18.75 15.75 15"></path></svg>';
-  assert.equal(count(html, new RegExp(esc('<span class="dev-fold-mark" aria-hidden="true">' + GLYPH + '</span></div>'), 'g')), cards,
-    'one closed mark per row, closing the row');
+  assert.ok(cards >= 4, 'the fixture still fills the columns');
+  assert.equal(count(html, /class="dev-fold-mark"/g), 0, 'the board draws no fold mark');
   assert.ok(!html.includes('data-open='), 'nothing folded wears the open mark');
   // Open: the card wears the SAME three paths, stretched by attribute, as the
   // button that folds it — at the head's end, before the meta line.
@@ -338,11 +345,16 @@ test('the fold mark: the same two chevrons at both sizes, stretched open on the 
   assert.match(CSS, /\.dev-fold-mark\[data-open="1"\] \.dev-fold-bar \{ transform: scaleY\(1\); animation: dev-fold-bar \.15s ease both; \}/);
   assert.match(CSS, /@media \(prefers-reduced-motion: reduce\) \{ \.dev-fold-mark path \{ animation: none; \} \}/);
   assert.ok(!/dev-fold[^\n]*rotate/.test(CSS), 'nothing on it rotates: what changes is size');
-  // Declared, one check per state, on the board.
+  // Declared: the OPEN state's check on the board. The closed one retired
+  // with the board's fold — DELIBERATE (#4486): its check was re-pointed at
+  // the rows that replaced the folded ones ("every item is one of the
+  // Workshop's rows"), so the manifest's size never moved.
   const checks = DAPP.tests.filter((t) => /fold mark/.test(t.name));
-  assert.equal(checks.length, 2);
-  assert.match(checks[0].expectSelector, /span\.dev-fold-mark\[aria-hidden="true"\]:not\(\[data-open\]\)/);
-  assert.match(checks[1].expectSelector, /button\.dev-fold-mark\[data-open="1"\]\[aria-expanded="true"\]\[aria-label\]/);
+  assert.equal(checks.length, 1);
+  assert.match(checks[0].expectSelector, /button\.dev-fold-mark\[data-open="1"\]\[aria-expanded="true"\]\[aria-label\]/);
+  assert.match(checks[0].path || '', /cards=open/);
+  assert.ok(!DAPP.tests.some((t) => /span\.dev-fold-mark/.test(t.expectSelector || '')),
+    'no check reads a closed mark off the board any more');
 });
 
 test('the declared checks that read a board card’s anatomy run with the cards open; two pin the fold', () => {
@@ -355,9 +367,11 @@ test('the declared checks that read a board card’s anatomy run with the cards 
     const sel = t.expectSelector || '';
     if (/workshop/.test(p) || /#gc-thread-head/.test(sel) || /\/(governance|issues|proposals)\//.test(p)) continue;
     if (!board.test(p) || !anatomy.test(sel)) continue;
-    // A check that selects the folded row, or taps one open, is about the
-    // fold itself and runs in the default state on purpose.
-    if (/dev-ws-row\b/.test(sel) || /shot=board-unfold/.test(p)) continue;
+    // A check that selects the row the item is drawn as — the folded row of
+    // the fold, or the Workshop's row the board draws now (#4486) — or taps
+    // one open, is about the row itself and runs in the default state on
+    // purpose.
+    if (/dev-ws-row\b|dev-ws-wrow|data-ws-open/.test(sel) || /shot=board-unfold/.test(p)) continue;
     if (!/[?&]cards=open(&|#|$)/.test(p)) offenders.push(t.name);
     else moved += 1;
   }
@@ -377,13 +391,13 @@ test('the declared checks that read a board card’s anatomy run with the cards 
     assert.ok(t && /cards=open/.test(t.path), `${name} runs with the cards open`);
   }
 
-  const folded = DAPP.tests.find((t) => t.name === '#app/<slug>/board resolves onto the stage pane, its cards folded to rows');
-  assert.ok(folded, 'the board route check pins the fold');
+  const folded = DAPP.tests.find((t) => t.name === '#app/<slug>/board resolves onto the stage pane, its items as rows (#4486)');
+  assert.ok(folded, 'the board route check pins the rows');
   assert.equal(folded.path, '/?demo=1#app/usernode-2d5619/board', 'with no cards=open: this IS the default');
   // The host moved with the surface: the Board view mode retired and those
   // columns are the Workshop's stage pane, so the chain is anchored on
-  // `[data-ws-stage]` rather than on the standalone board's own #dev-kanban-board.
-  assert.match(folded.expectSelector, /\[data-ws-stage\] #dev-kanban \.dev-kanban-col \.dev-ws-rowwrap > \.dev-ws-row\[role="button"\]\[aria-expanded="false"\]\[data-issue-row\]/);
+  // `[data-ws-stage]` — and the items are the Workshop's rows now (#4486).
+  assert.match(folded.expectSelector, /\[data-ws-stage\] #dev-kanban \.dev-kanban-col \.dev-ws-wlist \.dev-ws-wrow\[data-ws-open\]/);
 
   const unfold = DAPP.tests.find((t) => /shot=board-unfold/.test(t.path || ''));
   assert.ok(unfold, 'one check taps a row open');
@@ -1787,10 +1801,13 @@ test('the tags ride the meta line beside the number, on the open card and the fo
   assert.match(meta, /<button(?=[^>]*attr-chip)[^>]*data-attr-field="assignee"[^>]*>[\s\S]*?@priya/, 'the assignee chip on the meta line');
   assert.match(card, /<div class="dev-card-badges dev-card-status" data-empty="1">/, 'and nothing left in the band');
   const folded = kanbanHtml(makeAppView());
-  const row = folded.slice(folded.indexOf('data-issue-row="1575"'), folded.indexOf('data-proposal-row="34"'));
-  assert.match(row, /<span class="dev-ws-row-meta"><a href="[^"]*"[^>]*>#1575<\/a> · <span[^>]*>\d+[mhd] ago<\/span><button(?=[^>]*attr-chip)[^>]*data-attr-field="assignee"/,
-    'and on the row, after the number and how long ago it was asked');
-  assert.ok(!/dev-ws-row-band[\s\S]*?attr-chip/.test(row), 'never in the row’s state band');
+  // DELIBERATE (#4486): the board's row is the Workshop's row now, not the
+  // folded card — so the assignee chip rides the OPEN card's meta line, and
+  // the board's row says the number in its own words line.
+  const row = folded.slice(folded.indexOf('data-ws-row="issue:1575"'), folded.indexOf('data-ws-row="issue:1574"'));
+  assert.match(row, /<span class="dev-ws-wrow-sub">Request #1575 · sam<\/span>/,
+    'the number in the row’s words');
+  assert.ok(!/attr-chip/.test(row), 'and no card chip on the row');
   // The meta line may wrap for them: the one-line clamp is gone.
   const m = CSS.indexOf('\n:is(.dev-card-dense, .dev-card-topic) .dev-card-meta {');
   assert.ok(m > 0);
@@ -1884,7 +1901,7 @@ test('a merged card opens whole: the kudos slot is filled before paint, and the 
   // card on open. Both surfaces fill it from a LAYOUT effect now, and the
   // fold measurement watches the band's subtree so it re-folds around the
   // filled slot in the same frame.
-  assert.match(KANBAN, /useLayoutEffect\(\(\) => \{\s*const host = hostRef\.current;\s*if \(!host\) return;\s*callAppView\('_fillKudosHosts', host\);[\s\S]*?\}, \[openKey, unfolded\]\);/);
+  assert.match(KANBAN, /useLayoutEffect\(\(\) => \{\s*const host = hostRef\.current;\s*if \(!host\) return;\s*callAppView\('_fillKudosHosts', host\);[\s\S]*?\}, \[unfolded\]\);/);
   assert.ok(!/\bimport \{[^}]*\buseEffect\b/.test(KANBAN), 'the column has no plain effect left to fill from');
   assert.match(WORKSHOP, /useLayoutEffect\(\(\) => \{\s*const host = hostRef\.current;\s*if \(!host\) return;\s*callAppView\('_wireFeedComments', host\);\s*callAppView\('_fillKudosHosts', host\);/);
   const CARD = read('frontend/src/features/dev-board/card/dev-card.tsx');
@@ -1903,7 +1920,10 @@ test('the message count rides the meta line at both sizes, and only when there i
   const quiet = makeAppView();
   quiet._proposals[0].chat_count = 5;
   const folded = kanbanHtml(quiet);
-  assert.match(folded, /data-proposal-row="34"[\s\S]*?<span class="dev-ws-row-meta">(?:(?!<span class="dev-ws-row-band">)[\s\S])*?<span class="dev-chat-badge/, 'and on the row, in the same place');
+  // DELIBERATE (#4486): on the board the count is the row's 💬 chip — the
+  // one the card's badge was — beside the row's other states.
+  assert.match(folded, /data-ws-row="proposal:34"[\s\S]*?<span class="dev-ws-tag" aria-label="5 replies"/,
+    'and on the row, as the board chip');
   // The two sizes share one chrome now, too: the card's r22, its 14/14/12
   // padding with the 4px edge inside it, its 8px glyph gap, its drop shadow,
   // and no hairline border. Pinned value for value against the card's rule.

@@ -92,10 +92,10 @@ import { ProjectDiscussion } from './project-discussion';
 import { ProjectBand, type ProjectTabKey } from './project-band';
 import { SinceSummaryCard } from './since-summary-card';
 import { PlanPage } from './plan-page';
-import { PageBack } from './page-back';
+import { PageBackButton } from './page-back';
 import { readAskStream } from './ask-stream';
 import { WorkList, type CardRow as WorkCardRow, type TopicRef } from './work-row';
-import { TopicSidePanel } from './side-panel';
+import { TopicSidePanel, setSidePanelOpener } from './side-panel';
 import { WEEKS_FIRST, WEEKS_STEP, WeekPage, WeekRow, weekDate, weekFresh } from './week-pages';
 import {
   commitDistance,
@@ -3867,10 +3867,20 @@ export function DevWorkshop(): ReactNode {
   };
   const closeSide = useCallback(() => setSideItem(null), []);
   const sideKey = sideItem ? `${sideItem.kind}:${sideItem.id}` : null;
+  // #4486: the board's rows open their pages in the panel too, and the board
+  // is its own React mount — DevKanban also mounts standalone at the retired
+  // #dev-kanban-board host — so it cannot take openItem as a prop. The
+  // handler registers itself here; a board row hands the click over
+  // (./side-panel.tsx openRowInPanel).
+  useEffect(() => {
+    setSidePanelOpener(openItem);
+    return () => setSidePanelOpener(null);
+  }, [sideWide]); // eslint-disable-line react-hooks/exhaustive-deps
   // The panel goes with the tab, the project and the wide window; a week's
   // page goes with the tab and the project.
   useEffect(() => {
-    if (tab !== 'workshop' || !sideWide) setSideItem(null);
+    if (tab !== 'workshop' && tab !== 'all') setSideItem(null);
+    if (!sideWide) setSideItem(null);
     if (tab !== 'workshop') setOpenWeek(null);
   }, [tab, sideWide]);
   useEffect(() => {
@@ -3996,17 +4006,6 @@ export function DevWorkshop(): ReactNode {
       barRef={setBar}
     />
   );
-  const pageBar = tab === 'all' ? (
-    <div className="dev-ws-tabs dev-ws-pagebar" data-ws-pagebar="">
-      <div className="dev-ws-tabtrack">
-        <PageBack
-          label="Workshop"
-          title={pageTitle(tab)}
-          onBack={() => openTab(pageParent(tab))}
-        />
-      </div>
-    </div>
-  ) : null;
 
   // The Workshop page's since list, filed by week. A first visit has no
   // baseline and so nothing new, but the weeks and their lines are still
@@ -4041,10 +4040,9 @@ export function DevWorkshop(): ReactNode {
       // #4457: an item's page is open in the panel beside the list, and the
       // list makes room for it (app.css). An attribute, not a class: the
       // host's classes are written by useWorkshopHostState.
-      data-ws-side-open={sideItem && tab === 'workshop' ? '' : undefined}
+      data-ws-side-open={sideItem && (tab === 'workshop' || tab === 'all') ? '' : undefined}
     >
       {band}
-      {pageBar}
       {/* Everything but the bar lives in here. It is what carries the
           clearance under the last card: a sticky bar overlays whatever is
           beneath it while you scroll, so the content needs a bar's worth of
@@ -4444,8 +4442,9 @@ export function DevWorkshop(): ReactNode {
       </>
       ) : null}
 
-      {/* ── The item's page, beside the list (#4457) ── ./side-panel.tsx */}
-      {tab === 'workshop' && sideItem ? <TopicSidePanel item={sideItem} onClose={closeSide} /> : null}
+      {/* ── The item's page, beside the list (#4457; #4486: the board's rows
+          open here too) ── ./side-panel.tsx */}
+      {(tab === 'workshop' || tab === 'all') && sideItem ? <TopicSidePanel item={sideItem} onClose={closeSide} /> : null}
 
       {tab === 'needs' ? (
         <NeedsFeed
@@ -4477,33 +4476,28 @@ export function DevWorkshop(): ReactNode {
               and the general discussion are facts about the app, not about
               how you happen to be sorting it. */}
           <section className="dev-ws-pane" data-ws-pane="">
-          {/* ── The sticky head: the controls that act on what is below ──
-              The search and the filters used to sit in the frame's chrome
-              above the scroller, two strips away from the list they narrow.
-              (So did the "+", which is not a narrowing control: it adds to
-              the board and manages the app, so it is the hub's ⋯ now.) They
-              belong WITH the list — and with the grouping, because
-              "which grouping" and "narrowed to what" are one question asked
-              twice. The head pins, under the project's tabs (#3651: not
-              under the back bar, which scrolls away): filtering a long list
-              is exactly what you are doing when you are scrolled down, and a
-              bar that scrolled away would leave no way back.
+          {/* ── The sticky head: ONE ROW, the way back, the page's name, the
+              grouping, the search and the filters ──
+              Three stacked bars sat here (the back bar, then the grouping
+              switch, then the search row) and the first item started well
+              over 300px down. The back bar is gone into the head: "‹
+              Workshop" and "All items" lead it, the switch and the tools
+              follow. It still pins, under the project's tabs (#3651):
+              filtering a long list is exactly what you are doing when you
+              are scrolled down, and a bar that scrolled away would leave no
+              way back.
 
-              THE TABS LEAD, and the order is the argument: they decide what
-              the search is searching. With the search above them the control
-              that sets the scope sat under the control that acts within it,
-              and the pane had to be read bottom-up to be understood. Leading
-              with the switch also gives the head a title bar — the two-state
-              choice, then the tools for whichever state you picked. */}
+              THE GROUPING STILL PRECEDES THE TOOLS — it decides what the
+              search is searching; and the page's name and way back lead
+              both, because they decide what the whole pane is. */}
           <div className="dev-ws-pane-head">
-            {/* THE GROUPING LEADS THE HEAD, at every width (#852). It sat
-                beside the tab pill on a wide window, as an ear on the pane's
-                top-right corner; with the tabs in the header there is no pill
-                to sit beside, so it is the head's first row everywhere, as it
-                always was on a phone.
-
-                NO TITLE LINE HERE. The back bar above names the page, "All
-                items", so an eyebrow would be the same words twice. */}
+            {/* THE WAY BACK TO THE WORKSHOP, and the page's name. The back
+                bar above the pane used to carry them; it scrolled away under
+                the band, and the head — which pins — carries them now. */}
+            <div className="dev-ws-pagehead" data-ws-pagehead="">
+              <PageBackButton label="Workshop" onBack={() => openTab(pageParent(tab))} data-ws-page-back="" />
+              <span className="dev-ws-page-title">{pageTitle(tab)}</span>
+            </div>
             <GroupStrip group={group} />
             {/* The search and the filters. NOT the ⋯: that is the hub's, in
                 its hero, so the row draws none of its own. */}

@@ -2121,7 +2121,9 @@ test('#4457: a row opens its page beside the list on a wide window, and that pag
   // A plain click on a wide window; anything else is the row's own link.
   assert.match(WORKSHOP, /const SIDE_QUERY = '\(min-width: 1180px\)';/);
   assert.match(WORKSHOP, /if \(!sideWide\) return;\s*event\.preventDefault\(\);/);
-  assert.match(WORKSHOP, /\{tab === 'workshop' && sideItem \? <TopicSidePanel item=\{sideItem\} onClose=\{closeSide\} \/> : null\}/);
+  // #4486: the board is the All items tab's pane, so its rows open beside
+  // the board through the SAME panel — the tab test widened, not a copy.
+  assert.match(WORKSHOP, /\{\(tab === 'workshop' \|\| tab === 'all'\) && sideItem \? <TopicSidePanel item=\{sideItem\} onClose=\{closeSide\} \/> : null\}/);
   // The list makes room and keeps its place; the open row is lit.
   assert.match(CSS, /#dev-workshop:has\(> \.dev-ws\[data-ws-side-open\]\) \{/);
   assert.match(CSS, /\.dev-ws-wrow\[data-on\] \{ background: var\(--lit-tint\); \}/);
@@ -2928,11 +2930,11 @@ test('the grouping is a two-tab control, and category is what an untouched Works
   // twice and the head leads with the tools now.
   assert.ok(!html.includes('dev-ws-pane-eyebrow'), 'the eyebrow is gone');
   assert.ok(!/\.dev-ws-pane-eyebrow/.test(CSS), 'and so is the rule that styled it');
-  // THE STRIP LEADS THE PANE HEAD AT EVERY WIDTH (#852). It used to leave
-  // the head above 768px for an "ear" on the pane's right shoulder; the ear
-  // is gone, so the narrow render the suite draws (node has no `matchMedia`)
-  // is the one every width shows: the strip, then the tools.
-  assert.match(html, /class="dev-ws-pane-head"[^>]*><div class="dev-ws-group"[\s\S]*?<\/div><div id="dev-actions"/);
+  // THE HEAD IS ONE ROW NOW (#4486): the page's own title (with the back
+  // chip) leads it, then the grouping strip, then the tools. It used to be
+  // the strip that led (#852) — the ear was already gone — and three
+  // stacked bars before that.
+  assert.match(html, /class="dev-ws-pane-head"[^>]*><div class="dev-ws-pagehead"[\s\S]*?<\/div><div class="dev-ws-group"[\s\S]*?<\/div><div id="dev-actions"/);
   // The declared checks run at the capture's 1280px viewport, so they now
   // gate on the same arrangement: nothing names an ear any more.
   assert.ok(
@@ -2940,8 +2942,8 @@ test('the grouping is a two-tab control, and category is what an untouched Works
     'no declared check names the ear',
   );
   assert.ok(
-    dapp.tests.some((t) => /\.dev-ws-pane-head > \.dev-ws-group\[role="tablist"\]:first-child/.test(t.expectSelector || '')),
-    'one names the strip leading the head',
+    dapp.tests.some((t) => /\.dev-ws-pane-head > \.dev-ws-pagehead \+ \.dev-ws-group/.test(t.expectSelector || '')),
+    'one names the title leading the head, the strip right behind it (#4486)',
   );
   assert.ok(
     dapp.tests.some((t) => /pane-head:not\(:has\(> \.dev-ws-eyebrow\)\) > \.dev-ws-group \+ #dev-actions/
@@ -2999,8 +3001,10 @@ test('"By stage" swaps the pane for the board\'s own columns, and keeps everythi
   // are the bar at the bottom — so what has to hold is that the grouping
   // choice is a control WITHIN one destination and does not move you off it.
   assert.ok(!html.includes('data-ws-dashboard'), 'the status strip is the Workshop page\'s');
-  assert.match(html, /data-ws-band=""[\s\S]*?data-ws-tab-btn="workshop" aria-selected="true"[\s\S]*?data-ws-pagebar=""/,
-    'and you are still on All items: the Workshop tab lit, the page\'s back bar under it (#852)');
+  // DELIBERATE (#4486): the back bar under the tabs retired — the head's
+  // own "‹ Workshop" chip and title lead the pane head now, one row.
+  assert.match(html, /data-ws-band=""[\s\S]*?data-ws-tab-btn="workshop" aria-selected="true"[\s\S]*?data-ws-pagehead=""/,
+    'and you are still on All items: the Workshop tab lit, the head leading with the back chip and the title');
 });
 
 test('the stage pane is the SAME board component, not a second one', () => {
@@ -3510,8 +3514,10 @@ test('the tabs are a band in the community\'s colour, not the old pill: nothing 
   // with an underline rather than a marker; All items is the Workshop's page.
   assert.doesNotMatch(WORKSHOP, /useTabMarker|data-ws-tab-marker|role="tablist" aria-label="Workshop sections"/);
   assert.match(WORKSHOP, /<ProjectBand\s+tab=\{tab\}\s+owed=\{owed\}/);
-  assert.match(WORKSHOP, /<div className="dev-ws-tabs dev-ws-pagebar" data-ws-pagebar="">/,
-    'All items\' back bar keeps the strip\'s box');
+  // DELIBERATE (#4486): the pagebar above the pane retired — All items
+  // leads its pane head with the page's own title row (back chip + name).
+  assert.match(WORKSHOP, /<div className="dev-ws-pagehead" data-ws-pagehead="">/,
+    'All items leads its pane head with the page\'s own title row');
   const band = read('frontend/src/features/dev-board/workshop/project-band.tsx');
   assert.match(band, /className="dev-ws-tabs dev-ws-band"/, 'and so does the band');
   assert.match(band, /<div className="dev-ws-tabtrack" role="tablist" aria-label="Project"/);
@@ -4003,7 +4009,8 @@ test('#2767/#2769: the phone rail sits at the HEAD of the page, in flow, and lea
   // Workshop's own subtree, so hiding the app view hides it.
   assert.ok(!/createPortal/.test(WORKSHOP), 'nothing lifts the rail out of the tree');
   assert.ok(!/useRailHost|railHost/.test(WORKSHOP), 'and no hook looks for a host');
-  assert.match(WORKSHOP, /\{band\}\s*\{pageBar\}/, 'the band, and All items\' back bar, render where they are written');
+  assert.match(WORKSHOP, /\{band\}/, 'the band renders where it is written');
+  assert.ok(!/pageBar/.test(WORKSHOP), 'and the back bar it used to carry is the pane head now (#4486)');
   assert.ok(!/dev-ws-rail-host/.test(SHELL), 'the shell keeps no anchor for it');
   assert.ok(!/dev-ws-rail-host/.test(CSS), 'and no rule styles one');
   // ONE SPELLING OF THE BREAKPOINT survives for the ask composer and the feed.
@@ -4903,9 +4910,12 @@ test('a wide window reads the tabs at the top, as a segmented control', () => {
   assert.ok(!/\.dev-ws-tabbody \{[^}]*padding-bottom/.test(CSS.replace(/\/\*[\s\S]*?\*\//g, '')),
     'no clearance for a bar that no longer floats');
 
-  // The markup half: the track exists and is inert on a phone, so the bar
-  // there is byte-identical to what it was.
-  assert.match(WORKSHOP, /<div className="dev-ws-tabtrack">/);
+  // The markup half: the track exists (the project band's own), and the
+  // wrapper introduces no box on a phone. The pagebar that carried a
+  // second, inert track retired with #4486.
+  const band = read('frontend/src/features/dev-board/workshop/project-band.tsx');
+  assert.match(band, /<div className="dev-ws-tabtrack" role="tablist" aria-label="Project"/);
+  assert.ok(!/dev-ws-pagebar/.test(WORKSHOP), 'and no second track anywhere');
   assert.match(CSS, /\.dev-ws-tabtrack \{ display: contents; \}/,
     'the wrapper introduces no box on a phone');
 });
@@ -5279,18 +5289,16 @@ test('#3651: on All items one header pins, the tabs and the head, in the pane\'s
   assert.ok(wide, 'the wide-screen block exists');
   const decls = wide[1].replace(/\/\*[\s\S]*?\*\//g, '');
 
-  // 1. THE TABS ARE THE BAR ON EVERY PAGE; the back bar is not measured.
+  // 1. THE TABS ARE THE BAR ON EVERY PAGE — the ONLY one now: the back bar
+  //    under them retired with #4486 (its title row leads the pane head),
+  //    so the two-sticky-bars collision the bug was cannot be built again.
   assert.match(WORKSHOP, /<ProjectBand[^>]*?\n\s*barRef=\{setBar\}\n\s*\/>/, 'the band is the bar, All items too');
-  assert.match(WORKSHOP, /<div className="dev-ws-tabs dev-ws-pagebar" data-ws-pagebar="">/, 'the back bar carries no ref');
+  assert.ok(!/dev-ws-pagebar/.test(WORKSHOP), 'the back bar carries no ref, because it is gone');
   assert.equal((WORKSHOP.match(/\{setBar\}/g) || []).length, 1, 'and nothing else is the bar');
 
-  // 2. THE BACK BAR SCROLLS, under the tabs: in the flow, unshifted, with
-  //    no stacking level over them and no band of its own.
-  assert.match(decls, /\n  \.dev-ws-tabs\.dev-ws-pagebar \{ position: relative; top: auto; z-index: auto; \}/);
-  assert.match(decls, /\n  \.dev-ws-tabs\.dev-ws-pagebar::before \{ content: none; \}/);
-  //    ...and it overrides the strip's rule by specificity, not by order:
-  //    the strip's own `position: sticky` is written after it.
-  assert.ok(decls.indexOf('.dev-ws-tabs.dev-ws-pagebar {') < decls.indexOf('\n  .dev-ws-tabs {'));
+  // 2. NO SECOND BAR, so no override for it: the wide block carries no
+  //    pagebar rules at all.
+  assert.ok(!/dev-ws-pagebar/.test(decls), 'no pagebar rules left in the wide block');
 
   // 3. UNDER 768px THE HEAD RESTS ON THE BAND'S FOOT. The coloured band is
   //    opaque and draws no sheet behind it, so the measured offset's column
@@ -5311,7 +5319,7 @@ test('#3651: on All items one header pins, the tabs and the head, in the pane\'s
   assert.doesNotMatch(decls, /border-top-left-radius/, 'not the wide block\'s left corner alone');
   const hook = WORKSHOP.slice(WORKSHOP.indexOf('function usePinnedStrip('));
   const body = hook.slice(0, hook.indexOf('\n}\n'));
-  assert.match(body, /const below = bar\.nextElementSibling;/, 'pinned once what follows the bar slides under it — the back bar on All items');
+  assert.match(body, /const below = bar\.nextElementSibling;/, 'pinned once what follows the bar slides under it — the pane body on All items');
   assert.match(body, /host\.querySelector<HTMLElement>\(':scope > \.dev-ws-tabbody > \[data-ws-pane\]'\)/);
   assert.match(body, /host\.toggleAttribute\('data-ws-head-pinned', headPinned\)/);
   assert.equal((body.match(/host\.removeAttribute\('data-ws-head-pinned'\)/g) || []).length, 2,

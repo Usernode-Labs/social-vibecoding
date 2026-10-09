@@ -26,13 +26,28 @@
  * `_renderTopicHead`'s header describes).
  */
 
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, type MouseEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 import { ArrowRightIcon, XIcon } from '@/components/ui/icons';
 
 import { callAppView } from '../card/fold';
 import type { TopicRef } from './work-row';
+
+/**
+ * The board's rows open their pages in this panel too, and the board is its
+ * own React mount (the retired #dev-kanban-board host mounts DevKanban
+ * standalone), so it cannot take `openItem` as a prop. The Workshop
+ * registers its handler here; a row hands the click over. Unregistered —
+ * the board route's own mount, with no pane beside it — the row's link does
+ * its own job and the page takes the screen.
+ */
+export type SideOpener = (event: MouseEvent<HTMLAnchorElement>, ref: TopicRef) => void;
+let sideOpener: SideOpener | null = null;
+export function setSidePanelOpener(fn: SideOpener | null): void { sideOpener = fn; }
+export function openRowInPanel(event: MouseEvent<HTMLAnchorElement>, ref: TopicRef): void {
+  if (sideOpener) sideOpener(event, ref);
+}
 
 export function TopicSidePanel({ item, onClose }: { item: TopicRef; onClose: () => void }): ReactNode {
   // Mount the page once the host is in the document, and take it down with

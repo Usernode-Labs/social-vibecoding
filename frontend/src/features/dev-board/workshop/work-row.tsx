@@ -36,7 +36,7 @@ import {
   BallotIcon, ChatBubbleTailIcon, CheckIcon, ChevronRightIcon, EyeIcon, PencilSquareIcon,
 } from '@/components/ui/icons';
 
-import { VoteButton } from '../card/dev-card';
+import { MenuTrigger, VoteButton } from '../card/dev-card';
 import { openHref, voteSpecs } from '../card/fold';
 import type { DevCardModel, ListRow, RowBrief, RowTag } from '../card/model';
 
@@ -72,15 +72,19 @@ function numbers(list: number[]): string {
  * The row's one line in words. `inMine` is Your work, where a request you
  * are on needs no "yours": the list is yours. A change keeps it, beside the
  * requests it is for, which is what tells it apart from them.
+ *
+ * `onBoard` drops the category and the reply count from the words, because
+ * the board's status line carries them as chips instead (the coloured
+ * category chip and the 💬 count the cards kept) — said once, not twice.
  */
-export function rowWords(b: RowBrief, inMine = false): string {
+export function rowWords(b: RowBrief, inMine = false, onBoard = false): string {
   const parts: string[] = [b.n ? `${b.noun} #${b.n}` : b.noun];
   const who = b.mine ? 'yours' : b.by;
   if (who && !(inMine && b.mine && b.kind === 'request')) parts.push(who);
-  if (b.kind === 'request' && b.category) parts.push(b.category);
+  if (b.kind === 'request' && b.category && !onBoard) parts.push(b.category);
   if (b.linked.length && b.kind !== 'live') parts.push(`for ${numbers(b.linked)}`);
   if (b.closed.length && b.kind === 'live') parts.push(`closed ${numbers(b.closed)}`);
-  if (b.replies) parts.push(`${b.replies} ${b.replies === 1 ? 'reply' : 'replies'}`);
+  if (b.replies && !onBoard) parts.push(`${b.replies} ${b.replies === 1 ? 'reply' : 'replies'}`);
   return parts.join(' · ');
 }
 
@@ -120,7 +124,7 @@ function Votes({ vote, card }: { vote: NonNullable<RowBrief['vote']>; card: DevC
   );
 }
 
-export function WorkRow({ row, slug, inMine = false, on = false, onOpen }: {
+export function WorkRow({ row, slug, inMine = false, on = false, onOpen, menu = false, board = false }: {
   row: CardRow;
   slug: string;
   inMine?: boolean;
@@ -128,13 +132,26 @@ export function WorkRow({ row, slug, inMine = false, on = false, onOpen }: {
   on?: boolean;
   /** A plain click on the row: the Workshop opens it beside the list, or lets the link go. */
   onOpen?: (event: MouseEvent<HTMLAnchorElement>, ref: TopicRef) => void;
+  /**
+   * The row-level ☰, with the same descriptors the unfolded card's menu
+   * builds (`data-card-menu`, keyed as the card's). The board's rows ask
+   * for it — the unfolded card's menu is what they replace — and the
+   * Workshop's own lists do not, so nothing changes there.
+   */
+  menu?: boolean;
+  /**
+   * The board's tuning of the row: the coloured category chip and the 💬
+   * count ride the status line as chips (the words line drops them), the
+   * things the cards kept that the Workshop's words already say.
+   */
+  board?: boolean;
 }): ReactNode {
   const b = row.brief;
   if (!b) return null;
   const href = openHref(slug, row.card);
   const ref = topicRef(row.card);
   const Tile = TILE[b.kind] || PencilSquareIcon;
-  const status = b.tags.length > 0 || !!b.vote;
+  const status = b.tags.length > 0 || !!b.vote || (board && (b.category || b.replies)) || (!!menu && !!row.card.rail.menuKey);
   return (
     <div
       className="dev-ws-wrow"
@@ -155,11 +172,19 @@ export function WorkRow({ row, slug, inMine = false, on = false, onOpen }: {
             {row.card.title.text}
           </a>
         ) : <span className="dev-ws-wrow-link">{row.card.title.text}</span>}
-        <span className="dev-ws-wrow-sub">{rowWords(b, inMine)}</span>
+        <span className="dev-ws-wrow-sub">{rowWords(b, inMine, board)}</span>
         {status ? (
           <span className="dev-ws-wrow-status">
+            {board && b.category ? <span className="dev-ws-tag" data-tone="accent">{b.category}</span> : null}
             {b.tags.map((t) => <Tag key={`${t.label}:${t.tone}`} t={t} />)}
+            {board && b.replies ? (
+              <span className="dev-ws-tag" aria-label={`${b.replies} ${b.replies === 1 ? 'reply' : 'replies'}`}>
+                <ChatBubbleTailIcon aria-hidden="true" />
+                {b.replies}
+              </span>
+            ) : null}
             {b.vote ? <Votes vote={b.vote} card={row.card} /> : null}
+            {menu && row.card.rail.menuKey ? <MenuTrigger menuKey={row.card.rail.menuKey} /> : null}
           </span>
         ) : null}
       </span>
@@ -169,13 +194,17 @@ export function WorkRow({ row, slug, inMine = false, on = false, onOpen }: {
 }
 
 /** A hairline-divided list of rows. */
-export function WorkList({ rows, slug, inMine, openKey, onOpen }: {
+export function WorkList({ rows, slug, inMine, openKey, onOpen, menu = false, board = false }: {
   rows: CardRow[];
   slug: string;
   inMine?: boolean;
   /** `kind:id` of the item open in the panel, to highlight its row. */
   openKey?: string | null;
   onOpen?: (event: MouseEvent<HTMLAnchorElement>, ref: TopicRef) => void;
+  /** The row-level ☰ (the board's rows). */
+  menu?: boolean;
+  /** The board's tuning: category and 💬 as chips (the board's rows). */
+  board?: boolean;
 }): ReactNode {
   return (
     <div className="dev-ws-wlist">
@@ -189,6 +218,8 @@ export function WorkList({ rows, slug, inMine, openKey, onOpen }: {
             inMine={inMine}
             on={!!openKey && !!ref && openKey === `${ref.kind}:${ref.id}`}
             onOpen={onOpen}
+            menu={menu}
+            board={board}
           />
         );
       })}

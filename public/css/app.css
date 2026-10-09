@@ -13029,9 +13029,50 @@ button.attr-chip { cursor: pointer; }
 .voting-help-rules { list-style: disc; padding-left: 16px; margin: 0; display: flex; flex-direction: column; gap: 5px; line-height: 1.4; }
 .voting-help-rules strong { color: var(--text-primary); font-weight: 600; }
 
-/* ── Mobile kanban tabs (#814) ─────────────────────────────────────
+/* ── The pipeline heads (#4486) ─────────────────────────────────────
+   Each column leads with its stage icon, name and count, so the row of
+   heads reads as the steps of a piece of work: Requests › Underway ›
+   Waiting for approval › Done. The segmented, lit-when-selected treatment
+   is the Stage / Category switch's (.dev-ws-group), and the lit state is
+   the same pair of tokens the old mobile tab strip wore
+   (SECTION_TAB_ACTIVE / INACTIVE in the component).
+
+   Below 640px the board shows ONE column at a time (#814) and the heads
+   ARE the tabs: the .dev-kanban-pipe tablist above the board shows and the
+   in-column heads hide — the retired #dev-kanban-tabs strip's job, on the
+   same 640px line _getViewMode()'s width default draws. At >=640px the
+   tablist is display:none and every column is on screen at once. */
+
+.dev-kanban-pipe { display: none; }
+
+.dev-kanban-pipe-head {
+  display: inline-flex; align-items: center; gap: 6px;
+  min-width: 0; height: 32px; padding: 0 12px;
+  border: 0; border-radius: 999px; background: transparent;
+  color: var(--text-muted); font: inherit; font-size: 13px; font-weight: 600;
+  cursor: pointer; white-space: nowrap;
+}
+.dev-kanban-pipe-head:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.dev-kanban-pipe-icon { width: 14px; height: 14px; flex: none; }
+.dev-kanban-pipe-count { font-family: var(--font-mono, ui-monospace, monospace); font-size: 11px; font-weight: 500; opacity: .75; }
+
+@media (max-width: 639px) {
+  .dev-kanban-pipe {
+    display: flex; align-items: stretch; gap: 2px;
+    margin-bottom: 8px; padding: 2px; border-radius: 999px;
+    background: var(--dc-sheet-raise);
+    /* Four tabs share a phone's width; the names shorten, the counts stay. */
+  }
+  .dev-kanban-pipe .dev-kanban-pipe-head {
+    flex: 1 1 0; min-width: 0; padding: 0 6px; justify-content: center;
+  }
+  .dev-kanban-pipe .dev-kanban-pipe-name { overflow: hidden; text-overflow: ellipsis; }
+  .dev-kanban-col .dev-kanban-pipe-head { display: none; }
+}
+
+/* ── Mobile kanban columns (#814) ───────────────────────────────────
    Below 640px the Dev board shows ONE column at a time behind the
-   #dev-kanban-tabs strip instead of scrolling sideways — four columns
+   pipeline tablist instead of scrolling sideways — four columns
    can't fit a phone, which is exactly why _getViewMode()'s width
    default (min-width: 640px) draws the line here too. Presentation
    only: the markup always carries all four columns, and JS only ever
@@ -13040,7 +13081,7 @@ button.attr-chip { cursor: pointer; }
 
    The single-column line was 1024px (Tailwind's lg) until it was
    lowered to 640px (Tailwind's sm): the board is useful well below a
-   laptop, so the tab strip now only takes over on genuinely
+   laptop, so the single column now only takes over on genuinely
    phone-sized windows. In the band that changed hands (640-1023px) all
    four columns sit in ONE row at their readable 16rem width and the
    board scrolls sideways to reach the last of them — see the block
@@ -13069,9 +13110,6 @@ button.attr-chip { cursor: pointer; }
   }
 
   .dev-kanban-col.dev-kanban-col-active { display: block; }
-
-  /* The active tab already names the column and shows its count. */
-  .dev-kanban-col-head { display: none; }
 }
 
 /* The band the 640px line reclaimed from the tab strip (640-1023px):
@@ -17379,6 +17417,13 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    level down; the name is the page's one heading, under the name of where
    the disc goes. */
 .dev-ws-pagehead { display: flex; align-items: center; gap: 10px; min-width: 0; }
+/* The page's name beside its way back, on the All items pane head's one row
+   (#4486) — the pagehead-text stack the full-page PageBack draws is more
+   than a bar of controls has room for. */
+.dev-ws-page-title {
+  font-size: 15px; font-weight: 650; color: var(--text-primary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .dev-ws-page-back {
   width: 36px; height: 36px; flex: none; padding: 0;
   display: grid; place-items: center;
@@ -18836,8 +18881,6 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
      band of its own. `top: auto` because the strip's offset would SHIFT a
      relative box rather than pin it, and `z-index: auto` so it passes under
      the pinned tabs rather than over them. */
-  .dev-ws-tabs.dev-ws-pagebar { position: relative; top: auto; z-index: auto; }
-  .dev-ws-tabs.dev-ws-pagebar::before { content: none; }
   .dev-ws-tabs {
     order: 0;
     /* RELATIVE, NOT STATIC. There is nothing to stick to at the head of a
@@ -19413,9 +19456,17 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
    top of the reading area — the platform header is outside it. */
 .dev-ws-pane-head {
   position: sticky; top: 0; z-index: 20;
-  display: flex; flex-direction: column; gap: 8px;
+  display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px;
   padding: 8px 10px;
   border-radius: 22px 22px 0 0;
+}
+/* The way back and the page's name lead the row and do not share it:
+   "‹ Workshop  All items" reads as one phrase, so the head's next items
+   start after it, on the same line where it fits. */
+.dev-ws-pane-head .dev-ws-pagehead { flex: none; }
+.dev-ws-pane-head .dev-ws-pagehead::after {
+  content: ''; align-self: stretch; width: 1px; margin: 0 2px 0 6px;
+  background: var(--app-sheet-line);
 }
 /* PINNED, THE HEAD IS SQUARE ON TOP, at every width (#3651). Its rounded
    corners are the pane's at rest; pinned, it meets the flat foot of the tabs
@@ -22205,4 +22256,11 @@ html.in-side-panel body {
   .dev-ws-wvote { margin-left: 0; width: 100%; }
   .dev-ws-wvote-btn { margin-left: auto; }
   .dev-ws-week-line { font-size: 13.5px; }
+  /* The item's page fills the screen on a phone (#4486): the side panel is
+     a wide-window affordance (from 1180px), but a panel caught open by a
+     shrinking window — or a surface that opens one directly — still reads
+     as the page, not as a card floating over it. */
+  .dev-ws-side {
+    left: 0; right: 0; top: 0; bottom: 0; width: auto; border-radius: 0;
+  }
 }

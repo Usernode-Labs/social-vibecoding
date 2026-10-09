@@ -1013,9 +1013,9 @@
       ]
     },
     {
-      "name": "Dev board: every folded row wears the fold mark, closed — two chevrons apart, the bar between them drawn but scaled away",
+      "name": "Dev board: every item is one of the Workshop’s rows, and it opens beside the board (#4486)",
       "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban .dev-ws-rowwrap > .dev-ws-row[aria-expanded=\"false\"] > span.dev-fold-mark[aria-hidden=\"true\"]:not([data-open]) > svg > path.dev-fold-top + path.dev-fold-bar + path.dev-fold-bottom"
+      "expectSelector": "#dev-kanban .dev-ws-wlist .dev-ws-wrow[data-ws-open]"
     },
     {
       "name": "Dev board: the open card's fold mark is the same glyph stretched open, and the button that folds the card",
@@ -1095,7 +1095,7 @@
     {
       "name": "Dev board: an issue whose proposal is up for a vote is still ON the board (#1251)",
       "path": "/?demo=1&view=kanban&col=inprogress#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban-col-inprogress [data-issue-row=\"900017\"]"
+      "expectSelector": "#dev-kanban-col-inprogress [data-ws-open=\"issue:900017\"]"
     },
     {
       "name": "Dev board: an auto-solve run that asked a question says so (#1112)",
@@ -2345,7 +2345,7 @@
     {
       "name": "Mobile kanban tab strip ships one tab per column (#814)",
       "path": "/?demo=1#app/usernode-2d5619/board",
-      "expectSelector": "#dev-kanban-tabs [data-kanban-tab=\"inreview\"]"
+      "expectSelector": ".dev-kanban-pipe [data-kanban-tab=\"inreview\"]"
     },
     {
       "name": "Kanban board marks exactly one active column for the tabs (#814)",
@@ -2366,7 +2366,7 @@
     {
       "name": "?view=kanban still reaches the board's columns, whatever is stored (#814)",
       "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban-tabs [data-kanban-tab=\"done\"]"
+      "expectSelector": ".dev-kanban-pipe [data-kanban-tab=\"done\"]"
     },
     {
       "name": "Re-pointed: the ⋯ ends the hero's actions row, after Invite, with Joined across from it",
@@ -2407,9 +2407,9 @@
       "expectSelector": "#dev-body #dev-workshop .dev-ws-themes [data-ws-theme] .dev-ws-theme-body [data-ws-lane] .dev-ws-row[role=\"button\"][aria-expanded]"
     },
     {
-      "name": "#app/<slug>/board resolves onto the stage pane, its cards folded to rows",
+      "name": "#app/<slug>/board resolves onto the stage pane, its items as rows (#4486)",
       "path": "/?demo=1#app/usernode-2d5619/board",
-      "expectSelector": "#dev-body #dev-workshop [data-ws-stage] #dev-kanban .dev-kanban-col .dev-ws-rowwrap > .dev-ws-row[role=\"button\"][aria-expanded=\"false\"][data-issue-row]"
+      "expectSelector": "#dev-body #dev-workshop [data-ws-stage] #dev-kanban .dev-kanban-col .dev-ws-wlist .dev-ws-wrow[data-ws-open]"
     },
     {
       "name": "A project's Workshop tab leads All items with its one line on what the open work is about",
@@ -2425,9 +2425,9 @@
     },
     {
       "id": "workshop.grouping-ear",
-      "name": "The grouping strip leads All items' pane head, at every width, on category by default",
+      "name": "All items' pane head leads with the page's own title, the grouping right behind it (#4486)",
       "path": "/?demo=1&ws=all#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > .dev-ws-pane-head > .dev-ws-group[role=\"tablist\"]:first-child > [data-ws-group=\"category\"][aria-selected=\"true\"]",
+      "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > .dev-ws-pane-head > .dev-ws-pagehead + .dev-ws-group > [data-ws-group=\"category\"][aria-selected=\"true\"]",
       "expectText": "By category",
       "visual": true,
       "impact": [
@@ -2457,7 +2457,7 @@
     {
       "name": "?group=stage swaps All items' pane for the board's own columns",
       "path": "/?demo=1&ws=all&group=stage#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > .dev-ws-pane-body > .dev-ws-board[data-ws-stage] > #dev-kanban #dev-kanban-col-issues .dev-ws-row"
+      "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > .dev-ws-pane-body > .dev-ws-board[data-ws-stage] > #dev-kanban #dev-kanban-col-issues .dev-ws-wrow"
     },
     {
       "name": "The Workshop carries the board's search and filter bar, and keeps it when the search matches nothing (#2090)",

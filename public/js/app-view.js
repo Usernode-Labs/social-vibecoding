@@ -12834,9 +12834,15 @@ const AppView = {
     // Done is built from merged rows, and a merged thing's conversation
     // lives on the proposal it came from, which is what _feedThreadRef
     // already declines to address.
-    const cardRows = (items, build, refOf) => items.map((it) => {
+    //
+    // `kindOf` names the kind the row's WORDS are built from
+    // (_workshopBrief, the same brief the Workshop tab's rows carry), so
+    // the board's rows read like the Workshop's.
+    const cardRows = (items, build, refOf, kindOf) => items.map((it) => {
       const card = build(it);
       const row = { t: 'card', key: card.key, card };
+      const kind = kindOf ? kindOf(it) : null;
+      if (kind) row.brief = AppView._workshopBrief(kind, it.item || it, card);
       const ref = refOf ? refOf(it) : null;
       return ref ? AppView._attachRowConversation(row, ref.kind, ref.item) : row;
     });
@@ -12845,7 +12851,7 @@ const AppView = {
     const cols = [
       {
         key: 'issues', title: 'Requests', count: kIssues.length,
-        rows: cardRows(kIssues, (i) => AppView._issueCardModel(i), (i) => ({ kind: 'issue', item: i })),
+        rows: cardRows(kIssues, (i) => AppView._issueCardModel(i), (i) => ({ kind: 'issue', item: i }), () => 'issue'),
         empty: kIssues.length ? null : emptyNote,
         footer: issuesFooter,
       },
@@ -12871,13 +12877,14 @@ const AppView = {
           (x) => (x.kind === 'proposal'
             ? AppView._proposalCardModel(x.item) : AppView._govCardModel(x.item)),
           (x) => ({ kind: x.kind, item: x.item }),
+          (x) => x.kind,
         ),
         empty: kInReview.length ? null : emptyNote,
         footer: null,
       },
       {
         key: 'done', title: 'Done', count: filtering ? kDone.length : doneTotal,
-        rows: cardRows(kDone, (m) => AppView._mergedRowModel(m)),
+        rows: cardRows(kDone, (m) => AppView._mergedRowModel(m), null, () => 'merged'),
         empty: kDone.length ? null : emptyNote,
         footer: doneFooter,
         status: doneDeployment,
@@ -13559,6 +13566,20 @@ const AppView = {
   // session is still reached from the board.
   _inProgressRows(entries) {
     const list = entries || [];
+    // The rows' words (Workshop tab's brief), with the board's own note on a
+    // private session: it is the viewer's spec draft, and only they can see
+    // it — the words the "Yours · not shared" divider says, on the row.
+    const briefFor = (kind, item, card) => {
+      const b = AppView._workshopBrief(kind, item, card);
+      if (kind === 'my-session' && !item.shared_at) {
+        b.tags = [{ label: 'Spec draft · only you', tone: 'plain' }, ...b.tags];
+      }
+      return b;
+    };
+    const cardRow = (card, kind, item) => {
+      const row = { t: 'card', key: card.key, card, brief: briefFor(kind, item, card) };
+      return AppView._attachRowConversation(row, kind, item);
+    };
     const mine = list.filter((e) => e.kind === 'my-session');
     const priv = mine.filter((e) => !e.item.shared_at);
     const vis = mine.filter((e) => !!e.item.shared_at);
@@ -13577,7 +13598,7 @@ const AppView = {
       rows.push(AppView._privateDividerRow());
       for (const e of priv) {
         const card = AppView._mySessionCardModel(e.item);
-        rows.push(AppView._attachRowConversation({ t: 'card', key: card.key, card }, e.kind, e.item));
+        rows.push(cardRow(card, e.kind, e.item));
       }
     }
     if (archived) rows.push(archived);
@@ -13585,18 +13606,18 @@ const AppView = {
       rows.push(AppView._visibleDividerRow());
       for (const e of vis) {
         const card = AppView._mySessionCardModel(e.item);
-        rows.push(AppView._attachRowConversation({ t: 'card', key: card.key, card }, e.kind, e.item));
+        rows.push(cardRow(card, e.kind, e.item));
       }
     }
     for (const e of issues) {
       const card = AppView._issueCardModel(e.item);
-      rows.push(AppView._attachRowConversation({ t: 'card', key: card.key, card }, e.kind, e.item));
+      rows.push(cardRow(card, e.kind, e.item));
     }
     if (shared.length) {
       rows.push(AppView._othersDividerRow());
       for (const e of shared) {
         const card = AppView._sharedSessionCardModel(e.item);
-        rows.push(AppView._attachRowConversation({ t: 'card', key: card.key, card }, e.kind, e.item));
+        rows.push(cardRow(card, e.kind, e.item));
       }
     }
     return rows;

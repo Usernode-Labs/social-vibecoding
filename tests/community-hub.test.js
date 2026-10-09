@@ -79,10 +79,13 @@ test('a project page is four tabs, Hub, Discussion, Needs you and Workshop, with
   assert.equal(band.litTab('all'), 'workshop', 'the Workshop tab stays lit over All items');
   assert.equal(pageParent('all'), 'workshop', 'All items goes back to the Workshop');
   assert.deepEqual(['needs', 'workshop', 'all', 'discussion'].map(pageTitle), ['Needs you', 'Workshop', 'All items', 'Discussion']);
-  // The band on every page; All items adds its way back under it.
-  assert.match(LANDER, /const pageBar = tab === 'all' \? \(/);
-  assert.match(LANDER, /<PageBack\s+label="Workshop"\s+title=\{pageTitle\(tab\)\}\s+onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}/);
-  assert.match(LANDER, /\{band\}\s*\{pageBar\}/);
+  // The band on every page; DELIBERATE (#4486): All items' way back moved
+  // into its pane head — "‹ Workshop" and the page's name lead the one
+  // header row — instead of a bar under the band.
+  assert.match(LANDER, /<PageBackButton label="Workshop" onBack=\{\(\) => openTab\(pageParent\(tab\)\)\} data-ws-page-back="" \/>/);
+  assert.match(LANDER, /<span className="dev-ws-page-title">\{pageTitle\(tab\)\}<\/span>/);
+  assert.match(LANDER, /\{band\}/);
+  assert.ok(!/pageBar/.test(LANDER), 'and no bar under the band any more');
   // The hub's order, as agreed: the hero (who is here, what it is, what you
   // can do, the fortnight), the first version while Homeroom bot builds it
   // (tests/hub-just-you.test.js), what landed since your last visit, Needs
