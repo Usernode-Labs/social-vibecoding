@@ -5744,13 +5744,25 @@ test('#4568: a no vote is the blocked red, not the ok green', () => {
   assert.match(CSS, /\.dev-ws-rail-vote\.is-on\[data-ws-voted="no"\] \.dev-ws-rail-lab \{ color: var\(--state-blocked\); \}/);
 });
 
-test('a run that does not know its total yet says "Checks…" on a row, its full words the tooltip and what a screen reader reads', () => {
+test('a run that does not know its total yet still shows its bar: "Checks" on the row and the card, pulsing until the count arrives (#4628)', () => {
   const AppView = makeAppView();
   seed(AppView);
   const item = { id: 77, pr_number: 4577, status: 'promoted', check_state: 'pending', created_at: at(1), linked_issues: [] };
   const running = AppView.statusTagSpecs(item).find((s) => s.data && s.data['data-status-tag'] === 'checks-running');
-  assert.ok(running && /^Checks running…/.test(running.label), 'the card’s status tag keeps its words');
-  const tag = AppView._workshopBrief('proposal', item, null).tags.find((t) => /^Checks running…/.test(t.label));
+  assert.ok(running, 'the card’s status tag exists');
+  assert.equal(running.label, 'Checks', 'one word for the whole run');
+  assert.ok(running.progress && running.progress.indeterminate, 'the bar pulses before the total is known');
+  const tag = AppView._workshopBrief('proposal', item, null).tags.find((t) => t.label === 'Checks');
   assert.ok(tag, 'the row carries the tag');
-  assert.equal(tag.short, 'Checks…');
+  assert.ok(tag.progress && tag.progress.indeterminate, 'the same indeterminate progress');
+  assert.match(tag.title, /^Checks starting/, 'the full words are the tooltip and what a screen reader reads');
+  // The row draws the busy bar itself, not just the model.
+  const { WorkRow } = loadTsx('frontend/src/features/dev-board/workshop/work-row.tsx');
+  const v = AppView._workshopView();
+  const row = [...v.votes.rows, ...(v.since ? v.since.rows : [])].find((r) => r.t === 'card' && r.card.attrs['data-proposal-row']);
+  assert.ok(row, 'a proposal row');
+  const brief = { kind: 'change', noun: 'Change', n: 4577, by: 'bob', mine: false, category: '', replies: 0, linked: [], closed: [], stage: 'run', at: 0,
+    tags: [{ label: 'Checks', tone: 'run', title: tag.title, progress: tag.progress }] };
+  const html = renderToHtml(createElement(WorkRow, { row: { ...row, brief }, slug: 'demo-app' }));
+  assert.match(html, /<span class="dev-ws-tag" data-tone="run" title="Checks starting\.[^"]*"><span class="dc-status-spinner-arc" aria-hidden="true"><\/span>Checks<span class="checks-chip-bar checks-chip-bar-busy" role="progressbar" aria-valuemin="0" aria-label="Checks starting"><\/span><\/span>/);
 });

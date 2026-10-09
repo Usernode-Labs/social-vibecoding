@@ -21284,17 +21284,29 @@ const AppView = {
   // Ordering is blockReasons' own severity order, then the in-flight states,
   // so the first tag on the line is the most serious thing wrong with it.
   // #4499: the checks chip's bar — how many of the run's checks are done,
-  // out of how many — or null while the run does not know its total yet.
-  // `text` is the count in words, for the tooltip and the bar's name.
-  _checksChipProgress(live) {
+  // out of how many — or, while the run does not know its total yet and is
+  // in flight, an indeterminate bar (#4628): the build and prepare phase at
+  // the start of a run lasts minutes and the chip drew no bar for any of
+  // it. `text` is the count in words, for the tooltip and the bar's name.
+  _checksChipProgress(live, inFlight) {
     const bar = live && live.bar;
-    if (!bar || !bar.expected) return null;
-    const done = Math.min(bar.ran, bar.expected);
-    return { done, total: bar.expected, text: `${done} of ${bar.expected} checks done` };
+    if (bar && bar.expected) {
+      const done = Math.min(bar.ran, bar.expected);
+      return { done, total: bar.expected, text: `${done} of ${bar.expected} checks done` };
+    }
+    if (inFlight) {
+      const text = live && live.bar.ran ? `${live.bar.ran} checks done so far` : 'Checks starting';
+      return { done: 0, total: 0, indeterminate: true, text };
+    }
+    return null;
   },
   // The same bar as markup, for the chips still drawn as strings.
   checksChipBarHtml(progress) {
-    if (!progress || !progress.total) return '';
+    if (!progress || (!progress.total && !progress.indeterminate)) return '';
+    if (progress.indeterminate) {
+      // The ARIA indeterminate form: no valuenow or valuemax, and no fill.
+      return `<span class="checks-chip-bar checks-chip-bar-busy" role="progressbar" aria-valuemin="0" aria-label="${progress.text}"></span>`;
+    }
     const pct = Math.round((progress.done / progress.total) * 100);
     return `<span class="checks-chip-bar" role="progressbar" aria-valuemin="0" aria-valuemax="${progress.total}" aria-valuenow="${progress.done}" aria-label="${progress.text}"><span class="checks-chip-bar-fill" style="width:${pct}%"></span></span>`;
   },
@@ -21359,19 +21371,19 @@ const AppView = {
         || (!p.check_state && p.status === 'promoted' && !p.console_check_state)) {
       // Checks in flight. A board of cards should say how far each run is,
       // not just that it is running: #4499 draws that as a thin bar inside
-      // the chip ("Checks" and the bar) once the run knows its total, with
-      // the exact count in the tooltip and the bar's accessible name. Before
-      // the total is known the words carry it, as they always did.
+      // the chip ("Checks" and the bar) — counting done-of-total once the
+      // run knows its total, and pulsing until then (#4628), because the
+      // build and prepare phase is part of the run too. The exact count is
+      // the tooltip and the bar's accessible name.
       const live = p.check_state === 'pending' ? AppView._checksProgressView(p) : null;
-      const progress = AppView._checksChipProgress(live);
-      const count = !progress && live && live.bar.ran ? ` ${live.bar.ran}` : '';
+      const progress = AppView._checksChipProgress(live, true);
       const why = 'Automated tests are still running on the staging build. Merge is blocked until they pass.';
       out.push({
         t: 'chip', key: 'tag-checks-running', cls: AppView.STATUS_TAG_CLS.running,
-        label: p.check_state !== 'pending' ? 'Checks starting…' : progress ? 'Checks' : `Checks running…${count}`,
-        spinner: true, meta: true, progress: progress || undefined,
+        label: 'Checks',
+        spinner: true, meta: true, progress,
         data: { 'data-status-tag': 'checks-running' },
-        title: progress ? `${progress.text}. ${why}` : why,
+        title: `${progress.text}. ${why}`,
       });
     }
     return out;
@@ -21860,7 +21872,7 @@ const AppView = {
       // instead of silence. Rows carrying a console snapshot are genuine
       // pre-#47 legacy — keep their advisory fallback.
       if (!pr.console_check_state) {
-        return `<span class="gc-checks-running-badge" title="The staging preview is being prepared and automated tests are about to run. Merge is blocked until they pass."><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Checks starting…</span>`;
+        return `<span class="gc-checks-running-badge" title="The staging preview is being prepared and automated tests are about to run. Merge is blocked until they pass."><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Checks${AppView.checksChipBarHtml(AppView._checksChipProgress(null, true))}</span>`;
       }
       return AppView.consoleWarningBadgeHtml(pr);
     }
@@ -21894,9 +21906,13 @@ const AppView = {
     // (gc-checks-running-badge), not amber, so a not-yet-started check is
     // visibly distinct from the amber in-flight merge stages.
     // #4499: once the run knows its total, a bar inside the chip says how
-    // far it is; the exact count is the tooltip and the bar's name.
+    // far it is; the exact count is the tooltip and the bar's name. #4628:
+    // while the run is in flight but does not know its total yet (the build
+    // and prepare phase), the bar pulses instead of being missing. A
+    // deferred run is nothing in flight, so it keeps its words with no bar.
     const live = state === 'pending' ? AppView._checksProgressView(pr) : null;
-    const progress = AppView._checksChipProgress(live);
+    const inFlight = state === 'pending' && pr.check_phase !== 'deferred';
+    const progress = AppView._checksChipProgress(live, inFlight);
     const count = !progress && live && live.bar.ran ? ` ${live.bar.ran}` : '';
     const why = 'Automated tests are still running on the staging build. Merge is blocked until they pass.';
     const label = progress ? 'Checks' : `Checks running…${count}`;

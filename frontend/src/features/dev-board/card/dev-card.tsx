@@ -329,6 +329,18 @@ export function Preview({ spec }: { spec: PreviewSpec }): ReactNode {
  * exact count is its accessible name and the chip's tooltip.
  */
 export function ChecksBar({ progress }: { progress: ChecksProgress }): ReactNode {
+  // #4628: before the run knows its total, the bar pulses instead of
+  // filling — the ARIA indeterminate form, no valuenow or valuemax.
+  if (progress.indeterminate) {
+    return (
+      <span
+        className="checks-chip-bar checks-chip-bar-busy"
+        role="progressbar"
+        aria-valuemin={0}
+        aria-label={progress.text}
+      />
+    );
+  }
   const pct = progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
   return (
     <span
