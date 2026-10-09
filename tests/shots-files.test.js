@@ -296,6 +296,81 @@ test('a ready change carries the agent\'s note on what its shots leave out', () 
   }
 });
 
+test('a problem noticed on the after build names a declared change and one of its screens', () => {
+  const intent = twoScreenIntent();
+  assert.deepEqual(shots.notice(intent, {
+    change: 'invite-suggestions', screen: 'mobile', problem: '  The table is cut off at the right edge.  ',
+    alsoBefore: false, shot: 'screen',
+  }), {
+    text: 'The table is cut off at the right edge.', change: 'invite-suggestions', screen: 'mobile',
+    shot: 'screen', alsoBefore: false,
+  });
+  // The shot is optional, and so is whether the before build has it.
+  const bare = shots.notice(intent, { change: 'invite-suggestions', screen: 'desktop', problem: 'Overlap.' });
+  assert.equal(bare.shot, null);
+  assert.equal(bare.alsoBefore, 'unknown');
+  // One short sentence: longer text is cut at the cap.
+  assert.equal(shots.notice(intent, {
+    change: 'invite-suggestions', screen: 'desktop', problem: 'x'.repeat(900),
+  }).text.length, shots.MAX_NOTICE);
+  assert.equal(shots.MAX_NOTICE, 300);
+
+  for (const value of [true, 'true']) assert.equal(shots.alsoBefore(value), true);
+  for (const value of [false, 'false']) assert.equal(shots.alsoBefore(value), false);
+  for (const value of [undefined, null, '', 'unknown']) assert.equal(shots.alsoBefore(value), 'unknown');
+  assert.throws(() => shots.alsoBefore('maybe'), refusal('invalid_also_before'));
+
+  const base = { change: 'invite-suggestions', screen: 'desktop', problem: 'Overlap.' };
+  assert.throws(() => shots.notice(intent, { ...base, problem: '  ' }), refusal('problem_required'));
+  assert.throws(() => shots.notice(intent, { ...base, problem: 42 }), refusal('problem_required'));
+  assert.throws(() => shots.notice(intent, { ...base, change: 'someone-elses' }), refusal('unknown_change'));
+  assert.throws(() => shots.notice(intent, { ...base, screen: 'tablet' }), refusal('unknown_screen'));
+  assert.throws(() => shots.notice(intent, { ...base, shot: 'clip' }), refusal('invalid_kind'));
+  assert.throws(() => shots.notice(intent, { ...base, alsoBefore: 'yes' }), refusal('invalid_also_before'));
+});
+
+test('noticed problems ride beside the results and never change a change\'s status', () => {
+  const intent = motionIntent();
+  const saved = new Map();
+  for (const side of ['before', 'after']) {
+    save(saved, intent, { change: 'invite-suggestions', screen: 'desktop', side }, sideShot(side));
+  }
+  const without = shots.summarize(intent, saved);
+  assert.deepEqual(without.notices, []);
+  assert.equal(Object.hasOwn(without.verdict, 'notices'), false, 'a run without notices stores none');
+
+  const notices = [
+    { text: 'The sort control overlaps a heading.', change: 'invite-suggestions', screen: 'desktop', shot: 'screen', alsoBefore: true },
+    // The element shot was never saved, so the notice cannot point at it.
+    { text: 'A broken image.', change: 'invite-suggestions', screen: 'desktop', shot: 'element', alsoBefore: 'unknown' },
+    // A change that is not ready keeps its notice, without a shot to show it.
+    { text: 'The toast covers the button.', change: 'saved-toast', screen: 'desktop', shot: 'screen', alsoBefore: false },
+  ];
+  const summary = shots.summarize(intent, saved, new Map(), { notices });
+  assert.deepEqual(summary.stories, without.stories, 'the results are exactly what they were without notices');
+  assert.equal(summary.verdict.passed, without.verdict.passed);
+  assert.equal(summary.manifestHash, without.manifestHash, 'notices publish no file');
+  assert.deepEqual(summary.verdict.notices, [
+    { ...notices[0] },
+    { ...notices[1], shot: null },
+    { ...notices[2], shot: null },
+  ]);
+  assert.deepEqual(summary.notices, summary.verdict.notices);
+
+  // A run whose only change failed keeps its notices too, still advisory.
+  const failed = shots.summarize(intent, new Map(), new Map([['invite-suggestions', 'Saving answered 500.'], ['saved-toast', 'x']]), {
+    failed: new Set(['invite-suggestions']), notices: notices.slice(0, 1),
+  });
+  assert.equal(failed.verdict.passed, false);
+  assert.equal(failed.failedCount, 1);
+  assert.equal(failed.verdict.notices.length, 1);
+
+  // Never more than the cap, whatever the caller hands in.
+  const many = Array.from({ length: 9 }, (_, i) => ({ ...notices[0], text: `Problem ${i}.` }));
+  assert.equal(shots.summarize(intent, saved, new Map(), { notices: many }).verdict.notices.length, shots.MAX_NOTICES);
+  assert.equal(shots.MAX_NOTICES, 5);
+});
+
 test('only the files of ready changes are published, and the manifest hash names them', () => {
   const intent = motionIntent();
   const entries = [

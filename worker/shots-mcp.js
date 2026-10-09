@@ -262,6 +262,31 @@ server.registerTool('note_change', {
   } catch (error) { return toolError(error); }
 });
 
+server.registerTool('note_problem', {
+  description: 'Note a clear problem you saw on the after address while taking the shots that is not about the declared change itself: content cut off or running off the screen, text or controls overlapping, an error message or a broken image on screen, a layout that falls apart at the phone size. Only what any person would agree is broken, never a matter of taste, style or wording. Whether the declared change is shown or works is note_change and skip_change, not this. It is shown on the proposal under "Also noticed" and changes nothing about the shots. At most five per run; noting the same problem at the same place again updates it.',
+  inputSchema: {
+    change: z.string().min(1).max(96)
+      .describe('The declared change you were shooting when you saw it.'),
+    screen: z.string().min(1).max(32)
+      .describe('The screen (viewport name) it shows at.'),
+    problem: z.string().trim().min(1).max(300)
+      .describe('What is broken, in one short sentence a person will understand, e.g. "The results table is cut off at the right edge."'),
+    alsoBefore: z.union([z.boolean(), z.literal('unknown')]).optional()
+      .describe('true if the before address shows the same problem, false if it does not, "unknown" (the default) if you did not look.'),
+    shot: z.enum(['screen', 'element']).optional()
+      .describe('Which after shot you saved for this change and screen shows it, if one does.'),
+  },
+  annotations,
+}, async ({ change, screen, problem, alsoBefore, shot }) => {
+  try {
+    return resultContent((await request('/problem', {
+      method: 'POST',
+      body: { change, screen, problem, ...(alsoBefore != null ? { alsoBefore } : {}), ...(shot ? { shot } : {}) },
+      timeoutMs: 30_000,
+    })).result);
+  } catch (error) { return toolError(error); }
+});
+
 server.registerTool('fail_request', {
   description: 'Only for a change that declares intent.controlledFailurePath (an error state): make that exact API GET fail on both builds so the error screen can be shot. Set enabled=true before the step that triggers it, and false afterward. People see a "controlled test" label on those shots.',
   inputSchema: { path: z.string().min(6).max(512), enabled: z.boolean() },

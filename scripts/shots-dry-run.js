@@ -272,6 +272,10 @@ function contactSheet(intent, summary, fileNames, meta) {
       ${result.note ? `<p class="reason">Not in these shots: ${escapeHtml(result.note)}</p>` : ''}
       <p class="steps">${story.intent.steps.map(escapeHtml).join(' → ')}</p>${rows}</section>`;
   }).join('');
+  // What the agent noticed broken on the after build (note_problem).
+  const notices = (summary.notices || []).map((entry) => `<li>${escapeHtml(entry.text)}
+      <span class="meta">· ${escapeHtml(entry.change)} · ${escapeHtml(entry.screen)}${entry.shot ? ` · ${escapeHtml(entry.shot)} shot` : ''}
+      · ${entry.alsoBefore === true ? 'also on the before build' : entry.alsoBefore === false ? 'not on the before build' : 'before build not checked'}</span></li>`).join('');
   return `<!doctype html><meta charset="utf-8"><title>Before/after shots dry run</title>
 <style>body{font:14px system-ui,sans-serif;margin:24px;background:#fafafa;color:#18181b}
 section{background:#fff;border:1px solid #e4e4e7;border-radius:12px;padding:16px;margin:0 0 20px}
@@ -285,6 +289,7 @@ img,video{width:100%;border:1px solid #e4e4e7;border-radius:8px;background:#2727
 <h1>Before/after shots dry run</h1>
 <p>${escapeHtml(meta.before)} → ${escapeHtml(meta.after)} · ${summary.readyCount} of ${intent.stories.length} ready · agent ${escapeHtml(meta.agentOutcome)} in ${Math.round(meta.agentMs / 1000)} s</p>
 ${changes}
+${notices ? `<section><h2>Also noticed</h2><ul>${notices}</ul></section>` : ''}
 <h2>Agent's last words</h2><pre>${escapeHtml(meta.finalText || '(none)')}</pre>
 <h2>Tool calls</h2><pre>${escapeHtml(JSON.stringify(meta.toolCounts, null, 2))}</pre>`;
 }
@@ -436,6 +441,7 @@ async function main() {
     published: summary.verdict.passed,
     readyCount: summary.readyCount,
     changes: summary.stories,
+    notices: summary.notices,
     savedFiles: [...fileNames.values()],
     manifestHash: summary.manifestHash,
     mode: shots.SHOTS_MODE,

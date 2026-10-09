@@ -117,4 +117,15 @@ test('the contact sheet shows each change with its result and escapes proposal t
   assert.match(html, /<video src="shots\/saved-toast-desktop-before-clip\.webm" controls muted playsinline>/);
   assert.match(html, /<img src="shots\/saved-toast-desktop-after-screen\.png" alt="After · screen">/);
   assert.match(html, /1 of 2 ready · agent finished in 61 s/);
+  assert.doesNotMatch(html, /Also noticed/, 'nothing noticed, no section');
+
+  // What the agent noticed broken on the after build, as text.
+  const noticed = contactSheet(intent, { ...summary, notices: [
+    { text: 'The <b>table</b> is cut off.', change: 'saved-toast', screen: 'desktop', shot: 'screen', alsoBefore: false },
+    { text: 'Overlap.', change: 'saved-toast', screen: 'desktop', shot: null, alsoBefore: 'unknown' },
+  ] }, files, { before: 'b', after: 'a', agentOutcome: 'finished', agentMs: 1000, finalText: '', toolCounts: {} });
+  assert.match(noticed, /<h2>Also noticed<\/h2>/);
+  assert.match(noticed, /The &lt;b&gt;table&lt;\/b&gt; is cut off\./);
+  assert.match(noticed, /screen shot\s+· not on the before build/);
+  assert.match(noticed, /before build not checked/);
 });

@@ -650,7 +650,7 @@ const AGENT_DIAGNOSTIC_PHASES = new Set([
   'shots_mcp_ready', 'claude', 'agent', 'done',
 ]);
 const AGENT_DIAGNOSTIC_TOOLS = new Set([
-  'get_brief', 'save_shot', 'save_clip', 'skip_change', 'note_change', 'fail_request',
+  'get_brief', 'save_shot', 'save_clip', 'skip_change', 'note_change', 'note_problem', 'fail_request',
   'browser_navigate', 'browser_navigate_back', 'browser_snapshot',
   'browser_take_screenshot', 'browser_click', 'browser_type',
   'browser_fill_form', 'browser_press_key', 'browser_select_option',
@@ -1375,6 +1375,7 @@ async function executeRun(config, options, injected = {}) {
         skippedChanges: control.skipped.size,
         ...(control.failed?.size ? { failedChanges: control.failed.size } : {}),
         notedChanges: control.notes.size,
+        ...(control.notices?.length ? { notedProblems: control.notices.length } : {}),
         skippedAll: control.skippedAll ? true : false,
       } } : {}),
     });

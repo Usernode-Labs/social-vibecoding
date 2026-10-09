@@ -198,6 +198,15 @@ async function recentShots(pool, query = {}, deps = {}) {
         })),
         images: artifacts.filter((a) => a.media === 'png').length,
         clips: artifacts.filter((a) => a.media !== 'png').length,
+        // What the shots agent noticed broken on the after build besides
+        // the declared changes, as the card's "Also noticed" lists it.
+        shotNotices: (Array.isArray(shots.shotNotices) ? shots.shotNotices : []).slice(0, 5).map((n) => ({
+          text: clipText(n?.text, 300),
+          change: n?.change != null ? String(n.change).slice(0, 96) : null,
+          screen: n?.screen != null ? String(n.screen).slice(0, 32) : null,
+          shot: n?.shot === 'screen' || n?.shot === 'element' ? n.shot : null,
+          alsoBefore: n?.alsoBefore === true || n?.alsoBefore === false ? n.alsoBefore : 'unknown',
+        })),
         failureCode: shots.failureCode ? String(shots.failureCode).slice(0, 64) : null,
         failure: shots.failureReason ? clipText(shots.failureReason, MAX_SHOT_FAILURE) : null,
         ...(exits.has(Number(p.id)) ? { agentExit: exits.get(Number(p.id)) } : {}),

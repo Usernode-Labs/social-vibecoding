@@ -62,7 +62,7 @@ test('planner origin list rejects stale or malformed hosted-app catalogs', () =>
   }
 });
 
-const SHOTS_TOOLS = ['get_brief', 'save_shot', 'save_clip', 'skip_change', 'note_change', 'fail_request'];
+const SHOTS_TOOLS = ['get_brief', 'save_shot', 'save_clip', 'skip_change', 'note_change', 'note_problem', 'fail_request'];
 const RETIRED_TOOLS = /evidence_(?:get_context|run_plan|finish|capture|report_blocker|set_request_failure|reset_pair|reset_side)/;
 
 // Run the real config writer against a temporary state directory.
@@ -409,7 +409,7 @@ function bridgeFixture(t, { declaredChanges } = {}) {
   return { dir, shotsDir, runId, env, calls, tools, serverInfo, call, platformFetch };
 }
 
-test('the shots bridge offers exactly six tools and talks only to its own run', async (t) => {
+test('the shots bridge offers exactly seven tools and talks only to its own run', async (t) => {
   const bridge = bridgeFixture(t);
   assert.equal(bridge.serverInfo.name, 'usernode-before-after-shots');
   assert.deepEqual([...bridge.tools.keys()], SHOTS_TOOLS);
@@ -427,17 +427,44 @@ test('the shots bridge offers exactly six tools and talks only to its own run', 
   assert.equal(one.isError, false);
   const note = await bridge.call('note_change', { change: 'saved-toast', note: 'The undo link needs a second list.' });
   assert.equal(note.isError, false);
+  // A problem noticed on the after build goes to its own route, with only
+  // the fields the agent gave.
+  const problem = await bridge.call('note_problem', {
+    change: 'invite-suggestions', screen: 'phone', problem: 'The results table is cut off at the right edge.',
+    alsoBefore: false, shot: 'screen',
+  });
+  assert.equal(problem.isError, false);
+  const unsure = await bridge.call('note_problem', {
+    change: 'invite-suggestions', screen: 'desktop', problem: 'The sort control overlaps a column heading.',
+  });
+  assert.equal(unsure.isError, false);
 
   assert.deepEqual(bridge.calls.map((sent) => [sent.method, sent.origin, sent.path]), [
     ['GET', 'http://platform.test:3000', `/api/internal/shots/${bridge.runId}/context`],
     ['POST', 'http://platform.test:3000', `/api/internal/shots/${bridge.runId}/skip`],
     ['POST', 'http://platform.test:3000', `/api/internal/shots/${bridge.runId}/skip`],
     ['POST', 'http://platform.test:3000', `/api/internal/shots/${bridge.runId}/note`],
+    ['POST', 'http://platform.test:3000', `/api/internal/shots/${bridge.runId}/problem`],
+    ['POST', 'http://platform.test:3000', `/api/internal/shots/${bridge.runId}/problem`],
   ]);
   assert.ok(bridge.calls.every((sent) => sent.headers.authorization === 'Bearer run-scoped-jwt'));
   assert.deepEqual(JSON.parse(bridge.calls[1].body), { change: null, reason: 'Every screen shows a sign-in page.' });
   assert.deepEqual(JSON.parse(bridge.calls[2].body), { change: 'invite-suggestions', reason: 'Needs a second member.' });
   assert.deepEqual(JSON.parse(bridge.calls[3].body), { change: 'saved-toast', note: 'The undo link needs a second list.' });
+  assert.deepEqual(JSON.parse(bridge.calls[4].body), {
+    change: 'invite-suggestions', screen: 'phone', problem: 'The results table is cut off at the right edge.',
+    alsoBefore: false, shot: 'screen',
+  });
+  assert.deepEqual(JSON.parse(bridge.calls[5].body), {
+    change: 'invite-suggestions', screen: 'desktop', problem: 'The sort control overlaps a column heading.',
+  });
+  const problemTool = /registerTool\('note_problem', \{[\s\S]*?\n\}, async/.exec(read('shots-mcp.js'))[0];
+  assert.match(problemTool, /not about the declared change itself/);
+  assert.match(problemTool, /never a matter of taste, style or wording/);
+  assert.match(problemTool, /"Also noticed" and changes nothing about the shots/);
+  assert.match(problemTool, /At most five per run/);
+  assert.match(problemTool, /problem: z\.string\(\)\.trim\(\)\.min\(1\)\.max\(300\)/);
+  assert.match(problemTool, /alsoBefore: z\.union\(\[z\.boolean\(\), z\.literal\('unknown'\)\]\)\.optional\(\)/);
 
   // A bridge without its run, token or platform refuses to start.
   for (const broken of [{ SHOTS_JWT: '' }, { SHOTS_RUN_ID: 'not-a-run' }, { PLATFORM_URL: 'file:///etc' }]) {

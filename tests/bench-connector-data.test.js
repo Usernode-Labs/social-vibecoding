@@ -59,7 +59,13 @@ test('recent shots page through the gallery\'s own listing and counts, and keep 
         proposals: [{
           id: 70, appSlug: 'bread', appName: 'Bread', prNumber: 12, prUrl: 'https://github.com/x/y/pull/12', title: 'Add rye',
           mergedAt: '2026-10-01T00:00:00Z', captureState: 'ok', authorEmail: 'never@example.com',
-          shots: { state: 'verified', claims: [{ id: 'c1', claim: 'Rye is a choice' }], artifacts: [{ media: 'png' }, { media: 'png' }, { media: 'webm' }] },
+          shots: {
+            state: 'verified', claims: [{ id: 'c1', claim: 'Rye is a choice' }], artifacts: [{ media: 'png' }, { media: 'png' }, { media: 'webm' }],
+            shotNotices: [
+              { text: 'The flour table is cut off. '.repeat(20), change: 'c1', screen: 'phone', shot: 'screen', alsoBefore: true, extra: 'dropped' },
+              { text: 'An error shows.', change: 'c1', screen: 'desktop', shot: 'clip', alsoBefore: 'maybe' },
+            ],
+          },
           visuals: [{}, {}],
         }],
         nextCursor: { before: '2026-09-30T00:00:00Z', before_id: 69 },
@@ -72,6 +78,12 @@ test('recent shots page through the gallery\'s own listing and counts, and keep 
   assert.equal(p.sessionId, 70);
   assert.equal(p.shots.images, 2);
   assert.equal(p.shots.clips, 1);
+  // What the shots agent noticed on the after build, as the card lists it, bounded.
+  assert.equal(p.shots.shotNotices.length, 2);
+  assert.equal(p.shots.shotNotices[0].text.length, 300);
+  assert.deepEqual({ ...p.shots.shotNotices[0], text: null },
+    { text: null, change: 'c1', screen: 'phone', shot: 'screen', alsoBefore: true });
+  assert.deepEqual(p.shots.shotNotices[1], { text: 'An error shows.', change: 'c1', screen: 'desktop', shot: null, alsoBefore: 'unknown' });
   assert.equal(p.legacyCaptures, 2);
   assert.equal(p.authorEmail, undefined);
   assert.deepEqual(out.nextCursor, { before: '2026-09-30T00:00:00.000Z', beforeId: 69 });

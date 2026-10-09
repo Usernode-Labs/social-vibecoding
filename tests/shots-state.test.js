@@ -569,6 +569,28 @@ test('shot results come only from a shots verdict and carry nothing but id, stat
   ]);
 });
 
+test('problems the shots agent noticed are kept beside the results and never read as a change failing', () => {
+  const notices = [
+    { text: 'The sort control overlaps the Done heading.', change: 'invite-suggestions', screen: 'desktop', shot: 'screen', alsoBefore: true },
+  ];
+  const base = { state: 'verified', base_sha: BASE_SHA, head_sha: HEAD_SHA, intent: intent() };
+  const summary = state.runSummary({ ...base, hard_verdict: { ...shotsVerdict([
+    { id: 'invite-suggestions', status: 'ready', files: 2 },
+  ]), notices } });
+  assert.deepEqual(summary.shotNotices, notices);
+  assert.deepEqual(summary.shotResults, [{ id: 'invite-suggestions', status: 'ready', reason: null, note: null }]);
+  // Only a shots verdict carries them.
+  for (const hard_verdict of [null, { passed: true, runs: 2, notices }, { mode: 'shots', notices: 'x' }]) {
+    assert.deepEqual(state.runSummary({ ...base, hard_verdict }).shotNotices, [], JSON.stringify(hard_verdict));
+  }
+  // The proposal's copy of the run carries them, and nothing that decides
+  // whether the change works reads them.
+  const row = { shots_state: 'verified', shots_detail: { ...summary, intent: intent() } };
+  assert.deepEqual(state.brokenOnHead(row, HEAD_SHA), []);
+  const AppView = require('../public/js/app-view.js');
+  assert.equal(AppView._shotsBrokenCount({ ...summary, state: 'verified' }), 0);
+});
+
 // ── Taking the shots again ──────────────────────────────────────────────
 
 function rerunPool(old, { sessionRowCount = 1 } = {}) {

@@ -202,6 +202,21 @@ test('the shots agent prompt asks for before/after shots and leaves judgement to
   }
 });
 
+// Published shots showed defects nobody remarked on: a result table cut off
+// at the right edge on both screen sizes, a sort control over a column
+// heading. The agent notes those (note_problem), and only those.
+test('the shots agent notes clear problems on the after build, a handful, never taste or the change itself', () => {
+  const prompt = agent.SYSTEM_PROMPT;
+  assert.match(prompt, /Call note_problem with the change and screen where you saw it/);
+  assert.match(prompt, /content cut off or\s+running off the screen, text or controls overlapping each other, an error\s+message or a broken image on screen, a layout that falls apart at the phone\s+size/);
+  assert.match(prompt, /alsoBefore: true when the before address shows the same thing, false\s+when it does not, "unknown" when you did not look/);
+  assert.match(prompt, /Note only what any\s+person would agree is broken, at most a handful per run/);
+  assert.match(prompt, /never a matter of\s+taste, style or wording/);
+  assert.match(prompt, /never whether the declared change is shown or\s+works \(that is note_change and skip_change\)/);
+  assert.match(prompt, /under\s+"Also noticed"; they change nothing about the shots/);
+  assert.match(prompt, /Do not go looking for problems\s+on other screens/);
+});
+
 test('backend results cannot silently turn an errored model turn into success', () => {
   assert.equal(agent.failedResult(null), true);
   assert.equal(agent.failedResult({ exitCode: 1 }), true);

@@ -150,6 +150,9 @@ async function migrate(config) {
   await seedStagingCustomDomains(pool);
   await seedStagingPublicApiContributors(pool);
   await seedStagingVisuals(pool);
+  // Must run AFTER seedStagingVisuals: it owns the gallery demo app this
+  // fixture's proposal belongs to.
+  await seedStagingShotsNoticed(pool);
   await seedStagingLeaderboardProfile(pool);
   await seedStagingQaSession(pool, config);
   await seedStagingCloneQuestionSuggestions(pool, config);
@@ -7251,6 +7254,149 @@ async function seedStagingGalleryProposals(pool) {
   }
 }
 
+// A proposal with published before & after shots whose shots agent also
+// noticed problems on the after build, so the card's "Also noticed" can be
+// seen (and shot) on a preview. shot_runs and shot_artifacts are
+// staging:private, so no clone has a published run, and the demo states the
+// shots copies get are written by the deployed platform's code, not this
+// revision's. One merged proposal on the gallery's own demo app
+// (seedStagingGalleryProposals, which must run first), so it is listed
+// first in the admin Screenshot gallery as well, and its change page is
+// /#app/staging-demo-gallery-app/dev/proposals/900108. The run is verified
+// on the proposal's reviewed head, with a desktop and a phone screen per
+// side drawn as plain bars (services/bench/demo.js demoPng), and two
+// notices: one also on the before build, one not. Every word is an
+// obviously fake "Staging demo" line; fixed ids, idempotent, and a strict
+// no-op outside staging.
+const STAGING_SHOTS_NOTICED_SESSION_ID = 900108;
+
+async function seedStagingShotsNoticed(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const crypto = require('crypto');
+  const { demoPng } = require('../services/bench/demo');
+  const planContract = require('../services/visible-changes');
+  const shotsState = require('../services/shots-state');
+  const id = STAGING_SHOTS_NOTICED_SESSION_ID;
+  const runId = `${id}`.padEnd(32, 'e');
+  const baseSha = 'c'.repeat(40);
+  const headSha = 'd'.repeat(40);
+  try {
+    const intent = planContract.parseIntent({
+      version: 1,
+      impact: 'ui',
+      rationale: 'Staging demo: the board gains a sort control.',
+      stories: [{
+        id: 'board-sort',
+        claim: 'Staging demo: the board shows a Newest sort control above its columns.',
+        persona: 'member',
+        viewports: [
+          { name: 'desktop', width: 1280, height: 800 },
+          { name: 'phone', width: 390, height: 844 },
+        ],
+        intent: {
+          startPath: '/board',
+          steps: ['Open the board'],
+          checkpoint: 'The sort control is above the columns',
+          focus: 'Sort control',
+          baseState: 'not_present',
+          animation: 'none',
+        },
+      }],
+    });
+    const notices = [
+      { text: 'Staging demo: the Newest sort control overlaps the Done column heading.',
+        change: 'board-sort', screen: 'desktop', shot: 'screen', alsoBefore: true },
+      { text: 'Staging demo: the last column is cut off at the right edge.',
+        change: 'board-sort', screen: 'phone', shot: 'screen', alsoBefore: false },
+    ];
+    // Plain bars: a header, then the columns; the after side adds the
+    // sort control (the accent bar) between them.
+    const ground = [250, 250, 249];
+    const ink = [214, 211, 209];
+    const accent = [37, 99, 235];
+    const shot = (width, height, side) => demoPng(width, height, ground, [
+      { y: 32, h: 40, rgb: ink },
+      ...(side === 'head' ? [{ y: 96, h: 32, rgb: accent }] : []),
+      ...[0, 1, 2].map((i) => ({ y: 152 + i * 104, h: 80, rgb: ink })),
+    ]);
+    const files = [];
+    for (const [viewport, width, height] of [['desktop', 1280, 800], ['phone', 390, 844]]) {
+      for (const side of ['base', 'head']) {
+        const data = shot(width, height, side);
+        files.push({
+          id: crypto.createHash('sha256').update(`staging-shots-noticed:${viewport}:${side}`).digest('hex').slice(0, 32),
+          viewport, side, data, width, height,
+          sha256: crypto.createHash('sha256').update(data).digest('hex'),
+        });
+      }
+    }
+    const verdict = {
+      passed: true, mode: 'shots', runs: 1,
+      stories: [{ id: 'board-sort', status: 'ready', files: files.length }],
+      notices,
+    };
+    const planHash = crypto.createHash('sha256')
+      .update(`staging-shots-noticed:${files.map((file) => file.sha256).join(':')}`).digest('hex');
+    // The proposal's own copy of the run, as a published run leaves it.
+    const detail = {
+      ...shotsState.runSummary({
+        id: runId, state: 'verified', intent, base_sha: baseSha, head_sha: headSha,
+        plan_hash: planHash, hard_verdict: verdict,
+      }),
+      intent,
+    };
+
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, pr_number, pr_title, status,
+          promoted_at, merged_at, reviewed_head_sha,
+          shots_state, shots_run_id, shots_detail, shots_updated_at)
+       SELECT $1::int, 900106, u.id, 'staging-demo/shots-also-noticed', $1::int,
+              '[Mock] Staging demo: before & after with Also noticed', 'merged',
+              NOW() - interval '2 hours', NOW() - interval '1 hour', $2::varchar,
+              'verified', $3::varchar, $4::jsonb, NOW()
+         FROM users u
+        WHERE u.username = 'staging-demo-user'
+          AND EXISTS (SELECT 1 FROM apps WHERE id = 900106)
+       ON CONFLICT (id) DO NOTHING`,
+      [id, headSha, runId, JSON.stringify(detail)]
+    );
+    // Its builds are long gone, as a published run's are: the cleanup sweep
+    // has nothing to tear down for it.
+    const cleaned = {
+      cleanupComplete: true,
+      cleanupVersion: require('../services/shots-environment').RESOURCE_CLEANUP_VERSION,
+    };
+    await pool.query(
+      `INSERT INTO shot_runs
+         (id, session_id, base_sha, head_sha, plan_hash, intent, hard_verdict,
+          trace_summary, state, trigger, started_at, completed_at)
+       SELECT $1::varchar, $2::int, $3::varchar, $4::varchar, $5::varchar, $6::jsonb, $7::jsonb, $8::jsonb,
+              'verified', 'staging-fixture', NOW() - interval '3 hours', NOW() - interval '3 hours'
+        WHERE EXISTS (SELECT 1 FROM chat_sessions WHERE id = $2::int AND app_id = 900106)
+       ON CONFLICT (id) DO NOTHING`,
+      [runId, id, baseSha, headSha, planHash, JSON.stringify(intent), JSON.stringify(verdict),
+        JSON.stringify(cleaned)]
+    );
+    for (const file of files) {
+      await pool.query(
+        `INSERT INTO shot_artifacts
+           (id, run_id, story_id, viewport, side, variant, media, content_type,
+            data, width, height, bytes, sha256)
+         SELECT $1::varchar, $2::varchar, 'board-sort', $3::varchar, $4::varchar, 'context', 'png', 'image/png',
+                $5::bytea, $6::int, $7::int, $8::int, $9::varchar
+          WHERE EXISTS (SELECT 1 FROM shot_runs WHERE id = $2::varchar)
+         ON CONFLICT (id) DO NOTHING`,
+        [file.id, runId, file.viewport, file.side, file.data, file.width, file.height,
+          file.data.length, file.sha256]
+      );
+    }
+    log.info('db', 'Staging shots "Also noticed" fixture seeded', { sessionId: id });
+  } catch (err) {
+    log.warn('db', 'Staging shots "Also noticed" seeding failed', { message: err.message });
+  }
+}
+
 // (#60) Fixtures for the leaderboard user-profile drill-in. The profile
 // view lists a user's PROPOSED PRs (chat_sessions) with kudos counts
 // (pr_kudos) — both staging:private tables, so without seeding the view
@@ -13785,5 +13931,5 @@ module.exports = {
   backfillProposalIssuerAssignments,
   seedStagingTopicScrollThreads, seedStagingLlmUsage, seedStagingHomeLayout,
   seedStagingAnalyticsCharts, seedStagingSpendDistribution,
-  seedStagingGeneralChannel,
+  seedStagingGeneralChannel, seedStagingShotsNoticed,
 };
