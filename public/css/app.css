@@ -22350,6 +22350,14 @@ html.in-side-panel body {
   background: currentColor; transition: width .3s ease;
 }
 @media (prefers-reduced-motion: reduce) { .checks-chip-bar-fill { transition: none; } }
+/* #4628: before the run knows its total (the build, the wait for a slot,
+   the early run) the chip's bar is full width and pulses instead of being
+   absent — the Testing ledger's own busy motion, and off under reduced
+   motion the same way. */
+.checks-chip-bar-busy .checks-chip-bar-fill { animation: dev-ledger-progress-pulse 1.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .checks-chip-bar-busy .checks-chip-bar-fill { animation: none; }
+}
 /* A change's vote (#4486): the card's own status bar with its own words
    ("0 of 1 approval"), as long as its words plus the 56px the thin bar it
    replaced took, then the card's Vote button, at the far end of the row's

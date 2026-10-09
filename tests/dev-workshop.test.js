@@ -2195,6 +2195,12 @@ test('#4457, #4485, #4486: a change up for a vote keeps its vote at the end of t
   const runningBrief = { ...brief, tags: [{ label: 'Checks', tone: 'run', title: '619 of 732 checks done. Automated tests are still running.', progress: { done: 619, total: 732, text: '619 of 732 checks done' } }] };
   const running = renderToHtml(createElement(WorkRow, { row: { ...row, brief: runningBrief }, slug: 'demo-app' }));
   assert.match(running, /<span class="dev-ws-tag" data-tone="run" title="619 of 732 checks done\. Automated tests are still running\."><span class="dc-status-spinner-arc" aria-hidden="true"><\/span>Checks<span class="checks-chip-bar" role="progressbar" aria-valuemin="0" aria-valuemax="732" aria-valuenow="619" aria-label="619 of 732 checks done"><span class="checks-chip-bar-fill" style="width:85%"><\/span><\/span><\/span>/);
+  // #4628: a run that does not know its total yet gets the same bar,
+  // indeterminate: full width and pulsing, no value attributes.
+  const busyBrief = { ...brief, tags: [{ label: 'Checks running…', short: 'Checks…', tone: 'run', title: 'Automated tests are still running.', progress: { done: 0, total: 0, indeterminate: true, text: 'Checks under way' } }] };
+  const busy = renderToHtml(createElement(WorkRow, { row: { ...row, brief: busyBrief }, slug: 'demo-app' }));
+  assert.match(busy, /<span class="checks-chip-bar checks-chip-bar-busy" role="progressbar" aria-label="Checks under way"><span class="checks-chip-bar-fill" style="width:100%"><\/span><\/span>/);
+  assert.doesNotMatch(busy, /aria-valuenow/, 'an indeterminate bar carries no count');
   // #4486: the thin bar and its "1 of 3 yes" went; the card's own status
   // pill says it in its own words, at its words' width plus 56px (app.css).
   const pill = row.card.pill.state;

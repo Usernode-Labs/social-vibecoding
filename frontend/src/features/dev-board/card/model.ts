@@ -355,12 +355,15 @@ export interface FeedThreadRef {
 /**
  * How far a check run is (#4499): drawn as a thin bar inside the checks
  * chip. `text` is the count in words ("619 of 732 checks done"), the bar's
- * accessible name. Absent while the run does not know its total.
+ * accessible name. #4628: while the run does not know its total yet the bar
+ * is indeterminate — it pulses full width, with no value attributes — and
+ * `text` is its name only ("Checks under way").
  */
 export interface ChecksProgress {
   done: number;
   total: number;
   text: string;
+  indeterminate?: boolean;
 }
 
 export interface RowTag {

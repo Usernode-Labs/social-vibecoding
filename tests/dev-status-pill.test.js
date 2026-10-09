@@ -316,6 +316,9 @@ test('checks in flight are a neutral, spinning tag — they outrank nothing now'
   assert.equal(running.label, 'Checks running…');
   assert.match(running.cls, /zinc/, 'nobody has to act, so neutral');
   assert.ok(running.spinner, 'in flight, so it spins');
+  // #4628: before the run knows its total the chip carries the pulsing
+  // indeterminate bar instead of no bar at all.
+  assert.ok(running.progress && running.progress.indeterminate, 'the bar is under way, not absent');
   assert.ok(!/Checks/.test(AppView.statusPillState(pending).label), 'the bar is the vote');
 
   // #607: nothing recorded at all — the first run hasn't stamped 'pending'.
@@ -324,6 +327,7 @@ test('checks in flight are a neutral, spinning tag — they outrank nothing now'
   assert.ok(starting);
   assert.equal(starting.label, 'Checks starting…');
   assert.ok(starting.spinner);
+  assert.ok(starting.progress && starting.progress.indeterminate, 'the build phase carries the bar too');
 });
 
 test('a deferred run is not "running": the tag says deferred and does not spin (#2247)', () => {

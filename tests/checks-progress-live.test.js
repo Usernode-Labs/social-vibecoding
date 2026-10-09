@@ -992,9 +992,17 @@ test('the board card and the running badge carry the live count', () => {
   assert.match(badge, /title="12 of 523 checks done\. Automated tests/);
   const quiet = AppView.checksBadgeHtml({ status: 'promoted', check_state: 'pending', checks_progress: null });
   assert.match(quiet, /Checks running…</, 'no count before the first frame');
-  assert.doesNotMatch(quiet, /checks-chip-bar/, 'no bar before the total is known');
+  // #4628: the bar shows from the first frame — indeterminate, pulsing,
+  // with no value attributes while there is nothing to count.
+  assert.match(quiet, /<span class="checks-chip-bar checks-chip-bar-busy" role="progressbar" aria-label="Checks under way"><span class="checks-chip-bar-fill" style="width:100%"><\/span><\/span><\/span>$/,
+    'the bar is there before the total is known');
+  assert.doesNotMatch(quiet, /aria-valuenow/, 'an indeterminate bar carries no count');
   const noTotal = AppView.checksBadgeHtml({ status: 'promoted', check_state: 'pending', checks_progress: { ran: 7, passed: 7, failed: 0 } });
   assert.match(noTotal, /Checks running…\s7</, 'without a total the words carry the count');
+  assert.match(noTotal, /checks-chip-bar-busy/, 'and its bar pulses beside them');
+  // #607: the "Checks starting…" chip (the promote-time build) gets the same bar.
+  const freshBadge = AppView.checksBadgeHtml({ status: 'promoted' });
+  assert.match(freshBadge, /Checks starting…<span class="checks-chip-bar checks-chip-bar-busy"/);
 
   // The status-band chip the cards, the Workshop's rows and All items share.
   const tag = (pr) => AppView.statusTagSpecs(pr, {}).find((t) => t.key === 'tag-checks-running');
@@ -1005,10 +1013,12 @@ test('the board card and the running badge carry the live count', () => {
   assert.equal(running.spinner, true);
   const starting = tag({ status: 'promoted', check_state: null, console_check_state: null });
   assert.equal(starting.label, 'Checks starting…');
-  assert.equal(starting.progress, undefined);
+  assert.deepEqual({ ...starting.progress }, { done: 0, total: 0, indeterminate: true, text: 'Checks under way' });
+  assert.match(starting.title, /^Automated tests are still running/, 'the indeterminate tooltip stays the plain why sentence');
   const early = tag({ status: 'promoted', check_state: 'pending', checks_progress: null });
   assert.equal(early.label, 'Checks running…');
-  assert.equal(early.progress, undefined);
+  assert.deepEqual({ ...early.progress }, { done: 0, total: 0, indeterminate: true, text: 'Checks under way' });
+  assert.match(early.title, /^Automated tests are still running/);
 
   // Both React renderers draw the bar from the spec.
   const card = read('frontend/src/features/dev-board/card/dev-card.tsx');
@@ -1016,6 +1026,12 @@ test('the board card and the running badge carry the live count', () => {
   assert.match(card, /role="progressbar"[\s\S]*aria-label=\{progress\.text\}/);
   const row = read('frontend/src/features/dev-board/workshop/work-row.tsx');
   assert.match(row, /\{t\.progress \? <ChecksBar progress=\{t\.progress\} \/> : null\}/);
+  // #4628: the indeterminate bar is declared, rendered and pulsing.
+  assert.match(read('frontend/src/features/dev-board/card/model.ts'), /indeterminate\?: boolean;/);
+  assert.match(card, /checks-chip-bar checks-chip-bar-busy/);
+  assert.match(card, /busy \? \{\} : \{ 'aria-valuemin': 0, 'aria-valuemax': progress\.total, 'aria-valuenow': progress\.done \}/);
+  assert.match(read('public/css/app.css'), /\.checks-chip-bar-busy \.checks-chip-bar-fill \{ animation: dev-ledger-progress-pulse 1\.4s ease-in-out infinite; \}/);
+  assert.match(read('public/css/app.css'), /prefers-reduced-motion: reduce\) \{\n\s+\.checks-chip-bar-busy \.checks-chip-bar-fill \{ animation: none; \}/);
 });
 
 test('app.js hands the events to the topic page before DevChat\'s early returns', () => {

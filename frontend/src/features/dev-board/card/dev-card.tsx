@@ -327,16 +327,18 @@ export function Preview({ spec }: { spec: PreviewSpec }): ReactNode {
  * #4499: how far a check run is, as a thin bar inside its chip. It fills in
  * the chip's own ink, so it reads in whichever tone the chip wears. The
  * exact count is its accessible name and the chip's tooltip.
+ * #4628: while the run does not know its total the bar is indeterminate —
+ * full width, pulsing (`checks-chip-bar-busy`), with no value attributes,
+ * as an indeterminate progressbar carries none.
  */
 export function ChecksBar({ progress }: { progress: ChecksProgress }): ReactNode {
-  const pct = progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
+  const busy = progress.indeterminate === true;
+  const pct = busy || progress.total <= 0 ? 100 : Math.round((progress.done / progress.total) * 100);
   return (
     <span
-      className="checks-chip-bar"
+      className={busy ? 'checks-chip-bar checks-chip-bar-busy' : 'checks-chip-bar'}
       role="progressbar"
-      aria-valuemin={0}
-      aria-valuemax={progress.total}
-      aria-valuenow={progress.done}
+      {...(busy ? {} : { 'aria-valuemin': 0, 'aria-valuemax': progress.total, 'aria-valuenow': progress.done })}
       aria-label={progress.text}
     >
       <span className="checks-chip-bar-fill" style={{ width: `${pct}%` }} />

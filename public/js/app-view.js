@@ -21284,17 +21284,28 @@ const AppView = {
   // Ordering is blockReasons' own severity order, then the in-flight states,
   // so the first tag on the line is the most serious thing wrong with it.
   // #4499: the checks chip's bar — how many of the run's checks are done,
-  // out of how many — or null while the run does not know its total yet.
-  // `text` is the count in words, for the tooltip and the bar's name.
+  // out of how many. #4628: while the run does not know its total yet (the
+  // build and prepare phase, the wait for a slot, the early run) it is an
+  // indeterminate bar that pulses, so the bar shows from the moment the run
+  // is under way rather than only once counting can begin. `text` is the
+  // count in words, for the tooltip and the bar's name.
   _checksChipProgress(live) {
     const bar = live && live.bar;
-    if (!bar || !bar.expected) return null;
+    if (!bar || !bar.expected) {
+      return { done: 0, total: 0, indeterminate: true, text: 'Checks under way' };
+    }
     const done = Math.min(bar.ran, bar.expected);
     return { done, total: bar.expected, text: `${done} of ${bar.expected} checks done` };
   },
   // The same bar as markup, for the chips still drawn as strings.
   checksChipBarHtml(progress) {
-    if (!progress || !progress.total) return '';
+    if (!progress) return '';
+    if (progress.indeterminate) {
+      // Full width and pulsing (app.css): under way, no count yet. An
+      // indeterminate progressbar carries no value attributes.
+      return `<span class="checks-chip-bar checks-chip-bar-busy" role="progressbar" aria-label="${progress.text}"><span class="checks-chip-bar-fill" style="width:100%"></span></span>`;
+    }
+    if (!progress.total) return '';
     const pct = Math.round((progress.done / progress.total) * 100);
     return `<span class="checks-chip-bar" role="progressbar" aria-valuemin="0" aria-valuemax="${progress.total}" aria-valuenow="${progress.done}" aria-label="${progress.text}"><span class="checks-chip-bar-fill" style="width:${pct}%"></span></span>`;
   },
@@ -21360,18 +21371,22 @@ const AppView = {
       // Checks in flight. A board of cards should say how far each run is,
       // not just that it is running: #4499 draws that as a thin bar inside
       // the chip ("Checks" and the bar) once the run knows its total, with
-      // the exact count in the tooltip and the bar's accessible name. Before
-      // the total is known the words carry it, as they always did.
+      // the exact count in the tooltip and the bar's accessible name.
+      // #4628: before the total is known the words carry the count as they
+      // always did, and the chip gains the pulsing indeterminate bar —
+      // including the "Checks starting…" chip, whose build phase is the very
+      // start of the work.
       const live = p.check_state === 'pending' ? AppView._checksProgressView(p) : null;
       const progress = AppView._checksChipProgress(live);
-      const count = !progress && live && live.bar.ran ? ` ${live.bar.ran}` : '';
+      const count = progress.indeterminate && live && live.bar.ran ? ` ${live.bar.ran}` : '';
       const why = 'Automated tests are still running on the staging build. Merge is blocked until they pass.';
       out.push({
         t: 'chip', key: 'tag-checks-running', cls: AppView.STATUS_TAG_CLS.running,
-        label: p.check_state !== 'pending' ? 'Checks starting…' : progress ? 'Checks' : `Checks running…${count}`,
-        spinner: true, meta: true, progress: progress || undefined,
+        label: p.check_state !== 'pending' ? 'Checks starting…'
+          : progress.indeterminate ? `Checks running…${count}` : 'Checks',
+        spinner: true, meta: true, progress,
         data: { 'data-status-tag': 'checks-running' },
-        title: progress ? `${progress.text}. ${why}` : why,
+        title: progress.indeterminate ? why : `${progress.text}. ${why}`,
       });
     }
     return out;
@@ -21860,7 +21875,9 @@ const AppView = {
       // instead of silence. Rows carrying a console snapshot are genuine
       // pre-#47 legacy — keep their advisory fallback.
       if (!pr.console_check_state) {
-        return `<span class="gc-checks-running-badge" title="The staging preview is being prepared and automated tests are about to run. Merge is blocked until they pass."><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Checks starting…</span>`;
+        // #4628: the build is the run's very start, so the chip carries the
+        // pulsing indeterminate bar from here too.
+        return `<span class="gc-checks-running-badge" title="The staging preview is being prepared and automated tests are about to run. Merge is blocked until they pass."><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Checks starting…${AppView.checksChipBarHtml(AppView._checksChipProgress(null))}</span>`;
       }
       return AppView.consoleWarningBadgeHtml(pr);
     }
@@ -21895,12 +21912,14 @@ const AppView = {
     // visibly distinct from the amber in-flight merge stages.
     // #4499: once the run knows its total, a bar inside the chip says how
     // far it is; the exact count is the tooltip and the bar's name.
+    // #4628: before the total is known the bar pulses instead of being
+    // absent, and the count rides in the words as it always did.
     const live = state === 'pending' ? AppView._checksProgressView(pr) : null;
     const progress = AppView._checksChipProgress(live);
-    const count = !progress && live && live.bar.ran ? ` ${live.bar.ran}` : '';
+    const count = progress.indeterminate && live && live.bar.ran ? ` ${live.bar.ran}` : '';
     const why = 'Automated tests are still running on the staging build. Merge is blocked until they pass.';
-    const label = progress ? 'Checks' : `Checks running…${count}`;
-    return `<span class="gc-checks-running-badge" title="${progress ? `${progress.text}. ${why}` : why}"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>${label}${AppView.checksChipBarHtml(progress)}</span>`;
+    const label = progress.indeterminate ? `Checks running…${count}` : 'Checks';
+    return `<span class="gc-checks-running-badge" title="${progress.indeterminate ? why : `${progress.text}. ${why}`}"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>${label}${AppView.checksChipBarHtml(progress)}</span>`;
   },
 
   // #2380: claim-first, exact-revision before & after shots. The server already
