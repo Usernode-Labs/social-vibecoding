@@ -264,6 +264,57 @@ test('the brief\'s phone sign-in code never reaches a note or a skip reason', ()
   assert.equal(maskPhoneTestCode('code 048213', 'abc'), 'code 048213');
 });
 
+test('a problem noticed on the after build is kept with the run, capped, and changes no result', () => {
+  const run = control({ intent: threeChanges() });
+  shootBothSides(run, 'invite-suggestions');
+  const before = run.summary();
+  const first = run.noteProblem({
+    change: 'invite-suggestions', screen: 'desktop', problem: '  The table is cut off at the right edge. ',
+    alsoBefore: false, shot: 'screen',
+  });
+  assert.deepEqual(first, { noticed: 'invite-suggestions', screen: 'desktop', alsoBefore: false, notices: 1, remaining: 4 });
+  // The same problem at the same place again updates it rather than adding one.
+  const again = run.noteProblem({
+    change: 'invite-suggestions', screen: 'desktop', problem: 'the table is cut off at the right edge.', alsoBefore: true,
+  });
+  assert.equal(again.notices, 1);
+  assert.deepEqual(run.notices, [{
+    text: 'the table is cut off at the right edge.', change: 'invite-suggestions', screen: 'desktop',
+    shot: null, alsoBefore: true,
+  }]);
+  // A change that is not ready can still be where a problem shows.
+  run.noteProblem({ change: 'member-count', screen: 'desktop', problem: 'An error banner is on screen.' });
+
+  const summary = run.summary();
+  assert.deepEqual(summary.stories, before.stories, 'notices never change a change\'s status or note');
+  assert.equal(summary.verdict.passed, before.verdict.passed);
+  assert.deepEqual(summary.verdict.notices.map((entry) => [entry.change, entry.alsoBefore]),
+    [['invite-suggestions', true], ['member-count', 'unknown']]);
+  assert.doesNotMatch(JSON.stringify(run.progress()), /cut off|error banner/,
+    'the brief\'s progress reports the changes, not the notices');
+
+  // Five at most: the sixth is refused, and the agent is told why.
+  for (const text of ['One.', 'Two.', 'Three.']) {
+    run.noteProblem({ change: 'invite-suggestions', screen: 'desktop', problem: text });
+  }
+  assert.equal(run.notices.length, 5);
+  assert.throws(() => run.noteProblem({ change: 'invite-suggestions', screen: 'desktop', problem: 'Six.' }),
+    { code: 'too_many_notices', status: 409 });
+  assert.equal(run.lastToolFailure.operation, 'note-problem');
+  // Updating one already noted still works at the cap.
+  assert.equal(run.noteProblem({ change: 'invite-suggestions', screen: 'desktop', problem: 'One.', alsoBefore: true }).notices, 5);
+
+  assert.throws(() => run.noteProblem({ change: 'invite-suggestions', screen: 'tablet', problem: 'x' }),
+    { code: 'unknown_screen', status: 400 });
+  assert.throws(() => run.noteProblem({ change: 'nobody', screen: 'desktop', problem: 'x' }), { code: 'unknown_change' });
+  assert.throws(() => run.noteProblem({ change: 'invite-suggestions', screen: 'desktop', problem: '' }),
+    { code: 'problem_required' });
+
+  run.skipChange({ reason: 'Nothing else loads.' });
+  assert.throws(() => run.noteProblem({ change: 'invite-suggestions', screen: 'desktop', problem: 'Too late.' }),
+    { code: 'shots_turn_finished', status: 409 });
+});
+
 test('the last refused tool call is kept for the owner\'s diagnostics', () => {
   const run = control();
   assert.equal(run.lastToolFailure, null);

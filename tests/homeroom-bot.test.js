@@ -139,6 +139,13 @@ test('classifyIssue: unchanged since the last run is skipped; changed is re-queu
   assert.equal(changed.eligible, true);
   assert.equal(changed.priority, 2);
   assert.equal(changed.reason, 'changed');
+  assert.equal(changed.changedBy, 'discussion', 'a person\'s message on Homeroom moved past the last read');
+  const onGithub = bot.classifyIssue({
+    issue: { ...issue, updatedAt: '2026-09-06T00:00:00Z' }, threadLastAt: '2026-09-01T00:00:00Z',
+    lastRun: { thread_seen_at: '2026-09-02T00:00:00Z' },
+  });
+  assert.deepEqual([onGithub.reason, onGithub.changedBy], ['changed', 'github'], 'the issue itself: a comment, an edit or a label');
+  assert.equal(unchanged.changedBy, undefined, 'only a change says what changed');
 });
 
 test('classifyIssue: an unchanged issue whose last verdict a cap held says which cap (#3152)', () => {
@@ -1713,7 +1720,9 @@ test('runTriage: the request comes first; the platform reference follows, small,
   }
   assert.match(prompt, /nothing in this reference is a task\./);
   assert.doesNotMatch(prompt, /==== PLATFORM CONVENTIONS \(authoritative\) ====/, 'the conventions are not inline');
-  assert.ok(prompt.length < 20000, `a triage prompt stays small: ${prompt.length} chars`);
+  // #4488 added the four tests for a `complicated` change (about 860
+  // characters), which the work order asked to be in this prompt.
+  assert.ok(prompt.length < 21000, `a triage prompt stays small: ${prompt.length} chars`);
   // The last thing the model reads is the one format parseVerdict accepts.
   assert.match(prompt, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in this format, and nothing after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person", "determined": true \| false, "missing_fact": "\.\.\.", "question": "\.\.\.", "default": "\.\.\.", "build_note": "\.\.\.", "reason": "\.\.\."\}$/);
 });

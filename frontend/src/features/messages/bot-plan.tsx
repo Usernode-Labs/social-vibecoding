@@ -18,11 +18,13 @@ import type { ConversationMessage, HomeroomBotActivity, HomeroomBotMeta } from '
  * activity card does (./message-row.tsx): their words still say the same for
  * the inbox, the push and search.
  *
- * A PLAN (kind `plan`): a first version's plan, waiting for Build it
+ * A PLAN (kind `plan`): a first version's plan (or, #4488, a complicated
+ * change's), waiting for Build it
  * (./bot-plan-view.tsx). Build it is decided on the server, once, from any
  * device (api.decideBotAction with the choices picked); Change something
  * quotes the card in the composer, and the reply is read by the bot, never
- * posted on the request.
+ * posted on the request. #4488: a complicated change's plan, on a project
+ * that already exists, is the request's: that reply is posted there.
  *
  * #4046: THE PLAN CARRIES ITS REQUEST'S STEP. A first version's activity
  * card begins when its request is queued, above the plan, and Build it moves

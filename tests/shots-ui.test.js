@@ -400,6 +400,65 @@ test('a ready change shows the shots agent\'s note on what its shots leave out, 
   }
 });
 
+// The shots agent's notes on clear problems it saw on the after build
+// (note_problem): under a quiet small-caps label, each saying where it shows
+// and whether the before build has it too, and never on a card that is not
+// showing published shots.
+test('problems the shots agent noticed are listed under Also noticed, quietly and as text', () => {
+  const shotNotices = [
+    { text: 'The <b>Newest</b> sort control overlaps the "Done" heading.', change: 'dialog', screen: 'desktop', shot: 'screen', alsoBefore: true },
+    { text: 'The table is cut off at the right edge.', change: 'dialog', screen: 'phone', shot: null, alsoBefore: false },
+    { text: 'An error banner shows.', change: 'dialog', screen: 'desktop', shot: null, alsoBefore: 'unknown' },
+  ];
+  const card = AppView.shotsHtml(shots({ shotNotices }), { sessionId: 42 });
+  const noticed = /<section class="shots-noticed" data-shots-noticed="3" aria-label="Also noticed">[\s\S]*?<\/section>/.exec(card)[0];
+  assert.match(noticed, /<h3 class="shots-noticed-head">Also noticed<\/h3>/);
+  const items = noticed.match(/<li class="shots-noticed-item"[\s\S]*?<\/li>/g);
+  assert.equal(items.length, 3);
+  assert.match(items[0], /data-shots-notice="dialog" data-also-before="true"/);
+  assert.match(items[0], /<p class="shots-noticed-text">The &lt;b&gt;Newest&lt;\/b&gt; sort control overlaps the &quot;Done&quot; heading\.<\/p>/);
+  assert.match(items[0], /<div class="shots-noticed-meta">Desktop · Also on the before build<\/div>/);
+  assert.match(items[1], /data-also-before="false"[\s\S]*<div class="shots-noticed-meta">Phone · Not on the before build<\/div>/);
+  assert.match(items[2], /data-also-before="unknown"[\s\S]*<div class="shots-noticed-meta">Desktop<\/div>/,
+    'a notice nobody checked on the before build says nothing about it');
+  assert.ok(card.indexOf('shots-noticed') > card.indexOf('class="shots-viewer'), 'it follows the shots');
+  assert.ok(card.indexOf('shots-noticed') < card.indexOf('Shot details'));
+  // Quiet: no badge, fill or colour of its own; the card still reads ready.
+  assert.doesNotMatch(noticed, /dev-badge|bg-|text-red|text-violet|Didn/);
+  assert.match(card, /Shots ready/);
+
+  // The change page's Before and after card lists them too, after the changes.
+  const thread = AppView.shotsHtml(shots({ shotNotices }), { sessionId: 42, thread: true });
+  assert.match(thread, /<section class="shots-noticed" data-shots-noticed="3" aria-label="Also noticed">/);
+  // With more than one change, each says which one it was seen with.
+  const two = shots({
+    claims: [...shots().claims, { ...shots().claims[0], id: 'second', claim: 'The second change.' }],
+    shotNotices: [{ ...shotNotices[0], change: 'second' }],
+  });
+  assert.match(AppView.shotsHtml(two, { sessionId: 42 }), /<div class="shots-noticed-meta">Change 2 · Desktop · Also on the before build<\/div>/);
+
+  // None, or none with words: no section at all. Shot details never carries them.
+  for (const value of [undefined, [], [{ text: '  ', change: 'dialog', screen: 'desktop' }], 'broken']) {
+    assert.doesNotMatch(AppView.shotsHtml(shots({ shotNotices: value }), { sessionId: 42 }), /shots-noticed/);
+  }
+  assert.doesNotMatch(AppView.shotsHtml(shots({ shotNotices }), { sessionId: 42, details: true }), /shots-noticed/);
+  for (const state of ['planned', 'failed', 'stale']) {
+    assert.doesNotMatch(AppView.shotsHtml(shots({ state, shotNotices }), { sessionId: 42 }), /Also noticed/, state);
+  }
+});
+
+test('Also noticed is drawn with the shell\'s small-caps label and quiet lines', () => {
+  const css = require('node:fs').readFileSync(require('node:path').join(__dirname, '../public/css/app.css'), 'utf8');
+  const rule = (selector) => new RegExp(`\\n${selector.replace(/\./g, '\\.')} \\{([^}]*)\\}`).exec(css)?.[1] || '';
+  const head = rule('.shots-noticed-head');
+  for (const part of ['font-size: 12px', 'font-weight: 700', 'letter-spacing: .06em', 'text-transform: uppercase', 'color: var(--text-muted)']) {
+    assert.ok(head.includes(part), `the label is the small-caps group label: ${part}`);
+  }
+  assert.match(rule('.shots-noticed-text'), /color: var\(--text-primary\)/);
+  assert.match(rule('.shots-noticed-meta'), /color: var\(--text-muted\)/);
+  assert.doesNotMatch(rule('.shots-noticed') + rule('.shots-noticed-text'), /background|border/);
+});
+
 test('pending or failed shots show the declared changes and status but no media or legacy fallback', () => {
   for (const state of ['planned', 'failed', 'stale']) {
     const html = AppView.shotsHtml(shots({

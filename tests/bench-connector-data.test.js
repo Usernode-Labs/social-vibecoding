@@ -46,8 +46,46 @@ test('the bot overview carries the console\'s fields it names, and nothing else'
   assert.equal(out.runs[0].prompt, undefined);
   assert.equal(out.runs[0].user_email, undefined);
   assert.equal(out.runs[0].build.ok, true);
+  assert.equal(out.runs[0].build.state, 'built');
+  assert.equal(out.runs[0].readReason, null, 'a run from before read reasons');
+  assert.equal(out.buildLane, null, 'no lane in the payload, none here');
   assert.equal(out.nextBefore, 9, 'a full page names the next one');
   assert.equal(out.queue.items[0].app, 'bread');
+});
+
+test('a ready verdict that was never built says where it got to and why; a run says what started its read', async () => {
+  const run = (over) => ({ id: 9, app_slug: 'bread', issue_number: 3, verdict: 'ready', created_at: '2026-10-01T00:00:00Z', ...over });
+  const bot = {
+    async adminPayload() {
+      return {
+        settings: {}, bot: null, totals: {}, queue: { depth: 0, items: [] },
+        builds: {
+          queued: 2, building: 1, built: 40, failed: 3,
+          lane: { at: '2026-10-09T10:00:00Z', started: 0, inFlight: 2, paused: 'budget', detail: 'weekly limit reached' },
+          fault: null,
+        },
+        runs: [
+          run({ id: 6, build_error: "skipped: the platform's own repository is left out", read_reason: 'changed:github' }),
+          run({ id: 5, build_error: 'superseded: a later verdict on the same issue', read_reason: 'new' }),
+          run({ id: 4, build_queued_at: '2026-10-09T09:00:00Z', read_reason: 'retry_failed' }),
+          run({ id: 3, build_queued_at: '2026-10-09T09:00:00Z', build_at: '2026-10-09T09:05:00Z', read_reason: 'Not A Reason!' }),
+          run({ id: 2, build_ok: false, build_error: 'the build ran past its time limit' }),
+          run({ id: 1, verdict: 'person' }),
+        ],
+      };
+    },
+  };
+  const out = await data.botOverview(null, {}, {}, { bot });
+  assert.deepEqual(out.runs.map((r) => r.build && r.build.state), ['not_built', 'superseded', 'queued', 'building', 'failed', null]);
+  assert.match(out.runs[0].build.error, /platform's own repository/);
+  assert.equal(out.runs[2].build.queuedAt, '2026-10-09T09:00:00.000Z');
+  assert.deepEqual(out.runs.map((r) => r.readReason), ['changed:github', 'new', 'retry_failed', null, null, null],
+    'fixed-shape reasons only');
+  assert.deepEqual(out.buildLane, {
+    queued: 2, building: 1,
+    lastPass: { at: '2026-10-09T10:00:00Z', started: 0, inFlight: 2, paused: 'budget', detail: 'weekly limit reached' },
+    fault: null,
+  });
 });
 
 test('recent shots page through the gallery\'s own listing and counts, and keep only what they name', async () => {
@@ -59,7 +97,13 @@ test('recent shots page through the gallery\'s own listing and counts, and keep 
         proposals: [{
           id: 70, appSlug: 'bread', appName: 'Bread', prNumber: 12, prUrl: 'https://github.com/x/y/pull/12', title: 'Add rye',
           mergedAt: '2026-10-01T00:00:00Z', captureState: 'ok', authorEmail: 'never@example.com',
-          shots: { state: 'verified', claims: [{ id: 'c1', claim: 'Rye is a choice' }], artifacts: [{ media: 'png' }, { media: 'png' }, { media: 'webm' }] },
+          shots: {
+            state: 'verified', claims: [{ id: 'c1', claim: 'Rye is a choice' }], artifacts: [{ media: 'png' }, { media: 'png' }, { media: 'webm' }],
+            shotNotices: [
+              { text: 'The flour table is cut off. '.repeat(20), change: 'c1', screen: 'phone', shot: 'screen', alsoBefore: true, extra: 'dropped' },
+              { text: 'An error shows.', change: 'c1', screen: 'desktop', shot: 'clip', alsoBefore: 'maybe' },
+            ],
+          },
           visuals: [{}, {}],
         }],
         nextCursor: { before: '2026-09-30T00:00:00Z', before_id: 69 },
@@ -72,6 +116,12 @@ test('recent shots page through the gallery\'s own listing and counts, and keep 
   assert.equal(p.sessionId, 70);
   assert.equal(p.shots.images, 2);
   assert.equal(p.shots.clips, 1);
+  // What the shots agent noticed on the after build, as the card lists it, bounded.
+  assert.equal(p.shots.shotNotices.length, 2);
+  assert.equal(p.shots.shotNotices[0].text.length, 300);
+  assert.deepEqual({ ...p.shots.shotNotices[0], text: null },
+    { text: null, change: 'c1', screen: 'phone', shot: 'screen', alsoBefore: true });
+  assert.deepEqual(p.shots.shotNotices[1], { text: 'An error shows.', change: 'c1', screen: 'desktop', shot: null, alsoBefore: 'unknown' });
   assert.equal(p.legacyCaptures, 2);
   assert.equal(p.authorEmail, undefined);
   assert.deepEqual(out.nextCursor, { before: '2026-09-30T00:00:00.000Z', beforeId: 69 });

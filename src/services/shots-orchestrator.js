@@ -408,6 +408,34 @@ function phoneSignInBrief(code) {
   };
 }
 
+// Each persona's browser (worker/write-shots-mcp-config.js). A persona with a
+// phone screen also has a phone browser, the same name with `_phone`: signed
+// in the same way, and presenting as a phone (its user agent, touch, screen
+// density), so a phone screen is not a desktop browser made narrow.
+const BROWSER_TOOLS = Object.freeze({
+  member: 'browser_member',
+  read_only_admin: 'browser_admin',
+  full_admin: 'browser_full_admin',
+  guest: 'browser_guest',
+});
+const phoneTool = (persona) => `${BROWSER_TOOLS[persona]}_phone`;
+
+// Which browser shoots each declared change's screens, by change id and
+// screen name. The shots bridge reads it too, to find a screen's clip.
+function screenBrowsers(intent) {
+  return Object.fromEntries((intent?.stories || []).map((story) => [story.id,
+    Object.fromEntries((story.viewports || []).map((viewport) => [viewport.name,
+      planContract.phoneScreen(viewport) ? phoneTool(story.persona) : BROWSER_TOOLS[story.persona]]))]));
+}
+
+// Homeroom's install strip shows only in a phone browser, and every shots page
+// opens with it dismissed (worker/shots-page-init.js); a page opened with this
+// on its query shows it, for a change to the strip itself. Fixed words only.
+const INSTALL_STRIP = Object.freeze({
+  param: 'shots-install-strip=show',
+  note: 'Homeroom\'s "Add it to your home screen" strip is dismissed on every page these browsers open. For a change to the strip itself, add param to the start path\'s query (before any #) on both addresses, in the phone browser.',
+});
+
 // Who the signed-in browsers are to an app built on Homeroom. Its identity
 // token says who is signed in ({ id, username, usernode_pubkey, locale }),
 // never a role in the app: there is no creator or admin claim, and no
@@ -439,9 +467,16 @@ const CHILD_APP_ROLES = Object.freeze({
 // use to find the screens. Everything from the proposal is marked untrusted.
 // `childApp` is an app built on Homeroom rather than Homeroom itself.
 function shotsBrief({
-  run, session, revision, pair, deployment, intent, guestKind = null, homeTile = null, childApp = false,
+  run, session, revision, pair, deployment, intent, guestKind = null, homeTile = null, selfApp = false,
+  childApp = false,
 }) {
   const testingPaths = testingPathsForSession(session);
+  const phones = new Set(planContract.phonePersonas(intent));
+  const browser = (persona, who) => ({
+    tool: BROWSER_TOOLS[persona],
+    ...(phones.has(persona) ? { phoneTool: phoneTool(persona) } : {}),
+    who,
+  });
   // A change that only shows at certain times declares the moment to see it
   // at (services/preview-clock.js). Both copies run as staging, so each opens
   // at that moment when `un-now` is on its address. Parsed to a fixed shape
@@ -459,21 +494,14 @@ function shotsBrief({
       after: revision.headSha.slice(0, 12),
     },
     browsers: {
-      member: { tool: 'browser_member', who: childApp ? CHILD_APP_WHO.member : 'an ordinary member' },
-      read_only_admin: {
-        tool: 'browser_admin',
-        who: childApp ? CHILD_APP_WHO.read_only_admin : 'an administrator with read-only rights',
-      },
-      full_admin: {
-        tool: 'browser_full_admin',
-        who: childApp ? CHILD_APP_WHO.full_admin
-          : 'a full administrator that exists only in these two throwaway copies',
-      },
-      guest: {
-        tool: 'browser_guest',
-        who: GUEST_WHO[guestKind] || 'a visitor who is not signed in',
-      },
+      member: browser('member', childApp ? CHILD_APP_WHO.member : 'an ordinary member'),
+      read_only_admin: browser('read_only_admin',
+        childApp ? CHILD_APP_WHO.read_only_admin : 'an administrator with read-only rights'),
+      full_admin: browser('full_admin', childApp ? CHILD_APP_WHO.full_admin
+        : 'a full administrator that exists only in these two throwaway copies'),
+      guest: browser('guest', GUEST_WHO[guestKind] || 'a visitor who is not signed in'),
     },
+    screenBrowsers: screenBrowsers(intent),
     ...(childApp ? { appRoles: { ...CHILD_APP_ROLES } } : {}),
     changedFiles: {
       items: revision.files.slice(0, 200),
@@ -493,6 +521,8 @@ function shotsBrief({
     // The app's tile on Homeroom's home screen, which these addresses do not
     // otherwise show: each serves its own side's at homeTile.path.
     ...(homeTile ? { homeTile } : {}),
+    // Only Homeroom's own copies have the strip, and only a phone shows it.
+    ...(selfApp && phones.size ? { installStrip: { ...INSTALL_STRIP } } : {}),
     ...(moment ? {
       previewAt: {
         at: moment.at,
@@ -696,7 +726,7 @@ const AGENT_DIAGNOSTIC_KINDS = new Set([
   'runner_phase', 'runner_result', 'runner_exit', 'resume_retry',
   'tool_start', 'tool_end', 'agent_deadline',
   'browser_call_start', 'browser_call_pending', 'browser_call_end', 'browser_server_exit',
-  'auth_bootstrap', 'hosted_app_catalog', 'hosted_app_allowlist',
+  'auth_bootstrap', 'hosted_app_catalog', 'hosted_app_allowlist', 'demo_data',
   'document_request', 'document_response', 'controlled_failure_set', 'controlled_failure_hit',
   'platform_asset', 'home_tile', 'legacy_tailwind_cdn', 'egress_blocked', 'worker_memory',
   'provider_request_start', 'provider_request_pending', 'provider_response_headers',
@@ -708,7 +738,7 @@ const AGENT_DIAGNOSTIC_PHASES = new Set([
   'shots_mcp_ready', 'claude', 'agent', 'done',
 ]);
 const AGENT_DIAGNOSTIC_TOOLS = new Set([
-  'get_brief', 'save_shot', 'save_clip', 'skip_change', 'note_change', 'fail_request',
+  'get_brief', 'save_shot', 'save_clip', 'skip_change', 'note_change', 'note_problem', 'fail_request',
   'browser_navigate', 'browser_navigate_back', 'browser_snapshot',
   'browser_take_screenshot', 'browser_click', 'browser_type',
   'browser_fill_form', 'browser_press_key', 'browser_select_option',
@@ -751,7 +781,7 @@ function recordAgentDiagnostic(metrics, raw) {
   }
   for (const key of ['mcpServerCount', 'toolDefinitionCount', 'browserMemberToolCount',
     'browserAdminToolCount', 'browserFullAdminToolCount', 'browserGuestToolCount',
-    'storyCount', 'callOrdinal', 'headingCount',
+    'browserPhoneToolCount', 'storyCount', 'callOrdinal', 'headingCount',
     'buttonCount', 'linkCount', 'imageBlocks', 'exitCode', 'checkRank',
     'documentOrdinal', 'httpStatus', 'requestOrdinal', 'chunkCount', 'hitOrdinal',
     'count', 'catalogCount']) {
@@ -792,6 +822,8 @@ function recordAgentDiagnostic(metrics, raw) {
   if (raw.signal === 'SIGTERM' || raw.signal === 'SIGINT') event.signal = raw.signal;
   if (['base', 'head', 'hosted', 'outside'].includes(raw.side)) event.side = raw.side;
   if (['member', 'admin', 'full_admin', 'guest'].includes(raw.persona)) event.persona = raw.persona;
+  // A call in the persona's phone browser rather than its desktop one.
+  if (raw.phone === true) event.phone = true;
   if (['intent_start', 'declared_check', 'other'].includes(raw.routeHint)) {
     event.routeHint = raw.routeHint;
   }
@@ -1193,6 +1225,7 @@ async function executeRun(config, options, injected = {}) {
       run, session, revision, pair, deployment: exploration, intent,
       guestKind: guest.kind,
       homeTile: shotsHomeTile.briefEntry(homeTiles),
+      selfApp: app.slug === config.selfAppSlug,
       childApp: app.slug !== config.selfAppSlug,
     });
     const navigationHints = {
@@ -1200,8 +1233,12 @@ async function executeRun(config, options, injected = {}) {
       testingPaths: context.changeContext.testingPaths,
       declaredPaths: context.declaredChecks.map((check) => check.path),
     };
-    const clipSize = planContract.clipSize(intent);
-    const recordClips = clipSize != null;
+    const recordClips = planContract.clipSize(intent) != null;
+    // The desktop browsers record at the other motion screens' size and the
+    // phone browsers at the phone motion screens' size, each its own.
+    const clipSize = planContract.clipSize(intent, { phone: false });
+    const phoneClipSize = planContract.clipSize(intent, { phone: true });
+    const phonePersonas = planContract.phonePersonas(intent);
     failurePhase = 'register_control';
     stage(failurePhase);
     registration = deps.shotsControl.registerRun({
@@ -1249,6 +1286,10 @@ async function executeRun(config, options, injected = {}) {
           navigationHints,
           recordClips,
           clipSize,
+          phoneClipSize,
+          // A phone browser for each persona with a phone screen, as the
+          // brief's screenBrowsers names them.
+          phonePersonas,
           // A child app's pages load /usernode-bridge|native|tailwind/ from
           // the platform, which the edge routes in production; the shots
           // browser's proxy does the same. The platform serves its own.
@@ -1434,6 +1475,7 @@ async function executeRun(config, options, injected = {}) {
         skippedChanges: control.skipped.size,
         ...(control.failed?.size ? { failedChanges: control.failed.size } : {}),
         notedChanges: control.notes.size,
+        ...(control.notices?.length ? { notedProblems: control.notices.length } : {}),
         skippedAll: control.skippedAll ? true : false,
       } } : {}),
     });
@@ -1713,6 +1755,7 @@ module.exports = {
   loadSession,
   resolveRevisionContext,
   declaredCheckSummary,
+  INSTALL_STRIP,
   shotsBrief,
   sameProvenance,
   waitForSessionIdle,

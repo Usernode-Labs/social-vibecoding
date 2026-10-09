@@ -27,6 +27,7 @@ program failed replay on a locator, an assertion, or a fingerprint.
 | screen | A declared viewport (`desktop`, `mobile`, …) | `viewport` |
 | skipped | A change the shots agent could not reach, with its reason | `hard_verdict.stories[].status` |
 | failed | A change the shots agent tried on the after build, where the app itself broke (a server error, an error on screen, the effect never appearing) | `hard_verdict.stories[].status` |
+| noticed problem | A clear problem the shots agent saw on the after build while taking the shots, apart from the declared changes (content cut off, controls overlapping, an error on screen); advisory only | `hard_verdict.notices[]` |
 | shots agent | The hosted model that takes the shots (Claude Sonnet 5.5 for every proposal) | shots worker turn |
 | visible changes | The author's declaration of the changes (`impact`, `rationale`, `stories`) | `visibleChanges` on the way in, `intent` once stored |
 | preview | The running staging build of a proposal, and only that | |
@@ -108,6 +109,23 @@ external agent (`visible_changes` on the CLI's `proposal_submit_build`). The sha
   signed-out visitors declared for a signed-in persona
   (`shots-identities.personaWarnings`). They are warnings, not refusals: a
   change to the sign-in page itself is a real guest change.
+- The same answer says what data the copies hold
+  (`shots-ready-states.declarationAdvice`). `availableStates` names each
+  ready-made state with its personas (the demo states below; none for a
+  child app), and `dataNote` says where anything else comes from:
+  `hints.setup` steps the shots agent takes through the UI on both copies,
+  or the staging seeds (`src/db/migrate.js` for Homeroom, the app's own
+  `IS_STAGING` seed for a child app). A seed the proposal itself adds reaches
+  only the after copy. A warning is added when a declared change's claim,
+  steps or checkpoint name a state that no ready-made state holds (a
+  member's first-session tour, an invited account, the waitlist, an empty
+  state or a new account; on a child app also a change waiting for
+  approval and the rest) and the change has no `hints.setup`. These come
+  from a short list of phrases (`NEEDS`), so ordinary words like "plan" or
+  "invite" alone never warn. The data-state gap was the largest group of
+  changes with no shots (7 of 24 in about 125 merged proposals). These are
+  warnings too: the declaration is recorded either way. `submit_work`'s
+  answer does not carry them.
 - On an app built on Homeroom, no persona is the app's creator or one of
   its admins (see "Roles in an app built on Homeroom" below). The same
   response warns about a change declared there for `read_only_admin` or
@@ -167,14 +185,27 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
      "Suggest this back";
    - for the member: their chat with the Homeroom bot, with an activity card
      whose build waits its turn (working) and a newer card on the same
-     request.
+     request;
+   - for every persona: request #900017 (the staging mock request nothing
+     else marks), which a change of the member's addresses and which waits
+     for approval: "Waiting for approval · you" to the member, by the
+     member's name to the admins, with no Build it now;
+   - for every persona: the Leaderboard's season standings, where three of
+     the staging seeds' players have a Discord handle and two recorded
+     activities each, so their rows' drill-downs list activities with when
+     each happened;
+   - for the member: in the same chat with the Homeroom bot, the answered
+     plan for a new project's first version, and under it the bot's thanks
+     with the project's card and its build line (Building it). The project
+     has no first-version record, so no Home tile turns a build line for it.
 
    Each state goes into both copies or neither. A state the base or head
    revision cannot hold is left out of the run, as is one that fails to
    write on either side; neither fails the run. Every row is an obviously
    fake `[shots fixture]` row in a reserved id block (990840 to 990895). The
    brief's `availableFixtures` tells the agent each state's persona, what it
-   shows and its path.
+   shows and its path. An author is told the same states by name when they
+   declare a change (see "Declaring a change").
 
    The demo states are written by the deployed platform's own code, not by
    either revision under test. So a proposal cannot use a demo state it adds
@@ -189,31 +220,42 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
    copies" below).
 3. **Taking the shots** (`exploring`). The shots agent gets one turn in a
    shots worker. It has four browsers, one per persona (the guest's is not
-   signed in), and the "shots" tools:
+   signed in), a phone browser beside each persona that has a phone screen
+   (see "Phone screens" below), and the "shots" tools:
 
    | Tool | What it does |
    | --- | --- |
-   | `get_brief` | The declared changes, before/after addresses, which browser to use for whom, changed files and progress so far; on Homeroom's own copies, how phone sign-in works there (`phoneSignIn`) |
+   | `get_brief` | The declared changes, before/after addresses, which browser to use for whom and for each screen (`screenBrowsers`), changed files and progress so far; on Homeroom's own copies, how phone sign-in works there (`phoneSignIn`) |
    | `save_shot` | Publishes PNGs the browser saved with `browser_take_screenshot`, several per call, each for a change, screen, side and kind; one screenshot can be listed for several changes |
    | `save_clip` | Publishes the clip that the change's browser recorded most recently |
    | `note_change` | Records what a change's shots leave out of its claim, shown beside them |
+   | `note_problem` | Records a clear problem seen on the after build that is not about the declared change itself (content cut off or off the screen, overlapping text or controls, an error or broken image on screen, a layout that falls apart at the phone size): the change and screen where it shows, one short sentence (at most 300 characters), optionally which after shot shows it (`shot: "screen" \| "element"`), and `alsoBefore` (`true`, `false` or `"unknown"`, the default). At most five per run; noting the same problem at the same place again updates it, and a sixth is refused (`too_many_notices`) |
    | `skip_change` | Records why a change cannot be shown and withdraws anything saved for it (saving again takes the skip back); without a change id, it skips every change that is not ready. `outcome: "failed"` says the agent did the steps on the after address and the app broke, rather than that these copies cannot reach the state |
    | `fail_request` | Blocks a declared `controlledFailurePath` on both builds |
 
-   For each change and screen, the agent resizes the browser and opens the
-   start path again (an app that picks its layout at load keeps a desktop
-   layout in a phone screen otherwise), follows the steps on the after
-   address, waits for the finished state and for anything still moving to
-   settle, hovers the changed element into view (the shell scrolls inside
-   its own panes, so a `fullPage` screenshot shows no more than the screen),
-   moves the pointer off it so hover-only controls do not cover the change,
-   and saves a screen shot and an element shot. It does the same on the
+   For each change and screen, the agent takes the browser the brief names
+   for that screen (the persona's phone browser for a phone screen), resizes
+   it to the screen and opens the start path again (an app that picks its
+   layout at load keeps a desktop layout in a phone screen otherwise),
+   follows the steps on the after address, waits for the finished state and
+   for anything still moving to settle, hovers the changed element into view
+   (the shell scrolls inside its own panes, so a `fullPage` screenshot shows
+   no more than the screen), moves the pointer off it so hover-only controls
+   do not cover the change, and saves a screen shot and an element shot. It
+   does the same on the
    before address, framed the same way. Data a
    screen needs (`hints.setup`) is created on both addresses before either
    is shot. For a `motion` change it also records one clip per side.
    It calls `browser_close` to end the stills session, resizes again, and
    triggers only the motion. Then it calls `browser_close` again, which writes
    the recording, and `save_clip` publishes it.
+
+   On the way, it may note a few problems it sees on the after build with
+   `note_problem`. Its prompt asks for only what any person would agree is
+   broken, at most a handful, never a matter of taste, style or wording, and
+   never whether the declared change is shown or works (that is
+   `note_change` and `skip_change`). It does not go looking for problems on
+   other screens.
 4. **Saving** (`reviewing`). Each change is folded into one result. A change
    the agent skipped by name is **skipped**, even if shots were saved for it,
    or **failed** when it skipped it with `outcome: "failed"`.
@@ -238,9 +280,14 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
    itself failed and skipped nothing, it keeps the agent's error instead.
 
 `hard_verdict` records the outcome:
-`{ passed, mode: "shots", runs: 1, stories: [{ id, status, reason?, note? }] }`.
-`plan_hash` holds the manifest hash, which names exactly the files
-published.
+`{ passed, mode: "shots", runs: 1, stories: [{ id, status, reason?, note? }], notices? }`.
+`notices` (`[{ text, change, screen, shot, alsoBefore }]`) is there only when
+the agent noted a problem; a notice names its `shot` only while that after
+shot is published. Notices are advisory: they never change a change's
+status, never fail or pass a run, never gate a merge, and nothing that
+decides whether a change works reads them (`shots-state.brokenOnHead`, the
+Homeroom bot's fix round). `plan_hash` holds the manifest hash, which names
+exactly the files published.
 
 Within a run, a shots agent whose process died under it (`exitCause`
 `oom_killed`, `container_gone` or `turn_process_gone`, see
@@ -253,6 +300,73 @@ the run has been marked interrupted for 30 seconds. Until then the card says
 "Trying the shots again" rather than asking anyone to retry, and the view
 carries `automaticRetryPending: true`. A person can take the shots again,
 stop a running set, or (as an app manager) waive them.
+
+## The same data on both sides
+
+The viewer outlines every area where a before and an after screen differ,
+and one no declared change accounts for is drawn dashed and grey. So the
+two copies must show the same data wherever the proposal did not change
+it. The shots of #4460 did not: on the same member screen the bell read 16
+on one side and 15 on the other (27 on a phone screen of the same run), the
+third row of Your work was a different row, and Since your last visit
+counted 154 rows on one side and 5 on the other. Four things keep the sides
+together:
+
+- **One clone, one moment.** Both databases are copies of one prepared
+  source. Every row the platform then writes into them (the identities,
+  session copies and demo states) is stamped from one moment, read once
+  per reset and handed to both sides (`shots-fixtures.pairMoment`). A
+  `NOW()` in their SQL is bound to it (`atMoment`), and a time worked out in
+  JavaScript reads `ctx.at`. Before, each side read its own transaction's
+  clock, so the rows were microseconds to a tenth of a second apart. They
+  are now the same to the microsecond, apart from a column Postgres stamps
+  itself (`DEFAULT now()`) when a state leaves it out.
+- **Demo data made before the agent starts.** A copy of Homeroom makes the
+  staging Messages fixture for a person the first time they list their
+  conversations with `?demo=1`: conversations, unread messages and a dozen
+  bell notifications. Opening the Homeroom bot's DM then adds a card the
+  bot is working on, and one more notification. The agent used to make
+  them, on a side whenever it first opened such a screen there, so one
+  side's bell counted them and the other's did not (in two copies of a
+  fresh staging database: 15, then 27, then 28). On Homeroom's own pairs,
+  when any path the run may open asks for the demo, the browser bootstrap
+  now makes the same two requests as every signed-in persona on both sides
+  first (`worker/shots-browser-bootstrap.js`, `warmDemoData`); each side's
+  own server makes the data, from its own revision, and later views add
+  nothing.
+- **Every page is a first visit to a project's Workshop.** Since your last
+  visit counts from a stamp each page load leaves for the next
+  (`workshopSeen:<slug>`), and the agent loads the two addresses a
+  different number of times. The shots browsers drop that stamp before a
+  page reads it (`worker/shots-page-init.js`), which is the first visit the
+  declared checks' fresh browsers see. A change to the list itself is shot
+  through `?shot=since-visit`, which draws it on both sides.
+- **The same steps on both sides.** Data a screen needs (`hints.setup`) is
+  created on both addresses before either is shot.
+
+What still moves:
+
+- **Request-time `[Mock]` rows.** With `?demo=1`, a copy of Homeroom adds
+  mock rows to many answers, timed from that request (`Date.now()` in
+  `src/routes/sessions.js`, `votes.js`, `issues.js` and others), while
+  stored rows keep their times. As a run goes on, stored rows fall behind
+  mocks of a fixed age, and a list ordered by time changes order. In two
+  idle copies of a fresh staging database, the member's first six changes
+  by last activity (the order Your work lists them in) changed order six
+  times in the nine minutes after the demo states were written, the first
+  time two minutes in, when the mock in-progress session passed the demo
+  state's change with a deployed preview. Two sides shot a minute apart can
+  fall either side of such a moment: that is #4460's third row. The
+  platform cannot pin a clock the revision reads with `Date.now()`.
+  Anchoring the mocks to one instant per copy is a change to those routes,
+  and helps only once both revisions of a pair carry it.
+- **Times read off the browser's clock.** "3m ago" is worked out when the
+  page draws, so two shots a minute apart can read a minute apart.
+- **Each revision's own staging seeds**, written with `NOW()` when that
+  side booted, seconds apart from the other side's.
+- **Whatever the agent does on one side only**, such as exploring the
+  after address before it shoots, when that writes data (a vote, a read
+  marker).
 
 ## What the platform checks, and what it does not
 
@@ -268,11 +382,12 @@ The platform checks:
   taller one is a tiled capture nobody can read (`element_shot_too_wide`,
   `element_shot_too_tall`);
 - a clip is a WebM between 1 KB and 20 MB, only for a `motion` change;
-- the bridge reads only a plain `.png` that is directly inside a persona's
-  browser output directory, named by the agent. For a clip, it reads only the
-  newest `.webm` in the change's persona directory. Taking a clip retires
-  every older recording there, so a stale session can never be published
-  later;
+- the bridge reads only a plain `.png` that is directly inside a browser's
+  output directory (a persona's, or its phone browser's), named by the agent;
+  when two browsers saved the same name, the one saved last. For a clip, it
+  reads only the newest `.webm` in the directory of the browser that shoots
+  that screen, by the brief's `screenBrowsers`. Taking a clip retires every
+  older recording there, so a stale session can never be published later;
 - a shot was taken on its own side's address: a "before" on the before
   address, an "after" on the after address. The browser observer stamps each
   screenshot with the site of the page Playwright last reported, and each
@@ -400,6 +515,49 @@ Since phone sign-in is offered on both copies alike, every screen that asks
 whether it is (the signed-out pages, the waiting room, "Verify your
 account") shows its phone variant on both sides, as production does.
 
+## Phone screens
+
+A declared screen narrower than a tablet (under 768 px wide,
+`visible-changes.phoneScreen`) is a phone's, and it is shot in a browser that
+presents as a phone rather than in a desktop browser made narrow. Before
+this, a page that asks what device it runs on answered "desktop" on every
+phone screen, and two of about 125 merged proposals (4420, 4321) could not be
+shot at all: what they changed shows only for an iPhone or Android user
+agent.
+
+- Each persona with a phone screen gets a phone browser beside its own, its
+  name with `_phone` (`browser_member_phone`, `browser_admin_phone` and so
+  on; `visible-changes.phonePersonas`, which the run passes to the worker as
+  `SHOTS_PHONE_PERSONAS`). It is Playwright MCP with
+  `--device "iPhone 15"`: Playwright's device descriptor gives it an iPhone
+  Safari user agent, touch, `isMobile` (the page's viewport meta applies) and
+  a screen density of 3. Only the personas that need one get one: each is one
+  more browser server in the worker's memory, and its Chromium starts on its
+  first call.
+- Everything else is its persona's: the same storage state (signed in as the
+  same persona; the guest's stays signed out), the same proxy listener (the
+  same identity on a hosted app, the same egress rules), the same init script
+  and limits.
+- It saves into its own directory beside the persona's (`member_phone`, with
+  its stamps under `.provenance/member_phone`), so a desktop session closing
+  never stands for a phone clip's, and the address checks hold as they do for
+  any browser. It records clips at the phone motion screens' size
+  (`SHOTS_PHONE_CLIP_SIZE`); the desktop browsers record at the others'.
+- The brief names it: `browsers.<persona>.phoneTool`, and `screenBrowsers`
+  gives the browser for every change and screen. The agent resizes it to the
+  declared size like any other, and is told never to shoot a phone screen in
+  a desktop browser. Screenshots stay at CSS scale, so a 390 px phone screen
+  is a 390 px image whatever the density.
+- The init script (`worker/shots-page-init.js`) still records the install
+  strip's dismissal on every page (#4087), the phone browsers' included, so a
+  phone shot shows the screen rather than the strip over it. A top-level page
+  opened with `shots-install-strip=show` on its query has the dismissal taken
+  away instead, so a change to the strip itself is shot by opening its start
+  path with that flag, on both addresses, in the phone browser. The brief's
+  `installStrip` says so, on Homeroom's own copies when a screen is a
+  phone's. The flag holds for that page and every in-app step after it; a
+  later page load without it dismisses the strip again.
+
 ## Roles in an app built on Homeroom
 
 Homeroom tells an app who is signed in, never their role in it. The identity
@@ -481,6 +639,15 @@ shot when it is big enough to read (at least 120×40 px on both sides).
   "Taking the shots", "Saving the shots") and a Stop action. A failed run
   offers "Take the shots again", and so does a ready one (after better steps
   or hints, or to outline a run from before outlines were worked out).
+- **Also noticed.** Under the changes, a ready card lists the problems the
+  shots agent noted on the after build, under the small-caps label "Also
+  noticed": each in its own words, then where it shows ("Change 2" when there
+  are several, and the screen size) and, when the agent looked, "Also on the
+  before build" or "Not on the before build", so a problem the proposal did
+  not cause reads as such. No badge, fill or colour: they decide nothing. The
+  change page's Before and after card, the About sheet's and the admin
+  Screenshot gallery's show them; Shot details does not. A run that did not
+  publish shows none.
 - A change that is not up for a vote yet shows its shots the same way, on
   its page and in the Workshop feed, as soon as they are ready.
 - A proposal declared with nothing visible reads "No before & after needed"
@@ -489,8 +656,19 @@ shot when it is big enough to read (at least 120×40 px on both sides).
 
 The public view model and the connector's `get_proposal` carry `shotResults`
 (`[{ id, status: "ready" | "skipped" | "failed", reason, note }]`) beside `claims` and
-`artifacts`. Runs from before shots have no `shotResults`, and their older
-paired clips still play.
+`artifacts`, and `shotNotices`
+(`[{ text, change, screen, shot: "screen" | "element" | null, alsoBefore: true | false | "unknown" }]`,
+at most five, only for a published run on the current revision). The
+connector's `list_recent_shots` lists each proposal's `shotNotices` too, its
+text marked untrusted. Runs from before shots have no `shotResults`, runs
+from before notices have empty `shotNotices`, and older paired clips still
+play.
+
+A staging preview has one published run with notices to look at: the
+merged proposal 900108 on the Screenshot gallery's demo app
+(`src/db/migrate.js` `seedStagingShotsNoticed`), at
+`/#app/staging-demo-gallery-app/dev/proposals/900108` and first in
+`#admin/gallery`.
 
 ## A change of the Homeroom bot's
 
@@ -518,7 +696,8 @@ failing check gets (`homeroom-bot-followup.checksDue`'s `broken`, once per
 head and within its revisions) before anybody is told it is ready. Once that
 round is spent, the card says plainly what does not work ("Flat 4B Chores is
 built, but not everything works yet", "One thing isn’t working yet: …"), and
-nobody else is asked to approve it.
+nobody else is asked to approve it. Problems the shots agent only noticed
+(`notices`) are not a failing change and never start that round.
 
 ## Configuration
 
@@ -533,27 +712,32 @@ The shots agent is always Claude Code on this model, in a fresh thread
 started from its brief, including for proposals built on Codex (OpenRouter).
 
 Clips are recorded only for runs with a `motion` change
-(`SHOTS_RECORD_CLIPS=1` in the worker adds `--save-video=1280x800` to each
-browser). Each persona's browser saves files under
-`SHOTS_DIR/<member|admin|full_admin|guest>` via `--output-dir`.
+(`SHOTS_RECORD_CLIPS=1` in the worker adds `--save-video` to each browser, at
+`SHOTS_CLIP_SIZE`, the desktop motion screens' size, or 1280x800, and at
+`SHOTS_PHONE_CLIP_SIZE` for the phone browsers). Each persona's browser saves
+files under `SHOTS_DIR/<member|admin|full_admin|guest>` via `--output-dir`,
+and its phone browser under `SHOTS_DIR/<persona>_phone`.
 
 ## Where it lives
 
 | Piece | File |
 | --- | --- |
-| Declaration schema (`parseIntent`, `declaredChanges`, `hints`, `needsClip`) | `src/services/visible-changes.js` |
+| Declaration schema (`parseIntent`, `declaredChanges`, `hints`, `needsClip`, `phoneScreen`, `phonePersonas`) | `src/services/visible-changes.js` |
 | Declaring on a hosted turn (`declare_visible_changes`) | `worker/visible-changes-mcp.js`, `POST /api/internal/sessions/:id/visible-changes` |
-| File checks and per-change results (`shotTarget`, `summarize`) | `src/services/shots-files.js` |
-| Run-scoped control (`saveShot`, `skipChange`, `noteChange`, `summary`) | `src/services/shots-control.js` |
-| Internal routes (`/context`, raw `/shot`, `/skip`, `/note`, `/home-tile/:side`) | `src/routes/internal.js` |
+| File checks and per-change results (`shotTarget`, `notice`, `summarize`) | `src/services/shots-files.js` |
+| Run-scoped control (`saveShot`, `skipChange`, `noteChange`, `noteProblem`, `summary`) | `src/services/shots-control.js` |
+| Internal routes (`/context`, raw `/shot`, `/skip`, `/note`, `/problem`, `/home-tile/:side`) | `src/routes/internal.js` |
 | The app's home-screen tile on each side (`/__shots/home-tile`) | `src/services/shots-home-tile.js` |
 | Run flow and the brief (`executeRun`, `shotsBrief`) | `src/services/shots-orchestrator.js` |
 | Shots agent prompt and dispatch | `src/services/shots-agent.js` |
 | Shots bridge (MCP server `shots`) | `worker/shots-mcp.js` |
-| Fixture identities and session copies; demo states for the personas | `src/services/shots-fixtures.js`, `src/services/shots-demo-states.js` |
+| Fixture identities and session copies; demo states for the personas; the pair's one moment (`pairMoment`, `atMoment`) | `src/services/shots-fixtures.js`, `src/services/shots-demo-states.js` |
+| What a declaration is told about the copies' data (`availableStates`, `dataNote`, data warnings) | `src/services/shots-ready-states.js` |
+| Persona sign-in on both sides, and the demo data a copy makes on first view (`warmDemoData`) | `worker/shots-browser-bootstrap.js` |
+| Every shots page's init script (install strip dismissed unless `shots-install-strip=show`; the Workshop's visit stamp dropped) | `worker/shots-page-init.js` |
 | Persona tokens and the guest's, and the warnings on declaring (`mintShotsAuthTokens`, `shotsGuestIdentity`, `personaWarnings`) | `src/services/shots-identities.js` |
 | Phone sign-in on Homeroom's copies (`shotsPhoneSignInEnv`, `shotsPhoneTestCodeFrom`, `testNumbersAllowed`) | `src/services/shots-environment.js`, `src/config.js`, `src/services/firebase-phone-auth.js` |
-| Browser servers (`--output-dir`, `--save-video`) | `worker/write-shots-mcp-config.js` |
+| Browser servers (`--output-dir`, `--save-video`, the phone browsers' `--device`) | `worker/write-shots-mcp-config.js` |
 | Egress proxy (origins, public-only egress, platform assets, controlled failures) | `worker/shots-origin-proxy.js` |
 | Where the browser may go, and which shots may be published | `worker/shots-boundary.js` |
 | Local dry run: the pair, then the shots | `scripts/shots-dry-run-pair.js`, `scripts/shots-dry-run.js` |
@@ -561,7 +745,8 @@ browser). Each persona's browser saves files under
 | Where before and after differ, per screen (`screensFor`) | `src/services/shots-diff.js` |
 | Public routes (summary, files, diagnostics, take again, stop, waive) | `src/routes/shots.js` |
 | Tables, and the rename from `visual_evidence_*` | `src/db/schema.sql` (the "Renamed from visual_evidence_*" block) |
-| Proposal card | `public/js/app-view.js` (`shotsHtml`; the viewer frame is `_shotsViewerHtml`, which an HTML spec's drawn screens share, #3699) |
+| Proposal card | `public/js/app-view.js` (`shotsHtml`; the viewer frame is `_shotsViewerHtml`, which an HTML spec's drawn screens share, #3699; "Also noticed" is `.shots-noticed` in `public/css/app.css`) |
+| A staging run with notices to look at | `src/db/migrate.js` (`seedStagingShotsNoticed`) |
 
 ## Diagnosing a run
 
@@ -573,8 +758,8 @@ and reason, and a bounded trace:
 
 - `trace.failure` gives the phase, code and message, plus the last refused
   tool call (`tool`, `toolCode`, `toolMessage`);
-- `trace.control` gives the files saved, the changes skipped and noted, and
-  whether everything was skipped;
+- `trace.control` gives the files saved, the changes skipped and noted, the
+  problems noticed (`notedProblems`), and whether everything was skipped;
 - `trace.agentDispatches` and `trace.agentActivity` give the backend and
   model, fallback, tool counts, and pending browser and provider calls. See
   `shots-agent-diagnostics.md` for reading a timeout;
@@ -584,7 +769,10 @@ and reason, and a bounded trace:
   event list keeps only the last 128 events, so this is where startup time
   is read;
 - `trace.agentFinalResponse(s)` holds the agent's own last words (private
-  to this route).
+  to this route);
+- `trace.agentActivity.events` of kind `demo_data` say, per persona and
+  side, how each copy answered the bootstrap's request for its first-view
+  demo data (`outcome`, `httpStatus`).
 
 ## Dry run on local builds
 
@@ -605,8 +793,9 @@ allowed. Run from inside a Claude Code session, it starts the agent without
 that session's environment. `--fixtures` passes the seeded fixtures into the
 brief as a hosted reset does. `--state-dir` supplies each persona's signed-in
 storage state (the guest's browser always starts signed out); `--base-sha`/`--head-sha` fill in the brief's changed files
-and diff. It writes an `index.html` with every change side by side, plus
-`result.json`, the files, and the agent's stream, under `.shots-dry-run/`.
+and diff. It writes an `index.html` with every change side by side (and
+anything the agent noticed), plus `result.json`, the files, and the agent's
+stream, under `.shots-dry-run/`.
 `--help` lists the rest. It uses no database and publishes nothing.
 [dry-run-evaluation.md](dry-run-evaluation.md) is the plan for running it on
 real proposals.

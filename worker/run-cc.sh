@@ -43,7 +43,9 @@
 #                              claude-openrouter-request.js adapter, and needs
 #                              OPENROUTER_API_KEY + AGENT_MODEL (MODEL is the
 #                              same slug); OPENROUTER_API_BASE,
-#                              AGENT_MODEL_MAX_OUTPUT_TOKENS and
+#                              AGENT_MODEL_MAX_OUTPUT_TOKENS,
+#                              AGENT_MODEL_CONTEXT_WINDOW (sets the window
+#                              Claude Code compacts at) and
 #                              AGENT_REASONING_EFFORT are optional.
 #   DISCARD_FAILED_TURN        1: a build whose claude failed commits and
 #                              pushes nothing (the Homeroom bot's turns);
@@ -360,8 +362,10 @@ if [ "$MODE" = "scout" ]; then
 elif [ "$MODE" = "shots" ]; then
   # Shots turns operate only through platform-seeded MCP servers. Removing
   # every filesystem, shell, web and delegation tool prevents the model from
-  # reading browser storage state or inherited process credentials.
-  PERMISSION_FLAGS="--dangerously-skip-permissions --disallowed-tools Bash Edit Write NotebookEdit Read Glob Grep WebFetch WebSearch Task Agent Skill TodoWrite mcp__browser_member__browser_evaluate mcp__browser_member__browser_run_code mcp__browser_member__browser_file_upload mcp__browser_member__browser_install mcp__browser_admin__browser_evaluate mcp__browser_admin__browser_run_code mcp__browser_admin__browser_file_upload mcp__browser_admin__browser_install mcp__browser_full_admin__browser_evaluate mcp__browser_full_admin__browser_run_code mcp__browser_full_admin__browser_file_upload mcp__browser_full_admin__browser_install mcp__browser_guest__browser_evaluate mcp__browser_guest__browser_run_code mcp__browser_guest__browser_file_upload mcp__browser_guest__browser_install"
+  # reading browser storage state or inherited process credentials. Each
+  # persona's phone browser (browser_<persona>_phone, present only when a
+  # declared screen is a phone's) is denied the same browser tools.
+  PERMISSION_FLAGS="--dangerously-skip-permissions --disallowed-tools Bash Edit Write NotebookEdit Read Glob Grep WebFetch WebSearch Task Agent Skill TodoWrite mcp__browser_member__browser_evaluate mcp__browser_member__browser_run_code mcp__browser_member__browser_file_upload mcp__browser_member__browser_install mcp__browser_admin__browser_evaluate mcp__browser_admin__browser_run_code mcp__browser_admin__browser_file_upload mcp__browser_admin__browser_install mcp__browser_full_admin__browser_evaluate mcp__browser_full_admin__browser_run_code mcp__browser_full_admin__browser_file_upload mcp__browser_full_admin__browser_install mcp__browser_guest__browser_evaluate mcp__browser_guest__browser_run_code mcp__browser_guest__browser_file_upload mcp__browser_guest__browser_install mcp__browser_member_phone__browser_evaluate mcp__browser_member_phone__browser_run_code mcp__browser_member_phone__browser_file_upload mcp__browser_member_phone__browser_install mcp__browser_admin_phone__browser_evaluate mcp__browser_admin_phone__browser_run_code mcp__browser_admin_phone__browser_file_upload mcp__browser_admin_phone__browser_install mcp__browser_full_admin_phone__browser_evaluate mcp__browser_full_admin_phone__browser_run_code mcp__browser_full_admin_phone__browser_file_upload mcp__browser_full_admin_phone__browser_install mcp__browser_guest_phone__browser_evaluate mcp__browser_guest_phone__browser_run_code mcp__browser_guest_phone__browser_file_upload mcp__browser_guest_phone__browser_install"
 else
   PERMISSION_FLAGS="--dangerously-skip-permissions"
 fi
@@ -421,7 +425,8 @@ if [ "$MODE" = "shots" ]; then
   : > "$SHOTS_BROWSER_DIAGNOSTIC_FILE"
   # Each persona's browser saves the shots agent's named screenshots (and
   # clips, when a motion change is declared) here; the shots bridge reads
-  # them back by name to publish them.
+  # them back by name to publish them. A phone browser saves beside its
+  # persona's, in <persona>_phone, which the config writer creates.
   export SHOTS_DIR="$SHOTS_TMP/shots"
   mkdir -p "$SHOTS_DIR/member" "$SHOTS_DIR/admin" "$SHOTS_DIR/full_admin" "$SHOTS_DIR/guest" \
     || die "could not create the shots directories"

@@ -141,21 +141,24 @@ test('each paired reset serializes clones and adds the same member and full-admi
       return { password: 'disposable' };
     };
     dbManager.connectionUrl = (dbName) => `postgres://fixture@db/${dbName}`;
-    fixtures.ensureFullAdminIdentity = async ({ side }) => ({
+    // Every writer is handed the pair's one moment, the same on both sides.
+    const moments = [];
+    fixtures.ensureFullAdminIdentity = async ({ side, at }) => (moments.push(['admin', side, at]), {
       id: fixtures.FULL_ADMIN_PROFILE, persona: 'full_admin', path: '/#admin/users',
       appMembership: { appId: 42, slug, status: 'member' }, side,
     });
     fixtures.canCopyMemberAgentSession = async () => true;
-    fixtures.ensureHostedAppFixture = async () => ({
+    fixtures.ensureHostedAppFixture = async ({ side, at }) => (moments.push(['hosted', side, at]), {
       id: fixtures.HOSTED_APP_PROFILE, persona: 'member', startPath: '/#apps',
       path: `/app/${fixtures.hostedAppSlug(runId)}`,
       appSlug: fixtures.hostedAppSlug(runId),
     });
-    fixtures.copyMemberAgentSession = async ({ side }) => ({ id: fixtures.PROFILE,
+    fixtures.copyMemberAgentSession = async ({ side, at }) => (moments.push(['member', side, at]), { id: fixtures.PROFILE,
       persona: 'member', path: '/#messages/agent/990899', side });
     const adminSides = [];
-    fixtures.copyFullAdminAgentSession = async ({ side }) => {
+    fixtures.copyFullAdminAgentSession = async ({ side, at }) => {
       adminSides.push(side);
+      moments.push(['admin-session', side, at]);
       return { id: fixtures.FULL_ADMIN_SESSION_PROFILE, persona: 'full_admin', path: '/#messages/agent/990897', side };
     };
     // Each side can hold some demo states; only those BOTH can hold are
@@ -165,6 +168,7 @@ test('each paired reset serializes clones and adds the same member and full-admi
     const demoCalls = [];
     demoStates.installDemoStates = async (inputs, stateIds) => {
       demoCalls.push({ sides: Object.keys(inputs), dbs: [inputs.base.databaseUrl, inputs.head.databaseUrl], stateIds });
+      moments.push(['demo', 'base', inputs.base.at], ['demo', 'head', inputs.head.at]);
       return {
         installed: stateIds.map((id) => ({ id, persona: 'member', shows: [{ state: id, path: '/#messages' }] })),
         skipped: [],
@@ -179,6 +183,9 @@ test('each paired reset serializes clones and adds the same member and full-admi
     }, pair,
       { onProgress: (event) => progress.push(event.stage) });
     assert.deepEqual(order, [pair.sides.base.dbName, pair.sides.head.dbName]);
+    assert.equal(moments.length, 10);
+    assert.equal(new Set(moments.map(([, , at]) => at)).size, 1, 'one moment, read once per reset');
+    assert.equal(moments[0][2], new Date(Date.parse(moments[0][2])).toISOString());
     assert.deepEqual(progress.slice(0, 6), [
       'clone_base', 'clone_base_copy_template', 'clone_base_scrub_private',
       'clone_head', 'clone_head_copy_template', 'clone_head_scrub_private',

@@ -182,6 +182,23 @@ test('Claude Code gets the adapter and a local token, never the key', () => {
   assert.ok(!Object.values(env).includes(KEY));
 });
 
+test('Claude Code compacts at the limit Codex does, or the model\'s window when smaller, and knows the real window', () => {
+  const base = { baseUrl: 'http://127.0.0.1:4000', localToken: 'local', model: GLM };
+  const glm = claudeChildEnv({ PATH: '/bin', AGENT_MODEL_CONTEXT_WINDOW: '1310720' }, base);
+  assert.equal(glm.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '200000', 'a 1.3M window is compacted at 200k, never at 1.2M');
+  assert.equal(glm.CLAUDE_CODE_MAX_CONTEXT_TOKENS, '1310720');
+  const small = claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '128000' }, base);
+  assert.equal(small.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '128000');
+  const unknown = claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '' }, base);
+  assert.equal(unknown.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '200000', 'no catalog window: still compacted');
+  assert.equal(unknown.CLAUDE_CODE_MAX_CONTEXT_TOKENS, undefined, 'and no window is made up');
+  const chosen = claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '1310720', CLAUDE_CODE_AUTO_COMPACT_WINDOW: '90000' }, base);
+  assert.equal(chosen.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '90000', 'a window already set is kept');
+  const codex = fs.readFileSync(require.resolve('../worker/build-codex-model-catalog.js'), 'utf8');
+  assert.match(codex, /const AUTO_COMPACT_TOKEN_LIMIT = 200_000;/, 'the same limit as Codex');
+  assert.equal(require('../worker/claude-openrouter-request').AUTO_COMPACT_TOKEN_LIMIT, 200_000);
+});
+
 test('redaction is literal and ignores values too short to be secrets', () => {
   const redact = makeRedactor([KEY, 'a+b(c)*grant-value', 'short', null, undefined]);
   assert.equal(redact(`key=${KEY} and ${KEY}`), 'key=**** and ****');

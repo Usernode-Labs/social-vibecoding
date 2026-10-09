@@ -91,21 +91,21 @@ function prepareSpec(text) {
     if (doc.length > MAX_SPEC_HTML_CHARS) {
       return {
         ok: false, status: 400, code: 'spec_too_long',
-        message: `The HTML spec is ${doc.length} characters, over the ${MAX_SPEC_HTML_CHARS}-character limit `
-          + 'the spec viewer takes. Nothing was posted. Draw fewer or smaller screens, then post it again.',
+        message: `The HTML plan is ${doc.length} characters, over the ${MAX_SPEC_HTML_CHARS}-character limit `
+          + 'the plan viewer takes. Nothing was posted. Draw fewer or smaller screens, then post it again.',
         limitChars: MAX_SPEC_HTML_CHARS, actualChars: doc.length,
       };
     }
     const { markdown, html } = specHtml.normalizeSpecOutput(doc);
     if (!String(markdown || '').trim()) {
-      return { ok: false, status: 400, code: 'invalid_request', message: 'The HTML spec has no readable text.' };
+      return { ok: false, status: 400, code: 'invalid_request', message: 'The HTML plan has no readable text.' };
     }
     return { ok: true, markdown: markdown.trim(), html, format: 'html' };
   }
   if (raw.length > MAX_SPEC_MARKDOWN_CHARS) {
     return {
       ok: false, status: 400, code: 'spec_too_long',
-      message: `The spec is ${raw.length} characters, over the ${MAX_SPEC_MARKDOWN_CHARS}-character limit. `
+      message: `The plan is ${raw.length} characters, over the ${MAX_SPEC_MARKDOWN_CHARS}-character limit. `
         + 'Nothing was posted. Shorten it, then post it again.',
       limitChars: MAX_SPEC_MARKDOWN_CHARS, actualChars: raw.length,
     };

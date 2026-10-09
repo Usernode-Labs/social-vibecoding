@@ -1280,6 +1280,11 @@ function readVerdict(text) {
           : demoted ? clip(`Asked "${demoted.question}", but it was not a blocker: built with its default, "${demoted.default}".`, 2000)
             : null,
       demoted: !!demoted,
+      // #4488: a ready change on an existing app that is checked with its
+      // requester before it is built (a plan card first), and whose screens
+      // are reviewed once it is. Only a ready verdict carries it; a first
+      // version is always planned with its creator and drops it (actOnVerdict).
+      complicated: verdict === 'ready' && obj.complicated === true,
       // #4239: a request the bot leaves because it is about Homeroom itself,
       // not the app it was filed on. Only a person verdict carries it.
       platform: verdict === 'person' && obj.platform === true,
@@ -1343,7 +1348,12 @@ function classifyIssue({ issue, threadLastAt = null, busy = false, lastRun = nul
       }
       return { eligible: false, reason: 'unchanged', threadSeenAt };
     }
-    return { eligible: true, reason: 'changed', priority: 2, threadSeenAt };
+    // What moved past the last read: the GitHub issue (any comment, edit or
+    // label moves its updated_at) or a person's message on Homeroom. Kept
+    // on the run as its read_reason, so a request read again and again says
+    // why.
+    const changedBy = toMs(threadLastAt) > lastSeenMs && toMs(threadLastAt) >= toMs(issue.updatedAt) ? 'discussion' : 'github';
+    return { eligible: true, reason: 'changed', priority: 2, threadSeenAt, changedBy };
   }
   return { eligible: true, reason: 'new', priority: 1, threadSeenAt };
 }
@@ -1641,17 +1651,20 @@ async function refreshApp(pool, app, {
   const byNumber = new Map(issues.map((issue) => [Number(issue.number), issue]));
   for (const item of eligible) {
     const { rows: queued } = await pool.query(
-      `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason, thread_seen_at)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason, thread_seen_at, changed_by)
+       VALUES ($1, $2, $3, $4, $5, $7)
        ON CONFLICT (app_id, issue_number) DO UPDATE
          SET priority = LEAST(homeroom_bot_queue.priority, EXCLUDED.priority),
              thread_seen_at = EXCLUDED.thread_seen_at,
              reason = CASE WHEN homeroom_bot_queue.priority = 0
                              OR homeroom_bot_queue.reason = ANY($6::text[])
-                           THEN homeroom_bot_queue.reason ELSE EXCLUDED.reason END
+                           THEN homeroom_bot_queue.reason ELSE EXCLUDED.reason END,
+             changed_by = CASE WHEN homeroom_bot_queue.priority = 0
+                                 OR homeroom_bot_queue.reason = ANY($6::text[])
+                               THEN homeroom_bot_queue.changed_by ELSE EXCLUDED.changed_by END
        WHERE homeroom_bot_queue.started_at IS NULL
        RETURNING id, (xmax = 0) AS inserted`,
-      [app.id, item.n, item.priority, item.reason, item.threadSeenAt, SELF_QUEUED_REASONS],
+      [app.id, item.n, item.priority, item.reason, item.threadSeenAt, SELF_QUEUED_REASONS, item.changedBy || null],
     );
     out.queued += 1;
     // A new request on a live app: the person it is for gets its card now,
@@ -1786,6 +1799,7 @@ async function recordThrownTriage(pool, { app, item, settings, err }) {
   try {
     await insertRun(pool, {
       ...billingOf(item, live.isLiveFor(settings, app) ? 'live' : settings.mode),
+      readReason: readReasonOf(item),
       appId: app.id, issueNumber: item.issue_number,
       mode: live.isLiveFor(settings, app) ? 'live' : settings.mode,
       verdict: 'failed', error: `threw: ${err?.message || err}`,
@@ -1819,7 +1833,7 @@ async function nextBatch(pool, { batchSize, excludeAppIds = [], pausedApps = [],
     'SELECT id, slug, name, repo_url, self_hosted FROM apps WHERE id = $1', [appId],
   );
   const { rows: items } = await pool.query(
-    `SELECT id, app_id, issue_number, priority, reason, thread_seen_at, requested_by
+    `SELECT id, app_id, issue_number, priority, reason, thread_seen_at, requested_by, changed_by
        FROM homeroom_bot_queue
       WHERE app_id = $1 AND started_at IS NULL
       ORDER BY priority, enqueued_at
@@ -2160,14 +2174,27 @@ function billingOf(item, runMode) {
   };
 }
 
+/**
+ * What started a read, kept on its run (read_reason): its queue row's
+ * reason, and for a change what moved past the last read (classifyIssue's
+ * changedBy, carried on the row as changed_by), as 'changed:github' or
+ * 'changed:discussion'. Null with no reason.
+ */
+function readReasonOf(item) {
+  const reason = String(item?.reason || '').trim();
+  if (!reason) return null;
+  const by = reason === 'changed' && item?.changed_by ? `:${item.changed_by}` : '';
+  return clip(`${reason}${by}`, 80);
+}
+
 async function insertRun(pool, run) {
   const { rows } = await pool.query(
     `INSERT INTO homeroom_bot_runs
        (app_id, issue_number, session_id, mode, verdict, determined, missing_fact, question,
         question_default, build_note, reason, cap_suppressed, thread_seen_at, model, cost_usd,
         input_tokens, output_tokens, duration_ms, error, budget_stop, proposal_session_id,
-        checks_head_sha, charged, payer_user_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
+        checks_head_sha, charged, payer_user_id, read_reason)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
      RETURNING id`,
     [run.appId, run.issueNumber, run.sessionId || null, run.mode, run.verdict,
       run.determined ?? null, run.missingFact || null, run.question || null,
@@ -2180,7 +2207,10 @@ async function insertRun(pool, run) {
       run.checksHeadSha || null,
       // Whose week it counts toward, if anybody's (billingOf): a shadow run
       // never does.
-      run.charged ?? run.mode === 'live', run.payerUserId || null],
+      run.charged ?? run.mode === 'live', run.payerUserId || null,
+      // What started this read (readReasonOf), so a request read again and
+      // again says why.
+      run.readReason || null],
   );
   const id = rows[0]?.id || null;
   // #3624: a question's suggested answers, beside the row rather than in
@@ -2197,6 +2227,11 @@ async function insertRun(pool, run) {
       'UPDATE homeroom_bot_runs SET plan = $2 WHERE id = $1',
       [id, JSON.stringify(run.plan)],
     ).catch((err) => log.warn('homeroom-bot', 'Could not record a plan', { runId: id, err: err.message }));
+  }
+  // #4488: a ready verdict labelled complicated, the same way.
+  if (id && run.complicated) {
+    await pool.query('UPDATE homeroom_bot_runs SET complicated = TRUE WHERE id = $1', [id])
+      .catch((err) => log.warn('homeroom-bot', 'Could not record a complicated verdict', { runId: id, err: err.message }));
   }
   // #4239: a person verdict about Homeroom itself, the same way.
   if (id && run.aboutPlatform) {
@@ -2262,13 +2297,23 @@ async function openBotProposalTotal(pool, bot) {
   return rows[0]?.cnt || 0;
 }
 
+/**
+ * #4488: the daily cap on questions and notes, for a complicated change's
+ * plan (which asks its requester before anything is built): 'question_tripwire'
+ * when the project has had its fill today, else null.
+ */
+async function planTripwire(pool, appId) {
+  return await tripwireCount(pool, appId) >= QUESTION_TRIPWIRE_PER_DAY ? 'question_tripwire' : null;
+}
+
 // Only the verdicts that went out (or, in shadow, would have). A held one
 // said nothing but the one-line held note, and counting it would let each
-// retry of a held question push the window out again (#3152).
+// retry of a held question push the window out again (#3152). #4488: a
+// complicated change's plan asked its requester, so it counts as well.
 async function tripwireCount(pool, appId) {
   const { rows } = await pool.query(
     `SELECT COUNT(*)::int AS cnt FROM homeroom_bot_runs
-      WHERE app_id = $1 AND verdict = ANY($2::text[])
+      WHERE app_id = $1 AND (verdict = ANY($2::text[]) OR complicated IS TRUE)
         AND cap_suppressed IS NULL
         AND created_at > NOW() - INTERVAL '24 hours'`,
     [appId, TRIPWIRE_VERDICTS],
@@ -2836,6 +2881,7 @@ async function runTriage(pool, config, {
     // row (#3122); the retry is still logged below.
     const id = infra && isRepeatFault(error) ? null : await insertRun(pool, {
       ...billingOf(item, runMode),
+      readReason: readReasonOf(item),
       appId: app.id, issueNumber, mode: runMode, verdict: 'failed', error,
       threadSeenAt: item.thread_seen_at || null, model,
       durationMs: Date.now() - startedMs, ...extra,
@@ -2869,7 +2915,7 @@ async function runTriage(pool, config, {
   // they get here (`claimed`). The row's thread_seen_at is read back with
   // the claim: the refresh may have moved it on since the batch was loaded.
   const claim = await pool.query(
-    'UPDATE homeroom_bot_queue SET started_at = NOW() WHERE id = $1 AND (started_at IS NULL OR $2::boolean) RETURNING thread_seen_at',
+    'UPDATE homeroom_bot_queue SET started_at = NOW() WHERE id = $1 AND (started_at IS NULL OR $2::boolean) RETURNING thread_seen_at, changed_by',
     [item.id, !!item.claimed],
   );
   if (claim.rowCount === 0) {
@@ -2879,6 +2925,8 @@ async function runTriage(pool, config, {
   if (claim.rows?.[0]?.thread_seen_at) {
     item = { ...item, thread_seen_at: latestOf(item.thread_seen_at, claim.rows[0].thread_seen_at) };
   }
+  // And what moved, for the run's read_reason (readReasonOf).
+  if (claim.rows?.[0]?.changed_by) item = { ...item, changed_by: claim.rows[0].changed_by };
 
   const fetched = await github.fetchPublicIssue(repo.owner, repo.repo, issueNumber);
   const issue = fetched?.issue || null;
@@ -2948,6 +2996,12 @@ async function runTriage(pool, config, {
         app: app.slug, issueNumber, sessionId: open.id,
       });
       return { ran: false, reason: 'has_proposal' };
+    }
+    // #4488: "build it" from its requester under a complicated change's plan
+    // is Build it, not a new look: the build goes ahead from that plan.
+    if (await buildItOnRequest(pool, { appId: app.id, issueNumber, requester, deps: { dm: deps.dm, ws: liveD.ws } })) {
+      await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
+      return { ran: false, reason: 'build_it' };
     }
     // An issue a restart sent back (#3471), or a read started over because
     // somebody changed the request mid-read, was already told the bot is
@@ -3365,6 +3419,7 @@ async function runTriage(pool, config, {
     const retried = String(item.reason || '') === 'budget_retry';
     const id = await insertRun(pool, {
       ...billingOf(item, runMode),
+      readReason: readReasonOf(item),
       appId: app.id, issueNumber, sessionId: session.id, mode: runMode, verdict: 'failed',
       error: `budget: ${budgetHit}`, budgetStop: budgetHit,
       threadSeenAt: item.thread_seen_at || null, model,
@@ -3465,15 +3520,27 @@ async function runTriage(pool, config, {
       });
     }
   }
-  const capSuppressed = await simulateCaps(pool, bot, app.id, parsed.verdict, settings);
+  // #4488: a first version is always planned with its creator, never
+  // labelled; and a change whose plan its requester was asked about, and
+  // asked to change, is planned with them again whatever this look says.
+  if (parsed.complicated && requester?.firstVersion) parsed = { ...parsed, complicated: false };
+  if (liveMode && parsed.verdict === 'ready' && !parsed.complicated && !requester?.firstVersion
+    && await plannedWithRequester(pool, { appId: app.id, issueNumber })) {
+    parsed = { ...parsed, complicated: true };
+  }
+  // #4488: a complicated change's plan asks its requester before it is
+  // built, so it counts against the daily questions and notes as well.
+  const capSuppressed = await simulateCaps(pool, bot, app.id, parsed.verdict, settings)
+    || (parsed.complicated ? await planTripwire(pool, app.id) : null);
   // #4239: about Homeroom itself means nothing on Homeroom's own board.
   if (parsed.platform && (await platformAppSlugs(pool)).includes(app.slug)) parsed = { ...parsed, platform: false };
   const runId = await insertRun(pool, {
     ...billingOf(item, runMode),
+    readReason: readReasonOf(item),
     appId: app.id, issueNumber, sessionId: session.id, mode: runMode,
     verdict: parsed.verdict, determined: parsed.determined, missingFact: parsed.missingFact,
     question: parsed.question, questionDefault: parsed.questionDefault, questionAnswers: parsed.questionAnswers,
-    plan: parsed.plan, aboutPlatform: !!parsed.platform,
+    plan: parsed.plan, aboutPlatform: !!parsed.platform, complicated: !!parsed.complicated,
     buildNote: parsed.buildNote, reason: parsed.reason, capSuppressed,
     threadSeenAt: item.thread_seen_at || null, model, costUsd,
     inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
@@ -3532,13 +3599,27 @@ async function runTriage(pool, config, {
     } catch (err) {
       log.error('homeroom-bot', 'Acting on a live verdict failed', { app: app.slug, issueNumber, err: err.message });
     }
-  } else if (parsed.verdict === 'ready' && shadowBuildsApply(settings, app, config)) {
-    // Queued, not built here: the build lane runs it beside triage, so the
-    // rest of this app's batch is not held up behind a worker.
+  } else if (parsed.verdict === 'ready') {
+    const skip = shadowBuildSkipReason(settings, app, config);
     try {
-      if (await queueShadowBuild(pool, runId)) acted = 'shadow_queued';
+      if (!skip) {
+        // Queued, not built here: the build lane runs it beside triage, so
+        // the rest of this app's batch is not held up behind a worker.
+        if (await queueShadowBuild(pool, runId)) acted = 'shadow_queued';
+      } else {
+        // Not built, and the run says why (the console's "Not shadow
+        // built"). Fifty ready verdicts in the week to 2026-10-09 had no
+        // build and nothing on the run to say why.
+        await pool.query(
+          `UPDATE homeroom_bot_runs SET build_error = $2
+            WHERE id = $1 AND build_ok IS NULL AND build_queued_at IS NULL`,
+          [runId, clip(`skipped: ${skip}`, MAX_ERROR_CHARS)],
+        );
+      }
     } catch (err) {
-      log.error('homeroom-bot', 'Queueing a shadow build failed', { app: app.slug, issueNumber, err: err.message });
+      log.error('homeroom-bot', skip ? 'Recording why a ready verdict is not shadow built failed' : 'Queueing a shadow build failed', {
+        app: app.slug, issueNumber, err: err.message,
+      });
     }
   }
   return { ran: true, verdict: parsed.verdict, runId, ...(acted ? { acted } : {}) };
@@ -3602,13 +3683,28 @@ function isPlatformRepo(app, config = {}) {
  * repository everybody's proposals are made against.
  */
 function shadowBuildSkipReason(settings, app, config = {}) {
-  if (!settings?.shadowBuilds) return 'shadow builds are off';
-  if (live.isLiveFor(settings, app)) return 'the app is live now';
-  if (!settings.shadowBuildPlatform && isPlatformRepo(app, config)) {
-    return "the platform's own repository is left out";
-  }
-  if ((settings.pausedApps || []).includes(app?.slug)) return 'the app is paused';
+  if (!settings?.shadowBuilds) return SHADOW_SKIP.off;
+  if (live.isLiveFor(settings, app)) return SHADOW_SKIP.live;
+  if (!settings.shadowBuildPlatform && isPlatformRepo(app, config)) return SHADOW_SKIP.platform;
+  if ((settings.pausedApps || []).includes(app?.slug)) return SHADOW_SKIP.paused;
   return null;
+}
+const SHADOW_SKIP = Object.freeze({
+  off: 'shadow builds are off',
+  live: 'the app is live now',
+  platform: "the platform's own repository is left out",
+  paused: 'the app is paused',
+});
+
+/**
+ * Whether a run's build_error is the note triage left when a setting kept
+ * its ready verdict from being built (runTriage: "skipped: <why>"). That is
+ * a build that may still be made once the setting changes, unlike a skip
+ * the lane recorded (the issue closed, the app went away).
+ */
+function skippedAtTriage(buildError) {
+  const m = /^skipped: (.*)$/.exec(String(buildError || ''));
+  return !!m && Object.values(SHADOW_SKIP).includes(m[1]);
 }
 
 /**
@@ -3643,10 +3739,6 @@ function buildBudgets(app, config, turnBudgetMs, { firstVersion = false } = {}) 
   const factor = isPlatformRepo(app, config) ? PLATFORM_BUILD_TIME_FACTOR
     : firstVersion ? FIRST_VERSION_BUILD_TIME_FACTOR : 1;
   return { turnBudgetMs: turnBudgetMs * factor, specBudgetMs: live.SPEC_TURN_MAX_MS * factor };
-}
-
-function shadowBuildsApply(settings, app, config = {}) {
-  return shadowBuildSkipReason(settings, app, config) === null;
 }
 
 /**
@@ -5303,18 +5395,20 @@ async function queueShadowBackfill(pool, config = {}) {
   const left = { live: 0, platform: 0, paused: 0 };
   const ids = [];
   for (const r of rows) {
-    if (r.verdict !== 'ready' || r.build_queued_at || r.build_ok != null || r.build_error) continue;
+    // A ready verdict a setting kept from being built at the time (its run
+    // says so) is one to build now, as one with no note is.
+    if (r.verdict !== 'ready' || r.build_queued_at || r.build_ok != null || (r.build_error && !skippedAtTriage(r.build_error))) continue;
     const why = shadowBuildSkipReason(settings, { slug: r.slug, repo_url: r.repo_url }, config);
-    if (why === 'the app is live now') { left.live += 1; continue; }
-    if (why === "the platform's own repository is left out") { left.platform += 1; continue; }
-    if (why === 'the app is paused') { left.paused += 1; continue; }
+    if (why === SHADOW_SKIP.live) { left.live += 1; continue; }
+    if (why === SHADOW_SKIP.platform) { left.platform += 1; continue; }
+    if (why === SHADOW_SKIP.paused) { left.paused += 1; continue; }
     if (why) continue;
     ids.push(r.id);
   }
   let queued = [];
   if (ids.length) {
     ({ rows: queued } = await pool.query(
-      `UPDATE homeroom_bot_runs SET build_queued_at = NOW()
+      `UPDATE homeroom_bot_runs SET build_queued_at = NOW(), build_error = NULL
         WHERE id = ANY($1::int[]) AND build_queued_at IS NULL AND build_ok IS NULL
         RETURNING id, app_id`,
       [ids],
@@ -5611,6 +5705,7 @@ async function runFollowUp(pool, config, {
         ? 'its change could not be pushed' : 'the turn produced no change';
     runId = await insertRun(pool, {
       ...billingOf(item, runMode),
+      readReason: readReasonOf(item),
       appId: app.id, issueNumber, mode: runMode, verdict: 'failed', error: `revise: ${why}`,
       reason: parsed.reply, threadSeenAt: item.thread_seen_at || null, model,
       durationMs: Date.now() - startedMs, proposalSessionId: session.id, ...spent,
@@ -5648,6 +5743,7 @@ async function runFollowUp(pool, config, {
   const askAnswers = action === 'ask' ? suggestedAnswers(parsed?.answers) : null;
   runId = await insertRun(pool, {
     ...billingOf(item, runMode),
+    readReason: readReasonOf(item),
     appId: app.id, issueNumber, mode: runMode, verdict: followup.VERDICT_FOR[action],
     question: action === 'ask' ? reply : null,
     questionAnswers: askAnswers,
@@ -5866,6 +5962,7 @@ async function runChecksFix(pool, config, {
   const handOff = async ({ why, verdict, extra = {} }) => {
     runId = await insertRun(pool, {
       ...billingOf(item, runMode),
+      readReason: readReasonOf(item),
       appId: app.id, issueNumber, mode: runMode, verdict,
       reason: why, error: verdict === 'failed' ? `checks: ${why}` : null,
       threadSeenAt, model, durationMs: Date.now() - startedMs,
@@ -5973,6 +6070,7 @@ async function runChecksFix(pool, config, {
     const summary = parsed?.summary || parsed?.reply || 'It updated the change so its checks pass.';
     runId = await insertRun(pool, {
       ...billingOf(item, runMode),
+      readReason: readReasonOf(item),
       appId: app.id, issueNumber, mode: runMode, verdict: 'revise',
       reason: parsed?.reply || summary, buildNote: summary,
       threadSeenAt, model, durationMs: Date.now() - startedMs,
@@ -6170,7 +6268,9 @@ async function actOnVerdict({
       // waiting is never a mystery (homeroom-bot-dm.js dmText). A question
       // the daily tripwire holds is not: there is nothing to tell them yet.
       const toDm = capSuppressed === 'proposals_per_app' || capSuppressed === 'proposals_total';
-      await say(kind, live.heldText({ cap: capSuppressed, verdict: parsed.verdict, limit }), toDm ? { dm: { limit } } : undefined);
+      await say(kind, live.heldText({
+        cap: capSuppressed, verdict: parsed.verdict === 'ready' && parsed.complicated ? 'plan' : parsed.verdict, limit,
+      }), toDm ? { dm: { limit } } : undefined);
     }
   } else if (parsed.verdict === 'question') {
     // #3624: `dm` carries the question to the requester's DM too, with the
@@ -6201,6 +6301,13 @@ async function actOnVerdict({
       acted = 'build_queued';
     } else if (firstVersion) {
       acted = PLAN_ACTED[await awaitGo(pool, { runId, app, issueNumber, parsed, bot, deps })];
+    } else if (parsed.complicated) {
+      // #4488: a complicated change's spec is drafted first, in the build's
+      // own slot (buildLive planBeforeBuilding), and shown to its requester
+      // with Build it and Change something. Nothing is built until they
+      // say Build it.
+      await queueLiveBuild(pool, { runId, appId: app.id });
+      acted = 'plan_queued';
     } else {
       // Built after this turn, in a slot of its own (buildLive, started by
       // the lane), not inside it: the build held the project's one slot for
@@ -6288,12 +6395,16 @@ function choicesFrom(questions, answers = []) {
  * note, as binding (homeroom-bot-live.js splitApprovedPlan). Until 7 October
  * 2026 only the choices were written, and the bullets reached neither turn.
  */
-function creatorChoiceNote(chosen, { bullets = [] } = {}) {
+// #4488: `requester` for a complicated change on an existing project, whose
+// requester approved it: said as theirs, under its own heads.
+function creatorChoiceNote(chosen, { bullets = [], requester = false } = {}) {
   const plan = (Array.isArray(bullets) ? bullets : []).map((b) => String(b || '').trim()).filter(Boolean);
   const picks = Array.isArray(chosen) ? chosen : [];
   const lines = [];
-  if (plan.length) lines.push(live.APPROVED_PLAN_HEAD, ...plan.map((b) => `- ${b}`));
-  if (picks.length) lines.push(live.CREATOR_CHOICES_HEAD, ...picks.map((c) => `- ${c.question} ${c.answer}`));
+  if (plan.length) lines.push(requester ? live.APPROVED_BY_REQUESTER_HEAD : live.APPROVED_PLAN_HEAD, ...plan.map((b) => `- ${b}`));
+  if (picks.length) {
+    lines.push(requester ? live.REQUESTER_CHOICES_HEAD : live.CREATOR_CHOICES_HEAD, ...picks.map((c) => `- ${c.question} ${c.answer}`));
+  }
   return lines.length ? `\n\n${lines.join('\n')}` : '';
 }
 
@@ -6366,6 +6477,12 @@ async function sendRunPlan(pool, { runId, app, issueNumber, plan, bot, deps = {}
       return 'waiting';
     }
     if (sent?.stop) {
+      // #4488: a complicated change's plan is on its request's discussion
+      // too, where its requester answers it without the bot: it waits there.
+      if (plan?.complicated) {
+        await pool.query('UPDATE homeroom_bot_runs SET plan_unsent_at = NULL WHERE id = $1', [runId]);
+        return 'waiting';
+      }
       await stopUnsentPlan(pool, { runId, why: PLAN_STOPPED_WHY[sent.stop] || PLAN_STOPPED_WHY.unsent });
       return 'stopped';
     }
@@ -6376,6 +6493,11 @@ async function sendRunPlan(pool, { runId, app, issueNumber, plan, bot, deps = {}
       [runId],
     );
     if (run && Number(run.plan_send_attempts) >= PLAN_SEND_ATTEMPTS) {
+      // #4488: on its request it still waits for an answer; the DM stops trying.
+      if (plan?.complicated) {
+        await pool.query('UPDATE homeroom_bot_runs SET plan_unsent_at = NULL WHERE id = $1', [runId]);
+        return 'waiting';
+      }
       await stopUnsentPlan(pool, { runId, why: PLAN_STOPPED_WHY.unsent });
       return 'stopped';
     }
@@ -6436,6 +6558,8 @@ async function retryUnsentPlans(pool, bot, deps = {}) {
     const plan = {
       bullets: Array.isArray(row.plan?.bullets) ? row.plan.bullets : [],
       questions: Array.isArray(row.plan?.questions) ? row.plan.questions : [],
+      // #4488: a complicated change's, with the spec it shows.
+      ...(row.plan?.complicated ? { complicated: true, spec: row.plan.spec || null } : {}),
     };
     const state = await sendRunPlan(pool, { runId: Number(row.id), app, issueNumber: Number(row.issue_number), plan, bot, deps });
     out[state === 'waiting' ? 'sent' : state] += 1;
@@ -6478,6 +6602,228 @@ async function carryApprovedPlan(pool, { runId, appId, issueNumber }) {
   }
 }
 
+// ── #4488: a complicated change, checked with its requester first ────────
+//
+// A ready verdict on an existing project the triage labels `complicated`
+// (homeroom-bot-triage.md: a new screen or kind of thing, a change to how
+// people get around or what it stores, two quite different ways to do it,
+// or large) is not built at once. Its build slot drafts the spec first
+// (planBeforeBuilding: buildAndPropose's planOnly), with its before and
+// after screens, and it is shown to its requester with Build it and Change
+// something: on the request's discussion and GitHub, where anyone can read
+// it, and as the plan card in their DM with the bot when they have it. Its
+// run then waits with `awaiting_go_at` like a first version's plan, under
+// the same week (settleStalePlans) and the same new look (retireWaitingPlans).
+// Build it (the card's button, or "build it" from the requester on the
+// request: buildItOnRequest) is goAhead, and the build reads the spec they
+// saw (presetSpec, its screens from approvedSpecHtml) rather than drawing
+// another. Change something posts their words on the request, and its next
+// look plans it again (plannedWithRequester). Its screens are reviewed once
+// it is built, as a first version's are (buildLive).
+
+/**
+ * #4488: whether the request's newest live ready verdict was a complicated
+ * change whose plan its requester was asked about and that has not become
+ * a proposal: a new look at it plans it with them again rather than
+ * building. False when it cannot be read. Never throws.
+ */
+async function plannedWithRequester(pool, { appId, issueNumber }) {
+  try {
+    const { rows: [prev] = [] } = await pool.query(
+      `SELECT complicated, proposal_session_id FROM homeroom_bot_runs
+        WHERE app_id = $1 AND issue_number = $2 AND mode = 'live' AND verdict = 'ready'
+        ORDER BY id DESC LIMIT 1`,
+      [appId, issueNumber],
+    );
+    return !!prev && prev.complicated === true && prev.proposal_session_id == null;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * #4488: the HTML (the before and after screens) of the spec a complicated
+ * change's requester approved, from the version its plan was shown with, or
+ * null. Never throws.
+ */
+async function approvedSpecHtml(pool, plan) {
+  const sessionId = Number(plan?.spec?.sessionId);
+  const version = Number(plan?.spec?.version);
+  if (!Number.isInteger(sessionId) || sessionId <= 0 || !Number.isInteger(version) || version <= 0) return null;
+  try {
+    const { rows: [row] = [] } = await pool.query(
+      'SELECT content_html FROM chat_session_specs WHERE session_id = $1 AND version = $2',
+      [sessionId, version],
+    );
+    return row?.content_html || null;
+  } catch {
+    return null;
+  }
+}
+
+/** Pure (#4488): the plan's choices, as the spec that draws them is told. */
+function planChoicesNote(questions) {
+  const asks = (Array.isArray(questions) ? questions : []).filter((q) => q?.question && q.answers?.length);
+  const lines = [
+    'This spec is shown to the person who asked for it BEFORE anything is built, and the build will follow it as',
+    'written. Draw its before and after screens as they will really look.',
+  ];
+  if (asks.length) {
+    lines.push('They will also be asked these, with the first answer suggested. Draw the suggested answer, and say in a',
+      'line what would change with each other answer:', ...asks.map((q) => `- ${q.question} ${q.answers.join(' / ')}`));
+  }
+  return `\n\n${lines.join('\n')}`;
+}
+
+/** Pure (#4488): the bullets a complicated change's plan card shows: the read's, else one plain line. */
+function complicatedPlanBullets(plan) {
+  const bullets = planBullets(plan?.bullets || []);
+  return bullets.length ? bullets : ['The change this request asks for, as the plan and its screens below show it'];
+}
+
+/**
+ * #4488: a complicated change's plan, drafted in its build slot and shown to
+ * its requester before anything is built (see above). Resolves what was done:
+ * 'awaiting_go' (shown, and waiting for Build it), 'blocked', 'skipped',
+ * 'already_built' or 'build_failed' (no plan could be written, said on the
+ * request). Never builds.
+ */
+async function planBeforeBuilding({
+  pool, config, bot, app, repo, issueNumber, issue, parsed, plan = null, runId, seed, seedReadAt, postedAt,
+  turnBudgetMs, model, specModel, guidance = null, harnessed = false, say, deps,
+}) {
+  const { github, ws } = deps;
+  const questions = planQuestions(plan?.questions || []);
+  let drafted;
+  liveBuildsInFlight.add(runId);
+  try {
+    drafted = await live.buildAndPropose({
+      pool, config, bot, app, repo, issueNumber, issue, seed,
+      buildNote: `${parsed.buildNote || ''}${planChoicesNote(questions)}`,
+      ...buildBudgets(app, config, turnBudgetMs), model, specModel, deps,
+      platformRepo: isPlatformRepo(app, config), planOnly: true,
+      skipCheck: () => whyNotBuild(pool, { runId, botId: bot.id, appId: app.id, issueNumber, github, repo }),
+      origin: { lane: 'live', runId },
+      ...(harnessed ? { harnessOf: live.recipeHarness, specGuidance: guidance?.spec || null } : {}),
+    });
+  } finally {
+    liveBuildsInFlight.delete(runId);
+  }
+  if (drafted.costUsd > 0) {
+    try {
+      if (await deps.managedOpenRouter.usesIncludedKey(pool, bot.id)) {
+        await deps.limits.recordSpend(pool, bot.id, Math.round(drafted.costUsd * 1e6) / 1e4, { byok: false });
+      }
+    } catch (err) {
+      log.warn('homeroom-bot', 'Plan spend debit failed', { err: err.message });
+    }
+  }
+  const settle = () => pool.query('UPDATE homeroom_bot_runs SET live_build_waiting_at = NULL WHERE id = $1', [runId]).catch(() => {});
+  if (drafted.skipped) {
+    await recordLiveBuild(pool, runId, drafted, model);
+    await settle();
+    log.info('homeroom-bot', 'A complicated change stopped before its plan was shown', { app: app.slug, issueNumber, runId, why: drafted.skipped });
+    return 'skipped';
+  }
+  if (!drafted.planned) {
+    const acted = await announceBuilt({ pool, ws, app, bot, issueNumber, runId, built: drafted, say, domain: deps.domain });
+    await settle();
+    return acted;
+  }
+  const shown = {
+    bullets: complicatedPlanBullets(plan), questions, complicated: true,
+    ...(drafted.specVersion ? { spec: { sessionId: Number(drafted.sessionId), version: Number(drafted.specVersion) } } : {}),
+  };
+  const { rowCount } = await pool.query(
+    `UPDATE homeroom_bot_runs
+        SET live_build_waiting_at = NULL, awaiting_go_at = NOW(), plan = $2::jsonb, plan_send_attempts = 0, plan_unsent_at = NULL,
+            build_spec_md = $3, build_cost_usd = $4, build_model = COALESCE($5, build_model)
+      WHERE id = $1 AND build_ok IS NULL AND build_session_id IS NULL AND proposal_session_id IS NULL`,
+    [runId, JSON.stringify(shown), drafted.specMd, Number.isFinite(drafted.costUsd) ? drafted.costUsd : null, specModel || model || null],
+  ).catch((err) => {
+    log.warn('homeroom-bot', 'Could not record a complicated change\'s plan', { app: app.slug, issueNumber, runId, err: err.message });
+    return { rowCount: 0 };
+  });
+  if (!rowCount) return 'already_built';
+  if (shown.spec) await live.shareSpecVersion(pool, shown.spec.sessionId, shown.spec.version).catch(() => {});
+  // Their DM first, so the request's post does not ring them twice.
+  const dmSvc = deps.dm || require('./homeroom-bot-dm');
+  let sent = null;
+  try {
+    sent = await dmSvc.sendPlanCard(pool, { app, issueNumber, runId, plan: shown, bot, ws: ws || null });
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not send a complicated change\'s plan to its requester (it waits on the request)', {
+      app: app.slug, issueNumber, runId, err: err.message,
+    });
+  }
+  await pool.query(
+    'UPDATE homeroom_bot_runs SET plan_send_attempts = 1, plan_unsent_at = $2 WHERE id = $1',
+    [runId, sent?.messageId || sent?.stop ? null : new Date()],
+  ).catch(() => {});
+  const told = sent?.messageId ? await dmSvc.requesterOf(pool, app.id, issueNumber).catch(() => null) : null;
+  await say('plan', live.planCommentText({ spec: drafted.specMd, questions }), {
+    threadMessage: shown.spec
+      ? live.specCard({ sessionId: shown.spec.sessionId, version: shown.spec.version, spec: drafted.specMd, bot, asking: true })
+      : null,
+    ...(told?.username ? { untag: told.username } : {}),
+  });
+  await live.advanceSeen({
+    pool, github, threadContext: deps.threadContext, app, repo, issueNumber, runId, since: seedReadAt, postedAt,
+  }).catch((err) => log.warn('homeroom-bot', 'Could not record what the bot has seen', { err: err.message }));
+  log.info('homeroom-bot', 'A complicated change waits for its requester to check the plan', {
+    app: app.slug, issueNumber, runId, dm: !!sent?.messageId, choices: questions.length,
+  });
+  return 'awaiting_go';
+}
+
+// Words a requester writes on their request that say Build it to the plan
+// waiting there (the DM's own list: homeroom-bot-dm.js PLAN_GO_WORDS).
+function isGoWord(text) {
+  const dmSvc = require('./homeroom-bot-dm');
+  return dmSvc.isPlanGoWord(text);
+}
+
+/**
+ * #4488: "build it" from a complicated change's requester on its request,
+ * under a plan waiting there, is Build it: the build goes ahead (goAhead)
+ * and their DM card says so. Only when everything people wrote on the
+ * request since the plan is theirs and says to go ahead; anything else is a
+ * new look, which plans it again. Resolves true when it went ahead. Never
+ * throws.
+ */
+async function buildItOnRequest(pool, { appId, issueNumber, requester, deps = {} }) {
+  if (!requester?.userId) return false;
+  try {
+    const { rows: [run] = [] } = await pool.query(
+      `SELECT id, awaiting_go_at FROM homeroom_bot_runs
+        WHERE app_id = $1 AND issue_number = $2 AND mode = 'live' AND awaiting_go_at IS NOT NULL
+          AND build_ok IS NULL AND build_session_id IS NULL AND (plan->>'complicated')::boolean IS TRUE
+        ORDER BY id DESC LIMIT 1`,
+      [appId, issueNumber],
+    );
+    if (!run) return false;
+    const { rows: said } = await pool.query(
+      `SELECT m.user_id, m.content FROM chat_messages m
+         JOIN users u ON u.id = m.user_id
+        WHERE m.app_id = $1 AND m.thread_type = 'issue' AND m.thread_ref = $2
+          AND m.created_at > $3 AND m.deleted_at IS NULL AND u.is_synthetic IS NOT TRUE
+        ORDER BY m.id`,
+      [appId, issueNumber, run.awaiting_go_at],
+    );
+    const people = said.filter((m) => m.user_id != null);
+    if (!people.length || !people.every((m) => Number(m.user_id) === Number(requester.userId) && isGoWord(m.content))) return false;
+    const went = await goAhead(pool, { runId: Number(run.id) });
+    if (!went.ok) return false;
+    await (deps.dm || require('./homeroom-bot-dm')).markPlanBuilt(pool, Number(run.id), { chosen: went.chosen, ws: deps.ws || null })
+      .catch(() => {});
+    log.info('homeroom-bot', 'Build it, said on the request under a complicated change\'s plan', { appId, issueNumber, runId: Number(run.id) });
+    return true;
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not read a Build it said on a request', { appId, issueNumber, err: err.message });
+    return false;
+  }
+}
+
 /**
  * B6: Build it, under a first version's plan. The plan's bullets and the
  * answers tapped (any left go with the suggested one) are written into the
@@ -6494,7 +6840,7 @@ async function goAhead(pool, { runId, answers = [] }) {
   );
   if (!run) return { ok: false, why: 'gone' };
   const chosen = choicesFrom(run.plan?.questions, answers);
-  const note = creatorChoiceNote(chosen, { bullets: run.plan?.bullets });
+  const note = creatorChoiceNote(chosen, { bullets: run.plan?.bullets, requester: run.plan?.complicated === true });
   const { rows: [went] } = await pool.query(
     `UPDATE homeroom_bot_runs
         SET awaiting_go_at = NULL, live_build_waiting_at = NOW(), build_note = CONCAT(build_note, $2::text),
@@ -6563,6 +6909,32 @@ async function settleStalePlans(pool, deps = {}) {
   }
 }
 
+/**
+ * #4488: the review of a complicated change once it is built: the screens
+ * check round a first version gets (bot-review.js capture, review, fix),
+ * with the reviewer and budget the current first-version configuration
+ * gives them, the run's rounds recorded the same way. Null when that
+ * configuration has no reviewer or cannot be read: the change is proposed
+ * as built, as a review that cannot run fails open. Never throws.
+ */
+async function complicatedReview(pool, { runId, bot, deps = {} }) {
+  let current = null;
+  try {
+    current = await botConfigs().currentVersion(pool);
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not read the reviewer for a complicated change (building without a review)', { runId, err: err.message });
+    return null;
+  }
+  const recipe = current ? current.recipe : null;
+  if (!recipe || !botConfigs().reviews(recipe)) return null;
+  return {
+    reviewer: recipe.reviewer,
+    owner: { botRunId: runId },
+    onState: (state) => recordReviewState(pool, runId, state),
+    budgetCheck: ({ spentUsd } = {}) => botBudgetStop(pool, bot, deps, { spentUsd }),
+  };
+}
+
 // A first version whose configuration has no reviewer is only captured, for
 // the side builds it is compared with: a few minutes, never a review.
 const CAPTURE_ONLY_MINUTES = 15;
@@ -6614,6 +6986,10 @@ async function buildLive({
   pool, config, bot, app, repo, issueNumber, issue, parsed, runId,
   seed, seedReadAt, postedAt = [], turnBudgetMs, model: stageBuildModel, specModel: stageSpecModel = null, botLogin = null,
   proposalCeiling = PROPOSALS_PER_APP_CAP, firstVersion = false, presetSpec = null, carriedCostUsd = 0, settings = null, deps,
+  // #4488: a complicated change on an existing project: its plan first
+  // (planBeforeBuilding), and once its requester said Build it, built from
+  // that spec (presetSpec, its screens `presetSpecHtml`) and reviewed.
+  complicated = false, plan = null, presetSpecHtml = null,
 }) {
   const { github, ws } = deps;
   // A project's first version is built by the CURRENT CONFIGURATION
@@ -6637,12 +7013,22 @@ async function buildLive({
     pool, github, ws, app, repo, issueNumber, issue, runId, bot, botLogin,
     notifications: deps.notifications || null, postedAt,
   });
+  // #4488: a complicated change is not built until its requester has seen
+  // its plan: this slot drafts the spec and asks them.
+  const checkFirst = complicated && !firstVersion;
+  if (checkFirst && !presetSpec) {
+    return planBeforeBuilding({
+      pool, config, bot, app, repo, issueNumber, issue, parsed, plan, runId, seed, seedReadAt, postedAt,
+      turnBudgetMs, model, specModel, guidance, harnessed: !!version, say, deps,
+    });
+  }
   // The spec is posted on the issue the moment it is written, and the
-  // build goes straight on: it is there to read, not to approve.
+  // build goes straight on: it is there to read, not to approve. A plan
+  // its requester approved (#4488) was posted when they were asked.
   const onSpec = async ({ sessionId, version, specMd }) => {
     if (version) await live.shareSpecVersion(pool, sessionId, version);
-    await say('spec', live.specCommentText(specMd), {
-      threadMessage: version ? live.specCard({ sessionId, version, spec: specMd, bot }) : null,
+    await say('spec', live.specCommentText(specMd, { approved: checkFirst }), {
+      threadMessage: version ? live.specCard({ sessionId, version, spec: specMd, bot, approved: checkFirst }) : null,
       dm: { building: true },
     });
     // WP1 (#2): what the run has seen moves past its own plan comment now,
@@ -6686,7 +7072,7 @@ async function buildLive({
       owner: { botRunId: runId },
       onState: (state) => recordReviewState(pool, runId, state),
       budgetCheck: ({ spentUsd } = {}) => botBudgetStop(pool, bot, deps, { spentUsd }),
-    } : null;
+    } : checkFirst ? await complicatedReview(pool, { runId, bot, deps }) : null;
     const buildStartedMs = Date.now();
     built = await live.buildAndPropose({
       pool, config, bot, app, repo, issueNumber, issue, seed, buildNote: parsed.buildNote,
@@ -6731,6 +7117,9 @@ async function buildLive({
         specGuidance: guidance?.spec || null,
         buildGuidance: guidance?.build || null,
       } : {}),
+      // #4488: a complicated change's review, whatever builds later changes;
+      // its spec's screens; and its description says it was checked first.
+      ...(checkFirst ? { review, presetSpecHtml, checkedFirst: !!presetSpec } : {}),
     });
     buildMs = Date.now() - buildStartedMs;
   } finally {
@@ -7018,7 +7407,7 @@ async function liveCandidates(pool, {
   if (live.scopeIsEmpty(scope)) return [];
   const { rows } = await pool.query(
     `SELECT q.id, q.app_id, q.issue_number, q.priority, q.reason, q.thread_seen_at, q.requested_by,
-            q.payer_user_id,
+            q.payer_user_id, q.changed_by,
             COALESCE(r.user_id, i.created_by) AS person_id,
             fu.id AS follow_up_session_id
        FROM homeroom_bot_queue q
@@ -7099,7 +7488,7 @@ async function liveBuildCandidates(pool, { scope: given = null, liveSlugs = [], 
   if (live.scopeIsEmpty(scope)) return [];
   const { rows } = await pool.query(
     `SELECT r.id, r.app_id, r.issue_number, r.build_note, r.live_build_waiting_at, r.created_at,
-            r.build_spec_md, r.build_cost_usd, r.charged, r.payer_user_id,
+            r.build_spec_md, r.build_cost_usd, r.charged, r.payer_user_id, r.complicated, r.plan,
             COALESCE(q.user_id, i.created_by) AS person_id
        FROM homeroom_bot_runs r
        JOIN apps a ON a.id = r.app_id
@@ -7289,6 +7678,12 @@ async function buildOne(pool, config, { bot, app, run, settings, deps = {} }) {
     // (resumeLiveBuildFromSpec), and what writing it cost.
     presetSpec: run.build_spec_md || null,
     carriedCostUsd: run.build_spec_md ? Number(run.build_cost_usd) || 0 : 0,
+    // #4488: a complicated change, planned with its requester first; once
+    // they said Build it, built from exactly the spec they were shown (its
+    // markdown above, its screens read back here).
+    complicated: run.complicated === true && !requester?.firstVersion,
+    plan: run.plan && typeof run.plan === 'object' ? run.plan : null,
+    presetSpecHtml: run.build_spec_md && run.complicated === true ? await approvedSpecHtml(pool, run.plan) : null,
   };
   log.info('homeroom-bot', 'Live build started', {
     app: app.slug, issueNumber, runId: run.id, ...(run.build_spec_md ? { fromKeptPlan: true } : {}),
@@ -8138,7 +8533,7 @@ const RUNS_SQL = `SELECT r.id, r.issue_number, r.mode, r.verdict, r.determined, 
             r.question_answers, dm.dm_sent_at, dm.dm_answered_at, r.checks_head_sha,
             r.label_verdict, r.build_model,
             r.bot_config_version_id, bc.key AS bot_config_key, bc.label AS bot_config_label,
-            bc.version AS bot_config_version, r.review_rounds, r.review_stop,
+            bc.version AS bot_config_version, r.review_rounds, r.review_stop, r.read_reason,
             a.slug AS app_slug, a.name AS app_name, a.repo_url, u.username AS rated_by
        FROM homeroom_bot_runs r
        JOIN apps a ON a.id = r.app_id
@@ -8205,6 +8600,8 @@ const EXPORT_COLUMNS = Object.freeze([
   'checks_head_sha',
   // #3654: the verdict a labeller says was right, and the build's model.
   'label_verdict', 'build_model',
+  // What started the read ('new', 'changed:github', 'retry_failed', …).
+  'read_reason',
 ]);
 
 /** A question's suggested answers as one cell: "Yes | No | Later". */
@@ -8819,6 +9216,12 @@ module.exports = {
   choicesFrom,
   creatorChoiceNote,
   awaitGo,
+  planBeforeBuilding,
+  plannedWithRequester,
+  approvedSpecHtml,
+  buildItOnRequest,
+  complicatedReview,
+  planChoicesNote,
   retryUnsentPlans,
   PLAN_SEND_RETRY_MINUTES,
   PLAN_SEND_ATTEMPTS,
@@ -8922,6 +9325,7 @@ module.exports = {
   BLOCKERS,
   capRoomFor,
   simulateCaps,
+  planTripwire,
   parseVerdict,
   parseRepo,
   BOT_USERNAME,
@@ -8947,6 +9351,8 @@ module.exports = {
   personKeyOf,
   enqueueFront,
   billingOf,
+  readReasonOf,
+  skippedAtTriage,
   liveCandidates,
   // A project's first version goes first.
   FIRST_VERSION_PENDING_SQL,
