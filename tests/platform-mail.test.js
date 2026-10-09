@@ -559,8 +559,8 @@ test('the release mail is the "you\'re in" welcome, with its list and sign-off',
   assert.equal(m.subject, "You're in. Welcome to Homeroom");
   for (const part of [m.text, m.html]) {
     assert.match(part, /Make and share small apps with friends and groups\./);
-    assert.match(part, /Make an app for you, your friends or your group\./);
-    assert.match(part, /Suggest, preview, and vote on changes\./);
+    assert.match(part, /Make an app for your group/);
+    assert.match(part, /Suggest, preview and vote on changes/);
     assert.match(part, /Evan from Homeroom/);
   }
   assert.ok(m.text.includes('https://x.invalid/?signup=1&t=tok'), 'the link is in the text part');
@@ -569,6 +569,20 @@ test('the release mail is the "you\'re in" welcome, with its list and sign-off',
   const pre = m.html.indexOf("Here's how to get started.");
   assert.ok(pre > -1 && pre < m.html.indexOf('<img '), 'preheader leads the body');
   assert.match(m.html, /display:none[^"]*">Make and share small apps with friends and groups\. Here's how/);
+  // #4570: the landing page's hero. The illustration sits between the
+  // frame's logo and the button, and is an <img>, not a link, so the pill
+  // stays the mail's first anchor.
+  assert.match(m.html, /\/brand\/people\.png" width="272" height="204" alt=""/);
+  const logo = m.html.indexOf('<img ');
+  const illustration = m.html.indexOf('/brand/people.png');
+  const pill = m.html.indexOf('border-radius:999px');
+  assert.ok(logo > -1 && illustration > logo && pill > illustration,
+    'illustration after the logo, before the pill');
+  // The landing page's eyebrow over the headline.
+  assert.match(m.html, /letter-spacing:0\.8px[^>]*>You're in</);
+  // The welcome sentences #4570 cut are gone from both parts.
+  assert.doesNotMatch(m.html, /Once you're inside|Thanks for your interest/);
+  assert.doesNotMatch(m.text, /Once you're inside|Thanks for your interest/);
 });
 
 test('the release mail offers mobile steps only for a published store link', () => {
@@ -577,8 +591,9 @@ test('the release mail offers mobile steps only for a published store link', () 
   const both = templates.buildMessage('waitlist_released', {
     url: 'https://x.invalid/?login=1', hasAccount: true, mobile: { ios: IOS, android: ANDROID },
   });
-  assert.match(both.text, /Want to test Homeroom on mobile\?/);
-  assert.ok(both.text.includes(`Open the Homeroom invite (${IOS}).`));
+  assert.match(both.text, /Try it on mobile/);
+  assert.match(both.html, /Try it on mobile/);
+  assert.ok(both.text.includes(`open the Homeroom invite (${IOS}).`));
   assert.ok(both.text.includes(`Open the Homeroom testing link (${ANDROID}) while signed into Google Play`));
   assert.ok(both.html.includes(`<a href="${IOS}"`));
   assert.ok(both.html.includes(`<a href="${ANDROID.replace(/&/g, '&amp;')}"`));
