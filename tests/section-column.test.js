@@ -39,6 +39,9 @@ test('264px beside the 76px strip, reserved only while it is drawn', () => {
   assert.match(rule[0], /left: var\(--platform-rail-full\);/);
   assert.match(rule[0], /width: var\(--platform-column-full\);/);
   assert.match(rule[0], /box-shadow: inset -1px 0 0 var\(--app-sheet-line\);/, 'the strip\'s hairline at its edge');
+  // The strip's own translucent fill (#4624), not the opaque sheet: the
+  // wallpaper shows through it the way it shows through the strip beside it.
+  assert.match(rule[0], /background: var\(--dc-sheet-fill\);/);
   // The page moves over by it as it moves over by the strip.
   assert.match(desktop, /:has\(#platform-section-column:not\(\.hidden\)\) \{\s*--platform-column-w: var\(--platform-column-full\);\s*\}/);
   assert.match(desktop, /:has\(#platform-section-column:not\(\.hidden\)\) #app-view \{\s*padding-left: calc\(var\(--platform-rail-w, 0px\) \+ var\(--platform-column-w, 0px\) \+ var\(--platform-gutter\)\);/);
@@ -105,6 +108,9 @@ test('Messages\' column is its conversation list, flush with the strip; the conv
   assert.match(list[0], /flex: 0 0 var\(--platform-column-full\);/);
   assert.match(list[0], /width: var\(--platform-column-full\);/);
   assert.match(list[0], /box-shadow: inset -1px 0 0 var\(--app-sheet-line\);/);
+  // One material with the places column (#4624): the strip's own
+  // translucent fill on both second columns.
+  assert.match(list[0], /background: var\(--dc-sheet-fill\);/);
   // It stays where its checks find it.
   assert.match(read('frontend/src/features/messages/index.tsx'), /<section className=\{`messages-list-pane /);
 });

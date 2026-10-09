@@ -21620,7 +21620,11 @@ html.un-kb #platform-parked {
     padding: 12px 12px calc(12px + var(--platform-safe-bottom, 0px));
     overflow-y: auto;
     overscroll-behavior: contain;
-    background: var(--dc-sheet-solid, var(--bg-primary));
+    /* The strip's own translucent fill (#4624): the column sits on the fixed
+       wallpaper like the strip does — #app-view is padded over by rail plus
+       column whenever the column is drawn — so the glass shows the wallpaper
+       through, the same as the strip beside it. */
+    background: var(--dc-sheet-fill);
     box-shadow: inset -1px 0 0 var(--app-sheet-line);
   }
   html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)):has(#platform-section-column:not(.hidden)) {
@@ -21651,7 +21655,9 @@ html.un-kb #platform-parked {
     flex: 0 0 var(--platform-column-full);
     width: var(--platform-column-full);
     padding-right: 0;
-    background: var(--dc-sheet-solid, var(--bg-primary));
+    /* The column's ground, the strip's own translucent fill (#4624), so the
+       two second columns stay one material. */
+    background: var(--dc-sheet-fill);
     box-shadow: inset -1px 0 0 var(--app-sheet-line);
   }
 
