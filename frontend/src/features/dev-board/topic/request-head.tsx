@@ -20,7 +20,7 @@
  * publishes, since the specs are posted in it).
  */
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -93,15 +93,45 @@ function reducedMotion(): boolean {
 }
 
 /**
+ * #4481 — the fold is for words, not pictures. Splits a request's sanitised
+ * body into its text and its screenshots: every image is lifted out of the
+ * text (an anchor wrapping one image keeps its href, so an author's own link
+ * moves with it), a paragraph the lift leaves empty is dropped, and the
+ * lifted fragments come back joined in their original order. Markup with no
+ * image comes back untouched. String-based, not DOM-based, because this also
+ * renders server-side in tests and must render the same on its first client
+ * pass; the input is already sanitised where it was built, and the helper
+ * only moves whole tags.
+ */
+export function splitShots(html: string): { text: string; shots: string } {
+  if (!html) return { text: html, shots: '' };
+  const shots: string[] = [];
+  let rest = html.replace(/<a\b[^>]*>\s*<img\b[^>]*>\s*<\/a>/gi, (whole) => {
+    shots.push(whole);
+    return '';
+  });
+  rest = rest.replace(/<img\b[^>]*>/gi, (whole) => {
+    shots.push(whole);
+    return '';
+  });
+  if (!shots.length) return { text: html, shots: '' };
+  return { text: rest.replace(/<p\b[^>]*>\s*(<br\s*\/?>\s*)*<\/p>/gi, ''), shots: shots.join('') };
+}
+
+/**
  * The request's words, set apart as a quote and folded at four lines. "Show
  * more" (the hub's own reveal, `.dev-ws-reveal-start`) opens it by
  * animating the text's height between the fold and its full length; reduced
  * motion snaps. Whether there is anything to fold is measured, so a short
- * request has no control under it.
+ * request has no control under it. Its screenshots never fold (#4481):
+ * `splitShots` lifts them out, they render in their own block under the
+ * "Show more" control, and the fold sees only the text half.
  */
 export function RequestWords({ html }: { html: string }): ReactNode {
   const text = useRef<HTMLDivElement>(null);
-  const inner = useInnerHtml(html);
+  const { text: words, shots } = useMemo(() => splitShots(html), [html]);
+  const inner = useInnerHtml(words);
+  const shotsInner = useInnerHtml(shots);
   // `open` is what the clamp says; `shown` is what the button says, which
   // turns with the press rather than when the text has finished moving.
   const [open, setOpen] = useState(false);
@@ -113,7 +143,7 @@ export function RequestWords({ html }: { html: string }): ReactNode {
     if (!el || open) return;
     // Clamped, it is shorter than its content exactly when it folds something.
     setFolds(el.scrollHeight > el.clientHeight + 1);
-  }, [html, open]);
+  }, [words, open]);
   const toggle = () => {
     const el = text.current;
     if (!el || moving.current) return;
@@ -166,6 +196,7 @@ export function RequestWords({ html }: { html: string }): ReactNode {
           {shown ? 'Show less' : 'Show more'}
         </button>
       ) : null}
+      {shots ? <div className="dev-request-ask-shots" data-request-shots="" dangerouslySetInnerHTML={shotsInner} /> : null}
     </div>
   );
 }

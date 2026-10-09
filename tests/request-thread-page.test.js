@@ -141,6 +141,56 @@ test('voted in: every step is done, with no fill; a closed request says so inste
   assert.match(closed, /This request was closed by vote\./);
 });
 
+// #4481: screenshots never fold. The viewer-link markup is what
+// DevChat.renderMarkdown writes for a markdown image; the author's own
+// link is what an `[![alt](src)](href)` markdown image becomes.
+const shotInAuthorLink = '<a href="https://example.com/shot.png"><img class="dc-inline-img" src="https://example.com/shot.png" alt="shot"></a>';
+const shotInViewerLink = '<a class="dc-inline-img-link" href="https://example.com/other.png" target="_blank" rel="noopener noreferrer" aria-label="View image full size"><img class="dc-inline-img" src="https://example.com/other.png" alt=""></a>';
+
+test('splitShots lifts every screenshot out of the words, in order, keeping an author\'s own link', () => {
+  const { splitShots } = loadTsx(HEAD);
+  const html = `<div class="dev-issue-body"><p class="dc-p">Look at this:</p><p class="dc-p">${shotInAuthorLink}</p>`
+    + `<p class="dc-p">And then</p><p class="dc-p">${shotInViewerLink}</p><p class="dc-p"></p></div>`;
+  const { text, shots } = splitShots(html);
+  assert.equal(shots, shotInAuthorLink + shotInViewerLink, 'both pictures, in their original order');
+  assert.doesNotMatch(text, /<img\b/, 'no picture is left in the words');
+  assert.doesNotMatch(text, /dc-inline-img-link/);
+  assert.match(text, /<div class="dev-issue-body">/);
+  assert.match(text, /Look at this:/);
+  assert.match(text, /And then/);
+  assert.doesNotMatch(text, /<p class="dc-p"><\/p>/, 'a paragraph the lift emptied is dropped');
+  // Markup with no picture comes back exactly as it went in.
+  const plain = '<div class="dev-issue-body"><p>Consider topics.</p></div>';
+  assert.deepEqual(splitShots(plain), { text: plain, shots: '' });
+  assert.deepEqual(splitShots(''), { text: '', shots: '' });
+});
+
+test('a screenshot shows under the folded words, outside the clamp, without pressing Show more', () => {
+  const r = { ...requestView(), bodyHtml: `<div class="dev-issue-body"><p class="dc-p">Consider topics.</p><p class="dc-p">${shotInViewerLink}</p></div>` };
+  const html = renderComponent(HEAD, 'RequestHead', { r });
+  // The words half is unchanged: the quote, the clamp, the text.
+  assert.match(html, /class="dev-request-ask"><div class="dev-request-ask-text line-clamp-4" data-request-words=""><div class="dev-issue-body"><p class="dc-p">Consider topics\.<\/p><\/div><\/div>/);
+  // The picture is in its own block, after the words, never inside the clamp.
+  const at = (s) => html.indexOf(s);
+  assert.ok(at('data-request-words') !== -1 && at('dev-request-ask-shots') > at('data-request-words'),
+    'the shots block comes after the words');
+  assert.ok(at('dc-inline-img-link') > at('dev-request-ask-shots'), 'the picture is inside the shots block');
+  assert.match(html, /<div class="dev-request-ask-shots" data-request-shots=""><a class="dc-inline-img-link"/);
+  const words = /<div class="dev-request-ask-text line-clamp-4" data-request-words="">[\s\S]*?<\/div><\/div>/.exec(html);
+  assert.ok(words && !words[0].includes('<img'), 'no picture inside the folded words');
+});
+
+test('a body that is only a screenshot: the picture shows, with no Show more under it', () => {
+  const r = { ...requestView(), bodyHtml: `<div class="dev-issue-body"><p class="dc-p">${shotInViewerLink}</p></div>` };
+  const html = renderComponent(HEAD, 'RequestHead', { r });
+  assert.match(html, /dev-request-ask-shots/);
+  assert.doesNotMatch(html, /dev-request-more/);
+  assert.doesNotMatch(html, />Show more</, 'an image-only body has nothing to fold');
+  // The picture is still inside the element the image viewer listens on.
+  const root = /<div class="min-w-0 flex-1" data-image-viewer-scope="">[\s\S]*class="dc-inline-img-link"/.exec(html);
+  assert.ok(root, 'the screenshot stays inside the viewer scope');
+});
+
 function appView(username = 'evan', globals = {}) {
   const c = {
     ...globals,
