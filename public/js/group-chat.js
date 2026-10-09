@@ -1276,7 +1276,7 @@ const GroupChat = {
       });
       input.addEventListener('input', () => {
         GroupChat.setDraft(slug, input.value, threadKey);
-        GroupChat._autoGrowTextarea(input);
+        GroupChat._growThreadComposer(input);
         GroupChat.sendTyping({ type, ref });
       });
       // Multi-line submit semantics, same as the general composer: Enter
@@ -1781,6 +1781,17 @@ const GroupChat = {
   _threadScrollEl() {
     return document.getElementById('gc-thread-scroll')
       || document.getElementById('gc-thread-messages');
+  },
+
+  // #4513: growing the composer shrinks the thread's scroller, so a reader at
+  // the bottom slid off it with every new line. Measure before the grow, with
+  // the same 80px a live reply follows within (THREAD_FOLLOW_PX), and re-pin.
+  _growThreadComposer(input) {
+    const scroll = GroupChat._threadScrollEl();
+    const nearBottom = !!scroll
+      && scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80;
+    GroupChat._autoGrowTextarea(input);
+    if (nearBottom) scroll.scrollTop = scroll.scrollHeight;
   },
 
   // Paint the active thread's cached messages into #gc-thread-messages.
