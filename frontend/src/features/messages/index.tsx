@@ -1624,6 +1624,8 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   const pinned = useStickToBottom(scroller, !snap.nextAfter);
   const previousLast = useRef<number | null>(null);
   const initialScroll = useRef<number | null>(null);
+  // Whether this conversation was last drawn as a linked window (#2387).
+  const wasWindow = useRef(false);
   const conversationId = snap.route.conversationId;
   const typing = conversationId ? typingUsers(conversationId) : [];
   // #2884: the runs of cards the viewer has opened, by their first message.
@@ -1644,7 +1646,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
 
   useIsomorphicLayoutEffect(() => {
     if (!conversationId) return;
-    previousLast.current = null; initialScroll.current = null; pinned.current = true;
+    previousLast.current = null; initialScroll.current = null; pinned.current = true; wasWindow.current = false;
   }, [conversationId]);
 
   // A layout effect, so the scroll lands before the new rows are painted and
@@ -1654,6 +1656,8 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     const lastMessage = snap.messages.at(-1);
     const last = lastMessage?.id || null;
     if (!el || !last) return;
+    const fromWindow = wasWindow.current || !!snap.nextAfter;
+    wasWindow.current = !!snap.nextAfter;
     // #2387: a message link lands on its message, centred and flashed, once
     // — not at the bottom, and not again on every refresh after.
     if (focusId && shownFocus.current !== focusId) {
@@ -1683,11 +1687,14 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
       previousLast.current = last;
       return;
     }
-    // The viewer's own send always lands in view, wherever they had scrolled.
-    // Anything else follows only a reader who was at the bottom BEFORE it
-    // arrived (#3757): measured now, after the draw, a reply taller than the
-    // allowance read as the reader having scrolled up.
-    const sentNow = !!lastMessage?.pending && last !== previousLast.current;
+    // A new line, the viewer's own send included (#4511), follows only a
+    // reader who was at the bottom BEFORE it arrived (#3757): measured now,
+    // after the draw, a reply taller than the allowance read as the reader
+    // having scrolled up. A reader up in the history stays where they are
+    // reading. The one send that still moves is one from a linked window
+    // (#2387): store.send takes it to the present, which is a different
+    // stretch of the conversation, so it opens at its newest line.
+    const sentNow = !!lastMessage?.pending && last !== previousLast.current && fromWindow;
     if (previousLast.current === null || sentNow || pinned.current) {
       // The foot of a linked window (#2387) is not the present: nothing
       // follows it there. A send from one goes to the present (store.send).
@@ -1950,17 +1957,25 @@ function ReplyThreadPanel() {
   // phone this pane covers the conversation, so its composer is the one the
   // keyboard comes up under when a thread is replied to.
   useComposerKeyboard(scroller);
+  // #4511/#4513: the conversation's rule (./stick-to-bottom.ts). A reader at
+  // the newest reply stays there as replies arrive, their own included, and
+  // as the composer grows with a second line; one reading further up is
+  // left there. A thread opens at its newest reply.
+  const pinned = useStickToBottom(scroller, true);
   const count = useRef(0);
+  useIsomorphicLayoutEffect(() => { pinned.current = true; }, [conversationId, rootId]);
   useEffect(() => {
     if (conversationId && rootId && !snap.loadingThread && snap.active?.id === conversationId) {
       void loadReplyThread(conversationId, rootId);
     }
   }, [conversationId, rootId, snap.active?.id, snap.loadingThread]);
-  // New replies land in view, as the conversation's do.
-  useEffect(() => {
+  // New replies land in view for a reader who was at the bottom before they
+  // arrived. A layout effect, so it is read before a scroll event can report
+  // the grown content.
+  useIsomorphicLayoutEffect(() => {
     const el = scroller.current;
     const n = thread?.messages.length || 0;
-    if (el && n !== count.current) requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
+    if (el && n !== count.current && pinned.current) el.scrollTop = el.scrollHeight;
     count.current = n;
   }, [thread?.messages.length]);
   if (!conversationId || !rootId) return null;
