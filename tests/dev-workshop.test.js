@@ -2089,7 +2089,7 @@ test('#4457: Your work is rows in words, and a request your change addresses is 
   assert.deepEqual(plain(change.brief.linked), [12]);
   assert.equal(change.brief.mine, true);
   const { rowWords } = loadTsx('frontend/src/features/dev-board/workshop/work-row.tsx');
-  assert.equal(rowWords(change.brief, true), 'Change · yours · for #12');
+  assert.equal(rowWords(change.brief, true), 'Change · for #12', '#4485: on Your work a change of yours needs no "yours" either');
   assert.equal(rowWords({ ...claimed.brief, mine: true, by: 'me', category: 'Bug', replies: 3 }, true), 'Request #12 · Bug · 3 replies',
     'on Your work a request you are on needs no "yours"');
   assert.equal(rowWords({ ...claimed.brief, mine: false, by: 'maya', replies: 1 }), 'Request #12 · maya · 1 reply');
@@ -2101,12 +2101,12 @@ test('#4457: Your work is rows in words, and a request your change addresses is 
   const html = workshopHtml(AppView, 'workshop');
   const lane = html.slice(html.indexOf('data-ws-lane="mine"'), html.indexOf('data-ws-since=""'));
   assert.match(lane, /<div class="dev-ws-wlist"><div class="dev-ws-wrow" data-ws-row="mine:/);
-  assert.match(lane, /<a class="dev-ws-wrow-link" href="#app\/demo-app\/dev\/proposals\/51">Bottom tabs<\/a><span class="dev-ws-wrow-sub">Change · yours · for #12<\/span><span class="dev-ws-wrow-status"><span class="dev-ws-tag" data-tone="plain">Started<\/span><\/span>/);
+  assert.match(lane, /<a class="dev-ws-wrow-link" href="#app\/demo-app\/dev\/proposals\/51">Bottom tabs<\/a><span class="dev-ws-wrow-sub">Change · for #12<\/span><span class="dev-ws-wrow-status"><span class="dev-ws-tag" data-tone="plain">Started<\/span><\/span>/);
   assert.ok(!/data-edge=|dev-card-icon|dev-fold-mark|aria-expanded|data-issue-row|data-session-chip/.test(lane),
     'none of the card\'s chrome, and none of the hooks the Board\'s handler opens a card on');
 });
 
-test('#4457: a change up for a vote keeps its votes on the row: one part per yes, the count, and the card\'s Vote', () => {
+test('#4457: a change up for a vote keeps its votes on the row: the count and the card\'s Vote', () => {
   const { WorkRow } = loadTsx('frontend/src/features/dev-board/workshop/work-row.tsx');
   const AppView = makeAppView();
   seed(AppView);
@@ -2122,8 +2122,15 @@ test('#4457: a change up for a vote keeps its votes on the row: one part per yes
   const runningBrief = { ...brief, tags: [{ label: 'Checks', tone: 'run', title: '619 of 732 checks done. Automated tests are still running.', progress: { done: 619, total: 732, text: '619 of 732 checks done' } }] };
   const running = renderToHtml(createElement(WorkRow, { row: { ...row, brief: runningBrief }, slug: 'demo-app' }));
   assert.match(running, /<span class="dev-ws-tag" data-tone="run" title="619 of 732 checks done\. Automated tests are still running\."><span class="dc-status-spinner-arc" aria-hidden="true"><\/span>Checks<span class="checks-chip-bar" role="progressbar" aria-valuemin="0" aria-valuemax="732" aria-valuenow="619" aria-label="619 of 732 checks done"><span class="checks-chip-bar-fill" style="width:85%"><\/span><\/span><\/span>/);
-  assert.match(html, /<span class="dev-ws-wvote-bar" data-done="0" role="img" aria-label="1 of 3 yes"><span class="dev-ws-wvote-cell" data-on="1"><\/span><span class="dev-ws-wvote-cell"><\/span><span class="dev-ws-wvote-cell"><\/span><\/span>/,
-    'one part per yes it needs');
+  // #4485: the vote shares the tags' line, so it is the count in words and
+  // Vote, with no bar of parts; and the longest tags say less on a row, the
+  // full words their tooltip and what a screen reader reads.
+  assert.ok(!html.includes('dev-ws-wvote-bar'), 'no bar of parts');
+  const short = { ...brief, tags: [{ label: 'Taking before & after shots', short: 'Taking shots', tone: 'run' }, { label: 'Preview ready', short: 'Preview', tone: 'plain', glyph: 'eye' }] };
+  const shortHtml = renderToHtml(createElement(WorkRow, { row: { ...row, brief: short }, slug: 'demo-app' }));
+  assert.match(shortHtml, /<span class="dev-ws-tag" data-tone="run" title="Taking before &amp; after shots"><span class="dc-status-spinner-arc" aria-hidden="true"><\/span><span aria-hidden="true">Taking shots<\/span><span class="sr-only">Taking before &amp; after shots<\/span><\/span>/);
+  assert.match(shortHtml, /title="Preview ready">.*<span aria-hidden="true">Preview<\/span><span class="sr-only">Preview ready<\/span><\/span>/);
+  assert.match(html, /<span class="dev-ws-tag" data-tone="plain"><svg[^>]*>.*?<\/svg>Preview ready<\/span><span class="dev-ws-wvote" data-ws-vote="">/, 'a tag without short words draws its label, and the vote follows the tags on their line');
   assert.match(html, /<span class="dev-ws-wvote-n" data-ask="1">1 of 3 yes<\/span>/, 'in the accent while your vote is wanted');
   const { voteSpecs } = loadTsx('frontend/src/features/dev-board/card/fold.tsx');
   assert.ok(voteSpecs(row.card), 'the fixture can vote');
@@ -4491,7 +4498,7 @@ test('#4457: Week by week opens on two weeks, and Show earlier weeks adds rows t
   // Every class it emits has a rule (the #2097 lesson).
   const stripped = CSS.replace(/\/\*[\s\S]*?\*\//g, ' ');
   for (const cls of ['dev-ws-wlist', 'dev-ws-wrow', 'dev-ws-wrow-tile', 'dev-ws-wrow-main', 'dev-ws-wrow-link', 'dev-ws-wrow-sub',
-    'dev-ws-wrow-status', 'dev-ws-wrow-chev', 'dev-ws-tag', 'dev-ws-wvote', 'dev-ws-wvote-bar', 'dev-ws-wvote-cell', 'dev-ws-wvote-n',
+    'dev-ws-wrow-status', 'dev-ws-wrow-chev', 'dev-ws-tag', 'dev-ws-wvote', 'dev-ws-wvote-n',
     'dev-ws-week', 'dev-ws-week-main', 'dev-ws-week-head', 'dev-ws-week-fresh', 'dev-ws-week-line', 'dev-ws-week-n',
     'dev-ws-weekpage', 'dev-ws-week-meta', 'dev-ws-week-lead', 'dev-ws-none', 'dev-ws-since-clear', 'dev-ws-since-sum',
     'dev-ws-rules', 'dev-ws-rule-step', 'dev-ws-rule-join', 'dev-ws-rule-tile', 'dev-ws-rule-face', 'dev-ws-rule-text',

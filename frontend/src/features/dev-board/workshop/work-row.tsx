@@ -12,8 +12,11 @@
  *   - one line in words: "Change #4456 · yours · for #4455 and #4452",
  *     "Request #4417 · Communities & projects · 3 replies";
  *   - a status line: small tags for what is happening on it, and on a change
- *     up for a vote its votes (one part per Yes it needs, the count, and the
- *     card's own Vote button, so the vote is the existing one);
+ *     up for a vote its votes (the count in words and the card's own Vote
+ *     button, so the vote is the existing one). #4485: the vote shares the
+ *     tags' line, at its far end, on a phone too, rather than taking a line
+ *     of its own; so the longest tags say less on a row ("Taking shots",
+ *     "Preview", the full words their tooltip) and the vote's bar went;
  *   - a › that says the row opens.
  *
  * THE ROW OPENS THE ITEM'S PAGE. Its title is a real link to the page's
@@ -69,14 +72,14 @@ function numbers(list: number[]): string {
 }
 
 /**
- * The row's one line in words. `inMine` is Your work, where a request you
- * are on needs no "yours": the list is yours. A change keeps it, beside the
- * requests it is for, which is what tells it apart from them.
+ * The row's one line in words. `inMine` is Your work, where nothing needs
+ * "yours": the list is yours. #4485 dropped it from a change there too; the
+ * tile and "Change" tell it apart from a request.
  */
 export function rowWords(b: RowBrief, inMine = false): string {
   const parts: string[] = [b.n ? `${b.noun} #${b.n}` : b.noun];
   const who = b.mine ? 'yours' : b.by;
-  if (who && !(inMine && b.mine && b.kind === 'request')) parts.push(who);
+  if (who && !(inMine && b.mine)) parts.push(who);
   if (b.kind === 'request' && b.category) parts.push(b.category);
   if (b.linked.length && b.kind !== 'live') parts.push(`for ${numbers(b.linked)}`);
   if (b.closed.length && b.kind === 'live') parts.push(`closed ${numbers(b.closed)}`);
@@ -93,28 +96,23 @@ const TILE: Record<RowBrief['kind'], typeof CheckIcon> = {
 
 function Tag({ t }: { t: RowTag }): ReactNode {
   return (
-    <span className="dev-ws-tag" data-tone={t.tone} title={t.title}>
+    <span className="dev-ws-tag" data-tone={t.tone} title={t.title || (t.short ? t.label : undefined)}>
       {t.tone === 'run' ? <span className="dc-status-spinner-arc" aria-hidden="true" /> : null}
       {t.tone === 'ok' ? <CheckIcon aria-hidden="true" /> : null}
       {t.glyph === 'eye' ? <EyeIcon aria-hidden="true" /> : null}
-      {t.label}
+      {t.short ? <><span aria-hidden="true">{t.short}</span><span className="sr-only">{t.label}</span></> : t.label}
       {t.progress ? <ChecksBar progress={t.progress} /> : null}
     </span>
   );
 }
 
-/** A change's votes: one part per Yes it needs, the count, and Vote. */
+/** A change's votes: the count in words, and Vote. */
 function Votes({ vote, card }: { vote: NonNullable<RowBrief['vote']>; card: DevCardModel }): ReactNode {
   const need = Math.max(1, vote.need);
   const done = vote.yes >= need;
   const specs = voteSpecs(card);
   return (
     <span className="dev-ws-wvote" data-ws-vote="">
-      <span className="dev-ws-wvote-bar" data-done={done ? '1' : '0'} role="img" aria-label={`${vote.yes} of ${need} yes`}>
-        {Array.from({ length: Math.min(need, 12) }, (_, i) => (
-          <span key={i} className="dev-ws-wvote-cell" data-on={i < vote.yes ? '1' : undefined} />
-        ))}
-      </span>
       <span className="dev-ws-wvote-n" data-ask={vote.ask && !done ? '1' : undefined}>{`${vote.yes} of ${need} yes`}</span>
       {specs ? <span className="dev-ws-wvote-btn"><VoteButton yes={specs.yes} no={specs.no} /></span> : null}
     </span>

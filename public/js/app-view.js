@@ -9603,11 +9603,16 @@ const AppView = {
     const tags = [];
     const tagTone = (cls) => (cls === AppView.STATUS_TAG_CLS.running ? 'run'
       : cls === AppView.STATUS_TAG_CLS.soft ? 'warn' : 'bad');
+    // #4485: a row's chips share one line with its vote, so the longest
+    // say less there: the full sentence stays the chip's tooltip and its
+    // screen-reader words, and the change's page says it in full.
+    const ROW_SHORT = { 'Taking before & after shots': 'Taking shots', 'Preview ready': 'Preview' };
+    const shortly = (tag) => (ROW_SHORT[tag.label] ? { ...tag, short: ROW_SHORT[tag.label] } : tag);
     const checkTags = (p) => {
       for (const s of AppView.statusTagSpecs(p)) {
-        tags.push(s.progress
+        tags.push(shortly(s.progress
           ? { label: s.label, tone: tagTone(s.cls), title: s.title, progress: s.progress }
-          : { label: s.label, tone: tagTone(s.cls) });
+          : { label: s.label, tone: tagTone(s.cls) }));
       }
       if (p.check_state === 'passing') tags.push({ label: 'Checks passed', tone: 'ok' });
     };
@@ -9670,7 +9675,7 @@ const AppView = {
     }
     if (it.status === 'promoted') {
       checkTags(it);
-      if (preview) tags.push({ label: 'Preview ready', tone: 'plain', glyph: 'eye' });
+      if (preview) tags.push(shortly({ label: 'Preview ready', tone: 'plain', glyph: 'eye' }));
       const pill = AppView.statusPillState(it);
       return {
         ...out, stage: 'vote',
@@ -9680,7 +9685,7 @@ const AppView = {
     const busy = AppView._sessionBusy(it);
     tags.push({ label: busy ? 'Being worked on' : 'Started', tone: busy ? 'run' : 'plain' });
     if (it.pr_number) checkTags(it);
-    if (preview) tags.push({ label: 'Preview ready', tone: 'plain', glyph: 'eye' });
+    if (preview) tags.push(shortly({ label: 'Preview ready', tone: 'plain', glyph: 'eye' }));
     return { ...out, stage: 'worked' };
   },
 
