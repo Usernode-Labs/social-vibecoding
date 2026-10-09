@@ -2053,7 +2053,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       pool, sessionId, user: { ...stop.by }, force: stop.force, immediate: stop.immediate,
       expectedTurnId: stop.expectedTurnId, scheduleInteractiveRecovery, forwarded: true,
     });
-    return result.body?.reason !== 'no active turn';
+    return result.body?.reason !== NO_ACTIVE_TURN;
   });
 
   // Per-app visibility gate for every session-id-addressed route below
@@ -3395,7 +3395,13 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         user: { id: req.user.id, username: req.user.username },
         selectedModel, repoOwner, repoName, userApiKey,
         issueNumber, issue, comments, botUsername,
-      }).catch((err) => {
+      }).catch(async (err) => {
+        // Refused before it started (session-activity.js): nothing in the
+        // runner ran, so nothing else would end the row.
+        if (err instanceof sessionActivity.SessionBusyError) {
+          await failHeadlessRun(pool, session, `Auto session could not start: ${err.message}`).catch(() => {});
+          return;
+        }
         log.error('sessions', 'Headless session runner crashed', { sessionId: session.id, err: err.message, stack: err.stack });
       });
 
@@ -10545,6 +10551,10 @@ const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
 // receives an HTTP-shaped result with common ownership, durable intent and
 // confirmation. Agent conversations request immediate hard cancellation;
 // classic sessions retain their existing stop/force escalation policy.
+// What a Stop answers when this process runs no turn to stop. A Stop sent
+// here from another process is delivered again until it is anything else.
+const NO_ACTIVE_TURN = 'no active turn';
+
 async function requestSessionStop({ pool, sessionId, user, force = false, immediate = false, expectedTurnId = null, scheduleInteractiveRecovery = null, forwarded = false }) {
     // #1378: owner OR an admin who is allowed to WRITE. GET
     // /api/sessions/:id is admin-readable and GET .../status has no
@@ -10647,9 +10657,11 @@ async function requestSessionStop({ pool, sessionId, user, force = false, immedi
         // A different process may own the journal consumer. The durable
         // request survives its restart; signalling the worker ends the job,
         // and only its normal cleanup/recovery releases the busy record.
-        // No pending stop is recorded here: this process runs no turn on
-        // the session for one to guard (B5).
-        await worker.stopTurn(sessionId, { recordPending: false });
+        // A pending stop is recorded only where the turn runs: a bot,
+        // headless or sync turn runs here without a stop handle, and its
+        // next step must see the stop; a process running none must not
+        // refuse its own next dispatch over it (B5).
+        await worker.stopTurn(sessionId, { recordPending: runsTurnHere(sessionId) });
         await scheduleRetainedInteractiveTurn({ pool, sessionId, scheduleInteractiveRecovery });
         return { status: 202, body: { stopped: true, stopping: true } };
       }
@@ -10671,7 +10683,7 @@ async function requestSessionStop({ pool, sessionId, user, force = false, immedi
         by: user.username,
       });
       return { status: 200, body: {
-        ok: true, stopped: false, reason: 'no active turn', hasDurableTurn,
+        ok: true, stopped: false, reason: NO_ACTIVE_TURN, hasDurableTurn,
       } };
     }
     if (action === 'force_orphan') {
@@ -10899,6 +10911,12 @@ async function confirmStopLanded(sessionId, handle) {
 // request to do it: that request may be the wedged thing we're rescuing
 // the user from. The duplicate `stopped`/`done` it emits afterwards is
 // harmless — the client's stopping-state helpers are idempotent.
+// Whether this process runs a turn of the session, stop handle or not:
+// its turn registry or its worker registry has it.
+function runsTurnHere(sessionId) {
+  return activeWorkers.has(sessionId) || !!worker.getActiveTurnMode(sessionId) || !!worker.isInFlight(sessionId);
+}
+
 async function forceStopSession(pool, sessionId, username, handle, { immediate = false, expectedTurnId = null } = {}) {
   const containerName = handle?.workerName || worker.workerContainerName(sessionId);
 
@@ -10927,15 +10945,16 @@ async function forceStopSession(pool, sessionId, username, handle, { immediate =
   if (immediate) {
     // No initial probe, TERM grace period, retry timer or second button.
     // The worker confirms its process tree is gone in the same command.
-    // Without a handle the turn is not this process's: no pending stop here (B5).
-    const killed = await worker.stopTurn(sessionId, { force: true, recordPending: !!handle }).catch(() => false);
+    // A pending stop only where the turn runs (B5): with a handle, or a
+    // turn of this process's without one (a bot's, a headless or sync turn).
+    const killed = await worker.stopTurn(sessionId, { force: true, recordPending: !!handle || runsTurnHere(sessionId) }).catch(() => false);
     // A root-only idle probe cannot rule out a surviving tool child after
     // an incomplete tree kill. Without confirmation, evict the whole worker.
     executing = killed ? false : null;
   } else {
     executing = await worker.isWorkerExecuting(containerName);
     if (executing !== false) {
-      await worker.stopTurn(sessionId, { recordPending: !!handle }).catch(() => {});
+      await worker.stopTurn(sessionId, { recordPending: !!handle || runsTurnHere(sessionId) }).catch(() => {});
       await sleepMs(stopPolicy.STOP_PROBE_INTERVAL_MS);
       executing = await worker.isWorkerExecuting(containerName);
     }

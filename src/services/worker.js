@@ -2996,11 +2996,13 @@ async function ensureWorker(sessionId, {
   // check and the claim are one synchronous step: the status probe below
   // awaits, and two cold ensures that both passed a check before it used to
   // bootstrap twice, one reaping the other's container (B8).
+  // A caller that finds one running waits for it, then makes its own pass
+  // (its options may differ: storage, branch, pinned base), which finds the
+  // worker warm and checks it against them.
   const racing = _ensuring.get(Number(sessionId));
   if (racing) {
-    await racing;
-    await accountDeletionGuard(sessionId);
-    return containerName;
+    await racing.catch(() => {});
+    return ensureWorker(sessionId, { repoOwner, repoName, branchName, onProgress, temporary, pinnedBase });
   }
   const run = ensureWorkerClaimed(sessionId, containerName, {
     repoOwner, repoName, branchName, onProgress, temporary, pinnedBase,

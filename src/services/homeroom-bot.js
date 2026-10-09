@@ -3125,6 +3125,10 @@ async function runTriage(pool, config, {
   await clearStaleTurn(pool, session, { worker, maxAgeMs: turnBudgetMs })
     .catch((err) => log.warn('homeroom-bot', 'Stale turn check failed', { err: err.message }));
 
+  // One activity on the session (services/session-activity.js): with the
+  // session-activity machine on, it is refused while another process uses it.
+  const gate = await sessionActivity.tryBegin(session.id, 'turn', { label: 'bot triage' });
+  if (gate.refused) return recordFailure(`busy: ${gate.refused.message}`, { sessionId: session.id }, { infra: true });
   // A fresh model conversation for every issue (#3035). Passing a null
   // thread below is NOT enough: the platform reads null as "carry on the
   // session's saved thread" (resolveCodexRuntimeContext falls back to
@@ -3138,12 +3142,8 @@ async function runTriage(pool, config, {
   await pool.query(
     "UPDATE chat_sessions SET status = 'active', agent_thread_id = NULL, last_activity_at = NOW() WHERE id = $1",
     [session.id],
-  );
+  ).catch((err) => { gate.activity?.end(); throw err; });
   session.agent_thread_id = null;
-  // One activity on the session (services/session-activity.js): with the
-  // session-activity machine on, it is refused while another process uses it.
-  const gate = await sessionActivity.tryBegin(session.id, 'turn', { label: 'bot triage' });
-  if (gate.refused) return recordFailure(`busy: ${gate.refused.message}`, { sessionId: session.id }, { infra: true });
   const sessionUse = gate.activity;
   sessionUse?.enter();
   activeWorkers.add(session.id);

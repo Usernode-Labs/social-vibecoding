@@ -147,7 +147,9 @@ test('session-activity machine against the full PostgreSQL schema', { timeout: 1
     const hold = await ask(s, 'hold');
     assert.equal(hold.granted, true);
     assert.equal((await ask(s, 'turn')).reason, 'busy_hold', 'a new turn waits for the run');
-    assert.equal((await ask(s, 'turn', { turnId: 'turn-r' })).granted, true, 'recovery of the turn the run waits for');
+    assert.equal((await ask(s, 'destroy', { turnId: 'turn-r' })).granted, true, 'the watchdog reaping it once nobody holds it');
+    assert.equal((await ask(s, 'turn', { turnId: 'turn-r' })).granted, false, 'not while the reap runs');
+    assert.equal((await ask(s, 'destroy')).reason, 'busy_hold', 'any other destroy still waits for the run');
   });
 
   await t.test('a journal that runs nothing does not count', async () => {

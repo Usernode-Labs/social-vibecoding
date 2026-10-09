@@ -1109,7 +1109,29 @@ let leadership = null;
 // follower serves HTTP from boot; the couple of leader-scoped capabilities
 // (prod-debug SQL, whose role password lives in the leader's memory) degrade
 // to a clean 503 on the follower for the seconds until promotion.
+// Whether this process runs the leader's duties: a workflow runtime started
+// late (retryWorkflowStart) starts the leader's loops too.
+let workflowLeader = false;
+
+// A runtime that failed to start, retried with backoff (at most five
+// minutes apart) while the session-activity machine is configured on.
+function retryWorkflowStart(config, attempt = 1) {
+  const delayMs = Math.min(5 * 60 * 1000, 15000 * 2 ** (attempt - 1));
+  setTimeout(async () => {
+    const platform = require('./src/workflow/platform.ts');
+    try {
+      await platform.startWorkflow(config, { loops: !runsClusterMaintenance() });
+      if (workflowLeader) await platform.startWorkflowLoops();
+      log.info('server', 'Workflow runtime started on retry', { attempt });
+    } catch (err) {
+      log.error('server', 'Workflow runtime still failing to start', { attempt, err: err.message });
+      retryWorkflowStart(config, attempt + 1);
+    }
+  }, delayMs).unref();
+}
+
 async function becomeLeader() {
+  workflowLeader = true;
   log.info('server', 'Running leader duties (role bootstraps, recovery, sweepers)', {
     identity: leadership && leadership.identity,
   });
@@ -1676,9 +1698,16 @@ async function start() {
   // and waits for outcomes; the loops start in becomeLeader(), or here on a
   // staging preview, which never stands for election but must still decide.
   // Never fatal: without a runtime, governsKind() is false and [main]'s
-  // governance paths decide, as with the flag off.
+  // governance paths decide, as with the flag off. The session-activity
+  // machine is the exception: a process configured for it refuses every use
+  // of a session until its runtime runs, so the start is retried.
   await require('./src/workflow/platform.ts').startWorkflow(config, { loops: !runsClusterMaintenance() })
-    .catch((err) => log.error('server', 'Workflow runtime failed to start; the legacy paths decide', { err: err.message }));
+    .catch((err) => {
+      log.error('server', config.wfSessionActivityEnabled
+        ? 'Workflow runtime failed to start; sessions refuse new work until it does'
+        : 'Workflow runtime failed to start; the legacy paths decide', { err: err.message });
+      if (config.wfSessionActivityEnabled) retryWorkflowStart(config);
+    });
   startupDiagnostics = Object.freeze({
     totalMs: Date.now() - startedAt,
     migrationsOnStartup,
@@ -6434,17 +6463,11 @@ async function cleanup() {
   const retentionStop = require('./src/services/build-retention').stop();
   const checkRetentionStop = require('./src/services/check-retention').stop();
   const scorerStop = require('./src/services/topochain/challenge-scorer').stop();
-  // With the session-activity machine on, the workflow runtime stops after
-  // the drain below, not now: the turns and operations finishing during it
-  // end their session activities through it (services/session-activity.js).
-  // Its own running work reports nothing once stopped and is reclaimed when
-  // its lease runs out.
-  // With the session-activity machine off nothing ends through it, and the
-  // runtime stops at once, as before.
-  let workflowStop = require('./src/services/session-activity').wanted()
-    ? Promise.resolve()
-    : require('./src/workflow/platform.ts').stopWorkflow()
-      .catch((err) => log.warn('server', 'Stopping the workflow runtime failed', { err: err.message }));
+  // The workflow runtime has its own pool; its running work reports nothing
+  // and is reclaimed when its lease runs out. Session activities that end
+  // during the drain below still end: an Ended event is a plain insert.
+  const workflowStop = require('./src/workflow/platform.ts').stopWorkflow()
+    .catch((err) => log.warn('server', 'Stopping the workflow runtime failed', { err: err.message }));
   // Stop claiming push jobs immediately. The bounded drain runs in
   // parallel with HTTP/session draining and is awaited before pool close.
   const pushStop = mobilePush.stop({ timeoutMs: DRAIN_TIMEOUT_MS }).catch((err) => {
@@ -6559,8 +6582,6 @@ async function cleanup() {
   if (require('./src/services/session-activity').wanted()) {
     await require('./src/services/session-activity').endAll()
       .catch((err) => log.warn('server', 'Ending session activities failed', { err: err.message }));
-    workflowStop = require('./src/workflow/platform.ts').stopWorkflow()
-      .catch((err) => log.warn('server', 'Stopping the workflow runtime failed', { err: err.message }));
   }
 
   // A planned replay is hosted by this server process. If it is still active

@@ -9,6 +9,7 @@
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
 import { createRuntime } from './kernel/index.ts';
+import { append } from './kernel/stream.ts';
 import type { EventOutcome, Logger, Pool, Push, Queryable, Runtime } from './kernel/index.ts';
 import { legacy } from './legacy.ts';
 import { GOVERNANCE_KINDS } from './governance-proposal/facts.ts';
@@ -406,9 +407,14 @@ export async function requestActivity(a: {
   } }, { requestKey: `activity:${a.activityId}`, source: ACTIVITY_SOURCE, waitMs: a.waitMs ?? 5000 });
 }
 
+// An append is one insert, so an activity still ends after the runtime
+// stopped (a process shutting down ends what it holds after its drain): any
+// process running the machine applies it.
 export async function endActivity(sessionId: number, activityId: string, outcome = 'done'): Promise<void> {
-  await runtime!.append(SESSIONS, activityKey(sessionId), { type: 'Ended', payload: { sessionId, activityId, outcome } },
-    { requestKey: `ended:${activityId}`, source: ACTIVITY_SOURCE });
+  const event = { type: 'Ended', payload: { sessionId, activityId, outcome } };
+  const o = { requestKey: `ended:${activityId}`, source: ACTIVITY_SOURCE };
+  if (runtime) await runtime.append(SESSIONS, activityKey(sessionId), event, o);
+  else await append(legacy('db/pool').getPool(), SESSIONS, activityKey(sessionId), event, o);
 }
 
 // A Stop for a session's turn that this process does not run: the machine

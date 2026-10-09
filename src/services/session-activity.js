@@ -291,12 +291,6 @@ async function begin(sessionId, kind, opts = {}) {
   };
 }
 
-// Run `fn` outside every activity: for work started from inside one that
-// lives on its own (fire-and-forget), so it is never taken for a step.
-function detached(fn) {
-  return scope.exit(fn);
-}
-
 // For a gate that answers "busy" itself: { activity } (null with the flag
 // off), or { refused } with the SessionBusyError to answer with.
 async function tryBegin(sessionId, kind, opts = {}) {
@@ -391,7 +385,6 @@ module.exports = {
   run,
   begin,
   tryBegin,
-  detached,
   read,
   busyIds,
   isBusy,

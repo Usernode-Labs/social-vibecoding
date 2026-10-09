@@ -251,16 +251,16 @@ async function runTurn({
   } catch (err) {
     return { routed: { error: `worker: ${err.message}` }, result: {}, stopped: false, infra: true, costUsd: null, usage: {} };
   }
-  await pool.query(
-    "UPDATE chat_sessions SET status = 'active', agent_thread_id = NULL, agent_model = $2, last_activity_at = NOW() WHERE id = $1",
-    [session.id, model],
-  );
-  session.agent_thread_id = null;
-  session.agent_model = model;
   // One activity on the session (services/session-activity.js): with the
   // session-activity machine on, it is refused while another process uses it.
   const gate = await sessionActivity.tryBegin(session.id, 'turn', { label: 'bench turn' });
   if (gate.refused) return { routed: { error: `worker: ${gate.refused.message}` }, result: {}, stopped: false, infra: true, costUsd: null, usage: {} };
+  await pool.query(
+    "UPDATE chat_sessions SET status = 'active', agent_thread_id = NULL, agent_model = $2, last_activity_at = NOW() WHERE id = $1",
+    [session.id, model],
+  ).catch((err) => { gate.activity?.end(); throw err; });
+  session.agent_thread_id = null;
+  session.agent_model = model;
   const sessionUse = gate.activity;
   sessionUse?.enter();
   activeWorkers.add(session.id);

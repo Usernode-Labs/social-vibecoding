@@ -167,6 +167,21 @@ async function run({ config, pool, sessionId, commitHash }, deps = defaultDeps()
 
   const now = await plan({ pool, sessionId: id, commitHash }, deps);
   if (!now.sync) return { synced: false, why: now.why };
+  // The sync is claimed as a turn on the session before the head is
+  // (session-activity.js): a refusal leaves the head unclaimed, so the next
+  // failure of that head tries again. The sync's own turn joins this claim.
+  const sessionActivity = deps.sessionActivity || require('./session-activity');
+  const gate = await sessionActivity.tryBegin(id, 'turn', { label: 'boot-failure sync' });
+  if (gate.refused) return { synced: false, why: 'busy' };
+  gate.activity?.enter();
+  try {
+    return await syncClaimed({ config, pool, id, commitHash, now }, deps);
+  } finally {
+    await gate.activity?.end();
+  }
+}
+
+async function syncClaimed({ config, pool, id, commitHash, now }, deps) {
   if (!(await claim(pool, id, commitHash))) return { synced: false, why: 'claimed' };
 
   log.info('boot-failure-sync', 'Preview failed to start on a proposal behind main; syncing it', {

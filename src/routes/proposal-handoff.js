@@ -623,12 +623,24 @@ function managedRevisionKind(session) {
 
 // Claim the session for an operation on its branch (session-activity.js):
 // atomically across processes when the session-activity machine runs, and in
-// this process's registry as on [main]. { refused } when another process
-// holds it, else { release } (idempotent). The caller still makes its own
-// busy checks, which see this process's other operations.
+// this process's registry as on [main]. The machine is asked first; then this
+// process's own busy check and its claim run in one synchronous step, as
+// they did before (asking awaits). { refused } when either says no, else
+// { release } (idempotent).
+// What this process runs on the session: a turn, an operation, a hand-off
+// pipeline, a staging build or a capture.
+function sessionInFlightHere(sessionId) {
+  return isSessionBusy(Number(sessionId)) || hasInFlightHandoffPipeline(sessionId)
+    || staging.hasInFlightBuild(Number(sessionId)) || visuals.hasInFlightCapture(sessionId);
+}
+
 async function claimOperation(sessionId, label) {
   const gate = await sessionActivity.tryBegin(sessionId, 'operation', { label });
   if (gate.refused) return { refused: gate.refused, release: () => {} };
+  if (sessionInFlightHere(sessionId)) {
+    gate.activity?.end();
+    return { refused: new sessionActivity.SessionBusyError('busy_operation', sessionId), release: () => {} };
+  }
   const releaseOp = beginSessionOperation(sessionId);
   let released = false;
   return {
@@ -1821,7 +1833,13 @@ function proposalHandoffRoutes(config) {
         // the same registry, closing the check-then-act race between the two
         // surfaces. Early returns release here; an accepted build transfers
         // release ownership to the detached staging/check pipeline.
+        // The machine is asked first (it awaits); this process's busy check
+        // runs again with the claim, synchronously, below.
         const pipelineClaim = await sessionActivity.tryBegin(session.id, 'operation', { label: 'handoff pipeline' });
+        if (!pipelineClaim.refused && sessionInFlightHere(session.id)) {
+          pipelineClaim.activity?.end();
+          pipelineClaim.refused = true;
+        }
         if (pipelineClaim.refused) {
           return res.status(409).json({
             error: 'session_busy',

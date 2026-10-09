@@ -156,10 +156,11 @@ const live = (d: Data, f: Facts) => d.activities.filter((a) => f.live.has(a.id))
 // own (recovery, a retry, a wrap-up) must not be refused by it. One naming
 // the journal's turn is not kept out by it either (the watchdog reaping it).
 function blocker(d: Data, f: Facts, p: { kind: Kind; parent: string | null; turnId: string | null; activityId: string }): Kind | null {
-  // A turn that continues the journal's running turn (recovery, a retry)
-  // is not kept out by a hold: the screenshot run holding the worker waits
-  // for exactly that turn to end.
-  const continuesJournal = p.kind === 'turn' && !!p.turnId && f.journal?.live && f.journal.turnId === p.turnId;
+  // A turn that continues the journal's running turn (recovery, a retry),
+  // or the watchdog reaping it, is not kept out by a hold: the screenshot
+  // run holding the worker waits for exactly that turn to end.
+  const continuesJournal = (p.kind === 'turn' || p.kind === 'destroy')
+    && !!p.turnId && f.journal?.live && f.journal.turnId === p.turnId;
   for (const a of live(d, f)) {
     if (a.id === p.parent || a.id === p.activityId) continue;
     if (continuesJournal && a.kind === 'hold') continue;
