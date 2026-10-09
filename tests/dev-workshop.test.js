@@ -2117,6 +2117,11 @@ test('#4457: a change up for a vote keeps its votes on the row: one part per yes
     tags: [{ label: 'Checks running…', tone: 'run' }, { label: 'Preview ready', tone: 'plain', glyph: 'eye' }], vote: { yes: 1, need: 3, ask: true } };
   const html = renderToHtml(createElement(WorkRow, { row: { ...row, brief }, slug: 'demo-app' }));
   assert.match(html, /<span class="dev-ws-tag" data-tone="run"><span class="dc-status-spinner-arc" aria-hidden="true"><\/span>Checks running…<\/span>/);
+  // #4499: once the run knows its total, the tag carries a bar instead of
+  // "619/732", with the count as its tooltip and the bar's name.
+  const runningBrief = { ...brief, tags: [{ label: 'Checks', tone: 'run', title: '619 of 732 checks done. Automated tests are still running.', progress: { done: 619, total: 732, text: '619 of 732 checks done' } }] };
+  const running = renderToHtml(createElement(WorkRow, { row: { ...row, brief: runningBrief }, slug: 'demo-app' }));
+  assert.match(running, /<span class="dev-ws-tag" data-tone="run" title="619 of 732 checks done\. Automated tests are still running\."><span class="dc-status-spinner-arc" aria-hidden="true"><\/span>Checks<span class="checks-chip-bar" role="progressbar" aria-valuemin="0" aria-valuemax="732" aria-valuenow="619" aria-label="619 of 732 checks done"><span class="checks-chip-bar-fill" style="width:85%"><\/span><\/span><\/span>/);
   assert.match(html, /<span class="dev-ws-wvote-bar" data-done="0" role="img" aria-label="1 of 3 yes"><span class="dev-ws-wvote-cell" data-on="1"><\/span><span class="dev-ws-wvote-cell"><\/span><span class="dev-ws-wvote-cell"><\/span><\/span>/,
     'one part per yes it needs');
   assert.match(html, /<span class="dev-ws-wvote-n" data-ask="1">1 of 3 yes<\/span>/, 'in the accent while your vote is wanted');

@@ -9559,7 +9559,11 @@ const AppView = {
     const tagTone = (cls) => (cls === AppView.STATUS_TAG_CLS.running ? 'run'
       : cls === AppView.STATUS_TAG_CLS.soft ? 'warn' : 'bad');
     const checkTags = (p) => {
-      for (const s of AppView.statusTagSpecs(p)) tags.push({ label: s.label, tone: tagTone(s.cls) });
+      for (const s of AppView.statusTagSpecs(p)) {
+        tags.push(s.progress
+          ? { label: s.label, tone: tagTone(s.cls), title: s.title, progress: s.progress }
+          : { label: s.label, tone: tagTone(s.cls) });
+      }
       if (p.check_state === 'passing') tags.push({ label: 'Checks passed', tone: 'ok' });
     };
     const preview = !!(card && ((card.rail && card.rail.preview && card.rail.preview.state === 'live')
@@ -20680,6 +20684,21 @@ const AppView = {
   //
   // Ordering is blockReasons' own severity order, then the in-flight states,
   // so the first tag on the line is the most serious thing wrong with it.
+  // #4499: the checks chip's bar — how many of the run's checks are done,
+  // out of how many — or null while the run does not know its total yet.
+  // `text` is the count in words, for the tooltip and the bar's name.
+  _checksChipProgress(live) {
+    const bar = live && live.bar;
+    if (!bar || !bar.expected) return null;
+    const done = Math.min(bar.ran, bar.expected);
+    return { done, total: bar.expected, text: `${done} of ${bar.expected} checks done` };
+  },
+  // The same bar as markup, for the chips still drawn as strings.
+  checksChipBarHtml(progress) {
+    if (!progress || !progress.total) return '';
+    const pct = Math.round((progress.done / progress.total) * 100);
+    return `<span class="checks-chip-bar" role="progressbar" aria-valuemin="0" aria-valuemax="${progress.total}" aria-valuenow="${progress.done}" aria-label="${progress.text}"><span class="checks-chip-bar-fill" style="width:${pct}%"></span></span>`;
+  },
   STATUS_TAG_CLS: {
     blocking: 'dev-badge bg-red-500/10 text-red-700 dark:text-red-400',
     soft: 'dev-badge bg-amber-500/10 text-amber-800 dark:text-amber-400',
@@ -20739,17 +20758,21 @@ const AppView = {
       });
     } else if (p.check_state === 'pending'
         || (!p.check_state && p.status === 'promoted' && !p.console_check_state)) {
-      // Checks in flight. The live counts ride the label exactly as they did
-      // in the bar: a board of cards should say how far each run is, not just
-      // that it is running.
+      // Checks in flight. A board of cards should say how far each run is,
+      // not just that it is running: #4499 draws that as a thin bar inside
+      // the chip ("Checks" and the bar) once the run knows its total, with
+      // the exact count in the tooltip and the bar's accessible name. Before
+      // the total is known the words carry it, as they always did.
       const live = p.check_state === 'pending' ? AppView._checksProgressView(p) : null;
-      const count = live && live.bar.expected ? ` ${live.bar.ran}/${live.bar.expected}` : (live && live.bar.ran ? ` ${live.bar.ran}` : '');
+      const progress = AppView._checksChipProgress(live);
+      const count = !progress && live && live.bar.ran ? ` ${live.bar.ran}` : '';
+      const why = 'Automated tests are still running on the staging build. Merge is blocked until they pass.';
       out.push({
         t: 'chip', key: 'tag-checks-running', cls: AppView.STATUS_TAG_CLS.running,
-        label: p.check_state === 'pending' ? `Checks running…${count}` : 'Checks starting…',
-        spinner: true, meta: true,
+        label: p.check_state !== 'pending' ? 'Checks starting…' : progress ? 'Checks' : `Checks running…${count}`,
+        spinner: true, meta: true, progress: progress || undefined,
         data: { 'data-status-tag': 'checks-running' },
-        title: 'Automated tests are still running on the staging build. Merge is blocked until they pass.',
+        title: progress ? `${progress.text}. ${why}` : why,
       });
     }
     return out;
@@ -21267,9 +21290,14 @@ const AppView = {
     // 'pending' (or anything else): tests are still running. #405: grey
     // (gc-checks-running-badge), not amber, so a not-yet-started check is
     // visibly distinct from the amber in-flight merge stages.
+    // #4499: once the run knows its total, a bar inside the chip says how
+    // far it is; the exact count is the tooltip and the bar's name.
     const live = state === 'pending' ? AppView._checksProgressView(pr) : null;
-    const count = live && live.bar.expected ? ` ${live.bar.ran}/${live.bar.expected}` : (live && live.bar.ran ? ` ${live.bar.ran}` : '');
-    return `<span class="gc-checks-running-badge" title="Automated tests are still running on the staging build. Merge is blocked until they pass."><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Checks running…${count}</span>`;
+    const progress = AppView._checksChipProgress(live);
+    const count = !progress && live && live.bar.ran ? ` ${live.bar.ran}` : '';
+    const why = 'Automated tests are still running on the staging build. Merge is blocked until they pass.';
+    const label = progress ? 'Checks' : `Checks running…${count}`;
+    return `<span class="gc-checks-running-badge" title="${progress ? `${progress.text}. ${why}` : why}"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>${label}${AppView.checksChipBarHtml(progress)}</span>`;
   },
 
   // #2380: claim-first, exact-revision before & after shots. The server already

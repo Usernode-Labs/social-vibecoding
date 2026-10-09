@@ -22219,6 +22219,20 @@ html.in-side-panel body {
 .dev-ws-tag[data-tone="ok"] { color: var(--state-ok); background: var(--state-ok-bg); }
 .dev-ws-tag[data-tone="warn"] { color: var(--state-attention); background: var(--state-attention-bg); }
 .dev-ws-tag[data-tone="bad"] { color: var(--state-blocked); background: var(--state-blocked-bg); }
+/* #4499: how far a check run is, as a thin bar inside the checks chip
+   (the cards' status band, the Workshop's rows, All items). It is drawn in
+   the chip's own ink, so it wears whichever tone the chip does; the exact
+   count is the chip's tooltip and the bar's accessible name. */
+.checks-chip-bar {
+  position: relative; flex: none; display: inline-block; overflow: hidden;
+  width: 36px; height: 4px; margin-left: 4px; border-radius: 999px; vertical-align: middle;
+  background: color-mix(in srgb, currentColor 22%, transparent);
+}
+.checks-chip-bar-fill {
+  position: absolute; inset: 0 auto 0 0; border-radius: inherit;
+  background: currentColor; transition: width .3s ease;
+}
+@media (prefers-reduced-motion: reduce) { .checks-chip-bar-fill { transition: none; } }
 /* A change's votes: one part per Yes it needs, the count, and Vote. The
    count is in the accent when this viewer's vote is wanted. */
 .dev-ws-wvote { position: relative; z-index: 1; margin-left: auto; display: inline-flex; align-items: center; gap: 8px; }
