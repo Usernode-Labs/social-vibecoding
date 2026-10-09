@@ -37,8 +37,10 @@ export interface QuoteChipView {
   /**
    * A row with nobody to name: a platform message (`event`), or a message
    * whose author is gone (`message`). The strip then has a sentence of its own.
+   * `system` and `someone`: the row showed a stand-in where an author would
+   * be ("System", "Someone"), and `label` is that stand-in, not a name.
    */
-  unnamed?: 'event' | 'message' | null;
+  unnamed?: 'event' | 'message' | 'system' | 'someone' | null;
   snippet: string;
 }
 

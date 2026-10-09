@@ -43,6 +43,24 @@ test('the sent quote keeps its compact in-transcript form', () => {
   assert.doesNotMatch(css, /\.gc-quoted,\s*\n\.gc-reply-preview-inner \{/, 'no longer one shared rule');
 });
 
+// A tapped row, as the transcript draws it: its data attributes and classes.
+function quoteFromRow({ dataset, classes = [], text = 'hello' }) {
+  const sandbox = {
+    window: {}, URLSearchParams, location: { search: '' },
+    document: { getElementById: () => null },
+    App: { user: { id: 1 } },
+    PlatformI18n: englishPlatformI18n(),
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(fs.readFileSync(path.join(root, 'public/js/group-chat.js'), 'utf8'), sandbox);
+  return sandbox.window.GroupChat._quoteFromRow({
+    dataset: { msgId: '7', ...dataset },
+    classList: { contains: (name) => classes.includes(name) },
+    querySelector: (selector) => (selector === '.gc-msg-content' ? { textContent: text } : null),
+    textContent: text,
+  });
+}
+
 function labelFor(replyDraft) {
   const sandbox = {
     window: {}, URLSearchParams, location: { search: '' },
@@ -84,4 +102,28 @@ test('the label names what the reply is to', () => {
   assert.equal(labelFor({ source: 'message', author: null, snippet: 'gone' }).unnamed, 'message');
   assert.equal(lineFor({ source: 'event', author: null, snippet: 'Proposed PR #12' }), '↩ Replying to a platform message');
   assert.equal(lineFor({ source: 'message', author: null, snippet: 'gone' }), '↩ Replying to a message');
+});
+
+test('tapping a row that names nobody keeps that through the row, the quote and the strip', () => {
+  // A message that came with no author shows "System"; a spec card with no sharer shows "Someone".
+  const nameless = quoteFromRow({ dataset: { username: 'System', usernameMissing: '' } });
+  assert.equal(nameless.author, 'System', 'what is sent with the reply is unchanged');
+  assert.equal(nameless.authorMissing, 'system');
+  assert.equal(labelFor(nameless).unnamed, 'system');
+  assert.equal(lineFor(nameless), '↩ Replying to @System', 'English reads as before');
+  const card = quoteFromRow({ dataset: { sharedBy: 'Someone', sharedByUnknown: '', specTitle: 'Plan' }, classes: ['gc-spec-card'] });
+  assert.equal(card.authorMissing, 'someone');
+  assert.equal(labelFor(card).unnamed, 'someone');
+  assert.equal(lineFor(card), '↩ Replying to @Someone');
+  // Accounts really called "System" and "Someone" are named.
+  const real = quoteFromRow({ dataset: { username: 'System' } });
+  assert.equal(real.authorMissing, null);
+  assert.equal(labelFor(real).unnamed, null);
+  assert.equal(labelFor(real).label, '@System');
+  const realSharer = quoteFromRow({ dataset: { sharedBy: 'Someone', specTitle: 'Plan' }, classes: ['gc-spec-card'] });
+  assert.equal(labelFor(realSharer).unnamed, null);
+  // The transcript writes the attribute the quote reads.
+  const transcript = fs.readFileSync(path.join(root, 'frontend/src/features/group-chat/transcript.tsx'), 'utf8');
+  assert.equal((transcript.match(/data-username-missing=\{msg\.usernameMissing \? '' : undefined\}/g) || []).length, 2);
+  assert.match(transcript, /data-shared-by-unknown=\{spec\.sharedByUnknown \? '' : undefined\}/);
 });

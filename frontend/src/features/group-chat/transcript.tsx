@@ -504,6 +504,7 @@ export const SpecShareRow = memo(function SpecShareRow({ msg }: { msg: Transcrip
       data-spec-title={spec.previewTitle}
       data-session-id={spec.sessionId ?? ''}
       data-shared-by={spec.sharedBy}
+      data-shared-by-unknown={spec.sharedByUnknown ? '' : undefined}
     >
       <div className="gc-spec-card-header">
         <span className="gc-spec-card-icon">📋</span>
@@ -748,6 +749,7 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
       gutter={grouped ? <span className="gc-msg-gutter-time" title={msg.timeTitle}>{timeOfDay(msg.at) || msg.time}</span> : undefined}
       data-msg-id={msg.id ?? ''}
       data-username={msg.username}
+      data-username-missing={msg.usernameMissing ? '' : undefined}
       // #2236: only when set, so an ordinary row's attribute set is exactly
       // what it was.
       {...(msg.postedVia ? { 'data-posted-via': msg.postedVia } : {})}
@@ -972,6 +974,7 @@ const GitHubRow = memo(function GitHubRow({ msg }: { msg: TranscriptMessage }) {
       className="gc-msg gc-msg-github"
       data-github-comment={msg.key || ''}
       data-username={msg.username}
+      data-username-missing={msg.usernameMissing ? '' : undefined}
       avatar={(
         <Avatar shape="square" size="md" color={swatchFor(msg.username)} aria-hidden="true">
           {displayName(msg.username).charAt(0).toUpperCase()}

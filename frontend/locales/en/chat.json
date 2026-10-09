@@ -1059,6 +1059,14 @@
     "text": "↩ Replying to a message",
     "description": "Line above the message box in a community chat while the person is writing a reply to a message whose author is no longer known. Keep the arrow first."
   },
+  "group.composer.replyingToSystem": {
+    "text": "↩ Replying to @System",
+    "description": "Label over the message box while the person replies to a chat line that came with no author and shows \"System\" in the author's place. \"@System\" is written as it has always been shown."
+  },
+  "group.composer.replyingToSomeone": {
+    "text": "↩ Replying to @Someone",
+    "description": "Label over the message box while the person replies to a shared spec card whose sharer is not known and shows \"Someone\". \"@Someone\" is written as it has always been shown."
+  },
   "group.quiet.app.inviteUnnamed": {
     "text": "👋 Say hi, ask a question, or share what you would like to see next in this app.",
     "description": "Line under the heading of the empty-channel card of a project whose name is not known, for a person who may write. Keep the waving hand first."

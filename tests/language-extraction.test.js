@@ -695,3 +695,19 @@ test('the bot\'s status line never takes the unnamed project\'s stand-in as a jo
   assert.equal(message('messages:bot.tray.workingOnUnnamed'), message('messages:bot.tray.workingOn', { job: 'A project' }));
   assert.equal(message('messages:bot.tray.jobNeedsYouUnnamed'), message('messages:bot.tray.jobNeedsYou', { job: 'A project' }));
 });
+
+test('the reply strip words a nameless row in its own sentence', async (t) => {
+  const { module: composer } = await loadInSpanish(t, 'frontend/src/features/group-chat/composer.tsx', {
+    'chat:group.composer.replyingTo': '↩ Respondiendo a {{name}}',
+    'chat:group.composer.replyingToSystem': '↩ Respondiendo a un aviso del sistema',
+    'chat:group.composer.replyingToSomeone': '↩ Respondiendo a alguien',
+  });
+  const strip = (quote) => renderToHtml(createElement(composer.ComposerSlotsView, {
+    scope: 'general', slot: { quote: { snippet: 'x', ...quote }, attachError: null, attachments: [], status: '' },
+  }));
+  assert.match(strip({ label: '@System', unnamed: 'system' }), />↩ Respondiendo a un aviso del sistema</);
+  assert.match(strip({ label: '@Someone', unnamed: 'someone' }), />↩ Respondiendo a alguien</);
+  assert.match(strip({ label: '@System', unnamed: null }), />↩ Respondiendo a @System</, 'an account really called System is named');
+  assert.equal(message('chat:group.composer.replyingToSystem'), message('chat:group.composer.replyingTo', { name: '@System' }));
+  assert.equal(message('chat:group.composer.replyingToSomeone'), message('chat:group.composer.replyingTo', { name: '@Someone' }));
+});

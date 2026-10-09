@@ -1961,7 +1961,9 @@ const GroupChat = {
         : (q.author ? `@${q.author}` : ''),
       // A pull request is not somebody's name: the strip has a sentence for it.
       pr: q.source === 'pr' ? String(q.prNumber || '') : null,
-      unnamed: q.source === 'pr' || q.author ? null : (q.source === 'event' ? 'event' : 'message'),
+      unnamed: q.source === 'pr' ? null
+        : q.authorMissing && q.author ? q.authorMissing
+          : q.author ? null : (q.source === 'event' ? 'event' : 'message'),
       snippet: GroupChat._collapseSnippet(q.snippet).slice(0, 120),
     } : null;
     // #2387: the chip goes to the composer the quote was staged in, now that
@@ -1996,6 +1998,8 @@ const GroupChat = {
       return {
         source: 'spec', refMsgId: id,
         author: row.dataset.sharedBy || null,
+        // The card names nobody: `author` is its stand-in, and the strip has its own sentence.
+        authorMissing: 'sharedByUnknown' in row.dataset ? 'someone' : null,
         snippet: row.dataset.specTitle || PlatformI18n.t('chat:group.quote.spec'),
       };
     }
@@ -2024,6 +2028,8 @@ const GroupChat = {
     return {
       source: 'message', refMsgId: id,
       author: row.dataset.username || null,
+      // The row came with no author: `author` is the chat's stand-in for one.
+      authorMissing: 'usernameMissing' in row.dataset ? 'system' : null,
       // Collapse newlines (multi-line messages render with pre-wrap) so the
       // quote chip stays single-line.
       snippet,
