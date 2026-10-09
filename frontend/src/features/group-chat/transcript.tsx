@@ -991,7 +991,7 @@ const RequestEvent = memo(function RequestEvent({ msg, onRead }: { msg: Transcri
   let text: ReactNode = msg.systemText;
   if (spec) {
     glyph = '📋';
-    text = <><b>{spec.sharedBy}</b>{` posted spec v${spec.version}`}</>;
+    text = <><b>{spec.sharedBy}</b>{` posted plan v${spec.version}`}</>;
   } else if (gh) {
     glyph = '📋';
     text = <><b>{displayName(msg.username)}</b>{' posted a plan'}</>;

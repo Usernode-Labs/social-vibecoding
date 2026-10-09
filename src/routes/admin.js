@@ -19,6 +19,7 @@ const { isSessionBusy } = require('../services/active-workers');
 const stagingEnv = require('../services/staging-env');
 const mail = require('../services/mail');
 const phoneAuth = require('../services/firebase-phone-auth');
+const phoneFailureLog = require('../services/phone-failure-log');
 const mobilePushDiagnostics = require('../services/mobile-push-diagnostics');
 const applicationRuntime = require('../services/application-runtime');
 const managedOpenRouter = require('../services/openrouter-managed-keys');
@@ -2962,6 +2963,22 @@ function adminRoutes(config) {
         res.status(500).json({ error: 'Internal server error' });
       }
     });
+
+  // The failure log the test send cannot answer on its own: every failed
+  // phone code request, verification and link attempt real callers made
+  // (routes/phone-auth.js fail()), newest first, with the account name and
+  // Firebase's own code beside this API's. Any admin: it holds what the
+  // users table already shows them plus error codes, never a phone number
+  // (its last four digits only) and never session material.
+  router.get('/api/admin/sms/failures', async (req, res) => {
+    try {
+      const { failures, total7d } = await phoneFailureLog.recentFailures(pool, 50);
+      return res.json({ failures, total7d });
+    } catch (err) {
+      log.error('admin', 'sms failures read failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
 
   return router;
 }

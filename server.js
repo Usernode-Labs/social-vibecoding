@@ -1765,6 +1765,10 @@ if (require.main === module) {
 // (#767) let tests drive the graceful-shutdown sequence against a stubbed
 // listener and pool without booting a server. Not used by any runtime caller.
 module.exports = {
+  // #4439: the assembled Express app, every middleware and route mounted in
+  // order but not listening, so a test can drive the headers production
+  // sends with a shell asset (tests/spec-frame-styles.test.js).
+  app,
   adoptOrphanWorker,
   // #1378: the detached-turn resume itself, so tests can prove a stop that
   // lands on an ADOPTED turn terminalizes it as a stop instead of narrating

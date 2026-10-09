@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const path = require('node:path');
 
 const read = (path) => fs.readFileSync(path, 'utf8');
 
@@ -85,6 +86,7 @@ test('Kubernetes platform image builds and contains the generated shell assets',
     'COPY --chown=node:node src ./src',
     'COPY --chown=node:node scripts ./scripts',
     'COPY --chown=node:node worker ./worker',
+    'COPY --chown=node:node app-templates ./app-templates',
     'COPY --chown=node:node --from=shell /build/public ./public',
   ]) {
     assert.ok(runtime.includes(source), `${source} must be present in the runtime stage`);
@@ -92,6 +94,40 @@ test('Kubernetes platform image builds and contains the generated shell assets',
   assert.doesNotMatch(runtime, /^COPY .*frontend/m);
   assert.doesNotMatch(runtime, /^COPY .*tests/m);
   assert.doesNotMatch(runtime, /^COPY .*docs/m);
+});
+
+test('Kubernetes platform image ships every directory the server reads beside src/', () => {
+  // The runtime stage copies a list, not the whole tree, so a top-level
+  // directory that src/ reads by path is missing in production unless it is
+  // on that list. app-templates/ was not: every ready-made app and game
+  // starter failed to create with "ENOENT: scandir '/app/app-templates/…'"
+  // while Dockerfile, which copies everything, and every test were fine.
+  const dockerfile = read('Dockerfile.kubernetes');
+  const runtime = dockerfile.slice(dockerfile.lastIndexOf('\nFROM node:22-alpine\n'));
+  const shipped = new Set();
+  for (const [, args] of runtime.matchAll(/^COPY (.+)$/gm)) {
+    const parts = args.split(/\s+/).filter((a) => !a.startsWith('--'));
+    const dest = parts.pop();
+    if (dest === './') for (const p of parts) shipped.add(path.basename(p));
+    else shipped.add(dest.replace(/^\.\//, '').split('/')[0]);
+  }
+
+  const root = path.resolve(__dirname, '..');
+  const reads = [];
+  for (const rel of fs.readdirSync(path.join(root, 'src'), { recursive: true })) {
+    // The CLI runs from a developer's checkout, never in this image.
+    if (!rel.endsWith('.js') || rel.startsWith(`cli${path.sep}`)) continue;
+    const file = path.join(root, 'src', rel);
+    for (const [call] of read(file).matchAll(/path\.(?:join|resolve)\(__dirname(?:,\s*'[^']*')+/g)) {
+      const segments = [...call.matchAll(/'([^']*)'/g)].map((m) => m[1]);
+      const top = path.relative(root, path.resolve(path.dirname(file), ...segments)).split(path.sep)[0];
+      if (top && top !== 'src' && top !== '..') reads.push([top, path.relative(root, file)]);
+    }
+  }
+  assert.ok(reads.some(([top]) => top === 'app-templates'), 'the scan finds services/app-templates.js');
+  for (const [top, from] of reads) {
+    assert.ok(shipped.has(top), `${from} reads ${top}/, which the runtime stage does not copy`);
+  }
 });
 
 test('Kubernetes platform image keeps the npm download cache out of both dependency layers', () => {

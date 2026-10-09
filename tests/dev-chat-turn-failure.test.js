@@ -60,7 +60,7 @@ test('an agent RUN that fails is a failure too, not a green tick', () => {
   for (const failing of [
     'Scout error: ${result.fatalError',
     'Scout error: ${(ccText',
-    "'Scout finished but produced no spec text.'",
+    "'Scout finished but produced no plan text.'",
     'Worker error: ${result.fatalError',
     '${executionAgentName} error: ${(ccText',
   ]) {

@@ -95,7 +95,7 @@ test('the stream: "N replies", a GitHub reply in the same row with "· on GitHub
   assert.match(html, /class="messages-reply-count"[^>]*><span>2 replies<\/span>/);
   assert.match(html, /gc-msg gc-msg-github[\s\S]*?priya[\s\S]*?· on GitHub/);
   assert.match(html, /data-request-event="claim"[\s\S]*?<b>evan<\/b> started working on this/);
-  assert.match(html, /data-request-event="spec"[\s\S]*?<b>evan<\/b> posted spec v1[\s\S]*?>Read</);
+  assert.match(html, /data-request-event="spec"[\s\S]*?<b>evan<\/b> posted plan v1[\s\S]*?>Read</);
   assert.doesNotMatch(html, /Homeroom bot/, 'the bot\'s copy of the posting is not drawn');
 });
 

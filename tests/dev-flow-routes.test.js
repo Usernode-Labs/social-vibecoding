@@ -282,7 +282,7 @@ test('an agent session\'s hand-off carries its OWN change\'s spec, and nobody el
   const own = (await (await status('?sessionId=501&proposalId=501&targetKind=session&specFrom=501')).json()).instructions;
   assert.match(own, /THE USER HAS ALREADY TOLD YOU WHAT TO BUILD/);
   assert.match(own, /<untrusted-content>\nChange: Dark mode\n\n# Dark mode\nA toggle in Settings\.\n<\/untrusted-content>/);
-  assert.match(own, /proposalId 501, and that spec as `brief`/);
+  assert.match(own, /proposalId 501, and that plan as `brief`/);
   const read = poolCalls.find((c) => /spec_md/.test(c.sql));
   assert.match(read.sql, /WHERE id = \$1 AND user_id = \$2 AND app_id = \$3/, 'ownership is the query\'s, not the caller\'s');
   assert.deepEqual(read.params, [501, 42, 7]);

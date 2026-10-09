@@ -125,6 +125,11 @@ class PhoneAuthError extends Error {
     this.name = 'PhoneAuthError';
     this.code = code;
     this.status = status;
+    // The provider's own code when one was given (identityToolkitError, the
+    // Admin SDK's verify refusal): this API's code deliberately hides which
+    // Firebase knob failed, and the failure log (Admin → SMS delivery)
+    // needs it. Null for refusals decided here (phone_in_use, bad replay).
+    this.providerCode = null;
   }
 }
 
@@ -305,20 +310,24 @@ function identityToolkitError(data, status, path = null) {
   // 404 for a method that does not exist) is otherwise indistinguishable
   // from any other unmapped refusal.
   log.warn('phone-auth', 'Identity Toolkit refused', { path, status, code });
+  const withProvider = (err) => {
+    if (/^[A-Z][A-Z0-9_]{0,63}$/.test(code)) err.providerCode = code;
+    return err;
+  };
   if (code === 'INVALID_CODE' || code === 'SESSION_EXPIRED'
       || code === 'CODE_EXPIRED' || code === 'INVALID_SESSION_INFO') {
-    return new PhoneAuthError('invalid_or_expired_code', 'Invalid or expired code.');
+    return withProvider(new PhoneAuthError('invalid_or_expired_code', 'Invalid or expired code.'));
   }
   if (code === 'TOO_MANY_ATTEMPTS_TRY_LATER') {
-    return new PhoneAuthError('too_many_attempts', 'Too many attempts. Try again later.', 429);
+    return withProvider(new PhoneAuthError('too_many_attempts', 'Too many attempts. Try again later.', 429));
   }
   if (code === 'INVALID_PHONE_NUMBER') {
-    return new PhoneAuthError('invalid_phone', 'Enter a valid phone number.');
+    return withProvider(new PhoneAuthError('invalid_phone', 'Enter a valid phone number.'));
   }
   if (RECAPTCHA_REFUSALS.has(code)) {
-    return new PhoneAuthError('recaptcha_required', 'We could not check that you are a person. Try again.');
+    return withProvider(new PhoneAuthError('recaptcha_required', 'We could not check that you are a person. Try again.'));
   }
-  return new PhoneAuthError('firebase_unreachable', 'Could not reach the sign-in service. Try again.', 502);
+  return withProvider(new PhoneAuthError('firebase_unreachable', 'Could not reach the sign-in service. Try again.', 502));
 }
 
 // The bare POST: { ok, status, data }, throwing only when no answer came
@@ -599,8 +608,12 @@ async function verifyIdToken(pool, config, rawToken, deps = {}) {
       const verifier = deps.auth || adminAuth(config, deps);
       payload = await verifier.verifyIdToken(rawToken);
     } catch (err) {
-      log.warn('phone-auth', 'ID token verification failed', { err: err.message });
-      throw badToken();
+      log.warn('phone-auth', 'ID token verification failed', { err: err.message, code: err.code });
+      // The Admin SDK's own code ('auth/id-token-expired', 'auth/argument-error'
+      // …) is the operator's diagnosis; the caller still gets the bare 502.
+      const refusal = badToken();
+      if (typeof err.code === 'string' && err.code) refusal.providerCode = err.code;
+      throw refusal;
     }
     if (payload?.firebase?.sign_in_provider !== 'phone') throw badToken();
     phoneNumber = normalizePhone(payload.phone_number);
@@ -649,6 +662,13 @@ async function cleanupExpired(pool) {
     await pool.query("DELETE FROM oauth_signup_sessions WHERE expires_at < NOW() - INTERVAL '1 hour'");
   } catch (err) {
     log.warn('phone-auth', 'Expired phone sign-in state cleanup failed', { err: err.message });
+  }
+  // The failure log's own reap, in its own try: a missing table (a test
+  // schema without it) must not skip the state cleanup above.
+  try {
+    await pool.query("DELETE FROM phone_auth_failures WHERE created_at < NOW() - INTERVAL '30 days'");
+  } catch (err) {
+    log.warn('phone-auth', 'Failure log cleanup failed', { err: err.message });
   }
 }
 

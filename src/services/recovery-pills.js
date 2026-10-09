@@ -67,7 +67,7 @@ const QR_MAX_REPLY_LEN = 80;
 //                    caller's semantics stay readable at the call site.
 const RECOVERY_PILLS = Object.freeze({
   code_done: Object.freeze(['Propose it to the group', 'Make a tweak', 'What did it change?']),
-  // #1046: the build pill says "Build the spec", not "Build it" — the
+  // #1046: the build pill says "Build the plan" (#4450; "Build the spec" before), not "Build it" — the
   // whole plan gets built, and the wording has to say so. Same string the
   // model is told to use, so the row reads identically whichever rung
   // filled it.
@@ -107,7 +107,7 @@ const RECOVERY_PILLS = Object.freeze({
 // Each of those specs covered far more than the component named, so the
 // pill reads as "build only that part" for a tap that builds the whole
 // plan. The POST-SPEC BUILD PILL is therefore pinned to a literal string
-// ("Build the spec") and occupies the one generic slot the rule already
+// ("Build the plan") and occupies the one generic slot the rule already
 // allows — the arithmetic is unchanged, only which pill fills the slot on
 // a post-spec turn. The other 1-2 pills must still be specific, so the
 // anti-parroting pressure stays exactly where it was.
@@ -124,7 +124,6 @@ These are shapes, not strings — never send these words verbatim.
 POST-SPEC BUILD PILL — the ONE exception to that, and the one place a literal string is required. When this turn just drafted or revised a spec and nothing has been built from it yet, the FIRST pill must refer to the WHOLE spec: write it as Build the plan (or exactly that meaning in the conversation's language). Do NOT name a single component, screen, file or feature as the build target — a pill like "Build the sidebar" or "Build the avatar flow as specced" reads as "build only that part", when the tap builds everything the spec describes. This pill IS the set's one generic slot, so the remaining 1-2 pills must still name something specific about THIS spec. A pill may additionally offer a NARROWER build, but only if it says so out loud ("Build only the read-only slice first", "Build slice 1 only — the retry path"); it is an extra option, never a replacement for the whole-spec pill.
 
 NEVER emit any of these exact sets, or a set made only of these phrases: "Preview the change" / "Propose it to the group" / "Make another tweak"; "Build the plan" / "Revise the plan" / "What will this change?"; "Build it" / "Revise the plan" / "What will this change?"; "Propose it to the group" / "Make a tweak" / "What did it change?"; "Make a change" / "What issues are open right now?" / "What's the current state?"; "Try that again" / "What went wrong?". That ban is on the whole SET, not on the required build pill — "Build the plan" is meant to be sent verbatim; what is forbidden is a set in which NOTHING is specific to this conversation.
-Call the spec a plan in every pill, as the app does; never write "spec" in a pill.
 If you cannot make a pill specific, emit TWO pills instead of three — a short specific set beats a padded generic one.
 Write the pills in the SAME LANGUAGE the conversation is in, not always English.`;
 
@@ -158,7 +157,7 @@ function isUnansweredBreadcrumb(content) {
 // The breadcrumb text for a recovered scout turn whose journal replay
 // produced no spec text (previously emit-only, so it vanished on reload).
 const SCOUT_NO_SPEC_BREADCRUMB =
-  "The scout didn't produce a spec. Please send your request again.";
+  "The scout didn't produce a plan. Please send your request again.";
 
 // The breadcrumb text for a coding turn that could not be resumed at all.
 // One string for every unresumable shape (worker gone, journal unreadable,
@@ -352,7 +351,7 @@ const BANNED_GENERIC_PILLS = Object.freeze(new Set([
   // RECOVERY_PILLS, every kind.
   'propose it to the group', 'make a tweak', 'what did it change',
   'build the plan', 'revise the plan', 'what will this change',
-  // The pre-#4450 wording, still in people's own words and in history.
+  // The pre-#4450 wording of the same two pills, still in transcript history.
   'build the spec', 'revise the spec',
   'try that again', 'what went wrong',
   "what's the current state", 'make a change',

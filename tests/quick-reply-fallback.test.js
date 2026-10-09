@@ -254,7 +254,9 @@ test('no prompt surface lists a boilerplate pill triple verbatim', () => {
     // prompt must not offer either as a run to copy, even though the
     // build pill alone IS a required literal now (see the next test).
     ['Build the plan', 'Revise the plan', 'What will this change?'],
+    ['Build the spec', 'Revise the spec', 'What will this change?'],
     ['Build it', 'Revise the plan', 'What will this change?'],
+    ['Build it', 'Revise the spec', 'What will this change?'],
     ['Propose it to the group', 'Make a tweak', 'What did it change?'],
     ["How's it going?", 'Stop this build'],
   ];
@@ -341,7 +343,7 @@ test('a whole-spec build pill still passes only alongside specific pills', () =>
     'an all-boilerplate set still escalates, the literal notwithstanding');
   // The near-variants must not be a loophole around that.
   assert.equal(
-    isGenericPillSet(['Build the whole spec', 'Build the plan as written']),
+    isGenericPillSet(['Build the whole plan', 'Build the plan as written']),
     true,
     'rephrasing the required literal does not make a set specific');
 });

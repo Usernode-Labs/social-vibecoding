@@ -134,7 +134,7 @@ export function requestStage(fromRow: RequestStage, specs: number): RequestStage
   return fromRow;
 }
 
-/** The newest spec's version, for "Spec v2 is ready for comments." */
+/** The newest spec's version, for "Plan v2 is ready for comments." */
 export function newestSpecVersion(specs: RequestSpecCard[]): number | null {
   const versions = specs.map((s) => s.version).filter((v): v is number => v != null);
   return versions.length ? Math.max(...versions) : null;

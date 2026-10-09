@@ -40,8 +40,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "86c0f5b4faa86f00",
-          "length": 200319
+          "sha": "43166327a471e46d",
+          "length": 200180
         },
         "tools": [
           "dispatch_claude_code",
@@ -52,7 +52,7 @@
           "get_github_issue",
           "web_fetch"
         ],
-        "toolsSha": "4dc346790035446a",
+        "toolsSha": "c5dc1458ae310e99",
         "toolChoice": null,
         "messages": [
           {
@@ -133,8 +133,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "aa92cfaafcade426",
-          "length": 198692
+          "sha": "54f2bd9025b2a610",
+          "length": 198553
         },
         "tools": [
           "dispatch_claude_code",
@@ -145,7 +145,7 @@
           "get_github_issue",
           "web_fetch"
         ],
-        "toolsSha": "4dc346790035446a",
+        "toolsSha": "c5dc1458ae310e99",
         "toolChoice": null,
         "messages": [
           {
@@ -168,8 +168,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "aa92cfaafcade426",
-          "length": 198692
+          "sha": "54f2bd9025b2a610",
+          "length": 198553
         },
         "tools": [
           "dispatch_claude_code",
@@ -180,7 +180,7 @@
           "get_github_issue",
           "web_fetch"
         ],
-        "toolsSha": "4dc346790035446a",
+        "toolsSha": "c5dc1458ae310e99",
         "toolChoice": null,
         "messages": [
           {
@@ -290,8 +290,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "aa92cfaafcade426",
-          "length": 198692
+          "sha": "54f2bd9025b2a610",
+          "length": 198553
         },
         "tools": [
           "dispatch_claude_code",
@@ -302,7 +302,7 @@
           "get_github_issue",
           "web_fetch"
         ],
-        "toolsSha": "4dc346790035446a",
+        "toolsSha": "c5dc1458ae310e99",
         "toolChoice": null,
         "messages": [
           {
@@ -375,8 +375,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "aa92cfaafcade426",
-          "length": 198692
+          "sha": "54f2bd9025b2a610",
+          "length": 198553
         },
         "tools": [
           "dispatch_claude_code",
@@ -387,7 +387,7 @@
           "get_github_issue",
           "web_fetch"
         ],
-        "toolsSha": "4dc346790035446a",
+        "toolsSha": "c5dc1458ae310e99",
         "toolChoice": null,
         "messages": [
           {
@@ -457,8 +457,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "aa92cfaafcade426",
-          "length": 198692
+          "sha": "54f2bd9025b2a610",
+          "length": 198553
         },
         "tools": [
           "dispatch_claude_code",
@@ -469,7 +469,7 @@
           "get_github_issue",
           "web_fetch"
         ],
-        "toolsSha": "4dc346790035446a",
+        "toolsSha": "c5dc1458ae310e99",
         "toolChoice": null,
         "messages": [
           {
@@ -544,8 +544,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "aa92cfaafcade426",
-          "length": 198692
+          "sha": "54f2bd9025b2a610",
+          "length": 198553
         },
         "tools": [
           "dispatch_claude_code",
@@ -556,7 +556,7 @@
           "get_github_issue",
           "web_fetch"
         ],
-        "toolsSha": "4dc346790035446a",
+        "toolsSha": "c5dc1458ae310e99",
         "toolChoice": null,
         "messages": [
           {
@@ -637,8 +637,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "aa92cfaafcade426",
-          "length": 198692
+          "sha": "54f2bd9025b2a610",
+          "length": 198553
         },
         "tools": [
           "dispatch_claude_code",
@@ -649,7 +649,7 @@
           "get_github_issue",
           "web_fetch"
         ],
-        "toolsSha": "4dc346790035446a",
+        "toolsSha": "c5dc1458ae310e99",
         "toolChoice": null,
         "messages": [
           {
@@ -716,8 +716,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "aa92cfaafcade426",
-          "length": 198692
+          "sha": "54f2bd9025b2a610",
+          "length": 198553
         },
         "tools": [
           "dispatch_claude_code",
@@ -728,7 +728,7 @@
           "get_github_issue",
           "web_fetch"
         ],
-        "toolsSha": "4dc346790035446a",
+        "toolsSha": "c5dc1458ae310e99",
         "toolChoice": null,
         "messages": [
           {
@@ -792,8 +792,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "aa92cfaafcade426",
-          "length": 198692
+          "sha": "54f2bd9025b2a610",
+          "length": 198553
         },
         "tools": [
           "dispatch_claude_code",
@@ -804,7 +804,7 @@
           "get_github_issue",
           "web_fetch"
         ],
-        "toolsSha": "4dc346790035446a",
+        "toolsSha": "c5dc1458ae310e99",
         "toolChoice": null,
         "messages": [
           {
@@ -967,8 +967,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "aa92cfaafcade426",
-          "length": 198692
+          "sha": "54f2bd9025b2a610",
+          "length": 198553
         },
         "tools": [
           "dispatch_claude_code",
@@ -979,7 +979,7 @@
           "get_github_issue",
           "web_fetch"
         ],
-        "toolsSha": "4dc346790035446a",
+        "toolsSha": "c5dc1458ae310e99",
         "toolChoice": null,
         "messages": [
           {
@@ -1002,13 +1002,13 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "3e34ec15bab0dd26",
-          "length": 199054
+          "sha": "149efe1f1d041144",
+          "length": 198915
         },
         "tools": [
           "suggest_replies"
         ],
-        "toolsSha": "2ae0ed56094b2a87",
+        "toolsSha": "a92d0ef432e0ac61",
         "toolChoice": {
           "type": "auto"
         },
@@ -1192,8 +1192,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "3e34ec15bab0dd26",
-          "length": 199054
+          "sha": "149efe1f1d041144",
+          "length": 198915
         },
         "tools": [
           "dispatch_claude_code",
@@ -1204,7 +1204,7 @@
           "get_github_issue",
           "web_fetch"
         ],
-        "toolsSha": "4dc346790035446a",
+        "toolsSha": "c5dc1458ae310e99",
         "toolChoice": null,
         "messages": [
           {
@@ -1235,13 +1235,13 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "46151b509ce1a94b",
-          "length": 199788
+          "sha": "ed0dff5c897bc14d",
+          "length": 199649
         },
         "tools": [
           "suggest_replies"
         ],
-        "toolsSha": "2ae0ed56094b2a87",
+        "toolsSha": "a92d0ef432e0ac61",
         "toolChoice": {
           "type": "auto"
         },
@@ -1430,8 +1430,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "3e34ec15bab0dd26",
-          "length": 199054
+          "sha": "149efe1f1d041144",
+          "length": 198915
         },
         "tools": [
           "dispatch_claude_code",
@@ -1442,7 +1442,7 @@
           "get_github_issue",
           "web_fetch"
         ],
-        "toolsSha": "4dc346790035446a",
+        "toolsSha": "c5dc1458ae310e99",
         "toolChoice": null,
         "messages": [
           {
@@ -1465,13 +1465,13 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "3e34ec15bab0dd26",
-          "length": 199054
+          "sha": "149efe1f1d041144",
+          "length": 198915
         },
         "tools": [
           "suggest_replies"
         ],
-        "toolsSha": "2ae0ed56094b2a87",
+        "toolsSha": "a92d0ef432e0ac61",
         "toolChoice": {
           "type": "auto"
         },
@@ -1622,8 +1622,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "3e34ec15bab0dd26",
-          "length": 199054
+          "sha": "149efe1f1d041144",
+          "length": 198915
         },
         "tools": [
           "dispatch_claude_code",
@@ -1634,7 +1634,7 @@
           "get_github_issue",
           "web_fetch"
         ],
-        "toolsSha": "4dc346790035446a",
+        "toolsSha": "c5dc1458ae310e99",
         "toolChoice": null,
         "messages": [
           {
@@ -1723,8 +1723,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "fdd3fbfeeeab7186",
-          "length": 198754
+          "sha": "c77c6a29d452c4e3",
+          "length": 198615
         },
         "tools": [
           "suggest_answers",
@@ -1733,7 +1733,7 @@
           "get_github_issue",
           "web_fetch"
         ],
-        "toolsSha": "980c719382513f75",
+        "toolsSha": "aa74e7e6f7d99efb",
         "toolChoice": null,
         "messages": [
           {
@@ -1802,8 +1802,8 @@
         "model": "openai/gpt-5.3-codex",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "aa92cfaafcade426",
-          "length": 198692
+          "sha": "54f2bd9025b2a610",
+          "length": 198553
         },
         "tools": [
           "dispatch_claude_code",
@@ -1814,7 +1814,7 @@
           "get_github_issue",
           "web_fetch"
         ],
-        "toolsSha": "4dc346790035446a",
+        "toolsSha": "c5dc1458ae310e99",
         "toolChoice": null,
         "messages": [
           {
@@ -1933,8 +1933,8 @@
         "model": "openai/gpt-5.3-codex",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "aa92cfaafcade426",
-          "length": 198692
+          "sha": "54f2bd9025b2a610",
+          "length": 198553
         },
         "tools": [
           "dispatch_claude_code",
@@ -1945,7 +1945,7 @@
           "get_github_issue",
           "web_fetch"
         ],
-        "toolsSha": "4dc346790035446a",
+        "toolsSha": "c5dc1458ae310e99",
         "toolChoice": null,
         "messages": [
           {

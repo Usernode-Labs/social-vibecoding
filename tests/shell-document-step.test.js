@@ -93,6 +93,9 @@ test('--document writes the document for the commit id and leaves the bundle alo
   assert.equal(f.js(), f.bundle, 'the bundle is byte-for-byte what the first run wrote: not rebuilt, not stamped twice');
   assert.equal(f.read('frontend/.ssr/prerender.js'), null, 'the prerender bundle is removed once the document is final');
   assert.doesNotMatch(res.stdout, /pass 1\/2|pass 2\/2/, 'no Vite pass ran');
+  // This tree has no scripts/language-packs.js: the first run built the packs,
+  // and a --document run that reached for them again died here (#4302, #4332).
+  assert.equal(fs.existsSync(path.join(f.root, 'public/locales')), false, 'the language packs are not built again');
 });
 
 test('the dev document and the commit document differ by the id and nothing else', (t) => {
@@ -154,6 +157,8 @@ test('the script still runs both passes when no flag asks otherwise', () => {
   assert.match(script, /const documentOnly = process\.argv\.includes\('--document'\);/);
   assert.match(script, /if \(documentOnly\) \{[\s\S]+?\} else \{[\s\S]+?runVite\(\['build'\]\);[\s\S]+?runVite\(\['build', '--config', 'vite\.ssr\.config\.ts'/,
     'the two Vite passes are skipped only for --document');
+  assert.match(script, /if \(!documentOnly\) require\(path\.join\(ROOT, 'scripts\/language-packs\.js'\)\)\.buildLanguagePacks\(ROOT\);/,
+    'the language packs, an input of the bundle, are built by every run that builds it');
   assert.match(script, /if \(!keepPrerender\) fs\.rmSync\(ssrDir, \{ recursive: true, force: true \}\);/,
     'and the prerender bundle is still removed unless a later run was asked to reuse it');
   const ensure = fs.readFileSync(path.join(ROOT, 'scripts/ensure-shell-artifacts.js'), 'utf8');

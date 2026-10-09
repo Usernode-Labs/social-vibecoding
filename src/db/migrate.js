@@ -202,6 +202,7 @@ async function migrate(config) {
   // identities) and AFTER seedStagingLeaderboardProfile (it decorates that
   // seed's 900001 / 900002 fixture accounts).
   await seedStagingProfileCustomization(pool, config);
+  await seedStagingPhoneFailures(pool);
   await seedStagingPlatformMail(pool);
   finishPhase('stagingFixturesMs');
   await sweepInterruptedDbExports(pool);
@@ -3295,7 +3296,7 @@ function stagingAgentRunRows() {
     ['system', 'Scouting the repo for context (z-ai/glm-5.3-flash)...', codex],
     ['system', 'Scout reading the codebase...', codex],
     ['system', 'Claude Code progress', { progressLog: ['Reading the dev board header', 'Reading the theme tokens', 'Drafting the spec'], ...codex }],
-    ['system', `Scout drafted a ${STAGING_AGENT_SPEC.split('\n').length}-line spec from the codebase.`, {
+    ['system', `Scout drafted a ${STAGING_AGENT_SPEC.split('\n').length}-line plan from the codebase.`, {
       specPreview: STAGING_AGENT_SPEC.slice(0, 200), specLines: STAGING_AGENT_SPEC.split('\n').length,
       scoutOutput: STAGING_AGENT_SPEC, specVersion: 2, durationMs: 81000, ...codex,
     }],
@@ -4186,7 +4187,7 @@ async function seedStagingSharedSession(pool, config) {
     },
     {
       role: 'system', mins: 111, model: null,
-      content: 'Spec drafted',
+      content: 'Plan drafted',
       metadata: {
         specPreview: '# [staging fixture] Readable session cards on narrow screens\n\n- Two-row card layout\n- Actions wrap instead of crushing the title\n',
         specVersion: 1, specLines: 4,
@@ -8351,15 +8352,15 @@ async function seedStagingCloneSpecPills(pool, config) {
   // nicer header" — a component out of a plan that covered more than that,
   // which reads as "build only that bit". The other two stay specific.
   const quickReplies = [
-    'Build the spec',
+    'Build the plan',
     'What does the plan for #42 change?',
-    'Revise the spec first',
+    'Revise the plan first',
   ];
   const followUpContent =
     'This session was cloned from an auto session that ran unattended on GitHub issue #42. '
     + "You're on your own branch (forked from the auto session's, so its commits carry over).\n\n"
-    + 'Where things stand: the auto session investigated the repo and drafted a spec — open the '
-    + "spec viewer to review it. When you're happy with it, tell me to build it and I'll dispatch "
+    + 'Where things stand: the auto session investigated the repo and drafted a plan — open the '
+    + "plan viewer to review it. When you're happy with it, tell me to build it and I'll dispatch "
     + 'the coding agent.';
   await pool.query(
     `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
@@ -8450,10 +8451,10 @@ async function seedStagingQuickReplyFallback(pool, config) {
       title: '[staging fixture] Staging demo: pills fall back after a spec',
       prNumber: null,
       specMd,
-      // Expect: 'Build the spec' / 'Revise the spec' / 'What will this change?'
+      // Expect: 'Build the plan' / 'Revise the plan' / 'What will this change?'
       rows: [
         ['user', 'Plan out a dark mode toggle before we build anything.', {}, 12],
-        ['assistant', 'The scout drafted the spec — it\'s in the spec viewer.', {}, 10],
+        ['assistant', 'The scout drafted the plan — it\'s in the plan viewer.', {}, 10],
       ],
     },
     {
@@ -8527,12 +8528,12 @@ async function seedStagingQuickReplyFallback(pool, config) {
       // sees which rung produced it; only the telemetry column differs.
       rows: [
         ['user', 'Plan how avatar uploads should work before building anything.', {}, 14],
-        ['assistant', 'The scout drafted a spec for avatar uploads — it adds a user_avatars '
-          + 'table and a crop step, and it\'s in the spec viewer now.', {
+        ['assistant', 'The scout drafted a plan for avatar uploads — it adds a user_avatars '
+          + 'table and a crop step, and it\'s in the plan viewer now.', {
           // #1046: post-spec, so the build pill is the whole-spec literal
           // and the other two carry this spec's specifics. Its dapp.json
-          // check asserts the 'Build the spec' pill renders.
-          quickReplies: ['Build the spec', 'Drop the crop step from the plan', 'What does this add to the database?'],
+          // check asserts the 'Build the plan' pill renders.
+          quickReplies: ['Build the plan', 'Drop the crop step from the plan', 'What does this add to the database?'],
           quickRepliesSource: 'enforced',
         }, 12],
       ],
@@ -9455,7 +9456,7 @@ async function seedStagingSpecViewerSessions(pool, config) {
       await pool.query(
         `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
          VALUES ($1, 'system', $2, $3, NOW() - ($4::int * INTERVAL '1 minute'))`,
-        [sessionId, `Scout drafted a ${lineCount}-line spec from the codebase.`,
+        [sessionId, `Scout drafted a ${lineCount}-line plan from the codebase.`,
          JSON.stringify({ specPreview: f.spec, specLines: lineCount, specVersion: 1 }),
          f.minutesAgo - 1]
       );
@@ -9571,10 +9572,10 @@ async function seedStagingSharedSpecPanelSession(pool, config) {
 
     const transcript = [
       ['user', '[staging fixture] Plan the shared-spec change and post it to the group.', {}, 110],
-      ['system', 'Spec drafted', {
+      ['system', 'Plan drafted', {
         specPreview: sharedV2.slice(0, 400), specLines: sharedV2.split('\n').length, specVersion: 2,
       }, 100],
-      ['assistant', '[staging fixture] Spec v2 is in the viewer — I shared it with the group.', {}, 99],
+      ['assistant', '[staging fixture] Plan v2 is in the viewer — I shared it with the group.', {}, 99],
     ];
     for (const [role, content, metadata, mins] of transcript) {
       await pool.query(
@@ -9719,7 +9720,7 @@ async function seedStagingHtmlSpecSession(pool, config) {
     );
     await pool.query(
       `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
-       VALUES ($1, 'system', 'Spec drafted', $2::jsonb, NOW() - INTERVAL '100 minutes')`,
+       VALUES ($1, 'system', 'Plan drafted', $2::jsonb, NOW() - INTERVAL '100 minutes')`,
       [sessionId, JSON.stringify({ specPreview: markdown.slice(0, 400), specLines: markdown.split('\n').length, specVersion: 1, specFormat: 'html' })]
     );
   }
@@ -9855,7 +9856,7 @@ async function seedStagingDemoProposal(pool, config) {
 
   const messages = [
     { role: 'user', content: '[staging fixture] Please draft a proposal for a demo widget.', metadata: {}, minutesAgo: 45 },
-    { role: 'system', content: `Scout drafted a ${specLines}-line spec from the codebase.`,
+    { role: 'system', content: `Scout drafted a ${specLines}-line plan from the codebase.`,
       metadata: { specPreview, specLines, specVersion: 1 }, minutesAgo: 44 },
     { role: 'system', content: 'Claude Code finished', metadata: { ccOutput, ccOutcome: 'success', durationMs: 198000 }, minutesAgo: 40 },
   ];
@@ -10083,9 +10084,9 @@ async function seedStagingHeadlessFixtures(pool, config) {
     // stays pill-free: its answer chips own that turn.
     const wrapUp = {
       spec: {
-        text: '_Spec drafted — review it in the spec viewer after starting a session from this auto session._',
+        text: '_Plan drafted — review it in the plan viewer after starting a session from this auto session._',
         kind: 'spec_done',
-        pills: ['Build the spec', 'Revise the spec', 'What will this change?'],
+        pills: ['Build the plan', 'Revise the plan', 'What will this change?'],
       },
       code: {
         text: '_Change committed and pushed — start a session from this auto session to open the PR._',
@@ -13387,6 +13388,37 @@ async function migrateAppDbsToPerRole(pool, config) {
 // resolve) and all are visibly named staging-demo-*, so nobody mistakes
 // one for a real signup. The waitlist row exists so a tester can exercise
 // the confirm link end to end against a known token.
+// A few rows for Admin → SMS delivery's "Recent failures" table. The table
+// is staging:private, so a preview would otherwise show only its empty
+// state and nobody could review the populated one. One row per failure
+// shape the table exists to answer, all obviously fake, the demo user for
+// the one signed-in row; idempotent (only when the table is empty), and
+// strictly a no-op outside staging.
+async function seedStagingPhoneFailures(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const { rows } = await pool.query('SELECT count(*)::int AS n FROM phone_auth_failures');
+    if (!rows[0] || rows[0].n > 0) return;
+    await pool.query(
+      `INSERT INTO phone_auth_failures
+         (kind, user_id, phone_last4, error_code, provider_code, message, created_at)
+       VALUES
+         ('link_verify', 900001, '0101', 'phone_in_use', NULL,
+          'Staging demo: that phone number already has an account.',
+          NOW() - INTERVAL '2 days'),
+         ('verify', NULL, NULL, 'invalid_or_expired_code', 'INVALID_CODE',
+          'Staging demo: the code was mistyped or had expired.',
+          NOW() - INTERVAL '1 day'),
+         ('code_request', NULL, '9001', 'too_many_attempts', 'TOO_MANY_ATTEMPTS_TRY_LATER',
+          'Staging demo: too many attempts. Try again later.',
+          NOW() - INTERVAL '3 hours')`
+    );
+    log.info('db', 'Staging phone failure log seeded', { rows: 3 });
+  } catch (err) {
+    log.warn('db', 'Staging phone failure log seeding failed', { message: err.message });
+  }
+}
+
 async function seedStagingPlatformMail(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
 
