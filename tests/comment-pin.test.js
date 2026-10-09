@@ -145,6 +145,23 @@ test('the reworked mode: the bar as the view\'s header, the phone sheet, and the
     'the point under the fingers stays under them as the zoom changes');
 });
 
+test('the picture leaves the suggest flow\'s own overlays out, so the form never shows in it', () => {
+  const src = read('frontend/src/features/comment-pin/picture.ts');
+  // The form's Comment switch closes the form and opens the mode in the same
+  // breath, so the first view picture is drawn while the form is still
+  // leaving the screen: the sheet's slide-down on a phone, the kit shell's
+  // exit on a computer. Drawn, it reads as part of the page the comment is
+  // on, and the view keeps the picture until the page next scrolls, so the
+  // capture hides the overlay instead of waiting the exit out.
+  assert.ok(picture.PAGE_EXCLUDES.includes('#feedback-modal'), 'the form, in its sheet presentation');
+  assert.ok(picture.PAGE_EXCLUDES.includes('.un-modal'), 'the kit dialog\'s shell, the form on a computer');
+  assert.ok(picture.PAGE_EXCLUDES.includes('.un-backdrop'), 'the kit\'s dim, which would grey the whole page');
+  for (const sel of picture.PAGE_EXCLUDES) {
+    assert.match(sel, /^[.#][\w-]+$/, 'a selector SnapDOM can match, not a bare word');
+  }
+  assert.match(src, /exclude: \[\(el: Element\) => el === host, 'iframe', \.\.\.PAGE_EXCLUDES\]/);
+});
+
 // ── 2. Posting ────────────────────────────────────────────────────────
 
 test('the request says where the comment was pinned, in words', () => {

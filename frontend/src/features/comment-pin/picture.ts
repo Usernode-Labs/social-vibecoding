@@ -275,9 +275,29 @@ export function describeElement(el: Element | null): ElementInfo | null {
 }
 
 /**
- * The shell's own page as it is on screen, without the comment's own layer
- * and without frames, which are other documents (the app's is laid in from
- * its own picture).
+ * The overlays the suggest flow itself had on screen a moment before, which
+ * a picture of the page leaves out: the form still sliding away when the
+ * mode opens (its Comment switch), and the native kit's shells playing their
+ * exit — a dialog's on a computer, the Improve panel's. Drawn, such an
+ * overlay reads as part of the page the comment is on, and the view keeps
+ * the picture until the page next scrolls, so they are hidden rather than
+ * waited out. The kit's classes exist only while one of its surfaces is up;
+ * #feedback-modal is display:none whenever the form is not mid-exit itself,
+ * and a hidden element is skipped outright.
+ */
+export const PAGE_EXCLUDES = [
+  '#feedback-modal',
+  '.un-modal',
+  '.un-sheet',
+  '.un-panel',
+  '.un-action-sheet',
+  '.un-backdrop',
+] as const;
+
+/**
+ * The shell's own page as it is on screen, without the comment's own layer,
+ * without frames, which are other documents (the app's is laid in from its
+ * own picture), and without the flow's own overlays (PAGE_EXCLUDES).
  */
 async function drawShell(scale: number, host: Element): Promise<HTMLCanvasElement> {
   const snapdom = await loadLibrary();
@@ -288,7 +308,7 @@ async function drawShell(scale: number, host: Element): Promise<HTMLCanvasElemen
     dpr: 1,
     clip: { x: window.scrollX, y: window.scrollY, width: window.innerWidth, height: window.innerHeight },
     backgroundColor: getComputedStyle(document.body).backgroundColor || '#ffffff',
-    exclude: [(el: Element) => el === host, 'iframe'],
+    exclude: [(el: Element) => el === host, 'iframe', ...PAGE_EXCLUDES],
     excludeMode: 'hide',
   });
   return capture.toCanvas();
