@@ -164,7 +164,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Base images (node:22-alpine, node:22-bookworm-slim) come through
+      # Google's Docker Hub mirror. Pulls from Docker Hub here are anonymous,
+      # and Docker Hub limits those per IP address, which GitHub's runners
+      # share with everybody else's builds: on 9 Oct 2026 four releases in a
+      # row (20:52 to 21:15) failed in under a minute on "429 Too Many
+      # Requests" for node:22-alpine, and nothing merged went live for half
+      # an hour. mirror.gcr.io serves the same official images without that
+      # limit; BuildKit tries it first and falls back to Docker Hub itself.
       - uses: docker/setup-buildx-action@v4
+        with:
+          buildkitd-config-inline: |
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
 
       - name: Resolve Claude Code version
         id: claude
