@@ -87,6 +87,35 @@ function shotsCapacityEnv(config, app) {
   return app?.slug === config?.selfAppSlug ? { MAX_APPS: '0' } : {};
 }
 
+// Phone sign-in on Homeroom's own pair. The copies run the platform image,
+// whose NODE_ENV is 'production', so PHONE_TEST_CODE is refused there and a
+// change to the Join sheet's phone step could not be shot ("Phone sign-in is
+// not offered on these copies"). Each run gets its own random six-digit
+// code, the same on both sides, as SHOTS_PHONE_TEST_CODE: the fictional
+// test numbers (+1, any area code, 555 0100 to 0199) sign in with it and no
+// text is sent. A copy honours it only because it runs as
+// USERNODE_ENV=staging (config.js shotsPhoneTestCodeFrom); production and an
+// ordinary staging preview are never given it. A child app has no phone
+// sign-in, so its pair gets nothing.
+const PHONE_TEST_CODE_RE = /^[0-9]{6}$/;
+
+function newPhoneTestCode() {
+  return String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
+}
+
+function shotsPhoneSignInEnv(config, app, code) {
+  return app?.slug === config?.selfAppSlug && PHONE_TEST_CODE_RE.test(String(code || ''))
+    ? { SHOTS_PHONE_TEST_CODE: code } : {};
+}
+
+// The pair's code: made on its first reset and kept for every later one, so
+// both sides and every pass agree. Null for a child app.
+function pairPhoneTestCode(config, pair) {
+  if (pair?.app?.slug !== config?.selfAppSlug) return null;
+  if (!PHONE_TEST_CODE_RE.test(String(pair.phoneTestCode || ''))) pair.phoneTestCode = newPhoneTestCode();
+  return pair.phoneTestCode;
+}
+
 function hostedFixtureApp(runId) {
   return {
     id: shotsFixtures.HOSTED_APP_ID,
@@ -457,6 +486,7 @@ async function resetPair(config, pair, { onProgress = null } = {}) {
       clones.push([side, cloned]);
     }
     const cloneBySide = Object.fromEntries(clones);
+    const phoneTestCode = pairPhoneTestCode(config, pair);
     onProgress?.({ stage: 'deploy_pair' });
     const deployments = await allSettledValues(['base', 'head'].map(async (side) => {
       const spec = pair.sides[side];
@@ -465,6 +495,9 @@ async function resetPair(config, pair, { onProgress = null } = {}) {
       // the feature works for a member on a server with capacity. Disable
       // only this self-app limit inside disposable shots runtimes; neither
       // production nor an ordinary staging preview receives the override.
+      // Phone sign-in's test numbers are the same kind of shots-only
+      // override (shotsPhoneSignInEnv), and are left out of the fingerprint
+      // label below: a six-digit value's digest is a million guesses away.
       const shotsEnv = shotsCapacityEnv(config, pair.app);
       const deployed = await deployShotsRuntime(config, {
         app: pair.app,
@@ -478,6 +511,7 @@ async function resetPair(config, pair, { onProgress = null } = {}) {
           DATABASE_URL: dbManager.connectionUrl(spec.dbName, cloneBySide[side].password),
           ...spec.env,
           ...shotsEnv,
+          ...shotsPhoneSignInEnv(config, pair.app, phoneTestCode),
         },
         port: 3000,
         memory: docker.STAGING_MEMORY,
@@ -574,6 +608,9 @@ async function resetPair(config, pair, { onProgress = null } = {}) {
       availableFixtures,
       baseImageDigest: pair.sides.base.imageDigest,
       headImageDigest: pair.sides.head.imageDigest,
+      // For the shots agent's brief only (shots-orchestrator.js shotsBrief),
+      // which masks it out of everything the run stores.
+      phoneTestCode,
     };
   } catch (err) {
     await stopPair(config, pair);
@@ -621,6 +658,8 @@ module.exports = {
   legacyRuntimeName,
   dockerImageName,
   shotsCapacityEnv,
+  shotsPhoneSignInEnv,
+  pairPhoneTestCode,
   hostedFixtureApp,
   hostedFixtureRefs,
   removeRuntime,

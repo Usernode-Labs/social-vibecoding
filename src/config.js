@@ -130,6 +130,24 @@ function phoneTestCodeFrom(env) {
   return { code: raw, refused: null };
 }
 
+// SHOTS_PHONE_TEST_CODE: the same six digits, for the before & after shots
+// copies of Homeroom itself and nothing else. Those copies run the platform
+// image, whose NODE_ENV is 'production', so PHONE_TEST_CODE is refused there
+// and a change to the Join sheet's phone step had nothing to shoot. The
+// deployed platform hands each pair a fresh random code
+// (services/shots-environment.js shotsPhoneSignInEnv) and runs it as
+// USERNODE_ENV=staging. Honoured ONLY where USERNODE_ENV is exactly
+// 'staging': never in production, and app-manifest.js reserves the name, so
+// no dapp.json puts it on an ordinary staging preview either.
+function shotsPhoneTestCodeFrom(env) {
+  const raw = typeof env.SHOTS_PHONE_TEST_CODE === 'string' ? env.SHOTS_PHONE_TEST_CODE.trim() : '';
+  if (!raw) return { code: '', refused: null };
+  if (env.USERNODE_ENV === 'production') return { code: '', refused: 'production' };
+  if (env.USERNODE_ENV !== 'staging') return { code: '', refused: 'not a shots copy' };
+  if (!/^[0-9]{6}$/.test(raw)) return { code: '', refused: 'not six digits' };
+  return { code: raw, refused: null };
+}
+
 function canonicalCliOrigin(value, { allowLoopbackHttp = false } = {}) {
   if (typeof value !== 'string' || !value) return null;
   try {
@@ -870,8 +888,9 @@ function load() {
     // endpoint answering 404 not_offered, exactly as before this existed.
     firebasePhoneAuthEnabled: process.env.FIREBASE_PHONE_AUTH_ENABLED === 'true',
     firebaseWebApiKey: process.env.FIREBASE_WEB_API_KEY || '',
-    // Test numbers (phoneTestCodeFrom above). Never set in production.
-    phoneTestCode: phoneTestCodeFrom(process.env).code,
+    // Test numbers (phoneTestCodeFrom above, or shotsPhoneTestCodeFrom on a
+    // before & after shots copy). Never set in production.
+    phoneTestCode: phoneTestCodeFrom(process.env).code || shotsPhoneTestCodeFrom(process.env).code,
     // Platform outbound mail (login codes, waitlist confirmations,
     // waitlist release notices). src/services/mail/select.js picks the
     // transport once, here, from platform_env: Gmail API, a generic HTTP
@@ -1011,6 +1030,13 @@ function load() {
   } else if (phoneTest.refused) {
     console.error(`  PHONE_TEST_CODE=(refused: ${phoneTest.refused}) — test numbers are off`);
   }
+  // "(set)", never the code: the run's code lives in its brief only.
+  const shotsPhoneTest = shotsPhoneTestCodeFrom(process.env);
+  if (shotsPhoneTest.code && !phoneTest.code) {
+    console.log('  SHOTS_PHONE_TEST_CODE=(set) — a before & after shots copy: +1 … 555 0100–0199 sign in with the run\'s code; no text is sent');
+  } else if (shotsPhoneTest.refused) {
+    console.error(`  SHOTS_PHONE_TEST_CODE=(refused: ${shotsPhoneTest.refused}) — test numbers are off`);
+  }
   console.log(`  PLATFORM_MAIL=${config.mailTransport
     ? `${config.mailProvider}${config.mailStagingLogOnly ? ' (staging — rendered to the log, never delivered)' : ''} from=${config.mailFrom}`
     : '(no provider configured — OTP login codes and waitlist confirmations are NOT delivered)'}`);
@@ -1071,4 +1097,5 @@ module.exports = {
   canonicalNativeSessionV2Network,
   isLoopbackOrigin,
   phoneTestCodeFrom,
+  shotsPhoneTestCodeFrom,
 };

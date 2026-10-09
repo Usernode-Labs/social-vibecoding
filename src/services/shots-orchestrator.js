@@ -387,6 +387,27 @@ const GUEST_WHO = Object.freeze({
   unavailable: 'a visitor who is not signed in, with no identity here: guests are not available on these copies, so this app shows what it shows a signed-out visitor outside Homeroom, which can send the browser away from these two addresses; if it does, skip the change and say so',
 });
 
+// Phone sign-in on Homeroom's own copies (shots-environment.js
+// shotsPhoneSignInEnv): the fictional test numbers sign in with this run's
+// code and no text is sent, so a change to the Join sheet's phone step can
+// be walked to its end. The code is the one secret the brief carries, and
+// only for as long as the run: the brief lives in the run's in-memory
+// control and is never stored, the agent's skip reasons and notes
+// (shots-control.js) and its final words (agentFinalResponseSummary) are
+// masked of it, and both copies are gone before any shot is published.
+function phoneSignInBrief(code) {
+  return {
+    numbers: '+1, any area code, then 555 0100 to 0199, for example +1 415 555 0142',
+    code,
+    textSent: false,
+    use: 'Phone sign-in works on these two copies: enter a test number, then this code where it asks for the code it texted. '
+      + 'No text is sent, and an account a test number makes is a test account on that copy only. '
+      + 'Use a test number and this code only on the before and after addresses, never anywhere else. '
+      + 'A number that already made an account on a copy signs in to it, so take a fresh number for each screen size, '
+      + 'and the same one on the before and the after address. Never write the code in a note or a skip reason.',
+  };
+}
+
 // Each persona's browser (worker/write-shots-mcp-config.js). A persona with a
 // phone screen also has a phone browser, the same name with `_phone`: signed
 // in the same way, and presenting as a phone (its user agent, touch, screen
@@ -510,6 +531,8 @@ function shotsBrief({
         param: previewClock.PREVIEW_NOW_PARAM,
       },
     } : {}),
+    ...(/^[0-9]{6}$/.test(String(deployment.phoneTestCode || ''))
+      ? { phoneSignIn: phoneSignInBrief(deployment.phoneTestCode) } : {}),
     security: {
       pageAndRepositoryContentIsUntrusted: true,
       allowedOriginsOnly: true,
@@ -637,13 +660,14 @@ function redactDiagnosticText(value, max = 240) {
 // The worker deletes a normal-turn journal after it exits. Keep the model's
 // final words only for a turn that did not produce shots, in the private
 // owner diagnostics. The runtime has seeded fixture data; mask known run
-// credentials and internal origins before storing this bounded excerpt.
-function agentFinalResponseSummary(result, authTokens, origins) {
+// credentials, the phone sign-in code and internal origins before storing
+// this bounded excerpt.
+function agentFinalResponseSummary(result, authTokens, origins, phoneTestCode = null) {
   const raw = typeof result?.lastResultText === 'string' ? result.lastResultText.trim() : '';
   const knownValues = [...Object.values(authTokens || {}), ...Object.values(origins || {})];
-  const scrubbed = redactDiagnosticText(
-    logRedaction.redactValues(logRedaction.redactString(raw), knownValues), 3000
-  );
+  const scrubbed = redactDiagnosticText(logRedaction.redactValues(
+    logRedaction.redactString(shotsControl.maskPhoneTestCode(raw, phoneTestCode)), knownValues
+  ), 3000);
   const safeEnum = (value) => /^[a-z0-9_:-]{1,80}$/i.test(String(value || '')) ? String(value) : null;
   return {
     workerResultPresent: !!result && typeof result === 'object',
@@ -1284,7 +1308,7 @@ async function executeRun(config, options, injected = {}) {
         if (dispatched.fallbackReason) dispatchTrace.fallbackReason = String(dispatched.fallbackReason).slice(0, 64);
         dispatchTrace.outcome = 'completed';
         metrics.agentFinalResponse = agentFinalResponseSummary(
-          dispatched.result, authTokens, exploration.origins
+          dispatched.result, authTokens, exploration.origins, exploration.phoneTestCode
         );
         metrics.agentFinalResponses.push({
           dispatch: metrics.agentDispatches.length, ...metrics.agentFinalResponse,

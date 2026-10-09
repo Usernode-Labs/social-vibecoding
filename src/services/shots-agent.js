@@ -46,7 +46,12 @@ user agent, touch and screen density, so the app shows what it shows on a
 phone. The brief's screenBrowsers names the browser for every change and
 screen: use that one, and never shoot a phone screen in a desktop browser.
 Do not sign in (the guest stays signed out too), expose storage, leave the
-two addresses, or change or add a change.
+two addresses, or change or add a change. The one exception is phone sign-in:
+when the brief has phoneSignIn, a change whose steps go through a phone step
+(signing in, joining, or adding a phone) can be followed to its end with a
+test number and phoneSignIn.code, on the two addresses only, as
+phoneSignIn.use says. Signing in leaves that browser signed in on that
+address, so sign it out again before a change that needs it signed out.
 
 For each declared change and each of its screen sizes (viewports):
 1. In the browser screenBrowsers names for that change and screen, call
