@@ -14568,7 +14568,14 @@ const AppView = {
     if (served.includes('budget')) return `${conflict} · resumes after the daily budget reset`;
     if (n || fresh.mergeability === 'conflict' || /conflict/.test(String((g.detail && g.detail.note) || ''))) {
       // #3676: say who acts. "queued to fix" left a new member asking
-      // what they were meant to do; the answer is nothing.
+      // what they were meant to do. Usually the answer is nothing; but with
+      // failing checks the conflict lane waits for the author's next push
+      // (merge-queue.js conflictAdmission), so the line says that instead.
+      if (p.check_state === 'failing' || p.check_state === 'error') {
+        return viewer && viewer.isAuthor
+          ? `${conflict} · fixed after you fix the failing checks`
+          : `${conflict} · fixed after the author fixes the failing checks`;
+      }
       return `${conflict} · Homeroom will fix it, nothing to do`;
     }
     // Not a conflict the columns can see (a recording from before direct

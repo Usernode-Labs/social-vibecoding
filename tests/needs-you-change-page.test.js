@@ -487,7 +487,12 @@ test('a failing check opens its step onto the run, with each failure’s door; t
   const sync = s.rows.find((r) => r.gate === 'integration');
   assert.equal(sync.key, 'mergeability', 'the ledger row’s key is the data-note, so the declared checks still find it');
   assert.equal(sync.state, 'active');
-  assert.equal(sync.line, 'Conflict in 2 files · Homeroom will fix it, nothing to do');
+  // #3676: with failing checks the conflict lane waits for the author's next
+  // push (merge-queue.js conflictAdmission), so "nothing to do" would be false.
+  assert.equal(sync.line, 'Conflict in 2 files · fixed after the author fixes the failing checks');
+  const passing = plain(render(av, { ...item, check_state: 'passing', test_results: [] }).v.body.steps);
+  assert.equal(passing.rows.find((r) => r.gate === 'integration').line,
+    'Conflict in 2 files · Homeroom will fix it, nothing to do', 'otherwise Homeroom resolves it and nobody acts');
   assert.match(html, /data-note="mergeability" data-req-gate="integration" data-req-state="active"><span class="dev-step-mark dev-step-mark-active" aria-hidden="true"><span class="dc-status-icon dc-status-spinner-arc"/);
   assert.doesNotMatch(html, /Main has moved 8 commits ahead/, 'no sentence restating the sync');
   const checks = s.rows.find((r) => r.gate === 'checks');
