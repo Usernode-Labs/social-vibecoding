@@ -138,6 +138,13 @@ export interface HomeroomBotPlanQuestion {
 export interface HomeroomBotPlan {
   bullets: string[];
   questions: HomeroomBotPlanQuestion[];
+  /**
+   * #4488: a complicated change on a project that already exists, checked
+   * with the person who asked for it before it is built. Its spec (with its
+   * before and after screens) is on the request, whose card goes under it.
+   */
+  complicated?: boolean;
+  spec?: { sessionId: number; version: number } | null;
 }
 
 /**

@@ -1424,12 +1424,24 @@ const PLAN_GO_WORDS = new Set([
   'sounds good', 'build it please',
 ]);
 
+/** Pure (#4488): whether words written under a plan say to go ahead (PLAN_GO_WORDS). */
+function isPlanGoWord(text) {
+  return PLAN_GO_WORDS.has(String(text || '').trim().toLowerCase().replace(/[.!\s]+$/, '').replace(/\s+/g, ' '));
+}
+
 /** Pure (B6): a plan card's words, for the inbox, the push and anything that does not draw the card. */
-function planCardText({ appName, plan }) {
+function planCardText({ appName, plan, issueNumber = null }) {
   const bullets = (plan?.bullets || []).map((b) => `- ${b}`).join('\n');
   const asks = (plan?.questions || []).length
     ? `\n\n${plan.questions.length === 1 ? 'One choice' : 'Two choices'} for you, or I'll go with what I suggest.`
     : '';
+  // #4488: a complicated change on a project that already exists: its plan,
+  // and its before and after screens, are on the request too.
+  if (plan?.complicated) {
+    const line = issueNumber ? `**${appName}** request #${issueNumber}` : `your request on **${appName}**`;
+    return `Before I build ${line}, here's my plan:\n\n${bullets}${asks}\n\nIts before and after screens are on the request. `
+      + `Tap ${BUILD_IT} when it looks right, or Change something.`;
+  }
   return `Here's my plan for **${appName}**:\n\n${bullets}${asks}\n\nTap ${BUILD_IT} when it looks right, or Change something.`;
 }
 
@@ -1469,15 +1481,23 @@ async function sendPlanCard(pool, { app, issueNumber, runId, plan, bot, ws = nul
      VALUES ($1, $2, 'build_plan', $3) RETURNING id`,
     [requester.userId, app.id, clip(`The plan for ${name}`, 200)],
   );
+  // #4488: a complicated change on an existing project: not a first version,
+  // with its spec (read on the request, whose card goes under the plan).
+  const complicated = plan.complicated === true;
   const sent = await sendDm(pool, {
     bot,
     userId: requester.userId,
-    content: planCardText({ appName: name, plan: { bullets: plan.bullets, questions } }),
+    content: planCardText({ appName: name, plan: { bullets: plan.bullets, questions, complicated }, issueNumber }),
     idempotencyKey: `hrbot-plan-${runId}`,
     metadata: {
-      kind: PLAN_KIND, appSlug: app.slug, appName: name, issueNumber: Number(issueNumber), firstVersion: true,
-      plan: { bullets: plan.bullets, questions }, actionId: Number(action.id), status: 'open',
+      kind: PLAN_KIND, appSlug: app.slug, appName: name, issueNumber: Number(issueNumber), firstVersion: !complicated,
+      plan: {
+        bullets: plan.bullets, questions,
+        ...(complicated ? { complicated: true, ...(plan.spec ? { spec: plan.spec } : {}) } : {}),
+      },
+      actionId: Number(action.id), status: 'open',
     },
+    ...(complicated ? { objects: cardsFor(PLAN_KIND, {}, app, issueNumber) } : {}),
     replyToId: await requestStart(pool, { userId: requester.userId, appId: app.id, issueNumber }),
   });
   if (!sent?.messageId) {
@@ -1643,6 +1663,12 @@ async function changePlan(pool, { bot, user, target, message, deps = {} }) {
     && (newest.live_build_waiting_at || newest.build_session_id || newest.proposal_session_id)) {
     return reply(`I've already started building ${name}. Once it's ready to try, tell me here what to change.`);
   }
+  // #4488: a complicated change's plan is the request's, shared with its
+  // group: what to change is said there, and its next look plans it again.
+  const { rows: [planned] = [] } = await pool.query('SELECT plan FROM homeroom_bot_runs WHERE id = $1', [target.run_id]);
+  if (planned?.plan?.complicated === true) {
+    return changeOnRequest(pool, { user, target, text, app, issueNumber, reply, deps });
+  }
   await pool.query(
     `UPDATE homeroom_bot_runs
         SET plan_change = $2, awaiting_go_at = NULL, build_ok = COALESCE(build_ok, FALSE),
@@ -1674,6 +1700,63 @@ async function changePlan(pool, { bot, user, target, message, deps = {} }) {
     app: app.slug, issueNumber, userId: user.id,
   });
   return reply(`Thanks. I'll work that into a new plan for ${name} and send it here.`);
+}
+
+/**
+ * #4488: Change something under a complicated change's plan: their words are
+ * posted on the request's discussion as theirs (postOnRequest, which puts
+ * it first in the bot's queue), the plan stops waiting and its card says
+ * changes were asked for. Its next look plans it again with them, and the
+ * new plan comes here and to the request. Resolves what the bot said back.
+ */
+async function changeOnRequest(pool, { user, target, text, app, issueNumber, reply, deps = {} }) {
+  const line = `${app.name || app.slug} request #${issueNumber}`;
+  const posted = await postOnRequest(pool, { user, target, text, reason: 'plan_change', deps });
+  if (!posted.ok) return reply(`I couldn't post that on ${line}: ${posted.why}. Nothing was sent.`);
+  await pool.query(
+    `UPDATE homeroom_bot_runs SET awaiting_go_at = NULL, build_ok = COALESCE(build_ok, FALSE),
+            build_error = COALESCE(build_error, 'skipped: its requester asked to change the plan')
+      WHERE id = $1 AND awaiting_go_at IS NOT NULL AND build_session_id IS NULL AND proposal_session_id IS NULL`,
+    [target.run_id],
+  );
+  await pool.query(
+    'UPDATE homeroom_bot_dm_actions SET status = \'declined\', decided_at = NOW(), error = \'changed\' WHERE message_id = $1 AND status = \'open\'',
+    [target.message_id],
+  );
+  await setQuestionState(pool, Number(target.message_id), { status: 'closed', changing: true }, {
+    ws: deps.ws || null, conversationId: target.conversation_id, userId: user.id,
+  });
+  log.info('homeroom-bot-dm', 'A complicated change\'s plan is planned again with its requester\'s words, posted on the request', {
+    app: app.slug, issueNumber, userId: user.id,
+  });
+  return reply(`Thanks. I posted that on ${line}'s public discussion, and I'll plan it again with it and send the new plan here.`);
+}
+
+/**
+ * #4488: a complicated change's plan its requester said Build it to on the
+ * request itself: its card, wherever it was sent, says "Building it" with
+ * the answers it went with. Never throws.
+ */
+async function markPlanBuilt(pool, runId, { chosen = [], ws = null } = {}) {
+  try {
+    const { rows } = await pool.query(
+      'SELECT message_id, conversation_id, user_id FROM homeroom_bot_dm_messages WHERE kind = $2 AND run_id = $1',
+      [Number(runId), PLAN_KIND],
+    );
+    for (const row of rows) {
+      await pool.query(
+        'UPDATE homeroom_bot_dm_actions SET status = \'done\', decided_at = NOW() WHERE message_id = $1 AND status = \'open\'',
+        [row.message_id],
+      );
+      await setQuestionState(pool, Number(row.message_id), {
+        status: 'answered', chosen: 'build', answer: BUILD_IT, choices: (chosen || []).map((c) => c.answer),
+      }, { ws, conversationId: row.conversation_id, userId: row.user_id });
+    }
+    return rows.length;
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not mark a plan as built', { runId, err: err.message });
+    return 0;
+  }
 }
 
 /**
@@ -3935,6 +4018,9 @@ module.exports = {
   closePlanCards,
   decidePlanTap,
   changePlan,
+  changeOnRequest,
+  markPlanBuilt,
+  isPlanGoWord,
   waitingPlan,
   dmRecipient,
   untaggedRequester,

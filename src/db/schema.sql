@@ -10294,6 +10294,13 @@ CREATE INDEX IF NOT EXISTS homeroom_bot_runs_plan_unsent_idx
 -- itself rather than the project it was filed on (the triage's `platform`
 -- flag). Its requester is offered to move it to Homeroom's own board.
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS about_platform BOOLEAN;
+-- #4488: a `ready` verdict on an existing project the triage labelled
+-- complicated (a new screen or kind of thing, a change to how people get
+-- around or what it stores, two quite different ways to do it, or large).
+-- Its spec is drafted first and shown to its requester, whose Build it
+-- builds exactly that spec (`plan` holds { complicated, spec: { sessionId,
+-- version } }), and its screens are reviewed once it is built.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS complicated BOOLEAN;
 
 -- B9: a request asked for in a project's group chat, by mentioning Homeroom
 -- bot or by "Make this a request" on your own message. The message stays

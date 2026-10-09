@@ -475,6 +475,11 @@ const BOT_DM_ASK_KEY = 'staging-hrbot-ask';
 const BOT_DM_PLAN_KEY = 'staging-hrbot-plan';
 const BOT_DM_PLAN_ACTION_ID = 990002;
 const BOT_DM_TWO_QUESTIONS_KEY = 'staging-hrbot-two-questions';
+// #4488: a complicated change's plan on a project that already exists,
+// waiting for its requester's Build it, its screens on the request. A
+// fixture too: Build it names an action no row stands behind.
+const BOT_DM_COMPLICATED_PLAN_KEY = 'staging-hrbot-complicated-plan';
+const BOT_DM_COMPLICATED_PLAN_ACTION_ID = 990003;
 // #4046: and a first version's plan its maker already built, which the
 // card that follows its build sits under.
 const BOT_DM_BUILT_PLAN_KEY = 'staging-hrbot-plan-built';
@@ -639,6 +644,34 @@ async function ensureBotDmFixture(pool, user) {
           kind: 'question', appName: 'Staging demo app', issueNumber: 16,
           issueTitle: 'Staging demo, a weekly reminder', mirrors: true, status: 'open',
           question: questions[0].question, answers: questions[0].answers, questions, lead,
+        },
+      },
+    });
+  }
+  // #4488: a complicated change's plan, sent once, after what is there.
+  const complicatedSent = await pool.query(
+    `SELECT 1 FROM conversation_messages
+      WHERE conversation_id = $1 AND sender_id = $2 AND idempotency_key = $3`,
+    [opened.conversationId, bot.id, BOT_DM_COMPLICATED_PLAN_KEY]
+  );
+  if (!complicatedSent.rows.length) {
+    const plan = {
+      bullets: [
+        'Staging demo: a Leaderboard tab beside the list',
+        'Points for each item you finish, counted weekly',
+        'Your own place shown at the top',
+      ],
+      questions: [{ question: 'Who shows on the leaderboard?', answers: ['Everyone in the project', 'Only people who opt in'] }],
+      complicated: true,
+    };
+    await conversations.sendMessage(pool, { id: bot.id }, opened.conversationId, {
+      content: require('./homeroom-bot-dm').planCardText({ appName: 'Staging demo app', plan, issueNumber: 17 }),
+      idempotency_key: BOT_DM_COMPLICATED_PLAN_KEY,
+    }, {
+      metadata: {
+        homeroomBot: {
+          kind: 'plan', appName: 'Staging demo app', issueNumber: 17, firstVersion: false,
+          plan, actionId: BOT_DM_COMPLICATED_PLAN_ACTION_ID, status: 'open',
         },
       },
     });
