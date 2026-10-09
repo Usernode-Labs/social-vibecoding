@@ -10779,7 +10779,7 @@ CREATE TABLE IF NOT EXISTS homeroom_bot_dm_actions (
   error           TEXT,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   decided_at      TIMESTAMPTZ,
-  CONSTRAINT homeroom_bot_dm_actions_kind_check CHECK (kind IN ('file_request', 'withdraw_proposal', 'build_plan', 'move_request')),
+  CONSTRAINT homeroom_bot_dm_actions_kind_check CHECK (kind IN ('file_request', 'withdraw_proposal', 'build_plan', 'move_request', 'close_request')),
   CONSTRAINT homeroom_bot_dm_actions_status_check
     CHECK (status IN ('open', 'done', 'declined', 'failed'))
 );
@@ -10793,6 +10793,10 @@ COMMENT ON TABLE homeroom_bot_dm_actions IS 'staging:private';
 -- from a project's board to Homeroom's own (Move it to Homeroom / Keep it
 -- here). `app_id` is the project it is on and `source_issue_number` the
 -- request there; `issue_number` is the request it became on Homeroom's.
+-- #4525: `close_request`, an offer to propose closing one of its open
+-- requests (Propose to close / Keep it open). `app_id` is the project the
+-- request is on and `source_issue_number` the request it would close;
+-- `issue_number` is the close proposal filed when they tap.
 ALTER TABLE homeroom_bot_dm_actions
   ADD COLUMN IF NOT EXISTS session_id INTEGER REFERENCES chat_sessions(id) ON DELETE CASCADE;
 ALTER TABLE homeroom_bot_dm_actions ADD COLUMN IF NOT EXISTS source_issue_number INTEGER;
@@ -10800,7 +10804,7 @@ DO $$
 BEGIN
   ALTER TABLE homeroom_bot_dm_actions DROP CONSTRAINT IF EXISTS homeroom_bot_dm_actions_kind_check;
   ALTER TABLE homeroom_bot_dm_actions ADD CONSTRAINT homeroom_bot_dm_actions_kind_check
-    CHECK (kind IN ('file_request', 'withdraw_proposal', 'build_plan', 'move_request'));
+    CHECK (kind IN ('file_request', 'withdraw_proposal', 'build_plan', 'move_request', 'close_request'));
 END $$;
 
 -- The bot's own knobs, admin-tunable from its console section. `mode` is

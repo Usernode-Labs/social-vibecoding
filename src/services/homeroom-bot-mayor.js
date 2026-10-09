@@ -183,12 +183,17 @@ const KEEP_IT = 'Keep it';
 // to Homeroom's own board (homeroom-bot-move.js).
 const MOVE_IT = 'Move it to Homeroom';
 const KEEP_HERE = 'Keep it here';
+// #4525: the answers under an offer to propose closing one of their
+// requests, which goes to its group as a vote (homeroom-bot-move.js).
+const PROPOSE_CLOSE = 'Propose to close';
+const KEEP_OPEN = 'Keep it open';
 // The answers under each kind of offer (homeroom_bot_dm_actions.kind), the
 // one that does it first.
 const OFFER_ANSWERS = Object.freeze({
   file_request: Object.freeze([FILE_IT, NOT_NOW]),
   withdraw_proposal: Object.freeze([WITHDRAW_IT, KEEP_IT]),
   move_request: Object.freeze([MOVE_IT, KEEP_HERE]),
+  close_request: Object.freeze([PROPOSE_CLOSE, KEEP_OPEN]),
 });
 
 /**
@@ -342,6 +347,10 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '  own board: request_detail says aboutHomeroom when you left it for that reason. When they filed it or asked for',
     '  it, offer to move it there (offer_move_request). Nothing moves until they tap Move it to Homeroom under your',
     '  message, so never say it was moved.',
+    '- A request on one of their projects that is done, a duplicate or not wanted any more, when they ask you to',
+    '  propose closing it (offer_close_request). Nothing is proposed until they tap Propose to close under your',
+    '  message, and closing it is then still the project\'s group vote to decide: never say a request was closed,',
+    '  or that closing it was proposed.',
     '- Add their words to a request that already exists when they ask you to (comment_on_request): posted on its',
     '  public discussion under their name, and you look at the request again next. Say so.',
     '- Start one of their requests now when they ask you to (start_request): it goes to the front of your queue,',
@@ -395,9 +404,11 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '  Call things "request", "proposal" and the project by its name.',
     '- Keep a reply under 120 words unless they ask for detail.',
     '- Never write an em dash. Use a comma, a colon or a full stop instead.',
-    '- From this chat you cannot build, merge, vote, close requests or change settings, or change anybody else\'s',
+    '- From this chat you cannot build, merge, vote or change settings, or change anybody else\'s',
     '  proposal. Changes happen through requests and their proposals, and to your own proposals through',
-    '  revise_proposal. Everything you can do is listed above: never say you cannot do one of those things.',
+    '  revise_proposal. You cannot close a request yourself either: closing one is a proposal its group votes',
+    '  on, which you can offer to file (offer_close_request). Everything you can do is listed above:',
+    '  never say you cannot do one of those things.',
     '- Never say you will do something (revise, change, build, post, file, withdraw, report, look at it again)',
     '  unless a tool you called in this turn started it and its result says so, or progress or my_work shows it',
     '  under way. Never promise to follow up, look into, sort out, investigate or get back to them later: nothing',
@@ -590,6 +601,23 @@ const TOOLS = [
           project: { type: 'string', description: 'The project it is on: its name or short name.' },
           number: { type: 'integer', description: 'The request number.' },
           reason: { type: 'string', description: 'Why it is about Homeroom rather than the project, in a few plain words. They see it with the offer.' },
+        },
+        required: ['project', 'number', 'reason'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'offer_close_request',
+      description: 'Offer to propose closing one of their open requests that is done, a duplicate or not wanted any more. Not on a request that is already closed, or when a vote on closing it is open already. They see it under your reply with Propose to close and Keep it open; nothing is proposed unless they tap Propose to close. Then closing it goes to the project\'s group as a vote in their name, and it closes only when they approve. One offer per turn.',
+      parameters: {
+        type: 'object',
+        properties: {
+          project: { type: 'string', description: 'The project it is on: its name or short name.' },
+          number: { type: 'integer', description: 'The request number.' },
+          reason: { type: 'string', description: 'Why it should be closed, in a few plain words. They see it with the offer.' },
         },
         required: ['project', 'number', 'reason'],
         additionalProperties: false,
@@ -1162,6 +1190,16 @@ const CLAIMS = Object.freeze([
     instead: 'I haven\'t moved it yet.',
   },
   {
+    kind: 'closed',
+    // #4525: a request is closed only when its group approves the close
+    // proposal a tap filed. First person only: "I closed it", "I've proposed
+    // closing request #7".
+    re: /\bI(?:'ve| have)?(?: just| now| already)? (?:closed|proposed closing) (?:it|this|that|the request|your request|request #\d+|#\d+)\b/i,
+    backed: () => false,
+    said: 'says a request was closed',
+    instead: 'I haven\'t proposed closing it yet.',
+  },
+  {
     kind: 'reported',
     // "I've told the team", "I've reported it to the admins", "the team has
     // been told".
@@ -1258,8 +1296,8 @@ function checkNote(problems) {
     'No tool you called in this turn did that.',
     'If it happened earlier and the tools show it, say when. If they want it done now, call the tool that does it:',
     'offer_request drafts a request for them to file, comment_on_request posts on a request, start_request starts',
-    'one, revise_proposal changes your proposal, withdraw_proposal withdraws one of your proposals, report_problem',
-    'tells the Homeroom team. Otherwise say plainly that it has not been done.',
+    'one, revise_proposal changes your proposal, withdraw_proposal withdraws one of your proposals, offer_close_request',
+    'proposes closing a request, report_problem tells the Homeroom team. Otherwise say plainly that it has not been done.',
     `${promised}${unknown} Then call reply again.]`,
   ].join(' ').replace(/\s+/g, ' ').trim();
 }
@@ -1730,6 +1768,7 @@ async function runTool(pool, ctx, name, args) {
         return { ok: true, shown: 'They see it under your reply with File it and Not now. Nothing is filed until they tap File it.' };
       }
       case 'offer_move_request': return await offerMoveRequest(pool, ctx, args);
+      case 'offer_close_request': return await offerCloseRequest(pool, ctx, args);
       case 'reply': {
         ctx.reply = { text: clip(args.text, MAX_REPLY_CHARS), cards: args.cards, suggestions: args.suggestions };
         return { ok: true };
@@ -2381,19 +2420,23 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
   // #11 (WP3): an offer to withdraw one of its proposals is decided the same
   // way, by a tap, and names the proposal (session_id) it is about. #4239:
   // so is one to move a request to Homeroom's own board, which names the
-  // request (source_issue_number).
+  // request (source_issue_number). #4525: so is one to propose closing a
+  // request, which names the request it would close.
   const withdraw = o.kind === 'withdraw_proposal';
   const move = o.kind === 'move_request';
-  const kind = withdraw || move ? o.kind : 'file_request';
+  const close = o.kind === 'close_request';
+  const kind = withdraw || move || close ? o.kind : 'file_request';
   const { rows: [action] } = await pool.query(
     `INSERT INTO homeroom_bot_dm_actions (user_id, conversation_id, app_id, kind, title, details, session_id, source_issue_number)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
     [user.id, conversationId, o.app.id, kind, o.title, o.details || null, withdraw ? o.sessionId : null,
-      move ? o.issueNumber : null],
+      move || close ? o.issueNumber : null],
   );
   const moveSvc = require('./homeroom-bot-move');
   const body = move
     ? moveSvc.moveOfferText({ name, issueNumber: o.issueNumber, text, title: o.title, why: o.details })
+    : close
+    ? moveSvc.closeOfferText({ name, issueNumber: o.issueNumber, text, title: o.title, why: o.details })
     : withdraw
     ? [
       text || `Want me to withdraw this proposal on ${name}?`,
@@ -2418,8 +2461,9 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
     replyToId: message.id,
     // The proposal it would withdraw, to open before deciding.
     objects: withdraw ? [{ type: 'proposal', appId: Number(o.app.id), sessionId: Number(o.sessionId) }]
-      : move ? [{ type: 'issue', appId: Number(o.app.id), issueNumber: Number(o.issueNumber) }] : null,
-    metadata: move ? moveSvc.moveOfferMeta({ app: o.app, actionId: action.id }) : {
+      : move || close ? [{ type: 'issue', appId: Number(o.app.id), issueNumber: Number(o.issueNumber) }] : null,
+    metadata: move ? moveSvc.moveOfferMeta({ app: o.app, actionId: action.id })
+      : close ? moveSvc.closeOfferMeta({ app: o.app, actionId: action.id }) : {
       kind: 'confirm', appSlug: o.app.slug, appName: name, actionId: action.id,
       question: withdraw ? `Withdraw this proposal on ${name}?` : `File this as a request on ${name}?`,
       // `answers` for a client that predates `actions`.
@@ -2446,6 +2490,7 @@ const OFFER_WORDS = Object.freeze({
   file_request: { yes: new Set(['file it', 'file it please', 'please file it']), no: new Set(['not now']) },
   withdraw_proposal: { yes: new Set(['withdraw it', 'withdraw it please', 'please withdraw it']), no: new Set(['keep it']) },
   move_request: { yes: new Set(['move it', 'move it to homeroom', 'move it please', 'please move it']), no: new Set(['keep it here']) },
+  close_request: { yes: new Set(['propose to close', 'propose to close please', 'please propose to close', 'close it']), no: new Set(['keep it open']) },
 });
 const PLAIN_YES = new Set(['yes', 'yes please', 'yep', 'yeah', 'yup', 'sure', 'ok', 'okay', 'do it', 'go ahead', 'please do', 'file', 'go for it']);
 const PLAIN_NO = new Set(['no', 'nope', 'no thanks', 'cancel', 'don\'t', 'dont']);
@@ -2622,7 +2667,9 @@ async function settleOffer(pool, config, {
   );
   if (!claimed.length) {
     if (tapped) return { alreadyDecided: true };
-    if (action.status === 'done' && action.issue_number && action.kind !== 'move_request') return ack(...await alreadyFiled(pool, action));
+    if (action.status === 'done' && action.issue_number && action.kind !== 'move_request' && action.kind !== 'close_request') {
+      return ack(...await alreadyFiled(pool, action));
+    }
     return ack('That one is already decided.');
   }
   // The buttons give way to the choice on every device it is open on.
@@ -2635,6 +2682,9 @@ async function settleOffer(pool, config, {
   if (action.kind === 'withdraw_proposal') return decideWithdraw(pool, { bot, user, action, yes, ack, deps });
   if (action.kind === 'move_request') {
     return require('./homeroom-bot-move').decideMove(pool, config, { bot, user, settings, action, yes, ack, deps });
+  }
+  if (action.kind === 'close_request') {
+    return require('./homeroom-bot-move').decideClose(pool, config, { bot, user, settings, action, yes, ack, deps });
   }
   if (no) return ack('OK, I won\'t file it.');
   const { rows: apps } = await pool.query(
@@ -3417,6 +3467,35 @@ async function offerMoveRequest(pool, ctx, args) {
   };
 }
 
+/**
+ * #4525: an offer to propose closing one of their open requests, decided by
+ * a tap like any offer. The reason they gave travels with it: it is the
+ * close proposal's own.
+ */
+async function offerCloseRequest(pool, ctx, args) {
+  const { user, deps } = ctx;
+  if (ctx.offer) return { ok: false, error: 'You already put one thing under this reply for them to decide; one per turn. Nothing was proposed.' };
+  const app = await findApp(pool, args.project);
+  if (!app || !(await canView(pool, app, user))) return { ok: false, error: 'No such project. Check my_projects.' };
+  ctx.appIds.add(Number(app.id));
+  if (!(await canFile(pool, app, user))) {
+    return { ok: false, error: `They are not a member of ${app.name || app.slug}, so they cannot file requests there. They can join it from its page.` };
+  }
+  const moveSvc = require('./homeroom-bot-move');
+  const gate = await moveSvc.closeGate(pool, { app, issueNumber: args.number, deps });
+  if (!gate.ok) return { ok: false, error: `${gate.error} Nothing was proposed.` };
+  ctx.offer = {
+    kind: 'close_request', app, issueNumber: gate.issueNumber,
+    title: clip(withoutEmDashes(String(gate.issue.title || `Request ${gate.issueNumber}`).replace(/\s+/g, ' ')), MAX_TITLE_CHARS),
+    details: clip(withoutEmDashes(String(args.reason || '').replace(/\s+/g, ' ')), 600) || null,
+  };
+  return {
+    ok: true,
+    request: { project: app.slug, number: gate.issueNumber, title: gate.issue.title },
+    shown: 'They see it under your reply with Propose to close and Keep it open. Nothing is proposed until they tap Propose to close: ask them to, and never say it was proposed or closed.',
+  };
+}
+
 /** A tap under an offer to withdraw a proposal: Withdraw it withdraws it, if every gate still holds. */
 async function decideWithdraw(pool, { bot, user, action, yes, ack, deps = {} }) {
   if (!yes) return ack('OK, I\'ll leave it up.');
@@ -3605,6 +3684,8 @@ module.exports = {
   OFFER_ANSWERS,
   MOVE_IT,
   KEEP_HERE,
+  PROPOSE_CLOSE,
+  KEEP_OPEN,
   CANT_LOOK_TEXT,
   REPORT_SOURCE,
   MAX_REPORTS_PER_DAY,
@@ -3660,6 +3741,7 @@ module.exports = {
   findApp,
   canFile,
   offerMoveRequest,
+  offerCloseRequest,
   // #3772, #3769, #3768, #3771
   REQUEST_TIMEOUT_MS,
   DEFER_DELAYS_MS,

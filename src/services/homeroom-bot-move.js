@@ -124,6 +124,37 @@ async function moveGate(pool, { app, issueNumber, user, deps = {} }) {
 }
 
 /**
+ * #4525: the request a close offer is about, read fresh: an open issue
+ * (not a pull request) with no vote on closing it open already. Unlike a
+ * move, any open request of theirs may be offered, on any project. Resolves
+ * { ok: true, app, issueNumber, issue: { title } } or
+ * { ok: false, code, error } (not_found, unreadable, closed, already_proposed).
+ */
+async function closeGate(pool, { app, issueNumber, deps = {} }) {
+  const github = deps.github || require('./github');
+  const n = Number(issueNumber);
+  if (!app || !Number.isInteger(n) || n <= 0) return { ok: false, code: 'not_found', error: 'There is no such request.' };
+  const repo = repoOf(app);
+  if (!repo || !github.isEnabled()) return { ok: false, code: 'unreadable', error: 'Its request cannot be read right now.' };
+  let raw;
+  try {
+    raw = await github.getIssue(repo.owner, repo.repo, n);
+  } catch (err) {
+    log.warn('homeroom-bot-move', 'Could not read a request to close', { app: app.slug, issueNumber: n, err: err.message });
+    return { ok: false, code: 'not_found', error: 'There is no such request.' };
+  }
+  if (!raw || raw.pull_request) return { ok: false, code: 'not_found', error: 'There is no such request.' };
+  if (raw.state !== 'open') return { ok: false, code: 'closed', error: 'That request is already closed.' };
+  const { rows: open } = await pool.query(
+    `SELECT id FROM issues
+      WHERE app_id = $1 AND kind = 'close_issue' AND status = 'open' AND (payload->>'issueNumber')::int = $2`,
+    [app.id, n],
+  );
+  if (open.length) return { ok: false, code: 'already_proposed', error: 'A vote on closing it is already open.' };
+  return { ok: true, app, issueNumber: n, issue: { title: String(raw.title || '').trim() } };
+}
+
+/**
  * Who besides its author has taken part in a request, as short plain
  * reasons: empty when nobody has. Anything that cannot be read counts as
  * somebody, so a doubt always goes to a vote rather than a close.
@@ -366,6 +397,53 @@ async function decideMove(pool, config, { bot = null, user, settings, action, ye
 }
 
 /**
+ * #4525: a tap under a close offer (homeroom-bot-mayor.js settleOffer).
+ * Propose to close proposes closing the request to its group as a vote,
+ * in the tapper's name, with the reason the offer carried. `ack` sends the
+ * answer. Resolves what was sent.
+ */
+async function decideClose(pool, config, { bot = null, user, settings, action, yes, ack, deps = {} }) {
+  if (!yes) return ack('OK, I\'ll leave it open.');
+  const failed = async (error, text) => {
+    await pool.query('UPDATE homeroom_bot_dm_actions SET status = \'failed\', error = $2 WHERE id = $1', [action.id, clip(error, 300)]);
+    return ack(text);
+  };
+  const app = await appById(pool, action.app_id);
+  const gate = await closeGate(pool, { app, issueNumber: action.source_issue_number, deps });
+  if (!gate.ok) return failed(gate.code, `I couldn't propose it: ${gate.error}`);
+  const proposed = await proposeClose(pool, {
+    app, user, issueNumber: gate.issueNumber, issueTitle: gate.issue.title, reason: action.details, deps,
+  }).catch((err) => {
+    log.warn('homeroom-bot-move', 'Could not propose closing a request from a DM', { app: app.slug, issueNumber: gate.issueNumber, err: err.message });
+    return { ok: false, code: 'error' };
+  });
+  if (!proposed.ok) {
+    if (proposed.code === 'already_proposed') {
+      return failed(proposed.code, `A vote on closing request #${gate.issueNumber} on ${app.name || app.slug} is already open.`);
+    }
+    if (proposed.code === 'join_required') {
+      return failed(proposed.code, 'I couldn\'t propose it: you need to be a member of that project first. You can join it from its page.');
+    }
+    return failed(proposed.code || 'error', 'I couldn\'t propose it just now. Try again in a minute.');
+  }
+  await pool.query('UPDATE homeroom_bot_dm_actions SET issue_number = $2 WHERE id = $1', [action.id, proposed.id]);
+  const appName = app.name || app.slug;
+  // The request's line leads, which Messages draws as the card it carries
+  // (settleOffer's filing answer).
+  const line = dmModule(deps).requestLine({ appName, issueNumber: gate.issueNumber, issueTitle: gate.issue.title });
+  return ack(
+    `${line}\n\nDone. Closing it is now up for the group's vote: they'll see it on the request's page, and it closes only if they approve.`,
+    {
+      objects: [{ type: 'issue', appId: Number(app.id), issueNumber: gate.issueNumber }],
+      metadata: {
+        kind: 'filed', appSlug: app.slug, appName,
+        issueNumber: gate.issueNumber, issueTitle: gate.issue.title, closeProposalId: proposed.id,
+      },
+    },
+  );
+}
+
+/**
  * #4239: after the bot told a requester it left their request because it is
  * about Homeroom itself (homeroom-bot-dm.js relayIssuePost), the offer to
  * move it, under its own buttons. Offered once per request and person.
@@ -410,6 +488,30 @@ async function offerMove(pool, { bot, userId, app, issueNumber, title, reason = 
   }
 }
 
+/** Pure: the words of an offer to propose closing a request (#4525). */
+function closeOfferText({ name, issueNumber, text = null, title = null, why = null }) {
+  return [
+    text || `Want me to propose closing request #${issueNumber} on ${name}?`,
+    '',
+    `**${name}** · request #${issueNumber}${title ? `: ${clip(title, 140)}` : ''}`,
+    ...(why ? ['', `Why: ${clip(why, 600)}`] : []),
+    '',
+    'I can\'t close it myself: closing it goes to the project\'s group as a vote, and it closes only if they approve.',
+  ].join('\n');
+}
+
+/** Pure: a close offer's metadata: its question and buttons (homeroom-bot-mayor.js offerActions). */
+function closeOfferMeta({ app, actionId }) {
+  const name = app.name || app.slug;
+  return {
+    kind: 'confirm', appSlug: app.slug, appName: name, actionId: Number(actionId),
+    question: `Propose closing this request on ${name}?`,
+    // `answers` for a client that predates `actions`.
+    answers: [...mayorModule().OFFER_ANSWERS.close_request], actions: mayorModule().offerActions('close_request'),
+    status: 'open', mirrors: false,
+  };
+}
+
 /** Pure: the words of a move offer. */
 function moveOfferText({ name, issueNumber, text = null, title = null, why = null }) {
   return [
@@ -438,12 +540,16 @@ module.exports = {
   requestLink,
   movedFooter,
   moveGate,
+  closeGate,
   othersInvolved,
   proposeClose,
   closeNow,
   closedWords,
   decideMove,
+  decideClose,
   offerMove,
   moveOfferText,
   moveOfferMeta,
+  closeOfferText,
+  closeOfferMeta,
 };

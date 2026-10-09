@@ -75,10 +75,11 @@ test('it reads the platform with the agent-session Mayor\'s connector reads, nev
   assert.match(read('src/services/mayor/mcp-shim.js'), /subject: String\(rateSubject \?\? agentSessionId\),/);
 });
 
-test('the tools: fourteen lookups and actions and a reply, every one closed to extra arguments', () => {
+test('the tools: fifteen lookups and actions and a reply, every one closed to extra arguments', () => {
   assert.deepEqual(mayor.TOOLS.map((t) => t.function.name),
     ['progress', 'my_work', 'request_detail', 'my_projects', 'list_source', 'read_source', 'answer_question', 'revise_proposal',
-      'comment_on_request', 'start_request', 'offer_request', 'offer_move_request', 'withdraw_proposal', 'report_problem', 'reply']);
+      'comment_on_request', 'start_request', 'offer_request', 'offer_move_request', 'offer_close_request', 'withdraw_proposal',
+      'report_problem', 'reply']);
   for (const t of mayor.TOOLS) {
     assert.equal(t.type, 'function');
     assert.equal(t.function.parameters.additionalProperties, false, t.function.name);
@@ -395,7 +396,7 @@ test('#11 (WP3): a promise to come back later, "the team was told" and "I withdr
   assert.equal(mayor.stripClaims('Done, I withdrew the duplicate proposal.', [{ kind: 'withdrew' }]), 'I haven\'t withdrawn anything.');
   const note = mayor.checkNote([{ kind: 'promised', said: 'promises to come back to something later' }]);
   assert.match(note, /^\[Homeroom check, not from them: your reply promises to come back to something later\./);
-  assert.match(note, /withdraw_proposal withdraws one of your proposals, report_problem tells the Homeroom team/);
+  assert.match(note, /withdraw_proposal withdraws one of your proposals, offer_close_request proposes closing a request, report_problem tells the Homeroom team/);
   assert.match(note, /Never promise to look into something or come back to it later: say what you cannot do from here, and what they can do \(leave it, vote No on the proposal, comment on the request, or use Send feedback\), or offer report_problem\. Then call reply again\.\]$/);
   for (const text of [note, ...['promised', 'reported', 'withdrew'].map((k) => mayor.stripClaims('x', [{ kind: k }]))]) {
     assert.doesNotMatch(text, /—/);
@@ -427,6 +428,7 @@ test('#11 (WP3): withdrawing a proposal and telling the team are tools, describe
   assert.deepEqual(mayor.OFFER_ANSWERS, {
     file_request: ['File it', 'Not now'], withdraw_proposal: ['Withdraw it', 'Keep it'],
     move_request: ['Move it to Homeroom', 'Keep it here'],
+    close_request: ['Propose to close', 'Keep it open'],
   });
   assert.equal(mayor.REPORT_SOURCE, 'homeroom_bot');
 });
@@ -635,6 +637,47 @@ test('#4239: moving a request about Homeroom itself, as the model and the person
   assert.deepEqual(meta.actions.map((a) => [a.id, a.label, a.type]), [['yes', 'Move it to Homeroom', 'server'], ['no', 'Keep it here', 'server']]);
   assert.equal(meta.actionId, 9);
   for (const text of [move.moveOfferText({ name: 'Ear Trainer', issueNumber: 6, title: 'Header', why: 'It is the frame' }), tool.description]) {
+    assert.doesNotMatch(text, /\u2014/, 'no em dash');
+  }
+});
+
+// #4525: "can you propose closing request #4066? its done already" had the
+// bot answer it could not close requests from chat. It can offer to propose
+// closing one now, decided by a tap like any offer.
+test('#4525: offering to propose closing a request, as the model and the person see it', async () => {
+  const move = require('../src/services/homeroom-bot-move');
+  const tool = mayor.TOOLS.find((t) => t.function.name === 'offer_close_request').function;
+  assert.deepEqual(tool.parameters.required, ['project', 'number', 'reason']);
+  assert.match(tool.description, /done, a duplicate or not wanted any more/);
+  assert.match(tool.description, /Not on a request that is already closed, or when a vote on closing it is open already/);
+  assert.match(tool.description, /nothing is proposed unless they tap Propose to close/);
+  assert.match(tool.description, /closing it goes to the project's group as a vote in their name, and it closes only when they approve/);
+  const prompt = mayor.systemPrompt({ username: 'ada' });
+  assert.match(prompt, /propose closing it \(offer_close_request\)/);
+  assert.match(prompt, /Nothing is proposed until they tap Propose to close under your\n  message/);
+  assert.match(prompt, /You cannot close a request yourself either: closing one is a proposal its group votes\n  on, which you can offer to file \(offer_close_request\)/);
+  assert.doesNotMatch(prompt, /you cannot build, merge, vote, close requests or change settings/i,
+    'closing a request is no longer named among what it cannot do');
+  // Typed, its buttons' words decide only a close offer.
+  assert.deepEqual(mayor.typedDecision('Propose to close'), { yes: true, plain: false, kind: 'close_request' });
+  assert.deepEqual(mayor.typedDecision('close it'), { yes: true, plain: false, kind: 'close_request' });
+  assert.deepEqual(mayor.typedDecision('keep it open.'), { yes: false, plain: false, kind: 'close_request' });
+  // Only a tap proposes it: a reply that says it did is not sent as it is.
+  assert.equal(mayor.stripClaims('I closed request #7.', [{ kind: 'closed' }]), 'I haven\'t proposed closing it yet.');
+  assert.equal(mayor.stripClaims('I\'ve proposed closing it.', [{ kind: 'closed' }]), 'I haven\'t proposed closing it yet.');
+  const pool = { async query() { return { rows: [] }; } };
+  const ctx = { user: { id: 1 }, appIds: new Set() };
+  const kinds = async (text) => (await mayor.claimProblems(pool, ctx, text)).map((p) => p.kind);
+  assert.deepEqual(await kinds('I closed it.'), ['closed']);
+  assert.deepEqual(await kinds('I\'ve proposed closing it.'), ['closed']);
+  assert.deepEqual(await kinds('You can close it from its page.'), [], 'their own words are no claim of the bot\'s');
+  const meta = move.closeOfferMeta({ app: { slug: 'ear-trainer', name: 'Ear Trainer' }, actionId: 9 });
+  assert.deepEqual(meta.actions.map((a) => [a.id, a.label, a.type]), [['yes', 'Propose to close', 'server'], ['no', 'Keep it open', 'server']]);
+  assert.equal(meta.actionId, 9);
+  assert.equal(meta.question, 'Propose closing this request on Ear Trainer?');
+  assert.match(move.closeOfferText({ name: 'Ear Trainer', issueNumber: 6, title: 'Header', why: 'It is done' }),
+    /Want me to propose closing request #6 on Ear Trainer\?[\s\S]*\*\*Ear Trainer\*\* \u00b7 request #6: Header[\s\S]*Why: It is done[\s\S]*closing it goes to the project's group as a vote, and it closes only if they approve/);
+  for (const text of [move.closeOfferText({ name: 'Ear Trainer', issueNumber: 6, title: 'Header', why: 'It is done' }), tool.description]) {
     assert.doesNotMatch(text, /\u2014/, 'no em dash');
   }
 });
