@@ -203,5 +203,6 @@ test('staging holds each picture under ?demo=1, and ?shot= opens the feed on it'
   assert.match(ws, /shot === 'needs-diagram' \? 'diagram' : shot === 'needs-touches' \? 'touches'/);
   const check = require('../dapp.json').tests.find((t) => /author's diagram under that sentence/.test(t.name));
   assert.ok(check, 'folded into the existing Needs-you item check');
-  assert.match(check.expectSelector, /\[data-ws-diagram=\\?"rename\\?"\]\[data-diagram-source=\\?"author\\?"\]/);
+  assert.match(check.expectSelector, /:has\(\.dev-ws-item-summary \+ \[data-ws-diagram=rename\]\)/);
+  assert.ok(check.expectSelector.length <= 256, "the runner clips selectors at 256 characters");
 });
