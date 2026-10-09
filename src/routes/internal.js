@@ -27,6 +27,7 @@ const benchRunner = require('../services/bench/runner');
 const shotsControl = require('../services/shots-control');
 const shotsState = require('../services/shots-state');
 const shotsIdentities = require('../services/shots-identities');
+const shotsReadyStates = require('../services/shots-ready-states');
 
 // On-demand-TLS gate for Caddy. Caddy GETs this before issuing a Let's
 // Encrypt cert for a hostname it has never seen (see Caddyfile's
@@ -229,24 +230,32 @@ function internalRoutes(_config) {
     } catch (err) {
       return shotsError(res, err);
     }
-    // Whose browser the shots agent will use, said while the building agent
-    // can still declare again. Best-effort: a lookup that fails never fails
-    // a declaration that was recorded.
+    // Whose browser the shots agent will use, and what data the copies hold
+    // (shots-ready-states.js), said while the building agent can still
+    // declare again. Best-effort: a lookup that fails never fails a
+    // declaration that was recorded.
     let warnings = [];
+    let advice = null;
     try {
       const { rows } = await pool.query(
         'SELECT a.id, a.slug FROM chat_sessions s JOIN apps a ON a.id = s.app_id WHERE s.id = $1',
         [sessionId]
       );
       if (rows[0]) {
-        warnings = await shotsIdentities.personaWarnings(pool, rows[0], result.intent, {
-          selfApp: rows[0].slug === _config.selfAppSlug,
-        });
+        const selfApp = rows[0].slug === _config.selfAppSlug;
+        advice = shotsReadyStates.declarationAdvice(result.intent, { selfApp });
+        warnings = await shotsIdentities.personaWarnings(pool, rows[0], result.intent, { selfApp });
       }
     } catch (err) {
       log.warn('internal-api', 'Could not check the declared personas', { sessionId, err: err.message });
     }
-    return res.json({ ok: true, shots: result, ...(warnings.length ? { warnings } : {}) });
+    if (advice) warnings = [...warnings, ...advice.warnings];
+    return res.json({
+      ok: true,
+      shots: result,
+      ...(advice ? { availableStates: advice.availableStates, dataNote: advice.dataNote } : {}),
+      ...(warnings.length ? { warnings } : {}),
+    });
   };
   router.post('/api/internal/sessions/:sessionId/visible-changes',
     visibleChangesAuth, visibleChangesLimiter, declareVisibleChanges);

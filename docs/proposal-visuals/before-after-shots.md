@@ -108,6 +108,23 @@ external agent (`visible_changes` on the CLI's `proposal_submit_build`). The sha
   signed-out visitors declared for a signed-in persona
   (`shots-identities.personaWarnings`). They are warnings, not refusals: a
   change to the sign-in page itself is a real guest change.
+- The same answer says what data the copies hold
+  (`shots-ready-states.declarationAdvice`). `availableStates` names each
+  ready-made state with its personas (the demo states below; none for a
+  child app), and `dataNote` says where anything else comes from:
+  `hints.setup` steps the shots agent takes through the UI on both copies,
+  or the staging seeds (`src/db/migrate.js` for Homeroom, the app's own
+  `IS_STAGING` seed for a child app). A seed the proposal itself adds reaches
+  only the after copy. A warning is added when a declared change's claim,
+  steps or checkpoint name a state that no ready-made state holds (a
+  member's first-session tour, an invited account, the waitlist, an empty
+  state or a new account; on a child app also a change waiting for
+  approval and the rest) and the change has no `hints.setup`. These come
+  from a short list of phrases (`NEEDS`), so ordinary words like "plan" or
+  "invite" alone never warn. The data-state gap was the largest group of
+  changes with no shots (7 of 24 in about 125 merged proposals). These are
+  warnings too: the declaration is recorded either way. `submit_work`'s
+  answer does not carry them.
 - `hints` are optional. They pass on what the author learned while building
   (data to create first, text that proves the state was reached, and the
   element to point at), so the shots agent can go straight there. They are
@@ -162,14 +179,27 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
      "Suggest this back";
    - for the member: their chat with the Homeroom bot, with an activity card
      whose build waits its turn (working) and a newer card on the same
-     request.
+     request;
+   - for every persona: request #900017 (the staging mock request nothing
+     else marks), which a change of the member's addresses and which waits
+     for approval: "Waiting for approval · you" to the member, by the
+     member's name to the admins, with no Build it now;
+   - for every persona: the Leaderboard's season standings, where three of
+     the staging seeds' players have a Discord handle and two recorded
+     activities each, so their rows' drill-downs list activities with when
+     each happened;
+   - for the member: in the same chat with the Homeroom bot, the answered
+     plan for a new project's first version, and under it the bot's thanks
+     with the project's card and its build line (Building it). The project
+     has no first-version record, so no Home tile turns a build line for it.
 
    Each state goes into both copies or neither. A state the base or head
    revision cannot hold is left out of the run, as is one that fails to
    write on either side; neither fails the run. Every row is an obviously
    fake `[shots fixture]` row in a reserved id block (990840 to 990895). The
    brief's `availableFixtures` tells the agent each state's persona, what it
-   shows and its path.
+   shows and its path. An author is told the same states by name when they
+   declare a change (see "Declaring a change").
 
    The demo states are written by the deployed platform's own code, not by
    either revision under test. So a proposal cannot use a demo state it adds
@@ -442,6 +472,7 @@ browser). Each persona's browser saves files under
 | Shots agent prompt and dispatch | `src/services/shots-agent.js` |
 | Shots bridge (MCP server `shots`) | `worker/shots-mcp.js` |
 | Fixture identities and session copies; demo states for the personas | `src/services/shots-fixtures.js`, `src/services/shots-demo-states.js` |
+| What a declaration is told about the copies' data (`availableStates`, `dataNote`, data warnings) | `src/services/shots-ready-states.js` |
 | Persona tokens and the guest's (`mintShotsAuthTokens`, `shotsGuestIdentity`) | `src/services/shots-identities.js` |
 | Browser servers (`--output-dir`, `--save-video`) | `worker/write-shots-mcp-config.js` |
 | Egress proxy (origins, public-only egress, platform assets, controlled failures) | `worker/shots-origin-proxy.js` |
