@@ -240,8 +240,9 @@ const areaOf = (region) => Math.max(
 // each step takes about a tenth of a second, and this runs in the platform's
 // own process.
 async function screensFor(stories, files) {
-  const find = (storyId, viewport, side, variant) => files.find((file) => file.storyId === storyId
-    && file.viewport === viewport && file.side === side && file.variant === variant && file.media === 'png');
+  const find = (storyId, viewport, side, variant, colorScheme) => files.find((file) => file.storyId === storyId
+    && file.viewport === viewport && file.side === side && file.variant === variant && file.media === 'png'
+    && (file.colorScheme || 'light') === colorScheme);
   const cache = new Map();
   const pixelsOf = (file) => {
     if (!file) return null;
@@ -255,11 +256,12 @@ async function screensFor(stories, files) {
     }
   }
   const screens = [];
-  for (const viewport of viewports) {
+  const modes = [...new Set(files.filter((file) => file.media === 'png').map((file) => file.colorScheme || 'light'))];
+  for (const colorScheme of modes) for (const viewport of viewports) {
     const groups = [];
     for (const story of stories) {
-      const base = find(story.id, viewport, 'base', 'context');
-      const head = find(story.id, viewport, 'head', 'context');
+      const base = find(story.id, viewport, 'base', 'context', colorScheme);
+      const head = find(story.id, viewport, 'head', 'context', colorScheme);
       if (!base || !head) continue;
       const group = groups.find((entry) => entry.baseSha === base.sha256);
       if (group) group.stories.push(story);
@@ -275,8 +277,8 @@ async function screensFor(stories, files) {
         // may differ from the one shown only by what the agent hovered.
         const rects = {};
         for (const side of ['base', 'head']) {
-          const crop = find(story.id, viewport, side, 'focus');
-          const own = find(story.id, viewport, side, 'context');
+          const crop = find(story.id, viewport, side, 'focus', colorScheme);
+          const own = find(story.id, viewport, side, 'context', colorScheme);
           if (crop && own) await new Promise((resolve) => setImmediate(resolve));
           const places = crop && own ? locateAll(pixelsOf(own), pixelsOf(crop)) : [];
           const boxOf = (region) => (side === 'head' ? region.a : region.b);
@@ -302,6 +304,7 @@ async function screensFor(stories, files) {
         .map(({ region }) => region);
       screens.push({
         viewport,
+        ...(group.base.colorScheme ? { colorScheme } : {}),
         stories: group.stories.map((story) => story.id),
         shot: group.stories[0].id,
         width: before.w,

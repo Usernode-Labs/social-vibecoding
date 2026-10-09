@@ -63,9 +63,9 @@ test('a spec\'s viewer adds side by side, starts on auto, and offers close-up on
 
 test('the viewer CSS: the card\'s rules are untouched; side by side, auto and zoom are added beside them', () => {
   const css = read('public/css/app.css');
-  assert.match(css, /\.shots-stage > \.shots-flip-side \{[^}]*width: min\(100cqw, calc\(100cqh \* \(var\(--shots-shape, 16 \/ 10\)\)\)\); aspect-ratio: var\(--shots-shape, 16 \/ 10\);/);
+  assert.match(css, /\.shots-stage \.shots-flip-side \{[^}]*width: min\(100cqw, calc\(100cqh \* \(var\(--shots-shape, 16 \/ 10\)\)\)\); aspect-ratio: var\(--shots-shape, 16 \/ 10\);/);
   assert.match(css, /\.shots-viewer:has\(\.shots-side-both:checked\) \.shots-stage \{ grid-template-columns: minmax\(0, 1fr\) minmax\(0, 1fr\);/);
-  assert.match(css, /\.shots-viewer:has\(\.shots-side-both:checked\) \.shots-stage > \.shots-flip-after \{ grid-area: 1 \/ 2; \}/);
+  assert.match(css, /\.shots-viewer:has\(\.shots-side-both:checked\) \.shots-stage \.shots-flip-after \{ grid-area: 1 \/ 2; \}/);
   // Auto: After with no room, side by side with room, per screen size.
   assert.match(css, /@container \(max-width: 419\.98px\) \{\s*\.shots-viewer:has\(\.shots-side-auto:checked\) \.shots-view\[data-shots-viewport="phone"\] \.shots-flip-before \{ visibility: hidden; \}/);
   assert.match(css, /@container \(min-width: 420px\) \{\s*\.shots-viewer:has\(\.shots-side-auto:checked\) \.shots-view\[data-shots-viewport="phone"\] \.shots-stage \{ grid-template-columns/);

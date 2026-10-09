@@ -172,7 +172,7 @@ test('every screen sits in the same fixed stage, fitted at its own shape', () =>
   assert.doesNotMatch(html, /shots-flip-narrow|max-width/);
   const css = require('node:fs').readFileSync(require('node:path').join(__dirname, '../public/css/app.css'), 'utf8');
   assert.match(css, /\.shots-stage \{[^}]*container-type: size;[^}]*aspect-ratio: 16 \/ 10;/);
-  assert.match(css, /\.shots-stage > \.shots-flip-side \{[^}]*width: min\(100cqw, calc\(100cqh \* \(var\(--shots-shape, 16 \/ 10\)\)\)\); aspect-ratio: var\(--shots-shape, 16 \/ 10\);/);
+  assert.match(css, /\.shots-stage \.shots-flip-side \{[^}]*width: min\(100cqw, calc\(100cqh \* \(var\(--shots-shape, 16 \/ 10\)\)\)\); aspect-ratio: var\(--shots-shape, 16 \/ 10\);/);
   assert.match(css, /\.shots-view \{ grid-area: 1 \/ 1;[^}]*visibility: hidden; \}/, 'the screens share one cell, so the tallest sets the height');
   // Without recorded sizes a phone screen still reads as a phone.
   const unsized = AppView.shotsHtml({ ...value, artifacts: value.artifacts.map(({ width, height, ...rest }) => rest) }, { sessionId: 42 });
@@ -525,4 +525,20 @@ test('no state of the card says "Visual change preview"', () => {
       assert.doesNotMatch(html, /visual change preview/i, `${state} ${JSON.stringify(extra)}`);
     }
   }
+});
+
+test('paired photo appearances share one screen, default to the reader, and expose a local override', () => {
+  const value = shots();
+  const original = value.artifacts.filter((a) => a.url !== 'https://evil.example/x.png');
+  value.artifacts = original.map((a) => ({ ...a, colorScheme: 'light' })).concat(original.map((a, i) => ({ ...a, colorScheme: 'dark', id: id(String(i + 7)), url: url(String(i + 7)) })));
+  const html = AppView.shotsHtml(value, { sessionId: 42, thread: true });
+  assert.equal((html.match(/<figure class="shots-view"/g) || []).length, 1, 'appearances are not separate screens');
+  assert.match(html, /shots-appearance-auto[^>]*checked/);
+  assert.match(html, /aria-label="Show light photos"/);
+  assert.match(html, /aria-label="Show dark photos"/);
+  assert.match(html, /class="shots-photo-mode shots-photo-light"/);
+  assert.match(html, /class="shots-photo-mode shots-photo-dark"/);
+  assert.match(html, new RegExp(url('3')));
+  assert.match(html, new RegExp(url('9')));
+  assert.doesNotMatch(AppView.shotsHtml(shots(), { sessionId: 42 }), /shots-appearance-pick|shots-photo-mode/, 'single-mode runs have no misleading toggle');
 });

@@ -179,6 +179,7 @@ class RunControl {
     return shots.summarize(this.intent, this.saved, this.skipped, {
       fallbackReason: this.skippedAll, notes: this.notes,
       failed: this.failed, fallbackFailed: this.skippedAllFailed,
+      photoModes: this.context?.photoModes || ['light'],
     });
   }
 

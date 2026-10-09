@@ -149,7 +149,7 @@ test('every shots browser, the guest\'s included, is denied the tools that run c
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-denied-tools-'));
   try {
     const servers = Object.keys(writeConfig(dir).config.mcpServers).filter((name) => name.startsWith('browser_'));
-    assert.deepEqual(servers.sort(), ['browser_admin', 'browser_full_admin', 'browser_guest', 'browser_member']);
+    assert.deepEqual(servers.sort(), ['browser_admin', 'browser_admin_dark', 'browser_full_admin', 'browser_full_admin_dark', 'browser_guest', 'browser_guest_dark', 'browser_member', 'browser_member_dark']);
     for (const server of servers) {
       for (const tool of ['browser_evaluate', 'browser_run_code', 'browser_file_upload', 'browser_install']) {
         assert.ok(denied.has(`mcp__${server}__${tool}`), `${server} is denied ${tool}`);
@@ -234,7 +234,7 @@ test('the config writer gives each persona its own shots directory and records c
       SHOTS_JWT: 'secret-shots-jwt', SHOTS_MEMBER_TOKEN: 'secret-member-token',
     });
     assert.deepEqual(Object.keys(config.mcpServers).sort(),
-      ['browser_admin', 'browser_full_admin', 'browser_guest', 'browser_member', 'shots']);
+      ['browser_admin', 'browser_admin_dark', 'browser_full_admin', 'browser_full_admin_dark', 'browser_guest', 'browser_guest_dark', 'browser_member', 'browser_member_dark', 'shots']);
     // The bridge is named "shots" (Claude sees mcp__shots__*) and its
     // credentials come from the environment, never from this file.
     assert.deepEqual(config.mcpServers.shots, { command: 'node', args: ['/usr/local/bin/shots-mcp.js'] });
@@ -471,7 +471,7 @@ test('save_shot publishes only a plain .png the browser saved in a persona direc
     'the run\'s own addresses come from its brief');
   const [sent] = uploads(bridge);
   assert.equal(sent.method, 'POST');
-  assert.deepEqual(sent.query, { ...shot, kind: 'screen' });
+  assert.deepEqual(sent.query, { ...shot, kind: 'screen', colorScheme: 'light' });
   assert.equal(sent.headers['content-type'], 'application/octet-stream');
   assert.ok(Buffer.from(sent.body).equals(image));
 
@@ -696,4 +696,22 @@ test('a shots turn samples the worker\'s memory through the proxy, which the ima
   const asked = runner.indexOf('export SHOTS_MEMORY_SAMPLE_MS=5000');
   assert.ok(asked > 0, 'the runner sets the interval');
   assert.ok(asked < runner.indexOf('node /usr/local/bin/shots-origin-proxy.js &'), 'before the proxy starts');
+});
+
+ test('photo modes have fixed media emulation, shell preferences, and separate shot directories', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-modes-'));
+  try {
+    const { config } = writeConfig(dir, { SHOTS_RECORD_CLIPS: '1' });
+    for (const [server, mode] of [['browser_member', 'light'], ['browser_member_dark', 'dark']]) {
+      const args = config.mcpServers[server].args;
+      const appearance = JSON.parse(fs.readFileSync(args[args.indexOf('--config') + 1], 'utf8'));
+      assert.equal(appearance.browser.contextOptions.colorScheme, mode);
+      const script = fs.readFileSync(appearance.browser.initScript[0], 'utf8');
+      assert.match(script, new RegExp(`localStorage.setItem\\('theme', "${mode}"\\)`));
+      assert.match(script, /location.origin/);
+      assert.match(script, /history.replaceState/);
+      assert.equal(args[args.indexOf('--output-dir') + 1], path.join(dir, 'shots', 'member', ...(mode === 'dark' ? ['dark'] : [])));
+      if (mode === 'dark') assert.ok(!args.some((arg) => arg.startsWith('--save-video')));
+    }
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

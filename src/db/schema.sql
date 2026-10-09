@@ -9558,6 +9558,13 @@ CREATE TABLE IF NOT EXISTS shot_artifacts (
   created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE(run_id, story_id, viewport, side, variant, media)
 );
+-- Photo appearance is independent of viewport and comparison side. Existing
+-- shots remain the ordinary/light variant; a new run can retain both modes.
+ALTER TABLE shot_artifacts ADD COLUMN IF NOT EXISTS color_scheme VARCHAR(5) NOT NULL DEFAULT 'light'
+  CHECK (color_scheme IN ('light', 'dark'));
+ALTER TABLE shot_artifacts DROP CONSTRAINT IF EXISTS shot_artifacts_run_id_story_id_viewport_side_variant_media_key;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_shot_artifacts_mode_slot
+  ON shot_artifacts(run_id, story_id, viewport, side, variant, media, color_scheme);
 CREATE INDEX IF NOT EXISTS idx_shot_artifacts_run
   ON shot_artifacts(run_id, story_id, viewport);
 COMMENT ON TABLE shot_artifacts IS 'staging:private';

@@ -401,6 +401,7 @@ function shotsBrief({ run, session, revision, pair, deployment, intent, guestKin
     version: 2,
     runId: run.id,
     declaredChanges: intent.stories,
+    photoModes: ['light', 'dark'],
     addresses: { before: deployment.origins.base, after: deployment.origins.head },
     // Kept for the bridge's hosted-app catalog check, which keys on base/head.
     origins: deployment.origins,

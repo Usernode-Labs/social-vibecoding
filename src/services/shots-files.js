@@ -107,8 +107,8 @@ function changeFor(intent, changeId) {
   return story;
 }
 
-function slotKey({ storyId, viewport, side, variant }) {
-  return `${storyId}\u0000${viewport}\u0000${side}\u0000${variant}`;
+function slotKey({ storyId, viewport, side, variant, colorScheme = 'light' }) {
+  return `${storyId}\u0000${viewport}\u0000${side}\u0000${variant}\u0000${colorScheme}`;
 }
 
 // Where a saved file belongs: a declared change, one of its screen sizes, a
@@ -127,7 +127,14 @@ function shotTarget(intent, raw = {}) {
   if (kind.variant === 'animation' && !planContract.needsClip(story)) {
     throw new ShotError('clip_not_needed', `${story.id} is not declared as motion; save still shots for it.`);
   }
-  return { storyId: story.id, viewport, side, variant: kind.variant, media: kind.media };
+  if (raw.colorScheme != null && !['light', 'dark'].includes(raw.colorScheme)) {
+    throw new ShotError('invalid_color_scheme', 'Photo appearance must be light or dark.');
+  }
+  if (kind.media !== 'png' && raw.colorScheme === 'dark') {
+    throw new ShotError('invalid_color_scheme', 'Clips use the ordinary light browser.');
+  }
+  return { storyId: story.id, viewport, side, variant: kind.variant, media: kind.media,
+    ...(raw.colorScheme == null ? {} : { colorScheme: raw.colorScheme }) };
 }
 
 // Whether a skip says the after build broke ('failed') or the state could
@@ -202,11 +209,12 @@ function checkElementSize(story, target, info, screenFile = null) {
 function identicalStories(intent, saved) {
   const ids = new Set();
   for (const story of intent.stories) {
-    const same = story.viewports.every((viewport) => {
-      const base = saved.get(slotKey({ storyId: story.id, viewport: viewport.name, side: 'base', variant: 'context' }));
-      const head = saved.get(slotKey({ storyId: story.id, viewport: viewport.name, side: 'head', variant: 'context' }));
+    const modes = [...new Set([...saved.values()].filter((file) => file.storyId === story.id && file.media === 'png').map((file) => file.colorScheme || 'light'))];
+    const same = modes.every((colorScheme) => story.viewports.every((viewport) => {
+      const base = saved.get(slotKey({ storyId: story.id, viewport: viewport.name, side: 'base', variant: 'context', colorScheme }));
+      const head = saved.get(slotKey({ storyId: story.id, viewport: viewport.name, side: 'head', variant: 'context', colorScheme }));
       return !!base && !!head && base.sha256 === head.sha256;
-    });
+    }));
     if (same && story.viewports.length) ids.add(story.id);
   }
   return ids;
@@ -240,7 +248,7 @@ function missingWords(viewport, side, variant) {
 // skip of everything) only explains the changes that are not ready, and
 // `fallbackFailed` says that skip was the app breaking.
 function summarize(intent, saved, skipped = new Map(), {
-  fallbackReason = null, notes = new Map(), failed = new Set(), fallbackFailed = false,
+  fallbackReason = null, notes = new Map(), failed = new Set(), fallbackFailed = false, photoModes = ['light'],
 } = {}) {
   const published = [];
   const results = intent.stories.map((story) => {
@@ -253,9 +261,12 @@ function summarize(intent, saved, skipped = new Map(), {
     for (const viewport of story.viewports) {
       for (const side of ['base', 'head']) {
         for (const variant of ['context', 'focus', 'animation']) {
-          const file = saved.get(slotKey({ storyId: story.id, viewport: viewport.name, side, variant }));
-          if (file) files.push(file);
-          else if (required.includes(variant)) missing.push(missingWords(viewport.name, side, variant));
+          for (const colorScheme of variant === 'animation' ? ['light'] : photoModes) {
+            const file = saved.get(slotKey({ storyId: story.id, viewport: viewport.name, side, variant, colorScheme }));
+            if (file) files.push(file);
+            else if (required.includes(variant)) missing.push(missingWords(viewport.name, side, variant)
+              + (photoModes.length > 1 && variant !== 'animation' ? ` in ${colorScheme} mode` : ''));
+          }
         }
       }
     }
@@ -276,7 +287,7 @@ function summarize(intent, saved, skipped = new Map(), {
   const stories = markUnchanged(results, identicalStories(intent, saved));
   const ready = stories.filter((story) => story.status === 'ready').length;
   const manifest = published
-    .map(({ storyId, viewport, side, variant, sha256: digest }) => ({ storyId, viewport, side, variant, sha256: digest }))
+    .map(({ storyId, viewport, side, variant, colorScheme, sha256: digest }) => ({ storyId, viewport, side, variant, ...(colorScheme ? { colorScheme } : {}), sha256: digest }))
     .sort((a, b) => slotKey(a).localeCompare(slotKey(b)));
   return {
     stories,

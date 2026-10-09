@@ -1510,7 +1510,23 @@ function ShotsPicture({ v, near, wide }: {
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  const screen = pickScreen(v.screens || [], wide);
+  const [appearance, setAppearance] = useState<'auto' | 'light' | 'dark'>('auto');
+  const [viewerMode, setViewerMode] = useState<'light' | 'dark'>('light');
+  useEffect(() => {
+    const root = document.documentElement;
+    const sync = () => setViewerMode(root.classList.contains('dark') ? 'dark' : 'light');
+    sync();
+    const observer = new MutationObserver(sync);
+    observer.observe(root, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
+  const mode = appearance === 'auto' ? viewerMode : appearance;
+  const allScreens = v.screens || [];
+  const initial = pickScreen(allScreens, wide);
+  const screen = allScreens.find((s) => initial && s.viewport === initial.viewport
+    && s.changes.join(',') === initial.changes.join(',') && (s.colorScheme || 'light') === mode) || initial;
+  const hasPhotoModes = screen && ['light', 'dark'].every((m) => allScreens.some((s) => s.viewport === screen.viewport
+    && s.changes.join(',') === screen.changes.join(',') && (s.colorScheme || 'light') === m));
   if (!screen) return null;
   const W = screen.width;
   const H = Math.max(screen.before.height, screen.after.height);
@@ -1583,6 +1599,10 @@ function ShotsPicture({ v, near, wide }: {
           <button type="button" className="dev-ws-seg-btn dev-ws-seg-after" aria-pressed={side === 'after'} onClick={() => setSide('after')}>After</button>
         </div>
         <span className="dev-ws-media-size">{size}</span>
+        {hasPhotoModes ? <select className="dev-ws-photo-appearance" aria-label="Photo appearance" value={appearance}
+          onChange={(e) => setAppearance(e.target.value as 'auto' | 'light' | 'dark')}>
+          <option value="auto">Auto</option><option value="light">Light</option><option value="dark">Dark</option>
+        </select> : null}
       </div>
       <div
         className="dev-ws-media-view"

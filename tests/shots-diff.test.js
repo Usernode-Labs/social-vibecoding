@@ -136,3 +136,18 @@ test('unchangedStories names the changes whose every screen shows no difference'
   assert.deepEqual([...diff.unchangedStories([])], []);
   assert.deepEqual([...diff.unchangedStories(undefined)], []);
 });
+
+test('screens pair and outline photos within their own appearance only', async () => {
+  const stories = [{ id: 'change', viewports: [{ name: 'desktop' }] }];
+  const modes = ['light', 'dark'];
+  const files = modes.flatMap((colorScheme, i) => ['base', 'head'].map((side) => ({
+    ...file('change', 'desktop', side, 'context', screen(120, 80, side === 'head' ? [[20 + i * 40, 20, 10, 15, [100, 20, 30]]] : [], i ? [20, 20, 20] : [245, 245, 247])),
+    colorScheme,
+  })));
+  const screens = await diff.screensFor(stories, files);
+  assert.equal(screens.length, 2);
+  assert.deepEqual(screens.map((s) => s.colorScheme), modes);
+  assert.ok(screens[0].regions[0].a[0] < screens[1].regions[0].a[0], 'each appearance retains its own measured difference');
+  const mismatched = await diff.screensFor(stories, [files[0], files[3]]);
+  assert.equal(mismatched.length, 0, 'a light before never pairs with a dark after');
+});

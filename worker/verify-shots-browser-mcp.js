@@ -157,7 +157,7 @@ async function main() {
       fs.mkdirSync(path.join(dir, 'shots', persona), { recursive: true });
     }
     const config = JSON.parse(fs.readFileSync(output, 'utf8'));
-    for (const persona of ['browser_member', 'browser_admin', 'browser_full_admin', 'browser_guest']) {
+    for (const persona of ['browser_member', 'browser_admin', 'browser_full_admin', 'browser_guest', 'browser_member_dark']) {
       fs.writeFileSync(diagnosticFile, '');
       const tools = await verifyBrowser(config.mcpServers[persona]);
       const records = fs.readFileSync(diagnosticFile, 'utf8').trim().split('\n')

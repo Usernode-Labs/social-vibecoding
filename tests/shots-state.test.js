@@ -756,3 +756,13 @@ test('interruption budgets: rollouts spend only the ceiling, crashes keep the or
   assert.equal(allowed(state.MAX_INTERRUPTED_RETRIES, 0), false, 'but not forever');
   assert.equal(state.interruptedRetryAllowed({}), false, 'uncounted means no promise');
 });
+
+test('artifact persistence includes appearance without changing the revision fence', async () => {
+  const { pool, statements } = storePool(reviewingRun());
+  const ordinary = storedFiles()[0];
+  await state.storeArtifacts(pool, RUN_ID, [{ ...ordinary, colorScheme: 'light' }, { ...ordinary, colorScheme: 'dark' }], { headSha: HEAD_SHA, planHash: MANIFEST_HASH });
+  const inserts = statements.filter(({ sql }) => /^INSERT/.test(sql));
+  assert.equal(inserts.length, 2);
+  assert.match(inserts[0].sql, /color_scheme/);
+  assert.deepEqual(inserts.map((row) => row.values[15]), ['light', 'dark']);
+});

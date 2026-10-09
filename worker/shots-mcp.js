@@ -75,20 +75,21 @@ function refused(code, message) {
 // A screenshot the browser saved under the given name. Only a plain .png
 // directly inside one persona's directory is readable: the agent names it and
 // cannot point this bridge at browser storage state or any other file.
-function savedScreenshot(file) {
+function savedScreenshot(file, colorScheme = 'light') {
   if (!shotsDir) throw refused('shots_not_configured', 'Saving shots is not set up for this turn.');
   const name = path.basename(String(file || ''));
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,150}\.png$/.test(name)) {
     throw refused('invalid_shot_file', 'Name the .png file browser_take_screenshot saved, e.g. "invite-desktop-after.png".');
   }
   for (const persona of PERSONA_DIRS) {
-    const candidate = path.join(shotsDir, persona, name);
+    const dir = colorScheme === 'dark' ? path.join(shotsDir, persona, 'dark') : path.join(shotsDir, persona);
+    const candidate = path.join(dir, name);
     try {
       if (fs.lstatSync(candidate).isFile()) {
         // The site the browser observer stamped this image with: the page it
         // was taken on (shots-boundary.js).
         const image = fs.readFileSync(candidate);
-        return { image, origin: boundary.screenshotOrigin(path.join(shotsDir, persona), name, image) };
+        return { image, origin: boundary.screenshotOrigin(dir, name, image) };
       }
     } catch { /* try the next persona's directory */ }
   }
@@ -170,6 +171,7 @@ server.registerTool('save_shot', {
       screen: z.string().min(1).max(32),
       side: z.enum(['before', 'after']),
       kind: z.enum(['screen', 'element']).optional(),
+      colorScheme: z.enum(['light', 'dark']).default('light'),
       file: z.string().min(1).max(512),
     })).min(1).max(24),
   },
@@ -179,12 +181,12 @@ server.registerTool('save_shot', {
   // not these requests. A refused file does not stop the others.
   const results = [];
   let pair = null;
-  for (const { change, screen, side, kind = 'screen', file } of shots) {
+  for (const { change, screen, side, kind = 'screen', file, colorScheme = 'light' } of shots) {
     try {
-      const { image, origin } = savedScreenshot(file);
+      const { image, origin } = savedScreenshot(file, colorScheme);
       pair = pair || await pairOrigins();
       requireOnApp(side, [origin], pair);
-      const query = new URLSearchParams({ change, screen, side, kind });
+      const query = new URLSearchParams({ change, screen, side, kind, colorScheme });
       const result = (await request(`/shot?${query}`, { method: 'POST', binary: image })).result;
       results.push({ change, screen, side, kind, file, saved: true, result });
     } catch (error) {

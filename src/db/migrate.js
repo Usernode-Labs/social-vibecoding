@@ -150,6 +150,7 @@ async function migrate(config) {
   await seedStagingCustomDomains(pool);
   await seedStagingPublicApiContributors(pool);
   await seedStagingVisuals(pool);
+  await require('../services/staging-shot-appearances').seed(pool, config);
   await seedStagingLeaderboardProfile(pool);
   await seedStagingQaSession(pool, config);
   await seedStagingCloneQuestionSuggestions(pool, config);

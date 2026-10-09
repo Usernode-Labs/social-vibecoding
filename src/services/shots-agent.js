@@ -42,7 +42,16 @@ visitor who is not signed in sees, and the brief says what that is here.
 Do not sign in (the guest stays signed out too), expose storage, leave the
 two addresses, or change or add a change.
 
-For each declared change and each of its screen sizes (viewports):
+Photos must be saved in both light and dark appearance. The ordinary persona
+browser is fixed to light mode; the matching browser with suffix _dark is
+fixed to dark mode (browser_member_dark, browser_admin_dark,
+browser_full_admin_dark, browser_guest_dark). Use each one for its own mode,
+close it after its work to release Chromium, and name files with the mode.
+Pass colorScheme "light" or "dark" on every save_shot entry. Do not change
+the app's appearance controls: these browsers already set appearance before
+paint. Record clips only with the ordinary/light browser, as before.
+
+For each declared change, each screen size (viewport), and each photo mode:
 1. Call browser_resize with that width and height. Then open the start path
    again, even when the page is already open: some apps choose their layout
    once, when the page loads, so a page loaded at another size keeps the
@@ -77,7 +86,7 @@ For each declared change and each of its screen sizes (viewports):
    drawn over its edges such as a badge on a corner; for a change only a few
    pixels across, pick the bar or card around it.
 6. Save both in one save_shot call: list each file with the change id, the
-   screen name, side "after", and kind "screen" or "element". When the same
+   screen name, side "after", kind "screen" or "element", and colorScheme. When the same
    screen also shows another declared change at this size, list the
    screenshot again for that change in the same call instead of shooting it
    twice.
@@ -87,7 +96,7 @@ For each declared change and each of its screen sizes (viewports):
    intent.baseState is "not_present", shoot the same place where the new
    thing appears on the after side, do not look for a different screen, and
    leave out the element shot on that side.
-8. If the change's intent.animation is "motion", a still cannot show it, so
+8. In light mode only, if the change's intent.animation is "motion", a still cannot show it, so
    also record a clip of each side: call browser_close, browser_resize to the
    same screen size again, open the start path, do only the steps that
    trigger the motion, wait for it to finish, call browser_close again, then
@@ -108,7 +117,8 @@ state), and save everything for a state together.
 
 If a screen needs data you create through the app (hints.setup), create it
 the same way on both addresses before you shoot either, so the two sides
-differ only by the change.
+differ only by the change. Create this data only once per address, not again
+for the dark browser: both appearance browsers share each copy’s database.
 
 If the brief has previewAt, the change only shows at certain times, and
 previewAt.label says when in plain words. Open both copies at that moment:
