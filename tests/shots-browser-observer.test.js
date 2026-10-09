@@ -369,6 +369,72 @@ test('with clips recorded, the pointer is parked before the session closes', asy
   plain.parker.close();
 });
 
+test('a hover places the pointer only once it succeeds, and only with no click since', async () => {
+  const answer = (h, id, isError = false) => h.parker.output.write(
+    `${JSON.stringify({ result: { isError, content: [] }, jsonrpc: '2.0', id })}\n`);
+  // A failed hover leaves the click's pointer dirty.
+  const failed = parkerHarness();
+  failed.parker.input.write(call(1, 'browser_click', { element: 'a', ref: 'e1' })
+    + call(2, 'browser_hover', { element: 'b', ref: 'e2' }) + call(3, 'browser_take_screenshot'));
+  await failed.tick();
+  assert.deepEqual(failed.names(), ['browser_click', 'browser_hover'], 'the screenshot waits for the hover');
+  answer(failed, 1);
+  answer(failed, 2, true);
+  await failed.tick();
+  assert.deepEqual(failed.names().slice(2), ['browser_mouse_move_xy']);
+  assert.deepEqual(failed.answerIds(), [1, 2], 'the hover answer still reaches the agent');
+  failed.parker.close();
+  // A successful hover keeps the pointer where the agent put it.
+  const placed = parkerHarness();
+  placed.parker.input.write(call(1, 'browser_click', { element: 'a', ref: 'e1' })
+    + call(2, 'browser_hover', { element: 'b', ref: 'e2' }) + call(3, 'browser_take_screenshot'));
+  await placed.tick();
+  answer(placed, 2);
+  await placed.tick();
+  assert.deepEqual(placed.names(), ['browser_click', 'browser_hover', 'browser_take_screenshot']);
+  placed.parker.close();
+  // A click after the hover wins, even when the hover answers later.
+  const clicked = parkerHarness();
+  clicked.parker.input.write(call(1, 'browser_hover', { element: 'b', ref: 'e2' })
+    + call(2, 'browser_click', { element: 'a', ref: 'e1' }) + call(3, 'browser_take_screenshot'));
+  await clicked.tick();
+  answer(clicked, 1);
+  await clicked.tick();
+  assert.deepEqual(clicked.names(), ['browser_hover', 'browser_click', 'browser_mouse_move_xy']);
+  clicked.parker.close();
+});
+
+test('while a screenshot waits for its park, the parker reads no further input', async () => {
+  const h = parkerHarness();
+  let first = false;
+  let second = false;
+  h.parker.input.write(call(1, 'browser_click', { element: 'a', ref: 'e1' }) + call(2, 'browser_take_screenshot'), () => { first = true; });
+  h.parker.input.write(call(3, 'browser_snapshot'), () => { second = true; });
+  await h.tick();
+  assert.equal(first, false);
+  assert.equal(second, false);
+  assert.deepEqual(h.names(), ['browser_click', 'browser_mouse_move_xy']);
+  h.parker.output.write(`${JSON.stringify({ jsonrpc: '2.0', id: h.forwarded[1].id, result: { content: [] } })}\n`);
+  await h.tick();
+  assert.equal(first, true);
+  assert.equal(second, true);
+  assert.deepEqual(h.names(), ['browser_click', 'browser_mouse_move_xy', 'browser_take_screenshot', 'browser_snapshot']);
+  h.parker.close();
+});
+
+test('a held answer past the cap streams on in its own chunks and is reported', async () => {
+  const h = parkerHarness();
+  h.parker.input.write(call(1, 'browser_hover', { element: 'b', ref: 'e2' }));
+  await h.tick();
+  const piece = Buffer.alloc(1024 * 1024, 'a');
+  for (let i = 0; i < 9; i += 1) h.parker.output.write(piece);
+  await h.tick();
+  assert.equal(Buffer.concat(h.answered).length, 9 * piece.length);
+  assert.ok(h.answered.every((chunk) => chunk.length <= piece.length), 'no second full copy');
+  assert.deepEqual(h.events.map((event) => event.outcome), ['held_line_over_cap']);
+  h.parker.close();
+});
+
 test('observer exits after a client stops the browser while stdin remains open', async () => {
   const observerPath = path.join(__dirname, '..', 'worker', 'shots-browser-observer.js');
   const stub = `process.stdin.on('data',chunk=>{const m=JSON.parse(chunk.toString());process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result:{content:[]}})+'\\n')});`;

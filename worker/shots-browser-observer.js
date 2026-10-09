@@ -251,19 +251,20 @@ function createObserver({
 // move's answer never reaches the agent. (-1, -1) is outside the viewport,
 // so nothing is under the pointer, and it stays so when an element
 // screenshot scrolls the page; (0, 0) is a pixel of the page and hovers
-// whatever is drawn there. A pointer the agent placed itself (browser_hover,
-// browser_mouse_move_xy) is left where it is: the hover may be the very
-// change being shown. When clips are recorded, the pointer is parked before
+// whatever is drawn there. A pointer the agent placed itself (a successful
+// browser_hover or browser_mouse_move_xy, with no click since) is left where
+// it is: the hover may be the very change being shown. When clips are recorded, the pointer is parked before
 // browser_close too, so a clip's last frames are not hovered either.
 const PARK_TIMEOUT_MS = 12_000;
 const PARK_TOMBSTONE_MS = 60_000;
 const PARK_TOMBSTONE_MAX = 32;
-const PARK_HELD_LINE_MAX_BYTES = 64 * 1024 * 1024;
+const PARK_HELD_LINE_MAX_BYTES = 8 * 1024 * 1024;
+const PARSED_ANSWER_MAX_BYTES = 1024 * 1024;
 const POINTER_LEFT_ON_PAGE = new Set([
   'browser_click', 'browser_drag', 'browser_mouse_click_xy', 'browser_mouse_drag_xy',
 ]);
-const POINTER_PLACED = new Set(['browser_hover', 'browser_mouse_move_xy', 'browser_close']);
-const STRING_ID = /"id"\s*:\s*"([^"\\]{1,120})"/g;
+const POINTER_PLACED = new Set(['browser_hover', 'browser_mouse_move_xy']);
+const ANY_ID = /"id"\s*:\s*(?:"([^"\\]{1,120})"|(-?\d{1,16}))/g;
 
 function parkRequest(id) {
   return Buffer.from(`${JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: {
@@ -299,16 +300,39 @@ function createPointerParker({
 } = {}) {
   let leftOnPage = false;
   let parks = 0;
-  let waiting = null; // { id, startedAt, timer }
-  const tombstones = new Map(); // id -> expiry timer: late answers still dropped
+  let waiting = null; // the park move in flight: { id, startedAt, timer }
+  const tombstones = new Map(); // timed-out park id -> expiry timer: a late answer is still dropped
+  // The agent's own hovers and moves still in flight, by request id, with
+  // the pointer action they followed: one that succeeds leaves the pointer
+  // placed, unless a click came after it.
+  const placements = new Map();
+  let placementTimer = null;
+  let pointerSeq = 0;
+  let resume = null;
   let flushed = null;
   let closed = false;
-  const queue = []; // { line: Buffer, tool, parked }
+  const queue = []; // { line: Buffer, tool, key, parked }
+  const inSplit = lineSplitter();
+  const enqueue = (line) => {
+    let tool = null;
+    let key = null;
+    try {
+      const message = JSON.parse(line.toString('utf8'));
+      if (message?.method === 'tools/call') {
+        tool = message.params?.name || null;
+        if (message.id != null) key = JSON.stringify(message.id);
+      }
+    } catch { /* forwarded unchanged */ }
+    queue.push({ line, tool, key, parked: false });
+  };
   const input = new Transform({
     transform(chunk, _encoding, callback) {
       inSplit.push(chunk, enqueue);
+      // While a screenshot waits, the next chunk is not read: what is queued
+      // is never more than this one.
+      // drain() calls back once this chunk's lines have all gone on.
+      resume = callback;
       drain();
-      callback();
     },
     flush(callback) {
       const rest = inSplit.rest();
@@ -317,15 +341,6 @@ function createPointerParker({
       drain();
     },
   });
-  const inSplit = lineSplitter();
-  const enqueue = (line) => {
-    let tool = null;
-    try {
-      const message = JSON.parse(line.toString('utf8'));
-      if (message?.method === 'tools/call') tool = message.params?.name || null;
-    } catch { /* forwarded unchanged */ }
-    queue.push({ line, tool, parked: false });
-  };
   const bury = (id) => {
     if (tombstones.size >= PARK_TOMBSTONE_MAX) {
       const [oldest, timer] = tombstones.entries().next().value;
@@ -336,7 +351,7 @@ function createPointerParker({
     timer.unref?.();
     tombstones.set(id, timer);
   };
-  const settle = (id, outcome) => {
+  const settlePark = (id, outcome) => {
     if (!waiting || waiting.id !== id) return;
     clearTimeout(waiting.timer);
     const durationMs = Math.max(0, Math.round(now() - waiting.startedAt));
@@ -347,41 +362,93 @@ function createPointerParker({
     emit({ kind: 'browser_pointer_park', persona, outcome, durationMs });
     drain();
   };
+  const settlePlacement = (key, succeeded) => {
+    if (!placements.has(key)) return;
+    const seq = placements.get(key);
+    placements.delete(key);
+    if (succeeded && seq === pointerSeq) leftOnPage = false;
+    if (!placements.size) { clearTimeout(placementTimer); placementTimer = null; }
+    drain();
+  };
   const drain = () => {
     if (closed) return;
     while (!waiting && queue.length) {
       const item = queue[0];
       const parksHere = item.tool === 'browser_take_screenshot'
         || (parkBeforeClose && item.tool === 'browser_close');
-      if (parksHere && leftOnPage && !item.parked) {
+      if (parksHere && !item.parked) {
+        // A hover still in flight decides whether the pointer is placed.
+        if (placements.size) {
+          if (!placementTimer) {
+            placementTimer = setTimeout(() => {
+              placementTimer = null;
+              placements.clear();
+              drain();
+            }, timeoutMs);
+            placementTimer.unref?.();
+          }
+          break;
+        }
         item.parked = true;
-        leftOnPage = false;
-        const id = `usernode-shots-park-${nonce}-${++parks}`;
-        const timer = setTimeout(() => { bury(id); settle(id, 'timeout'); }, timeoutMs);
-        timer.unref?.();
-        waiting = { id, startedAt: now(), timer };
-        input.push(parkRequest(id));
-        continue;
+        if (leftOnPage) {
+          leftOnPage = false;
+          const id = `usernode-shots-park-${nonce}-${++parks}`;
+          const timer = setTimeout(() => { bury(id); settlePark(id, 'timeout'); }, timeoutMs);
+          timer.unref?.();
+          waiting = { id, startedAt: now(), timer };
+          input.push(parkRequest(id));
+          continue;
+        }
       }
       queue.shift();
-      if (POINTER_LEFT_ON_PAGE.has(item.tool)) leftOnPage = true;
-      else if (POINTER_PLACED.has(item.tool)) leftOnPage = false;
+      if (POINTER_LEFT_ON_PAGE.has(item.tool)) { leftOnPage = true; pointerSeq += 1; }
+      else if (POINTER_PLACED.has(item.tool)) {
+        pointerSeq += 1;
+        if (item.key) placements.set(item.key, pointerSeq);
+      } else if (item.tool === 'browser_close') { leftOnPage = false; pointerSeq += 1; }
       input.push(item.line);
     }
-    if (!waiting && !queue.length && flushed) { const done = flushed; flushed = null; done(); }
+    if (waiting || queue.length) return;
+    if (resume) { const next = resume; resume = null; next(); }
+    if (flushed) { const done = flushed; flushed = null; done(); }
   };
-  const ours = (id) => (waiting && waiting.id === id) || tombstones.has(id);
-  // Which of the parker's moves a whole answer line belongs to, if any. The
-  // SDK writes the id after the result, so both ends are read.
-  const parkIdOf = (line) => {
-    const ends = line.length > 16384
-      ? `${line.subarray(0, 8192).toString('utf8')}\n${line.subarray(-8192).toString('utf8')}`
-      : line.toString('utf8');
-    for (const match of ends.matchAll(STRING_ID)) if (ours(match[1])) return match[1];
+  const watching = () => !!waiting || tombstones.size > 0 || placements.size > 0;
+  // The id of a whole held line that the parker is waiting on, if any. The
+  // SDK writes the id after the result, so the last match in the line's
+  // tail is read first, then its head; only the ends are copied.
+  const watchedKeyOf = (chunks, bytes) => {
+    const head = [];
+    for (let i = 0, size = 0; i < chunks.length && size < 8192; i += 1) {
+      head.push(chunks[i]); size += chunks[i].length;
+    }
+    const tail = [];
+    for (let i = chunks.length - 1, size = 0; i >= 0 && size < 8192; i -= 1) {
+      tail.unshift(chunks[i]); size += chunks[i].length;
+    }
+    const texts = bytes <= 16384 ? [Buffer.concat(chunks).toString('utf8')]
+      : [Buffer.concat(tail).subarray(-8192).toString('utf8'), Buffer.concat(head).subarray(0, 8192).toString('utf8')];
+    for (const text of texts) {
+      const matches = [...text.matchAll(ANY_ID)].reverse();
+      for (const match of matches) {
+        const key = match[1] !== undefined ? JSON.stringify(match[1]) : match[2];
+        const id = match[1] !== undefined ? match[1] : null;
+        if (id !== null && ((waiting && waiting.id === id) || tombstones.has(id))) return { park: id };
+        if (placements.has(key)) return { placement: key };
+      }
+    }
     return null;
   };
-  // While a move is outstanding (or answered late), every answer line is
-  // held whole until its id is known; otherwise lines stream through.
+  const failedAnswer = (chunks, bytes) => {
+    if (bytes > PARSED_ANSWER_MAX_BYTES) return null;
+    try {
+      const message = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      return message.error ? 'rpc_error' : message.result?.isError === true ? 'tool_error' : 'ok';
+    } catch { return 'unparsed'; }
+  };
+  // While a park move or the agent's own hover is in flight, each answer
+  // line is held whole until its id is known; otherwise lines stream
+  // through. A park answer (a mouse move's) is a few KB, so a line past the
+  // cap cannot be one in practice: it streams on, and the diagnostics say so.
   let held = [];
   let heldBytes = 0;
   let passing = false;
@@ -392,7 +459,7 @@ function createPointerParker({
         const end = chunk.indexOf(10, offset);
         const part = chunk.subarray(offset, end < 0 ? chunk.length : end + 1);
         offset += part.length;
-        if (!passing && !held.length && !waiting && !tombstones.size) passing = true;
+        if (!passing && !held.length && !watching()) passing = true;
         if (passing) {
           this.push(part);
           if (end >= 0) passing = false;
@@ -402,25 +469,34 @@ function createPointerParker({
         heldBytes += part.length;
         if (end < 0) {
           if (heldBytes > PARK_HELD_LINE_MAX_BYTES) {
-            this.push(Buffer.concat(held)); held = []; heldBytes = 0; passing = true;
+            for (const piece of held) this.push(piece);
+            held = []; heldBytes = 0; passing = true;
+            emit({ kind: 'browser_pointer_park', persona, outcome: 'held_line_over_cap' });
           }
           continue;
         }
-        const line = Buffer.concat(held);
+        const chunks = held;
+        const bytes = heldBytes;
         held = []; heldBytes = 0;
-        const id = parkIdOf(line);
-        if (!id) { this.push(line); continue; }
-        let message = null;
-        try { message = JSON.parse(line.toString('utf8')); } catch { /* unparsed */ }
-        const outcome = !message ? 'unparsed' : message.error ? 'rpc_error'
-          : message.result?.isError === true ? 'tool_error' : 'ok';
-        if (tombstones.has(id)) { clearTimeout(tombstones.get(id)); tombstones.delete(id); }
-        settle(id, outcome);
+        const watched = watchedKeyOf(chunks, bytes);
+        if (watched?.park) {
+          const id = watched.park;
+          if (tombstones.has(id)) { clearTimeout(tombstones.get(id)); tombstones.delete(id); }
+          settlePark(id, failedAnswer(chunks, bytes) || 'unparsed');
+          continue;
+        }
+        for (const piece of chunks) this.push(piece);
+        if (watched?.placement) {
+          // An answer too large to read is a snapshot, which a success carries.
+          const outcome = failedAnswer(chunks, bytes);
+          settlePlacement(watched.placement, outcome === null || outcome === 'ok');
+        }
       }
       callback();
     },
     flush(callback) {
-      if (held.length) this.push(Buffer.concat(held));
+      for (const piece of held) this.push(piece);
+      held = [];
       callback();
     },
   });
@@ -430,7 +506,9 @@ function createPointerParker({
     close() {
       closed = true;
       if (waiting) clearTimeout(waiting.timer);
+      clearTimeout(placementTimer);
       waiting = null;
+      placements.clear();
       queue.length = 0;
       for (const timer of tombstones.values()) clearTimeout(timer);
       tombstones.clear();
