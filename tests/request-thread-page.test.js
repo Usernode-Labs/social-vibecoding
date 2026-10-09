@@ -211,8 +211,8 @@ test('⋯ holds the work rows first, then the author\'s edits and the tags', () 
   av._ghIssues = [row];
   const labels = JSON.parse(JSON.stringify(av._requestMenuItems(row).map((item) => item.label)));
   assert.deepEqual(labels.slice(0, 4), ['Start more work', 'Claim it', 'Edit title', 'Edit request']);
-  assert.ok(labels.includes('Set priority…') && labels.includes('Set category…') && labels.includes('Assign someone…'));
-  assert.ok(labels.indexOf('Assign someone…') < labels.indexOf('Open on GitHub') || !labels.includes('Open on GitHub'));
+  assert.ok(labels.includes('Suggest a priority…') && labels.includes('Suggest a category…') && labels.includes('Suggest who takes it…'));
+  assert.ok(labels.indexOf('Suggest who takes it…') < labels.indexOf('Open on GitHub') || !labels.includes('Open on GitHub'));
 });
 
 test('an admin can release somebody else\'s claim from ⋯, and nobody else is offered it', () => {

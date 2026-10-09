@@ -6902,9 +6902,9 @@ const AppView = {
     const rows = folded.length ? folded.map((a) => AppView._foldedMenuItem(a)).concat(list) : list;
     if (!own) return rows;
     return [{
-      label: 'Open card',
+      label: 'Open full page',
       icon: 'open',
-      title: 'The card on its own page',
+      title: 'See this change or request on its own page. It changes nothing.',
       act: () => { window.location.hash = own; },
     }].concat(rows);
   },
@@ -6915,8 +6915,8 @@ const AppView = {
   // The click event a ⋯ menu row is currently acting on, or null.
   //
   // A row's `act()` runs INSIDE the click dispatch that chose it, and three
-  // of the rows ("Change assignee…" / "Change priority…" / "Change
-  // category…") open the body-mounted #attr-popover synchronously. So that
+  // of the rows (the assignee, priority and category ones, "Suggest who
+  // takes it…" and the rest) open the body-mounted #attr-popover synchronously. So that
   // very click carried on bubbling up to the document-level "a click outside
   // the popover dismisses it" handler in _attrInit — whose target was the
   // menu row, i.e. outside #attr-popover (and by then removed from the DOM
@@ -14567,7 +14567,9 @@ const AppView = {
     if (served.includes('awaiting_approval')) return `${conflict} · fixed after the vote`;
     if (served.includes('budget')) return `${conflict} · resumes after the daily budget reset`;
     if (n || fresh.mergeability === 'conflict' || /conflict/.test(String((g.detail && g.detail.note) || ''))) {
-      return `${conflict} · queued to fix`;
+      // #3676: say who acts. "queued to fix" left a new member asking
+      // what they were meant to do; the answer is nothing.
+      return `${conflict} · Homeroom will fix it, nothing to do`;
     }
     // Not a conflict the columns can see (a recording from before direct
     // merges, say): the gate's own words, as a sentence.
@@ -17908,7 +17910,7 @@ const AppView = {
   // BOARD default now: rendering "⚑ Set priority", "Set category" and
   // "Unassigned" on every card meant a brand-new card carried three grey
   // chips of pure noise. The empty-state entry points moved into the card's
-  // ⋯ menu ("Set priority…" etc.). The DETAIL view keeps omitUnset off —
+  // ⋯ menu ("Suggest a priority…" etc.). The DETAIL view keeps omitUnset off —
   // that page is where metadata gets set, so all three belong there whether
   // or not they carry a value.
   //
@@ -17933,7 +17935,7 @@ const AppView = {
         && !!AppView._placedCategoryFor(targetType, targetRef);
       if (omitUnset && !(summary && summary.top) && !placed) continue;
       // B10c: who is on it shows only when somebody is. "Unassigned" was a
-      // grey chip saying nothing; the ⋯ row "Assign someone…" sets it.
+      // grey chip saying nothing; the ⋯ row "Suggest who takes it…" sets it.
       if (field === 'assignee' && !(summary && summary.top)) continue;
       out.push(AppView._attrChipSpec(field, targetType, targetRef, summary, readonly));
     }
@@ -17949,9 +17951,13 @@ const AppView = {
     if (AppView.readOnly || (opts && opts.readonly)) return [];
     const it = item || {};
     const labels = {
-      priority: ['Set priority…', 'Change priority…'],
-      category: ['Set category…', 'Change category…'],
-      assignee: ['Assign someone…', 'Change assignee…'],
+      // #3676: each says what it does. Picking one is a vote the board
+      // shows to everyone, not a private setting, so the label says
+      // "suggest" rather than "set" or "change" — and not "vote", which on a
+      // change's page already means the vote on the change itself.
+      priority: ['Suggest a priority…', 'Suggest a different priority…'],
+      category: ['Suggest a category…', 'Suggest a different category…'],
+      assignee: ['Suggest who takes it…', 'Suggest someone else to take it…'],
     };
     // No separate grouping row: the card's own CATEGORY chip is the
     // affordance now — tapping it opens this same popover — so a fourth row
@@ -17964,10 +17970,10 @@ const AppView = {
         // chip it produces are recognisably the same thing.
         icon: field,
         title: field === 'assignee'
-          ? 'Suggest or vote on who should take this'
+          ? 'Suggest or vote on who should take this. Everyone sees the result on the board.'
           : (field === 'category'
-            ? 'Vote on which category this card belongs to'
-            : `Vote on this card's ${field}`),
+            ? 'Vote on which category this belongs to. Everyone sees the result on the board.'
+            : 'Vote on how urgent this is. Everyone sees the result on the board.'),
         act: () => AppView._openAttrMenuPopover(field, targetType, targetRef),
       };
     });

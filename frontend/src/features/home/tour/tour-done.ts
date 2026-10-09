@@ -12,7 +12,7 @@
  * carries it too.
  *
  * Since #3240 the tour no longer starts by itself, so nothing here decides
- * whether it OPENS: the Getting started card's first row, "Take the 1-minute
+ * whether it OPENS: the Getting started card's first row, "Take a quick
  * tour", ticks off from the account's answer (src/services/onboarding.js),
  * and that is what the answer is for now. Two rules are left, each a pure
  * function or a guarded write so the tests EXECUTE them:

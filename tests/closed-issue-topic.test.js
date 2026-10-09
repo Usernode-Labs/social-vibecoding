@@ -173,7 +173,7 @@ test('a closed issue page offers no claim, kudos, close or start-work actions', 
   assert.equal(view.card.actions.length, 0, 'no actions on the topic card');
   assert.match(view.body.request.status.closed, /^This request was closed/);
   const rows = (AppView._cardMenus[view.body.request.menuKey] || []).map((m) => m.label);
-  for (const label of ['Pledge kudos', 'Claim it', 'Propose to close', 'Start more work', 'Set priority…']) {
+  for (const label of ['Pledge kudos', 'Claim it', 'Propose to close', 'Start more work', 'Suggest a priority…']) {
     assert.ok(!rows.includes(label), `no "${label}" row behind the request's ⋯`);
   }
 
