@@ -733,7 +733,7 @@ function useCommunity(slug: string, polling: boolean): Community {
 /** The people row's faces: the community's members (its maker first), else just you. */
 export function peopleOf(community: Community, me: string): Person[] {
   const members = Array.isArray(community?.members) ? community!.members.filter((m) => m && (m.username || m.display_name)) : [];
-  return members.length ? members : [{ username: me || 'you' }];
+  return members.length ? members : [{ username: me || translate('onboarding:firstSession.made.people.you') }];
 }
 
 /** A quiet button: white, under or beside the blue one. */

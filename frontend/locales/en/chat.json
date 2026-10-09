@@ -1071,6 +1071,10 @@
     "text": "Couldn’t load this thread.",
     "description": "Error line in a discussion thread when its messages could not be fetched. A 'Try again' button follows it."
   },
+  "group.thread.unknownAuthor": {
+    "text": "someone",
+    "description": "Stands where a person's username is shown on the card under a chat message that previews the newest reply in its thread, when the reply's author is not known. Shown alone in the name's own element; lower case in English, like a username."
+  },
   "group.quote.spec": {
     "text": "Spec",
     "description": "Stands in for the text of a shared spec that has no title, in the preview of the message being replied to above the chat message box. A spec is the written description of a change."

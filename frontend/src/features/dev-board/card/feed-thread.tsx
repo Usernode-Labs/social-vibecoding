@@ -33,6 +33,7 @@ import { ArrowUpIcon } from '@/components/ui/icons';
 import { Textarea } from '@/components/ui/textarea';
 
 import { useMessages } from '../../../lib/i18n/react';
+import { t as translate } from '../../../lib/i18n/runtime';
 import { agoStamp } from '../../../lib/timestamp';
 import { useAutoGrow } from '../../../lib/use-auto-grow';
 import { useStoreState } from '../../../lib/use-store-state';
@@ -82,7 +83,7 @@ export function feedThreadPreview(rows: any[]): {
   return {
     messages: human.slice(-PREVIEW).map((r: any) => ({
       id: r.id,
-      author: r.username || 'someone',
+      author: r.username || translate('project:feedThread.unknownAuthor'),
       userId: r.user_id != null ? Number(r.user_id) : null,
       content: String(r.content || ''),
       createdAt: r.created_at,

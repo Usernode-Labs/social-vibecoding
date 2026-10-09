@@ -440,7 +440,7 @@ const Profile = {
       }
       announceFriendsChanged();
     } catch (err) {
-      profileStore.set({ friendsStatus: friendErrorMessage(err, row ? row.username : 'them') });
+      profileStore.set({ friendsStatus: friendErrorMessage(err, row ? row.username : null) });
     } finally {
       profileStore.set({ friendsPending: null });
     }
@@ -465,7 +465,7 @@ const Profile = {
       }
       announceFriendsChanged();
     } catch (err) {
-      profileStore.set({ friendsStatus: friendErrorMessage(err, row ? row.username : 'them') });
+      profileStore.set({ friendsStatus: friendErrorMessage(err, row ? row.username : null) });
     } finally {
       profileStore.set({ friendsPending: null });
     }

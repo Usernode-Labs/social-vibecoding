@@ -3499,6 +3499,10 @@
     "text": "That didn’t send. Try again, or open the item to reply there.",
     "description": "Error under an open card when posting a reply failed. \"Open the item\" means go to the proposal's or request's own page."
   },
+  "feedThread.unknownAuthor": {
+    "text": "someone",
+    "description": "Stands where an author's username is shown beside a reply in the short thread preview under a card, when the author is not known. Shown alone in the name's own element; lower case in English, like a username."
+  },
   "typeahead.mention.name": {
     "text": "Mention someone",
     "description": "Accessible name of the list of people that opens when the person types @ in a reply box under a card: picking one inserts that member's @name."

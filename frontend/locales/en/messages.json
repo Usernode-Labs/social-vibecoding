@@ -27,6 +27,10 @@
     "text": "You can’t add @{{username}} as a friend right now.",
     "description": "Error shown when a friend request could not be sent to this person. {{username}} is their username; keep the @ in front of it."
   },
+  "friends.error.cannotAddUnnamed": {
+    "text": "You can’t add @them as a friend right now.",
+    "description": "Error shown when a friend request could not be sent and the person's username is not known. \"@them\" stands in for the username in English; write whatever reads naturally for an unnamed person, with or without the @."
+  },
   "friends.error.updateFailed": {
     "text": "Couldn’t update this friendship. Check your connection and try again.",
     "description": "Error shown when adding, accepting, declining or removing a friend failed, usually because the network is down."

@@ -130,10 +130,16 @@ export async function act(userId: number, action: FriendAction): Promise<FriendS
 }
 
 /** What a refusal says, in the platform's voice. Never says WHY a person is unreachable. */
-export function errorMessage(err: unknown, username: string): string {
+export function errorMessage(err: unknown, username: string | null): string {
   const status = (err as { status?: number } | null)?.status;
   if (err instanceof FriendsApiError && status === 429) return err.message;
-  if (status === 404) return t('messages:friends.error.cannotAdd', { username });
+  // `username` is an account's name or nothing. With no name the sentence
+  // has its own wording: a pronoun is never passed off as a username.
+  if (status === 404) {
+    return username
+      ? t('messages:friends.error.cannotAdd', { username })
+      : t('messages:friends.error.cannotAddUnnamed');
+  }
   return t('messages:friends.error.updateFailed');
 }
 

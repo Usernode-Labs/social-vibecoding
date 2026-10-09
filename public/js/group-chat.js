@@ -2322,7 +2322,7 @@ const GroupChat = {
       participants: people.map((p) => (p && typeof p === 'object' ? p.username : p)).filter(Boolean).slice(0, 3),
       // #2387 follow-up: the newest reply, which the card under the message shows.
       lastReply: last && typeof last === 'object'
-        ? { name: String(last.username || 'someone'), text: String(last.content || '') }
+        ? { name: String(last.username || PlatformI18n.t('chat:group.thread.unknownAuthor')), text: String(last.content || '') }
         : null,
     };
   },

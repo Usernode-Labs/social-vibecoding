@@ -128,3 +128,16 @@ test('a game sentence keeps everything the catalog writes around the maker\'s wo
   assert.deepEqual([own.head, own.tail], ['Propio  DESPUÉS', '']);
   assert.equal(own.text, 'Propio dibujamos。 DESPUÉS');
 });
+
+test('a person with no known username gets a sentence of their own, never a pronoun as a name', () => {
+  // eslint-disable-next-line global-require
+  const { loadTsx } = require('./lib/render-tsx');
+  const friends = loadTsx('frontend/src/features/friends/api.ts');
+  assert.equal(friends.errorMessage({ status: 404 }, 'ada'), 'You can’t add @ada as a friend right now.');
+  assert.equal(friends.errorMessage({ status: 404 }, null), 'You can’t add @them as a friend right now.',
+    'English reads as it always has');
+  assert.equal(message('messages:friends.error.cannotAddUnnamed'), 'You can’t add @them as a friend right now.');
+  // eslint-disable-next-line global-require
+  const profile = require('node:fs').readFileSync(require('node:path').join(__dirname, '../frontend/src/features/profile/profile.js'), 'utf8');
+  assert.doesNotMatch(profile, /friendErrorMessage\(err, [^)]*'them'\)/);
+});

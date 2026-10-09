@@ -879,6 +879,10 @@
     "text": "Homeroom is making your app. It will message you when the first version is ready to try, or if it has any questions.",
     "description": "Second line under the new project's card on the screen shown right after a project is made, while the first version is being built. Homeroom is the product's name."
   },
+  "firstSession.made.people.you": {
+    "text": "you",
+    "description": "Stands where a member's username is shown under the single face in the people row on the screen shown right after a project is made, when the maker's own username is not known yet: the only person here is the reader. Shown alone; lower case in English, like a username."
+  },
   "firstSession.invite.title": {
     "text": "Invite people to {{community}}",
     "description": "Heading of the sheet for sending an invite link. {{community}} is the name of the community people are invited to."
