@@ -2263,6 +2263,31 @@ async function _persistActiveTurn(sessionId, turn) {
   }
 }
 
+// A dispatch that a pending stop skipped before it began (execInWorker's
+// #937 gate). Only the exact record registered for it is touched, and only
+// while it is still dispatch_pending: a turn that replaced it, or one that
+// somehow moved on, is never someone this may clear. A tail-holding caller
+// gets the record handed to its tail, as a finished exec's would be; any
+// other caller gets it cleared. A later finishTurn by the caller finds it
+// gone and returns true. Never throws.
+async function releaseSkippedDispatch(sessionId, turnId, { holdTurnRecord = false } = {}) {
+  if (!turnId) return false;
+  const pool = _getPoolSafe();
+  if (!pool) return false;
+  try {
+    const current = await turnLifecycle.loadActiveTurn(pool, sessionId);
+    if (!current
+      || String(turnLifecycle.turnIdentity(current) || '') !== String(turnId)
+      || turnLifecycle.phaseOf(current) !== turnLifecycle.PHASE_DISPATCH_PENDING) return false;
+    if (holdTurnRecord) await markTurnTail(sessionId, {}, { turnId });
+    else if (!(await finishTurn(sessionId, { turnId }))) return false;
+    return true;
+  } catch (err) {
+    log.warn('worker', 'Could not release a skipped dispatch\'s turn record', { sessionId, turnId, err: err.message });
+    return false;
+  }
+}
+
 async function clearActiveTurn(sessionId, { turnId = null, journal = null } = {}) {
   const pool = _getPoolSafe();
   if (!pool) return false;
@@ -3330,6 +3355,14 @@ async function execInWorker(sessionId, {
     stopped.agentHarness = resolveTurnBackend(agentBackend, agentHarness).harness;
     stopped.execExitSeen = true;
     stopped.exitCode = 143;
+    // The record that attempt registration already wrote for this very turn
+    // is released here, the way this function's `finally` releases a turn
+    // that ran: returning before that `try` left it in dispatch_pending with
+    // nothing to clear it. A caller that does not finish turns itself (the
+    // Homeroom bot's follow-ups) left its proposal "running" for good, and
+    // every later turn on it waited behind a turn that had never started
+    // (change 7490, 9 Oct 2026).
+    await releaseSkippedDispatch(sessionId, preRegisteredTurnId, { holdTurnRecord });
     return stopped;
   }
 
@@ -5223,6 +5256,7 @@ module.exports = {
   syncUserAgentFiles,
   resumeTurnFromJournal,
   clearActiveTurn,
+  releaseSkippedDispatch,
   // post-agent tail lifecycle (holdTurnRecord callers)
   TURN_PHASE_TAIL,
   markTurnTail,
