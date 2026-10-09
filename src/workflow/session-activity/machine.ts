@@ -1,6 +1,6 @@
 // session-activity: who is using a chat session right now. One instance
 // per session. Its state is the session's activities: one per thing
-// happening on it (a turn, a branch move, a staging build, a screenshot
+// happening on it (a turn, an operation on its branch or preview, a screenshot
 // run's hold on the worker, a pause or teardown), granted here under the
 // instance's lock so two that must not overlap never do, whichever process
 // asks. The holder keeps its activity alive by renewing a lease on its row
@@ -11,7 +11,7 @@
 // workflow-foundation's session-activity-design.md is the design.
 
 import { NONE, defineMachine, ok, reject } from '../kernel/index.ts';
-import type { Check, Event, Machine, Outcome, Push, TransitionContext, WorkResultPayload } from '../kernel/index.ts';
+import type { Check, Event, Json, Machine, Outcome, Push, TransitionContext, WorkResultPayload } from '../kernel/index.ts';
 import { readFacts } from './facts.ts';
 import type { Facts } from './facts.ts';
 
@@ -22,24 +22,36 @@ export const sessionKey = (sessionId: number) => `session:${sessionId}`;
 export const LEASE_MS = 90_000;
 export const RENEW_MS = 15_000;
 
-export const WORK = Object.freeze({ retire: 'worker.retire' });
+// Work kinds are one namespace across machines (merge-followups has its own
+// 'worker.retire', which asks this machine).
+export const WORK = Object.freeze({ retire: 'session.retireWorker' });
 
-export type Kind = 'turn' | 'branch' | 'build' | 'hold' | 'destroy';
-export const KINDS: ReadonlySet<Kind> = new Set(['turn', 'branch', 'build', 'hold', 'destroy']);
+export type Kind = 'chat' | 'turn' | 'operation' | 'hold' | 'destroy';
+export const KINDS: ReadonlySet<Kind> = new Set(['chat', 'turn', 'operation', 'hold', 'destroy']);
 
-// What may not overlap, from what [main] refuses today:
-// - a turn: another turn, a branch move, a hold (other than its own), a destroy;
-// - a branch move: another branch move, a staging build or capture, a destroy;
-// - a staging build or capture, a hold: a destroy;
-// - a destroy: anything.
-const PAIRS: [Kind, Kind][] = [
-  ['turn', 'turn'], ['turn', 'branch'], ['turn', 'hold'], ['turn', 'destroy'],
-  ['branch', 'branch'], ['branch', 'build'], ['branch', 'destroy'],
-  ['build', 'destroy'], ['hold', 'destroy'], ['destroy', 'destroy'],
-];
-const CONFLICTS = new Map<Kind, Set<Kind>>([...KINDS].map((k) => [k, new Set<Kind>()]));
-for (const [a, b] of PAIRS) { CONFLICTS.get(a)!.add(b); CONFLICTS.get(b)!.add(a); }
-export const conflicts = (a: Kind, b: Kind) => CONFLICTS.get(a)!.has(b);
+// What keeps a request out, from what [main] refuses today. A Mayor chat
+// turn keeps nothing out: it is recorded so a Stop finds the process running
+// it. An operation needs the session's branch and preview to itself (moving
+// the branch, promoting, rebuilding the preview); a destroy pauses, evicts,
+// reclaims or tears down. Staging builds and captures are not activities:
+// Kubernetes already serialises a session's builds across processes
+// (staging.js), and what refuses on them still asks staging.js and
+// visuals.js as on [main].
+// - a turn is kept out by a turn, an operation, a hold (other than its own)
+//   and a destroy;
+// - an operation by a turn, an operation and a destroy;
+// - a hold by a destroy only: a screenshot run holds the worker first and
+//   then waits for the session to go idle;
+// - a destroy by anything but a chat turn;
+// - a chat turn by nothing.
+const BLOCKED_BY = new Map<Kind, ReadonlySet<Kind>>([
+  ['chat', new Set()],
+  ['turn', new Set(['turn', 'operation', 'hold', 'destroy'])],
+  ['operation', new Set(['turn', 'operation', 'destroy'])],
+  ['hold', new Set(['destroy'])],
+  ['destroy', new Set(['turn', 'operation', 'hold', 'destroy'])],
+]);
+export const blockedBy = (requested: Kind, existing: Kind) => BLOCKED_BY.get(requested)!.has(existing);
 
 // ── States ──────────────────────────────────────────────────────────────
 
@@ -132,19 +144,22 @@ const EVENTS = {
 const live = (d: Data, f: Facts) => d.activities.filter((a) => f.live.has(a.id));
 
 // The first thing in the way of a request, or null. A request never
-// conflicts with its own parent (a screenshot run's turn and its hold), and
-// one naming a turn never conflicts with that turn's journal (recovery
-// taking a detached turn over, the watchdog reaping it).
+// conflicts with its own parent (a screenshot run's turn and its hold).
+// A running turn's journal keeps out what a turn keeps out, except another
+// turn: two turns are already kept apart where a turn records its journal
+// (turn-lifecycle.js persistNewTurn), and a turn that continues the journal's
+// own (recovery, a retry, a wrap-up) must not be refused by it. One naming
+// the journal's turn is not kept out by it either (the watchdog reaping it).
 function blocker(d: Data, f: Facts, p: { kind: Kind; parent: string | null; turnId: string | null; activityId: string }): Kind | null {
   for (const a of live(d, f)) {
     if (a.id === p.parent || a.id === p.activityId) continue;
-    if (conflicts(p.kind, a.kind)) return a.kind;
+    if (blockedBy(p.kind, a.kind)) return a.kind;
   }
-  if (f.journal?.live && f.journal.turnId !== p.turnId && conflicts(p.kind, 'turn')) return 'turn';
+  if (f.journal?.live && p.kind !== 'turn' && f.journal.turnId !== p.turnId && blockedBy(p.kind, 'turn')) return 'turn';
   return null;
 }
 
-const named = (activities: Activity[]): SAState['name'] => (activities.length ? 'in_use' : 'idle');
+const named = (activities: Activity[]): Open['name'] => (activities.length ? 'in_use' : 'idle');
 
 // The retirement's next step: run it once nothing counts, else look again
 // when the longest a holder can be gone without the lease running out has
@@ -213,8 +228,9 @@ const stopRequested = {
   },
 };
 function turnFor(activities: Activity[], expectedTurnId: string | null): Activity | undefined {
-  const turns = activities.filter((a) => a.kind === 'turn');
-  return (expectedTurnId && turns.find((a) => a.turnId === expectedTurnId)) || turns[turns.length - 1];
+  const turns = activities.filter((a) => a.kind === 'turn' || a.kind === 'chat');
+  return (expectedTurnId && turns.find((a) => a.turnId === expectedTurnId))
+    || turns.filter((a) => a.kind === 'turn').pop() || turns[turns.length - 1];
 }
 
 const retireRequested = {
@@ -324,7 +340,7 @@ export function sessionActivity(): Machine<SAState, Facts> {
         [gone, (after as Open).data.sessionId, JSON.stringify(added), ctx.now.toISOString(), LEASE_MS,
           JSON.stringify(stopped.map((a) => ({ id: a.id, stop: a.stop })))]);
     },
-    reply: async (tx, event, after) => {
+    reply: async (tx, event, after): Promise<Json | undefined> => {
       if (event.type === 'Requested') return { granted: true, leaseMs: LEASE_MS, renewMs: RENEW_MS };
       if (event.type === 'StopRequested') {
         const turn = turnFor((after as Open).data.activities.filter((a) => a.stop), event.payload.expectedTurnId);

@@ -47,6 +47,7 @@
 // excluded from the global session cap (routes/sessions.js), so a bot turn
 // never costs a person a slot.
 
+const sessionActivity = require('./session-activity');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -2617,10 +2618,17 @@ async function askForVerdictBlock(pool, config, {
 }) {
   const { worker, agentTurn, sessions, activeWorkers } = deps;
   if (!threadId || activeWorkers.has(session.id)) return null;
+  // One activity on the session (services/session-activity.js): with the
+  // session-activity machine on, another process's use of it refuses this
+  // the same way this process's own does.
+  const gate = await sessionActivity.tryBegin(session.id, 'turn', { label: 'bot verdict repair' });
+  if (gate.refused) return null;
+  const sessionUse = gate.activity;
+  sessionUse?.enter();
   await pool.query(
     "UPDATE chat_sessions SET status = 'active', last_activity_at = NOW() WHERE id = $1",
     [session.id],
-  );
+  ).catch((err) => { sessionUse?.end(); throw err; });
   activeWorkers.add(session.id);
   let stopped = false;
   let stopping = null;
@@ -2673,6 +2681,7 @@ async function askForVerdictBlock(pool, config, {
     clearTimeout(timer);
     if (stopping) await stopping;
     activeWorkers.delete(session.id);
+    sessionUse?.end();
     await pauseIdleSession(pool, session.id);
   }
   return { routed: routed || { error: 'not_a_codex_session' }, pricing, stopped };
@@ -3131,6 +3140,12 @@ async function runTriage(pool, config, {
     [session.id],
   );
   session.agent_thread_id = null;
+  // One activity on the session (services/session-activity.js): with the
+  // session-activity machine on, it is refused while another process uses it.
+  const gate = await sessionActivity.tryBegin(session.id, 'turn', { label: 'bot triage' });
+  if (gate.refused) return recordFailure(`busy: ${gate.refused.message}`, { sessionId: session.id }, { infra: true });
+  const sessionUse = gate.activity;
+  sessionUse?.enter();
   activeWorkers.add(session.id);
 
   // The budget (#2737). The wall clock ends the turn the same way a person's
@@ -3263,6 +3278,7 @@ async function runTriage(pool, config, {
     clearTimeout(budgetTimer);
     if (stopping) await stopping;
     activeWorkers.delete(session.id);
+    sessionUse?.end();
     // Back to rest, unless a turn still holds the session: a session paused
     // under a turn in flight is one restart recovery throws away (#1006).
     await pauseIdleSession(pool, session.id);

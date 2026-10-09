@@ -128,9 +128,11 @@ async function plan({ pool, sessionId, commitHash }, deps = defaultDeps()) {
   }
 }
 
+// Busy here, or with the session-activity machine on, in any process.
 async function waitForIdle(sessionId, deps) {
   const deadline = deps.now() + IDLE_WAIT_MS;
-  while (deps.activeWorkers.isSessionBusy(Number(sessionId))) {
+  const sessionActivity = deps.sessionActivity || require('./session-activity');
+  while (deps.activeWorkers.isSessionBusy(Number(sessionId)) || await sessionActivity.isBusy(Number(sessionId))) {
     if (deps.now() >= deadline) return false;
     await deps.sleep(IDLE_POLL_MS);
   }

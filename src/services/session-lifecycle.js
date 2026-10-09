@@ -15,6 +15,7 @@ const staging = require('./staging');
 const turnLifecycle = require('./turn-lifecycle');
 const worker = require('./worker');
 const { isSessionBusy } = require('./active-workers');
+const sessionActivity = require('./session-activity');
 const workerProgress = require('./worker-progress');
 const github = require('./github');
 const branchNames = require('./branch-names');
@@ -170,11 +171,14 @@ async function notifyPausedMidTurn(pool, session) {
 // status } when the proposal is already Underway, or { ok: false, code } with
 // code in 'not_found' | 'forbidden' | 'merging' | 'closed' | 'busy' |
 // 'pending_secret'.
-async function unpromoteSession({ pool, sessionId, userId, actorUsername = null }) {
+// `busyElsewhere`: the caller's claim on the session as an operation was
+// refused (session-activity.js), so another process's turn or branch move
+// makes it busy, as one in this process does.
+async function unpromoteSession({ pool, sessionId, userId, actorUsername = null, busyElsewhere = false }) {
   // An in-process turn (the chat handler's set, a sync-main run) is not in
   // the row, so it is checked here; a busy session skips the write and is
   // reported below, after the ownership answer.
-  const busyNow = require('./active-workers').isSessionBusy(sessionId);
+  const busyNow = busyElsewhere || require('./active-workers').isSessionBusy(sessionId);
 
   const { rows } = busyNow ? { rows: [] } : await pool.query(
     `UPDATE chat_sessions cs
@@ -309,13 +313,26 @@ async function freeGlobalSlot({ pool, graceMs, excludeSessionId = null }) {
     // proposal staging has no worker exec, but it owns the same session and
     // must be allowed to finish just like a web coding turn.
     if (isSessionBusy(row.id)) continue;
-    const { paused } = await pauseSession({ pool, sessionId: row.id, reason: 'pressure' });
+    const { paused } = await pauseUnlessBusy({ pool, sessionId: row.id, reason: 'pressure' });
     if (paused) {
       log.info('session-lifecycle', 'Freed global slot under pressure', { sessionId: row.id });
       return { freed: true, sessionId: row.id };
     }
   }
   return { freed: false };
+}
+
+// Pausing a session to free a slot is a 'destroy' activity on it
+// (session-activity.js): with the session-activity machine on, a turn in
+// another process (the other colour, or a detached turn not adopted yet)
+// refuses it, so freeing a slot never kills a live turn (B2).
+async function pauseUnlessBusy(args) {
+  try {
+    return await sessionActivity.run(args.sessionId, 'destroy', { label: `pause (${args.reason})` }, () => pauseSession(args));
+  } catch (err) {
+    if (err instanceof sessionActivity.SessionBusyError) return { paused: false };
+    throw err;
+  }
 }
 
 // The per-user cap, handled for the user rather than put to them. When their
@@ -347,7 +364,7 @@ async function freeUserSlot({ pool, userId, excludeSessionId = null, includeHead
   for (const row of rows) {
     const id = Number(row && row.id);
     if (!Number.isInteger(id) || id <= 0 || isSessionBusy(id)) continue;
-    const { paused } = await pauseSession({ pool, sessionId: id, userId, reason: 'lru' });
+    const { paused } = await pauseUnlessBusy({ pool, sessionId: id, userId, reason: 'lru' });
     if (paused) {
       log.info('session-lifecycle', 'Freed a user slot', { userId, sessionId: id });
       return { freed: true, sessionId: id };

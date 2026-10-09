@@ -53,6 +53,7 @@
 // build (sideBuildStage, laterSideBuildStage). Any other is abandoned and run
 // again from the start (services/bench/lane.js).
 
+const sessionActivity = require('../session-activity');
 const crypto = require('crypto');
 const bcrypt = require('bcrypt');
 const log = require('../logger');
@@ -256,6 +257,10 @@ async function runTurn({
   );
   session.agent_thread_id = null;
   session.agent_model = model;
+  // One activity on the session (services/session-activity.js): with the
+  // session-activity machine on, it is refused while another process uses it.
+  const sessionUse = await sessionActivity.begin(session.id, 'turn', { label: 'bench turn' });
+  sessionUse?.enter();
   activeWorkers.add(session.id);
   let stopped = false;
   let stopping = null;
@@ -304,6 +309,7 @@ async function runTurn({
     clearTimeout(timer);
     if (stopping) await stopping;
     activeWorkers.delete(session.id);
+    sessionUse?.end();
     await pool.query(
       "UPDATE chat_sessions SET status = 'paused', last_activity_at = NOW() WHERE id = $1 AND status = 'active'",
       [session.id],

@@ -95,21 +95,21 @@ test('session-activity machine against the full PostgreSQL schema', { timeout: 1
 
   await t.test('what excludes what', async () => {
     const s = await session();
-    const branch = await ask(s, 'branch');
-    assert.equal(branch.granted, true);
-    assert.equal((await ask(s, 'branch')).reason, 'busy_branch', 'two branch moves');
-    assert.equal((await ask(s, 'build')).reason, 'busy_branch', 'a build under a branch move');
-    assert.equal((await ask(s, 'turn')).reason, 'busy_branch');
-    assert.equal((await ask(s, 'destroy')).reason, 'busy_branch');
-    await end(s, branch.activityId);
-    const build = await ask(s, 'build');
-    assert.equal(build.granted, true);
-    assert.equal((await ask(s, 'turn')).granted, true, 'a turn runs beside a staging build');
+    const op = await ask(s, 'operation');
+    assert.equal(op.granted, true);
+    assert.equal((await ask(s, 'operation')).reason, 'busy_operation', 'two branch moves');
+    assert.equal((await ask(s, 'turn')).reason, 'busy_operation');
+    assert.equal((await ask(s, 'destroy')).reason, 'busy_operation');
+    assert.equal((await ask(s, 'hold')).granted, true, 'a hold keeps only a destroy out');
+    assert.equal((await ask(s, 'chat')).granted, true, 'a Mayor chat turn keeps nothing out and is kept out by nothing');
   });
 
   await t.test('a hold keeps a destroy and other turns out, but not its own turn', async () => {
     const s = await session();
+    const running = await ask(s, 'turn');
     const hold = await ask(s, 'hold');
+    assert.equal(hold.granted, true, 'a screenshot run holds the worker, then waits for the turn to end');
+    await end(s, running.activityId);
     assert.equal((await ask(s, 'destroy')).reason, 'busy_hold');
     assert.equal((await ask(s, 'turn')).reason, 'busy_hold', 'a coding turn while the screenshot run sets up (B7)');
     const own = await ask(s, 'turn', { parent: hold.activityId });
@@ -128,11 +128,11 @@ test('session-activity machine against the full PostgreSQL schema', { timeout: 1
     assert.deepEqual(rows.map((r) => r.id), [b.activityId]);
   });
 
-  await t.test("a running turn's journal counts as a turn, except to whoever names that turn", async () => {
+  await t.test("a running turn's journal keeps out what a turn does, except whoever names that turn", async () => {
     const s = await session();
     await turnLifecycle.persistNewTurn(pool, s, { turnId: 'turn-1', mode: 'chat', phase: 'executing' });
     assert.equal((await ask(s, 'destroy')).reason, 'busy_turn', 'a pause under a detached turn (B2)');
-    assert.equal((await ask(s, 'turn')).reason, 'busy_turn');
+    assert.equal((await ask(s, 'operation')).reason, 'busy_turn', 'a branch move under it (B10)');
     const takeover = await ask(s, 'turn', { turnId: 'turn-1' });
     assert.equal(takeover.granted, true, 'recovery taking its turn over');
     assert.equal((await ask(s, 'destroy', { turnId: 'turn-1' })).reason, 'busy_turn', 'not while a live holder runs it');
@@ -165,7 +165,7 @@ test('session-activity machine against the full PostgreSQL schema', { timeout: 1
     assert.equal(renewal.held, true);
     assert.equal(renewal.stop.by.username, 'sa_owner', 'a missed push is caught at the next renewal');
     const seen = await readActivities(pool, [s]);
-    assert.equal(seen.get(s).stopping, true);
+    assert.deepEqual(seen.get(s), [{ id: turn.activityId, kind: 'turn', stopping: true }]);
     const none = await session();
     const nid = await rt.append(MACHINE, sessionKey(none), { type: 'StopRequested', payload: {
       sessionId: none, by: { id: owner.id, username: 'sa_owner', canAdminWrite: false }, force: false, immediate: false, expectedTurnId: null,
@@ -230,7 +230,7 @@ test('session-activity machine against the full PostgreSQL schema', { timeout: 1
     assert.equal((await renewLease(pool, a.activityId)).held, true);
     const after = (await pool.query('SELECT lease_until FROM wf_session_activities WHERE id = $1', [a.activityId])).rows[0].lease_until;
     assert.ok(after > before);
-    await assert.rejects(pool.query(`UPDATE wf_session_activities SET kind = 'build' WHERE id = $1`, [a.activityId]), /WF_OWNERSHIP_VIOLATION/);
+    await assert.rejects(pool.query(`UPDATE wf_session_activities SET kind = 'hold' WHERE id = $1`, [a.activityId]), /WF_OWNERSHIP_VIOLATION/);
     await assert.rejects(pool.query('DELETE FROM wf_session_activities WHERE id = $1', [a.activityId]), /WF_OWNERSHIP_VIOLATION/);
     await lapse(a.activityId);
     assert.deepEqual(await renewLease(pool, a.activityId), { held: false, stop: null });

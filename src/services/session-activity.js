@@ -40,9 +40,9 @@ const HOLDER = `${os.hostname()}:${process.pid}:${crypto.randomUUID().slice(0, 8
 
 // What each kind of activity also covers when one of its own steps asks.
 const COVERS = new Map([
-  ['turn', new Set(['turn', 'branch', 'build', 'hold'])],
-  ['branch', new Set(['branch', 'build'])],
-  ['build', new Set(['build'])],
+  ['chat', new Set(['chat'])],
+  ['turn', new Set(['turn', 'operation', 'hold'])],
+  ['operation', new Set(['operation'])],
   ['hold', new Set(['hold'])],
   ['destroy', new Set(['destroy'])],
 ]);
@@ -58,6 +58,9 @@ class SessionBusyError extends Error {
     // busy_turn → 'turn'; 'retiring', 'unavailable' as they are.
     this.blockedBy = String(reason).replace(/^busy_/, '');
     this.sessionId = Number(sessionId);
+    // A refusal changes nothing durable: a recovery that was refused keeps
+    // its turn's record and is retried (recovery-retry.js).
+    this.retainActiveTurn = true;
   }
 }
 
@@ -66,8 +69,15 @@ const scope = new AsyncLocalStorage();
 const handles = new Map();
 let stopHandler = null;
 
+// Whether this process asks the machine (WF_SESSION_ACTIVITY_ENABLED), set
+// at boot. On, a process whose workflow runtime did not start refuses to
+// start anything on a session rather than decide from its memory alone.
+let configured = false;
+function configure(config) {
+  configured = !!config?.wfSessionActivityEnabled;
+}
 function wanted() {
-  try { return platform().sessionActivityWanted(); } catch { return false; }
+  return configured;
 }
 function enabled() {
   try { return platform().sessionActivityEnabled(); } catch { return false; }
@@ -245,6 +255,13 @@ async function begin(sessionId, kind, opts = {}) {
   return {
     handle,
     enter: () => scope.enterWith(handle),
+    // Keep the activity on for work that outlives the caller (a detached
+    // pipeline): it ends once that work's release and end() have both run.
+    retain: () => {
+      handle.refs += 1;
+      let kept = true;
+      return () => { if (kept) { kept = false; release(handle, 'done').catch(() => {}); } };
+    },
     end: (outcome = 'done') => {
       if (done) return Promise.resolve();
       done = true;
@@ -253,8 +270,19 @@ async function begin(sessionId, kind, opts = {}) {
   };
 }
 
-// What every process reads: the sessions with a live activity, and whether
-// a stop is on its way to their turn. Empty with the flag off.
+// For a gate that answers "busy" itself: { activity } (null with the flag
+// off), or { refused } with the SessionBusyError to answer with.
+async function tryBegin(sessionId, kind, opts = {}) {
+  try {
+    return { activity: await begin(sessionId, kind, opts), refused: null };
+  } catch (err) {
+    if (err instanceof SessionBusyError) return { activity: null, refused: err };
+    throw err;
+  }
+}
+
+// What every process reads: per session, its live activities
+// ({ id, kind, stopping }), oldest first. Empty with the flag off.
 async function read(sessionIds) {
   const ids = [...new Set((sessionIds || []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
   if (!ids.length || !wanted() || !enabled()) return new Map();
@@ -266,18 +294,46 @@ async function read(sessionIds) {
   }
 }
 
+// The sessions among these that something uses, by what every process
+// reads. A Mayor chat turn alone does not count, and neither does what the
+// caller itself runs inside (a sweep's step asking whether anything ELSE
+// uses the session). Empty with the flag off.
+async function busyIds(sessionIds) {
+  const out = new Set();
+  for (const [id, list] of await read(sessionIds)) {
+    const own = new Set();
+    for (let h = scope.getStore(); h; h = h.parentHandle) if (h.sessionId === id) own.add(h.id);
+    if (list.some((a) => a.kind !== 'chat' && !own.has(a.id))) out.add(id);
+  }
+  return out;
+}
+
 async function isBusy(sessionId) {
-  return (await read([sessionId])).has(Number(sessionId));
+  return (await busyIds([sessionId])).has(Number(sessionId));
+}
+
+// What screens show beside this process's memory: whether a turn or an
+// operation runs on the session somewhere, and whether a stop is on its way
+// to it. { busy, stopping } per session id.
+async function liveStates(sessionIds) {
+  const out = new Map();
+  for (const [id, list] of await read(sessionIds)) {
+    out.set(id, {
+      busy: list.some((a) => a.kind !== 'chat'),
+      stopping: list.some((a) => a.stopping),
+    });
+  }
+  return out;
 }
 
 // The worker can go once nothing uses the session (the machine waits), or
 // with the flag off as [main] did: now, unless this process holds it.
-async function retire(sessionId, by) {
+async function retire(sessionId, by, workerApi = null) {
   if (wanted() && enabled()) {
     await platform().retireSession(Number(sessionId), by);
     return { deferred: 'session-activity' };
   }
-  return require('./worker').retireWorker(sessionId);
+  return (workerApi || require('./worker')).retireWorker(sessionId);
 }
 
 // A Stop for a turn this process does not run. Resolves true when the
@@ -303,11 +359,15 @@ async function endAll(outcome = 'shutdown') {
 
 module.exports = {
   HOLDER,
+  configure,
   SessionBusyError,
   run,
   begin,
+  tryBegin,
   read,
+  busyIds,
   isBusy,
+  liveStates,
   retire,
   forwardStop,
   stopArrived,

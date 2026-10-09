@@ -91,6 +91,7 @@ function defaults(deps = {}) {
     turnDeps: deps.turnDeps || null,
     worker: deps.worker || require('../worker'),
     activeWorkers: deps.activeWorkers || require('../active-workers'),
+    sessionActivity: deps.sessionActivity || require('../session-activity'),
     stopRegistry: deps.stopRegistry || require('../stop-registry'),
     sessionBus: deps.sessionBus || require('../session-bus'),
     broadcastGlobal: deps.broadcastGlobal || ((payload) => require('../ws').broadcastGlobal(payload)),
@@ -290,6 +291,15 @@ async function runDispatch({
     }
   }
 
+  // The build is one activity on the change (services/session-activity.js):
+  // with the session-activity machine on, it is claimed here, atomically
+  // across processes, and the model switch and the coding turn below run
+  // inside it rather than asking again.
+  const gate = await d.sessionActivity.tryBegin(changeId, 'turn', { label: 'agent build' });
+  if (gate.refused) return refusal(gate.refused.blockedBy === 'hold' ? SHOTS_BUSY_TEXT : BUSY_TEXT);
+  gate.activity?.enter();
+  const endGate = () => gate.activity?.end();
+
   const turnDeps = turnDepsOf(d);
   // The conversation's model choice applies from the next build: switch the
   // change to it now, before the operation guard is claimed (the switch
@@ -306,11 +316,13 @@ async function runDispatch({
       log.warn('agent-mayor', 'Could not switch the change to the conversation\'s model', {
         agentSessionId, changeId, err: switched.error,
       });
+      endGate();
       return refusal('model_switch_failed: Could not switch to the selected model. No new coding run was started. Try again.');
     }
   }
-  if (await shouldStop()) return stoppedBeforeStart();
-  const release = d.activeWorkers.beginSessionOperation(changeId);
+  if (await shouldStop()) { endGate(); return stoppedBeforeStart(); }
+  const releaseOperation = d.activeWorkers.beginSessionOperation(changeId);
+  const release = () => { releaseOperation(); endGate(); };
   // #937: a new dispatch is the boundary that retires the previous turn's
   // pending stop, exactly as a new classic turn is.
   d.worker.clearPendingStop(changeId);

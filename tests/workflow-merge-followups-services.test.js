@@ -39,7 +39,7 @@ const { mergeFollowupsServices } = require('../src/workflow/merge-followups/serv
 const { WORK } = require('../src/workflow/merge-followups/machine.ts');
 
 const pool = { async query() { return { rows: [] }; } };
-const handlers = mergeFollowupsServices({ config: {}, pool, retire: async () => ({ deferred: false }) });
+const handlers = mergeFollowupsServices({ config: {}, pool });
 const run = (input) => handlers[WORK.issues].run({ input, key: 'issues', attempt: 1, resumeFrom: null, checkpoint: async () => {} });
 const base = { sessionId: 5, appId: 2, appSlug: 'shop', prNumber: 8, owner: 'acme', repo: 'shop' };
 

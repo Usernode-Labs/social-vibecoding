@@ -3,8 +3,9 @@
 
 import type { Json, WorkHandler } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
-import { backoff } from '../github-work.ts';
 import { WORK } from './machine.ts';
+
+const backoff = (attempt: number) => Math.min(30 * 60 * 1000, 30 * 1000 * 2 ** (attempt - 1));
 
 export function sessionActivityServices(): Record<string, WorkHandler> {
   return {

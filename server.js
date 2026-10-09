@@ -557,6 +557,9 @@ app.use(require('./src/routes/mail-tracking').mailTrackingRoutes(config));
 // The configuration every process that runs the workflow machines sets up
 // (src/workflow/setup.ts): activity mail, the account-deletion guard on workers.
 require('./src/workflow/setup.ts').configureWorkflowProcess(config);
+// Whether this process asks the session-activity machine before using a
+// session (WF_SESSION_ACTIVITY_ENABLED).
+require('./src/services/session-activity').configure(config);
 
 // App-stored user files (#752). Public for the same reason as app-icons:
 // app pages load them with plain <img> tags from their own subdomains.
@@ -2110,7 +2113,10 @@ const CHECKS_STALE_MS = stagingRecovery.checksStaleMs();
 // CHECK_MAX_AUTO_RETRIES; read in staging-recovery.
 const CHECK_MAX_AUTO_RETRIES = stagingRecovery.checkMaxAutoRetries();
 
-function checkRecoveryInFlight(sessionId) {
+// A turn or operation in another process counts too (session-activity.js):
+// re-driving checks it is running would start a second run beside it.
+async function checkRecoveryInFlight(sessionId) {
+  if (await require('./src/services/session-activity').isBusy(sessionId)) return true;
   return activeWorkersSvc.isSessionBusy(sessionId)
     || hasInFlightHandoffPipeline(sessionId)
     || stagingSvc.hasInFlightBuild(Number(sessionId))
@@ -2184,7 +2190,7 @@ async function reconcileStuckChecks(config) {
   let leftToHarvest = 0;
   for (const session of rows) {
     if (rechecked >= MAX_RECHECKS) break;
-    if (checkRecoveryInFlight(session.id)) continue;
+    if (await checkRecoveryInFlight(session.id)) continue;
     if (await checkRunLeftToHarvest(config, pool, session, 'stuck-checks-boot')) {
       leftToHarvest++;
       continue;
@@ -4194,7 +4200,19 @@ function buildRecoveryStopHandle({ sessionId, containerName, activeTurn, broadca
   return handle;
 }
 
+// Recovery takes the detached turn over as an activity on its session
+// (services/session-activity.js), naming the journal's turn. With the
+// session-activity machine on, it is refused while the process that ran the
+// turn still holds it (the other colour during a rollout, still streaming
+// it): the refusal keeps the turn's record, and the caller's retry adopts it
+// once that holder has ended it or its lease ran out.
 async function resumeDetachedTurn(args) {
+  return require('./src/services/session-activity').run(args.sessionId, 'turn', {
+    label: 'recovered turn', turnId: turnLifecycle.turnIdentity(args.activeTurn),
+  }, () => resumeDetachedTurnHeld(args));
+}
+
+async function resumeDetachedTurnHeld(args) {
   const { pool, sessionId, containerName, activeTurn, broadcastGlobal } = args;
   const relayTo = [];
   require('./src/services/agent-sessions').conversationsOfChange(pool, sessionId)
@@ -4992,6 +5010,23 @@ const SWEEP_INTERVAL_MS = 30 * 1000;
 
 let sweeperHandle = null;
 
+// A sweep's step on one session, as an activity on it
+// (services/session-activity.js): skipped, resolving false, while something
+// it must not overlap uses the session, in this process or, with the
+// session-activity machine on, in any other. A step that pauses, evicts or
+// tears down is a 'destroy'; one that rebuilds or moves what a proposal
+// shows is an 'operation'.
+async function sweepStep(sessionId, kind, label, fn, opts = {}) {
+  const sessionActivity = require('./src/services/session-activity');
+  try {
+    await sessionActivity.run(sessionId, kind, { label, ...opts }, fn);
+    return true;
+  } catch (err) {
+    if (err instanceof sessionActivity.SessionBusyError) return false;
+    throw err;
+  }
+}
+
 function startIdleEvictionSweeper() {
   if (sweeperHandle) return;
   log.info('server', 'Worker idle-eviction sweeper started', {
@@ -5007,7 +5042,10 @@ function startIdleEvictionSweeper() {
       if (meta.bootstrapping) continue;
       if (now - meta.lastUsedMs < WORKER_IDLE_EVICTION_MS) continue;
       try {
-        await worker.evictWorker(meta.sessionId);
+        // The worker is the session's, not this process's: another process
+        // may be running a turn on it (a turn there is not in this
+        // registry).
+        if (!(await sweepStep(meta.sessionId, 'destroy', 'idle eviction', () => worker.evictWorker(meta.sessionId)))) continue;
         log.info('server', 'Idle warm worker evicted', {
           sessionId: meta.sessionId,
           containerName: meta.containerName,
@@ -5169,7 +5207,8 @@ function startSessionAutoPauseSweeper(config) {
       for (const row of rows) {
         if (activeWorkersSvc.isSessionBusy(row.id)) continue;
         try {
-          await sessionLifecycle.pauseSession({ pool, sessionId: row.id, reason: 'auto-idle' });
+          await sweepStep(row.id, 'destroy', 'auto-pause',
+            () => sessionLifecycle.pauseSession({ pool, sessionId: row.id, reason: 'auto-idle' }));
         } catch (err) {
           log.warn('server', 'Auto-pause failed', { sessionId: row.id, err: err.message });
         }
@@ -5209,7 +5248,8 @@ function startSessionAutoPauseSweeper(config) {
           // leaving a staging_url pointing at nothing.
           if (stagingSvc.hasInFlightBuild(row.id)) continue;
           try {
-            await sessionLifecycle.teardownStagingForSession({ pool, sessionId: row.id, reason: 'idle-gc' });
+            await sweepStep(row.id, 'destroy', 'staging idle GC',
+              () => sessionLifecycle.teardownStagingForSession({ pool, sessionId: row.id, reason: 'idle-gc' }));
           } catch (err) {
             log.warn('server', 'Staging GC failed', { sessionId: row.id, err: err.message });
           }
@@ -5276,6 +5316,14 @@ function startSessionAutoPauseSweeper(config) {
           });
           continue;
         }
+        // Not busy HERE is not orphaned: the turn may run in another
+        // process (the other colour during a rollout, B1). With the
+        // session-activity machine on, a live holder of this turn refuses
+        // the reap; its journal alone does not (the reap names it).
+        const reapGate = await require('./src/services/session-activity').tryBegin(row.id, 'destroy', {
+          label: 'stale turn reap', turnId: turnLifecycle.turnIdentity(row.active_turn),
+        });
+        if (reapGate.refused) continue;
         try {
           const reapTail = (row.active_turn && typeof row.active_turn.tail === 'object'
             && row.active_turn.tail) || {};
@@ -5405,6 +5453,8 @@ function startSessionAutoPauseSweeper(config) {
           }
         } catch (err) {
           log.warn('server', 'Stale active_turn reap failed', { sessionId: row.id, err: err.message });
+        } finally {
+          reapGate.activity?.end();
         }
       }
     } catch (err) {
@@ -5460,7 +5510,10 @@ function startSessionAutoPauseSweeper(config) {
         stagingHealAttempts.set(session.id, Date.now());
         healed++;
         try {
-          const result = await stagingRecovery.rebuildSessionStaging({ config, pool, session, reason: 'heal' });
+          let result = null;
+          await sweepStep(session.id, 'operation', 'staging heal', async () => {
+            result = await stagingRecovery.rebuildSessionStaging({ config, pool, session, reason: 'heal' });
+          });
           if (result === 'built') stagingHealAttempts.delete(session.id);
         } catch (err) {
           log.warn('server', 'Staging heal failed', { sessionId: session.id, err: err.message });
@@ -5490,7 +5543,7 @@ function startSessionAutoPauseSweeper(config) {
       let rechecked = 0;
       for (const session of rows) {
         if (rechecked >= MAX_RECHECKS_PER_SWEEP) break;
-        if (checkRecoveryInFlight(session.id)) continue;
+        if (await checkRecoveryInFlight(session.id)) continue;
         const last = checkRecheckAttempts.get(session.id) || 0;
         if (Date.now() - last < STAGING_HEAL_COOLDOWN_MS) continue;
         if (await checkRunLeftToHarvest(config, pool, session, 'stuck-checks-sweep')) continue;
@@ -5612,7 +5665,8 @@ function startSessionAutoPauseSweeper(config) {
         importedHeadSyncAttempts.set(session.id, Date.now());
         synced++;
         try {
-          await prImportSync.syncImportedProposal({ config, pool, session });
+          await sweepStep(session.id, 'operation', 'imported head sync',
+            () => prImportSync.syncImportedProposal({ config, pool, session }));
         } catch (err) {
           log.warn('server', 'Imported-PR head sync failed', { sessionId: session.id, err: err.message });
         }
@@ -5881,6 +5935,12 @@ function startStalePrSweeper(config) {
       );
       for (const session of rows) {
         if (activeWorkersSvc.isSessionBusy(session.id)) continue;
+        // Refreshing the head, merging or archiving is an operation on the
+        // proposal: with the session-activity machine on, a turn or branch
+        // move in another process refuses it here, as one in this process
+        // does above.
+        const sweepGate = await require('./src/services/session-activity').tryBegin(session.id, 'operation', { label: 'window-elapsed sweep' });
+        if (sweepGate.refused) continue;
         try {
           // Native PR branches can be updated outside Homeroom. Refresh their
           // immutable reviewed revision before any timed governance decision,
@@ -5953,6 +6013,8 @@ function startStalePrSweeper(config) {
           log.warn('server', 'Window-elapsed merge check failed', {
             sessionId: session.id, err: err.message,
           });
+        } finally {
+          sweepGate.activity?.end();
         }
       }
     } catch (err) {
@@ -6067,7 +6129,8 @@ function startStalePrSweeper(config) {
         for (const row of rows) {
           if (activeWorkersSvc.isSessionBusy(row.id)) continue;
           try {
-            await sessionLifecycle.archiveSession({ pool, sessionId: row.id, reason: 'stale-pr' });
+            await sweepStep(row.id, 'destroy', 'stale proposal archive',
+              () => sessionLifecycle.archiveSession({ pool, sessionId: row.id, reason: 'stale-pr' }));
           } catch (err) {
             log.warn('server', 'Stale-PR archive failed', { sessionId: row.id, err: err.message });
           }
@@ -6369,12 +6432,13 @@ async function cleanup() {
   const retentionStop = require('./src/services/build-retention').stop();
   const checkRetentionStop = require('./src/services/check-retention').stop();
   const scorerStop = require('./src/services/topochain/challenge-scorer').stop();
+  // The workflow runtime stops after the drain below, not now: the turns
+  // and operations finishing during it end their session activities
+  // through it (services/session-activity.js). Its own running work
+  // reports nothing once stopped and is reclaimed when its lease runs out.
+  let workflowStop = Promise.resolve();
   // Stop claiming push jobs immediately. The bounded drain runs in
   // parallel with HTTP/session draining and is awaited before pool close.
-  // The workflow runtime has its own pool; its running work reports nothing
-  // and is reclaimed when its lease runs out.
-  const workflowStop = require('./src/workflow/platform.ts').stopWorkflow()
-    .catch((err) => log.warn('server', 'Stopping the workflow runtime failed', { err: err.message }));
   const pushStop = mobilePush.stop({ timeoutMs: DRAIN_TIMEOUT_MS }).catch((err) => {
     log.warn('server', 'Mobile push shutdown failed', {
       code: typeof err?.code === 'string' ? err.code : 'unknown',
@@ -6464,7 +6528,8 @@ async function cleanup() {
   });
 
   const [drained] = await Promise.all([
-    lifecycle.waitFor(() => getActiveWorkerCount() === 0 && shotsRuns().length === 0, {
+    lifecycle.waitFor(() => getActiveWorkerCount() === 0 && shotsRuns().length === 0
+      && require('./src/services/session-activity').heldCount() === 0, {
       timeoutMs: DRAIN_TIMEOUT_MS, intervalMs: 500,
     }),
     announced,
@@ -6480,6 +6545,13 @@ async function cleanup() {
   }
   await pushStop;
   await agentTurnsEnded;
+  // What this process still holds on any session ends with it. A detached
+  // turn whose container keeps running stays busy through its journal until
+  // the next process adopts it.
+  await require('./src/services/session-activity').endAll()
+    .catch((err) => log.warn('server', 'Ending session activities failed', { err: err.message }));
+  workflowStop = require('./src/workflow/platform.ts').stopWorkflow()
+    .catch((err) => log.warn('server', 'Stopping the workflow runtime failed', { err: err.message }));
 
   // A planned replay is hosted by this server process. If it is still active
   // when the drain expires, record the actual shutdown now so its owner can

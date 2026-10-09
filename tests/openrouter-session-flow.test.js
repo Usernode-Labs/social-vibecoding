@@ -125,7 +125,7 @@ test('an OpenRouter session runs the Mayor on its own OpenRouter model (#2809/#2
 test('direct OpenRouter prompt supports chat replies as well as repository changes', () => {
   const tool = between(
     sessions,
-    'async function runClaudeCodeTool({',
+    'async function runClaudeCodeToolTurn({',
     // #2779: getMayorSystemPrompt, which used to follow the tool, moved
     // to services/mayor/prompt.js.
     'async function getFilesFromContainer(',
@@ -167,7 +167,7 @@ test('Generate proposal follows the saved OpenRouter provider without Claude cre
 test('OpenRouter headless and recovery paths do not resolve Anthropic billing', () => {
   const headless = between(
     sessions,
-    'async function runHeadlessSession({',
+    'async function runHeadlessSessionTurn({',
     'async function runRecoveredWrapUp({',
   );
   const directHeadless = between(

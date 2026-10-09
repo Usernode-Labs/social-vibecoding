@@ -99,7 +99,8 @@ async function lookup(db, { sessionId, clientMessageId, viewer }) {
   const state = deliveryState({
     messageId,
     liveMessageId: handle?.userMessageId ?? null,
-    turnLive: !!handle || isSessionBusy(Number(sessionId)),
+    turnLive: !!handle || isSessionBusy(Number(sessionId))
+      || await require('./session-activity').isBusy(Number(sessionId)),
     isLatestUserMessage: !!row.latest_user,
     hasLaterRows: !!row.has_later,
   });

@@ -432,11 +432,19 @@ function anthropicProxyRoutes(config) {
     // bill the dedicated system-token budget, not the owner's allowance.
     // The worker records the in-flight turn's mode in its warm registry;
     // read it synchronously to decide which cap+tracker to gate against.
+    // This process may not run the turn (any web process serves the proxy),
+    // or may run it resumed after a restart, which records no mode in
+    // memory: then the turn's journal says which it is (B5).
     let workerMod = null;
     try { workerMod = require('../services/worker'); } catch {}
-    const isSyncTurn = (() => {
-      try { return !!workerMod && workerMod.getActiveTurnMode(sessionId) === 'sync'; }
-      catch { return false; }
+    const isSyncTurn = await (async () => {
+      let mode = null;
+      try { mode = workerMod ? workerMod.getActiveTurnMode(sessionId) : null; } catch { mode = null; }
+      if (mode) return mode === 'sync';
+      try {
+        const { rows } = await pool.query(`SELECT active_turn->>'mode' AS mode FROM chat_sessions WHERE id = $1`, [sessionId]);
+        return rows[0]?.mode === 'sync';
+      } catch { return false; }
     })();
 
     // Resolve effective cap + current spend snapshot. Both come from

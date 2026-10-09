@@ -211,6 +211,9 @@
       "web | uses src/services/pr-vote-revision.js:countedVotePredicateSql",
       "web | uses src/services/ws-bus.js:CHANNEL",
       "web | uses src/services/ws-bus.js:workflowBody"
+    ],
+    "session-activity": [
+      "services | uses src/services/worker.js:destroyCcVolume"
     ]
   }
 }

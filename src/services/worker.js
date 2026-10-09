@@ -2992,7 +2992,33 @@ async function ensureWorker(sessionId, {
   await accountDeletionGuard(sessionId);
   const containerName = workerRuntimeName(sessionId);
 
-  // Coalesce concurrent ensures — if one's already racing, await it.
+  // Coalesce concurrent ensures — if one's already racing, await it. The
+  // check and the claim are one synchronous step: the status probe below
+  // awaits, and two cold ensures that both passed a check before it used to
+  // bootstrap twice, one reaping the other's container (B8).
+  const racing = _ensuring.get(Number(sessionId));
+  if (racing) {
+    await racing;
+    await accountDeletionGuard(sessionId);
+    return containerName;
+  }
+  const run = ensureWorkerClaimed(sessionId, containerName, {
+    repoOwner, repoName, branchName, onProgress, temporary, pinnedBase,
+  });
+  _ensuring.set(Number(sessionId), run);
+  try {
+    return await run;
+  } finally {
+    if (_ensuring.get(Number(sessionId)) === run) _ensuring.delete(Number(sessionId));
+  }
+}
+
+// sessionId -> the ensureWorker running for it in this process.
+const _ensuring = new Map();
+
+async function ensureWorkerClaimed(sessionId, containerName, {
+  repoOwner, repoName, branchName, onProgress, temporary, pinnedBase,
+}) {
   const existing = _registryGet(sessionId);
   if (existing?.bootstrap) {
     await existing.bootstrap;
@@ -3760,6 +3786,7 @@ async function execInWorker(sessionId, {
     // The agent process is done with the platform once its journal has
     // ended: the tail (PR, staging, the wrap-up) never uses this token.
     await revokeHomeroomReadGrant(sessionId, homeroomGrant);
+    await reconcileTurnByok(sessionId, durableTurnId);
     if (providerDispatched && providerTerminalObserved && isClaude && measuredTelemetryComponent) {
       recordClaudeCodingRun({
         sessionId,
@@ -3827,14 +3854,31 @@ function getActiveTurnMode(sessionId) {
 // Record `cents` of BYOK-billed spend against the session's in-flight
 // turn. Fire-and-forget on the durable mirror: billing bookkeeping must
 // never fail the API call that incurred it.
+//
+// The proxy call can land on a process that does not run the turn (any
+// web process serves it). That process has no turn of its own to tally:
+// the spend goes to the turn's durable record only, under the turn the
+// journal names, and the owner reads it back when its turn ends
+// (reconcileTurnByok) (B5).
 function noteTurnByokSpend(sessionId, cents) {
   const sid = Number(sessionId);
   if (!(cents > 0)) return;
   const meta = _warmRegistry.get(sid);
-  _registryUpsert(sid, { turnByokCents: ((meta && meta.turnByokCents) || 0) + cents });
   const pool = _getPoolSafe();
   const activeTurnId = meta?.activeTurnId || null;
-  if (pool && activeTurnId) {
+  if (!activeTurnId) {
+    if (!pool) return;
+    turnLifecycle.loadActiveTurn(pool, sid)
+      .then((turn) => (turn?.turnId
+        ? turnLifecycle.incrementByokCents(pool, { sessionId: sid, turnId: turn.turnId, cents })
+        : null))
+      .catch((err) => {
+        log.warn('worker', 'Failed to persist turn byok spend', { sessionId: sid, err: err.message });
+      });
+    return;
+  }
+  _registryUpsert(sid, { turnByokCents: ((meta && meta.turnByokCents) || 0) + cents });
+  if (pool) {
     turnLifecycle.incrementByokCents(pool, {
       sessionId: sid,
       turnId: activeTurnId,
@@ -3842,6 +3886,22 @@ function noteTurnByokSpend(sessionId, cents) {
     }).catch((err) => {
       log.warn('worker', 'Failed to persist turn byok spend', { sessionId: sid, err: err.message });
     });
+  }
+}
+
+// The turn's BYOK spend as its durable record has it, when that is more than
+// this process saw: calls another process proxied for it (B5). Read once,
+// as the turn ends, before anything settles it.
+async function reconcileTurnByok(sessionId, turnId) {
+  const pool = _getPoolSafe();
+  if (!pool || !turnId) return;
+  try {
+    const turn = await turnLifecycle.loadActiveTurn(pool, sessionId);
+    if (turn?.turnId !== turnId) return;
+    const durable = Number(turn.byokCents) || 0;
+    if (durable > getTurnByokCents(sessionId)) _registryUpsert(Number(sessionId), { turnByokCents: durable });
+  } catch (err) {
+    log.warn('worker', 'Could not read the turn\'s durable BYOK spend', { sessionId, err: err.message });
   }
 }
 
@@ -4220,10 +4280,15 @@ async function _consumeJournal(containerName, journal, progress, state, { sessio
 //
 // `stopRequestedAt` on the registry entry tightens the watchdog cadence as
 // a fallback for the case where this append doesn't land at all.
-async function stopTurn(sessionId, { force = false } = {}) {
+// `recordPending: false` is for a process that does not run the turn (a
+// Stop that found no handle here): it kills what runs in the container but
+// records no pending stop here, which would refuse this process's next
+// dispatch on the session for a stop that was never its own (B5). The
+// owner, or recovery, reads the durable stop stamp instead.
+async function stopTurn(sessionId, { force = false, recordPending = true } = {}) {
   const meta = _registryGet(sessionId);
   const containerName = meta?.containerName || workerRuntimeName(sessionId);
-  _registryUpsert(sessionId, { stopRequestedAt: Date.now() });
+  if (recordPending) _registryUpsert(sessionId, { stopRequestedAt: Date.now() });
   const command = execWorkerCommand(containerName, ['sh', '-c',
     buildTurnStopScript(meta?.journal || null, { force }),
   ], null, { timeoutMs: force ? 5000 : 30000 });
@@ -4390,6 +4455,7 @@ async function resumeTurnFromJournal(sessionId, {
     // destroy the sole replay source before those writes had landed.
     return finalizeHarnessResult(state);
   } finally {
+    await reconcileTurnByok(sessionId, turnId);
     if (providerTerminalObserved && state.providerDispatched
         && resolveTurnBackend(agentBackend).isClaude && telemetryComponent && turnId) {
       recordClaudeCodingRun({

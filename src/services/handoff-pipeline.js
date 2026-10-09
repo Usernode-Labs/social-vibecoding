@@ -60,7 +60,11 @@ function hasInFlightHandoffPipeline(sessionId) {
   return handoffPipelines.has(String(sessionId));
 }
 
-function beginHandoffPipeline(sessionId) {
+// `activity` is the pipeline's activity on the session
+// (session-activity.js begin()), ended with it: the caller claims it before
+// its last busy check, since claiming can wait on the session-activity
+// machine and this cannot.
+function beginHandoffPipeline(sessionId, activity = null) {
   const key = String(sessionId);
   handoffPipelines.add(key);
   const releaseOperation = beginSessionOperation(sessionId);
@@ -70,6 +74,7 @@ function beginHandoffPipeline(sessionId) {
     released = true;
     handoffPipelines.delete(key);
     releaseOperation();
+    activity?.end();
   };
 }
 

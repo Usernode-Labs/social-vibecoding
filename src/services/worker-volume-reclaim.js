@@ -32,6 +32,7 @@ function defaults(deps = {}) {
   return {
     worker: deps.worker || require('./worker'),
     activeWorkers: deps.activeWorkers || require('./active-workers'),
+    sessionActivity: deps.sessionActivity || require('./session-activity'),
     now: deps.now || Date.now,
   };
 }
@@ -87,8 +88,16 @@ async function reclaimWorkerVolumes({
   const freed = [];
   for (const pick of picked) {
     try {
+      // Freeing the volume is a 'destroy' activity on the session: with the
+      // session-activity machine on, a screenshot run or a turn in another
+      // process refuses it (B6), and the volume is left for a later sweep.
+      let destroyed = false;
       // eslint-disable-next-line no-await-in-loop
-      await d.worker.destroyCcVolume(pick.sessionId);
+      await d.sessionActivity.run(pick.sessionId, 'destroy', { label: 'volume reclaim' }, async () => {
+        await d.worker.destroyCcVolume(pick.sessionId);
+        destroyed = true;
+      }).catch((err) => { if (!(err instanceof d.sessionActivity.SessionBusyError)) throw err; });
+      if (!destroyed) continue;
       if (pick.status === 'merged' || pick.status === 'archived') {
         // eslint-disable-next-line no-await-in-loop
         await pool.query('UPDATE chat_sessions SET cc_purged = TRUE WHERE id = $1', [pick.sessionId]);

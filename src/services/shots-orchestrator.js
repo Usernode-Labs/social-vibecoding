@@ -24,6 +24,7 @@ const planContract = require('./visible-changes');
 const previewClock = require('./preview-clock');
 const state = require('./shots-state');
 const turnLifecycle = require('./turn-lifecycle');
+const sessionActivity = require('./session-activity');
 const { isUiAffecting: uiFileHeuristic } = require('./visual-file-classifier');
 const worker = require('./worker');
 
@@ -466,6 +467,10 @@ async function waitForSessionIdle(pool, sessionId, {
   timeoutMs = 120_000,
   recoveryTimeoutMs = timeoutMs,
   workerService = worker,
+  // What uses the session besides a turn's journal and this process's
+  // worker: an operation here, and with the session-activity machine on,
+  // a turn or operation in any process (B7). Injected for tests.
+  busyElsewhere = defaultBusyElsewhere,
   intervalMs = 500,
   now = Date.now,
   wait = (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)),
@@ -515,7 +520,8 @@ async function waitForSessionIdle(pool, sessionId, {
     const activeTurnPhase = safeTurnField(turnLifecycle.phaseOf(activeTurn));
     const workerInFlight = !!(await workerService.isInFlight(sessionId));
     const workerMode = safeTurnField(await workerService.getActiveTurnMode?.(sessionId));
-    if (activeTurnPresent || workerInFlight) busyObserved = true;
+    const otherwiseBusy = !!(await busyElsewhere(sessionId));
+    if (activeTurnPresent || workerInFlight || otherwiseBusy) busyObserved = true;
     if (!recoveryReason) {
       if (activeTurnMode === 'shots') recoveryReason = 'shots_turn';
       else if (activeTurnPhase === turnLifecycle.PHASE_CLEANUP_PENDING) {
@@ -529,7 +535,7 @@ async function waitForSessionIdle(pool, sessionId, {
       workerInFlight,
       workerMode,
     });
-    if (!activeTurnPresent && !workerInFlight) {
+    if (!activeTurnPresent && !workerInFlight && !otherwiseBusy) {
       const result = { ...observation, outcome: 'idle' };
       if (typeof onObservation === 'function') onObservation({ ...result });
       return result;
@@ -548,6 +554,16 @@ async function waitForSessionIdle(pool, sessionId, {
     }
     await wait(Math.min(pollIntervalMs, activeLimitMs - observation.waitedMs));
   }
+}
+
+// A sync with main, a hand-off pipeline or another operation in this
+// process (active-workers.js), or a turn or operation the session-activity
+// machine granted anywhere. The run's own hold is neither.
+async function defaultBusyElsewhere(sessionId) {
+  const id = Number(sessionId);
+  if (require('./active-workers').hasSessionOperation(id)) return true;
+  const live = (await sessionActivity.read([id])).get(id) || [];
+  return live.some((a) => a.kind === 'turn' || a.kind === 'operation');
 }
 
 function errorCode(error) {
@@ -997,6 +1013,7 @@ async function executeRun(config, options, injected = {}) {
     shotsControl: injected.shotsControl || shotsControl,
     worker: injected.worker || worker,
     waitForSessionIdle: injected.waitForSessionIdle || waitForSessionIdle,
+    sessionActivity: injected.sessionActivity || sessionActivity,
   };
   const { pool, revision, onProgress = null } = options;
   let run = options.run;
@@ -1005,6 +1022,7 @@ async function executeRun(config, options, injected = {}) {
   let pair = null;
   let registration = null;
   let workerHold = null;
+  let shotsHold = null;
   let failurePhase = 'load_run';
   let temporaryWorkerAttempted = false;
   const metrics = newRunMetrics();
@@ -1027,6 +1045,19 @@ async function executeRun(config, options, injected = {}) {
     // run, so a merge meanwhile retires it once the run is done rather than
     // under the agent (worker.holdWorker).
     workerHold = deps.worker.holdWorker?.(session.id) || null;
+    // With the session-activity machine on, the hold is an activity on the
+    // session too, so every process sees it: a merge anywhere waits for it
+    // before retiring the worker, a volume reclaim or a pause is refused,
+    // and a coding turn cannot start while the run sets up (B6, B7).
+    try {
+      shotsHold = await deps.sessionActivity.begin(session.id, 'hold', { label: 'before & after shots' });
+    } catch (error) {
+      if (!(error instanceof sessionActivity.SessionBusyError)) throw error;
+      throw new ShotsOrchestrationError('shots_agent_busy', error.blockedBy === 'retiring'
+        ? 'This proposal\'s worker is being retired, so its before/after shots cannot run.'
+        : 'The proposal\'s worker could not be held for the before/after shots.');
+    }
+    shotsHold?.enter();
     if (run.current_run_id && run.current_run_id !== run.id) {
       throw new ShotsOrchestrationError('stale_shots_operation', 'A newer run took over these before/after shots before this one started.');
     }
@@ -1429,6 +1460,7 @@ async function executeRun(config, options, injected = {}) {
           });
         }
       }
+      await shotsHold?.end();
       if (temporaryWorkerAttempted && !retired) {
         try {
           await deps.worker.destroyCcVolume(session.id);
@@ -1635,8 +1667,12 @@ async function stopForSession(pool, sessionId, injected = {}) {
     throw error;
   }
   if (inFlight.has(`${Number(sessionId)}:${run.head_sha}`)) stopRequested.add(run.id);
-  if (workerApi.getActiveTurnMode(sessionId) === 'shots') {
-    await workerApi.stopTurn(sessionId).catch((error) => {
+  // The shots turn may run in another process: its journal says so. Only
+  // the process running it records a pending stop (B5, B6).
+  const runsHere = workerApi.getActiveTurnMode(sessionId) === 'shots';
+  const journalShots = state.currentCode(turnLifecycle.parseActiveTurn(session.active_turn)?.mode) === 'shots';
+  if (runsHere || journalShots) {
+    await workerApi.stopTurn(sessionId, { recordPending: runsHere }).catch((error) => {
       log.warn('shots', 'Could not stop the shots agent', { sessionId, runId: run.id, error: error.message });
     });
   }

@@ -13204,9 +13204,9 @@ CREATE TRIGGER chat_sessions_wf_merge_owned
     'merged_at', 'merge_commit_sha', 'included_in_session_id', 'live_at');
 
 -- session-activity (src/workflow/session-activity/): who is using a chat
--- session right now. One row per activity the machine granted (a turn, a
--- branch move, a staging build, a screenshot run's hold on the worker, a
--- pause or teardown), written by its transitions. The holder keeps the row
+-- session right now. One row per activity the machine granted (a Mayor chat
+-- turn, a coding turn, an operation on its branch or preview, a screenshot
+-- run's hold on the worker, a pause or teardown), written by its transitions. The holder keeps the row
 -- alive by moving lease_until forward (lease.ts), the way a service renews a
 -- wf_work lease; nothing else may change a row outside the pipeline. A row
 -- whose lease ran out no longer counts, and the machine deletes it the next
@@ -13215,7 +13215,7 @@ CREATE TRIGGER chat_sessions_wf_merge_owned
 CREATE TABLE IF NOT EXISTS wf_session_activities (
   id                UUID PRIMARY KEY,
   session_id        INTEGER NOT NULL,
-  kind              TEXT NOT NULL CHECK (kind IN ('turn', 'branch', 'build', 'hold', 'destroy')),
+  kind              TEXT NOT NULL CHECK (kind IN ('chat', 'turn', 'operation', 'hold', 'destroy')),
   holder            TEXT NOT NULL,
   label             TEXT,
   turn_id           TEXT,

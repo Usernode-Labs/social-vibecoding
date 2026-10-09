@@ -26,6 +26,7 @@ const visibleChangesContract = require('../services/visible-changes');
 // apart on what a refusal means.
 const { STATUS_BY_CODE: UPDATE_STATUS_BY_CODE } = require('./dev-flow');
 const { beginSessionOperation, isSessionBusy } = require('../services/active-workers');
+const sessionActivity = require('../services/session-activity');
 const { effectiveSessionCaps } = require('../services/session-caps');
 const connectorLimits = require('../services/connector-limits');
 const { drainGuard } = require('../services/lifecycle');
@@ -620,6 +621,28 @@ function managedRevisionKind(session) {
   return null;
 }
 
+// Claim the session for an operation on its branch (session-activity.js):
+// atomically across processes when the session-activity machine runs, and in
+// this process's registry as on [main]. { refused } when another process
+// holds it, else { release } (idempotent). The caller still makes its own
+// busy checks, which see this process's other operations.
+async function claimOperation(sessionId, label) {
+  const gate = await sessionActivity.tryBegin(sessionId, 'operation', { label });
+  if (gate.refused) return { refused: gate.refused, release: () => {} };
+  const releaseOp = beginSessionOperation(sessionId);
+  let released = false;
+  return {
+    refused: null,
+    activity: gate.activity,
+    release: () => {
+      if (released) return;
+      released = true;
+      releaseOp();
+      gate.activity?.end();
+    },
+  };
+}
+
 function checkRuntime(session) {
   const sessionId = Number(session.id);
   const runtime = {
@@ -1196,7 +1219,7 @@ function proposalHandoffRoutes(config) {
             existingSession: publicSessionStatus(another),
           });
         }
-        if (checkRuntime(replacementSession).inFlight) {
+        if (checkRuntime(replacementSession).inFlight || await sessionActivity.isBusy(replacementSession.id)) {
           return res.status(409).json({
             error: 'replacement_target_busy',
             message: 'The proposal being replaced still has live work. Wait for it to stop before replacing it.',
@@ -1427,17 +1450,21 @@ function proposalHandoffRoutes(config) {
         if (!(await appAccess.checkAppAccess(pool, accessRow(session), req.user, 'collab'))) {
           return res.status(404).json({ error: 'Active handoff session not found' });
         }
-        if (isSessionBusy(Number(session.id))
+        const elsewhere = await sessionActivity.tryBegin(session.id, 'operation', { label: 'commit upload' });
+        if (elsewhere.refused
+            || isSessionBusy(Number(session.id))
             || hasInFlightHandoffPipeline(session.id)
             || staging.hasInFlightBuild(Number(session.id))
             || visuals.hasInFlightCapture(session.id)) {
+          elsewhere.activity?.end();
           return res.status(409).json({
             error: 'session_busy',
             message: 'The shared proposal is currently changing. Retry when it finishes.',
           });
         }
         const expectedParent = currentProposalBranchHead(session);
-        const releaseOperation = beginSessionOperation(session.id);
+        const releaseOp = beginSessionOperation(session.id);
+        const releaseOperation = () => { releaseOp(); elsewhere.activity?.end(); };
         try {
           const repo = repoCoordinates(session);
           if (!github.isEnabled() || !repo) {
@@ -1673,7 +1700,14 @@ function proposalHandoffRoutes(config) {
           // and launches one proposal check run for the final uploaded commit.
           // It must not use the active-session pipeline, whose persistence is
           // scoped to the pre-vote lifecycle captured at submission.
-          const releaseOperation = beginSessionOperation(session.id);
+          const claim = await claimOperation(session.id, 'proposal revision build');
+          if (claim.refused) {
+            return res.status(409).json({
+              error: 'session_busy',
+              message: 'The shared proposal is currently changing in another local or web turn. Retry when it finishes.',
+            });
+          }
+          const releaseOperation = claim.release;
           try {
             const repo = repoCoordinates(session);
             if (!github.isEnabled() || !repo) {
@@ -1747,7 +1781,10 @@ function proposalHandoffRoutes(config) {
             // Keep the shared session busy across the detached proposal build,
             // including the small async gap before staging registers itself.
             // The outer operation below releases only its own reference.
-            const releaseChecks = beginSessionOperation(session.id);
+            // The checks keep the build's activity on past this response.
+            const checksOp = beginSessionOperation(session.id);
+            const checksUse = claim.activity ? claim.activity.retain() : () => {};
+            const releaseChecks = () => { checksOp(); checksUse(); };
             prImportSync.rerunChecksForNewHead({
               config, pool, session: freshSession, newHead: input.headSha,
             }).catch((err) => log.warn('proposal-handoff', 'Promoted managed revision checks failed', {
@@ -1772,7 +1809,14 @@ function proposalHandoffRoutes(config) {
         // the same registry, closing the check-then-act race between the two
         // surfaces. Early returns release here; an accepted build transfers
         // release ownership to the detached staging/check pipeline.
-        const releasePipeline = beginHandoffPipeline(session.id);
+        const pipelineClaim = await sessionActivity.tryBegin(session.id, 'operation', { label: 'handoff pipeline' });
+        if (pipelineClaim.refused) {
+          return res.status(409).json({
+            error: 'session_busy',
+            message: 'The shared proposal is currently changing in another local or web turn. Retry when it finishes.',
+          });
+        }
+        const releasePipeline = beginHandoffPipeline(session.id, pipelineClaim.activity);
         let pipelineDetached = false;
         try {
           const repo = repoCoordinates(session);
@@ -1960,7 +2004,12 @@ function proposalHandoffRoutes(config) {
       // the session for its whole run, so no coding turn or sync can start
       // beside it; anything ELSE holding the session may still move its
       // branch.
-      if (isSessionBusy(Number(session.id)) && !hasInFlightHandoffPipeline(session.id)) {
+      // A turn in another process counts too (session-activity.js). The
+      // pipeline that checks this commit may run there as well, so only a
+      // turn refuses; the branch-head check below catches anything else.
+      const elsewhere = (await sessionActivity.read([session.id])).get(Number(session.id)) || [];
+      if ((isSessionBusy(Number(session.id)) && !hasInFlightHandoffPipeline(session.id))
+          || elsewhere.some((a) => a.kind === 'turn')) {
         return refuse('An agent turn is still running on this change. Submit it for review when the turn finishes.');
       }
       // Hold the same cross-surface claim used by build/sync through the

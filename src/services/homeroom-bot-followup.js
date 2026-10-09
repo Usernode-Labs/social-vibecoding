@@ -47,6 +47,7 @@
 // this round has run). It is due once per head, like a failing check, and
 // within the same MAX_REVISIONS.
 
+const sessionActivity = require('./session-activity');
 const log = require('./logger');
 const { parseStopMentioning, failedClaudeTurn, requestRulesLines } = require('./homeroom-bot-live');
 const shotsState = require('./shots-state');
@@ -506,6 +507,10 @@ async function runFollowUpTurn({
   // follow-up runs the follow-up stage's own model.
   await require('./homeroom-bot-live').stampSessionModel(pool, session, model);
 
+  // One activity on the session (services/session-activity.js): with the
+  // session-activity machine on, it is refused while another process uses it.
+  const sessionUse = await sessionActivity.begin(session.id, 'turn', { label: 'bot follow-up turn' });
+  sessionUse?.enter();
   let stopped = false;
   let stopping = null;
   const timer = setTimeout(() => {
@@ -555,6 +560,7 @@ async function runFollowUpTurn({
     clearTimeout(timer);
     if (stopping) await stopping;
     activeWorkers.delete(session.id);
+    sessionUse?.end();
   }
   const result = (routed && routed.result) || {};
   const costUsd = Number.isFinite(routed && routed.estimatedCostUsd) ? routed.estimatedCostUsd : null;

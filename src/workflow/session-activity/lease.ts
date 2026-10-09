@@ -17,16 +17,22 @@ export async function renewLease(db: Queryable, activityId: string): Promise<Ren
   return rows.length ? { held: true, stop: rows[0].stop || null } : { held: false, stop: null };
 }
 
-// What readers see: per session, the kinds of its live activities and
-// whether a stop is on its way to its turn. One indexed read for a list.
-export async function readActivities(db: Queryable, sessionIds: number[]): Promise<Map<number, { kinds: Set<string>; stopping: boolean }>> {
-  const out = new Map<number, { kinds: Set<string>; stopping: boolean }>();
+// What readers see: per session, its live activities (what each is, and
+// whether a stop is on its way to it). One indexed read for a list.
+export interface LiveActivity { id: string; kind: string; stopping: boolean }
+
+export async function readActivities(db: Queryable, sessionIds: number[]): Promise<Map<number, LiveActivity[]>> {
+  const out = new Map<number, LiveActivity[]>();
   if (!sessionIds.length) return out;
   const { rows } = await db.query(
-    `SELECT session_id, array_agg(DISTINCT kind) AS kinds, bool_or(stop_requested_at IS NOT NULL) AS stopping
+    `SELECT session_id, id::text AS id, kind, stop_requested_at IS NOT NULL AS stopping
        FROM wf_session_activities
       WHERE session_id = ANY($1::int[]) AND lease_until > now()
-      GROUP BY session_id`, [sessionIds]);
-  for (const r of rows) out.set(Number(r.session_id), { kinds: new Set(r.kinds), stopping: !!r.stopping });
+      ORDER BY granted_at`, [sessionIds]);
+  for (const r of rows) {
+    const id = Number(r.session_id);
+    if (!out.has(id)) out.set(id, []);
+    out.get(id)!.push({ id: r.id, kind: r.kind, stopping: !!r.stopping });
+  }
   return out;
 }

@@ -101,7 +101,10 @@ async function adoptActive({ config, pool, session, headSha, deps }) {
     name: session.app_name,
     repo_url: session.repo_url,
   };
-  const releasePipeline = pipeline.beginHandoffPipeline(session.id);
+  // The pipeline outlives this sync and keeps an activity on the session
+  // (session-activity.js); inside the sync's own, it joins it.
+  const pipelineUse = await require('./session-activity').begin(session.id, 'operation', { label: 'handoff pipeline' });
+  const releasePipeline = pipeline.beginHandoffPipeline(session.id, pipelineUse);
   try {
     pipeline.startHandoffPipeline(
       config, pool, fresh, app, headSha, releasePipeline, 'sync-main'

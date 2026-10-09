@@ -56,7 +56,7 @@ test('workflow machines in a process of their own, and through its crash', { tim
 
   // The flags, as config.js reads them; the child adds the database URL.
   const flags = { dataEncryptionKey: DATA_KEY, wfGovernanceEnabled: true, wfMergeFollowupsEnabled: true,
-    wfPoolMax: 4, wfSlots: 2, wfOwnershipMode: 'raise',
+    wfSessionActivityEnabled: true, wfPoolMax: 4, wfSlots: 2, wfOwnershipMode: 'raise',
     // Phone push on, to a fake Firebase (the fixture fakes its library).
     mobilePushEnabled: true, mobilePushEnvironment: 'production', firebaseProjectId: 'social-test',
     firebaseServiceAccountJsonB64: Buffer.from(JSON.stringify({
@@ -71,6 +71,12 @@ test('workflow machines in a process of their own, and through its crash', { tim
   const stub = (p, exports) => { const id = require.resolve(p); require.cache[id] = { id, filename: id, loaded: true, exports, paths: [] }; };
   stub('../src/db/pool', { getPool: () => pool });
   platform = require('../src/workflow/platform.ts');
+  // The web side's activities on sessions (services/session-activity.js),
+  // decided in the workflow process. What browsers would hear of them is
+  // not this test's concern.
+  require('../src/services/session-state').setPublisher(() => {});
+  const sessionActivity = require('../src/services/session-activity');
+  sessionActivity.configure(flags);
   // What browsers hear, as every web process does.
   const heard = [];
   listener = new Client({ connectionString: databaseUrl });
@@ -205,34 +211,57 @@ test('workflow machines in a process of their own, and through its crash', { tim
 
   // ── Known dependencies on the web process's memory ──────────────────
 
-  await t.test('a shots run holding a worker in the web process keeps a merge from retiring it', {
-    todo: 'worker.js#_workerHolds lives in the process running the shots run (list: services | uses src/services/worker.js:retireWorker); step 1 makes it durable',
-  }, async () => {
+  // ── Session activity: what the web side uses, every process sees ────
+
+  const volumeGone = async (s) => (await procs.effects(pool, 'docker.removeVolume')).filter((e) => e.data.name.endsWith(`-${s.id}`));
+
+  async function mergeUnderHold({ crashAt } = {}) {
     const a = await app({ selfHosted: true });
     const s = await proposal(a);
-    const hold = require('../src/services/worker').holdWorker(s.id);
+    // A screenshot run in the web process holds the proposal's worker.
+    const hold = await sessionActivity.begin(s.id, 'hold', { label: 'before & after shots' });
+    let processes = 1;
     try {
       await platform.mergeConfirmed({ sessionId: s.id, appId: a.id, mergeSha: SHA('c'), force: false, tally: { yes: 1, required: 1, active: 1 } });
-      await procs.until(() => settled('merge-followups', mergeKey(s), 'worker.retire'), 'the retire work to finish');
-      const removed = (await procs.effects(pool, 'docker.removeVolume')).filter((e) => e.data.name.endsWith(`-${s.id}`));
-      assert.deepEqual(removed, [], 'the worker is kept while the shots run holds it');
+      await procs.until(() => settled('merge-followups', mergeKey(s), 'worker.retire'), 'the merge to ask for the retirement');
+      await procs.until(async () => (await instance('session-activity', mergeKey(s)))?.state === 'retiring', 'the retirement to wait');
+      assert.deepEqual(await volumeGone(s), [], 'the worker is kept while the screenshot run holds it');
+      if (crashAt) await procs.arm(pool, crashAt);
     } finally {
-      await hold.release();
+      await hold.end();
     }
+    if (crashAt) {
+      await procs.reached(pool, crashAt);
+      await workflow.kill();
+      await procs.expireLeases(pool);
+      await pool.query('DELETE FROM wf_test_pauses WHERE name = $1', [crashAt]);
+      await startWorkflow();
+      processes = 2;
+    }
+    await procs.until(async () => (await volumeGone(s)).length, 'the worker retired once the hold ended');
+    await procs.until(async () => (await instance('session-activity', mergeKey(s)))?.state === 'idle', 'the session free again');
+    return { volumes: (await volumeGone(s)).length, processes };
+  }
+
+  await t.test('a screenshot run holding a worker in the web process keeps a merge from retiring it until it ends (B6)', async () => {
+    assert.deepEqual(await mergeUnderHold(), { volumes: 1, processes: 1 });
   });
 
-  await t.test('a change busy in the web process is not marked as carried by a merge', {
-    todo: 'active-workers.js#activeSessionOperations lives in the process running the operation (list: services | uses src/services/active-workers.js:isSessionBusy); step 1 makes it durable',
-  }, async () => {
+  await t.test('the same, restarted: the workflow process killed as it retires the worker', async () => {
+    assert.deepEqual(await mergeUnderHold({ crashAt: 'docker.removeVolume' }), { volumes: 1, processes: 2 },
+      'retired once, by the next process');
+  });
+
+  await t.test('a change busy in the web process is not marked as carried by a merge', async () => {
     const a = await app({ selfHosted: true });
     const carrier = await proposal(a);
     const { rows: [busy] } = await pool.query(
       `INSERT INTO chat_sessions (app_id, user_id, status, pr_number, pr_title, reviewed_head_sha)
        VALUES ($1, $2, 'promoted', $3, 'Busy', $4) RETURNING *`, [a.id, author.id, ++seq, SHA('e')]);
-    // Its head is one of the carrier's commits, and a sync with main is running on it here.
+    // Its head is one of the carrier's commits, and a branch move is running on it here.
     await pool.query(`INSERT INTO wf_test_effects (kind, data) VALUES ('github.prCommits', $1)`,
       [JSON.stringify({ number: carrier.pr_number, shas: [SHA('e')] })]);
-    const done = require('../src/services/active-workers').beginSessionOperation(busy.id);
+    const op = await sessionActivity.begin(busy.id, 'operation', { label: 'proposal update' });
     try {
       await platform.mergeConfirmed({ sessionId: carrier.id, appId: a.id, mergeSha: SHA('f'), force: false, tally: { yes: 1, required: 1, active: 1 } });
       await procs.until(() => settled('merge-followups', mergeKey(carrier), 'included.find'), 'the search for carried changes');
@@ -242,7 +271,53 @@ test('workflow machines in a process of their own, and through its crash', { tim
       const row = await read();
       assert.deepEqual(row, { status: 'promoted', included_in_session_id: null }, 'left as it is while busy');
     } finally {
-      done();
+      await op.end();
+    }
+  });
+
+  await t.test('two turns on one session never overlap, and a lapsed holder frees it after a crash of the web side', async () => {
+    const a = await app();
+    const s = await proposal(a);
+    const first = await sessionActivity.begin(s.id, 'turn', { label: 'coding turn' });
+    await assert.rejects(sessionActivity.begin(s.id, 'turn', { label: 'second turn' }),
+      (err) => err.code === 'session_busy' && err.blockedBy === 'turn', 'refused, saying what is in the way');
+    // The process holding it dies without ending it: its renewals stop and
+    // its lease runs out (time passing, as expireLeases does for work).
+    clearInterval(first.handle.timer);
+    first.handle.ended = true;
+    await pool.query(`UPDATE wf_session_activities SET lease_until = now() - interval '1 second' WHERE id = $1`, [first.handle.id]);
+    const next = await sessionActivity.begin(s.id, 'turn', { label: 'coding turn after the crash' });
+    await next.end();
+  });
+
+  await t.test('a Stop for a turn this process runs reaches it from another process', async () => {
+    const a = await app();
+    const s = await proposal(a);
+    const stops = [];
+    sessionActivity.setStopHandler(async (sessionId, stop) => { stops.push({ sessionId, by: stop.by.username }); return true; });
+    const turn = await sessionActivity.begin(s.id, 'turn', { label: 'coding turn' });
+    try {
+      // Another process (here, the machine's push relayed by every web
+      // process) asks for it: the bus carries it to this one's handle.
+      const busListener = new Client({ connectionString: databaseUrl });
+      await busListener.connect();
+      busListener.on('notification', (m) => {
+        const e = JSON.parse(m.payload);
+        if (e.i === 'workflow' && e.k === 'session_stop') sessionActivity.stopArrived(e.d);
+      });
+      await busListener.query('LISTEN usernode_ws');
+      try {
+        const sent = await sessionActivity.forwardStop(s.id, { by: { id: author.id, username: author.username, canAdminWrite: false },
+          force: false, immediate: false, expectedTurnId: null });
+        assert.equal(sent, true);
+        await procs.until(() => stops.length, 'the stop to reach the turn');
+        assert.deepEqual(stops, [{ sessionId: s.id, by: author.username }]);
+      } finally {
+        await busListener.end();
+      }
+    } finally {
+      sessionActivity.setStopHandler(null);
+      await turn.end();
     }
   });
 

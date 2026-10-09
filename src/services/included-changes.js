@@ -145,6 +145,7 @@ function depsOf(deps = {}) {
     journey: deps.journey || require('./journey-events'),
     watcher: deps.watcher || require('./issue-close-watcher'),
     isSessionBusy: deps.isSessionBusy || require('./active-workers').isSessionBusy,
+    sessionActivity: deps.sessionActivity || require('./session-activity'),
     resolveIssueBounty: deps.resolveIssueBounty || ((...args) => require('../routes/votes').resolveIssueBounty(...args)),
   };
 }
@@ -170,7 +171,9 @@ async function includeStackedChanges({ config = null, pool, session, sha = null,
   if (!repo || !githubOn(d.github) || typeof d.github.listPullRequestCommitShas !== 'function') return none;
 
   const { rows: candidates = [] } = await pool.query(CANDIDATES_SQL, [session.app_id, session.id]);
-  const idle = candidates.filter((c) => !d.isSessionBusy(Number(c.id)));
+  // Busy here, or with the session-activity machine on, in any process.
+  const elsewhere = await d.sessionActivity.busyIds(candidates.map((c) => Number(c.id)));
+  const idle = candidates.filter((c) => !d.isSessionBusy(Number(c.id)) && !elsewhere.has(Number(c.id)));
   if (!idle.length) return none;
 
   let listed;
@@ -250,7 +253,7 @@ async function settleIncluded({ config, pool, row, carrier, sha, deployed = true
   did.requestsClosed = (await step('close its requests', () => closeRequests({ pool, row, carrier, github, repo, d }))) || [];
 
   await step('tear down its preview', () => d.staging.teardownStaging(row, { slug: row.app_slug }));
-  await step('retire its worker', () => d.worker.retireWorker(row.id));
+  await step('retire its worker', () => d.sessionActivity.retire(row.id, 'included', d.worker));
   await step('tell its agent session', () => d.agentSessions.noteChangeClosed(pool, { change: row, outcome: 'merged' }));
 
   await step('tell the vote panels', () => d.ws.pushVoteUpdate({

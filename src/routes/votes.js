@@ -2929,7 +2929,9 @@ function voteRoutes(config) {
         // re-runs against the live container (or rebuilds a dead one) and
         // captureForSession is _inFlight-guarded.
         (async () => {
-          let needsKick = !session.check_state || strandedPendingChecks(session);
+          // Not stranded while another process's turn or operation holds it.
+          let needsKick = !session.check_state
+            || (strandedPendingChecks(session) && !(await require('../services/session-activity').isBusy(session.id)));
           if (!needsKick && github.isEnabled() && repoOwner && repoName) {
             try {
               const octokit = await github.getInstallationOctokit(repoOwner);
@@ -5929,10 +5931,11 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
 
     // Chat session is done: no further turns will reference CC memory, so
     // drop the worker and its persistent `.claude` volume. A shots run still
-    // working in that worker keeps it until it finishes (worker.retireWorker).
+    // working in that worker keeps it until it finishes: with the
+    // session-activity machine on, whichever process runs it
+    // (session-activity.js retire).
     try {
-      const worker = require('../services/worker');
-      await worker.retireWorker(session.id);
+      await require('../services/session-activity').retire(session.id, 'merge');
     } catch (err) {
       log.warn('votes', 'Failed to destroy CC volume', { sessionId: session.id, err: err.message });
     }

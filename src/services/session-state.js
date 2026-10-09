@@ -131,6 +131,15 @@ function liveState(sessionId) {
   return { busy, phase, stopping };
 }
 
+// The live state with what other processes run on the session, as the
+// session-activity machine records it (session-activity.js liveStates):
+// with it on, one process can no longer publish "idle" while another works
+// (B4). `elsewhere` is that session's entry, or undefined.
+function withElsewhere(live, elsewhere) {
+  if (!elsewhere) return live;
+  return { ...live, busy: !!(live.busy || elsewhere.busy), stopping: !!(live.stopping || elsewhere.stopping) };
+}
+
 async function loadRow(sessionId) {
   if (!_pool) return null;
   try {
@@ -204,7 +213,8 @@ function recompute(sessionId) {
 async function recomputeOnce(id) {
   // Read the live registries AFTER the queue clears, not before it — a
   // recompute queued behind another must reflect the state as of its turn.
-  const live = liveState(id);
+  const elsewhere = (await require('./session-activity').liveStates([id])).get(id);
+  const live = withElsewhere(liveState(id), elsewhere);
   const row = await loadRow(id);
   const payload = buildPayload(id, row, live);
   const key = stateKey(payload);
@@ -246,6 +256,7 @@ function _reset() {
 module.exports = {
   touch,
   liveState,
+  withElsewhere,
   isIdleState,
   buildPayload,
   setPool,

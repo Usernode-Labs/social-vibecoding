@@ -437,7 +437,13 @@ async function updateProposalFromForkBranch(deps, params) {
     const forkRepo = forkRepoName || repo;
 
     const busy = deps.busy || defaultBusyCheck;
-    if (busy(session)) {
+    // An operation on the proposal's branch (session-activity.js): with the
+    // session-activity machine on, a turn or branch move in another process
+    // refuses it as one in this process does.
+    const elsewhere = await (deps.sessionActivity || require('./session-activity'))
+      .tryBegin(sessionId, 'operation', { label: 'proposal update' });
+    if (elsewhere.refused || busy(session)) {
+      elsewhere.activity?.end();
       return fail(
         'session_busy',
         'This proposal is in the middle of a build right now. Retry in a minute. Pushing onto it mid-build '
@@ -445,10 +451,12 @@ async function updateProposalFromForkBranch(deps, params) {
         { retryable: true }
       );
     }
+    elsewhere.activity?.enter();
 
     const beginOperation = deps.beginOperation
       || require('./active-workers').beginSessionOperation;
-    const releaseOperation = beginOperation(sessionId);
+    const releaseOp = beginOperation(sessionId);
+    const releaseOperation = () => { releaseOp(); elsewhere.activity?.end(); };
     try {
       const ctx = {
         pool, config, gh, head, votes, prImportSync, githubPublic,
@@ -1975,7 +1983,10 @@ async function settleActiveSession({ config, pool, session, sessionId, headSha, 
     repo_url: session.repo_url,
   };
   const fresh = { ...session, checks_commit_sha: headSha };
-  const releasePipeline = beginHandoffPipeline(sessionId);
+  // The pipeline outlives the update that starts it, and keeps its
+  // activity on the session (it joins the update's).
+  const pipelineUse = await require('./session-activity').begin(sessionId, 'operation', { label: 'handoff pipeline' });
+  const releasePipeline = beginHandoffPipeline(sessionId, pipelineUse);
   try {
     // Detached on purpose: the build and the visual capture take minutes, and
     // the caller is an HTTP request that has already been told the push
