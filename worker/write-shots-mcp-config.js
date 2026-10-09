@@ -50,32 +50,32 @@ const proxyFor = (persona) => {
 // system appearance and pin the shell's documented preference before paint.
 // Auth storage is still the original private state file.
 const appearanceConfig = {};
-for (const colorScheme of ['light', 'dark']) {
+for (const colorScheme of ['light']) {
   const script = path.join(shotsDir, `appearance-${colorScheme}.js`);
   fs.writeFileSync(script, `(() => {
   if (!${JSON.stringify([baseOrigin, headOrigin])}.includes(location.origin)) return;
   try { localStorage.setItem('theme', ${JSON.stringify(colorScheme)}); } catch {}
   const url = new URL(location.href);
   for (const name of ['theme', 'shot']) {
-    if (['light', 'dark'].includes(url.searchParams.get(name))) url.searchParams.set(name, ${JSON.stringify(colorScheme)});
+    if (['light'].includes(url.searchParams.get(name))) url.searchParams.set(name, ${JSON.stringify(colorScheme)});
   }
   history.replaceState(history.state, '', url);
 })();
 `, { mode: 0o600 });
   const file = path.join(shotsDir, `appearance-${colorScheme}.json`);
   fs.writeFileSync(file, JSON.stringify({ browser: { contextOptions: { colorScheme }, initScript: [script] } }), { mode: 0o600 });
-  appearanceConfig[colorScheme] = file;
+  appearanceConfig.light = file;
   for (const persona of ['member', 'admin', 'full_admin', 'guest']) {
     fs.mkdirSync(path.join(shotsDir, persona, 'dark'), { recursive: true, mode: 0o700 });
   }
 }
-const browserArgs = (persona, colorScheme = 'light') => {
+const browserArgs = (persona) => {
   const observed = persona === 'read_only_admin' ? 'admin' : persona;
   return [
     '/usr/local/bin/shots-browser-observer.js',
     observed,
     '--browser', 'chromium', '--headless', '--isolated', '--no-sandbox', '--caps', 'vision',
-    '--config', appearanceConfig[colorScheme],
+    '--config', appearanceConfig.light,
     '--storage-state', path.join(stateDir, `${persona}.json`),
     '--block-service-workers', '--image-responses', 'allow',
     '--proxy-server', proxyFor(persona),
@@ -84,11 +84,12 @@ const browserArgs = (persona, colorScheme = 'light') => {
     // own loopback services behind the proxy's refusal if that default goes.
     '--proxy-bypass', '<-loopback>',
     '--timeout-action', '10000', '--timeout-navigation', '30000',
-    '--output-dir', colorScheme === 'dark' ? path.join(shotsDir, observed, 'dark') : path.join(shotsDir, observed),
-    ...(recordClips && colorScheme === 'light' ? [`--save-video=${clipSize}`] : []),
+    '--output-dir', path.join(shotsDir, observed),
+    ...(recordClips ? [`--save-video=${clipSize}`] : []),
   ];
 };
 const browserEnv = {
+  SHOTS_PAIR_PHOTOS: '1',
   SHOTS_ALLOWED_ORIGINS: JSON.stringify([baseOrigin, headOrigin]),
   SHOTS_BROWSER_DIAGNOSTIC_FILE: process.env.SHOTS_BROWSER_DIAGNOSTIC_FILE || '',
   SHOTS_NAVIGATION_HINTS: process.env.SHOTS_NAVIGATION_HINTS || '{}',
@@ -103,7 +104,4 @@ const config = {
     browser_guest: { command: 'node', args: browserArgs('guest'), env: browserEnv },
   },
 };
-for (const [name, persona] of [['member', 'member'], ['admin', 'read_only_admin'], ['full_admin', 'full_admin'], ['guest', 'guest']]) {
-  config.mcpServers[`browser_${name}_dark`] = { command: 'node', args: browserArgs(persona, 'dark'), env: browserEnv };
-}
 fs.writeFileSync(output, `${JSON.stringify(config)}\n`, { mode: 0o600 });

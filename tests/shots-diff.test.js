@@ -147,7 +147,8 @@ test('screens pair and outline photos within their own appearance only', async (
   const screens = await diff.screensFor(stories, files);
   assert.equal(screens.length, 2);
   assert.deepEqual(screens.map((s) => s.colorScheme), modes);
-  assert.ok(screens[0].regions[0].a[0] < screens[1].regions[0].a[0], 'each appearance retains its own measured difference');
+  assert.ok(screens[0].regions.length > 0, 'historical light comparison retains its measured difference');
+  assert.deepEqual(screens[1].regions, [], 'dark photos do not trigger another pixel comparison or reuse light outlines');
   const mismatched = await diff.screensFor(stories, [files[0], files[3]]);
   assert.equal(mismatched.length, 0, 'a light before never pairs with a dark after');
 });
@@ -170,7 +171,8 @@ test('both viewers keep claim groups consistent when only light captures are ide
   for (const mode of ['light', 'dark']) {
     const own = screens.filter((s) => s.colorScheme === mode);
     assert.deepEqual(own.map((s) => [s.shot, s.stories]), [['first', ['first']], ['second', ['second']]]);
-    assert.ok(own.every((s) => s.regions.length > 0), 'each group retains its own measured outline');
+    if (mode === 'light') assert.ok(own.every((s) => s.regions.length > 0), 'light groups retain measured outlines');
+    else assert.ok(own.every((s) => s.regions.length === 0), 'additional dark photos stay plain');
   }
   const shots = { state: 'verified', claims: stories.map((s) => ({ ...s, viewports: ['desktop'] })), screens, artifacts: files.map((f) => ({
     ...f, id: f.sha256.slice(0, 32), url: `/api/apps/demo/proposals/42/shots/${f.sha256.slice(0, 32)}`,

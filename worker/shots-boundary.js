@@ -129,16 +129,20 @@ const stampFile = (outputDir, name) => path.join(provenanceDir(outputDir), `${pa
 
 /** Record the site the screenshot just saved in outputDir was taken on. */
 function stampScreenshot(outputDir, imagePath, pageUrl) {
-  writePrivate(stampFile(outputDir, imagePath), {
-    origin: webOrigin(pageUrl), sha256: digest(fs.readFileSync(imagePath)),
-  });
+  const value = { origin: webOrigin(pageUrl), sha256: digest(fs.readFileSync(imagePath)) };
+  writePrivate(stampFile(outputDir, imagePath), value);
+  return value;
 }
 
 /** The site this image was stamped with, or null when it has no stamp or is not the image stamped. */
-function screenshotOrigin(outputDir, name, image) {
+function screenshotProof(outputDir, name, image) {
   const value = readJson(stampFile(outputDir, name));
   if (typeof value?.origin !== 'string' || typeof value?.sha256 !== 'string') return null;
-  return digest(image) === value.sha256 ? value.origin : null;
+  return digest(image) === value.sha256 ? value : null;
+}
+
+function screenshotOrigin(outputDir, name, image) {
+  return screenshotProof(outputDir, name, image)?.origin || null;
 }
 
 /** Record every site a browser session showed, as it closes (its clip's pages). */
@@ -185,6 +189,7 @@ module.exports = {
   webOrigin,
   stampScreenshot,
   screenshotOrigin,
+  screenshotProof,
   recordSession,
   sessionOrigins,
   provenanceRefusal,

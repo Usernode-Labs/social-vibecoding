@@ -184,6 +184,7 @@ COPY shots-boundary.js /usr/local/bin/shots-boundary.js
 COPY shots-memory.js /usr/local/bin/shots-memory.js
 COPY shots-hosted-app-contract.js /usr/local/bin/shots-hosted-app-contract.js
 COPY shots-browser-observer.js /usr/local/bin/shots-browser-observer.js
+COPY shots-appearance-pair.js /usr/local/bin/shots-appearance-pair.js
 COPY shots-browser-bootstrap.js /usr/local/bin/shots-browser-bootstrap.js
 COPY session-bootstrap.js /usr/local/bin/session-bootstrap.js
 COPY write-shots-mcp-config.js /usr/local/bin/write-shots-mcp-config.js

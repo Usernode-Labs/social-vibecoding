@@ -207,7 +207,11 @@ function createObserver({
         const succeeded = shape.outcome === 'ok' || (!message && truncated);
         if (call.tool === 'browser_take_screenshot' && succeeded) {
           const file = savedScreenshotPath(text);
-          if (insideOutput(file)) provenance.stampScreenshot(outputDir, path.resolve(file), pageUrl);
+          // The paired handler already stamps both bytes from the actual
+          // page. Avoid hashing/writing the light proof again here. The
+          // bridge requires its private pair manifest before publication.
+          const paired = /^pair-[A-Za-z0-9][A-Za-z0-9._-]{0,140}\.png$/.test(path.basename(file || ''));
+          if (insideOutput(file) && !paired) provenance.stampScreenshot(outputDir, path.resolve(file), pageUrl);
         }
         if (call.tool === 'browser_close' && shape.outcome === 'ok') {
           // The session's clip is written as it closes: these are its pages.
@@ -251,6 +255,8 @@ function browserCommand(value = process.env.SHOTS_BROWSER_MCP_COMMAND) {
       return parsed;
     }
   } catch { /* fall through to the installed server */ }
+  if (process.env.SHOTS_PAIR_PHOTOS === '1') return [process.execPath, '--require',
+    path.join(__dirname, 'shots-appearance-pair.js'), '/usr/local/lib/node_modules/@playwright/mcp/cli.js'];
   return ['mcp-server-playwright'];
 }
 
