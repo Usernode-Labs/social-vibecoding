@@ -526,6 +526,91 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   }
 });
 
+// Every row a table holds, keyed by its primary key (the whole row where it
+// has none), as row_to_json writes it.
+async function tableRows(pool, table) {
+  const { rows: key } = await pool.query(
+    `SELECT a.attname FROM pg_index i
+       JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+      WHERE i.indrelid = $1::regclass AND i.indisprimary
+      ORDER BY array_position(i.indkey, a.attnum)`, [table]);
+  const { rows } = await pool.query(`SELECT row_to_json(t) AS row FROM ${table} t`);
+  return new Map(rows.map(({ row }) => [
+    JSON.stringify(key.length ? key.map(({ attname }) => row[attname]) : row), row]));
+}
+
+test('both copies hold the same demo-state rows, every time in them from the pair\'s one moment', { timeout: 180000 }, async (t) => {
+  const copies = await pairOfCopies(t);
+  if (!copies) return;
+  const { base, head } = copies;
+  // A moment a month back, so a time read off either side's own clock
+  // instead of the pair's stands out.
+  const at = new Date(Date.now() - 30 * 86400000).toISOString();
+  const tables = [...new Set([...demoStates.STATES.flatMap((state) => Object.keys(state.needs)),
+    'app_collaborators', 'users'])].sort();
+  const snapshot = async (pool) => Object.fromEntries(await Promise.all(
+    tables.map(async (table) => [table, await tableRows(pool, table)])));
+  const before = { base: await snapshot(base.pool), head: await snapshot(head.pool) };
+  const result = await demoStates.installDemoStates(
+    { base: { ...base.input, at }, head: { ...head.input, at } }, demoStates.STATE_IDS);
+  assert.deepEqual(result.skipped, []);
+  // What the states wrote on one side: each row they added, and of a row
+  // they changed, the columns they changed.
+  const written = async (side, pool) => {
+    const out = {};
+    for (const table of tables) {
+      const rows = [];
+      for (const [key, row] of await tableRows(pool, table)) {
+        const was = before[side][table].get(key);
+        if (!was) { rows.push([key, row]); continue; }
+        const changed = Object.fromEntries(Object.entries(row)
+          .filter(([column, value]) => JSON.stringify(value) !== JSON.stringify(was[column])));
+        if (Object.keys(changed).length) rows.push([key, changed]);
+      }
+      out[table] = rows.sort(([a], [b]) => a.localeCompare(b));
+    }
+    return out;
+  };
+  const sides = { base: await written('base', base.pool), head: await written('head', head.pool) };
+  // Postgres's own stamps, a column's DEFAULT now(), are each side's own
+  // transaction clock: allowed only in such a column, near the real clock,
+  // and under a second apart. Everything else is the same on both sides.
+  const { rows: defaulted } = await base.pool.query(
+    `SELECT table_name || '.' || column_name AS name FROM information_schema.columns
+      WHERE table_schema = current_schema() AND column_default ILIKE '%now()%'`);
+  const stampedByPostgres = new Set(defaulted.map((row) => row.name));
+  const nearNow = (value) => typeof value === 'string' && /^\d{4}-\d\d-\d\dT/.test(value)
+    && Math.abs(Date.parse(value) - Date.now()) < 3600000;
+  let compared = 0;
+  for (const table of tables) {
+    assert.deepEqual(sides.head[table].map(([key]) => key), sides.base[table].map(([key]) => key), table);
+    for (const [index, [key, row]] of sides.base[table].entries()) {
+      const other = sides.head[table][index][1];
+      assert.deepEqual(Object.keys(other), Object.keys(row), `${table} ${key}`);
+      for (const [column, value] of Object.entries(row)) {
+        compared += 1;
+        if (JSON.stringify(value) === JSON.stringify(other[column])) continue;
+        assert.ok(stampedByPostgres.has(`${table}.${column}`) && nearNow(value) && nearNow(other[column])
+          && Math.abs(Date.parse(value) - Date.parse(other[column])) < 1000,
+        `${table}.${column} of ${key} differs between the sides: `
+          + `${JSON.stringify(value)} / ${JSON.stringify(other[column])}`);
+      }
+    }
+  }
+  assert.ok(compared > 200, `the states wrote what was compared (${compared} values)`);
+  // And the times the screens order by are the moment's, not either clock's.
+  const { rows: [running] } = await head.pool.query(
+    'SELECT last_activity_at, active_turn FROM agent_sessions WHERE id = $1', [demoStates.IDS.runningSession]);
+  assert.equal(running.last_activity_at.toISOString(), new Date(Date.parse(at) - 60000).toISOString());
+  assert.equal(Date.parse(running.active_turn.renewedAt), Date.parse(at) + 6 * 3600000);
+  const { rows: [remix] } = await base.pool.query('SELECT forked_from FROM apps WHERE id = $1', [demoStates.IDS.memberRemix]);
+  assert.equal(remix.forked_from.forkedAt, new Date(Date.parse(at) - 2 * 86400000).toISOString());
+  // Two moments for one pair are refused.
+  await assert.rejects(demoStates.installDemoStates(
+    { base: { ...base.input, at }, head: { ...head.input, at: new Date().toISOString() } }, demoStates.STATE_IDS),
+  /one moment/);
+});
+
 test('the demo states refuse a database that is not the run\'s own', async () => {
   const input = {
     databaseUrl: 'postgres://fixture@db/app_usernode_2d5619', slug: SLUG,

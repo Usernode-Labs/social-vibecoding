@@ -239,8 +239,10 @@ async function up(options) {
   // The same per-side fixtures a hosted reset applies to a self-app pair;
   // availableFixtures keeps the base side's descriptors, as it does there.
   const fixtures = require('../src/services/shots-fixtures');
+  // Both sides written at one moment, as there (shots-fixtures.pairMoment).
+  const at = fixtures.pairMoment();
   const input = (side) => ({ databaseUrl: `postgres://usernode:localdev@127.0.0.1:5440/${n.dbs[side]}`,
-    slug: SLUG, runId: n.runId, side });
+    slug: SLUG, runId: n.runId, side, at });
   const availableFixtures = [];
   const admins = [];
   for (const side of ['base', 'head']) admins.push(await fixtures.ensureFullAdminIdentity(input(side)));
@@ -266,6 +268,7 @@ async function up(options) {
   finally { await pool.end(); }
   const { chromium } = playwright(lab);
   const { bootstrapInternalSession } = require('../worker/session-bootstrap');
+  const { warmDemoData } = require('../worker/shots-browser-bootstrap');
   const pairDir = path.join(lab, 'pairs', label);
   const stateDir = path.join(pairDir, 'state');
   fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
@@ -284,6 +287,10 @@ async function up(options) {
           if (!(await context.cookies(ORIGINS[side])).some((cookie) => cookie.name === 'session')) {
             throw new Error(`${persona} has no session on ${ORIGINS[side]}`);
           }
+          // The demo data a copy makes on first view, made on both sides
+          // before any shot, as the worker's bootstrap does for a run with a
+          // ?demo=1 path (this pair is made before any intent, so always).
+          await warmDemoData(context, ORIGINS[side]);
         }
         await context.storageState({ path: path.join(stateDir, `${persona}.json`) });
         fs.chmodSync(path.join(stateDir, `${persona}.json`), 0o600);

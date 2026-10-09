@@ -283,6 +283,73 @@ the run has been marked interrupted for 30 seconds. Until then the card says
 carries `automaticRetryPending: true`. A person can take the shots again,
 stop a running set, or (as an app manager) waive them.
 
+## The same data on both sides
+
+The viewer outlines every area where a before and an after screen differ,
+and one no declared change accounts for is drawn dashed and grey. So the
+two copies must show the same data wherever the proposal did not change
+it. The shots of #4460 did not: on the same member screen the bell read 16
+on one side and 15 on the other (27 on a phone screen of the same run), the
+third row of Your work was a different row, and Since your last visit
+counted 154 rows on one side and 5 on the other. Four things keep the sides
+together:
+
+- **One clone, one moment.** Both databases are copies of one prepared
+  source. Every row the platform then writes into them (the identities,
+  session copies and demo states) is stamped from one moment, read once
+  per reset and handed to both sides (`shots-fixtures.pairMoment`). A
+  `NOW()` in their SQL is bound to it (`atMoment`), and a time worked out in
+  JavaScript reads `ctx.at`. Before, each side read its own transaction's
+  clock, so the rows were microseconds to a tenth of a second apart. They
+  are now the same to the microsecond, apart from a column Postgres stamps
+  itself (`DEFAULT now()`) when a state leaves it out.
+- **Demo data made before the agent starts.** A copy of Homeroom makes the
+  staging Messages fixture for a person the first time they list their
+  conversations with `?demo=1`: conversations, unread messages and a dozen
+  bell notifications. Opening the Homeroom bot's DM then adds a card the
+  bot is working on, and one more notification. The agent used to make
+  them, on a side whenever it first opened such a screen there, so one
+  side's bell counted them and the other's did not (in two copies of a
+  fresh staging database: 15, then 27, then 28). On Homeroom's own pairs,
+  when any path the run may open asks for the demo, the browser bootstrap
+  now makes the same two requests as every signed-in persona on both sides
+  first (`worker/shots-browser-bootstrap.js`, `warmDemoData`); each side's
+  own server makes the data, from its own revision, and later views add
+  nothing.
+- **Every page is a first visit to a project's Workshop.** Since your last
+  visit counts from a stamp each page load leaves for the next
+  (`workshopSeen:<slug>`), and the agent loads the two addresses a
+  different number of times. The shots browsers drop that stamp before a
+  page reads it (`worker/shots-page-init.js`), which is the first visit the
+  declared checks' fresh browsers see. A change to the list itself is shot
+  through `?shot=since-visit`, which draws it on both sides.
+- **The same steps on both sides.** Data a screen needs (`hints.setup`) is
+  created on both addresses before either is shot.
+
+What still moves:
+
+- **Request-time `[Mock]` rows.** With `?demo=1`, a copy of Homeroom adds
+  mock rows to many answers, timed from that request (`Date.now()` in
+  `src/routes/sessions.js`, `votes.js`, `issues.js` and others), while
+  stored rows keep their times. As a run goes on, stored rows fall behind
+  mocks of a fixed age, and a list ordered by time changes order. In two
+  idle copies of a fresh staging database, the member's first six changes
+  by last activity (the order Your work lists them in) changed order six
+  times in the nine minutes after the demo states were written, the first
+  time two minutes in, when the mock in-progress session passed the demo
+  state's change with a deployed preview. Two sides shot a minute apart can
+  fall either side of such a moment: that is #4460's third row. The
+  platform cannot pin a clock the revision reads with `Date.now()`.
+  Anchoring the mocks to one instant per copy is a change to those routes,
+  and helps only once both revisions of a pair carry it.
+- **Times read off the browser's clock.** "3m ago" is worked out when the
+  page draws, so two shots a minute apart can read a minute apart.
+- **Each revision's own staging seeds**, written with `NOW()` when that
+  side booted, seconds apart from the other side's.
+- **Whatever the agent does on one side only**, such as exploring the
+  after address before it shoots, when that writes data (a vote, a read
+  marker).
+
 ## What the platform checks, and what it does not
 
 The platform checks:
@@ -575,11 +642,12 @@ and its phone browser under `SHOTS_DIR/<persona>_phone`.
 | Run flow and the brief (`executeRun`, `shotsBrief`) | `src/services/shots-orchestrator.js` |
 | Shots agent prompt and dispatch | `src/services/shots-agent.js` |
 | Shots bridge (MCP server `shots`) | `worker/shots-mcp.js` |
-| Fixture identities and session copies; demo states for the personas | `src/services/shots-fixtures.js`, `src/services/shots-demo-states.js` |
+| Fixture identities and session copies; demo states for the personas; the pair's one moment (`pairMoment`, `atMoment`) | `src/services/shots-fixtures.js`, `src/services/shots-demo-states.js` |
 | What a declaration is told about the copies' data (`availableStates`, `dataNote`, data warnings) | `src/services/shots-ready-states.js` |
+| Persona sign-in on both sides, and the demo data a copy makes on first view (`warmDemoData`) | `worker/shots-browser-bootstrap.js` |
+| Every shots page's init script (install strip dismissed unless `shots-install-strip=show`; the Workshop's visit stamp dropped) | `worker/shots-page-init.js` |
 | Persona tokens and the guest's, and the warnings on declaring (`mintShotsAuthTokens`, `shotsGuestIdentity`, `personaWarnings`) | `src/services/shots-identities.js` |
 | Browser servers (`--output-dir`, `--save-video`, the phone browsers' `--device`) | `worker/write-shots-mcp-config.js` |
-| Every shots page's init script (install strip dismissed unless `shots-install-strip=show`) | `worker/shots-page-init.js` |
 | Egress proxy (origins, public-only egress, platform assets, controlled failures) | `worker/shots-origin-proxy.js` |
 | Where the browser may go, and which shots may be published | `worker/shots-boundary.js` |
 | Local dry run: the pair, then the shots | `scripts/shots-dry-run-pair.js`, `scripts/shots-dry-run.js` |
@@ -610,7 +678,10 @@ and reason, and a bounded trace:
   event list keeps only the last 128 events, so this is where startup time
   is read;
 - `trace.agentFinalResponse(s)` holds the agent's own last words (private
-  to this route).
+  to this route);
+- `trace.agentActivity.events` of kind `demo_data` say, per persona and
+  side, how each copy answered the bootstrap's request for its first-view
+  demo data (`outcome`, `httpStatus`).
 
 ## Dry run on local builds
 
