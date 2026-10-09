@@ -318,3 +318,22 @@ test('a first version\'s populated demo: the viewer\'s own data, a screen and a 
   const excerpt = doc.slice(doc.indexOf('<!-- work-order:begin -->'), doc.indexOf('<!-- work-order:end -->'));
   assert.match(excerpt, /A project's first version is the one\n   exception, on `\?demo=1` only: see "A first version's populated demo"\./);
 });
+
+// The shots copies sign in fixture accounts, and Homeroom tells an app who
+// is signed in, never their role in it. An app that hard-codes its creator's
+// account into a screen makes every change there unshootable (three runs on
+// one app's Creator Studio, QuestVerse's PRs 7 to 9), so the doc says so
+// where it explains who the before & after shots see.
+test('conventions doc says no shots persona is the app\'s creator or admin, and not to hard-code people', () => {
+  const doc = getAppConventions();
+  const start = doc.indexOf('### Who the before & after shots see');
+  assert.ok(start > 0, 'the section is there');
+  const section = doc.slice(start, doc.indexOf('\n### ', start + 1)).replace(/\s+/g, ' ');
+  assert.match(section, /Four things it cannot do by itself/);
+  assert.match(section, /\*\*No persona is your app's creator or one of its admins\.\*\*/);
+  assert.match(section, /Homeroom tells your app who is signed in, never their role in it/);
+  assert.match(section, /`read_only_admin` and `full_admin` are Homeroom's own administrators, which your app is not told/);
+  assert.match(section, /refuses every shots browser, and its changes are skipped/);
+  assert.match(section, /Do not hard-code people into a screen the project works on/);
+  assert.match(section, /name that way in `hints\.setup`/);
+});
