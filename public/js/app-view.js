@@ -693,14 +693,21 @@ const AppView = {
   // path is captured when dispatch begins and still holds the ancestors the
   // target had. A scripted `el.click()` runs no microtask mid-dispatch, so
   // the target is still attached and the old check passed — which is why
-  // the ?shot=board-unfold capture could not catch this.
+  // the ?shot=board-open capture's predecessor could not catch this.
+  //
+  // #4486: AND THE BOARD'S ROWS. All items' columns and By category's lanes
+  // draw the Workshop's row (workshop/work-row.tsx), which carries the item's
+  // hooks like the folded card it replaced and opens the item's page through
+  // its own link, beside the board on a wide window. A click inside one that
+  // lands off the link (the status bar, the 💬 count) is the row's too, so
+  // the handler stands aside for `.dev-ws-wrow` as it does for a fold.
   _inFoldWrapper(e) {
+    const own = (n) => !!(n && n.classList
+      && (n.classList.contains('dev-ws-rowwrap') || n.classList.contains('dev-ws-wrow')));
     const path = e && typeof e.composedPath === 'function' ? e.composedPath() : null;
-    if (path && path.length) {
-      return path.some((n) => !!(n && n.classList && n.classList.contains('dev-ws-rowwrap')));
-    }
+    if (path && path.length) return path.some(own);
     const t = e && e.target;
-    return !!(t && typeof t.closest === 'function' && t.closest('.dev-ws-rowwrap'));
+    return !!(t && typeof t.closest === 'function' && t.closest('.dev-ws-rowwrap, .dev-ws-wrow'));
   },
   // `?cards=open` — every board card drawn unfolded: the board as it was
   // before its columns folded their cards to rows (#1787), and the state the
@@ -1285,7 +1292,7 @@ const AppView = {
       }
       // `?shot=week-page` opens this week's own page in the Workshop tab
       // (#4457): Week by week's first row, pressed through its own handler,
-      // as `?shot=board-unfold` presses a row, once the row is drawn. A
+      // as `?shot=board-open` presses a row, once the row is drawn. A
       // human's first real gesture stops it, as there.
       if (shot === 'week-page') {
         AppView._workshopSince[slug] = Date.now() - 3 * 86400000;
@@ -1355,12 +1362,14 @@ const AppView = {
           }
         }, 300);
       }
-      // `?shot=board-unfold` clicks the FIRST folded row on the board, so a
-      // check can watch a card unfold the way a tap does — through the fold's
-      // own handler, with the delegated open handler above standing aside.
-      // A synthetic click is not `isTrusted`, so it does not end the window
-      // the way a real gesture does; same guard as the ⋯ menu link.
-      if (shot === 'board-unfold') {
+      // `?shot=board-open` taps the FIRST row on the board (#4486), so a
+      // check can watch its page open beside the board the way a tap does:
+      // through the row's own link and the Workshop's handler, with the
+      // delegated open handler above standing aside. On the checks' 1280px
+      // frame that is the side panel. A synthetic click is not `isTrusted`,
+      // so it does not end the window the way a real gesture does; same
+      // guard as the ⋯ menu link.
+      if (shot === 'board-open') {
         let tries = 0;
         const done = () => {
           clearInterval(tick);
@@ -1372,15 +1381,18 @@ const AppView = {
         document.addEventListener('keydown', onUserInput, true);
         const tick = setInterval(() => {
           if (App.currentApp !== slug || (tries += 1) > 40) { done(); return; }
-          if (document.querySelector('#dev-kanban .dev-ws-rowwrap-open')) { done(); return; }
-          const row = document.querySelector('#dev-kanban .dev-ws-row');
+          if (document.querySelector('.dev-ws-side[data-ws-side]')) { done(); return; }
+          const row = document.querySelector('#dev-kanban .dev-ws-wrow-link');
           if (row) row.click();
         }, 300);
       }
       if (shot === 'feed-comments') {
-        // The Workshop keeps its rows folded; the slot only exists inside an
-        // unfolded one, so the view model unfolds the first issue row for
-        // this capture (see _workshopView's autoExpand).
+        // The slot only exists inside an unfolded card. #4486: By category's
+        // rows open the item's page and no longer unfold, so the checks ride
+        // this link on the board with its cards open (`group=stage&cards=open`),
+        // where every card is drawn unfolded; this fills the first slot and
+        // brings it on screen. (The view model's autoExpand still opens the
+        // theme that row is in, for a By category route.)
         AppView._workshopShot = 'feed-comments';
         let tries = 0;
         const done = () => {
@@ -9644,14 +9656,14 @@ const AppView = {
     return row;
   },
 
-  // #4457: what the Workshop tab's rows say about an item, in words — the
-  // row is a neutral tile, the title, one line ("Change #4456 · yours · for
-  // #4455"), then small tags for what is happening on it and, on a change up
-  // for a vote, the vote. Resolved here, like every other card fact, so the
-  // component re-derives nothing: `noun`/`n`/`by` and the rest are joined
-  // into the line by workshop/work-row.tsx, which also decides what to leave
-  // out where (your own name, on Your work). Tag tones: `run` (in flight),
-  // `ok` (live, passed), `warn` (worth knowing), `bad` (stops it), `plain`.
+  // #4457: what the Workshop's rows say about an item, in words — the row
+  // is the title, one line in the board's words ("PR #4456 · evan · for
+  // #4455 · 4m ago", #4486), then small tags for what is happening on it
+  // and, on a change up for a vote, the vote. Resolved here, like every
+  // other card fact, so the component re-derives nothing: `noun`/`n`/`by`
+  // and the rest are joined into the line by workshop/work-row.tsx. Tag
+  // tones: `run` (in flight), `ok` (live, passed), `warn` (worth knowing),
+  // `bad` (stops it), `plain`.
   _workshopBrief(kind, item, card) {
     const it = item || {};
     const meId = App.user && App.user.id;
@@ -9678,6 +9690,10 @@ const AppView = {
     const shortly = (tag) => (ROW_SHORT[tag.label] ? { ...tag, short: ROW_SHORT[tag.label] } : tag);
     const checkTags = (p) => {
       for (const s of AppView.statusTagSpecs(p)) {
+        // #4486: "Behind main" does not stop a change landing, so it stays
+        // on the change's page, off the row. A change that cannot land
+        // says so in its bar.
+        if (s.data && s.data['data-status-tag'] === 'behind') continue;
         tags.push(shortly(s.progress
           ? { label: s.label, tone: tagTone(s.cls), title: s.title, progress: s.progress }
           : { label: s.label, tone: tagTone(s.cls) }));
@@ -9691,14 +9707,21 @@ const AppView = {
       if (pill.key === 'deployed' || pill.key === 'merged') tags.push({ label: 'Live', tone: 'ok' });
       else tags.push({ label: pill.label, tone: pill.tone === 'blocked' ? 'bad' : pill.spinner ? 'run' : 'plain' });
     };
+    // #4486: the card's own age, as its meta line says it, for the row's
+    // line in words ("snait · 11h ago"): each kind's card dates itself from
+    // the same field read here.
+    const agoOf = (v) => (v ? AppView._workshopAgo(v) : '');
+    // Your own session's card names nobody (it is yours); the row's line in
+    // words names its maker as every other row does (#4486).
+    const by = who || (kind === 'my-session' && App.user && App.user.username ? App.user.username : '');
     const base = {
-      kind: 'change', noun: 'Change', n: null, by: who || '', mine: !!mineBy,
+      kind: 'change', noun: 'Change', n: null, by, mine: !!mineBy,
       // #4538: Homeroom bot built this change from a request made for the
       // viewer, so Your work lists it — while `mine` stays "the viewer made
-      // it", so the line keeps saying Homeroom bot and never "yours".
+      // it", so the line keeps naming Homeroom bot as its maker.
       requested: kind === 'proposal' && it.requested_by_me === true && !mineBy,
       category: '',
-      replies: 0, linked: [], closed: [], stage: 'worked', at: 0, tags, vote: null,
+      replies: 0, linked: [], closed: [], stage: 'worked', at: 0, ago: agoOf(it.created_at), tags, vote: null,
     };
     if (kind === 'issue') {
       const ws = AppView._issueWorkState(it);
@@ -9707,8 +9730,12 @@ const AppView = {
         auto_solving: 'Auto-solving', answer_needed: 'Needs an answer', draft_ready: 'Draft ready',
       };
       if (ws) {
+        // #4486: and who is on it ("Picked up · zura", "Started · you"), in
+        // place of the card's @ chip: the work-state chip's own name.
+        const person = ws.who && (ws.key === 'in_review' || ws.key === 'working' || ws.key === 'paused' || ws.key === 'claimed')
+          ? ` · ${ws.who}${ws.people > 1 ? ` +${ws.people - 1}` : ''}` : '';
         tags.push({
-          label: WORDS[ws.key] || ws.label,
+          label: (WORDS[ws.key] || ws.label) + person,
           tone: ws.spinner ? 'run' : ws.key === 'answer_needed' ? 'warn' : 'plain',
         });
       }
@@ -9717,7 +9744,7 @@ const AppView = {
         ...base, kind: 'request', noun: 'Request', n: Number(it.number) || null,
         category: cat ? cat.label : '', replies: Number(it.chatCount) || 0,
         stage: ws && ws.key !== 'claimed' && ws.key !== 'in_review' ? 'worked' : (ws && ws.key === 'in_review' ? 'vote' : 'request'),
-        at: ts(it.createdAt || it.created_at),
+        at: ts(it.createdAt || it.created_at), ago: agoOf(it.createdAt || it.created_at),
       };
     }
     if (kind === 'merged') {
@@ -9727,6 +9754,7 @@ const AppView = {
         ...base, kind: 'live', noun: closeRow ? 'Vote' : 'Change', n: Number(it.pr_number || it.id) || null,
         closed: nums(it.linked_issues), replies: Number(it.chat_count) || 0, stage: 'live',
         at: ts(it.merged_at || it.closed_at || it.created_at),
+        ago: agoOf(closeRow ? ((it.payload && it.payload.appliedAt) || it.created_at) : it.created_at),
       };
     }
     if (kind === 'gov') {
@@ -9756,10 +9784,60 @@ const AppView = {
       };
     }
     const busy = AppView._sessionBusy(it);
+    // #4486: your session nobody else can see says so, with a lock, where
+    // the board's "Yours · not shared" divider said it for the whole group.
+    if (kind === 'my-session' && !it.shared_at) tags.push(AppView._onlyYouTag());
     tags.push({ label: busy ? 'Being worked on' : 'Started', tone: busy ? 'run' : 'plain' });
     if (it.pr_number) checkTags(it);
     if (preview) tags.push(shortly({ label: 'Preview ready', tone: 'plain', glyph: 'eye' }));
     return { ...out, stage: 'worked' };
+  },
+
+  // #4486: the two tags that say only the viewer can see something, with a
+  // lock: a private session's own row ("Only you"), and the request a private
+  // session of theirs is for, where that session folds in rather than being
+  // a second row ("Spec draft · only you", `_foldPrivateDrafts`).
+  _onlyYouTag() {
+    return { label: 'Only you', tone: 'plain', glyph: 'lock', title: AppView.PRIVATE_DIVIDER_TITLE };
+  },
+  _specDraftTag() {
+    return { label: 'Spec draft · only you', tone: 'plain', glyph: 'lock', title: AppView.PRIVATE_DIVIDER_TITLE };
+  },
+  // The request a private session of the viewer's is for, when that request
+  // is one of `numbers` (the requests drawn beside it), else null.
+  _privateDraftFor(session, numbers) {
+    if (!session || session.shared_at) return null;
+    const linked = AppView._sanitizeIssueNumbers(Array.isArray(session.linked_issues) ? session.linked_issues : []);
+    const n = linked.find((x) => numbers.has(Number(x)));
+    return n == null ? null : Number(n);
+  },
+  // #4486: a private session of yours on a request that is drawn beside it
+  // is that request's "Spec draft · only you" tag, not a second row: the
+  // board's Requests and Underway and a By category group draw the request,
+  // and the session is how far you have got with it. `rows` are card rows
+  // with their briefs; returns them without the folded sessions, the
+  // request rows carrying the tag. A private session tied to no request
+  // drawn there keeps its own row, tagged "Only you".
+  _foldPrivateDrafts(rows, sessionOf) {
+    const issueRows = new Map();
+    for (const r of rows) {
+      if (r && r.t === 'card' && r.brief && r.brief.kind === 'request' && r.brief.n) issueRows.set(Number(r.brief.n), r);
+    }
+    if (!issueRows.size) return rows;
+    const numbers = new Set(issueRows.keys());
+    const tagged = new Set();
+    const out = [];
+    for (const r of rows) {
+      const s = sessionOf(r);
+      const n = s ? AppView._privateDraftFor(s, numbers) : null;
+      if (n == null) { out.push(r); continue; }
+      const target = issueRows.get(n);
+      if (!tagged.has(n)) {
+        target.brief = { ...target.brief, tags: [...target.brief.tags, AppView._specDraftTag()] };
+        tagged.add(n);
+      }
+    }
+    return out;
   },
 
   // ── The Workshop ───────────────────────────────────────────────────
@@ -10845,16 +10923,13 @@ const AppView = {
     const entries = [];
     // #1933: under the "By category" pane every row sits beneath the heading
     // that names its category, so the card's own category chip would repeat
-    // the heading on every line. It is dropped from the rows this pane draws
-    // and kept everywhere else: the stage pane's columns, the Board, and the
-    // vote and own-work strips, which are not grouped by category.
-    const underThemeHeading = AppView._getWorkshopGroup() === 'category';
+    // the heading on every line. #4486: the lanes' rows leave it out
+    // themselves (workshop.tsx `Lane`, `category={false}`), so the card keeps
+    // it here: these same rows are the Workshop tab's since list too, which
+    // draws the chip, whichever grouping All items was last read in.
     const add = (kind, item, lane, build) => {
-      let card = build();
+      const card = build();
       if (!card) return;
-      if (underThemeHeading && Array.isArray(card.badges) && card.badges.some((b) => b && b.key === 'attr:category')) {
-        card = { ...card, badges: card.badges.filter((b) => !(b && b.key === 'attr:category')) };
-      }
       const row = AppView._attachRowConversation({
         t: 'card', key: card.key, card, brief: AppView._workshopBrief(kind, item, card),
       }, kind, item);
@@ -10889,6 +10964,17 @@ const AppView = {
     // a fortnight away still shows everything that landed meanwhile.
     for (const m of buckets.done) {
       add('merged', m, activityOf('merged', m) >= weekAgo ? 'shipped' : 'done', () => AppView._mergedRowModel(m));
+    }
+    // #4486: a private session of yours on a request on the board is that
+    // request's "Spec draft · only you" tag, in its category as on the board,
+    // rather than a second item underway beside it.
+    {
+      const entryOf = new Map(entries.map((e) => [e.row, e]));
+      const kept = new Set(AppView._foldPrivateDrafts(entries.map((e) => e.row), (r) => {
+        const e = entryOf.get(r);
+        return e && e.kind === 'my-session' ? e.item : null;
+      }));
+      for (let i = entries.length - 1; i >= 0; i -= 1) if (!kept.has(entries[i].row)) entries.splice(i, 1);
     }
 
     // ── What you are working on ──
@@ -12969,10 +13055,16 @@ const AppView = {
     // Done is built from merged rows, and a merged thing's conversation
     // lives on the proposal it came from, which is what _feedThreadRef
     // already declines to address.
-    const cardRows = (items, build, refOf) => items.map((it) => {
+    //
+    // #4486: every row carries its `brief`, what the Workshop's row says in
+    // words (`_workshopBrief`), as the Workshop tab's lists do: the columns
+    // draw that row now. `briefOf` names the kind for a column whose rows
+    // hang no conversation.
+    const cardRows = (items, build, refOf, briefOf) => items.map((it) => {
       const card = build(it);
-      const row = { t: 'card', key: card.key, card };
       const ref = refOf ? refOf(it) : null;
+      const b = ref || (briefOf ? briefOf(it) : null);
+      const row = { t: 'card', key: card.key, card, ...(b ? { brief: AppView._workshopBrief(b.kind, b.item, card) } : {}) };
       return ref ? AppView._attachRowConversation(row, ref.kind, ref.item) : row;
     });
     const emptyNote = filtering ? 'No matching cards' : 'Nothing here yet';
@@ -13012,12 +13104,25 @@ const AppView = {
       },
       {
         key: 'done', title: 'Done', count: filtering ? kDone.length : doneTotal,
-        rows: cardRows(kDone, (m) => AppView._mergedRowModel(m)),
+        rows: cardRows(kDone, (m) => AppView._mergedRowModel(m), null, (m) => ({ kind: 'merged', item: m })),
         empty: kDone.length ? null : emptyNote,
         footer: doneFooter,
         status: doneDeployment,
       },
     ];
+    // #4486: a private session of yours on a request in Requests or Underway
+    // is that request's "Spec draft · only you" tag, not a second row in
+    // Underway. Folded across the two columns, so the request is found
+    // whichever of them it is in.
+    {
+      const sessionOf = (r) => (r && r.t === 'card' && r.card && r.card.attrs && r.card.attrs['data-session-chip']
+        ? (AppView._mySessions || []).find((s) => String(s.id) === String(r.card.attrs['data-session-chip'])) || null
+        : null);
+      const both = AppView._foldPrivateDrafts([...cols[0].rows, ...cols[1].rows], sessionOf);
+      const keep = new Set(both);
+      cols[1].rows = cols[1].rows.filter((r) => keep.has(r));
+      cols[1].count = cols[1].rows.filter((r) => r.t === 'card').length;
+    }
     // The In progress column's own empty note has to come after its rows are
     // built: the archived toggle counts as content even with no cards.
     if (!cols[1].rows.length) cols[1].empty = emptyNote;
@@ -13049,8 +13154,13 @@ const AppView = {
         tone: 'neutral', text: 'Latest merged change · awaiting deployment',
         title: 'Production is still serving an earlier revision.',
       };
+      // #4486: in the board's words, through the change it names when it
+      // names one ("Live in production through PR #4454").
       if (d.state === 'deployed') return {
-        tone: 'ok', text: `Production live at ${String(d.runningSha).slice(0, 7)}`,
+        tone: 'ok',
+        text: d.livePrNumber
+          ? `Live in production through PR #${d.livePrNumber}`
+          : `Live in production at ${String(d.runningSha).slice(0, 7)}`,
         title: 'The latest merged change is included in the observed production revision.',
       };
       // `unknown` means the platform has no evidence either way (a
@@ -13083,7 +13193,7 @@ const AppView = {
         : (sha || 'the latest merged change');
       return {
         tone: 'ok',
-        text: `Production live through ${boundary}`,
+        text: `Live in production through ${boundary}`,
         title: 'Every merged change through this point is live in production.',
       };
     }
@@ -13708,32 +13818,28 @@ const AppView = {
       .filter((entry) => entry.item.source !== 'imported').length;
     const note = AppView._sessionFilterNoteRow(regularSessionCount);
     if (note) rows.push(note);
-    if (priv.length) {
-      rows.push(AppView._privateDividerRow());
-      for (const e of priv) {
-        const card = AppView._mySessionCardModel(e.item);
-        rows.push(AppView._attachRowConversation({ t: 'card', key: card.key, card }, e.kind, e.item));
-      }
-    }
-    if (archived) rows.push(archived);
+    // #4486: each card row carries its brief, the words the board's row says.
+    const cardRow = (card, e) => AppView._attachRowConversation(
+      { t: 'card', key: card.key, card, brief: AppView._workshopBrief(e.kind, e.item, card) }, e.kind, e.item);
+    // #4486: your private sessions lead the column as rows of their own,
+    // each tagged "Only you" with a lock (`_workshopBrief`), where the
+    // "Yours · not shared" divider used to say it over all of them. One on a
+    // request drawn on the board folds into that request's row instead
+    // (`_foldPrivateDrafts`, from _kanbanView).
+    for (const e of priv) rows.push(cardRow(AppView._mySessionCardModel(e.item), e));
     if (vis.length) {
       rows.push(AppView._visibleDividerRow());
-      for (const e of vis) {
-        const card = AppView._mySessionCardModel(e.item);
-        rows.push(AppView._attachRowConversation({ t: 'card', key: card.key, card }, e.kind, e.item));
-      }
+      for (const e of vis) rows.push(cardRow(AppView._mySessionCardModel(e.item), e));
     }
-    for (const e of issues) {
-      const card = AppView._issueCardModel(e.item);
-      rows.push(AppView._attachRowConversation({ t: 'card', key: card.key, card }, e.kind, e.item));
-    }
+    for (const e of issues) rows.push(cardRow(AppView._issueCardModel(e.item), e));
     if (shared.length) {
       rows.push(AppView._othersDividerRow());
-      for (const e of shared) {
-        const card = AppView._sharedSessionCardModel(e.item);
-        rows.push(AppView._attachRowConversation({ t: 'card', key: card.key, card }, e.kind, e.item));
-      }
+      for (const e of shared) rows.push(cardRow(AppView._sharedSessionCardModel(e.item), e));
     }
+    // The archived toggle closes the column (#4486): it followed the
+    // "Yours · not shared" divider's group, and with that divider gone it
+    // would head the column's card as if it named it.
+    if (archived) rows.push(archived);
     return rows;
   },
 

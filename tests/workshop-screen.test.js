@@ -1035,3 +1035,48 @@ test('#3270: the controller reads the Needs you feed alongside, and survives los
     global.fetch = priorFetch;
   }
 });
+
+// ── #4486: All items, a project Workshop's page ───────────────────────
+//
+// Not this screen, but the page its rows lead to: the project's All items,
+// whose rows open the item's page in the panel the Workshop tab uses, and
+// whose one-row head and pipeline stay on screen down a long column.
+
+const workshopTsx = read('frontend/src/features/dev-board/workshop/workshop.tsx');
+const kanbanTsx = read('frontend/src/features/dev-board/card/dev-kanban.tsx');
+const appCss = read('public/css/app.css');
+
+test('#4486: a row on All items opens its page beside the board on a wide window, and a tab change closes it', () => {
+  // The same panel, from the same handler: a plain click on a wide window,
+  // anything else the row's own link (a phone: the page takes the screen).
+  assert.match(workshopTsx, /if \(!sideWide\) return;\s*event\.preventDefault\(\);\s*setSideItem/);
+  assert.match(workshopTsx, /<DevKanban openKey=\{sideKey\} onOpen=\{openItem\} \/>/, 'the board’s rows');
+  assert.match(workshopTsx, /<WorkList rows=\{rows\} slug=\{slug\} openKey=\{openKey\} onOpen=\{onOpen\} variant="board" category=\{false\} \/>/,
+    'and By category’s');
+  assert.match(workshopTsx, /\{\(tab === 'workshop' \|\| tab === 'all'\) && sideItem \? <TopicSidePanel item=\{sideItem\} onClose=\{closeSide\} \/> : null\}/);
+  assert.match(workshopTsx, /data-ws-side-open=\{sideItem && \(tab === 'workshop' \|\| tab === 'all'\) \? '' : undefined\}/);
+  // It closes whenever the tab changes, and when the window narrows.
+  assert.match(workshopTsx, /useEffect\(\(\) => \{\s*setSideItem\(null\);\s*if \(tab !== 'workshop'\) setOpenWeek\(null\);\s*\}, \[tab\]\);/);
+  assert.match(workshopTsx, /useEffect\(\(\) => \{\s*if \(!sideWide\) setSideItem\(null\);\s*\}, \[sideWide\]\);/);
+  // The board keeps its place beside it: 316px columns, scrolling sideways,
+  // the tapped column brought beside the panel and the strip following.
+  assert.match(appCss, /#dev-workshop\.dev-ws-has-board:has\(> \.dev-ws\[data-ws-side-open\]\) \{ max-width: calc\(100% - 616px\); \}/);
+  assert.match(appCss, /\.dev-ws\[data-ws-side-open\] :is\(#dev-kanban, \.dev-kanban-stages\) \{ grid-template-columns: repeat\(4, 316px\); \}/);
+  assert.match(workshopTsx, /if \(c\.right > b\.right\) board\.scrollLeft \+= Math\.ceil\(c\.right - b\.right\);\s*else if \(c\.left < b\.left\) board\.scrollLeft -= Math\.ceil\(b\.left - c\.left\);\s*syncStrip\(board\);/);
+});
+
+test('#4486: the one-row head and the pipeline pin together under the project’s tabs', () => {
+  // Both live in the pane head, which is what pins (position: sticky, under
+  // the tabs at the measured offset), so the column names stay on screen.
+  const head = workshopTsx.slice(workshopTsx.indexOf('<div className="dev-ws-pane-head">'), workshopTsx.indexOf('<div className="dev-ws-pane-body">'));
+  assert.match(head, /<div className="dev-ws-allbar" data-ws-allbar="">\s*<PageBack[\s\S]*?eyebrow=\{false\}[\s\S]*?<GroupStrip group=\{group\} \/>[\s\S]*?<DevActionsRow/);
+  assert.match(head, /\{group === 'stage' \? <StageStrip \/> : null\}/);
+  assert.match(appCss, /\.dev-ws-pane-head \{\s*position: sticky; top: 0; z-index: 20;/);
+  assert.match(appCss, /#dev-workshop \.dev-ws-pane-head \{\s*top: calc\(var\(--ws-pin-top, 0px\) \+ var\(--dev-ws-head-top, 0px\)\);/);
+  // Pinned, on By stage, the row and the steps take the sheet's colour.
+  assert.match(appCss, /#dev-workshop\.dev-ws-has-board \.dev-ws\[data-ws-head-pinned\] \.dev-ws-pane-head \{\s*background-color: var\(--dc-sheet-solid\);/);
+  // The strip cannot share a sideways scroller with the board (that box
+  // would be what it pinned to), so it follows the board's scroll instead.
+  assert.match(kanbanTsx, /export function syncStrip\(board: HTMLElement \| null\): void \{/);
+  assert.match(appCss, /\.dev-kanban-stages \{[^}]*overflow: hidden;/);
+});

@@ -36,12 +36,22 @@ export function PageBackButton({ label, onBack, ...rest }: BackButtonProps): Rea
   );
 }
 
-export function PageBack({ label, title, onBack }: { label: string; title: string; onBack: () => void }): ReactNode {
+export function PageBack({ label, title, onBack, eyebrow = true }: {
+  label: string;
+  title: string;
+  onBack: () => void;
+  /**
+   * The name of where it goes, over the title. All items' one-row header
+   * (#4486) leaves it out: the lit Workshop tab right above it says so, and
+   * the row is one line.
+   */
+  eyebrow?: boolean;
+}): ReactNode {
   return (
     <div className="dev-ws-pagehead" data-ws-pagehead="">
       <PageBackButton label={label} onBack={onBack} data-ws-page-back="" />
       <div className="dev-ws-pagehead-text">
-        <span className="dev-ws-pagehead-over">{label}</span>
+        {eyebrow ? <span className="dev-ws-pagehead-over">{label}</span> : null}
         <h2 className="dev-ws-pagehead-title">{title}</h2>
       </div>
     </div>
