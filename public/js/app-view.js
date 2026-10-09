@@ -4226,8 +4226,10 @@ const AppView = {
       return;
     }
 
-    // Full-screen topic (issue / proposal / governance) discussion.
-    if (subTab === 'topic' && ref && ref.kind && ref.id) {
+    // Full-screen topic (issue / proposal / governance) discussion. A change
+    // addressed by its pull request's number (#4367) has no id yet: the topic
+    // view looks it up.
+    if (subTab === 'topic' && ref && ref.kind && (ref.id || (ref.kind === 'proposal' && ref.pr))) {
       // #2487: a cold topic deep link starts with the display-only header
       // snapshot from whichever app this browser visited last. Unlike the
       // forum, chat and owner-session branches, this branch never replaced
@@ -4553,7 +4555,25 @@ const AppView = {
   },
 
   async _renderTopicSubView(content, ref) {
-    AppView._devTopic = { kind: ref.kind, id: ref.id };
+    // #4367: `dev/changes/<N>` names a change by its pull request's number.
+    // Look up the session it is, with the page's skeleton up; a number this
+    // app has no change for is the same miss as a bad session id.
+    if (ref.kind === 'proposal' && !ref.id && ref.pr) {
+      const pending = { kind: 'proposal', id: null, pr: ref.pr };
+      AppView._devTopic = pending;
+      AppView._reactDevBoard()?.mountTopicSubView(content);
+      const id = await AppView._sessionIdForChange(ref.pr);
+      if (AppView._devTopic !== pending || !document.getElementById('dev-topic-thread')) return;
+      if (!id) {
+        if (App._abandonWorkshopResume?.()) return;
+        App.switchTab('dev');
+        return;
+      }
+      ref = { kind: 'proposal', id, pr: ref.pr };
+    }
+    AppView._devTopic = ref.pr
+      ? { kind: ref.kind, id: ref.id, pr: ref.pr }
+      : { kind: ref.kind, id: ref.id };
     // #2847: arriving at a proposal's page (card tap, deep link, notification
     // row) is the viewer seeing it — clear its "New proposal" nudge.
     if (ref.kind === 'proposal' || ref.kind === 'session') {
@@ -4674,10 +4694,52 @@ const AppView = {
     // surface is what decides between redirecting and staying put.
     if (['proposal', 'session'].includes(ref.kind)
         && AppView._redirectLegacyBuildLink(AppView._findTopicItem())) return;
+    // #4367: an old `dev/proposals/<id>` address of a change that has a pull
+    // request becomes `dev/changes/<N>`, in place (no Back entry).
+    if (ref.kind === 'proposal') AppView._canonicalizeChangeAddress(AppView._findTopicItem());
     // #363: mount the thread FIRST so its header slot (#gc-thread-head) exists,
     // then paint the topic card/body into it.
     AppView._mountTopicThread();
     AppView._renderTopicHead();
+  },
+
+  // #4367: the session a change's pull request number names on this app, or
+  // null — from the server, which applies the proposal page's own visibility.
+  async _sessionIdForChange(pr) {
+    const slug = App.currentApp || AppView.appData?.slug;
+    if (!slug || !pr) return null;
+    try {
+      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/changes/${Number(pr)}${AppView._demoQS()}`);
+      if (!res.ok) return null;
+      const data = await res.json();
+      const id = Number(data && data.sessionId);
+      return Number.isInteger(id) && id > 0 ? id : null;
+    } catch {
+      return null;
+    }
+  },
+
+  // #4367: once the open change is known to have a pull request, its address
+  // is `dev/changes/<N>`. Replaces the history entry — an old link is the
+  // same page, not somewhere to go Back to. Only an address that is this
+  // topic's `dev/proposals/<id>` is rewritten.
+  _canonicalizeChangeAddress(item) {
+    const t = AppView._devTopic;
+    const pr = Number(item && item.pr_number);
+    if (!t || t.kind !== 'proposal' || !item || item.id !== t.id
+        || !Number.isInteger(pr) || pr <= 0) return false;
+    t.pr = pr;
+    if (App.embeddedPanel || App.currentTab !== 'dev' || App.currentSubTab !== 'topic') return false;
+    const route = location.hash
+      ? location.hash.replace(/^#/, '').split('?')[0]
+      : location.pathname.replace(/^\/+/, '');
+    if (!new RegExp(`/dev/proposals/${t.id}$`).test(route)) return false;
+    const url = App._appUrl(App.currentApp, 'dev', t, 'topic');
+    try {
+      history.replaceState(null, '', url);
+    } catch (_) { return false; }
+    App._noteWorkshopView?.(url);
+    return true;
   },
 
   _findTopicItem() {
@@ -5124,7 +5186,7 @@ const AppView = {
       sessionId: ref.sessionId,
       label: n ? `#${n}` : 'Change',
       title: ref.title || (n ? `Pull request #${n}` : `Change ${ref.sessionId}`),
-      href: `#app/${slug}/dev/proposals/${ref.sessionId}`,
+      href: n ? `#app/${slug}/dev/changes/${n}` : `#app/${slug}/dev/proposals/${ref.sessionId}`,
     };
   },
 
@@ -5568,7 +5630,7 @@ const AppView = {
       sessionId: id,
       label: n ? `#${n}` : 'Change',
       title: item.included_in_pr_title || (n ? `Pull request #${n}` : `Change ${id}`),
-      href: `#app/${slug}/dev/proposals/${id}`,
+      href: n ? `#app/${slug}/dev/changes/${n}` : `#app/${slug}/dev/proposals/${id}`,
     };
   },
 
@@ -7555,7 +7617,9 @@ const AppView = {
     AppView._editingIssueTitle = null;
     AppView._editingSessionTitle = null;
     if (typeof App !== 'undefined' && App.switchTab) {
-      return App.switchTab('dev', { kind, id }, 'topic');
+      // #4367: a change with a pull request opens at `dev/changes/<N>`.
+      const pr = kind === 'proposal' ? Number(AppView._findItem('proposal', id)?.pr_number) : 0;
+      return App.switchTab('dev', Number.isInteger(pr) && pr > 0 ? { kind, id, pr } : { kind, id }, 'topic');
     }
   },
 

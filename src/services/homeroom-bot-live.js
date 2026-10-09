@@ -249,8 +249,9 @@ async function lastPostKind(pool, appId, issueNumber) {
   return rows[0]?.kind || null;
 }
 
-function proposalLink(domain, appSlug, sessionId) {
-  return `https://${domain}/#app/${encodeURIComponent(appSlug)}/dev/proposals/${Number(sessionId)}`;
+// #4367: by its pull request's number once it has one.
+function proposalLink(domain, appSlug, sessionId, prNumber = null) {
+  return `https://${domain}/${require('./change-destination').changeHref(appSlug, sessionId, prNumber)}`;
 }
 
 // ── The spec ─────────────────────────────────────────────────────────────

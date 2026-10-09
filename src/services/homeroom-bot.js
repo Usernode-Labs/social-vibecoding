@@ -5507,7 +5507,7 @@ async function runFollowUp(pool, config, {
     // What happened in plain words, and how to start it again; the record
     // (`why`) stays on the run and in the line above (followup.revisionFailedText).
     // The requester hears it in their DM too, with the change's card.
-    const proposalUrl = deps.domain ? live.proposalLink(deps.domain, app.slug, session.id) : null;
+    const proposalUrl = deps.domain ? live.proposalLink(deps.domain, app.slug, session.id, session.pr_number) : null;
     await say('followup_failed', followup.revisionFailedText({ why, canRevise }), postedAt, {
       dm: { reason: why, canRevise, sessionId: session.id, link: proposalUrl },
     })
@@ -5548,7 +5548,7 @@ async function runFollowUp(pool, config, {
   });
 
   const prNumber = session.pr_number;
-  const proposalUrl = deps.domain ? live.proposalLink(deps.domain, app.slug, session.id) : null;
+  const proposalUrl = deps.domain ? live.proposalLink(deps.domain, app.slug, session.id, session.pr_number) : null;
   const text = action === 'revise'
     ? followup.revisedText({
       summary: parsed?.summary, reply: parsed?.reply, prNumber, link: proposalUrl,
@@ -5871,7 +5871,7 @@ async function runChecksFix(pool, config, {
     // checks are shown; not on the issue, whose people asked for the change,
     // not for its checks. The reconcile has already said the votes were
     // cleared there.
-    const link = deps.domain ? live.proposalLink(deps.domain, app.slug, session.id) : null;
+    const link = deps.domain ? live.proposalLink(deps.domain, app.slug, session.id, session.pr_number) : null;
     await live.postOnProposal({
       pool, ws: deps.ws, app, issueNumber, runId, kind: 'checks_revise', bot, sessionId: session.id,
       text: followup.checksRevisedText({
@@ -6004,7 +6004,7 @@ async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, sa
     ).catch(() => {});
     // The vote-card metadata the promote route's own activity rows carry,
     // so the issue's thread shows the live proposal card, not only a link.
-    const link = live.proposalLink(domain, app.slug, built.sessionId);
+    const link = live.proposalLink(domain, app.slug, built.sessionId, built.prNumber);
     await say('proposal', live.proposalText({ link, prNumber: built.prNumber }), {
       msgType: 'vote', metadata: { vote: { sessionId: built.sessionId, prNumber: built.prNumber } },
       dm: { link, prNumber: built.prNumber, sessionId: built.sessionId },

@@ -4968,6 +4968,46 @@ function voteRoutes(config) {
   // list or from here. Accepts promoted / merging / merged so a proposal
   // that transitioned status between list-render and click still resolves
   // (active rows are normally fully cached, but this stays robust).
+  // #4367: a change's address is its pull request's number
+  // (`/app/<slug>/dev/changes/<N>`, the "Change #N" on screen), and the page
+  // still opens by session id. This turns the one into the other, under the
+  // same view gate and visibility rule as the read below, so a number it
+  // answers is one that read serves. Several sessions can name one PR; the
+  // one that reached a vote wins, then the newest.
+  router.get('/api/apps/:slug/changes/:number', async (req, res) => {
+    try {
+      const gatedApp = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
+      );
+      if (!gatedApp) return res.status(404).json({ error: 'App not found' });
+      const number = /^\d{1,9}$/.test(String(req.params.number))
+        ? parseInt(req.params.number, 10) : NaN;
+      if (!(number > 0)) return res.status(404).json({ error: 'Change not found' });
+      const { rows } = await pool.query(
+        `SELECT cs.id FROM chat_sessions cs
+         WHERE cs.app_id = $1 AND cs.pr_number = $3
+           AND (cs.status IN ('promoted', 'merging', 'merged')
+             OR (cs.status IN ('active', 'paused')
+               AND (cs.user_id = $2 OR cs.shared_at IS NOT NULL)))
+         ORDER BY (cs.status IN ('promoted', 'merging', 'merged')) DESC, cs.id DESC
+         LIMIT 1`,
+        [gatedApp.id, req.user?.id || null, number]
+      );
+      let sessionId = rows[0] ? rows[0].id : null;
+      // Staging demo mode: the by-id read's mock rows, by their PR number.
+      if (!sessionId && IS_STAGING && req.query.demo === '1') {
+        const mock = stagingMockMerged(req.user).concat(stagingMockProposals())
+          .find((m) => Number(m.pr_number) === number);
+        sessionId = mock ? mock.id : null;
+      }
+      if (!sessionId) return res.status(404).json({ error: 'Change not found' });
+      res.json({ sessionId, prNumber: number });
+    } catch (err) {
+      log.error('votes', 'Failed to resolve change', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.get('/api/apps/:slug/proposals/:id', async (req, res) => {
     try {
       // View-level (#621): read-only viewers can open a proposal's

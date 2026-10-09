@@ -40,6 +40,8 @@
 // claimed queue rows alone, so a build (whose queue row is gone) and a
 // follow-up waiting its turn showed as nothing while the bot said otherwise.
 
+const { changeHref } = require('./change-destination');
+
 // Lazy: the live module is large, and only the queue readers below need it.
 function live() { return require('./homeroom-bot-live'); }
 
@@ -233,13 +235,14 @@ function failedCount(results) {
   return results.filter((t) => t && t.status && t.status !== 'pass').length;
 }
 
-function links(domain, { slug, number = null, proposal = null }) {
+function links(domain, { slug, number = null, proposal = null, pr = null }) {
   if (!domain || !slug) return {};
   const base = `https://${domain}/#app/${encodeURIComponent(slug)}`;
   return {
     project: base,
     ...(number ? { request: `${base}/dev/issues/${Number(number)}` } : {}),
-    ...(proposal ? { proposal: `${base}/dev/proposals/${Number(proposal)}` } : {}),
+    // #4367: a change with a pull request goes by its number.
+    ...(proposal ? { proposal: `https://${domain}/${changeHref(slug, proposal, pr)}` } : {}),
   };
 }
 
@@ -849,7 +852,7 @@ async function proposalFacts(pool, sessionId, { domain = null } = {}) {
     `SELECT cs.id, cs.app_id, a.slug,
             CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'merging' ELSE cs.status END AS status,
             cs.check_state, cs.check_phase, cs.checks_progress,
-            cs.test_results, cs.session_title, cs.pr_title, cs.promoted_at, cs.created_at,
+            cs.test_results, cs.session_title, cs.pr_title, cs.pr_number, cs.promoted_at, cs.created_at,
             (SELECT COUNT(*)::int FROM pr_votes pv WHERE pv.session_id = cs.id AND pv.vote = 'yes'
                 AND ${revision.countedVotePredicateSql('pv', 'cs')}) AS yes,
             (SELECT COUNT(*)::int FROM pr_votes pv WHERE pv.session_id = cs.id AND pv.vote = 'no'
@@ -868,7 +871,7 @@ async function proposalFacts(pool, sessionId, { domain = null } = {}) {
       needed = governance.computeGate(gov, electorate.active, s.yes, s.no, s.promoted_at || s.created_at).required;
     } catch { needed = null; }
   }
-  const link = links(domain, { slug: s.slug, proposal: s.id }).proposal;
+  const link = links(domain, { slug: s.slug, proposal: s.id, pr: s.pr_number }).proposal;
   return {
     proposal: Number(s.id),
     title: s.session_title || s.pr_title || null,

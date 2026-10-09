@@ -284,9 +284,9 @@ test('the drawer renders both, and its waiting row uses the same safe wording', 
 test('submitted and shared connector changes open the same full change page', () => {
   const at = FE_SRC.indexOf("item.kind === 'connector_submitted'");
   const block = FE_SRC.slice(at, FE_SRC.indexOf("item.kind === 'auto_solve_done'", at));
-  assert.match(block, /ref: \{ kind: 'proposal', id \}/,
+  assert.match(block, /ref: Notifications\._changeRef\(id, item\.prNumber\)/,
     'the in-app route is lifecycle-neutral');
-  assert.match(block, /dev\/proposals\/\$\{id\}/,
+  assert.match(block, /Notifications\._changeHash\(item\.appSlug, id, item\.prNumber\)/,
     'the hash fallback uses the same route');
   assert.doesNotMatch(block, /kind = item\.detail|dev\/\$\{seg\}/,
     'sharing no longer diverts to the reduced public-discussion page');

@@ -85,6 +85,7 @@
 const log = require('./logger');
 const appAccess = require('./app-access');
 const { HOMEROOM_BOT_CARDS_LOCK } = require('./advisory-locks');
+const { changeHref } = require('./change-destination');
 
 const KIND = 'activity';
 // The most cards one read answers for, newest first. An older card keeps
@@ -119,8 +120,9 @@ function issueHref(slug, issueNumber) {
   return `#app/${encodeURIComponent(slug)}/dev/issues/${Number(issueNumber)}`;
 }
 
-function proposalHref(slug, sessionId) {
-  return `#app/${encodeURIComponent(slug)}/dev/proposals/${Number(sessionId)}`;
+// #4367: by its pull request's number once it has one.
+function proposalHref(slug, sessionId, prNumber = null) {
+  return changeHref(slug, sessionId, prNumber);
 }
 
 // ── Starting a card ──
@@ -456,7 +458,7 @@ function linksOf(row) {
   return {
     request: issueHref(row.slug, row.issue_number),
     proposal: row.proposal_session_id && OPENABLE_PROPOSAL.has(row.proposal_status)
-      ? proposalHref(row.slug, row.proposal_session_id) : null,
+      ? proposalHref(row.slug, row.proposal_session_id, row.proposal_pr_number) : null,
   };
 }
 
@@ -690,7 +692,7 @@ async function cardRows(pool, userId, limit = MAX_CARDS) {
             c.look_at, c.started_at, prior.runs AS earlier_runs,
             nxt.began AS next_at,
             run.id AS run_id, run.verdict, run.build_ok, run.build_error, run.cap_suppressed,
-            run.created_at AS run_at, run.proposal_session_id,
+            run.created_at AS run_at, run.proposal_session_id, cs.pr_number AS proposal_pr_number,
             run.live_build_waiting_at AS build_waiting_at, bs.status AS build_status,
             -- Merged but not live yet (live_at) reads as merging: going live.
             CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'merging' ELSE cs.status END AS proposal_status,
