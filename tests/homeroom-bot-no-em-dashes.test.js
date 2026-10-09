@@ -167,5 +167,7 @@ test('the build and the spec are asked for no em dashes', () => {
 test('the bot\'s DM replies, and the requests it offers to file, have no em dash', () => {
   assert.equal(mayor.cleanReply(`[about x] It's on your list ${EM} I'll start it next.`), 'It\'s on your list. I\'ll start it next.');
   const src = read('src/services/homeroom-bot-mayor.js');
-  assert.match(src, /const title = clip\(withoutEmDashes\(String\(args\.title \|\| ''\)/);
+  // #4605: the normaliser moved into draftFromArgs, which the offer_request
+  // case and its failed-attempt record both share.
+  assert.match(src, /title: clip\(withoutEmDashes\(String\(args\.title \|\| ''\)/);
 });

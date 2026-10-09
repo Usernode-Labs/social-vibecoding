@@ -331,7 +331,11 @@ test('#3772: a claim nothing backs is asked about once, then cut and said plainl
     ['filed', 'unknown']);
   assert.deepEqual(await kinds('I\'ve filed it for you.'), ['filed']);
   assert.deepEqual(await kinds('I opened a new request for that.'), ['filed']);
-  assert.deepEqual(await kinds('I drafted it below; tap File it to file #13.'), [], 'a draft, and a request that exists');
+  // #4605: a draft promised under this reply is now the offered claim, and
+  // it is backed once the offer is attached.
+  assert.deepEqual(await kinds('I drafted it below; tap File it to file #13.'), ['offered']);
+  assert.deepEqual(await kinds('I drafted it below; tap File it to file #13.', { offer: { app: { id: 7 } } }), [],
+    'backed once the offer is attached');
   assert.deepEqual(await kinds('I opened the proposal yesterday.'), [], 'its own proposal is not a filing');
   assert.deepEqual(await kinds('I posted your answer on the request\'s discussion.'), ['posted']);
   assert.deepEqual(await kinds('I posted your answer on the request\'s discussion.', { posted: 'Ear Trainer request #13' }), []);
@@ -403,6 +407,88 @@ test('#11 (WP3): a promise to come back later, "the team was told" and "I withdr
     assert.doesNotMatch(text, /—/);
   }
 });
+
+// #4605: twice on Rilo the bot drafted a request, said a File it button
+// would appear under its reply, and none did: offer_request had failed and
+// nothing recorded it. The promise is a claim like any other now: backed by
+// ctx.offer, asked about once, then attached from the draft the failed call
+// recorded, or cut with the rest.
+test('#4605: a reply that promises the File it buttons counts as a claim, backed by the offer', async () => {
+  const pool = { query: async () => ({ rows: [] }) };
+  const ctx = { user: { id: 1 }, appIds: new Set() };
+  const kinds = async (text, extra = {}) => (await mayor.claimProblems(pool, { ...ctx, ...extra }, text)).map((p) => p.kind);
+  for (const text of [
+    'Tap File it below and I\'ll file it for you.',
+    'File it / Not now will appear under this message.',
+    'I\'ve drafted the request, tap File it to confirm.',
+    'I\'ve drafted your new request; Not now is there too if you change your mind.',
+  ]) assert.deepEqual(await kinds(text), ['offered'], text);
+  assert.deepEqual(await kinds('Tap File it below.', { offer: { app: { id: 7 } } }), [], 'backed once the offer is attached');
+  assert.deepEqual(await kinds('Tap Withdraw it below and I\'ll withdraw it.'), [], 'the withdrawal offer is not this claim');
+  assert.deepEqual(await kinds('Tap File it on my last message.'), [], 'a button already there is not this reply\'s promise');
+
+  const note = mayor.checkNote([{ kind: 'offered', said: 'promises a File it button that will not appear' }]);
+  assert.match(note, /^\[Homeroom check, not from them: your reply promises a File it button that will not appear\./);
+  assert.match(note, /call offer_request with the project, the title and the details you drafted, so the File it and Not now buttons really appear under your reply, or say plainly that nothing has been drafted to file\. Then call reply again\.\]$/);
+
+  assert.equal(
+    mayor.stripClaims('Happy to file that one for you. I\'ve drafted the request, tap File it to confirm.', [{ kind: 'offered' }]),
+    'I haven\'t drafted anything to file just now.\n\nHappy to file that one for you.',
+  );
+  for (const text of [note, mayor.stripClaims('Tap File it below.', [{ kind: 'offered' }])]) {
+    assert.doesNotMatch(text, /—/, 'no em dash in anything new');
+  }
+});
+
+test('#4605: the offer is attached from the recorded draft when the rules still pass, and not when they do not', async () => {
+  const app = { id: 2198, slug: 'rilo', name: 'Rilo', collab_visibility: 'public', community_id: 3 };
+  const attempt = {
+    project: 'Rilo', app: null, title: 'Week by week tracking in insights',
+    details: 'A view in insights that shows progress week by week.',
+  };
+  // The project is found again from the draft, the person may file there
+  // (an admin passes checkAppAccess without a membership row), the title is
+  // long enough: ctx.offer is set as the tool case would set it.
+  const pool = { async query(sql) { return /FROM apps/.test(String(sql)) ? { rows: [app] } : { rows: [] }; } };
+  const ctx = { user: { id: 5, isAdmin: true }, appIds: new Set(), offer: null, offerAttempt: { ...attempt } };
+  assert.equal(await mayor.offerFromAttempt(pool, ctx), true);
+  assert.deepEqual(ctx.offer, { app, title: attempt.title, details: attempt.details });
+  assert.ok(ctx.appIds.has(2198));
+
+  // The model promised the buttons and never called the tool: nothing to
+  // attach, the promise is cut instead.
+  const quiet = { user: { id: 5, isAdmin: true }, appIds: new Set(), offer: null, offerAttempt: null };
+  assert.equal(await mayor.offerFromAttempt(pool, quiet), false);
+  assert.equal(quiet.offer, null);
+  const fails = async (name, over) => {
+    const c = { user: { id: 5, isAdmin: true }, appIds: new Set(), offer: null, offerAttempt: { ...attempt, ...over } };
+    assert.equal(await mayor.offerFromAttempt({ async query() { return { rows: [] }; } }, c), false, name);
+    assert.equal(c.offer, null, name);
+  };
+  await fails('no such project', { project: 'nope' });
+  await fails('the title is too short', { app, title: 'ab' });
+  // Not a member now: nothing is blocked, the project is public to read, and
+  // no membership row is there.
+  const outsider = { user: { id: 5 }, appIds: new Set(), offer: null, offerAttempt: { ...attempt, app } };
+  assert.equal(await mayor.offerFromAttempt({ async query() { return { rows: [] }; } }, outsider), false, 'they cannot file there');
+  assert.equal(outsider.offer, null);
+});
+
+test('#4605: the offer is re-attached before the strip, and only when the reply promised the buttons', () => {
+  const src = read('src/services/homeroom-bot-mayor.js');
+  const tail = src.slice(src.indexOf('let text = clip(cleanReply'));
+  const attached = tail.indexOf("some((p) => p.kind === 'offered')");
+  const stripped = tail.indexOf('stripClaims(text, ctx.checkedProblems)');
+  assert.ok(attached > -1 && stripped > -1);
+  assert.ok(attached < stripped, 'the offer is recovered before the promise is cut');
+  assert.match(tail, /if \(!ctx\.offer && \(ctx\.checkedProblems \|\| \[\]\)\.some\(\(p\) => p\.kind === 'offered'\)\) \{\n    if \(await offerFromAttempt\(pool, ctx\)\) \{/,
+    'only when the claim says the buttons were promised and none is attached');
+  // A failed offer_request records its draft, and a successful one leaves nothing.
+  assert.match(src, /const draft = draftFromArgs\(args\);\n        ctx\.offerAttempt = draft;/);
+  assert.match(src, /delete ctx\.offerAttempt;\n        ctx\.offer = \{ app, title: draft\.title, details: draft\.details \};/);
+  assert.match(src, /if \(name === 'offer_request'\) ctx\.offerAttempt = draftFromArgs\(args\);/, 'and one that threw too');
+});
+
 
 test('#11 (WP3): withdrawing a proposal and telling the team are tools, described precisely', () => {
   const prompt = mayor.systemPrompt({ username: 'ada' });

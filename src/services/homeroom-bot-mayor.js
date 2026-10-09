@@ -1119,6 +1119,30 @@ async function canFile(pool, app, user) {
   } catch { return false; }
 }
 
+/**
+ * #4605: the offer a reply promised, rebuilt from the draft its
+ * `offer_request` call recorded (ctx.offerAttempt), when the reply still
+ * promises the File it buttons and ctx.offer is unset. The same rules a
+ * successful call passes: the project found (again, when the failed call
+ * never got that far), the person may file there now, and a title of at
+ * least 3 characters. True and `ctx.offer` set when it all passes; false and
+ * nothing changed when it does not, so the promise is cut instead.
+ */
+async function offerFromAttempt(pool, ctx) {
+  const attempt = ctx.offerAttempt;
+  if (!attempt) return false;
+  try {
+    const app = attempt.app || await findApp(pool, attempt.project);
+    if (!app) return false;
+    if (!(await canFile(pool, app, ctx.user))) return false;
+    const title = String(attempt.title || '');
+    if (title.length < 3) return false;
+    if (ctx.appIds) ctx.appIds.add(Number(app.id));
+    ctx.offer = { app, title, details: attempt.details || '' };
+    return true;
+  } catch { return false; }
+}
+
 // ── What a reply may say was done (#3769, #3772) ──────────────────────────
 //
 // On 3 October the bot answered a typed "file it" with "Filed: Ear Trainer
@@ -1213,6 +1237,22 @@ const CLAIMS = Object.freeze([
     said: 'promises to come back to something later',
     instead: CANT_LOOK_TEXT,
   },
+  {
+    kind: 'offered',
+    // #4605: the File it / Not now buttons of this reply hang under it only
+    // when offer_request ran: the bot twice promised them with nothing under
+    // the message. The promise is "File it" or "Not now" tied to "below" or
+    // "under this message" in the same sentence, either order, or a past
+    // tense "I've drafted" said alongside the tap that would confirm it.
+    // An offer's own composed body never passes through claimProblems, and
+    // "Withdraw it below" is the withdrawal offer's words, not these. A
+    // button on an earlier message ("tap File it on my last message") is
+    // left alone: it is already there.
+    re: /\b(?:File it|Not now)\b[^.!?]*?\b(?:below|under (?:this|my|the) (?:message|reply))\b|\b(?:below|under (?:this|my|the) (?:message|reply))\b[^.!?]*?\b(?:File it|Not now)\b|\bI(?:'ve| have)? drafted\b[^.!?]{0,120}?\b(?:File it|Not now)\b/i,
+    backed: (ctx) => !!ctx.offer,
+    said: 'promises a File it button that will not appear',
+    instead: 'I haven\'t drafted anything to file just now.',
+  },
 ]);
 
 /**
@@ -1287,6 +1327,10 @@ function checkNote(problems) {
   const promised = problems.some((p) => p.kind === 'promised')
     ? ' Never promise to look into something or come back to it later: say what you cannot do from here, and what they can do (leave it, vote No on the proposal, comment on the request, or use Send feedback), or offer report_problem.'
     : '';
+  // #4605: the buttons of this reply appear only when offer_request ran.
+  const offered = problems.some((p) => p.kind === 'offered')
+    ? ' If they asked for something to be filed, call offer_request with the project, the title and the details you drafted, so the File it and Not now buttons really appear under your reply, or say plainly that nothing has been drafted to file.'
+    : '';
   return [
     `[Homeroom check, not from them: your reply ${list}.`,
     'No tool you called in this turn did that.',
@@ -1294,7 +1338,7 @@ function checkNote(problems) {
     'offer_request drafts a request for them to file, comment_on_request posts on a request, start_request starts',
     'one, revise_proposal changes your proposal, withdraw_proposal withdraws one of your proposals, report_problem',
     'tells the Homeroom team. Otherwise say plainly that it has not been done.',
-    `${promised}${unknown} Then call reply again.]`,
+    `${promised}${offered}${unknown} Then call reply again.]`,
   ].join(' ').replace(/\s+/g, ' ').trim();
 }
 
@@ -1749,18 +1793,23 @@ async function runTool(pool, ctx, name, args) {
       case 'withdraw_proposal': return await withdrawProposal(pool, ctx, args);
       case 'report_problem': return await reportProblem(pool, ctx, args);
       case 'offer_request': {
+        // #4605: what the draft was, recorded whether the offer attaches or
+        // not, so a reply that still promises the File it buttons can have
+        // one attached from it (offerFromAttempt). On success nothing stays:
+        // ctx.offer is set and the recovery never runs.
+        const draft = draftFromArgs(args);
+        ctx.offerAttempt = draft;
         if (ctx.offer) return { ok: false, error: 'One offer per turn.' };
         const app = await findApp(pool, args.project);
         if (!app) return { ok: false, error: 'No such project. Check my_projects.' };
+        draft.app = app;
         ctx.appIds.add(Number(app.id));
         if (!(await canFile(pool, app, user))) {
           return { ok: false, error: `They are not a member of ${app.name || app.slug}, so they cannot file requests there. They can join it from its page.` };
         }
-        // The request's name, on its board and in every message about it.
-        const title = clip(withoutEmDashes(String(args.title || '').replace(/\s+/g, ' ')).replace(/:+$/, ''), MAX_TITLE_CHARS);
-        const details = clip(args.details, MAX_DETAILS_CHARS);
-        if (title.length < 3) return { ok: false, error: 'The title is too short.' };
-        ctx.offer = { app, title, details };
+        if (draft.title.length < 3) return { ok: false, error: 'The title is too short.' };
+        delete ctx.offerAttempt;
+        ctx.offer = { app, title: draft.title, details: draft.details };
         return { ok: true, shown: 'They see it under your reply with File it and Not now. Nothing is filed until they tap File it.' };
       }
       case 'offer_move_request': return await offerMoveRequest(pool, ctx, args);
@@ -1773,8 +1822,27 @@ async function runTool(pool, ctx, name, args) {
     }
   } catch (err) {
     log.warn('homeroom-bot-mayor', 'A DM tool failed', { tool: name, userId: user.id, err: err.message });
+    // #4605: an offer_request that threw still recorded what it was drafting,
+    // with the project unresolved; attaching re-resolves it and re-checks
+    // membership, so a transient failure still recovers.
+    if (name === 'offer_request') ctx.offerAttempt = draftFromArgs(args);
     return { error: 'That lookup failed.' };
   }
+}
+
+/**
+ * #4605: the draft an `offer_request` call was making, normalised the same
+ * way a successful one's title and details are. The project is unresolved
+ * until findApp has it.
+ */
+function draftFromArgs(args) {
+  args = args || {};
+  return {
+    project: args.project ?? null,
+    app: null,
+    title: clip(withoutEmDashes(String(args.title || '').replace(/\s+/g, ' ')).replace(/:+$/, ''), MAX_TITLE_CHARS),
+    details: clip(args.details, MAX_DETAILS_CHARS),
+  };
 }
 
 /**
@@ -2171,7 +2239,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   // Used-up building time holds their requests (runTriage), never the chat.
   const ctx = {
     bot, user, settings, config, deps, messageId: message.id, userText: String(message.content || '').trim(),
-    cards: [], offer: null, reply: null, progress: null, readWork: false, revised: false, posted: null,
+    cards: [], offer: null, offerAttempt: null, reply: null, progress: null, readWork: false, revised: false, posted: null,
     // #3772: what this turn did, for the check on what its reply says
     // (claimProblems): a comment posted, a request started, work under way
     // by the records, a revision of a proposal they asked about. #11 (WP3):
@@ -2342,6 +2410,19 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     }
   }
   let text = clip(cleanReply(ctx.reply?.text || finalText), MAX_REPLY_CHARS);
+  // #4605: a reply that still promises the File it buttons gets the offer
+  // attached from the draft its tool call recorded, when that passes the
+  // same rules a successful call does, and the reply then goes out with the
+  // buttons under it. When it cannot, the problem stays and the promise is
+  // cut below with the rest.
+  if (!ctx.offer && (ctx.checkedProblems || []).some((p) => p.kind === 'offered')) {
+    if (await offerFromAttempt(pool, ctx)) {
+      ctx.checkedProblems = ctx.checkedProblems.filter((p) => p.kind !== 'offered');
+      log.info('homeroom-bot-mayor', 'Attached the offer a reply promised, from the draft its tool call recorded', {
+        userId: user.id, messageId: message.id,
+      });
+    }
+  }
   // Whatever the second pass still claimed with nothing behind it is cut.
   if (text && ctx.checkedProblems?.length) {
     log.info('homeroom-bot-mayor', 'Cut what a DM reply still claimed', {
@@ -3868,6 +3949,8 @@ module.exports = {
   claimProblems,
   checkNote,
   stripClaims,
+  // #4605
+  offerFromAttempt,
   commentText,
   commentOnRequest,
   startRequest,
