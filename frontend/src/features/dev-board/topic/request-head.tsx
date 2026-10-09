@@ -20,7 +20,7 @@
  * publishes, since the specs are posted in it).
  */
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -98,10 +98,34 @@ function reducedMotion(): boolean {
  * animating the text's height between the fold and its full length; reduced
  * motion snaps. Whether there is anything to fold is measured, so a short
  * request has no control under it.
+ *
+ * #4481: a screenshot in the words is never folded. Every picture link the
+ * renderer builds (`a.dc-inline-img-link` wrapping exactly one image, an
+ * author's image-only link among them) moves out of the clamped node into
+ * its own always-visible block under the words, so "Show more" folds only
+ * the words and a body that is just a screenshot shows no control. Pictures
+ * keep the viewer's delegated tap: the block sits inside the scope
+ * `RequestHead` spreads (and change-head.tsx likewise).
  */
+
+// One pass, document order kept. Every anchor whose content is exactly one
+// <img> (whitespace around it allowed) moves, whole, to the pictures.
+// Attribute values cannot contain a raw `>` (the renderer escapes them), so
+// `[^>]*` is safe. Everything left, including an anchor where the image
+// shares the link with words, stays the words' html.
+const PICTURE = /<a\s[^>]*>\s*<img\b[^>]*>\s*<\/a>/g;
+
+function splitPictures(html: string): { text: string; pictures: string } {
+  const pictures: string[] = [];
+  const text = html.replace(PICTURE, (m) => (pictures.push(m), ''));
+  return { text, pictures: pictures.join('') };
+}
+
 export function RequestWords({ html }: { html: string }): ReactNode {
   const text = useRef<HTMLDivElement>(null);
-  const inner = useInnerHtml(html);
+  const { text: wordsHtml, pictures: picturesHtml } = useMemo(() => splitPictures(html), [html]);
+  const inner = useInnerHtml(wordsHtml);
+  const pictures = useInnerHtml(picturesHtml);
   // `open` is what the clamp says; `shown` is what the button says, which
   // turns with the press rather than when the text has finished moving.
   const [open, setOpen] = useState(false);
@@ -113,7 +137,7 @@ export function RequestWords({ html }: { html: string }): ReactNode {
     if (!el || open) return;
     // Clamped, it is shorter than its content exactly when it folds something.
     setFolds(el.scrollHeight > el.clientHeight + 1);
-  }, [html, open]);
+  }, [wordsHtml, open]);
   const toggle = () => {
     const el = text.current;
     if (!el || moving.current) return;
@@ -155,6 +179,9 @@ export function RequestWords({ html }: { html: string }): ReactNode {
           the length of the animation, and puts the clamp back as it ends so
           React's next render agrees with the DOM. */}
       <div ref={text} className={`dev-request-ask-text${open ? '' : ' line-clamp-4'}`} data-request-words="" dangerouslySetInnerHTML={inner} />
+      {picturesHtml ? (
+        <div className="dev-request-ask-images" data-request-words-images="" dangerouslySetInnerHTML={pictures} />
+      ) : null}
       {folds || open ? (
         <button
           type="button"

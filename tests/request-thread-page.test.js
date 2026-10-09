@@ -133,6 +133,39 @@ test('the root post: who asked and when, the title in bold, the words as a quote
   assert.match(html, /data-act="openChangeWorkspace"[^>]*>Continue your work</);
 });
 
+// #4481: the screenshots a request's words carry are never folded away. The
+// picture links the renderer builds move out of the clamped words div into
+// their own always-visible block under it, so "Show more" folds only words.
+test('#4481: a screenshot in the words shows outside the fold, not behind "Show more"', () => {
+  const PICTURE = '<a class="dc-inline-img-link" href="https://app.example/issue-images/7" target="_blank" '
+    + 'rel="noopener noreferrer" aria-label="View image full size">'
+    + '<img class="dc-inline-img" src="https://app.example/issue-images/7" alt="Screenshot" loading="lazy"></a>';
+  const withBody = (bodyHtml) => ({ ...requestView(), bodyHtml });
+  const html = renderComponent(HEAD, 'RequestHead', { r: withBody(
+    `<div class="dev-issue-body"><p class="dc-p">Landed here, missing details.</p><p class="dc-p">${PICTURE}</p></div>`,
+  ) });
+  // The picture hangs in its own block that follows the words div…
+  assert.match(html, /<div class="dev-request-ask-images" data-request-words-images="">[\s\S]{0,80}class="dc-inline-img-link"/);
+  const words = html.slice(html.indexOf('data-request-words'), html.indexOf('data-request-words-images'));
+  // …which itself holds no picture, and keeps the words it had.
+  assert.ok(!words.includes('dc-inline-img-link'), 'the clamped words hold no picture');
+  assert.match(words, /Landed here, missing details\./);
+
+  // A body that is only a screenshot: the words keep nothing but the empty
+  // paragraph the renderer left behind (a 4px gap), and the picture hangs
+  // present in its own block after them. The fold measurement sees no text,
+  // so no "Show more" is drawn (the button only ever appears from the layout
+  // effect, which a static render does not run).
+  const only = renderComponent(HEAD, 'RequestHead', { r: withBody(
+    `<div class="dev-issue-body"><p class="dc-p">${PICTURE}</p></div>`,
+  ) });
+  assert.ok(only.indexOf('data-request-words=""') < only.indexOf('dev-request-ask-images'),
+    'the pictures block follows the words');
+  const onlyWords = only.slice(only.indexOf('data-request-words=""'), only.indexOf('dev-request-ask-images'));
+  assert.ok(!onlyWords.includes('<img'), 'the words hold no picture');
+  assert.match(only, /<div class="dev-request-ask-images" data-request-words-images=""><a class="dc-inline-img-link"/);
+});
+
 test('voted in: every step is done, with no fill; a closed request says so instead of the stepper', () => {
   const voted = renderComponent(HEAD, 'RequestHead', { r: requestView({ stage: 'voted', lead: 'Voted in.', action: null }) });
   assert.equal((voted.match(/data-state="done"/g) || []).length, 4);

@@ -7,7 +7,8 @@
 // `images: true` wraps each in `a.dc-inline-img-link`), so they cannot carry
 // a handler; the surface around them delegates the tap through
 // features/image-viewer/image-viewer.tsx `useInlineImageViewer`. Three
-// surfaces draw a request's pictures: its words on its own page, the root
+// surfaces draw a request's pictures: its words on its own page, where since
+// #4481 they hang in their own block under the folded words, the root
 // post of its thread (features/dev-board/topic/request-head.tsx, #4453), its
 // replies there, GitHub's among them (features/group-chat/transcript.tsx
 // `RequestRows`), and its words under a row the Workshop unfolds
