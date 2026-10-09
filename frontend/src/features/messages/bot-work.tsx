@@ -4,6 +4,8 @@ import { Button } from '@/components/ui/button';
 import { SectionHeader } from '@/components/ui/grouped-list';
 import { ChevronDownIcon, ListLinesIcon, SpinnerRingIcon } from '@/components/ui/icons';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
+import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { agoStamp } from '../../lib/timestamp';
 import * as api from './api';
 import {
@@ -11,7 +13,7 @@ import {
 } from './bot-activity';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { POLL_MS } from './bot-activity-store';
-import { WORK_CHANGED_EVENT, jobName, jobTitle } from './bot-shared';
+import { WORK_CHANGED_EVENT, dotText, jobName, jobTitle } from './bot-shared';
 import type {
   ConversationMessage, HomeroomBotActivityOutcome, HomeroomBotCurrentJob, HomeroomBotJob, HomeroomBotPastJob,
   HomeroomBotPhase, HomeroomBotWork,
@@ -146,26 +148,26 @@ function resetBotWork(): void {
 
 /** What a tile of Now says the bot is doing when the server sends no words of its own. */
 export const PHASE_LABELS: Record<HomeroomBotPhase, string> = {
-  looking: 'looking at it',
-  building: 'building',
-  following_up: 'following up on its change',
-  setting_up: 'getting the project ready',
+  looking: 'messages:bot.phase.looking',
+  building: 'messages:bot.phase.building',
+  following_up: 'messages:bot.phase.followingUp',
+  setting_up: 'messages:bot.phase.settingUp',
   // #3734: one per step services/homeroom-bot-tray.js draws an in-flight
   // stage of the bot's progress as.
-  queued: 'waiting its turn in my queue',
-  follow_up_queued: 'waiting its turn to follow up on its change',
-  merging: 'making the approved change live',
+  queued: 'messages:bot.phase.queued',
+  follow_up_queued: 'messages:bot.phase.followUpQueued',
+  merging: 'messages:bot.phase.merging',
 };
 
 /** The same, as the header's status line says it after the request's name. */
 export const SHORT_PHASES: Record<HomeroomBotPhase, string> = {
-  looking: 'reading it',
-  building: 'building',
-  following_up: 'following up',
-  setting_up: 'setting up',
-  queued: 'in my queue',
-  follow_up_queued: 'queued to follow up',
-  merging: 'going live',
+  looking: 'messages:bot.tray.workingOnPhase.looking',
+  building: 'messages:bot.tray.workingOnPhase.building',
+  following_up: 'messages:bot.tray.workingOnPhase.followingUp',
+  setting_up: 'messages:bot.tray.workingOnPhase.settingUp',
+  queued: 'messages:bot.tray.workingOnPhase.queued',
+  follow_up_queued: 'messages:bot.tray.workingOnPhase.followUpQueued',
+  merging: 'messages:bot.tray.workingOnPhase.merging',
 };
 
 /**
@@ -174,23 +176,23 @@ export const SHORT_PHASES: Record<HomeroomBotPhase, string> = {
  * (ACTIVITY_OUTCOME_LABELS, and the server's copy in
  * services/homeroom-bot-activity.js), with the request's name in it.
  */
-export const LAST_WORDS: Record<HomeroomBotActivityOutcome, (name: string) => string> = {
-  question: (name) => `asked you about ${name}`,
-  proposed: (name) => `${name} waiting for approval`,
-  live: (name) => `${name} went live`,
-  closed: (name) => `the change for ${name} was closed`,
-  blocked: (name) => `couldn’t build ${name} as written`,
-  build_failed: (name) => `couldn’t finish building ${name}`,
-  person: (name) => `left ${name} to the group`,
-  empty: (name) => `found nothing to build in ${name}`,
-  failed: (name) => `couldn’t finish looking at ${name}`,
-  held: (name) => `held ${name} back for now`,
-  stopped: (name) => `stopped on ${name}`,
-  answer: (name) => `answered on ${name}`,
-  revise: (name) => `updated the change for ${name}`,
-  checking: (name) => `checking ${name} before you try it`,
-  needs_look: (name) => `${name} needs a look`,
-  going_live: (name) => `${name} going live`,
+export const LAST_WORDS: Record<HomeroomBotActivityOutcome, string> = {
+  question: 'messages:bot.last.question',
+  proposed: 'messages:bot.last.proposed',
+  live: 'messages:bot.last.live',
+  closed: 'messages:bot.last.closed',
+  blocked: 'messages:bot.last.blocked',
+  build_failed: 'messages:bot.last.buildFailed',
+  person: 'messages:bot.last.person',
+  empty: 'messages:bot.last.empty',
+  failed: 'messages:bot.last.failed',
+  held: 'messages:bot.last.held',
+  stopped: 'messages:bot.last.stopped',
+  answer: 'messages:bot.last.answer',
+  revise: 'messages:bot.last.revise',
+  checking: 'messages:bot.last.checking',
+  needs_look: 'messages:bot.last.needsLook',
+  going_live: 'messages:bot.last.goingLive',
 };
 
 function capitalized(text: string): string {
@@ -224,38 +226,53 @@ export interface TrayStatus {
  * check reads).
  */
 export function trayStatus(work: HomeroomBotWork | null, now: Date = new Date()): TrayStatus {
-  const plain: TrayStatus = { kind: 'idle', long: 'Activity', short: 'Activity' };
+  const plain: TrayStatus = { kind: 'idle', long: translate('messages:bot.tray.activity'), short: translate('messages:bot.tray.activity') };
   if (!work) return plain;
   const waiting = work.needsYou.length;
-  const needs = waiting ? ` · ${waiting} ${waiting === 1 ? 'needs' : 'need'} you` : '';
+  const needs = waiting ? translate('messages:bot.tray.needYou', { count: waiting }) : null;
   const queued = work.now.length > 0 && work.now.every((job) => QUEUED_PHASES.has(job.phase));
   // A phone's line has room for one of the two: what waits on them wins.
   if (work.now.length === 1) {
     const job = work.now[0];
-    let short = `Working on ${shortName(job)}`;
-    if (queued) short = needs ? `Queued${needs}` : `${shortName(job)} queued`;
-    else if (needs) short = `Working${needs}`;
-    return { kind: 'working', long: `Working on ${jobName(job)} · ${SHORT_PHASES[job.phase]}${needs}`, short };
+    let short = translate('messages:bot.tray.workingOnShort', { job: shortName(job) });
+    if (queued) short = waiting ? translate('messages:bot.tray.queuedNeedYou', { count: waiting }) : translate('messages:bot.tray.jobQueued', { job: shortName(job) });
+    else if (waiting) short = translate('messages:bot.tray.workingNeedYou', { count: waiting });
+    return {
+      kind: 'working',
+      // The job and its stage are one message; an unknown stage says the job alone.
+      long: dotText([translate(SHORT_PHASES[job.phase] || 'messages:bot.tray.workingOn', { job: jobName(job) }), needs]),
+      short,
+    };
   }
   if (work.now.length) {
-    let short = `Working on ${work.now.length}`;
-    if (queued) short = needs ? `Queued${needs}` : `${work.now.length} queued`;
-    else if (needs) short = `Working${needs}`;
-    return { kind: 'working', long: `Working on ${work.now.length} requests${needs}`, short };
+    const count = work.now.length;
+    let short = translate('messages:bot.tray.workingOnCount', { count });
+    if (queued) short = waiting ? translate('messages:bot.tray.queuedNeedYou', { count: waiting }) : translate('messages:bot.tray.countQueued', { count });
+    else if (waiting) short = translate('messages:bot.tray.workingNeedYou', { count: waiting });
+    return { kind: 'working', long: dotText([translate('messages:bot.tray.workingOnRequests', { count }), needs]), short };
   }
   if (waiting === 1) {
     const job = work.needsYou[0];
-    return { kind: 'you', long: `${jobName(job)} needs you`, short: `${shortName(job)} needs you` };
+    return {
+      kind: 'you',
+      long: translate('messages:bot.tray.jobNeedsYou', { job: jobName(job) }),
+      short: translate('messages:bot.tray.jobNeedsYouShort', { job: shortName(job) }),
+    };
   }
-  if (waiting) return { kind: 'you', long: `${waiting} requests need you`, short: `${waiting} need you` };
+  if (waiting) {
+    return {
+      kind: 'you',
+      long: translate('messages:bot.tray.requestsNeedYou', { count: waiting }),
+      short: translate('messages:bot.tray.needYouShort', { count: waiting }),
+    };
+  }
   const last = work.history[0];
   if (!last?.outcome) return plain;
   const ago = agoStamp(last.at, { now }).text;
-  const when = ago ? ` · ${ago}` : '';
   return {
     kind: 'last',
-    long: `Last: ${LAST_WORDS[last.outcome](jobName(last))}${when}`,
-    short: `Last: ${LAST_WORDS[last.outcome](shortName(last))}${when}`,
+    long: dotText([translate(LAST_WORDS[last.outcome], { job: jobName(last) }), ago]),
+    short: dotText([translate(LAST_WORDS[last.outcome], { job: shortName(last) }), ago]),
   };
 }
 
@@ -300,6 +317,8 @@ export function BotWorkStatusView({ status }: { status: TrayStatus }) {
 }
 
 export function BotWorkStatusLine() {
+  // Subscribed: trayStatus reads its words as this renders.
+  useMessages('messages');
   const { work } = useBotWork();
   return <BotWorkStatusView status={trayStatus(work)} />;
 }
@@ -322,6 +341,7 @@ export function BotWorkStatusLine() {
  * homeroom-bot-dm-activity-tray) selects the toggle by. A pure render.
  */
 export function BotWorkButtonView({ work, open, onToggle }: { work: HomeroomBotWork | null; open: boolean; onToggle?: () => void }) {
+  const t = useMessages('messages');
   const { kind } = trayStatus(work);
   const waiting = work ? work.needsYou.length : 0;
   let badge: ReactNode = null;
@@ -339,8 +359,8 @@ export function BotWorkButtonView({ work, open, onToggle }: { work: HomeroomBotW
     <button
       type="button"
       className="messages-thread-action messages-bot-work-button"
-      aria-label="Activity"
-      title="Activity"
+      aria-label={t('messages:bot.tray.button')}
+      title={t('messages:bot.tray.button')}
       aria-expanded={open}
       aria-controls={BOT_WORK_PANEL_ID}
       data-bot-work-toggle=""
@@ -368,15 +388,15 @@ function PanelNote({ children, className = '' }: { children: string; className?:
 /** Where a tile can be opened: its proposal once people can open it, its request, or its project. */
 function tileLinks(job: HomeroomBotJob): ReactNode[] {
   const links: ReactNode[] = [];
-  if (job.links.proposal) links.push(<ActivityLink key="proposal" data="bot-work" href={job.links.proposal}>Open change</ActivityLink>);
+  if (job.links.proposal) links.push(<ActivityLink key="proposal" data="bot-work" href={job.links.proposal}>{translate('messages:bot.tray.openChange')}</ActivityLink>);
   if (job.links.request) {
     links.push(
       <ActivityLink key="request" data="bot-work" href={job.links.request}>
-        {job.firstVersion || !job.issueNumber ? 'Open request' : `Request #${job.issueNumber}`}
+        {job.firstVersion || !job.issueNumber ? translate('messages:bot.tray.openRequest') : translate('messages:bot.tray.requestNumber', { number: job.issueNumber })}
       </ActivityLink>,
     );
   } else if (job.links.project) {
-    links.push(<ActivityLink key="project" data="bot-work" href={job.links.project}>Open project</ActivityLink>);
+    links.push(<ActivityLink key="project" data="bot-work" href={job.links.project}>{translate('messages:bot.tray.openProject')}</ActivityLink>);
   }
   return links;
 }
@@ -393,6 +413,7 @@ interface TileProps {
 
 /** One request, in the activity cards' language. Its earlier runs fold away under it. */
 function Tile({ job, group, tone, lead, eyebrow, status, ago }: TileProps) {
+  const t = useMessages('messages');
   const [showEarlier, setShowEarlier] = useState(false);
   const links = tileLinks(job);
   const earlier = job.earlier;
@@ -425,7 +446,7 @@ function Tile({ job, group, tone, lead, eyebrow, status, ago }: TileProps) {
               data-bot-work-earlier={earlier.length}
               onClick={() => setShowEarlier((shown) => !shown)}
             >
-              {`${earlier.length} earlier ${earlier.length === 1 ? 'run' : 'runs'}`}
+              {t('messages:bot.tray.earlierRuns', { count: earlier.length })}
               <ChevronDownIcon className={`h-3.5 w-3.5 transition-transform ${showEarlier ? 'rotate-180' : ''}`} aria-hidden="true" />
             </button>
           ) : null}
@@ -435,7 +456,7 @@ function Tile({ job, group, tone, lead, eyebrow, status, ago }: TileProps) {
         <ul className="flex flex-col gap-1.5 border-t border-zinc-200 pt-2 dark:border-zinc-800">
           {earlier.map((run) => (
             <li key={run.id} className="flex gap-2 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400">
-              <span className="min-w-0 flex-1">{ACTIVITY_OUTCOME_LABELS[run.outcome]}</span>
+              <span className="min-w-0 flex-1">{t(ACTIVITY_OUTCOME_LABELS[run.outcome])}</span>
               <span className="shrink-0">{ago(run.at)}</span>
             </li>
           ))}
@@ -446,12 +467,17 @@ function Tile({ job, group, tone, lead, eyebrow, status, ago }: TileProps) {
 }
 
 function withTime(text: string, time: string): string {
-  return time ? `${text} · ${time}` : text;
+  return time ? translate('messages:list.dot', { first: text, second: time }) : text;
 }
 
 function NowTile({ job, at, ago }: { job: HomeroomBotCurrentJob; at: Date; ago: (value: string | null) => string }) {
+  const t = useMessages('messages');
   const stepped = !!job.step && !!job.of;
-  const eyebrow = stepped ? `Step ${job.step} of ${job.of}${job.stepName ? ` · ${job.stepName}` : ''}` : 'Working on it';
+  const eyebrow = stepped
+    ? (job.stepName
+      ? t('messages:bot.tray.eyebrowStepNamed', { step: job.step as number, total: job.of as number, name: job.stepName })
+      : t('messages:bot.tray.eyebrowStep', { step: job.step as number, total: job.of as number }))
+    : t('messages:bot.tray.eyebrowWorking');
   const elapsed = spanText(job.since, at);
   return (
     <Tile
@@ -460,7 +486,7 @@ function NowTile({ job, at, ago }: { job: HomeroomBotCurrentJob; at: Date; ago: 
       tone={null}
       lead={<ActivityLead step={job.step} of={job.of} stepName={job.stepName} working />}
       eyebrow={eyebrow}
-      status={withTime(capitalized(job.doing || PHASE_LABELS[job.phase]), elapsed ? `${elapsed} so far` : '')}
+      status={withTime(job.doing ? capitalized(job.doing) : t(PHASE_LABELS[job.phase]), elapsed ? t('messages:bot.tray.soFar', { duration: elapsed }) : '')}
       ago={ago}
     />
   );
@@ -490,15 +516,16 @@ export function AppStatusLead({ job, tone }: { job: HomeroomBotJob; tone: Activi
 }
 
 function PastTile({ job, group, ago }: { job: HomeroomBotPastJob; group: 'you' | 'history'; ago: (value: string | null) => string }) {
+  const t = useMessages('messages');
   const tone: ActivityTone = group === 'you' ? 'you' : (job.outcome ? ACTIVITY_OUTCOME_TONES[job.outcome] : 'ended');
-  const said = job.outcome ? ACTIVITY_OUTCOME_LABELS[job.outcome] : capitalized(job.doing || 'waiting on you');
+  const said = job.outcome ? t(ACTIVITY_OUTCOME_LABELS[job.outcome]) : job.doing ? capitalized(job.doing) : t('messages:bot.tray.waitingOnYou');
   return (
     <Tile
       job={job}
       group={group}
       tone={tone}
       lead={group === 'history' ? <AppStatusLead job={job} tone={tone} /> : <ActivityLead tone={tone} />}
-      eyebrow={TONE_WORDS[tone]}
+      eyebrow={t(TONE_WORDS[tone])}
       status={withTime(said, ago(job.at))}
       ago={ago}
     />
@@ -519,6 +546,7 @@ export interface BotWorkPanelViewProps {
 
 /** The panel itself, from what was read: a pure render, so a test can draw every state. */
 export function BotWorkPanelView({ work, failed = false, historyOpen = false, onToggleHistory, onRetry, now }: BotWorkPanelViewProps) {
+  const t = useMessages('messages');
   const at = now || new Date();
   const ago = (value: string | null) => agoStamp(value, { now: at }).text;
   const idle = !!work && !work.now.length && !work.needsYou.length;
@@ -526,17 +554,17 @@ export function BotWorkPanelView({ work, failed = false, historyOpen = false, on
     <section
       id={BOT_WORK_PANEL_ID}
       className="absolute inset-x-3 top-1 max-h-[min(70vh,40rem)] overflow-y-auto overscroll-contain rounded-[20px] bg-white pb-3 shadow-[inset_0_0_0_1px_var(--app-sheet-line),0_18px_40px_-16px_rgba(0,0,0,0.35)] dark:bg-zinc-900"
-      aria-label="Homeroom bot activity"
+      aria-label={t('messages:bot.tray.panelName')}
       data-bot-work-panel=""
     >
       {!work ? (
         failed ? (
           <div className="flex items-center gap-3 px-4 py-3" role="alert">
-            <span className="min-w-0 flex-1 text-[0.8125rem] text-zinc-500 dark:text-zinc-400">Couldn’t load what I’m working on.</span>
-            <Button type="button" variant="pillNeutral" size="sm" ink="neutral" onClick={onRetry}>Try again</Button>
+            <span className="min-w-0 flex-1 text-[0.8125rem] text-zinc-500 dark:text-zinc-400">{t('messages:bot.tray.loadFailed')}</span>
+            <Button type="button" variant="pillNeutral" size="sm" ink="neutral" onClick={onRetry}>{t('core:common.tryAgain')}</Button>
           </div>
         ) : (
-          <SkeletonGroup label="Loading activity" className="space-y-4 px-4 py-4">
+          <SkeletonGroup label={t('messages:bot.tray.loading')} className="space-y-4 px-4 py-4">
             {[0, 1, 2].map((key) => (
               <div key={key} className="space-y-2">
                 <Skeleton className="w-2/3" />
@@ -549,7 +577,7 @@ export function BotWorkPanelView({ work, failed = false, historyOpen = false, on
         <>
           {work.now.length ? (
             <>
-              <SectionHeader className="pt-3">Now</SectionHeader>
+              <SectionHeader className="pt-3">{t('messages:bot.tray.sectionNow')}</SectionHeader>
               <div className={TILE_GRID}>
                 {work.now.map((job) => <NowTile key={job.key} job={job} at={at} ago={ago} />)}
               </div>
@@ -557,13 +585,13 @@ export function BotWorkPanelView({ work, failed = false, historyOpen = false, on
           ) : null}
           {work.needsYou.length ? (
             <>
-              <SectionHeader className={work.now.length ? 'pt-4' : 'pt-3'}>Needs you</SectionHeader>
+              <SectionHeader className={work.now.length ? 'pt-4' : 'pt-3'}>{t('messages:bot.tray.sectionNeedsYou')}</SectionHeader>
               <div className={TILE_GRID}>
                 {work.needsYou.map((job) => <PastTile key={job.key} job={job} group="you" ago={ago} />)}
               </div>
             </>
           ) : null}
-          {idle ? <PanelNote className="pt-3">I’m not working on anything for you right now.</PanelNote> : null}
+          {idle ? <PanelNote className="pt-3">{t('messages:bot.tray.idle')}</PanelNote> : null}
           {work.history.length ? (
             <>
               <button
@@ -574,7 +602,7 @@ export function BotWorkPanelView({ work, failed = false, historyOpen = false, on
                 data-bot-work-history-toggle=""
                 onClick={onToggleHistory}
               >
-                {historyOpen ? 'Hide history' : `Show history (${work.history.length})`}
+                {historyOpen ? t('messages:bot.tray.hideHistory') : t('messages:bot.tray.showHistory', { count: work.history.length })}
                 <ChevronDownIcon className={`h-4 w-4 transition-transform ${historyOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
               </button>
               {historyOpen ? (
@@ -583,8 +611,8 @@ export function BotWorkPanelView({ work, failed = false, historyOpen = false, on
                 </div>
               ) : null}
             </>
-          ) : idle ? <PanelNote>Nothing yet. When I work on a request of yours, it shows up here.</PanelNote> : null}
-          {failed ? <PanelNote className="pt-3">Couldn’t refresh this just now; it may be out of date.</PanelNote> : null}
+          ) : idle ? <PanelNote>{t('messages:bot.tray.empty')}</PanelNote> : null}
+          {failed ? <PanelNote className="pt-3">{t('messages:bot.tray.stale')}</PanelNote> : null}
         </>
       )}
     </section>

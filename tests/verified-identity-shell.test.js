@@ -8,6 +8,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -131,7 +132,15 @@ test('#4378: making a project public needs a verified owner, on the server and t
 
   const verify = loadTsx('frontend/src/features/auth/verify-identity.tsx');
   const html = renderToHtml(createElement(verify.VerifyIdentityBody, {
-    phoneOffered: true, copy: verify.MAKE_PUBLIC_COPY, onVerified() {}, onSettings() {}, onNotNow() {},
+    // The sheet's copy is a table of message ids, which the sheet reads before
+    // it hands the words to the body.
+    phoneOffered: true,
+    copy: {
+      title: message(verify.MAKE_PUBLIC_COPY.title),
+      lead: message(verify.MAKE_PUBLIC_COPY.lead),
+      reason: message(verify.MAKE_PUBLIC_COPY.reason),
+    },
+    onVerified() {}, onSettings() {}, onNotNow() {},
   }));
   assert.match(html, />Verify to make it public</);
   assert.match(html, />Public projects need a verified owner, so each person counts once\. Add your phone number and it goes public\. Nobody sees your number\.</);

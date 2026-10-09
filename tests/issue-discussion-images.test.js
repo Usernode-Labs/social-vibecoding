@@ -10,6 +10,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 const { marked } = require('marked');
 
 const src = fs.readFileSync(
@@ -41,6 +42,7 @@ function loadRenderer() {
     AbortController,
   };
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${src}\n;globalThis.__DevChat = DevChat;`, sandbox);
   return {

@@ -13,6 +13,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadTsx, renderComponent, renderToHtml, createElement } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
+
+// A test that steps MakeScreen by hand, against a React whose hooks it counts,
+// gives the component its English this way: the real hook (useMessages) reads
+// React's context, which only a renderer provides.
+const ENGLISH_HOOK = { useMessages: () => message, RichMessage: () => null, Message: () => null };
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -150,7 +156,7 @@ test('the landing: the story in place of the pitch unless switched off, for nobo
 test('the story: label, headline, "For example" and the three examples, "Get started", then Sign in', () => {
   const html = renderComponent('frontend/src/features/auth/story.tsx', 'Story', { primaryClass: 'pill', onStart() {}, onSignIn() {} });
   // Each row: its emoji (the tier list draws a chart, no text), title and line.
-  const TEMPLATE_ROWS = loadTsx(`${DIR}/examples.ts`).TEMPLATES.flatMap((t) => (t.chart ? [t.title, t.line] : [t.emoji, t.title, t.line]));
+  const TEMPLATE_ROWS = loadTsx(`${DIR}/examples.ts`).TEMPLATES.flatMap((t) => (t.chart ? [message(t.title), message(t.line)] : [t.emoji, message(t.title), message(t.line)]));
   const text = html.replace(/<[^>]+>/g, '\n').split('\n').map((t) => t.trim()).filter(Boolean)
     .map((t) => t.replace(/&#x27;/g, "'"));
   assert.deepEqual(text, [
@@ -181,21 +187,28 @@ test('three templates, the same on the story and the make screen, each a whole s
   const { TEMPLATES, OWN, sentence, suggestedName, firstChoice, descriptionOf } = loadTsx(`${DIR}/examples.ts`);
   assert.deepEqual(TEMPLATES.map((t) => t.key), ['tier', 'game', 'organizer']);
   for (const t of TEMPLATES) {
-    for (const k of ['emoji', 'title', 'line', 'short', 'head', 'note']) assert.ok(t[k], `${t.key}.${k}`);
-    assert.ok(t.note.length <= 280, `${t.key} note fits a link's note`);
+    // What a person reads is a message id (frontend/locales/en/onboarding.json);
+    // the sentence's head is the catalog's, up to its blank.
+    for (const k of ['title', 'line', 'short', 'note']) assert.ok(message(t[k]), `${t.key}.${k}`);
+    assert.ok(t.emoji, `${t.key}.emoji`);
+    assert.ok(sentence(t, OWN, '').head, `${t.key}.head`);
+    assert.ok(message(t.note).length <= 280, `${t.key} note fits a link's note`);
     for (const c of t.choices) {
-      const s = sentence(t, c.key, t.finish ? c.example : '');
+      const s = sentence(t, c.key, t.finish ? 'we roll dice and race each other around the board' : '');
       assert.ok(!s.blank && s.text.length >= 10, `${t.key}/${c.key} is a whole description`);
-      assert.ok(c.name, `${t.key}/${c.key} suggests a name`);
+      assert.ok(message(c.name), `${t.key}/${c.key} suggests a name`);
       assert.ok(descriptionOf(t, c.key).length <= 90, `${t.key}/${c.key} description fits DESCRIPTION_MAX`);
     }
-    assert.doesNotMatch(JSON.stringify(t), /—/, `${t.key}: no em dash`);
+    const words = [t.title, t.line, t.short, t.note, t.own.sentence, t.own.example, t.own.description,
+      ...t.choices.flatMap((c) => [c.label, c.sentence, c.name, c.description, ...(c.example ? [c.example] : [])])]
+      .map((id) => message(id, { words: '' }));
+    assert.doesNotMatch(JSON.stringify(words), /—/, `${t.key}: no em dash`);
   }
   // The tier list: one tap is a whole description.
   const [tier, game, organizer] = TEMPLATES;
   assert.equal(firstChoice(tier), 'restaurants');
   assert.equal(sentence(tier, 'hikes', '').text, 'A tier list for our favorite hikes. Anyone can add items, everyone sorts them, and we can see where they land.');
-  assert.deepEqual(tier.choices.map((c) => c.name), ['Restaurant Tier List', 'Hiking Tier List', 'City Tier List', 'Game Tier List']);
+  assert.deepEqual(tier.choices.map((c) => message(c.name)), ['Restaurant Tier List', 'Hiking Tier List', 'City Tier List', 'Game Tier List']);
   assert.equal(sentence(tier, OWN, '').blank, true, 'Your own waits for their words');
   assert.equal(sentence(tier, OWN, '  taco   spots ').text, 'A tier list for our favorite taco spots. Anyone can add items, everyone sorts them, and we can see where they land.');
   assert.equal(suggestedName(tier, OWN, 'taco spots'), 'Taco Spots Tier List');
@@ -208,14 +221,14 @@ test('three templates, the same on the story and the make screen, each a whole s
   assert.equal(suggestedName(game, OWN, 'a card game'), '', 'their own game is theirs to name');
   assert.equal(suggestedName(game, 'trivia', ''), 'Trivia Night');
   // The organizer: each choice says what it keeps.
-  assert.deepEqual(organizer.choices.map((c) => [c.label, c.name]), [['Groceries', 'Grocery List'], ['Chores', 'Chore List'], ['Shared library', 'Lending Library'], ['Potlucks', 'Potluck Planner']]);
+  assert.deepEqual(organizer.choices.map((c) => [message(c.label), message(c.name)]), [['Groceries', 'Grocery List'], ['Chores', 'Chore List'], ['Shared library', 'Lending Library'], ['Potlucks', 'Potluck Planner']]);
   // (What the ready-made chore list does: it sends no nudge.)
   assert.equal(sentence(organizer, 'chores', '').text, 'An app to organize our chores: who\'s on what this week, and whose turn it is next.');
   assert.equal(sentence(organizer, 'library', '').text, 'An app to organize our shared library: what we can borrow, who has it now, and who\'s asking for it next.');
   assert.equal(suggestedName(organizer, OWN, 'camping gear'), 'Camping Gear List');
   // The story says the same three, the tier list drawn as a tier list.
   const story = renderComponent('frontend/src/features/auth/story.tsx', 'Story', { primaryClass: 'pill', onStart() {}, onSignIn() {} });
-  for (const t of TEMPLATES) assert.ok(story.includes(`>${t.title}<`) && story.includes(`>${t.line}<`), t.key);
+  for (const t of TEMPLATES) assert.ok(story.includes(`>${message(t.title)}<`) && story.includes(`>${message(t.line)}<`), t.key);
   assert.match(story, /data-tier-chart=""/);
 });
 
@@ -234,8 +247,15 @@ test('"Make it" makes a private community through the dialog\'s own route', () =
   assert.match(make, /entry = 'first-session'/, 'the first session is the default door');
   assert.match(make, /export const BRIEF_MIN = 10;/);
   assert.equal(require('../src/services/homeroom-bot-dm').MIN_BRIEF_CHARS, 10, 'the server\'s floor');
-  for (const words of ['What do you want to make?', 'What should it do?', 'What should we call it?', 'It\'s your group\'s name too. You can change it later.', 'Look around first']) {
-    assert.ok(make.includes(words), words);
+  for (const [id, words] of [
+    ['onboarding:firstSession.make.title', 'What do you want to make?'],
+    ['onboarding:firstSession.make.briefLabel', 'What should it do?'],
+    ['onboarding:firstSession.make.nameLabel', 'What should we call it?'],
+    ['onboarding:firstSession.make.nameHint', 'It\'s your group\'s name too. You can change it later.'],
+    ['onboarding:firstSession.make.lookAround', 'Not sure yet? <0>Look around first</0>'],
+  ]) {
+    assert.ok(make.includes(`'${id}'`) || make.includes(`"${id}"`), words);
+    assert.equal(message(id), words);
   }
 });
 
@@ -265,8 +285,8 @@ test('a choice that needs no typing makes a ready-made app, with nothing for Hom
   assert.match(src, /\.\.\.\(ready \? \{ readyMade: true \} : \{\}\),/);
   // The sentence says so, quietly, under its choices.
   const make = loadTsx(`${DIR}/make.tsx`);
-  assert.equal(make.READY_LINE, 'Ready-made: nothing to build, so it is ready as soon as it is set up.');
-  assert.match(src, /\{readyMadeOf\(template, choice\) \? <p data-make-ready="" className=\{HINT\}>\{READY_LINE\}<\/p> : null\}/);
+  assert.equal(message(make.READY_LINE), 'Ready-made: nothing to build, so it is ready as soon as it is set up.');
+  assert.match(src, /\{readyMadeOf\(template, choice\) \? <p data-make-ready="" className=\{HINT\}>\{t\(READY_LINE\)\}<\/p> : null\}/);
 });
 
 // Evan, 8 Oct 2026: each game preset starts its project from a game
@@ -284,18 +304,21 @@ test('a game preset starts from a working game starter, and its brief is still b
     assert.ok(appTemplates.botStarter(s.template), `${c.key}: a starter the bot builds on`);
     assert.equal(appTemplates.isReadyMade(s.template), false, `${c.key}: never ready-made`);
     assert.equal(readyMadeOf(game, c.key), null);
-    assert.ok(s.starts && !/\u2014/.test(s.starts), `${c.key}: says what it starts from`);
+    // `starts` is the id of the whole line; the catalog holds the words.
+    assert.equal(s.starts, `onboarding:firstSession.template.game.${c.key}.starterLine`);
+    assert.ok(!/\u2014/.test(message(s.starts)), `${c.key}: says what it starts from`);
+    assert.match(message(s.starts), /^Starts from a game that already works, .+, and Homeroom bot builds your idea on it\.$/);
   }
   assert.equal(starterOf(game, OWN), null, 'their own game idea starts from the empty scaffold');
   for (const t of TEMPLATES.filter((x) => x.key !== 'game')) {
     for (const c of t.choices) assert.equal(starterOf(t, c.key), null, `${c.key}: no game starter`);
   }
   const make = loadTsx(`${DIR}/make.tsx`);
-  assert.equal(make.starterLine('a dice race'), 'Starts from a game that already works, a dice race, and Homeroom bot builds your idea on it.');
+  assert.equal(make.starterLine('onboarding:firstSession.template.game.board.starterLine'), 'Starts from a game that already works, a dice race, and Homeroom bot builds your idea on it.');
   const src = read(`${DIR}/make.tsx`);
   // Only while the sentence is drawn as it is, like a ready-made app.
   assert.match(src, /const starter = templated && example \? starterOf\(example, choice\) : null;/);
-  assert.match(src, /\{starterOf\(template, choice\) \? <p data-make-starter="" className=\{HINT\}>\{starterLine\(starterOf\(template, choice\)!\.starts\)\}<\/p> : null\}/);
+  assert.match(src, /\{starterOf\(template, choice\) \? <p data-make-starter="" className=\{HINT\}>\{t\(starterOf\(template, choice\)!\.starts\)\}<\/p> : null\}/);
 });
 
 // #4384: the make screen no longer says, under Make it, that what you write
@@ -346,7 +369,8 @@ test('"Make it" looks pale only while making: a press with an answer missing goe
   assert.match(src, /const gap: Missing = templated && said\?\.blank \? 'blank' : missingAnswer\(text, name\);\s+if \(gap\) \{\s+setMissing\(gap\);\s+\(gap === 'name' \? nameRef\.current : templated \? wordsField\(\) : briefRef\.current\)\?\.focus\(\{ preventScroll: true \}\);\s+return;\s+\}/);
   assert.match(src, /\{missing === 'name'\s+\? <p id="first-session-name-hint" role="alert" className=\{NEEDED\}>\{needed\}<\/p>/);
   // The placeholder reads as an example, not as a name already given.
-  assert.match(src, /placeholder="For example, Hiking Tier List"/);
+  assert.match(src, /placeholder=\{t\('onboarding:firstSession\.make\.namePlaceholder'\)\}/);
+  assert.equal(message('onboarding:firstSession.make.namePlaceholder'), 'For example, Hiking Tier List');
   assert.doesNotMatch(src, /placeholder="Hiking Tier List"/);
   // Drawn: the button is live before anything is typed.
   const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', onMade() {}, onLookAround() {} });
@@ -415,13 +439,13 @@ test('a template fills in the description and the name; words of their own let g
   // the template's written out.
   assert.match(src, /onChange=\{\(e\) => \{\s+const next = e\.target\.value;\s+setBrief\(next\);\s+(?:\/\/[^\n]*\n\s+)+if \(picked !== OWN_IDEA && next !== written\) \{\s+setPicked\(OWN_IDEA\);\s+setWritten\(null\);\s+\}/);
   // A tile is marked from `picked` alone, so it is unmarked with it.
-  assert.match(src, /const on = picked === t;/);
+  assert.match(src, /const on = picked === example;/);
   assert.match(src, /aria-pressed=\{on\}/);
   // Make it sends the template's description only while it is still picked.
   assert.match(src, /const example = template;/);
   assert.match(src, /\.\.\.\(example \? \{ description: descriptionOf\(example, choice\) \} : \{\}\),/);
   // The name field is not cleared by letting go of the template.
-  const onChange = src.slice(src.indexOf('const next = e.target.value;'), src.indexOf('placeholder="A map of'));
+  const onChange = src.slice(src.indexOf('const next = e.target.value;'), src.indexOf("placeholder={t('onboarding:firstSession.make.briefPlaceholder')}"));
   assert.doesNotMatch(onChange, /setName\(/);
 
   // Executed against a React it can step by hand: tap a template, change its
@@ -443,7 +467,7 @@ test('a template fills in the description and the name; words of their own let g
     // The allowance row's store (dialogs/app-allowance.tsx, which Make it reads for its limit).
     useSyncExternalStore(subscribe, get) { at++; return get(); },
   };
-  const { MakeScreen } = loadTsx(`${DIR}/make.tsx`, { stubs: { react: React } });
+  const { MakeScreen } = loadTsx(`${DIR}/make.tsx`, { stubs: { react: React, '../../lib/i18n/react': ENGLISH_HOOK } });
   const draw = () => { at = 0; return MakeScreen({ who: 'Jordan', onMade() {}, onLookAround() {} }); };
   const find = (node, test, out = []) => {
     if (!node || typeof node !== 'object') return out;
@@ -527,14 +551,20 @@ test('the game\'s box reads as a field to type in, and the tiles are two by two'
   const src = read(`${DIR}/make.tsx`);
   // A field, plainly: white, ringed in the accent while it is empty, with a
   // label above it. The blank's words are tinted; the box is not.
-  assert.match(src, /Finish it in your own words/);
+  assert.match(src, /\{t\('onboarding:firstSession\.make\.finishLabel'\)\}/);
+  assert.equal(message('onboarding:firstSession.make.finishLabel'), 'Finish it in your own words');
   assert.match(src, /className=\{`\$\{WORDS_BOX\} \$\{words\.trim\(\) \? WORDS_FILLED : WORDS_EMPTY\}`\}/);
   assert.match(src, /const WORDS_EMPTY = 'shadow-\[inset_0_0_0_2px_var\(--accent\),/);
-  assert.match(src, /placeholder=\{`For example, \$\{boxExample\}`\}/);
-  assert.match(src, /<div className="grid grid-cols-2 gap-2" role="group" aria-label="Ideas">/);
+  // The box's example is one whole message, "For example, …".
+  assert.match(src, /placeholder=\{t\(boxExample\)\}/);
+  assert.equal(message('onboarding:firstSession.template.game.board.example'), 'For example, we roll dice and race each other around the board');
+  assert.equal(message('onboarding:firstSession.template.game.own.example'), 'For example, a drawing game where one of us draws and everyone guesses');
+  assert.match(src, /<div className="grid grid-cols-2 gap-2" role="group" aria-label=\{t\('onboarding:firstSession\.make\.ideasLabel'\)\}>/);
+  assert.equal(message('onboarding:firstSession.make.ideasLabel'), 'Ideas');
   // The choices are the shell's chip, and wrap.
   assert.match(src, /import \{ Chip \} from '@\/components\/ui\/chip';/);
-  assert.match(src, /<div className="mb-1 mt-3 flex flex-wrap gap-1.5" role="group" aria-label="Choices">/);
+  assert.match(src, /<div className="mb-1 mt-3 flex flex-wrap gap-1.5" role="group" aria-label=\{t\('onboarding:firstSession\.make\.choicesLabel'\)\}>/);
+  assert.equal(message('onboarding:firstSession.make.choicesLabel'), 'Choices');
 });
 
 test('the make screen sends the device\'s time zone with Make it, so the sketch\'s today is the maker\'s', () => {
@@ -567,7 +597,8 @@ test('after Make it: the build line, then one invite, and the second button says
   const invitesService = require('../src/services/community-invites');
   assert.match(src, /const LINK_DAYS = 7;\s+const LINK_USES = 25;/);
   assert.deepEqual([invitesService.DEFAULT_DAYS, invitesService.DEFAULT_USES], [7, 25]);
-  assert.match(src, /Anyone with the link can join for the next 7 days, up to 25 people\./);
+  assert.match(src, /\{t\('onboarding:firstSession\.invite\.limits'\)\}/);
+  assert.equal(message('onboarding:firstSession.invite.limits'), 'Anyone with the link can join for the next 7 days, up to 25 people.');
   // Evan, 5 October 2026: the first invite is a link and nothing else. No
   // invite by username (somebody brand new knows nobody on Homeroom yet), and
   // no joining-rule line ("With one other person using it, a change goes
@@ -583,7 +614,8 @@ test('after Make it: the build line, then one invite, and the second button says
   assert.match(sheet, />Copy link</);
   assert.doesNotMatch(sheet, /username|say yes|goes live/i);
   assert.match(read('frontend/src/features/app-context/invite-pane.tsx'), /joiningRule/, 'the project\'s own pane keeps the rule');
-  assert.match(src, /When you share, your note also goes in the group chat as your first message\./);
+  assert.match(src, /\{t\('onboarding:firstSession\.invite\.noteHint'\)\}/);
+  assert.match(sheet, /When you share, your note also goes in the group chat as your first message\./);
   assert.match(src, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(made\.slug\)\}\/messages`/);
   const invites = require('../src/services/community-invites');
   assert.equal(invites.LIMITS.maxDays, 30);
@@ -698,7 +730,7 @@ test('the admin Journey page says which first session answered the join screen',
 
 test('a waitlist answer opens the make screen on Your own idea, filled in, with one quiet line under the box', () => {
   const make = loadTsx(`${DIR}/make.tsx`);
-  assert.equal(make.WAITLIST_IDEA_LINE, 'Filled in from your waitlist answer.');
+  assert.equal(message(make.WAITLIST_IDEA_LINE), 'Filled in from your waitlist answer.');
   const idea = 'A tracker for my run club, so we can see who keeps up';
   const base = { who: 'Jordan', onMade() {}, onLookAround() {} };
   const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { ...base, idea });
@@ -710,7 +742,7 @@ test('a waitlist answer opens the make screen on Your own idea, filled in, with 
   // One quiet line directly under it: small, muted (the screen's HINT).
   const line = /<p data-make-waitlist-idea="" class="([^"]*)">([^<]*)<\/p>/.exec(html);
   assert.ok(line, 'the line is drawn');
-  assert.equal(line[2], make.WAITLIST_IDEA_LINE);
+  assert.equal(line[2], message(make.WAITLIST_IDEA_LINE));
   assert.match(line[1], /\btext-xs\b/);
   assert.match(line[1], /\btext-zinc-500\b/);
   assert.doesNotMatch(line[1], /red-|amber-|font-(semi)?bold/);
@@ -751,7 +783,7 @@ test('the line goes once the words are changed, and a template can still be pick
     useLayoutEffect() { at++; },
     useSyncExternalStore(subscribe, get) { at++; return get(); },
   };
-  const { MakeScreen } = loadTsx(`${DIR}/make.tsx`, { stubs: { react: React } });
+  const { MakeScreen } = loadTsx(`${DIR}/make.tsx`, { stubs: { react: React, '../../lib/i18n/react': ENGLISH_HOOK } });
   const draw = () => { at = 0; return MakeScreen({ who: 'Jordan', onMade() {}, onLookAround() {}, idea }); };
   const find = (node, test, out = []) => {
     if (!node || typeof node !== 'object') return out;

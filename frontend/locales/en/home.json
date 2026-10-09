@@ -1,0 +1,1042 @@
+{
+  "search.placeholder": {
+    "text": "Search your apps…",
+    "description": "Placeholder inside the search field at the top of the Home screen, which filters the viewer's own app tiles."
+  },
+  "search.label": {
+    "text": "Search your apps",
+    "description": "Accessible name of the search field at the top of the Home screen."
+  },
+  "search.clear": {
+    "text": "Clear search",
+    "description": "Tooltip and accessible name of the × button inside Home's search field: empties the field."
+  },
+  "search.results_one": {
+    "text": "{{count}} result",
+    "description": "Small heading over the app tiles on Home while a search is active. {{count}} is how many of the viewer's apps match."
+  },
+  "search.results_other": {
+    "text": "{{count}} results",
+    "description": "Small heading over the app tiles on Home while a search is active. {{count}} is how many of the viewer's apps match."
+  },
+  "grid.heading": {
+    "text": "My apps",
+    "description": "Heading over the grid of app tiles on the Home screen: the apps this person keeps a tile for. The same name is used in \"Add to My apps\"."
+  },
+  "grid.loading": {
+    "text": "Loading your apps",
+    "description": "Read by screen readers while the grid of app tiles on Home is still loading."
+  },
+  "grid.noMatches": {
+    "text": "No apps match “{{query}}”. Clear the search and try <0>Discover Communities</0> below.",
+    "description": "Shown in place of Home's app tiles when the search finds none of the viewer's apps. {{query}} is what the person typed. The numbered tag highlights the name of the section further down the Home screen; use the same words as that section's heading."
+  },
+  "grid.showAll_one": {
+    "text": "Show all {{count}} app",
+    "description": "Button under the grid of app tiles on Home: reveals the rows of tiles that are folded away. {{count}} is the total number of the viewer's apps."
+  },
+  "grid.showAll_other": {
+    "text": "Show all {{count}} apps",
+    "description": "Button under the grid of app tiles on Home: reveals the rows of tiles that are folded away. {{count}} is the total number of the viewer's apps."
+  },
+  "grid.notice.offline": {
+    "text": "You're offline. Apps you've opened before will appear here once this device has loaded them.",
+    "description": "Shown in place of Home's app tiles when the device has no connection and no apps are stored yet."
+  },
+  "grid.notice.loadFailed": {
+    "text": "Couldn't load your apps",
+    "description": "Title of the error card shown in place of Home's app tiles when the list of apps could not be fetched."
+  },
+  "grid.tile.tip": {
+    "text": "{{app}}. Hold or right-click for app actions",
+    "description": "Tooltip of an app's tile on the Home screen. {{app}} is the app's name; keep it first. Holding the tile or right-clicking it opens a menu of actions for that app."
+  },
+  "grid.tile.actions": {
+    "text": "App actions",
+    "description": "Tooltip and accessible name of the small menu button on an app's card: opens the menu of things to do with that app."
+  },
+  "grid.tile.remixedFrom": {
+    "text": "Remixed from {{app}}",
+    "description": "Tooltip and accessible name of the small ⑂ badge on an app's tile: this app was made as a copy (a remix) of another. {{app}} is the original app's name."
+  },
+  "grid.tile.audience.invited": {
+    "text": "Private community",
+    "description": "Tooltip and accessible name of the small people badge on an app's tile: the app belongs to a community people join by invitation."
+  },
+  "grid.tile.audience.solo": {
+    "text": "Just you",
+    "description": "Tooltip and accessible name of the small lock badge on an app's tile: only the viewer can see and use this app."
+  },
+  "grid.tile.retryNamed": {
+    "text": "Retry {{app}}",
+    "description": "Accessible name of the Retry button on a tile whose app failed to build: tries building it again. {{app}} is the app's name."
+  },
+  "grid.tile.status.creating": {
+    "text": "Spinning up...",
+    "description": "Small status line under an app's name on its Home tile: the app is being set up and is not running yet."
+  },
+  "grid.tile.status.awaitingSecrets": {
+    "text": "Awaiting secrets",
+    "description": "Small status line under an app's name on its Home tile: the app is waiting for its required secret values (API keys and the like) to be set."
+  },
+  "grid.tile.status.error": {
+    "text": "Error",
+    "description": "Small status line under an app's name on its Home tile: the app failed to build or start."
+  },
+  "layout.saveFailed": {
+    "text": "Couldn’t save your home screen layout.",
+    "description": "Brief notice when the new arrangement of tiles on Home, after a drag, could not be saved."
+  },
+  "create.label": {
+    "text": "New project",
+    "description": "Label under the dashed + tile at the end of Home's grid: starts a new project (an app and the community that builds it)."
+  },
+  "create.tip": {
+    "text": "Start a new project",
+    "description": "Tooltip of the + tile at the end of Home's grid."
+  },
+  "create.disabledHint": {
+    "text": "View your app allowance or request more slots.",
+    "description": "Last sentence of the + tile's tooltip when the viewer has used up the number of apps they may create: what pressing it does instead. A slot is room for one app."
+  },
+  "create.lockedTip": {
+    "text": "New project. View app quota. {{hint}}",
+    "description": "Tooltip and accessible name of the + tile at the end of Home's grid when the viewer cannot create another app right now. {{hint}} is one whole sentence saying what pressing the tile does (\"View your app allowance or request more slots.\")."
+  },
+  "myApps.added": {
+    "text": "Added to My apps",
+    "description": "Brief notice after an app's tile was added to the viewer's Home. \"My apps\" is the name of that section."
+  },
+  "myApps.removed": {
+    "text": "Removed from My apps",
+    "description": "Brief notice after an app's tile was taken off the viewer's Home. \"My apps\" is the name of that section."
+  },
+  "myApps.updateFailed": {
+    "text": "Update failed: {{reason}}",
+    "description": "Brief notice when adding an app to My apps, or removing it, did not go through. {{reason}} is the server's own error message, or a code such as \"HTTP 500\"."
+  },
+  "leave.afterUnpin.title": {
+    "text": "Leave {{community}} too?",
+    "description": "Title of the question asked right after someone removed an app from My apps while still a member of its community. {{community}} is the app's name. \"Leave\" means stop being a member."
+  },
+  "leave.afterUnpin.private": {
+    "text": "It’s off your Home screen. Leaving also ends your access until someone invites you back.",
+    "description": "Body of the \"Leave … too?\" question when the app's community is private."
+  },
+  "leave.afterUnpin.public": {
+    "text": "It’s off your Home screen. You can stay a member, or leave and stop proposing and voting on its changes.",
+    "description": "Body of the \"Leave … too?\" question when the app's community is public. \"Changes\" is a noun."
+  },
+  "leave.afterUnpin.confirm": {
+    "text": "Leave",
+    "description": "Confirming button of the \"Leave … too?\" question: stop being a member of the app's community. A verb."
+  },
+  "leave.afterUnpin.stay": {
+    "text": "Stay a member",
+    "description": "The other button of the \"Leave … too?\" question: keep the membership and close the question."
+  },
+  "leave.confirm.title": {
+    "text": "Leave {{community}}?",
+    "description": "Title of the question asked when someone presses \"Joined\" on an app to stop being a member of its community. {{community}} is the app's name."
+  },
+  "leave.confirm.private": {
+    "text": "You will lose access to it until someone invites you back.",
+    "description": "Body of the \"Leave …?\" question when the app's community is private."
+  },
+  "leave.confirm.public": {
+    "text": "You won’t be able to propose or vote on its changes until you join again.",
+    "description": "Body of the \"Leave …?\" question when the app's community is public. \"Changes\" is a noun."
+  },
+  "leave.confirm.button": {
+    "text": "Leave",
+    "description": "Confirming button of the \"Leave …?\" question: stop being a member of the app's community. A verb."
+  },
+  "membership.joined": {
+    "text": "Joined {{community}}",
+    "description": "Brief notice after the viewer joined an app's community. {{community}} is the app's name."
+  },
+  "membership.left": {
+    "text": "Left {{community}}",
+    "description": "Brief notice after the viewer stopped being a member of an app's community. {{community}} is the app's name. \"Left\" is the past of leave, not a direction."
+  },
+  "membership.joinFailed": {
+    "text": "Couldn’t join: {{reason}}",
+    "description": "Brief notice when joining an app's community failed. {{reason}} is the server's own error message, or a code such as \"HTTP 500\"."
+  },
+  "membership.leaveFailed": {
+    "text": "Couldn’t leave: {{reason}}",
+    "description": "Brief notice when leaving an app's community failed. {{reason}} is the server's own error message, or a code such as \"HTTP 500\"."
+  },
+  "menu.updated": {
+    "text": "Updated {{when}}",
+    "description": "Line in the header of an app tile's menu: when the app's latest version went live. {{when}} is a short relative time such as \"3d ago\" or \"just now\"."
+  },
+  "menu.details.label": {
+    "text": "App details",
+    "description": "Item in an app tile's menu on Home: opens the app's page in Discover."
+  },
+  "menu.details.tip": {
+    "text": "Version, status and everything you can do with this app",
+    "description": "Tooltip of the \"App details\" item in an app tile's menu."
+  },
+  "menu.github.label": {
+    "text": "View on GitHub",
+    "description": "Item in an app's menu: opens the app's source code repository on GitHub in a new tab."
+  },
+  "menu.github.tip": {
+    "text": "Open this app’s repository",
+    "description": "Tooltip of the \"View on GitHub\" item in an app's menu. \"Open\" is a verb."
+  },
+  "menu.myApps.add": {
+    "text": "Add to My apps",
+    "description": "Item in an app's menu: puts a tile for the app on the viewer's Home. \"My apps\" is the name of that section."
+  },
+  "menu.myApps.remove": {
+    "text": "Remove from My apps",
+    "description": "Item in an app's menu: takes the app's tile off the viewer's Home. \"My apps\" is the name of that section."
+  },
+  "menu.myApps.showAgainTip": {
+    "text": "Show this app in My apps again. You keep your builder access either way.",
+    "description": "Tooltip of \"Add to My apps\" in an app's menu, for someone who builds the app and had hidden its tile."
+  },
+  "menu.myApps.hideTip": {
+    "text": "Hide this app from My apps. It stays live and you keep your builder access.",
+    "description": "Tooltip of \"Remove from My apps\" in an app's menu, for someone who builds the app. \"Live\" means still running for its users."
+  },
+  "menu.notifications.label": {
+    "text": "Notifications",
+    "description": "Item in an app's menu: opens the choices of what this app may notify the viewer about."
+  },
+  "menu.notifications.tip": {
+    "text": "Choose what this app can notify you about, here and on your phone.",
+    "description": "Tooltip of the \"Notifications\" item in an app's menu."
+  },
+  "menu.widget.edit": {
+    "text": "Edit in Homeroom widget",
+    "description": "Item in an app's menu in the iPhone app, when the app is already on the Homeroom widget: reveals the strip on Home where the widget's apps are arranged. Homeroom is the product's name."
+  },
+  "menu.widget.add": {
+    "text": "Add to Homeroom widget",
+    "description": "Item in an app's menu in the iPhone app: adds the app to the Homeroom widget on the phone's home screen. Homeroom is the product's name."
+  },
+  "menu.phoneHome.add": {
+    "text": "Add to phone home screen",
+    "description": "Item in an app's menu in the Android app: puts a shortcut to the app on the phone's home screen."
+  },
+  "menu.phoneHome.addFailed": {
+    "text": "Add to home screen failed: {{reason}}",
+    "description": "Brief notice when putting an app on the phone's home screen, or on the Homeroom widget, failed. {{reason}} is the error the phone reported."
+  },
+  "menu.install.label": {
+    "text": "Add to Home Screen",
+    "description": "Item in an app's menu in a phone browser: opens the page that explains how to install the app on the phone's home screen with its own icon."
+  },
+  "menu.install.tip": {
+    "text": "Put this app on your phone’s home screen with its own icon",
+    "description": "Tooltip of the \"Add to Home Screen\" item in an app's menu."
+  },
+  "menu.retry": {
+    "text": "Retry",
+    "description": "Item in the menu of an app that failed to build, shown to its creator: tries building and starting the app again."
+  },
+  "menu.buildLog.label": {
+    "text": "View build log",
+    "description": "Item in the menu of an app whose last build failed: opens the log of that build. \"Build\" is a noun."
+  },
+  "menu.buildLog.tip": {
+    "text": "See why the last build/deploy failed",
+    "description": "Tooltip of \"View build log\" in an app's menu when the server gave no failure reason of its own."
+  },
+  "menu.checkUpdates.label": {
+    "text": "Check for updates",
+    "description": "Item in an app's menu, for administrators: checks whether the app's repository has a newer version to deploy."
+  },
+  "menu.checkUpdates.checking": {
+    "text": "Checking…",
+    "description": "Replaces the label of \"Check for updates\" in an app's menu while the check is running."
+  },
+  "menu.checkUpdates.failedHttp": {
+    "text": "Check failed (HTTP {{status}})",
+    "description": "Brief notice when \"Check for updates\" failed and the server gave no message. {{status}} is the HTTP status number, such as 500."
+  },
+  "menu.checkUpdates.failed": {
+    "text": "Check failed: {{reason}}",
+    "description": "Brief notice when \"Check for updates\" could not reach the server. {{reason}} is the browser's own error message."
+  },
+  "menu.remix.label": {
+    "text": "Remix",
+    "description": "Item in an app's menu: makes the viewer's own copy of the app to change freely. A verb."
+  },
+  "menu.remix.sub": {
+    "text": "Make your own copy",
+    "description": "Second line, and tooltip, of the \"Remix\" item in an app's menu."
+  },
+  "menu.lock.lock": {
+    "text": "Lock app",
+    "description": "Item in an app's menu, for administrators: from then on a change to the app also needs an administrator's yes vote. \"Lock\" is a verb."
+  },
+  "menu.lock.unlock": {
+    "text": "Unlock app",
+    "description": "Item in an app's menu, for administrators, when the app is locked: lifts the extra administrator vote. A verb."
+  },
+  "menu.lock.lockTip": {
+    "text": "Lock this app. An admin yes vote will also be required to merge changes.",
+    "description": "Tooltip of \"Lock app\" in an app's menu. To merge a change is to accept it into the app."
+  },
+  "menu.lock.unlockTip": {
+    "text": "App locked: merges also need an admin yes vote. Click to unlock.",
+    "description": "Tooltip of \"Unlock app\" in an app's menu. A merge is the acceptance of a change into the app."
+  },
+  "menu.lock.failedHttp": {
+    "text": "Lock toggle failed (HTTP {{status}})",
+    "description": "Brief notice when locking or unlocking an app failed and the server gave no message. {{status}} is the HTTP status number."
+  },
+  "menu.lock.failed": {
+    "text": "Lock toggle failed: {{reason}}",
+    "description": "Brief notice when locking or unlocking an app could not reach the server. {{reason}} is the browser's own error message."
+  },
+  "menu.settings": {
+    "text": "App settings",
+    "description": "Item in an app's menu, for people who manage the app: opens the app's settings dialog."
+  },
+  "menu.report": {
+    "text": "Report app",
+    "description": "Item in an app's menu: reports the app to Homeroom's moderators as breaking the rules. \"Report\" is a verb."
+  },
+  "check.noDetails": {
+    "text": "Check finished (no details returned).",
+    "description": "Brief notice after \"Check for updates\" when the server's answer said nothing about the outcome."
+  },
+  "check.noDrift.title": {
+    "text": "Latest commit is already running",
+    "description": "Title of the question asked after \"Check for updates\" found the app already runs its repository's newest version (commit)."
+  },
+  "check.noDrift.message": {
+    "text": "Force a rebuild anyway? (Useful if env vars or platform code changed.)",
+    "description": "Body of the question asked after \"Check for updates\" found nothing new. \"Env vars\" are the app's environment variables."
+  },
+  "check.noDrift.confirm": {
+    "text": "Rebuild",
+    "description": "Confirming button of the \"Force a rebuild anyway?\" question: builds and deploys the app again. A verb."
+  },
+  "check.rebuild.started": {
+    "text": "Rebuild started. Watch the version pill.",
+    "description": "Brief notice after a forced rebuild of an app began. The version pill is the small chip showing the app's version, where progress appears."
+  },
+  "check.rebuild.failed": {
+    "text": "Rebuild kickoff failed: {{reason}}",
+    "description": "Brief notice when a forced rebuild of an app could not be started. {{reason}} is the server's own error message."
+  },
+  "check.redeployed": {
+    "text": "Redeployed to {{sha}}.",
+    "description": "Brief notice after \"Check for updates\" found a newer version and deployed it. {{sha}} is the first seven characters of that version's commit id."
+  },
+  "check.inFlight": {
+    "text": "A redeploy is already in progress for this app.",
+    "description": "Brief notice after \"Check for updates\" when the app is already being deployed again."
+  },
+  "check.firstSeen": {
+    "text": "Recorded current SHA ({{sha}}). Future drift will trigger a redeploy.",
+    "description": "Brief notice after the first \"Check for updates\" on an app. {{sha}} is the first seven characters of the current commit id. Drift means the repository moving ahead of what is deployed."
+  },
+  "check.fetchFailed": {
+    "text": "Couldn't reach GitHub: {{reason}}",
+    "description": "Brief notice when \"Check for updates\" could not read the app's repository. {{reason}} is the server's own error message."
+  },
+  "check.fetchFailedUnknown": {
+    "text": "Couldn't reach GitHub: unknown error",
+    "description": "Brief notice when \"Check for updates\" could not read the app's repository and the server gave no reason."
+  },
+  "check.invalidRepo": {
+    "text": "This app has an invalid repo URL.",
+    "description": "Brief notice after \"Check for updates\" when the address of the app's repository is not usable."
+  },
+  "check.rebuildFailed": {
+    "text": "Drift detected ({{from}} → {{to}}) but redeploy failed: {{reason}}",
+    "description": "Brief notice when \"Check for updates\" found a newer version but deploying it failed. {{from}} and {{to}} are seven-character commit ids, the deployed one and the newer one. {{reason}} is the server's own error message."
+  },
+  "check.rebuildFailedUnknown": {
+    "text": "Drift detected ({{from}} → {{to}}) but redeploy failed: unknown error",
+    "description": "Brief notice when \"Check for updates\" found a newer version, deploying it failed and the server gave no reason. {{from}} and {{to}} are seven-character commit ids."
+  },
+  "check.finished": {
+    "text": "Check finished: {{status}}",
+    "description": "Brief notice after \"Check for updates\" ended with an outcome this screen has no sentence for. {{status}} is the server's own status code, such as no_change."
+  },
+  "time.justNow": {
+    "text": "just now",
+    "description": "A relative time inside \"Updated …\" in an app tile's menu: less than a minute ago. Lower case because it follows another word."
+  },
+  "time.minutesAgo_one": {
+    "text": "{{count}}m ago",
+    "description": "A compact relative time inside \"Updated …\" in an app tile's menu. {{count}} is a number of minutes; \"m\" abbreviates minutes."
+  },
+  "time.minutesAgo_other": {
+    "text": "{{count}}m ago",
+    "description": "A compact relative time inside \"Updated …\" in an app tile's menu. {{count}} is a number of minutes; \"m\" abbreviates minutes."
+  },
+  "time.hoursAgo_one": {
+    "text": "{{count}}h ago",
+    "description": "A compact relative time inside \"Updated …\" in an app tile's menu. {{count}} is a number of hours; \"h\" abbreviates hours."
+  },
+  "time.hoursAgo_other": {
+    "text": "{{count}}h ago",
+    "description": "A compact relative time inside \"Updated …\" in an app tile's menu. {{count}} is a number of hours; \"h\" abbreviates hours."
+  },
+  "time.daysAgo_one": {
+    "text": "{{count}}d ago",
+    "description": "A compact relative time inside \"Updated …\" in an app tile's menu. {{count}} is a number of days; \"d\" abbreviates days."
+  },
+  "time.daysAgo_other": {
+    "text": "{{count}}d ago",
+    "description": "A compact relative time inside \"Updated …\" in an app tile's menu. {{count}} is a number of days; \"d\" abbreviates days."
+  },
+  "time.monthsAgo_one": {
+    "text": "{{count}}mo ago",
+    "description": "A compact relative time inside \"Updated …\" in an app tile's menu. {{count}} is a number of months; \"mo\" abbreviates months."
+  },
+  "time.monthsAgo_other": {
+    "text": "{{count}}mo ago",
+    "description": "A compact relative time inside \"Updated …\" in an app tile's menu. {{count}} is a number of months; \"mo\" abbreviates months."
+  },
+  "time.yearsAgo_one": {
+    "text": "{{count}}y ago",
+    "description": "A compact relative time inside \"Updated …\" in an app tile's menu. {{count}} is a number of years; \"y\" abbreviates years."
+  },
+  "time.yearsAgo_other": {
+    "text": "{{count}}y ago",
+    "description": "A compact relative time inside \"Updated …\" in an app tile's menu. {{count}} is a number of years; \"y\" abbreviates years."
+  },
+  "widget.heading": {
+    "text": "Homeroom widget",
+    "description": "Heading of the strip on Home, in the iPhone app, where the apps shown on the Homeroom home-screen widget are arranged. Homeroom is the product's name."
+  },
+  "widget.help.toggle": {
+    "text": "How to add the widget to your home screen",
+    "description": "Tooltip and accessible name of the small ⓘ button beside the \"Homeroom widget\" heading: shows or hides the instructions."
+  },
+  "widget.help.steps": {
+    "text": "<0>Add the widget to your home screen:</0> touch and hold an empty area of your iPhone home screen, tap <1>Edit</1> → <2>Add Widget</2> (or the <3>+</3>), search for <4>Homeroom</4>, pick a size and tap <5>Add Widget</5>. The apps below appear on it automatically.",
+    "description": "Instructions shown in the widget strip on Home in the iPhone app. Every numbered tag is emphasis. \"Edit\" and \"Add Widget\" are the names of buttons in iOS: use the names iOS shows in your language. Homeroom is the product's name; keep it."
+  },
+  "widget.close": {
+    "text": "Close the widget section",
+    "description": "Tooltip and accessible name of the \"Done\" button on the widget strip on Home: hides the strip."
+  },
+  "widget.hint.withTiles": {
+    "text": "Drag tiles to reorder. Drag cards from My apps here to add them.",
+    "description": "Hint under the app tiles in the widget strip on Home. \"My apps\" is the name of the grid below it."
+  },
+  "widget.hint.empty": {
+    "text": "Drag a card from My apps here (or use its menu) to add it to the Homeroom widget on your home screen.",
+    "description": "Hint in the widget strip on Home while it holds no apps. \"My apps\" is the name of the grid below; Homeroom is the product's name."
+  },
+  "widget.tile.remove": {
+    "text": "Remove from widget",
+    "description": "Tooltip of the ✕ button on an app's tile in the widget strip on Home: takes that app off the Homeroom widget."
+  },
+  "widget.tile.removeNamed": {
+    "text": "Remove {{app}} from widget",
+    "description": "Accessible name of the ✕ button on an app's tile in the widget strip on Home. {{app}} is the app's name."
+  },
+  "widget.removeFailed": {
+    "text": "Remove from widget failed: {{reason}}",
+    "description": "Brief notice when taking an app off the Homeroom widget failed. {{reason}} is the error the phone reported."
+  },
+  "widget.reorderFailed": {
+    "text": "Widget reorder failed: {{reason}}",
+    "description": "Brief notice when saving the new order of apps on the Homeroom widget failed. {{reason}} is the error the phone reported."
+  },
+  "gettingStarted.regionLabel": {
+    "text": "Getting started",
+    "description": "Accessible name of the card at the top of Home that lists a new member's first steps."
+  },
+  "gettingStarted.title": {
+    "text": "Getting started",
+    "description": "Title of the card at the top of Home that lists a new member's first steps, while some are still to do."
+  },
+  "gettingStarted.doneTitle": {
+    "text": "You’re all set",
+    "description": "Title of the Getting started card on Home once every step is done."
+  },
+  "gettingStarted.close": {
+    "text": "Close Getting started",
+    "description": "Accessible name of the × button on the finished Getting started card: removes the card from Home. \"Close\" is a verb; \"Getting started\" is the card's title."
+  },
+  "gettingStarted.seeChallenges": {
+    "text": "See challenges",
+    "description": "Button on the finished Getting started card: opens the Challenges tab, where the newly unlocked challenges are."
+  },
+  "gettingStarted.counter.progress": {
+    "text": "{{done}} of {{total}} done",
+    "description": "Line under the Getting started card's title. {{done}} is how many steps are finished and {{total}} how many there are."
+  },
+  "gettingStarted.counter.withPoints_one": {
+    "text": "{{done}} of {{total}} done · {{points}} pts earned",
+    "description": "Line under the Getting started card's title once steps have paid points. {{done}} and {{total}} count steps; {{points}} is the points earned so far, already formatted (\"1,500\"); \"pts\" abbreviates points. {{count}} is the same number of points, for the plural."
+  },
+  "gettingStarted.counter.withPoints_other": {
+    "text": "{{done}} of {{total}} done · {{points}} pts earned",
+    "description": "Line under the Getting started card's title once steps have paid points. {{done}} and {{total}} count steps; {{points}} is the points earned so far, already formatted (\"1,500\"); \"pts\" abbreviates points. {{count}} is the same number of points, for the plural."
+  },
+  "gettingStarted.counter.celebrate_one": {
+    "text": "{{done}} of {{total}} done · <0>+{{points}} pts</0> earned",
+    "description": "Line under \"You’re all set\" on the finished Getting started card. {{done}} and {{total}} count steps; {{points}} is the points earned, already formatted (\"1,500\"); the numbered tag shows them in green. Keep the + sign. {{count}} is the same number of points, for the plural."
+  },
+  "gettingStarted.counter.celebrate_other": {
+    "text": "{{done}} of {{total}} done · <0>+{{points}} pts</0> earned",
+    "description": "Line under \"You’re all set\" on the finished Getting started card. {{done}} and {{total}} count steps; {{points}} is the points earned, already formatted (\"1,500\"); the numbered tag shows them in green. Keep the + sign. {{count}} is the same number of points, for the plural."
+  },
+  "gettingStarted.unlock.oneStep_one": {
+    "text": "One more step unlocks {{count}} more challenge",
+    "description": "Line beside a lock at the foot of the Getting started card when exactly one step is left. {{count}} is how many further challenges finishing the card unlocks."
+  },
+  "gettingStarted.unlock.oneStep_other": {
+    "text": "One more step unlocks {{count}} more challenges",
+    "description": "Line beside a lock at the foot of the Getting started card when exactly one step is left. {{count}} is how many further challenges finishing the card unlocks."
+  },
+  "gettingStarted.unlock.twoSteps_one": {
+    "text": "Two more steps unlock {{count}} more challenge",
+    "description": "Line beside a lock at the foot of the Getting started card when exactly two steps are left. {{count}} is how many further challenges finishing the card unlocks."
+  },
+  "gettingStarted.unlock.twoSteps_other": {
+    "text": "Two more steps unlock {{count}} more challenges",
+    "description": "Line beside a lock at the foot of the Getting started card when exactly two steps are left. {{count}} is how many further challenges finishing the card unlocks."
+  },
+  "gettingStarted.unlock.finishAll_one": {
+    "text": "Finish all {{total}} to unlock {{count}} more challenge",
+    "description": "Line beside a lock at the foot of the Getting started card when three or more steps are left. {{total}} is the number of steps on the card; {{count}} is how many further challenges finishing them unlocks."
+  },
+  "gettingStarted.unlock.finishAll_other": {
+    "text": "Finish all {{total}} to unlock {{count}} more challenges",
+    "description": "Line beside a lock at the foot of the Getting started card when three or more steps are left. {{total}} is the number of steps on the card; {{count}} is how many further challenges finishing them unlocks."
+  },
+  "gettingStarted.unlocked_one": {
+    "text": "{{count}} challenge unlocked",
+    "description": "Line beside an open lock on the finished Getting started card. {{count}} is how many challenges are now available."
+  },
+  "gettingStarted.unlocked_other": {
+    "text": "{{count}} challenges unlocked",
+    "description": "Line beside an open lock on the finished Getting started card. {{count}} is how many challenges are now available."
+  },
+  "gettingStarted.reward.tour": {
+    "text": "No points · ticks when you finish or skip it",
+    "description": "Small grey line under the tour step on the Getting started card: the tour pays no points, and the step is marked done once the tour was finished or skipped."
+  },
+  "gettingStarted.reward.earned_one": {
+    "text": "+{{points}} pts earned",
+    "description": "Small green line under a finished step on the Getting started card. {{points}} is the points that step paid, already formatted (\"1,500\"); keep the + sign. {{count}} is the same number, for the plural."
+  },
+  "gettingStarted.reward.earned_other": {
+    "text": "+{{points}} pts earned",
+    "description": "Small green line under a finished step on the Getting started card. {{points}} is the points that step paid, already formatted (\"1,500\"); keep the + sign. {{count}} is the same number, for the plural."
+  },
+  "gettingStarted.reward.earnsPoints_one": {
+    "text": "Earns {{points}} pts",
+    "description": "Small amber line under an unfinished step on the Getting started card: what finishing it pays. {{points}} is the number of points as the organisers wrote it; \"pts\" abbreviates points. {{count}} is the same number, for the plural."
+  },
+  "gettingStarted.reward.earnsPoints_other": {
+    "text": "Earns {{points}} pts",
+    "description": "Small amber line under an unfinished step on the Getting started card: what finishing it pays. {{points}} is the number of points as the organisers wrote it; \"pts\" abbreviates points. {{count}} is the same number, for the plural."
+  },
+  "gettingStarted.reward.earns": {
+    "text": "Earns {{reward}}",
+    "description": "Small amber line under an unfinished step on the Getting started card. {{reward}} is the reward as the organisers wrote it, unit included, for example \"500 pts\"."
+  },
+  "gettingStarted.join.note": {
+    "text": "Homeroom and Just-you projects don’t count.",
+    "description": "Small grey line under the \"join a community\" step on the Getting started card: joining Homeroom's own project or a project only the viewer can see does not complete the step. Homeroom is the product's name; \"Just you\" is the name of the audience of a project only its owner sees."
+  },
+  "gettingStarted.join.detailWithNote": {
+    "text": "{{detail}} Homeroom and Just-you projects don’t count.",
+    "description": "Small grey line under the \"join a community\" step on the Getting started card. {{detail}} is the organisers' own sentence describing the step, ending in its own full stop; keep it first. Homeroom is the product's name; \"Just you\" is the name of the audience of a project only its owner sees."
+  },
+  "gettingStarted.step.tour.short": {
+    "text": "Start",
+    "description": "Button with a play icon beside the tour step on the Getting started card: starts the one-minute tour of Homeroom. A verb."
+  },
+  "gettingStarted.step.tour.long": {
+    "text": "Take the tour",
+    "description": "Tooltip of the \"Start\" button beside the tour step on the Getting started card."
+  },
+  "gettingStarted.step.tour.aria": {
+    "text": "Start the tour",
+    "description": "Accessible name of the \"Start\" button beside the tour step on the Getting started card."
+  },
+  "gettingStarted.step.join.short": {
+    "text": "Join",
+    "description": "Button beside the \"join a community\" step on the Getting started card: opens Discover, where a community can be joined. A verb."
+  },
+  "gettingStarted.step.join.long": {
+    "text": "Find a community",
+    "description": "Tooltip and accessible name of the \"Join\" button on the Getting started card."
+  },
+  "gettingStarted.step.joinFirst": {
+    "text": "Join a community first.",
+    "description": "Small grey line under a later step on the Getting started card while the viewer has joined no community yet: that step cannot be done before joining one."
+  },
+  "gettingStarted.step.discover.short": {
+    "text": "Discover",
+    "description": "Button beside a step on the Getting started card when no app is suggested for it: opens the Discover tab. Use the same word as the Discover tab."
+  },
+  "gettingStarted.step.discover.long": {
+    "text": "Find an app on Discover",
+    "description": "Tooltip and accessible name of the \"Discover\" button on the Getting started card. Discover is the name of the tab that lists every app."
+  },
+  "gettingStarted.step.try.findApp_one": {
+    "text": "Find an app on Discover and spend {{count}} second in it.",
+    "description": "Small grey line under the \"try an app\" step on the Getting started card when no app is suggested. {{count}} is the number of seconds to spend. Discover is the name of a tab."
+  },
+  "gettingStarted.step.try.findApp_other": {
+    "text": "Find an app on Discover and spend {{count}} seconds in it.",
+    "description": "Small grey line under the \"try an app\" step on the Getting started card when no app is suggested. {{count}} is the number of seconds to spend. Discover is the name of a tab."
+  },
+  "gettingStarted.step.vote.findApp": {
+    "text": "Find an app on Discover and see what people are building.",
+    "description": "Small grey line under the \"vote\" step on the Getting started card when no app is suggested. Discover is the name of a tab."
+  },
+  "gettingStarted.step.suggest.findApp": {
+    "text": "Find an app on Discover and tell its builders what would make it better.",
+    "description": "Small grey line under the \"send feedback\" step on the Getting started card when no app is suggested. Discover is the name of a tab."
+  },
+  "gettingStarted.step.other.open": {
+    "text": "Open",
+    "description": "Button beside a step on the Getting started card that the organisers gave no button text: goes to the place where the step is done. A verb."
+  },
+  "gettingStarted.step.try.short": {
+    "text": "Try",
+    "description": "Button beside the \"try an app\" step on the Getting started card: opens the suggested app. A verb."
+  },
+  "gettingStarted.step.try.long": {
+    "text": "Try {{app}}",
+    "description": "Tooltip and accessible name of the \"Try\" button on the Getting started card. {{app}} is the suggested app's name."
+  },
+  "gettingStarted.step.try.detail_one": {
+    "text": "Spend {{count}} second in {{app}}.",
+    "description": "Small grey line under the \"try an app\" step on the Getting started card. {{count}} is the number of seconds to spend; {{app}} is the suggested app's name."
+  },
+  "gettingStarted.step.try.detail_other": {
+    "text": "Spend {{count}} seconds in {{app}}.",
+    "description": "Small grey line under the \"try an app\" step on the Getting started card. {{count}} is the number of seconds to spend; {{app}} is the suggested app's name."
+  },
+  "gettingStarted.step.suggest.short": {
+    "text": "Suggest",
+    "description": "Button beside the \"send feedback\" step on the Getting started card: opens the suggested app with its feedback form. A verb."
+  },
+  "gettingStarted.step.suggest.long": {
+    "text": "Suggest a change to {{app}}",
+    "description": "Tooltip and accessible name of the \"Suggest\" button on the Getting started card. {{app}} is the suggested app's name. \"Change\" is a noun."
+  },
+  "gettingStarted.step.suggest.detail": {
+    "text": "Tell {{app}}’s builders what would make it better.",
+    "description": "Small grey line under the \"send feedback\" step on the Getting started card. {{app}} is the suggested app's name."
+  },
+  "gettingStarted.step.vote.short": {
+    "text": "Vote",
+    "description": "Button beside the \"vote\" step on the Getting started card: opens the list of changes waiting for the viewer's vote in an app. A verb."
+  },
+  "gettingStarted.step.vote.long": {
+    "text": "Vote in {{app}}",
+    "description": "Tooltip and accessible name of the \"Vote\" button on the Getting started card. {{app}} is the name of the app whose changes are waiting."
+  },
+  "gettingStarted.step.vote.waiting_one": {
+    "text": "{{count}} change is waiting in {{app}}.",
+    "description": "Small grey line under the \"vote\" step on the Getting started card. {{count}} is how many proposed changes (noun) wait for a vote; {{app}} is the app's name."
+  },
+  "gettingStarted.step.vote.waiting_other": {
+    "text": "{{count}} changes are waiting in {{app}}.",
+    "description": "Small grey line under the \"vote\" step on the Getting started card. {{count}} is how many proposed changes (noun) wait for a vote; {{app}} is the app's name."
+  },
+  "gettingStarted.step.vote.waitingElsewhere_one": {
+    "text": "Nothing in {{app}} yet; {{count}} change is waiting in {{otherApp}}.",
+    "description": "Small grey line under the \"vote\" step on the Getting started card when the app the viewer joined has nothing to vote on but another does. {{app}} is the joined app's name, {{otherApp}} the other app's, and {{count}} how many proposed changes (noun) wait there."
+  },
+  "gettingStarted.step.vote.waitingElsewhere_other": {
+    "text": "Nothing in {{app}} yet; {{count}} changes are waiting in {{otherApp}}.",
+    "description": "Small grey line under the \"vote\" step on the Getting started card when the app the viewer joined has nothing to vote on but another does. {{app}} is the joined app's name, {{otherApp}} the other app's, and {{count}} how many proposed changes (noun) wait there."
+  },
+  "gettingStarted.step.look.short": {
+    "text": "Look",
+    "description": "Button beside the \"vote\" step on the Getting started card when nothing is waiting for a vote: opens an app's workshop to see what is being built. A verb."
+  },
+  "gettingStarted.step.look.long": {
+    "text": "See what {{app}} is building",
+    "description": "Tooltip and accessible name of the \"Look\" button on the Getting started card. {{app}} is the app's name; its community is what is building."
+  },
+  "gettingStarted.step.look.detail": {
+    "text": "Nothing is waiting for approval yet. See what people are building.",
+    "description": "Small grey line under the \"vote\" step on the Getting started card when no proposed change is waiting for a vote anywhere."
+  },
+  "waitlist.regionLabel": {
+    "text": "Waitlist",
+    "description": "Accessible name of the card on Home where someone invited into a private community can join the waiting list to make their own apps."
+  },
+  "waitlist.title": {
+    "text": "Make your own apps",
+    "description": "Title of the waitlist card on Home."
+  },
+  "waitlist.join.button": {
+    "text": "Join the waitlist",
+    "description": "Main button of the waitlist card on Home: starts joining the waiting list for creating apps."
+  },
+  "waitlist.join.note": {
+    "text": "We're letting people in a few at a time.",
+    "description": "Small note under the \"Join the waitlist\" button on Home."
+  },
+  "waitlist.listed.byText": {
+    "text": "We’ll text you when your spot is ready.",
+    "description": "Shown on the waitlist card once the viewer is on the list with a phone number only: they will get a text message."
+  },
+  "waitlist.listed.byEmail": {
+    "text": "We’ll email you when your spot is ready.",
+    "description": "Shown on the waitlist card once the viewer is on the list with an email address."
+  },
+  "waitlist.addEmail.link": {
+    "text": "Add an email too",
+    "description": "Link on the waitlist card for someone listed by phone only: opens the form to add an email address as well."
+  },
+  "waitlist.sooner.title": {
+    "text": "Want in sooner?",
+    "description": "Line at the foot of the waitlist card, beside a link to a short survey that can move the viewer up the list."
+  },
+  "waitlist.sooner.answer": {
+    "text": "Answer 4 questions",
+    "description": "Link beside \"Want in sooner?\" on the waitlist card: opens the four-question survey."
+  },
+  "waitlist.sooner.edit": {
+    "text": "Edit my answers",
+    "description": "Link beside \"Want in sooner?\" on the waitlist card once the survey was answered: reopens it."
+  },
+  "waitlist.email.titleJoin": {
+    "text": "Join the waitlist",
+    "description": "Title of the email step of the waitlist card on Home, for someone not on the list yet."
+  },
+  "waitlist.email.titleAdd": {
+    "text": "Add an email too",
+    "description": "Title of the email step of the waitlist card on Home, for someone already listed by phone."
+  },
+  "waitlist.email.leadOwn": {
+    "text": "With your email, or another one.",
+    "description": "Line under the title of the waitlist card's email step when the account already has an email address, which is filled in below. It completes the title \"Join the waitlist\"."
+  },
+  "waitlist.email.leadAdd": {
+    "text": "Add your email. We’ll email you a 6-digit code.",
+    "description": "Line under the title of the waitlist card's email step when the account has no email address."
+  },
+  "waitlist.email.label": {
+    "text": "Email",
+    "description": "Label of the email address field on the waitlist card."
+  },
+  "waitlist.email.placeholder": {
+    "text": "you@example.com",
+    "description": "Placeholder inside the email address field on the waitlist card: an example of an address. Keep it a valid-looking address."
+  },
+  "waitlist.email.submitJoin": {
+    "text": "Join the waitlist",
+    "description": "Submit button of the waitlist card's email step when the address is the account's own, so no code is needed."
+  },
+  "waitlist.email.submitCode": {
+    "text": "Email me a code",
+    "description": "Submit button of the waitlist card's email step when the address must be confirmed: sends a 6-digit code to it."
+  },
+  "waitlist.email.privacy": {
+    "text": "We use it to tell you when your spot is ready, and you can sign in with it. Nobody else sees it.",
+    "description": "Small note under the email field on the waitlist card. \"It\" is the email address."
+  },
+  "waitlist.email.notNow": {
+    "text": "Not now",
+    "description": "Link under the waitlist card's email step: goes back without adding an address."
+  },
+  "waitlist.code.title": {
+    "text": "Check your email",
+    "description": "Title of the waitlist card's step where the emailed code is typed in."
+  },
+  "waitlist.code.sent": {
+    "text": "We sent a 6-digit code to {{email}}. It expires in 15 minutes.",
+    "description": "Line under \"Check your email\" on the waitlist card. {{email}} is the address the code went to."
+  },
+  "waitlist.code.label": {
+    "text": "Code",
+    "description": "Label of the field for the 6-digit emailed code on the waitlist card. A noun."
+  },
+  "waitlist.code.submit": {
+    "text": "Join the waitlist",
+    "description": "Submit button of the waitlist card's code step: confirms the code and joins the list."
+  },
+  "waitlist.code.otherEmail": {
+    "text": "Use another email",
+    "description": "Link under the code field on the waitlist card: goes back to enter a different address."
+  },
+  "waitlist.code.resend": {
+    "text": "Send a new code",
+    "description": "Link under the code field on the waitlist card: emails a fresh code to the same address."
+  },
+  "waitlist.error.join": {
+    "text": "Could not join the waitlist. Try again.",
+    "description": "Error on the waitlist card when joining failed and the server gave no message of its own."
+  },
+  "waitlist.error.code": {
+    "text": "Could not check that code. Try again.",
+    "description": "Error on the waitlist card when the emailed code could not be checked and the server gave no message of its own."
+  },
+  "verify.regionLabel": {
+    "text": "Verify your account",
+    "description": "Accessible name of the card on Home that asks a member to verify their identity."
+  },
+  "verify.title": {
+    "text": "Verify your account",
+    "description": "Title of the card on Home that asks a member to verify their identity."
+  },
+  "verify.lead": {
+    "text": "Add your phone number to vote on public apps and get the full AI budget. Nobody sees your number.",
+    "description": "Text under \"Verify your account\" on Home when verifying by phone number is offered. The AI budget is the allowance of AI use each account gets."
+  },
+  "verify.reason": {
+    "text": "Verified accounts vote on public apps and get the full AI budget.",
+    "description": "Text under \"Verify your account\" on Home when phone verification is not offered; instructions to link other accounts follow it."
+  },
+  "discover.heading": {
+    "text": "Discover Communities",
+    "description": "Heading of the section of Home that shows a rail of app cards to try."
+  },
+  "discover.fallbackTitle": {
+    "text": "Discover",
+    "description": "Title of Home's Discover block when the server sent none. Not shown as a heading today; kept with the block's data."
+  },
+  "discover.browseAll.label": {
+    "text": "Browse all apps",
+    "description": "Link at the right end of the \"Discover Communities\" heading on Home, and its accessible name: opens the Discover screen with every app."
+  },
+  "discover.browseAll.tip": {
+    "text": "Browse every app in the directory",
+    "description": "Tooltip of the \"Browse all apps\" link on Home."
+  },
+  "discover.empty.title": {
+    "text": "Nothing to discover right now",
+    "description": "First line of the card shown in Home's Discover Communities section when there are no apps to suggest. The whole card links to the Discover screen."
+  },
+  "discover.empty.detail": {
+    "text": "Browse the directory to find an app to try.",
+    "description": "Second line of the card shown in Home's Discover Communities section when there are no apps to suggest."
+  },
+  "discover.card.addTip": {
+    "text": "Add to My apps",
+    "description": "Tooltip of the round + button on an app's card in Home's Discover Communities rail: puts a tile for the app in My apps."
+  },
+  "discover.card.addedTip": {
+    "text": "Added. Tap to remove from My apps",
+    "description": "Tooltip of the round check button on an app's card in Home's Discover Communities rail when the app is already in My apps."
+  },
+  "discover.card.addNamed": {
+    "text": "Add {{app}} to My apps",
+    "description": "Accessible name of the round + button on an app's card in Home's Discover Communities rail. {{app}} is the app's name; \"My apps\" is the name of the grid on Home."
+  },
+  "discover.card.removeNamed": {
+    "text": "Remove {{app}} from My apps",
+    "description": "Accessible name of the round check button on an app's card in Home's Discover Communities rail when the app is already in My apps. {{app}} is the app's name."
+  },
+  "discover.card.contributors_one": {
+    "text": "{{count}} contributor",
+    "description": "Small line at the bottom of an app's card in Home's Discover Communities rail. {{count}} is how many people have contributed to the app."
+  },
+  "discover.card.contributors_other": {
+    "text": "{{count}} contributors",
+    "description": "Small line at the bottom of an app's card in Home's Discover Communities rail. {{count}} is how many people have contributed to the app."
+  },
+  "challenges.heading": {
+    "text": "Challenges",
+    "description": "Heading of the section of Home that lists the season's challenges: tasks that earn points."
+  },
+  "challenges.fallbackTitle": {
+    "text": "Challenges",
+    "description": "Title of Home's Challenges block when the server sent none. Kept with the block's data."
+  },
+  "panels.fallbackTitle": {
+    "text": "Widget",
+    "description": "Title of a block on the Home screen whose own title is missing. A block of Home, not the phone's home-screen widget."
+  },
+  "challenges.open.label": {
+    "text": "Open challenges",
+    "description": "Link at the right end of the \"Challenges\" heading on Home, and its accessible name: goes to the Challenges tab of the Leaderboard screen. \"Open\" is a verb."
+  },
+  "challenges.open.tip": {
+    "text": "Go to the Challenges tab on the Leaderboard screen",
+    "description": "Tooltip of the \"Open challenges\" link on Home."
+  },
+  "challenges.empty.text": {
+    "text": "No challenges are running right now",
+    "description": "Shown in Home's Challenges section between seasons. The line is a button that goes to the Challenges tab."
+  },
+  "challenges.empty.tip": {
+    "text": "Go to the Challenges tab on the Leaderboard screen",
+    "description": "Tooltip of the \"No challenges are running right now\" line on Home."
+  },
+  "challenges.empty.label": {
+    "text": "No challenges are running right now. Go to the Challenges tab on the Leaderboard screen",
+    "description": "Accessible name of the \"No challenges are running right now\" line on Home: the state, then what pressing it does."
+  },
+  "challenges.fold.showLess": {
+    "text": "Show less",
+    "description": "Button under Home's list of challenges when it is unfolded: folds it back to the first few."
+  },
+  "challenges.fold.seeAllCount_one": {
+    "text": "See all {{count}} challenge",
+    "description": "Button under Home's list of challenges: unfolds the whole list. {{count}} is how many challenges are open."
+  },
+  "challenges.fold.seeAllCount_other": {
+    "text": "See all {{count}} challenges",
+    "description": "Button under Home's list of challenges: unfolds the whole list. {{count}} is how many challenges are open."
+  },
+  "challenges.fold.seeAll": {
+    "text": "See all challenges",
+    "description": "Button under Home's list of challenges when their number is not known: unfolds the whole list."
+  },
+  "challenges.fold.collapseTip": {
+    "text": "Collapse this widget",
+    "description": "Tooltip of the \"Show less\" button under Home's list of challenges. \"Widget\" means this block of the Home screen."
+  },
+  "challenges.fold.expandTip": {
+    "text": "Show every challenge in this widget",
+    "description": "Tooltip of the \"See all challenges\" button on Home. \"Widget\" means this block of the Home screen."
+  },
+  "challenges.onboardingNote": {
+    "text": "Finish Getting started to unlock the rest of the season.",
+    "description": "Note under Home's list of challenges while the first challenges are unfinished. \"Getting started\" is the title of the card of first steps."
+  },
+  "challenges.group.setup": {
+    "text": "First challenges",
+    "description": "Heading over the group of a new member's first challenges, in Home's Challenges section."
+  },
+  "challenges.group.week": {
+    "text": "This week",
+    "description": "Heading over the group of challenges that end with the current week, in Home's Challenges section."
+  },
+  "challenges.group.always": {
+    "text": "Always open",
+    "description": "Heading over the group of challenges with no deadline, in Home's Challenges section. \"Open\" is an adjective: available."
+  },
+  "challenges.group.other": {
+    "text": "Season challenges",
+    "description": "Heading over the season's remaining challenges, in Home's Challenges section."
+  },
+  "challenges.group.done": {
+    "text": "Done",
+    "description": "Heading over the challenges the viewer has completed, in Home's Challenges section."
+  },
+  "challenges.group.noDeadline": {
+    "text": "no deadline",
+    "description": "Small note at the right of the \"Always open\" heading in Home's Challenges section, where other groups show the time left. Lower case, like the times it stands in for."
+  },
+  "challenges.timeLeft.hours_one": {
+    "text": "{{count}}h left",
+    "description": "Time remaining for a challenge or a group of challenges on Home, under a day. {{count}} is a number of hours; \"h\" abbreviates hours."
+  },
+  "challenges.timeLeft.hours_other": {
+    "text": "{{count}}h left",
+    "description": "Time remaining for a challenge or a group of challenges on Home, under a day. {{count}} is a number of hours; \"h\" abbreviates hours."
+  },
+  "challenges.timeLeft.days_one": {
+    "text": "{{count}}d left",
+    "description": "Time remaining for a challenge or a group of challenges on Home. {{count}} is a number of days; \"d\" abbreviates days."
+  },
+  "challenges.timeLeft.days_other": {
+    "text": "{{count}}d left",
+    "description": "Time remaining for a challenge or a group of challenges on Home. {{count}} is a number of days; \"d\" abbreviates days."
+  },
+  "challenges.row.done": {
+    "text": "Done",
+    "description": "State shown on a challenge's card on Home: the viewer has completed it."
+  },
+  "challenges.row.started": {
+    "text": "Started",
+    "description": "State shown on a challenge's card on Home: the viewer has earned something from it but not completed it."
+  },
+  "challenges.row.notStarted": {
+    "text": "Not started",
+    "description": "State shown on a challenge's card on Home: the viewer has made no progress on it."
+  },
+  "challenges.row.countOf": {
+    "text": "{{current}}/{{target}}",
+    "description": "Progress shown on a challenge's card on Home: {{current}} done out of the {{target}} needed."
+  },
+  "challenges.row.countOfUnit": {
+    "text": "{{current}}/{{target}} {{unit}}",
+    "description": "Progress shown on a challenge's card on Home: {{current}} done out of the {{target}} needed. {{unit}} is the organisers' own word for what is counted, such as \"apps\"."
+  },
+  "challenges.row.earned_one": {
+    "text": "Earned {{points}} pts",
+    "description": "Line on a completed challenge's card on Home. {{points}} is the points it paid, already formatted (\"1,500\"); \"pts\" abbreviates points. {{count}} is the same number, for the plural."
+  },
+  "challenges.row.earned_other": {
+    "text": "Earned {{points}} pts",
+    "description": "Line on a completed challenge's card on Home. {{points}} is the points it paid, already formatted (\"1,500\"); \"pts\" abbreviates points. {{count}} is the same number, for the plural."
+  },
+  "challenges.reward.points_one": {
+    "text": "{{points}} pts",
+    "description": "A challenge's reward on its card on Home. {{points}} is the number of points as the organisers wrote it; \"pts\" abbreviates points. {{count}} is the same number, for the plural."
+  },
+  "challenges.reward.points_other": {
+    "text": "{{points}} pts",
+    "description": "A challenge's reward on its card on Home. {{points}} is the number of points as the organisers wrote it; \"pts\" abbreviates points. {{count}} is the same number, for the plural."
+  },
+  "challenges.summary.progress": {
+    "text": "{{done}} of {{total}}",
+    "description": "Summary of Home's Challenges block: {{done}} challenges completed out of {{total}}."
+  },
+  "challenges.summary.withPointsLeft_one": {
+    "text": "{{done}} of {{total}} · {{points}} pts left",
+    "description": "Summary of Home's Challenges block: {{done}} challenges completed out of {{total}}, and {{points}} points still to be earned, already formatted (\"1,500\"). {{count}} is the same number of points, for the plural."
+  },
+  "challenges.summary.withPointsLeft_other": {
+    "text": "{{done}} of {{total}} · {{points}} pts left",
+    "description": "Summary of Home's Challenges block: {{done}} challenges completed out of {{total}}, and {{points}} points still to be earned, already formatted (\"1,500\"). {{count}} is the same number of points, for the plural."
+  },
+  "tone.cream": {
+    "text": "Cream",
+    "description": "Name of a card colour, a pale warm off-white: tooltip and accessible name of its swatch in the featured illustration editor."
+  },
+  "tone.yellow": {
+    "text": "Yellow",
+    "description": "Name of a card colour, a soft yellow: tooltip and accessible name of its swatch in the featured illustration editor."
+  },
+  "tone.orange": {
+    "text": "Orange",
+    "description": "Name of a card colour, a soft orange: tooltip and accessible name of its swatch in the featured illustration editor."
+  },
+  "tone.coral": {
+    "text": "Coral",
+    "description": "Name of a card colour, a pinkish orange: tooltip and accessible name of its swatch in the featured illustration editor."
+  },
+  "tone.pink": {
+    "text": "Pink",
+    "description": "Name of a card colour, a soft pink: tooltip and accessible name of its swatch in the featured illustration editor."
+  },
+  "tone.purple": {
+    "text": "Purple",
+    "description": "Name of a card colour, a soft purple: tooltip and accessible name of its swatch in the featured illustration editor."
+  },
+  "tone.indigo": {
+    "text": "Indigo",
+    "description": "Name of a card colour, a blue-violet: tooltip and accessible name of its swatch in the featured illustration editor."
+  },
+  "tone.blue": {
+    "text": "Blue",
+    "description": "Name of a card colour, a soft blue: tooltip and accessible name of its swatch in the featured illustration editor."
+  },
+  "tone.teal": {
+    "text": "Teal",
+    "description": "Name of a card colour, a blue-green: tooltip and accessible name of its swatch in the featured illustration editor."
+  },
+  "tone.mint": {
+    "text": "Mint",
+    "description": "Name of a card colour, a pale green: tooltip and accessible name of its swatch in the featured illustration editor."
+  },
+  "tone.sage": {
+    "text": "Sage",
+    "description": "Name of a card colour, a greyish green: tooltip and accessible name of its swatch in the featured illustration editor."
+  },
+  "tone.gray": {
+    "text": "Gray",
+    "description": "Name of a card colour, a neutral grey: tooltip and accessible name of its swatch in the featured illustration editor."
+  }
+}

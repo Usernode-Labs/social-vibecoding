@@ -8,6 +8,7 @@
 
 import type { ReactNode } from 'react';
 
+import { useMessages } from '../../../lib/i18n/react';
 import type { FooterSpec } from './model';
 
 function callAppView(fn: string): void {
@@ -16,25 +17,28 @@ function callAppView(fn: string): void {
 }
 
 export function FooterView({ f }: { f: FooterSpec }): ReactNode {
+  const t = useMessages('project');
   if (f.kind === 'showAll') {
     return (
-      <button className="gc-vote-btn" onClick={() => callAppView('showAllDone')}>{`Show all ${f.n}`}</button>
+      <button className="gc-vote-btn" onClick={() => callAppView('showAllDone')}>{t('project:kanban.footer.showAll', { count: f.n })}</button>
     );
   }
   if (f.kind === 'loadMerged') {
     return (
       <button className="gc-vote-btn" disabled={f.loading} onClick={() => callAppView('loadMoreMerged')}>
-        {f.loading ? 'Loading…' : (f.n != null ? `Load more (${f.n})` : 'Load more')}
+        {f.loading
+          ? t('project:kanban.footer.loading')
+          : (f.n != null ? t('project:kanban.footer.loadMoreCount', { count: f.n }) : t('project:kanban.footer.loadMore'))}
       </button>
     );
   }
   if (f.kind === 'github') {
     return (
       <a href={f.href} target="_blank" rel="noopener" className="text-xs text-violet-700 hover:underline dark:text-violet-400">
-        {'More open requests →'}
+        {t('project:kanban.footer.moreRequests')}
       </a>
     );
   }
-  return <span className="text-xs text-zinc-500 dark:text-zinc-500 italic">{`+${f.n} more completed`}</span>;
+  return <span className="text-xs text-zinc-500 dark:text-zinc-500 italic">{t('project:kanban.footer.moreCompleted', { count: f.n })}</span>;
 }
 

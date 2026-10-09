@@ -11,6 +11,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -482,8 +483,10 @@ test('the sheet: Apple and Google first when offered, then email; the trip carri
   // Apple and Google first, unless the invite's Join starts with the phone
   // (tests/phone-invite-join.test.js), when they sit under it past an "or".
   assert.match(src, /const otherWays: Step = providers\.length \? 'choose' : 'email';\s+const firstStep: Step = phone \? 'phone' : otherWays;/);
-  assert.match(src, /\{`Continue with \$\{PROVIDER_LABEL\[provider\]\}`\}/);
-  assert.match(src, /Continue with email/);
+  assert.match(src, /\{t\('auth:signInSheet\.continueWith', \{ provider: PROVIDER_LABEL\[provider\] \}\)\}/);
+  assert.equal(message('auth:signInSheet.continueWith', { provider: 'Apple' }), 'Continue with Apple');
+  assert.match(src, /\{t\('auth:signInSheet\.continueWithEmail'\)\}/);
+  assert.equal(message('auth:signInSheet.continueWithEmail'), 'Continue with email');
   assert.match(src, /fetchSessionMint\(usernameVia === 'phone' \? '\/api\/auth\/phone\/finish' : '\/api\/auth\/oauth\/finish',/);
   const icons = read('frontend/@/components/ui/icons.tsx');
   assert.match(icons, /export const AppleIcon = filled\(/);

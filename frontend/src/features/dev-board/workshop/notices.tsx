@@ -26,6 +26,8 @@
 
 import { useEffect, useState } from 'react';
 
+import { RichMessage, useMessages } from '../../../lib/i18n/react';
+import { t } from '../../../lib/i18n/runtime';
 import { agoStamp } from '../../../lib/timestamp';
 
 export type SettingsNotice = {
@@ -47,9 +49,15 @@ export type Notices = { settings: SettingsNotice[]; week: WeekNotice | null };
 
 /** "by @ada · 2d ago", or "through a voted change · 2d ago". */
 export function noticeMeta(notice: Pick<SettingsNotice, 'by' | 'at' | 'kind'>): string {
-  const who = notice.by ? `by @${notice.by}` : (notice.kind === 'approver' ? '' : 'through a voted change');
   const when = notice.at ? agoStamp(notice.at).text : '';
-  return [who, when].filter(Boolean).join(' · ');
+  // Each case is a whole message: who did it, when, or both.
+  if (notice.by) {
+    return when
+      ? t('project:notices.meta.byWhen', { username: notice.by, when })
+      : t('project:notices.meta.by', { username: notice.by });
+  }
+  if (notice.kind === 'approver') return when;
+  return when ? t('project:notices.meta.votedWhen', { when }) : t('project:notices.meta.voted');
 }
 
 /** True when the panel has anything to say. */
@@ -58,16 +66,24 @@ export function hasNotices(notices: Notices | null | undefined): boolean {
 }
 
 export function NoticesPanel({ notices }: { notices: Notices }) {
+  // Subscribed: the head, and the meta lines noticeMeta reads.
+  const translate = useMessages('project');
   if (!hasNotices(notices)) return null;
   return (
     <section className="dev-ws-strip" data-ws-notices="">
       <div className="dev-ws-head">
-        <span className="dev-ws-head-title">Lately in this project</span>
+        <span className="dev-ws-head-title">{translate('project:notices.title')}</span>
       </div>
       <ul className="dev-ws-notices">
         {notices.week ? (
           <li className="dev-ws-notice" data-ws-notice="week">
-            <span className="dev-ws-notice-text"><b>This week.</b> {notices.week.line.replace(/^This week on [^:]+:\s*/, '')}</span>
+            <span className="dev-ws-notice-text">
+              <RichMessage
+                id="project:notices.week"
+                values={{ summary: notices.week.line.replace(/^This week on [^:]+:\s*/, '') }}
+                components={[<b />]}
+              />
+            </span>
             {notices.week.at ? <span className="dev-ws-notice-meta">{agoStamp(notices.week.at).text}</span> : null}
           </li>
         ) : null}

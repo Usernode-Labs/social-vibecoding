@@ -23,6 +23,7 @@
 // The `HomeLayout` and `window.HomePanels` reads throughout stay as they are:
 // both are published by sibling modules the island imports BEFORE this one, and
 // every read happens at call time, long after the bundle has evaluated.
+import { t as message, htmlText } from '../../lib/i18n/runtime';
 import { AppCard } from '../apps/app-card.js';
 import { gridStore } from './grid-store';
 import { chromeStore } from './chrome-store';
@@ -196,8 +197,7 @@ const Home = {
             ready: true, view: 'grid', rowTemplate: '', items: [],
             resultsHeading: null, emptyQuery: null, create: null,
             notice: {
-              text: "You're offline. Apps you've opened before will appear here once this "
-                + 'device has loaded them.',
+              text: message('home:grid.notice.offline'),
               tone: 'muted',
             },
           });
@@ -212,7 +212,7 @@ const Home = {
         resultsHeading: null, emptyQuery: null, create: null,
         // #1899: the grid draws this as the shared error card
         // (features/apps/load-error.tsx) with a Retry that re-runs load().
-        notice: { text: "Couldn't load your apps", tone: 'error' },
+        notice: { text: message('home:grid.notice.loadFailed'), tone: 'error' },
       });
     }
   },
@@ -738,7 +738,7 @@ const Home = {
       }
       return true;
     } catch (err) {
-      PlatformUI.toast('Couldn’t save your home screen layout.');
+      PlatformUI.toast(message('home:layout.saveFailed'));
       await Home._ensureLayoutLoaded({ force: true });
       Home.render();
       return false;
@@ -789,7 +789,7 @@ const Home = {
       if (!matches.length) {
         emptyQuery = query;
       } else {
-        resultsHeading = `${matches.length} result${matches.length === 1 ? '' : 's'}`;
+        resultsHeading = message('home:search.results', { count: matches.length });
         items = matches.map((a) => ({ kind: 'card', placement: null, app: Home.appView(a) }));
       }
     } else {
@@ -887,7 +887,7 @@ const Home = {
       const flows = !placed.length || items.some((it) => !it.placement);
       create = createHidden ? null : {
         enabled: canCreate,
-        hint: Home.CREATE_DISABLED_HINT,
+        hint: message(Home.CREATE_DISABLED_HINT),
         placement: flows ? null : { ...HomeLayout.trailingCell(placed, cols), w: 1, h: 1 },
       };
       // A private member makes no apps until they are let in off the
@@ -1021,11 +1021,11 @@ const Home = {
     // is making says where it is in the build line's words, from the time it
     // is set up until it is live (Home.tileBuildLine), not "Spinning up...".
     const buildLine = Home.tileBuildLine(app);
-    const statusLabel = buildLine ? BUILD_LINE_WORDS[buildLine]
+    const statusLabel = buildLine ? message(BUILD_LINE_WORDS[buildLine])
       : isRunning ? ''
-      : app.status === 'creating' ? 'Spinning up...'
-      : isAwaiting ? 'Awaiting secrets'
-      : 'Error';
+      : app.status === 'creating' ? message('home:grid.tile.status.creating')
+      : isAwaiting ? message('home:grid.tile.status.awaitingSecrets')
+      : message('home:grid.tile.status.error');
     // Retry is the errored card's primary recovery action, gated to
     // creator-or-full-admin (view-only admins excluded, issue #311).
     const showRetry = isError
@@ -2145,7 +2145,7 @@ const Home = {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || `HTTP ${res.status}`);
       }
-      PlatformUI.toast(desired ? 'Added to My apps' : 'Removed from My apps');
+      PlatformUI.toast(desired ? message('home:myApps.added') : message('home:myApps.removed'));
       if (!desired) await Home._offerLeaveAfterUnpin(app);
     } catch (err) {
       app.is_favorited = prev.is_favorited;
@@ -2155,7 +2155,7 @@ const Home = {
       // renders, and a stale slug would expand the grid for an app that is
       // not there.
       Home._revealSlug = null;
-      PlatformUI.toast(`Update failed: ${err.message}`);
+      PlatformUI.toast(message('home:myApps.updateFailed', { reason: err.message }));
       await Home.load();
       if (typeof onChange === 'function') onChange();
     }
@@ -2175,12 +2175,12 @@ const Home = {
     const confirmModal = typeof window !== 'undefined' ? window.ConfirmModal : null;
     const name = app.name || app.slug;
     const ok = await confirmModal?.show?.({
-      title: `Leave ${name} too?`,
+      title: message('home:leave.afterUnpin.title', { community: name }),
       message: app.view_visibility === 'private'
-        ? 'It’s off your Home screen. Leaving also ends your access until someone invites you back.'
-        : 'It’s off your Home screen. You can stay a member, or leave and stop proposing and voting on its changes.',
-      confirmLabel: 'Leave',
-      cancelLabel: 'Stay a member',
+        ? message('home:leave.afterUnpin.private')
+        : message('home:leave.afterUnpin.public'),
+      confirmLabel: message('home:leave.afterUnpin.confirm'),
+      cancelLabel: message('home:leave.afterUnpin.stay'),
       danger: true,
     });
     if (!ok) return false;
@@ -2225,11 +2225,11 @@ const Home = {
       // silent leave is the one outcome this step exists to prevent.
       const confirmModal = typeof window !== 'undefined' ? window.ConfirmModal : null;
       const ok = await confirmModal?.show?.({
-        title: `Leave ${name}?`,
+        title: message('home:leave.confirm.title', { community: name }),
         message: privateApp
-          ? 'You will lose access to it until someone invites you back.'
-          : 'You won’t be able to propose or vote on its changes until you join again.',
-        confirmLabel: 'Leave',
+          ? message('home:leave.confirm.private')
+          : message('home:leave.confirm.public'),
+        confirmLabel: message('home:leave.confirm.button'),
         danger: true,
       });
       if (!ok) return false;
@@ -2264,7 +2264,7 @@ const Home = {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       if (app && Number.isFinite(Number(data.member_count))) app.member_count = Number(data.member_count);
-      PlatformUI.toast(desired ? `Joined ${name}` : `Left ${name}`);
+      PlatformUI.toast(desired ? message('home:membership.joined', { community: name }) : message('home:membership.left', { community: name }));
       Home._announceMembership(slug, desired);
       if (!app) {
         await Home.load();
@@ -2274,7 +2274,9 @@ const Home = {
     } catch (err) {
       if (app && prev) Object.assign(app, prev);
       Home._revealSlug = null;
-      PlatformUI.toast(`Couldn’t ${desired ? 'join' : 'leave'}: ${err.message}`);
+      PlatformUI.toast(desired
+        ? message('home:membership.joinFailed', { reason: err.message })
+        : message('home:membership.leaveFailed', { reason: err.message }));
       await Home.load();
       if (typeof onChange === 'function') onChange();
       return false;
@@ -2311,10 +2313,10 @@ const Home = {
         throw new Error(data.error || `HTTP ${res.status}`);
       }
       if (desired) Home._revealSlug = slug;
-      PlatformUI.toast(desired ? 'Added to My apps' : 'Removed from My apps');
+      PlatformUI.toast(desired ? message('home:myApps.added') : message('home:myApps.removed'));
     } catch (err) {
       Home._revealSlug = null;
-      PlatformUI.toast(`Update failed: ${err.message}`);
+      PlatformUI.toast(message('home:myApps.updateFailed', { reason: err.message }));
     }
     await Home.load();
     if (typeof onChange === 'function') onChange();
@@ -2366,7 +2368,7 @@ const Home = {
   // message. Mirrors the status enum in main-drift-poller.js.
   reportCheckResult(data) {
     if (!data || !data.status) {
-      PlatformUI.toast('Check finished (no details returned).');
+      PlatformUI.toast(message('home:check.noDetails'));
       return;
     }
     switch (data.status) {
@@ -2380,38 +2382,46 @@ const Home = {
         // but most operators reach for the home-card ⟳ first.
         if (data.slug) {
           PlatformUI.confirm({
-            title: 'Latest commit is already running',
-            message: 'Force a rebuild anyway? (Useful if env vars or platform code changed.)',
-            confirmLabel: 'Rebuild',
+            title: message('home:check.noDrift.title'),
+            message: message('home:check.noDrift.message'),
+            confirmLabel: message('home:check.noDrift.confirm'),
           }).then((ok) => {
             if (!ok) return;
             fetch(`/api/apps/${data.slug}/redeploy`, { method: 'POST' })
               .then((r) => r.ok ? r.json() : r.json().then((j) => Promise.reject(new Error(j.error || `HTTP ${r.status}`))))
-              .then(() => PlatformUI.toast('Rebuild started. Watch the version pill.'))
-              .catch((err) => PlatformUI.toast(`Rebuild kickoff failed: ${err.message}`));
+              .then(() => PlatformUI.toast(message('home:check.rebuild.started')))
+              .catch((err) => PlatformUI.toast(message('home:check.rebuild.failed', { reason: err.message })));
           });
         }
         return;
       case 'redeployed':
-        PlatformUI.toast(`Redeployed to ${(data.to || '').slice(0, 7)}.`);
+        PlatformUI.toast(message('home:check.redeployed', { sha: (data.to || '').slice(0, 7) }));
         return;
       case 'in_flight':
-        PlatformUI.toast('A redeploy is already in progress for this app.');
+        PlatformUI.toast(message('home:check.inFlight'));
         return;
       case 'first_seen':
-        PlatformUI.toast(`Recorded current SHA (${(data.sha || '').slice(0, 7)}). Future drift will trigger a redeploy.`);
+        PlatformUI.toast(message('home:check.firstSeen', { sha: (data.sha || '').slice(0, 7) }));
         return;
       case 'fetch_failed':
-        PlatformUI.toast(`Couldn't reach GitHub: ${data.error || 'unknown error'}`);
+        PlatformUI.toast(data.error
+          ? message('home:check.fetchFailed', { reason: data.error })
+          : message('home:check.fetchFailedUnknown'));
         return;
       case 'invalid_repo':
-        PlatformUI.toast('This app has an invalid repo URL.');
+        PlatformUI.toast(message('home:check.invalidRepo'));
         return;
       case 'rebuild_failed':
-        PlatformUI.toast(`Drift detected (${(data.from || '').slice(0, 7)} → ${(data.attempted || '').slice(0, 7)}) but redeploy failed: ${data.error || 'unknown error'}`);
+        PlatformUI.toast(data.error
+          ? message('home:check.rebuildFailed', {
+            from: (data.from || '').slice(0, 7), to: (data.attempted || '').slice(0, 7), reason: data.error,
+          })
+          : message('home:check.rebuildFailedUnknown', {
+            from: (data.from || '').slice(0, 7), to: (data.attempted || '').slice(0, 7),
+          }));
         return;
       default:
-        PlatformUI.toast(`Check finished: ${data.status}`);
+        PlatformUI.toast(message('home:check.finished', { status: data.status }));
     }
   },
 
@@ -2462,11 +2472,11 @@ const Home = {
     // statusLabel / warningHtml below — so "Spinning up…", "Awaiting
     // secrets" and "Error" are unaffected.
     const buildLine = Home.tileBuildLine(app);
-    const statusLabel = buildLine ? BUILD_LINE_WORDS[buildLine]
+    const statusLabel = buildLine ? htmlText(BUILD_LINE_WORDS[buildLine])
       : app.status === 'running' ? ''
-      : app.status === 'creating' ? 'Spinning up...'
-      : isAwaiting ? 'Awaiting secrets'
-      : 'Error';
+      : app.status === 'creating' ? htmlText('home:grid.tile.status.creating')
+      : isAwaiting ? htmlText('home:grid.tile.status.awaitingSecrets')
+      : htmlText('home:grid.tile.status.error');
     const isError = app.status === 'error';
     const isRunning = app.status === 'running';
     // The active-users badge is gone from the tile face too. The count is
@@ -2522,9 +2532,11 @@ const Home = {
           ? 'bg-emerald-500 border-emerald-500 text-white'
           : 'bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-600 text-violet-700 dark:text-violet-400 hover:border-violet-400'
       }" data-slug="${app.slug}" data-added="${isAdded}" title="${
-        isAdded ? 'Added. Tap to remove from My apps' : 'Add to My apps'
+        isAdded ? htmlText('home:discover.card.addedTip') : htmlText('home:discover.card.addTip')
       }" aria-label="${
-        isAdded ? `Remove ${escapeHtml(app.name)} from My apps` : `Add ${escapeHtml(app.name)} to My apps`
+        isAdded
+          ? htmlText('home:discover.card.removeNamed', { app: String(app.name || '') })
+          : htmlText('home:discover.card.addNamed', { app: String(app.name || '') })
       }" aria-pressed="${isAdded}">${
         isAdded
           ? '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>'
@@ -2533,7 +2545,7 @@ const Home = {
     // Discovery keeps its explicit menu beside the add badge. Launcher
     // tiles use long press / right click instead (#1616).
     const hamburgerHtml = (corner) => `
-      <button class="card-menu-btn absolute -top-1.5 ${corner} w-6 h-6 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-zinc-500 dark:text-zinc-300 hover:text-zinc-700 dark:hover:text-zinc-100 hover:border-zinc-300 dark:hover:border-zinc-500 transition-colors" data-slug="${app.slug}" title="App actions" aria-label="App actions" aria-haspopup="menu"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg></button>`;
+      <button class="card-menu-btn absolute -top-1.5 ${corner} w-6 h-6 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-zinc-500 dark:text-zinc-300 hover:text-zinc-700 dark:hover:text-zinc-100 hover:border-zinc-300 dark:hover:border-zinc-500 transition-colors" data-slug="${app.slug}" title="${htmlText('home:grid.tile.actions')}" aria-label="${htmlText('home:grid.tile.actions')}" aria-haspopup="menu"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg></button>`;
     // Discovery grids show BOTH: the add/remove badge as the primary
     // affordance, plus the same "…" menu the home cards have, so an app
     // you haven't added still offers Fork / build log / admin actions
@@ -2549,7 +2561,7 @@ const Home = {
     // not a corner button the icon covered on phones. Same classes as
     // app-grid.tsx's RETRY_BTN; a Retry tile greys only its icon.
     const retryHtml = showRetry
-      ? `<button type="button" class="retry-btn relative inline-flex items-center rounded-full bg-violet-600 hover:bg-violet-500 px-1.5 text-[11px] leading-3 font-semibold text-white cursor-pointer transition-colors before:absolute before:-inset-x-1.5 before:-inset-y-2 before:content-[''] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-1" data-slug="${app.slug}" aria-label="Retry ${escapeHtml(String(app.name || '')).replace(/"/g, '&quot;')}">Retry</button>`
+      ? `<button type="button" class="retry-btn relative inline-flex items-center rounded-full bg-violet-600 hover:bg-violet-500 px-1.5 text-[11px] leading-3 font-semibold text-white cursor-pointer transition-colors before:absolute before:-inset-x-1.5 before:-inset-y-2 before:content-[''] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-1" data-slug="${app.slug}" aria-label="${htmlText('home:grid.tile.retryNamed', { app: String(app.name || '') })}">${htmlText('core:common.retry')}</button>`
       : '';
 
     // Fork lineage tag: a small amber ⑂ badge on the icon's bottom-left
@@ -2560,7 +2572,7 @@ const Home = {
     const forkName = app.forked_from && typeof app.forked_from === 'object'
       ? (app.forked_from.name || '<deleted>') : null;
     const forkTagHtml = forkName
-      ? `<span class="fork-tag absolute -bottom-1 -left-1 w-5 h-5 flex items-center justify-center rounded-full bg-amber-500 text-white text-xs font-bold shadow-sm" title="Remixed from ${escapeHtml(forkName)}" aria-label="Remixed from ${escapeHtml(forkName)}">⑂</span>`
+      ? `<span class="fork-tag absolute -bottom-1 -left-1 w-5 h-5 flex items-center justify-center rounded-full bg-amber-500 text-white text-xs font-bold shadow-sm" title="${htmlText('home:grid.tile.remixedFrom', { app: forkName })}" aria-label="${htmlText('home:grid.tile.remixedFrom', { app: forkName })}">⑂</span>`
       : '';
 
     const icon = Home.iconTileFor(app);
@@ -2714,7 +2726,7 @@ const Home = {
     try {
       await window.usernode.removeHomeScreenShortcut(id);
     } catch (err) {
-      PlatformUI.toast(`Remove from widget failed: ${(err && err.message) || err}`);
+      PlatformUI.toast(message('home:widget.removeFailed', { reason: String((err && err.message) || err) }));
       await Home._refreshWidgetItems();
       Home.render();
     }
@@ -2730,7 +2742,7 @@ const Home = {
     try {
       await window.usernode.reorderHomeScreenShortcuts(ids);
     } catch (err) {
-      PlatformUI.toast(`Widget reorder failed: ${(err && err.message) || err}`);
+      PlatformUI.toast(message('home:widget.reorderFailed', { reason: String((err && err.message) || err) }));
       await Home._refreshWidgetItems();
       Home.render();
     }
@@ -3411,17 +3423,19 @@ const Home = {
   },
   // Last-pass telemetry, for the Settings → "Widget icons" row. Kept
   // here rather than derived there: by the time someone opens Settings
-  // the interesting pass has long finished.
+  // the interesting pass has long finished. The outcome is recorded as
+  // `{ kind, sent, refused }`, not as text: Settings says it, together with
+  // the time, as one whole message (settings:usernode.widgetIcons.lastCheck.*).
   _lastHealAt: 0,
   _lastHealOutcome: null,
   async _healWidgetIconsPass() {
     if (Home._shortcutSupport?.mechanism !== 'widget') {
-      Home._lastHealOutcome = 'skipped, not the widget mechanism';
+      Home._lastHealOutcome = { kind: 'skippedMechanism' };
       return;
     }
     const bridge = window.usernode;
     if (!bridge || typeof bridge.addHomeScreenShortcut !== 'function') {
-      Home._lastHealOutcome = 'skipped, no shortcut bridge';
+      Home._lastHealOutcome = { kind: 'skippedBridge' };
       return;
     }
     // Resolve the dual-icon capability BEFORE building any marker or
@@ -3492,8 +3506,10 @@ const Home = {
       } catch (_) { /* private mode — retried next load, sends deduped by `tried` */ }
     }
     Home._lastHealOutcome = (sent || failed)
-      ? `sent ${sent}${failed ? `, ${failed} refused` : ''}`
-      : 'nothing to send';
+      ? (failed
+        ? { kind: 'sentRefused', sent, refused: failed }
+        : { kind: 'sent', sent })
+      : { kind: 'nothing' };
     if (healed) {
       try {
         const resp = await bridge.getHomeScreenShortcuts();
@@ -3620,8 +3636,8 @@ const Home = {
     if (!app.demo && app.slug) {
       items.push({
         key: 'app-details',
-        label: 'App details',
-        title: 'Version, status and everything you can do with this app',
+        label: message('home:menu.details.label'),
+        title: message('home:menu.details.tip'),
         run: () => {
           window.Browse?.noteDetailOrigin?.('home');
           location.hash = `#apps/${encodeURIComponent(app.slug)}`;
@@ -3640,8 +3656,8 @@ const Home = {
     if (app.repo_url) {
       items.push({
         key: 'github',
-        label: 'View on GitHub',
-        title: 'Open this app’s repository',
+        label: message('home:menu.github.label'),
+        title: message('home:menu.github.tip'),
         // `noopener` explicitly: the target document must not get a handle on
         // this window, and repo_url is app-supplied.
         run: () => window.open(app.repo_url, '_blank', 'noopener'),
@@ -3650,16 +3666,16 @@ const Home = {
     if (app.is_collaborator) {
       items.push({
         key: 'favorite',
-        label: app.your_apps_hidden ? 'Add to My apps' : 'Remove from My apps',
+        label: app.your_apps_hidden ? message('home:menu.myApps.add') : message('home:menu.myApps.remove'),
         title: app.your_apps_hidden
-          ? 'Show this app in My apps again. You keep your builder access either way.'
-          : 'Hide this app from My apps. It stays live and you keep your builder access.',
+          ? message('home:menu.myApps.showAgainTip')
+          : message('home:menu.myApps.hideTip'),
         run: () => Home._menuToggleFavorite(app, !!app.your_apps_hidden),
       });
     } else {
       items.push({
         key: 'favorite',
-        label: app.is_favorited ? 'Remove from My apps' : 'Add to My apps',
+        label: app.is_favorited ? message('home:menu.myApps.remove') : message('home:menu.myApps.add'),
         run: () => Home._menuToggleFavorite(app, !app.is_favorited),
       });
     }
@@ -3676,8 +3692,8 @@ const Home = {
     // beside it.
     items.push({
       key: 'notifications',
-      label: 'Notifications',
-      title: 'Choose what this app can notify you about, here and on your phone.',
+      label: message('home:menu.notifications.label'),
+      title: message('home:menu.notifications.tip'),
       run: () => window.UsernodeReact?.dialogs?.appNotifications?.open({ slug: app.slug }),
     });
     // Native homescreen shortcut — only when the page runs inside a
@@ -3703,13 +3719,13 @@ const Home = {
         // by default) management section — reorder or remove from there.
         items.push({
           key: 'add-to-homescreen',
-          label: 'Edit in Homeroom widget',
+          label: message('home:menu.widget.edit'),
           run: () => Home._revealWidgetSection(),
         });
       } else {
         items.push({
           key: 'add-to-homescreen',
-          label: isWidget ? 'Add to Homeroom widget' : 'Add to phone home screen',
+          label: isWidget ? message('home:menu.widget.add') : message('home:menu.phoneHome.add'),
           run: () => Home._menuAddShortcut(app),
         });
       }
@@ -3732,8 +3748,8 @@ const Home = {
     if (installHost !== 'none') {
       items.push({
         key: 'install',
-        label: 'Add to Home Screen',
-        title: 'Put this app on your phone’s home screen with its own icon',
+        label: message('home:menu.install.label'),
+        title: message('home:menu.install.tip'),
         run: () => {
           const href = `/app/${encodeURIComponent(app.slug)}/install`;
           if (installHost === 'standalone') {
@@ -3756,7 +3772,7 @@ const Home = {
       });
     }
     if (isError && (user.canAdminWrite || user.id === app.created_by)) {
-      items.push({ key: 'retry', label: 'Retry', run: () => Home._menuRetry(app) });
+      items.push({ key: 'retry', label: message('home:menu.retry'), run: () => Home._menuRetry(app) });
     }
     // #416: "View build log" for involved users — on errored apps, and
     // on running apps whose last recorded failure post-dates the last
@@ -3770,8 +3786,8 @@ const Home = {
     if (canSeeBuildLog && (isError || rebuildFailed)) {
       items.push({
         key: 'build-log',
-        label: 'View build log',
-        title: app.last_failure_reason || 'See why the last build/deploy failed',
+        label: message('home:menu.buildLog.label'),
+        title: app.last_failure_reason || message('home:menu.buildLog.tip'),
         run: () => window.BuildLog && BuildLog.open(app.slug),
       });
     }
@@ -3781,7 +3797,7 @@ const Home = {
       // menu vanishing with zero feedback.
       items.push({
         key: 'check-updates',
-        label: 'Check for updates',
+        label: message('home:menu.checkUpdates.label'),
         keepOpen: true,
         run: (itemEl) => Home._menuCheckUpdates(app, itemEl),
       });
@@ -3796,19 +3812,19 @@ const Home = {
     if (!app.self_hosted && typeof AppView !== 'undefined' && AppView.promptFork) {
       items.push({
         key: 'fork',
-        label: 'Remix',
-        sub: 'Make your own copy',
-        title: 'Make your own copy',
+        label: message('home:menu.remix.label'),
+        sub: message('home:menu.remix.sub'),
+        title: message('home:menu.remix.sub'),
         run: () => AppView.promptFork({ slug: app.slug, name: app.name }),
       });
     }
     if (user.canAdminWrite) {
       items.push({
         key: 'lock',
-        label: app.locked ? 'Unlock app' : 'Lock app',
+        label: app.locked ? message('home:menu.lock.unlock') : message('home:menu.lock.lock'),
         title: app.locked
-          ? 'App locked: merges also need an admin yes vote. Click to unlock.'
-          : 'Lock this app. An admin yes vote will also be required to merge changes.',
+          ? message('home:menu.lock.unlockTip')
+          : message('home:menu.lock.lockTip'),
         run: () => Home._menuToggleLock(app),
       });
     }
@@ -3819,10 +3835,10 @@ const Home = {
     // (delete_block 'shared' is only ever handed to them) keeps the entry,
     // because the dialog is also where the deletion refusal is explained.
     if (user.canAdminWrite || app.can_manage || app.can_delete || app.delete_block === 'shared') {
-      items.push({ key: 'app-settings', label: 'App settings', run: () => window.UsernodeReact?.dialogs?.appSettings?.open({ slug: app.slug }) });
+      items.push({ key: 'app-settings', label: message('home:menu.settings'), run: () => window.UsernodeReact?.dialogs?.appSettings?.open({ slug: app.slug }) });
     }
     if (App.user && app.slug && app.can_report === true) items.push({
-      key: 'report', label: 'Report app',
+      key: 'report', label: message('home:menu.report'),
       run: () => window.UsernodeReact?.dialogs?.report?.open({ targetType: 'app', target: app.slug, label: app.name || app.slug }),
     });
     return items;
@@ -3860,7 +3876,7 @@ const Home = {
       <div class="card-menu-title">${escapeHtml(app.name || app.slug)}</div>
       <div class="card-menu-slug">${escapeHtml(app.slug)}</div>
       <div class="card-menu-version">${pillHtml}</div>
-      ${updatedRel ? `<div class="card-menu-updated">Updated ${escapeHtml(updatedRel)}</div>` : ''}
+      ${updatedRel ? `<div class="card-menu-updated">${htmlText('home:menu.updated', { when: updatedRel })}</div>` : ''}
       ${pillsHtml ? `<div class="card-menu-pills">${pillsHtml}</div>` : ''}`;
   },
 
@@ -4366,7 +4382,7 @@ const Home = {
       return true;
     } catch (err) {
       const msg = String((err && err.message) || err);
-      if (!/denied/i.test(msg)) PlatformUI.toast(`Add to home screen failed: ${msg}`);
+      if (!/denied/i.test(msg)) PlatformUI.toast(message('home:menu.phoneHome.addFailed', { reason: msg }));
       return false;
     }
   },
@@ -4396,18 +4412,18 @@ const Home = {
   async _menuCheckUpdates(app, itemEl) {
     if (itemEl) {
       itemEl.disabled = true;
-      itemEl.textContent = 'Checking…';
+      itemEl.textContent = message('home:menu.checkUpdates.checking');
     }
     try {
       const res = await fetch(`/api/apps/${app.slug}/check-updates`, { method: 'POST' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        PlatformUI.toast(data.error || `Check failed (HTTP ${res.status})`);
+        PlatformUI.toast(data.error || message('home:menu.checkUpdates.failedHttp', { status: res.status }));
       } else {
         Home.reportCheckResult(data);
       }
     } catch (err) {
-      PlatformUI.toast(`Check failed: ${err.message}`);
+      PlatformUI.toast(message('home:menu.checkUpdates.failed', { reason: err.message }));
     } finally {
       Home.closeCardMenu();
       await Home.load();
@@ -4424,12 +4440,12 @@ const Home = {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        PlatformUI.toast(data.error || `Lock toggle failed (HTTP ${res.status})`);
+        PlatformUI.toast(data.error || message('home:menu.lock.failedHttp', { status: res.status }));
         return;
       }
       Home.updateAppCardLock(app.slug, nextLocked);
     } catch (err) {
-      PlatformUI.toast(`Lock toggle failed: ${err.message}`);
+      PlatformUI.toast(message('home:menu.lock.failed', { reason: err.message }));
     }
   },
 
@@ -5158,7 +5174,7 @@ const Home = {
   // is on every home screen regardless of quota, so this string is what the
   // locked tile announces in its tooltip and label. The dialog it opens
   // carries the exact used-of-limit numbers.
-  CREATE_DISABLED_HINT: 'View your app allowance or request more slots.',
+  CREATE_DISABLED_HINT: 'home:create.disabledHint',
 
   // `wireCreateButtons()` lived here: `document.querySelectorAll('.home-create-btn')`,
   // each button cloneNode'd and swapped for a fresh copy so a re-paint could
@@ -5227,6 +5243,14 @@ const Home = {
 // Node, where there is no window.
 if (typeof window !== 'undefined') window.Home = Home;
 
+// The grid's view model holds text (a tile's status, the results heading),
+// so a language change rebuilds it from the apps already loaded.
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  document.addEventListener('homeroom:language-changed', () => {
+    if (Home._apps.length) Home.render();
+  });
+}
+
 // escapeHtml and formatRelativeTime used to be AMBIENT here: as a classic
 // script's top-level function declarations they were `window.escapeHtml` /
 // `window.formatRelativeTime`, and home.js was the LAST tag to declare either,
@@ -5267,12 +5291,12 @@ function formatRelativeTime(input) {
   const t = new Date(input);
   if (Number.isNaN(t.getTime())) return null;
   const seconds = Math.floor((Date.now() - t.getTime()) / 1000);
-  if (seconds < 60) return 'just now';
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-  if (seconds < 86400 * 30) return `${Math.floor(seconds / 86400)}d ago`;
-  if (seconds < 86400 * 365) return `${Math.floor(seconds / (86400 * 30))}mo ago`;
-  return `${Math.floor(seconds / (86400 * 365))}y ago`;
+  if (seconds < 60) return message('home:time.justNow');
+  if (seconds < 3600) return message('home:time.minutesAgo', { count: Math.floor(seconds / 60) });
+  if (seconds < 86400) return message('home:time.hoursAgo', { count: Math.floor(seconds / 3600) });
+  if (seconds < 86400 * 30) return message('home:time.daysAgo', { count: Math.floor(seconds / 86400) });
+  if (seconds < 86400 * 365) return message('home:time.monthsAgo', { count: Math.floor(seconds / (86400 * 30)) });
+  return message('home:time.yearsAgo', { count: Math.floor(seconds / (86400 * 365)) });
 }
 
 // Back online: refill a grid that could only show the offline note. Guarded

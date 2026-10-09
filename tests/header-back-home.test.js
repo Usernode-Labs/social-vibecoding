@@ -43,6 +43,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const { runModules, makeStoreStub } = require('./helpers/bundle-module');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 const APP_JS = read('public/js/app.js');
@@ -160,8 +161,9 @@ test('the anchor renders both glyphs and hides exactly one', () => {
   // and that inventory is a contract (tests/shell-id-inventory.test.js).
   assert.match(HEADER, /className=\{BACK_BTN_CLASS \+ \(mode === 'none' \? ' hidden' : ''\)\}/,
     "the anchor itself hides only on 'none'");
-  assert.match(HEADER, /aria-label=\{backArrow \? 'Back' : backClose \? 'Close app' : 'Home'\}/,
+  assert.match(HEADER, /aria-label=\{backArrow \? t\('core:header\.back'\) : backClose \? t\('core:header\.closeApp'\) : t\('core:header\.home'\)\}/,
     'and the accessible name follows the glyph — three meanings, three names');
+  assert.deepEqual(['back', 'closeApp', 'home'].map((name) => message(`core:header.${name}`)), ['Back', 'Close app', 'Home']);
 });
 
 // ── 4. The ladder inside an app ────────────────────────────────────────
@@ -253,7 +255,10 @@ function loadImprove(initial) {
   // Its `createStore` is the stub above, which is also what the controller
   // then writes into — one store, reached two ways, as in the bundle.
   runModules(sandbox, [['improve-store.js', IMPROVE_STORE]], {
-    imports: { '../../lib/plain-store.js': { createStore: () => store } },
+    imports: {
+      '../../lib/plain-store.js': { createStore: () => store },
+      '../../lib/i18n/runtime': englishPlatformI18n(),
+    },
     tail: 'window.__improveStore = { improveStore, boardHref, topicBackHref, topicBackLabel, topicWorkshopHref };',
   });
   // The one surface still listing these sessions. Flip `sheet.open` in a
@@ -262,6 +267,8 @@ function loadImprove(initial) {
   const sheet = { open: false };
   runModules(sandbox, [['improve-controller.js', IMPROVE_CONTROLLER]], {
     imports: {
+      // The module reads its words through the language runtime: the real one, in English.
+      '../../lib/i18n/runtime': englishPlatformI18n(),
       '../apps/app-card.js': { iconViewFor: () => ({}) },
       // THE CONTROLLER PRESENTS NOTHING NOW (#2718 review). It adopted the
       // Improve panel's root through lib/kit-surface and swept the other

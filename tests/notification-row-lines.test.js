@@ -41,6 +41,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx } = require('./lib/render-tsx');
@@ -59,6 +60,7 @@ let rowView = null;
 async function load() {
   if (rowView) return rowView;
   if (!globalThis.window) globalThis.window = globalThis;
+  globalThis.PlatformI18n = englishPlatformI18n();
   loadTsx('frontend/src/features/notifications/notifications.js');
   rowView = globalThis.window.Notifications._rowView;
   assert.equal(typeof rowView, 'function', 'the controller publishes _rowView');

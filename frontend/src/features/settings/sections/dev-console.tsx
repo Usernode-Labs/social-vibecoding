@@ -1,5 +1,6 @@
 import { SectionHeading } from '@/components/ui/field';
 import { SwitchRow } from '@/components/ui/switch';
+import { useMessages } from '../../../lib/i18n/react';
 
 /**
  * Developer console visibility. The bug-icon in the header opens a slide-up
@@ -9,17 +10,18 @@ import { SwitchRow } from '@/components/ui/switch';
  * it to always-visible whenever an iframe is on screen.
  */
 export function DevConsoleSection() {
+  const t = useMessages('settings');
   return (
     <div data-settings-section="dev-console" className="hidden">
       <div id="settings-devconsole-section">
-        <SectionHeading title="Developer console">
-          The bug icon in the header opens a slide-up log of console output and errors forwarded from the running app.
+        <SectionHeading title={t('settings:devConsole.title')}>
+          {t('settings:devConsole.intro')}
         </SectionHeading>
         <SwitchRow id="dev-console-always-show">
-          Always show the icon
+          {t('settings:devConsole.alwaysShow.label')}
         </SwitchRow>
         <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
-          When unchecked (the default), the icon only appears once the current app has logged at least one error.
+          {t('settings:devConsole.alwaysShow.description')}
         </p>
       </div>
     </div>

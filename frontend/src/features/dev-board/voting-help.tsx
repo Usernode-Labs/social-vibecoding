@@ -23,8 +23,12 @@
  * runs inside it. Prose with emphasis is exactly what JSX is better at than a
  * concatenated string, and it is the one part of this popover a reader is
  * likely to edit — so it lives where the emphasis is legible rather than
- * escaped. Every wording is carried over verbatim.
+ * escaped. Every wording is carried over verbatim. The sentences are catalog
+ * entries now (`project:votingHelp.rule.*`), each whole, with its emphasis as
+ * numbered tags.
  */
+
+import { RichMessage, useMessages } from '../../lib/i18n/react';
 
 export interface VotingHelpProps {
   /**
@@ -37,61 +41,26 @@ export interface VotingHelpProps {
 }
 
 export function VotingHelp({ live }: VotingHelpProps) {
+  const t = useMessages('project');
   return (
     <>
-      <div className="attr-pop-head">How voting &amp; merges work</div>
+      <div className="attr-pop-head">{t('project:votingHelp.title')}</div>
       {live ? (
         <div className="vh-live">
-          <div className="vh-live-title">This proposal, right now</div>
+          <div className="vh-live-title">{t('project:votingHelp.liveTitle')}</div>
           <div className="vh-live-body">{live}</div>
         </div>
       ) : null}
       <div className="vh-rules">
         <ul className="voting-help-rules">
-          <li>
-            Only people who’ve actually used the app recently count as voters. The
-            number of Yes votes needed scales with how many active testers there are.
-          </li>
-          <li>
-            {'A proposal with clear support and no objections goes live on its own after a '
-              + 'short visibility window (a few days), so everyone has a chance to look. '}
-            <strong>Quiet is taken as a nod</strong>
-            , so speak up if something bothers you.
-          </li>
-          <li>
-            The more support a proposal has, the shorter the wait. A clear majority
-            merges almost immediately; thin, unopposed support waits longer.
-          </li>
-          <li>
-            <strong>No</strong>
-            {' votes make a proposal harder to pass: they raise the number of Yes votes '
-              + 'needed and lengthen the wait.'}
-          </li>
-          <li>
-            {'If enough people vote No, the proposal '}
-            <strong>needs a conversation</strong>
-            {'. The timer turns off and it needs a straight majority of Yes votes to go '
-              + 'live, so talk it through.'}
-          </li>
-          <li>
-            A proposal with more No than Yes and little support is set aside after a
-            countdown (“Set aside in …”). Nothing is lost: it can come back as a new
-            proposal.
-          </li>
-          <li>
-            {'Even after winning the vote, a proposal only merges once its '}
-            <strong>automated checks pass</strong>
-            {' and it’s '}
-            <strong>up to date with the main app</strong>
-            . Locked apps also need an admin’s Yes.
-          </li>
-          <li>
-            {'Apps can customize these rules: restricting approvals to '}
-            <strong>invited approvers</strong>
-            {' (everyone else’s votes stay visible but advisory) and/or requiring a fixed '}
-            <strong>“at least N approvals”</strong>
-            {' instead of the timed majority system.'}
-          </li>
+          <li>{t('project:votingHelp.rule.voters')}</li>
+          <li><RichMessage id="project:votingHelp.rule.quiet" components={[<strong />]} /></li>
+          <li>{t('project:votingHelp.rule.support')}</li>
+          <li><RichMessage id="project:votingHelp.rule.no" components={[<strong />]} /></li>
+          <li><RichMessage id="project:votingHelp.rule.conversation" components={[<strong />]} /></li>
+          <li>{t('project:votingHelp.rule.setAside')}</li>
+          <li><RichMessage id="project:votingHelp.rule.checks" components={[<strong />, <strong />]} /></li>
+          <li><RichMessage id="project:votingHelp.rule.custom" components={[<strong />, <strong />]} /></li>
         </ul>
       </div>
     </>

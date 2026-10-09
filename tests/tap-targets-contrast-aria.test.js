@@ -14,6 +14,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -173,8 +174,11 @@ test('Q19: each small control named by the audit wears a hit-slop', () => {
   // open and which <pre> it opens (tests/agent-files-list-aria.test.js renders it).
   assert.match(files, /aria-expanded=\{open\}/, 'agent files View reports open');
   assert.match(files, /aria-controls=\{contentId\}/, 'agent files View points at its content');
-  assert.match(files, /aria-label=\{`\$\{open \? 'Hide' : 'View'\} \$\{file\.name\}`\}/, 'agent files View names its file');
-  assert.match(files, /aria-label=\{`Delete \$\{file\.name\}`\}/, 'agent files Delete names its file');
+  assert.match(files, /aria-label=\{open\s*\? t\('settings:agentFiles\.file\.hideName', \{ file: file\.name \}\)\s*: t\('settings:agentFiles\.file\.viewName', \{ file: file\.name \}\)\}/, 'agent files View names its file');
+  assert.equal(message('settings:agentFiles.file.viewName', { file: 'notes.md' }), 'View notes.md');
+  assert.equal(message('settings:agentFiles.file.hideName', { file: 'notes.md' }), 'Hide notes.md');
+  assert.match(files, /aria-label=\{t\('settings:agentFiles\.file\.deleteName', \{ file: file\.name \}\)\}/, 'agent files Delete names its file');
+  assert.equal(message('settings:agentFiles.file.deleteName', { file: 'notes.md' }), 'Delete notes.md');
 });
 
 test('Q19: where a slop cannot hang off the control, the control or its row grows on touch', () => {
@@ -207,22 +211,30 @@ test('Q19: chip and Save slops never cover a neighbour\'s own box', () => {
 
 test('Q20: form controls the audit found unnamed have names', () => {
   const waitlist = read('frontend/src/features/auth/waitlist.tsx');
-  assert.match(waitlist, /<label className=\{SURVEY_LABEL\} htmlFor="waitlist-country">\s*Country/,
+  assert.match(waitlist, /<label className=\{SURVEY_LABEL\} htmlFor="waitlist-country">\s*\{t\('auth:waitlist\.country\.label'\)\}/,
     'the Country label points at its select');
+  assert.equal(message('auth:waitlist.country.label'), 'Country');
   assert.match(waitlist, /id="waitlist-country"/);
   // Four text boxes that took focus announcing only "edit text".
   assert.match(read('frontend/src/features/messages/message-row.tsx'),
-    /<textarea ref=\{editRef\} aria-label="Edit message"/, 'the message edit box');
+    /<textarea ref=\{editRef\} aria-label=\{t\('messages:row\.editLabel'\)\}/, 'the message edit box');
+  assert.equal(message('messages:row.editLabel'), 'Edit message');
   assert.match(read('frontend/src/features/dev-board/card/dev-card.tsx'),
-    /id=\{`dev-\$\{kind\}-title-input`\}\n\s*aria-label=\{session \? 'Proposal title' : 'Request title'\}/,
+    /id=\{`dev-\$\{kind\}-title-input`\}\n\s*aria-label=\{session \? msg\('project:card\.title\.proposalInput'\) : msg\('project:card\.title\.requestInput'\)\}/,
     'the card title editor, named by kind');
+  assert.deepEqual([message('project:card.title.proposalInput'), message('project:card.title.requestInput')], ['Proposal title', 'Request title']);
   const topicHead = read('frontend/src/features/dev-board/topic/topic-head.tsx');
-  assert.match(topicHead, /<h4 id="dev-issue-body-heading" className="dev-topic-h">About this request<\/h4>/);
+  assert.match(topicHead, /<h4 id="dev-issue-body-heading" className="dev-topic-h">\{t\('project:topic\.request\.body\.title'\)\}<\/h4>/);
+  assert.equal(message('project:topic.request.body.title'), 'About this request');
   assert.match(topicHead, /id="dev-issue-body-input"\n\s*aria-labelledby="dev-issue-body-heading"/,
     'the issue body editor is named after its heading');
   const wallet = read('frontend/src/features/header/wallet-sheet-body.tsx');
-  assert.match(wallet, /placeholder="Recipient address \(ut1…\)" aria-label="Recipient address"/);
-  assert.match(wallet, /placeholder="Amount" aria-label="Amount"/);
+  assert.match(wallet, /placeholder=\{t\('wallet:send\.recipientPlaceholder'\)\} aria-label=\{t\('wallet:send\.recipientLabel'\)\}/);
+  assert.match(wallet, /placeholder=\{t\('wallet:send\.amountPlaceholder'\)\} aria-label=\{t\('wallet:send\.amountLabel'\)\}/);
+  assert.equal(message('wallet:send.recipientPlaceholder'), 'Recipient address (ut1…)');
+  assert.equal(message('wallet:send.recipientLabel'), 'Recipient address');
+  assert.equal(message('wallet:send.amountPlaceholder'), 'Amount');
+  assert.equal(message('wallet:send.amountLabel'), 'Amount');
 });
 
 test('Q20: the setup guide\'s scrolling code blocks are focusable, named regions', () => {

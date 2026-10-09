@@ -98,6 +98,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { XIcon } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useClassToggle, useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility } from '../../lib/visibility-store';
@@ -134,6 +135,7 @@ function leaveAnimates(): boolean {
 }
 
 export function ParkedStrip() {
+  const t = useMessages();
   const ref = useRef<HTMLDivElement | null>(null);
   const { app } = useStoreState(parkedStore);
   // The bar's own answer, read the way the bar reads it. `true` is the
@@ -255,13 +257,13 @@ export function ParkedStrip() {
               <AppIconContent app={record} />
             </span>
             <span className="platform-parked-name">{shown.name}</span>
-            <span className="platform-parked-pill">Resume</span>
+            <span className="platform-parked-pill">{t('core:parked.resume')}</span>
           </a>
           <button
             id="platform-parked-forget"
             type="button"
             className="platform-parked-x"
-            aria-label={`Forget ${shown.name}`}
+            aria-label={t('core:parked.forget', { app: shown.name })}
             onClick={() => forgetParked(app)}
           >
             <XIcon className="w-4 h-4" />

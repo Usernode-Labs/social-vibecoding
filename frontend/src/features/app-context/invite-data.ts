@@ -26,6 +26,8 @@
  * while one is on its way gets the same promise.
  */
 
+import { t } from '../../lib/i18n/runtime';
+
 export type InviteLink = {
   id: number;
   token: string;
@@ -60,7 +62,7 @@ export type InviteOutcome = {
 export async function inviteApi(url: string, init?: RequestInit): Promise<any> {
   const res = await fetch(url, { credentials: 'same-origin', ...init });
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body?.error || 'Something went wrong. Try again.');
+  if (!res.ok) throw new Error(body?.error || t('agent:appContext.invite.error.generic'));
   return body;
 }
 
@@ -100,7 +102,7 @@ export function prepareInvite(slug: string): Promise<InviteOutcome> {
   settled = null;
   const promise: Promise<InviteOutcome> = readInviteState(slug, true).then(
     (state) => ({ slug, state, error: null }),
-    (err) => ({ slug, state: null, error: (err as Error)?.message || 'Something went wrong. Try again.' }),
+    (err) => ({ slug, state: null, error: (err as Error)?.message || t('agent:appContext.invite.error.generic') }),
   ).then((outcome) => {
     if (opening && opening.promise === promise) {
       opening = null;

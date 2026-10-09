@@ -25,6 +25,7 @@ import type {
   ThreadRootRef,
   UserSearchResult,
 } from './types';
+import { t } from '../../lib/i18n/runtime';
 import { countOf } from './approval-words';
 import type { HomeroomLink } from './homeroom-links';
 import { botRowPreview, plainText } from './plain-text';
@@ -356,7 +357,7 @@ export function normalizeThreadRoot(input: unknown): ThreadRootRef | null {
   if (!id) return null;
   return {
     id,
-    senderUsername: text(pick(row, 'senderUsername', 'sender_username', 'username')) || 'Deleted user',
+    senderUsername: text(pick(row, 'senderUsername', 'sender_username', 'username')) || t('messages:api.deletedUser'),
     content: text(pick(row, 'content')),
     deleted: pick(row, 'deleted') === true,
   };
@@ -417,7 +418,7 @@ export function normalizeConversation(input: unknown): ConversationDetail {
   const latestMessage = latestRaw ? normalizeMessage(latestRaw, id) : null;
   const title = text(pick(row, 'title', 'name'))
     || (kind === 'direct' ? peer?.username || members.find((member) => member.status === 'member')?.username : '')
-    || 'Conversation';
+    || t('messages:api.conversationTitle');
   const canSendValue = pick(row, 'canSend', 'can_send');
   const homeroomBot = kind === 'direct' && pick(row, 'homeroomBot') === true;
   const summary = plainText(text(pick(row, 'latestSummary', 'latest_summary', 'preview')) || latestMessage?.content || '');
@@ -498,7 +499,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   try { data = await response.json(); } catch { data = null; }
   if (!response.ok) {
     const body = record(data);
-    throw new MessagesApiError(response.status, text(pick(body, 'error', 'message'), `Request failed (${response.status})`));
+    throw new MessagesApiError(response.status, text(pick(body, 'error', 'message'), t('messages:api.requestFailed', { status: response.status })));
   }
   return data as T;
 }
@@ -671,7 +672,7 @@ export async function uploadAttachment(conversationId: number, file: File): Prom
   });
   let data: unknown = null;
   try { data = await response.json(); } catch { data = null; }
-  if (!response.ok) throw new MessagesApiError(response.status, text(pick(record(data), 'error', 'message'), `Upload failed (${response.status})`));
+  if (!response.ok) throw new MessagesApiError(response.status, text(pick(record(data), 'error', 'message'), t('messages:api.uploadFailed', { status: response.status })));
   return normalizeAttachment(pick(record(data), 'attachment') ?? data, conversationId);
 }
 
@@ -706,7 +707,7 @@ export async function listAppItems(slug: string, type: 'issue' | 'proposal' | 'g
     const row = record(item);
     return {
       id: strictId(pick(row, 'number', 'id')) || 0,
-      title: text(pick(row, 'title', 'pr_title', 'session_title'), 'Untitled'),
+      title: text(pick(row, 'title', 'pr_title', 'session_title'), t('messages:api.untitledItem')),
       status: text(pick(row, 'status')) || undefined,
     };
   }).filter((item) => item.id);
@@ -793,13 +794,13 @@ export async function approveChange(sessionId: number, epoch: number | null): Pr
       body: JSON.stringify(epoch === null ? { vote: 'yes' } : { vote: 'yes', expectedEpoch: epoch }),
     });
   } catch {
-    return { ok: false, stale: false, epoch: null, error: 'Couldn’t reach Homeroom. Try again.' };
+    return { ok: false, stale: false, epoch: null, error: t('messages:api.approve.unreachable') };
   }
   const data = record(await response.json().catch(() => ({})));
   if (response.ok) return { ok: true, stale: false, epoch, error: null, goesLive: normalizeGoesLive(pick(data, 'goesLive')) };
   const stale = response.status === 409 && pick(data, 'headChanged') === true;
   const next = Number.isInteger(pick(data, 'approvalEpoch')) ? Number(pick(data, 'approvalEpoch')) : null;
-  return { ok: false, stale, epoch: next, error: stale ? null : (text(pick(data, 'message')) || text(pick(data, 'error')) || 'Couldn’t approve it just now.') };
+  return { ok: false, stale, epoch: next, error: stale ? null : (text(pick(data, 'message')) || text(pick(data, 'error')) || t('messages:api.approve.failed')) };
 }
 
 export async function decideBotAction(actionId: number, choice: string, answers?: string[]): Promise<{ label: string | null }> {

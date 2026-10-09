@@ -126,9 +126,9 @@ export type InboxFilter = 'all' | 'people' | 'channels' | 'agents';
 
 /** The filter row, in order. Exported so the view and its test share one list. */
 export const INBOX_FILTERS: ReadonlyArray<readonly [InboxFilter, string]> = [
-  ['all', 'All'],
-  ['people', 'People'],
-  ['agents', 'Agents'],
+  ['all', 'messages:inbox.filter.all'],
+  ['people', 'messages:inbox.filter.people'],
+  ['agents', 'messages:inbox.filter.agents'],
 ];
 
 /**

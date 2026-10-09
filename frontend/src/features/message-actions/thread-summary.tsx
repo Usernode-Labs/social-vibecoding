@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 
 import { ChevronRightIcon, ThreadIcon } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
 import { agoStamp } from '../../lib/timestamp';
 
 /**
@@ -26,13 +27,16 @@ export function ThreadSummaryChip({ replyCount, lastReplyAt, avatars, lastReply 
   onOpen: () => void;
 }) {
   const last = lastReplyAt ? agoStamp(lastReplyAt) : null;
-  const count = `${replyCount} ${replyCount === 1 ? 'reply' : 'replies'}`;
+  const t = useMessages('messages');
+  const count = t('messages:thread.summary.count', { count: replyCount });
   if (lastReply) {
     return (
       <button
         type="button"
         className={`msgx-thread-chip msgx-thread-card ${active ? 'msgx-thread-chip-active' : ''}`}
-        aria-label={`${count}, last from @${lastReply.name}${last?.text ? ` ${last.text}` : ''}. Open thread`}
+        aria-label={last?.text
+          ? t('messages:thread.summary.openLastFromAt', { count: replyCount, username: lastReply.name, when: last.text })
+          : t('messages:thread.summary.openLastFrom', { count: replyCount, username: lastReply.name })}
         aria-pressed={active}
         onClick={(event) => { event.stopPropagation(); onOpen(); }}
       >
@@ -44,7 +48,7 @@ export function ThreadSummaryChip({ replyCount, lastReplyAt, avatars, lastReply 
         <span className="msgx-thread-line">
           {lastReply.face}
           <strong className="msgx-thread-line-name">@{lastReply.name}</strong>
-          <span className="msgx-thread-line-text">{lastReply.text || 'Attachment'}</span>
+          <span className="msgx-thread-line-text">{lastReply.text || t('messages:thread.summary.attachment')}</span>
           {last?.text ? <time className="msgx-thread-line-time" dateTime={lastReplyAt || undefined} title={last.title}>{last.text}</time> : null}
         </span>
       </button>
@@ -54,13 +58,15 @@ export function ThreadSummaryChip({ replyCount, lastReplyAt, avatars, lastReply 
     <button
       type="button"
       className={`msgx-thread-chip ${active ? 'msgx-thread-chip-active' : ''}`}
-      aria-label={`${count}${last?.text ? `, last reply ${last.text}` : ''}. Open thread`}
+      aria-label={last?.text
+        ? t('messages:thread.summary.openLastAt', { count: replyCount, when: last.text })
+        : t('messages:thread.summary.open', { count: replyCount })}
       aria-pressed={active}
       onClick={(event) => { event.stopPropagation(); onOpen(); }}
     >
       {avatars ? <span className="msgx-thread-faces" aria-hidden="true">{avatars}</span> : null}
       <span className="msgx-thread-count">{count}</span>
-      {last?.text ? <span className="msgx-thread-last" title={last.title}>Last reply {last.text}</span> : null}
+      {last?.text ? <span className="msgx-thread-last" title={last.title}>{t('messages:thread.summary.lastReply', { when: last.text })}</span> : null}
       <ChevronRightIcon className="msgx-thread-chevron" aria-hidden="true" />
     </button>
   );

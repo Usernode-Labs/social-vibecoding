@@ -42,6 +42,9 @@ import { useEffect, useState, type ReactNode } from 'react';
 
 import { ChevronRightIcon, XIcon } from '@/components/ui/icons';
 
+import { useMessages } from '../../../lib/i18n/react';
+import { t as translate } from '../../../lib/i18n/runtime';
+
 export type SinceSummary =
   | { state: 'none' }
   | { state: 'list'; windowStart: number; headAt: number; count: number; items: Array<{ pr: number | null; title: string }> }
@@ -60,13 +63,11 @@ const midnight = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(
 export function sinceLabel(windowStart: number, now: number = Date.now()): string {
   const start = new Date(windowStart);
   const days = Math.round((midnight(new Date(now)) - midnight(start)) / DAY_MS);
-  if (days <= 0) return 'Since earlier today';
-  if (days === 1) return 'Since yesterday';
-  if (days < 7) return `Since ${start.toLocaleDateString(undefined, { weekday: 'long' })}`;
-  return `Since ${start.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`;
+  if (days <= 0) return translate('project:sinceSummary.since.today');
+  if (days === 1) return translate('project:sinceSummary.since.yesterday');
+  if (days < 7) return translate('project:sinceSummary.since.weekday', { weekday: start.toLocaleDateString(undefined, { weekday: 'long' }) });
+  return translate('project:sinceSummary.since.date', { date: start.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) });
 }
-
-const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 function readDismissed(slug: string): number {
   try {
@@ -98,6 +99,7 @@ export function SinceSummaryCard({ slug, since, onMore }: {
   /** The way to the whole of it, week by week (the Workshop page). */
   onMore?: () => void;
 }): ReactNode {
+  const t = useMessages('project');
   const [data, setData] = useState<SinceSummary | null>(null);
   const [dismissed, setDismissed] = useState(0);
 
@@ -135,15 +137,15 @@ export function SinceSummaryCard({ slug, since, onMore }: {
         <span className="dev-ws-hub-head-end">
           {onMore ? (
             <button type="button" className="dev-ws-hub-open dev-ws-since-card-more un-touch-target" data-ws-since-summary-more="" onClick={onMore}>
-              Week by week
+              {t('project:sinceSummary.weekByWeek')}
               <ChevronRightIcon className="w-3.5 h-3.5" aria-hidden="true" />
             </button>
           ) : null}
           <button
             type="button"
             className="dev-ws-since-card-x un-touch-target"
-            aria-label="Dismiss this summary"
-            title="Dismiss this summary"
+            aria-label={t('project:sinceSummary.dismiss')}
+            title={t('project:sinceSummary.dismiss')}
             data-ws-since-summary-dismiss=""
             onClick={dismiss}
           >
@@ -164,8 +166,8 @@ export function SinceSummaryCard({ slug, since, onMore }: {
           corner is the door now, and a phone's head has no room for the
           count and the tag beside the window's name. */}
       <p className="dev-ws-since-card-foot">
-        <span className="dev-ws-since-card-n">{plural(data.count, 'change', 'changes')}</span>
-        {data.state === 'ai' ? <span className="dev-ws-since-card-tag">AI summary</span> : null}
+        <span className="dev-ws-since-card-n">{t('project:sinceSummary.changes', { count: data.count })}</span>
+        {data.state === 'ai' ? <span className="dev-ws-since-card-tag">{t('project:sinceSummary.aiTag')}</span> : null}
       </p>
     </section>
   );

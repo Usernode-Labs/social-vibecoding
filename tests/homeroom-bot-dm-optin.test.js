@@ -21,6 +21,7 @@ const assert = require('node:assert/strict');
 const express = require('express');
 const fs = require('node:fs');
 const path = require('node:path');
+const { message } = require('./lib/platform-i18n');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
@@ -222,7 +223,8 @@ test('Settings -> Experimental has the switch, wired to the route, with a revert
   const section = read('frontend/src/features/settings/sections/experimental.tsx');
   assert.match(section, /<SwitchRow id="homeroom-bot-dm-enabled">/, 'the switch');
   assert.match(section, /<StatusLine id="homeroom-bot-dm-status"/, 'and somewhere to say a join was refused');
-  assert.match(section, /The platform pays for its work for you, up to a weekly limit\./,
+  assert.match(section, /t\('settings:experimental\.homeroomBot\.description'\)/);
+  assert.match(message('settings:experimental.homeroomBot.description'), /The platform pays for its work for you, up to a weekly limit\./,
     'it says who pays, and that there is a limit');
 
   const settings = read('frontend/src/features/settings/settings.js');
@@ -233,7 +235,8 @@ test('Settings -> Experimental has the switch, wired to the route, with a revert
   assert.match(save[0], /'\/api\/me\/homeroom-bot-dm'/, 'POSTs to the route');
   assert.match(save[0], /toggle\.checked = !!this\.state\.homeroomBotDm/,
     'a refused join puts the switch back rather than leaving it lying');
-  assert.match(save[0], /return fail\(j\.error \|\| 'Failed to save\.'\)/, 'and shows the server\'s reason');
+  assert.match(save[0], /return fail\(j\.error \|\| tr\('settings:experimental\.homeroomBotDm\.saveFailed'\)\)/, 'and shows the server\'s reason');
+  assert.equal(message('settings:experimental.homeroomBotDm.saveFailed'), 'Failed to save.');
   // The create dialog asks for a project description from App.user, so the
   // live object has to move with the switch in this same page load.
   assert.match(save[0], /App\.user\.homeroomBotDm = !!enabled/);
@@ -265,7 +268,9 @@ test('somebody not on the list is told where to turn it on, plainly', () => {
   assert.match(dm.NOT_ENABLED_TEXT, /turn on Homeroom bot in Settings, under Experimental/);
   assert.doesNotMatch(dm.NOT_ENABLED_TEXT, /—/);
   assert.match(read('frontend/src/features/settings/sections/experimental.tsx'),
-    /Homeroom bot \(build with it in Messages\)/, 'and the switch goes by the name the bot gives it');
+    /t\('settings:experimental\.homeroomBot\.label'\)/);
+  assert.equal(message('settings:experimental.homeroomBot.label'),
+    'Homeroom bot (build with it in Messages)', 'and the switch goes by the name the bot gives it');
 });
 
 test('with the bot on for everyone, nobody is sent to the switch it hides', () => {

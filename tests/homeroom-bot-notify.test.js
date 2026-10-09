@@ -12,6 +12,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { Pool } = require('pg');
@@ -27,6 +28,7 @@ let bell = null;
 function loadBell() {
   if (bell) return bell;
   if (!globalThis.window) globalThis.window = globalThis;
+  globalThis.PlatformI18n = englishPlatformI18n();
   loadTsx('frontend/src/features/notifications/notifications.js');
   bell = globalThis.window.Notifications;
   return bell;
@@ -121,12 +123,24 @@ test('B4: the bell words each moment as the push does, under the bot\'s name, an
 test('B4: the push and the bell keep one copy of the words', () => {
   const server = fs.readFileSync(require.resolve('../src/services/mobile-push-policy.js'), 'utf8');
   const client = fs.readFileSync(require.resolve('../frontend/src/features/notifications/notifications.js'), 'utf8');
-  const words = (src) => {
-    const body = src.slice(src.indexOf('const words = {'), src.indexOf('}[m[1]]'));
-    return body.split('\n').map((l) => l.trim()).filter((l) => /^[a-z_]+: app \?/.test(l));
-  };
-  assert.equal(words(server).length, 17);
-  assert.deepEqual(words(client), words(server));
+  const serverWords = server.slice(server.indexOf('const words = {'), server.indexOf('}[m[1]]'))
+    .split('\n').map((l) => l.trim()).filter((l) => /^[a-z_]+: app \?/.test(l));
+  assert.equal(serverWords.length, 17);
+  // The client's words are catalog entries now (notifications:row.bot.moment.*):
+  // its table holds, per moment, the id with the project's name and the id
+  // without. Each must say exactly what the server's line says.
+  const ids = new Map([...client.matchAll(
+    /^\s*([a-z_]+): \['(notifications:row\.bot\.moment\.[A-Za-z.]+)', '(notifications:row\.bot\.moment\.[A-Za-z.]+)'\],$/gm,
+  )].map((m) => [m[1], [m[2], m[3]]]));
+  assert.equal(ids.size, 17);
+  for (const line of serverWords) {
+    const m = /^([a-z_]+): app \? `(.*)` : '(.*)',$/.exec(line);
+    assert.ok(m, line);
+    assert.ok(ids.has(m[1]), `the bell has ${m[1]}`);
+    const [named, unnamed] = ids.get(m[1]);
+    assert.equal(message(named, { project: 'Plant Pal' }), m[2].replace('${app}', 'Plant Pal'), m[1]);
+    assert.equal(message(unnamed), m[3].replace(/\\'/g, "'"), m[1]);
+  }
 });
 
 test('B4: which of the bot\'s messages ring, by kind', () => {

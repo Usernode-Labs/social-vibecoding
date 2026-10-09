@@ -31,6 +31,8 @@ import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button';
 import { SpinnerArcIcon } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { normalizeRepositoryUrl } from '../dialogs/repository-url';
 
 /** What a repo's dapp.json already says, as the check reads it. */
@@ -51,12 +53,12 @@ export type CheckResult =
  * could not read it. Never throws.
  */
 export async function checkRepo(url: string, fetcher: typeof fetch = fetch): Promise<CheckResult> {
-  if (!url) return { ok: false, error: 'Paste a GitHub repo URL first.' };
+  if (!url) return { ok: false, error: translate('onboarding:firstSession.import.error.noUrl') };
   let res: Response;
   try {
     res = await fetcher(`/api/github/verify-access?url=${encodeURIComponent(url)}`, { credentials: 'same-origin' });
   } catch {
-    return { ok: false, error: 'Network error. Try again.' };
+    return { ok: false, error: translate('onboarding:firstSession.import.error.network') };
   }
   let data: Record<string, unknown> = {};
   try {
@@ -64,7 +66,7 @@ export async function checkRepo(url: string, fetcher: typeof fetch = fetch): Pro
   } catch {
     /* a non-JSON body is reported through the HTTP status below */
   }
-  if (!res.ok) return { ok: false, error: (typeof data.error === 'string' && data.error) || `Check failed (HTTP ${res.status}).` };
+  if (!res.ok) return { ok: false, error: (typeof data.error === 'string' && data.error) || translate('onboarding:firstSession.import.error.checkFailed', { status: res.status }) };
   const manifest = data.manifest as RepoManifest | null | undefined;
   return {
     ok: true,
@@ -74,15 +76,16 @@ export async function checkRepo(url: string, fetcher: typeof fetch = fetch): Pro
   };
 }
 
-/** Every repository is public on GitHub, whoever may open the project. */
-const CODE_PUBLIC = 'Its code stays public on GitHub.';
-
-/** Who a repo's dapp.json lets in, in the words the old dialog's notice used. */
-export function visibilityWords(v: NonNullable<RepoManifest['visibility']>): string {
-  if (v.build === 'public' && v.view === 'public') return 'anyone can find it, join and build';
-  if (v.build === 'private' && v.view === 'public') return 'anyone can see it, and only people invited can build';
-  if (v.build === 'public') return 'anyone can build it';
-  return `it is private to the people invited. ${CODE_PUBLIC}`;
+/**
+ * The note for who a repo's dapp.json lets in, as a message id: one whole
+ * sentence for each way it can be other than a private community.
+ */
+function visibilityNote(v: NonNullable<RepoManifest['visibility']>): string {
+  if (v.build === 'public' && v.view === 'public') return 'onboarding:firstSession.import.note.public';
+  if (v.build === 'private' && v.view === 'public') return 'onboarding:firstSession.import.note.viewPublic';
+  if (v.build === 'public') return 'onboarding:firstSession.import.note.buildPublic';
+  // Viewable by anyone with no word on who builds: said as it always was.
+  return 'onboarding:firstSession.import.note.private';
 }
 
 /**
@@ -91,10 +94,10 @@ export function visibilityWords(v: NonNullable<RepoManifest['visibility']>): str
  * when it changes nothing. Pure, for tests/create-front-door.test.js.
  */
 export function repoNote(manifest: RepoManifest | null, unread: boolean): string | null {
-  if (unread) return 'Couldn’t read this repo’s dapp.json. Anything it sets still applies once it’s imported.';
+  if (unread) return translate('onboarding:firstSession.import.note.unread');
   const v = manifest?.visibility;
   if (v && (v.build === 'public' || v.view === 'public')) {
-    return `Its dapp.json says ${visibilityWords(v)}, so it starts that way rather than as a private community.`;
+    return translate(visibilityNote(v));
   }
   return null;
 }
@@ -135,6 +138,7 @@ export function ImportForm({ className, header, submit, onDescribe, allowance, b
   /** The make screen's allowance row, when it bears on this. */
   allowance?: ReactNode;
 }) {
+  const t = useMessages('onboarding');
   const urlRef = useRef<HTMLInputElement>(null);
   const nameRef = useRef<HTMLInputElement>(null);
   const [url, setUrl] = useState('');
@@ -156,7 +160,7 @@ export function ImportForm({ className, header, submit, onDescribe, allowance, b
     setError(null);
     setState('checking');
     setManifest(null);
-    setStatus('Checking bot access…');
+    setStatus(translate('onboarding:firstSession.import.checking'));
     const result = await checkRepo(normalized);
     if (!result.ok) {
       setState('error');
@@ -166,7 +170,7 @@ export function ImportForm({ className, header, submit, onDescribe, allowance, b
     setManifest(result.manifest);
     setUnread(result.unread);
     setState('ok');
-    setStatus(`✓ usernode-bot has Write access to ${result.fullName}.`);
+    setStatus(translate('onboarding:firstSession.import.hasAccess', { repo: result.fullName }));
     // The name opens on the repo's own, unless one was already typed.
     const repoName = typeof result.manifest.name === 'string' ? result.manifest.name : '';
     if (repoName) setName((typed) => (typed.trim() ? typed : repoName));
@@ -198,7 +202,7 @@ export function ImportForm({ className, header, submit, onDescribe, allowance, b
       {header}
       <div className="mt-6 overflow-hidden rounded-2xl bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
         <div className={FIELD}>
-          <label htmlFor="make-import-url" className={LABEL}>GitHub repo URL</label>
+          <label htmlFor="make-import-url" className={LABEL}>{t('onboarding:firstSession.import.urlLabel')}</label>
           <div className="flex items-center gap-2">
             <input
               ref={urlRef}
@@ -227,7 +231,7 @@ export function ImportForm({ className, header, submit, onDescribe, allowance, b
                 if (state === 'ok') nameRef.current?.focus({ preventScroll: true });
                 else void check();
               }}
-              placeholder="github.com/owner/repo"
+              placeholder={t('onboarding:firstSession.import.urlPlaceholder')}
               className={`${INPUT} min-w-0 flex-1 font-mono text-[15px]`}
             />
             <button
@@ -237,7 +241,7 @@ export function ImportForm({ className, header, submit, onDescribe, allowance, b
               disabled={state === 'checking'}
               className="shrink-0 rounded-full bg-zinc-100 px-3.5 py-1.5 text-[14px] font-semibold text-zinc-900 disabled:opacity-60 dark:bg-zinc-800 dark:text-zinc-100"
             >
-              {state === 'ok' ? 'Re-check' : 'Check'}
+              {state === 'ok' ? t('onboarding:firstSession.import.recheck') : t('onboarding:firstSession.import.check')}
             </button>
           </div>
           <p
@@ -247,11 +251,11 @@ export function ImportForm({ className, header, submit, onDescribe, allowance, b
             className={state === 'error' || missing === 'repo' ? NEEDED : state === 'ok' ? 'pb-1 text-xs text-emerald-700 dark:text-emerald-400' : HINT}
           >
             {state === 'checking' ? <SpinnerArcIcon className="mr-1.5 inline-block h-3.5 w-3.5 animate-spin align-[-2px]" aria-hidden="true" /> : null}
-            {missing === 'repo' && state !== 'error' ? 'Check the repo first.' : (status || 'Invite usernode-bot to the repo first (Write access on an organization repo).')}
+            {missing === 'repo' && state !== 'error' ? t('onboarding:firstSession.import.needed.repo') : (status || t('onboarding:firstSession.import.inviteBot'))}
           </p>
         </div>
         <div className={FIELD}>
-          <label htmlFor="make-import-name" className={LABEL}>What should we call it?</label>
+          <label htmlFor="make-import-name" className={LABEL}>{t('onboarding:firstSession.import.nameLabel')}</label>
           <input
             ref={nameRef}
             id="make-import-name"
@@ -261,12 +265,12 @@ export function ImportForm({ className, header, submit, onDescribe, allowance, b
             value={name}
             aria-describedby="make-import-name-hint"
             onChange={(e) => { setName(e.target.value); setMissing(null); setError(null); }}
-            placeholder="For example, Sunday Run Club"
+            placeholder={t('onboarding:firstSession.import.namePlaceholder')}
             className={INPUT}
           />
           {missing === 'name'
-            ? <p id="make-import-name-hint" role="alert" className={NEEDED}>Give it a name to import it. You can change it later.</p>
-            : <p id="make-import-name-hint" className={HINT}>It's your group's name too. You can change it later.</p>}
+            ? <p id="make-import-name-hint" role="alert" className={NEEDED}>{t('onboarding:firstSession.import.needed.name')}</p>
+            : <p id="make-import-name-hint" className={HINT}>{t('onboarding:firstSession.import.nameHint')}</p>}
         </div>
       </div>
       {note ? <p data-make-import-note="" className="mt-2 px-1 text-[13px] leading-snug text-zinc-500 dark:text-zinc-400">{note}</p> : null}
@@ -282,11 +286,11 @@ export function ImportForm({ className, header, submit, onDescribe, allowance, b
         ink="solidLate"
         className="mt-6 flex items-center justify-center disabled:opacity-50"
       >
-        {busy ? 'Importing…' : 'Import it'}
+        {busy ? t('onboarding:firstSession.import.importing') : t('onboarding:firstSession.import.submit')}
       </Button>
       <p className="mt-3 text-center">
         <button type="button" data-make-describe="" onClick={onDescribe} className="text-[13px] font-medium text-violet-700 hover:underline dark:text-violet-400">
-          Describe a new project instead
+          {t('onboarding:firstSession.import.describeInstead')}
         </button>
       </p>
     </form>

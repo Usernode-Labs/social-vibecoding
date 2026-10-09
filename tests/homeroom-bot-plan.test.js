@@ -18,6 +18,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -350,7 +351,8 @@ test('B6: which bot messages draw a plan or two questions, and what state a plan
   assert.match(css, /\.messages-bot-answers button\[aria-pressed="true"\] \{ color: var\(--accent-ink\); background: var\(--accent\); \}/);
   assert.match(css, /\.messages-bot-chosen \{[^}]*color: var\(--accent-ink\);\s*background: var\(--accent\);/, '#4197: an answered chip wears the tapped answer\'s fill');
   const composer = read('frontend/src/features/messages/composer.tsx');
-  assert.match(composer, /Say what to change, and Homeroom bot sends a new plan\. Only you see this\./);
+  assert.match(composer, /\{t\('messages:composer\.planReplyNote'\)\}/);
+  assert.equal(message('messages:composer.planReplyNote'), 'Say what to change, and Homeroom bot sends a new plan. Only you see this.');
 });
 
 test('B6: the plan is answered in the chat; #4043: the App tab no longer draws it', () => {

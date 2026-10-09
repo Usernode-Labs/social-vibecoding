@@ -13,18 +13,55 @@
 import type { TranscriptMessage } from '../../group-chat/transcript-store';
 import { eventText } from '../../group-chat/proposal-event';
 
-/** One thing that happened, as its line: a glyph, who did it, and the rest. */
+/**
+ * One thing that happened, as its line: a glyph and the line's words. A line
+ * the page words itself is a whole message (`id`, read with `values` where
+ * it is drawn, with `<0>` around who did it and `<1>` around a vote's
+ * reason); a line somebody else worded, the merge event's or a platform
+ * notice's, arrives as `text`.
+ */
 export interface ChangeLine {
   kind: 'submitted' | 'vote' | 'preview' | 'merged' | 'spec' | 'notice';
   glyph: string;
   /** Bold at the line's start, or null when the line names nobody. */
   actor: string | null;
-  text: string;
-  /** A vote's own line, quoted after it. */
-  reason?: string;
+  /** The whole line's message id. */
+  id?: string;
+  /** What `id` is read with: who did it, a spec's version, a vote's reason. */
+  values?: Record<string, string | number>;
+  /** A line already worded: the merge event's sentence, or a notice. */
+  text?: string;
   /** `preview`: the line ends "· Try it". */
   tryIt?: boolean;
 }
+
+/**
+ * A vote's line, one whole message for each case: who voted (or nobody
+ * named), yes or no, on this version or an earlier one, with or without the
+ * voter's reason.
+ */
+const VOTE_LINE = {
+  named: {
+    yes: {
+      current: { bare: 'project:topic.change.line.votedYes', reason: 'project:topic.change.line.votedYesReason' },
+      earlier: { bare: 'project:topic.change.line.votedYesEarlier', reason: 'project:topic.change.line.votedYesEarlierReason' },
+    },
+    no: {
+      current: { bare: 'project:topic.change.line.votedNo', reason: 'project:topic.change.line.votedNoReason' },
+      earlier: { bare: 'project:topic.change.line.votedNoEarlier', reason: 'project:topic.change.line.votedNoEarlierReason' },
+    },
+  },
+  unnamed: {
+    yes: {
+      current: { bare: 'project:topic.change.line.unnamedVotedYes', reason: 'project:topic.change.line.unnamedVotedYesReason' },
+      earlier: { bare: 'project:topic.change.line.unnamedVotedYesEarlier', reason: 'project:topic.change.line.unnamedVotedYesEarlierReason' },
+    },
+    no: {
+      current: { bare: 'project:topic.change.line.unnamedVotedNo', reason: 'project:topic.change.line.unnamedVotedNoReason' },
+      earlier: { bare: 'project:topic.change.line.unnamedVotedNoEarlier', reason: 'project:topic.change.line.unnamedVotedNoEarlierReason' },
+    },
+  },
+} as const;
 
 /**
  * The line a row is drawn as, or null for a person's message (a Messages
@@ -42,25 +79,29 @@ export interface ChangeLine {
 export function changeLine(msg: TranscriptMessage): ChangeLine | null {
   if (msg.kind === 'message' || msg.kind === 'github') return null;
   if (msg.kind === 'spec_share' && msg.specShare) {
-    return { kind: 'spec', glyph: '📋', actor: msg.specShare.sharedBy, text: ` posted spec v${msg.specShare.version}` };
+    return {
+      kind: 'spec', glyph: '📋', actor: msg.specShare.sharedBy,
+      id: 'project:topic.change.line.postedSpec',
+      values: { author: msg.specShare.sharedBy, version: msg.specShare.version },
+    };
   }
   if (msg.stagingBuild === 'started') return null;
-  if (msg.stagingBuild === 'ready') return { kind: 'preview', glyph: '👀', actor: null, text: 'The preview is ready', tryIt: true };
+  if (msg.stagingBuild === 'ready') return { kind: 'preview', glyph: '👀', actor: null, id: 'project:topic.change.line.previewReady', tryIt: true };
   const ev = msg.event;
   if (ev && ev.type === 'vote') {
-    const said = `voted ${ev.vote === 'no' ? 'no' : 'yes'}${ev.earlier ? ' on an earlier version' : ''}`;
+    const ids = VOTE_LINE[ev.actor ? 'named' : 'unnamed'][ev.vote === 'no' ? 'no' : 'yes'][ev.earlier ? 'earlier' : 'current'];
     return {
       kind: 'vote',
       glyph: ev.vote === 'no' ? '✋' : '✅',
       actor: ev.actor || null,
-      text: ev.actor ? ` ${said}` : `${said.charAt(0).toUpperCase()}${said.slice(1)}`,
-      ...(ev.reason ? { reason: ev.reason } : {}),
+      id: ev.reason ? ids.reason : ids.bare,
+      values: { voter: ev.actor || '', ...(ev.reason ? { reason: ev.reason } : {}) },
     };
   }
   if (ev && ev.type === 'submitted') {
     return ev.actor
-      ? { kind: 'submitted', glyph: '🗳️', actor: ev.actor, text: ' asked for approval' }
-      : { kind: 'submitted', glyph: '🗳️', actor: null, text: 'Asked for approval' };
+      ? { kind: 'submitted', glyph: '🗳️', actor: ev.actor, id: 'project:topic.change.line.askedForApproval', values: { author: ev.actor } }
+      : { kind: 'submitted', glyph: '🗳️', actor: null, id: 'project:topic.change.line.unnamedAskedForApproval' };
   }
   if (ev && ev.type === 'merged') return { kind: 'merged', glyph: '🎉', actor: null, text: eventText(msg) };
   const text = ev && ev.type === 'notice' ? (ev.text || '') : (msg.systemText || '');

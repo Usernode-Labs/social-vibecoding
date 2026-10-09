@@ -28,6 +28,7 @@
 //     what is left of the five; the rows stay newest first. More than five
 //     working at once are all listed, since each is something in progress.
 
+import { t } from '../../lib/i18n/runtime';
 import { agentActivity, type AgentActivity } from '../agent-session/activity';
 
 export interface ContinueAgentSession {
@@ -78,18 +79,42 @@ function agentApp(session: ContinueAgentSession): string | null {
     || null;
 }
 
+/** Where a session's work stands, as the row's second line says it. */
+export type AgentDetailKind = 'session' | 'approval' | 'goingLive' | 'live' | 'inProgress';
+
+// Message ids. The line alone ("In progress"), and the line after the app's
+// name ("Run Club · in progress"): two wordings, so two messages each.
+const DETAIL: Record<AgentDetailKind, string> = {
+  session: 'agent:appContext.continue.detail.session',
+  approval: 'agent:appContext.continue.detail.approval',
+  goingLive: 'agent:appContext.continue.detail.goingLive',
+  live: 'agent:appContext.continue.detail.live',
+  inProgress: 'agent:appContext.continue.detail.inProgress',
+};
+const SUB_WITH_APP: Record<AgentDetailKind, string> = {
+  session: 'agent:appContext.continue.sub.session',
+  approval: 'agent:appContext.continue.sub.approval',
+  goingLive: 'agent:appContext.continue.sub.goingLive',
+  live: 'agent:appContext.continue.sub.live',
+  inProgress: 'agent:appContext.continue.sub.inProgress',
+};
+
 /** "Run Club · in progress", or "In progress" with no app to name. */
-export function agentSub(app: string | null, detail: string): string {
-  return app ? `${app} · ${detail.charAt(0).toLowerCase()}${detail.slice(1)}` : detail;
+export function agentSub(app: string | null, kind: AgentDetailKind): string {
+  return app ? t(SUB_WITH_APP[kind], { app }) : t(DETAIL[kind]);
+}
+
+function agentDetailKind(session: ContinueAgentSession): AgentDetailKind {
+  const change = session.activeChange;
+  if (!change) return 'session';
+  if (change.status === 'promoted') return 'approval';
+  if (change.status === 'merging') return 'goingLive';
+  if (change.status === 'merged') return 'live';
+  return 'inProgress';
 }
 
 function agentDetail(session: ContinueAgentSession): string {
-  const change = session.activeChange;
-  if (!change) return 'Agent session';
-  if (change.status === 'promoted') return 'Waiting for approval';
-  if (change.status === 'merging') return 'Going live';
-  if (change.status === 'merged') return 'Live';
-  return 'In progress';
+  return t(DETAIL[agentDetailKind(session)]);
 }
 
 export function continueRows(
@@ -108,9 +133,9 @@ export function continueRows(
       key: `agent:${session.id}`,
       sessionId: session.id,
       href: `#messages/agent/${session.id}`,
-      title: session.title || (session.activeChange && session.activeChange.title) || 'Agent session',
+      title: session.title || (session.activeChange && session.activeChange.title) || t('agent:appContext.continue.untitled'),
       detail: agentDetail(session),
-      sub: agentSub(agentApp(session), agentDetail(session)),
+      sub: agentSub(agentApp(session), agentDetailKind(session)),
       activity: agentActivity(session),
     }));
   return { rows, more: current.length > shown.length };

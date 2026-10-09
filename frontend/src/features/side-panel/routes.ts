@@ -49,6 +49,8 @@
  * the panel.
  */
 
+import { t } from '../../lib/i18n/runtime';
+
 export type PanelKind =
   | 'workshop'
   | 'proposal'
@@ -269,16 +271,17 @@ export function samePage(a: string | null | undefined, b: string | null | undefi
   return pa.key === pb.key;
 }
 
+// Message ids, read when a title is asked for.
 const KIND_TITLE: Record<PanelKind, string> = {
-  workshop: 'Workshop',
-  proposal: 'Proposal',
-  issue: 'Request',
-  change: 'Change',
-  'new-change': 'New change',
-  thread: 'Messages',
-  chat: 'Chat',
-  agent: 'Agent session',
-  messages: 'Messages',
+  workshop: 'agent:sidePanel.title.workshop',
+  proposal: 'agent:sidePanel.title.proposal',
+  issue: 'agent:sidePanel.title.request',
+  change: 'agent:sidePanel.title.change',
+  'new-change': 'agent:sidePanel.title.newChange',
+  thread: 'agent:sidePanel.title.thread',
+  chat: 'agent:sidePanel.title.chat',
+  agent: 'agent:sidePanel.title.agent',
+  messages: 'agent:sidePanel.title.messages',
 };
 
 /** The pages whose title is their kind, whatever their header says. */
@@ -302,8 +305,8 @@ export function titleFor(route: string | null | undefined, reported?: string | n
   const page = route ? panelPage(route) : null;
   const text = String(reported || '').trim();
   if (!page) return text;
-  if (FIXED_TITLE.has(page.kind)) return KIND_TITLE[page.kind];
-  return text || KIND_TITLE[page.kind];
+  if (FIXED_TITLE.has(page.kind)) return t(KIND_TITLE[page.kind]);
+  return text || t(KIND_TITLE[page.kind]);
 }
 
 /**

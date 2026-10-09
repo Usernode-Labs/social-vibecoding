@@ -68,6 +68,8 @@ import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { Wordmark } from '@/components/ui/wordmark';
 
 import { pushDismissible, type Release } from '../../lib/back-stack';
+import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { AppContext } from '../app-context/app-context-controller.js';
 import { invalidateAppAllowance } from '../dialogs/app-allowance-store.js';
 import { swatchFor } from '../messages/format';
@@ -514,6 +516,7 @@ export function cardPlacement(
 
 /** The tour over the live shell (see the header); exported so a test can draw its card. */
 export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo; steps: TourStep[]; onEnd: () => void; start?: number }) {
+  const t = useMessages('onboarding');
   // A screenshot state may open it part-way (tourShot, below), on its own
   // screen; the tour itself always starts at its first card.
   const [index, setIndex] = useState(() => Math.max(0, Math.min(start, steps.length - 1)));
@@ -689,16 +692,16 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
         className="pointer-events-auto fixed left-4 right-4 mx-auto max-w-md rounded-[20px] bg-white p-4 text-zinc-900 shadow-[0_18px_40px_-16px_rgba(0,0,0,0.6)] dark:bg-zinc-800 dark:text-zinc-100"
         style={card}
       >
-        <p className="text-[12px] font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{`${index + 1} of ${steps.length}`}</p>
+        <p className="text-[12px] font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{t('onboarding:firstSession.tour.counter', { step: index + 1, total: steps.length })}</p>
         <p id="first-session-tour-title" className="mt-0.5 text-[17px] font-semibold leading-snug">{words.title}</p>
         <p className="mt-1 text-[15px] leading-snug text-zinc-600 dark:text-zinc-300">{words.text}</p>
         <div className="mt-3 flex items-center justify-between gap-3">
           {step.last ? <span /> : (
-            <button type="button" onClick={skip} className="py-1.5 text-[15px] font-semibold text-zinc-500 dark:text-zinc-400">Skip</button>
+            <button type="button" onClick={skip} className="py-1.5 text-[15px] font-semibold text-zinc-500 dark:text-zinc-400">{t('onboarding:firstSession.tour.skip')}</button>
           )}
           <div className="flex items-center gap-2.5">
             {index > 0 ? (
-              <button type="button" onClick={() => go(index - 1)} className="rounded-full bg-zinc-100 px-3.5 py-1.5 text-[15px] font-semibold text-zinc-900 dark:bg-zinc-700 dark:text-zinc-100">Back</button>
+              <button type="button" onClick={() => go(index - 1)} className="rounded-full bg-zinc-100 px-3.5 py-1.5 text-[15px] font-semibold text-zinc-900 dark:bg-zinc-700 dark:text-zinc-100">{t('core:common.back')}</button>
             ) : null}
             {step.tap && !step.last ? (
               // The hint presses the control it names (pressTarget), so it
@@ -714,7 +717,7 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
               </button>
             ) : (
               <Button type="button" onClick={() => go(index + 1)} variant="pillAccent" size="sm" ink="solid" className="text-[15px] font-semibold">
-                {step.last ? 'Got it' : 'Next'}
+                {step.last ? t('onboarding:firstSession.tour.gotIt') : t('onboarding:firstSession.tour.next')}
               </Button>
             )}
           </div>
@@ -730,11 +733,12 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
  * empty (WelcomeHeld) while the invite's standing is read.
  */
 function WelcomeFrame({ children, foot = null, held = false }: { children: React.ReactNode; foot?: React.ReactNode; held?: boolean }) {
+  const t = useMessages('onboarding');
   return (
     <div
       role="dialog"
       aria-labelledby={held ? undefined : 'first-session-title'}
-      aria-label={held ? 'Opening your invite' : undefined}
+      aria-label={held ? t('onboarding:firstSession.welcome.opening') : undefined}
       data-first-session-welcome={held ? 'held' : ''}
       className="fixed inset-0 z-[9000] flex flex-col text-zinc-900 dark:text-zinc-100"
       style={{ background: 'var(--home-wallpaper, #f4f2e4)' }}
@@ -760,9 +764,10 @@ function WelcomeFrame({ children, foot = null, held = false }: { children: React
 
 /** The frame while the invite's standing is read: where its words will be. */
 export function WelcomeHeld() {
+  const t = useMessages('onboarding');
   return (
     <WelcomeFrame held>
-      <SkeletonGroup label="Opening your invite" className="my-auto flex flex-col items-center pb-10">
+      <SkeletonGroup label={t('onboarding:firstSession.welcome.opening')} className="my-auto flex flex-col items-center pb-10">
         <span className="flex">
           <Skeleton shape="block" className="h-10 w-10 rounded-full" />
           <Skeleton shape="block" className="-ml-2.5 h-10 w-10 rounded-full" />
@@ -854,7 +859,7 @@ export function rosterOrder(members: Member[], inviter: string | null): Member[]
 
 /** How many people, in words: "1 person", "8 people". */
 export function peopleCount(n: number): string {
-  return `${n} ${n === 1 ? 'person' : 'people'}`;
+  return translate('onboarding:firstSession.people.count', { count: n });
 }
 
 /**
@@ -864,6 +869,7 @@ export function peopleCount(n: number): string {
  * row's tile, so the hairline lines up as it does in every list.
  */
 function MemberRow({ member, you, inviter }: { member: Member; you: boolean; inviter: boolean }) {
+  const t = useMessages('onboarding');
   const name = member.name || member.username;
   return (
     <ListRow
@@ -879,12 +885,13 @@ function MemberRow({ member, you, inviter }: { member: Member; you: boolean; inv
         </span>
       )}
       title={name}
-      subtitle={you ? 'You' : inviter ? 'Invited you' : `@${member.username}`}
+      subtitle={you ? t('onboarding:firstSession.welcome.member.you') : inviter ? t('onboarding:firstSession.welcome.member.invitedYou') : `@${member.username}`}
     />
   );
 }
 
 export function YoureIn({ info, onGo }: { info: FirstSessionInfo; onGo: (firstVersion: FirstVersionStage) => void }) {
+  const t = useMessages('onboarding');
   const user = legacy().App?.user;
   const [members, setMembers] = useState<Member[] | null>(() => (info.people ? membersOf(info.people) : null));
   const [count, setCount] = useState<number | null>(info.memberCount ?? null);
@@ -939,12 +946,12 @@ export function YoureIn({ info, onGo }: { info: FirstSessionInfo; onGo: (firstVe
           ink="solidLate"
           className="flex items-center justify-center"
         >
-          {`Go to ${info.name}`}
+          {t('onboarding:firstSession.welcome.goTo', { community: info.name })}
         </Button>
       )}
     >
       <h1 id="first-session-title" className="mt-6 text-balance text-[32px] font-extrabold leading-9 tracking-[-0.01em]">
-        {`Welcome to ${info.name}`}
+        {t('onboarding:firstSession.welcome.title', { community: info.name })}
       </h1>
       {/* What the community makes together, above the people who make it. */}
       <div data-first-session-app="" className="mt-6">
@@ -959,7 +966,7 @@ export function YoureIn({ info, onGo }: { info: FirstSessionInfo; onGo: (firstVe
       </div>
       <div data-first-session-people="" className="text-left">
         {roster === null ? (
-          <SkeletonGroup label="Loading who is in it" className="pt-6">
+          <SkeletonGroup label={t('onboarding:firstSession.welcome.loadingPeople')} className="pt-6">
             <Skeleton className="mb-3 w-20" />
             <Skeleton shape="block" className="h-[146px] w-full rounded-[20px]" />
           </SkeletonGroup>
@@ -1193,6 +1200,8 @@ export function leavesDoor(target: EventTarget | null): boolean {
 }
 
 export function FirstSession() {
+  // The tour's steps are built in the language on screen, and again when it changes.
+  const t = useMessages('onboarding');
   const [mode, setMode] = useState<Mode>({ kind: 'none' });
 
   // An account the story's sheet just made is asked what to make, once,
@@ -1393,7 +1402,7 @@ export function FirstSession() {
     const project = { slug: mode.info.slug, name: mode.info.name, conversationId: mode.info.conversationId };
     if (mode.path === 'private') return privateSteps(project);
     return mode.path === 'maker' ? makerSteps(project) : invitedSteps(project);
-  }, [mode]);
+  }, [mode, t]);
 
   if (mode.kind === 'make' && mode.entry === 'create') {
     return (

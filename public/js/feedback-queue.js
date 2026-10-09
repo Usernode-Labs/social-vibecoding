@@ -379,13 +379,13 @@
             remaining.splice(remaining.indexOf(shot), 1);
             saveProgress();
           } else if (classifyFailure({ status: res.status }) !== 'permanent') {
-            return { ok: false, status: res.status, networkError: false, error: (data && data.error) || 'screenshot upload failed' };
+            return { ok: false, status: res.status, networkError: false, error: (data && data.error) || PlatformI18n.t('shell:feedbackQueue.error.screenshotUpload') };
           } else {
             remaining.splice(remaining.indexOf(shot), 1);
             saveProgress();
           }
         } catch (err) {
-          return { ok: false, status: 0, networkError: true, error: 'network error' };
+          return { ok: false, status: 0, networkError: true, error: PlatformI18n.t('shell:feedbackQueue.error.network') };
         }
       }
       if (ids.length) body.screenshotIds = ids;
@@ -406,7 +406,7 @@
         error: (data && data.error) || null,
       };
     } catch (err) {
-      return { ok: false, status: 0, networkError: true, error: 'network error' };
+      return { ok: false, status: 0, networkError: true, error: PlatformI18n.t('shell:feedbackQueue.error.network') };
     }
   }
 
@@ -441,7 +441,7 @@
       const verdict = classifyFailure(res);
       const next = Object.assign({}, claimed, {
         sendingSince: null,
-        lastError: res.error || 'Could not send',
+        lastError: res.error || PlatformI18n.t('shell:feedbackQueue.error.couldNotSend'),
       });
       if (verdict === 'permanent') {
         next.status = 'failed';

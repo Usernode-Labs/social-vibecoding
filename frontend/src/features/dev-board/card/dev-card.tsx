@@ -53,6 +53,8 @@ import { createPortal } from 'react-dom';
 
 import { Bars3Icon, CheckIcon, ChevronDownIcon, ChevronRightIcon, EyeIcon, EyeOffIcon, Glyph, PencilSquareIcon, XIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
+import { useMessages } from '../../../lib/i18n/react';
+import { t as translate } from '../../../lib/i18n/runtime';
 import { useStoreState } from '../../../lib/use-store-state';
 import { clampPopoverHeight, placeUnderAnchor } from '../../../lib/anchor-popover';
 import { anchorRectOf, useAnchoredDismiss } from '../../../lib/popover-dismiss';
@@ -121,15 +123,19 @@ export function fmtCountdown(ms: number): string {
   const d = Math.floor(s / 86400);
   if (d >= 1) {
     const h = Math.floor((s % 86400) / 3600);
-    return h >= 1 ? `~${d}d ${h}h` : `~${d}d`;
+    return h >= 1
+      ? translate('project:card.countdown.daysHours', { days: d, hours: h })
+      : translate('project:card.countdown.days', { days: d });
   }
   const h = Math.floor(s / 3600);
   if (h >= 1) {
     const m = Math.floor((s % 3600) / 60);
-    return m >= 1 ? `~${h}h ${m}m` : `~${h}h`;
+    return m >= 1
+      ? translate('project:card.countdown.hoursMinutes', { hours: h, minutes: m })
+      : translate('project:card.countdown.hours', { hours: h });
   }
   const m = Math.max(1, Math.floor(s / 60));
-  return `~${m}m`;
+  return translate('project:card.countdown.minutes', { minutes: m });
 }
 
 /** A vote still being taken: the tally tiers, before either side has won. */
@@ -180,6 +186,7 @@ export function Chevron(): ReactNode {
  */
 export function StatusPill({ s, inline }: { s: StatusPillState; inline?: boolean }): ReactNode {
   const { now } = useStoreState(cardNowStore);
+  const t = useMessages('project');
   if (!s || !s.label) return null;
   let fills: ReactNode = null;
   const fullFill = (side: 'yes' | 'no') => (
@@ -208,15 +215,21 @@ export function StatusPill({ s, inline }: { s: StatusPillState; inline?: boolean
   // The 30s tick: re-derive the countdown label from the store's `now`;
   // before the first tick the baked label carries the paint.
   const label = s.countdown && now > 0
-    ? `${s.reject ? 'Set aside' : 'Goes live'} in ${fmtCountdown(s.countdown - now)}${s.suffix || ''}`
+    ? `${s.reject
+      ? t('project:card.pill.setAsideIn', { time: fmtCountdown(s.countdown - now) })
+      : t('project:card.pill.goesLiveIn', { time: fmtCountdown(s.countdown - now) })}${s.suffix || ''}`
     : s.label;
   const extra = Array.isArray(s.reasons) ? Math.max(0, s.reasons.length - 1) : 0;
   const titleParts: string[] = [];
   if (s.title) titleParts.push(s.title);
   else if (s.reasons && s.reasons[0]) titleParts.push(s.reasons[0].detail);
-  if (s.tier === 2 && extra > 0) {
-    titleParts.push(`and ${extra} more reason${extra === 1 ? '' : 's'}, open for details`);
-  }
+  // The first reason and "and N more" are one message, so a language can
+  // order and punctuate them; with no first reason the count stands alone.
+  const tooltip = s.tier === 2 && extra > 0
+    ? (titleParts.length
+      ? t('project:card.pill.reasonAndMore', { reason: titleParts[0] ?? '', count: extra })
+      : t('project:card.pill.moreReasons', { count: extra }))
+    : (titleParts.length ? titleParts.join(' · ') : undefined);
   const cd = s.countdown ? (s.reject ? ' gc-reject-countdown' : ' gc-merge-countdown') : '';
   // An OPEN vote is the bar's own tone on a board card — accent blue, with an
   // accent fill — where the tier's `progress` violet is kept for the merge
@@ -228,7 +241,7 @@ export function StatusPill({ s, inline }: { s: StatusPillState; inline?: boolean
       className={`gc-vote-count gc-vote-count-${s.tone} dev-status-pill${block}${vote}${cd}`}
       data-window-ends={s.countdown ? String(s.countdown) : undefined}
       data-label-suffix={s.countdown && s.suffix ? s.suffix : undefined}
-      title={titleParts.length ? titleParts.join(' · ') : undefined}
+      title={tooltip}
     >
       {fills}
       <span className="gc-vote-count-label">
@@ -240,14 +253,14 @@ export function StatusPill({ s, inline }: { s: StatusPillState; inline?: boolean
         {s.advisory > 0 ? (
           <span
             className="gc-vote-count-suffix"
-            title={`${s.advisory} advisory vote${s.advisory === 1 ? '' : 's'} from non-approvers, so they don't count toward merging`}
+            title={t('project:card.pill.advisoryVotes', { count: s.advisory })}
           >{`+${s.advisory}`}</span>
         ) : null}
         {s.lock ? (
           <span
             className="gc-vote-count-lock"
             aria-hidden="true"
-            title={s.lockTitle || 'This change needs a Yes from another member. It won’t merge on a timer: it needs real Yes votes to reach the app’s normal threshold.'}
+            title={s.lockTitle || t('project:card.pill.lockFallback')}
           >{'\u{1F512}'}</span>
         ) : null}
       </span>
@@ -270,16 +283,17 @@ export function StatusPill({ s, inline }: { s: StatusPillState; inline?: boolean
  * is about to arrive.)
  */
 export function Preview({ spec }: { spec: PreviewSpec }): ReactNode {
+  const t = useMessages('project');
   if (spec.state === 'live') {
     return (
       <button
         type="button"
         className={`gc-vote-btn gc-vote-btn-preview${spec.iconOnly ? ' gc-vote-btn-icon' : ''}`}
-        aria-label="Open preview"
+        aria-label={t('project:card.preview.open')}
         title={spec.title}
         onClick={() => call({ fn: 'swapToStagingForSession', args: [spec.sessionId, spec.url] })}
       >
-        {spec.iconOnly ? <EyeIcon aria-hidden="true" /> : <><EyeIcon aria-hidden="true" />{'Preview'}</>}
+        {spec.iconOnly ? <EyeIcon aria-hidden="true" /> : <><EyeIcon aria-hidden="true" />{t('project:card.preview.label')}</>}
       </button>
     );
   }
@@ -302,21 +316,21 @@ export function Preview({ spec }: { spec: PreviewSpec }): ReactNode {
           title={spec.title}
         >
           <Spinner />
-          {'Preview building…'}
+          {t('project:card.preview.building')}
         </button>
       );
     }
     return (
-      <span className="gc-vote-btn gc-vote-btn-icon gc-checks-running-badge" role="img" aria-label="Preview building" title={spec.title}>
+      <span className="gc-vote-btn gc-vote-btn-icon gc-checks-running-badge" role="img" aria-label={t('project:card.preview.buildingName')} title={spec.title}>
         <Spinner />
       </span>
     );
   }
   if (!spec.iconOnly) {
-    return <span className="gc-conflict-badge" title={spec.title}>Preview unavailable</span>;
+    return <span className="gc-conflict-badge" title={spec.title}>{t('project:card.preview.unavailable')}</span>;
   }
   return (
-    <span className="gc-vote-btn gc-vote-btn-icon gc-conflict-badge" role="img" aria-label="Preview unavailable" title={spec.title}>
+    <span className="gc-vote-btn gc-vote-btn-icon gc-conflict-badge" role="img" aria-label={t('project:card.preview.unavailableName')} title={spec.title}>
       <EyeOffIcon aria-hidden="true" />
     </span>
   );
@@ -324,6 +338,7 @@ export function Preview({ spec }: { spec: PreviewSpec }): ReactNode {
 
 /** One entry of the status band, dispatched over the tagged union. */
 export function Badge({ b }: { b: BadgeSpec }): ReactNode {
+  const t = useMessages('project');
   switch (b.t) {
     case 'chip':
       return (
@@ -351,7 +366,7 @@ export function Badge({ b }: { b: BadgeSpec }): ReactNode {
         <span
           className={`dev-chat-badge dev-badge ${b.count ? 'bg-violet-500/10 text-violet-700 dark:text-violet-400' : 'hidden bg-zinc-500/10 text-zinc-500 dark:text-zinc-400'}`}
           data-count={b.count}
-          title="Messages in this thread"
+          title={t('project:card.badge.threadMessages')}
         >{`\u{1F4AC} ${b.count}`}</span>
       );
     case 'attr': {
@@ -407,12 +422,12 @@ export function Badge({ b }: { b: BadgeSpec }): ReactNode {
           title={b.title}
           data-issue-chip={b.n}
           onClick={() => call({ fn: 'openTopic', args: ['issue', b.n] })}
-        >{`${b.prefix}#${b.n}`}</button>
+        >{b.label}</button>
       );
     case 'issueLink':
       return (
         <a href={b.href} target="_blank" rel="noopener" className={b.cls} title={b.title}>
-          {`${b.verb} #${b.n}`}
+          {b.label}
         </a>
       );
     case 'ms':
@@ -491,6 +506,7 @@ export const BADGE_MAX = 4;
 const VOTE_ARITY: Record<string, number> = { castVote: 3, castIssueVote: 2 };
 
 export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): ReactNode {
+  const t = useMessages('project');
   const [open, setOpen] = useState(false);
   const [rect, setRect] = useState<{ top: number; bottom: number; right: number } | null>(null);
   // The switch's side while the picker is up: Yes by default, the viewer's
@@ -597,6 +613,22 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
     setSheetEl(panel);
     return true;
   };
+  // The fallback sheet's two rows, each a whole message: the side's word,
+  // with its tally when the spec carries one.
+  const sheetYes = (): string => {
+    const n = tally(yes);
+    if (prior === 'yes') {
+      return n ? t('project:card.vote.sheet.stillYesTally', { tally: n }) : t('project:card.vote.sheet.stillYes');
+    }
+    return n ? t('project:card.vote.sheet.yesTally', { tally: n }) : t('project:card.vote.sheet.yes');
+  };
+  const sheetNo = (): string => {
+    const n = tally(no);
+    if (prior === 'yes') {
+      return n ? t('project:card.vote.sheet.notThisTimeTally', { tally: n }) : t('project:card.vote.sheet.notThisTime');
+    }
+    return n ? t('project:card.vote.sheet.noTally', { tally: n }) : t('project:card.vote.sheet.no');
+  };
   const toggle = (e: MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
     if (sending) return;
@@ -613,9 +645,9 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
           // asks for its line as any No does.
           actions: [
             approve
-              ? { label: '✓  Approve', handler: () => send(yes, null) }
-              : { label: `✓  ${prior === 'yes' ? 'Still yes' : 'Yes'}${tally(yes) ? ` (${tally(yes)})` : ''}`, handler: () => pickTouch(yes) },
-            { label: approve ? '✕  Don’t approve' : `✕  ${prior === 'yes' ? 'Not this time' : 'No'}${tally(no) ? ` (${tally(no)})` : ''}`, handler: () => pickTouch(no) },
+              ? { label: t('project:card.vote.sheet.approve'), handler: () => send(yes, null) }
+              : { label: sheetYes(), handler: () => pickTouch(yes) },
+            { label: approve ? t('project:card.vote.sheet.dontApprove') : sheetNo(), handler: () => pickTouch(no) },
           ],
         });
         return;
@@ -655,8 +687,14 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
     if (h && h !== measuredH) setMeasuredH(h);
   }, [open, side, measuredH]);
   const face = approve
-    ? (mine === 'yes' ? 'Approved' : (mine === 'no' ? 'Not approved' : 'Approve'))
-    : (mine === 'yes' ? 'Yes' : (mine === 'no' ? 'No' : (prior === 'yes' ? 'Still yes?' : 'Vote')));
+    ? (mine === 'yes'
+      ? t('project:card.vote.face.approved')
+      : (mine === 'no' ? t('project:card.vote.face.notApproved') : t('project:card.vote.face.approve')))
+    : (mine === 'yes'
+      ? t('project:card.vote.face.yes')
+      : (mine === 'no'
+        ? t('project:card.vote.face.no')
+        : (prior === 'yes' ? t('project:card.vote.face.stillYes') : t('project:card.vote.face.vote'))));
   // B7: an approval is where it ends. The Yes makes the change live, so the
   // "Approved" face has nothing left to pick and goes inert, as it always
   // has. A "Not approved" opens the picker on its line, to change either.
@@ -666,13 +704,13 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
   const disabled = !!(yes.disabled || no.disabled);
   const title = disabled && yes.title ? yes.title : approve
     ? (approved
-      ? 'You approved it.'
-      : (mine === 'no' ? 'You didn’t approve it. Press to change that.' : 'Approve it, and it goes live.'))
+      ? t('project:card.vote.title.approved')
+      : (mine === 'no' ? t('project:card.vote.title.notApproved') : t('project:card.vote.title.approve')))
     : mine
-      ? `You voted ${face}. Press to change your vote.`
+      ? (mine === 'yes' ? t('project:card.vote.title.votedYes') : t('project:card.vote.title.votedNo'))
       : prior === 'yes'
-        ? `You said yes to an earlier version. One tap carries it onto this one.`
-        : `Cast your vote · Yes ${tally(yes)} · No ${tally(no)}`;
+        ? t('project:card.vote.title.priorYes')
+        : t('project:card.vote.title.cast', { yesTally: tally(yes), noTally: tally(no) });
   // The popover's frame: the switch, the box and the buttons (no box on a
   // governance vote). Placed from the button's rect each render by
   // lib/anchor-popover.ts — the helper the Homeroom menu shares — exactly as
@@ -727,7 +765,7 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
     />
   );
   // The picker's header, which names both of its homes.
-  const heading = approve ? 'Your approval' : 'Your vote';
+  const heading = approve ? t('project:card.vote.dialog.approval') : t('project:card.vote.dialog.vote');
   const popover = open && pos ? createPortal(
     <div
       ref={popRef}
@@ -762,12 +800,12 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
         data-vote-btn={faceKey}
         aria-haspopup="dialog"
         aria-expanded={open || !!sheetEl ? 'true' : undefined}
-        title={sending ? 'Sending your vote.' : title}
+        title={sending ? t('project:card.vote.title.sending') : title}
         aria-busy={sending ? 'true' : undefined}
         disabled={disabled || approved || !!sending}
         onClick={toggle}
       >
-        {sending ? 'Sending…' : (
+        {sending ? t('project:card.vote.sending') : (
           <>
             {mine === 'yes' ? <CheckIcon aria-hidden="true" /> : null}
             {mine === 'no' ? <XIcon aria-hidden="true" /> : null}
@@ -826,20 +864,28 @@ export function VotePicker({
   onCancel: () => void;
   onSend: () => void;
 }): ReactNode {
+  const t = useMessages('project');
+  const tc = useMessages('core');
   const trimmed = line.replace(/\s+/g, ' ').trim();
   const yesOn = side === 'yes';
   // The header over the switch is also the switch's accessible name.
   const headId = `${reasonId}-head`;
   // #3977: an approval's two sides are its own words, with no tally (it is
   // one person's to give) and no "Still yes": nobody is asked to vote.
-  const yesWord = approve ? 'Approve' : (prior === 'yes' ? 'Still yes' : 'Yes');
-  const noWord = approve ? 'Don’t approve' : (prior === 'yes' ? 'Not this time' : 'No');
-  const sendWord = approve ? (yesOn ? yesWord : noWord) : (yesOn ? 'Vote yes' : 'Vote no');
+  const yesWord = approve
+    ? t('project:card.vote.picker.approve')
+    : (prior === 'yes' ? t('project:card.vote.picker.stillYes') : t('project:card.vote.picker.yes'));
+  const noWord = approve
+    ? t('project:card.vote.picker.dontApprove')
+    : (prior === 'yes' ? t('project:card.vote.picker.notThisTime') : t('project:card.vote.picker.no'));
+  const sendWord = approve
+    ? (yesOn ? t('project:card.vote.picker.sendApprove') : t('project:card.vote.picker.sendDontApprove'))
+    : (yesOn ? t('project:card.vote.picker.sendYes') : t('project:card.vote.picker.sendNo'));
   return (
     <>
-      <div className="dev-vote-switch-label" id={headId}>{approve ? 'Your approval' : 'Your vote'}</div>
+      <div className="dev-vote-switch-label" id={headId}>{approve ? t('project:card.vote.picker.headApproval') : t('project:card.vote.picker.headVote')}</div>
       {uncounted ? (
-        <p className="dev-vote-uncounted" data-vote-uncounted="">Test account: this vote won’t count.</p>
+        <p className="dev-vote-uncounted" data-vote-uncounted="">{t('project:card.vote.picker.uncounted')}</p>
       ) : null}
       <div className="dev-vote-switch" role="group" aria-labelledby={headId}>
         <button
@@ -871,8 +917,8 @@ export function VotePicker({
         <div className="dev-vote-reason" data-vote-reason={side}>
           <label className="dev-vote-reason-label" htmlFor={reasonId}>
             {yesOn
-              ? (solo || approve ? 'Add a note, if you like.' : 'Add a line for the group, if you like.')
-              : 'What’s not working for you? One line is plenty.'}
+              ? (solo || approve ? t('project:card.vote.picker.noteLabel') : t('project:card.vote.picker.lineLabel'))
+              : t('project:card.vote.picker.noLabel')}
           </label>
           <textarea
             id={reasonId}
@@ -880,7 +926,7 @@ export function VotePicker({
             className="dev-vote-reason-box"
             rows={2}
             maxLength={280}
-            placeholder={yesOn ? 'What do you like about it?' : 'What would you want to change?'}
+            placeholder={yesOn ? t('project:card.vote.picker.yesPlaceholder') : t('project:card.vote.picker.noPlaceholder')}
             value={line}
             onChange={(ev) => onLine(ev.target.value)}
             onKeyDown={onBoxKey}
@@ -888,7 +934,7 @@ export function VotePicker({
         </div>
       ) : null}
       <div className="dev-vote-reason-actions">
-        <button type="button" className="dev-vote-reason-cancel" onClick={onCancel}>Cancel</button>
+        <button type="button" className="dev-vote-reason-cancel" onClick={onCancel}>{tc('core:common.cancel')}</button>
         <button
           type="button"
           className={`dev-vote-reason-send dev-vote-reason-send-${side}`}
@@ -913,6 +959,7 @@ export function isVoteSpec(a: ActionSpec, side: 'yes' | 'no'): boolean {
 /** One action pill; the kudos slot and the Explore pill are its two specials. */
 export function ActionButton({ a, fold, hidden }: { a: ActionSpec; fold?: number; hidden?: boolean }): ReactNode {
   const { enabled } = useStoreState(aiEnabledStore);
+  const t = useMessages('project');
   // `data-fold` marks a pill the one-line band may hide; every pill carries
   // one but the kudos host.
   const foldAttrs = fold ? { 'data-fold': String(fold), 'data-folded': hidden ? '1' : undefined } : {};
@@ -934,11 +981,11 @@ export function ActionButton({ a, fold, hidden }: { a: ActionSpec; fold?: number
         disabled={!enabled}
         {...foldAttrs}
         data-proposal-id={a.explore}
-        title={enabled ? a.title : "AI chat isn't configured on this deployment."}
+        title={enabled ? a.title : t('project:card.explore.unavailable')}
         onClick={(e) => call({ fn: 'exploreProposalInDevChat', args: [a.explore!] }, e.currentTarget)}
       >
         <span aria-hidden="true">{'✨'}</span>
-        {' Explore in a coding agent'}
+        {` ${t('project:card.explore.label')}`}
       </button>
     );
   }
@@ -982,14 +1029,15 @@ export function ActionButton({ a, fold, hidden }: { a: ActionSpec; fold?: number
  * and the declared checks find it where they always did.
  */
 export function MenuTrigger({ menuKey }: { menuKey: string }): ReactNode {
+  const t = useMessages('project');
   return (
     <button
       type="button"
       className="gc-vote-btn gc-vote-btn-icon dev-card-menu-btn"
       data-card-menu={menuKey}
       aria-haspopup="true"
-      aria-label="More actions"
-      title="More actions"
+      aria-label={t('project:card.menu.more')}
+      title={t('project:card.menu.more')}
     >
       <Bars3Icon aria-hidden="true" />
     </button>
@@ -1022,6 +1070,9 @@ function MetaPartView({ p }: { p: MetaPart }): ReactNode {
 
 /** The title band's content: lead/trail runs, the edit pencil, the editor. */
 export function TitleContent({ t }: { t: TitleSpec }): ReactNode {
+  // `t` is the title spec here, so the messages' reader takes another name.
+  const msg = useMessages('project');
+  const common = useMessages('core');
   if (t.editing) {
     const session = 'session' in t.editing;
     const n = session ? t.editing.session : t.editing.issue;
@@ -1036,7 +1087,7 @@ export function TitleContent({ t }: { t: TitleSpec }): ReactNode {
       <div className="flex flex-wrap items-center gap-2">
         <Input
           id={`dev-${kind}-title-input`}
-          aria-label={session ? 'Proposal title' : 'Request title'}
+          aria-label={session ? msg('project:card.title.proposalInput') : msg('project:card.title.requestInput')}
           type="text"
           maxLength={session ? 256 : 200}
           defaultValue={t.editing.initial}
@@ -1045,8 +1096,8 @@ export function TitleContent({ t }: { t: TitleSpec }): ReactNode {
           box="tight"
           onKeyDown={onKeyDown}
         />
-        <button type="button" className="gc-vote-btn" onClick={() => call({ fn: save, args: [n] })}>Save</button>
-        <button type="button" className="gc-vote-btn" onClick={() => call({ fn: cancel })}>Cancel</button>
+        <button type="button" className="gc-vote-btn" onClick={() => call({ fn: save, args: [n] })}>{common('core:common.save')}</button>
+        <button type="button" className="gc-vote-btn" onClick={() => call({ fn: cancel })}>{common('core:common.cancel')}</button>
         <span id={`dev-${kind}-title-error`} className="w-full text-xs text-red-400 hidden"></span>
       </div>
     );
@@ -1068,8 +1119,8 @@ export function TitleContent({ t }: { t: TitleSpec }): ReactNode {
           <button
             type="button"
             className="align-middle text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-200 transition-colors dark:text-zinc-400"
-            title={editSession ? 'Edit this proposal title' : "Edit this request's title (you asked for it)"}
-            aria-label="Edit title"
+            title={editSession ? msg('project:card.title.editProposal') : msg('project:card.title.editRequest')}
+            aria-label={msg('project:card.title.edit')}
             onClick={() => call({
               fn: editSession ? 'beginSessionTitleEdit' : 'beginIssueTitleEdit',
               args: [editId],
@@ -1191,6 +1242,7 @@ function RequirementsRow({ x }: { x: Extract<ExtraSpec, { t: 'requirements' }> }
  * outcome a voter is deciding on, not a missing picture.
  */
 function IllustrationPreviewRow({ x }: { x: Extract<ExtraSpec, { t: 'illustration' }> }): ReactNode {
+  const t = useMessages('project');
   const side = (label: string, which: 'current' | 'proposed', art: typeof x.proposed) => (
     <figure className="m-0 flex min-w-0 flex-1 flex-col gap-1" data-illustration-side={which}>
       <figcaption className="text-[0.65rem] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">{label}</figcaption>
@@ -1201,27 +1253,28 @@ function IllustrationPreviewRow({ x }: { x: Extract<ExtraSpec, { t: 'illustratio
         >
           <img
             src={art.url}
-            alt={`${which === 'proposed' ? 'Proposed' : 'Current'} featured illustration`}
+            alt={which === 'proposed' ? t('project:card.illustration.altProposed') : t('project:card.illustration.altCurrent')}
             loading="lazy"
             className="block h-24 w-full object-cover"
           />
         </div>
       ) : (
         <div className="flex h-24 items-center justify-center rounded-lg border border-dashed border-zinc-300 text-[0.7rem] text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
-          {which === 'proposed' && x.remove ? 'Removed, the app icon shows instead' : 'No illustration, the app icon shows'}
+          {which === 'proposed' && x.remove ? t('project:card.illustration.removed') : t('project:card.illustration.none')}
         </div>
       )}
     </figure>
   );
   return (
     <div className="mt-2 flex gap-3 px-0.5" data-illustration-preview="1">
-      {side('Current', 'current', x.current)}
-      {side('Proposed', 'proposed', x.proposed)}
+      {side(t('project:card.illustration.current'), 'current', x.current)}
+      {side(t('project:card.illustration.proposed'), 'proposed', x.proposed)}
     </div>
   );
 }
 
 function ExtraRow({ x }: { x: ExtraSpec }): ReactNode {
+  const t = useMessages('project');
   if (x.t === 'requirements') return <RequirementsRow x={x} />;
   if (x.t === 'illustration') return <IllustrationPreviewRow x={x} />;
   if (x.t === 'note') {
@@ -1234,15 +1287,15 @@ function ExtraRow({ x }: { x: ExtraSpec }): ReactNode {
   // The topic-view-only admin claim list, with its per-claim clear control.
   return (
     <div className="mt-1 flex flex-wrap items-center gap-1 px-0.5 text-[0.65rem] text-zinc-500 dark:text-zinc-400">
-      {'Claims:'}
+      {t('project:card.claims.label')}
       {x.claims.map((c) => (
         <span key={c.userId} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-700 dark:text-sky-400">
           {c.username}
           <button
             type="button"
             className="hover:text-sky-700 dark:hover:text-sky-300 dark:text-sky-400"
-            title={`Release ${c.username}'s claim (admin)`}
-            aria-label={`Release ${c.username}'s claim (admin)`}
+            title={t('project:card.claims.release', { username: c.username })}
+            aria-label={t('project:card.claims.release', { username: c.username })}
             onClick={() => call({ fn: 'clearIssueClaim', args: [c.issue, c.userId] })}
           ><span aria-hidden="true">{'×'}</span></button>
         </span>

@@ -27,6 +27,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 import { returnKeyHandler } from '../../lib/return-to-next';
@@ -54,37 +55,31 @@ const ROW_LINE = 'flex items-center justify-between py-2 border-b border-zinc-10
  * words, and say it is off when production is delegated or not set up yet.
  * The Android permission's own name never appears here.
  */
-export const BACKGROUND_SERVICE_ACTIVE
-  = 'A background service keeps running so this phone can keep producing blocks'
-  + ' and stay in sync with the network while you are not using the app.'
-  + ' A notification stays visible while it is active.';
-export const BACKGROUND_SERVICE_INACTIVE
-  = 'The background service is not active. This phone is not producing blocks,'
-  + ' so nothing keeps running while you are not using the app.';
+export const BACKGROUND_SERVICE_ACTIVE = 'wallet:staking.backgroundActive';
+export const BACKGROUND_SERVICE_INACTIVE = 'wallet:staking.backgroundInactive';
 
 /** Drawn as the soft warning box, the Node sheet's health notice. */
 function BackgroundServiceNote({ active }: { active: boolean }): ReactNode {
+  const t = useMessages('wallet');
   return (
     <Alert
       variant="notice" density="compact"
       data-background-service={active ? 'active' : 'inactive'}
     >
-      {active ? BACKGROUND_SERVICE_ACTIVE : BACKGROUND_SERVICE_INACTIVE}
+      {active ? t(BACKGROUND_SERVICE_ACTIVE) : t(BACKGROUND_SERVICE_INACTIVE)}
     </Alert>
   );
 }
 
-export const DELEGATION_DISCLOSURE
-  = 'When delegated, you receive half the points you would earn by producing blocks directly from your phone.';
-export const SELF_HOSTED_NODE
-  = 'Want to run a node on your own laptop or server and monitor it from your phone?'
-  + ' Start the node there using the same account you use on this phone.';
+export const DELEGATION_DISCLOSURE = 'wallet:staking.disclosure';
+export const SELF_HOSTED_NODE = 'wallet:staking.selfHosted';
 
 /** The plain card every non-warning box in this section uses. */
 const CARD = 'rounded-lg border border-zinc-200 dark:border-zinc-800 p-3 text-sm';
 const MUTED = 'mt-1 text-sm text-zinc-500 dark:text-zinc-400';
 
 function StakingCard({ s }: { s: WalletSheetState }): ReactNode {
+  const t = useMessages('wallet');
   const staking: StakingView = s.staking;
   if (staking.kind === 'absent') return null;
   // Order (#3059 follow-up): the phone's status, with the delegation
@@ -94,28 +89,28 @@ function StakingCard({ s }: { s: WalletSheetState }): ReactNode {
   return (
     <section data-block-production className="mb-4 space-y-3">
       <div className="text-[0.9375rem] font-semibold text-zinc-500 dark:text-zinc-400">
-        Block production
+        {t('wallet:staking.heading')}
       </div>
       <div data-block-production-card="status" className={CARD}>
         {staking.kind === 'pending' ? (
           // Setup unfinished is NOT "not delegated": it offers a retry.
-          <div className="text-base font-semibold">Wallet setup is still in progress</div>
+          <div className="text-base font-semibold">{t('wallet:staking.setupPending')}</div>
         ) : (
           <>
             <div className="text-base font-semibold">
-              {staking.kind === 'delegated' ? 'Delegated' : 'Producing blocks on this phone'}
+              {staking.kind === 'delegated' ? t('wallet:staking.delegated') : t('wallet:staking.local')}
             </div>
             <div className={MUTED}>
               {staking.kind === 'delegated'
-                ? 'Block production on this phone is disabled.'
-                : 'Producing blocks directly on this phone earns full points.'}
+                ? t('wallet:staking.delegatedNote')
+                : t('wallet:staking.localNote')}
             </div>
             {staking.kind === 'delegated' ? (
               <>
                 <div className="mt-2 font-mono text-xs">{staking.delegate}</div>
                 {staking.since ? (
                   <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-                    {`Delegated since ${staking.since}`}
+                    {t('wallet:staking.delegatedSince', { when: staking.since })}
                   </div>
                 ) : null}
               </>
@@ -123,11 +118,11 @@ function StakingCard({ s }: { s: WalletSheetState }): ReactNode {
           </>
         )}
         <div className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
-          {DELEGATION_DISCLOSURE}
+          {t(DELEGATION_DISCLOSURE)}
         </div>
       </div>
       <div data-block-production-card="self-hosted" className={CARD}>
-        {SELF_HOSTED_NODE}
+        {t(SELF_HOSTED_NODE)}
       </div>
       {s.isAndroid
         ? <BackgroundServiceNote active={staking.kind === 'local'} />
@@ -137,13 +132,13 @@ function StakingCard({ s }: { s: WalletSheetState }): ReactNode {
           layout="full" size="narrowBold"
           disabled={s.refreshPending}
           onClick={() => controller()?.retryState?.()}
-        >{s.refreshPending ? 'Retrying…' : 'Retry'}</Button>
+        >{s.refreshPending ? t('wallet:staking.retrying') : t('wallet:staking.retry')}</Button>
       ) : (
         <Button
           layout="full" size="narrowBold"
           disabled={s.stakingPending}
           onClick={() => controller()?._manageStaking?.()}
-        >{s.stakingPending ? 'Opening…' : 'Manage delegation'}</Button>
+        >{s.stakingPending ? t('wallet:staking.opening') : t('wallet:staking.manage')}</Button>
       )}
     </section>
   );
@@ -178,14 +173,15 @@ function SendForm({ onSent }: { onSent: () => void }): ReactNode {
   const [to, setTo] = useState('');
   const [amount, setAmount] = useState('');
   const [sending, setSending] = useState(false);
+  const t = useMessages('wallet');
   const toRef = useRef<HTMLInputElement | null>(null);
   useEffect(() => { toRef.current?.focus(); }, []);
 
   const submit = async () => {
     const addr = to.trim();
     const n = parseInt(amount.trim(), 10);
-    if (!addr || !addr.startsWith('ut1')) { ui()?.toast?.('Enter a valid ut1… address'); return; }
-    if (!Number.isFinite(n) || n <= 0) { ui()?.toast?.('Enter a positive amount'); return; }
+    if (!addr || !addr.startsWith('ut1')) { ui()?.toast?.(t('wallet:send.invalidAddress')); return; }
+    if (!Number.isFinite(n) || n <= 0) { ui()?.toast?.(t('wallet:send.invalidAmount')); return; }
     setSending(true);
     const ok = await controller()?.sendFromSheet?.(addr, n);
     if (ok) onSent(); else setSending(false);
@@ -200,17 +196,17 @@ function SendForm({ onSent }: { onSent: () => void }): ReactNode {
       onKeyDown={returnKeyHandler({ submit: () => { if (!sending) void submit(); } })}
     >
       <input
-        ref={toRef} placeholder="Recipient address (ut1…)" aria-label="Recipient address"
+        ref={toRef} placeholder={t('wallet:send.recipientPlaceholder')} aria-label={t('wallet:send.recipientLabel')}
         className={`${FIELD} font-mono`} enterKeyHint="next"
         value={to} onChange={(e) => setTo(e.target.value)}
       />
       <input
-        placeholder="Amount" aria-label="Amount" inputMode="numeric" enterKeyHint="send" className={FIELD}
+        placeholder={t('wallet:send.amountPlaceholder')} aria-label={t('wallet:send.amountLabel')} inputMode="numeric" enterKeyHint="send" className={FIELD}
         value={amount} onChange={(e) => setAmount(e.target.value)}
       />
-      <Button size="flushBold" disabled={sending} onClick={submit}>Send</Button>
+      <Button size="flushBold" disabled={sending} onClick={submit}>{t('wallet:send.submit')}</Button>
       <div className="text-xs text-zinc-500 dark:text-zinc-400">
-        You will confirm this transaction on the next screen.
+        {t('wallet:send.confirmNote')}
       </div>
     </div>
   );
@@ -221,6 +217,7 @@ function SendForm({ onSent }: { onSent: () => void }): ReactNode {
 export function WalletSheetBody(): ReactNode {
   const s = useStoreState(walletSheetStore);
   const [expand, setExpand] = useState<'none' | 'send' | 'receive'>('none');
+  const t = useMessages('wallet');
   return (
     <>
       <div className="text-3xl font-bold mb-1">{s.balanceLabel}</div>
@@ -230,27 +227,27 @@ export function WalletSheetBody(): ReactNode {
           <button
             className="text-violet-700 hover:text-violet-400 text-xs font-medium dark:text-violet-400"
             onClick={() => controller()?.copyAddress?.()}
-          >Copy</button>
+          >{t('core:common.copy')}</button>
         ) : null}
       </div>
       <div className="flex gap-2 mb-4">
         <Button
           layout="flex" size="flushBold" disabled={!s.submissionSupported}
           onClick={() => setExpand('send')}
-        >Send</Button>
+        >{t('wallet:sheet.send')}</Button>
         <button
           className="flex-1 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 text-sm font-semibold text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800"
           onClick={() => setExpand('receive')}
-        >Receive</button>
+        >{t('wallet:sheet.receive')}</button>
       </div>
       {!s.walletSupported ? (
         <div className="mb-4 rounded-lg border border-zinc-200 dark:border-zinc-800 p-3 text-sm text-zinc-500 dark:text-zinc-400">
-          Wallet state is unavailable in this app version.
+          {t('wallet:sheet.walletUnavailable')}
         </div>
       ) : null}
       {!s.submissionSupported ? (
         <div className="mb-4 rounded-lg border border-zinc-200 dark:border-zinc-800 p-3 text-sm text-zinc-500 dark:text-zinc-400">
-          Transaction submission is unavailable in this app version.
+          {t('wallet:sheet.submissionUnavailable')}
         </div>
       ) : null}
       {s.stateError ? (
@@ -264,13 +261,13 @@ export function WalletSheetBody(): ReactNode {
         {expand === 'send' ? <SendForm onSent={() => setExpand('none')} /> : null}
       </div>
       <div className="text-sm font-semibold text-zinc-500 dark:text-zinc-400 mt-2 mb-1">
-        Recent
+        {t('wallet:sheet.recent')}
       </div>
       <div>
         {s.receipts == null
-          ? <div className="text-sm text-zinc-500 py-2 dark:text-zinc-400">Loading…</div>
+          ? <div className="text-sm text-zinc-500 py-2 dark:text-zinc-400">{t('core:common.loading')}</div>
           : s.receipts.length === 0
-            ? <div className="text-sm text-zinc-500 py-2 dark:text-zinc-400">No recent transactions yet.</div>
+            ? <div className="text-sm text-zinc-500 py-2 dark:text-zinc-400">{t('wallet:sheet.noTransactions')}</div>
             : s.receipts.slice(0, 20).map((r) => (
               <div key={r.key} className={ROW_LINE}>
                 <div className="min-w-0">

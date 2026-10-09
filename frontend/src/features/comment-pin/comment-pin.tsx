@@ -33,6 +33,7 @@ import { createElement, useCallback, useEffect, useLayoutEffect, useRef, useStat
 
 import { Button } from '@/components/ui/button';
 
+import { useMessages } from '../../lib/i18n/react';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 import {
   describeElement, encodeUnder, finishPicture, inRect, pictureScale, placeBeside, takeBase, thumbnail,
@@ -101,6 +102,7 @@ function clampToViewport(p: Point): Point {
 }
 
 function CommentPin({ session, onClose }: { session: Session; onClose: () => void }): ReactNode {
+  const t = useMessages('devchat');
   const [pin, setPin] = useState<Point>(session.start);
   const pinInApp = inRect(pin, session.frameRect);
   const defaultTarget: Target = pinInApp && session.app ? 'app' : 'platform';
@@ -169,8 +171,8 @@ function CommentPin({ session, onClose }: { session: Session; onClose: () => voi
       onClose();
       const name = target === 'app' && session.app ? session.app.name : 'Homeroom';
       const line = outcome.botWillBuild
-        ? `Posted to ${name}. Homeroom bot is building it.`
-        : `Posted to ${name}. Thanks!`;
+        ? t('devchat:commentPin.toast.postedBuilding', { place: name })
+        : t('devchat:commentPin.toast.posted', { place: name });
       (window as unknown as { PlatformUI?: { toast?: (m: string) => void } }).PlatformUI?.toast?.(line);
       return;
     }
@@ -181,7 +183,7 @@ function CommentPin({ session, onClose }: { session: Session; onClose: () => voi
     }
     setSending(false);
     setError(outcome.error);
-  }, [text, sending, pinInApp, pin, base, keepShot, target, session, onClose]);
+  }, [text, sending, pinInApp, pin, base, keepShot, target, session, onClose, t]);
 
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
     if (e.key === 'Escape') {
@@ -197,19 +199,19 @@ function CommentPin({ session, onClose }: { session: Session; onClose: () => voi
   };
 
   const shotLine = !keepShot
-    ? 'No screenshot.'
+    ? t('devchat:commentPin.shot.none')
     : base === undefined
-      ? 'Taking a screenshot…'
+      ? t('devchat:commentPin.shot.taking')
       : base
-        ? 'Screenshot of this page, with your pin'
-        : "Couldn't take a screenshot. Your words still go.";
+        ? t('devchat:commentPin.shot.attached')
+        : t('devchat:commentPin.shot.failed');
 
   return (
     <div
       id="comment-pin"
       role="dialog"
       aria-modal="true"
-      aria-label="Comment on this page"
+      aria-label={t('devchat:commentPin.dialogLabel')}
       // A press here moves the pin and keeps the comment's own field
       // focused (its mousedown is prevented), so a tap keeps the keyboard
       // too (tests/keyboard-dismiss.test.js).
@@ -240,12 +242,12 @@ function CommentPin({ session, onClose }: { session: Session; onClose: () => voi
         <textarea
           ref={textRef}
           id="comment-pin-text"
-          aria-label="Your comment"
+          aria-label={t('devchat:commentPin.textLabel')}
           rows={3}
           value={text}
           readOnly={sending}
           onChange={(e) => setText(e.target.value)}
-          placeholder="What should change here?"
+          placeholder={t('devchat:commentPin.placeholder')}
           className="block w-full resize-none bg-transparent text-[15px] leading-snug text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100 dark:placeholder:text-zinc-500"
         />
         <div className="mt-2 flex items-center gap-2 text-[13px] text-zinc-500 dark:text-zinc-400">
@@ -260,13 +262,13 @@ function CommentPin({ session, onClose }: { session: Session; onClose: () => voi
               onClick={() => setKeepShot((k) => !k)}
               disabled={sending}
             >
-              {keepShot ? 'Remove' : 'Add back'}
+              {keepShot ? t('devchat:commentPin.shot.remove') : t('devchat:commentPin.shot.addBack')}
             </button>
           ) : null}
         </div>
         {session.app ? (
-          <div className="mt-2 flex items-center gap-1.5 text-[13px]" role="radiogroup" aria-label="Where it goes">
-            <span className="mr-0.5 text-zinc-500 dark:text-zinc-400">To</span>
+          <div className="mt-2 flex items-center gap-1.5 text-[13px]" role="radiogroup" aria-label={t('devchat:commentPin.target.groupLabel')}>
+            <span className="mr-0.5 text-zinc-500 dark:text-zinc-400">{t('devchat:commentPin.target.to')}</span>
             {([['app', session.app.name], ['platform', 'Homeroom']] as Array<[Target, string]>).map(([value, label]) => (
               <button
                 key={value}
@@ -285,13 +287,13 @@ function CommentPin({ session, onClose }: { session: Session; onClose: () => voi
             ))}
           </div>
         ) : (
-          <p className="mt-2 text-[13px] text-zinc-500 dark:text-zinc-400">To Homeroom</p>
+          <p className="mt-2 text-[13px] text-zinc-500 dark:text-zinc-400">{t('devchat:commentPin.target.toHomeroom')}</p>
         )}
         {error ? (
           <p id="comment-pin-error" role="alert" className="mt-2 text-[13px] text-red-700 dark:text-red-400">{error}</p>
         ) : null}
         <div className="mt-3 flex items-center justify-between gap-2">
-          <span className="text-xs text-zinc-500 dark:text-zinc-400">Enter to post. Esc to cancel.</span>
+          <span className="text-xs text-zinc-500 dark:text-zinc-400">{t('devchat:commentPin.keysHint')}</span>
           <Button
             type="button"
             id="comment-pin-send"
@@ -302,7 +304,7 @@ function CommentPin({ session, onClose }: { session: Session; onClose: () => voi
             disabled={sending || !text.trim()}
             onClick={() => { void send(); }}
           >
-            {sending ? 'Posting…' : 'Post'}
+            {sending ? t('devchat:commentPin.posting') : t('devchat:commentPin.post')}
           </Button>
         </div>
       </div>

@@ -30,6 +30,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { message } = require('./lib/platform-i18n');
 
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
@@ -395,7 +396,9 @@ test('rename: prefills the current name and PUTs to /rename', () => {
 test('fork: takes its source from the open payload, POSTs to /fork', () => {
   const src = dialog('fork-app.tsx');
   assert.match(src, /useDialog<ForkSource>\('fork'/);
-  assert.match(src, /\(remix\)`/, 'the "<name> (remix)" default is suggested');
+  assert.match(src, /inputRef\.current\.value = src\?\.name\s*\? t\('dialogs:fork\.defaultName\.named', \{ app: src\.name \}\)/,
+    'the "<name> (remix)" default is suggested');
+  assert.equal(message('dialogs:fork.defaultName.named', { app: 'Book Club' }), 'Book Club (remix)');
   assert.match(src, /\/fork`/);
   // #1549: the 201 only starts the asynchronous copy. Keep the dialog open
   // on the same progress report as create/import so a real failure reason is
@@ -434,7 +437,9 @@ test('share: fills the URL through resolveDevHost and flashes the copy button', 
   assert.match(src, /window\.resolveDevHost/);
   assert.match(src, /navigator\.clipboard\?\.writeText/);
   assert.match(src, /document\.execCommand\('copy'\)/, 'the non-clipboard fallback moved too');
-  assert.match(src, /setCopyLabel\('Copied!'\)|setCopyLabel\(ok \? 'Copied!'/);
+  assert.match(src, /setCopyLabel\(ok \? 'copied' : 'failed'\)/);
+  assert.match(src, /copyLabel === 'copied' \? t\('dialogs:share\.copied'\)/);
+  assert.equal(message('dialogs:share.copied'), 'Copied!');
 });
 
 test('members: the island owns the lifecycle, the controller owns the card', () => {

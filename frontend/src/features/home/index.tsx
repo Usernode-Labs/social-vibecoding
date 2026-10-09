@@ -96,6 +96,7 @@ import { VerifyCard } from './verify-card';
 import { WaitlistCard } from './waitlist-card';
 import { WidgetStrip } from './widget-strip';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 
 // The three modules that fill this screen, imported in the order their
@@ -107,6 +108,7 @@ import './home-panels.js';
 import './home.js';
 
 export function HomeScreen() {
+  const t = useMessages('home');
   const screenRef = useRef<HTMLElement | null>(null);
   useVisibilityHiddenClass(screenRef, 'home-screen', true);
 
@@ -158,15 +160,15 @@ export function HomeScreen() {
               id="home-search-input"
               type="text"
               autoComplete="off"
-              placeholder="Search your apps…"
-              aria-label="Search your apps"
+              placeholder={t('home:search.placeholder')}
+              aria-label={t('home:search.label')}
               className="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 pl-9 pr-9 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-violet-400 dark:focus:border-violet-600"
             />
             <button
               id="home-search-clear"
               className="hidden absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-200 hover:bg-zinc-500/10 text-base leading-none dark:text-zinc-400"
-              title="Clear search"
-              aria-label="Clear search"
+              title={t('home:search.clear')}
+              aria-label={t('home:search.clear')}
             >
               &times;
             </button>
@@ -263,7 +265,7 @@ export function HomeScreen() {
               (the tile menus' "Add to My apps", the browse screen's badge),
               because two names for one collection is worse than either.
           */}
-          <SectionHeading>My apps</SectionHeading>
+          <SectionHeading>{t('home:grid.heading')}</SectionHeading>
           <AppGrid />
           {/*
               "Show all N apps" — revealed by Home.render() only when the

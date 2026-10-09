@@ -10,11 +10,21 @@ function handler(name) {
   const end = source.indexOf('\n  }', start) + 4;
   return source.slice(start, end).replace(': FormEvent', '').replace(': string', '');
 }
+// The handlers read their text through `t` (and `blockedCopy` through
+// `translate`). This is the English catalog source read directly, so the
+// suite still needs no frontend install; one/other is all English has.
+const catalog = JSON.parse(fs.readFileSync('frontend/locales/en/dialogs.json', 'utf8'));
+function t(id, values = {}) {
+  const key = id.slice(id.indexOf(':') + 1);
+  const entry = catalog[key] || catalog[`${key}_${values.count === 1 ? 'one' : 'other'}`];
+  if (!entry) throw new Error(`No English catalog entry for ${id}`);
+  return entry.text.replace(/{{\s*(\w+)\s*}}/g, (_, name) => String(values[name] ?? ''));
+}
 function setup(fetch) {
   const s = { app: {slug:'test-app',name:'Test App',repo_url:'https://github.com/o/r',self_hosted:false,
     can_manage:true,collab_visibility:'public',view_visibility:'public',can_delete:true,contributor_count:1},
     confirmation:'Test App',accessDraft:'private',accessChanged:true,accessProposalOpen:false,
-    sharedAck:false,setSharedAck(v){s.sharedAck=v;},JSON,
+    sharedAck:false,setSharedAck(v){s.sharedAck=v;},JSON,t,
     pending:{current:false},generation:{current:0},fetch,Error,Promise,
     setApp(v){s.app=v;},setConfirmation(v){s.confirmation=v;},setError(v){s.error=v;},
     setLoading(v){s.loading=v;},setBusy(v){s.busy=v;},
@@ -107,7 +117,7 @@ test('a blocked app (core or shared) never makes a request',async()=>{
 });
 test('the blocked notice names the reason the server gave (#2161)',()=>{
   const start=source.indexOf('function blockedCopy(');const end=source.indexOf('\n}',start)+2;
-  const ctx={};vm.createContext(ctx);vm.runInContext(source.slice(start,end).replace(': AppSettings',''),ctx);
+  const ctx={translate:t};vm.createContext(ctx);vm.runInContext(source.slice(start,end).replace(': AppSettings',''),ctx);
   assert.match(ctx.blockedCopy({delete_block:'core'}),/core platform app/);
   assert.match(ctx.blockedCopy({delete_block:'shared',contributor_count:2}),/1 other contributor,/);
   assert.match(ctx.blockedCopy({delete_block:'shared',contributor_count:4}),/3 other contributors,/);

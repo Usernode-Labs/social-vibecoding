@@ -30,6 +30,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -96,7 +97,9 @@ test('the qualification is words, not a fourth state', () => {
   // tests/improve-session-spinner.test.js counts three branches of.
   const start = ROW_TSX.indexOf('function stateOf(');
   const body = ROW_TSX.slice(start, ROW_TSX.indexOf('\n}\n', start));
-  assert.match(body, /label: session\.awaitingInput \? 'Needs you' : 'Ready',/);
+  assert.match(body, /label: session\.awaitingInput \? t\('agent:menu\.row\.state\.needsYou'\) : t\('agent:menu\.row\.state\.ready'\),/);
+  assert.equal(message('agent:menu.row.state.needsYou'), 'Needs you');
+  assert.equal(message('agent:menu.row.state.ready'), 'Ready');
   assert.equal((body.match(/bg-emerald-500\/15 text-emerald-700 dark:text-emerald-400/g) || []).length, 1,
     'both labels share the emerald pill');
   // The emerald tile badge that stood beside it was the row's static green
@@ -152,6 +155,8 @@ function load(answers) {
   const sheet = { open: false };
   runModules(sandbox, [['improve-controller.js', CONTROLLER]], {
     imports: {
+      // The module reads its words through the language runtime: the real one, in English.
+      '../../lib/i18n/runtime': englishPlatformI18n(),
       '../apps/app-card.js': { iconViewFor: (app) => ({ kind: 'letter', letter: app.name[0] }) },
       // THE CONTROLLER PRESENTS NOTHING NOW (#2718 review). It adopted the
       // Improve panel's root through lib/kit-surface and swept the other
@@ -282,7 +287,8 @@ test('one predicate feeds both surfaces', () => {
   assert.match(body, /status: statusLabel\(session\)/);
   assert.match(body, /awaitingInput: awaitsInput\(session\)/);
   const label = CONTROLLER.slice(CONTROLLER.indexOf('function statusLabel('));
-  assert.match(label.slice(0, label.indexOf('\n}\n')), /if \(awaitsInput\(session\)\) return 'Needs you';/);
+  assert.match(label.slice(0, label.indexOf('\n}\n')), /if \(awaitsInput\(session\)\) return t\('agent:menu\.row\.status\.needsYou'\);/);
+  assert.equal(message('agent:menu.row.status.needsYou'), 'Needs you');
   // …and the predicate defers to the LIVE busy accessor, not the payload flag.
   const pred = CONTROLLER.slice(CONTROLLER.indexOf('function awaitsInput('));
   assert.match(pred.slice(0, pred.indexOf('\n}\n')), /liveBusy\(session\)\) return false/);

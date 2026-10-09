@@ -100,8 +100,15 @@ test('#4046: the plan is the one place its request\'s step shows: the cards abov
     'while it waits: the step, and nothing else');
   assert.deepEqual(planProgress(working({ step: 4, of: 7, stepName: 'Build it', typicalMinutes: { from: 10, to: 25 } }), 'built'),
     { line: 'Step 4 of 7 · Build it · 10 to 25 min', step: 4, of: 7 }, 'the step, its name, the time: short enough for one line');
-  assert.equal(planTime({ from: 10, to: 25 }), '10 to 25 min');
-  assert.equal(planTime({ from: 3, to: 3 }), 'about 3 min');
+  // The time is a kind and its numbers; the line that holds it is one whole message.
+  assert.deepEqual(planTime({ from: 10, to: 25 }), { kind: 'range', from: 10, count: 25 });
+  assert.deepEqual(planTime({ from: 3, to: 3 }), { kind: 'about', from: 3, count: 3 });
+  assert.deepEqual(planProgress(working({ step: 4, of: 7, typicalMinutes: { from: 3, to: 3 } }), 'built'),
+    { line: 'Step 4 of 7 · about 3 min', step: 4, of: 7 });
+  assert.deepEqual(planProgress(working({ doing: 'building it', typicalMinutes: { from: 10, to: 25 } }), 'built'),
+    { line: 'Building it · 10 to 25 min', step: null, of: null });
+  assert.deepEqual(planProgress(working({ typicalMinutes: { from: 3, to: 3 } }), 'built'),
+    { line: 'Working on it · about 3 min', step: null, of: null });
   assert.equal(planTime(null), null);
   assert.deepEqual(planProgress(working({ doing: 'ready to build; waiting its turn to be built' }), 'built'),
     { line: 'Ready to build; waiting its turn to be built', step: null, of: null }, 'a step it cannot count is said in words, with no bar');

@@ -28,6 +28,7 @@ import type { ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 import { Html } from '../../../lib/html';
+import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { Avatar } from '@/components/ui/feed';
 import { CheckIcon, EllipsisHorizontalIcon } from '@/components/ui/icons';
 import { swatchFor } from '../../group-chat/swatch';
@@ -35,7 +36,7 @@ import { useInlineImageViewer } from '../../image-viewer/image-viewer';
 import { ActionButton, TitleContent, VoteButton, isVoteSpec } from '../card/dev-card';
 import type { ActionSpec, DevCardModel } from '../card/model';
 import type { ChangeGateView, ChangeThreadView, TopicBody } from './model';
-import { RequestWords } from './request-head';
+import { RequestWords, sentences } from './request-head';
 import { TopicBack } from './topic-back';
 import { IncludedIn, IssueAssociations, SummaryMore } from './topic-head';
 
@@ -45,10 +46,11 @@ function host(id: string): Element | null {
 
 /** The sheet's header: what this is, its category, and everything else behind ⋯. */
 function ChangeBar({ v, menuKey }: { v: ChangeThreadView; menuKey: string }): ReactNode {
+  const t = useMessages('project');
   return (
     <header className="messages-thread-header">
       <div className="min-w-0 flex-1">
-        <div className="messages-thread-name">{v.number ? `Change #${v.number}` : 'Change'}</div>
+        <div className="messages-thread-name">{v.number ? t('project:topic.change.bar.titleNumbered', { number: v.number }) : t('project:topic.change.bar.title')}</div>
         {v.category ? <div className="messages-thread-sub" data-change-category="">{v.category}</div> : null}
       </div>
       {menuKey ? (
@@ -57,8 +59,8 @@ function ChangeBar({ v, menuKey }: { v: ChangeThreadView; menuKey: string }): Re
           className="messages-thread-action dev-card-menu-btn"
           data-card-menu={menuKey}
           aria-haspopup="true"
-          aria-label="More actions"
-          title="More actions"
+          aria-label={t('project:topic.change.bar.more')}
+          title={t('project:topic.change.bar.more')}
         >
           <EllipsisHorizontalIcon aria-hidden="true" />
         </button>
@@ -74,7 +76,12 @@ function ChangeBar({ v, menuKey }: { v: ChangeThreadView; menuKey: string }): Re
  * finished progress bar may be green).
  */
 function GateCard({ which, g, action, id }: { which: 'votes' | 'testing'; g: ChangeGateView; action: ReactNode; id: number | null }): ReactNode {
+  const t = useMessages('project');
   const open = () => (window as any).AppView?.openTechnicalDetails?.(id, 'checks');
+  // The note's sentences arrive worded (AppView._changeThreadView); the door
+  // into Details rides at the paragraph's end, in one message with them.
+  const note = sentences(g.note);
+  const door = <button type="button" className="dev-change-gate-link" onClick={open} />;
   return (
     <div className="dev-change-gate" data-change-gate={which} data-done={g.done ? 'true' : 'false'} data-tone={g.tone} role="group" aria-label={g.name}>
       <div className="dev-change-gate-main">
@@ -96,8 +103,11 @@ function GateCard({ which, g, action, id }: { which: 'votes' | 'testing'; g: Cha
       {action ? <div className="dev-change-gate-act">{action}</div> : null}
       {g.note.length || (g.details && id) ? (
         <p className="dev-change-gate-note">
-          {g.note.join(' ')}
-          {g.details && id ? <>{g.note.length ? ' ' : ''}<button type="button" className="dev-change-gate-link" onClick={open}>See what failed</button></> : null}
+          {g.details && id
+            ? (note
+              ? <RichMessage id="project:topic.change.gate.noteSeeFailed" values={{ note }} components={[door]} />
+              : <button type="button" className="dev-change-gate-link" onClick={open}>{t('project:topic.change.gate.seeFailed')}</button>)
+            : note}
         </p>
       ) : null}
     </div>
@@ -106,6 +116,7 @@ function GateCard({ which, g, action, id }: { which: 'votes' | 'testing'; g: Cha
 
 /** The Before and after card: the shots, or the line that says where they are. */
 function ShotsCard({ s }: { s: NonNullable<ChangeThreadView['shots']> }): ReactNode {
+  const t = useMessages('project');
   if (s.state === 'verified') {
     return (
       <section className="dev-change-shots" data-change-shots="verified">
@@ -115,8 +126,8 @@ function ShotsCard({ s }: { s: NonNullable<ChangeThreadView['shots']> }): ReactN
     );
   }
   return (
-    <section className="dev-change-shots dev-change-shots-plain" data-change-shots={s.state} aria-label="Before and after">
-      <div className="dev-change-card-name">Before and after</div>
+    <section className="dev-change-shots dev-change-shots-plain" data-change-shots={s.state} aria-label={t('project:topic.change.shots.title')}>
+      <div className="dev-change-card-name">{t('project:topic.change.shots.title')}</div>
       {s.html ? <Html className="dev-change-shots-tiles usn-visuals-body" data-visuals-scope="1" html={s.html} /> : null}
       {s.line ? (
         <p className="dev-change-shots-line">
@@ -136,6 +147,7 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
   linkedIssues: number[];
   onIssuesSaved: (issues: number[]) => void;
 }): ReactNode {
+  const t = useMessages('project');
   const images = useInlineImageViewer();
   const all: ActionSpec[] = card.actions || [];
   const yes = all.find((a) => isVoteSpec(a, 'yes'));
@@ -177,7 +189,7 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
           <RequestWords html={body.summaryHtml || ''} />
           {body.summaryMore ? <SummaryMore m={body.summaryMore} /> : null}
           {body.summaryStale && body.summaryHtml
-            ? <p className="dev-change-stale" role="note">Written for an earlier version of this change.</p>
+            ? <p className="dev-change-stale" role="note">{t('project:topic.change.summaryStale')}</p>
             : null}
           {body.includedIn ? <IncludedIn r={body.includedIn} /> : null}
           {id && (issues.length || body.canEditIssues || thanks) ? (

@@ -28,6 +28,9 @@
 import { CheckIcon, SpinnerArcIcon, WarningTriangleIcon, XIcon } from '@/components/ui/icons';
 import { Button } from '@/components/ui/button';
 
+import { useMessages } from '../../lib/i18n/react';
+import { listText, t as translate } from '../../lib/i18n/runtime';
+
 import {
   CREATION_STEPS,
   outcomeOf,
@@ -115,11 +118,13 @@ function headline(
   mode: 'new' | 'import' | 'fork',
   appName: string,
 ): string {
-  if (outcome === 'live') return `${appName} is live`;
-  if (outcome === 'needs-secrets') return 'Almost there';
-  if (outcome === 'failed') return `Couldn’t finish ${appName}`;
-  if (mode === 'fork') return `Remixing ${appName}`;
-  return mode === 'import' ? `Importing ${appName}` : `Creating ${appName}`;
+  if (outcome === 'live') return translate('dialogs:createProgress.title.live', { app: appName });
+  if (outcome === 'needs-secrets') return translate('dialogs:createProgress.title.almost');
+  if (outcome === 'failed') return translate('dialogs:createProgress.title.failed', { app: appName });
+  if (mode === 'fork') return translate('dialogs:createProgress.title.remixing', { app: appName });
+  return mode === 'import'
+    ? translate('dialogs:createProgress.title.importing', { app: appName })
+    : translate('dialogs:createProgress.title.creating', { app: appName });
 }
 
 /**
@@ -137,17 +142,16 @@ function statusLine(
     // it would build the first version and send it to try, and this line
     // used to send the person off to "see what it shipped with".
     if (builder === 'bot') {
-      return `${appName} is set up. Homeroom bot is building its first version from your description `
-        + 'and will message you when it’s ready to try.';
+      return translate('dialogs:createProgress.status.liveBot', { app: appName });
     }
-    if (builder === 'request') return 'Your project is ready. Its first request is waiting on its page.';
-    return 'Your app is running. Open it to see what it shipped with.';
+    if (builder === 'request') return translate('dialogs:createProgress.status.liveRequest');
+    return translate('dialogs:createProgress.status.live');
   }
   if (outcome === 'needs-secrets') {
     const keys = progress.missingSecrets || [];
     return keys.length
-      ? `Set ${keys.join(', ')} and your app will finish starting.`
-      : 'Set the required secrets and your app will finish starting.';
+      ? translate('dialogs:createProgress.status.needsNamedSecrets', { secrets: listText(keys) })
+      : translate('dialogs:createProgress.status.needsSecrets');
   }
   if (outcome === 'failed') {
     // QA 2026-09-24 Q32b: the broadcast reason is the server's own line
@@ -158,24 +162,24 @@ function statusLine(
     // is none (a watchdog timeout, or a process that died before recording
     // one), say what we actually know rather than showing an empty box.
     if (!progress.errorReason) {
-      return 'Setup stopped before your app was running. Retrying usually clears a transient failure.';
+      return translate('dialogs:createProgress.status.stopped');
     }
     const failed = CREATION_STEPS[states.indexOf('failed')]?.key;
     return failed === 'build'
-      ? 'The build didn’t finish. Try again, or ask an admin.'
-      : 'Setup didn’t finish. Try again, or ask an admin.';
+      ? translate('dialogs:createProgress.status.buildFailed')
+      : translate('dialogs:createProgress.status.setupFailed');
   }
-  return 'This usually takes under a minute. You can close this and keep going. We’ll finish in the background and your app will appear in your apps.';
+  return translate('dialogs:createProgress.status.pending');
 }
 
 /** The last next step on a project that is Just you: the one vote is yours. */
-const SOLO_APPROVE = 'You approve it, and it goes live.';
+const SOLO_APPROVE = 'dialogs:createProgress.next.soloApprove';
 
 /** The three things to do next, once there is an app to do them to. */
 const NEXT_STEPS = [
-  'Open your app and try what it shipped with.',
-  'Describe a change in chat, and a coding agent writes it.',
-  'Collaborators vote it in, and it goes live.',
+  'dialogs:createProgress.next.open',
+  'dialogs:createProgress.next.describe',
+  'dialogs:createProgress.next.collaboratorsVote',
 ] as const;
 
 /**
@@ -195,20 +199,29 @@ export function nextSteps({ builder = null, audience = null, mode = 'new' }: {
   audience?: Audience | null;
   mode?: 'new' | 'import' | 'fork';
 } = {}): readonly string[] {
+  return nextStepIds({ builder, audience, mode }).map((id) => translate(id));
+}
+
+/** The same three lines as message ids; `nextSteps` reads them when it is called. */
+function nextStepIds({ builder, audience, mode }: {
+  builder: Builder;
+  audience: Audience | null;
+  mode: 'new' | 'import' | 'fork';
+}): readonly string[] {
   if (mode === 'fork') return [NEXT_STEPS[0], NEXT_STEPS[1], SOLO_APPROVE];
   const approve = audience === 'solo' ? SOLO_APPROVE
-    : audience ? 'Members vote it in, and it goes live.' : NEXT_STEPS[2];
+    : audience ? 'dialogs:createProgress.next.membersVote' : NEXT_STEPS[2];
   if (builder === 'bot') {
     return [
-      'Homeroom bot builds the first version from your description.',
-      'It messages you in your chat when it’s ready, and asks there if anything is unclear.',
+      'dialogs:createProgress.next.botBuilds',
+      'dialogs:createProgress.next.botMessages',
       approve,
     ];
   }
   if (builder === 'request') {
     return [
-      'Your description is the project’s first request.',
-      'Start a change from it, and a coding agent writes it.',
+      'dialogs:createProgress.next.firstRequest',
+      'dialogs:createProgress.next.startChange',
       approve,
     ];
   }
@@ -255,13 +268,15 @@ export function CreateProgress({
   progress,
   builder = null,
   audience = null,
-  openLabel = 'Open app',
+  openLabel,
   onOpenApp,
   onViewApp,
   onRetry,
   onSetSecrets,
   onClose,
 }: CreateProgressProps) {
+  // Subscribed: the helpers above read their text when this renders.
+  const t = useMessages('dialogs');
   const outcome = outcomeOf(progress.status);
   const states = stepStates(progress);
   const look = SURFACES[surface];
@@ -281,7 +296,7 @@ export function CreateProgress({
             className="flex items-center gap-2.5 text-sm"
           >
             <StepGlyph state={states[i]} />
-            <span className={STEP_LABEL_CLASS[states[i]]}>{step.label}</span>
+            <span className={STEP_LABEL_CLASS[states[i]]}>{t(step.label)}</span>
           </li>
         ))}
       </ol>
@@ -312,7 +327,7 @@ export function CreateProgress({
       {outcome === 'failed' && progress.errorReason ? (
         <details id="create-progress-details" className="text-xs text-zinc-500 dark:text-zinc-400">
           <summary className="cursor-pointer select-none font-medium text-zinc-600 dark:text-zinc-300">
-            Details
+            {t('dialogs:createProgress.details')}
           </summary>
           <p className="mt-1.5 font-mono break-words whitespace-pre-wrap text-zinc-600 dark:text-zinc-300">
             {progress.errorReason}
@@ -328,7 +343,7 @@ export function CreateProgress({
       {outcome === 'failed' ? null : (
         <div id="create-progress-next" className={look.next}>
           <p className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400 mb-2">
-            What happens next
+            {t('dialogs:createProgress.next.heading')}
           </p>
           <ol className="space-y-1.5">
             {nextSteps({ builder, audience, mode }).map((line, i) => (
@@ -347,7 +362,7 @@ export function CreateProgress({
       */}
       {outcome === 'live' && builder === 'bot' && onViewApp ? (
         <button type="button" id="create-progress-view-app" className={look.secondary} onClick={onViewApp}>
-          Open app
+          {t('dialogs:createProgress.viewApp')}
         </button>
       ) : null}
 
@@ -358,21 +373,21 @@ export function CreateProgress({
           className={look.close}
           onClick={onClose}
         >
-          {outcome === 'pending' ? 'Close' : 'Done'}
+          {outcome === 'pending' ? t('core:common.close') : t('core:common.done')}
         </button>
         {outcome === 'live' ? (
           <Button type="button" id="create-progress-primary" layout="flex" {...look.primary} onClick={onOpenApp}>
-            {openLabel}
+            {openLabel ?? t('dialogs:createProgress.openApp')}
           </Button>
         ) : null}
         {outcome === 'needs-secrets' ? (
           <Button type="button" id="create-progress-primary" layout="flex" {...look.primary} onClick={onSetSecrets}>
-            Set secrets
+            {t('dialogs:createProgress.setSecrets')}
           </Button>
         ) : null}
         {outcome === 'failed' ? (
           <Button type="button" id="create-progress-primary" layout="flex" {...look.primary} onClick={onRetry}>
-            Retry
+            {t('core:common.retry')}
           </Button>
         ) : null}
       </div>

@@ -29,6 +29,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -131,6 +132,7 @@ function loadPane({ challenges, eventId = null }) {
   sandbox.TopochainEventContext = context;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.runInContext(CHALLENGES_SRC, sandbox, { filename: 'topochain-challenges.js' });
 
   const pane = sandbox.window.TopochainChallenges;
@@ -179,7 +181,8 @@ test('onboarding progress uses personal completion and explains the later unlock
   pane._onboarding = { total: 3, completed: 2, unlocked: false, event_id: 10 };
   pane._renderGrid();
   const grid = store.get().grid;
-  assert.deepEqual({ ...grid.progress }, { done: 2, total: 3, caption: 'done in First challenges' },
+  assert.equal(message('leaderboard:progress.firstLabel', { done: 2, count: 3 }), '2 of 3 done in First challenges');
+  assert.deepEqual({ ...grid.progress }, { done: 2, total: 3, scope: 'first' },
     'setup is its own scope while it gates the rest');
   // 2026-10-01: what a new account finishes is its Getting started list.
   assert.equal(grid.notice, 'Finish Getting started to unlock the rest of the season.');
@@ -764,15 +767,18 @@ test('card and page descriptors carry the illustration tone only when it is tone
 test('the grid opens on its progress: the tally, scoped to the selected event', () => {
   const { pane, context, store } = loadPane({ challenges: CH, eventId: 900500 });
   pane._renderGrid();
-  assert.deepEqual({ ...store.get().grid.progress }, { done: 2, total: 3, caption: 'done' },
+  assert.deepEqual({ ...store.get().grid.progress }, { done: 2, total: 3 },
     'no event known yet: the bare tally');
+  assert.equal(message('leaderboard:progress.plainLabel', { done: 2, count: 3 }), '2 of 3 done');
   context.selectedEvent = () => ({ id: 900500, name: 'Season 2' });
   pane._renderGrid();
   // QA 2026-09-24 Q17: an event's tally says it is an event's.
-  assert.equal(store.get().grid.progress.caption, 'done in this event · Season 2');
+  assert.deepEqual({ ...store.get().grid.progress }, { done: 2, total: 3, scope: 'event', name: 'Season 2' });
+  assert.equal(message('leaderboard:progress.eventLabel', { done: 2, count: 3, event: 'Season 2' }),
+    '2 of 3 done in this event · Season 2');
   context.selectedEvent = () => ({ id: 900500, name: '  ' });
   pane._renderGrid();
-  assert.equal(store.get().grid.progress.caption, 'done', 'a blank name is left out');
+  assert.deepEqual({ ...store.get().grid.progress }, { done: 2, total: 3 }, 'a blank name is left out');
   assert.equal(store.get().grid.points, undefined, 'and it carries no points');
   delete context.selectedEvent;
 });
@@ -957,7 +963,9 @@ test('the page is a level of the screen: the platform header is its nav bar', ()
     // pane asks App for that name rather than knowing it — a stub that
     // answered `undefined` would have this test passing on the fallback while
     // the screen said the wrong word.
-    _leaderboardTitle: (sub) => LEADERBOARD_TITLES[sub || 'challenges'] || 'Leaderboard',
+    // The table holds message ids; the name is its English catalog text.
+    _leaderboardTitle: (sub) => (LEADERBOARD_TITLES[sub || 'challenges']
+      ? message(LEADERBOARD_TITLES[sub || 'challenges']) : 'Leaderboard'),
   };
   sandbox.window.Leaderboard = { isOpen: () => true, section: 'challenges' };
   pane._openIdx(0);

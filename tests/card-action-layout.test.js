@@ -68,6 +68,7 @@ function makeAppView(userId, opts) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
@@ -781,5 +782,6 @@ test('B8: a change Homeroom bot built is recognised by its author', () => {
   assert.equal(AppView._botBuilt({ username: 'ada' }), false);
   const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8');
   // #4455: a change's page has no band; asking the bot is a row of its ⋯.
-  assert.match(src, /if \(proposal && AppView\._botBuilt\(item\) && !ro\) \{\n\s+rows\.push\(\{\n\s+label: 'Ask for changes', icon: 'generate',/);
+  assert.match(src, /if \(proposal && AppView\._botBuilt\(item\) && !ro\) \{\n\s+rows\.push\(\{\n\s+label: PlatformI18n\.t\('changes:page\.menu\.askForChanges'\), icon: 'generate',/);
+  assert.equal(require('./lib/platform-i18n').message('changes:page.menu.askForChanges'), 'Ask for changes');
 });

@@ -35,6 +35,7 @@ import { ChevronLeftIcon } from '@/components/ui/icons';
 
 import { GRAPHITE, useResolvedCommunityColor } from '../../lib/community-color';
 import { HeroPeople, InviteCard } from '../dev-board/workshop/community-card';
+import { useMessages } from '../../lib/i18n/react';
 import { joinByInvite, type InviteOffer } from '../dev-board/workshop/invite-offer';
 
 export type InvitePreviewInfo = Pick<
@@ -53,7 +54,8 @@ export type InvitePreviewInfo = Pick<
 };
 
 /** Why there is nothing more to see: the rest is the members'. */
-export const CLOSED_LINE = 'Its members, its app and what it is deciding open once you join.';
+// A message id: the page reads it when it renders.
+export const CLOSED_LINE = 'auth:invitePreview.closed';
 
 export function InvitePreviewPage({ info, busy, onJoin, onClose }: {
   info: InvitePreviewInfo;
@@ -61,6 +63,7 @@ export function InvitePreviewPage({ info, busy, onJoin, onClose }: {
   onJoin: () => void;
   onClose: () => void;
 }) {
+  const t = useMessages('auth');
   // The colour the community's own header wears (lib/community-color.ts),
   // from what the link's standing says of its icon. With no icon at all it
   // picks from the name: the project's address is not the preview's to know.
@@ -83,7 +86,7 @@ export function InvitePreviewPage({ info, busy, onJoin, onClose }: {
       >
         <button
           type="button"
-          aria-label="Not now"
+          aria-label={t('auth:invitePreview.notNow')}
           data-invite-preview-close=""
           onClick={onClose}
           className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-white"
@@ -102,7 +105,7 @@ export function InvitePreviewPage({ info, busy, onJoin, onClose }: {
           {info.description ? (
             <p className="dev-ws-hero-desc" data-invite-preview-description="">{info.description}</p>
           ) : null}
-          <p className="dev-ws-hero-line" data-invite-preview-closed="">{CLOSED_LINE}</p>
+          <p className="dev-ws-hero-line" data-invite-preview-closed="">{t(CLOSED_LINE)}</p>
         </section>
       </div>
     </div>

@@ -61,6 +61,7 @@ import { BookmarkSolidIcon } from '@/components/ui/icons';
 
 import { swatchFor } from '../messages/format';
 
+import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { notificationsStore } from './notifications-store.js';
 
@@ -102,9 +103,15 @@ type SavedView = {
    */
   conversationId: number;
   who: string;
-  /** Where it was said: the app's name, or the conversation's. */
+  /** The author's username, bare; '' for a message the platform wrote. */
+  author: string;
+  /** Where it was said: the app's name, or the conversation's. '' when
+   *  unknown: `line` then says "a conversation" or "an app" itself. */
   appName: string;
+  /** The first line's message id (`notifications:saved.line.*`). */
+  line: string;
   time: string;
+  timeTitle?: string;
   text: string;
 };
 
@@ -114,7 +121,11 @@ type InviteView = {
   kind: string;
   icon: string;
   who: string;
-  verb: string;
+  /** The inviter's username, bare; '' when unknown. */
+  inviter: string;
+  /** The sentence's message id (`notifications:invite.line.*`). */
+  line: string;
+  /** The project's name; '' when unknown. */
   appName: string;
   /** The inviter's own words, sent with the invite ('' for none). */
   note?: string;
@@ -147,6 +158,7 @@ function kit(): any {
  * readable option available.
  */
 function Saved({ view, touch }: { view: SavedView; touch: boolean }): ReactNode {
+  const t = useMessages('notifications');
   const ref = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const el = ref.current;
@@ -154,7 +166,7 @@ function Saved({ view, touch }: { view: SavedView; touch: boolean }): ReactNode 
     if (!touch || !el || !ui?.swipeActions) return;
     ui.swipeActions(el, {
       actions: [{
-        label: 'Unsave',
+        label: t('notifications:saved.unsave'),
         handler: () => controller()?._unsave(view.messageId),
       }],
     });
@@ -190,11 +202,15 @@ function Saved({ view, touch }: { view: SavedView; touch: boolean }): ReactNode 
               definition — so the two ends of the gesture read as one
               feature. */}
           <BookmarkSolidIcon aria-hidden="true" className="inline-block w-3.5 h-3.5 align-[-2px] mr-1 text-violet-700 dark:text-violet-400" />
-          <span className="font-bold text-zinc-900 dark:text-zinc-100">{view.who}</span>
-          {' in '}
-          <span>{view.appName}</span>
-          {' · '}
-          <time title={view.timeTitle}>{view.time}</time>
+          <RichMessage
+            id={view.line}
+            values={{ username: view.author, place: view.appName, when: view.time }}
+            components={[
+              <span className="font-bold text-zinc-900 dark:text-zinc-100" />,
+              <span />,
+              <time title={view.timeTitle} />,
+            ]}
+          />
         </div>
         <div className="text-sm leading-snug text-zinc-900 dark:text-zinc-100 line-clamp-2">{view.text}</div>
       </button>
@@ -206,7 +222,7 @@ function Saved({ view, touch }: { view: SavedView; touch: boolean }): ReactNode 
           controller()?._unsave(view.messageId);
         }}
       >
-        Unsave
+        {t('notifications:saved.unsave')}
       </button>
     </div>
   );
@@ -218,6 +234,7 @@ function Saved({ view, touch }: { view: SavedView; touch: boolean }): ReactNode 
  * tap path everywhere.
  */
 function Invite({ view, touch }: { view: InviteView; touch: boolean }): ReactNode {
+  const t = useMessages('notifications');
   const ref = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const el = ref.current;
@@ -226,11 +243,11 @@ function Invite({ view, touch }: { view: InviteView; touch: boolean }): ReactNod
     ui.swipeActions(el, {
       actions: [
         {
-          label: 'Accept',
+          label: t('notifications:invite.accept'),
           handler: () => controller()?._acceptInvite(view.appId, view.slug, view.kind),
         },
         {
-          label: 'Decline',
+          label: t('notifications:invite.decline'),
           destructive: true,
           handler: () => controller()?._declineInvite(view.appId, view.kind),
         },
@@ -257,20 +274,27 @@ function Invite({ view, touch }: { view: InviteView; touch: boolean }): ReactNod
           whitespace-only children — see the note on <Meta> for why.
       */}
       <div className="text-sm leading-snug text-zinc-900 dark:text-zinc-100">
-        <span className="font-bold">{view.who}</span>
-        {` ${view.verb} `}
-        <span className="font-bold">{view.appName}</span>
+        <RichMessage
+          id={view.line}
+          values={{ username: view.inviter, project: view.appName }}
+          components={[<span className="font-bold" />, <span className="font-bold" />]}
+        />
       </div>
       {/* The inviter's note, as an invite link's page shows it. */}
       {view.note ? (
         <p data-invite-note="" className="mt-0.5 text-sm leading-snug text-zinc-700 dark:text-zinc-200 line-clamp-3">
-          {`“${view.note}”`}
+          {t('notifications:invite.note', { note: view.note })}
         </p>
       ) : null}
       <div className="text-xs text-zinc-500 dark:text-zinc-400">
         <span aria-hidden="true">{`${view.icon} `}</span>
-        {view.members ? <span data-invite-members="">{`${view.members} · `}</span> : null}
-        <time title={view.timeTitle}>{view.time}</time>
+        {view.members ? (
+          <RichMessage
+            id="notifications:invite.meta.membersWhen"
+            values={{ members: view.members, when: view.time }}
+            components={[<span data-invite-members="" />, <time title={view.timeTitle} />]}
+          />
+        ) : <time title={view.timeTitle}>{view.time}</time>}
       </div>
       <div className="flex gap-2 mt-2">
         <Button
@@ -284,7 +308,7 @@ function Invite({ view, touch }: { view: InviteView; touch: boolean }): ReactNod
             controller()?._acceptInvite(view.appId, view.slug, view.kind);
           }}
         >
-          Accept
+          {t('notifications:invite.accept')}
         </Button>
         <button
           data-invite-decline={view.appId}
@@ -295,7 +319,7 @@ function Invite({ view, touch }: { view: InviteView; touch: boolean }): ReactNod
             controller()?._declineInvite(view.appId, view.kind);
           }}
         >
-          Decline
+          {t('notifications:invite.decline')}
         </button>
       </div>
       </div>
@@ -342,6 +366,7 @@ export function NotificationsPinnedSections(): ReactNode {
   const saved = state.saved || [];
   const invites = state.invites || [];
   const [invitesOpen, setInvitesOpen] = useState(false);
+  const t = useMessages('notifications');
   const { shown: shownInvites, hidden: hiddenInvites } = visibleInvites(invites, invitesOpen);
 
   return (
@@ -355,7 +380,7 @@ export function NotificationsPinnedSections(): ReactNode {
       <div id="notifications-saved" className="shrink-0 overflow-y-auto max-h-64">
         {saved.length ? (
           <div className="px-4 pt-4 pb-1 text-xs font-medium text-zinc-500 dark:text-zinc-500">
-            Saved
+            {t('notifications:saved.heading')}
           </div>
         ) : null}
         {saved.map((s) => (
@@ -372,7 +397,7 @@ export function NotificationsPinnedSections(): ReactNode {
       <div id="notifications-invites" className="shrink-0">
         {invites.length ? (
           <div className="px-4 pt-4 pb-1 text-xs font-medium text-zinc-500 dark:text-zinc-500">
-            Invites
+            {t('notifications:invite.heading')}
           </div>
         ) : null}
         {shownInvites.map((inv) => (
@@ -389,7 +414,7 @@ export function NotificationsPinnedSections(): ReactNode {
                 setInvitesOpen(true);
               }}
             >
-              {`Show ${hiddenInvites} more ${hiddenInvites === 1 ? 'invite' : 'invites'}`}
+              {t('notifications:invite.showMore', { count: hiddenInvites })}
             </button>
           </div>
         ) : null}

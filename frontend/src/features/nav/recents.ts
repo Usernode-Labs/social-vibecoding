@@ -29,6 +29,7 @@
  * a row keeps the Messages address it always had.
  */
 
+import { t } from '../../lib/i18n/runtime';
 import { agentActivity, type AgentActivity } from '../agent-session/activity';
 import type { AgentChat, AppDiscussion } from '../messages/inbox';
 
@@ -202,7 +203,7 @@ export function buildRecents(input: {
     items.push({
       key: `agent:${item.id}`,
       kind: 'agent',
-      label: item.title || 'Untitled chat',
+      label: item.title || t('core:recents.untitledChat'),
       href: `#chat/${encodeURIComponent(item.id)}`,
       at: item.updatedAt || item.createdAt || null,
       unread: false,
@@ -215,7 +216,7 @@ export function buildRecents(input: {
     items.push({
       key: `agent-session:${item.id}`,
       kind: 'agent',
-      label: item.title || 'New session',
+      label: item.title || t('core:recents.newSession'),
       href: `#messages/agent/${item.id}`,
       at: item.lastActivityAt || item.createdAt || null,
       unread: false,
@@ -369,9 +370,9 @@ export interface RecentGroups {
 }
 
 export function recentDayLabel(daysAgo: number): string {
-  if (daysAgo <= 0) return 'Today';
-  if (daysAgo === 1) return 'Yesterday';
-  return `${daysAgo} days ago`;
+  if (daysAgo <= 0) return t('core:recents.day.today');
+  if (daysAgo === 1) return t('core:recents.day.yesterday');
+  return t('core:recents.day.daysAgo', { count: daysAgo });
 }
 
 function localMidnight(at: number): number {

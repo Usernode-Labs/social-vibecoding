@@ -4,6 +4,7 @@
  * See ./composer-chrome-store.ts for the split.
  */
 
+import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import {
   quickRepliesStore,
@@ -66,27 +67,20 @@ export function QuickRepliesBar() {
   );
 }
 
-const PAST_TITLE = (label: string) =>
-  `The last turn ran on ${label}. That machine has detached, so the next turn runs on Homeroom.`;
-
-const LIVE_TITLE = (label: string) =>
-  `Spec and coding turns in this session run on ${label}, using its own Claude subscription. `
-  + 'A spec turn is read-only; after a coding turn Homeroom still opens the PR, builds the '
-  + 'preview and runs the checks.';
-
 export function RunnerControlsView({ kind, label }: RunnerState) {
+  const t = useMessages('devchat');
   if (kind === 'none') return null;
   if (kind === 'past') {
     return (
-      <span className="dc-runner-chip dc-runner-chip-past" title={PAST_TITLE(label)}>
-        {`Last turn: ${label}`}
+      <span className="dc-runner-chip dc-runner-chip-past" title={t('devchat:runner.pastTitle', { machine: label })}>
+        {t('devchat:runner.lastTurn', { machine: label })}
       </span>
     );
   }
   return (
     <>
       <label className="text-xs text-zinc-500 dark:text-zinc-400" htmlFor="dc-runner-select">
-        Run on:
+        {t('devchat:runner.runOn')}
       </label>
       {/*
           Picking "Homeroom" is a HAND-BACK, not a selection: the module puts
@@ -108,7 +102,7 @@ export function RunnerControlsView({ kind, label }: RunnerState) {
         <option value="local">{label}</option>
         <option value="platform">Homeroom</option>
       </select>
-      <span className="dc-runner-chip" title={LIVE_TITLE(label)}>Running on your machine</span>
+      <span className="dc-runner-chip" title={t('devchat:runner.liveTitle', { machine: label })}>{t('devchat:runner.onYourMachine')}</span>
     </>
   );
 }

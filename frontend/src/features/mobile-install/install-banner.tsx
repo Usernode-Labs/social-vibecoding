@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { XIcon } from '@/components/ui/icons';
+import { useMessages } from '../../lib/i18n/react';
 import { useHiddenClass } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { offeringGoToHomeroom } from '../app-context/about-data';
@@ -84,6 +85,7 @@ function writeDismissed(): void {
 }
 
 export function MobileInstallBanner() {
+  const t = useMessages('agent');
   const ref = useRef<HTMLDivElement>(null);
   const [urls, setUrls] = useState<StoreUrls | null>(null);
   const [dismissed, setDismissed] = useState(false);
@@ -181,10 +183,10 @@ export function MobileInstallBanner() {
               store listing published this used to read "Get the app" over a
               link to nowhere. */}
           {offer === null
-            ? 'Get the app'
+            ? t('agent:install.banner.getApp')
             : offer.kind === 'store'
-              ? `Get the app on ${storeLabel(offer.os, offer.url)}`
-              : 'Add it to your home screen'}
+              ? t(storeLabel(offer.os, offer.url))
+              : t('agent:install.banner.addToHomeScreen')}
         </div>
       </div>
       {offer && offer.kind === 'a2hs' ? (
@@ -208,7 +210,7 @@ export function MobileInstallBanner() {
           ink="solid"
           className="inline-flex items-center h-7 un-touch-target"
         >
-          How
+          {t('agent:install.banner.how')}
         </Button>
       ) : (
         <a
@@ -218,14 +220,14 @@ export function MobileInstallBanner() {
           rel="noopener noreferrer"
           className="shrink-0 inline-flex items-center h-7 px-3 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-medium transition-colors un-touch-target"
         >
-          Get
+          {t('agent:install.banner.get')}
         </a>
       )}
       <button
         id="mobile-install-dismiss"
         type="button"
         onClick={dismiss}
-        aria-label="Dismiss install banner"
+        aria-label={t('agent:install.banner.dismiss')}
         className="shrink-0 w-7 h-7 flex items-center justify-center rounded-full text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors un-touch-target"
       >
         <XIcon className="w-4 h-4" aria-hidden="true" />

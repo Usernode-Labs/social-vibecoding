@@ -15,6 +15,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -39,15 +40,24 @@ function wordsIn(text) {
     .filter(Boolean).length;
 }
 
+// The pitch's words are catalog entries; the screen holds their ids in order.
+const PITCH_IDS = [
+  'auth:waitlist.intro', 'auth:waitlist.points.builtHere', 'auth:waitlist.points.chain', 'auth:waitlist.points.gradual',
+];
+const pitchText = () => PITCH_IDS.map((id) => message(id)).join(' ');
+
 test('stage 1 leads with one sentence, then a list', () => {
-  const pitch = WAITLIST.slice(
-    WAITLIST.indexOf('Describe the app you want'),
-    WAITLIST.indexOf('Just your email to join.'));
+  const from = WAITLIST.indexOf("{t('auth:waitlist.intro')}");
+  const to = WAITLIST.indexOf("{t('auth:waitlist.justEmail')}");
+  assert.ok(from > 0 && to > from, 'the pitch is still drawn above the one-line ask');
+  const pitch = WAITLIST.slice(from, to);
+  assert.deepEqual(Array.from(pitch.matchAll(/\{t\('([^']+)'\)\}/g), (m) => m[1]), PITCH_IDS,
+    'the pitch is these four messages and nothing else');
   assert.match(pitch, /<ul/, 'the three supporting claims are a list now');
   const items = pitch.match(/<li>/g) || [];
   assert.equal(items.length, 3);
-  assert.ok(wordsIn(pitch) < 70,
-    `the pitch should be well under the original ~75 words, saw ${wordsIn(pitch)}`);
+  assert.ok(wordsIn(pitchText()) < 70,
+    `the pitch should be well under the original ~75 words, saw ${wordsIn(pitchText())}`);
 });
 
 test('and keeps every claim it used to make', () => {
@@ -59,21 +69,24 @@ test('and keeps every claim it used to make', () => {
     /public apps are open to everyone now/,
     /Just your email to join\./,
   ]) {
-    assert.match(flat(WAITLIST), claim);
+    assert.match(flat(`${pitchText()} ${message('auth:waitlist.justEmail')}`), claim);
   }
 });
 
 test('the heading and the step line are untouched: checks pin them', () => {
   // "Enter your confirmation code" and "Registered with" are declared-check
   // text on ?shot= routes, and the whole pitch hides on `joined` as before.
-  assert.match(WAITLIST, /Join the waitlist/);
+  assert.match(WAITLIST, /\{t\('auth:waitlist\.title'\)\}/);
+  assert.match(message('auth:waitlist.title'), /Join the waitlist/);
   assert.match(WAITLIST, /hiddenLast\(joined, 'mt-3 text-sm font-medium/);
 });
 
 test('want-in-sooner drops the sentence that said it twice', () => {
-  const intro = MORE.slice(
-    MORE.indexOf('Four questions, about three minutes'),
-    MORE.indexOf('id="more-invalid"'));
+  // One message between the heading and the invalid-link notice, and no other.
+  const between = MORE.slice(MORE.indexOf("{t('auth:more.title')}"), MORE.indexOf('id="more-invalid"'));
+  assert.deepEqual(Array.from(between.matchAll(/\bt\('([^']+)'/g), (m) => m[1]), ['auth:more.title', 'auth:more.intro']);
+  const intro = message('auth:more.intro');
+  assert.match(intro, /^Four questions, about three minutes/);
   assert.ok(wordsIn(intro) < 40, `saw ${wordsIn(intro)} words`);
   // What it must still say.
   assert.match(flat(intro), /what we read when we pick who gets in next/);
@@ -84,10 +97,12 @@ test('want-in-sooner drops the sentence that said it twice', () => {
   // removed, which is exactly the sort of prose a whole-file grep trips on.
   assert.doesNotMatch(flat(intro), /worth more than the order/);
   assert.doesNotMatch(flat(intro), /Every one is optional/);
-  assert.match(MORE, /Optional \(moves you up the list\)/,
+  assert.match(MORE, /\{t\('auth:more\.eyebrow'\)\}/);
+  assert.match(message('auth:more.eyebrow'), /Optional \(moves you up the list\)/,
     'the optional label is still there, which is why the sentence could go');
 });
 
 test('the "Want in sooner?" heading survives, because a check asserts it', () => {
-  assert.match(MORE, /Want in sooner\?/);
+  assert.match(MORE, /\{t\('auth:more\.title'\)\}/);
+  assert.match(message('auth:more.title'), /Want in sooner\?/);
 });

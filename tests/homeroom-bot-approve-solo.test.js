@@ -30,6 +30,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -64,6 +65,7 @@ function makeAppView(over = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
@@ -112,7 +114,9 @@ test('B7: the button, the status, the step and ⋯ on a project that is just you
   AppView.appData = { slug: 'plant-pal', audience: 'invited' };
   assert.equal(AppView.statusPillState(change({ votes_required: 2 })).label, 'Vote · 0/2');
   assert.ok(!AppView._proposalMenuItems(change(), {}).some((i) => i.label === 'Don’t approve'));
-  assert.match(SRC, /const voteStep = AppView\._approveSolo\(item\) \? 'Your approval' : 'Vote';/);
+  assert.match(SRC, /const voteStep = AppView\._approveSolo\(item\) \? PlatformI18n\.t\('changes:page\.steps\.label\.yourApproval'\) : PlatformI18n\.t\('changes:page\.steps\.label\.vote'\);/);
+  assert.equal(message('changes:page.steps.label.yourApproval'), 'Your approval');
+  assert.equal(message('changes:page.steps.label.vote'), 'Vote');
   // B10a: the change page's eyebrow and the card's meta line say it the same way.
   AppView.appData = { slug: 'plant-pal', audience: 'solo' };
   assert.equal(AppView._waitingWords(change()), 'Waiting for your approval');
@@ -206,8 +210,10 @@ test('#3977: a solo Don\'t approve sends its note the way a group\'s No sends it
   assert.match(fn, /onSend=\{submit\}/);
   // Fallback with no kit sheet: Approve asks for nothing, Don't approve asks
   // for its line through castVote's own prompt, as any No.
-  assert.match(fn, /\{ label: '✓  Approve', handler: \(\) => send\(yes, null\) \}/);
-  assert.match(fn, /label: approve \? '✕  Don’t approve' : [^\n]*handler: \(\) => pickTouch\(no\) \}/);
+  assert.match(fn, /\{ label: t\('project:card\.vote\.sheet\.approve'\), handler: \(\) => send\(yes, null\) \}/);
+  assert.match(fn, /label: approve \? t\('project:card\.vote\.sheet\.dontApprove'\) : [^\n]*handler: \(\) => pickTouch\(no\) \}/);
+  assert.equal(message('project:card.vote.sheet.approve'), '✓  Approve');
+  assert.equal(message('project:card.vote.sheet.dontApprove'), '✕  Don’t approve');
 
   // And castVote posts that line with the No: the server stores it on the
   // vote (pr_votes.reason) and writes it into the change's own discussion,
@@ -246,7 +252,8 @@ test('#4270: ⋯ no longer offers a separate "Don\'t approve"', () => {
   assert.doesNotMatch(menu, /castVote\(/, 'no vote is cast from ⋯');
   assert.doesNotMatch(menu, /label: 'Don’t approve'/);
   // The picker still has it, worded so, on every face that draws VoteButton.
-  assert.match(CARD_SRC, /const noWord = approve \? 'Don’t approve' :/);
+  assert.match(CARD_SRC, /const noWord = approve\s*\? t\('project:card\.vote\.picker\.dontApprove'\)\s*:/);
+  assert.equal(message('project:card.vote.picker.dontApprove'), 'Don’t approve');
 });
 
 test('#3977: the Needs you tab\'s vote sheet is the same picker, as an approval', () => {

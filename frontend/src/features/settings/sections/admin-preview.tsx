@@ -1,5 +1,6 @@
 import { SectionHeading } from '@/components/ui/field';
 import { SwitchRow } from '@/components/ui/switch';
+import { useMessages } from '../../../lib/i18n/react';
 
 /**
  * Admin-only: "view as non-admin" preview. Visible only when the server
@@ -12,17 +13,18 @@ import { SwitchRow } from '@/components/ui/switch';
  * screen, separate from the wrapper's routing `hidden` — see wallet.tsx.
  */
 export function AdminPreviewSection() {
+  const t = useMessages('settings');
   return (
     <div data-settings-section="admin-preview" className="hidden">
       <div id="settings-admin-section" className="hidden">
-        <SectionHeading title="Admin preview">
-          Hide admin-only UI so the app looks the way it does for a regular user. Useful for spotting UX issues that only affect non-admins.
+        <SectionHeading title={t('settings:adminPreview.title')}>
+          {t('settings:adminPreview.intro')}
         </SectionHeading>
         <SwitchRow id="view-as-non-admin">
-          View as non-admin
+          {t('settings:adminPreview.toggle.label')}
         </SwitchRow>
         <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
-          Purely a client-side display toggle, so your server-side admin privileges are unaffected. The page will reload so the rest of the UI picks up the change.
+          {t('settings:adminPreview.toggle.description')}
         </p>
       </div>
     </div>

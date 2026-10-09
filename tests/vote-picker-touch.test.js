@@ -20,6 +20,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const { renderComponent } = require('./lib/render-tsx');
@@ -147,7 +148,8 @@ test('VoteButton draws the panel once for both homes, opens on Yes, and sends on
     'touch: the same panel inside the kit sheet\'s content element');
   // #3977: both homes are named by the picker's own header, which is "Your
   // approval" on a solo change whose Yes is the one it needs.
-  assert.match(fn, /const heading = approve \? 'Your approval' : 'Your vote';/);
+  assert.match(fn, /const heading = approve \? t\('project:card\.vote\.dialog\.approval'\) : t\('project:card\.vote\.dialog\.vote'\);/);
+  assert.deepEqual([message('project:card.vote.dialog.approval'), message('project:card.vote.dialog.vote')], ['Your approval', 'Your vote']);
   assert.match(fn, /aria-haspopup="dialog"/, 'the face says what it opens');
   assert.match(fn, /const startSide = \(\): 'yes' \| 'no' => \(mine === 'no' \? 'no' : 'yes'\);/, 'Yes by default; a viewer who voted No starts from No');
   assert.match(fn, /if \(open \|\| sheetRef\.current\) \{ shut\(\); return; \}\s*setSide\(startSide\(\)\);\s*setLine\(''\);/, 'reset on every open');
@@ -218,7 +220,8 @@ test('a test account\'s vote on an app a real person made says, in one line, tha
   assert.match(SRC, /uncounted=\{!!yes\.uncounted\}/);
   const appView = fs.readFileSync(path.join(__dirname, '..', 'public/js/app-view.js'), 'utf8');
   assert.match(appView, /pr\.my_vote_uncounted === true \? \{ uncounted: true \} : \{\}/);
-  assert.match(appView, /Test account: this vote won’t count\./, 'the legacy vote rows carry the same words');
+  assert.match(appView, /data-vote-uncounted="">\$\{PlatformI18n\.htmlText\('changes:vote\.row\.uncounted'\)\}/, 'the legacy vote rows carry the same words');
+  assert.equal(message('changes:vote.row.uncounted'), 'Test account: this vote won’t count.');
   assert.match(CSS, /\.dev-vote-uncounted \{/);
   assert.match(CSS, /\.gc-vote-uncounted \{/);
 });
@@ -264,6 +267,7 @@ test('#3984: castVote and castIssueVote set the mark once the vote is committed 
 test('#3984: a notification\'s "Still yes" reads "Sending…" and its row takes no second press', () => {
   const sheet = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/notifications/notifications-sheet.tsx'), 'utf8');
   assert.match(sheet, /disabled=\{a\.key === 'still_yes' && busy\}/, 'only the vote waits; Accept, Decline and the rest do not');
-  assert.match(sheet, /\{a\.key === 'still_yes' && busy \? 'Sending…' : a\.label\}/);
+  assert.match(sheet, /\{a\.key === 'still_yes' && busy \? t\('notifications:row\.sending'\) : a\.label\}/);
+  assert.equal(message('notifications:row.sending'), 'Sending…');
   assert.match(sheet, /\.then\(\(\) => setBusy\(false\)\)/);
 });

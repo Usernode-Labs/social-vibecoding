@@ -88,14 +88,15 @@ import {
   AppWindowIcon, ChevronDownIcon, ChevronUpIcon, HashIcon, SparklesIcon, UserGroupIcon, UserIcon,
 } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
+import { listText } from '../../lib/i18n/runtime';
 import { useHiddenClass } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import {
-  LIVE_APP_LABEL, LiveAppDot, useCurrentAppSlug, useLiveAppSlugs,
+  liveAppLabel, LiveAppDot, useCurrentAppSlug, useLiveAppSlugs,
 } from '../app-frame/live-apps';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { loadAgentSessions, useAgentSessions } from '../agent-session/store';
-import { ACTIVITY_LABEL } from '../agent-session/activity';
 import { AgentActivityIcon } from '../agent-session/activity-mark';
 import { useGlobalChatSelector } from '../global-chat/store';
 import { improveStore } from '../improve/improve-store.js';
@@ -117,13 +118,20 @@ const GLYPHS: Record<RecentKind, typeof UserIcon> = {
   agent: SparklesIcon,
 };
 
-/** What the kind is called, for the row's accessible name. */
+/** The row's accessible name by kind: a message id whose text holds the
+ *  kind and the row's own label ("Direct message: {{name}}"). */
 const KIND_NAMES: Record<RecentKind, string> = {
-  app: 'App',
-  direct: 'Direct message',
-  group: 'Group chat',
-  channel: 'Channel',
-  agent: 'Agent chat',
+  app: 'core:recents.row.app',
+  direct: 'core:recents.row.direct',
+  group: 'core:recents.row.group',
+  channel: 'core:recents.row.channel',
+  agent: 'core:recents.row.agent',
+};
+
+/** What an agent session is doing, as the row's accessible name adds it. */
+const ACTIVITY_FACT: Record<'working' | 'done', string> = {
+  working: 'core:recents.row.working',
+  done: 'core:recents.row.finished',
 };
 
 function onAppClick(event: MouseEvent<HTMLAnchorElement>, slug: string, resume = false): void {
@@ -187,16 +195,22 @@ function AppTile({ app }: { app: NonNullable<RecentItem['app']> }) {
 function RecentRow({ item, live, resume = false }: { item: RecentItem; live: boolean; resume?: boolean }) {
   const Glyph = GLYPHS[item.kind];
   const app = item.app && (item.app.iconUrl || item.app.iconEmoji) ? item.app : null;
-  const unread = item.unread ? ', unread' : '';
-  const loaded = live ? `, ${LIVE_APP_LABEL}` : '';
-  const doing = item.activity ? `, ${ACTIVITY_LABEL[item.activity].toLowerCase()}` : '';
+  const t = useMessages();
+  // Independent facts, each a whole message, joined the way the language on
+  // screen lists them.
+  const name = listText([
+    t(KIND_NAMES[item.kind], { name: item.label }),
+    live ? liveAppLabel() : null,
+    item.activity ? t(ACTIVITY_FACT[item.activity]) : null,
+    item.unread ? t('core:recents.row.unread') : null,
+  ]);
   return (
     <a
       className="platform-recent"
       href={item.href}
       data-recent-kind={item.kind}
       data-recent-key={item.key}
-      aria-label={`${KIND_NAMES[item.kind]}: ${item.label}${loaded}${doing}${unread}`}
+      aria-label={name}
       {...(live ? { 'data-live': 'true' } : null)}
       {...(item.current ? { 'aria-current': 'true' as const, 'data-current': 'true' } : null)}
       onClick={item.app
@@ -214,7 +228,7 @@ function RecentRow({ item, live, resume = false }: { item: RecentItem; live: boo
           so hovering it shows the whole label. */}
       <span className="platform-recent-label" title={item.label}>{item.label}</span>
       {/* #3618: the action the row stands for, on a running app you left. */}
-      {resume ? <span className="platform-recent-resume" aria-hidden="true">Resume</span> : null}
+      {resume ? <span className="platform-recent-resume" aria-hidden="true">{t('core:recents.resume')}</span> : null}
       {/* #2902: still loaded — resuming it shows it exactly as it was left. */}
       {live ? <LiveAppDot className="platform-recent-live" /> : null}
       {item.unread ? <span className="platform-recent-dot" aria-hidden="true" /> : null}
@@ -234,6 +248,8 @@ export function RecentsByDay({ items, live, showOlder, onToggleOlder, now }: {
   onToggleOlder: () => void;
   now?: number;
 }) {
+  // Subscribed: the day labels and the fold are read in the language on screen.
+  const t = useMessages();
   const { days, earlier, older } = groupRecents(items, now);
   const row = (item: RecentItem) => (
     <RecentRow key={item.key} item={item} live={!!item.app && live.includes(item.app.slug)} />
@@ -252,13 +268,13 @@ export function RecentsByDay({ items, live, showOlder, onToggleOlder, now }: {
           ("Older") under "Earlier" would say nothing new. */}
       {earlier.length ? (
         <>
-          <div className="platform-recents-day">Earlier</div>
+          <div className="platform-recents-day">{t('core:recents.earlier')}</div>
           {earlier.map(row)}
         </>
       ) : null}
       {showOlder && older.length ? (
         <>
-          {earlier.length ? null : <div className="platform-recents-day">Older</div>}
+          {earlier.length ? null : <div className="platform-recents-day">{t('core:recents.older')}</div>}
           {older.map(row)}
         </>
       ) : null}
@@ -272,7 +288,7 @@ export function RecentsByDay({ items, live, showOlder, onToggleOlder, now }: {
           {showOlder
             ? <ChevronUpIcon className="platform-recents-more-icon" aria-hidden="true" />
             : <ChevronDownIcon className="platform-recents-more-icon" aria-hidden="true" />}
-          <span>{showOlder ? 'Show less' : `Show ${older.length} older`}</span>
+          <span>{showOlder ? t('core:recents.showLess') : t('core:recents.showOlder', { count: older.length })}</span>
         </button>
       ) : null}
     </>
@@ -285,10 +301,11 @@ export function RecentsByDay({ items, live, showOlder, onToggleOlder, now }: {
  * render it from plain props.
  */
 export function ActiveApps({ items }: { items: RecentItem[] }) {
+  const t = useMessages();
   if (!items.length) return null;
   return (
     <div className="platform-active" role="group" aria-labelledby="platform-active-head">
-      <h2 id="platform-active-head" className="platform-recents-head">Active</h2>
+      <h2 id="platform-active-head" className="platform-recents-head">{t('core:recents.active')}</h2>
       {items.map((item) => <RecentRow key={item.key} item={item} live resume={!item.current} />)}
     </div>
   );
@@ -312,6 +329,8 @@ function useMidnightRender(): void {
 }
 
 export function RecentsList() {
+  // Subscribed here too: the rows' fallback labels are read as the list is built.
+  const t = useMessages();
   const ref = useRef<HTMLDivElement | null>(null);
   const [mounted, setMounted] = useState(false);
   // #2919: the rows before the labelled days, folded on every load.
@@ -391,7 +410,7 @@ export function RecentsList() {
       aria-labelledby="platform-recents-head"
     >
       <ActiveApps items={active} />
-      <h2 id="platform-recents-head" className="platform-recents-head">Recents</h2>
+      <h2 id="platform-recents-head" className="platform-recents-head">{t('core:recents.heading')}</h2>
       <RecentsByDay
         items={items}
         live={live}

@@ -20,6 +20,7 @@ import { useState, type ReactNode } from 'react';
 
 import { ChevronRightIcon } from '@/components/ui/icons';
 
+import { useMessages } from '../../../lib/i18n/react';
 import { CardIcon, DevCard } from './dev-card';
 import { CardRowView, type DetailPlacement } from './fold';
 import type { ArchivedRow, ListRow } from './model';
@@ -49,6 +50,7 @@ export interface RowFold {
 
 function ArchivedBlock({ rows }: { rows: ArchivedRow[] }): ReactNode {
   const [open, setOpen] = useState(false);
+  const t = useMessages('project');
   return (
     <div className="pt-1" data-archived-block="">
       <button
@@ -64,7 +66,7 @@ function ArchivedBlock({ rows }: { rows: ArchivedRow[] }): ReactNode {
           className="w-3 h-3 transition-transform"
           style={open ? { transform: 'rotate(90deg)' } : undefined}
         />
-        {`Show archived (${rows.length})`}
+        {t('project:kanban.archived.show', { count: rows.length })}
       </button>
       <div data-archived-list="" className={open ? 'space-y-2 pt-2' : 'hidden space-y-2 pt-2'}>
         {rows.map((r) => (
@@ -72,10 +74,10 @@ function ArchivedBlock({ rows }: { rows: ArchivedRow[] }): ReactNode {
             <CardIcon spec={r.icon} />
             <span className="flex-1 min-w-0">
               <span className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 break-words">{r.label}</span>
-              <span className="block text-xs text-zinc-500 dark:text-zinc-400 truncate">Archived</span>
+              <span className="block text-xs text-zinc-500 dark:text-zinc-400 truncate">{t('project:kanban.archived.state')}</span>
             </span>
-            <button type="button" className="gc-vote-btn" data-unarchive-chip={r.id} title="Restore this session (reopens its PR)">
-              Unarchive
+            <button type="button" className="gc-vote-btn" data-unarchive-chip={r.id} title={t('project:kanban.archived.restoreTitle')}>
+              {t('project:kanban.archived.unarchive')}
             </button>
           </div>
         ))}

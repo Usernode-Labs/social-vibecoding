@@ -235,11 +235,11 @@ const TopochainLeaderboard = {
         // event bar's default pick covers "none is currently running").
         // That's an empty world, not a failure — render it neutrally.
         TopochainLeaderboard._error = null;
-        TopochainLeaderboard._empty = 'No events have been published yet.';
+        TopochainLeaderboard._empty = PlatformI18n.t('leaderboard:standings.noEvents');
       } else {
         TopochainLeaderboard._empty = null;
         TopochainLeaderboard._error = (data && data.error)
-          || 'Failed to load the leaderboard.';
+          || PlatformI18n.t('leaderboard:standings.loadFailed');
       }
     }
     TopochainLeaderboard._renderBody();
@@ -391,11 +391,11 @@ const TopochainLeaderboard = {
       ? ['rank', 'user', 'points', 'blocks']
       : ['rank', 'user', 'points', 'blocks', 'success'];
     const headers = {
-      rank: 'Rank',
-      user: 'User',
-      points: isSeason ? 'Season points' : 'Points',
-      blocks: 'Blocks produced',
-      success: 'Success rate',
+      rank: PlatformI18n.t('leaderboard:standings.column.rank'),
+      user: PlatformI18n.t('leaderboard:standings.column.user'),
+      points: isSeason ? PlatformI18n.t('leaderboard:standings.column.seasonPoints') : PlatformI18n.t('leaderboard:standings.column.points'),
+      blocks: PlatformI18n.t('leaderboard:standings.column.blocks'),
+      success: PlatformI18n.t('leaderboard:standings.column.success'),
     };
 
     const rows = shown.map((r, i) => ({
@@ -404,7 +404,7 @@ const TopochainLeaderboard = {
       nonPodium: !!r.is_non_podium,
       // The server resolves a name for every account it can (#2394); a row
       // it still cannot name says so rather than showing only its points.
-      user: str(r.display_name) || 'Anonymous',
+      user: str(r.display_name) || PlatformI18n.t('leaderboard:standings.anonymous'),
       points: str(r.total_points),
       extra: str(r.extra_points),
       blocks: str(r.event_total_produced_blocks),
@@ -500,14 +500,14 @@ const TopochainLeaderboard = {
           TopochainLeaderboard._drillActivities = { loading: false, error: null, data: data.data };
         } else {
           TopochainLeaderboard._drillActivities = {
-            loading: false, error: (data && data.error) || 'Could not load activities.', data: null,
+            loading: false, error: (data && data.error) || PlatformI18n.t('leaderboard:drill.activitiesFailed'), data: null,
           };
         }
         TopochainLeaderboard._renderDrill();
       });
     } else {
       TopochainLeaderboard._drillActivities = {
-        loading: false, error: 'No identifier available for this row.', data: null,
+        loading: false, error: PlatformI18n.t('leaderboard:drill.noIdentifier'), data: null,
       };
     }
 
@@ -521,7 +521,7 @@ const TopochainLeaderboard = {
           TopochainLeaderboard._drillEpoch = { loading: false, error: null, data: data.data };
         } else {
           TopochainLeaderboard._drillEpoch = {
-            loading: false, error: (data && data.error) || 'Could not load the epoch breakdown.', data: null,
+            loading: false, error: (data && data.error) || PlatformI18n.t('leaderboard:drill.epoch.failed'), data: null,
           };
         }
         TopochainLeaderboard._renderDrill();
@@ -537,8 +537,8 @@ const TopochainLeaderboard = {
       TopochainLeaderboard._drillEpoch = {
         loading: false,
         error: TopochainLeaderboard._isSeasonBoard()
-          ? 'The epoch breakdown is per event. Pick a single event above to see it.'
-          : 'No wallet linked for this row.',
+          ? PlatformI18n.t('leaderboard:drill.epoch.perEvent')
+          : PlatformI18n.t('leaderboard:drill.epoch.noWallet'),
         data: null,
       };
     }
@@ -559,7 +559,7 @@ const TopochainLeaderboard = {
           TopochainLeaderboard._drillProfile = { loading: false, error: null, data: data.data };
         } else {
           TopochainLeaderboard._drillProfile = {
-            loading: false, error: (data && data.error) || 'Could not load your profile.', data: null,
+            loading: false, error: (data && data.error) || PlatformI18n.t('leaderboard:drill.profile.failed'), data: null,
           };
         }
         TopochainLeaderboard._renderDrill();
@@ -638,7 +638,7 @@ const TopochainLeaderboard = {
     };
 
     return {
-      displayName: str(row.display_name) || 'Anonymous',
+      displayName: str(row.display_name) || PlatformI18n.t('leaderboard:standings.anonymous'),
       walletAddress: row.wallet_address ? str(row.wallet_address) : null,
       profile,
       activities,
@@ -654,3 +654,13 @@ const TopochainLeaderboard = {
 // frontend/scripts/build-shell.mjs evaluates the island's whole module graph
 // in Node, where there is no window.
 if (typeof window !== 'undefined') window.TopochainLeaderboard = TopochainLeaderboard;
+
+// The table's headings and stand-in names are read when a view is built, so a
+// new language builds the views again from what is already loaded.
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  document.addEventListener('homeroom:language-changed', () => {
+    if (!TopochainLeaderboard._open) return;
+    TopochainLeaderboard._renderBody();
+    TopochainLeaderboard._renderDrill();
+  });
+}

@@ -35,6 +35,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const express = require('express');
@@ -412,10 +413,15 @@ test('it presents at once, with an empty field and nothing fetched to fill it (#
 test('beside the field, every sign-up surface says the username will be public (#3575)', () => {
   const shared = read('frontend/src/features/auth/shared.ts');
   const note = 'Your username will be public to other users on Homeroom.';
-  assert.match(shared, /export const USERNAME_PUBLIC_NOTE = 'Your username will be public to other users on Homeroom\.';/);
-  // The gate is a classic module with no imports, so it spells the words;
-  // this is what holds the two copies together.
-  assert.ok(gateJs.includes(`const PUBLIC_NOTE = '${note}';`));
+  // The React forms read the sentence from the catalog, one entry per form.
+  assert.match(shared, /auth:register\.usernamePublic and auth:login\.signup\.usernamePublic/);
+  assert.equal(message('auth:register.usernamePublic'), note);
+  assert.equal(message('auth:login.signup.usernamePublic'), note);
+  // The gate is a classic module with no imports, so it reads the words
+  // from the catalog by id; this is what holds the copies together.
+  assert.ok(gateJs.includes("const PUBLIC_NOTE = 'onboarding:username.publicNote';"));
+  assert.match(gateJs, /PlatformI18n\.t\(PUBLIC_NOTE\)/);
+  assert.equal(message('onboarding:username.publicNote'), note);
   // Right after the input, ahead of the error line, so a refusal never
   // displaces it — and the input names it for a screen reader.
   const inputAt = gateJs.indexOf('panel.appendChild(input);');
@@ -429,10 +435,10 @@ test('beside the field, every sign-up surface says the username will be public (
   // shared constant on its own line, directly under the input.
   const register = read('frontend/src/features/auth/register.tsx');
   assert.match(register,
-    /aria-describedby="reg-username-public reg-username-hint"[\s\S]{0,700}?<p id="reg-username-public" className=\{FIELD_HINT\}>\s*\{USERNAME_PUBLIC_NOTE\}\s*<\/p>\s*<p\s+id="reg-username-hint"/);
+    /aria-describedby="reg-username-public reg-username-hint"[\s\S]{0,700}?<p id="reg-username-public" className=\{FIELD_HINT\}>\s*\{t\('auth:register\.usernamePublic'\)\}\s*<\/p>\s*<p\s+id="reg-username-hint"/);
   const login = read('frontend/src/features/auth/login.tsx');
   assert.match(login,
-    /aria-describedby="otp-username-public otp-username-hint"[\s\S]{0,300}?\/>\s*<p id="otp-username-public" className=\{FIELD_HINT\}>\s*\{USERNAME_PUBLIC_NOTE\}\s*<\/p>\s*<p id="otp-username-hint"/);
+    /aria-describedby="otp-username-public otp-username-hint"[\s\S]{0,300}?\/>\s*<p id="otp-username-public" className=\{FIELD_HINT\}>\s*\{t\('auth:login\.signup\.usernamePublic'\)\}\s*<\/p>\s*<p id="otp-username-hint"/);
 });
 
 test('screenshot and demo routes are skipped, except this step own shot', () => {
@@ -472,8 +478,11 @@ test('the declared checks reach the step and pin its copy', () => {
   // The strings the checks match on live in the module; a reword that
   // breaks them fails here, next to the code, instead of in a proposal
   // check.
+  // The module reads them from the catalog: the English of the ids it asks for.
+  const gateWords = [...gateJs.matchAll(/'(onboarding:username\.[A-Za-z.]+)'/g)].map((m) => message(m[1], { username: 'x' }));
+  assert.ok(gateWords.length >= 10, 'the gate reads its words by id');
   for (const t of ours) {
-    if (t.expectText) assert.ok(gateJs.includes(t.expectText), t.expectText);
+    if (t.expectText) assert.ok(gateWords.some((words) => words.includes(t.expectText)), t.expectText);
   }
   assert.ok(gateJs.includes('data-choose-username-save'));
   // #3575: the visual check asserts the field arrives EMPTY (the

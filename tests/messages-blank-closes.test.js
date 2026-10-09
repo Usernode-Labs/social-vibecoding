@@ -6,6 +6,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -27,5 +28,6 @@ test('closing goes through the store\'s own navigation', () => {
   // open(null) routes to the bare #messages hash — the two-pane layout then
   // shows "Choose a conversation".
   assert.match(STORE, /export function open\(conversationId\?: number \| null\): void \{[\s\S]*?: '#messages';/);
-  assert.match(SCREEN, /<h2>Choose a conversation<\/h2>/);
+  assert.equal(message('messages:thread.empty.title'), 'Choose a conversation');
+  assert.match(SCREEN, /<h2>\{t\('messages:thread\.empty\.title'\)\}<\/h2>/);
 });

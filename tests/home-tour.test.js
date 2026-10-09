@@ -56,6 +56,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { renderComponent, loadTsx } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
@@ -95,11 +96,11 @@ test('the five steps are the ones the design settled on, in order', () => {
 
 test('each step carries copy, and none of it is an em dash', () => {
   for (const step of steps.TOUR_STEPS) {
-    assert.ok(step.title.length > 0, `${step.id} has a title`);
-    assert.ok(step.body.length > 12, `${step.id} has body copy`);
+    assert.ok(message(step.title).length > 0, `${step.id} has a title`);
+    assert.ok(message(step.body).length > 12, `${step.id} has body copy`);
     // tests/no-em-dash-in-copy.test.js bans it across frontend/src; this
     // table is all copy, so it is worth saying twice.
-    assert.doesNotMatch(`${step.title} ${step.body}`, /—/, `${step.id} is em-dash free`);
+    assert.doesNotMatch(`${message(step.title)} ${message(step.body)}`, /—/, `${step.id} is em-dash free`);
   }
 });
 
@@ -110,7 +111,7 @@ test('every step points at a REAL control, and nothing is illustrated', () => {
   // The whole My apps section, heading included, so the card never sits on
   // the heading the step is about (#3240); the grid is the fallback.
   assert.deepEqual([...byId.apps.targets], ['#home-apps-section', '#app-list']);
-  assert.match(byId.apps.body, /people for a private community, a lock for one that is just yours/,
+  assert.match(message(byId.apps.body), /people for a private community, a lock for one that is just yours/,
     'the step names the tile marks the grid draws');
   // The way into Settings is the Me tab, whose screen carries
   // #profile-row-settings (#2718).
@@ -118,7 +119,8 @@ test('every step points at a REAL control, and nothing is illustrated', () => {
   // #3567: the Communities tab, whose key and id are still `workshop`.
   assert.deepEqual([...byId.communities.targets], ['#platform-tab-workshop']);
   assert.match(read('frontend/src/features/nav/tab-bar.tsx'),
-    /\{ key: 'workshop' as const, label: 'Communities', href: '#communities'/,
+    /\{ key: 'workshop' as const, label: 'core:tabs\.communities', href: '#communities'/);
+  assert.equal(message('core:tabs.communities'), 'Communities',
     'the tab the step points at is the one labelled Communities');
   // THE MENU ARC: the mark that opens it, then the well inside it that holds
   // both of its actions. The mark is on screen on every route, which is what
@@ -810,7 +812,7 @@ test('?shot=welcome-tour opens the tour at step 1 and writes nothing (#3567)', (
   const check = DAPP.tests.find((t) => t.path === '/?shot=welcome-tour');
   assert.ok(check, 'dapp.json declares a check on the tour shot');
   assert.match(check.expectSelector, /#home-tour:not\(\.hidden\)/);
-  assert.ok(steps.TOUR_STEPS[0].body.toLowerCase().includes(check.expectText.toLowerCase()),
+  assert.ok(message(steps.TOUR_STEPS[0].body).toLowerCase().includes(check.expectText.toLowerCase()),
     'and it asserts the communities step\'s own copy');
 });
 
@@ -819,13 +821,13 @@ test('the communities step names what the screen names (#3567)', () => {
   // people see it by its audience, in the screen's own words.
   const step = steps.TOUR_STEPS[0];
   assert.equal(step.id, 'communities');
-  assert.equal(step.title, 'Communities');
-  assert.match(step.body, /communities that build projects together/);
-  assert.match(step.body, /propose a change, and the group votes it in/);
+  assert.equal(message(step.title), 'Communities');
+  assert.match(message(step.body), /communities that build projects together/);
+  assert.match(message(step.body), /propose a change, and the group votes it in/);
   for (const audience of ['Just you', 'a Private community', 'a Public community']) {
-    assert.ok(step.body.includes(audience), `names ${audience}`);
+    assert.ok(message(step.body).includes(audience), `names ${audience}`);
   }
-  assert.doesNotMatch(step.body, /\bapps?\b/, 'a thing being built is a project');
+  assert.doesNotMatch(message(step.body), /\bapps?\b/, 'a thing being built is a project');
 });
 
 test('nothing opens the tour by itself: a request, or a reload under one in progress', () => {
@@ -1019,7 +1021,9 @@ test('Settings offers Replay the tour, and it is a registered section', () => {
   assert.match(html, /id="settings-tour-replay"/);
   assert.match(html, /Replay the tour/);
   // Registered in the menu, a page of its own under Help & about.
-  assert.match(SETTINGS_JS, /\{ key: 'tour', label: 'Welcome tour', group: 'Help & about' \}/);
+  assert.match(SETTINGS_JS, /\{ key: 'tour', label: 'settings:nav\.part\.tour', group: 'settings:nav\.group\.helpAbout' \}/);
+  assert.equal(message('settings:nav.part.tour'), 'Welcome tour');
+  assert.equal(message('settings:nav.group.helpAbout'), 'Help & about');
 });
 
 test('Replay clears the flag, asks for the tour, then goes to Home', () => {

@@ -35,6 +35,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -401,7 +402,7 @@ test('the Workshop is a row in the menu, not a toggle (#2761)', () => {
   // the App segment — the parked app on the bar (#2762) is the way back.
   assert.ok(!/AppViewTabs|view-tabs/.test(SHEET.replace(/\{\/\*[\s\S]*?\*\/\}/g, '')),
     'the strip is not rendered here any more');
-  assert.match(SHEET, /id="app-menu-row-workshop"[\s\S]{0,200}label="Go to community"/,
+  assert.match(SHEET, /id="app-menu-row-workshop"[\s\S]{0,200}label=\{t\('agent:appContext\.row\.community'\)\}/,
     'the row that replaced it');
   // The strip's Workshop segment carried the vote count; it rides the row now.
   assert.match(SHEET, /id="app-menu-workshop-owed"/);

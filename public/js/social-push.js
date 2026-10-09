@@ -245,18 +245,18 @@
 
     async setEnabled(enabled) {
       if (!await SocialPush.isSupported()) {
-        throw new Error('Activity notifications are not supported by this app build');
+        throw new Error(PlatformI18n.t('shell:push.error.unsupported'));
       }
       if (!SocialPush._sessionAdmitted()) {
-        throw new Error('Secure app sign-in is still finishing. Try again shortly');
+        throw new Error(PlatformI18n.t('shell:push.error.signInFinishing'));
       }
       const generation = SocialPush._admissionGeneration;
       const value = await window.usernode.setSocialPushEnabled(enabled === true);
       if (generation !== SocialPush._admissionGeneration) {
-        throw new Error('The native session changed while updating notifications');
+        throw new Error(PlatformI18n.t('shell:push.error.sessionChanged'));
       }
       const state = SocialPush._applyState(value);
-      if (!state) throw new Error('The app returned an invalid notification state');
+      if (!state) throw new Error(PlatformI18n.t('shell:push.error.invalidState'));
       return state;
     },
 

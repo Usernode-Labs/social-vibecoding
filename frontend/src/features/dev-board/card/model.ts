@@ -185,8 +185,8 @@ export type BadgeSpec =
   /** A metadata chip (priority / assignee / category). */
   | { t: 'attr'; key: string; field: 'priority' | 'assignee' | 'category'; targetType: string; targetRef: string | number; cls: string; hover: string; title: string; count: number; readonly: boolean; label: AttrLabel }
   /** Closes #N — in-app (button) or on GitHub (anchor). */
-  | { t: 'issueChip'; key: string; n: number; prefix: string; cls: string; title: string }
-  | { t: 'issueLink'; key: string; n: number; href: string; verb: string; cls: string; title: string }
+  | { t: 'issueChip'; key: string; n: number; label: string; cls: string; title: string }
+  | { t: 'issueLink'; key: string; n: number; href: string; label: string; cls: string; title: string }
   /** MergeStatus.badgeHtml's descriptor, as data. */
   | { t: 'ms'; key: string; tone: string; label: string; title?: string; spinner?: boolean; glyph?: string; votes?: { yes: number; majority: number; reached: boolean } }
   /** BuildVenues.chipHtml — where this session's turns run. */
@@ -366,7 +366,8 @@ export interface RowTag {
 export interface RowBrief {
   /** The neutral tile's glyph. */
   kind: 'request' | 'change' | 'live' | 'vote';
-  noun: string;
+  /** Which word names it ("Change #4456", "Request"): a key, the row reads the message. */
+  noun: 'change' | 'request' | 'vote';
   n: number | null;
   /** Who made it ('' when nobody is named). */
   by: string;

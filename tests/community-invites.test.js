@@ -10,6 +10,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -196,7 +197,9 @@ test('the shell: signed out it is the landing, remembered for after sign-in; sig
   assert.match(app, /const inviteToken = rawHash \? null : App\._inviteTokenFromPath\(location\.pathname\);/);
   assert.match(app, /AuthScreens\.rememberDeepLink\(location\.pathname\);\s+AuthScreens\.show\('landing'\);/);
   assert.match(app, /if \(App\.user\.hasPlatformAccess !== false\) \{\s+App\._followInvite\(inviteToken\);/);
-  assert.match(app, /confirmLabel: 'Join',\s+cancelLabel: 'Not now',/);
+  assert.match(app, /confirmLabel: PlatformI18n\.t\('shell:invite\.confirm\.join'\),\s+cancelLabel: PlatformI18n\.t\('shell:invite\.confirm\.notNow'\),/);
+  assert.equal(message('shell:invite.confirm.join'), 'Join');
+  assert.equal(message('shell:invite.confirm.notNow'), 'Not now');
   const screens = read('public/js/auth-screens.js');
   assert.match(screens, /if \(\/\^\\\/invite\\\/\[A-Za-z0-9_-\]\{22\}\$\/\.test\(value\)\) return value;/, 'a deep link back to it');
   assert.match(screens, /if \(invite\) AuthScreens\._waitingInvite = invite\[1\];/, 'kept for the waiting room');
@@ -242,7 +245,8 @@ test('the words: the landing card, the invite pane', () => {
   assert.equal(card.inviterLabel({}), '');
   // The signed-out page does not say who will see the join (owner, 8 October).
   assert.equal(card.seenLine, undefined);
-  assert.equal(card.HOMEROOM_LINE, 'On Homeroom, people using an app build and improve it together.');
+  assert.equal(card.HOMEROOM_LINE, 'auth:invite.homeroomLine');
+  assert.equal(message(card.HOMEROOM_LINE), 'On Homeroom, people using an app build and improve it together.');
   // The making line is gone: the hero says who invited you, not who made it.
   const src = read('frontend/src/features/auth/invite-card.tsx');
   assert.doesNotMatch(src, /and invited you to join|export function madeLine|export function underLine/);
@@ -263,8 +267,10 @@ test('the words: the landing card, the invite pane', () => {
   assert.equal(pane.linkDetail({ ...fresh, maxUses: null, uses: 2 }, now), '2 joined · 7 days left');
   const paneSrc = read('frontend/src/features/app-context/invite-pane.tsx');
   assert.match(paneSrc, /const DAY_CHOICES = \[1, 7, 30, NO_LIMIT\];/);
-  assert.match(paneSrc, /'Until you turn it off'/);
-  assert.match(paneSrc, /'Anyone with the link'/);
+  assert.match(paneSrc, /t\('agent:appContext\.invite\.option\.untilOff'\)/);
+  assert.equal(message('agent:appContext.invite.option.untilOff'), 'Until you turn it off');
+  assert.match(paneSrc, /t\('agent:appContext\.invite\.option\.anyone'\)/);
+  assert.equal(message('agent:appContext.invite.option.anyone'), 'Anyone with the link');
   assert.match(paneSrc, /\{state\.joiningRule\}/);
   assert.equal(pane.newcomerLine(), 'Someone new to Homeroom joins straight away and goes right into this project.');
   assert.doesNotMatch(pane.newcomerLine.toString(), /skip/, 'no skips past the waitlist to count');
@@ -339,7 +345,10 @@ test(`the preview reads like the page: who made it, their note, the project's pi
   assert.match(routes.previewTags({ ...live, building: true, project: { ...live.project, name: 'Run Tracker' }, communityName: 'Sunday Run Club' }, null),
     /og:title" content="Maya is making this for Sunday Run Club"/);
   // The signed-in confirm says the same.
-  assert.match(read('public/js/app.js'), /\? `\$\{standing\.inviterName\} \$\{standing\.building \? 'is making' : 'made'\} it and invited you\.`/);
+  // Each wording is a whole message of its own (shell.json).
+  assert.match(read('public/js/app.js'), /\? \(standing\.building\s+\? PlatformI18n\.t\('shell:invite\.from\.isMaking', \{ inviter: standing\.inviterName \}\)\s+: PlatformI18n\.t\('shell:invite\.from\.made', \{ inviter: standing\.inviterName \}\)\)/);
+  assert.equal(message('shell:invite.from.isMaking', { inviter: 'Maya' }), 'Maya is making it and invited you.');
+  assert.equal(message('shell:invite.from.made', { inviter: 'Maya' }), 'Maya made it and invited you.');
 });
 
 test('the picture is served only through a live link, and only an after-shot of a merged change', () => {
@@ -380,5 +389,6 @@ test(`a live link's landing is "Made for you"; the pitch stays in the document, 
   assert.match(card, /<section\s+data-landing-invite="live"/);
   assert.match(card, /data-landing-invite-picture=\{picture\.kind\}/);
   assert.match(card, /data-landing-invite-note=""/);
-  assert.match(card, /\{`Join \$\{project\.name\}`\}/);
+  assert.match(card, /\{t\('auth:invite\.join', \{ project: project\.name \}\)\}/);
+  assert.equal(message('auth:invite.join', { project: 'Game Corner' }), 'Join Game Corner');
 });

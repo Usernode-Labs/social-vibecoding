@@ -37,6 +37,7 @@ import { Button } from '@/components/ui/button';
 import { GroupedList, ListRow } from '@/components/ui/grouped-list';
 import { ArrowRightShortIcon } from '@/components/ui/icons';
 
+import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { AppIconContent, AppIconLink, AppPills, appIconKind, hasAppPills } from './app-card-view';
 
 type ContributorRowView = {
@@ -110,6 +111,7 @@ const HEAD_RULE = "after:absolute after:bottom-0 after:left-4 after:right-0 afte
   + "after:bg-zinc-200 dark:after:bg-zinc-800 after:content-['']";
 
 function ContributorRow({ row }: { row: ContributorRowView }): ReactNode {
+  const t = useMessages('discover');
   return (
     <ListRow
       as="button"
@@ -119,7 +121,7 @@ function ContributorRow({ row }: { row: ContributorRowView }): ReactNode {
       chevron={false}
       className="browse-contrib-row transition-colors hover:bg-zinc-500/5"
       data-username={row.who}
-      tooltip={`View @${row.who}’s changes`}
+      tooltip={t('discover:detail.contributor.viewChanges', { username: row.who })}
       onClick={() => controller()?.openContributor(row.who)}
       // Rank and disc travel together as ONE leading element, so the 12px
       // between them survives the row's own 16px gap.
@@ -136,25 +138,29 @@ function ContributorRow({ row }: { row: ContributorRowView }): ReactNode {
       trailing={(
         <div
           className={`shrink-0 inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${row.pillTint}`}
-          title="Their changes that went live in this app"
-        >{`${row.merged} live`}</div>
+          title={t('discover:detail.contributor.liveTip')}
+        >{t('discover:detail.contributor.live', { count: row.merged })}</div>
       )}
     />
   );
 }
 
 function Contributors({ view }: { view: ContributorsView }): ReactNode {
+  const t = useMessages('discover');
   return (
     <GroupedList id="browse-detail-contributors" className={CARD_SPACING}>
       {/* The heading paints in every state (including loading) so the page
           doesn't jump when the fetch lands. */}
       <h3
         className={`relative px-4 py-2.5 text-sm font-semibold text-zinc-900 dark:text-zinc-100 ${HEAD_RULE}`}
-        title="The app&rsquo;s creator, its members, and everyone with a change that went live in it"
+        title={t('discover:detail.contributors.tip')}
       >
-        Contributors
-        {view.count == null ? null : (
-          <span className="text-zinc-500 dark:text-zinc-500 font-normal">{` · ${view.count}`}</span>
+        {view.count == null ? t('discover:detail.contributors.heading') : (
+          <RichMessage
+            id="discover:detail.contributors.headingCount"
+            values={{ count: view.count }}
+            components={[<span className="text-zinc-500 dark:text-zinc-500 font-normal" />]}
+          />
         )}
       </h3>
       {view.note ? <p className={NOTE_CLASS}>{view.note}</p> : null}
@@ -184,9 +190,10 @@ function Contributors({ view }: { view: ContributorsView }): ReactNode {
 }
 
 function Missing(): ReactNode {
+  const t = useMessages('discover');
   return (
     <div className="text-sm text-zinc-500 dark:text-zinc-400">
-      <p className="mb-3">That app isn&rsquo;t available.</p>
+      <p className="mb-3">{t('discover:detail.unavailable')}</p>
       {/* #1036: a real anchor, so a modified click stays the browser's. */}
       <a
         id="browse-detail-back"
@@ -198,13 +205,14 @@ function Missing(): ReactNode {
           e.preventDefault();
           location.hash = '#apps';
         }}
-      >&larr; Back to all apps</a>
+      >{t('discover:detail.backToAll')}</a>
     </div>
   );
 }
 
 function Ready({ view }: { view: Extract<DetailView, { state: 'ready' }> }): ReactNode {
   const warm = () => controller()?.warmDetailApp(view.slug);
+  const t = useMessages('discover');
   return (
     <>
       <div className="flex items-start gap-4">
@@ -238,19 +246,19 @@ function Ready({ view }: { view: Extract<DetailView, { state: 'ready' }> }): Rea
                 <a
                   href={view.forkedFrom.href}
                   className="hover:underline"
-                  title={`Remixed from ${view.forkedFrom.name}: open the original`}
+                  title={t('discover:detail.remixedFrom.openOriginal', { app: view.forkedFrom.name })}
                 >
-                  {`\u2442 Remixed from ${view.forkedFrom.name}`}
+                  {t('discover:detail.remixedFrom.line', { app: view.forkedFrom.name })}
                 </a>
               ) : (
-                <span className="opacity-90" title="The original app no longer exists">
-                  {`\u2442 Remixed from ${view.forkedFrom.name}`}
+                <span className="opacity-90" title={t('discover:detail.remixedFrom.originalGone')}>
+                  {t('discover:detail.remixedFrom.line', { app: view.forkedFrom.name })}
                 </span>
               )}
             </p>
           ) : null}
           {view.updatedRel ? (
-            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{`Updated ${view.updatedRel}`}</p>
+            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{t('discover:detail.updated', { when: view.updatedRel })}</p>
           ) : null}
           {hasAppPills(view.app) ? (
             <div className="flex flex-wrap items-center gap-1 mt-2">
@@ -307,8 +315,8 @@ function Ready({ view }: { view: Extract<DetailView, { state: 'ready' }> }): Rea
               // The action rows' own weight and ink (see them just below):
               // Share is one more entry in the same list, not a headline.
               titleClassName="font-normal text-zinc-700 dark:text-zinc-200"
-              tooltip="Share a link to this app"
-              title="Share"
+              tooltip={t('discover:detail.share.tip')}
+              title={t('discover:detail.share.label')}
               onClick={() => controller()?.shareDetailApp(view.app)}
             />
           ) : null}
@@ -342,13 +350,14 @@ function Ready({ view }: { view: Extract<DetailView, { state: 'ready' }> }): Rea
 }
 
 export function BrowseDetail({ detail }: { detail: DetailView | null }): ReactNode {
+  const t = useMessages('discover');
   if (!detail) return null;
   if (detail.state === 'loading') {
-    return <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading&hellip;</p>;
+    return <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('core:common.loading')}</p>;
   }
   if (detail.state === 'blocked') return <div className={NOTE_CLASS}>
-    <p>You blocked this app. Unblock it to open it again.</p>
-    <a href="#settings/blocked-apps" className="text-violet-600 dark:text-violet-400 underline">Open blocked apps in Settings</a>
+    <p>{t('discover:detail.blocked.note')}</p>
+    <a href="#settings/blocked-apps" className="text-violet-600 dark:text-violet-400 underline">{t('discover:detail.blocked.settingsLink')}</a>
   </div>;
   if (detail.state === 'missing') return <Missing />;
   return <Ready key={detail.slug} view={detail} />;

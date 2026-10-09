@@ -33,6 +33,7 @@ function context(user = { id: 42, username: 'Builder' }, globals = {}) {
     setTimeout, clearTimeout, setInterval, clearInterval,
     location: { search: '', hash: '' }, URLSearchParams, ...globals };
   c.window = c;
+  c.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(c);
   for (const p of ['public/js/merge-status.js', 'public/js/app-view.js']) {
     vm.runInContext(fs.readFileSync(path.join(ROOT, p), 'utf8'), c);

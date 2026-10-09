@@ -42,6 +42,8 @@ import { Wordmark } from '@/components/ui/wordmark';
 import { cn } from '@/lib/utils';
 
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
+import { Message, RichMessage, useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { FRAME_THEME_PARAM } from '../app-frame/app-frame-policy.js';
 import {
@@ -255,6 +257,8 @@ function swapViewerFrame(): HTMLIFrameElement | null {
  * again. See the file header.
  */
 const ViewerRegion = memo(function ViewerRegion() {
+  // Read once, not subscribed: this subtree must never re-render (above), so
+  // the frame's title stays in the language the screen first mounted in.
   return (
     <div id="app-viewer" className="hidden flex-1 min-h-0 flex flex-col bg-white dark:bg-zinc-950">
       {/*
@@ -269,12 +273,29 @@ const ViewerRegion = memo(function ViewerRegion() {
       <iframe
         id="app-viewer-frame"
         className="flex-1 w-full border-0"
-        title="App"
+        title={translate('auth:landing.viewerTitle')}
         allow="clipboard-write"
       ></iframe>
     </div>
   );
 });
+
+/**
+ * The lock on an account-required tile. Its own component so the tooltip is
+ * read in the language on screen while LandingTile stays a plain function of
+ * its props (tests/app-card-keyboard-open.test.js calls it as one).
+ */
+function AccountRequiredBadge() {
+  const t = useMessages('auth');
+  return (
+    <span
+      className="absolute -top-1.5 -right-1.5 w-6 h-6 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-zinc-500 dark:text-zinc-300"
+      title={t('auth:landing.tile.accountRequired')}
+    >
+      <LockIcon className="w-3.5 h-3.5" aria-hidden="true" />
+    </span>
+  );
+}
 
 /**
  * One launcher tile, mirroring the authed homescreen's renderAppCard shape
@@ -363,12 +384,7 @@ export function LandingTile({
           </div>
         )}
         {gated ? (
-          <span
-            className="absolute -top-1.5 -right-1.5 w-6 h-6 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-zinc-500 dark:text-zinc-300"
-            title="Account required"
-          >
-            <LockIcon className="w-3.5 h-3.5" aria-hidden="true" />
-          </span>
+          <AccountRequiredBadge />
         ) : null}
       </div>
       {/*
@@ -385,7 +401,7 @@ export function LandingTile({
           {label}
         </div>
         {gated ? (
-          <p className="app-card-status text-zinc-500 dark:text-zinc-500">Account required</p>
+          <p className="app-card-status text-zinc-500 dark:text-zinc-500"><Message id="auth:landing.tile.accountRequired" /></p>
         ) : null}
       </div>
     </div>
@@ -536,24 +552,25 @@ const CHIP_LABEL = 'text-[15px] text-[rgba(0,0,0,0.8)] dark:text-zinc-100';
  * until then the rail says what is true of the platform whoever is reading
  * it. Only the LOOK is transcribed.
  */
+// `line` is a message id, read when the rail renders.
 const CHIPS: readonly { line: string; dot: string }[] = [
   {
-    line: 'Describe an app in chat',
+    line: 'auth:landing.chips.describe',
     dot: 'radial-gradient(circle closest-side, #6717fb 0%, #5a32fb 12.5%, #4e4dfc 25%,'
       + ' #3484fc 50%, #1bbafd 75%, #0fd5fd 87.5%, #02f0fd 100%)',
   },
   {
-    line: 'An AI builds it',
+    line: 'auth:landing.chips.build',
     dot: 'radial-gradient(circle closest-side, #41b24a 0%, #66c459 25%, #8bd669 50%,'
       + ' #b0e878 75%, #d6fa87 100%)',
   },
   {
-    line: 'The community votes it in',
+    line: 'auth:landing.chips.vote',
     dot: 'radial-gradient(circle closest-side, #fb179d 0%, #fc3776 25%, #fc5750 50%,'
       + ' #fd7629 75%, #fd8615 87.5%, #fd9602 100%)',
   },
   {
-    line: 'Contributors own a share',
+    line: 'auth:landing.chips.own',
     dot: 'radial-gradient(circle closest-side, #ffae2b 0%, #ffce4d 50%, #ffee6f 100%)',
   },
 ];
@@ -590,6 +607,7 @@ export async function startedFromStory(kind: 'existing' | 'new', handOff: () => 
 export function LandingScreen() {
   const rootRef = useRef<HTMLElement>(null);
   useVisibilityHiddenClass(rootRef, AUTH_SCREEN_IDS.landing, false);
+  const t = useMessages('auth');
   // The screen's interior mounts on its first reveal, not in the prerender —
   // see lib/mount-on-reveal.ts. AuthScreens.show() asks for it (through
   // window.UsernodeReact.mount) before it wires or reveals the screen, so the
@@ -778,7 +796,7 @@ export function LandingScreen() {
         if (launchId !== st.launchId) return;
         if (!token) {
           legacy().PlatformUI?.toast?.(
-            'Could not sign in to this app. Check your connection and try again.',
+            translate('auth:landing.appSignInFailed'),
             { error: true },
           );
           return;
@@ -788,7 +806,7 @@ export function LandingScreen() {
           url.searchParams.set('token', token);
           launchUrl = url.toString();
         } catch {
-          legacy().PlatformUI?.toast?.('This app could not be opened.', { error: true });
+          legacy().PlatformUI?.toast?.(translate('auth:landing.appOpenFailed'), { error: true });
           return;
         }
       }
@@ -1227,7 +1245,7 @@ export function LandingScreen() {
             id="landing-back-btn"
             type="button"
             className={hiddenLast(!openApp, LANDING_BACK_CLASS)}
-            aria-label="Back to apps"
+            aria-label={t('auth:landing.backToApps')}
             onClick={() => live.current.closeLandingApp()}
           >
             <ChevronLeftIcon className="w-5 h-5" />
@@ -1344,17 +1362,17 @@ export function LandingScreen() {
           */}
           <div className={OFFLINE_NOTICE}>
             <h2 className="text-sm font-semibold text-amber-800 dark:text-amber-400">
-              You're offline
+              {t('auth:landing.offline.title')}
             </h2>
             <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-              Signing in and joining the waitlist both need a connection.
+              {t('auth:landing.offline.body')}
             </p>
             <button
               type="button"
               data-offline-retry=""
               className="mt-3 rounded-lg border border-amber-500/50 px-3 py-1.5 text-sm font-medium text-amber-800 dark:text-amber-300 hover:bg-amber-500/10 transition-colors"
             >
-              Try again
+              {t('auth:landing.offline.retry')}
             </button>
           </div>
           {/*
@@ -1460,7 +1478,7 @@ export function LandingScreen() {
                       gives — it is a value no class literal can hold well.
                   */}
                   <span className={CHIP_DOT} style={{ background: dot }} aria-hidden="true" />
-                  <span className={CHIP_LABEL}>{line}</span>
+                  <span className={CHIP_LABEL}>{t(line)}</span>
                 </span>
               )))}
             </div>
@@ -1499,13 +1517,13 @@ export function LandingScreen() {
           */}
           <div className={hiddenLast(pitchHidden, 'px-4 flex grow flex-col text-center')}>
             <p className="mt-5 text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">
-              Opening gradually
+              {t('auth:landing.pitch.eyebrow')}
             </p>
             <h1 className="mt-2.5 text-[30px] leading-[34px] md:text-[34px] md:leading-[38px] xl:text-[38px] xl:leading-[42px] font-extrabold text-balance">
-              Come build the next version with us.
+              {t('auth:landing.pitch.headline')}
             </h1>
             <p className="mt-2.5 text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400 text-pretty">
-              We're letting people in a few at a time, and we'll email you when your spot is ready.
+              {t('auth:landing.pitch.body')}
             </p>
             {/*
                 THE WAY OUT TO THE LONG VERSION. One sentence is the right
@@ -1533,7 +1551,7 @@ export function LandingScreen() {
                 data-offline-disabled=""
                 className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
               >
-                Learn more about Homeroom
+                {t('auth:landing.learnMore')}
               </a>
             </p>
             {/*
@@ -1641,10 +1659,10 @@ export function LandingScreen() {
                     className={hiddenLast(!waitlistUrl, PRIMARY_PILL)}
                     onClick={onLeaveCta}
                   >
-                    Join the waitlist
+                    {t('auth:landing.joinWaitlist')}
                   </a>
                   <a href="#login" className={SECONDARY_PILL} onClick={onLeaveCta}>
-                    Sign in
+                    {t('auth:landing.signIn')}
                   </a>
                 </div>
                 {/*
@@ -1665,16 +1683,15 @@ export function LandingScreen() {
                     'mt-1.5 text-center text-[15px] text-zinc-500 dark:text-zinc-400',
                   )}
                 >
-                  {'Already joined? '}
+                  <RichMessage id="auth:landing.alreadyJoined" components={[
                   <a
                     id="landing-status-link"
                     href="#waitlist?confirm=1"
                     data-offline-disabled=""
                     className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
                     onClick={onLeaveCta}
-                  >
-                    Check your status
-                  </a>
+                  />,
+                  ]} />
                 </p>
               </div>
               {/*
@@ -1697,7 +1714,7 @@ export function LandingScreen() {
                 className={hiddenLast(!session, PRIMARY_PILL)}
                 onClick={onLeaveCta}
               >
-                Your spot on the waitlist
+                {t('auth:landing.backToWaiting')}
               </a>
             </div>
           </div>
@@ -1724,7 +1741,7 @@ export function LandingScreen() {
       {madeForYou ? (
         <SignInSheet
           open={sheet === 'join'}
-          title={`Join ${invite!.project!.name}`}
+          title={t('auth:landing.sheet.join', { project: invite!.project!.name })}
           followInvite
           providers={providers}
           native={nativeSignIn}
@@ -1740,7 +1757,7 @@ export function LandingScreen() {
       {storyOn ? (
         <SignInSheet
           open={sheet === 'start' || sheet === 'signin'}
-          title={sheet === 'signin' ? 'Sign in' : 'Make your account'}
+          title={sheet === 'signin' ? t('auth:landing.sheet.signIn') : t('auth:landing.sheet.makeAccount')}
           providers={providers}
           native={nativeSignIn}
           from={sheet === 'signin' ? 'signin' : 'story'}

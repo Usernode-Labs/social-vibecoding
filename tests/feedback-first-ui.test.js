@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 const source = fs.readFileSync(path.join(__dirname, '../frontend/src/features/dialogs/feedback-controller.js'), 'utf8')
   .replace(/^import .*$/gm, '').replace(/^export /gm, '') + '\nglobalThis.Feedback = Feedback;';
 const moment = { userId: 7, appSlug: 'filed-app', issueNumber: 41, canFix: true };
@@ -27,6 +28,8 @@ function harness({ response = { firstFeedback: moment }, ok = true } = {}) {
   let id = 0, queueHooks, failedReads = 0;
   const el = id => { if (!els.has(id)) els.set(id, element(id)); return els.get(id); };
   const sandbox = {
+    // The binding the controller's i18n import gives it (the import line is stripped above).
+    t: englishPlatformI18n().t,
     console, URLSearchParams, location: { search: '', hash: '', pathname: '/' },
     document: { getElementById: el, querySelector: () => null, querySelectorAll: () => [], createElement: element, addEventListener() {}, body: { appendChild() {} } },
     localStorage: { getItem() { return null; }, setItem() {} }, sessionStorage: { getItem() { return null; }, setItem() {}, removeItem() {} },

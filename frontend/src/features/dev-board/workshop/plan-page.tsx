@@ -27,6 +27,9 @@ import { useEffect, type ReactNode } from 'react';
 
 import { GroupedList } from '@/components/ui/grouped-list';
 
+import { RichMessage, useMessages } from '../../../lib/i18n/react';
+import { t as translate } from '../../../lib/i18n/runtime';
+
 import { PageBackButton } from './page-back';
 import type { CommunityPayload } from './community-card';
 
@@ -38,7 +41,7 @@ export function planStep(step: number | null | undefined, of: number | null | un
   const at = Number(step) || 0;
   const all = Number(of) || 0;
   if (at <= 0 || all <= 0 || at > all) return null;
-  return { text: `Step ${at} of ${all}` };
+  return { text: translate('project:plan.step', { step: at, total: all }) };
 }
 
 /** The build lines of a plan its maker already chose (#4396): it is being built or tested. */
@@ -51,9 +54,9 @@ const CHOSEN_LINES = new Set(['building', 'testing']);
  */
 export function decidesLine(creator: string | null | undefined, line?: string | null): string {
   if (line && CHOSEN_LINES.has(line)) {
-    return `${creator || 'The person who started it'} chose this plan. Once it’s live, anyone here can suggest changes.`;
+    return creator ? translate('project:plan.chosen.named', { username: creator }) : translate('project:plan.chosen.starter');
   }
-  return creator ? `${creator} decides on this plan.` : 'The person who started it decides on this plan.';
+  return creator ? translate('project:plan.decides.named', { username: creator }) : translate('project:plan.decides.starter');
 }
 
 /** The plan as members read it: what the first version will do, and each question with its suggested answer. */
@@ -69,9 +72,10 @@ export interface MemberPlan {
  * (../../app-frame/waiting-card.tsx).
  */
 export function PlanLines({ name, plan }: { name: string; plan: MemberPlan }): ReactNode {
+  const t = useMessages('project');
   return (
     <>
-      <GroupedList tone="plane" className="mx-0" role="list" aria-label={`Plan for ${name}`} data-ws-plan-lines="">
+      <GroupedList tone="plane" className="mx-0" role="list" aria-label={t('project:plan.linesLabel', { project: name })} data-ws-plan-lines="">
         {plan.bullets.map((bullet) => <div key={bullet} role="listitem" className="dev-ws-plan-row">{bullet}</div>)}
       </GroupedList>
       {plan.questions.length ? (
@@ -94,6 +98,7 @@ export function PlanPage({ name, data, onBack, onDiscussion }: {
   onBack: () => void;
   onDiscussion: () => void;
 }): ReactNode {
+  const t = useMessages('project');
   const fv = data?.first_version || null;
   const plan = fv?.plan && fv.plan.bullets && fv.plan.bullets.length ? fv.plan : null;
   // Nothing to read once the read has answered: back to the Hub.
@@ -106,10 +111,10 @@ export function PlanPage({ name, data, onBack, onDiscussion }: {
   return (
     <section className="dev-ws-plan" data-ws-plan-page="">
       <div className="dev-ws-planhead">
-        <PageBackButton label="Hub" onBack={onBack} data-ws-page-back="" />
+        <PageBackButton label={t('project:plan.backHub')} onBack={onBack} data-ws-page-back="" />
         <img src={BOT_AVATAR} alt="" className="dev-ws-plan-bot" />
         <span className="dev-ws-plan-bot-name">
-          Homeroom bot <span className="dev-ws-plan-ai">AI</span>
+          <RichMessage id="project:plan.botNameBadge" components={[<span className="dev-ws-plan-ai" />]} />
         </span>
       </div>
       {/* The 7 Oct plan card ruling (PR 6): the title first, then the step
@@ -119,14 +124,14 @@ export function PlanPage({ name, data, onBack, onDiscussion }: {
           pasted. Each of Homeroom bot's questions is a row too, the question
           small over its suggested answer. */}
       <div className="dev-ws-plan-head" data-ws-plan-card="">
-        <h2 className="dev-ws-plan-title">{`My plan for ${name}`}</h2>
+        <h2 className="dev-ws-plan-title">{t('project:plan.title', { project: name })}</h2>
         {step ? <p className="dev-ws-plan-step" data-ws-plan-step="">{step.text}</p> : null}
       </div>
       <PlanLines name={name} plan={plan} />
       <div className="dev-ws-plan-foot">
         <p className="dev-ws-plan-who" data-ws-plan-who="">{decidesLine(fv.creator, fv.line)}</p>
         <button type="button" className="dev-ws-plan-talk un-touch-target" data-ws-plan-discussion="" onClick={onDiscussion}>
-          Talk about it in Discussion
+          {t('project:plan.talk')}
         </button>
       </div>
     </section>

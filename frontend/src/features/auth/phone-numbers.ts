@@ -20,6 +20,7 @@ import {
 import metadata from 'libphonenumber-js/min/metadata';
 
 import { flag, phoneE164, type PhoneRead } from './phone-input';
+import { t } from '../../lib/i18n/runtime';
 
 export type { CountryCode };
 
@@ -54,10 +55,10 @@ export function countryOptions(): { code: CountryCode; label: string }[] {
 }
 
 /** "a UK mobile number", "a mobile number in France". */
-function aNumberIn(country: string): string {
-  if (country === 'US') return 'a US mobile number';
-  if (country === 'GB') return 'a UK mobile number';
-  return `a mobile number in ${regionName(country)}`;
+function notANumberIn(country: string): string {
+  if (country === 'US') return t('auth:phone.notUsMobile');
+  if (country === 'GB') return t('auth:phone.notUkMobile');
+  return t('auth:phone.notMobileIn', { country: regionName(country) });
 }
 
 /** The browser's region, if it is one with a dial code. */
@@ -118,17 +119,17 @@ export function countryOfPlus(raw: string, current: CountryCode): CountryCode | 
  */
 export function toE164(raw: string, country: CountryCode): PhoneRead {
   const typed = String(raw || '').trim();
-  if (!typed.replace(/\D/g, '')) return { ok: false, error: 'Enter your phone number.' };
+  if (!typed.replace(/\D/g, '')) return { ok: false, error: t('auth:phone.missing') };
   if (typed.startsWith('+')) {
     const value = phoneE164(typed);
     const parsed = value ? parsePhoneNumberFromString(value, metadata) : undefined;
-    if (!value || !parsed) return { ok: false, error: 'That doesn\'t look like a phone number. Check the digits after the +.' };
+    if (!value || !parsed) return { ok: false, error: t('auth:phone.notANumber') };
     if (!parsed.isPossible()) {
-      return { ok: false, error: `That doesn't look like ${aNumberIn(countryOfPlus(value, country) || country)}.` };
+      return { ok: false, error: notANumberIn(countryOfPlus(value, country) || country) };
     }
     return { ok: true, e164: value };
   }
-  const wrong: PhoneRead = { ok: false, error: `That doesn't look like ${aNumberIn(country)}.` };
+  const wrong: PhoneRead = { ok: false, error: notANumberIn(country) };
   if (/[a-z]/i.test(typed)) return wrong;
   const parsed = parsePhoneNumberFromString(typed, country, metadata);
   const value = parsed ? phoneE164(parsed.number) : null;
