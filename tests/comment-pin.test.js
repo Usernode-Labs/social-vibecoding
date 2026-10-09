@@ -63,6 +63,74 @@ test('the picture is the screen\'s own pixels, up to 2x, and never past 3000 on 
   assert.equal(picture.inRect({ x: 1, y: 1 }, null), false);
 });
 
+// ── 1b. The inset view (#4554) ─────────────────────────────────────────
+
+test('the inset picture keeps its margin, keeps the screen\'s shape, and maps points both ways', () => {
+  const desktop = picture.insetFrame({ width: 1280, height: 800 }, 24);
+  assert.ok(Math.abs(desktop.scale - 0.94) < 1e-9, 'the height binds on a wide screen');
+  assert.ok(Math.abs(desktop.x - 38.4) < 1e-9 && Math.abs(desktop.y - 24) < 1e-9, 'centred');
+  const phone = picture.insetFrame({ width: 390, height: 844 }, 12);
+  assert.ok(Math.abs(phone.scale - 366 / 390) < 1e-9, 'the narrow side binds on a phone');
+  assert.ok(Math.abs(phone.x - 12) < 1e-9 && phone.y >= 12, 'at least the margin on every side');
+  // Points round-trip, and the page's own corner sits at the frame's corner.
+  const p = { x: 300, y: 200 };
+  const back = picture.toPage(picture.toScreen(p, desktop), desktop);
+  assert.ok(Math.abs(back.x - p.x) < 1e-9 && Math.abs(back.y - p.y) < 1e-9);
+  const corner = picture.toScreen({ x: 0, y: 0 }, desktop);
+  assert.ok(Math.abs(corner.x - desktop.x) < 1e-9 && Math.abs(corner.y - desktop.y) < 1e-9);
+  // A degenerate viewport still yields a frame, never a divide by zero.
+  assert.equal(picture.insetFrame({ width: 0, height: 0 }, 24).scale, 0);
+  // A zero scale reads as one on the way back, so a point survives it.
+  assert.deepEqual(picture.toPage({ x: 5, y: 5 }, { x: 0, y: 0, scale: 0 }), { x: 5, y: 5 });
+});
+
+test('the close-up opens on the pin at zoom 2, and holds its zoom and pan to the picture', () => {
+  const box = { width: 360, height: 150 };
+  const shot = { width: 800, height: 600 };
+  // The pin at the picture's middle opens centred on it.
+  const centred = picture.closeUpView({ pin: { x: 400, y: 300 }, box, picture: shot, zoom: 2, pan: { x: 0, y: 0 } });
+  assert.equal(centred.zoom, 2);
+  assert.deepEqual(centred.size, { width: 720, height: 540 });
+  assert.deepEqual(centred.offset, { x: -180, y: -195 });
+  // Zoom is held to 1..4 whatever comes in.
+  assert.equal(picture.closeUpView({ pin: { x: 0, y: 0 }, box, picture: shot, zoom: 9, pan: { x: 0, y: 0 } }).zoom, 4);
+  assert.equal(picture.closeUpView({ pin: { x: 0, y: 0 }, box, picture: shot, zoom: 0, pan: { x: 0, y: 0 } }).zoom, 1);
+  // A pin near an edge, or a pan past it, is held to the picture's edge, and
+  // the pan that comes back is the one actually drawn, so the caller's state
+  // never runs away from the picture.
+  const edge = picture.closeUpView({ pin: { x: 10, y: 10 }, box, picture: shot, zoom: 2, pan: { x: 0, y: 0 } });
+  assert.deepEqual(edge.offset, { x: 0, y: 0 });
+  assert.deepEqual(edge.pan, { x: -171, y: -66 });
+  const panned = picture.closeUpView({ pin: { x: 400, y: 300 }, box, picture: shot, zoom: 2, pan: { x: 500, y: 0 } });
+  assert.deepEqual(panned.offset, { x: 0, y: -195 });
+  assert.deepEqual(panned.pan, { x: -320, y: 0 });
+});
+
+test('the reworked mode: the bar on the picture, the phone sheet, and the close-up', () => {
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  // The bar rests on the picture's bottom edge, centred, until dragged.
+  assert.match(src, /inset\.y \+ window\.innerHeight \* inset\.scale - barSize\.height/);
+  // Taking a new picture says so in the bar, and taps wait while it draws.
+  assert.match(src, /viewShot\?\.state === 'drawing' \? 'Taking a screenshot…'/);
+  assert.match(src, /if \(viewShot\?\.state === 'drawing'\) return;/);
+  // On a phone the box is a bottom sheet, riding the keyboard, and while the
+  // wait for the next pin is on it holds just that row.
+  assert.match(src, /comment-sheet-in platform-kb-sheet/);
+  assert.match(src, /useKeyboardSurface\(boxRef, \{ ride: true \}\);/);
+  assert.match(src, /phone && draft\.active == null \?/);
+  assert.match(src, /nextPinRow\n          \) : \(/);
+  // The close-up at the top of the sheet draws the pin's area of the view
+  // picture, or the comment's own thumbnail when the page has moved on.
+  assert.match(src, /<CloseUp\s+view=\{viewShot\?\.url \|\| ''\}/);
+  assert.match(src, /own=\{viewDiffers \? activePicture\?\.thumb \|\| null : null\}/);
+  const closeUp = read('frontend/src/features/comment-pin/close-up.tsx');
+  assert.match(closeUp, /touchAction: 'none'/, 'the close-up box only, never the page under it');
+  assert.match(closeUp, /Pinch to zoom/);
+  assert.match(closeUp, /Math\.min\(MAX_ZOOM, zPrev \* dist \/ g\.dist\)/, 'the pinch sets the zoom from the fingers');
+  assert.match(closeUp, /mid\.x - c\.x - \(g\.mid\.x - c\.x - panRef\.current\.x\) \* \(z \/ zPrev\)/,
+    'the point under the fingers stays under them as the zoom changes');
+});
+
 // ── 2. Posting ────────────────────────────────────────────────────────
 
 test('the request says where the comment was pinned, in words', () => {

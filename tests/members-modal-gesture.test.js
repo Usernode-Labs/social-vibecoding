@@ -329,9 +329,13 @@ test('every dialog reveals through the shared synchronous seam', () => {
   // openedAt, drop `hidden`, lift the card. It must NOT depend on
   // requestAnimationFrame — the WebView dropped that frame and left the panel
   // closed, which is the bug at the top of this file.
+  //
+  // The slice is the OPEN branch: the close branch below it now legitimately
+  // waits (the phone sheet's slide-out, #4554) before it hides, and that wait
+  // is not a reveal dependency.
   const effect = STATIC_MODAL_SRC.slice(
     STATIC_MODAL_SRC.indexOf('    if (open) {'),
-    STATIC_MODAL_SRC.indexOf('  }, [rootRef, open, dismissFromKit]);'),
+    STATIC_MODAL_SRC.indexOf('    } else {', STATIC_MODAL_SRC.indexOf('    if (open) {')),
   );
   assert.ok(effect, 'found the reveal effect');
   assert.doesNotMatch(effect, /requestAnimationFrame|setTimeout/,

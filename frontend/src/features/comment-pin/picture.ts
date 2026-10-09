@@ -118,6 +118,92 @@ export function placeBeside(pin: Point, size: Size, viewport: Size, gap = 14, ma
   return { x, y };
 }
 
+// ── The inset view (the comment-mode rework) ──────────────────────────
+//
+// Comment mode shows the page as a picture of it instead of over the live
+// page, so nothing reads as clickable. These are the pure bits of that
+// drawing, exported for tests.
+
+/**
+ * Where the page's picture sits on the screen: the whole viewport shrunk
+ * until it clears `margin` on every side, keeping the screen's shape,
+ * centred.
+ */
+export function insetFrame(viewport: Size, margin: number): { x: number; y: number; scale: number } {
+  const w = Math.max(1, viewport.width);
+  const h = Math.max(1, viewport.height);
+  const scale = Math.min((w - 2 * margin) / w, (h - 2 * margin) / h);
+  return { x: (w - w * scale) / 2, y: (h - h * scale) / 2, scale: Math.max(0, scale) };
+}
+
+/** A point of the page to where it sits on the inset picture. */
+export function toScreen(p: Point, frame: { x: number; y: number; scale: number }): Point {
+  return { x: p.x * frame.scale + frame.x, y: p.y * frame.scale + frame.y };
+}
+
+/** A point on the inset picture back to where it is on the page. */
+export function toPage(p: Point, frame: { x: number; y: number; scale: number }): Point {
+  const s = frame.scale || 1;
+  return { x: (p.x - frame.x) / s, y: (p.y - frame.y) / s };
+}
+
+/** What the close-up draws, and where. */
+export interface CloseUp {
+  /** The drawn picture's size, in the box's pixels. */
+  size: Size;
+  /** The drawn picture's top-left corner in the box. */
+  offset: Point;
+  /** The zoom actually drawn, clamped. */
+  zoom: number;
+  /** The pan actually drawn, clamped to the picture's edges. */
+  pan: Point;
+}
+
+const clamp = (n: number, low: number, high: number) => Math.max(low, Math.min(high, n));
+
+/**
+ * The close-up's drawn picture. Zoom is 1 to 4 about the pin (1 = the
+ * picture's width fits the box), pan moves the view from there; both are
+ * clamped so the picture always covers the box, and the returned `pan` is
+ * the clamped one, so a caller can keep it as its state.
+ */
+export function closeUpView(input: {
+  /** Where the pin is on the picture, in the picture's own pixels. */
+  pin: Point;
+  /** The close-up box's size, in screen pixels. */
+  box: Size;
+  /** The picture's size, in its own pixels. */
+  picture: Size;
+  zoom: number;
+  pan: Point;
+}): CloseUp {
+  const base = input.box.width / Math.max(1, input.picture.width);
+  const zoom = clamp(Number(input.zoom) || 1, 1, 4);
+  const size = {
+    width: input.picture.width * base * zoom,
+    height: input.picture.height * base * zoom,
+  };
+  const centre = { x: input.box.width / 2, y: input.box.height / 2 };
+  const wanted = {
+    x: centre.x - input.pin.x * base * zoom + (Number(input.pan?.x) || 0),
+    y: centre.y - input.pin.y * base * zoom + (Number(input.pan?.y) || 0),
+  };
+  const offset = {
+    x: size.width <= input.box.width
+      ? (input.box.width - size.width) / 2
+      : clamp(wanted.x, input.box.width - size.width, 0),
+    y: size.height <= input.box.height
+      ? (input.box.height - size.height) / 2
+      : clamp(wanted.y, input.box.height - size.height, 0),
+  };
+  return {
+    size,
+    offset,
+    zoom,
+    pan: { x: offset.x - wanted.x, y: offset.y - wanted.y },
+  };
+}
+
 /**
  * Ask the running app's frame for its picture. Resolves with what it said,
  * or null when it said nothing in time (an app without the bridge, an old
