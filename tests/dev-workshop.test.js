@@ -1079,7 +1079,7 @@ test('since-your-last-visit sits with the other things addressed to you', () => 
   assert.ok(html.indexOf('data-ws-dashboard') < html.indexOf('data-ws-since=""'), 'its own section, under the board');
   assert.ok(!workshopHtml(AppView).includes('data-ws-since=""'), 'and not on the hub any more');
   assert.ok(html.indexOf('data-ws-mine=""') < html.indexOf('data-ws-since=""'));
-  // #4457: SHOWN, as rows, and only what OTHER people did: the heading, its
+  // #4457: SHOWN, as rows: the heading, its
   // count, Clear, a sentence, then the same rows Your work draws.
   assert.match(html, /<section class="dev-ws-strip" data-ws-since=""><div class="dev-ws-head" data-ws-since-head=""><span class="dev-ws-head-title">Since your last visit<\/span><span class="dev-ws-head-n">\d+<\/span><button type="button" class="dev-ws-since-clear un-touch-target" data-ws-since-clear="">Clear<\/button><\/div>/);
   assert.match(html, /<p class="dev-ws-since-sum" data-ws-since-sum="">[^<]+\.<\/p><div class="dev-ws-wlist">/);
@@ -1090,11 +1090,36 @@ test('since-your-last-visit sits with the other things addressed to you', () => 
   // Nothing new is ONE line. Clear moves the line to now.
   assert.match(WORKSHOP, /<p className="dev-ws-none" data-ws-since-none="">Nothing new since you were last here\.<\/p>/);
   assert.match(WORKSHOP, /callAppView\('_workshopClearSince', slug, v\.since\.through\)/);
-  // Your own work is not repeated in it.
-  assert.match(WORKSHOP, /\.filter\(\(r\): r is WorkCardRow => r\.t === 'card' && !!r\.brief && !r\.brief\.mine\)/);
+  // Own ongoing work is not repeated; its merged outcomes are retained.
+  assert.match(WORKSHOP, /!r\.brief\.mine \|\| r\.brief\.stage === 'live'/);
   // The reveals keep their own shape.
   assert.match(CSS, /\.dev-ws-reveal-start \{[^}]*justify-content: flex-start;/);
   assert.match(CSS, /\.dev-ws-reveal \{[^}]*justify-content: center;/);
+});
+
+test('#4505: catch-up retains your recently merged contributions, not your ongoing work', () => {
+  const store = { 'workshopSeen:demo-app': String(Date.now() - 3.5 * 86400000) };
+  const AppView = makeAppView({ localStorage: store });
+  seed(AppView);
+  AppView._merged = [
+    { ...AppView._merged[0], username: 'me', pr_title: 'My recent live contribution', live_at: at(1) },
+    { ...AppView._merged[0], id: 79, pr_number: 42, username: 'me', pr_title: 'My merge going live', live_at: null },
+    { ...AppView._merged[0], id: 80, pr_number: 43, username: 'me', pr_title: 'My older contribution', merged_at: at(8), last_message_at: at(8) },
+  ];
+  AppView._mySessions = [{ id: 81, status: 'active', username: 'me', session_title: 'My ongoing contribution', created_at: at(1), last_activity_at: at(1) }];
+  const html = workshopHtml(AppView, 'workshop');
+  const since = html.split('data-ws-since=""')[1].split('data-ws-weeks=""')[0];
+  assert.match(since, /My recent live contribution/);
+  assert.match(since, /My merge going live/);
+  assert.ok(!since.includes('My older contribution'), 'old merges stay in their week');
+  assert.ok(!since.includes('My ongoing contribution'), 'ongoing work stays in Your work');
+  assert.match(html.split('data-ws-mine=""')[1].split('data-ws-since=""')[0], /My ongoing contribution/);
+  assert.match(since, /1 change waiting for your vote, 2 changes live/);
+  assert.match(since, /dev-ws-head-n">4<\/span>/, 'heading counts both merges, request and vote');
+  AppView._workshopClearSince('demo-app', AppView._workshopView().since.through);
+  const cleared = workshopHtml(AppView, 'workshop').split('data-ws-since=""')[1].split('data-ws-weeks=""')[0];
+  assert.match(cleared, /Nothing new since you were last here/);
+  assert.ok(!cleared.includes('My recent live contribution'));
 });
 
 test('#4457: the sentence over Since your last visit counts the rows under it', () => {

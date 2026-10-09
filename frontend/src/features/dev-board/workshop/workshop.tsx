@@ -901,7 +901,7 @@ export function sinceWeekStateKey(week: Pick<SinceWeek, 'startMs'>): string {
 }
 
 /**
- * What other people did since your last visit, in a sentence: "1 new
+ * What moved since your last visit, in a sentence: "1 new
  * request, 1 change waiting for your vote, 1 change live." Counted over the
  * rows drawn under it (#4457), so the sentence and the list agree.
  */
@@ -4016,10 +4016,10 @@ export function DevWorkshop(): ReactNode {
   const firstWeek = v.dashboard ? v.dashboard.firstWeek : null;
   // #4457: the week whose page is open, while it is still in the list.
   const weekUp = openWeek ? weeks.find((w) => sinceWeekStateKey(w) === openWeek) || null : null;
-  // Since your last visit is what OTHER people did: your own work is the
-  // list above it, and is not repeated here.
+  // Own ongoing work is already in Your work. Once it merges, its outcome
+  // belongs in catch-up too: it no longer appears in that ongoing list.
   const sinceRows = (v.since ? v.since.rows : [])
-    .filter((r): r is WorkCardRow => r.t === 'card' && !!r.brief && !r.brief.mine);
+    .filter((r): r is WorkCardRow => r.t === 'card' && !!r.brief && (!r.brief.mine || r.brief.stage === 'live'));
   const openWeekPage = (key: string) => {
     setOpenWeek(key);
     scrollToHead(hostRef.current);
@@ -4364,8 +4364,8 @@ export function DevWorkshop(): ReactNode {
       ) : null}
 
       {/* ── Since your last visit ──
-          #4457: ALWAYS DRAWN, and only what OTHER people did since you were
-          last here, in the same rows as Your work. It no longer carries the
+          #4457: ALWAYS DRAWN, with what other people did and your own merged
+          contributions since you were last here, in the same rows as Your work. It no longer carries the
           weeks: those are Week by week, below, each its own page (#3947).
           Nothing new is one line. Clear moves the line to now. A person who
           has not joined, or a first visit, reads "Recently": what moved
