@@ -245,8 +245,8 @@ test('the heading needs the ISSUE state, which is why the server does not word i
 test('the reference links the proposal page in-app, and names the PR', () => {
   const AppView = makeAppView();
   const ref = AppView._issueProposalRefView(issueRow());
-  assert.equal(ref.href, '#app/demo/dev/proposals/5001',
-    'the proposal page, not the GitHub URL — the resolver only ever returns rows that have one');
+  assert.equal(ref.href, '#app/demo/dev/changes/2431',
+    'the proposal page, not the GitHub URL, at its PR number (#4367) — the resolver only ever returns rows that have one');
   assert.equal(ref.label, '#2431');
   assert.equal(ref.title, 'A closed issue says which proposal closed it');
 
@@ -306,7 +306,7 @@ test('the issue topic page renders the reference as a navigable row', () => {
   const closed = render({});
   assert.match(closed, /class="dev-issue-closed-band" data-tone="merged" data-topic-part="closed-band"/);
   assert.match(closed, /class="dev-issue-closed-band-k">Closed</);
-  assert.match(closed, /href="#app\/demo\/dev\/proposals\/5001"/);
+  assert.match(closed, /href="#app\/demo\/dev\/changes\/2431"/);
   assert.match(closed, /class="dev-ws-chip dev-ws-chip-info dev-topic-issue" data-addressed-by="5001"/);
   assert.ok(closed.includes('<b>#2431</b>'), 'the PR number leads the pill');
   assert.ok(closed.includes('A closed issue says which proposal closed it'));

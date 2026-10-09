@@ -224,7 +224,7 @@ export function recordObjectOrigin(event: MouseEvent<Element>, href: string, inb
   if (inboxOnly && !here.startsWith('#messages')) return;
   const origin = here.startsWith('#messages') ? here : '#messages';
   if (/\/dev\/sessions\//.test(href)) w.Improve?.enterSessionFrom?.(origin);
-  else if (/\/dev\/(?:issues|proposals|governance)\//.test(href)) w.Improve?.enterTopicFrom?.(origin);
+  else if (/\/dev\/(?:issues|proposals|changes|governance)\//.test(href)) w.Improve?.enterTopicFrom?.(origin);
 }
 
 /**

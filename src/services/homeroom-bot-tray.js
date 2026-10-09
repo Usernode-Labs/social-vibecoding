@@ -68,6 +68,7 @@ const log = require('./logger');
 const appAccess = require('./app-access');
 const progressSvc = require('./homeroom-bot-progress');
 const activitySvc = require('./homeroom-bot-activity');
+const { changeHref } = require('./change-destination');
 
 // The most requests History lists.
 const HISTORY_LIMIT = 30;
@@ -124,8 +125,9 @@ function issueHref(slug, issueNumber) {
   return `#app/${encodeURIComponent(slug)}/dev/issues/${Number(issueNumber)}`;
 }
 
-function proposalHref(slug, sessionId) {
-  return `#app/${encodeURIComponent(slug)}/dev/proposals/${Number(sessionId)}`;
+// #4367: by its pull request's number once it has one.
+function proposalHref(slug, sessionId, prNumber = null) {
+  return changeHref(slug, sessionId, prNumber);
 }
 
 function projectHref(slug) {
@@ -144,11 +146,11 @@ function keyOf(slug, issueNumber) {
 }
 
 /** Pure: where an entry's links go: its request, its proposal, or (with no request) its project. */
-function linksFor(slug, issueNumber, proposalId) {
+function linksFor(slug, issueNumber, proposalId, prNumber = null) {
   const request = Number(issueNumber) ? issueHref(slug, issueNumber) : null;
   return {
     request,
-    proposal: proposalId ? proposalHref(slug, proposalId) : null,
+    proposal: proposalId ? proposalHref(slug, proposalId, prNumber) : null,
     project: request ? null : projectHref(slug),
   };
 }
@@ -237,7 +239,7 @@ function atOf(row, outcome) {
 /** Pure: where a run opens. Its proposal once people can open it, else its request. */
 function hrefOf(row) {
   if (row.proposal_session_id && OPENABLE_PROPOSAL.has(row.proposal_status)) {
-    return proposalHref(row.slug, row.proposal_session_id);
+    return proposalHref(row.slug, row.proposal_session_id, row.proposal_pr_number);
   }
   return row.issue_number ? issueHref(row.slug, row.issue_number) : projectHref(row.slug);
 }
@@ -321,7 +323,8 @@ function entryOfRuns(runs) {
   const proposalRow = withProposal && OPENABLE_PROPOSAL.has(withProposal.proposal_status) ? withProposal : null;
   const firstVersion = !!newest.first_version;
   const issueNumber = Number(newest.issue_number) || null;
-  const links = linksFor(newest.slug, issueNumber, proposalRow ? proposalRow.proposal_session_id : null);
+  const links = linksFor(newest.slug, issueNumber, proposalRow ? proposalRow.proposal_session_id : null,
+    proposalRow ? proposalRow.proposal_pr_number : null);
   return {
     key: keyOf(newest.slug, issueNumber),
     id: Number(lead.id),
@@ -436,7 +439,7 @@ async function currentJobs(pool, { userId, settings, deps = {} }) {
 async function pastRuns(pool, { userId, limit = RUN_LIMIT }) {
   const { rows } = await pool.query(
     `SELECT r.id, r.issue_number, r.verdict, r.build_ok, r.build_error, r.cap_suppressed,
-            r.proposal_session_id, r.created_at,
+            r.proposal_session_id, cs.pr_number AS proposal_pr_number, r.created_at,
             (r.plan IS NOT NULL AND r.plan->'chosen' IS NULL AND r.build_ok IS FALSE
               AND r.build_session_id IS NULL AND r.proposal_session_id IS NULL) AS plan_only,
             -- Merged but not live yet (live_at) reads as merging: going live.

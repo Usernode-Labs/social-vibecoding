@@ -80,6 +80,7 @@ import { offerJoin, registerJoinAnchor } from '../../../lib/join-required';
 import { askToVerifyForPublic, identityNeededHere } from '../../auth/verify-identity';
 import { invitedByLine, joinByInvite, useInviteOffer, type InviteJoin, type InviteOffer } from './invite-offer';
 import { hubShot, hubShotPayload } from './hub-shot';
+import { changeHref } from '../../../lib/change-href';
 
 type Audience = 'open' | 'invited' | 'solo';
 
@@ -1208,7 +1209,7 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedBy
       {data.audience_change ? (
         <a
           className="dev-ws-hero-line dev-ws-hero-pending"
-          href={`#app/${encodeURIComponent(slug)}/dev/proposals/${data.audience_change.session_id}`}
+          href={changeHref(slug, data.audience_change.session_id, data.audience_change.pr_number)}
           data-ws-community-audience-pending={String(data.audience_change.session_id)}
         >
           {audienceChangeLine(data.audience_change.title)}

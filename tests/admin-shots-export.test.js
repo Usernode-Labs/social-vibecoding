@@ -271,7 +271,7 @@ test('a failed run carries what the diagnostics screen would say, and no private
   assert.deepEqual(JSON.parse(rec.agent_pending_json),
     { providerRequests: [{ stage: 'await_first_byte', ms: 90000 }] },
     'only the pending lists that hold something');
-  assert.equal(rec.proposal_path, '/#app/todo/dev/proposals/12');
+  assert.equal(rec.proposal_path, '/#app/todo/dev/changes/3401', '#4367: a change with a PR goes by its number');
   assert.equal(rec.diagnostics_path,
     `/api/apps/todo/proposals/12/shots/diagnostics?runId=${'c'.repeat(32)}`);
   assert.ok(!JSON.stringify(rec).includes(SECRET), 'the final answer stays out of every column');

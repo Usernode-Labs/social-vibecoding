@@ -767,7 +767,7 @@ test('each verdict says its own thing; a verdict held by a cap says only that it
   const card = h.posts.find((p) => p.kind === 'proposal');
   assert.equal(card.msgType, 'vote', 'the thread gets the live vote card');
   assert.deepEqual(card.metadata, { vote: { sessionId: 5001, prNumber: 42 } });
-  assert.match(card.text, /https:\/\/app\.onhomeroom\.com\/#app\/rss-reader-4113da\/dev\/proposals\/5001/);
+  assert.match(card.text, /https:\/\/app\.onhomeroom\.com\/#app\/rss-reader-4113da\/dev\/changes\/42/);
   assert.ok(h.queries.some((q) => /SET proposal_session_id = \$2/.test(q.sql) && q.params[1] === 5001));
   assert.deepEqual(h.deps.limits.spend, [25], 'the build is paid for from the bot\'s weekly allowance');
 

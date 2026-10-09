@@ -356,7 +356,7 @@ test('Make it public and Make it private are the ⋯\'s (Make it public stays on
   // The row appears once the read answers, after the menu was wired, so it
   // closes the menu through the close the wiring publishes.
   assert.match(read('public/js/app-view.js'), /AppView\._closePlusMenu = close;/);
-  assert.match(CARD_SRC, /href=\{`#app\/\$\{encodeURIComponent\(slug\)\}\/dev\/proposals\/\$\{data\.audience_change\.session_id\}`\}/);
+  assert.match(CARD_SRC, /href=\{changeHref\(slug, data\.audience_change\.session_id, data\.audience_change\.pr_number\)\}/);
   // The server offers it to exactly whom POST /visibility-pr accepts.
   const route = read('src/routes/apps.js');
   assert.match(route, /const canManage = !app\.self_hosted && !!app\.repo_url\s*&& await appAdmins\.canManageApp\(pool, app, req\.user\);/);

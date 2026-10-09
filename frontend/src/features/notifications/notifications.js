@@ -496,6 +496,21 @@ const Notifications = {
   // behaviour; there is no anchored dropdown any more, and a side drawer left
   // open over the screen you just navigated to is the same problem the touch
   // sheet had.
+  // #4367: a change's topic ref, carrying its pull request's number when it
+  // has one, so the page opens at `dev/changes/<N>`.
+  _changeRef(sessionId, prNumber) {
+    const id = parseInt(sessionId, 10);
+    const pr = Number(prNumber);
+    return Number.isInteger(pr) && pr > 0 ? { kind: 'proposal', id, pr } : { kind: 'proposal', id };
+  },
+
+  // The same change as an address (lib/change-href.ts; spelled out here,
+  // as this module keeps its one bundle import).
+  _changeHash(slug, sessionId, prNumber) {
+    const ref = Notifications._changeRef(sessionId, prNumber);
+    return ref.pr ? `#app/${slug}/dev/changes/${ref.pr}` : `#app/${slug}/dev/proposals/${ref.id}`;
+  },
+
   _dismissSheetForNav() {
     if (Notifications.open) Notifications.hide();
   },
@@ -951,10 +966,10 @@ const Notifications = {
       if (typeof App !== 'undefined' && App.openAppTab) {
         return App.openAppTab(item.appSlug, 'dev', {
           subTab: 'topic',
-          ref: { kind: 'proposal', id: parseInt(item.sessionId, 10) },
+          ref: Notifications._changeRef(item.sessionId, item.prNumber),
         });
       } else {
-        window.location.hash = `#app/${item.appSlug}/dev/proposals/${item.sessionId}`;
+        window.location.hash = Notifications._changeHash(item.appSlug, item.sessionId, item.prNumber);
       }
       return;
     }
@@ -995,10 +1010,10 @@ const Notifications = {
       if (typeof App !== 'undefined' && App.openAppTab) {
         return App.openAppTab(item.appSlug, 'dev', {
           subTab: 'topic',
-          ref: { kind: 'proposal', id },
+          ref: Notifications._changeRef(id, item.prNumber),
         });
       } else {
-        window.location.hash = `#app/${item.appSlug}/dev/proposals/${id}`;
+        window.location.hash = Notifications._changeHash(item.appSlug, id, item.prNumber);
       }
       return;
     }
@@ -1126,11 +1141,13 @@ const Notifications = {
       }
       if (typeof App !== 'undefined' && App.openAppTab) {
         return App.openAppTab(item.appSlug, 'dev', toProposals
-          ? { subTab: 'proposals', ref: item.sessionId || null }
+          ? (item.sessionId && Number(item.prNumber) > 0
+            ? { subTab: 'topic', ref: Notifications._changeRef(item.sessionId, item.prNumber) }
+            : { subTab: 'proposals', ref: item.sessionId || null })
           : { subTab: 'issues', ref: issueNumber });
       } else {
         window.location.hash = toProposals
-          ? `#app/${item.appSlug}/dev/proposals${item.sessionId ? `/${item.sessionId}` : ''}`
+          ? (item.sessionId ? Notifications._changeHash(item.appSlug, item.sessionId, item.prNumber) : `#app/${item.appSlug}/dev/proposals`)
           : `#app/${item.appSlug}/dev/issues/${issueNumber}`;
       }
     }
