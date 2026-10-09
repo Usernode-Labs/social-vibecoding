@@ -193,11 +193,11 @@ test('a non-owner gets no share affordances, no build hint and its own empty cop
     draftContent: '', versions: [],
   });
   assert.deepEqual(empty.view().body,
-    { kind: 'empty', copy: 'No spec has been shared for this session yet.' });
+    { kind: 'empty', copy: 'No plan has been shared for this session yet.' });
 
   const owner = openViewer(makeDevChat(), { draftContent: '', versions: [] });
   assert.deepEqual(owner.view().body,
-    { kind: 'empty', copy: 'No spec yet. Ask the AI to draft one.' });
+    { kind: 'empty', copy: 'No plan yet. Ask the AI to draft one.' });
 });
 
 test('nothing to share is `blank`, already shared is `live` and spent', () => {
@@ -289,7 +289,7 @@ test('the header keeps its order: version, copy, share to user, share to group, 
   );
   assert.match(out, /class="dc-spec-viewer-header"/);
   assert.match(out, /class="dc-spec-viewer-body-wrap"/);
-  assert.match(out, /<button id="dc-spec-viewer-close" class="dc-spec-viewer-close" aria-label="Close spec viewer">/);
+  assert.match(out, /<button id="dc-spec-viewer-close" class="dc-spec-viewer-close" aria-label="Close plan viewer">/);
 });
 
 test('the version picker renders its options and disables itself when empty', () => {
@@ -315,11 +315,11 @@ test('a disabled action renders WITHOUT the id its handler bound to', () => {
     groupShare: { kind: 'blank' },
     buildHint: false,
   });
-  assert.match(blank, /<button class="dc-spec-action-btn dc-spec-copy-btn" disabled="" title="No spec to copy yet">Copy markdown<\/button>/);
+  assert.match(blank, /<button class="dc-spec-action-btn dc-spec-copy-btn" disabled="" title="No plan to copy yet">Copy markdown<\/button>/);
   assert.equal(blank.includes('id="dc-spec-viewer-copy"'), false);
   assert.equal(blank.includes('id="dc-spec-viewer-share"'), false);
   assert.equal(blank.includes('id="dc-spec-viewer-share-user"'), false);
-  assert.equal((blank.match(/disabled="" title="No spec version to share yet"/g) || []).length, 2,
+  assert.equal((blank.match(/disabled="" title="No plan version to share yet"/g) || []).length, 2,
     'both share buttons keep their placeholder');
   // A blank button is still the OWNER's, so the popover is still there.
   assert.ok(blank.includes('id="dc-spec-share-pop"'));
@@ -332,7 +332,7 @@ test('an already-shared version says so and stops', () => {
   assert.ok(out.includes('>Shared</button>'));
 
   const fresh = html(OPEN);
-  assert.match(fresh, /title="Post a card linking to this spec in the group chat"/);
+  assert.match(fresh, /title="Post a card linking to this plan in the group chat"/);
   assert.ok(fresh.includes('>Share to group</button>'));
 });
 
@@ -374,7 +374,7 @@ test('the share-to-user button announces its popover, and the popover field has 
   // The target it names is that dialog, labelled.
   const card = closed.match(/<div[^>]*id="dc-spec-share-pop"[^>]*>/)[0];
   assert.match(card, /role="dialog"/);
-  assert.match(card, /aria-label="Share this spec with one person"/);
+  assert.match(card, /aria-label="Share this plan with one person"/);
   // The field is named, not left to its placeholder.
   const input = closed.match(/<input[^>]*id="dc-spec-share-input"[^>]*>/)[0];
   assert.match(input, /aria-label="Username to share with"/);
@@ -397,7 +397,7 @@ test('the two halves render as tabs, and an empty half keeps its own', () => {
     },
   });
   assert.match(out, /class="dc-spec-viewer-body dc-spec-viewer-preamble"><p>intro<\/p>/);
-  assert.match(out, /class="dc-spec-viewer-tabs" role="tablist" aria-label="Spec sections"/);
+  assert.match(out, /class="dc-spec-viewer-tabs" role="tablist" aria-label="Plan sections"/);
   assert.match(out, /class="dc-spec-viewer-tab" role="tab" aria-selected="false" data-spec-tab="user">User-facing</);
   assert.match(out, /class="dc-spec-viewer-tab dc-spec-viewer-tab-active" role="tab" aria-selected="true" data-spec-tab="tech">Technical</);
   assert.match(out, /class="dc-spec-viewer-body" role="tabpanel"><p>plan<\/p>/);
@@ -414,7 +414,7 @@ test('the two halves render as tabs, and an empty half keeps its own', () => {
 
 test('loading and empty bodies stay plain text, never markup', () => {
   const loading = html({ ...OPEN, body: { kind: 'loading' } });
-  assert.match(loading, /<div class="p-4 text-sm text-zinc-500 dark:text-zinc-400">Loading spec/);
+  assert.match(loading, /<div class="p-4 text-sm text-zinc-500 dark:text-zinc-400">Loading plan/);
   const empty = html({ ...OPEN, body: { kind: 'empty', copy: 'No spec yet. <b>x</b>' } });
   assert.ok(empty.includes('&lt;b&gt;x&lt;/b&gt;'), 'an empty-state sentence is TEXT');
 });

@@ -42,7 +42,7 @@ export interface ChangeLine {
 export function changeLine(msg: TranscriptMessage): ChangeLine | null {
   if (msg.kind === 'message' || msg.kind === 'github') return null;
   if (msg.kind === 'spec_share' && msg.specShare) {
-    return { kind: 'spec', glyph: '📋', actor: msg.specShare.sharedBy, text: ` posted spec v${msg.specShare.version}` };
+    return { kind: 'spec', glyph: '📋', actor: msg.specShare.sharedBy, text: ` posted plan v${msg.specShare.version}` };
   }
   if (msg.stagingBuild === 'started') return null;
   if (msg.stagingBuild === 'ready') return { kind: 'preview', glyph: '👀', actor: null, text: 'The preview is ready', tryIt: true };

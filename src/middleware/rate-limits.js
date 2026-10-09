@@ -990,7 +990,7 @@ const requestSpecLimiter = makeLimiter({
   max: 20,
   name: 'request-spec-post',
   keyByUser: true,
-  message: 'Too many specs posted. Try again later this hour.',
+  message: 'Too many plans posted. Try again later this hour.',
 });
 
 const issueScreenshotLimiter = makeLimiter({

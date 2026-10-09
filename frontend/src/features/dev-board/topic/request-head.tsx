@@ -227,7 +227,7 @@ function RequestStatus({ s, specs }: { s: RequestStatusView; specs: RequestSpecC
   // Voted in is the end: every stop is done.
   const done = stage === 'voted';
   const version = newestSpecVersion(specs);
-  const specLine = stage === 'spec' ? (version ? `Spec v${version} is ready for comments.` : 'A spec is ready for comments.') : null;
+  const specLine = stage === 'spec' ? (version ? `Plan v${version} is ready for comments.` : 'A plan is ready for comments.') : null;
   const say = [s.lead, s.note || specLine].filter(Boolean).join(' ');
   const a = s.action;
   return (
@@ -276,7 +276,7 @@ function SpecCard({ card }: { card: RequestSpecCard }): ReactNode {
     <div className="messages-object-card dev-request-spec" data-request-spec={card.key}>
       <span className="messages-object-icon" aria-hidden="true">📋</span>
       <div className="min-w-0 flex-1">
-        <div className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400 font-semibold">{card.version ? `Spec · v${card.version}` : 'Spec'}</div>
+        <div className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400 font-semibold">{card.version ? `Plan · v${card.version}` : 'Plan'}</div>
         <div className="text-base font-semibold text-zinc-900 dark:text-zinc-100 line-clamp-2">{card.title}</div>
         <div className="text-sm text-zinc-500 dark:text-zinc-400 truncate">
           {`by ${card.by}`}

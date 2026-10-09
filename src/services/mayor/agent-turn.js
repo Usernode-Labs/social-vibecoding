@@ -388,7 +388,7 @@ function fallbackWrapUp(outcome) {
     return reason || 'The coding agent could not run on this change.';
   }
   if (outcome.isError) return 'The coding agent did not finish this run. The details are above.';
-  if (outcome.kind === 'scout') return 'The spec is updated. Tell me when you want it built.';
+  if (outcome.kind === 'scout') return 'The plan is updated. Tell me when you want it built.';
   return 'The coding agent has finished. The details are above.';
 }
 

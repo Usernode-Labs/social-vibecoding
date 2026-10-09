@@ -897,10 +897,10 @@ function specSnippet(spec, title) {
 function specCommentText(spec) {
   return [
     // B6: no approval talk while it builds. The change is linked once it can be tried.
-    'Homeroom bot wrote a spec for this request and is building it now. The change will be linked here when it\'s '
+    'Homeroom bot wrote a plan for this request and is building it now. The change will be linked here when it\'s '
       + 'ready to try.',
     '',
-    '<details><summary>The spec</summary>',
+    '<details><summary>The plan</summary>',
     '',
     clipText(spec, MAX_SPEC_COMMENT_CHARS),
     '',
@@ -915,8 +915,8 @@ function specCommentText(spec) {
 function specCard({ sessionId, version, spec, bot, proposed = false }) {
   const title = specTitle(spec);
   const content = proposed
-    ? `📋 The spec this proposal was built from${title ? `: "${title}"` : ''}.`
-    : `📋 Homeroom bot's spec for this request${title ? `: "${title}"` : ''}. It is building it now.`;
+    ? `📋 The plan this proposal was built from${title ? `: "${title}"` : ''}.`
+    : `📋 Homeroom bot's plan for this request${title ? `: "${title}"` : ''}. It is building it now.`;
   return {
     content,
     msgType: 'spec_share',

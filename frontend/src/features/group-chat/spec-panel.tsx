@@ -77,7 +77,7 @@ function SpecDocBody({ body }: { body: Extract<SpecPanelBody, { kind: 'spec' }> 
   return (
     <div className="gc-spec-panel-body">
       {body.preambleHtml ? <HtmlPart className="dc-spec-viewer-preamble" html={body.preambleHtml} /> : null}
-      <div className="dc-spec-viewer-tabs" role="tablist" aria-label="Spec sections">
+      <div className="dc-spec-viewer-tabs" role="tablist" aria-label="Plan sections">
         {tabButton('user', 'User-facing')}
         {tabButton('tech', 'Technical')}
       </div>
@@ -93,8 +93,8 @@ function CopyButton() {
   return (
     <button
       className="gc-spec-panel-copy"
-      aria-label="Copy the whole spec as markdown"
-      title="Copy the whole spec as markdown"
+      aria-label="Copy the whole plan as markdown"
+      title="Copy the whole plan as markdown"
       onClick={async () => {
         const ok = await ui()?.copyText?.(controller()?._specPanelRaw);
         setLabel(ok ? 'Copied!' : 'Copy failed');
@@ -119,7 +119,7 @@ export function SpecPanelView({ open, title, subtitle, canCopy, body }: SpecPane
         {canCopy ? <CopyButton /> : null}
         <button
           className="gc-spec-panel-close"
-          aria-label="Close spec panel"
+          aria-label="Close plan panel"
           onClick={() => controller()?._closeSpecPanel?.()}
         >
           ×

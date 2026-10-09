@@ -220,7 +220,7 @@ function WorkspaceView({ s }: { s: Extract<DevViewState, { kind: 'session' }> })
         </div>
         <div
           id="dc-spec-resizer" className={s.spec.open ? PANE.specResizer.on : PANE.specResizer.off}
-          role="separator" aria-orientation="vertical" aria-label="Resize spec viewer"
+          role="separator" aria-orientation="vertical" aria-label="Resize plan viewer"
         ></div>
         {/* The pane's `width` is the DRAG's inline style and its `-open`
             class is this model's; the reader inside it is its own island,

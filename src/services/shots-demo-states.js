@@ -419,7 +419,7 @@ const STATES = [
       );
       return {
         shows: [{
-          state: 'A live Homeroom bot verdict marked Ready on request #900003, with the build it made and the spec it built from (expand that row).',
+          state: 'A live Homeroom bot verdict marked Ready on request #900003, with the build it made and the plan it built from (expand that row).',
           path: '/#admin/homeroom-bot',
         }],
         alsoFor: ['full_admin'],

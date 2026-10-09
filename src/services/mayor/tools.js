@@ -28,7 +28,7 @@ const DISPATCH_TOOL = {
     + 'just chatting, brainstorming, asking about past work, or giving vague feedback. At most one call per user message. '
     + 'NOTE: the current spec doc (CURRENT SPEC DOC in your context) is auto-injected into the agent\'s prompt — '
     + 'do NOT re-summarize the spec in the prompt arg; describe only WHICH SLICE to build now. '
-    + 'When the user asked to build THE SPEC (rather than naming a narrower scope themselves), the slice is the '
+    + 'When the user asked to build THE SPEC (they call it the plan; rather than naming a narrower scope themselves), the slice is the '
     + 'ENTIRE spec: say so in the prompt arg and do not silently pick one part of it.',
   input_schema: {
     type: 'object',

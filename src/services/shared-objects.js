@@ -284,7 +284,7 @@ async function hydrateOne(pool, user, ref) {
       const row = rows[0];
       return {
         ...base, sessionId: row.session_id, version: row.version,
-        title: row.session_title || row.pr_title || `Spec v${row.version}`,
+        title: row.session_title || row.pr_title || `Plan v${row.version}`,
         state: `v${row.version}`, author: row.username,
         href: `#app/${encodeURIComponent(app.slug)}/dev/sessions/${row.session_id}`,
       };

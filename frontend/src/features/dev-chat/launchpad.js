@@ -54,7 +54,7 @@
     if (resume) {
       lines.push('');
       lines.push('Continue ' + resume.kind + ' #' + resume.id + ' on branch `' + resume.branch + '`.');
-      lines.push('Read its saved spec and conversation, and start from the current head of that branch.');
+      lines.push('Read its saved plan and conversation, and start from the current head of that branch.');
       lines.push('Preserve the existing work. Do not start over or open a second proposal.');
       if (resume.kind === 'proposal') lines.push('Updating the existing proposal clears its votes and asks reviewers to re-review.');
     }

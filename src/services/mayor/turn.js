@@ -1814,7 +1814,7 @@ async function runMayorTurn(ctx, deps) {
       } else if (toolKind === 'scout') {
         // Spec/scout just planned something — make the build handoff
         // explicit so a finished spec doesn't read as a finished change.
-        mayorText2 = "_Spec updated: it's in the spec viewer. Tell me to build it whenever you're ready and I'll dispatch the coding agent._";
+        mayorText2 = "_Plan updated: it's in the plan viewer. Tell me to build it whenever you're ready and I'll dispatch the coding agent._";
       } else {
         mayorText2 = '_Done._';
       }

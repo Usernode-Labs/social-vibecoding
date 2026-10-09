@@ -79,13 +79,13 @@ export function requestStream(rows: TranscriptMessage[]): { rows: TranscriptMess
     } else if (m.kind === 'github' && m.githubSpec) {
       specs.push({
         key: `g${m.key || specs.length}`,
-        title: m.githubSpec.title || 'The spec',
+        title: m.githubSpec.title || 'The plan',
         version: null,
         by: displayName(m.username),
         at: m.at || null,
         time: m.time,
         timeTitle: m.timeTitle,
-        read: { kind: 'text', title: m.githubSpec.title || 'The spec', markdown: m.githubSpec.markdown, html: m.githubSpec.html },
+        read: { kind: 'text', title: m.githubSpec.title || 'The plan', markdown: m.githubSpec.markdown, html: m.githubSpec.html },
       });
     }
   }
@@ -119,7 +119,7 @@ export type RequestStage = 'asked' | 'spec' | 'built' | 'voted';
 
 export const STAGES: { key: RequestStage; label: string }[] = [
   { key: 'asked', label: 'Asked' },
-  { key: 'spec', label: 'Spec' },
+  { key: 'spec', label: 'Plan' },
   { key: 'built', label: 'Built' },
   { key: 'voted', label: 'Voted in' },
 ];
@@ -134,7 +134,7 @@ export function requestStage(fromRow: RequestStage, specs: number): RequestStage
   return fromRow;
 }
 
-/** The newest spec's version, for "Spec v2 is ready for comments." */
+/** The newest spec's version, for "Plan v2 is ready for comments." */
 export function newestSpecVersion(specs: RequestSpecCard[]): number | null {
   const versions = specs.map((s) => s.version).filter((v): v is number => v != null);
   return versions.length ? Math.max(...versions) : null;

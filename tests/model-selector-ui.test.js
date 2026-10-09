@@ -915,7 +915,7 @@ test('a label the user typed on their own machine is escaped, not interpreted', 
   assert.match(html, /&lt;img/);
   // It rides in a `title` too, which is the attribute context the string
   // renderer needed a separate escape for.
-  assert.match(html, /title="The last turn ran on|title="Spec and coding turns in this session run on &lt;img/);
+  assert.match(html, /title="The last turn ran on|title="Plan and coding turns in this session run on &lt;img/);
 });
 
 test('a machine that has gone leaves a past-tense chip, not a live one', () => {

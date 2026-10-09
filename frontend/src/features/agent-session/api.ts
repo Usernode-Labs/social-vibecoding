@@ -632,7 +632,7 @@ export interface SpecVersion {
 export async function getSpec(changeId: number): Promise<{ spec: string; html: string | null; versions: SpecVersion[] }> {
   const body = await json<{ spec?: string; html?: string | null; versions?: SpecVersion[] }>(
     await request(`/api/sessions/${changeId}/spec`),
-    'Could not load the spec.',
+    'Could not load the plan.',
   );
   return {
     spec: typeof body.spec === 'string' ? body.spec : '',
@@ -673,7 +673,7 @@ export async function ensureChangeStaging(changeId: number): Promise<{ status: s
 export async function getSpecVersionDoc(changeId: number, version: number): Promise<{ text: string; html: string | null }> {
   const body = await json<{ spec?: { content?: string; content_html?: string | null } }>(
     await request(`/api/sessions/${changeId}/specs/${version}`),
-    'Could not load that version of the spec.',
+    'Could not load that version of the plan.',
   );
   const spec = body.spec || {};
   return {

@@ -509,12 +509,12 @@ export function runHeading(run: Pick<RunItem, 'mode' | 'status'>): string {
   const scout = run.mode === 'scout';
   const sync = run.mode === 'sync';
   switch (run.status) {
-    case 'running': return scout ? 'Writing the spec…' : sync ? 'Syncing with main…' : 'Building the change…';
-    case 'done': return scout ? 'Wrote the spec' : sync ? 'Synced with main' : 'Built the change';
+    case 'running': return scout ? 'Writing the plan…' : sync ? 'Syncing with main…' : 'Building the change…';
+    case 'done': return scout ? 'Wrote the plan' : sync ? 'Synced with main' : 'Built the change';
     case 'no_changes': return 'Made no changes';
-    case 'failed': return scout ? 'The spec was not written' : sync ? 'Could not sync with main' : 'The build did not finish';
-    case 'stopped': return scout ? 'Stopped writing the spec' : 'Stopped the build';
-    default: return scout ? 'Spec run ended' : sync ? 'Sync ended' : 'Build ended';
+    case 'failed': return scout ? 'The plan was not written' : sync ? 'Could not sync with main' : 'The build did not finish';
+    case 'stopped': return scout ? 'Stopped writing the plan' : 'Stopped the build';
+    default: return scout ? 'Plan run ended' : sync ? 'Sync ended' : 'Build ended';
   }
 }
 
@@ -572,7 +572,7 @@ const TOOL_ACTIVITY: Record<string, string> = {
   switch_active_change: 'Switching changes',
   set_focus_app: 'Changing the focus',
   get_prod_status: 'Reading production status',
-  dispatch_scout: 'The coding agent is writing the spec',
+  dispatch_scout: 'The coding agent is writing the plan',
   dispatch_coding_agent: 'The coding agent is building',
 };
 

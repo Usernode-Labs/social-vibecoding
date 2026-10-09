@@ -972,7 +972,7 @@ const Notifications = {
         GroupChat._writeSpecPanelOpen(item.appSlug, {
           sessionId: item.sessionId,
           version,
-          title: `Spec v${version}`,
+          title: `Plan v${version}`,
         });
       }
       Notifications._dismissSheetForNav();
@@ -2764,7 +2764,7 @@ function rowView(n) {
       icon: '\u{1F4CB}',
       by: n.sourceUsername || null,
       ...headline(
-        'Spec shared',
+        'Plan shared',
         n.sessionTitle || prLabel || n.branchName || `v${n.detail || '?'}`,
       ),
     };
