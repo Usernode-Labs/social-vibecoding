@@ -200,12 +200,17 @@ server.registerTool('save_shot', {
         throw refused('photo_pair_missing', 'This final photo has no complete trusted appearance pair. Retake the paired screenshot once.');
       }
       pair = pair || await pairOrigins();
-      for (const mode of automatic ? ['light', 'dark'] : [colorScheme]) {
-        const { image, origin } = mode === colorScheme ? primary : dark;
-        requireOnApp(side, [origin], pair);
-        const query = new URLSearchParams({ change, screen, side, kind, colorScheme: mode });
-        const result = (await request(`/shot?${query}`, { method: 'POST', binary: image })).result;
-        results.push({ change, screen, side, kind, file, colorScheme: mode, saved: true, result });
+      requireOnApp(side, [primary.origin, ...(automatic ? [dark.origin] : [])], pair);
+      if (automatic) {
+        const size = Buffer.alloc(4); size.writeUInt32BE(primary.image.length);
+        const query = new URLSearchParams({ change, screen, side, kind, pair: 'light-dark' });
+        const result = (await request(`/shot?${query}`, { method: 'POST', binary: Buffer.concat([size, primary.image, dark.image]) })).result;
+        for (const [index, mode] of ['light', 'dark'].entries()) results.push({ change, screen, side, kind, file,
+          colorScheme: mode, saved: true, result: Array.isArray(result) ? result[index] : result });
+      } else {
+        const query = new URLSearchParams({ change, screen, side, kind, colorScheme });
+        const result = (await request(`/shot?${query}`, { method: 'POST', binary: primary.image })).result;
+        results.push({ change, screen, side, kind, file, colorScheme, saved: true, result });
       }
     } catch (error) {
       results.push({ change, screen, side, kind, file, saved: false,

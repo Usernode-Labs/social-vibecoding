@@ -82,18 +82,25 @@ class RunControl {
   // One file the agent saved: a screen or element shot, or a clip. Saving the
   // same slot again replaces it, so the agent can retake a poor shot, and
   // saving for a change it skipped takes that skip back.
-  saveShot(rawTarget, buffer) {
-    try {
-      this.assertOpen();
-      const target = shots.shotTarget(this.intent, rawTarget);
-      const info = target.media === 'webm' ? shots.inspectClip(buffer) : shots.inspectImage(buffer);
-      shots.checkElementSize(
-        this.declaredChange(target.storyId), target, info,
-        this.saved.get(shots.slotKey({ ...target, variant: 'context' })),
-      );
-      this.saved.set(shots.slotKey(target), shots.stored(target, buffer, info));
+  prepareShot(rawTarget, buffer) {
+    this.assertOpen();
+    const target = shots.shotTarget(this.intent, rawTarget);
+    const info = target.media === 'webm' ? shots.inspectClip(buffer) : shots.inspectImage(buffer);
+    shots.checkElementSize(this.declaredChange(target.storyId), target, info,
+      this.saved.get(shots.slotKey({ ...target, variant: 'context' })));
+    return { target, info, file: shots.stored(target, buffer, info) };
+  }
+
+  storeShots(prepared) {
+    // Validation above is complete for every member before any replacement.
+    // This synchronous mutation cannot expose a partial pair to publication.
+    for (const { target, file } of prepared) {
+      this.saved.set(shots.slotKey(target), file);
       this.skipped.delete(target.storyId);
       this.failed.delete(target.storyId);
+    }
+    return prepared.map((entry) => {
+      const { target, info } = entry;
       // The same image on the other side says the two sides were not shot
       // in the states the claim compares. Said while the agent can still
       // retake them, not only on the card afterwards.
@@ -118,10 +125,24 @@ class RunControl {
         } : {}),
         progress: this.progress(),
       };
-    } catch (error) {
-      this.lastToolFailure = { operation: 'save-shot', error };
-      throw error;
-    }
+    });
+  }
+
+  saveShot(rawTarget, buffer) {
+    try { return this.storeShots([this.prepareShot(rawTarget, buffer)])[0]; }
+    catch (error) { this.lastToolFailure = { operation: 'save-shot', error }; throw error; }
+  }
+
+  savePhotoPair(rawTarget, buffer) {
+    try {
+      if (!Buffer.isBuffer(buffer) || buffer.length < 4) throw new shots.ShotError('invalid_shot_pair', 'A photo pair must contain both complete PNG images.');
+      const lightBytes = buffer.readUInt32BE(0);
+      if (!lightBytes || lightBytes >= buffer.length - 4) throw new shots.ShotError('invalid_shot_pair', 'A photo pair must contain both complete PNG images.');
+      const prepared = ['light', 'dark'].map((colorScheme, index) => this.prepareShot(
+        { ...rawTarget, colorScheme }, index ? buffer.subarray(4 + lightBytes) : buffer.subarray(4, 4 + lightBytes)));
+      if (prepared.some(({ target }) => target.media !== 'png')) throw new shots.ShotError('invalid_shot_pair', 'Only PNG photos can be paired.');
+      return this.storeShots(prepared);
+    } catch (error) { this.lastToolFailure = { operation: 'save-shot', error }; throw error; }
   }
 
   // The agent could not reach a change, or found that the shots it saved do

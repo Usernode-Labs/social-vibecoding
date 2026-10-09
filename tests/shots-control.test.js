@@ -364,3 +364,20 @@ test('an element shot wider than its screen is refused and saves nothing', () =>
   assert.equal(run.saved.size, 1);
   assert.equal(run.lastToolFailure.operation, 'save-shot');
 });
+
+
+test('atomic retakes preserve the complete old pair when the second image is invalid', () => {
+  const run = control({ intent: fixtures.intent(), context: { photoModes: ['light', 'dark'] } });
+  const pack = (light, dark) => { const prefix = Buffer.alloc(4); prefix.writeUInt32BE(light.length); return Buffer.concat([prefix, light, dark]); };
+  const target = { change: 'invite-suggestions', screen: 'desktop', kind: 'screen' };
+  for (const side of ['before', 'after']) run.savePhotoPair({ ...target, side }, pack(fixtures.png({ shade: side === 'before' ? 10 : 80 }), fixtures.png({ shade: side === 'before' ? 20 : 90 })));
+  const old = [...run.saved.values()].map((f) => f.sha256);
+  assert.equal(run.summary().verdict.passed, true);
+  assert.throws(() => run.savePhotoPair({ ...target, side: 'after' }, pack(fixtures.png({ shade: 120 }), Buffer.from('invalid dark'))));
+  assert.deepEqual([...run.saved.values()].map((f) => f.sha256), old, 'neither old slot was replaced');
+  assert.equal(run.summary().verdict.passed, true, 'the previous complete generation remains usable');
+  run.savePhotoPair({ ...target, side: 'after' }, pack(fixtures.png({ shade: 120 }), fixtures.png({ shade: 130 })));
+  const next = [...run.saved.values()].map((f) => f.sha256);
+  assert.deepEqual(next.slice(0, 2), old.slice(0, 2));
+  assert.notEqual(next[2], old[2]); assert.notEqual(next[3], old[3]);
+});

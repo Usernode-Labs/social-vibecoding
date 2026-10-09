@@ -261,6 +261,16 @@ async function screensFor(stories, files) {
   }
   const screens = [];
   const modes = [...new Set(files.filter((file) => file.media === 'png').map((file) => file.colorScheme || 'light'))];
+  // The original light workflow compares the first after image for each
+  // shared before image. Appearance display grouping must not expand that
+  // measurement budget when dark photos split the logical screens.
+  const lightHeads = new Map();
+  for (const viewport of viewports) for (const story of stories) {
+    const base = find(story.id, viewport, 'base', 'context', 'light');
+    const head = find(story.id, viewport, 'head', 'context', 'light');
+    const key = base && JSON.stringify([viewport, base.sha256]);
+    if (base && !lightHeads.has(key)) lightHeads.set(key, head?.sha256 || null);
+  }
   for (const colorScheme of modes) for (const viewport of viewports) {
     const groups = [];
     for (const story of stories) {
@@ -281,14 +291,16 @@ async function screensFor(stories, files) {
       // Dark is an additional photo only: keep the historical light pixel
       // comparison, without a second decode/diff/focus-search pipeline or
       // pretending light outlines were measured on dark pixels.
-      if (colorScheme === 'dark') {
+      const lightKey = JSON.stringify([viewport, group.base.sha256]);
+      if (colorScheme === 'dark' || lightHeads.get(lightKey) !== group.head.sha256) {
         const dimensions = (file) => ({
           w: file.width || file.data.readUInt32BE(16),
           h: file.height || file.data.readUInt32BE(20),
         });
         const before = dimensions(group.base); const after = dimensions(group.head);
         screens.push({ viewport, colorScheme, stories: group.stories.map((story) => story.id),
-          shot: group.stories[0].id, width: before.w, heightBefore: before.h, heightAfter: after.h, regions: [] });
+          shot: group.stories[0].id, width: before.w, heightBefore: before.h, heightAfter: after.h,
+          measured: false, identical: group.base.sha256 === group.head.sha256, regions: [] });
         continue;
       }
       const before = pixelsOf(group.base);
@@ -359,7 +371,7 @@ function unchangedStories(screens) {
   for (const screen of screens || []) {
     for (const id of screen.stories || []) {
       seen.add(id);
-      if (id !== screen.shot || (screen.regions || []).length) changed.add(id);
+      if (id !== screen.shot || (screen.measured === false ? screen.identical !== true : (screen.regions || []).length)) changed.add(id);
     }
   }
   return new Set([...seen].filter((id) => !changed.has(id)));

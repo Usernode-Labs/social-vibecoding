@@ -171,7 +171,11 @@ test('both viewers keep claim groups consistent when only light captures are ide
   for (const mode of ['light', 'dark']) {
     const own = screens.filter((s) => s.colorScheme === mode);
     assert.deepEqual(own.map((s) => [s.shot, s.stories]), [['first', ['first']], ['second', ['second']]]);
-    if (mode === 'light') assert.ok(own.every((s) => s.regions.length > 0), 'light groups retain measured outlines');
+    if (mode === 'light') {
+      assert.ok(own[0].regions.length > 0, 'original representative retains measured outlines');
+      assert.equal(own[1].measured, false, 'splitting for dark cannot add another light comparison');
+      assert.deepEqual(own[1].regions, [], 'different after pixels cannot borrow representative outlines');
+    }
     else assert.ok(own.every((s) => s.regions.length === 0), 'additional dark photos stay plain');
   }
   const shots = { state: 'verified', claims: stories.map((s) => ({ ...s, viewports: ['desktop'] })), screens, artifacts: files.map((f) => ({

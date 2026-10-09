@@ -49,25 +49,9 @@ const proxyFor = (persona) => {
 // Fixed browser configuration, never agent-provided code. Emulate the
 // system appearance and pin the shell's documented preference before paint.
 // Auth storage is still the original private state file.
-const appearanceConfig = {};
-for (const colorScheme of ['light']) {
-  const script = path.join(shotsDir, `appearance-${colorScheme}.js`);
-  fs.writeFileSync(script, `(() => {
-  if (!${JSON.stringify([baseOrigin, headOrigin])}.includes(location.origin)) return;
-  try { localStorage.setItem('theme', ${JSON.stringify(colorScheme)}); } catch {}
-  const url = new URL(location.href);
-  for (const name of ['theme', 'shot']) {
-    if (['light'].includes(url.searchParams.get(name))) url.searchParams.set(name, ${JSON.stringify(colorScheme)});
-  }
-  history.replaceState(history.state, '', url);
-})();
-`, { mode: 0o600 });
-  const file = path.join(shotsDir, `appearance-${colorScheme}.json`);
-  fs.writeFileSync(file, JSON.stringify({ browser: { contextOptions: { colorScheme }, initScript: [script] } }), { mode: 0o600 });
-  appearanceConfig.light = file;
-  for (const persona of ['member', 'admin', 'full_admin', 'guest']) {
-    fs.mkdirSync(path.join(shotsDir, persona, 'dark'), { recursive: true, mode: 0o700 });
-  }
+const appearanceConfig = { light: require('./shots-appearance-pair').writeLightConfig(shotsDir, [baseOrigin, headOrigin]) };
+for (const persona of ['member', 'admin', 'full_admin', 'guest']) {
+  fs.mkdirSync(path.join(shotsDir, persona, 'dark'), { recursive: true, mode: 0o700 });
 }
 const browserArgs = (persona) => {
   const observed = persona === 'read_only_admin' ? 'admin' : persona;

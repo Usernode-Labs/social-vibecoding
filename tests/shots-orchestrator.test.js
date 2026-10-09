@@ -421,7 +421,7 @@ test('a change whose screens differ only by noise is published with a note sayin
         control.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before', kind: 'screen', colorScheme },
           fixtures.png({ shade: 10 }));
         control.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after', kind: 'screen', colorScheme },
-          fixtures.png({ shade: 12 }));
+          fixtures.png({ shade: colorScheme === 'dark' ? 10 : 12 }));
       }
       saveStills(control, 'invite-empty');
       return { backend: 'claude_code', threadId: 'shots-thread' };
@@ -436,6 +436,23 @@ test('a change whose screens differ only by noise is published with a note sayin
     { id: 'invite-suggestions', status: 'ready', files: 4, unchanged: true, note: shots.UNCHANGED_NOTE },
     { id: 'invite-empty', status: 'ready', files: 4 },
   ]);
+});
+
+test('a dark-only change publishes without a false unchanged note or dark pixel comparison', async () => {
+  const fixture = setup({ dispatch: async (options) => {
+    const control = controlFor(options);
+    for (const colorScheme of ['light', 'dark']) {
+      for (const side of ['before', 'after']) control.saveShot({ change: 'invite-suggestions', screen: 'desktop', side, colorScheme },
+        fixtures.png({ shade: colorScheme === 'dark' && side === 'after' ? 200 : 10 }));
+    }
+    saveStills(control, 'invite-empty');
+    return { backend: 'claude_code', threadId: 'shots-thread' };
+  } });
+  fixture.run.intent = twoChangeIntent();
+  assert.equal((await execute(fixture)).state, 'verified');
+  const verdict = fixture.transitions.find((entry) => entry.next === 'verified').patch.hardVerdict;
+  assert.equal(verdict.stories[0].unchanged, undefined);
+  assert.equal(verdict.stories[0].note, undefined);
 });
 
 test('useful shots publish with cleanup pending when teardown leaves a runtime', async () => {

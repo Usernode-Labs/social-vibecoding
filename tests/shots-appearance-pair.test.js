@@ -81,19 +81,22 @@ test('the historical pinned shell captures real appearances and restores its exa
   for (const fail of [false, true]) {
     const classes = new Set(); const attributes = new Map(); const stored = new Map([['theme', 'dark']]);
     let osDark = false;
+    const meta = { getAttribute: (key) => attributes.get(key) ?? null, setAttribute: (key, value) => attributes.set(key, value), removeAttribute: (key) => attributes.delete(key) };
     const context = vm.createContext({ URLSearchParams, Symbol, Promise,
       location: { search: '?shot=light' },
       localStorage: { getItem: (key) => stored.get(key) ?? null, setItem: (key, value) => stored.set(key, value), removeItem: (key) => stored.delete(key) },
       document: { documentElement: { classList: {
         contains: (key) => classes.has(key), add: (key) => classes.add(key), remove: (key) => classes.delete(key),
         toggle: (key, force) => force ? classes.add(key) : classes.delete(key),
-      } }, querySelector: () => ({ getAttribute: (key) => attributes.get(key) ?? null, setAttribute: (key, value) => attributes.set(key, value), removeAttribute: (key) => attributes.delete(key) }) },
+      } }, querySelector: () => meta },
       matchMedia: () => ({ matches: osDark, addEventListener() {} }),
       addEventListener() {}, requestAnimationFrame: (fn) => fn(),
     });
     context.window = context; vm.runInContext(source, context);
+    const originalMethods = ['add', 'remove'].map(name => context.document.documentElement.classList[name]);
+    const originalMetaSetter = meta.setAttribute;
     const originalGet = context.Theme.get; const originalColor = attributes.get('content'); const notices = [];
-    context.Theme.onChange((mode) => notices.push([mode, context.Theme.get()]));
+    context.Theme.onChange((mode) => notices.push([mode, context.Theme.get(), classes.has('dark'), attributes.get('content')]));
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'real-shell-pair-'));
     const page = { url: () => 'https://after.example/state?shot=light',
       evaluate: (fn, value) => vm.runInContext(`(${fn.toString()})(${JSON.stringify(value)})`, context),
@@ -109,11 +112,13 @@ test('the historical pinned shell captures real appearances and restores its exa
     try {
       const operation = pairing.photoPair({ page, directory, filename: 'pair-pinned.png', capture, origins: ['https://after.example'] });
       if (fail) await assert.rejects(operation, /second photo failed/); else await operation;
-      assert.equal(context.Theme.get, originalGet); assert.equal(context.Theme.get(), 'light');
+      assert.equal(context.Theme.get, originalGet);
+      assert.deepEqual(['add', 'remove'].map(name => context.document.documentElement.classList[name]), originalMethods);
+      assert.equal(meta.setAttribute, originalMetaSetter); assert.equal(context.Theme.get(), 'light');
       assert.equal(Object.getOwnPropertySymbols(context.Theme).length, 0);
       assert.equal(stored.get('theme'), 'dark'); assert.equal(osDark, false); assert.equal(classes.has('dark'), false);
       assert.equal(attributes.get('content'), originalColor);
-      assert.deepEqual(notices, [['dark', 'dark'], ['light', 'light']]);
+      assert.deepEqual(notices, [['dark', 'dark', true, '#0b0d1b'], ['light', 'light', false, '#f4f2e4']]);
       assert.equal(!!pairing.readPair(directory, 'pair-pinned.png'), !fail);
     } finally { fs.rmSync(directory, { recursive: true, force: true }); }
   }

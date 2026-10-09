@@ -151,6 +151,8 @@ function localBridge(runtimeDir) {
     .replaceAll('/usr/local/lib/node_modules/', `${path.join(ROOT, 'node_modules')}/`)
     .replace("require('./shots-hosted-origins')",
       `require(${JSON.stringify(path.join(ROOT, 'worker', 'shots-hosted-origins.js'))})`)
+    .replace("require('./shots-appearance-pair')",
+      `require(${JSON.stringify(path.join(ROOT, 'worker', 'shots-appearance-pair.js'))})`)
     .replace("require('./shots-boundary')",
       `require(${JSON.stringify(path.join(ROOT, 'worker', 'shots-boundary.js'))})`);
   const file = path.join(runtimeDir, 'shots-mcp.js');
@@ -169,6 +171,7 @@ function browserServer(options, persona, shotsDir, clipSize) {
     command: process.execPath,
     args: [
       path.join(ROOT, 'worker', 'shots-browser-observer.js'), PERSONAS[persona].dir,
+      '--config', path.join(shotsDir, 'appearance-light.json'),
       '--browser', options.browser, '--headless', '--isolated', '--no-sandbox', '--caps', 'vision',
       ...(statePath && fs.existsSync(statePath) ? ['--storage-state', statePath] : []),
       // No shots proxy runs here to keep a page off this machine's own
@@ -183,6 +186,8 @@ function browserServer(options, persona, shotsDir, clipSize) {
     ],
     env: {
       PATH: process.env.PATH || '',
+      NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --require ${JSON.stringify(path.join(ROOT, 'worker', 'shots-appearance-pair.js'))}`.trim(),
+      SHOTS_PAIR_PHOTOS: '1',
       SHOTS_BROWSER_MCP_COMMAND: JSON.stringify(options.playwrightMcp),
       SHOTS_ALLOWED_ORIGINS: JSON.stringify([options.before, options.after]),
     },
@@ -259,11 +264,19 @@ function contactSheet(intent, summary, fileNames, meta) {
   const changes = intent.stories.map((story) => {
     const result = results.get(story.id) || {};
     const rows = story.viewports.map((viewport) => {
-      const find = (side, variant) => fileNames.get(`${story.id}|${viewport.name}|${side}|${variant}`);
-      const rowsFor = [['context', 'screen', false], ['focus', 'element', false], ['animation', 'clip', true]]
-        .filter(([variant]) => find('base', variant) || find('head', variant))
-        .map(([variant, word, video]) => `<div class="pair">${cell(`Before · ${word}`, find('base', variant), video)}${cell(`After · ${word}`, find('head', variant), video)}</div>`);
-      return `<h3>${escapeHtml(viewport.name)} ${viewport.width}×${viewport.height}</h3>${rowsFor.join('') || '<p class="none">No shots saved.</p>'}`;
+      const modes = [...new Set([...fileNames.keys()].filter((key) => key.startsWith(`${story.id}|${viewport.name}|`))
+        .map((key) => key.split('|')[4]).filter(Boolean))];
+      if (!modes.length) modes.push('light');
+      const find = (side, variant, mode) => fileNames.get(`${story.id}|${viewport.name}|${side}|${variant}|${mode}`)
+        || (mode === 'light' ? fileNames.get(`${story.id}|${viewport.name}|${side}|${variant}`) : null);
+      const photos = modes.flatMap((mode) => [['context', 'screen'], ['focus', 'element']]
+        .filter(([variant]) => find('base', variant, mode) || find('head', variant, mode))
+        .map(([variant, word]) => { const label = modes.length > 1 ? `${mode} · ${word}` : word;
+          return `<div class="pair">${cell(`Before · ${label}`, find('base', variant, mode), false)}${cell(`After · ${label}`, find('head', variant, mode), false)}</div>`; }));
+      const clips = ['base', 'head'].some((side) => find(side, 'animation', 'light'))
+        ? `<div class="pair">${cell('Before · clip', find('base', 'animation', 'light'), true)}${cell('After · clip', find('head', 'animation', 'light'), true)}</div>` : '';
+      const rowsFor = [...photos, clips].join('');
+      return `<h3>${escapeHtml(viewport.name)} ${viewport.width}×${viewport.height}</h3>${rowsFor || '<p class="none">No shots saved.</p>'}`;
     }).join('');
     return `<section><h2>${escapeHtml(story.claim)}</h2>
       <p class="meta"><b class="${result.status === 'ready' ? 'ready' : 'skipped'}">${escapeHtml(result.status || 'unknown')}</b>
@@ -316,8 +329,9 @@ async function main() {
   const runtimeDir = path.join(options.out, 'runtime');
   const shotsDir = path.join(runtimeDir, 'shots');
   for (const persona of Object.values(PERSONAS)) {
-    fs.mkdirSync(path.join(shotsDir, persona.dir), { recursive: true, mode: 0o700 });
+    fs.mkdirSync(path.join(shotsDir, persona.dir, 'dark'), { recursive: true, mode: 0o700 });
   }
+  require('../worker/shots-appearance-pair').writeLightConfig(shotsDir, [options.before, options.after]);
   fs.mkdirSync(path.join(options.out, 'shots'), { recursive: true });
 
   const runId = crypto.randomBytes(16).toString('hex');
@@ -420,9 +434,10 @@ async function main() {
   const side = { base: 'before', head: 'after' };
   const kind = { context: 'screen', focus: 'element', animation: 'clip' };
   for (const [, file] of registration.control.saved) {
-    const name = `${file.storyId}-${file.viewport}-${side[file.side]}-${kind[file.variant]}.${file.media}`;
+    const appearance = file.media === 'png' ? (file.colorScheme || 'light') : null;
+    const name = `${file.storyId}-${file.viewport}-${side[file.side]}-${kind[file.variant]}${appearance ? '-'+appearance : ''}.${file.media}`;
     fs.writeFileSync(path.join(options.out, 'shots', name), file.data);
-    fileNames.set(`${file.storyId}|${file.viewport}|${file.side}|${file.variant}`, name);
+    fileNames.set(`${file.storyId}|${file.viewport}|${file.side}|${file.variant}${appearance ? '|'+appearance : ''}`, name);
   }
   const { counts: toolCounts, finalText } = toolCalls(streamFile);
   const result = {
@@ -459,5 +474,5 @@ if (require.main === module) {
 }
 
 module.exports = {
-  PERSONAS, parseArgs, revisionContext, contactSheet, agentEnv, watchAgentStream, browserServer,
+  localBridge, PERSONAS, parseArgs, revisionContext, contactSheet, agentEnv, watchAgentStream, browserServer,
 };

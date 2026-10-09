@@ -10,6 +10,17 @@ const pairedName = (name) => /^pair-[A-Za-z0-9][A-Za-z0-9._-]{0,140}\.png$/.test
 const manifestPath = (dir, name) => path.join(dir, '.appearance-pairs', `${name}.json`);
 const hash = (data) => crypto.createHash('sha256').update(data).digest('hex');
 
+function writeLightConfig(directory, origins) {
+  const script = path.join(directory, 'appearance-light.js');
+  fs.writeFileSync(script, `(() => {
+    if (!${JSON.stringify(origins)}.includes(location.origin)) return;
+    try { localStorage.setItem('theme', 'light'); } catch {}
+  })();\n`, { mode: 0o600 });
+  const config = path.join(directory, 'appearance-light.json');
+  fs.writeFileSync(config, JSON.stringify({ browser: { contextOptions: { colorScheme: 'light' }, initScript: [script] } }), { mode: 0o600 });
+  return config;
+}
+
 function readPair(dir, name, proofs = null) {
   if (!pairedName(name)) return null;
   try {
@@ -50,15 +61,32 @@ async function photoPair({ page, directory, filename, capture, origins }) {
     await page.evaluate((mode) => {
       if (typeof window.Theme?.set === 'function') {
         if (window.Theme[Symbol.for('homeroom.shots.originalThemeGet')]) window.Theme.get = () => mode;
-        window.Theme.set(mode);
         // The historical shell closes over ?shot=light/dark when loaded.
-        // Keep that deep link and its UI state intact while overriding its
-        // visual appearance and public reader for this photo only.
+        // Its setter must notify listeners AFTER the effective appearance
+        // is installed: AppView forwards that class to embedded apps.
         if (typeof window.Theme?.apply === 'function' && typeof window.Theme?.get === 'function') {
-          document.documentElement.classList.toggle('dark', mode === 'dark');
+          const classes = document.documentElement.classList;
+          const wantDark = mode === 'dark';
+          classes.toggle('dark', wantDark);
           const meta = document.querySelector('meta[name="theme-color"]');
-          if (meta) meta.setAttribute('content', mode === 'dark' ? '#0b0d1b' : '#f4f2e4');
-        }
+          const ground = wantDark ? '#0b0d1b' : '#f4f2e4';
+          if (meta) meta.setAttribute('content', ground);
+          const restores = [];
+          const patch = (object, name, wrapper) => {
+            const descriptor = Object.getOwnPropertyDescriptor(object, name);
+            const original = object[name];
+            Object.defineProperty(object, name, { ...(descriptor || { configurable: true, writable: true }), value: wrapper(original) });
+            restores.push(() => descriptor ? Object.defineProperty(object, name, descriptor) : delete object[name]);
+          };
+          try {
+            // Prevent the pinned closure from briefly applying the wrong
+            // class/chrome before dispatching its existing listeners.
+            patch(classes, 'add', (add) => function (...names) { return add.apply(this, names.filter((name) => name !== 'dark' || wantDark)); });
+            patch(classes, 'remove', (remove) => function (...names) { return remove.apply(this, names.filter((name) => name !== 'dark' || !wantDark)); });
+            if (meta) patch(meta, 'setAttribute', (set) => function (name, value) { return set.call(this, name, name === 'content' ? ground : value); });
+            window.Theme.set(mode);
+          } finally { for (const restore of restores.reverse()) restore(); }
+        } else window.Theme.set(mode);
       }
       return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     }, colorScheme);
@@ -142,5 +170,13 @@ function install(mcpPackage = '/usr/local/lib/node_modules/@playwright/mcp/packa
   };
 }
 
-if (process.env.SHOTS_PAIR_PHOTOS === '1') install(process.env.SHOTS_PLAYWRIGHT_MCP_PACKAGE);
-module.exports = { pairedName, readPair, photoPair, install };
+// NODE_OPTIONS also reaches a local npx parent. Install only in the actual
+// pinned browser CLI process, never in npm/the observer/the shots bridge.
+if (process.env.SHOTS_PAIR_PHOTOS === '1') {
+  let entryPackage;
+  try { entryPackage = path.join(path.dirname(fs.realpathSync(process.argv[1])), 'package.json'); } catch {}
+  if (entryPackage && fs.existsSync(entryPackage) && JSON.parse(fs.readFileSync(entryPackage, 'utf8')).name === '@playwright/mcp') {
+    install(process.env.SHOTS_PLAYWRIGHT_MCP_PACKAGE || entryPackage);
+  }
+}
+module.exports = { pairedName, readPair, photoPair, writeLightConfig, install };

@@ -118,3 +118,22 @@ test('the contact sheet shows each change with its result and escapes proposal t
   assert.match(html, /<img src="shots\/saved-toast-desktop-after-screen\.png" alt="After · screen">/);
   assert.match(html, /1 of 2 ready · agent finished in 61 s/);
 });
+
+test('the supported dry run preloads the pair hook even with an explicit MCP command', () => {
+  const options = parseArgs(['--intent', 'i.json', '--before', 'http://a', '--after', 'http://b', '--playwright-mcp', '/bin/custom-mcp']);
+  const config = browserServer(options, 'member', '/tmp/shots', null);
+  assert.equal(config.env.SHOTS_PAIR_PHOTOS, '1');
+  assert.match(config.env.NODE_OPTIONS, /shots-appearance-pair\.js/);
+  assert.deepEqual(JSON.parse(config.env.SHOTS_BROWSER_MCP_COMMAND), ['/bin/custom-mcp']);
+  assert.equal(config.args[config.args.indexOf('--config') + 1], '/tmp/shots/appearance-light.json');
+});
+
+test('the contact sheet keeps light and dark captures separately named', () => {
+  const intent = fixtures.intent();
+  const fileNames = new Map();
+  for (const mode of ['light', 'dark']) for (const side of ['base', 'head']) {
+    fileNames.set(`invite-suggestions|desktop|${side}|context|${mode}`, `${side}-${mode}.png`);
+  }
+  const html = contactSheet(intent, { verdict: { passed: true }, stories: [{ id: 'invite-suggestions', status: 'ready', files: 4 }] }, fileNames, { before: 'http://a', after: 'http://b', agentOutcome: 'finished', agentMs: 1, toolCounts: {} });
+  for (const name of fileNames.values()) assert.ok(html.includes(name), name);
+});

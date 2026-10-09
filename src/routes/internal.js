@@ -169,7 +169,9 @@ function internalRoutes(_config) {
   const shotBody = raw({ type: 'application/octet-stream', limit: '21mb' });
   router.post('/api/internal/shots/:runId/shot', shotsAuth, shotsLimiter, shotBody, (req, res) => {
     try {
-      const result = shotsControlForRequest(req).saveShot({
+      const control = shotsControlForRequest(req);
+      if (req.query.pair != null && req.query.pair !== 'light-dark') throw new shotsControl.ShotsControlError('invalid_shot_pair', 'Pair must be light-dark.', 400);
+      const result = control[req.query.pair === 'light-dark' ? 'savePhotoPair' : 'saveShot']({
         change: req.query.change,
         screen: req.query.screen,
         side: req.query.side,

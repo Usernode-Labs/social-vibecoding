@@ -388,7 +388,7 @@ function bridgeFixture(t, { declaredChanges } = {}) {
     } else if (parsed.pathname.endsWith('/context')) {
       payload = { ok: true, context };
     } else {
-      payload = { ok: true, result: { accepted: parsed.pathname.split('/').pop() } };
+      payload = { ok: true, result: parsed.searchParams.get('pair') === 'light-dark' ? [{ accepted: 'light' }, { accepted: 'dark' }] : { accepted: parsed.pathname.split('/').pop() } };
     }
     return new Response(JSON.stringify(payload), { status: 200, headers: { 'content-type': 'application/json' } });
   };
@@ -707,9 +707,9 @@ test('a shots turn samples the worker\'s memory through the proxy, which the ima
       const appearance = JSON.parse(fs.readFileSync(args[args.indexOf('--config') + 1], 'utf8'));
       assert.equal(appearance.browser.contextOptions.colorScheme, mode);
       const script = fs.readFileSync(appearance.browser.initScript[0], 'utf8');
-      assert.match(script, new RegExp(`localStorage.setItem\\('theme', "${mode}"\\)`));
+      assert.match(script, /localStorage.setItem\('theme', 'light'\)/);
       assert.match(script, /location.origin/);
-      assert.match(script, /history.replaceState/);
+      assert.doesNotMatch(script, /history.replaceState/, 'capture configuration preserves the real URL');
       assert.equal(args[args.indexOf('--output-dir') + 1], path.join(dir, 'shots', 'member', ...(mode === 'dark' ? ['dark'] : [])));
       assert.equal(config.mcpServers[server].env.SHOTS_PAIR_PHOTOS, '1');
       assert.ok(fs.existsSync(path.join(dir, 'shots', 'member', 'dark')), 'same persona stores its second image; no second server');
@@ -733,10 +733,14 @@ test('one final screenshot save publishes its trusted light and dark slots autom
   });
   const saved = await bridge.call('save_shot', { shots: [{ change: 'invite-suggestions', screen: 'desktop', side: 'after', file: filename }] });
   assert.equal(saved.value.saved, 2);
-  assert.deepEqual(uploads(bridge).map((r) => r.query.colorScheme), ['light', 'dark']);
-  assert.deepEqual(uploads(bridge).map((r) => r.body.toString()), ['light-png', 'dark-png']);
+  assert.equal(uploads(bridge).length, 1, 'one atomic platform write for both slots');
+  const sent = uploads(bridge)[0];
+  assert.equal(sent.query.pair, 'light-dark');
+  assert.equal(sent.body.readUInt32BE(0), 9);
+  assert.equal(sent.body.subarray(4, 13).toString(), 'light-png');
+  assert.equal(sent.body.subarray(13).toString(), 'dark-png');
   fs.writeFileSync(path.join(directory, 'dark', filename), 'changed-after-capture');
   const refusedPair = await bridge.call('save_shot', { shots: [{ change: 'invite-suggestions', screen: 'desktop', side: 'after', file: filename }] });
   assert.equal(refusedPair.value.saved, 0);
-  assert.equal(uploads(bridge).length, 2, 'a changed pair never starts another upload');
+  assert.equal(uploads(bridge).length, 1, 'a changed pair never starts another upload');
 });
