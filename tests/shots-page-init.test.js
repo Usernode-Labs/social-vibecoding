@@ -21,13 +21,22 @@ test('the init script records the exact dismissal the banner reads', () => {
   const key = banner.match(/const DISMISS_KEY = '([^']+)';/)[1];
   const store = new Map();
   const sessionStorage = { setItem: (k, v) => store.set(k, String(v)) };
-  vm.runInNewContext(read(INIT), { sessionStorage });
+  const window = {}; window.top = window;
+  vm.runInNewContext(read(INIT), { sessionStorage, window });
   assert.equal(store.get(key), '1', 'banner reads sessionStorage[DISMISS_KEY] === "1"');
+});
+
+test('a framed page (a hosted app inside the shell) is left alone', () => {
+  const store = new Map();
+  const sessionStorage = { setItem: (k, v) => store.set(k, String(v)) };
+  vm.runInNewContext(read(INIT), { sessionStorage, window: { top: {} } });
+  assert.equal(store.size, 0);
 });
 
 test('a page with no storage does not throw', () => {
   const sessionStorage = { setItem() { throw new Error('SecurityError'); } };
-  assert.doesNotThrow(() => vm.runInNewContext(read(INIT), { sessionStorage }));
+  const window = {}; window.top = window;
+  assert.doesNotThrow(() => vm.runInNewContext(read(INIT), { sessionStorage, window }));
 });
 
 test('every shots browser loads it, and the image puts it where they look', () => {

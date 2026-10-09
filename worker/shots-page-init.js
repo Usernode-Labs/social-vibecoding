@@ -7,8 +7,11 @@
 // the strip's × records (install-banner.tsx, DISMISS_KEY), so the shots show
 // what a member sees once they have closed it. Only the shots browsers run
 // it: declared checks and real visitors still get the banner as before.
+//
+// Top-level pages only: a hosted app runs in a frame of the shell, and the
+// frame is the app being photographed, so its storage is left as it is.
 try {
-  sessionStorage.setItem('mobileInstallBannerDismissed', '1');
+  if (window.top === window) sessionStorage.setItem('mobileInstallBannerDismissed', '1');
 } catch {
   /* An opaque origin (about:blank) has no storage; there is no banner there. */
 }
