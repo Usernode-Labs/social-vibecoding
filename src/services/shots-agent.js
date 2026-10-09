@@ -176,7 +176,21 @@ the app errored), try the step once more, then call skip_change with outcome
 request and its status. That is the change not working, and people and its
 author need to know. Use the default outcome only when these copies cannot
 reach the state: missing data, access, or an interaction you could not
-perform.`;
+perform.
+
+While you take the shots you may see something plainly broken on the after
+address that is not about the declared change itself: content cut off or
+running off the screen, text or controls overlapping each other, an error
+message or a broken image on screen, a layout that falls apart at the phone
+size. Call note_problem with the change and screen where you saw it, what is
+broken in one short sentence, the after shot it shows in if you saved one,
+and alsoBefore: true when the before address shows the same thing, false
+when it does not, "unknown" when you did not look. People read these under
+"Also noticed"; they change nothing about the shots. Note only what any
+person would agree is broken, at most a handful per run: never a matter of
+taste, style or wording, and never whether the declared change is shown or
+works (that is note_change and skip_change). Do not go looking for problems
+on other screens; note what you see on the way.`;
 
 const TASK_PROMPT = `Read your brief with get_brief, then save a before and an
 after shot of every declared change on each of its screens (plus a clip of

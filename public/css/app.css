@@ -15408,6 +15408,15 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .shots-claim-n { flex: none; width: 20px; height: 20px; margin-top: 1px; border-radius: 999px; display: grid; place-items: center;
   font-size: 11px; font-weight: 700; line-height: 1; color: #fff; background: #3f3f46; font-variant-numeric: tabular-nums; }
 .dark .shots-claim-n { color: #18181b; background: #d4d4d8; }
+/* Also noticed: problems the shots agent saw on the after build besides the
+   declared changes. Quiet on purpose: the small-caps label every group label
+   in the shell uses, then plain lines with no fill or colour, because they
+   decide nothing about the change. */
+.shots-noticed { display: grid; gap: 6px; }
+.shots-noticed-head { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); }
+.shots-noticed-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.shots-noticed-text { margin: 0; font-size: 14px; line-height: 1.4; color: var(--text-primary); }
+.shots-noticed-meta { margin-top: 2px; font-size: 12px; line-height: 1.4; color: var(--text-muted); }
 
 /* An HTML spec's screens (#3699) use the same viewer (AppView._shotsViewerHtml)
    with three things the card leaves off. Each is radios read by :has(), like
@@ -16360,6 +16369,7 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-change-shots .shots-stage { margin: 0 10px; border-radius: 12px; border: 0; }
 .dev-change-shots .shots-view-notes { padding: 12px 14px 4px; }
 .dev-change-shots .shots-claims { padding: 0 14px 12px; }
+.dev-change-shots .shots-noticed { padding: 4px 14px 14px; }
 .dev-change-shots-plain { padding: 12px 14px 14px; }
 .dev-change-shots-line { margin: 8px 0 0; display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text-muted); }
 .dev-change-shots-tiles { margin-top: 8px; }

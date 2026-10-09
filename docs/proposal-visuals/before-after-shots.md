@@ -27,6 +27,7 @@ program failed replay on a locator, an assertion, or a fingerprint.
 | screen | A declared viewport (`desktop`, `mobile`, …) | `viewport` |
 | skipped | A change the shots agent could not reach, with its reason | `hard_verdict.stories[].status` |
 | failed | A change the shots agent tried on the after build, where the app itself broke (a server error, an error on screen, the effect never appearing) | `hard_verdict.stories[].status` |
+| noticed problem | A clear problem the shots agent saw on the after build while taking the shots, apart from the declared changes (content cut off, controls overlapping, an error on screen); advisory only | `hard_verdict.notices[]` |
 | shots agent | The hosted model that takes the shots (Claude Sonnet 5.5 for every proposal) | shots worker turn |
 | visible changes | The author's declaration of the changes (`impact`, `rationale`, `stories`) | `visibleChanges` on the way in, `intent` once stored |
 | preview | The running staging build of a proposal, and only that | |
@@ -224,6 +225,7 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
    | `save_shot` | Publishes PNGs the browser saved with `browser_take_screenshot`, several per call, each for a change, screen, side and kind; one screenshot can be listed for several changes |
    | `save_clip` | Publishes the clip that the change's browser recorded most recently |
    | `note_change` | Records what a change's shots leave out of its claim, shown beside them |
+   | `note_problem` | Records a clear problem seen on the after build that is not about the declared change itself (content cut off or off the screen, overlapping text or controls, an error or broken image on screen, a layout that falls apart at the phone size): the change and screen where it shows, one short sentence (at most 300 characters), optionally which after shot shows it (`shot: "screen" \| "element"`), and `alsoBefore` (`true`, `false` or `"unknown"`, the default). At most five per run; noting the same problem at the same place again updates it, and a sixth is refused (`too_many_notices`) |
    | `skip_change` | Records why a change cannot be shown and withdraws anything saved for it (saving again takes the skip back); without a change id, it skips every change that is not ready. `outcome: "failed"` says the agent did the steps on the after address and the app broke, rather than that these copies cannot reach the state |
    | `fail_request` | Blocks a declared `controlledFailurePath` on both builds |
 
@@ -243,6 +245,13 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
    It calls `browser_close` to end the stills session, resizes again, and
    triggers only the motion. Then it calls `browser_close` again, which writes
    the recording, and `save_clip` publishes it.
+
+   On the way, it may note a few problems it sees on the after build with
+   `note_problem`. Its prompt asks for only what any person would agree is
+   broken, at most a handful, never a matter of taste, style or wording, and
+   never whether the declared change is shown or works (that is
+   `note_change` and `skip_change`). It does not go looking for problems on
+   other screens.
 4. **Saving** (`reviewing`). Each change is folded into one result. A change
    the agent skipped by name is **skipped**, even if shots were saved for it,
    or **failed** when it skipped it with `outcome: "failed"`.
@@ -267,9 +276,14 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
    itself failed and skipped nothing, it keeps the agent's error instead.
 
 `hard_verdict` records the outcome:
-`{ passed, mode: "shots", runs: 1, stories: [{ id, status, reason?, note? }] }`.
-`plan_hash` holds the manifest hash, which names exactly the files
-published.
+`{ passed, mode: "shots", runs: 1, stories: [{ id, status, reason?, note? }], notices? }`.
+`notices` (`[{ text, change, screen, shot, alsoBefore }]`) is there only when
+the agent noted a problem; a notice names its `shot` only while that after
+shot is published. Notices are advisory: they never change a change's
+status, never fail or pass a run, never gate a merge, and nothing that
+decides whether a change works reads them (`shots-state.brokenOnHead`, the
+Homeroom bot's fix round). `plan_hash` holds the manifest hash, which names
+exactly the files published.
 
 Within a run, a shots agent whose process died under it (`exitCause`
 `oom_killed`, `container_gone` or `turn_process_gone`, see
@@ -571,6 +585,15 @@ shot when it is big enough to read (at least 120×40 px on both sides).
   "Taking the shots", "Saving the shots") and a Stop action. A failed run
   offers "Take the shots again", and so does a ready one (after better steps
   or hints, or to outline a run from before outlines were worked out).
+- **Also noticed.** Under the changes, a ready card lists the problems the
+  shots agent noted on the after build, under the small-caps label "Also
+  noticed": each in its own words, then where it shows ("Change 2" when there
+  are several, and the screen size) and, when the agent looked, "Also on the
+  before build" or "Not on the before build", so a problem the proposal did
+  not cause reads as such. No badge, fill or colour: they decide nothing. The
+  change page's Before and after card, the About sheet's and the admin
+  Screenshot gallery's show them; Shot details does not. A run that did not
+  publish shows none.
 - A change that is not up for a vote yet shows its shots the same way, on
   its page and in the Workshop feed, as soon as they are ready.
 - A proposal declared with nothing visible reads "No before & after needed"
@@ -579,8 +602,19 @@ shot when it is big enough to read (at least 120×40 px on both sides).
 
 The public view model and the connector's `get_proposal` carry `shotResults`
 (`[{ id, status: "ready" | "skipped" | "failed", reason, note }]`) beside `claims` and
-`artifacts`. Runs from before shots have no `shotResults`, and their older
-paired clips still play.
+`artifacts`, and `shotNotices`
+(`[{ text, change, screen, shot: "screen" | "element" | null, alsoBefore: true | false | "unknown" }]`,
+at most five, only for a published run on the current revision). The
+connector's `list_recent_shots` lists each proposal's `shotNotices` too, its
+text marked untrusted. Runs from before shots have no `shotResults`, runs
+from before notices have empty `shotNotices`, and older paired clips still
+play.
+
+A staging preview has one published run with notices to look at: the
+merged proposal 900108 on the Screenshot gallery's demo app
+(`src/db/migrate.js` `seedStagingShotsNoticed`), at
+`/#app/staging-demo-gallery-app/dev/proposals/900108` and first in
+`#admin/gallery`.
 
 ## A change of the Homeroom bot's
 
@@ -608,7 +642,8 @@ failing check gets (`homeroom-bot-followup.checksDue`'s `broken`, once per
 head and within its revisions) before anybody is told it is ready. Once that
 round is spent, the card says plainly what does not work ("Flat 4B Chores is
 built, but not everything works yet", "One thing isn’t working yet: …"), and
-nobody else is asked to approve it.
+nobody else is asked to approve it. Problems the shots agent only noticed
+(`notices`) are not a failing change and never start that round.
 
 ## Configuration
 
@@ -635,9 +670,9 @@ and its phone browser under `SHOTS_DIR/<persona>_phone`.
 | --- | --- |
 | Declaration schema (`parseIntent`, `declaredChanges`, `hints`, `needsClip`, `phoneScreen`, `phonePersonas`) | `src/services/visible-changes.js` |
 | Declaring on a hosted turn (`declare_visible_changes`) | `worker/visible-changes-mcp.js`, `POST /api/internal/sessions/:id/visible-changes` |
-| File checks and per-change results (`shotTarget`, `summarize`) | `src/services/shots-files.js` |
-| Run-scoped control (`saveShot`, `skipChange`, `noteChange`, `summary`) | `src/services/shots-control.js` |
-| Internal routes (`/context`, raw `/shot`, `/skip`, `/note`, `/home-tile/:side`) | `src/routes/internal.js` |
+| File checks and per-change results (`shotTarget`, `notice`, `summarize`) | `src/services/shots-files.js` |
+| Run-scoped control (`saveShot`, `skipChange`, `noteChange`, `noteProblem`, `summary`) | `src/services/shots-control.js` |
+| Internal routes (`/context`, raw `/shot`, `/skip`, `/note`, `/problem`, `/home-tile/:side`) | `src/routes/internal.js` |
 | The app's home-screen tile on each side (`/__shots/home-tile`) | `src/services/shots-home-tile.js` |
 | Run flow and the brief (`executeRun`, `shotsBrief`) | `src/services/shots-orchestrator.js` |
 | Shots agent prompt and dispatch | `src/services/shots-agent.js` |
@@ -655,7 +690,8 @@ and its phone browser under `SHOTS_DIR/<persona>_phone`.
 | Where before and after differ, per screen (`screensFor`) | `src/services/shots-diff.js` |
 | Public routes (summary, files, diagnostics, take again, stop, waive) | `src/routes/shots.js` |
 | Tables, and the rename from `visual_evidence_*` | `src/db/schema.sql` (the "Renamed from visual_evidence_*" block) |
-| Proposal card | `public/js/app-view.js` (`shotsHtml`; the viewer frame is `_shotsViewerHtml`, which an HTML spec's drawn screens share, #3699) |
+| Proposal card | `public/js/app-view.js` (`shotsHtml`; the viewer frame is `_shotsViewerHtml`, which an HTML spec's drawn screens share, #3699; "Also noticed" is `.shots-noticed` in `public/css/app.css`) |
+| A staging run with notices to look at | `src/db/migrate.js` (`seedStagingShotsNoticed`) |
 
 ## Diagnosing a run
 
@@ -667,8 +703,8 @@ and reason, and a bounded trace:
 
 - `trace.failure` gives the phase, code and message, plus the last refused
   tool call (`tool`, `toolCode`, `toolMessage`);
-- `trace.control` gives the files saved, the changes skipped and noted, and
-  whether everything was skipped;
+- `trace.control` gives the files saved, the changes skipped and noted, the
+  problems noticed (`notedProblems`), and whether everything was skipped;
 - `trace.agentDispatches` and `trace.agentActivity` give the backend and
   model, fallback, tool counts, and pending browser and provider calls. See
   `shots-agent-diagnostics.md` for reading a timeout;
@@ -702,8 +738,9 @@ allowed. Run from inside a Claude Code session, it starts the agent without
 that session's environment. `--fixtures` passes the seeded fixtures into the
 brief as a hosted reset does. `--state-dir` supplies each persona's signed-in
 storage state (the guest's browser always starts signed out); `--base-sha`/`--head-sha` fill in the brief's changed files
-and diff. It writes an `index.html` with every change side by side, plus
-`result.json`, the files, and the agent's stream, under `.shots-dry-run/`.
+and diff. It writes an `index.html` with every change side by side (and
+anything the agent noticed), plus `result.json`, the files, and the agent's
+stream, under `.shots-dry-run/`.
 `--help` lists the rest. It uses no database and publishes nothing.
 [dry-run-evaluation.md](dry-run-evaluation.md) is the plan for running it on
 real proposals.

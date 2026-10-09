@@ -195,6 +195,15 @@ function internalRoutes(_config) {
     } catch (err) { return shotsError(res, err); }
   });
 
+  // A problem the shots agent noticed on the after build besides the
+  // declared changes, shown on the proposal under "Also noticed".
+  router.post('/api/internal/shots/:runId/problem', shotsAuth, shotsLimiter, (req, res) => {
+    try {
+      const result = shotsControlForRequest(req).noteProblem(req.body || {});
+      return res.json({ ok: true, result });
+    } catch (err) { return shotsError(res, err); }
+  });
+
   // Build-agent declaration boundary. Claude build workers carry the legacy
   // worker:session capability; Codex build workers carry only worker:push.
   // Both may record intent for their own session, but neither can execute a
