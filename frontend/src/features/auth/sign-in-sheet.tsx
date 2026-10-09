@@ -281,6 +281,16 @@ export function mayFocusByCode({ touch, keysUp }: { touch: boolean; keysUp: bool
 }
 
 /**
+ * `mayFocusByCode` for this device, now. The make screen asks it too
+ * (../first-session/make.tsx, #4597): the sheet hands off with the keys
+ * down, and a caret put in the description from code would raise them again
+ * over a screen that is meant to open whole.
+ */
+export function mayFocusByCodeNow(): boolean {
+  return mayFocusByCode({ touch: touchScreen(), keysUp: keyboardUp() });
+}
+
+/**
  * Where Return in field `at` of a step's fields goes (5 Oct 2026: the
  * Homeroom app is losing the keyboard's ‹ › bar, flutter-mobile-app #603,
  * so Return is the way from one field to the next). From any field but the
@@ -511,6 +521,9 @@ export function SignInSheet({
   const [needsUsername, setNeedsUsername] = useState(false);
   // The address a release link signed in (#4594), for the account step's welcome.
   const [welcome, setWelcome] = useState<string | null>(null);
+  // The handle the account step's field arrives holding (#4596): made from
+  // the address by the server, or '' for an empty field.
+  const [suggestedUsername, setSuggestedUsername] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [details, setDetails] = useState<NativeLoginFailureDetails | null>(null);
   const [busy, setBusy] = useState(false);
@@ -596,7 +609,7 @@ export function SignInSheet({
   // field whose keys are up lands before anything can take them down.
   useIsomorphicLayoutEffect(() => {
     if (!open || step === 'choose') return;
-    const focus = mayFocusByCode({ touch: touchScreen(), keysUp: keyboardUp() });
+    const focus = mayFocusByCodeNow();
     if (step === 'password' && identifierPrefill.current && identifierField.current) {
       identifierField.current.value = identifierPrefill.current;
       identifierPrefill.current = '';
@@ -608,9 +621,9 @@ export function SignInSheet({
         : step === 'password' ? identifierField
           : step === 'phone' ? (askName ? nameField : phoneField)
             : step === 'phone-code' ? phoneCodeField
-              : (needsUsername ? usernameField : passwordField);
+              : (needsUsername && !suggestedUsername ? usernameField : passwordField);
     if (focus) field.current?.focus({ preventScroll: true });
-  }, [open, step, needsUsername]);
+  }, [open, step, needsUsername, suggestedUsername]);
 
   // Back from the provider's page by the browser's Back button, the page can
   // come out of the back-forward cache as it was left: busy. Undo that.
@@ -733,6 +746,11 @@ export function SignInSheet({
   // Away to the make screen: the panel goes down while the wallpaper comes
   // up behind it. Resolves once that has had its time.
   const handOff = useCallback((): Promise<void> => {
+    // The keys go down with the sheet (#4597): Continue kept the caret in
+    // its field (HOLD_FIELD_FOCUS), and the make screen opens whole, its
+    // description waiting for a tap rather than under the keyboard.
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && panelRef.current?.contains(active)) active.blur();
     setLeaving(true);
     const ms = prefersReducedMotion() ? 0 : HAND_OFF_MS;
     return new Promise((resolve) => { window.setTimeout(resolve, ms); });
@@ -783,6 +801,7 @@ export function SignInSheet({
         return;
       }
       setNeedsUsername(data.needsUsername === true);
+      setSuggestedUsername(typeof data.suggestedUsername === 'string' ? data.suggestedUsername : '');
       setCooldownUntil(0);
       setStep('account');
     } catch (err) {
@@ -1266,7 +1285,7 @@ export function SignInSheet({
               {needsUsername ? (
                 <div className={FIELD}>
                   <label htmlFor="sign-in-sheet-username" className={LABEL}>Username</label>
-                  <input ref={usernameField} id="sign-in-sheet-username" autoComplete="username" enterKeyHint="next" onKeyDown={returnWalks(accountStepFields, 0)} className={INPUT} placeholder={USERNAME_RULE} {...HANDLE_FIELD} />
+                  <input ref={usernameField} id="sign-in-sheet-username" defaultValue={suggestedUsername} autoComplete="username" enterKeyHint="next" onKeyDown={returnWalks(accountStepFields, 0)} className={INPUT} placeholder={USERNAME_RULE} {...HANDLE_FIELD} />
                 </div>
               ) : null}
               <div className={FIELD}>

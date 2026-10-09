@@ -384,7 +384,24 @@ async function finishProvenEmail(pool, email, result) {
   if (result.next === 'set-password') {
     result.waitlisted = await isWaitlisted(pool, result.userId);
   }
+  if (result.next === 'set-password' && result.needsUsernameChoice) {
+    result.suggestedUsername = await suggestedUsername(pool, email, result.userId);
+  }
   return result;
+}
+
+/**
+ * The handle the set-password step's username field arrives holding
+ * (#4596, usernames.suggestUsernameForEmail). Best effort: a failed read
+ * answers null, an empty field, rather than failing the code that worked.
+ */
+async function suggestedUsername(pool, email, userId) {
+  try {
+    return await usernames.suggestUsernameForEmail(pool, email, userId);
+  } catch (error) {
+    log.warn('email-signup', 'Username suggestion failed', { message: error.message });
+    return null;
+  }
 }
 
 /**

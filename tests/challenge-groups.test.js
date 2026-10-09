@@ -482,6 +482,79 @@ test('while setup gates the rest the progress is the First challenges group’s 
   assert.equal(gridOf(store).onboardingEventId, 9, 'a locked event without setup cards points back to them');
 });
 
+test('the points summary totals numeric rewards only, earned from the viewer’s own rows', () => {
+  const { pane, store } = loadPane({
+    event: { id: 10, name: 'Season 2' },
+    challenges: [
+      ch(1, 'WEEKLY', { card_preview: { label: 'WEEKLY', reward: '1,000 pts' }, progress: { done: true } }),
+      ch(2, 'WEEKLY', { card_preview: { label: 'WEEKLY', reward: 'Up to 250 pts' } }),
+      // Prose cannot be summed: it is out of the total AND its earned
+      // points with it, so both figures describe the same set.
+      ch(3, 'WEEKLY', { card_preview: { label: 'WEEKLY', reward: '½ of your final credits' }, progress: { done: true } }),
+      ch(4, 'WEEKLY', { card_preview: { label: 'WEEKLY', reward: '500 points' } }),
+    ],
+  });
+  pane._mine = new Map([
+    [1, { id: 1, activities_total: 800 }],
+    [3, { id: 3, activities_total: 50 }],
+  ]);
+  pane._renderGrid();
+  const grid = gridOf(store);
+  assert.deepEqual({ ...grid.progress, points: undefined },
+    { done: 2, total: 4, caption: 'done in this event', points: undefined });
+  assert.deepEqual({ ...grid.progress.points }, { earned: 800, total: 1750 });
+});
+
+test('while the gate is closed the points read the First challenges only', () => {
+  const { pane, store } = loadPane({
+    event: { id: 10, name: 'Season 2' },
+    challenges: [
+      ch(1, 'ONBOARDING', { card_preview: { label: 'ONBOARDING', reward: '500 pts' }, progress: { done: true } }),
+      ch(2, 'ONBOARDING', { card_preview: { label: 'ONBOARDING', reward: '250 pts' } }),
+      ch(3, 'WEEKLY', { card_preview: { label: 'WEEKLY', reward: '900 pts' } }),
+    ],
+    onboarding: { total: 2, completed: 1, unlocked: false, event_id: 10 },
+  });
+  pane._mine = new Map([[1, { id: 1, activities_total: 500 }], [3, { id: 3, activities_total: 900 }]]);
+  pane._renderGrid();
+  const grid = gridOf(store);
+  assert.deepEqual({ ...grid.progress, points: undefined },
+    { done: 1, total: 2, caption: 'done in First challenges', points: undefined },
+    'the count follows the gate, and so do the points');
+  assert.deepEqual({ ...grid.progress.points }, { earned: 500, total: 750 },
+    'the weekly row\'s 900 on offer and earned are both out of scope');
+});
+
+test('all prose on offer, there is no points field at all', () => {
+  const { pane, store } = loadPane({
+    event: { id: 10, name: 'Season 2' },
+    challenges: [
+      ch(1, 'WEEKLY', { card_preview: { label: 'WEEKLY', reward: '½ of your final credits' } }),
+      ch(2, 'WEEKLY', { card_preview: { label: 'WEEKLY' } }),
+    ],
+  });
+  pane._mine = new Map([[1, { id: 1, activities_total: 50 }]]);
+  pane._renderGrid();
+  assert.equal('points' in gridOf(store).progress, false, 'no "0 of 0 pts earned" line');
+});
+
+test('the frontend reward parser takes parseRewardPoints\' same cases', () => {
+  const { pane } = loadPane();
+  const parse = (v) => pane._rewardPoints(v);
+  assert.equal(parse('500 pts'), 500);
+  assert.equal(parse('1,000 pts'), 1000);
+  assert.equal(parse('Up to 2,000 pts'), 2000);
+  assert.equal(parse('500'), 500);
+  assert.equal(parse('500 points'), 500);
+  assert.equal(parse(' Up to 500 pts '), 500);
+  assert.equal(parse('Up to 500 pts / issue'), null, 'a trailing clause is prose');
+  assert.equal(parse('½ of your final credits'), null);
+  assert.equal(parse('Fame'), null);
+  assert.equal(parse(null), null);
+  assert.equal(parse(undefined), null);
+  assert.equal(parse(''), null);
+});
+
 // ─── The pane ───────────────────────────────────────────────────────────
 
 test('the pane draws a grouped grid’s header as a disclosure over its own grid', () => {

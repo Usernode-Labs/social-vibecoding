@@ -392,7 +392,11 @@ test('with the keyboard up nothing scrolls under the status bar: the bar stays, 
   assert.match(src, /import \{ useKeyboardSurface \} from '\.\.\/\.\.\/lib\/keyboard-surface';/);
   assert.match(src, /useKeyboardSurface\(scrollerRef\);/);
   assert.doesNotMatch(src, /useComposerKeyboard/, 'one owner of the fields\' taps: the surface, not the kit\'s chat avoidance too');
-  assert.match(src, /useEffect\(\(\) => \{ briefRef\.current\?\.focus\(\{ preventScroll: true \}\); \}, \[\]\);/);
+  // #4597: the caret goes in from code only where the sign-in sheet would
+  // put one (a desktop, or keys already up), so on a phone the screen opens
+  // whole after the account step instead of under the keyboard.
+  assert.match(src, /import \{ mayFocusByCodeNow \} from '\.\.\/auth\/sign-in-sheet';/);
+  assert.match(src, /useEffect\(\(\) => \{ if \(mayFocusByCodeNow\(\)\) briefRef\.current\?\.focus\(\{ preventScroll: true \}\); \}, \[\]\);/);
   // The bar holds the whole mark under the status bar's inset (on a notched
   // phone the mark used to hang 12px out of a 52px box), so what scrolls
   // stops below it.
@@ -571,8 +575,8 @@ test('after Make it: the build line, then one invite, and the second button says
   // Evan, 5 October 2026: the first invite is a link and nothing else. No
   // invite by username (somebody brand new knows nobody on Homeroom yet), and
   // no joining-rule line ("With one other person using it, a change goes
-  // live when you both say yes, …"): both stay in the project's own invite
-  // pane (features/app-context/invite-pane.tsx).
+  // live when you both say yes, …"). The project's own invite pane dropped
+  // the rule line too (#4599).
   assert.doesNotMatch(src, /joiningRule|setRule|Invite by username|\/invites`/);
   const sheet = renderToHtml(createElement(made.InviteSheet, {
     made: { slug: 'page-turners', name: 'Page Turners', emoji: '📚', description: null, example: null, conversationId: 3 },
@@ -582,7 +586,6 @@ test('after Make it: the build line, then one invite, and the second button says
   // tests/first-session-copy-link.test.js).
   assert.match(sheet, />Copy link</);
   assert.doesNotMatch(sheet, /username|say yes|goes live/i);
-  assert.match(read('frontend/src/features/app-context/invite-pane.tsx'), /joiningRule/, 'the project\'s own pane keeps the rule');
   assert.match(src, /When you share, your note also goes in the group chat as your first message\./);
   assert.match(src, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(made\.slug\)\}\/messages`/);
   const invites = require('../src/services/community-invites');

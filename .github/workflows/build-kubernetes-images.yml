@@ -53,8 +53,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # The BuildKit daemon from Google's Docker Hub mirror, as the build
+      # job's: see the note there.
       - uses: docker/setup-buildx-action@v4
         if: github.event_name == 'schedule'
+        with:
+          driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
 
       - name: Check scheduled worker image
         id: scheduled_worker
@@ -164,7 +168,29 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Nothing in the build comes from Docker Hub directly. Pulls from Docker
+      # Hub here are anonymous, and Docker Hub limits those per IP address,
+      # which GitHub's runners share with everybody else's builds: on 9 Oct
+      # 2026 four releases in a row (20:52 to 21:15) failed in under a minute
+      # on "429 Too Many Requests" for node:22-alpine, and the re-runs failed
+      # on Docker Hub's token service answering 504. mirror.gcr.io, Google's
+      # Docker Hub mirror, serves the same images without that limit.
+      #
+      #   driver-opts image   the BuildKit daemon itself (moby/buildkit),
+      #                       which the runner's Docker pulls before any
+      #                       build starts, so the config below cannot reach
+      #                       it: the capture job failed right here at 21:41.
+      #   buildkitd config    every docker.io image a build pulls: the base
+      #                       images (node:22-alpine, node:22-bookworm-slim)
+      #                       and the SBOM scanner `sbom: true` runs
+      #                       (docker/buildkit-syft-scanner). BuildKit tries
+      #                       the mirror first and falls back to Docker Hub.
       - uses: docker/setup-buildx-action@v4
+        with:
+          driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
+          buildkitd-config-inline: |
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
 
       - name: Resolve Claude Code version
         id: claude
