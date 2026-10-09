@@ -85,11 +85,6 @@ const MERGE_GREEN_DELAY_MS = 2000;
 const CAMPAIGN_LEASE_SECONDS = 120;
 const CAMPAIGN_RENEW_MS = 30 * 1000;
 
-// The fence every write of a driver carries: the campaign's lease is still
-// this driver's ($runner) and has not run out. A driver whose lease went to
-// another writes nothing, whatever it believes. `mc` is the campaign row of
-// the app row (or the campaign) being written.
-// (Spelled out in each statement below so check-sql validates it.)
 
 function parseRepo(url) {
   const [, owner, repo] = (url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
@@ -555,6 +550,39 @@ async function renewLease(pool, campaignId, runner) {
   return rows.length > 0;
 }
 
+// The fence every write of a driver goes through: in one transaction, the
+// campaign row is share-locked while its lease is still this driver's and
+// has not run out, then `write(client)` runs. A takeover updates that row,
+// so it waits for a fenced write in progress and cannot land in the middle
+// of one; a write after a takeover finds the lease gone and does nothing
+// (null). A check inside the write's own statement would not do: a write
+// that waits on an app row's lock re-reads that row, but not the campaign
+// row its check read before the wait.
+async function underLease(pool, campaignId, runner, write) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `SELECT 1 FROM maintenance_campaigns
+        WHERE id = $1 AND runner_id = $2 AND lease_until > NOW()
+        FOR SHARE`,
+      [campaignId, runner]
+    );
+    if (!rows.length) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+    const out = await write(client);
+    await client.query('COMMIT');
+    return out;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 /**
  * Drive one campaign: every pending app, one at a time. Returns
  * { ran: false, reason } when it did not drive it (another driver holds its
@@ -626,14 +654,12 @@ async function runCampaign(config, pool, campaignId) {
     // gone (this one holds the lease), so the app is run again. A crash
     // between "PR opened on GitHub" and the row's 'pr_open' opens a second
     // PR here; that gap is [main]'s, to close when campaigns migrate.
-    await pool.query(
+    await underLease(pool, campaignId, runner, (client) => client.query(
       `UPDATE maintenance_campaign_apps
           SET state = 'pending', error = NULL, updated_at = NOW()
-        WHERE campaign_id = $1 AND state = 'running' AND runner_id IS DISTINCT FROM $2
-          AND EXISTS (SELECT 1 FROM maintenance_campaigns mc
-                       WHERE mc.id = $1 AND mc.runner_id = $2 AND mc.lease_until > NOW())`,
+        WHERE campaign_id = $1 AND state = 'running' AND runner_id IS DISTINCT FROM $2`,
       [campaignId, runner]
-    );
+    ));
 
     // Few-shot carry-forward: the first successful app's summary keeps
     // later apps consistent. In-process only — after a restart the
@@ -650,7 +676,7 @@ async function runCampaign(config, pool, campaignId) {
         return { ran: true, paused: 'lease_lost' };
       }
       // The next pending app, claimed by this driver.
-      const { rows } = await pool.query(
+      const claimed = await underLease(pool, campaignId, runner, (client) => client.query(
         `UPDATE maintenance_campaign_apps c
             SET state = 'running', runner_id = $2, updated_at = NOW()
            FROM apps a
@@ -659,23 +685,27 @@ async function runCampaign(config, pool, campaignId) {
                          ORDER BY mca.id
                          LIMIT 1 FOR UPDATE SKIP LOCKED)
             AND a.id = c.app_id
-            AND EXISTS (SELECT 1 FROM maintenance_campaigns mc
-                         WHERE mc.id = $1 AND mc.runner_id = $2 AND mc.lease_until > NOW())
         RETURNING c.id AS row_id, a.id AS app_id, a.slug, a.name, a.repo_url, a.self_hosted`,
         [campaignId, runner]
-      );
+      ));
+      if (!claimed) {
+        log.warn('fleet-maintenance', 'Campaign lease lost before claiming an app; another driver goes on', { campaignId });
+        return { ran: true, paused: 'lease_lost' };
+      }
+      const { rows } = claimed;
       if (!rows.length) {
         // Done: with the lease, and no app left pending or still running
         // (another driver's row that a retry made pending, or a row a
         // replaced driver held, is not done).
-        const { rowCount } = await pool.query(
+        const finished = await underLease(pool, campaignId, runner, (client) => client.query(
           `UPDATE maintenance_campaigns
               SET status = 'done', completed_at = NOW()
-            WHERE id = $1 AND status = 'running' AND runner_id = $2 AND lease_until > NOW()
+            WHERE id = $1 AND status = 'running' AND runner_id = $2
               AND NOT EXISTS (SELECT 1 FROM maintenance_campaign_apps
                                WHERE campaign_id = $1 AND state IN ('pending', 'running'))`,
           [campaignId, runner]
-        );
+        ));
+        const rowCount = finished ? finished.rowCount : 0;
         if (rowCount === 0) {
           // A pending row again (a retry): run it. Otherwise this driver
           // stops, and the resume picks the campaign up once nobody holds it.
@@ -689,7 +719,7 @@ async function runCampaign(config, pool, campaignId) {
       const row = rows[0];
       const app = { id: row.app_id, slug: row.slug, name: row.name, repo_url: row.repo_url };
       // The row's result is written only by the driver that claimed it
-      // (runner_id = $3, still 'running'), while the lease is its own.
+      // (runner_id = $3, still 'running'), under its lease (underLease).
 
       try {
         const out = await runAppChange({
@@ -705,15 +735,12 @@ async function runCampaign(config, pool, campaignId) {
         });
 
         if (out.skipped) {
-          await pool.query(
+          await underLease(pool, campaignId, runner, (client) => client.query(
             `UPDATE maintenance_campaign_apps
                 SET state = 'skipped', error = $2, updated_at = NOW()
-              WHERE id = $1 AND runner_id = $3 AND state = 'running'
-              AND EXISTS (SELECT 1 FROM maintenance_campaigns mc
-                           WHERE mc.id = maintenance_campaign_apps.campaign_id
-                             AND mc.runner_id = $3 AND mc.lease_until > NOW())`,
+              WHERE id = $1 AND runner_id = $3 AND state = 'running'`,
             [row.row_id, String(out.reason || '').slice(0, 2000), runner]
-          );
+          ));
           log.info('fleet-maintenance', 'Campaign app skipped', {
             campaignId, slug: app.slug, reason: out.reason,
           });
@@ -736,15 +763,12 @@ async function runCampaign(config, pool, campaignId) {
           config, pool, campaign, app, files: out.files, summary: out.summary, platformUserId,
         });
         if (!exemplarSummary && out.summary) exemplarSummary = out.summary;
-        await pool.query(
+        await underLease(pool, campaignId, runner, (client) => client.query(
           `UPDATE maintenance_campaign_apps
               SET state = 'pr_open', session_id = $2, error = NULL, updated_at = NOW()
-            WHERE id = $1 AND runner_id = $3 AND state = 'running'
-              AND EXISTS (SELECT 1 FROM maintenance_campaigns mc
-                           WHERE mc.id = maintenance_campaign_apps.campaign_id
-                             AND mc.runner_id = $3 AND mc.lease_until > NOW())`,
+            WHERE id = $1 AND runner_id = $3 AND state = 'running'`,
           [row.row_id, opened.sessionId, runner]
-        );
+        ));
       } catch (err) {
         // Stopped mid-app: the row is left 'running' for the next driver.
         if (err.code === 'campaign_stopped') {
@@ -754,15 +778,12 @@ async function runCampaign(config, pool, campaignId) {
         log.warn('fleet-maintenance', 'Campaign app failed', {
           campaignId, slug: app.slug, err: err.message,
         });
-        await pool.query(
+        await underLease(pool, campaignId, runner, (client) => client.query(
           `UPDATE maintenance_campaign_apps
               SET state = 'failed', error = $2, updated_at = NOW()
-            WHERE id = $1 AND runner_id = $3 AND state = 'running'
-              AND EXISTS (SELECT 1 FROM maintenance_campaigns mc
-                           WHERE mc.id = maintenance_campaign_apps.campaign_id
-                             AND mc.runner_id = $3 AND mc.lease_until > NOW())`,
+            WHERE id = $1 AND runner_id = $3 AND state = 'running'`,
           [row.row_id, String(err.message || err).slice(0, 2000), runner]
-        ).catch(() => {});
+        )).catch(() => {});
       }
     }
 
@@ -974,6 +995,8 @@ module.exports = {
   resumeRunningCampaigns,
   // Exported for unit tests.
   runAppChange,
+  takeLease,
+  underLease,
   openCampaignProposal,
   campaignSystemPrompt,
   CAMPAIGN_TOOLS,

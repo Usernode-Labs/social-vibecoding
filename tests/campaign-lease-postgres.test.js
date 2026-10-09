@@ -145,6 +145,40 @@ test('maintenance campaigns: one driver at a time, whichever process calls', { t
     assert.equal((await leaseOf(id)).status, 'done');
   });
 
+  await t.test('a takeover waits for a fenced write in progress, so it never lands in the middle of one', async () => {
+    // A write that waits on an app row's lock would re-read that row, but not
+    // the lease it checked before the wait (another review's finding: the
+    // reset then reset a successor's claim). The fence holds the lease's row.
+    const id = await campaign();
+    const { rows: [one] } = await pool.query(`SELECT id FROM apps WHERE slug = 'one'`);
+    const { rows: [row] } = await pool.query(
+      `INSERT INTO maintenance_campaign_apps (campaign_id, app_id, state, runner_id) VALUES ($1, $2, 'running', 'gone') RETURNING id`,
+      [id, one.id]);
+    await pool.query(`UPDATE maintenance_campaigns SET runner_id = 'mine', lease_until = NOW() + INTERVAL '1 second' WHERE id = $1`, [id]);
+    const holder = await pool.connect();   // someone else holds the app row
+    let released = false;
+    const release = async () => { if (!released) { released = true; await holder.query('COMMIT'); holder.release(); } };
+    let write = null;
+    let takeover = null;
+    let took = null;
+    try {
+      await holder.query('BEGIN');
+      await holder.query('SELECT 1 FROM maintenance_campaign_apps WHERE id = $1 FOR UPDATE', [row.id]);
+      write = fleet.underLease(pool, id, 'mine', (c) => c.query(
+        `UPDATE maintenance_campaign_apps SET state = 'pending' WHERE id = $1 AND state = 'running'`, [row.id]));
+      await new Promise((r) => setTimeout(r, 1200));   // its lease has run out meanwhile
+      takeover = fleet.takeLease(pool, id, 'successor').then((c) => { took = c; });
+      await new Promise((r) => setTimeout(r, 300));
+      assert.equal(took, null, 'the takeover waits while the fenced write is in progress');
+    } finally {
+      await release();   // a failure above must not leave the row locked
+      await Promise.allSettled([write, takeover]);
+    }
+    assert.ok(await write, 'the write landed, under the lease it held when it began');
+    assert.equal(took?.runner_id, 'successor', 'and the successor takes over after it, not in the middle');
+    assert.equal((await pool.query('SELECT state FROM maintenance_campaign_apps WHERE id = $1', [row.id])).rows[0].state, 'pending');
+  });
+
   await t.test('a campaign a driver from before the lease is still moving is left to it', async () => {
     const id = await campaign();
     const { rows: [one] } = await pool.query(`SELECT id FROM apps WHERE slug = 'one'`);

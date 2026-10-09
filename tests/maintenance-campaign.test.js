@@ -706,6 +706,7 @@ test('runCampaign: fans out sequentially — one PR opened, one skipped, campaig
     // The lease on the campaign row: taken, then renewed between apps.
     [/SET runner_id = \$2, lease_until/, [CAMPAIGN]],
     [/SET lease_until = NOW\(\) \+ make_interval/, [{ id: 5 }]],
+    [/FOR SHARE/, [{ '?column?': 1 }]],   // the fence: the lease is still this driver's
     [/SELECT id FROM users WHERE username = \$1/, [{ id: 99 }]],
     [/state = 'pending'\s+ORDER BY mca\.id\s+LIMIT 1/, () => pendingPicks[pick++] || []],
     [/INSERT INTO chat_sessions/, [{ id: 501 }]],
@@ -780,6 +781,7 @@ test('runCampaign: an app failure is recorded and the loop continues', async () 
     // The lease on the campaign row: taken, then renewed between apps.
     [/SET runner_id = \$2, lease_until/, [CAMPAIGN]],
     [/SET lease_until = NOW\(\) \+ make_interval/, [{ id: 5 }]],
+    [/FOR SHARE/, [{ '?column?': 1 }]],   // the fence: the lease is still this driver's
     [/SELECT id FROM users WHERE username = \$1/, [{ id: 99 }]],
     [/state = 'pending'\s+ORDER BY mca\.id\s+LIMIT 1/, () => pendingPicks[pick++] || []],
     [/SELECT state, COUNT\(\*\)::int AS n/, [{ state: 'failed', n: 1 }, { state: 'skipped', n: 1 }]],
@@ -817,6 +819,7 @@ async function runToThePr({ renewals, shuttingDown = () => false }) {
       if (answer instanceof Error) throw answer;
       return answer ? [{ id: 5 }] : [];
     }],
+    [/FOR SHARE/, [{ '?column?': 1 }]],
     [/SELECT id FROM users WHERE username = \$1/, [{ id: 99 }]],
     [/state = 'pending'\s+ORDER BY mca\.id\s+LIMIT 1/, [{ row_id: 101, app_id: 9, slug: 'cool-app', name: 'Cool App', repo_url: CHILD_APP.repo_url }]],
     [/INSERT INTO chat_sessions/, [{ id: 501 }]],
