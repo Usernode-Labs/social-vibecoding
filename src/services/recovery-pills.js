@@ -157,7 +157,7 @@ function isUnansweredBreadcrumb(content) {
 // The breadcrumb text for a recovered scout turn whose journal replay
 // produced no spec text (previously emit-only, so it vanished on reload).
 const SCOUT_NO_SPEC_BREADCRUMB =
-  "The scout didn't produce a spec. Please send your request again.";
+  "The scout didn't produce a plan. Please send your request again.";
 
 // The breadcrumb text for a coding turn that could not be resumed at all.
 // One string for every unresumable shape (worker gone, journal unreadable,

@@ -113,7 +113,7 @@ test('breadcrumb strings are non-empty and stable', () => {
   assert.equal(UNANSWERED_BREADCRUMB,
     "I didn't get to reply to that. Send your message again.");
   assert.equal(SCOUT_NO_SPEC_BREADCRUMB,
-    "The scout didn't produce a spec. Please send your request again.");
+    "The scout didn't produce a plan. Please send your request again.");
   assert.equal(TURN_UNFINISHED_BREADCRUMB,
     "That coding turn didn't finish. Please send your request again.");
 });
