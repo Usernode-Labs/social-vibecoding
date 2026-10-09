@@ -1150,6 +1150,20 @@ const CLAIMS = Object.freeze([
     instead: 'I haven\'t filed anything for that yet. Tell me what you want filed and I\'ll draft it for you to confirm.',
   },
   {
+    kind: 'drafted',
+    // #4605: "A File it button will appear under this message", "tap File
+    // it", "you'll see File it below", "I've drafted the request". A draft
+    // exists only when offer_request made one this turn, so a reply that says
+    // one is there with nothing behind it leaves the person nothing to tap
+    // (Drea, twice, on Rilo). Not a filing: `filed` above needs "I filed".
+    re: /\bFile it\b[^.!?\n]{0,80}\b(?:appear|show(?:s|n)? up|below|under (?:this|my|the|that) (?:message|reply))|\b(?:tap|press|click|hit|use)\s+(?:the\s+)?\**["“]?File it\b|\b(?:you(?:'ll| will| should)? see|there(?:'s| is| will be))\b[^.!?\n]{0,60}\bFile it\b|\bI(?:'ve| have)?(?: just| now)? (?:drafted|prepared|written up|put together)\b[^.!?\n]{0,60}\b(?:request|draft)\b|\b(?:draft|drafted request)\b[^.!?\n]{0,40}\b(?:below|under (?:this|my|the) (?:message|reply))\b/i,
+    // Any offer this turn made backs the reply; the check does not look at
+    // what kind of offer it was.
+    backed: (ctx) => !!ctx.offer,
+    said: 'says a drafted request with File it is under it',
+    instead: 'I haven\'t drafted it yet, so there\'s nothing to tap. Tell me what you want filed and I\'ll draft it for you to confirm.',
+  },
+  {
     kind: 'posted',
     re: /\bI(?:'ve| have)?(?: just| now)? (?:posted|added|put|passed|left|sent|shared)\b[^.!?\n]{0,80}\b(?:discussion|comment|request|proposal|board|issue|thread)\b/i,
     backed: (ctx) => !!(ctx.posted || ctx.revised || ctx.commented),
@@ -1287,6 +1301,11 @@ function checkNote(problems) {
   const promised = problems.some((p) => p.kind === 'promised')
     ? ' Never promise to look into something or come back to it later: say what you cannot do from here, and what they can do (leave it, vote No on the proposal, comment on the request, or use Send feedback), or offer report_problem.'
     : '';
+  // #4605: a draft promised with no offer behind it. The second pass drafts
+  // it; refused, the promise is cut (stripClaims) rather than sent again.
+  const drafted = problems.some((p) => p.kind === 'drafted')
+    ? ' Your reply says a draft with File it and Not now is under it, but you did not call offer_request in this turn, so nothing is under it. Call offer_request now with the project, title and details, then reply. If offer_request is refused, say why plainly and do not mention File it.'
+    : '';
   return [
     `[Homeroom check, not from them: your reply ${list}.`,
     'No tool you called in this turn did that.',
@@ -1294,7 +1313,7 @@ function checkNote(problems) {
     'offer_request drafts a request for them to file, comment_on_request posts on a request, start_request starts',
     'one, revise_proposal changes your proposal, withdraw_proposal withdraws one of your proposals, report_problem',
     'tells the Homeroom team. Otherwise say plainly that it has not been done.',
-    `${promised}${unknown} Then call reply again.]`,
+    `${promised}${drafted}${unknown} Then call reply again.]`,
   ].join(' ').replace(/\s+/g, ' ').trim();
 }
 
@@ -3839,6 +3858,7 @@ module.exports = {
   decideOffer,
   decideOfferTap,
   offerActions,
+  confirmMeta,
   closeOfferText,
   closeOfferMeta,
   decideTyped,

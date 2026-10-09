@@ -331,7 +331,11 @@ test('#3772: a claim nothing backs is asked about once, then cut and said plainl
     ['filed', 'unknown']);
   assert.deepEqual(await kinds('I\'ve filed it for you.'), ['filed']);
   assert.deepEqual(await kinds('I opened a new request for that.'), ['filed']);
-  assert.deepEqual(await kinds('I drafted it below; tap File it to file #13.'), [], 'a draft, and a request that exists');
+  // #4605: a promised draft counts only when offer_request ran this turn.
+  assert.deepEqual(await kinds('I drafted it below; tap File it to file #13.'), ['drafted'],
+    'a File it button promised with no draft made');
+  assert.deepEqual(await kinds('I drafted it below; tap File it to file #13.', { offer: { app: {}, title: 'x' } }),
+    [], 'a draft, and a request that exists');
   assert.deepEqual(await kinds('I opened the proposal yesterday.'), [], 'its own proposal is not a filing');
   assert.deepEqual(await kinds('I posted your answer on the request\'s discussion.'), ['posted']);
   assert.deepEqual(await kinds('I posted your answer on the request\'s discussion.', { posted: 'Ear Trainer request #13' }), []);
@@ -357,6 +361,34 @@ test('#3772: a claim nothing backs is asked about once, then cut and said plainl
     'I haven\'t changed the proposal yet.\n\nHere is what I found about the size options on Ear Trainer.',
   );
   assert.equal(mayor.stripClaims('Unchanged.', []), 'Unchanged.');
+});
+
+test('#4605: a draft promised with no offer behind it is caught, and the second pass is told to draft it', async () => {
+  const pool = { query: async () => ({ rows: [{ n: 13 }] }) };
+  const ctx = { user: { id: 1 }, appIds: new Set() };
+  const kinds = async (text, extra = {}) => (await mayor.claimProblems(pool, { ...ctx, ...extra }, text)).map((p) => p.kind);
+  // Drea's replies: a File it button promised, nothing drafted that turn.
+  for (const text of [
+    'A File it button will appear under this message.',
+    'Tap File it to file it.',
+    'You\'ll see File it and Not now below.',
+    'I\'ve drafted the request for Rilo.',
+  ]) assert.deepEqual(await kinds(text), ['drafted'], text);
+  assert.deepEqual(await kinds('I\'ve drafted the request for Rilo.', { offer: { app: {}, title: 'x' } }), [], 'the offer backs it');
+  assert.deepEqual(await kinds('Want me to file that as a request on Rilo?'), [], 'an offer to come is no promise');
+  assert.deepEqual(await kinds('Request #13 is with the group.'), [], 'a filed request is no draft');
+  assert.deepEqual(await kinds('Tap File it under my earlier message.'), ['drafted'], 'an open draft from an earlier turn is not this turn\'s');
+
+  const note = mayor.checkNote([{ kind: 'drafted', said: 'says a drafted request with File it is under it' }]);
+  assert.match(note, /^\[Homeroom check, not from them: your reply says a drafted request with File it is under it\./);
+  assert.match(note, /did not call offer_request in this turn, so nothing is under it\. Call offer_request now/);
+  assert.match(note, /If offer_request is refused, say why plainly and do not mention File it\. Then call reply again\.\]$/);
+  assert.doesNotMatch(note, /—/);
+
+  assert.equal(
+    mayor.stripClaims('A File it button will appear under this message.', [{ kind: 'drafted' }]),
+    'I haven\'t drafted it yet, so there\'s nothing to tap. Tell me what you want filed and I\'ll draft it for you to confirm.',
+  );
 });
 
 test('#11 (WP3): a promise to come back later, "the team was told" and "I withdrew it" count only when this turn did it', async () => {
