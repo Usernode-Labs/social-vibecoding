@@ -114,6 +114,31 @@ function describeReply(r) {
   return `- ${r.author}, ${place} (${String(r.createdAt || '').slice(0, 16)}):\n${clipText(r.body, 2000).split('\n').map((l) => `  ${l}`).join('\n')}`;
 }
 
+/**
+ * #4613: what a reply turn has now read, as the mark the runs it records
+ * keep: the latest of the mark it started from and every reply it was shown
+ * (by toMs), as an ISO string. The queue row's mark can be older than the
+ * replies the run read (a row queued or claimed before the person wrote, or
+ * no mark at all: a checks row, Run now, a restart), and a run that recorded
+ * only that old mark had the next look read the same message as new and
+ * answer it twice. Never lowers a mark, and returns the one it was given
+ * unchanged when no reply carries a time (a recovered turn's placeholder).
+ * Pure.
+ */
+function readThrough(replies = [], mark = null) {
+  let latest = toMs(mark);
+  let timed = false;
+  for (const r of (Array.isArray(replies) ? replies : [])) {
+    const t = toMs(r && r.createdAt);
+    if (t > 0) {
+      timed = true;
+      if (t > latest) latest = t;
+    }
+  }
+  if (!timed) return mark || null;
+  return new Date(latest).toISOString();
+}
+
 // #3703: how much of the proposal's spec a follow-up reads. A spec is a
 // page or two; this is a ceiling on a runaway one, not a budget.
 const MAX_SPEC_CHARS = 12_000;
@@ -813,6 +838,7 @@ module.exports = {
   MAX_REPLY_TRIES,
   unansweredFailure,
   repliesSince,
+  readThrough,
   replyFailedText,
   checksRetryText,
   failingNowLines,

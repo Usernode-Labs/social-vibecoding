@@ -33,6 +33,10 @@ const SETTINGS = { mode: 'shadow', turnSeconds: 1200, turnInputTokens: 10_000_00
 const ANSWERED = '2026-10-09T10:00:00Z';
 const ASKED = '2026-10-09T20:56:00Z';
 const FAILED_SEEN = '2026-10-09T20:56:30Z';
+// #4613: readThrough answers an ISO string, so a mark it computes reads back
+// with its milliseconds spelled out.
+const ASKED_ISO = new Date(ASKED).toISOString();
+const FAILED_SEEN_ISO = new Date(FAILED_SEEN).toISOString();
 const ITEM = { id: 31, app_id: 9, issue_number: 24, priority: 2, reason: 'changed', thread_seen_at: FAILED_SEEN };
 const HEAD = 'a'.repeat(40);
 const ASK = { author: 'evan', body: '@​Homeroom bot inset it even more', createdAt: ASKED };
@@ -57,6 +61,16 @@ test('replies are read from the last run that answered, past up to two that fail
   assert.deepEqual(followup.repliesSince([failedRun(new Date(FAILED_SEEN)), failedRun(FAILED_SEEN), answeredRun], 5001).gaveUp, true,
     'a mark is a moment, as a Date or a string');
   assert.deepEqual(followup.repliesSince([], 5001), { sinceAt: null, failures: 0, gaveUp: false });
+});
+
+test('readThrough is the latest of the mark and the replies the run read', () => {
+  assert.equal(followup.readThrough([{ createdAt: ASKED }], null), ASKED_ISO, 'a null mark becomes the newest reply read');
+  assert.equal(followup.readThrough([{ createdAt: ASKED }, { createdAt: ANSWERED }], null), ASKED_ISO, 'the newest of them, whatever the order');
+  assert.equal(followup.readThrough([{ createdAt: ASKED }], FAILED_SEEN), FAILED_SEEN_ISO, 'a later mark is never lowered');
+  assert.equal(followup.readThrough([{ createdAt: FAILED_SEEN }], FAILED_SEEN), FAILED_SEEN_ISO, 'a reply at the mark changes nothing');
+  assert.equal(followup.readThrough([], FAILED_SEEN), FAILED_SEEN, 'no replies: the mark stands as it was given');
+  assert.equal(followup.readThrough([{ where: 'issue' }], FAILED_SEEN), FAILED_SEEN, 'a recovered turn\'s placeholder carries no time');
+  assert.equal(followup.readThrough([{ where: 'issue' }], null), null);
 });
 
 test('only a reply turn on this change that said nothing is an unanswered failure', () => {
@@ -209,12 +223,55 @@ test('before: with the failed run\'s mark the same message was "nothing new"; tw
   assert.equal(twice.calls.exec.length + twice.calls.onProposal.length, 0, 'no turn and nothing said');
 });
 
+// #4613: the queue row's mark can be older than the replies the run read, or
+// missing (a checks row, Run now, a restart). A run that recorded only it had
+// the next look read the same message as new and answer it a second time.
+test('a reply turn on a row with no mark records the message it answered as seen', async (t) => {
+  const h = harness({ recentRuns: [answeredRun] });
+  const out = await run(t, h, { ...ITEM, thread_seen_at: null });
+  assert.equal(out.verdict, 'answer');
+  assert.equal(insertOf(h).params[12], ASKED_ISO, 'the answered run\'s mark is the newest reply it read, not null');
+});
+
+test('a failed reply turn on a row with no mark records what it read too', async (t) => {
+  const h = harness({ recentRuns: [answeredRun], routed: { error: 'turn_failed' } });
+  const out = await run(t, h, { ...ITEM, thread_seen_at: null });
+  assert.equal(out.verdict, 'failed');
+  assert.equal(insertOf(h).params[12], ASKED_ISO, 'the retry re-reads the same messages, and giving up leaves a mark, not null');
+});
+
+test('one message, one answer: the mark the answer records stops a second one', async (t) => {
+  const first = harness({ recentRuns: [answeredRun] });
+  const out = await run(t, first, { ...ITEM, thread_seen_at: null });
+  assert.equal(out.verdict, 'answer');
+  const mark = insertOf(first).params[12];
+  assert.equal(mark, ASKED_ISO);
+  assert.equal(first.calls.posts.filter((p) => p.kind === 'followup_answer').length, 1);
+
+  // The next look: its newest run is the answer just recorded, with the mark
+  // it kept, and the same proposal thread. Before this change the mark was
+  // null, so the same message read as new and was answered again.
+  const second = harness({
+    recentRuns: [{ verdict: 'answer', error: null, thread_seen_at: mark, proposal_session_id: 5001, checks_head_sha: null }],
+  });
+  const again = await run(t, second, { ...ITEM, thread_seen_at: mark });
+  assert.deepEqual(again, { ran: false, reason: 'no_new_replies' });
+  assert.equal(second.calls.exec.length + second.calls.onProposal.length, 0, 'no turn, nothing said');
+  assert.equal(
+    first.calls.posts.filter((p) => p.kind === 'followup_answer').length
+      + second.calls.posts.filter((p) => p.kind === 'followup_answer').length,
+    1,
+    'exactly one answer across both looks',
+  );
+});
+
 test('a reply turn that ends unreadable says so in the thread, and that it will try again', async (t) => {
   const h = harness({ recentRuns: [answeredRun], result: { lastResultText: 'I looked at it.', pushOk: false } });
   const out = await run(t, h);
   assert.equal(out.verdict, 'failed');
   assert.match(insertOf(h).params[18], /^unparseable: /, 'the record stays on the run');
-  assert.equal(insertOf(h).params[12], FAILED_SEEN);
+  // #4613: the mark a reply turn records is readThrough's, an ISO string.
+  assert.equal(insertOf(h).params[12], FAILED_SEEN_ISO);
   const note = h.calls.onProposal.find((p) => p.kind === 'followup_failed');
   assert.ok(note, 'it used to post nothing');
   assert.equal(note.sessionId, 5001);
