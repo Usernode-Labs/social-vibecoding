@@ -57,6 +57,13 @@ export type NeedsFeedItem = {
    * needs (B7, the server's rule for `_cardVoteButtonSpecs`' `approve`).
    */
   approve?: boolean;
+  /**
+   * The change's declared changes and its declared on-screen visibility,
+   * for the Needs-you card's diagram when the change has no shots. Both
+   * omitted when the server has nothing to draw from.
+   */
+  changes?: string[];
+  impact?: 'none';
   app: { slug: string; name: string; icon_url: string | null; icon_emoji: string | null };
 };
 
@@ -134,6 +141,10 @@ export function reelRows(
       summary,
       descriptionHtml: item.summary ? html(item.summary) : '',
       visuals: null,
+      // The diagram feeds, numbered the way a project page's rows number
+      // them (AppView._workshopChanges).
+      changes: (item.changes || []).map((text, k) => ({ n: k + 1, text })),
+      impact: item.impact || null,
       askAbout: { kind: change ? 'proposal' : 'gov', ref: item.id },
       thread: { type: change ? 'session' : 'governance', ref: item.id },
       app: item.app,

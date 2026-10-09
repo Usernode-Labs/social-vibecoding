@@ -320,6 +320,12 @@ const ITEMS_SQL = `
 // project's own NeedsFeed now, which renders them in full there), so they
 // are cut at NEEDS_FEED_SUMMARY_MAX rather than at a card's length. A
 // summary is a few paragraphs; the cap is for the one that is not.
+//
+// And the two optional fields the card's diagram reads when the change has
+// no before & after shots: `changes` (the declared changes, from
+// shots_detail's claims) and `impact` ('none' when the proposal declared
+// that nothing on screen changes). Both are omitted when there is nothing
+// to draw.
 const NEEDS_FEED_MAX = 60;
 const NEEDS_FEED_SUMMARY_MAX = 2000;
 
@@ -337,7 +343,9 @@ const NEEDS_FEED_SQL = `
                AND ${countedVotePredicateSql('pv', 'cs')})::int AS yes,
            (SELECT COUNT(*) FROM pr_votes pv
              WHERE pv.session_id = cs.id AND pv.vote = 'no'
-               AND ${countedVotePredicateSql('pv', 'cs')})::int AS no
+               AND ${countedVotePredicateSql('pv', 'cs')})::int AS no,
+           cs.shots_detail->'claims' AS claims,
+           cs.shots_detail->>'impact' AS impact
       FROM chat_sessions cs
       LEFT JOIN users u ON u.id = cs.user_id
      WHERE ${OWED_PROPOSALS_WHERE}
@@ -345,14 +353,15 @@ const NEEDS_FEED_SQL = `
     SELECT 'governance', i.app_id, i.id, i.title::text,
            LEFT(COALESCE(i.description, ''), ${NEEDS_FEED_SUMMARY_MAX})::text,
            u.username::text, NULL::int, NULL::int, i.created_at,
-           NULL::int, NULL::int
+           NULL::int, NULL::int,
+           NULL::jsonb, NULL::text
       FROM issues i
       LEFT JOIN users u ON u.id = i.created_by
      WHERE ${OWED_GOVERNANCE_WHERE}
   )
   SELECT a.id AS app_id, a.slug, a.name, a.icon_image_id, a.icon_emoji,
          o.kind, o.id, o.title, o.summary, o.author, o.number, o.epoch,
-         o.at, o.yes, o.no,
+         o.at, o.yes, o.no, o.claims, o.impact,
          (o.kind = 'proposal'
            AND (${communities.audienceSql('a', '(SELECT COUNT(*) FROM community_members m WHERE m.community_id = a.community_id)')}) = 'solo'
            AND counts_toward_outcome($1, a.id)) AS solo
@@ -486,6 +495,10 @@ function shapeNeedsFeed(rows) {
     yes: row.yes == null ? null : Number(row.yes),
     no: row.no == null ? null : Number(row.no),
     ...(approvedAlone(row) ? { approve: true } : {}),
+    // The card diagram's two optional feeds, omitted when there is nothing
+    // to draw so a row without either keeps the shape it had.
+    ...(changesFromClaims(row.claims).length ? { changes: changesFromClaims(row.claims) } : {}),
+    ...(row.impact === 'none' ? { impact: 'none' } : {}),
     app: {
       slug: row.slug,
       name: row.name || row.slug,
@@ -493,6 +506,19 @@ function shapeNeedsFeed(rows) {
       icon_emoji: row.icon_emoji || null,
     },
   }));
+}
+
+/**
+ * The declared changes a feed row carries, as plain strings: the claim texts
+ * shots_detail records, trimmed, the empties dropped, at most three and each
+ * cut at 1000 characters (the same bound the shots view itself applies).
+ */
+function changesFromClaims(claims) {
+  if (!Array.isArray(claims)) return [];
+  return claims
+    .map((c) => String((c && c.claim) || '').trim().slice(0, 1000))
+    .filter(Boolean)
+    .slice(0, 3);
 }
 
 /**
@@ -716,7 +742,7 @@ function workshopOverviewRoutes(config) {
 module.exports = {
   workshopOverviewRoutes, demoNeedsVoteRoutes, withDemoCounts, DEMO_COUNTS, COUNTS_SQL,
   withDemoItems, DEMO_ITEMS, ITEMS_SQL, ITEMS_PER_APP, ITEMS_TOTAL, groupItems,
-  NEEDS_FEED_SQL, NEEDS_FEED_MAX, shapeNeedsFeed, withVotesRequired, DEMO_NEEDS_FEED, withDemoNeedsFeed,
+  NEEDS_FEED_SQL, NEEDS_FEED_MAX, shapeNeedsFeed, changesFromClaims, withVotesRequired, DEMO_NEEDS_FEED, withDemoNeedsFeed,
   isDemoNeedsProposal,
   OWED_BY_COMMUNITY_SQL, owedByCommunity,
   MY_SESSIONS_WHERE, MY_PROPOSALS_WHERE,

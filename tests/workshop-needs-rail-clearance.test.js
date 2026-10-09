@@ -24,11 +24,14 @@ test('title, summary, caption and picture all keep the rail\'s 74px free', () =>
   assert.match(rule('.dev-ws-item-summary'), /margin: 10px 74px 0 0;/);
   assert.match(rule('.dev-ws-item-caption'), /padding: 12px 74px 0 0;/);
   assert.match(rule('.dev-ws-media-view'), /margin-right: 74px;/);
+  // The diagram sits where the shots picture sits, so it keeps the same lane.
+  assert.match(rule('.dev-ws-diagram'), /margin: 14px 74px 0 0;/);
 });
 
 test('the wide layout, where the rail stands beside the card, gives the room back', () => {
   assert.match(css, /\.dev-ws-item-title \{ font-size: 32px; line-height: 1\.14; margin-right: 0;/);
   assert.match(css, /\.dev-ws-item-summary \{ font-size: 19px; line-height: 1\.45; margin-right: 0;/);
+  assert.match(css, /\.dev-ws-diagram \{ margin-right: 0; \}/);
 });
 
 test('above the rail, the head takes the full width', () => {

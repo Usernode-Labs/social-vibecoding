@@ -9845,6 +9845,16 @@ const AppView = {
     return null;
   },
 
+  // The proposal's declared changes, numbered from 1 as the shots number
+  // them, for the Needs-you card's diagram when its shots have not come back
+  // (a verified run lifts the same list into `visuals.changes` instead, and
+  // the card draws the picture). Null and missing claims alike read as none.
+  _workshopChanges(shots) {
+    const claims = shots && typeof shots === 'object' && Array.isArray(shots.claims) ? shots.claims : [];
+    return claims.slice(0, 3).map((c, k) => ({ n: k + 1, text: String((c && c.claim) || '').trim() }))
+      .filter((c) => c.text);
+  },
+
   // An issue body as one plain sentence-run for the feed: markdown marks
   // stripped, whitespace folded, cut at a word. The full body is on the
   // issue's own page, which the title links to.
@@ -10895,6 +10905,11 @@ const AppView = {
         visuals: kind === 'proposal'
           ? AppView._workshopVisuals(item && item.visuals, item && item.shots)
           : (kind === 'session' && item && item.shots ? AppView._workshopVisuals(null, item.shots) : null),
+        // The change's declared changes and declared visibility, for the
+        // card's diagram when the shots have not come back. A verified run
+        // draws the picture, so these are read only when `visuals` is null.
+        changes: AppView._workshopChanges(item && item.shots),
+        impact: item && item.shots && typeof item.shots === 'object' ? item.shots.impact || null : null,
       };
       return kind ? AppView._attachRowConversation(row, kind, item) : row;
     };

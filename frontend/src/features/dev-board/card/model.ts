@@ -572,6 +572,18 @@ export interface DevWorkshopView {
       /** Every declared change, numbered as its outlines are. */
       changes?: { n: number; text: string }[];
     } | null;
+    /**
+     * The change's declared changes, numbered as the shots number them, on a
+     * row WITHOUT its shots yet (a verified run lifts them into `visuals`).
+     * What the Needs-you card's diagram draws when there is no picture.
+     */
+    changes?: { n: number; text: string }[];
+    /**
+     * The declared on-screen visibility ('ui' | 'motion' | 'none'), when the
+     * proposal declared one. 'none' is the change the card can say shows
+     * nothing.
+     */
+    impact?: 'ui' | 'motion' | 'none' | null;
   })[];
   /** Proposals awaiting THIS viewer's vote — pinned above the themes. */
   votes: {

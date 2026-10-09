@@ -46,6 +46,7 @@ import { memo, useCallback, useEffect, useInsertionEffect, useLayoutEffect, useM
 
 import { Button } from '@/components/ui/button';
 import {
+  ArrowRightIcon,
   ArrowUpIcon,
   BallotIcon,
   ChatBubbleTailIcon,
@@ -55,6 +56,7 @@ import {
   ChevronUpIcon,
   DescriptionIcon,
   EllipsisHorizontalIcon,
+  EyeOffIcon,
   HandRaisedIcon,
   PlayIcon,
   SparklesIcon,
@@ -77,6 +79,7 @@ import { FeedThread } from '../card/feed-thread';
 import type { ActionRef, DevCardModel, DevWorkshopView, ListRow, WorkshopTheme } from '../card/model';
 import { CardSkeleton } from '../card/skeleton';
 import { VotePicker } from '../card/dev-card';
+import { diagramFor, type ChangeDiagram as ChangeDiagramSpec } from './change-diagram';
 import { ProgressRing } from '@/components/ui/progress-ring';
 import { useWorkshopGroup } from './group-mode-store';
 import { describe as describeCommunity } from '../../workshop/community-scope';
@@ -1479,6 +1482,60 @@ function regionRect(region: ShotScreen['regions'][number], side: Side): { box: B
 }
 
 /**
+ * The card's diagram, where the shots picture sits on cards that have one:
+ * a small panel that shows what the change does, for one whose shots have
+ * not come back (or were never going to). Renames are drawn as the words
+ * themselves, the old crossed out and the new in the info chip's tint;
+ * otherwise the change's declared changes are numbered tiles, numbered the
+ * way the shots number them; otherwise the single line that says nothing on
+ * screen changes. Picked by `diagramFor` (./change-diagram.ts); the panel is
+ * for reading, so nothing here is a button.
+ */
+function ChangeDiagram({ d }: { d: ChangeDiagramSpec }): ReactNode {
+  return (
+    <figure className="dev-ws-diagram" data-ws-diagram={d.kind}>
+      <div className="dev-ws-diagram-panel">
+        {d.kind === 'renames' ? (
+          <>
+            <figcaption className="dev-ws-diagram-head">Renames</figcaption>
+            <ul className="dev-ws-renames">
+              {d.pairs.map((p) => (
+                <li key={`${p.from}\n${p.to}`} className="dev-ws-rename">
+                  <span className="dev-ws-term dev-ws-term-before">{p.from}</span>
+                  <ArrowRightIcon className="dev-ws-rename-arrow" aria-hidden="true" />
+                  <span className="sr-only"> renamed to </span>
+                  <span className="dev-ws-term dev-ws-term-after" aria-hidden="true">{p.to}</span>
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : d.kind === 'changes' ? (
+          <>
+            <figcaption className="dev-ws-diagram-head">What changes</figcaption>
+            <ol className="dev-ws-diagram-tiles">
+              {d.tiles.map((t) => (
+                <li key={t.n} className="dev-ws-diagram-tile">
+                  <span className="dev-ws-diagram-n" aria-hidden="true">{t.n}</span>
+                  <span className="dev-ws-diagram-text">{t.text}</span>
+                </li>
+              ))}
+            </ol>
+          </>
+        ) : (
+          <>
+            <figcaption className="dev-ws-diagram-head">What changes</figcaption>
+            <div className="dev-ws-diagram-tile">
+              <EyeOffIcon className="dev-ws-diagram-glyph" aria-hidden="true" />
+              <span className="dev-ws-diagram-text">Nothing on screen changes</span>
+            </div>
+          </>
+        )}
+      </div>
+    </figure>
+  );
+}
+
+/**
  * The item's picture when its before & after run worked out its screens:
  * ONE screen, at the reader's own size, cropped to the areas the run found
  * different and outlined there, numbered as the declared changes are (the
@@ -1705,6 +1762,13 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
   // A run that worked out its screens IS the summary: the picture takes the
   // paragraph's room, and the words are one tap away in Description.
   const shots = !!(row.visuals && row.visuals.screens && row.visuals.screens.length);
+  // No picture at all: a small diagram of what the change does, picked once
+  // from the row's own words and declared changes (a request row carries
+  // neither, and keeps its empty space). Null leaves the spacer as it was.
+  const diagram = useMemo(
+    () => (row.kind === 'vote' && !row.visuals ? diagramFor(row) : null),
+    [row]
+  );
   // THE HEAD TAKES THE FULL WIDTH WHEN IT ENDS ABOVE THE RAIL. The rail sits
   // at the item's foot on a phone, so on most screens the by-line, title and
   // summary are nowhere near it, and keeping its lane free only wrapped them
@@ -1715,7 +1779,7 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
   const titleRef = useRef<HTMLHeadingElement>(null);
   const summaryRef = useRef<HTMLParagraphElement>(null);
   const [head, setHead] = useState<'all' | 'title' | 'none'>('all');
-  useLayoutEffect(() => { setHead('all'); }, [railClear, title, summary, shots]);
+  useLayoutEffect(() => { setHead('all'); }, [railClear, title, summary, shots, diagram]);
   useLayoutEffect(() => {
     if (!railClear || head === 'none') return;
     const item = itemRef.current;
@@ -1785,7 +1849,8 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
       )}
       {shots && row.visuals ? <ShotsPicture v={row.visuals} near={near} wide={wide} />
         : row.visuals ? <BeforeAfter v={row.visuals} near={near} onFull={onFull} />
-          : <div className="dev-ws-item-spacer" aria-hidden="true" />}
+          : diagram ? <ChangeDiagram d={diagram} />
+            : <div className="dev-ws-item-spacer" aria-hidden="true" />}
       <div className="dev-ws-item-caption">
         {facts.length ? (
           <button type="button" className="dev-ws-item-facts" data-ws-facts="" aria-haspopup="dialog" onClick={onDescribe}>
